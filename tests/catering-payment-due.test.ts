@@ -16,7 +16,7 @@ vi.mock("@/lib/supabase-server", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 
-import { createPaymentDue } from "@/lib/catering/payments";
+import { createPaymentDue, syncDuePaymentAmount } from "@/lib/catering/payments";
 import { paymentsFake } from "./payments-fake-client";
 
 const QUOTE = "a0000000-0000-4000-8000-000000000001";
@@ -67,5 +67,49 @@ describe("W02/B038 — createPaymentDue never hands back a due intent at a stale
     db.failUpdate.push("catering_payments");
 
     await expect(createPaymentDue(db.client, input(20000))).rejects.toThrow(/createPaymentDue/);
+  });
+});
+
+describe("W02 review r1 — a due intent is never re-priced under an open checkout", () => {
+  const open = () =>
+    paymentsFake({
+      catering_payments: [{ id: "old", quote_id: QUOTE, kind: "deposit", amount_cents: 30000, status: "due", provider_session_id: "cs_old" }],
+    });
+
+  it("syncDuePaymentAmount refuses a row that still points at a session, and writes nothing", async () => {
+    const db = open();
+
+    expect(await syncDuePaymentAmount(db.client, "old", 20000)).toBe(false);
+
+    expect(db.tables.catering_payments![0]).toMatchObject({ amount_cents: 30000, provider_session_id: "cs_old" });
+  });
+
+  it("told which session the caller RETIRED, it writes the amount and clears the id in ONE update", async () => {
+    const db = open();
+
+    expect(await syncDuePaymentAmount(db.client, "old", 20000, "cs_old")).toBe(true);
+
+    expect(db.tables.catering_payments![0]).toMatchObject({ amount_cents: 20000, provider_session_id: null });
+    const writes = db.ops.filter((o) => o.kind === "update");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.payload).toEqual({ amount_cents: 20000, provider_session_id: null });
+  });
+
+  it("…and refuses when the row now names a DIFFERENT session than the one retired", async () => {
+    const db = open();
+    db.tables.catering_payments![0]!.provider_session_id = "cs_newer";
+
+    expect(await syncDuePaymentAmount(db.client, "old", 20000, "cs_old")).toBe(false);
+
+    expect(db.tables.catering_payments![0]).toMatchObject({ amount_cents: 30000, provider_session_id: "cs_newer" });
+  });
+
+  it("createPaymentDue's idempotent path returns such an intent AS IT IS (the pay path retires, then re-prices)", async () => {
+    const db = open();
+
+    const out = await createPaymentDue(db.client, input(20000));
+
+    expect(out.id).toBe("old");
+    expect(db.tables.catering_payments![0]).toMatchObject({ amount_cents: 30000, provider_session_id: "cs_old" });
   });
 });

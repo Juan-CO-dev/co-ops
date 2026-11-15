@@ -170,6 +170,7 @@ export interface StripeWebhookDeps {
 export type PaymentReviewReason =
   | "another_payment_already_paid" // a second payment on the quote that is not deposit → balance
   | "amount_mismatch"              // Stripe charged an amount the intent does not carry
+  | "amount_not_current"           // the amount charged is not what the quote asks for NOW (an older price)
   | "intent_was_void"              // the intent had been closed before the customer paid it
   | "quote_not_payable"            // the quote is superseded, declined or expired
   | "already_settled"              // the row was already paid/refunded another way; NOT moved
@@ -302,19 +303,37 @@ interface QuoteContext {
   location_id: string;
   status: string | null;
   superseded_at: string | null;
+  /** The quote's own snapshot — what a deposit / a full payment is priced at NOW. */
+  deposit_cents: number | null;
+  total_cents: number | null;
 }
+
+const wholeCents = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) ? v : null);
 
 /** The quote a payment belongs to: its shop, and whether it is still an open order. Null
  *  when the quote row does not exist. THROWS on a read error (this runs BEFORE any write). */
 async function quoteOfPayment(sb: ServiceClient, quoteId: string): Promise<QuoteContext | null> {
   const { data, error } = await sb
     .from("catering_quotes")
-    .select("id, location_id, status, superseded_at")
+    .select("id, location_id, status, superseded_at, deposit_cents, total_cents")
     .eq("id", quoteId)
-    .maybeSingle<{ id: string; location_id: string; status: string | null; superseded_at: string | null }>();
+    .maybeSingle<{
+      id: string;
+      location_id: string;
+      status: string | null;
+      superseded_at: string | null;
+      deposit_cents: number | null;
+      total_cents: number | null;
+    }>();
   if (error) throw new Error(`quoteOfPayment: ${error.message}`);
   if (!data) return null;
-  return { location_id: data.location_id, status: data.status ?? null, superseded_at: data.superseded_at ?? null };
+  return {
+    location_id: data.location_id,
+    status: data.status ?? null,
+    superseded_at: data.superseded_at ?? null,
+    deposit_cents: wholeCents(data.deposit_cents),
+    total_cents: wholeCents(data.total_cents),
+  };
 }
 
 /** The shop that owns a payment, via its quote. Null when the quote cannot be found. */
@@ -548,6 +567,13 @@ async function dispatch(
   const reasons: PaymentReviewReason[] = [];
   if (payment.status === "void") reasons.push("intent_was_void");
   if (outcome.amountCents != null && outcome.amountCents !== payment.amount_cents) reasons.push("amount_mismatch");
+  // AN OLDER PRICE (review r1). An intent whose checkout could not be retired when the quote
+  // was re-priced keeps the amount that checkout charges (lib/catering/payment-carry.ts), so
+  // the row and the charge AGREE and `amount_mismatch` is silent — while the customer has
+  // paid a deposit or a total this quote no longer asks for. A `balance` is total − paid and
+  // has no snapshot to be weighed against.
+  const asked = payment.kind === "deposit" ? quote?.deposit_cents : payment.kind === "full" ? quote?.total_cents : null;
+  if (asked != null && (outcome.amountCents ?? payment.amount_cents) !== asked) reasons.push("amount_not_current");
   if (quote && (quote.superseded_at != null || quote.status === "declined" || quote.status === "expired")) {
     reasons.push("quote_not_payable");
   }
@@ -601,6 +627,19 @@ async function dispatch(
   return { result: reasons.length > 0 ? "paid_needs_review" : "paid", locationId };
 }
 
+/** Has the WHOLE charge been refunded? Read from the charge alone (see `refund` below). */
+export function chargeFullyRefunded(outcome: Pick<CheckoutEventOutcome, "chargeFullyRefunded" | "amountCents" | "chargeAmountCents">): boolean {
+  if (outcome.chargeFullyRefunded !== undefined) return outcome.chargeFullyRefunded;
+  // `amountCents` is the charge's CUMULATIVE `amount_refunded` (Stripe sums every refund on
+  // the charge), so two partial refunds that together cover the charge do read as full.
+  return (
+    outcome.amountCents != null &&
+    outcome.chargeAmountCents != null &&
+    outcome.chargeAmountCents > 0 &&
+    outcome.amountCents >= outcome.chargeAmountCents
+  );
+}
+
 /**
  * `charge.refunded` — the only event that moves a row BACKWARDS. It is located by
  * `provider_ref = the charge's payment_intent`, which is exactly the id the paid flip
@@ -613,13 +652,21 @@ async function dispatch(
  * included. `status` has no "partially_refunded" member (migration 0127's CHECK), and the
  * row used to move to `refunded` on any of them — which told the customer portal nothing
  * had been paid, re-opened the pay panel, and let the already-paid gate wave a second
- * deposit through. So the row moves to `refunded` only when the WHOLE charge is refunded:
- * Stripe's own `refunded: true`, or a cumulative `amount_refunded` that covers the row's
- * `amount_cents`. Anything less leaves the row `paid` — the customer HAS paid — and the
- * refunded amount is recorded on the same audit action with `partial: true`, result
- * `partially_refunded`. A payload that carries neither signal is treated as partial: when
- * we cannot tell, the conservative reading is the one that does not invite a second
- * charge. Splitting the status is still a settlement-ledger decision, not a webhook one.
+ * deposit through. So the row moves to `refunded` only when the WHOLE charge is refunded.
+ * Anything less leaves the row `paid` — the customer HAS paid — and the refunded amount is
+ * recorded on the same audit action with `partial: true`, result `partially_refunded`.
+ * Splitting the status is still a settlement-ledger decision, not a webhook one.
+ *
+ * ── "WHOLE" IS THE CHARGE'S OWN FACT, NEVER THE ROW'S (review r1) ────────────────────
+ * The first cut of this weighed `amount_refunded` against the ROW's `amount_cents`. The
+ * row's amount is ours — a person, a re-price or an old bug can leave it below what Stripe
+ * captured — and then a refund of the row's amount read as "fully refunded" with money
+ * still held: $300 captured on a row saying $200, $200 refunded, payment re-opened. The
+ * charge is the money, so only the charge may say it is all gone (`chargeFullyRefunded`
+ * above): Stripe's `refunded` flag when the payload carries one — in either direction —
+ * else `amount_refunded` against the charge's own `amount`. A payload with neither is
+ * treated as partial: when we cannot tell, the conservative reading is the one that does
+ * not invite a second charge.
  */
 async function refund(
   sb: ServiceClient,
@@ -642,11 +689,7 @@ async function refund(
     return { result: "location_mismatch", locationId };
   }
 
-  // `amountCents` is the charge's CUMULATIVE `amount_refunded` (Stripe sums every refund on
-  // the charge), so two partial refunds that together cover the row do read as full.
-  const fullyRefunded =
-    outcome.chargeFullyRefunded === true ||
-    (outcome.amountCents != null && outcome.amountCents >= payment.amount_cents);
+  const fullyRefunded = chargeFullyRefunded(outcome);
 
   if (fullyRefunded) {
     const { error, count } = await sb
@@ -716,6 +759,8 @@ const REVIEW_SENTENCE: Record<PaymentReviewReason, string> = {
   another_payment_already_paid:
     "Another payment on this order was already marked paid. This may be a duplicate charge that needs a refund.",
   amount_mismatch: "The amount the customer was charged does not match the amount on the payment record.",
+  amount_not_current:
+    "The customer paid an earlier price for this order: the amount charged is not what the quote asks for now. They may be owed a refund of the difference, or still owe it.",
   intent_was_void: "This payment request had been closed before the customer paid it.",
   quote_not_payable: "The quote is no longer open (it was replaced, declined or expired).",
   already_settled:

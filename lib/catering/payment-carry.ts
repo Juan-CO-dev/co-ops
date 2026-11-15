@@ -35,14 +35,24 @@
  *       · LEFT IN FLIGHT (moved, untouched): its Checkout Session is already `complete` —
  *         the customer's money is landing. The row keeps its amount and its session id so
  *         the webhook's flip lands on the live revision and records what was charged.
+ *       · HELD AT ITS OWN AMOUNT (moved, untouched): it would be carried, but its Checkout
+ *         Session could not be retired — see the next section.
  *
  * ── THE OPEN CHECKOUT SESSION ────────────────────────────────────────────────────────
  * A due intent may point at a hosted session at the OLD amount that the customer can still
- * pay. It is retired at Stripe (`retireCheckoutSession`) and its id cleared. If it cannot
- * be retired (Stripe is down; the shop has no credentials any more) the row's fate above is
- * unchanged and the session id is KEPT — the next checkout retires it before minting
- * (lib/portal/quotes.ts), and if the customer pays it first, the webhook records the
- * payment and flags it (`amount_mismatch` / `intent_was_void`). Nothing is silently lost.
+ * pay. It is retired at Stripe (`retireCheckoutSession`) and its id cleared; only THEN is
+ * the intent re-priced.
+ *
+ * AN INTENT WHOSE CHECKOUT IS STILL OPEN IS NEVER RE-PRICED (review r1). If the session
+ * cannot be retired (Stripe is down; the shop has no credentials any more) the intent is
+ * moved with its session id AND ITS AMOUNT — the row's `amount_cents` is what that checkout
+ * will charge, and it must go on saying so. Re-pricing it anyway is how $300 got captured
+ * on a row that said $200, after which a $200 refund read as "fully refunded". The stale
+ * amount is corrected at the first safe moment: the customer's next pay tap retires the
+ * session and only then re-prices (lib/portal/quotes.ts `initiatePayment`), failing closed
+ * if it still cannot. If the customer pays the old checkout first, the webhook records
+ * exactly what was charged and flags it (`amount_not_current`; `intent_was_void` for an
+ * intent this pass had to close). Nothing is silently lost, and no row lies about money.
  *
  * ── A PAYMENT THAT LANDS WHILE WE ARE MOVING IT ──────────────────────────────────────
  * The Stripe webhook can advance a row (due → paid) between this module's read and its
@@ -84,14 +94,15 @@ export interface CarryPaymentsInput {
 export interface CarryPaymentsResult {
   /** Every row re-pointed at the new revision, with the revision it left. */
   moved: Array<{ paymentId: string; fromQuoteId: string }>;
-  /** Due intents kept alive on the new revision, re-priced. */
+  /** Due intents kept alive on the new revision, re-priced (their checkout, if any, retired). */
   carriedDue: Array<{ paymentId: string; kind: string; fromCents: number; toCents: number }>;
   /** Due intents closed. */
   voided: string[];
   /** Due intents whose checkout was already complete — moved, otherwise untouched. */
   inFlight: string[];
   sessionsRetired: number;
-  /** Due intents whose open session could NOT be retired (the id is kept on the row). */
+  /** Due intents whose open session could NOT be retired: the row keeps the session id, and
+   *  (when it stays due) the AMOUNT that session charges. Never re-priced; see the header. */
   sessionsNotRetired: string[];
   /** Rows that could NOT be moved (see the header) — still on a superseded revision. */
   leftBehind: string[];
@@ -214,14 +225,19 @@ export async function carryPaymentsToRevision(
 
     let wrote: DueWrite = "conflict";
     if (carry) {
-      const patch: Record<string, unknown> = { quote_id: input.newQuoteId, amount_cents: target };
-      if (sessionCleared) patch.provider_session_id = null;
+      // RE-PRICED ONLY ONCE ITS CHECKOUT IS GONE (see the header). With a session we could
+      // not retire, the row moves as it is: its amount is what that checkout will charge.
+      const patch: Record<string, unknown> = sessionCleared
+        ? { quote_id: input.newQuoteId, amount_cents: target, provider_session_id: null }
+        : { quote_id: input.newQuoteId };
       // A unique-index refusal (0130 / 0303) is a legacy collision, not a fault: fall
       // through to voiding this intent rather than abandoning the whole carry.
       wrote = await writeDue(sb, p.id, patch);
       if (wrote === "written") {
         result.moved.push(from);
-        result.carriedDue.push({ paymentId: p.id, kind: p.kind, fromCents: p.amount_cents, toCents: target as number });
+        if (sessionCleared) {
+          result.carriedDue.push({ paymentId: p.id, kind: p.kind, fromCents: p.amount_cents, toCents: target as number });
+        }
         liveDueKinds.add(p.kind);
         continue;
       }

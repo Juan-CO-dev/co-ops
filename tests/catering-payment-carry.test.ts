@@ -157,7 +157,7 @@ describe("W02/B006 — the Checkout Session at the old amount is retired", () =>
     expect(out.sessionsNotRetired).toEqual([]);
   });
 
-  it("if the session CANNOT be retired, the intent is still carried and KEEPS the id — so the next checkout retires it", async () => {
+  it("if the session CANNOT be retired, the intent moves with the id AND ITS AMOUNT — an open checkout is never re-priced (review r1)", async () => {
     db.tables.catering_payments!.push(pay({ id: "dep", provider: "stripe", provider_session_id: "cs_old" }));
     const retireDown = vi.fn(async () => {
       throw new Error("stripe is down");
@@ -165,15 +165,27 @@ describe("W02/B006 — the Checkout Session at the old amount is retired", () =>
 
     const out = await carryPaymentsToRevision(db.client, toV2, retireDown);
 
-    expect(row("dep")).toMatchObject({ quote_id: V2, status: "due", amount_cents: 25000, provider_session_id: "cs_old" });
+    // `cs_old` can still be paid at $200. The row must go on saying $200 — re-pricing it to
+    // the revision's $250 is how a charge and its row came to disagree. The next pay tap
+    // retires the session and only then re-prices (tests/catering-reprice-late-payment.test.ts).
+    expect(row("dep")).toMatchObject({ quote_id: V2, status: "due", amount_cents: 20000, provider_session_id: "cs_old" });
+    expect(out.moved).toEqual([{ paymentId: "dep", fromQuoteId: V1 }]);
+    expect(out.carriedDue).toEqual([]);
     expect(out.sessionsNotRetired).toEqual(["dep"]);
   });
 
   it("a shop that cannot reach Stripe at all (retire = null) behaves the same way", async () => {
     db.tables.catering_payments!.push(pay({ id: "dep", provider: "stripe", provider_session_id: "cs_old" }));
     const out = await carryPaymentsToRevision(db.client, toV2, null);
-    expect(row("dep")).toMatchObject({ quote_id: V2, provider_session_id: "cs_old" });
+    expect(row("dep")).toMatchObject({ quote_id: V2, amount_cents: 20000, provider_session_id: "cs_old" });
     expect(out.sessionsNotRetired).toEqual(["dep"]);
+  });
+
+  it("an intent with NO session is still re-priced when Stripe is unreachable — there is no checkout to disagree with", async () => {
+    db.tables.catering_payments!.push(pay({ id: "dep" }));
+    const out = await carryPaymentsToRevision(db.client, toV2, null);
+    expect(row("dep")).toMatchObject({ quote_id: V2, status: "due", amount_cents: 25000 });
+    expect(out.carriedDue).toEqual([{ paymentId: "dep", kind: "deposit", fromCents: 20000, toCents: 25000 }]);
   });
 
   it("a checkout that is already COMPLETE is left exactly as it is, on the live revision", async () => {

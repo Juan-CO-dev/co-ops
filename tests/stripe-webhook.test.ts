@@ -316,7 +316,9 @@ describe("charge.refunded", () => {
     id: "evt_r",
     type: "charge.refunded",
     livemode: false,
-    data: { object: { id: "ch_1", payment_intent: "pi_1", amount_refunded: 2500, metadata: {}, ...over } },
+    // A charge as Stripe sends it: what was captured, what has been refunded so far, and
+    // Stripe's own "all of it" flag. The default is a FULL refund of a $25 charge.
+    data: { object: { id: "ch_1", payment_intent: "pi_1", amount: 2500, amount_refunded: 2500, refunded: true, metadata: {}, ...over } },
   });
 
   it("finds the payment by provider_ref and moves paid → refunded", async () => {
@@ -376,17 +378,25 @@ describe("charge.refunded", () => {
     );
   });
 
-  it("W02/B036 — partial refunds that TOGETHER cover the row read as full (amount_refunded is cumulative)", async () => {
+  it("W02/B036 — partial refunds that TOGETHER cover the CHARGE read as full (amount_refunded is cumulative)", async () => {
     const paid300 = { ...PAID_ROW, amount_cents: 30000 };
     const { client } = stubClient(handlerFor({ paymentByRef: { data: paid300 } }));
-    // No boolean on the payload: the cumulative amount alone decides.
-    const out = await processStripeEvent(client, refundEvent({ amount_refunded: 30000 }), SINGLE, noNotify);
+    // No boolean on the payload: the cumulative amount, against the charge's own amount, decides.
+    const out = await processStripeEvent(client, refundEvent({ amount: 30000, amount_refunded: 30000, refunded: undefined }), SINGLE, noNotify);
     expect(out.result).toBe("refunded");
+  });
+
+  it("review r1 — the ROW's amount never decides: a refund covering the row but not the charge is partial", async () => {
+    // The row says $25; Stripe captured $300 and has refunded $25 of it.
+    const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: PAID_ROW } }));
+    const out = await processStripeEvent(client, refundEvent({ amount: 30000, amount_refunded: 2500, refunded: undefined }), SINGLE, noNotify);
+    expect(out.result).toBe("partially_refunded");
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
   });
 
   it("W02/B036 — a refund payload with NEITHER signal is treated as partial, never as a re-opened order", async () => {
     const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: PAID_ROW } }));
-    const out = await processStripeEvent(client, refundEvent({ amount_refunded: undefined }), SINGLE, noNotify);
+    const out = await processStripeEvent(client, refundEvent({ amount: undefined, refunded: undefined }), SINGLE, noNotify);
     expect(out.result).toBe("partially_refunded");
     expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
   });

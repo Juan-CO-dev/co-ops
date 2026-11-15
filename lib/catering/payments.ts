@@ -167,17 +167,37 @@ export interface CreatePaymentDueInput {
  * a $200 deposit, and $150 is what the customer was sent to pay. The row's `amount_cents`
  * is the authority the webhook, the staff board and the reports all read, so the row is
  * what must move.
+ *
+ * ── NEVER UNDER AN OPEN CHECKOUT (review r1) ─────────────────────────────────────────
+ * A due intent that points at a Checkout Session is priced by that session: the customer
+ * can still pay it at the amount it was minted for. Re-pricing the row first is how $300
+ * was captured on a row that said $200, and a $200 refund then read as a full one. So the
+ * write is ALSO guarded on the session:
+ *   · `retiredSessionId` null (the default): the row must hold NO session. A row that
+ *     does is left exactly as it is and this returns false.
+ *   · `retiredSessionId` set: the caller has ALREADY retired that session at Stripe. The
+ *     row must still name it; the amount is written and the id cleared in the same UPDATE,
+ *     so the row never says the new amount while pointing at the old checkout.
+ * Returning false therefore means "not due any more, OR the row's checkout is not the one
+ * you resolved". Either way the caller must not send anyone to pay.
  */
 export async function syncDuePaymentAmount(
   sb: ReturnType<typeof getServiceRoleClient>,
   paymentId: string,
   amountCents: number,
+  retiredSessionId: string | null = null,
 ): Promise<boolean> {
-  const { error, count } = await sb
+  const base = sb
     .from("catering_payments")
-    .update({ amount_cents: amountCents }, { count: "exact" })
+    .update(
+      retiredSessionId ? { amount_cents: amountCents, provider_session_id: null } : { amount_cents: amountCents },
+      { count: "exact" },
+    )
     .eq("id", paymentId)
     .eq("status", "due");
+  const { error, count } = await (retiredSessionId
+    ? base.eq("provider_session_id", retiredSessionId)
+    : base.is("provider_session_id", null));
   if (error) throw new Error(`syncDuePaymentAmount: ${error.message}`);
   return (count ?? 0) > 0;
 }
@@ -189,7 +209,10 @@ export async function syncDuePaymentAmount(
  *
  * IDEMPOTENT ON THE (quote, kind) DUE INTENT, AND THE AMOUNT IS PART OF THAT: when a due
  * intent already exists it is returned at the amount this call asked for, re-priced if it
- * had drifted (see `syncDuePaymentAmount`).
+ * had drifted (see `syncDuePaymentAmount`). ONE EXCEPTION: an existing intent that points at
+ * an open Checkout Session is returned AS IT IS. Its amount is what that checkout charges,
+ * and this helper has no way to retire one; the pay path retires it and re-prices before a
+ * new checkout is offered (lib/portal/quotes.ts `initiatePayment`).
  */
 export async function createPaymentDue(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -213,14 +236,14 @@ export async function createPaymentDue(
     if (error.code === "23505") {
       const { data: existing } = await sb
         .from("catering_payments")
-        .select("id, amount_cents")
+        .select("id, amount_cents, provider_session_id")
         .eq("quote_id", input.quoteId)
         .eq("kind", input.kind)
         .eq("status", "due")
         .limit(1)
-        .maybeSingle<{ id: string; amount_cents: number }>();
+        .maybeSingle<{ id: string; amount_cents: number; provider_session_id: string | null }>();
       if (existing) {
-        if (existing.amount_cents !== input.amountCents) {
+        if (existing.amount_cents !== input.amountCents && !existing.provider_session_id) {
           let repriced: boolean;
           try {
             repriced = await syncDuePaymentAmount(sb, existing.id, input.amountCents);

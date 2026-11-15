@@ -461,12 +461,12 @@ export async function initiatePayment(
   // fast path in front of it, not the guard.
   const { data: existing, error: exErr } = await sb
     .from("catering_payments")
-    .select("id, amount_cents")
+    .select("id, amount_cents, provider_session_id")
     .eq("quote_id", quoteId)
     .eq("kind", kind)
     .eq("status", "due")
     .limit(1)
-    .maybeSingle<{ id: string; amount_cents: number }>();
+    .maybeSingle<{ id: string; amount_cents: number; provider_session_id: string | null }>();
   if (exErr) throw new Error(`initiatePayment existing: ${exErr.message}`);
 
   // A REUSED INTENT CARRIES TODAY'S AMOUNT (audit W02/B038). `amountCents` is read from
@@ -474,8 +474,23 @@ export async function initiatePayment(
   // said something else. The row is the authority the webhook and the staff board read, so
   // it is re-priced before anyone is sent to pay it — guarded on `due`, so a row a payment
   // advanced in the meantime refuses instead of being rewritten under the money.
+  //
+  // …BUT NEVER UNDER AN OPEN CHECKOUT (review r1). If the intent still points at a Checkout
+  // Session, that session can be paid at the OLD amount; re-pricing the row first is how
+  // $300 was captured on a row that said $200. So the session is retired FIRST (fail
+  // closed: 502 if Stripe will not confirm it, 409 if its payment is already landing, 503
+  // if this shop can no longer reach Stripe at all), and the amount and the cleared id are
+  // then written in ONE guarded UPDATE.
   if (existing && existing.amount_cents !== amountCents) {
-    const repriced = await syncDuePaymentAmount(sb, existing.id, amountCents);
+    const openSession = existing.provider_session_id;
+    if (openSession) {
+      const creds = stripeCredentialsFor(await locationCodeFor(sb, quote.locationId));
+      if (!creds) {
+        throw new PortalQuoteError(503, "payment_unavailable", "Payment is temporarily unavailable — please try again");
+      }
+      await retireOrRefuse(creds.secretKey, openSession);
+    }
+    const repriced = await syncDuePaymentAmount(sb, existing.id, amountCents, openSession);
     if (!repriced) throw new PortalQuoteError(409, "not_due", "That payment is no longer due");
   }
 

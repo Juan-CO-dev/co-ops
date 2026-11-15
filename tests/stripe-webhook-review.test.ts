@@ -324,3 +324,66 @@ describe("W02/B035 — the staff notification says when a payment needs a look",
     expect(mail.html).toMatch(/already marked paid/i);
   });
 });
+
+describe("W02 review r1 — a payment at a price the quote no longer asks for is flagged `amount_not_current`", () => {
+  // An intent whose checkout could not be retired when the quote was re-priced keeps the
+  // amount that checkout charges, so the row and the charge AGREE (`amount_mismatch` is
+  // silent). The quote's own snapshot is what says the customer paid an older price.
+  const withSnapshot = (deposit: number, total: number) => {
+    Object.assign(db.tables.catering_quotes![0]!, { deposit_cents: deposit, total_cents: total });
+  };
+
+  it("a deposit charged at the quote's CURRENT deposit is an ordinary payment", async () => {
+    withSnapshot(20000, 100000);
+    db.tables.catering_payments!.push(pay({ id: DEPOSIT }));
+
+    const out = await processStripeEvent(db.client, completed(DEPOSIT), SINGLE, deps);
+
+    expect(out.result).toBe("paid");
+    expect(lastAuditMeta().needs_review).toEqual([]);
+  });
+
+  it("a deposit charged at an OLDER deposit amount is recorded as charged, and flagged", async () => {
+    withSnapshot(15000, 75000); // the quote was re-priced down; the open checkout was for $200
+    db.tables.catering_payments!.push(pay({ id: DEPOSIT }));
+
+    const out = await processStripeEvent(db.client, completed(DEPOSIT), SINGLE, deps);
+
+    expect(out.result).toBe("paid_needs_review");
+    expect(row(DEPOSIT)).toMatchObject({ status: "paid", amount_cents: 20000 });
+    expect(lastAuditMeta()).toMatchObject({ needs_review: ["amount_not_current"], amount_cents: 20000, event_amount_cents: 20000 });
+  });
+
+  it("a FULL payment is weighed against the quote's total", async () => {
+    withSnapshot(20000, 90000);
+    db.tables.catering_payments!.push(pay({ id: FULL, kind: "full", amount_cents: 100000 }));
+
+    const out = await processStripeEvent(db.client, completed(FULL, { amount_total: 100000 }), SINGLE, deps);
+
+    expect(out.result).toBe("paid_needs_review");
+    expect(lastAuditMeta().needs_review).toEqual(["amount_not_current"]);
+  });
+
+  it("a BALANCE has no snapshot to be weighed against and is never flagged for it", async () => {
+    withSnapshot(20000, 100000);
+    db.tables.catering_payments!.push(
+      pay({ id: DEPOSIT, status: "paid", provider: "stripe", provider_ref: "pi_1" }),
+      pay({ id: BALANCE, kind: "balance", amount_cents: 80000 }),
+    );
+
+    const out = await processStripeEvent(db.client, completed(BALANCE, { amount_total: 80000 }), SINGLE, deps);
+
+    expect(out.result).toBe("paid");
+  });
+
+  it("the staff email has a plain sentence for it", async () => {
+    Object.assign(db.tables.catering_quotes![0]!, { pipeline_id: "lead-1" });
+    db.tables.catering_pipeline = [{ id: "lead-1", assigned_to: "user-1" }];
+    db.tables.users = [{ id: "user-1", email: "manager@example.com", active: true }];
+    await notifyPaymentPaid(db.client, { paymentId: DEPOSIT, quoteId: QUOTE, locationId: LOCATION, kind: "deposit", amountCents: 20000, reviewReasons: ["amount_not_current"] });
+
+    const mail = sendEmailMock.mock.calls.at(-1)![0];
+    expect(mail.subject).toMatch(/NEEDS REVIEW/);
+    expect(mail.text).toMatch(/earlier price/i);
+  });
+});
