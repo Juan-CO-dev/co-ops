@@ -106,7 +106,8 @@ describe("W02/B035 — retireCheckoutSession", () => {
 
   it("never puts the key in an error", async () => {
     fetchMock.mockResolvedValueOnce(reply(401, { error: { type: "invalid_request_error", message: "Invalid API Key provided" } }));
-    const err = await retireCheckoutSession("sk_test_fake", "cs_test_1").catch((e) => e as StripeError);
-    expect(String(err.message)).not.toContain("sk_test_fake");
+    const err: unknown = await retireCheckoutSession("sk_test_fake", "cs_test_1").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StripeError);
+    expect(String((err as StripeError).message)).not.toContain("sk_test_fake");
   });
 });
