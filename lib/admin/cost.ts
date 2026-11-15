@@ -39,19 +39,21 @@ import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { loadMeasureUnits } from "@/lib/admin/skus";
-import { loadRecipeInputsAcrossScopes, loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadRecipeInputsAcrossScopes, loadSkuPackChains, loadSkuPacksAtPoints } from "@/lib/prep-consumption";
 import { assertScopeToken, catalogWriteRoleAllowed, GLOBAL_VERSION_WRITE_MIN, resolveCurrentPrices, skuOwnerAllowed, type ResolvedPrice, type ScopedPriceRow, type VersionScope } from "@/lib/sku-versions-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 // The PURE half lives in cost-shared.ts (the house *-shared law) so the
 // derivation is test-pinnable; re-exported here so server consumers' import
 // paths are unchanged.
-import { contentOzForSku, receivedLineContribution } from "@/lib/admin/cost-shared";
+import { contentOzForSku, receivedLineContribution, rootConversionOf, type FlatPackFacts } from "@/lib/admin/cost-shared";
 import { buildPackChain, chainRootLabel } from "@/lib/pack-chain-shared";
 
 export {
   computeSkuCostPerOz,
   contentOzForSku,
   receivedLineContribution,
+  rootConversionOf,
+  type FlatPackFacts,
   type ReceivedLineFacts,
   measureFactorMap,
   type SkuChainMap,
@@ -185,7 +187,7 @@ async function loadChainAwareContent(
   sb: ReturnType<typeof getServiceRoleClient>,
   skuIds: string[],
   measuresMap: Map<string, MeasureUnitFactor>,
-): Promise<Map<string, { oz: number | null; rootLabel: string | null }>> {
+): Promise<Map<string, { oz: number | null; rootLabel: string | null; flat: FlatPackFacts }>> {
   if (skuIds.length === 0) return new Map();
   const [skuRows, chains] = await Promise.all([
     // W04/B149: chunked + paged, and a failed read throws instead of leaving SKUs "missing oz".
@@ -198,14 +200,8 @@ async function loadChainAwareContent(
     skuRows.map((s) => {
       const chain = chains.get(s.id) ?? null;
       const rootLabel = chain && chain.length > 0 ? chainRootLabel(buildPackChain(chain)) : s.pack_format;
-      return [s.id, {
-        oz: contentOzForSku(
-          { unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) },
-          chain,
-          measuresMap,
-        ),
-        rootLabel,
-      }];
+      const flat: FlatPackFacts = { pack_format: s.pack_format, unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) };
+      return [s.id, { oz: contentOzForSku(flat, chain, measuresMap), rootLabel, flat }];
     }),
   );
 }
@@ -337,6 +333,9 @@ export interface SkuReceivingLedger {
  * history. Each line goes through `receivedLineContribution` (W04/B043): oz = the frozen
  * `resolved_oz` (legacy root lines: qty × content_oz); $ = root packs received × the line's
  * root-pack price (a store run's line price is per received level) ?? the current SKU price.
+ * W04 r1: a line's frozen price converts through the pack in force AT THE DELIVERY'S SHOP WHEN THE
+ * LINE WAS WRITTEN (`loadSkuPacksAtPoints`), so a later pack edit or a shop pack differing from the
+ * global default never moves historical dollars.
  * Lines missing a price / an oz basis are excluded and counted (honest under-count).
  * Received-to-date, NOT true on-hand (R4 = received − counted).
  */
@@ -350,10 +349,10 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
   // scan truncates at 1000 and silently under-counts received $/oz. Order by the
   // unique `id` for a stable total order across pages. The SKU list is chunked too (W04/B149):
   // /admin/skus passes the whole catalog, which outgrows the request line.
-  const lines = await selectByIdChunks<{ vendor_item_id: string; delivery_id: string; qty_received: number | string; unit_price: number | string | null; received_level_label: string | null; resolved_oz: number | string | null }>(
+  const lines = await selectByIdChunks<{ id: string; vendor_item_id: string; delivery_id: string; qty_received: number | string; unit_price: number | string | null; received_level_label: string | null; resolved_oz: number | string | null; created_at: string | null }>(
     skuIds, (chunk, from, to) => sb
       .from("vendor_delivery_items")
-      .select("vendor_item_id, delivery_id, qty_received, unit_price, received_level_label, resolved_oz")
+      .select("id, vendor_item_id, delivery_id, qty_received, unit_price, received_level_label, resolved_oz, created_at")
       .in("vendor_item_id", chunk)
       .order("id", { ascending: true })
       .range(from, to),
@@ -365,12 +364,12 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
   const contentById = await loadChainAwareContent(sb, skuIds, measuresMap);
 
   const deliveryIds = [...new Set(lines.map((l) => l.delivery_id))];
-  const delMeta = new Map<string, { date: string; vendorName: string; store: boolean }>();
+  const delMeta = new Map<string, { date: string; vendorName: string; store: boolean; locationId: string | null }>();
   if (deliveryIds.length > 0) {
     // W04/B149: the delivery id list grows with every truck. Chunked, paged, and loud on error
     // (a swallowed error rendered a blank date and "(vendor)" for every missed delivery).
-    const dels = await selectByIdChunks<{ id: string; delivery_date: string; vendor_id: string }>(
-      deliveryIds, (chunk, from, to) => sb.from("vendor_deliveries").select("id, delivery_date, vendor_id")
+    const dels = await selectByIdChunks<{ id: string; delivery_date: string; vendor_id: string; location_id: string | null }>(
+      deliveryIds, (chunk, from, to) => sb.from("vendor_deliveries").select("id, delivery_date, vendor_id, location_id")
         .in("id", chunk).order("id", { ascending: true }).range(from, to));
     const vendorIds = [...new Set(dels.map((d) => d.vendor_id))];
     const vends = await selectByIdChunks<{ id: string; name: string; source_kind: string | null }>(
@@ -379,9 +378,13 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
     const vById = new Map(vends.map((v) => [v.id, v]));
     for (const d of dels) {
       const v = vById.get(d.vendor_id);
-      delMeta.set(d.id, { date: d.delivery_date, vendorName: v?.name ?? "(vendor)", store: v?.source_kind === "store" });
+      delMeta.set(d.id, { date: d.delivery_date, vendorName: v?.name ?? "(vendor)", store: v?.source_kind === "store", locationId: d.location_id ?? null });
     }
   }
+
+  // W04 r1: the pack in force at each line's shop when it was written (one versions + levels load).
+  const { packs: packAtLine, versioned } = await loadSkuPacksAtPoints(lines.flatMap((l) => l.created_at
+    ? [{ key: l.id, skuId: l.vendor_item_id, scope: delMeta.get(l.delivery_id)?.locationId ?? null, asOf: l.created_at }] : []));
 
   for (const id of skuIds) out.set(id, { receivedDollars: 0, receivedOz: 0, unpricedLineCount: 0, missingOzLineCount: 0, deliveries: [] });
 
@@ -391,10 +394,14 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
     const qty = num(l.qty_received) ?? 0;
     const meta = delMeta.get(l.delivery_id);
     const content = contentById.get(l.vendor_item_id);
+    const then = content && l.created_at
+      ? rootConversionOf(content.flat, packAtLine.get(l.id), measuresMap, versioned.has(l.vendor_item_id))
+      : { rootOz: null, rootLabel: null };
     const { oz, dollars } = receivedLineContribution({
       qty, levelLabel: l.received_level_label, resolvedOz: num(l.resolved_oz),
       linePrice: num(l.unit_price), currentRootPrice: prices.get(l.vendor_item_id) ?? null,
-      contentOz: content?.oz ?? null, rootLabel: content?.rootLabel ?? null, priceIsPerLevel: meta?.store ?? false,
+      contentOz: content?.oz ?? null, rootLabel: content?.rootLabel ?? null,
+      receivedRootOz: then.rootOz, receivedRootLabel: then.rootLabel, priceIsPerLevel: meta?.store ?? false,
     });
     if (dollars == null) led.unpricedLineCount += 1;
     else led.receivedDollars += dollars;

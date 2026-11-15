@@ -226,6 +226,34 @@ export function packsFromVersions(
   return out;
 }
 
+/** One (SKU, shop, instant) a caller needs the pack in force at (W04 r1: a delivery line). */
+export interface PackPoint { key: string; skuId: string; scope: VersionScope; asOf: string }
+
+/**
+ * The pack in force at MANY points from ONE load of the SKUs' versions (every scope) and their levels:
+ * the same pick as an as-of read (`pickVersionsAsOf` + `packsFromVersions`), per point, so a ledger of
+ * lines written at different shops and instants needs no per-line query. A point with no version in
+ * force is absent (the caller decides what "no pack then" means for it).
+ */
+export function resolvePacksAtPoints(
+  versions: readonly ScopedVersionRow[],
+  levels: readonly ScopedLevelRow[],
+  points: readonly PackPoint[],
+  warnings?: PackPickWarning[],
+): Map<string, ResolvedPack> {
+  const versionsBySku = new Map<string, ScopedVersionRow[]>();
+  for (const v of versions) versionsBySku.set(v.sku_id, [...(versionsBySku.get(v.sku_id) ?? []), v]);
+  const levelsBySkuId = new Map<string, ScopedLevelRow[]>();
+  for (const l of levels) levelsBySkuId.set(l.sku_id, [...(levelsBySkuId.get(l.sku_id) ?? []), l]);
+  const out = new Map<string, ResolvedPack>();
+  for (const p of points) {
+    const picked = pickVersionsAsOf(versionsBySku.get(p.skuId) ?? [], p.scope, p.asOf);
+    const pack = packsFromVersions(picked, levelsBySkuId.get(p.skuId) ?? [], warnings).get(p.skuId);
+    if (pack) out.set(p.key, pack);
+  }
+  return out;
+}
+
 /**
  * A business date resolves at its LAST instant (ET), so a change made that day is that day's pack.
  * The last instant is the NEXT day's ET start minus 1 ms (chunk-3 review P3a) — never start + 24 h,

@@ -5,7 +5,7 @@ import { receivedLineContribution, type ReceivedLineFacts } from "@/lib/admin/co
  * Audit W04/B043. Chain: case = 6 x bag, bag = 5 lb (80 oz), one root = 480 oz, case price $48.
  * Two bags received at level "bag" are 160 oz and a third of a case, never 2 cases (960 oz, $96).
  */
-const base: ReceivedLineFacts = { qty: 2, levelLabel: "bag", resolvedOz: 160, linePrice: null, currentRootPrice: 48, contentOz: 480, rootLabel: "case", priceIsPerLevel: false };
+const base: ReceivedLineFacts = { qty: 2, levelLabel: "bag", resolvedOz: 160, linePrice: null, currentRootPrice: 48, contentOz: 480, rootLabel: "case", receivedRootOz: 480, receivedRootLabel: "case", priceIsPerLevel: false };
 
 describe("W04/B043 receiving ledger reads inner-level lines at their real size", () => {
   it("an inner-level line counts its frozen resolved oz, not qty x case content", () => {

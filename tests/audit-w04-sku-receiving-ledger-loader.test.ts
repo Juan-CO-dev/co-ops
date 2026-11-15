@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   tables: {} as Record<string, Row[]>,
   errors: {} as Record<string, string>,
   inSizes: {} as Record<string, number[]>,
+  todayBags: 6,
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
@@ -19,13 +20,22 @@ vi.mock("@/lib/admin/skus", () => ({
     { id: "oz", label: "oz", dimension: "weight", toBaseFactor: 1 },
   ],
 }));
-vi.mock("@/lib/prep-consumption", () => ({
+vi.mock("@/lib/prep-consumption", async () => {
+  const { resolvePacksAtPoints } = await import("@/lib/sku-versions-shared");
+  return {
   loadRecipeInputsAcrossScopes: async () => [],
+  // The real pure picker over the fake version tables (the loader's I/O half is chunked/paged like loadSkuPackResolution).
+  loadSkuPacksAtPoints: async (points: Parameters<typeof resolvePacksAtPoints>[2]) => {
+    const versions = (state.tables.sku_pack_versions ?? []) as unknown as Parameters<typeof resolvePacksAtPoints>[0];
+    const levels = (state.tables.sku_pack_levels ?? []) as unknown as Parameters<typeof resolvePacksAtPoints>[1];
+    return { packs: resolvePacksAtPoints(versions, levels, points), versioned: new Set(versions.map((v) => v.sku_id)) };
+  },
   loadSkuPackChains: async (ids: string[]) => new Map(ids.map((id) => [id, [
-    { id: "case", label: "case", containsQty: 6, containsLevelId: "bag", containsMeasureUnit: null, displayOrdinal: 0 },
+    { id: "case", label: "case", containsQty: state.todayBags, containsLevelId: "bag", containsMeasureUnit: null, displayOrdinal: 0 },
     { id: "bag", label: "bag", containsQty: 5, containsLevelId: null, containsMeasureUnit: "lb", displayOrdinal: 1 },
   ]])),
-}));
+  };
+});
 vi.mock("@/lib/supabase-server", () => ({
   getServiceRoleClient: () => ({
     from(table: string) {
@@ -53,7 +63,7 @@ import { loadSkuReceivingLedger } from "@/lib/admin/cost";
 const actor = { user: { id: "u", role: "owner" }, locations: [] } as unknown as AuthContext;
 
 beforeEach(() => {
-  state.errors = {}; state.inSizes = {};
+  state.errors = {}; state.inSizes = {}; state.todayBags = 6;
   state.tables = {
     vendor_items: [{ id: "sku", units_per_pack: 6, each_size: 5, each_measure: "lb", avg_oz_per_each: null, pack_format: "case" }],
     vendor_price_history: [{ id: "p", vendor_item_id: "sku", unit_price: 48, effective_date: "2026-11-01", recorded_at: null, location_id: null, price_lane_id: null }],
@@ -86,6 +96,38 @@ describe("W04/B043 SKU receiving ledger", () => {
     const led = (await loadSkuReceivingLedger(actor, ["sku"])).get("sku")!;
     expect(led.receivedOz).toBe(1440);
     expect(led.receivedDollars).toBe(150);
+  });
+});
+
+describe("W04 r1: historical delivery dollars use the pack in force at that shop then", () => {
+  const levels = (version: string, location: string | null, bags: number) => [
+    { id: `${version}-case`, sku_id: "sku", version_id: version, location_id: location, label: "case", contains_qty: bags, contains_level_id: `${version}-bag`, contains_measure_unit: null, display_ordinal: 0 },
+    { id: `${version}-bag`, sku_id: "sku", version_id: version, location_id: location, label: "bag", contains_qty: 5, contains_level_id: null, contains_measure_unit: "lb", display_ordinal: 1 },
+  ];
+  beforeEach(() => {
+    state.tables.sku_pack_versions = [
+      { id: "g1", sku_id: "sku", location_id: null, valid_from: "2026-01-01T00:00:00Z", valid_to: "2026-11-12T00:00:00Z", flat_snapshot: null },
+      { id: "g2", sku_id: "sku", location_id: null, valid_from: "2026-11-12T00:00:00Z", valid_to: null, flat_snapshot: null },
+      { id: "s1", sku_id: "sku", location_id: "shopB", valid_from: "2026-06-01T00:00:00Z", valid_to: null, flat_snapshot: null },
+    ];
+    state.tables.sku_pack_levels = [...levels("g1", null, 6), ...levels("g2", null, 4), ...levels("s1", "shopB", 3)];
+    state.tables.vendor_delivery_items = [
+      { id: "l1", vendor_item_id: "sku", delivery_id: "d1", qty_received: 2, unit_price: 60, received_level_label: "bag", resolved_oz: 160, created_at: "2026-11-10T15:00:00Z" },
+    ];
+    state.tables.vendor_deliveries = [{ id: "d1", delivery_date: "2026-11-10", vendor_id: "v", location_id: "shopA" }];
+  });
+
+  it("two bags at a frozen $60/case stay $20 after the case drops to 4 bags", async () => {
+    state.todayBags = 4;
+    const led = (await loadSkuReceivingLedger(actor, ["sku"])).get("sku")!;
+    expect(led.receivedOz).toBe(160);
+    expect(led.receivedDollars).toBeCloseTo(20, 6);
+  });
+
+  it("a delivery at a shop with its own 3-bag case prices against that case", async () => {
+    state.tables.vendor_deliveries = [{ id: "d1", delivery_date: "2026-11-10", vendor_id: "v", location_id: "shopB" }];
+    const led = (await loadSkuReceivingLedger(actor, ["sku"])).get("sku")!;
+    expect(led.receivedDollars).toBeCloseTo(40, 6);
   });
 });
 

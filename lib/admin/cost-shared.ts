@@ -28,7 +28,8 @@
  * forgets it.
  */
 import type { MeasureUnitOption } from "@/lib/admin/skus";
-import type { PackChainLevel } from "@/lib/pack-chain-shared";
+import { buildPackChain, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";
+import type { ResolvedPack } from "@/lib/sku-versions-shared";
 import { skuContentOz, skuCostPerOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 
 /** The chain map both admin pages already load (ONE query, the loadRecipeGraph law). */
@@ -104,34 +105,90 @@ export interface ReceivedLineFacts {
   levelLabel: string | null;
   /** `resolved_oz`, frozen at write time through the pack chain in force then. */
   resolvedOz: number | null;
-  /** `unit_price` as entered: a ROOT-pack price from a vendor, a per-LEVEL price from a store run. */
+  /** `unit_price` as entered: a ROOT-pack price from a vendor (the root in force THEN), a per-LEVEL price from a store run. */
   linePrice: number | null;
   /** The SKU's current root-pack price, used when the line carries none. */
   currentRootPrice: number | null;
-  /** Today's content oz of ONE root pack. */
+  /** Today's content oz of ONE root pack (pairs with `currentRootPrice`). */
   contentOz: number | null;
   /** Today's root level label (chain root, else the flat pack format). */
   rootLabel: string | null;
+  /** Content oz of ONE root pack in force at the delivery's shop when the line was written (W04 r1); null = unknown. */
+  receivedRootOz: number | null;
+  /** That pack's root label; null = unknown. */
+  receivedRootLabel: string | null;
   /** True for a store-run line, whose `linePrice` is per received level. */
   priceIsPerLevel: boolean;
 }
 
+const positiveOrNull = (n: number | null): number | null => (n != null && Number.isFinite(n) && n > 0 ? n : null);
+
 /**
- * What ONE received line adds to the ledger, in oz and dollars (W04/B043). A line entered at an INNER
- * level ("bag", or an inner-pack scan) is not a whole case: its oz is the frozen `resolved_oz`, so a
- * later chain edit cannot rewrite history, and its root-pack count is that oz over one root's oz.
- * Only a legacy line (no level) or a root-level line falls back to qty × content oz. Null = cannot be
- * known honestly; the caller excludes and counts it, never guesses.
+ * What ONE received line adds to the ledger, in oz and dollars (W04/B043, r1). A line entered at an INNER
+ * level ("bag", or an inner-pack scan) is not a whole case: its oz is the frozen `resolved_oz`, so a later
+ * chain edit cannot rewrite history. Its FROZEN root-pack price converts through the pack in force at
+ * that shop when it was received (that oz over THAT root's oz), so neither a later case-size edit nor a
+ * global default differing from the shop's own pack moves historical dollars. A line with no price is
+ * valued at today's price over today's root. Null = cannot be known honestly; the caller excludes and
+ * counts it, never guesses.
  */
 export function receivedLineContribution(l: ReceivedLineFacts): { oz: number | null; dollars: number | null } {
   const level = l.levelLabel?.trim() || null;
-  const atRoot = level == null || (l.rootLabel != null && level === l.rootLabel);
+  const rootThen = l.receivedRootLabel ?? l.rootLabel;
+  const atRoot = level == null || (rootThen != null && level === rootThen);
   const stored = l.resolvedOz != null && Number.isFinite(l.resolvedOz) && l.resolvedOz >= 0 ? l.resolvedOz : null;
-  const content = l.contentOz != null && Number.isFinite(l.contentOz) && l.contentOz > 0 ? l.contentOz : null;
-  const oz = stored ?? (atRoot && content != null ? l.qty * content : null);
-  const roots = atRoot ? l.qty : stored != null && content != null ? stored / content : null;
+  const now = positiveOrNull(l.contentOz);
+  const then = positiveOrNull(l.receivedRootOz);
+  const oz = stored ?? (atRoot && (then ?? now) != null ? l.qty * (then ?? now)! : null);
   let dollars: number | null = null;
-  if (l.linePrice != null) dollars = l.priceIsPerLevel ? l.qty * l.linePrice : roots != null ? roots * l.linePrice : null;
-  else if (l.currentRootPrice != null && roots != null) dollars = roots * l.currentRootPrice;
+  if (l.linePrice != null) {
+    if (l.priceIsPerLevel) dollars = l.qty * l.linePrice;
+    else {
+      const rootsThen = atRoot ? l.qty : stored != null && then != null ? stored / then : null;
+      dollars = rootsThen != null ? rootsThen * l.linePrice : null;
+    }
+  } else if (l.currentRootPrice != null) {
+    const rootsNow = stored != null && now != null ? stored / now : atRoot ? l.qty : null;
+    dollars = rootsNow != null ? rootsNow * l.currentRootPrice : null;
+  }
   return { oz, dollars: dollars != null && Number.isFinite(dollars) ? dollars : null };
+}
+
+/** A SKU's flat pack fields (the mirror), as the ledger reads them beside its versions. */
+export interface FlatPackFacts {
+  pack_format: string | null;
+  unitsPerPack: number | null;
+  eachSize: number | null;
+  eachMeasure: string | null;
+  avgOzPerEach: number | null;
+}
+
+/**
+ * One root pack's content oz and label under `pack` (a pack in force at some instant, W04 r1). A chain
+ * answers from its levels; a pre-chain baseline from the flat pack it preserved. With NO pack in force:
+ * a SKU that has versions had none then (unknown, never today's guess); a SKU that never had one has
+ * only ever had its flat pack, which answers.
+ */
+export function rootConversionOf(
+  flat: FlatPackFacts,
+  pack: ResolvedPack | undefined,
+  measuresByLabel: Map<string, MeasureUnitFactor>,
+  skuHasVersions: boolean,
+): { rootOz: number | null; rootLabel: string | null } {
+  if (!pack) {
+    if (skuHasVersions) return { rootOz: null, rootLabel: null };
+    return { rootOz: contentOzForSku(flat, null, measuresByLabel), rootLabel: flat.pack_format };
+  }
+  if (pack.levels.length > 0) {
+    return { rootOz: contentOzForSku(flat, pack.levels, measuresByLabel), rootLabel: chainRootLabel(buildPackChain(pack.levels)) };
+  }
+  if (pack.flat) {
+    const f = pack.flat;
+    const eachSize = f.each_size == null ? null : Number(f.each_size);
+    return {
+      rootOz: contentOzForSku({ unitsPerPack: f.units_per_pack, eachSize: Number.isFinite(eachSize) ? eachSize : null, eachMeasure: f.each_measure, avgOzPerEach: flat.avgOzPerEach }, null, measuresByLabel),
+      rootLabel: f.pack_format,
+    };
+  }
+  return { rootOz: null, rootLabel: null };
 }
