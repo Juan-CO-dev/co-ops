@@ -242,15 +242,22 @@ describe("the REPORT-BOUND photo read (Astra 2b r2)", () => {
     current = createFakeDb(w);
     expect(await refused(signPackRequestPhoto(actor("moo", 8, []), { requestId: "r1", additionId: null }))).toEqual({ status: 404, code: "not_found" });
   });
-  it("the routes go through it, and lib/photos.ts was not widened", () => {
+  it("the routes go through it; lib/photos.ts reads by the report grant and still uploads by membership", () => {
     for (const f of ["app/api/admin/catalog/pack-requests/[requestId]/photo/route.ts", "app/api/admin/catalog/pack-requests/[requestId]/additions/[additionId]/photo/route.ts"]) {
       const src = readFileSync(f, "utf8");
       expect(src).toContain("signPackRequestPhoto(ctx,");
       expect(src).toContain("requireSession(");
       expect(src).not.toContain("assertStepUp");
     }
+    // Audit W10 / B064 (lead ruling, supersedes the 2b r2 "not widened" pin): the generic photo READ follows
+    // the report grant (membership, or level 8+), because every /api/photos link sits on a report a MoO can
+    // already open. The UPLOAD keeps the membership bind, and that is the ONLY lockLocationContext call left.
+    // Behaviour is pinned role by role in tests/photos-read-scope.test.ts.
     const photos = readFileSync("lib/photos.ts", "utf8");
-    expect(photos).toContain("if (!lockLocationContext(actorLoc(actor), row.location_id)) {");
+    expect(photos).toContain("if (!canReadReportLocation(actorLoc(actor), row.location_id)) {");
+    expect(photos).toContain("if (!lockLocationContext(actorLoc(actor), input.locationId)) {");
+    expect(photos.split("lockLocationContext(actorLoc(").length - 1).toBe(1);
+    expect(photos.split("canReadReportLocation(actorLoc(").length - 1).toBe(1);
     expect(readFileSync("components/catalog/DoorPhoto.tsx", "utf8")).not.toContain("/api/photos/");
   });
 });
