@@ -15,6 +15,10 @@
  *     top-left BackToDashboard pill is the redundant-by-design companion.
  *   - Built as foundation for future expansion (password change,
  *     notification prefs, etc.) — name is UserMenu, not LanguageSelector
+ *   - Every request has a deadline (audit W06 round 8): the language and blurb
+ *     saves run the request AND the body they read under SAVE_TIMEOUT_MS
+ *     (lib/bounded-fetch.ts), so a stalled one releases its button with the
+ *     existing error; Sign out is lib/logout-client.ts's bounded retries.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -23,9 +27,13 @@ import { usePathname, useRouter } from "next/navigation";
 
 import { ActionButton } from "@/components/ActionButton";
 import { SigningOutOverlay } from "@/components/auth/SigningOutOverlay";
+import { withDeadline } from "@/lib/bounded-fetch";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 import { requestSignOut } from "@/lib/logout-client";
+
+/** A language or blurb save that has not answered (headers and body) by then has failed (round 8). */
+const SAVE_TIMEOUT_MS = 10_000;
 
 interface UserMenuProps {
   /** User's display name — used to derive the initial for the trigger. */
@@ -83,29 +91,35 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb, sessio
     setUpdating(true);
     setError(null);
     try {
-      const res = await fetch("/api/users/me/language", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ language: next }),
-        redirect: "manual",
-      });
-      if (res.ok) {
-        // Server confirmed; update local Context. Pessimistic — wait for 200
-        // before updating so we don't flicker on an error response.
-        setLanguage(next);
-        // Server-rendered (serverT) strings only change on a refetch (#54).
-        router.refresh();
-      } else {
+      // The request and its error body under one deadline; the state is set after it.
+      const answer = await withDeadline(SAVE_TIMEOUT_MS, async (signal) => {
+        const res = await fetch("/api/users/me/language", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ language: next }),
+          redirect: "manual",
+          signal,
+        });
+        if (res.ok) return { ok: true as const };
         let body: { error?: string; message?: string } = {};
         try {
           body = (await res.json()) as { error?: string; message?: string };
         } catch {
           // ignore JSON parse failure; we'll surface a generic message
         }
-        setError(body.message ?? body.error ?? "Update failed.");
+        return { ok: false as const, body };
+      });
+      if (answer.ok) {
+        // Server confirmed; update local Context. Pessimistic — wait for 200
+        // before updating so we don't flicker on an error response.
+        setLanguage(next);
+        // Server-rendered (serverT) strings only change on a refetch (#54).
+        router.refresh();
+      } else {
+        setError(answer.body.message ?? answer.body.error ?? "Update failed.");
       }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Network error.");
+    } catch {
+      setError("Network error."); // a network failure, or no answer by the deadline
     } finally {
       setUpdating(false);
     }
@@ -117,15 +131,19 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb, sessio
     setBlurbSaving(true);
     setBlurbStatus("idle");
     try {
-      const res = await fetch("/api/users/me/profile-blurb", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blurb: next }),
-        redirect: "manual",
+      // The request and its success body under one deadline; the state is set after it.
+      const answer = await withDeadline(SAVE_TIMEOUT_MS, async (signal) => {
+        const res = await fetch("/api/users/me/profile-blurb", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ blurb: next }),
+          redirect: "manual",
+          signal,
+        });
+        return res.ok ? { ok: true as const, body: (await res.json()) as { blurb: string | null } } : { ok: false as const };
       });
-      if (res.ok) {
-        const body = (await res.json()) as { blurb: string | null };
-        const saved = body.blurb ?? "";
+      if (answer.ok) {
+        const saved = answer.body.blurb ?? "";
         setSavedBlurb(saved);
         setBlurb(saved);
         setBlurbStatus("saved");
