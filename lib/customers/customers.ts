@@ -488,13 +488,18 @@ export async function runRetention(actor: CustomerActor, meta: RequestMeta, deps
   const sb = deps.client ?? getServiceRoleClient();
   const cutoff = retentionCutoff(deps.now ?? new Date()).toISOString();
   let erased = 0;
+  let skipped = 0;
   for (let batch = 0; batch < 10; batch++) {
-    const r = await rpc<{ erased: number }>(sb, "customer_retention_sweep", { p_actor_id: actor.userId, p_cutoff: cutoff, p_limit: 200 });
+    // 0312 (W12/B070): a candidate that became active under the identity lock is skipped, not erased.
+    // A skipped row still used a batch slot, so only a short batch ends the run. Before 0312 there is
+    // no `skipped` key (treated as 0, the old behaviour).
+    const r = await rpc<{ erased: number; skipped?: number }>(sb, "customer_retention_sweep", { p_actor_id: actor.userId, p_cutoff: cutoff, p_limit: 200 });
     erased += r.erased;
-    if (r.erased < 200) break;
+    skipped += r.skipped ?? 0;
+    if (r.erased + (r.skipped ?? 0) < 200) break;
   }
   await audit({ actorId: actor.userId, actorRole: actor.role, action: "customer.retention_sweep", resourceTable: "customers", resourceId: null,
-    metadata: { cutoff, erased, months: RETENTION_MONTHS }, ...meta });
+    metadata: { cutoff, erased, skipped, months: RETENTION_MONTHS }, ...meta });
   return { erased, cutoff };
 }
 

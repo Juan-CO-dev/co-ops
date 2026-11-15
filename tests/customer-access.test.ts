@@ -114,6 +114,13 @@ describe("delete-on-request and retention", () => {
     expect(rpc).toHaveBeenCalledTimes(2);
     expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({ action: "customer.retention_sweep", metadata: { erased: 203, months: 36 } });
   });
+  it("skipped rows count toward the batch so the loop keeps going (W12/B070)", async () => {
+    const rpc = vi.fn().mockResolvedValueOnce({ data: { erased: 150, skipped: 50 }, error: null }).mockResolvedValueOnce({ data: { erased: 3, skipped: 0 }, error: null });
+    const r = await runRetention(owner, meta, { client: { rpc, from: vi.fn() } as never, now: new Date("2026-10-08T00:00:00Z") });
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(r.erased).toBe(153);
+    expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({ action: "customer.retention_sweep", metadata: { erased: 153, skipped: 50 } });
+  });
 });
 
 describe("consent import: idempotent and chunked", () => {
