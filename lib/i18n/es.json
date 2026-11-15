@@ -7327,6 +7327,7 @@
   "pmv2.mine.count": "Días: {n}",
   "pmv2.error.generic": "No se pudo guardar. Intenta de nuevo.",
   "pmv2.error.unsaved": "Una respuesta o nota aún no se guardó. Revisa a la persona marcada con “Cambios sin guardar” e inténtalo de nuevo.",
+  "pmv2.error.subject_is_author": "No puedes evaluarte a ti mismo.",
   "pmv2.error.forbidden": "No puedes hacer eso en este reporte.",
   "pmv2.error.not_copy_author": "Solo el gerente dueño de esta copia puede cambiarla.",
   "pmv2.error.not_found": "No se encontró ese reporte o copia.",

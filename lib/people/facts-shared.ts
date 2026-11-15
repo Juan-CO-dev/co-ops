@@ -195,7 +195,7 @@ export interface PmV2CopyFact { id: string; pm_report_id: string; author_id: str
 /** A live grade; `grade` NULL = "Didn't see" (never counted). */
 export interface PmV2GradeFact { id: string; copy_id: string; subject_id: string; position_id: string | null; criterion_id: string; grade: "great" | "good" | "needs_work" | null }
 /** A live note (only its existence counts; the text is never loaded here). */
-export interface PmV2NoteFact { id: string; copy_id: string }
+export interface PmV2NoteFact { id: string; copy_id: string; subject_id: string }
 export interface PmV2Facts { days: PmV2DayFact[]; copies: PmV2CopyFact[]; grades: PmV2GradeFact[]; notes: PmV2NoteFact[] }
 export function emptyPmV2Facts(): PmV2Facts {
   return { days: [], copies: [], grades: [], notes: [] };

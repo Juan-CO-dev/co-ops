@@ -337,6 +337,40 @@ describe("B058 — an empty copy is not an author; the reader never sees themsel
   });
 });
 
+describe("B059 — never yourself", () => {
+  it("saveGrade / saveNote / addPosition for oneself refuse subject_is_author before the RPC", async () => {
+    const base = { actor: kh, locationId: A, copyId: COPY_KH, subjectId: KH, positionId: P_EXPO };
+    await expect(v2.saveGrade(service(), { ...base, criterionId: C_EXPO, grade: "great" })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });
+    await expect(v2.saveNote(service(), { ...base, note: "I was great" })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });
+    await expect(v2.addPosition(service(), { ...base, positionId: P_REG, reason: "me" })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });
+    expect(rpc).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+  });
+  it("an RPC subject_is_author refusal maps by name", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "subject_is_author" } });
+    await expect(v2.saveGrade(service(), { actor: kh, locationId: A, copyId: COPY_KH, subjectId: EMP, positionId: P_EXPO, criterionId: C_EXPO, grade: "good" })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });
+  });
+  it("loadMyCopy never offers the author's own card", async () => {
+    const view = await v2.loadMyCopy(service(), { actor: kh, locationId: A, date: DATE, presenceRoster: [{ id: KH, name: "Kim" }, { id: EMP, name: "Eli" }], now: new Date("2026-10-16T03:00:00Z") });
+    expect(view!.people.some((p) => p.subjectId === KH)).toBe(false);
+    expect(view!.people.some((p) => p.subjectId === EMP)).toBe(true);
+  });
+  it("an old self-grade counts nowhere", async () => {
+    const t = tables("submitted");
+    t.pm_copy_grades!.push({ id: "g-self", copy_id: COPY_KH, location_id: A, subject_id: KH, position_id: null, criterion_id: C_SHARED, grade: "great", superseded_at: null });
+    t.pm_copy_notes!.push({ id: "n-self", copy_id: COPY_KH, location_id: A, subject_id: KH, position_id: null, note: "SELF-PRAISE", superseded_at: null });
+    db = createFakeDb(t);
+    expect(await v2.loadMyFeedbackV2(service(), { userId: KH })).toEqual([]);
+    const r = await v2.loadDayResults(service(), { actor: gm, locationId: A, date: DATE });
+    expect(r!.people.some((p) => p.subjectId === KH)).toBe(false);
+    expect(JSON.stringify(r)).not.toContain("SELF-PRAISE");
+  });
+  it("setMvpV2 refuses naming yourself", async () => {
+    await expect(v2.setMvpV2(service(), { actor: kh, locationId: A, date: DATE, mvpUserId: KH, mvpNote: null })).rejects.toMatchObject({ status: 403, code: "subject_is_author" });
+    expect(db.writes).toHaveLength(0);
+  });
+});
+
 describe("loadMyFeedbackV2 — bands from submitted v2 days, no author, no note", () => {
   it("open days are hidden; a submitted day shows bands only", async () => {
     expect(await v2.loadMyFeedbackV2(service(), { userId: EMP })).toEqual([]);

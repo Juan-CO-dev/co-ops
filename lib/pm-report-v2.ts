@@ -242,7 +242,9 @@ export async function loadMyCopy(service: SupabaseClient, args: {
   const mine = copies.find((c) => c.author_id === args.actor.userId);
   if (!mine) return null;
   const others = copies.filter((c) => c.author_id !== args.actor.userId);
-  const subjectIds = args.presenceRoster.map((p) => p.id);
+  // B059: the author never gets their own card (they never grade themselves).
+  const presenceRoster = args.presenceRoster.filter((p) => p.id !== args.actor.userId);
+  const subjectIds = presenceRoster.map((p) => p.id);
   const [intervals, { positions, stations }, criteria, added, grades, notes] = await Promise.all([
     loadDayIntervals(service, args.locationId, args.date, subjectIds, args.now),
     loadShopPositions(service, args.locationId),
@@ -254,7 +256,7 @@ export async function loadMyCopy(service: SupabaseClient, args: {
   const posById = new Map(positions.map((p) => [p.id, p] as const));
   const addedPositions: AddedPosition[] = added.map((a) => ({ subjectId: a.subject_id, positionId: a.position_id, byAuthorId: mine.author_id, reason: a.reason }));
   const crit = criteria.map((c) => ({ id: c.id, positionId: c.position_id, label: c.label, labelEs: c.label_es, sort: c.sort, active: c.active }));
-  const roster = rosterForCopy(args.presenceRoster, intervals, addedPositions);
+  const roster = rosterForCopy(presenceRoster, intervals, addedPositions);
   const people = roster.map((person) => {
     const positionsView: PmCopyPositionView[] = person.positions.map((p) => {
       const row = p.positionId ? posById.get(p.positionId) : undefined;
@@ -346,6 +348,7 @@ export interface PmCopyWriteArgs { actor: PeopleActor; locationId: string; copyI
 /** One grade (or null = "Didn't see"). Audited `pm_report.copy_grade` (ids and the grade; never a note). */
 export async function saveGrade(service: SupabaseClient, args: PmCopyWriteArgs & { subjectId: unknown; positionId: unknown; criterionId: unknown; grade: unknown }): Promise<{ id: string }> {
   requireUuid(args.subjectId); requireUuid(args.criterionId);
+  if (args.subjectId === args.actor.userId) refuse("subject_is_author");
   if (args.positionId !== null) requireUuid(args.positionId);
   if (args.grade !== null && !(PM_GRADES as readonly unknown[]).includes(args.grade)) refuse("invalid_payload");
   const { copy, day } = await copyForAct(service, args.actor, args.locationId, args.copyId, "write");
@@ -363,6 +366,7 @@ export async function saveGrade(service: SupabaseClient, args: PmCopyWriteArgs &
 /** The free text for a person (≤ 500; blank clears). Audited WITHOUT the text (R9). */
 export async function saveNote(service: SupabaseClient, args: PmCopyWriteArgs & { subjectId: unknown; positionId: unknown; note: unknown }): Promise<{ id: string | null }> {
   requireUuid(args.subjectId);
+  if (args.subjectId === args.actor.userId) refuse("subject_is_author");
   if (args.positionId !== null) requireUuid(args.positionId);
   if (args.note !== null && typeof args.note !== "string") refuse("invalid_payload");
   const note = typeof args.note === "string" ? args.note.trim() : "";
@@ -380,6 +384,7 @@ export async function saveNote(service: SupabaseClient, args: PmCopyWriteArgs & 
 /** "Worked somewhere else?": checks 5–6 only (that is its purpose), a reason. Audited without the reason text. */
 export async function addPosition(service: SupabaseClient, args: PmCopyWriteArgs & { subjectId: unknown; positionId: unknown; reason: unknown }): Promise<{ id: string }> {
   requireUuid(args.subjectId); requireUuid(args.positionId);
+  if (args.subjectId === args.actor.userId) refuse("subject_is_author");
   const reason = typeof args.reason === "string" ? args.reason.trim() : "";
   if (reason.length < 1 || reason.length > PM_V2_REASON_MAX) refuse("invalid_reason");
   const { copy } = await copyForAct(service, args.actor, args.locationId, args.copyId, "write");
@@ -456,6 +461,7 @@ export async function submitDay(service: SupabaseClient, args: { actor: PeopleAc
 export async function setMvpV2(service: SupabaseClient, args: { actor: PeopleActor; locationId: string; date: string; mvpUserId: string | null; mvpNote: string | null }): Promise<void> {
   await requireManagerAt(service, args.actor, args.locationId);
   if (args.mvpUserId !== null) requireUuid(args.mvpUserId);
+  if (args.mvpUserId !== null && args.mvpUserId === args.actor.userId) refuse("subject_is_author");
   const day = await loadDay(service, args.locationId, args.date);
   if (!day) refuse("not_found");
   if (day.format !== "v2") refuse("format_mismatch");
@@ -506,8 +512,11 @@ export async function loadDayResults(service: SupabaseClient, args: { actor: Peo
     if (!canReadPmDayResults(args.actor, { ...dayRef(day, allCopies), authorIds })) refuse("forbidden");
   }
   const copyIds = allCopies.map((c) => c.id);
-  // R9 / W09-2: the reader never sees the rows written ABOUT them (their superiors still do).
-  const notAboutReader = <T extends { subject_id: string }>(rows: T[]): T[] => rows.filter((r) => r.subject_id !== args.actor.userId);
+  // R9 / W09-2: the reader never sees the rows written ABOUT them (their superiors still do). B059: a row whose
+  // subject is its own copy's author (an old self-grade) counts nowhere.
+  const authorOf = new Map(allCopies.map((c) => [c.id, c.author_id] as const));
+  const notAboutReader = <T extends { copy_id: string; subject_id: string }>(rows: T[]): T[] =>
+    rows.filter((r) => r.subject_id !== args.actor.userId && r.subject_id !== authorOf.get(r.copy_id));
   const [gradesRaw, notesRaw, addedRaw, { positions }, criteria] = await Promise.all([
     loadLive<GradeRow>(service, "pm_copy_grades", "id, copy_id, location_id, subject_id, position_id, criterion_id, grade", copyIds),
     loadLive<NoteRow>(service, "pm_copy_notes", "id, copy_id, subject_id, position_id, note", copyIds),
@@ -651,7 +660,8 @@ export async function loadMyFeedbackV2(service: SupabaseClient, args: { userId: 
   }
   const submitted = new Map(days.filter((d) => d.format === "v2" && d.status !== "open").map((d) => [d.id, d] as const));
   const copyById = new Map(copies.filter((c) => submitted.has(c.pm_report_id)).map((c) => [c.id, c] as const));
-  const live = grades.filter((g) => copyById.has(g.copy_id));
+  // B059: a self-grade (subject = the grading copy's author) never counts.
+  const live = grades.filter((g) => copyById.has(g.copy_id) && copyById.get(g.copy_id)!.author_id !== g.subject_id);
   if (!live.length) return [];
   const out: MyFeedbackV2Day[] = [];
   const byDay = new Map<string, GradeRow[]>();

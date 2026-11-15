@@ -273,14 +273,20 @@ async function loadPmV2Families(
         });
         v2.grades.push(...rows.filter((g) => members.has(g.subject_id)));
       }
+      // W09/B059: a self-grade (subject = the grading copy's author) never enters a skill or a tally.
+      const authorOf = new Map(v2.copies.map((c) => [c.id, c.author_id] as const));
+      v2.grades = v2.grades.filter((g) => g.subject_id !== authorOf.get(g.copy_id));
     }
     if (wantNotes) {
       // Only the subject's OWN copies: a note counts for the manager who wrote it.
-      const authored = v2.copies.filter((c) => members.has(c.author_id)).map((c) => c.id);
-      for (const ids of chunk(authored, ID_CHUNK)) {
-        v2.notes.push(...await selectAllRows<PmV2NoteFact>((from, to) => service
-          .from("pm_copy_notes").select("id, copy_id").in("copy_id", ids).is("superseded_at", null)
-          .order("id", { ascending: true }).range(from, to)));
+      const authoredCopies = v2.copies.filter((c) => members.has(c.author_id));
+      const authorOfNote = new Map(authoredCopies.map((c) => [c.id, c.author_id] as const));
+      for (const ids of chunk(authoredCopies.map((c) => c.id), ID_CHUNK)) {
+        const rows = await selectAllRows<PmV2NoteFact>((from, to) => service
+          .from("pm_copy_notes").select("id, copy_id, subject_id").in("copy_id", ids).is("superseded_at", null)
+          .order("id", { ascending: true }).range(from, to));
+        // W09/B059: a note about oneself is not a "notes" act.
+        v2.notes.push(...rows.filter((n) => n.subject_id !== authorOfNote.get(n.copy_id)));
       }
     }
   } catch (e) {

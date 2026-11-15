@@ -7327,6 +7327,7 @@
   "pmv2.mine.count": "Days: {n}",
   "pmv2.error.generic": "Couldn't save. Try again.",
   "pmv2.error.unsaved": "An answer or note didn’t save yet. Check the person marked “Unsaved changes”, then try again.",
+  "pmv2.error.subject_is_author": "You can't review yourself.",
   "pmv2.error.forbidden": "You can't do that on this report.",
   "pmv2.error.not_copy_author": "Only the manager who owns this copy can change it.",
   "pmv2.error.not_found": "That report or copy wasn't found.",
