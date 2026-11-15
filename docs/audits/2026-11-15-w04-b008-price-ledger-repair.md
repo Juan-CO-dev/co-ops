@@ -108,12 +108,49 @@ the op's `after.unit_price` in `vendor_import_applies.result` (and the `sku.pric
 `metadata.actor_context = 'vendor_import'`); recompute against the root that op used, and match the manifest's
 bad value to that `after`, not to the observation's `proposed`.
 
+### 2a. Keep the authoritative winner of each SKU / scope / date (W04 round 2)
+
+A bad import row is repaired ONLY where it is still the WINNER of its own `(sku, scope, effective_date)`: no other
+row for the same SKU, the same scope (`location_id` AND `price_lane_id`, compared with `is not distinct from`) and
+the same `effective_date` sorts after it (`recorded_at desc nulls last, id desc`, the `resolveCurrentPrices`
+order). If a later row exists on that date, someone (a person, a receipt, or a later import) already wrote the
+authoritative price for that day: a repair appended now with `recorded_at = clock_timestamp()` would sort after
+that legitimate correction and overturn it with a value recomputed from older evidence. Such a bad row is history
+already superseded and goes in the manifest's SKIPPED list (with the winning row's id), never in the repair list.
+When two bad import rows share a date, only the later one (the winner) is repaired.
+
+```sql
+-- 2a evidence (read-only): for each 1a row, the row that wins its SKU / scope / date, when it is not itself.
+select b.id as bad_price_id, b.vendor_item_id as sku_id, b.location_id, b.price_lane_id, b.effective_date,
+       w.id as winning_price_id, w.source as winning_source, w.unit_price as winning_price, w.recorded_at as winning_recorded_at
+from public.vendor_price_history b
+join lateral (
+  select o.* from public.vendor_price_history o
+  where o.vendor_item_id = b.vendor_item_id
+    and o.location_id is not distinct from b.location_id
+    and o.price_lane_id is not distinct from b.price_lane_id
+    and o.effective_date = b.effective_date
+  order by o.recorded_at desc nulls last, o.id desc
+  limit 1
+) w on w.id <> b.id
+where b.id in (/* bad price ids from 1a */);
+-- Every row returned is SKIPPED (superseded the same day); every 1a row not returned is a repair candidate.
+```
+
+The manifest therefore has two lists, both reviewed: **repair** (bad row = winner of its date; columns as above)
+and **skipped** (bad row id, winning row id, winning source). The historical B008 repair is NOT complete until this
+evidence-backed manifest exists, has been reviewed, and has been rehearsed on the sim; until then only new prices are
+fixed (PR #546).
+
 ## 3. Proposed append-only repair (template; do not run)
 
 Never UPDATE or DELETE a price row. Append a correcting row with the SAME `effective_date` and scope, recorded now:
 it sorts after the bad row (same date, later `recorded_at`), so it becomes current exactly where the bad row was
 current, and a newer real price stays current where one exists. The bad row stays as history, named by the
-correction.
+correction. Because a same-date row recorded after the bad one would ALSO lose to the repair, the repair runs only
+for rows that are still the winner of their SKU / scope / date (2a), under the SKU row lock the price writers take,
+and refuses the whole run if any manifest row has stopped being its date's winner (a drifted ledger: rebuild the
+manifest).
 
 ```sql
 -- 03xx_w04_b008_price_root_repair.sql (sketch). Literal manifest from section 2.
@@ -126,10 +163,26 @@ begin
     -- (bad_price_id, sku_id, bad_unit_price, corrected_unit_price, evidence)
     ('00000000-0000-0000-0000-000000000000'::uuid, '00000000-0000-0000-0000-000000000000'::uuid, 4.37::numeric, 39.33::numeric, '<batch>:row:<n>')
   ) as t(bad_id, sku_id, bad_price, good_price, evidence) loop
+    -- The SKU row lock every price writer takes first (record_receiving_prices, the catalog writers, the
+    -- importer), so no same-date price can commit between the winner check below and the insert.
+    perform 1 from public.vendor_items where id = m.sku_id for update;
     select * into v_bad from public.vendor_price_history where id = m.bad_id for update;
     -- A drifted ledger refuses: the row must still be the import's, unchanged, for this SKU.
     assert found and v_bad.vendor_item_id = m.sku_id and v_bad.unit_price = m.bad_price
        and v_bad.source = 'vendor_import', format('drift on %s', m.bad_id);
+    -- Keep the authoritative winner (2a): refuse if ANY other row of this SKU, scope and effective_date sorts
+    -- after the bad row (recorded_at desc nulls last, id desc). A legitimate later same-date correction must
+    -- never be overturned by this repair; a manifest row that lost its date since review means a rebuild.
+    assert not exists (
+      select 1 from public.vendor_price_history o
+      where o.vendor_item_id = v_bad.vendor_item_id
+        and o.location_id is not distinct from v_bad.location_id
+        and o.price_lane_id is not distinct from v_bad.price_lane_id
+        and o.effective_date = v_bad.effective_date
+        and o.id <> v_bad.id
+        and (coalesce(o.recorded_at, '-infinity'::timestamptz), o.id)
+          > (coalesce(v_bad.recorded_at, '-infinity'::timestamptz), v_bad.id)
+    ), format('superseded the same day: %s is not the winner of its SKU / scope / date', m.bad_id);
     assert not exists (select 1 from public.vendor_price_history
        where source = 'audit_w04_b008_repair' and source_note like m.bad_id::text || '%'), format('already repaired %s', m.bad_id);
     insert into public.vendor_price_history
@@ -157,3 +210,7 @@ Checks before applying:
 3. Rehearse on the sim with a copy of the manifest; re-run 1b afterwards: every corrected SKU's current price must
    be the corrected row (or a newer real price).
 4. Deploy PR #546 first, so no old-semantics batch can append another bad row after the manifest is frozen.
+5. Re-run the 2a query immediately before applying: it must return exactly the manifest's SKIPPED list. On the sim,
+   rehearse the case the guard exists for: a bad import row followed by a legitimate correction with the SAME
+   `effective_date`; the run must refuse for that row (or the row must be on the skipped list) and the correction
+   must still be the current price afterwards.
