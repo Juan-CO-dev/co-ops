@@ -32,6 +32,7 @@ import type { AuthContext } from "@/lib/session";
 import { loadCateringReader } from "./ezcater-detail";
 import { carryPaymentsToRevision, retireSessionFor, type CarryPaymentsResult } from "./payment-carry";
 import { canReadCateringContact } from "./ezcater-detail-shared";
+import { quoteTimeExpired } from "@/lib/portal/payability-shared";
 
 export const QUOTE_READ_MIN = 5; // shift_lead+ may VIEW (a lead viewer sees its quote)
 export const QUOTE_WRITE_MIN = 6; // catering_mgr+ may build/revise/send
@@ -1125,12 +1126,31 @@ export async function setQuoteStatus(actor: AuthContext, id: string, status: Ext
   // path back to a sale is a revision, not an accept. Other transitions stay open on purpose
   // (declined → accepted is a legitimate manager reversal).
   // "Expired" is the clock as well as the status (audit W02/B037). Nothing sweeps
-  // `expires_at`, so a sent quote past its date still reads `sent` here — exactly the rule
-  // `mapQuote` derives `isExpired` from, and the one the board already hides Accept on.
-  // The board hid the button; this refuses the request whatever the page did.
-  const lapsed = row.status === "sent" && row.expires_at != null && Date.parse(row.expires_at) < Date.now();
-  if ((row.status === "expired" || lapsed) && status === "accepted") {
-    throw new CateringQuoteError(409, "quote_expired", "This quote has expired — revise it before accepting");
+  // `expires_at`, so an open offer past its date still reads `sent` — or `submitted`: a
+  // self-serve order gets the same window from `submitDraft` — and the board hid Accept
+  // only on the first. This reads the ONE shared predicate the portal's pay gate reads
+  // (lib/portal/payability-shared.ts), so the two cannot disagree: `accepted` is not judged
+  // by the clock, so accepting a lapsed order used to re-open payment at its old price.
+  if (status === "accepted") {
+    let expired = row.status === "expired";
+    if (!expired && quoteTimeExpired(row.status, row.expires_at)) {
+      // An offer the customer PAID toward was taken up in time (the reading the customer's
+      // own order list makes — lib/portal/account.ts rule 6). Confirming it re-opens
+      // nothing: the portal's already-paid gate refuses a second payment on it. A failed
+      // read refuses the accept rather than guessing.
+      const { data: paid, error: pErr } = await sb
+        .from("catering_payments")
+        .select("id")
+        .eq("quote_id", id)
+        .eq("status", "paid")
+        .limit(1)
+        .maybeSingle<{ id: string }>();
+      if (pErr) throw new Error(`setQuoteStatus payments: ${pErr.message}`);
+      expired = !paid;
+    }
+    if (expired) {
+      throw new CateringQuoteError(409, "quote_expired", "This quote has expired — revise it before accepting");
+    }
   }
 
   // Guard on the status the pre-read saw (silent-UPDATE law): count 0 means the status

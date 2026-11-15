@@ -89,3 +89,55 @@ describe("W02/B037 — a quote past its date cannot be accepted", () => {
     expect((await refusal(setQuoteStatus(owner, QUOTE, "accepted"))).code).toBe("quote_expired");
   });
 });
+
+describe("W02/B037 (review r1) — a self-serve SUBMITTED order is an open offer on the same clock", () => {
+  // `submitDraft` stamps the same 14-day `expires_at` on a submitted order that a sent quote
+  // gets. The accept gate only read the clock for `sent`, so an expired submitted order could
+  // be accepted — and `accepted` is not judged by the clock, so the portal then took payment
+  // at the lapsed price. The gate now reads the ONE shared predicate (`quoteTimeExpired`).
+  it("accepting a SUBMITTED order whose expires_at has passed is refused 409 quote_expired, and nothing is written", async () => {
+    db.tables.catering_quotes = [quote({ status: "submitted", expires_at: PAST })];
+
+    const err = await refusal(setQuoteStatus(owner, QUOTE, "accepted"));
+
+    expect(err.status).toBe(409);
+    expect(err.code).toBe("quote_expired");
+    expect(db.tables.catering_quotes![0]!.status).toBe("submitted");
+    expect(db.ops.filter((o) => o.kind === "update")).toEqual([]);
+  });
+
+  it("a submitted order inside its window is accepted as before", async () => {
+    db.tables.catering_quotes = [quote({ status: "submitted" })];
+    await setQuoteStatus(owner, QUOTE, "accepted");
+    expect(db.tables.catering_quotes![0]!.status).toBe("accepted");
+  });
+
+  it("an offer the customer PAID toward is taken up, not expired: it can still be confirmed after its date", async () => {
+    // The same reading the customer's own order list makes (lib/portal/account.ts rule 6):
+    // a deposit paid inside the window took the offer up in time. The portal cannot take a
+    // second payment on it (the already-paid gate), so confirming it re-opens nothing.
+    db.tables.catering_quotes = [quote({ status: "submitted", expires_at: PAST })];
+    db.tables.catering_payments = [{ id: "p1", quote_id: QUOTE, kind: "deposit", status: "paid", amount_cents: 20000 }];
+
+    await setQuoteStatus(owner, QUOTE, "accepted");
+
+    expect(db.tables.catering_quotes![0]!.status).toBe("accepted");
+  });
+
+  it("…but a payment that is only DUE, void or refunded took nothing up — the lapsed order stays closed", async () => {
+    for (const status of ["due", "void", "refunded"]) {
+      db.tables.catering_quotes = [quote({ status: "submitted", expires_at: PAST })];
+      db.tables.catering_payments = [{ id: "p1", quote_id: QUOTE, kind: "deposit", status, amount_cents: 20000 }];
+      expect((await refusal(setQuoteStatus(owner, QUOTE, "accepted"))).code, status).toBe("quote_expired");
+    }
+  });
+
+  it("a failed read of the payments refuses the accept rather than guessing", async () => {
+    db.tables.catering_quotes = [quote({ status: "submitted", expires_at: PAST })];
+    db.tables.catering_payments = [];
+    db.failSelect.push("catering_payments");
+
+    await expect(setQuoteStatus(owner, QUOTE, "accepted")).rejects.toThrow(/setQuoteStatus payments/);
+    expect(db.tables.catering_quotes![0]!.status).toBe("submitted");
+  });
+});
