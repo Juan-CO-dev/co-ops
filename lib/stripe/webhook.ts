@@ -124,6 +124,30 @@
  *     else (the amount, the order's price now, its deadline, its other payments, its open
  *     checkouts) is read again and judged again.
  *
+ * ── A DELAYED PAYMENT THAT FAILED FREES ITS INTENT (review r5) ───────────────────────
+ * Checkout is minted with no `payment_method_types`, so the methods offered are the ones the
+ * Stripe account has switched on, and those can include bank debits. Stripe: "Some payment
+ * methods aren't instant, such as ACH direct debit and other bank transfers. This means,
+ * funds won't be immediately available when Checkout completes." (docs.stripe.com/checkout/
+ * fulfillment). Such a session reads `complete` with `payment_status: unpaid` — which this
+ * codebase rightly treats as "money may be landing": the pay path refuses another checkout
+ * (409 `payment_in_progress`) and nothing can expire a complete session. The verdict arrives
+ * as `checkout.session.async_payment_succeeded` ("Occurs when a payment intent using a
+ * delayed payment method finally succeeds.") or `checkout.session.async_payment_failed`
+ * ("Occurs when a payment intent using a delayed payment method fails." — both
+ * docs.stripe.com/api/events/types). The failure used to change nothing, so the dead session
+ * stayed on the due row and the customer could never try again.
+ *
+ * `async_payment_failed` is Stripe's own word that the attempt is over, exactly as
+ * `checkout.session.expired` is. So it CLEARS the session id — guarded on the exact session
+ * the event names and on the row still being `due` or `void`, so a late or repeated failure
+ * event can never clear a NEWER checkout the row has been given since — and writes an audit
+ * row (`catering.payment.provider_payment_failed`). The intent itself is untouched: a due
+ * row stays due at its amount and the next pay tap mints a fresh checkout. (The Stripe pages
+ * quoted here do not say whether a `complete` session can ever be paid after its delayed
+ * payment failed — UNVERIFIED — and nothing here depends on it: a later success for that
+ * session still finds the row by `metadata.payment_id` and is recorded, or flagged.)
+ *
  * ── TWO DEPLOYMENT SHAPES, ONE PROCESSOR ─────────────────────────────────────────────
  * DEFAULT — one Stripe account for the whole business, endpoint `/api/webhooks/stripe`.
  *   The URL carries no shop, so `locationId` arrives null and the shop is LEARNED from the
@@ -163,7 +187,7 @@ export type StripeProcessingResult =
   | "already_advanced"    // a FIRST-SEEN delivery whose charge another event already recorded (or the row was since refunded)
   | "payment_not_found"   // metadata + session-id lookup both came up empty
   | "location_mismatch"   // per-location mode: the payment belongs to another shop
-  | "async_failed"        // delayed-notification payment failed; the row stays 'due'
+  | "async_failed"        // delayed-notification payment failed; the row keeps its status, the failed session's id is cleared
   | "expired"             // the Checkout Session expired unpaid; the row keeps its status, its session id is cleared
   | "refunded"            // a paid row became refunded (the WHOLE charge was refunded)
   | "partially_refunded"  // part of the charge was refunded; the row stays 'paid', the amount is audited
@@ -599,7 +623,57 @@ async function dispatch(
     return { result: "location_mismatch", locationId };
   }
 
-  if (outcome.kind === "async_failed") return { result: "async_failed", locationId };
+  if (outcome.kind === "async_failed") {
+    // STRIPE'S OWN WORD THAT A DELAYED PAYMENT FAILED (review r5 — see the header). The
+    // session is `complete` and can never be expired, so until now its id stayed on the row
+    // and every later pay tap answered 409 `payment_in_progress`, for good. The failure is
+    // the end of that attempt: its id is cleared, exactly as an expiry's is.
+    //
+    // GUARDED ON THE EXACT SESSION THE EVENT NAMES, and on the row still being `due` or
+    // `void`. A failure event can arrive late, twice, or after the customer has already been
+    // given another checkout — it must never clear a session it is not about. A `paid` /
+    // `refunded` row's id is history and is not touched. The intent's status and amount are
+    // never written here: a due row stays due.
+    let sessionCleared = false;
+    if (outcome.sessionId) {
+      const { data: clearedRows, error: clearErr } = await sb
+        .from("catering_payments")
+        .update({ provider_session_id: null })
+        .eq("id", payment.id)
+        .in("status", ["due", "void"])
+        .eq("provider_session_id", outcome.sessionId)
+        .select("id")
+        .returns<Array<{ id: string }>>();
+      if (clearErr) throw new Error(`stripe async-failed clear session: ${clearErr.message}`);
+      sessionCleared = (clearedRows ?? []).length > 0;
+    }
+    // The failed attempt is RECORDED: which intent, which session, whether that session was
+    // still the row's (false = the row had already moved on — nothing was cleared).
+    void audit({
+      actorId: null,
+      actorRole: null,
+      action: "catering.payment.provider_payment_failed",
+      resourceTable: "catering_payments",
+      resourceId: payment.id,
+      metadata: {
+        actor_context: "stripe_webhook",
+        quote_id: payment.quote_id,
+        kind: payment.kind,
+        amount_cents: payment.amount_cents,
+        row_status: payment.status,
+        session_id: outcome.sessionId ?? null,
+        session_cleared: sessionCleared,
+        payment_intent_id: outcome.paymentIntentId ?? null,
+        stripe_event_id: outcome.eventId,
+        livemode: outcome.livemode,
+        location_id: locationId,
+        location_code: ctx.locationCode,
+      },
+      ipAddress: null,
+      userAgent: null,
+    });
+    return { result: "async_failed", locationId };
+  }
   if (outcome.kind === "expired") {
     // STRIPE'S OWN WORD THAT A CHECKOUT IS CLOSED (review r3). A session id on a due or void
     // row is an unresolved checkout that blocks new collection on the quote until its

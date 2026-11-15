@@ -13,8 +13,8 @@
  *   guard turns the replay into a reported no-op instead of a silent second write.
  *   CROSS-SHOP REFUSAL. In per-location mode an event signed by one shop's account may
  *   never advance another shop's money, however well-formed its metadata is.
- *   NOTHING MOVES ON A FAILURE. `expired` / `async_failed` leave the row `due` and write
- *   no payment row at all.
+ *   NOTHING MOVES ON A FAILURE. `expired` / `async_failed` leave the row's status, amount
+ *   and money columns alone; the ONLY write is the guarded clear of the dead session's id.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -288,7 +288,11 @@ describe("completed / async_succeeded — the paid flip", () => {
 });
 
 describe("failures and expiries leave the row DUE", () => {
-  it("checkout.session.async_payment_failed → async_failed, and no payment row is written", async () => {
+  // Review r5: a FAILED delayed payment is Stripe's own word that the attempt is over — its
+  // session is `complete` and can never be expired, so its id used to stay on the row and
+  // block every retry for good. The id is cleared exactly as an expiry's is; nothing else
+  // about the intent is written, and the failed attempt is recorded.
+  it("checkout.session.async_payment_failed → async_failed: the row's status is untouched; only the failed session's id is cleared, guarded on that id", async () => {
     const { client, ops } = stubClient(handlerFor());
     const out = await processStripeEvent(
       client,
@@ -298,8 +302,17 @@ describe("failures and expiries leave the row DUE", () => {
     );
 
     expect(out.result).toBe("async_failed");
-    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
-    expect(auditMock).not.toHaveBeenCalled();
+    const writes = ops.filter((o) => o.table === "catering_payments" && o.kind === "update");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.payload).toEqual({ provider_session_id: null });
+    expect(writes[0]!.filters).toMatchObject({ id: PAYMENT_ID, provider_session_id: "cs_1", "status:in": ["due", "void"] });
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(auditMock.mock.calls[0]![0]).toMatchObject({
+      action: "catering.payment.provider_payment_failed",
+      resourceId: PAYMENT_ID,
+      metadata: { session_id: "cs_1", session_cleared: true, stripe_event_id: "evt_f", row_status: "due" },
+    });
+    expect(noNotify.notifyPaid).not.toHaveBeenCalled();
   });
 
   // Review r3: an expiry is Stripe's own confirmation that a checkout is closed, so the dead
