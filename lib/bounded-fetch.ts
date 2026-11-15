@@ -27,8 +27,8 @@ export async function withDeadline<T>(ms: number, run: (signal: AbortSignal) => 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
+      reject(new DeadlineExceeded(ms)); // first, so the race reports the deadline rather than the abort it causes
       controller.abort();
-      reject(new DeadlineExceeded(ms));
     }, ms);
   });
   const work = run(controller.signal);
