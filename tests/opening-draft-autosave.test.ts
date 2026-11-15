@@ -348,6 +348,153 @@ describe("OpeningDraftAutosaver — dispose on unmount (B079)", () => {
   });
 });
 
+/**
+ * Fix round 1 (Astra W14-r1, P2) — back to the acknowledged draft while a newer one is in flight.
+ *
+ * The form holds A and the server acknowledged A. An edit sends B; before B answers the operator
+ * puts the form back to A and leaves. "Latest equals the acknowledged draft" used to mean
+ * "nothing to send": no beacon went out, dispose dropped B's reconciliation, and B committed
+ * last — the next device opened on B, an edit the operator had already undone.
+ *
+ * On hide / unmount the question is now "can the server end on anything but the latest draft?":
+ * a request that left with another body (still in flight, or the newest one sent whatever became
+ * of it) is pending work, so the latest draft goes out as a beacon with the NEXT sequence —
+ * higher than B's, so under 0315 it wins in either arrival order.
+ */
+describe("OpeningDraftAutosaver — back to the acknowledged draft while a newer one is in flight (fix round 1)", () => {
+  const A = body(0);
+  const B = body(1);
+  /** save_opening_phase1_draft (0315) for ONE tab: a request applies only with a higher sequence than the stored one. */
+  function server0315() {
+    let stored: { seq: number; payload: string } | null = null;
+    return {
+      receive(wire: string) {
+        const { seq } = seqOf(wire);
+        if (stored !== null && seq <= stored.seq) return false;
+        stored = { seq, payload: payloadOf(wire) };
+        return true;
+      },
+      persisted: () => stored?.payload ?? A, // A is what the server held when the page loaded
+    };
+  }
+
+  it("A → B (pending) → A → navigate away: one beacon carries A with a sequence above B's", () => {
+    const h = harness();
+    h.saver.observe(A); // hydrated: the server holds A
+    h.saver.observe(B);
+    h.fire(); // B leaves as fetch seq 1 and stays in flight
+    h.saver.observe(A); // the operator puts the form back
+    expect(h.live()).toEqual([]);
+    h.saver.dispose(); // "< Dashboard": the page unmounts
+    expect(h.beacons.length).toBe(1);
+    expect(payloadOf(h.beacons[0]!)).toBe(A);
+    expect(seqOf(h.beacons[0]!).seq).toBeGreaterThan(seqOf(h.posts[0]!.body).seq);
+    expect(seqOf(h.beacons[0]!)).toEqual({ tab: TAB, seq: 2 });
+  });
+
+  it("the server ends on A whichever of B and the beacon arrives first", () => {
+    for (const order of ["fetch_first", "beacon_first"] as const) {
+      const h = harness();
+      h.saver.observe(A);
+      h.saver.observe(B);
+      h.fire();
+      h.saver.observe(A);
+      h.saver.dispose();
+      const db = server0315();
+      const arrivals = order === "fetch_first" ? [h.posts[0]!.body, h.beacons[0]!] : [h.beacons[0]!, h.posts[0]!.body];
+      for (const wire of arrivals) db.receive(wire);
+      expect({ order, latestIntended: A, persisted: db.persisted(), beacons: h.beacons.length })
+        .toEqual({ order, latestIntended: A, persisted: A, beacons: 1 });
+    }
+  });
+
+  it("the same on a hidden tab; when the tab comes back, B's late answer changes nothing and nothing loops", async () => {
+    const h = harness();
+    h.saver.observe(A);
+    h.saver.observe(B);
+    h.fire();
+    h.saver.observe(A);
+    h.saver.onHidden(); // the tablet is locked / the tab is switched
+    expect(h.beacons.map(payloadOf)).toEqual([A]);
+    expect(seqOf(h.beacons[0]!).seq).toBe(2);
+    expect(h.saver.sentPayload()).toBe(A);
+    h.saver.onHidden(); // a second hide (pagehide + visibilitychange) sends nothing more
+    expect(h.beacons.length).toBe(1);
+    h.posts[0]!.resolve({ ok: true, applied: false }); // the beacon landed first: B was refused
+    await tick();
+    expect(h.saver.sentPayload()).toBe(A);
+    expect(h.posts.length).toBe(1);
+    expect(h.live()).toEqual([]);
+    h.saver.onHidden();
+    expect(h.beacons.length).toBe(1);
+  });
+
+  it("on a database without 0315, B applied after the beacon is answered by sending A once more", async () => {
+    const h = harness();
+    h.saver.observe(A);
+    h.saver.observe(B);
+    h.fire();
+    h.saver.observe(A);
+    h.saver.onHidden();
+    h.posts[0]!.resolve({ ok: true, applied: true }); // last write wins: the server may hold B
+    await tick();
+    expect(h.posts.length).toBe(2);
+    expect(payloadOf(h.posts[1]!.body)).toBe(A);
+    expect(seqOf(h.posts[1]!.body).seq).toBe(3);
+  });
+
+  it("B failed at the network (it may still have reached the server) → A → navigate: A is sent", async () => {
+    const h = harness();
+    h.saver.observe(A);
+    h.saver.observe(B);
+    h.fire();
+    h.posts[0]!.reject(new Error("connection reset"));
+    await tick();
+    h.saver.observe(A);
+    h.saver.dispose();
+    expect(h.beacons.map(payloadOf)).toEqual([A]);
+    expect(seqOf(h.beacons[0]!).seq).toBe(2);
+  });
+
+  it("a refused beacon claims nothing: the next hide tries again", () => {
+    const h = harness();
+    h.saver.observe(A);
+    h.saver.observe(B);
+    h.fire();
+    h.saver.observe(A);
+    h.refuseBeacons();
+    h.saver.onHidden();
+    expect(h.beacons).toEqual([]);
+    expect(h.saver.sentPayload()).toBe(A);
+  });
+
+  it("unchanged: once B is acknowledged and A went out and was acknowledged, leaving sends nothing", async () => {
+    const h = harness();
+    h.saver.observe(A);
+    h.saver.observe(B);
+    h.fire();
+    h.posts[0]!.resolve({ ok: true, applied: true });
+    await tick();
+    h.saver.observe(A);
+    h.fire();
+    h.posts[1]!.resolve({ ok: true, applied: true });
+    await tick();
+    expect(h.saver.sentPayload()).toBe(A);
+    h.saver.dispose();
+    expect(h.beacons).toEqual([]);
+  });
+
+  it("unchanged: leaving while the in-flight request carries the latest draft still sends that draft once", () => {
+    const h = harness();
+    h.saver.observe(A);
+    h.saver.observe(B);
+    h.fire(); // B in flight, and B is what the form holds
+    h.saver.dispose();
+    expect(h.beacons.map(payloadOf)).toEqual([B]);
+    expect(seqOf(h.beacons[0]!).seq).toBe(2);
+  });
+});
+
 describe("the opening page is wired to the controller", () => {
   const page = readFileSync("app/(authed)/operations/opening/opening-client.tsx", "utf8");
   it("sends every draft through OpeningDraftAutosaver with a per-tab id", () => {

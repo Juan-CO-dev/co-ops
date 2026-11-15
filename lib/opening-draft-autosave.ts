@@ -30,6 +30,15 @@
  * UNMOUNT (B079). `dispose()` sends one final beacon when an edit is still pending, then the
  * saver is dead: a client-side navigation used to drop the edit inside the debounce window.
  *
+ * LEAVING ON THE ACKNOWLEDGED DRAFT (fix round 1). "Pending" is not only "the form differs from
+ * the acknowledged draft". The form holds A (acknowledged); an edit sends B; before B answers the
+ * operator puts the form back to A and leaves. Nothing was sent — latest equalled the marker —
+ * and the dead saver never reconciled B, so B committed last. On hide / unmount the test is
+ * therefore also "did the NEWEST send carry another body?" (`newestSent`: in flight, failed, or
+ * simply not answered yet — whatever became of it, the server may end on it). If so the latest
+ * draft goes out as a beacon with the next sequence, higher than that send's, so under 0315 it
+ * wins in either arrival order.
+ *
  * NEVER BLOCKS THE OPERATOR, and never loops on failure: a failed save changes the quiet
  * status line and waits for the next edit (or the page-hide beacon), exactly as before.
  *
@@ -65,6 +74,11 @@ export class OpeningDraftAutosaver {
   private latest: string | null = null;
   /** The payload this tab believes the server holds. null until the first observe. */
   private sent: string | null = null;
+  /**
+   * The body of the NEWEST send (highest sequence, fetch or beacon), acknowledged or not. null
+   * until something is sent. When it differs from `latest`, the server may still end on it.
+   */
+  private newestSent: string | null = null;
   /** This tab's send counter (fetches and beacons share it). */
   private seq = 0;
   /** The highest sequence whose save was acknowledged as applied (or claimed by a beacon). */
@@ -117,15 +131,26 @@ export class OpeningDraftAutosaver {
    * browser and survives. It carries the NEXT sequence, so it can never overwrite a newer save
    * and an older fetch still in flight can never overwrite it. Claimed only on a successful
    * enqueue; a refused beacon leaves the ordinary save pending.
+   *
+   * Sent when the latest draft is not the acknowledged one — or when it is, but the newest send
+   * carried a DIFFERENT body (see the header: back to the acknowledged draft while a newer one
+   * is in flight). Nothing is sent when the acknowledged draft and the newest send both name
+   * the latest draft: the server cannot end on anything else.
    */
   onHidden(): void {
     if (!this.enabled || this.stopped) return;
     const payload = this.latest;
-    if (payload === null || payload === this.sent) return;
+    if (payload === null) return;
+    const newestSendDiffers = this.newestSent !== null && this.newestSent !== payload;
+    if (payload === this.sent && !newestSendDiffers) return;
     const seq = ++this.seq;
-    if (!this.deps.beacon(withDraftRev(payload, this.tabId, seq))) return;
+    if (!this.deps.beacon(withDraftRev(payload, this.tabId, seq))) {
+      // Not queued: the sequence was never used on the wire, nothing is claimed.
+      return;
+    }
     this.sent = payload;
     this.ackedSeq = seq;
+    this.newestSent = payload;
     this.cancelTimer();
   }
 
@@ -170,6 +195,7 @@ export class OpeningDraftAutosaver {
     if (payload === null || (!force && payload === this.sent)) return;
     const seq = ++this.seq;
     this.inFlight.set(seq, payload);
+    this.newestSent = payload;
     const revision = this.deps.onStart();
     let result: { ok: boolean; applied: boolean };
     try {
