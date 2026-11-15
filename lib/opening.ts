@@ -64,6 +64,7 @@ import {
   type BatchContractCode,
 } from "@/lib/batch-prep-shared";
 import type { RoleCode } from "./roles";
+import { findDayInstance } from "@/lib/checklist-day-instance";
 import {
   OPENING_CONFIRM_FLOOR_LEVEL,
   applyEffectiveResolution,
@@ -813,17 +814,38 @@ export async function loadOpeningState(
   // PR-3: date-aware resolution on the opening date (args.date). Newest active
   // version effective on that day — a pending next-day version is invisible until
   // its day, so a mid-shift publish can never strand the opener.
-  const openingBase = service
-    .from("checklist_templates")
-    .select("id, name")
-    .eq("location_id", args.locationId)
-    .eq("type", "opening") as unknown as EffectiveResolvableBuilder;
-  const { data: tmplRow, error: tmplErr } = await applyEffectiveResolution(
-    openingBase,
-    args.date,
-  ).maybeSingle<{ id: string; name: string }>();
-  if (tmplErr) {
-    throw new Error(`loadOpeningState: load template: ${tmplErr.message}`);
+  // W15/B084 + B086: a day that already has its opening (on ANY version, retired included)
+  // keeps that instance's own version — an apply-now publish mid-open never starts a second
+  // opening, and a past day's opening is never hidden by a retirement.
+  const dayInstance = await findDayInstance<{ id: string; template_id: string; status: string; created_at: string | null }>(service, {
+    locationId: args.locationId,
+    type: "opening",
+    date: args.date,
+    columns: "id, template_id, status, created_at",
+  });
+  let tmplRow: { id: string; name: string } | null = null;
+  if (dayInstance) {
+    const { data, error } = await service
+      .from("checklist_templates")
+      .select("id, name")
+      .eq("id", dayInstance.template_id)
+      .maybeSingle<{ id: string; name: string }>();
+    if (error) throw new Error(`loadOpeningState: load instance template: ${error.message}`);
+    tmplRow = data;
+  } else {
+    const openingBase = service
+      .from("checklist_templates")
+      .select("id, name")
+      .eq("location_id", args.locationId)
+      .eq("type", "opening") as unknown as EffectiveResolvableBuilder;
+    const { data, error: tmplErr } = await applyEffectiveResolution(
+      openingBase,
+      args.date,
+    ).maybeSingle<{ id: string; name: string }>();
+    if (tmplErr) {
+      throw new Error(`loadOpeningState: load template: ${tmplErr.message}`);
+    }
+    tmplRow = data;
   }
   if (!tmplRow) return null;
 

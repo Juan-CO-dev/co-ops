@@ -141,6 +141,18 @@ export class ChecklistInstanceClosedError extends ChecklistError {
   }
 }
 
+/**
+ * W15/B084 (0320): another version of the same list already has this shop's one instance
+ * for the day (an apply-now publish landed mid-open). The caller re-reads the day's
+ * instance (lib/checklist-day-instance.ts) instead of starting a second list.
+ */
+export class ChecklistLineageTakenError extends ChecklistError {
+  constructor(public readonly templateId: string, public readonly date: string) {
+    super(`Another version of this list already has the ${date} instance.`, "checklist_instance_lineage_taken");
+    this.name = "ChecklistLineageTakenError";
+  }
+}
+
 export class ChecklistLockedError extends ChecklistError {
   constructor(public readonly instanceId: string) {
     super(`Instance ${instanceId} is from a single-submission template and is locked.`, "single_submission_locked");
@@ -952,6 +964,9 @@ export async function getOrCreateInstance(
       );
     }
     return { instance: rowToInstance(race), created: false };
+  }
+  if (insertErr && /\bchecklist_instance_lineage_taken\b/.test(insertErr.message ?? "")) {
+    throw new ChecklistLineageTakenError(templateId, date);
   }
   if (insertErr) throw new Error(`getOrCreateInstance insert: ${insertErr.message}`);
   if (!inserted) throw new Error(`getOrCreateInstance insert returned no row`);
