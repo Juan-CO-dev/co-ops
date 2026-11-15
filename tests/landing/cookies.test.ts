@@ -10,7 +10,7 @@ function hostOnly(response: NextResponse) {
 describe('actual session cookie response serialization', () => {
   it('staff issuance and invalid session clearing remain host-only', async () => {
     const response = NextResponse.json({});
-    applySessionCookie(response, { sessionId:'fixture', cookieName:'co_ops_session', jwt:'fixture', cookieMaxAgeSeconds:300 }); hostOnly(response);
+    applySessionCookie(response, { sessionId:'fixture', cookieName:'co_ops_session', jwt:'fixture', cookieMaxAgeSeconds:300, atomic:true }); hostOnly(response);
     const invalid=await requireSession(new NextRequest('https://staff.example.test/api/test'), '/api/test');
     expect(invalid).toBeInstanceOf(NextResponse); hostOnly(invalid as NextResponse);
   });

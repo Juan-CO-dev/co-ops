@@ -141,6 +141,7 @@ const mutationRoutes: Record<string, string> = {
   "toast-sales/exclusions/route.ts": "POST",
   "toast-sales/pull/route.ts": "POST",
   "users/[id]/activate/route.ts": "POST",
+  "users/[id]/confirm-email/route.ts": "POST",
   "users/[id]/deactivate/route.ts": "POST",
   "users/[id]/employment/route.ts": "POST",
   "users/[id]/dormant/route.ts": "POST",

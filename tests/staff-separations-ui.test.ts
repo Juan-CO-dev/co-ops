@@ -24,7 +24,7 @@ const ev = (o: Partial<EmploymentEventRow> & Pick<EmploymentEventRow, "id" | "ki
 const SEP = employmentStateOf([ev({ id: "s1", kind: "separated", separationType: "fired", lastDayWorked: "2026-10-15", reason: "Took cash from the drawer", rehire: "no", rehireNote: "Owner decision" })]);
 const LEAVE = employmentStateOf([ev({ id: "l1", kind: "leave_start", leaveReason: "school", expectedBack: "2027-01-05", note: "Fall semester" })]);
 const viewFor = (role: RoleCode, state: typeof SEP) => employmentViewFor({ role, locations: [A] }, [A], state);
-const person = (id: string, name: string, over: Partial<AdminUserListItem> = {}): AdminUserListItem => ({ id, name, email: null, role: "employee", level: 3, active: true,
+const person = (id: string, name: string, over: Partial<AdminUserListItem> = {}): AdminUserListItem => ({ id, name, email: null, emailVerified: false, role: "employee", level: 3, active: true,
   lastLoginAt: null, locationIds: [A], dormantAt: null, dormancy: { dormant: false, reason: null, since: null } as unknown as AdminUserListItem["dormancy"], ...over });
 
 function page(language: "en" | "es", actorRole: RoleCode, users: AdminUserListItem[]) {

@@ -10,6 +10,8 @@ vi.mock("@/lib/session", () => ({ requireSession: mocks.session }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => mocks.service }));
 vi.mock("@/lib/assignments", () => ({ hasTaskAccess: mocks.access }));
 vi.mock("@/lib/auth-flows", () => ({ verifyActorPin: mocks.pin }));
+// The per-session re-check counter (audit W07 B159) is not what this file tests: every re-check is allowed.
+vi.mock("@/lib/auth-reauth", async () => (await import("./helpers/reauth-mock")).reauthAllowAll());
 vi.mock("@/lib/cash", () => ({ CASH_REPORT_BASE_LEVEL: 4, DENOMINATION_UNITS_CENTS: [], sumDenominations: () => 0, submitCashReport: mocks.cashSubmit }));
 vi.mock("@/lib/prep", () => ({ AM_PREP_BASE_LEVEL: 3, PrepRoleViolationError: class extends Error {}, createMidDayPrepInstance: mocks.midDayCreate, resolveMidDayPrepTemplate: mocks.template }));
 vi.mock("@/lib/opening", () => ({ OpeningError: class extends Error {}, canAccessOpeningInstance: mocks.openingAccess, submitPhase2Atomic: mocks.openingSubmit }));
@@ -24,11 +26,11 @@ const OTHER_SHOP = "22222222-2222-4222-8222-222222222222";
 const INSTANCE = "33333333-3333-4333-8333-333333333333";
 const USER = "44444444-4444-4444-8444-444444444444";
 const DATE = "2026-10-07";
-const ctx = { user: { id: USER }, role: "employee", level: 3, locations: [SHOP] };
+const ctx = { user: { id: USER }, session: { id: "session" }, role: "employee", level: 3, locations: [SHOP] };
 function req(body: unknown): NextRequest {
   return new NextRequest("http://localhost/api/test", { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify(body) });
 }
-const cashBody = { locationId: SHOP, date: DATE, pin: "1234", projectedCents: 0, cashTipsCents: 0, countMethod: "hand", drawerTotalCents: 0 };
+const cashBody = { locationId: SHOP, date: DATE, pin: "1234", projectedCents: 0, cashTipsCents: 0, countMethod: "hand", drawerTotalCents: 0, drawerCountedEmpty: true }; // W03/B007: a $0 drawer files only when counted empty
 
 beforeEach(() => {
   vi.clearAllMocks();
