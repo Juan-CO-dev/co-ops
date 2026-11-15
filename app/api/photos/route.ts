@@ -3,7 +3,9 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  * POST /api/photos — upload a photo (photo uploader seam, 0164).
  *
  * multipart/form-data body:
- *   file       — the image blob (jpeg/png/webp/heic, ≤ 8 MB)
+ *   file       — the image blob (jpeg/png/webp/heic, ≤ 8 MB here; the browser never sends more
+ *                than MAX_UPLOAD_BYTES, 4 MiB, because on the hosting platform a request body
+ *                over 4.5 MB is refused with 413 before this route runs — audit W10 / B065)
  *   locationId — the location the photo belongs to (validated against the actor's
  *                locations — a location-bind IDOR guard)
  *
