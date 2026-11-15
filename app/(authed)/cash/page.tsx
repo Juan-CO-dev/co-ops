@@ -14,7 +14,7 @@ import { hasTaskAccess } from "@/lib/assignments";
 
 import { redirect } from "next/navigation";
 
-import { loadCashReport } from "@/lib/cash";
+import { cashLockedByClosing, loadCashReport } from "@/lib/cash";
 import { overShortReadout } from "@/lib/cash-shared";
 import { loadToastCashProjected, type ToastProjected } from "@/lib/cash-toast";
 import { submittedToastLine } from "@/lib/cash-toast-shared";
@@ -25,7 +25,6 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { CashClient } from "./cash-client";
@@ -71,32 +70,11 @@ export default async function CashPage({ searchParams }: PageProps) {
 
   const report = await loadCashReport(sb, { locationId: locationParam, date: today });
 
-  // Up-front lock: when no report exists but today's closing is already finalized,
-  // show a locked state instead of the entry form. Mirrors the edit-window gate
-  // in lib/cash.ts submitCashReport (lines 127–137).
-  let closingFinalized = false;
-  if (!report) {
-    // PR-3: date-aware resolution — the closing version effective today (the
-    // instance lookup keys on `today`).
-    const cTmplBase = sb
-      .from("checklist_templates")
-      .select("id")
-      .eq("location_id", locationParam)
-      .eq("type", "closing") as unknown as EffectiveResolvableBuilder;
-    const { data: cTmpl } = await applyEffectiveResolution(cTmplBase, today).maybeSingle<{ id: string }>();
-    if (cTmpl) {
-      const { data: cInst } = await sb
-        .from("checklist_instances")
-        .select("status")
-        .eq("template_id", cTmpl.id)
-        .eq("location_id", locationParam)
-        .eq("date", today)
-        .maybeSingle<{ status: string }>();
-      if (cInst && (cInst.status === "confirmed" || cInst.status === "incomplete_confirmed")) {
-        closingFinalized = true;
-      }
-    }
-  }
+  // Up-front lock: when no report exists but one of today's closing instances is already finalized
+  // (confirmed, incomplete_confirmed or auto_finalized, on any template version — W03/B040 +
+  // review r1), show a locked state instead of the entry form. The SAME read as the edit-window
+  // gate in lib/cash.ts submitCashReport (cashLockedByClosing); a failed read throws.
+  const closingFinalized = !report && (await cashLockedByClosing(sb, { locationId: locationParam, date: today }));
 
   // When no report exists, load active users at this location before the return.
   let users: { id: string; name: string }[] = [];

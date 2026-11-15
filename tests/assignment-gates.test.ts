@@ -92,10 +92,11 @@ describe("assignment gates at the writer boundary", () => {
   });
 
   it("cash rejects a revoked assignment before superseding any history", async () => {
-    const { service, from } = instanceClient();
+    const { service, from, rpc } = instanceClient();
     const result = await submitCashReport(service, { actor: { ...actor, locations: ["shop"] }, locationId: "shop", date: "2026-10-07", projectedCents: 0, drawerTotalCents: 0, floatCents: 0, countMethod: "hand", denominations: null, cashTipsCents: 0, onShift: [], overShortNote: null, toastProjected: null });
     expect(result).toEqual({ ok: false, reason: "assignment_required" });
     expect(from).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
   });
 });
 
