@@ -783,7 +783,6 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
     await submitLegacy(sb, { customerId, quoteId, snapshot: snapshotColumns(rates, stack, isDelivery, deliveryZoneId), expiresAt, napkins, napkinsOrder: baseLineTotals.length, depositCents: stack.depositCents });
   }
 
-
   // Best-effort confirmation email (allowlist-gated; never throws).
   try {
     const { data: cust } = await sb.from("catering_customers").select("name, email").eq("id", customerId).maybeSingle<{ name: string | null; email: string | null }>();
