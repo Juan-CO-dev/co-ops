@@ -25,6 +25,8 @@ export interface FakeSession {
   paymentId: string;
   /** The idempotency key it was minted under. */
   key: string;
+  /** The `expires_at` it was minted with (epoch seconds); undefined = Stripe's default. */
+  expiresAtSec?: number;
 }
 
 export interface StripeFake {
@@ -40,7 +42,7 @@ export interface StripeFake {
   retrieve: (
     secretKey: string,
     sessionId: string,
-  ) => Promise<{ status: "open" | "complete" | "expired" | "gone"; url: string | null; amountTotal: number | null; quoteId: string | null; paymentId: string | null }>;
+  ) => Promise<{ status: "open" | "complete" | "expired" | "gone"; url: string | null; amountTotal: number | null; quoteId: string | null; paymentId: string | null; expiresAt?: number | null }>;
   /** The customer finishes a checkout. */
   complete: (sessionId: string) => void;
   /** A session lapses on its own (24 h). */
@@ -87,6 +89,7 @@ export function stripeFake(): StripeFake {
         quoteId: input.quoteId,
         paymentId: input.paymentId,
         key: idempotencyKey,
+        expiresAtSec: input.expiresAtSec,
       };
       sessions.set(id, session);
       keys.set(idempotencyKey, { fingerprint, sessionId: id });
@@ -115,6 +118,7 @@ export function stripeFake(): StripeFake {
         amountTotal: s.amountCents,
         quoteId: s.quoteId,
         paymentId: s.paymentId,
+        expiresAt: s.expiresAtSec ?? null,
       };
     },
 

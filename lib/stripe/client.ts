@@ -313,6 +313,8 @@ export interface CheckoutSessionState {
   /** `metadata.quote_id` / `metadata.payment_id` exactly as we wrote them at creation. */
   quoteId: string | null;
   paymentId: string | null;
+  /** The session's own `expires_at`, epoch seconds — when it stops being payable. */
+  expiresAt?: number | null;
 }
 
 /**
@@ -345,11 +347,13 @@ export async function retrieveCheckoutSession(secretKey: string, sessionId: stri
   const metadata = (read.json?.metadata ?? null) as Record<string, unknown> | null;
   const text = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
   const amount = read.json?.amount_total;
+  const expiresAt = read.json?.expires_at;
   return {
     status,
     url: status === "open" ? text(read.json?.url) : null,
     amountTotal: typeof amount === "number" && Number.isInteger(amount) ? amount : null,
     quoteId: text(metadata?.quote_id),
     paymentId: text(metadata?.payment_id),
+    expiresAt: typeof expiresAt === "number" && Number.isInteger(expiresAt) ? expiresAt : null,
   };
 }

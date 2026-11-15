@@ -117,11 +117,22 @@ describe("W02/B037 (review r1) — a self-serve SUBMITTED order is an open offer
     // a deposit paid inside the window took the offer up in time. The portal cannot take a
     // second payment on it (the already-paid gate), so confirming it re-opens nothing.
     db.tables.catering_quotes = [quote({ status: "submitted", expires_at: PAST })];
-    db.tables.catering_payments = [{ id: "p1", quote_id: QUOTE, kind: "deposit", status: "paid", amount_cents: 20000 }];
+    // Paid INSIDE the window (review r2: "in time" is the payment's own paid_at, not its existence).
+    db.tables.catering_payments = [
+      { id: "p1", quote_id: QUOTE, kind: "deposit", status: "paid", amount_cents: 20000, paid_at: "2019-12-31T00:00:00.000Z" },
+    ];
 
     await setQuoteStatus(owner, QUOTE, "accepted");
 
     expect(db.tables.catering_quotes![0]!.status).toBe("accepted");
+  });
+
+  it("…a payment made AFTER the date did not take it up: paid late, or with no paid_at at all, the order stays closed (review r2)", async () => {
+    for (const paid_at of ["2020-01-02T00:00:00.000Z", null]) {
+      db.tables.catering_quotes = [quote({ status: "submitted", expires_at: PAST })];
+      db.tables.catering_payments = [{ id: "p1", quote_id: QUOTE, kind: "deposit", status: "paid", amount_cents: 20000, paid_at }];
+      expect((await refusal(setQuoteStatus(owner, QUOTE, "accepted"))).code, String(paid_at)).toBe("quote_expired");
+    }
   });
 
   it("…but a payment that is only DUE, void or refunded took nothing up — the lapsed order stays closed", async () => {

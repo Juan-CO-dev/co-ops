@@ -46,7 +46,8 @@ import { TENANT_NAME } from "@/lib/tenant";
 import type { Quote, QuoteItem, QuoteDetail } from "@/lib/catering/quotes";
 import { isQuoteLineKind } from "@/lib/catering/prep-demand-shared";
 import { isQuoteStatus } from "@/lib/catering/quotes";
-import { quotePayability, quoteTimeExpired } from "@/lib/portal/payability-shared";
+import { offerDeadlineMs, quotePayability, quoteTimeExpired } from "@/lib/portal/payability-shared";
+import { checkoutSessionExpiry } from "@/lib/stripe/shared";
 
 /** 404-style error for the customer path (ownership failures surface as "not found"). */
 export class PortalQuoteError extends Error {
@@ -283,6 +284,9 @@ interface PayableQuote {
   eventDate: string | null;
   depositCents: number;
   totalCents: number;
+  /** When the offer stops being open, epoch ms — null for a quote not judged by the clock
+   *  (a team-confirmed order, or no `expires_at`). A checkout must not outlive it. */
+  offerDeadlineMs: number | null;
 }
 
 /**
@@ -385,6 +389,7 @@ async function loadPayableQuote(
     eventDate: row.event_date,
     depositCents: row.deposit_cents,
     totalCents: row.total_cents,
+    offerDeadlineMs: offerDeadlineMs(row.status, row.expires_at),
   };
 }
 
@@ -679,6 +684,18 @@ async function inspectOrRefuse(secretKey: string, sessionId: string): Promise<Ch
  * re-priced while the mint was at Stripe answers 409 `not_payable`, and the session priced
  * for the old revision is closed instead of recorded.
  *
+ * ── A CHECKOUT DOES NOT OUTLIVE THE OFFER IT PAYS (review r2) ────────────────────────
+ * The pay gate reads the clock (B037), but only when a checkout is OPENED. A session minted
+ * five minutes before the offer's `expires_at` stayed payable for Stripe's default 24 hours.
+ * So the session is minted with `expires_at` = the offer's own deadline, inside the range
+ * Stripe allows — "anywhere from 30 minutes to 24 hours after Checkout Session creation"
+ * (docs.stripe.com/api/checkout/sessions/create) — see `checkoutSessionExpiry`. An offer
+ * with less than that minimum left still gets a checkout, at the minimum: the customer
+ * tapped Pay while the offer was open. A payment that settles in that overhang (or through
+ * a session minted before this rule) is recorded and FLAGGED by the webhook
+ * (`paid_after_expiry`), and does not by itself let the team accept the lapsed offer
+ * (`offerTakenUpInTime`). A team-confirmed (`accepted`) order is not on the offer's clock.
+ *
  * Step 6 runs AFTER step 5 on purpose: a session is not a charge, so a session we then
  * fail to record costs nothing but an unused Stripe object, whereas recording a session id
  * we failed to create would leave the webhook's fallback lookup pointing at nothing.
@@ -749,6 +766,14 @@ export async function createQuoteCheckout(input: {
     retiredSessions += 1;
   }
 
+  // THE SESSION DOES NOT OUTLIVE THE OFFER (review r2 — see the header). Stripe's default
+  // session lives 24 hours; an offer with two hours left would stay payable for twenty-two
+  // more through a checkout this gate is never asked about again.
+  const sessionExpiresAt = checkoutSessionExpiry(
+    Math.floor(Date.now() / 1000),
+    quote.offerDeadlineMs == null ? null : quote.offerDeadlineMs / 1000,
+  );
+
   // THE INTENT'S OWN STORED SESSION (see the header): the same attempt, or not ours to reuse.
   const stored = payRow.provider_session_id;
   if (stored) {
@@ -761,7 +786,10 @@ export async function createQuoteCheckout(input: {
       state.url != null &&
       state.amountTotal === input.amountCents &&
       state.quoteId === input.quoteId &&
-      state.paymentId === input.paymentId;
+      state.paymentId === input.paymentId &&
+      // …and it ends no later than a checkout minted now would. A session that outlives the
+      // offer (minted before this rule, or before the offer's date moved) is not handed back.
+      (sessionExpiresAt === undefined || state.expiresAt == null || state.expiresAt <= sessionExpiresAt);
     if (sameAttempt) return { url: state.url as string };
 
     // Not this attempt. Close it for good before anything new exists (an open one may
@@ -801,6 +829,7 @@ export async function createQuoteCheckout(input: {
         customerEmail: input.customerEmail,
         successUrl: `${origin}/order/quote/${input.quoteId}?checkout=success`,
         cancelUrl: `${origin}/order/quote/${input.quoteId}?checkout=cancel`,
+        expiresAtSec: sessionExpiresAt,
       },
       // A FRESH KEY PER MINT (see the header). The payment id is a prefix only so the
       // request is findable in Stripe's logs; the uuid is what makes it this mint's alone.

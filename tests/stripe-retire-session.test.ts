@@ -122,7 +122,7 @@ describe("W02/B035 review r1 — retrieveCheckoutSession", () => {
   };
 
   it("GETs the session with the shop's key and reports what a payment decision needs", async () => {
-    fetchMock.mockResolvedValueOnce(reply(200, OPEN));
+    fetchMock.mockResolvedValueOnce(reply(200, { ...OPEN, expires_at: 1795183200 }));
 
     expect(await retrieveCheckoutSession("sk_test_fake", "cs_test_1")).toEqual({
       status: "open",
@@ -130,6 +130,8 @@ describe("W02/B035 review r1 — retrieveCheckoutSession", () => {
       amountTotal: 20000,
       quoteId: "q-1",
       paymentId: "p-1",
+      // When the session stops being payable (review r2: it must not outlive the offer).
+      expiresAt: 1795183200,
     });
 
     const [url, init] = fetchMock.mock.calls[0]!;

@@ -56,6 +56,12 @@
  *     that was already settled another way: each is a named reason, the ledger outcome is
  *     `paid_needs_review`, the audit row carries the reasons, and the staff email asks for
  *     a look. Nothing is refunded automatically — moving money back is a human decision.
+ *   - …INCLUDING A PAYMENT THAT SETTLED AFTER THE OFFER EXPIRED (review r2). The pay gate
+ *     reads the clock when a checkout is OPENED; a checkout opened in time can be completed
+ *     late. The settlement time is the event's own `created` (never later than now) — not
+ *     the moment a retried delivery was processed — it is what `paid_at` records, and it is
+ *     weighed against the offer with the one shared rule (`quoteTimeExpired`): reason
+ *     `paid_after_expiry`. The staff accept reads the same two facts (`offerTakenUpInTime`).
  *   - THE OTHER INTENT IS CLOSED. When a deposit or a full payment lands, the quote's other
  *     due deposit/full intent is voided: both are priced for an UNPAID quote, so neither is
  *     collectable any more.
@@ -84,6 +90,7 @@ import { renderEmailLayout, appUrl, escapeHtml } from "@/lib/email-templates/_la
 import { resolveCateringManager } from "@/lib/catering/system-intake";
 import { TENANT_NAME } from "@/lib/tenant";
 import { parseCheckoutEvent, stripeEnvSuffix, type CheckoutEventOutcome } from "@/lib/stripe/shared";
+import { quoteTimeExpired } from "@/lib/portal/payability-shared";
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
@@ -173,6 +180,7 @@ export type PaymentReviewReason =
   | "amount_not_current"           // the amount charged is not what the quote asks for NOW (an older price)
   | "intent_was_void"              // the intent had been closed before the customer paid it
   | "quote_not_payable"            // the quote is superseded, declined or expired
+  | "paid_after_expiry"            // the payment settled after the open offer's expires_at
   | "already_settled"              // the row was already paid/refunded another way; NOT moved
   | "sibling_check_failed";        // we could not read the quote's other payments
 
@@ -303,6 +311,8 @@ interface QuoteContext {
   location_id: string;
   status: string | null;
   superseded_at: string | null;
+  /** The open offer's deadline. Null when the quote has none. */
+  expires_at: string | null;
   /** The quote's own snapshot — what a deposit / a full payment is priced at NOW. */
   deposit_cents: number | null;
   total_cents: number | null;
@@ -315,13 +325,14 @@ const wholeCents = (v: unknown): number | null => (typeof v === "number" && Numb
 async function quoteOfPayment(sb: ServiceClient, quoteId: string): Promise<QuoteContext | null> {
   const { data, error } = await sb
     .from("catering_quotes")
-    .select("id, location_id, status, superseded_at, deposit_cents, total_cents")
+    .select("id, location_id, status, superseded_at, expires_at, deposit_cents, total_cents")
     .eq("id", quoteId)
     .maybeSingle<{
       id: string;
       location_id: string;
       status: string | null;
       superseded_at: string | null;
+      expires_at: string | null;
       deposit_cents: number | null;
       total_cents: number | null;
     }>();
@@ -331,6 +342,7 @@ async function quoteOfPayment(sb: ServiceClient, quoteId: string): Promise<Quote
     location_id: data.location_id,
     status: data.status ?? null,
     superseded_at: data.superseded_at ?? null,
+    expires_at: typeof data.expires_at === "string" ? data.expires_at : null,
     deposit_cents: wholeCents(data.deposit_cents),
     total_cents: wholeCents(data.total_cents),
   };
@@ -489,12 +501,18 @@ async function dispatch(
   // charge and must not vanish — may be advanced. A concurrent/replayed advance matches
   // zero rows and REPORTS itself rather than writing a second time.
   const notify = deps.notifyPaid ?? ((args: NotifyPaidArgs) => notifyPaymentPaid(sb, args));
+  // WHEN THE MONEY SETTLED (see the header): the event's own `created`, never later than
+  // now — a redelivery hours later must not make an in-time payment look late, and a
+  // timestamp from the future must not make a late one look early.
+  const nowMs = Date.now();
+  const settledAtMs = outcome.createdSec != null ? Math.min(outcome.createdSec * 1000, nowMs) : nowMs;
+  const settledAt = new Date(settledAtMs).toISOString();
   const { error, count } = await sb
     .from("catering_payments")
     .update(
       {
         status: "paid",
-        paid_at: new Date().toISOString(),
+        paid_at: settledAt,
         provider: "stripe",
         provider_ref: outcome.paymentIntentId ?? null,
       },
@@ -577,6 +595,10 @@ async function dispatch(
   if (quote && (quote.superseded_at != null || quote.status === "declined" || quote.status === "expired")) {
     reasons.push("quote_not_payable");
   }
+  // SETTLED AFTER THE OFFER EXPIRED (review r2): the one shared clock rule, read at the
+  // moment the money settled. An `accepted` order is not on that clock and is never flagged.
+  const settledLate = quote != null && quoteTimeExpired(quote.status ?? "", quote.expires_at, settledAtMs);
+  if (settledLate) reasons.push("paid_after_expiry");
   const siblings = await reviewSiblings(sb, payment);
   reasons.push(...siblings.reasons);
 
@@ -601,6 +623,9 @@ async function dispatch(
       location_id: locationId,
       location_code: ctx.locationCode,
       row_moved: true,
+      // When the money settled (the row's `paid_at`), beside the offer's deadline.
+      settled_at: settledAt,
+      offer_expires_at: quote?.expires_at ?? null,
       // Empty for an ordinary payment. See PaymentReviewReason.
       needs_review: reasons,
       voided_sibling_ids: siblings.voided,
@@ -763,6 +788,8 @@ const REVIEW_SENTENCE: Record<PaymentReviewReason, string> = {
     "The customer paid an earlier price for this order: the amount charged is not what the quote asks for now. They may be owed a refund of the difference, or still owe it.",
   intent_was_void: "This payment request had been closed before the customer paid it.",
   quote_not_payable: "The quote is no longer open (it was replaced, declined or expired).",
+  paid_after_expiry:
+    "The customer paid after this quote had expired (the checkout was opened while it was still open). Check that the price and date still stand: revise the quote to confirm the order, or refund the payment.",
   already_settled:
     "This payment was already recorded another way (for example marked paid by hand), so this card charge may be a duplicate that needs a refund.",
   sibling_check_failed: "We could not check this order's other payments. Please check for a duplicate charge.",

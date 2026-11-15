@@ -51,10 +51,47 @@ export interface QuotePayabilityInput {
  * about payments (the page, `customerOrderStatus`) apply that themselves.
  */
 export function quoteTimeExpired(status: string, expiresAt: string | null, now: number = Date.now()): boolean {
-  if (status !== "sent" && status !== "submitted") return false;
-  if (!expiresAt) return false;
+  const deadline = offerDeadlineMs(status, expiresAt);
+  return deadline != null && deadline < now;
+}
+
+/**
+ * The instant an OPEN OFFER stops being one, in epoch milliseconds — or null when this
+ * quote is not judged by the clock at all (not `sent` / `submitted`, or no usable
+ * `expires_at`). `quoteTimeExpired` above is "that instant has passed"; the checkout path
+ * reads the instant itself, so the session it mints ends when the offer does.
+ */
+export function offerDeadlineMs(status: string, expiresAt: string | null): number | null {
+  if (status !== "sent" && status !== "submitted") return null;
+  if (!expiresAt) return null;
   const at = Date.parse(expiresAt);
-  return Number.isFinite(at) && at < now;
+  return Number.isFinite(at) ? at : null;
+}
+
+/**
+ * "Was this offer TAKEN UP IN TIME?" — the one exemption to an expired offer (audit W02,
+ * review r2). A lapsed offer the customer paid toward INSIDE its window is an order, not a
+ * dead quote, and the team may still confirm it. But "a paid row exists" is not that fact:
+ * a checkout opened before the date can be completed after it, and staff can record a
+ * payment by hand any day. So a payment counts only when it is `paid` AND its `paid_at` is
+ * not after the offer's `expires_at`. A paid row that cannot say when it was paid proves
+ * nothing. With no usable `expires_at` there is no deadline to be late for.
+ *
+ * A payment that settled late is not lost or hidden — it is on the quote, flagged for
+ * review (`paid_after_expiry`, lib/stripe/webhook.ts) — it just does not re-open the offer
+ * by itself: a person revises the quote (the payment follows it) or refunds the money.
+ */
+export function offerTakenUpInTime(
+  expiresAt: string | null,
+  payments: ReadonlyArray<{ status: string; paidAt: string | null }>,
+): boolean {
+  const deadline = expiresAt ? Date.parse(expiresAt) : NaN;
+  const paid = payments.filter((p) => p.status === "paid");
+  if (!Number.isFinite(deadline)) return paid.length > 0;
+  return paid.some((p) => {
+    const at = p.paidAt ? Date.parse(p.paidAt) : NaN;
+    return Number.isFinite(at) && at <= deadline;
+  });
 }
 
 export function quotePayability(quote: QuotePayabilityInput, now: number = Date.now()): QuotePayability {

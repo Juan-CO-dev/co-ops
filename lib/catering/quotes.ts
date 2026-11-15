@@ -32,7 +32,7 @@ import type { AuthContext } from "@/lib/session";
 import { loadCateringReader } from "./ezcater-detail";
 import { carryPaymentsToRevision, reconcileFamilyPayments, retireSessionFor, type CarryPaymentsResult } from "./payment-carry";
 import { canReadCateringContact } from "./ezcater-detail-shared";
-import { quoteTimeExpired } from "@/lib/portal/payability-shared";
+import { offerTakenUpInTime, quoteTimeExpired } from "@/lib/portal/payability-shared";
 
 export const QUOTE_READ_MIN = 5; // shift_lead+ may VIEW (a lead viewer sees its quote)
 export const QUOTE_WRITE_MIN = 6; // catering_mgr+ may build/revise/send
@@ -1210,15 +1210,25 @@ export async function setQuoteStatus(actor: AuthContext, id: string, status: Ext
       // own order list makes — lib/portal/account.ts rule 6). Confirming it re-opens
       // nothing: the portal's already-paid gate refuses a second payment on it. A failed
       // read refuses the accept rather than guessing.
-      const { data: paid, error: pErr } = await sb
+      //
+      // …"IN TIME" IS A FACT ABOUT THE PAYMENT, NOT ITS EXISTENCE (review r2). A checkout
+      // opened before the date can be completed after it, and a payment can be marked paid
+      // by hand any day; a paid row alone used to re-open the lapsed offer at its old price.
+      // Only a payment whose `paid_at` is not after `expires_at` counts (`offerTakenUpInTime`).
+      // A late one is already flagged for review (`paid_after_expiry`); it leaves this accept
+      // refused, and the way forward is the one the refusal names — revise the quote (the
+      // payment follows the revision) — or a refund.
+      const { data: paidRows, error: pErr } = await sb
         .from("catering_payments")
-        .select("id")
+        .select("id, status, paid_at")
         .eq("quote_id", id)
         .eq("status", "paid")
-        .limit(1)
-        .maybeSingle<{ id: string }>();
+        .returns<Array<{ id: string; status: string; paid_at: string | null }>>();
       if (pErr) throw new Error(`setQuoteStatus payments: ${pErr.message}`);
-      expired = !paid;
+      expired = !offerTakenUpInTime(
+        row.expires_at,
+        (paidRows ?? []).map((p) => ({ status: p.status, paidAt: p.paid_at ?? null })),
+      );
     }
     if (expired) {
       throw new CateringQuoteError(409, "quote_expired", "This quote has expired — revise it before accepting");

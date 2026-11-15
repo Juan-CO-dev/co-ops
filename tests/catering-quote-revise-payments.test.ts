@@ -318,7 +318,8 @@ describe("W02/B006 review r1 — a failed carry never leaves a revision that can
     const V2 = "a0000000-0000-4000-8000-000000000002";
     db.tables.catering_quotes = [
       v1({ superseded_at: "2026-11-05T00:00:00.000Z" }),
-      v1({ id: V2, root_id: V1, version: 2, status: "sent", expires_at: "2020-01-01T00:00:00.000Z" }),
+      // Lapsed on Nov 3 — the day AFTER the deposit was paid (Nov 2): taken up in time.
+      v1({ id: V2, root_id: V1, version: 2, status: "sent", expires_at: "2026-11-03T00:00:00.000Z" }),
     ];
     payments().push(deposit());
 
