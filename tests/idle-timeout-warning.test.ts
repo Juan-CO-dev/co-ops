@@ -488,3 +488,56 @@ describe("B012 / B153 round 4 — other tabs leave only after the logout request
     expect(window.localStorage.getItem(SIGNED_OUT_KEY)).toMatch(/:logout$/);
   });
 });
+
+describe("B153 round 4 — the throttled shared activity clock keeps the latest activity", () => {
+  it("activity at 0:00 and 0:04: a background tab does not sign out before 10:04", async () => {
+    linkTabs();
+    mountTab("B", { input: false }); // its own clock only learns of activity through storage
+    mountTab("A");
+    fireEvent.keyDown(window, { key: "a" }); // 0:00
+    await advance(4);
+    fireEvent.keyDown(window, { key: "b" }); // 0:04 — inside the 5 s storage throttle
+    await advance(599); // 10:03
+    expect(calls("/api/auth/logout")).toHaveLength(0);
+    expect(h.push).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("dialog")).toHaveLength(2); // both tabs show the same countdown
+    await advance(2); // 10:05
+    expect(calls("/api/auth/logout").length).toBeGreaterThanOrEqual(1);
+    expect(pushedTabs()).toEqual(["A", "B"]);
+  });
+
+  it("one trailing write carries the latest suppressed activity; nothing new = no write", async () => {
+    const set = vi.spyOn(Storage.prototype, "setItem");
+    const activityWrites = () => set.mock.calls.filter((c) => c[0] === ACTIVITY_KEY).map((c) => Number(c[1]));
+    mount();
+    const t0 = Date.now();
+    expect(activityWrites()).toEqual([t0]); // the mount stamp
+    fireEvent.keyDown(window, { key: "a" }); // same instant as the stamp: nothing new
+    await advance(30);
+    expect(activityWrites()).toEqual([t0]);
+    fireEvent.keyDown(window, { key: "b" }); // 0:30 — throttle open: written at once
+    await advance(1);
+    fireEvent.keyDown(window, { key: "c" }); // 0:31 — suppressed
+    await advance(1);
+    fireEvent.keyDown(window, { key: "d" }); // 0:32 — suppressed; the latest
+    expect(activityWrites()).toEqual([t0, t0 + 30_000]);
+    await advance(3); // 0:35 — the trailing write
+    expect(activityWrites()).toEqual([t0, t0 + 30_000, t0 + 32_000]);
+    await advance(60);
+    expect(activityWrites()).toHaveLength(3); // one write, no repeats
+  });
+
+  it("the trailing activity write is cancelled on unmount", async () => {
+    const set = vi.spyOn(Storage.prototype, "setItem");
+    const activityWrites = () => set.mock.calls.filter((c) => c[0] === ACTIVITY_KEY);
+    const view = mount();
+    await advance(30);
+    fireEvent.keyDown(window, { key: "a" }); // written
+    await advance(1);
+    fireEvent.keyDown(window, { key: "b" }); // suppressed
+    expect(activityWrites()).toHaveLength(2);
+    view.unmount();
+    await advance(10);
+    expect(activityWrites()).toHaveLength(2);
+  });
+});

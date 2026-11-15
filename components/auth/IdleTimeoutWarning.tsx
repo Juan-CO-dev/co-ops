@@ -22,8 +22,9 @@
  *
  * ONE idle clock across tabs (B153): the last-activity instant is shared via
  * localStorage (`co_ops_last_activity`) and the `storage` event, so an
- * untouched background tab never signs out a person working in another tab,
- * and activity elsewhere closes this tab's warning. A sign-out in one tab
+ * untouched background tab never signs out a person working in another tab
+ * (writes are throttled to one per 5 s, with one trailing write for the latest
+ * suppressed activity, so every tab works to the same deadline), and activity elsewhere closes this tab's warning. A sign-out in one tab
  * (`co_ops_signed_out`) sends the other tabs to the login page without a
  * second logout — published only once that tab's logout request has settled,
  * so a slow logout response can never clear a sign-in made in another tab.
@@ -122,7 +123,12 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
   // The mount effect below stamps the real timestamp before the idle interval's
   // first tick (+1000ms), so the timer still measures from first paint.
   const lastActivityRef = useRef<number>(0);
+  /** When this tab last wrote the shared clock (the throttle anchor) and the activity instant it wrote. */
   const lastActivityWriteRef = useRef<number>(0);
+  const lastActivityWrittenRef = useRef<number>(0);
+  /** Latest activity the 5 s storage throttle suppressed (0 = none) and its one trailing-write timer. */
+  const pendingActivityWriteRef = useRef<number>(0);
+  const activityWriteTimerRef = useRef<number | null>(null);
   /** Send time of this tab's last ACKNOWLEDGED heartbeat (or the page load): the server saw activity up to here. */
   const lastHeartbeatRef = useRef<number>(0);
   const heartbeatInFlightRef = useRef(false);
@@ -141,13 +147,34 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
   const stayBtnRef = useRef<HTMLButtonElement | null>(null);
   const logoutBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  /** Stamp activity in this tab and (throttled) in the shared clock. */
+  /**
+   * Stamp activity in this tab and (throttled) in the shared clock. Activity the throttle suppresses is not
+   * dropped (round 4): one trailing write publishes the latest of it when the window opens — otherwise a
+   * keystroke at 0:04 after a write at 0:00 left the other tabs on 0:00, and they signed the session out at
+   * 10:00 while this tab still showed four seconds left. Nothing new since the last write = no trailing write.
+   */
   const markActivity = useCallback((now: number, forceShared = false) => {
     lastActivityRef.current = now;
     if (forceShared || now - lastActivityWriteRef.current >= ACTIVITY_WRITE_EVERY_MS) {
       lastActivityWriteRef.current = now;
+      lastActivityWrittenRef.current = now;
+      pendingActivityWriteRef.current = 0;
       writeStored(IDLE_ACTIVITY_KEY, String(now));
+      return;
     }
+    if (now <= lastActivityWrittenRef.current) return; // nothing new
+    if (now > pendingActivityWriteRef.current) pendingActivityWriteRef.current = now;
+    if (activityWriteTimerRef.current !== null || unmountedRef.current) return;
+    activityWriteTimerRef.current = window.setTimeout(() => {
+      activityWriteTimerRef.current = null;
+      const latest = pendingActivityWriteRef.current;
+      pendingActivityWriteRef.current = 0;
+      if (latest === 0 || expiredRef.current || unmountedRef.current) return;
+      if (latest <= Math.max(lastActivityWrittenRef.current, readStoredMs(IDLE_ACTIVITY_KEY))) return; // already published
+      lastActivityWriteRef.current = Date.now();
+      lastActivityWrittenRef.current = latest;
+      writeStored(IDLE_ACTIVITY_KEY, String(latest));
+    }, lastActivityWriteRef.current + ACTIVITY_WRITE_EVERY_MS - now);
   }, []);
 
   /**
@@ -248,13 +275,16 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId 
     beatForActivityRef.current = beatForActivity;
   }, [beatForActivity]);
 
-  // The trailing-heartbeat / retry timer dies with the component (and a response landing after unmount schedules none).
+  // The trailing-heartbeat / retry timer and the trailing activity write die with the component
+  // (and a response landing after unmount schedules none).
   useEffect(() => {
     unmountedRef.current = false;
     return () => {
       unmountedRef.current = true;
       if (trailingBeatTimerRef.current !== null) window.clearTimeout(trailingBeatTimerRef.current);
       trailingBeatTimerRef.current = null;
+      if (activityWriteTimerRef.current !== null) window.clearTimeout(activityWriteTimerRef.current);
+      activityWriteTimerRef.current = null;
     };
   }, []);
 
