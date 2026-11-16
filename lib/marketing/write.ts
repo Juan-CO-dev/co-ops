@@ -27,7 +27,7 @@ export async function marketingRpc(ctx: AuthContext, rpc: string, args: Record<s
   if (error) return marketingWriteError(error);
   // Explicit allowlist: free-text notes/reasons and snapshot payload never enter audit metadata.
   const metadata: Record<string, unknown> = {};
-  for (const key of ["p_kind", "p_date", "p_corrects", "p_location_id", "p_platform", "p_from", "p_to", "p_amount_cents", "p_list_count", "p_milestone_id", "p_kpi_version"]) {
+  for (const key of ["p_kind", "p_date", "p_corrects", "p_entry", "p_location_id", "p_platform", "p_from", "p_to", "p_amount_cents", "p_list_count", "p_milestone_id", "p_kpi_version"]) {
     if (key in args) metadata[key.slice(2)] = args[key];
   }
   await audit({ actorId: ctx.user.id, actorRole: ctx.user.role, action, resourceTable: table, resourceId: typeof data === "string" ? data : null, metadata, ipAddress: null, userAgent: null });

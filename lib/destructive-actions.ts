@@ -51,6 +51,7 @@ export const DESTRUCTIVE_ACTIONS = [
   "marketing.milestone_record",
   "marketing.milestone_correct",
   "marketing.manual_entry_correct",
+  "marketing.manual_entry_void", // W26-2 b: a person removes a recorded spend entry (append-only voided correction, 0333).
   "marketing.baseline_snapshot",
   "landing_ad_code.create",
   "landing_ad_code.retire",

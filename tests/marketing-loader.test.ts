@@ -182,3 +182,45 @@ it('campaign taps count past the 1,000-row RPC cap (W26/B138)', async () => {
   if (data.state !== 'ok') throw new Error('missing scorecard');
   expect(data.taps.total.value).toBe(2240);
 });
+
+describe('removed spend entries (W26-2 b)', () => {
+  const base = { kind: 'meta_spend', location_id: null, platform: null, period_start: '2026-10-19', period_end: '2026-10-25', amount_cents: 500, list_count: null, note: null };
+  const rows = [
+    { ...base, id: 'kept', corrects_id: null, voided: false },
+    { ...base, id: 'gone-root', period_start: '2026-10-26', period_end: '2026-11-01', corrects_id: null, voided: false },
+    { ...base, id: 'gone', period_start: '2026-10-26', period_end: '2026-11-01', corrects_id: 'gone-root', voided: true },
+  ];
+  function db(columnMissing: boolean) {
+    const selects: string[] = [];
+    const from = (table: string) => {
+      let columns = '';
+      const query = { select: (c: string) => { columns = c; if (table === 'marketing_manual_entries') selects.push(c); return query; }, order: () => query,
+        range: async () => {
+          if (table === 'marketing_manual_entries') {
+            if (columnMissing && columns.includes('voided')) return { data: null, error: { code: '42703' } };
+            return { data: rows.map(({ voided, ...rest }) => columns.includes('voided') ? { ...rest, voided } : rest), error: null };
+          }
+          return { data: table === 'locations' ? [{ id: 'one', name: 'One', code: 'MEP' }] : table === 'marketing_milestones' ? [{ id: 'first', kind: 'first_ad_spend', milestone_date: '2026-10-19', corrects_id: null }] : [], error: null };
+        } };
+      return query;
+    };
+    const rpc = pagedTaps(async (name: string, args: { p_from: string }) => ({ error: null, data: name === 'marketing_order_tap_intents' ? [] : name === 'sales_report_catering_values' ? null
+      : { channels: [], direct_online_orders: [], captured_days: [args.p_from], large_checks: [], unknown_labels: [], ezcater: [] } }));
+    return { selects, client: { from, rpc } as unknown as MarketingDeps['client'] };
+  }
+  it('hides a removed head and its spend', async () => {
+    const { client } = db(false);
+    const data = await loadMarketingScorecard(viewer, null, { client, env, now: new Date('2026-11-05T17:00:00Z') });
+    if (data.state !== 'ok') throw new Error('missing scorecard');
+    expect(data.entries.map(r => r.id)).toEqual(['kept']);
+    expect(data.series.map(r => r.metaSpend.value)).toEqual([500, null, null]);
+  });
+  it('before 0333 is applied, re-reads without the column and removes nothing', async () => {
+    const { client, selects } = db(true);
+    const data = await loadMarketingScorecard(viewer, null, { client, env, now: new Date('2026-11-05T17:00:00Z') });
+    if (data.state !== 'ok') throw new Error('missing scorecard');
+    expect(selects.some(c => c.includes('voided'))).toBe(true);
+    expect(selects.at(-1)).not.toContain('voided');
+    expect(data.entries.map(r => r.id).sort()).toEqual(['gone', 'kept']);
+  });
+});
