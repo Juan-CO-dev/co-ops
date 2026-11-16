@@ -41,3 +41,12 @@ export function parseSnapshotLines(raw: unknown): SnapshotLine[] {
   }
   return out;
 }
+
+/** W19/B110 fix round 1: the lines a PO past draft FROZE, or null when it never froze any. A snapshot whose `lines`
+ *  is an array is authoritative even when EMPTY (that is what was confirmed, and what the email reads: it refuses
+ *  `no_order_lines`), so a po_line inserted after the freeze must not show up in its place. Only a missing or
+ *  malformed snapshot (a legacy PO confirmed before snapshots) is null, and the caller falls back to po_lines. */
+export function frozenSnapshotLines(raw: unknown): SnapshotLine[] | null {
+  const lines = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as { lines?: unknown }).lines : undefined;
+  return Array.isArray(lines) ? parseSnapshotLines(raw) : null;
+}

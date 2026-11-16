@@ -57,7 +57,7 @@ import { poLineGuideKey, resolveGuideKey } from "@/lib/order-guides-shared";
 import { compareByGuide } from "@/lib/order-guide-sort";
 import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import { resolveActive } from "@/lib/location-sku-shared";
-import { parseSnapshotLines, type SnapshotLine } from "@/lib/po-snapshot-shared";
+import { frozenSnapshotLines, type SnapshotLine } from "@/lib/po-snapshot-shared";
 
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
 export const PO_MIN = 4; // key_holder+
@@ -1676,10 +1676,12 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   // W19/B110: a PO past draft SHOWS WHAT WAS CONFIRMED. Its lines (qty, name, item number, unit, price, guide key)
   // come from confirmed_snapshot — the same reading the vendor email sends (lib/po-snapshot-shared.ts) — so the
   // panel, its Copy / mailto body and the email cannot diverge; only the note (not in the snapshot) is joined from
-  // po_lines by SKU (unique per PO since 0190). A draft, or a legacy PO with no snapshot lines, reads po_lines as before.
-  const frozenLines = po.status === "draft" ? [] : parseSnapshotLines(po.confirmed_snapshot);
+  // po_lines by SKU (unique per PO since 0190). A frozen EMPTY snapshot is honored as empty (fix round 1: the email
+  // refuses no_order_lines; the panel must not show a line inserted after the freeze). A draft, or a legacy PO with no
+  // snapshot at all, reads po_lines as before.
+  const frozenLines = po.status === "draft" ? null : frozenSnapshotLines(po.confirmed_snapshot);
   const noteBySku = new Map(lines.map((l) => [l.sku_id, l.note] as const));
-  const detailLines: PoDetailLine[] = frozenLines.length > 0
+  const detailLines: PoDetailLine[] = frozenLines !== null
     ? frozenLines.map((l: SnapshotLine) => ({
         skuId: l.skuId,
         skuName: l.name,

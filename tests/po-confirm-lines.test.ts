@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
-import { parseSnapshotLines } from "@/lib/po-snapshot-shared";
+import { frozenSnapshotLines, parseSnapshotLines } from "@/lib/po-snapshot-shared";
 
 const source = readFileSync("lib/purchase-orders.ts", "utf8");
 const ast = ts.createSourceFile("purchase-orders.ts", source, ts.ScriptTarget.Latest, true);
@@ -134,10 +134,10 @@ describe("W19/B109 updateDraftLines names the trigger's refusal", () => {
 
 describe("W19/B110 a confirmed PO's lines come from confirmed_snapshot", () => {
   const snapshot = { lines: [{ skuId: "s1", name: "Ham", itemNumber: "77", qty: 2, unitLabel: "cs", priceCents: 1200, guidePos: 3, guideSection: "Deli" }] };
-  function setup(status: string) {
+  function setup(status: string, snap: unknown = snapshot) {
     const f = fakeClient((table, op, q) => {
       if (table === "purchase_orders" && q.cols?.startsWith("email_send_uncertain_at")) return { data: { email_send_uncertain_at: null }, error: null };
-      if (table === "purchase_orders") return { data: { ...PO, status, par_pass_event_id: null, confirmed_snapshot: status === "draft" ? null : snapshot, cutoff_at_confirm: null, created_at: "t0", confirmed_at: "t1", placed_at: null, placed_note: null, ack: null }, error: null };
+      if (table === "purchase_orders") return { data: { ...PO, status, par_pass_event_id: null, confirmed_snapshot: status === "draft" ? null : snap, cutoff_at_confirm: null, created_at: "t0", confirmed_at: "t1", placed_at: null, placed_note: null, ack: null }, error: null };
       if (table === "po_lines") return { data: [{ sku_id: "s1", order_qty: "10", order_unit_label: "cs", price_cents_at_order: 1300, guide_position_snapshot: 3, guide_section_snapshot: "Deli", note: "back door" }], error: null };
       if (table === "vendor_items" && q.cols === "id, name, item_number") return { data: [{ id: "s1", name: "Ham v2", item_number: "78" }], error: null };
       if (table === "vendors") return { data: { id: "v1", name: "Baldor", transmission_tier: "manual", portal_url: null }, error: null };
@@ -150,13 +150,23 @@ describe("W19/B110 a confirmed PO's lines come from confirmed_snapshot", () => {
       guideKeysFor: async () => new Map(), chainRootLabel: () => null, buildPackChain: () => [], compareByGuide: () => 0,
       emailOrderingAvailable: () => false, isPlausibleEmail: () => true, loadCreditsForDelivery: async () => [],
       parseAckInfo: () => null, truncateBody: (b: string | null) => b, num: (v: number | string | null) => (v === null ? null : Number(v)),
-      poLineGuideKey: (i: { snapshot: unknown }) => i.snapshot, parseSnapshotLines, process: { env: {} },
+      poLineGuideKey: (i: { snapshot: unknown }) => i.snapshot, parseSnapshotLines, frozenSnapshotLines, process: { env: {} },
     });
     return () => load({ user: { id: "kh", role: "key_holder" } }, "po-1");
   }
   it("confirmed: qty, name and item number are the snapshot's (what was confirmed and emailed); the note joins by SKU", async () => {
     const d = await setup("confirmed")();
     expect(d.lines).toEqual([expect.objectContaining({ orderQty: 2, skuName: "Ham", itemNumber: "77", priceCentsAtOrder: 1200, note: "back door" })]);
+  });
+  it("confirmed with an EMPTY snapshot: shows no lines (what the email would send), not a po_line added after the freeze", async () => {
+    // Fix round 1: a legacy race can leave confirmed_snapshot.lines = [] while po_lines holds a later insert. The empty
+    // snapshot is still what was confirmed (the email refuses no_order_lines); the panel and Copy / mailto must agree.
+    const d = await setup("confirmed", { lines: [] })();
+    expect(d.lines).toEqual([]);
+  });
+  it("confirmed with NO snapshot (legacy, never frozen): falls back to po_lines", async () => {
+    const d = await setup("confirmed", null)();
+    expect(d.lines).toEqual([expect.objectContaining({ orderQty: 10, skuName: "Ham v2" })]);
   });
   it("draft: still the live po_lines", async () => {
     const d = await setup("draft")();
@@ -170,6 +180,14 @@ describe("W19/B110 the one snapshot parser", () => {
     expect(parseSnapshotLines({ lines: "x" })).toEqual([]);
     const out = parseSnapshotLines({ lines: [null, 3, { skuId: "a", name: "A", qty: 0 }, { skuId: "b", qty: "2" }] });
     expect(out.map(l => [l.skuId, l.qty, l.name])).toEqual([["a", 0, "A"], ["b", 0, "(sku)"]]);
+  });
+  it("frozenSnapshotLines tells a frozen empty snapshot ([]) from a missing or malformed one (null)", () => {
+    expect(frozenSnapshotLines({ lines: [] })).toEqual([]);
+    expect(frozenSnapshotLines(null)).toBeNull();
+    expect(frozenSnapshotLines({})).toBeNull();
+    expect(frozenSnapshotLines({ lines: "x" })).toBeNull();
+    expect(frozenSnapshotLines([])).toBeNull();
+    expect(frozenSnapshotLines({ lines: [{ skuId: "a", qty: 1 }] })?.map(l => l.skuId)).toEqual(["a"]);
   });
   it("po-email reads the snapshot through it", () => {
     const email = readFileSync("lib/po-email.ts", "utf8");
