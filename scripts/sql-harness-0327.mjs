@@ -245,7 +245,7 @@ try {
   check(nullCredits.item_ids.length === 1, 'null credit lists mean no credits');
 
   // ── V. delivery_match_verdict ──────────────────────────────────────────────────────────────────
-  // `seen` = the receipt the person compared (null = "none was linked when I looked").
+  // `seen` = the receipt the person compared. Required: null (a caller that names none) is refused receipt_required.
   const verdict = (delivery, kind, v, note, seen = null) => rpc('delivery_match_verdict', [delivery, kind, v ?? null, note ?? null, seen], ['uuid', 'text', 'text', 'text', 'uuid']);
   const state = async id => one('select match_state, note, email_receipt_id from public.vendor_deliveries where id=$1', [id]);
   const D = saved.delivery_id;
@@ -254,14 +254,25 @@ try {
   const link = async (delivery, r) => { await db.query('update public.email_receipts set linked_delivery_id=$1 where id=$2', [delivery, r]); await db.query('update public.vendor_deliveries set email_receipt_id=$2 where id=$1', [delivery, r]); };
 
   await refuses(() => verdict(D, 'attest', 'matched', null, receipt), /no_receipt/, 'attest without a linked receipt is no_receipt');
+  // Review W20-r2: a verdict that names no receipt is refused in EVERY state, starting with "no receipt linked".
+  await refuses(() => verdict(D, 'attest', 'matched'), /receipt_required/, 'with no receipt linked: an attestation that names none is receipt_required');
+  await refuses(() => verdict(D, 'override', null, 'no paperwork came'), /receipt_required/, 'with no receipt linked: an override that names none is receipt_required (null is never "none linked")');
+  await refuses(() => verdict(D, 'override', null, 'accepted', receipt), /receipt_changed/, 'with no receipt linked: an override that names one (it was unlinked) is receipt_changed');
+  check((await state(D)).match_state === 'counted_only' && (await state(D)).note === 'dock 2' && (await state(D)).email_receipt_id === null, '...and none of them writes anything');
   await refuses(() => verdict(uuid(), 'attest', 'matched', null, receipt), /not_found/, 'an unknown delivery is not_found');
   await refuses(() => verdict(D, 'approve', 'matched', null, receipt), /invalid_input/, 'an unknown kind is invalid_input');
   await refuses(() => verdict(null, 'attest', 'matched', null, receipt), /invalid_input/, 'a null delivery is invalid_input');
   await link(D, receipt);
   await refuses(() => verdict(D, 'attest', 'maybe', null, receipt), /invalid_verdict/, 'a verdict that is not matched / discrepant is invalid_verdict');
   await refuses(() => verdict(D, 'attest', null, null, receipt), /invalid_verdict/, 'a missing verdict is invalid_verdict');
-  await refuses(() => verdict(D, 'attest', 'matched'), /invalid_input/, 'an attestation that names no receipt is invalid_input');
-  check((await state(D)).match_state === 'counted_only', '...and writes nothing');
+  // The receipt is linked BEFORE these requests run (the reviewer's case: nothing changes mid-request). A
+  // caller that names none is refused; it is not judged on the receipt that happens to be linked.
+  await refuses(() => verdict(D, 'attest', 'matched'), /receipt_required/, 'an attestation that names no receipt is receipt_required');
+  await refuses(() => verdict(D, 'attest', 'discrepant', 'short 2 cases'), /receipt_required/, '...for either verdict');
+  await refuses(() => verdict(D, 'override', null, 'accepted without the paperwork'), /receipt_required/, 'an override that names no receipt is receipt_required, even with one linked');
+  check((await state(D)).match_state === 'counted_only' && (await state(D)).note === 'dock 2', '...and writes nothing');
+  await refuses(() => verdict(D, 'override', null, 'accepted', receipt2), /receipt_changed/, 'an override that names a receipt other than the one linked is receipt_changed');
+  check((await state(D)).match_state === 'counted_only' && (await state(D)).note === 'dock 2', '...and writes nothing either');
   await refuses(() => service(() => one('select public.delivery_match_verdict($1::uuid, $2::text, $3::text, $4::text) result', [D, 'attest', 'matched', null])),
     /function public\.delivery_match_verdict\(uuid, text, text, text\) does not exist/, 'the four-argument form does not exist: no caller can skip naming the receipt');
   const first = await verdict(D, 'attest', 'matched', 'ignored on a match', receipt);
@@ -284,7 +295,8 @@ try {
     await refuses(() => verdict(D, 'attest', 'matched', null, receipt), /receipt_changed/, 'unlink, a replacement, then the stale attestation: refused receipt_changed');
     await refuses(() => verdict(D, 'attest', 'discrepant', 'short 2 cases', receipt), /receipt_changed/, '...for either verdict');
     await refuses(() => verdict(D, 'override', null, 'accepted', receipt), /receipt_changed/, 'an override decided on the first receipt is refused receipt_changed too');
-    await refuses(() => verdict(D, 'override', null, 'accepted'), /receipt_changed/, 'an override decided when no receipt was linked is refused once one is');
+    await refuses(() => verdict(D, 'attest', 'matched'), /receipt_required/, 'after the replacement, an attestation that names no receipt is receipt_required: the replacement is not marked');
+    await refuses(() => verdict(D, 'override', null, 'accepted'), /receipt_required/, 'after the replacement, an override that names no receipt is receipt_required too');
     const untouched = await state(D);
     check(untouched.match_state === 'counted_only' && untouched.note === replaced.note && untouched.email_receipt_id === receipt2,
       '...and the replacement receipt is NOT marked on the first one\'s comparison: state and note untouched');
@@ -308,8 +320,15 @@ try {
   await verdict(D, 'override', null, 'second look: still accepted', receipt);
   check((await state(D)).note === `${beforeRace}\nsecond look: still accepted`, 'a second override appends (never clobbers)');
   const blank = await record(header({ invoice_number: 'INV-5', notes: null, note: null }), [line(skuA)]);
-  await verdict(blank.delivery_id, 'override', null, 'no paperwork came');
-  check((await state(blank.delivery_id)).note === 'no paperwork came' && (await state(blank.delivery_id)).match_state === 'override', 'an override needs no receipt, and a first note has no leading newline');
+  await refuses(() => verdict(blank.delivery_id, 'override', null, 'no paperwork came'), /receipt_required/, 'a delivery with no receipt is not overridden by a caller that names none: receipt_required, nothing written');
+  check((await state(blank.delivery_id)).note === null && (await state(blank.delivery_id)).match_state === 'counted_only', '...its state and its (empty) note are untouched');
+  // A first note on a delivery that has none: its own delivery and receipt, so `blank` stays receipt-less below.
+  const firstNote = await record(header({ invoice_number: 'INV-6', notes: null, note: null }), [line(skuA)]);
+  const receipt3 = uuid();
+  await db.query("insert into public.email_receipts(id, source, location_id) values ($1,'upload',$2)", [receipt3, shop]);
+  await link(firstNote.delivery_id, receipt3);
+  await verdict(firstNote.delivery_id, 'override', null, 'accepted: the driver had no paperwork', receipt3);
+  check((await state(firstNote.delivery_id)).note === 'accepted: the driver had no paperwork' && (await state(firstNote.delivery_id)).match_state === 'override', 'an override that names the linked receipt is written, and a first note has no leading newline');
 
   // ── U. delivery_receipt_unlink ─────────────────────────────────────────────────────────────────
   const unlink = (delivery, r, note, who = actor) => rpc('delivery_receipt_unlink', [delivery, r, note, who], ['uuid', 'uuid', 'text', 'uuid']);

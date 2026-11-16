@@ -3686,6 +3686,7 @@
   "receiving.claim.error.unlink_note_required": "Indica por qué lo desvinculas.",
   "receiving.claim.error.unlink_unavailable": "Desvincular aún no está disponible. Inténtalo más tarde.",
   "receiving.claim.error.receipt_changed": "El comprobante de esta entrega cambió. Actualiza e inténtalo de nuevo.",
+  "receiving.claim.error.receipt_required": "Esta página está desactualizada. Recárgala e inténtalo de nuevo.",
   "receiving.claim.unlink_open": "¿Comprobante equivocado? Desvincúlalo",
   "receiving.claim.unlink_hint": "Al desvincular, el comprobante vuelve a la lista de espera y se borra la comparación de esta entrega. No se elimina nada.",
   "receiving.claim.unlink_note_label": "¿Por qué es el comprobante equivocado? (obligatorio)",

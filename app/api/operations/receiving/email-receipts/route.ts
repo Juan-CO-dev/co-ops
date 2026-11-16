@@ -13,6 +13,7 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  *        → RECEIPT_MIN gate → uploadManualReceipt → { receiptId }
  *
  * PATCH { deliveryId?, action, receiptId?, poId?, verdict?, note? }
+ *        (`receiptId` is REQUIRED for attest and override: 400 receipt_required without one, W20-r2)
  *        action "link"      → RECEIPT_MIN     → linkReceipt(actor, receiptId, deliveryId)
  *        action "attest"    → RECEIPT_MIN     → attestMatch(actor, deliveryId, verdict, note, receiptId)
  *        action "override"  → RECEIPT_OVERRIDE_MIN → overrideMatch(actor, deliveryId, note, receiptId)
@@ -226,12 +227,18 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
-  // The receipt the person was looking at (attest / override / unlink). Optional, but a value that
-  // is sent must be a receipt id: the lib refuses `receipt_changed` when another one is linked by
-  // the time the write runs (review W20-r1), so a verdict never lands on a receipt nobody compared.
+  // The receipt the person was looking at (attest / override / unlink). A value that is sent must be
+  // a receipt id: the lib refuses `receipt_changed` when another one is linked by the time the write
+  // runs (review W20-r1), so a verdict never lands on a receipt nobody compared.
   const seenReceipt = b.receiptId;
   const seenReceiptId = typeof seenReceipt === "string" && UUID_RE.test(seenReceipt) ? seenReceipt : null;
   const badSeenReceipt = seenReceipt !== undefined && seenReceipt !== null && seenReceiptId === null;
+  // Attest and override REQUIRE it (review W20-r2). A request without one (missing or null) comes
+  // from a page opened before the receipt was sent; judging it on the receipt read now would mark a
+  // replacement receipt on the old one's comparison. 400 `receipt_required`: the request is
+  // incomplete (409 `receipt_changed` is for a receipt that was named and is no longer the one linked).
+  const receiptRequired = () =>
+    jsonError(400, "receipt_required", { message: "This page is out of date. Reload and try again.", field: "receiptId" });
 
   if (action === "attest") {
     if (ROLES[ctx.user.role].level < RECEIPT_MIN) return jsonError(403, "forbidden");
@@ -240,6 +247,7 @@ export async function PATCH(req: NextRequest) {
       return jsonError(400, "invalid_payload", { message: "verdict must be matched or discrepant", field: "verdict" });
     }
     if (badSeenReceipt) return jsonError(400, "invalid_payload", { message: "receiptId must be a receipt id", field: "receiptId" });
+    if (seenReceiptId === null) return receiptRequired();
     const note = typeof b.note === "string" ? b.note : undefined;
     try {
       await attestMatch(ctx, deliveryId, verdict as MatchVerdict, note, seenReceiptId);
@@ -275,6 +283,7 @@ export async function PATCH(req: NextRequest) {
     return jsonError(400, "invalid_payload", { message: "A non-empty note is required for action=override", field: "note" });
   }
   if (badSeenReceipt) return jsonError(400, "invalid_payload", { message: "receiptId must be a receipt id", field: "receiptId" });
+  if (seenReceiptId === null) return receiptRequired();
   try {
     await overrideMatch(ctx, deliveryId, note, seenReceiptId);
     return jsonOk({ ok: true });

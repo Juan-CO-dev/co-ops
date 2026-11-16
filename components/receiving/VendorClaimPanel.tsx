@@ -552,9 +552,10 @@ export function VendorClaimPanel({
   };
 
   // PATCH attest matched / discrepant. Names the receipt on screen: a verdict is about THAT receipt,
-  // so one that was swapped underneath is refused instead of being marked on this comparison.
+  // so one that was swapped underneath is refused instead of being marked on this comparison. The
+  // server requires it (400 receipt_required), so nothing is sent without a receipt on screen.
   const attest = async (verdict: "matched" | "discrepant") => {
-    if (busy) return;
+    if (busy || !receipt) return;
     if (verdict === "discrepant" && mode !== "discrepancy") {
       setMode("discrepancy");
       setErr(null);
@@ -568,7 +569,7 @@ export function VendorClaimPanel({
       body: JSON.stringify({
         deliveryId,
         action: "attest",
-        receiptId: receipt?.id,
+        receiptId: receipt.id,
         verdict,
         note: verdict === "discrepant" ? note.trim() || undefined : undefined,
       }),
@@ -583,9 +584,9 @@ export function VendorClaimPanel({
     showError(j?.code);
   };
 
-  // PATCH override (AGM+, note required).
+  // PATCH override (AGM+, note required). Names the receipt on screen, like attest.
   const override = async () => {
-    if (busy) return;
+    if (busy || !receipt) return;
     if (!note.trim()) {
       setErr(t("receiving.claim.error.note_required"));
       return;
@@ -595,7 +596,7 @@ export function VendorClaimPanel({
     const res = await fetch(API, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ deliveryId, action: "override", receiptId: receipt?.id, note: note.trim() }),
+      body: JSON.stringify({ deliveryId, action: "override", receiptId: receipt.id, note: note.trim() }),
     });
     setBusy(false);
     if (res.ok) {

@@ -67,7 +67,13 @@ describe("0327 receiving atomic writers", () => {
     expect(attest).toBeLessThan(updates[0]!);
     expect(override).toBeGreaterThan(updates[0]!);
     expect(override).toBeLessThan(updates[1]!);
-    expect(verdict).toContain("if p_kind = 'attest' and p_receipt is null then raise exception 'invalid_input'");
+    // Review W20-r2: a null receipt is refused for BOTH kinds, before the lock, and is never compared.
+    const required = verdict.indexOf("if p_receipt is null then raise exception 'receipt_required'; end if;");
+    expect(required).toBeGreaterThan(-1);
+    expect(required).toBeLessThan(lock);
+    expect(verdict).not.toContain("p_kind = 'attest' and p_receipt is null");
+    expect(verdict).not.toMatch(/p_receipt is not null and/);
+    expect(sql).toContain("invalid_verdict, note_required, already_overridden, receipt_changed, receipt_required, forbidden.");
     // The four-argument form is refused at apply and exists nowhere in the file as a function.
     expect(statements).toContain("to_regprocedure('public.delivery_match_verdict(uuid,text,text,text)') is not null");
     expect(statements).not.toContain("delivery_match_verdict(p_delivery uuid, p_kind text, p_verdict text, p_note text)");
@@ -118,7 +124,14 @@ describe("0327 receiving atomic writers", () => {
       "unlink, a replacement, then the stale attestation: refused receipt_changed",
       "...and the replacement receipt is NOT marked on the first one's comparison: state and note untouched",
       "an override decided on the first receipt is refused receipt_changed too",
-      "an attestation that names no receipt is invalid_input",
+      "an attestation that names no receipt is receipt_required",
+      "an override that names no receipt is receipt_required, even with one linked",
+      'with no receipt linked: an override that names none is receipt_required (null is never "none linked")',
+      "with no receipt linked: an override that names one (it was unlinked) is receipt_changed",
+      "after the replacement, an attestation that names no receipt is receipt_required: the replacement is not marked",
+      "after the replacement, an override that names no receipt is receipt_required too",
+      "an override that names a receipt other than the one linked is receipt_changed",
+      "a delivery with no receipt is not overridden by a caller that names none: receipt_required, nothing written",
       "the four-argument form does not exist: no caller can skip naming the receipt",
       "a four-argument draft of the verdict writer (one that cannot name its receipt) is refused, never left beside the real one",
       "the delivery has no receipt and its match is back to counted_only (an override is cleared too)",

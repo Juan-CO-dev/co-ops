@@ -21,10 +21,12 @@
 --      The read-check-write of attestMatch / overrideMatch under the delivery ROW LOCK: an attestation that
 --      queued behind an override is refused `already_overridden` instead of replacing it and dropping its note,
 --      and two notes appended at once are both kept, in order.
---      `p_receipt` is the receipt the verdict is ABOUT (the one the person compared on screen; for an override,
---      null = "no receipt was linked when I looked"). It is compared with the linked receipt UNDER THE LOCK: if a
---      manager unlinked it and another was linked in between, the verdict is refused `receipt_changed` instead of
---      marking the replacement on the first receipt's comparison (review W20-r1). An attestation must name one.
+--      `p_receipt` is the receipt the verdict is ABOUT (the one the person compared on screen). It is REQUIRED,
+--      for an attestation and for an override: null is refused `receipt_required` (review W20-r2). A caller that
+--      cannot say which receipt the person saw must not have this function decide on whatever is linked now (the
+--      app's page offers both actions only beside a linked receipt). It is compared with the linked receipt UNDER
+--      THE LOCK: if a manager unlinked it, or unlinked it and linked another, in between, the verdict is refused
+--      `receipt_changed` instead of marking the replacement on the first receipt's comparison (review W20-r1).
 --   3. delivery_receipt_unlink(p_delivery, p_receipt, p_note, p_actor) -> jsonb
 --      Clears BOTH sides of a delivery <-> receipt link in one transaction, sets the delivery's match back to
 --      `counted_only` (a verdict about a receipt that is no longer linked means nothing; an override is cleared
@@ -35,7 +37,7 @@
 --      reads it so the automatic link and the "is this the invoice?" prompt never put back a pair a person undid.
 --
 -- NAMED REFUSALS (P0001, message = the code; the app maps them): invalid_input, not_found, no_receipt,
---   invalid_verdict, note_required, already_overridden, receipt_changed, forbidden.
+--   invalid_verdict, note_required, already_overridden, receipt_changed, receipt_required, forbidden.
 --
 -- LOCK ORDER: the delivery row FOR NO KEY UPDATE (functions 2 and 3; compatible with the key-share checks of the
 --   rows that reference a delivery), then, in function 3 only, its receipt row. Nothing takes a delivery after a
@@ -256,8 +258,10 @@ begin
   if p_delivery is null or p_kind is null or p_kind not in ('attest', 'override') then
     raise exception 'invalid_input';
   end if;
-  -- An attestation is a judgment of ONE receipt against the count: it must say which.
-  if p_kind = 'attest' and p_receipt is null then raise exception 'invalid_input'; end if;
+  -- A verdict (attestation or override) is about ONE receipt, the one the person was looking at: it must say
+  -- which. Null is never read as "whatever is linked now" (review W20-r2): that is how a page that showed
+  -- receipt A marked its replacement B.
+  if p_receipt is null then raise exception 'receipt_required'; end if;
   select * into d from public.vendor_deliveries where id = p_delivery for no key update;
   if not found then raise exception 'not_found'; end if;
 
@@ -278,7 +282,8 @@ begin
      where id = d.id;
   else
     if v_note is null then raise exception 'note_required'; end if;
-    -- An override needs no receipt, but it was decided on what was (or was not) linked: null-safe, under the lock.
+    -- An override was decided beside the receipt it names. That receipt replaced OR unlinked (none linked now)
+    -- is a change: null-safe, under the lock.
     if d.email_receipt_id is distinct from p_receipt then raise exception 'receipt_changed'; end if;
     v_state := 'override';
     update public.vendor_deliveries

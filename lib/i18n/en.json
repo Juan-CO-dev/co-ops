@@ -3687,6 +3687,7 @@
   "receiving.claim.error.unlink_note_required": "Say why you are unlinking it.",
   "receiving.claim.error.unlink_unavailable": "Unlinking isn't available yet. Try again later.",
   "receiving.claim.error.receipt_changed": "This delivery's receipt changed. Refresh and try again.",
+  "receiving.claim.error.receipt_required": "This page is out of date. Reload and try again.",
   "receiving.claim.unlink_open": "Wrong receipt? Unlink it",
   "receiving.claim.unlink_hint": "Unlinking sends this receipt back to the waiting list and clears this delivery's match. Nothing is deleted.",
   "receiving.claim.unlink_note_label": "Why is this the wrong receipt? (required)",

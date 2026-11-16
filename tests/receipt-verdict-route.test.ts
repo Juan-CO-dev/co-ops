@@ -5,6 +5,11 @@
  * holder then taps "Matches": the request used to carry only the delivery, so the verdict landed
  * on B using A's comparison. The page now sends the receipt on screen with the verdict, the route
  * passes it to the lib, and the lib (and delivery_match_verdict, 0327) refuse `receipt_changed`.
+ *
+ * Fix round 2 (review W20-r2): naming the receipt is REQUIRED. A page opened before this release
+ * sends no `receiptId`; the request used to be judged on whatever receipt it read, so after a
+ * manager replaced A with B the old page attested B on A's comparison. A verdict or an override
+ * that does not name a receipt (missing or null) is now 400 `receipt_required` and reaches no writer.
  */
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -41,9 +46,12 @@ describe("PATCH action=attest carries the receipt on screen", () => {
     expect(res.status).toBe(200);
     expect(mocks.attest).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ user: expect.objectContaining({ role: "key_holder" }) }), "d1", "discrepant", "short 2 cases", RECEIPT);
   });
-  it("a request that names no receipt still works (the lib judges it on the receipt it reads)", async () => {
-    await patch({ action: "attest", deliveryId: "d1", verdict: "matched" });
-    expect(mocks.attest).toHaveBeenCalledExactlyOnceWith(expect.anything(), "d1", "matched", undefined, null);
+  it.each([["missing", {}], ["null", { receiptId: null }]])("review W20-r2: a %s receiptId is 400 receipt_required and reaches no writer", async (_label, extra) => {
+    mocks.role = "key_holder";
+    const res = await patch({ action: "attest", deliveryId: "d1", verdict: "matched", ...extra });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "receipt_required", field: "receiptId", error: "This page is out of date. Reload and try again." });
+    expect(mocks.attest).not.toHaveBeenCalled();
   });
   it.each(["not-a-uuid", 5, {}, ""])("a malformed receiptId (%j) is 400 and reaches no writer", async receiptId => {
     const res = await patch({ action: "attest", deliveryId: "d1", verdict: "matched", receiptId });
@@ -65,13 +73,24 @@ describe("PATCH action=override carries the receipt on screen", () => {
     expect(res.status).toBe(200);
     expect(mocks.override).toHaveBeenCalledExactlyOnceWith(expect.anything(), "d1", "accepted per vendor call", RECEIPT);
   });
-  it("works without naming a receipt", async () => {
-    await patch({ action: "override", deliveryId: "d1", note: "no paperwork came" });
-    expect(mocks.override).toHaveBeenCalledExactlyOnceWith(expect.anything(), "d1", "no paperwork came", null);
-  });
-  it("a malformed receiptId is 400", async () => {
-    const res = await patch({ action: "override", deliveryId: "d1", note: "accepted", receiptId: "not-a-uuid" });
+  it.each([["missing", {}], ["null", { receiptId: null }]])("review W20-r2: a %s receiptId is 400 receipt_required and reaches no writer", async (_label, extra) => {
+    const res = await patch({ action: "override", deliveryId: "d1", note: "no paperwork came", ...extra });
     expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "receipt_required", field: "receiptId", error: "This page is out of date. Reload and try again." });
+    expect(mocks.override).not.toHaveBeenCalled();
+  });
+  it.each(["not-a-uuid", 5, {}, ""])("a malformed receiptId (%j) is 400 and reaches no writer", async receiptId => {
+    const res = await patch({ action: "override", deliveryId: "d1", note: "accepted", receiptId });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "invalid_payload", field: "receiptId" });
+    expect(mocks.override).not.toHaveBeenCalled();
+  });
+  it("the role and note checks still come first (a refusal never depends on the receipt named)", async () => {
+    mocks.role = "key_holder";
+    expect((await patch({ action: "override", deliveryId: "d1", note: "accepted" })).status).toBe(403);
+    mocks.role = "agm";
+    const res = await patch({ action: "override", deliveryId: "d1", note: "  " });
+    expect(await res.json()).toMatchObject({ code: "invalid_payload", field: "note" });
     expect(mocks.override).not.toHaveBeenCalled();
   });
   it("returns receipt_changed by code", async () => {
@@ -84,15 +103,22 @@ describe("PATCH action=override carries the receipt on screen", () => {
 
 describe("the delivery page sends the receipt it is showing", () => {
   const panel = readFileSync("components/receiving/VendorClaimPanel.tsx", "utf8").replace(/\r\n/g, "\n");
-  it("attest and override both name receipt.id, like unlink", () => {
+  it("attest and override both name receipt.id, like unlink, and send nothing without a receipt on screen", () => {
     const attest = panel.slice(panel.indexOf("const attest = async"), panel.indexOf("const override = async"));
+    expect(attest).toContain("if (busy || !receipt) return;");
     expect(attest).toContain('action: "attest"');
-    expect(attest).toContain("receiptId: receipt?.id");
+    expect(attest).toContain("receiptId: receipt.id");
     const override = panel.slice(panel.indexOf("const override = async"), panel.indexOf("const unlink = async"));
-    expect(override).toContain('JSON.stringify({ deliveryId, action: "override", receiptId: receipt?.id, note: note.trim() })');
+    expect(override).toContain("if (busy || !receipt) return;");
+    expect(override).toContain('JSON.stringify({ deliveryId, action: "override", receiptId: receipt.id, note: note.trim() })');
+    expect(panel).not.toContain("receiptId: receipt?.id");
+  });
+  it("review W20-r2: the out-of-date page message is plain, in English and Spanish", () => {
+    expect((en as Record<string, string>)["receiving.claim.error.receipt_required"]).toBe("This page is out of date. Reload and try again.");
+    expect((es as Record<string, string>)["receiving.claim.error.receipt_required"]).toBe("Esta página está desactualizada. Recárgala e inténtalo de nuevo.");
   });
   it("every refusal a verdict can get has a message in English and Spanish", () => {
-    for (const code of ["receipt_changed", "match_changed", "already_overridden", "no_receipt", "verdict_note_unavailable"]) {
+    for (const code of ["receipt_required", "receipt_changed", "match_changed", "already_overridden", "no_receipt", "verdict_note_unavailable"]) {
       const key = `receiving.claim.error.${code}`;
       const a = (en as Record<string, string>)[key], b = (es as Record<string, string>)[key];
       expect(a, key).toBeTruthy(); expect(b, key).toBeTruthy(); expect(b, key).not.toBe(a);
