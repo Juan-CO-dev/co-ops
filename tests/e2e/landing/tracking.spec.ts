@@ -246,20 +246,41 @@ test('v4.2: the footer "Privacy settings" reopens the same notice and withdrawal
 
 // W24/B213: a catering Lead tapped while the ad code is still being looked up is sent to CAPI at once
 // (unattributed, no Pixel) instead of being buffered on a page that is about to leave.
+// The Lead goes by navigator.sendBeacon with a Blob body. Playwright's WebKit routing reports that
+// request with postData() === null although WebKit delivers the body, so receipt is observed at an
+// HTTP server (a test-only relay in front of the Next fixture), on every engine.
 test('catering Lead tapped during ad-code lookup reaches CAPI',async({page,context})=>{
   await isolateMeta(page);
   await context.addCookies([{name:'landing_consent',value:'accepted',url:`http://localhost:${portBase}`}]);
   const events:Record<string,unknown>[]=[];
-  await page.route('**/api/landing/events',route=>{events.push(route.request().postDataJSON());return route.fulfill({status:204});});
+  const relay=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    const body=Buffer.concat(chunks);
+    if(new URL(req.url!,'http://localhost').pathname==='/api/landing/events'){
+      // A body that does not parse is recorded by size, so a failure shows what actually arrived.
+      let parsed:Record<string,unknown>;try{parsed=JSON.parse(body.toString());}catch{parsed={unparsed_body_bytes:body.length};}
+      events.push(parsed);res.writeHead(204);res.end();return;
+    }
+    const upstream=httpRequest({hostname:'localhost',port:portBase,path:req.url,method:req.method,headers:{...req.headers,host:`localhost:${portBase}`}},response=>{res.writeHead(response.statusCode!,response.headers);response.pipe(res);});
+    upstream.on('error',()=>{res.writeHead(502);res.end();});upstream.end(body);
+  });
+  await new Promise<void>(resolve=>relay.listen(0,'127.0.0.1',resolve));
+  const origin=`http://localhost:${(relay.address() as AddressInfo).port}`;
   let started=false;
   await page.route('**/api/landing/ad-code',async route=>{started=true;await new Promise(resolve=>setTimeout(resolve,800));await route.fulfill({json:{ad:'campaign-new'}});});
   await context.route('https://complimentsonlysubs.com/**',route=>route.fulfill({contentType:'text/html',body:'Catering inquiry'}));
-  await page.goto('/?ad=campaign-new');
-  await expect.poll(()=>started).toBe(true);
-  await page.locator('.landing-v3-ask').evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
-  await expect.poll(()=>events.length).toBe(1);
-  expect(events[0]).toMatchObject({event_name:'Lead',placement:'catering',ad:'unattributed'});
-  expect(await page.evaluate(()=>window.fbq?.queue?.filter(args=>args[1]==='Lead').length??0)).toBe(0);
+  try {
+    await page.goto(`${origin}/?ad=campaign-new`);
+    await expect.poll(()=>started).toBe(true);
+    await page.locator('.landing-v3-ask').evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
+    await expect.poll(()=>events.length).toBe(1);
+    expect(events[0]).toMatchObject({event_name:'Lead',placement:'catering',ad:'unattributed'});
+    expect(await page.evaluate(()=>window.fbq?.queue?.filter(args=>args[1]==='Lead').length??0)).toBe(0);
+    // Exactly one: the resolved lookup must not replay a buffered copy.
+    await page.waitForTimeout(1000);expect(events).toHaveLength(1);
+  } finally {
+    relay.closeAllConnections();await new Promise<void>((resolve,reject)=>relay.close(error=>error?reject(error):resolve()));
+  }
 });
 
 // W24/B212: a navigating tap during the lookup switches tracking off; when the page proves it stayed
