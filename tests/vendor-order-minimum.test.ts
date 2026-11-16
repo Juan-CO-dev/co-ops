@@ -99,7 +99,7 @@ describe("the advisory stays advisory", () => {
   it("it is NOT in the transmitted body — the vendor knows their own minimum", () => {
     const src = read("components", "ordering", "ParPassWalker.tsx");
     const at = src.indexOf("const bodyText = useMemo");
-    const body = src.slice(at, src.indexOf("}, [order, shopLabel, dateLabel, t]);", at));
+    const body = src.slice(at, src.indexOf("}, [order, shopLabel, vendorDateLabel]);", at));
     expect(at).toBeGreaterThan(-1);
     expect(body).not.toContain("orderMinimum");
   });
