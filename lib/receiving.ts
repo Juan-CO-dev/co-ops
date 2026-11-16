@@ -63,6 +63,7 @@ import {
   storeRootPackPrice,
   isDuplicateAppend,
   photoIdFromRef,
+  sameInvoiceNumber,
   type AppendLine,
   type IntakeLineForCredits,
   type MissingExpectedLine,
@@ -522,14 +523,22 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   // Dedupe guard (spec D1 dedupeKey): vendor + location + date + case-insensitive
   // invoice identity. A driver re-handing amended paperwork must NOT double-file.
   // An in-progress hit means "continue that one", a complete hit means "already received".
+  //
+  // W20/B198: compared EXACTLY (case-insensitive), in code. The old `.ilike(invoice_number, raw)`
+  // made `_` and `%` wildcards (and PostgREST rewrites `*` to `%`, which no escaping can undo), so
+  // "INV_1001" was refused as a duplicate of "INV-1001", and a pattern matching two rows was a
+  // 500 from maybeSingle. One vendor's deliveries at one shop on one day is a handful of rows;
+  // the identity is the 0169 index key lower(invoice_number), and that index stays the arbiter.
   const invoiceNumber = input.invoiceNumber?.trim() || null;
   if (invoiceNumber) {
-    const { data: dup, error: dupErr } = await sb.from("vendor_deliveries")
-      .select("id, delivery_status")
+    const { data: sameDay, error: dupErr } = await sb.from("vendor_deliveries")
+      .select("id, delivery_status, invoice_number")
       .eq("vendor_id", input.vendorId).eq("location_id", input.locationId).eq("delivery_date", input.deliveryDate)
-      .ilike("invoice_number", invoiceNumber)
-      .maybeSingle<{ id: string; delivery_status: string | null }>();
+      .not("invoice_number", "is", null)
+      .order("created_at", { ascending: true }).order("id", { ascending: true })
+      .returns<Array<{ id: string; delivery_status: string | null; invoice_number: string | null }>>();
     if (dupErr) throw new Error(`recordDelivery dedupe: ${dupErr.message}`);
+    const dup = (sameDay ?? []).find((d) => sameInvoiceNumber(d.invoice_number, invoiceNumber));
     if (dup) {
       const msg = dup.delivery_status === "in_progress"
         ? "This delivery is already in progress — continue it instead."

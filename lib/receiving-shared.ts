@@ -200,6 +200,18 @@ export function receivingPriceRows(
   }));
 }
 
+/**
+ * Are two invoice numbers the same delivery identity (W20/B198)? Exact apart from case and
+ * outer spaces: the key of the 0169 unique index, lower(invoice_number). Never a pattern, so
+ * "INV_1001" is not "INV-1001". An empty or missing number is never a duplicate (no-invoice
+ * drops are exempt from the index too).
+ */
+export function sameInvoiceNumber(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = a?.trim().toLowerCase() ?? "";
+  const y = b?.trim().toLowerCase() ?? "";
+  return x !== "" && x === y;
+}
+
 /** A single line as it lands in a delivery-append batch (identity tuple only). */
 export interface AppendLine {
   skuId: string;
