@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { parseReceipt } from "@/lib/receipt-parse";
+import { parseReceipt, PARSE_CALL_TIMEOUT_MS, PARSE_MAX_TOKENS } from "@/lib/receipt-parse";
+import { vendorMailFailureCode } from "@/lib/vendor-mail-shared";
 import { matchReceiptToPo, applyReceiptPoEffects, attemptAutoLink } from "@/lib/email-receipts";
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
@@ -9,9 +10,9 @@ vi.mock("@/lib/email-receipts", () => ({
   attemptAutoLink: vi.fn(async () => {}), EmailReceiptError: Error, RECEIPT_MIN: 4,
 }));
 
-function service(locationId: string | null, accounts: unknown[], lookupError = false, writeCount = 1) {
+function service(locationId: string | null, accounts: unknown[], lookupError = false, writeCount = 1, attributedBy?: string) {
   const writes: Record<string, unknown>[] = [];
-  const receipt = { id: "receipt", inbound_message_id: "message", attributed_by: locationId ? "address" : null,
+  const receipt = { id: "receipt", inbound_message_id: "message", attributed_by: attributedBy ?? (locationId ? "address" : null),
     parse_state: "unparsed", source: "inbound", location_id: locationId, vendor_guess_id: "sender-vendor",
     raw_storage_path: "message.eml", attachment_paths: [], linked_po_id: null };
   const sb = {
@@ -45,7 +46,7 @@ describe("routed inbound parse attribution gates", () => {
     ["shop-b", "001", "shop-b", "address", true],
     [null, undefined, null, null, false],
   ] as const)("persists %s/%s before effects", async (address, number, location, source, conflict) => {
-    const { sb, writes } = service(address, [{ vendor_id: "account-vendor", location_id: "shop-a", account_number: "001" }]);
+    const { sb, writes } = service(address, [{ vendor_id: "sender-vendor", location_id: "shop-a", account_number: "001" }]);
     const fetched = response(number);
     await expect(parseReceipt(sb, "receipt")).resolves.toEqual({ ok: true, docKind: "invoice" });
     expect(writes[0]).toMatchObject({ parse_state: "parsed", location_id: location, attributed_by: source, attribution_conflict: conflict });
@@ -55,6 +56,69 @@ describe("routed inbound parse attribution gates", () => {
     expect(attemptAutoLink).toHaveBeenCalledTimes(allowed ? 1 : 0);
     const request = fetched.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(request[1].body)).model).toBe("claude-sonnet-5-5");
+  });
+  // W20/B194 (decision W20-1 b): another vendor's account number flags the receipt for a person.
+  it.each([["shop-a", "shop-a", "address"], [null, null, null]] as const)(
+    "another vendor's account flags the receipt and runs no automation (address %s)", async (address, location, source) => {
+      const { sb, writes } = service(address, [{ vendor_id: "account-vendor", location_id: "shop-a", account_number: "001" }]);
+      response("001");
+      await expect(parseReceipt(sb, "receipt")).resolves.toEqual({ ok: true, docKind: "invoice" });
+      expect(writes[0]).toMatchObject({ parse_state: "parsed", location_id: location, vendor_guess_id: "sender-vendor",
+        attributed_by: source, attribution_conflict: true, account_location_id: "shop-a", account_vendor_id: "account-vendor" });
+      expect(matchReceiptToPo).not.toHaveBeenCalled();
+      expect(applyReceiptPoEffects).not.toHaveBeenCalled();
+      expect(attemptAutoLink).not.toHaveBeenCalled();
+    });
+  // W20/B193: a person claimed the shop before the parse. The parse must not infer over it, and
+  // the delivery auto-link (skipped before: it only ran when THIS parse inferred attribution)
+  // now runs with the order match.
+  it("a manual pre-parse claim still runs the delivery auto-link after parse", async () => {
+    const { sb, writes } = service("shop-a", [], false, 1, "manual");
+    response("001");
+    await expect(parseReceipt(sb, "receipt")).resolves.toEqual({ ok: true, docKind: "invoice" });
+    expect(writes[0]).toMatchObject({ parse_state: "parsed", doc_kind: "invoice" });
+    expect(writes[0]).not.toHaveProperty("location_id");
+    expect(writes[0]).not.toHaveProperty("attributed_by");
+    expect(attemptAutoLink).toHaveBeenCalledExactlyOnceWith("receipt");
+    expect(matchReceiptToPo).toHaveBeenCalledTimes(1);
+  });
+  // W20/B115: an invoice past ~35 lines used to be cut off at 2048 output tokens and recorded as
+  // unparseable_json for good.
+  it("a max_tokens stop is recorded as truncated_output, not unparseable_json, and runs nothing", async () => {
+    const { sb, writes } = service("shop-a", []);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ stop_reason: "max_tokens",
+      content: [{ type: "text", text: '{"docKind":"invoice","lines":[{"desc' }] }))));
+    await expect(parseReceipt(sb, "receipt")).resolves.toEqual({ ok: false });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ parse_state: "failed", parsed_json: { reason: "truncated_output" } });
+    expect(vendorMailFailureCode(writes[0]?.parsed_json)).toBe("truncated_output");
+    expect(matchReceiptToPo).not.toHaveBeenCalled();
+    expect(attemptAutoLink).not.toHaveBeenCalled();
+  });
+  it("a complete answer that happens to end on max_tokens is still not trusted", async () => {
+    const { sb, writes } = service("shop-a", []);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ stop_reason: "max_tokens",
+      content: [{ type: "text", text: '{"docKind":"invoice"}' }] }))));
+    await parseReceipt(sb, "receipt");
+    expect(writes[0]).toMatchObject({ parse_state: "failed", parsed_json: { reason: "truncated_output" } });
+  });
+  it("asks for enough output room for a 100-line invoice and tells the model the line limit", async () => {
+    const { sb } = service("shop-a", []);
+    const fetched = response(undefined);
+    await parseReceipt(sb, "receipt");
+    const request = fetched.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(request[1].body)) as { max_tokens: number; messages: Array<{ content: Array<{ text?: string }> }> };
+    expect(body.max_tokens).toBe(PARSE_MAX_TOKENS);
+    expect(PARSE_MAX_TOKENS).toBeGreaterThanOrEqual(8192);
+    expect(body.messages[0]!.content.at(-1)!.text).toContain("List at most 100 lines");
+    expect(PARSE_CALL_TIMEOUT_MS).toBe(150_000);
+  });
+  it("an ordinary end_turn answer parses as before", async () => {
+    const { sb, writes } = service("shop-a", []);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ stop_reason: "end_turn",
+      content: [{ type: "thinking", thinking: "" }, { type: "text", text: '{"docKind":"invoice","lines":[{"description":"Sub rolls","qty":4}]}' }] }))));
+    await expect(parseReceipt(sb, "receipt")).resolves.toEqual({ ok: true, docKind: "invoice" });
+    expect(writes[0]).toMatchObject({ parse_state: "parsed", doc_kind: "invoice" });
   });
   it("fails closed on account lookup failure", async () => {
     const { sb, writes } = service("shop-a", [], true);

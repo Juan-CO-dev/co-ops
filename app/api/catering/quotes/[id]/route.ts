@@ -91,7 +91,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     let prepDemandResynced = true;
     if (pipelineId) {
       try {
-        await resyncPrepDemand(ctx, pipelineId);
+        // W22/B121: a resync skipped to protect the customer's stored package picks is NOT a resync —
+        // the manager is told (QuotesClient shows catering.quotes.prep_not_resynced).
+        prepDemandResynced = (await resyncPrepDemand(ctx, pipelineId)) !== "skipped_package_picks";
       } catch (e) {
         prepDemandResynced = false;
         // Durable failure trail (adversarial review C3, 2026-07-31) — parity with

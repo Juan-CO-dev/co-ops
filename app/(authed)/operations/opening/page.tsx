@@ -22,7 +22,7 @@ import { ActionLink } from "@/components/ActionButton";
 
 import { AuthShell } from "@/components/auth/AuthShell";
 import { LogoutButton } from "@/components/auth/LogoutButton";
-import { accessibleLocations, type LocationActor } from "@/lib/locations";
+import { shopTaskLocations, type LocationActor } from "@/lib/locations";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
@@ -68,7 +68,8 @@ async function loadAccessibleLocations(
   sb: ReturnType<typeof getServiceRoleClient>,
   actor: LocationActor,
 ): Promise<LocationLite[]> {
-  const access = accessibleLocations(actor);
+  // W05B (Juan 2026-11-15): level 8+ (MoO, owner, CGS) work the opening at any active shop.
+  const access = shopTaskLocations(actor);
   let query = sb
     .from("locations")
     .select("id, name, code")

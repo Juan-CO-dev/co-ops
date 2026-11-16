@@ -143,6 +143,8 @@ export type RuleSeverity = "error" | "gap" | "warning";
 /** THE SEVERITY TABLE — the plan's map, one row per code. */
 export const RULE_CODES = {
   person_overlap: "error",
+  /** B134: a shift over time this person is already scheduled at ANOTHER shop (`RulePerson.elsewhere`). */
+  other_shop_overlap: "error",
   position_over_headcount: "error",
   shift_below_minimum: "error",
   /** CC chunk B ruling 3: a shift longer than the shop's daily maximum (`limits.maxShiftH`, default 10.5 h). HARD. */
@@ -1614,6 +1616,10 @@ export function checkScheduleRules(s: WeekSchedule, ctx: RuleContext, opts: Rule
       if (!availableOn(p, date, sh.startQ, sh.endQ)) {
         const w = p.availability[date];
         push("outside_assumed_availability", date, { userId: u, q: sh.startQ, params: { fromQ: w ? w.fromQ : null, toQ: w ? w.toQ : null, source: w ? w.source : null } });
+      }
+      // B134: never two shops at once — one problem per other-shop block the shift overlaps (its times, never the shop).
+      for (const [a, z] of p.elsewhere?.[date] ?? []) {
+        if (sh.startQ < z && sh.endQ > a) push("other_shop_overlap", date, { userId: u, q: Math.max(sh.startQ, a), params: { fromQ: a, toQ: z } });
       }
       let slots = personSlot.get(u);
       if (!slots) { slots = new Uint8Array(96); personSlot.set(u, slots); }

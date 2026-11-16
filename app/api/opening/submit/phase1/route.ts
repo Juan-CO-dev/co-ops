@@ -71,7 +71,7 @@ import { canAccessOpeningInstance } from "@/lib/opening";
 import { type NextRequest } from "next/server";
 
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { lockLocationContext } from "@/lib/locations";
+import { canWorkShopTasks } from "@/lib/locations";
 import { OpeningError, submitPhase1Atomic } from "@/lib/opening";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -363,7 +363,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (
-    !lockLocationContext(
+    !canWorkShopTasks(
       { role: ctx.role, locations: ctx.locations },
       instance.location_id,
     )

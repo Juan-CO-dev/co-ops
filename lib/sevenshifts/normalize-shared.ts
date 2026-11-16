@@ -429,7 +429,11 @@ export function normalizeShifts(input: readonly unknown[]): Normalized<ShiftRow>
   }));
 }
 
-/** Unpaid and paid breaks alike, summed from each break's in/out; null when no `breaks` list is sent. */
+/**
+ * UNPAID breaks only, summed from each break's in/out; null when no `breaks` list is sent. A paid break is worked time
+ * (B137): Toast's hours deduct only unpaid breaks (`unpaidBreakHours`), so counting paid ones here made a shift read
+ * short against Toast. A break with no `paid` flag counts as unpaid (7shifts' default).
+ */
 function breakMinutes(o: Obj): number | null {
   if (absent(o.breaks)) return null;
   if (!Array.isArray(o.breaks)) throw new Reject("bad_value");
@@ -439,6 +443,7 @@ function breakMinutes(o: Obj): number | null {
     // A break removed in 7shifts carries `deleted: true` (docs, update-time-punch-data, re-read
     // 2026-10-15) and adds nothing (chunk A review #5).
     if (optBool(b, "deleted") === true) continue;
+    if (optBool(b, "paid") === true) continue;
     const from = optInstant(b, "in");
     const to = optInstant(b, "out");
     if (from !== null && to !== null) ms += Math.max(0, Date.parse(to) - Date.parse(from));

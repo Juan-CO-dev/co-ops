@@ -21,6 +21,10 @@ const C = "77777777-7777-4777-8777-777777777777";
 const PO = "88888888-8888-4888-8888-888888888888";
 
 let inserts: Array<{ table: string; rows: unknown }> = [];
+// W20/B197: a new delivery is written by ONE call (record_delivery_atomic); the missing-item
+// credits travel in its `p_missing_credits`.
+let atomic: Array<Record<string, unknown>> = [];
+const missingCredits = () => atomic[0]!.p_missing_credits as Array<Record<string, unknown>>;
 function client(poLines: Array<{ sku_id: string; order_qty: number }>) {
   return { from(table: string) {
     let ids: unknown[] = [];
@@ -41,7 +45,11 @@ function client(poLines: Array<{ sku_id: string; order_qty: number }>) {
       return Promise.resolve({ data, error: null, count: 1 }).then(resolve);
     };
     return q;
-  }, rpc: async () => ({ data: null, error: null }) };
+  }, rpc: async (fn: string, args: Record<string, unknown>) => {
+    if (fn !== "record_delivery_atomic") return { data: null, error: null };
+    atomic.push(args);
+    return { data: { delivery_id: "delivery", item_ids: ["item"] }, error: null };
+  } };
 }
 const actor = { user: { id: "user", role: "key_holder" }, locations: [SHOP] } as never;
 const input = (missing: { skuId: string; expectedQty: number; unitPrice: number | null }) => ({
@@ -50,7 +58,7 @@ const input = (missing: { skuId: string; expectedQty: number; unitPrice: number 
   lines: [{ skuId: A, qtyReceived: 1 }], missingLines: [missing],
 });
 
-beforeEach(() => { inserts = []; vi.clearAllMocks(); });
+beforeEach(() => { inserts = []; atomic = []; vi.clearAllMocks(); });
 
 describe("W04/B148 missing-item credits are bounded by the PO", () => {
   it("refuses a SKU that was never on the PO, before any write", async () => {
@@ -58,19 +66,19 @@ describe("W04/B148 missing-item credits are bounded by the PO", () => {
     await expect(recordDelivery(actor, input({ skuId: B, expectedQty: 100, unitPrice: 200 })))
       .rejects.toMatchObject({ status: 400, code: "missing_not_on_po" });
     expect(inserts).toEqual([]);
+    expect(atomic).toEqual([]);
   });
 
   it("caps the claimed qty at what the PO ordered", async () => {
     vi.mocked(getServiceRoleClient).mockReturnValue(client([{ sku_id: A, order_qty: 1 }, { sku_id: C, order_qty: 3 }]) as never);
     await recordDelivery(actor, input({ skuId: C, expectedQty: 100, unitPrice: 2 }));
-    const credit = inserts.find((i) => i.table === "vendor_credits")!.rows as Array<Record<string, unknown>>;
-    expect(credit).toEqual([expect.objectContaining({ sku_id: C, reason: "short", qty: 3, amount_cents: 600, delivery_item_id: null })]);
+    expect(missingCredits()).toEqual([{ sku_id: C, reason: "short", qty: 3, amount_cents: 600 }]);
+    expect(inserts).toEqual([]);
   });
 
   it("an honest claim at the ordered qty is unchanged", async () => {
     vi.mocked(getServiceRoleClient).mockReturnValue(client([{ sku_id: A, order_qty: 1 }, { sku_id: C, order_qty: 3 }]) as never);
     await recordDelivery(actor, input({ skuId: C, expectedQty: 2, unitPrice: null }));
-    const credit = inserts.find((i) => i.table === "vendor_credits")!.rows as Array<Record<string, unknown>>;
-    expect(credit).toEqual([expect.objectContaining({ sku_id: C, qty: 2, amount_cents: null })]);
+    expect(missingCredits()).toEqual([expect.objectContaining({ sku_id: C, qty: 2, amount_cents: null })]);
   });
 });

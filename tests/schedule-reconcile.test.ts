@@ -10,6 +10,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { RECONCILE_FLAG_CODES, reconcile, type ReconcileInput } from "@/lib/scheduling/reconcile-shared";
+import { normalizeTimePunches } from "@/lib/sevenshifts/normalize-shared";
 
 // Wed Oct 14 2026 (EDT, UTC−4) and Thu Oct 15.
 const D1 = "2026-10-14";
@@ -229,6 +230,19 @@ describe("sources_disagree: 7shifts punch hours vs Toast hours > 15 min for a pe
     expect(row(far, ANA).flags).toEqual([{ code: "sources_disagree", date: D1, params: { toastHours: 6, sevenHours: 5.5 } }]);
     const near = reconcile(base({ publishedSevenShifts14d: pub, toastPunches14d: [punch("tg-ana", D1, "11:00", "17:00")], sevenPunches14d: [{ sevenUserId: "701", clockedIn: at(D1, "11:00"), clockedOut: at(D1, "16:50"), breakMinutes: 0 }] }));
     expect(codes(row(near, ANA))).toEqual([]);
+  });
+});
+
+describe("paid breaks are worked time on both sides (B137)", () => {
+  it("Toast 8 h vs a 7shifts 09:00–17:00 punch with two paid 10-minute breaks → no sources_disagree", () => {
+    const n = normalizeTimePunches([{ id: 1, user_id: 701, clocked_in: at(D1, "09:00"), clocked_out: at(D1, "17:00"),
+      breaks: [{ in: at(D1, "10:00"), out: at(D1, "10:10"), paid: true }, { in: at(D1, "14:00"), out: at(D1, "14:10"), paid: true }] }]);
+    expect(n.rejected).toEqual([]);
+    const breakMinutes = n.rows[0]!.break_minutes!;
+    expect(breakMinutes).toBe(0);
+    const out = reconcile(base({ publishedSevenShifts14d: [published("701", D1, "09:00", "17:00")], toastPunches14d: [punch("tg-ana", D1, "09:00", "17:00")],
+      sevenPunches14d: [{ sevenUserId: "701", clockedIn: at(D1, "09:00"), clockedOut: at(D1, "17:00"), breakMinutes }] }));
+    expect(codes(row(out, ANA))).not.toContain("sources_disagree");
   });
 });
 

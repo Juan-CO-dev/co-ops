@@ -142,11 +142,14 @@ export async function postPhoto(
   prepared: PreparedUpload,
   locationId: string,
   timeoutMs: number = UPLOAD_TIMEOUT_MS,
+  /** A TASK photo names its checklist instance (audit W05B): the server binds it by the shop-task rule. */
+  options: { instanceId?: string | null } = {},
 ): Promise<PhotoUploadOutcome> {
   const fail = (error: PhotoUploadError): PhotoUploadOutcome => ({ ok: false, error });
   const form = new FormData();
   form.append("file", prepared.blob, prepared.name);
   form.append("locationId", locationId);
+  if (options.instanceId) form.append("instanceId", options.instanceId);
   try {
     return await withDeadline(timeoutMs, async (signal): Promise<PhotoUploadOutcome> => {
       const res = await fetch("/api/photos", { method: "POST", body: form, redirect: "manual", signal });

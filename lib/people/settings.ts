@@ -50,6 +50,8 @@ export async function savePeopleShopSettings(
   }
   // CC gate ruling (chunk G Q3): flipping the PM v2 switch is MoO+ only, the same rule as its admin card. A GM may
   // still save the shop's other setting (the prep position) as long as the switch value travels unchanged.
+  // This read is the friendly fast path only: it runs outside the lock, so 0334 decides the rule again inside
+  // save_people_shop_settings on the LOCKED row (B219: a MoO's flip between this read and the RPC).
   if (!canManagePmV2Switch(args.actor) && args.pmV2 !== (await loadPeopleShopSettings(service, args.locationId)).pmV2) {
     throw new PeopleSkillError(403, "pm_v2_moo_only");
   }

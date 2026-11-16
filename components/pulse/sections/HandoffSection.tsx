@@ -19,14 +19,16 @@ export function HandoffSection({ data, mode, locationId, onChanged }: { data: Ha
   const [failed, setFailed] = useState(false);
   const notes = mode === "card" ? data.notes.slice(0, 3) : data.notes;
 
-  const post = async (payload: Record<string, unknown>) => {
+  // Resolves true when the server accepted the action. It never touches the composer draft: an ack or
+  // a retract must not wipe a note still being written (B119); only a successful create clears it.
+  const post = async (payload: Record<string, unknown>): Promise<boolean> => {
     setBusy(true); setFailed(false);
     try {
       const res = await fetch("/api/pulse/handoff", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locationId, ...payload }) });
-      if (!res.ok) { setFailed(true); return; }
-      setBody("");
+      if (!res.ok) { setFailed(true); return false; }
       await onChanged();
-    } catch { setFailed(true); } finally { setBusy(false); }
+      return true;
+    } catch { setFailed(true); return false; } finally { setBusy(false); }
   };
 
   return (
@@ -62,7 +64,13 @@ export function HandoffSection({ data, mode, locationId, onChanged }: { data: Ha
         </ul>
       )}
       {data.canAuthor && mode === "detail" && (
-        <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); if (body.trim()) void post({ action: "create", audience, body }); }}>
+        <form className="flex flex-col gap-2" onSubmit={(e) => {
+          e.preventDefault();
+          const sent = body;
+          if (!sent.trim()) return;
+          // Clear only what was sent: text typed while the create was in flight survives.
+          void post({ action: "create", audience, body: sent }).then((ok) => { if (ok) setBody((cur) => (cur === sent ? "" : cur)); });
+        }}>
           <h3 className={subHeading}>{t("pulse.handoff.write")}</h3>
           <label className="flex flex-col gap-1 text-xs font-bold text-co-text-muted">
             {t("pulse.handoff.audience_label")}
