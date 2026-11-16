@@ -100,6 +100,39 @@ describe("trends loader scope and independent clipped windows", () => {
       expect(alignTrendCompare(r, g)).toBe(r);
     }
   });
+  it("a WHOLE calendar month (the last_month preset) compares with the whole previous calendar month (W26 review r1)", () => {
+    const lastMonth = (today: string) => alignTrendCompare(resolveTrendRange({ range: "last_month", compare: "1" }, today, "month"), "month");
+    // March 10: February vs January 1–31 (not January 1–28).
+    const feb = lastMonth("2026-03-10");
+    expect({ from: feb.from, to: feb.to }).toEqual({ from: "2026-02-01", to: "2026-02-28" });
+    expect(feb.previous).toEqual({ from: "2026-01-01", to: "2026-01-31" });
+    // May 3: April (30 days) vs March 1–31 (not March 1–30).
+    const apr = lastMonth("2026-05-03");
+    expect(apr.previous).toEqual({ from: "2026-03-01", to: "2026-03-31" });
+    // March vs February (28 days) — the shorter month is whole too.
+    expect(lastMonth("2026-04-15").previous).toEqual({ from: "2026-02-01", to: "2026-02-28" });
+    // Several whole months (custom Feb 1 – Apr 30): the three whole months before.
+    const q = alignTrendCompare(parseReportRange({ range: "custom", from: "2026-02-01", to: "2026-04-30", compare: "1" }, "2026-05-10", "month"), "month");
+    expect(q.previous).toEqual({ from: "2025-11-01", to: "2026-01-31" });
+    expect(clippedBucketKeys(q.previous.from, q.previous.to, "month")).toEqual(["2025-11-01", "2025-12-01", "2026-01-01"]);
+  });
+  it("a PARTIAL month range keeps the same-days-N-months-earlier alignment (W26/B222)", () => {
+    const p = alignTrendCompare(parseReportRange({ range: "custom", from: "2026-03-01", to: "2026-03-30", compare: "1" }, "2026-04-05", "month"), "month");
+    expect(p.previous).toEqual({ from: "2026-02-01", to: "2026-02-28" });
+    const mid = alignTrendCompare(parseReportRange({ range: "custom", from: "2026-03-05", to: "2026-03-31", compare: "1" }, "2026-04-05", "month"), "month");
+    expect(mid.previous).toEqual({ from: "2026-02-05", to: "2026-02-28" });
+  });
+  it("loadTrendSeries with the last_month preset counts January 29–31 in the previous window", async () => {
+    const f = fake({ cash_reports: [
+      { id: "jan30", location_id: "mine", report_date: "2026-01-30", over_short_cents: 40 },
+      { id: "feb10", location_id: "mine", report_date: "2026-02-10", over_short_cents: 100 },
+    ] });
+    const range = parseReportRange({ range: "last_month", compare: "1" }, "2026-03-10", "month");
+    const result = await loadTrendSeries(f.service, { ...args, compare: true, today: "2026-03-10", range, viewer: { userId: "kh", level: 4, locations: ["mine"] } });
+    expect(result.previous?.map(b => b.key)).toEqual(["2026-01-01"]);
+    expect(result.current.map(b => b.key)).toEqual(["2026-02-01"]);
+    expect(result.totals.cash).toEqual({ current: 100, previous: 40, delta: 60 });
+  });
   it("loads a month compare with as many previous buckets as current ones (W26/B222)", async () => {
     const f = fake({});
     const result = await loadTrendSeries(f.service, { ...args, compare: true, today: "2026-03-01", viewer: { userId: "kh", level: 4, locations: ["mine"] } });

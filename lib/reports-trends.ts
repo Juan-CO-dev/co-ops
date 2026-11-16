@@ -175,17 +175,29 @@ function shiftMonthsClamped(date: string, months: number): string {
   target.setUTCDate(Math.min(d, lastDay));
   return target.toISOString().slice(0, 10);
 }
+/** True when [from, to] is exactly whole calendar months (from = a 1st, to = a month's last day). */
+function isWholeCalendarMonths(from: string, to: string): boolean {
+  return from.endsWith("-01") && from <= to && addDays(to, 1).endsWith("-01");
+}
 /**
- * Month grain (W26/B222): the comparison window is the SAME calendar days N
- * months earlier (N = the current window's month buckets), clamped to month
- * end, so previous bucket i pairs with current bucket i and both sides span
- * the same number of months. Day and week grain return the range unchanged
- * (equal days already give equal, aligned buckets). Ops trends only: the
- * team / person pages keep the shared resolver (people-layer golden).
+ * Month grain (W26/B222): the comparison window spans the SAME number of
+ * month buckets N, so previous bucket i pairs with current bucket i.
+ *   · A range of WHOLE calendar months (the last_month preset, or a custom
+ *     Feb 1 – Apr 30) compares with the N whole calendar months right before
+ *     it — February vs January 1–31, April vs March 1–31 (review r1: shifting
+ *     the end date by N months clamped January to the 28th and dropped 29–31).
+ *   · A PARTIAL range compares with the same calendar days N months earlier,
+ *     clamped to month end.
+ * Day and week grain return the range unchanged (equal days already give
+ * equal, aligned buckets). Ops trends only: the team / person pages keep the
+ * shared resolver (people-layer golden).
  */
 export function alignTrendCompare(range: TrendRange, granularity: TrendGranularity): TrendRange {
   if (granularity !== "month") return range;
   const n = clippedBucketKeys(range.from, range.to, "month").length;
+  if (isWholeCalendarMonths(range.from, range.to)) {
+    return { ...range, previous: { from: shiftMonthsClamped(range.from, -n), to: addDays(range.from, -1) } };
+  }
   return { ...range, previous: { from: shiftMonthsClamped(range.from, -n), to: shiftMonthsClamped(range.to, -n) } };
 }
 export function trendLocationAllowed(viewer: Viewer, locationId: string): boolean {
