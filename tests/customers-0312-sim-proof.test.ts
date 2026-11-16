@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   CUTOFF, EXPORT_DATE, IMPORT_SOURCE, fixture, fixtureSQL, holderSQL, importFixture, importFixtureSQL, importPreflight,
-  importRetireSQL, importSignatures, preflight, racerSQL, retireSQL, runImportPairings, runProof, signatures, userColumns,
+  importPersonBSQL, importRetireSQL, importSignatures, preflight, racerSQL, retireSQL, runImportPairings, runProof, signatures, userColumns,
 } from "../scripts/sim/customers-0312-retention-lock-check-management.mjs";
 import { PROD_REF, SIM_REF, projectRef } from "../scripts/supabase-management-query.mjs";
 
@@ -76,8 +76,8 @@ describe("0312 sim import-finish pairing (offline)", () => {
     expect(importFixtureSQL(f)).toContain("timestamptz '1990-01-01 00:00+00'");
     const cleanup = importRetireSQL(f);
     expect(cleanup).not.toMatch(/\bdelete from\b|\btruncate\b/i);
-    expect(cleanup).toContain(`'${f.a}','delete_request'`);
-    expect(cleanup).toContain(`'${f.b}','delete_request'`);
+    expect(cleanup).toContain("'delete_request'");
+    expect(cleanup).toContain(`c.id in ('${f.a}','${f.b}')`);
   });
   it.each(["grant", "order", "blast", "imports", "running"])("refuses %s drift before any insert", async (mode) => {
     const query = vi.fn()
@@ -88,18 +88,47 @@ describe("0312 sim import-finish pairing (offline)", () => {
     expect(query.mock.calls.every(([sql]) => !String(sql).includes("insert into"))).toBe(true);
   });
 
-  type Mode = { blocked: [boolean, boolean]; erased: number; aState?: object; bState?: object; replay?: boolean };
-  const ok: Mode = { blocked: [true, true], erased: 0 };
+  // r2 (review P2): the fake no longer supplies the sweep's erased count. It models the fixture rows the
+  // script's SQL creates (people from its inserts, opt-ins from completed finishes, erasures) and the sweep
+  // erases exactly the live, unconsented ones: the sweep's eligibility at the 1990-01-02 cutoff (every fixture
+  // person is last seen 1990-01-01). The database-backed version is sql-harness-0312's sim-fixture block.
+  type Mode = { blocked: [boolean, boolean]; sweepIgnoresConsent?: boolean; aState?: object; bState?: object; replay?: boolean };
+  const ok: Mode = { blocked: [true, true] };
   function transport(mode: Mode) {
-    let time = 0, pairing = -1, calls = 0;
+    let time = 0, pairing = -1, calls = 0, imports = 0;
     let release: (rows: unknown[]) => void = () => {};
     const hold = () => new Promise<unknown[]>((resolve) => { release = resolve; });
+    const people = new Map<string, { email: string; consented: boolean; erased: boolean }>();
+    const importEmail = new Map<string, string>();
+    const sweeps: number[] = [];
+    const log: string[] = [];
+    const finish = (sql: string) => {
+      const id = /customer_consent_import_finish\('[^']+','([^']+)'/.exec(sql)![1]!;
+      for (const p of people.values()) if (p.email === importEmail.get(id) && !p.erased) p.consented = true;
+      return [{ result: { replay: mode.replay ?? false } }];
+    };
+    const sweep = () => {
+      const erased = [...people.values()].filter((p) => !p.erased && (mode.sweepIgnoresConsent || !p.consented));
+      for (const p of erased) p.erased = true;
+      sweeps.push(erased.length);
+      return [{ result: { erased: erased.length, skipped: 0 } }];
+    };
     const query = vi.fn(async (sql: string): Promise<unknown[]> => {
       if (sql.includes("unnest(array[")) return importGrants;
       if (sql.includes(" as locked")) return [{ locked: true }];
       if (sql.includes(" as candidates")) return [{ candidates: 0, imports: 0, running: 0 }];
-      if (sql.includes("insert into public.users")) return [];
-      if (sql.includes("customer_consent_import_begin(")) return [{ import_id: "00000000-0000-4000-8000-00000000000" + (pairing + 2) }];
+      if (sql.includes("insert into public.customers")) {
+        for (const [, id, email] of sql.matchAll(/customer_identifiers\([^)]*\)\s*values\('([0-9a-f-]+)','email','([^']+)'/g)) {
+          people.set(id!, { email: email!, consented: false, erased: false });
+          log.push(`create ${email}`);
+        }
+        return [];
+      }
+      if (sql.includes("customer_consent_import_begin(")) {
+        const id = `00000000-0000-4000-8000-00000000000${++imports}`;
+        importEmail.set(id, /sim-0312i-[ab]-[0-9a-f-]+@example\.test/.exec(sql)![0]);
+        return [{ import_id: id }];
+      }
       if (sql.includes("customer_consent_import_chunk(")) return [];
       if (sql.includes(" as ready")) return [{ ready: true }];
       if (sql.includes("pg_blocking_pids")) return [{ blocked: mode.blocked[pairing] }];
@@ -107,30 +136,41 @@ describe("0312 sim import-finish pairing (offline)", () => {
       const isSweep = sql.includes("customer_retention_sweep(");
       if (isFinish || isSweep) {
         expect(sql).toContain("set local role service_role");
-        // Calls in order: finish holds (I), sweep races (I), sweep holds (II), finish races (II).
+        // Calls in order: finish holds (I), sweep races (I), sweep holds (II), finish races (II). The holder's
+        // effect lands first (it commits first); the racer then sees it.
         calls += 1;
         expect(isFinish).toBe(calls === 1 || calls === 4);
+        log.push(isFinish ? "finish" : "sweep");
+        const rows = isFinish ? finish(sql) : sweep();
         if (calls === 1 || calls === 3) { pairing += 1; return hold(); }
         time += 7000; release([]);
-        return isSweep ? [{ result: { erased: mode.erased, skipped: 0 } }] : [{ result: { replay: mode.replay ?? false } }];
+        return rows;
       }
       if (sql.includes(" as exported")) {
-        return pairing === 0
-          ? [mode.aState ?? { live: true, identifiers: 1, consent: "opted_in", exported: true }]
-          : [mode.bState ?? { live: false, identifiers: 0, consent: "opted_out", exported: false }];
+        const id = /where id='([0-9a-f-]+)'/.exec(sql)![1]!;
+        const p = people.get(id)!;
+        const isA = p.email.includes("-a-");
+        const override = isA ? mode.aState : mode.bState;
+        if (override && (pairing === 0) === isA) return [override];
+        return [{ live: !p.erased, identifiers: p.erased ? 0 : 1, consent: p.erased ? "opted_out" : p.consented ? "opted_in" : null,
+          exported: p.consented && !p.erased }];
       }
-      if (sql.includes("select public.customer_erase(")) return [];
-      if (sql.includes(" as retired")) return [{ retired: true }];
+      if (sql.includes("select public.customer_erase(")) {
+        for (const p of people.values()) p.erased = true;
+        log.push("retire");
+        return [];
+      }
+      if (sql.includes(" as retired")) return [{ retired: [...people.values()].every((p) => p.erased) }];
       throw new Error(`unexpected SQL ${sql.slice(0, 60)}`);
     });
     const raceOptions = { now: () => time, sleep: async (ms: number) => { time += ms; } };
-    return { query, raceOptions };
+    return { query, raceOptions, sweeps, log };
   }
   it.each<[string, Mode, boolean]>([
     ["both orders blocked, nobody opted in mid-erase", ok, true],
     ["the sweep did not block behind the finish", { ...ok, blocked: [false, true] }, false],
     ["the finish did not block behind the sweep", { ...ok, blocked: [true, false] }, false],
-    ["the sweep erased the person the import opted in", { ...ok, erased: 1 }, false],
+    ["the sweep erased the person the import opted in", { ...ok, sweepIgnoresConsent: true }, false],
     ["the opted-in person lost their address", { ...ok, aState: { live: true, identifiers: 0, consent: "opted_in", exported: false } }, false],
     ["the person erased first came back opted in", { ...ok, bState: { live: false, identifiers: 0, consent: "opted_in", exported: false } }, false],
     ["the racing finish only replayed", { ...ok, replay: true }, false],
@@ -139,5 +179,28 @@ describe("0312 sim import-finish pairing (offline)", () => {
     const proof = runImportPairings(query, vi.fn(), raceOptions);
     if (passes) await proof; else await expect(proof).rejects.toThrow();
     expect(query.mock.calls.filter(([sql]) => String(sql).includes("select public.customer_erase("))).toHaveLength(1);
+  });
+  it("creates B only after pairing I, so pairing I's sweep has no candidate and pairing II's erases exactly B", async () => {
+    const { query, raceOptions, sweeps, log } = transport(ok);
+    await runImportPairings(query, vi.fn(), raceOptions);
+    expect(sweeps).toEqual([0, 1]);
+    expect(log.map((l) => l.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/, "<id>"))).toEqual([
+      "create sim-0312i-a-<id>@example.test", "finish", "sweep",
+      "create sim-0312i-b-<id>@example.test", "sweep", "finish", "retire",
+    ]);
+  });
+  it("a run that stops in pairing I never creates B and still retires what it created", async () => {
+    const { query, raceOptions, log } = transport({ ...ok, blocked: [false, true] });
+    await expect(runImportPairings(query, vi.fn(), raceOptions)).rejects.toThrow(/racer must have an ungranted lock/);
+    expect(log.some((l) => l.includes("sim-0312i-b-"))).toBe(false);
+    expect(log.at(-1)).toBe("retire");
+    expect(importRetireSQL(importFixture())).toMatch(/customer_erase\([^)]*c\.id,'delete_request'\) from public\.customers c where c\.id in \(/);
+  });
+  it("the fixture SQL creates only A up front; B has its own insert", () => {
+    const f = importFixture();
+    expect(importFixtureSQL(f)).toContain(f.emailA);
+    expect(importFixtureSQL(f)).not.toContain(f.emailB);
+    expect(importPersonBSQL(f)).toContain(f.emailB);
+    expect(importPersonBSQL(f)).not.toContain(f.emailA);
   });
 });

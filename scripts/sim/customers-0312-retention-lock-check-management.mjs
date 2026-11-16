@@ -18,7 +18,10 @@
  *       opted out and out of the marketing file. Before r1 the finish never took the identity lock and
  *       could commit an opt-in between the sweep's re-check and its erase.
  * Its fixture: two synthetic people last seen 1990-01-01 and two imports of source toast_marketing_api
- * dated 1990-01-01; the pre-flight refuses unless every import of that source on sim is one of this proof's
+ * dated 1990-01-01. Person B is created only AFTER pairing I passes, right before import B is staged
+ * (r2, review P2): an unconsented B present during pairing I is a correct sweep candidate at the 1990-01-02
+ * cutoff, so pairing I's sweep would erase B (erased: 1) and the proof would abort before pairing II.
+ * scripts/sql-harness-0312.mjs runs this exact sequence serially on PGlite to prove the fixture's eligibility; the pre-flight refuses unless every import of that source on sim is one of this proof's
  * own (so no real diff baseline moves) and none is running. The completed fixture imports stay (append-only;
  * consent history is never deleted): a later toast_marketing_api import on sim diffs against them and is not
  * a baseline. The blast-radius counts are the sweep's own candidates (live, unmerged), so a re-run passes.
@@ -124,13 +127,15 @@ const personSQL = (id, tag, email) => `
     insert into public.customer_identifiers(customer_id,kind,value,value_sha256,source,first_seen_at,last_seen_at)
       values(${q(id)},'email',${q(email)},encode(sha256(convert_to(${q(email)},'UTF8')),'hex'),'toast_pos',
         timestamptz '1990-01-01 00:00+00',timestamptz '1990-01-01 00:00+00');`;
+// The owner user and person A only. Person B comes later (importPersonBSQL), after pairing I.
 export function importFixtureSQL(f) {
   return `begin;
     insert into public.users(id,name,role,pin_hash,active) values(${q(f.actor)},${q(f.tag)},'owner','SIM-NO-VALID-CREDENTIAL',true);
     ${personSQL(f.a, f.tag, f.emailA)}
-    ${personSQL(f.b, f.tag, f.emailB)}
     commit;`;
 }
+export const importPersonBSQL = (f) => `begin;${personSQL(f.b, f.tag, f.emailB)}
+    commit;`;
 export const beginSQL = (f, email) => `select (public.customer_consent_import_begin(${q(f.actor)},${q(IMPORT_SOURCE)},
     encode(sha256(convert_to(${q(`${f.tag}:${email}`)},'UTF8')),'hex'),date ${q(EXPORT_DATE)},false,1))->>'import_id' as import_id`;
 export const chunkSQL = (f, importId, email) => `select public.customer_consent_import_chunk(${q(f.actor)},${q(importId)},0,
@@ -142,13 +147,16 @@ export const stateSQL = (id) => `select
       (select status from public.customer_consent_current where customer_id=${q(id)} and channel='email') as consent,
       exists(select 1 from public.customer_marketing_export('email') x where x.customer_id=${q(id)}) as exported`;
 export function importRetireSQL(f) {
-  // Erase (by delete request) only the two fixture people; retire only the fixture user. Nothing is deleted.
+  // Erase (by delete request) only the fixture people that exist (a run that stopped early never created B,
+  // or nothing at all); retire only the fixture user. Nothing is deleted.
   return `begin;
-    select public.customer_erase(${q(f.actor)},${q(f.a)},'delete_request');
-    select public.customer_erase(${q(f.actor)},${q(f.b)},'delete_request');
+    select public.customer_erase(${q(f.actor)},c.id,'delete_request') from public.customers c where c.id in (${q(f.a)},${q(f.b)});
     update public.users set active=false where id=${q(f.actor)} and name=${q(f.tag)};
     commit;`;
 }
+// Every fixture person that exists is erased and the fixture user (if created) is inactive.
+export const importRetiredSQL = (f) => `select not exists(select 1 from public.users where id=${q(f.actor)} and active)
+      and not exists(select 1 from public.customers where id in (${q(f.a)},${q(f.b)}) and erased_at is null) as retired`;
 
 export async function importPreflight(query) {
   const grants = await query(`begin read only; set local statement_timeout='10s';
@@ -180,7 +188,8 @@ async function stageImport(query, f, email) {
   return importId;
 }
 
-export async function runImportPairings(query, log=console.log, raceOptions={}) {
+// `race` is proveRace on sim; the offline harness passes a serial stand-in to replay the same sequence.
+export async function runImportPairings(query, log=console.log, raceOptions={}, race=proveRace) {
   await importPreflight(query);
   const f = importFixture();
   log(`FIXTURE allocated ${JSON.stringify({ actor: f.actor, a: f.a, b: f.b, tag: f.tag })}`);
@@ -189,29 +198,32 @@ export async function runImportPairings(query, log=console.log, raceOptions={}) 
     // I. The finish holds the identity lock; the sweep races.
     const importA = await stageImport(query, f, f.emailA);
     log(`FIXTURE import A ${importA}`);
-    const first = await proveRace(query, finishSQL(f, importA), racerSQL(f), `${f.tag}-1`, raceOptions);
+    const first = await race(query, finishSQL(f, importA), racerSQL(f), `${f.tag}-1`, raceOptions);
     assert.equal(first.ok, true, 'the sweep must commit');
     assert.equal(first.rows?.[0]?.result?.erased, 0, 'the sweep must erase nobody: the import opted the person in under the lock');
     const a = await query(stateSQL(f.a));
     assert.deepEqual(a[0], { live: true, identifiers: 1, consent: 'opted_in', exported: true },
       'the person the import opted in keeps identity, consent and the marketing file');
     log('PASS I: the sweep blocked behind the finishing import, then erased nobody');
-    // II. The sweep holds the identity lock (it has checked and erased B); the finish races.
+    // II. Only now does B exist (r2): unconsented and last seen 1990-01-01, B is the sweep's one candidate.
+    // The sweep holds the identity lock (it has checked and erased B); the finish races.
+    await query(importPersonBSQL(f));
     const importB = await stageImport(query, f, f.emailB);
     log(`FIXTURE import B ${importB}`);
-    const second = await proveRace(query, racerSQL(f), finishSQL(f, importB), `${f.tag}-2`, raceOptions);
+    const second = await race(query, racerSQL(f), finishSQL(f, importB), `${f.tag}-2`, raceOptions);
     assert.equal(second.ok, true, 'the finish must commit after the sweep');
     assert.equal(second.rows?.[0]?.result?.replay, false, 'the finish must complete the import');
     const b = await query(stateSQL(f.b));
     assert.deepEqual(b[0], { live: false, identifiers: 0, consent: 'opted_out', exported: false },
       'the person the sweep erased first stays erased, opted out and unmarketed');
+    const kept = await query(stateSQL(f.a));
+    assert.ok(kept[0]?.live === true && kept[0]?.identifiers === 1, 'the second sweep erased only B: A (opted in at the time) stays');
     log('PASS II: the finish blocked behind the sweep, then completed; nobody was opted in mid-erase');
   } finally {
     await query(importRetireSQL(f));
-    const rows = await query(`select not exists(select 1 from public.users where id=${q(f.actor)} and active)
-      and (select count(*) from public.customers where id in (${q(f.a)},${q(f.b)}) and erased_at is not null) = 2 as retired`);
+    const rows = await query(importRetiredSQL(f));
     assert.equal(rows[0]?.retired, true, 'owned fixture must be retired');
-    log('PASS import fixture user retired and both fixture people erased by delete request');
+    log('PASS import fixture user retired and every fixture person created erased by delete request');
   }
 }
 

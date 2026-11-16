@@ -15,6 +15,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
+import { transactionSQL } from './sim/checklist-0276-lock-check-management.mjs';
+import {
+  finishSQL, importFixture, importFixtureSQL, importPersonBSQL, importRetireSQL, importRetiredSQL, racerSQL, runImportPairings, stateSQL,
+} from './sim/customers-0312-retention-lock-check-management.mjs';
 
 const read = (n) => readFileSync(new URL(`../supabase/migrations/${n}`, import.meta.url), 'utf8');
 const migration = read('0312_customer_consent_retention_fixes.sql');
@@ -378,6 +382,60 @@ try {
     await db.exec('set role service_role');
     check((await one(db, "select count(*)::int n from public.customer_merge_suggestions_open(null, 50)")).n === 0, 'service_role can call the new suggestions read');
     await db.exec('reset role');
+    await db.close();
+  }
+
+  // W12/B070 r2 (review P2): the SIM proof's own fixture, evaluated by the database. The sim script's
+  // runImportPairings runs here end to end with its exact SQL (preflight, fixture, staging, both pairings,
+  // cleanup), each race replayed serially in its commit order (holder commits, then racer) through the
+  // same transactionSQL wrapper (service_role, read committed) minus the sleep. What the sweep erases is
+  // therefore what the fixture rows make eligible, not a value the test supplies.
+  {
+    const { db } = await fresh(true);
+    await db.exec('alter table public.users add column name text, add column pin_hash text');
+    const query = async (sql) => [...(await db.exec(sql))].reverse().find((r) => r.fields.length > 0)?.rows ?? [];
+    const races = [];
+    const serialRace = async (q, holder, racer, tag) => {
+      const held = await q(transactionSQL(`${tag}-h`, holder));
+      const rows = await q(transactionSQL(`${tag}-r`, racer));
+      races.push({ held: held[0]?.result, raced: rows[0]?.result });
+      return { ok: true, rows };
+    };
+    const log = [];
+    await runImportPairings(query, (m) => log.push(m), {}, serialRace);
+    check(races.length === 2 && races[0].raced.erased === 0 && races[1].held.erased === 1,
+      "sim fixture: pairing I's sweep has no candidate (B not yet created); pairing II's sweep erases exactly B");
+    check(log.some((m) => m.startsWith('PASS II')) && log.at(-1).startsWith('PASS import fixture user retired'),
+      'sim fixture: the import pairings run through pairing II and retire the fixture');
+    // A re-run on the same database (sim keeps the earlier fixture imports, append-only) passes too.
+    await runImportPairings(query, () => {}, {}, serialRace);
+    check(races.length === 4 && races[2].raced.erased === 0 && races[3].held.erased === 1, 'sim fixture: a re-run passes against the earlier fixture imports');
+    // Partial fixture: a run that stopped after pairing I (B never created) still retires cleanly.
+    const g = importFixture();
+    await query(importFixtureSQL(g));
+    await query(importRetireSQL(g));
+    check((await query(importRetiredSQL(g)))[0]?.retired === true && (await query(stateSQL(g.a)))[0]?.live === false,
+      'sim fixture: cleanup tolerates a fixture that never created B');
+    const none = importFixture();
+    await query(importRetireSQL(none));
+    check((await query(importRetiredSQL(none)))[0]?.retired === true, 'sim fixture: cleanup tolerates a fixture that created nothing');
+    await db.close();
+  }
+  // The r1 fixture shape (B created up front, unconsented, last seen 1990) is a red: pairing I's sweep
+  // correctly erases B, so the proof's erased:0 assertion aborts before pairing II.
+  {
+    const { db } = await fresh(true);
+    await db.exec('alter table public.users add column name text, add column pin_hash text');
+    const query = async (sql) => [...(await db.exec(sql))].reverse().find((r) => r.fields.length > 0)?.rows ?? [];
+    const f = importFixture();
+    await query(importFixtureSQL(f));
+    await query(importPersonBSQL(f));
+    const begun = await call(db, 'customer_consent_import_begin', [f.actor, 'toast_marketing_api', sha(randomUUID()), '1990-01-01', false, 1]);
+    await call(db, 'customer_consent_import_chunk', [f.actor, begun.import_id, 0, JSON.stringify([{ email: f.emailA }])], ['', '', '', '::jsonb']);
+    await query(transactionSQL('r1-h', finishSQL(f, begun.import_id)));
+    const sweep = (await query(transactionSQL('r1-r', racerSQL(f))))[0]?.result;
+    check(sweep.erased === 1 && (await query(stateSQL(f.b)))[0]?.live === false,
+      'sim fixture red: with B created before pairing I, the sweep erases B (erased 1, not the asserted 0)');
     await db.close();
   }
 
