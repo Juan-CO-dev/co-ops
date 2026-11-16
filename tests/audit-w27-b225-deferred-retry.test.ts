@@ -7,7 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { catchUpDailyJobs, CATCH_UP_MIN_JOB_MS } from "@/lib/daily-catchup";
 import { audit } from "@/lib/audit";
 import { runToastSalesPull } from "@/lib/toast-sales-pull-run";
-import { receiptRunMinimumMs } from "@/lib/receipt-parse-budget-shared";
+import { INBOUND_FETCH_WINDOW_MS, PARSE_ROW_RESERVE_MS, receiptRunMinimumMs } from "@/lib/receipt-parse-budget-shared";
+import { runParseReceipts } from "@/lib/parse-receipts-run";
+import { parseReceipt } from "@/lib/receipt-parse";
 
 const mocks = vi.hoisted(() => ({ service: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
@@ -32,10 +34,16 @@ let fetchStarts = 0;
 const cost = { claim: 15_000, queueRead: 1_000 };
 /** Jobs already caught up today (seeded success rows). */
 let doneToday: string[] = [];
+/** Unparsed inbound receipts waiting (parse-key runs only), and how often the run read that queue. */
+let unparsed: string[] = [];
+let receiptQueueReads = 0;
+/** Inbound mail due for a fetch. */
+let mail: string[] = [];
 
 beforeEach(() => {
   vi.resetAllMocks();
   attempts.length = 0; won.clear(); log.length = 0; fetchStarts = 0;
+  unparsed = []; receiptQueueReads = 0; mail = ["pending-mail-1"];
   cost.claim = 15_000;
   doneToday = ["prune-sessions", "toast-sales-pull"];
   clock = 1_800_000_000_000;
@@ -64,9 +72,10 @@ beforeEach(() => {
         return { data: hit ? { occurred_at: "2026-09-12T11:00:00.000Z" } : null, error: null };
       },
       returns: async () => {
-        expect(table).toBe("inbound_messages");
         clock += cost.queueRead;
-        return { data: [{ id: "pending-mail-1" }], error: null };
+        if (table === "email_receipts") { receiptQueueReads++; return { data: unparsed.map(id => ({ id })), error: null }; }
+        expect(table).toBe("inbound_messages");
+        return { data: mail.map(id => ({ id })), error: null };
       },
     };
     return query;
@@ -99,7 +108,9 @@ describe("a claimed catch-up that started nothing is deferred and retried once",
     expect(receiptRows()).toEqual(["cron.deferred"]);
     expect(deferredMeta()[0]).toMatchObject({
       action: "cron.deferred", resourceTable: "cron", actorId: null,
-      metadata: { job: "parse-receipts", reason: "started_nothing", attempt: "first", remaining_ms: expect.any(Number) },
+      // r4: the 15 s claim leaves 55 s, less than one fetch window, so the SAME admission rule asked after the claim
+      // defers it before the runner is called.
+      metadata: { job: "parse-receipts", reason: "too_little_time_after_claim", attempt: "first", remaining_ms: expect.any(Number) },
     });
   });
 
@@ -172,5 +183,107 @@ describe("the other catch-up jobs share the rule", () => {
     await catchUpDailyJobs({ now: today, deadline: clock + 1_000 });
     expect(attempts).toEqual(["catchup:prune-sessions:2026-09-12"]);
     expect(log.filter(r => r.job === "prune-sessions").map(r => r.action)).toEqual(["cron.success"]);
+  });
+});
+
+describe("review r4: after ANY claim, every job re-asks its own admission rule; a run that started nothing is deferred", () => {
+  it("the reviewer's repro: fetch-only, 70 s left, a 71 s claim — zero fetches, cron.deferred (never success), and the next tick retries", async () => {
+    cost.claim = 71_000;
+    const result = await catchUpDailyJobs({ now: today, deadline: clock + 70_000 });
+    expect(attempts).toEqual([first]);
+    expect(fetchStarts).toBe(0);
+    expect(result.ran).not.toContain("parse-receipts");
+    expect(receiptRows()).toEqual(["cron.deferred"]);
+    expect(deferredMeta()[0]!.metadata).toMatchObject({ reason: "too_little_time_after_claim", attempt: "first", remaining_ms: 0 });
+    clock += 600_000; // the next tick
+    cost.claim = 1_000;
+    const next = await catchUpDailyJobs({ now: today, deadline: clock + 280_000 });
+    expect(attempts).toEqual([first, retry]);
+    expect(fetchStarts).toBe(1);
+    expect(next.ran).toContain("parse-receipts");
+    expect(receiptRows()).toEqual(["cron.deferred", "cron.success"]);
+  });
+
+  it("an admitted claim that leaves exactly one fetch window still runs and succeeds", async () => {
+    cost.claim = 10_000 - cost.queueRead; // the claim spends the handoff minus the queue read
+    const result = await catchUpDailyJobs({ now: today, deadline: clock + receiptRunMinimumMs(false) });
+    expect(fetchStarts).toBe(1);
+    expect(result.ran).toContain("parse-receipts");
+    expect(receiptRows()).toEqual(["cron.success"]);
+  });
+
+  it("backstop: the claim fits but a slow queue read leaves no fetch window — the sweep starts nothing and it is deferred", async () => {
+    cost.claim = 1_000; cost.queueRead = 15_000;
+    await catchUpDailyJobs({ now: today, deadline: clock + receiptRunMinimumMs(false) });
+    expect(fetchStarts).toBe(0);
+    expect(receiptRows()).toEqual(["cron.deferred"]);
+    expect(deferredMeta()[0]!.metadata).toMatchObject({ reason: "started_nothing" });
+  });
+
+  it("parse-receipts with a parse key: a claim past the parse reserve starts no parse and no queue read, defers, and the next tick parses", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-parse");
+    vi.stubEnv("RESEND_API_KEY", ""); vi.stubEnv("RESEND_INBOUND_SECRET", "");
+    unparsed = ["receipt-1"];
+    vi.mocked(parseReceipt).mockResolvedValue({ ok: true } as Awaited<ReturnType<typeof parseReceipt>>);
+    cost.claim = receiptRunMinimumMs(true) + 1_000;
+    await catchUpDailyJobs({ now: today, deadline: clock + receiptRunMinimumMs(true) });
+    expect(attempts).toEqual([first]);
+    expect(receiptQueueReads).toBe(0);
+    expect(parseReceipt).not.toHaveBeenCalled();
+    expect(receiptRows()).toEqual(["cron.deferred"]);
+    clock += 600_000;
+    cost.claim = 1_000;
+    await catchUpDailyJobs({ now: today, deadline: clock + 280_000 });
+    expect(attempts).toEqual([first, retry]);
+    expect(parseReceipt).toHaveBeenCalledOnce();
+    expect(receiptRows()).toEqual(["cron.deferred", "cron.success"]);
+  });
+
+  it("toast-sales-pull: a claim that returns after the deadline defers it, and the next tick retries once", async () => {
+    doneToday = ["prune-sessions", "parse-receipts"];
+    const healthy = { businessDate: "2026-09-11", results: [], healthy: true, startedNothing: false, metadata: { job: "toast-sales-pull" } };
+    vi.mocked(runToastSalesPull).mockResolvedValue(healthy as unknown as Awaited<ReturnType<typeof runToastSalesPull>>);
+    const sales = "catchup:toast-sales-pull:2026-09-12";
+    cost.claim = 300_000;
+    await catchUpDailyJobs({ now: today, deadline: clock + 280_000 });
+    expect(runToastSalesPull).not.toHaveBeenCalled();
+    expect(log.filter(r => r.job === "toast-sales-pull").map(r => r.action)).toEqual(["cron.deferred"]);
+    clock += 600_000; cost.claim = 1_000;
+    await catchUpDailyJobs({ now: today, deadline: clock + 280_000 });
+    expect(attempts).toEqual([sales, `${sales}:retry1`]);
+    expect(log.filter(r => r.job === "toast-sales-pull").map(r => r.action)).toEqual(["cron.deferred", "cron.success"]);
+  });
+
+  it("toast-sales-pull backstop: a pull that started no capture is deferred, not a success or a failure", async () => {
+    doneToday = ["prune-sessions", "parse-receipts"];
+    const unstarted = { businessDate: "2026-09-11", results: [], healthy: false, startedNothing: true, metadata: { job: "toast-sales-pull" } };
+    vi.mocked(runToastSalesPull).mockResolvedValue(unstarted as unknown as Awaited<ReturnType<typeof runToastSalesPull>>);
+    cost.claim = 1_000;
+    await catchUpDailyJobs({ now: today, deadline: clock + 280_000 });
+    expect(log.filter(r => r.job === "toast-sales-pull").map(r => r.action)).toEqual(["cron.deferred"]);
+    expect(deferredMeta()[0]!.metadata).toMatchObject({ reason: "started_nothing" });
+  });
+});
+
+describe("review r4: the receipt run's startedNothing is computed from what ran", () => {
+  it("fetch-only, deadline already past: no fetch leg ran, so it started nothing", async () => {
+    const r = await runParseReceipts(clock - 1);
+    expect(fetchStarts).toBe(0);
+    expect(r).toMatchObject({ dormant: false, startedNothing: true });
+  });
+
+  it("fetch-only, the sweep ran and found no mail due: work done, not a deferral", async () => {
+    mail = [];
+    const r = await runParseReceipts(clock + INBOUND_FETCH_WINDOW_MS + 10_000);
+    expect(r).toMatchObject({ startedNothing: false });
+  });
+
+  it("with a parse key and receipts waiting but no whole parse left: started nothing", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-parse");
+    vi.stubEnv("RESEND_API_KEY", ""); vi.stubEnv("RESEND_INBOUND_SECRET", "");
+    unparsed = ["receipt-1"];
+    const r = await runParseReceipts(clock + PARSE_ROW_RESERVE_MS - 1);
+    expect(parseReceipt).not.toHaveBeenCalled();
+    expect(r).toMatchObject({ startedNothing: true });
   });
 });

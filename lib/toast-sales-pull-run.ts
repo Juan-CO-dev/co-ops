@@ -114,5 +114,8 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
     const left = deadlineAt - Date.now() - 5_000;
     if (left > 5_000) await runToastLaborPull(dates, { deadlineMs: Math.min(45_000, left), context: "cron" });
   } catch (error) { console.error("[toast labor] pull threw:", captureErrorCode(error)); }
-  return { businessDate, results, metadata, healthy };
+  // Computed from what ran (W27/B225 r4): the pull's unit of work is the capture, and it was refused for want of
+  // route time, so no day was pulled. The caller decides what that means (the catch-up defers it).
+  const startedNothing = capture.skipped && "reason" in capture && capture.reason === "capture_route_time_exhausted";
+  return { businessDate, results, metadata, healthy, startedNothing };
 }

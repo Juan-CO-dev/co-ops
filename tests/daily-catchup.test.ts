@@ -62,7 +62,7 @@ beforeEach(() => {
   vi.mocked(getServiceRoleClient).mockReturnValue({ from, rpc } as unknown as ReturnType<typeof getServiceRoleClient>);
   vi.mocked(runVaultScrub).mockResolvedValue({ scrubbed: 4, migrationPending: false });
   vi.mocked(runPruneSessions).mockResolvedValue({ revoked: 3 });
-  vi.mocked(runToastSalesPull).mockResolvedValue({ businessDate: "2026-09-11", results: [], healthy: true, metadata: { capture_failures: 0,
+  vi.mocked(runToastSalesPull).mockResolvedValue({ businessDate: "2026-09-11", results: [], healthy: true, startedNothing: false, metadata: { capture_failures: 0,
     job: "toast-sales-pull", business_date: "2026-09-11", source: "capture", dates: [], capture_skipped: false, capture_skip_reason: null, pars_pending_activation: false, per_location_failures: 0,
     depletion_rows: {}, depletion_failures: 0, par_rows: {}, par_run_failures: 0,
     ezcater_shadow: { processed: 0, failed: 0, deferred: false },

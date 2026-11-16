@@ -62,7 +62,17 @@ export const INBOUND_FETCH_WINDOW_MS = 60_000;
  * spends its one claim for the day; anything less is left for the next scan.
  */
 export function receiptRunMinimumMs(parseEnabled: boolean): number {
-  return PARSE_HANDOFF_MS + (parseEnabled ? PARSE_ROW_RESERVE_MS : INBOUND_FETCH_WINDOW_MS);
+  return PARSE_HANDOFF_MS + receiptWorkMinimumMs(parseEnabled);
+}
+
+/**
+ * Least time the receipt run's first unit of WORK needs once the run is under way (W27/B225 r4): one whole parse,
+ * or (fetch-only) one whole fetch window. `receiptRunMinimumMs` is this plus the handoff the claim and the queue read
+ * spend; after the claim has been taken, the catch-up asks this again so a slow claim cannot start a run that can
+ * no longer start anything.
+ */
+export function receiptWorkMinimumMs(parseEnabled: boolean): number {
+  return parseEnabled ? PARSE_ROW_RESERVE_MS : INBOUND_FETCH_WINDOW_MS;
 }
 
 /** May a receipt run start at `now` and still do its work before `deadline`? */

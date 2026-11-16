@@ -259,3 +259,13 @@ it("the authenticated route emits a successful heartbeat with the explicit fixtu
     metadata: expect.objectContaining({ job: "toast-sales-pull", capture_skipped: true,
       capture_skip_reason: "capture_fixture_mode" }) }));
 });
+
+// W27/B225 r4: startedNothing is computed from what ran — the pull's unit of work is the capture.
+it("startedNothing is true only when the capture was refused for want of route time", async () => {
+  captureResult = { failures: 0, skipped: true, results: [], reason: "capture_route_time_exhausted" } as unknown as CaptureResult;
+  expect(await runToastSalesPull({ businessDate: DAYS[0]! })).toMatchObject({ startedNothing: true, healthy: false });
+  captureResult = fullCapture();
+  expect(await runToastSalesPull({ businessDate: DAYS[0]! })).toMatchObject({ startedNothing: false, healthy: true });
+  captureResult = { failures: 0, skipped: true, results: [] } as unknown as CaptureResult; // capture disabled: not a deferral
+  expect((await runToastSalesPull({ businessDate: DAYS[0]! })).startedNothing).toBe(false);
+});

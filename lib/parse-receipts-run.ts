@@ -53,10 +53,13 @@ export async function runParseReceipts(deadline: number) {
   const sb = getServiceRoleClient();
   const fetchDeadline = parseEnabled ? fetchShareDeadline(deadline) : deadline;
   let inbound: { swept: number; failed: number; deferred?: number; overran?: true } = { swept: 0, failed: 0 };
+  // What each leg ACTUALLY did (W27/B225 r4), never what it was meant to do: a leg that was skipped for time did not
+  // look at its queue, so it cannot vouch that nothing was waiting.
+  let fetchCompleted = false;
   if (inboundEnabled && Date.now() < fetchDeadline) {
     const fetching = sweepInboundMessages(sb, fetchDeadline);
     const leg = await settledBy(fetching, fetchDeadline);
-    if (leg.inTime) inbound = leg.value;
+    if (leg.inTime) { inbound = leg.value; fetchCompleted = true; }
     else {
       // Its counts are unknown here; the inbound ledger has each message's own outcome.
       inbound = { swept: 0, failed: 0, overran: true };
@@ -65,7 +68,7 @@ export async function runParseReceipts(deadline: number) {
     }
   }
   if (!parseEnabled) return { dormant: false as const, swept: 0, parsed: 0, failed: 0,
-    startedNothing: deferredOnly(inbound, 0, 0),
+    startedNothing: startedNothingFrom({ inboundEnabled, fetchCompleted, inbound, parseEnabled: false, parseQueueRead: false, parseWaiting: 0, parseStarted: 0 }),
     metadata: { job: "parse-receipts", swept: 0, parsed: 0, failed: 0, inbound } };
   const { data: rows, error } = await sb
     .from("email_receipts")
@@ -102,16 +105,23 @@ export async function runParseReceipts(deadline: number) {
   // never throws. Metadata style mirrors toast-sales-pull's per-item counts.
   const metadata = { job: "parse-receipts", swept, parsed, failed, inbound };
   return { dormant: false as const, swept, parsed, failed,
-    startedNothing: deferredOnly(inbound, list.length - swept, swept), metadata };
+    startedNothing: startedNothingFrom({ inboundEnabled, fetchCompleted, inbound, parseEnabled: true, parseQueueRead: true, parseWaiting: list.length, parseStarted: swept }), metadata };
 }
 
 /**
- * Work was waiting and the run started none of it (W27/B225 r2): due mail the sweep deferred for want of a fetch
- * window, or unparsed receipts no whole parse fitted for, with no message and no receipt started. A run like this
- * did no work, so its caller must not report it as a success. An overrun fetch leg had a message in flight: that
- * is work started.
+ * Did this run start NO unit of work (W27/B225 r2, generalised in r4)? Computed from what actually ran:
+ *   - a unit started = a message fetch begun (or a fetch leg that overran with one in flight), or a parse begun;
+ *   - a leg that ran to completion and found its queue EMPTY did its job (nothing to start is not a deferral);
+ *   - a leg that was enabled but never ran (skipped for time) or left waiting work unstarted did not.
+ * So the run "started nothing" when no unit started and not every enabled leg looked and found nothing. Such a run
+ * did no work, and its caller must not record it as a success.
  */
-function deferredOnly(inbound: { swept: number; deferred?: number; overran?: true }, parseDeferred: number, parseStarted: number): boolean {
-  if (inbound.overran || inbound.swept > 0 || parseStarted > 0) return false;
-  return (inbound.deferred ?? 0) > 0 || parseDeferred > 0;
+function startedNothingFrom(r: {
+  inboundEnabled: boolean; fetchCompleted: boolean; inbound: { swept: number; deferred?: number; overran?: true };
+  parseEnabled: boolean; parseQueueRead: boolean; parseWaiting: number; parseStarted: number;
+}): boolean {
+  if (r.inbound.overran || r.inbound.swept > 0 || r.parseStarted > 0) return false;
+  const fetchFoundNothing = !r.inboundEnabled || (r.fetchCompleted && (r.inbound.deferred ?? 0) === 0);
+  const parseFoundNothing = !r.parseEnabled || (r.parseQueueRead && r.parseWaiting === 0);
+  return !(fetchFoundNothing && parseFoundNothing);
 }
