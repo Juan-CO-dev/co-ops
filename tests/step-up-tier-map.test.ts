@@ -272,6 +272,8 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/weights/route.ts": ["E"],
   // Not under /admin, but step-up-gated all the same.
   "app/api/catering/quotes/[id]/send/route.ts": ["B"],
+  // Owner request 2026-11-15: resend an expired quote with a new expiry — Send's own tier.
+  "app/api/catering/quotes/[id]/resend/route.ts": ["B"],
   // Catering inbox phase 1b: Send draft (outside /admin, isCateringInboxSendPath) and the owner / CGS mode switch.
   "app/api/catering/inbox/[id]/send/route.ts": ["B"],
   "app/api/admin/catering-inbox/settings/route.ts": ["B"],
