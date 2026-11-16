@@ -180,12 +180,21 @@ export async function loadSkuToItems(skuIds: string[], locationId: string): Prom
 
   // PRODUCT pass: which of these SKUs are members of a product, and which recipes
   // pin those products. One membership read + one pins read, both batched.
-  const { data: memberRows, error: memErr } = await sb.from("vendor_items").select("id, product_id")
-    .in("id", skuIds).not("product_id", "is", null)
-    .returns<Array<{ id: string; product_id: string }>>();
-  if (memErr) throw new Error(`loadSkuToItems product membership: ${memErr.message}`);
+  // The membership read is NOT filtered by the SKU id list (audit B098): the production page
+  // passes every active SKU, and ~210 ids in `.in("id", …)` is already past the request-line
+  // ceiling. Product members are a small set (products exist only where plurality does), so
+  // every member row is paged and the caller's SKUs are picked in memory — the same rows.
+  const memberRows = (await selectAllRows<{ id: string; product_id: string }>(async (from, to) => {
+    const { data, error: memErr } = await sb.from("vendor_items").select("id, product_id")
+      .not("product_id", "is", null)
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<Array<{ id: string; product_id: string }>>();
+    if (memErr) throw new Error(`loadSkuToItems product membership: ${memErr.message}`);
+    return { data };
+  })).filter((m) => wanted.has(m.id));
   const membersByProduct = new Map<string, string[]>();
-  for (const m of memberRows ?? []) {
+  for (const m of memberRows) {
     const list = membersByProduct.get(m.product_id) ?? [];
     list.push(m.id);
     membersByProduct.set(m.product_id, list);
@@ -241,12 +250,22 @@ export async function loadSkuToItems(skuIds: string[], locationId: string): Prom
   return out;
 }
 
+/** vendor_delivery_items has TWO FKs to vendor_deliveries — a bare `!inner` fails PGRST201, so the FK is named. */
+const DELIVERY_AT_LOCATION_EMBED = "vendor_deliveries!vendor_delivery_items_delivery_id_fkey!inner(location_id)";
+/** production_inputs has ONE FK to productions; the embed scopes inputs to live productions at the shop. */
+const LIVE_PRODUCTION_AT_LOCATION_EMBED = "productions!inner(location_id, superseded_at, revoked_at)";
+
 /**
  * received packs − consumed packs, per SKU (for the form's in-stock hint), scoped
  * to ONE location: SKUs are global but physical stock is per-location, so receipts
  * and productions are bound to `locationId` (mixing stores gave a wrong hint).
- * All three reads paginate past the 1000-row cap (they silently truncated → the
+ * Both reads paginate past the 1000-row cap (they silently truncated → the
  * hint OVERSTATED stock as ledgers grew, hiding consumption past row 1000).
+ * NEITHER SPENDS AN ID LIST (audit B098). The caller passes every active SKU, and the old
+ * reads put that list AND every delivery id at the shop into `.in()` filters — past the
+ * request-line ceiling at ~210 SKUs, so the production page failed to render. Both ledgers
+ * are now scoped to the shop through their header embed (service role; AGENTS.md) and the
+ * caller's SKUs are picked in memory: the same rows, a constant request line.
  * NOTE: consumed still uses qty_entered, whose unit varies by producer (manual
  * form = packs, prep panel = case/each/oz). For panel-created rows this mixes
  * units; the advisory hint is approximate. Fixing that (consume via input_oz ÷
@@ -256,24 +275,27 @@ export async function loadInStockPacks(skuIds: string[], locationId: string): Pr
   const out = new Map<string, number>();
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  // Deliveries at this location → the delivery ids that scope receipt lines.
-  const deliveryIds = (await selectAllRows<{ id: string }>(
-    (from, to) => sb.from("vendor_deliveries").select("id").eq("location_id", locationId).order("id", { ascending: true }).range(from, to),
-  )).map((d) => d.id);
-  const recv = deliveryIds.length === 0 ? [] : await selectAllRows<{ vendor_item_id: string; qty_received: number | string }>(
-    (from, to) => sb.from("vendor_delivery_items").select("vendor_item_id, qty_received").in("vendor_item_id", skuIds).in("delivery_id", deliveryIds).order("id", { ascending: true }).range(from, to),
-  );
-  const liveHdr = await selectAllRows<{ id: string }>(
-    (from, to) => sb.from("productions").select("id").eq("location_id", locationId).is("superseded_at", null).is("revoked_at", null).order("id", { ascending: true }).range(from, to),
-  );
-  const liveIds = new Set(liveHdr.map((h) => h.id));
-  const lines = await selectAllRows<{ production_id: string; input_sku_id: string; qty_entered: number | string | null }>(
-    (from, to) => sb.from("production_inputs").select("production_id, input_sku_id, qty_entered").in("input_sku_id", skuIds).order("id", { ascending: true }).range(from, to),
-  );
+  const wanted = new Set(skuIds);
+  const [recv, lines] = await Promise.all([
+    // Receipt lines of deliveries AT this location.
+    selectAllRows<{ vendor_item_id: string; qty_received: number | string }>(
+      (from, to) => sb.from("vendor_delivery_items").select(`id, vendor_item_id, qty_received, ${DELIVERY_AT_LOCATION_EMBED}`)
+        .eq("vendor_deliveries.location_id", locationId).order("id", { ascending: true }).range(from, to),
+    ),
+    // Inputs of LIVE productions (not superseded, not revoked) at this location.
+    selectAllRows<{ input_sku_id: string; qty_entered: number | string | null }>(
+      (from, to) => sb.from("production_inputs").select(`id, input_sku_id, qty_entered, ${LIVE_PRODUCTION_AT_LOCATION_EMBED}`)
+        .eq("productions.location_id", locationId).is("productions.superseded_at", null).is("productions.revoked_at", null)
+        .order("id", { ascending: true }).range(from, to),
+    ),
+  ]);
   for (const id of skuIds) out.set(id, 0);
-  for (const r of recv) out.set(r.vendor_item_id, (out.get(r.vendor_item_id) ?? 0) + (num(r.qty_received) ?? 0));
+  for (const r of recv) {
+    if (!wanted.has(r.vendor_item_id)) continue;
+    out.set(r.vendor_item_id, (out.get(r.vendor_item_id) ?? 0) + (num(r.qty_received) ?? 0));
+  }
   for (const l of lines) {
-    if (!liveIds.has(l.production_id)) continue;
+    if (!wanted.has(l.input_sku_id)) continue;
     out.set(l.input_sku_id, (out.get(l.input_sku_id) ?? 0) - (num(l.qty_entered) ?? 0));
   }
   return out;

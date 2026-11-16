@@ -29,7 +29,7 @@ import { classifyEmail, normalizeEmail, normalizePhoneE164 } from "./identity-sh
 import { profileStats, type CustomerOrderRow } from "./stats-shared";
 import { listParamsInput, parseListParams, type CustomerListParams, type CustomerListDto, type CustomerListSearchParams } from "./list-params-shared";
 import { etCalendarDate } from "@/lib/operational-day";
-import { monthlyVisits, shopSplit, orderHistory, cateringSummary, type DetailOrder } from "./profile-detail-shared";
+import { monthlyVisits, shopSplit, orderHistory, cateringSummary, liveOrders, type DetailOrder } from "./profile-detail-shared";
 import { cateringAccounts, parseCateringParams, sortCateringAccounts, type CateringOrder, type CateringPerson } from "./catering-accounts-shared";
 import { MARKETPLACE_LINK_REASONS, type MarketplaceLinkReason } from "./marketplace-link-shared";
 
@@ -96,6 +96,29 @@ async function memberIds(sb: Client, rootId: string): Promise<string[]> {
   return (data ?? []).map((r: { id: string }) => r.id);
 }
 
+/**
+ * 0312 (W12/B176) adds customer_orders.voided_at. Until it is applied the column is missing (42703), so
+ * every customer_orders read tries with it and, on that one error, reads again without it (every order
+ * then counts as live: the pre-0312 behaviour). Remove the fallback once 0312 is on prod.
+ */
+class VoidedColumnMissing extends Error {}
+function voidedColumnMissing(error: { code?: string; message?: string } | null | undefined): boolean {
+  return error?.code === "42703" && (error.message ?? "").includes("voided_at");
+}
+/** A plain string, so the select stays untyped rows (the caller names the row type). */
+const columns = (base: string, col: string): string => base + col;
+async function withVoidedColumn<T>(read: (col: string) => Promise<T>): Promise<T> {
+  try { return await read(",voided_at"); }
+  catch (e) { if (e instanceof VoidedColumnMissing) return read(""); throw e; }
+}
+type OrdersPage<T> = { data: T[] | null; error: { code?: string; message: string } | null };
+/** Awaits one customer_orders page; the row type is the caller's (the select is a plain string). */
+async function guardVoided<T>(query: PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }>): Promise<OrdersPage<T>> {
+  const r = await query;
+  if (voidedColumnMissing(r.error)) throw new VoidedColumnMissing();
+  return r as OrdersPage<T>;
+}
+
 interface CustomerRow { id: string; full_name: string | null; masked_channels: string[]; merged_into: string | null; erased_at: string | null }
 
 async function statsFor(sb: Client, viewer: CustomerViewer, ids: readonly string[]): Promise<CustomerStatsDto[]> {
@@ -103,11 +126,11 @@ async function statsFor(sb: Client, viewer: CustomerViewer, ids: readonly string
   const scope = customerShopScope(viewer);
   const { data: people, error: pe } = await sb.from("customers").select("id,full_name,masked_channels,merged_into,erased_at").in("id", [...ids]);
   if (pe) throw new Error(`customers: ${pe.message}`);
-  const orders = await selectAllRows<CustomerOrderRow & { customer_id: string }>((from, to) => {
-    let q = sb.from("customer_orders").select("customer_id,business_date,channel,total_cents,items,location_id").in("customer_id", [...ids]);
+  const orders = liveOrders(await withVoidedColumn((col) => selectAllRows<CustomerOrderRow & { customer_id: string; voided_at?: string | null }>((from, to) => {
+    let q = sb.from("customer_orders").select(columns("customer_id,business_date,channel,total_cents,items,location_id", col)).in("customer_id", [...ids]);
     if (scope) q = q.in("location_id", scope);
-    return q.order("id").range(from, to);
-  });
+    return guardVoided(q.order("id").range(from, to));
+  })));
   const { data: consent, error: ce } = await sb.from("customer_consent_current").select("customer_id,status").eq("channel", "email").in("customer_id", [...ids]);
   if (ce) throw new Error(`consent: ${ce.message}`);
   const { data: cards, error: ke } = await sb.from("customer_cards").select("customer_id").in("customer_id", [...ids]);
@@ -234,17 +257,18 @@ export async function loadProfile(viewer: CustomerViewer, customerId: string, de
 /** Preserve the all-or-error pagination contract without exposing database error detail. */
 async function privateRows<T>(build: Parameters<typeof selectAllRows<T>>[0]): Promise<T[]> {
   try { return await selectAllRows<T>(build); }
-  catch { throw new CustomerError(503, "customer_list_unavailable"); }
+  catch (e) { if (e instanceof VoidedColumnMissing) throw e; throw new CustomerError(503, "customer_list_unavailable"); }
 }
 
 async function detailOrders(sb: Client, viewer: CustomerViewer, ids: string[]): Promise<DetailOrder[]> {
   const scope = customerShopScope(viewer);
   const out: DetailOrder[] = [];
-  for (const batch of chunkRows(ids, 100)) out.push(...await privateRows<DetailOrder>((from, to) => {
-    let q = sb.from("customer_orders").select("id,customer_id,business_date,channel,total_cents,items,location_id,source_kind,contact_masked").in("customer_id", batch);
+  // Voided orders are returned too (the history labels them); callers count liveOrders() only.
+  for (const batch of chunkRows(ids, 100)) out.push(...await withVoidedColumn((col) => privateRows<DetailOrder>((from, to) => {
+    let q = sb.from("customer_orders").select(columns("id,customer_id,business_date,channel,total_cents,items,location_id,source_kind,contact_masked", col)).in("customer_id", batch);
     if (scope) q = q.in("location_id", scope);
-    return q.order("id").range(from, to);
-  }));
+    return guardVoided(q.order("id").range(from, to));
+  })));
   return out;
 }
 
@@ -294,7 +318,7 @@ async function profileLinks(sb: Client, viewer: CustomerViewer, customerId: stri
     const base = { id: l.id, confidence: Number(l.confidence), reasons: l.reasons.filter((r): r is MarketplaceLinkReason => MARKETPLACE_LINK_REASONS.includes(r as MarketplaceLinkReason)) };
     if (guest.id === customerId) outgoing.push({ ...base, person: visible(person.id) ? { id: person.id, name: person.full_name } : null });
     if (person.id === customerId && visible(guest.id)) {
-      const s = profileStats(orders.filter((o) => o.customer_id === guest.id));
+      const s = profileStats(liveOrders(orders.filter((o) => o.customer_id === guest.id)));
       incoming.push({ ...base, person: { id: guest.id, name: guest.full_name },
         stats: { visits: s.visits, spendCents: s.spendCents, firstOrder: s.firstOrder, lastOrder: s.lastOrder } });
     }
@@ -309,7 +333,8 @@ export async function loadProfileDetail(viewer: CustomerViewer, customerId: stri
   const [person] = await detailPeople(sb, [customerId]);
   if (!person || person.erased_at || person.merged_into) throw new CustomerError(404, "customer_not_found");
   const orders = await detailOrders(sb, viewer, [customerId]);
-  const s = profileStats(orders, 5);
+  const live = liveOrders(orders);
+  const s = profileStats(live, 5);
   const { data: consent, error: ce } = await sb.from("customer_consent_current").select("status")
     .eq("customer_id", customerId).eq("channel", "email").maybeSingle();
   const { count: cards, error: ke } = await sb.from("customer_cards").select("customer_id", { count: "exact", head: true }).eq("customer_id", customerId);
@@ -321,8 +346,8 @@ export async function loadProfileDetail(viewer: CustomerViewer, customerId: stri
     emailMarketing: consent?.status === "opted_in" || consent?.status === "opted_out" ? consent.status : "unknown" });
   const today = etCalendarDate((deps.now ?? new Date()).toISOString());
   return { profile, isGuest: !identifiers && orders.length > 0 && orders.every((o) => o.contact_masked), today,
-    months: monthlyVisits(orders, today), shops: shopSplit(orders), shopNames: await loadCustomerShops(viewer, { client: sb }),
-    history: orderHistory(orders, args.page ?? 1), catering: cateringSummary(orders), links: await profileLinks(sb, viewer, customerId) };
+    months: monthlyVisits(live, today), shops: shopSplit(live), shopNames: await loadCustomerShops(viewer, { client: sb }),
+    history: orderHistory(orders, args.page ?? 1), catering: cateringSummary(live), links: await profileLinks(sb, viewer, customerId) };
 }
 
 export async function loadCateringAccounts(viewer: CustomerViewer, raw: CustomerListSearchParams = {}, deps: CustomerDeps = {}) {
@@ -330,21 +355,21 @@ export async function loadCateringAccounts(viewer: CustomerViewer, raw: Customer
   const params = parseCateringParams(raw, viewer.level);
   const scope = customerShopScope(viewer) ?? (params.locationId ? [params.locationId] : null);
   const sb = deps.client ?? getServiceRoleClient();
-  const orders = await privateRows<CateringOrder>((from, to) => {
-    let q = sb.from("customer_orders").select("customer_id,business_date,total_cents,location_id,source_kind")
+  const orders = liveOrders(await withVoidedColumn((col) => privateRows<CateringOrder & { voided_at?: string | null }>((from, to) => {
+    let q = sb.from("customer_orders").select(columns("customer_id,business_date,total_cents,location_id,source_kind", col))
       .or("source_kind.neq.toast,channel.eq.catering");
     if (scope) q = q.in("location_id", scope);
-    return q.order("id").range(from, to);
-  });
+    return guardVoided(q.order("id").range(from, to));
+  })));
   const people: CateringPerson[] = await detailPeople(sb, [...new Set(orders.map((o) => o.customer_id))]);
   const live = people.filter((p) => !p.merged_into && !p.erased_at);
   const visits = new Map<string, number>();
   for (const batch of chunkRows(live.map((p) => p.id), 100)) {
-    const rows = await privateRows<{ customer_id: string }>((from, to) => {
-      let q = sb.from("customer_orders").select("customer_id").in("customer_id", batch);
+    const rows = liveOrders(await withVoidedColumn((col) => privateRows<{ customer_id: string; voided_at?: string | null }>((from, to) => {
+      let q = sb.from("customer_orders").select(columns("customer_id", col)).in("customer_id", batch);
       if (scope) q = q.in("location_id", scope);
-      return q.order("id").range(from, to);
-    });
+      return guardVoided(q.order("id").range(from, to));
+    })));
     for (const r of rows) visits.set(r.customer_id, (visits.get(r.customer_id) ?? 0) + 1);
   }
   const today = etCalendarDate((deps.now ?? new Date()).toISOString());
@@ -371,10 +396,19 @@ export async function loadSuggestions(viewer: CustomerViewer, deps: CustomerDeps
   requireEnabled();
   requireStats(viewer);
   const sb = deps.client ?? getServiceRoleClient();
-  const { data, error } = await sb.from("customer_merge_suggestions").select("id,customer_a,customer_b,confidence,reasons")
-    .eq("status", "open").order("confidence", { ascending: false }).limit(50);
-  if (error) throw new Error(`suggestions: ${error.message}`);
-  const rows = (data ?? []) as { id: string; customer_a: string; customer_b: string; confidence: number; reasons: string[] }[];
+  type Row = { id: string; customer_a: string; customer_b: string; confidence: number; reasons: string[] };
+  // 0312 (W12/B177): the shop filter runs in SQL BEFORE the 50-row limit, so other shops' pairs can no
+  // longer fill the page and leave a GM with none. assertInScope below stays as a second check.
+  let rows: Row[];
+  const scoped = await sb.rpc("customer_merge_suggestions_open", { p_location_ids: customerShopScope(viewer), p_limit: 50 });
+  if (!scoped.error) rows = (scoped.data ?? []) as Row[];
+  else if (["PGRST202", "42883"].includes(scoped.error.code ?? "")) {
+    // 0312 not applied yet: the pre-0312 read (limit first), so the page keeps working until the apply.
+    const { data, error } = await sb.from("customer_merge_suggestions").select("id,customer_a,customer_b,confidence,reasons")
+      .eq("status", "open").order("confidence", { ascending: false }).limit(50);
+    if (error) throw new Error(`suggestions: ${error.message}`);
+    rows = (data ?? []) as Row[];
+  } else throw new CustomerError(503, "customer_list_unavailable");
   const ids = [...new Set(rows.flatMap((r) => [r.customer_a, r.customer_b]))];
   if (ids.length === 0) return [];
   const { data: people, error: pe } = await sb.from("customers").select("id,full_name").in("id", ids);
@@ -488,13 +522,18 @@ export async function runRetention(actor: CustomerActor, meta: RequestMeta, deps
   const sb = deps.client ?? getServiceRoleClient();
   const cutoff = retentionCutoff(deps.now ?? new Date()).toISOString();
   let erased = 0;
+  let skipped = 0;
   for (let batch = 0; batch < 10; batch++) {
-    const r = await rpc<{ erased: number }>(sb, "customer_retention_sweep", { p_actor_id: actor.userId, p_cutoff: cutoff, p_limit: 200 });
+    // 0312 (W12/B070): a candidate that became active under the identity lock is skipped, not erased.
+    // A skipped row still used a batch slot, so only a short batch ends the run. Before 0312 there is
+    // no `skipped` key (treated as 0, the old behaviour).
+    const r = await rpc<{ erased: number; skipped?: number }>(sb, "customer_retention_sweep", { p_actor_id: actor.userId, p_cutoff: cutoff, p_limit: 200 });
     erased += r.erased;
-    if (r.erased < 200) break;
+    skipped += r.skipped ?? 0;
+    if (r.erased + (r.skipped ?? 0) < 200) break;
   }
   await audit({ actorId: actor.userId, actorRole: actor.role, action: "customer.retention_sweep", resourceTable: "customers", resourceId: null,
-    metadata: { cutoff, erased, months: RETENTION_MONTHS }, ...meta });
+    metadata: { cutoff, erased, skipped, months: RETENTION_MONTHS }, ...meta });
   return { erased, cutoff };
 }
 
@@ -516,6 +555,9 @@ export async function importConsentCsv(
   let merged;
   try { merged = mergeConsentFiles(args.files.map((f) => parseConsentCsv(f.text))); }
   catch (e) { if (e instanceof ConsentCsvError) throw new CustomerError(400, e.code); throw e; }
+  // W12/B175: an empty snapshot opts out everyone still subscribed, so it always needs the importer's
+  // explicit confirmation. Refused BEFORE begin, so no running import is left behind to cancel.
+  if (merged.rows.length === 0 && !args.allowLargeOptOut) throw new CustomerError(409, "consent_import_empty_snapshot");
   const sha = createHash("sha256").update(canonicalImportPayload(merged.rows, merged.explicitStatus, args.exportDate), "utf8").digest("hex");
   const chunks = chunkRows(merged.rows);
   const sb = deps.client ?? getServiceRoleClient();

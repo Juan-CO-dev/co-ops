@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cateringSummary, monthlyVisits, orderHistory, shopSplit, type DetailOrder } from "@/lib/customers/profile-detail-shared";
+import { cateringSummary, liveOrders, monthlyVisits, orderHistory, shopSplit, type DetailOrder } from "@/lib/customers/profile-detail-shared";
 
 const order = (overrides: Partial<DetailOrder> = {}): DetailOrder => ({ id: "a", customer_id: "person", business_date: "2026-10-01",
   channel: "takeout", total_cents: 1000, items: [], location_id: "shop-a", source_kind: "toast", ...overrides });
@@ -29,11 +29,17 @@ describe("customer detail projections", () => {
       order({ id: "a", items: [{ name: "D", qty: 1 }, { name: "B", qty: 2 }, { name: "A", qty: 2 }, { name: "C", qty: 3 }] })];
     const first = orderHistory(orders, -1, 1);
     expect(first).toEqual({ rows: [{ date: "2026-10-01", locationId: "shop-a", channel: "takeout", source: "toast", totalCents: 1000,
-      items: [{ name: "C", qty: 3 }, { name: "A", qty: 2 }, { name: "B", qty: 2 }], moreItems: 1 }], total: 3, page: 1, pages: 3 });
+      items: [{ name: "C", qty: 3 }, { name: "A", qty: 2 }, { name: "B", qty: 2 }], moreItems: 1, voided: false }], total: 3, page: 1, pages: 3 });
     expect(orderHistory(orders, 2, 1).rows[0]!.totalCents).toBeNull();
     expect(orderHistory(orders, 999, 1)).toMatchObject({ page: 3, rows: [{ date: "2026-09-30" }] });
     expect(orderHistory([], 5)).toEqual({ rows: [], total: 0, page: 1, pages: 1 });
     expect(orders[0]!.id).toBe("z");
+  });
+  it("a voided order stays in the history, labelled, and liveOrders drops it from every total (W12/B176)", () => {
+    const orders = [order({ id: "a" }), order({ id: "b", voided_at: "2026-10-02T00:00:00Z" })];
+    expect(orderHistory(orders, 1).rows.map((r) => [r.voided, r.totalCents])).toEqual([[false, 1000], [true, 1000]]);
+    expect(liveOrders(orders).map((o) => o.id)).toEqual(["a"]);
+    expect(shopSplit(liveOrders(orders))).toEqual([{ locationId: "shop-a", visits: 1, spendCents: 1000, lastOrder: "2026-10-01" }]);
   });
   it("counts all three catering paths and propagates unknown spend", () => {
     expect(cateringSummary([order()])).toBeNull();

@@ -1219,6 +1219,11 @@ async function loadSkuMembership(skuId: string): Promise<{ id: string; product_i
  * SKU that some product_primaries row names is refused for the same reason detach
  * refuses it: the composite FK would reject the write anyway, and a named 409 is a
  * better error than a constraint violation surfacing as a 500.
+ *
+ * THE WRITE IS A COMPARE-AND-SET (audit B187). The check above reads `product_id` NULL; the
+ * update carries the same condition, so of two attaches racing for one free SKU exactly one
+ * matches a row. The loser re-reads and gets the named 409 instead of silently re-parenting
+ * the SKU and undoing the winner. A single conditional UPDATE is atomic; no lock is needed.
  */
 export async function attachMember(
   actor: AuthContext,
@@ -1256,13 +1261,22 @@ export async function attachMember(
   const { error, count } = await sb
     .from("vendor_items")
     .update({ product_id: args.productId, updated_by: actor.user.id, updated_at: new Date().toISOString() }, { count: "exact" })
-    .eq("id", args.skuId);
+    .eq("id", args.skuId)
+    .is("product_id", null);
   throwIfSchemaPending(error, "attachMember");
   if (error?.code === "23503") {
     throw new ProductError(400, "invalid_product", "Product not found");
   }
   if (error) throw new Error(`attachMember failed: ${error.message}`);
-  if (count === 0) throw new ProductError(404, "sku_not_found", "SKU not found");
+  if (count === 0) {
+    // Nothing matched: the SKU is gone (404 from the re-read) or somebody attached it first.
+    const now = await loadSkuMembership(args.skuId);
+    if (now.product_id === args.productId) return; // the same attach, made concurrently: theirs is the audit row
+    if (now.product_id != null) {
+      throw new ProductError(409, "already_member", "This SKU already belongs to another product");
+    }
+    throw new ProductError(409, "member_moved", "This SKU changed while you were saving. Refresh and try again.");
+  }
 
   await audit({
     actorId: actor.user.id,
@@ -1277,12 +1291,18 @@ export async function attachMember(
 }
 
 /**
- * Detach a SKU from its product (product_id → NULL, back to implicit singleton).
+ * Detach a SKU from ONE NAMED product (product_id → NULL, back to implicit singleton).
  * Refuses with 409 when a product_primaries row names it — see attachMember.
+ *
+ * `productId` IS REQUIRED and is the write's condition (audit B102). Detach used to update by
+ * SKU id alone, so a product screen left open while the SKU was moved to another product
+ * removed it from THAT product — one the manager never saw — and the audit row did not say
+ * which product lost the member. Now a SKU that is no longer in the named product is a named
+ * 409 (`member_moved`), and the audit row records the product.
  */
 export async function detachMember(
   actor: AuthContext,
-  args: { skuId: string },
+  args: { skuId: string; productId: string },
 ): Promise<void> {
   requireLevel(actor, PRODUCT_WRITE_MIN);
   const sb = getServiceRoleClient();
@@ -1309,10 +1329,18 @@ export async function detachMember(
   const { error, count } = await sb
     .from("vendor_items")
     .update({ product_id: null, updated_by: actor.user.id, updated_at: new Date().toISOString() }, { count: "exact" })
-    .eq("id", args.skuId);
+    .eq("id", args.skuId)
+    .eq("product_id", args.productId);
   throwIfSchemaPending(error, "detachMember");
+  // A primary designated between the check above and this write: the composite FK refuses it.
+  if (error?.code === "23503") {
+    throw new ProductError(409, "primary_must_be_reassigned", "Reassign the primary before detaching this SKU");
+  }
   if (error) throw new Error(`detachMember failed: ${error.message}`);
-  if (count === 0) throw new ProductError(404, "sku_not_found", "SKU not found");
+  if (count === 0) {
+    await loadSkuMembership(args.skuId); // gone entirely → 404 sku_not_found
+    throw new ProductError(409, "member_moved", "That SKU is no longer in this product. Refresh the page.");
+  }
 
   await audit({
     actorId: actor.user.id,
@@ -1320,7 +1348,7 @@ export async function detachMember(
     action: "product.member_detach",
     resourceTable: "vendor_items",
     resourceId: args.skuId,
-    metadata: {},
+    metadata: { product_id: args.productId },
     ipAddress: null,
     userAgent: null,
   });
