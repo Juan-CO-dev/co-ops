@@ -15,6 +15,7 @@ const label = "grid min-w-0 max-w-full gap-1 text-[11px] font-bold tracking-[0.1
 
 const ERRORS: Record<string, TranslationKey> = {
   consent_import_large_opt_out: "customers.import.error.largeOptOut",
+  consent_import_empty_snapshot: "customers.import.error.emptySnapshot",
   consent_import_older_than_last: "customers.import.error.older",
   consent_import_busy: "customers.import.error.busy",
   consent_import_future_date: "customers.import.error.future",
@@ -64,7 +65,7 @@ export function ConsentTools({ metaEnabled, today }: { metaEnabled: boolean; tod
       const r = await send("/api/admin/customers/confirm", "B", payload);
       if (!r) return;
       if (!r.ok) {
-        if (r.code === "consent_import_large_opt_out") setNeedsConfirm(true);
+        if (r.code === "consent_import_large_opt_out" || r.code === "consent_import_empty_snapshot") setNeedsConfirm(true);
         setError(ERRORS[r.code ?? ""] ?? "customers.error.generic");
         return;
       }

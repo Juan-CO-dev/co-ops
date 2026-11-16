@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { auditTaskOverride, hasTaskAccess } from "@/lib/assignments";
+import { pickEffectiveRefItem } from "@/lib/ref-track-shared";
 /**
  * Prep instance lifecycle — Phase 3 / Module #1 Build #2 PR 1.
  *
@@ -2492,9 +2493,9 @@ async function reconcileRefTrackItems(
   const refItemIds = [...new Set(tracks.map((t) => t.references_template_item_id))];
   const { data: refRows, error: rErr } = await service
     .from("checklist_template_items")
-    .select("id, template_id, label")
+    .select("id, template_id, label, station")
     .in("id", refItemIds)
-    .returns<Array<{ id: string; template_id: string; label: string }>>();
+    .returns<Array<{ id: string; template_id: string; label: string; station: string | null }>>();
   if (rErr) throw new Error(`reconcileRefTrackItems: ref rows: ${rErr.message}`);
   const refById = new Map((refRows ?? []).map((r) => [r.id, r]));
 
@@ -2543,19 +2544,31 @@ async function reconcileRefTrackItems(
     if (riErr) throw new Error(`reconcileRefTrackItems: ref instance: ${riErr.message}`);
     if (!refInst) continue;
 
-    // The referenced item on the EFFECTIVE version (versioning re-mints item ids, so
-    // the frozen references_template_item_id may not exist on today's version — match
-    // by label, the system key, on the effective template).
-    const { data: effRefItem, error: eiErr } = await service
-      .from("checklist_template_items")
-      .select("id")
-      .eq("template_id", effRefTmpl.id)
-      .eq("label", refItem.label)
-      .eq("active", true)
-      .limit(1)
-      .maybeSingle<{ id: string }>();
-    if (eiErr) throw new Error(`reconcileRefTrackItems: eff ref item: ${eiErr.message}`);
-    const effRefItemId = effRefItem?.id ?? refItem.id;
+    // The referenced item on the EFFECTIVE version (audit W14 / B081). When the frozen
+    // reference is on today's template it IS the item. Otherwise versioning re-minted the
+    // ids and the item is found again by label AND station — labels repeat per station on
+    // an opening template, so a label alone picked an arbitrary station's row. Zero or
+    // several matches skip the line (lib/ref-track-shared.ts): never another station's
+    // item, never the other version's id.
+    let candidates: Array<{ id: string; station: string | null }> = [];
+    if (refItem.template_id !== effRefTmpl.id) {
+      const { data: candRows, error: eiErr } = await service
+        .from("checklist_template_items")
+        .select("id, station")
+        .eq("template_id", effRefTmpl.id)
+        .eq("label", refItem.label)
+        .eq("active", true)
+        .returns<Array<{ id: string; station: string | null }>>();
+      if (eiErr) throw new Error(`reconcileRefTrackItems: eff ref item: ${eiErr.message}`);
+      candidates = candRows ?? [];
+    }
+    const effRefItemId = pickEffectiveRefItem(refItem, effRefTmpl.id, candidates);
+    if (effRefItemId === null) {
+      console.warn(
+        `[prep] reconcileRefTrackItems: closing item ${track.id} tracks ${refItem.id}, which has ${candidates.length} same-label item(s) on template ${effRefTmpl.id} and no single one at its station; line left unticked.`,
+      );
+      continue;
+    }
 
     // Is the referenced item live-completed on today's referenced instance?
     const { data: comp, error: cErr } = await service

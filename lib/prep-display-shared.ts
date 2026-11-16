@@ -69,6 +69,9 @@ export function parseDecimalDraft(raw: string): DecimalDraft {
   return { kind: "invalid" };
 }
 
+/** What a decimal box shows for a committed value (the one formatter for every draft box). */
+export const draftOf = (v: number | null): string => (v === null ? "" : String(v));
+
 /**
  * #6 — why a row has no prep need yet. A row with no par never gets one, however the section
  * is verified ("no par set — type what you made"); a row with a par waits for ground truth.

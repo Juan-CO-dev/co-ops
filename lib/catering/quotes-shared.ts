@@ -6,6 +6,7 @@
  * quotes.ts re-exports, so server consumers are unchanged.
  */
 import { isQuoteLineKind, type QuoteLineKind } from "@/lib/catering/prep-demand-shared";
+import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
 export type { QuoteLineKind };
 
 export interface ChargeRates {
@@ -438,4 +439,33 @@ export function leadOptionLabel(lead: QuoteLeadOption, formatDate: (yyyymmdd: st
   ]
     .filter((p): p is string => typeof p === "string" && p.trim() !== "")
     .join(" · ");
+}
+
+// ── Resend an expired quote: the date a person picks → the instant the offer ends ────
+/** The furthest out a resend may push the expiry, in whole operational (ET) days from today.
+ *  A quote's own window is 14 days; this is a typo guard on a date a person types, not a
+ *  policy. Shared so the date picker's `max` and the server's refusal are one number. */
+export const QUOTE_RESEND_MAX_DAYS = 90;
+
+/** What the date picker opens on: the same 14-day window a new quote gets. */
+export const QUOTE_RESEND_DEFAULT_DAYS = 14;
+
+/**
+ * The instant a quote expires when a person says "good through <date>": the LAST SECOND of
+ * that operational (ET) day, as an ISO string — so the date the board shows for it
+ * (`etCalendarDate(expires_at)`) is the date that was picked, and an offer "through the
+ * 30th" is still payable at 9 PM on the 30th. DST-correct (the day's own ET midnights).
+ *
+ * Returns null for anything that is not a real `YYYY-MM-DD` calendar date — including a
+ * well-formed impossible one (2026-02-30), which the range helper would otherwise roll into
+ * March. PURE: the caller decides what "in the future" means against its own clock.
+ */
+export function quoteExpiryInstantForEtDate(value: unknown): string | null {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const utcMidnight = Date.parse(`${value}T00:00:00Z`);
+  if (!Number.isFinite(utcMidnight) || new Date(utcMidnight).toISOString().slice(0, 10) !== value) return null;
+  const endExclusive = Date.parse(operationalDayUtcRange(value).endExclusiveIso);
+  if (!Number.isFinite(endExclusive)) return null;
+  const iso = new Date(endExclusive - 1000).toISOString();
+  return etCalendarDate(iso) === value ? iso : null;
 }

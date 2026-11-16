@@ -209,6 +209,10 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "catering.payment.checkout_created",
   "catering.payment.mark_paid",
   "catering.payment.provider_paid",
+  // Also a system observation (audit W02 review r5): Stripe told us a delayed payment
+  // (a bank debit) FAILED. No money moved and no person acted; the row records that the
+  // attempt ended and whether its Checkout Session was released from the intent.
+  "catering.payment.provider_payment_failed",
   "catering.payment.provider_refunded",
   "catering.pipeline.create",
   "catering.pipeline.edit",

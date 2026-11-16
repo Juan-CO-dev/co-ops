@@ -21,7 +21,7 @@ export interface CustomerCaptureResult { ok: boolean; linked: number; skipped: n
 
 type Client = Pick<SupabaseClient, "rpc" | "from">;
 
-export async function persistCapturedCustomers(locationId: string, rawOrders: readonly unknown[], options: { signal?: AbortSignal; client?: Client } = {}): Promise<CustomerCaptureResult> {
+export async function persistCapturedCustomers(locationId: string, rawOrders: readonly unknown[], options: { signal?: AbortSignal; client?: Client; businessDate?: string } = {}): Promise<CustomerCaptureResult> {
   const empty = { linked: 0, skipped: 0, created: 0, ownerConflicts: 0, suggestions: 0 };
   if (!customerProfilesEnabled()) return { ok: true, ...empty, error: "customer_profiles_off" };
   const signal = options.signal ?? AbortSignal.timeout(30_000);
@@ -46,6 +46,14 @@ export async function persistCapturedCustomers(locationId: string, rawOrders: re
       // A re-captured order whose contact now resolves to someone else keeps its owner (0249); counted, never named.
       result.ownerConflicts += r.owner_conflicts ?? 0;
       for (const id of r.customer_ids ?? []) touched.add(id);
+    }
+    // 0312 (W12/B176): a Toast order voided or deleted AFTER it was first linked sends no row above, so
+    // the shop-day is re-synced from the latest pointers every time, even when no row was sent. Before
+    // 0312 is applied the function is missing (PGRST202 / 42883) and nothing changes.
+    if (options.businessDate) {
+      signal.throwIfAborted();
+      const { error } = await sb.rpc("customer_orders_sync_voided", { p_location_id: locationId, p_business_date: options.businessDate }).abortSignal(signal);
+      if (error && !["PGRST202", "42883"].includes(error.code ?? "")) throw new Error("customer_ingest_failed");
     }
     result.suggestions = await suggestFromCards(sb, [...touched], signal);
     return { ok: true, ...result, error: null };

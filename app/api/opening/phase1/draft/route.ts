@@ -9,7 +9,11 @@ import { OpeningRoleViolationError, canAccessOpeningInstance } from "@/lib/openi
  * holder opens the same instance on their OWN device and submits — lost every keystroke.
  * This route is the write half of the fix; the page loader is the read half.
  *
- * Body: { instanceId: string (uuid), draft: OpeningPhase1Draft }
+ * Body: { instanceId: string (uuid), draft: OpeningPhase1Draft, rev?: { tab: uuid, seq: integer ≥ 1 } }
+ *   `rev` (audit W14 / B078) is the sending TAB's revision: a random id minted per page load
+ *   and that tab's send counter. The writer refuses a request from the same tab whose counter
+ *   is not higher than the stored one, so a slow older autosave or beacon can never overwrite
+ *   a newer draft. Absent = an older client: accepted, last write wins. Malformed = 400.
  *   `draft` = { version, items, sections, openerNoPriorDataAttestation }, validated by
  *   `parseOpeningPhase1Draft` (lib/opening-draft-shared.ts) — the SAME pure validator the
  *   loader runs on read-back, so what a client can save and what the page can hydrate can
@@ -17,8 +21,10 @@ import { OpeningRoleViolationError, canAccessOpeningInstance } from "@/lib/openi
  *   reasons POST /api/opening/submit/phase1 accepts; an unknown one fails the whole draft
  *   (400 invalid_payload) rather than being coerced to null.
  *
- * Response (success): { savedAt: string }  — the SERVER's timestamp, so the status line
- *   in the footer never shows a wrong time from a skewed device clock.
+ * Response (success): { savedAt: string, applied: boolean }  — the SERVER's timestamp, so
+ *   the status line in the footer never shows a wrong time from a skewed device clock.
+ *   `applied: false` = the server already holds a NEWER save from the same tab and wrote
+ *   nothing; it is a success for the client (there is nothing to retry).
  *
  * Response (error): lib/api-helpers.ts jsonError shape.
  *   400 invalid_json               — body is not JSON
@@ -74,8 +80,8 @@ import { type NextRequest } from "next/server";
 
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { lockLocationContext } from "@/lib/locations";
-import { parseOpeningPhase1Draft } from "@/lib/opening-draft-shared";
-import { saveOpeningPhase1Draft } from "@/lib/opening";
+import { parseOpeningDraftRev, parseOpeningPhase1Draft } from "@/lib/opening-draft-shared";
+import { OpeningDraftRefusedError, saveOpeningPhase1Draft } from "@/lib/opening";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -109,6 +115,14 @@ export async function POST(req: NextRequest) {
     return jsonError(400, "invalid_payload", {
       message: "draft failed validation (version, items, sections).",
       field: "draft",
+    });
+  }
+  // Optional; the same req.json() path serves the fetch and the text/plain beacon.
+  const rev = parseOpeningDraftRev(raw.rev);
+  if (!rev.ok) {
+    return jsonError(400, "invalid_payload", {
+      message: "rev must be { tab: uuid, seq: integer >= 1 } when present.",
+      field: "rev",
     });
   }
   const instanceId = raw.instanceId;
@@ -157,18 +171,37 @@ export async function POST(req: NextRequest) {
     return jsonError(403, "role_level_insufficient", { required: 4, actor_level: ctx.level });
   }
 
-  // 4. Upsert. Last write wins (see saveOpeningPhase1Draft).
+  // 4. Save. In order within one tab, last write wins across devices (see
+  //    saveOpeningPhase1Draft). The writer re-checks the instance and its status under a
+  //    lock, so the reads above are the friendly early answers, not the authority.
   try {
-    const { savedAt } = await saveOpeningPhase1Draft(service, {
+    const { savedAt, applied } = await saveOpeningPhase1Draft(service, {
       instanceId,
       locationId: instance.location_id,
       draft,
       savedBy: ctx.user.id,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
+      rev: rev.rev,
     });
-    return jsonOk({ savedAt });
+    return jsonOk({ savedAt, applied });
   } catch (err) {
     if (err instanceof OpeningRoleViolationError) return jsonError(403, "role_level_insufficient", {});
+    if (err instanceof OpeningDraftRefusedError) {
+      // Phase 1 was submitted (or the instance moved) between the read above and the write.
+      if (err.code === "phase1_not_open") {
+        return jsonError(409, "phase1_not_open", {
+          message: "Phase 1 has already been submitted for this opening.",
+          instance_id: instanceId,
+        });
+      }
+      if (err.code === "instance_not_found") {
+        return jsonError(404, "instance_not_found", {
+          message: `Instance ${instanceId} not found`,
+          instance_id: instanceId,
+        });
+      }
+      return jsonError(400, "invalid_payload", { message: "draft save refused", field: "draft" });
+    }
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[/api/opening/phase1/draft] draft save failed:", msg);
     return jsonError(500, "internal_error", { message: "draft save failed" });
