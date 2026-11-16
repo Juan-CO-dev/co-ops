@@ -157,21 +157,27 @@ export async function loadPublicCateringPackages(locationId: string): Promise<Ca
   // Resolve names + prices for the referenced spine leaves so expanded lines are labeled + priced.
   const itemIds = [...new Set(pkgItems.map((r) => r.item_id).filter((v): v is string => v != null))];
   const menuItemIds = [...new Set(pkgItems.map((r) => r.menu_item_id).filter((v): v is string => v != null))];
-  const itemMap = new Map<string, { name: string; priceCents: number }>();
-  const menuMap = new Map<string, { name: string; priceCents: number }>();
+  // `active` rides along (audit W01/B031 r1): a deactivated ingredient makes its package unorderable
+  // and a deactivated pick is no longer an eligible option — resolveLines (save) and the re-price
+  // (preview / submit) check a cart against exactly this list.
+  const itemMap = new Map<string, { name: string; priceCents: number; active: boolean }>();
+  const menuMap = new Map<string, { name: string; priceCents: number; active: boolean }>();
   if (itemIds.length > 0) {
-    const { data: rows } = await sb.from("items").select("id, name, menu_price").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", itemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null }>>();
-    for (const r of rows ?? []) itemMap.set(r.id, { name: r.name, priceCents: dollarsToCents(r.menu_price) });
+    const { data: rows } = await sb.from("items").select("id, name, menu_price, active").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", itemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null; active: boolean }>>();
+    for (const r of rows ?? []) itemMap.set(r.id, { name: r.name, priceCents: dollarsToCents(r.menu_price), active: r.active === true });
   }
   if (menuItemIds.length > 0) {
-    const { data: rows } = await sb.from("menu_items").select("id, name, menu_price").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", menuItemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null }>>();
-    for (const r of rows ?? []) menuMap.set(r.id, { name: r.name, priceCents: dollarsToCents(r.menu_price) });
+    const { data: rows } = await sb.from("menu_items").select("id, name, menu_price, active").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", menuItemIds).returns<Array<{ id: string; name: string; menu_price: number | string | null; active: boolean }>>();
+    for (const r of rows ?? []) menuMap.set(r.id, { name: r.name, priceCents: dollarsToCents(r.menu_price), active: r.active === true });
   }
 
   const byPackage = new Map<string, PackageLine[]>();
+  /** Packages with a deactivated fixed ingredient: not orderable, so not offered (B031 r1). */
+  const unavailable = new Set<string>();
   for (const r of pkgItems) {
     const resolved = r.item_id ? itemMap.get(r.item_id) : r.menu_item_id ? menuMap.get(r.menu_item_id) : undefined;
     if (!resolved) continue; // Hidden or missing references are not available choices.
+    if (!resolved.active) { unavailable.add(r.package_id); continue; }
     const label = (r.description && r.description.trim()) || resolved?.name || "Item";
     const arr = byPackage.get(r.package_id) ?? [];
     arr.push({ itemId: r.item_id, menuItemId: r.menu_item_id, label, quantity: Number(r.quantity), unitPriceCents: resolved?.priceCents ?? 0 });
@@ -193,14 +199,15 @@ export async function loadPublicCateringPackages(locationId: string): Promise<Ca
     // Resolve names for any option refs not already in the fixed-line maps.
     const optItemIds = [...new Set((optRows ?? []).map((o) => o.item_id).filter((v): v is string => v != null && !itemMap.has(v)))];
     const optMenuIds = [...new Set((optRows ?? []).map((o) => o.menu_item_id).filter((v): v is string => v != null && !menuMap.has(v)))];
-    if (optItemIds.length > 0) { const { data } = await sb.from("items").select("id, name").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", optItemIds).returns<Array<{ id: string; name: string }>>(); for (const x of data ?? []) itemMap.set(x.id, { name: x.name, priceCents: 0 }); }
-    if (optMenuIds.length > 0) { const { data } = await sb.from("menu_items").select("id, name").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", optMenuIds).returns<Array<{ id: string; name: string }>>(); for (const x of data ?? []) menuMap.set(x.id, { name: x.name, priceCents: 0 }); }
+    if (optItemIds.length > 0) { const { data } = await sb.from("items").select("id, name, active").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", optItemIds).returns<Array<{ id: string; name: string; active: boolean }>>(); for (const x of data ?? []) itemMap.set(x.id, { name: x.name, priceCents: 0, active: x.active === true }); }
+    if (optMenuIds.length > 0) { const { data } = await sb.from("menu_items").select("id, name, active").or(`location_id.is.null,location_id.eq.${locationId}`).in("id", optMenuIds).returns<Array<{ id: string; name: string; active: boolean }>>(); for (const x of data ?? []) menuMap.set(x.id, { name: x.name, priceCents: 0, active: x.active === true }); }
     const optionsByLine = new Map<string, PackageSlotOption[]>();
     for (const o of optRows ?? []) {
       const kind = o.menu_item_id ? ("menu_item" as const) : ("item" as const);
       const refId = (o.menu_item_id ?? o.item_id)!;
-      const name = kind === "menu_item" ? menuMap.get(refId)?.name : itemMap.get(refId)?.name;
-      if (!name) continue;
+      const ref = kind === "menu_item" ? menuMap.get(refId) : itemMap.get(refId);
+      if (!ref || !ref.active) continue; // missing, out of scope, or deactivated: not an eligible pick
+      const name = ref.name;
       const arr = optionsByLine.get(o.package_item_id) ?? []; arr.push({ kind, refId, name }); optionsByLine.set(o.package_item_id, arr);
     }
     for (const line of choiceLines) {
@@ -210,7 +217,7 @@ export async function loadPublicCateringPackages(locationId: string): Promise<Ca
     }
   }
 
-  return packages.map((p) => ({
+  return packages.filter((p) => !unavailable.has(p.id)).map((p) => ({
     id: p.id,
     serves: p.serves == null ? null : Number(p.serves),
     labelEn: p.label_en,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import type { AuthContext } from "@/lib/session";
 import {
-  buildInboxEscalation, inboxCronEligible, inboxDeliveryConfig, inboxDeliveryOutcome, inboxReplyThreading, inboxSendable, inboxStaffUrl, renderInboxReply, senderAddress, textToHtml,
+  buildInboxEscalation, INBOX_DELIVERY_ERROR_CODES, INBOX_SEND_ERRORS, inboxCronEligible, inboxDeliveryConfig, inboxDeliveryOutcome, inboxReplyThreading, inboxSendable, inboxStaffUrl, renderInboxReply, senderAddress, textToHtml,
 } from "@/lib/catering/inbox-delivery-shared";
 import { getCateringInboxMessage, listCateringInbox } from "@/lib/catering/inbox";
 import { inboxOwnAddresses } from "@/lib/catering/inbox-content-shared";
@@ -196,7 +196,7 @@ describe("the delivery worker (cron path)", () => {
     const { sb } = fakeInboxService({ tables: liveTables(), rpc });
     runtime.sendEmail.mockResolvedValue({ id: "p" });
     const run = await runCateringInboxDelivery({ service: sb, now: new Date("2026-11-11T12:00:00Z") });
-    expect(run).toEqual({ ran: true, swept: 0, replies: { attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0 }, escalations: { attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0 } });
+    expect(run).toEqual({ ran: true, swept: 0, replies: { attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0, errored: 0 }, escalations: { attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0, errored: 0 } });
     expect(claims.map(c => [c.p_message_id, c.p_kind, c.p_trigger, c.p_actor_id])).toEqual([[ids.message, "reply", "cron", null], [ids.escalation, "escalation", "cron", null]]);
     expect(claims[1]!.p_escalation).toMatchObject({ language: "es", params: { tenantName: expect.any(String), reason: "urgent", inboxUrl: "https://staff.example.test/catering/inbox" } });
     expect((claims[1]!.p_escalation as { preview_text: string }).preview_text).toContain(es["catering.inbox.reason.urgent"]);
@@ -219,10 +219,41 @@ describe("the delivery worker (cron path)", () => {
     ] }), rpc });
     runtime.sendEmail.mockResolvedValue({ error: "refused", code: "validation_error" });
     const run = await runCateringInboxDelivery({ service: sb, now: new Date("2026-11-11T12:00:00Z") });
-    expect(run.replies).toEqual({ attempted: 1, sent: 0, failed: 0, ambiguous: 0, skipped: 1 });
-    expect(run.escalations).toEqual({ attempted: 1, sent: 0, failed: 1, ambiguous: 0, skipped: 0 });
+    expect(run.replies).toEqual({ attempted: 1, sent: 0, failed: 0, ambiguous: 0, skipped: 1, errored: 0 });
+    expect(run.escalations).toEqual({ attempted: 1, sent: 0, failed: 1, ambiguous: 0, skipped: 0, errored: 0 });
     expect(rpc.mock.calls.find(([name, args]) => name === "claim_catering_inbox_delivery" && (args as Record<string, unknown>).p_kind === "escalation")![1]).toMatchObject({ p_escalation: null });
     expect(rpc).toHaveBeenCalledWith("finish_catering_inbox_delivery", expect.objectContaining({ p_outcome: "failed", p_error_code: "provider_rejected" }));
+  });
+  it.each(["recipient_cap", "unsafe_preview"])("%s from the claim is a named skip, not an error", async code => {
+    const rpc = vi.fn((name: string) => {
+      if (name === "sweep_catering_inbox_delivery") return { data: [], error: null };
+      if (name === "catering_inbox_delivery_due") return { data: { replies: [{ message_id: ids.message, draft_id: ids.draft }], escalations: [] }, error: null };
+      if (name === "claim_catering_inbox_delivery") return { data: null, error: { message: code } };
+      throw new Error(`Unexpected writer: ${name}`);
+    });
+    const { sb } = fakeInboxService({ tables: liveTables(), rpc });
+    const run = await runCateringInboxDelivery({ service: sb, now: new Date("2026-11-11T12:00:00Z") });
+    expect(run.replies).toEqual({ attempted: 1, sent: 0, failed: 0, ambiguous: 0, skipped: 1, errored: 0 });
+    expect(runtime.sendEmail).not.toHaveBeenCalled();
+  });
+  // Audit W11/B169: an unexpected claim error (a timeout, a network failure) was counted as an ordinary skip, with no log.
+  it("an unexpected claim error is logged and counted errored, not skipped", async () => {
+    const rpc = vi.fn((name: string) => {
+      if (name === "sweep_catering_inbox_delivery") return { data: [], error: null };
+      if (name === "catering_inbox_delivery_due") return { data: { replies: [{ message_id: ids.message, draft_id: ids.draft }], escalations: [] }, error: null };
+      if (name === "claim_catering_inbox_delivery") return { data: null, error: { message: "canceling statement due to statement timeout" } };
+      throw new Error(`Unexpected writer: ${name}`);
+    });
+    const { sb } = fakeInboxService({ tables: liveTables(), rpc });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const run = await runCateringInboxDelivery({ service: sb, now: new Date("2026-11-11T12:00:00Z") });
+      expect(run.replies).toEqual({ attempted: 1, sent: 0, failed: 0, ambiguous: 0, skipped: 0, errored: 1 });
+      expect(run.escalations).toEqual({ attempted: 0, sent: 0, failed: 0, ambiguous: 0, skipped: 0, errored: 0 });
+      expect(logged).toHaveBeenCalledWith("[catering-inbox] delivery attempt errored", { code: "write_failed", kind: "reply", message_id: ids.message });
+      expect(JSON.stringify(logged.mock.calls)).not.toContain("guest@example.test");
+      expect(runtime.sendEmail).not.toHaveBeenCalled();
+    } finally { logged.mockRestore(); }
   });
   it("the cron route: secret → switches → lease → run; busy lease skips; a thrown run is a fixed-code failure", async () => {
     const { sb } = fakeInboxService({ tables: liveTables(), rpc: (name) => name === "sweep_catering_inbox_delivery" ? { data: [], error: null }
@@ -299,8 +330,8 @@ describe("review round: uncertainty, starvation, the expiry sweep", () => {
     const run = await runCateringInboxDelivery({ service: sb, now: new Date("2026-11-11T12:00:00Z") });
     expect(claims.map(c => [c.p_message_id, c.p_kind])).toEqual([[fresh, "reply"], [freshEsc, "escalation"]]);
     expect(claims[1]!.p_escalation).toMatchObject({ language: "es", params: { reason: "urgent" } });
-    expect(run.replies).toEqual({ attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0 });
-    expect(run.escalations).toEqual({ attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0 });
+    expect(run.replies).toEqual({ attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0, errored: 0 });
+    expect(run.escalations).toEqual({ attempted: 1, sent: 1, failed: 0, ambiguous: 0, skipped: 0, errored: 0 });
     expect(runtime.sendEmail).toHaveBeenCalledTimes(2);
     // No lane list read, no page walk: the only draft/message reads are the per-attempt lookups.
     expect(from.mock.calls.filter(([table]) => table === "catering_inbox_drafts").length).toBeLessThanOrEqual(1);
@@ -377,4 +408,27 @@ describe("the human routes", () => {
     await expect(sendCateringInboxDraft(actor, "00000000-0000-4000-8000-000000000000", { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ status: 404 });
     await expect(sendCateringInboxDraft({ ...actor, user: { ...actor.user, role: "agm" } } as AuthContext, ids.message, { expectedRevision: 1, requestId: ids.request })).rejects.toMatchObject({ status: 403 });
   });
+});
+
+// Audit W11/B068: a customer subject with a URL carrying ? or #, or "token=", made the claim refuse the escalation forever.
+it.each(["en", "es"] as const)("escalation text never carries a customer URL or token (%s)", language => {
+  const dict = (language === "en" ? en : es) as Record<string, string>;
+  const t = (key: string, params?: Record<string, string>) => (dict[key] ?? key).replace(/\{(\w+)\}/g, (m, n: string) => params?.[n] ?? m);
+  const envelope = buildInboxEscalation({ language, tenantName: "Synthetic", inboxUrl: inboxStaffUrl("https://staff.example.test"), reason: "urgent",
+    sender: "x@example.test?token=1", subject: "Urgent help with https://example.com/order?id=123 token=abc www.example.com/#frag TOKEN =2", translate: t });
+  expect(envelope.preview_text).not.toContain("example.com/order");
+  expect(envelope.preview_text).not.toMatch(/(https?:\/\/[^\s]*[?#]|token=)/);
+  expect(envelope.preview_text).not.toMatch(/token\s*=/i);
+  expect(envelope.preview_text).toContain(dict["catering.inbox.escalation.link_removed"]!);
+  expect(envelope.preview_text).toContain("https://staff.example.test/catering/inbox");
+});
+
+// Audit W11 (0311): the two new SQL codes are named, translated refusals, never generic failures.
+it("recipient_cap and unsafe_preview have en + es text", () => {
+  for (const dict of [en, es] as Record<string, string>[]) {
+    expect(dict["catering.inbox.send_error.recipient_cap"]).toBeTruthy();
+    expect(dict["catering.inbox.delivery.error.unsafe_preview"]).toBeTruthy();
+    for (const code of INBOX_SEND_ERRORS) expect(dict[`catering.inbox.send_error.${code}`], code).toBeTruthy();
+    for (const code of INBOX_DELIVERY_ERROR_CODES) expect(dict[`catering.inbox.delivery.error.${code}`], code).toBeTruthy();
+  }
 });

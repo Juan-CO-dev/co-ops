@@ -15,14 +15,13 @@ import { hasTaskAccess } from "@/lib/assignments";
 import { redirect } from "next/navigation";
 
 import { cashLockedByClosing, loadCashReport } from "@/lib/cash";
-import { overShortReadout } from "@/lib/cash-shared";
+import { cashBusinessDay, overShortReadout } from "@/lib/cash-shared";
 import { loadToastCashProjected, type ToastProjected } from "@/lib/cash-toast";
 import { submittedToastLine } from "@/lib/cash-toast-shared";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
-import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -64,7 +63,10 @@ export default async function CashPage({ searchParams }: PageProps) {
 
   const sb = getServiceRoleClient();
   const lang = auth.user.language;
-  const today = etCalendarDate(new Date().toISOString());
+  // The page offers ONE date: today's business day. It is the write gate's own definition
+  // (cashBusinessDay), so it is always inside the current week a key holder may file for
+  // (W03 follow-up, Juan 2026-11-15; pinned in tests/cash-current-week.test.ts).
+  const today = cashBusinessDay(new Date().toISOString());
 
   if (!(await hasTaskAccess(sb, { userId: auth.user.id, level: auth.level, locationId: locationParam, date: today, task: "cash_report" }))) redirect("/dashboard");
 

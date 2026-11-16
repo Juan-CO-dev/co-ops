@@ -22,6 +22,7 @@ import { FAQ, GTK } from "@/components/portal/portal-content";
 import type { DraftLoad } from "@/lib/portal/draft";
 import type { ChargeStack } from "@/lib/catering/quotes";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
+import { reviewFailure, type PortalDeliveryInfo } from "@/lib/portal/draft-shared";
 
 // ── Tip presets ──────────────────────────────────────────────────────────────────────
 const TIP_PRESETS = [0, 0.15, 0.18, 0.2] as const;
@@ -86,9 +87,19 @@ function OrderReview() {
 
   const [draft, setDraft] = useState<DraftLoad | null>(null);
   const [stack, setStack] = useState<ChargeStack | null>(null);
+  // Delivery as the server priced it (Juan 2026-11-15): the fee, the zone's minimum, and whether the
+  // order can be placed as it stands. Null until the first preview (or on a pre-change server).
+  const [delivery, setDelivery] = useState<PortalDeliveryInfo | null>(null);
   const [tipRate, setTipRate] = useState<TipRate>(0);
   const [napkins, setNapkins] = useState(false);
+  // The order's allergy / special-instructions note — the lead's dietary_notes, saved with the submit
+  // and shown to staff on the lead (audit W01/B002).
+  const [dietaryNotes, setDietaryNotes] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  // A failure that needs the customer somewhere else (audit W01/B034): the cart changed under them, or
+  // the portal session expired. Never an endless "Loading your order…".
+  const [blocked, setBlocked] = useState<"cart_changed" | "session_expired" | null>(null);
+  const hasStack = useRef(false);
   // Does THIS shop take a card online? A server fact (lib/stripe/client.ts, resolved per
   // location), delivered beside the draft. It changes what the copy PROMISES and nothing
   // else — LRA-210's lesson is that a page must never describe a provider the deployment
@@ -111,15 +122,19 @@ function OrderReview() {
       try {
         const res = await fetch(`/api/portal/order/draft/${encodeURIComponent(quoteId)}`);
         if (res.status === 404) { router.push("/order/start"); return; }
-        if (!res.ok) { setLoadError("Couldn't load your order. Please refresh or start over."); return; }
+        if (res.status === 401) { setBlocked("session_expired"); return; }
+        if (!res.ok) { setLoadError(t("order.review.error_load")); return; }
         const json = (await res.json()) as { ok: boolean; draft: DraftLoad; paymentsOnline?: boolean };
+        // Already submitted or superseded (e.g. Back after placing it): the order lives on its quote page now.
+        if (json.draft.status !== "draft" || json.draft.editable === false) { router.replace(`/order/quote/${encodeURIComponent(json.draft.quoteId)}`); return; }
         setDraft(json.draft);
+        setDietaryNotes(json.draft.lead?.dietaryNotes ?? "");
         setPaymentsOnline(json.paymentsOnline === true);
       } catch {
-        setLoadError("Couldn't load your order. Please refresh or start over.");
+        setLoadError(t("order.review.error_load"));
       }
     })();
-  }, [router]);
+  }, [router, t]);
 
   // ── Step 2: fetch server-authoritative preview whenever tip or napkins changes ──────
   useEffect(() => {
@@ -131,6 +146,13 @@ function OrderReview() {
     previewAbort.current = ac;
 
     const tipBps = Math.round(tipRate * 10000);
+    const fail = (status: number | null, code: string | null) => {
+      const action = reviewFailure(status, code, hasStack.current);
+      if (action === "go_to_quote") router.replace(`/order/quote/${encodeURIComponent(draft.quoteId)}`);
+      else if (action === "cart_changed" || action === "session_expired") setBlocked(action);
+      else if (action === "error") setLoadError(t("order.review.error_load"));
+      // "keep": a recompute failed while a breakdown is shown — keep the last one.
+    };
 
     void (async () => {
       try {
@@ -139,24 +161,26 @@ function OrderReview() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             quoteId: draft.quoteId,
-            isDelivery: draft.isDelivery,
-            deliveryZoneId: draft.deliveryZoneId ?? null,
             tipBps,
             napkins,
           }),
           signal: ac.signal,
         });
         if (ac.signal.aborted) return;
-        if (!res.ok) return; // keep showing prior stack
-        const json = (await res.json()) as { ok: boolean; stack: ChargeStack };
-        if (!ac.signal.aborted) setStack(json.stack);
+        if (!res.ok) {
+          const code = await res.json().then((j: { error?: unknown }) => (typeof j?.error === "string" ? j.error : null)).catch(() => null);
+          if (!ac.signal.aborted) fail(res.status, code);
+          return;
+        }
+        const json = (await res.json()) as { ok: boolean; stack: ChargeStack; delivery?: PortalDeliveryInfo };
+        if (!ac.signal.aborted) { hasStack.current = true; setStack(json.stack); setDelivery(json.delivery ?? null); }
       } catch (e) {
         // AbortError is expected on rapid tip/napkins changes — silently ignore.
         if (e instanceof DOMException && e.name === "AbortError") return;
-        // Other errors: leave prior stack in place; don't surface to the user.
+        fail(null, null); // network: an error screen when nothing is shown yet, else keep the breakdown
       }
     })();
-  }, [draft, tipRate, napkins]);
+  }, [draft, tipRate, napkins, router, t]);
 
   // ── Submit handler ─────────────────────────────────────────────────────────────────
   async function handleComplete() {
@@ -170,32 +194,63 @@ function OrderReview() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           quoteId: draft.quoteId,
-          isDelivery: draft.isDelivery,
-          deliveryZoneId: draft.deliveryZoneId ?? null,
           tipBps,
           napkins,
+          dietaryNotes,
         }),
       });
-      const json = (await res.json()) as { ok?: boolean; quoteId?: string; error?: string };
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; quoteId?: string; error?: string };
       if (json.ok && json.quoteId) {
         router.push(`/order/quote/${json.quoteId}`);
-      } else {
-        setSubmitError("Something went wrong. Please try again.");
-        setSubmitting(false);
+        return;
       }
+      const action = reviewFailure(res.status, json.error ?? null, true);
+      if (action === "go_to_quote") { router.replace(`/order/quote/${encodeURIComponent(draft.quoteId)}`); return; }
+      if (action === "cart_changed" || action === "session_expired") { setBlocked(action); setSubmitting(false); return; }
+      if (action === "delivery_unavailable") { setSubmitError(t("order.review.delivery_unavailable")); setSubmitting(false); return; }
+      if (action === "below_delivery_minimum") {
+        setSubmitError(delivery?.minOrderCents != null
+          ? t("order.review.delivery_minimum_short", { min: centsToMoney(delivery.minOrderCents), short: centsToMoney(Math.max(delivery.shortByCents, 1)) })
+          : t("order.review.delivery_minimum_generic"));
+        setSubmitting(false);
+        return;
+      }
+      setSubmitError(t("order.review.submit_failed"));
+      setSubmitting(false);
     } catch {
-      setSubmitError("Something went wrong. Please try again.");
+      setSubmitError(t("order.review.submit_failed"));
       setSubmitting(false);
     }
   }
 
   // ── Render: loading / error states ────────────────────────────────────────────────
+  if (blocked) {
+    const quoteId = draft?.quoteId ?? (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("draft") : null);
+    return (
+      <div className="grid min-h-screen place-items-center bg-co-bg px-6 text-center text-co-text">
+        <div className="max-w-md">
+          <p role="alert" className="text-sm font-semibold text-co-text">
+            {t(blocked === "cart_changed" ? "order.review.cart_changed" : "order.review.session_expired")}
+          </p>
+          {blocked === "cart_changed" && quoteId ? (
+            <Link href={`/order/build?draft=${encodeURIComponent(quoteId)}`} className="mt-4 inline-flex min-h-[44px] items-center text-sm font-bold underline">{t("order.review.edit_order")}</Link>
+          ) : (
+            <Link href="/order/start" className="mt-4 inline-flex min-h-[44px] items-center text-sm font-bold underline">{t("order.review.sign_in")}</Link>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (loadError) {
     return (
       <div className="grid min-h-screen place-items-center bg-co-bg px-6 text-center text-co-text">
         <div>
-          <p className="text-sm font-semibold text-co-text">{loadError}</p>
-          <Link href="/order/start" className="mt-4 inline-block text-sm font-bold underline">Start over</Link>
+          <p role="alert" className="text-sm font-semibold text-co-text">{loadError}</p>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-4">
+            <button type="button" onClick={() => window.location.reload()} className="inline-flex min-h-[44px] items-center text-sm font-bold underline">{t("order.review.retry")}</button>
+            <Link href="/order/start" className="inline-flex min-h-[44px] items-center text-sm font-bold underline">{t("order.review.start_over")}</Link>
+          </div>
         </div>
       </div>
     );
@@ -213,6 +268,12 @@ function OrderReview() {
   const lead = draft.lead;
   const isDelivery = draft.isDelivery;
   const isCompany = !!(lead?.company?.trim());
+  // A delivery order the server would refuse (no zone, under the minimum): say why, and hold Submit.
+  const deliveryBlock: string | null = delivery?.refusal === "delivery_unavailable"
+    ? t("order.review.delivery_unavailable")
+    : delivery?.refusal === "below_delivery_minimum" && delivery.minOrderCents != null
+      ? t("order.review.delivery_minimum_short", { min: centsToMoney(delivery.minOrderCents), short: centsToMoney(delivery.shortByCents) })
+      : null;
 
   return (
     <div className="min-h-screen bg-co-bg pb-32 text-co-text">
@@ -290,6 +351,24 @@ function OrderReview() {
                 );
               })}
             </ul>
+          </section>
+        </Reveal>
+
+        {/* Allergies & special instructions — saved with the order, seen by the kitchen team */}
+        <Reveal className="mt-5">
+          <section className="rounded-3xl border border-co-border/70 bg-co-surface p-6 shadow-sm">
+            <label htmlFor="order-dietary-notes" className="text-sm font-extrabold text-co-text">{t("order.review.notes_heading")}</label>
+            <p className="mt-0.5 text-xs text-co-text-dim">{t("order.review.notes_help")}</p>
+            <textarea
+              id="order-dietary-notes"
+              aria-label={t("order.review.notes_heading")}
+              value={dietaryNotes}
+              onChange={(e) => setDietaryNotes(e.target.value)}
+              maxLength={2000}
+              rows={3}
+              placeholder={t("order.review.notes_placeholder")}
+              className="mt-3 w-full rounded-xl border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm text-co-text"
+            />
           </section>
         </Reveal>
 
@@ -373,9 +452,12 @@ function OrderReview() {
               <Row label="Service charge (kitchen & packing)" value={centsToMoney(stack.serviceChargeCents)} muted />
               <Row
                 label={isDelivery ? "Delivery" : "Pickup"}
-                value={stack.deliveryFeeCents > 0 ? centsToMoney(stack.deliveryFeeCents) : "Free"}
+                value={stack.deliveryFeeCents > 0 ? centsToMoney(stack.deliveryFeeCents) : isDelivery && delivery?.refusal === "delivery_unavailable" ? "—" : "Free"}
                 muted
               />
+              {isDelivery && delivery?.minOrderCents != null && (
+                <p className="-mt-1 text-xs text-co-text-dim">{t("order.review.delivery_minimum", { min: centsToMoney(delivery.minOrderCents) })}</p>
+              )}
               {stack.gratuityCents > 0 && <Row label="Tip for the crew" value={centsToMoney(stack.gratuityCents)} muted />}
               <Row label="Estimated DC tax" value={centsToMoney(stack.taxCents)} muted />
               <div className="mt-1.5 flex items-center justify-between border-t border-co-border pt-3">
@@ -442,6 +524,14 @@ function OrderReview() {
       {/* Sticky place-order bar — the one click that completes the order */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-co-border bg-co-bg/95 px-5 py-3.5 backdrop-blur">
         <div className="mx-auto flex max-w-2xl flex-col gap-2">
+          {deliveryBlock && !submitError && (
+            <p role="alert" className="text-center text-xs font-semibold text-co-cta-text">
+              {deliveryBlock}{" "}
+              {delivery?.refusal === "below_delivery_minimum" && (
+                <Link href={`/order/build?draft=${encodeURIComponent(draft.quoteId)}`} className="inline-flex min-h-[44px] items-center underline">{t("order.review.edit_order")}</Link>
+              )}
+            </p>
+          )}
           {submitError && (
             <p className="text-center text-xs font-semibold text-red-600">{submitError}</p>
           )}
@@ -458,7 +548,7 @@ function OrderReview() {
             <button
               type="button"
               onClick={() => { void handleComplete(); }}
-              disabled={submitting}
+              disabled={submitting || deliveryBlock != null}
               className="inline-flex min-h-[54px] flex-1 items-center justify-center rounded-full bg-co-text px-6 text-sm font-bold uppercase tracking-[0.08em] text-co-cta shadow-xl shadow-black/20 transition hover:bg-co-text/90 disabled:opacity-50 sm:flex-none sm:px-10"
             >
               {submitting

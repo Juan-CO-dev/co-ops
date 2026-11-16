@@ -1,14 +1,14 @@
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
-import { machineNotesMarkers } from "./machine-notes-shared";
+import { findMachineBlock, machineNotesMarkers } from "./machine-notes-shared";
 
 /** Once structured detail exists, hide its obsolete machine summary, retaining human text. */
 export function humanEzcaterNotes(notes: string | null): string | null {
   if (!notes) return notes;
-  const { begin, end } = machineNotesMarkers("ezCater order", "ezCater");
-  const start = notes.indexOf(begin);
-  const finish = start < 0 ? -1 : notes.indexOf(end, start + begin.length);
-  if (finish < 0) return notes;
-  return notes.slice(0, start) + notes.slice(finish + end.length);
+  const markers = machineNotesMarkers("ezCater order", "ezCater");
+  // Whole marker lines only: a quoted end marker inside the block never ends it early (audit W11/B170).
+  const block = findMachineBlock(notes, markers);
+  if (!block) return notes;
+  return notes.slice(0, block.start) + notes.slice(block.end + markers.end.length);
 }
 
 /** The existing catering contact policy; operational writes keep their own scope. */

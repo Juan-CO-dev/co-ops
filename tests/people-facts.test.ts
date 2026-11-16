@@ -137,3 +137,34 @@ describe("PeopleInputs and the trusted role", () => {
     expect(v.level).toBe(6);
   });
 });
+
+describe("B061 — a v1 eval note counts for the person who wrote it", () => {
+  const ANA = "33333333-3333-4333-8333-333333333333", BEN = "44444444-4444-4444-8444-444444444444";
+  const crew: RosterMember[] = [{ userId: ANA, name: "Ana", role: "key_holder", level: 4 }, { userId: BEN, name: "Ben", role: "gm", level: 7 }];
+  function evalTables(): Tables {
+    const t = tables();
+    t.pm_reports = [{ id: "r1", location_id: SHOP, report_date: "2026-10-10", status: "submitted", submitted_by: BEN, submitted_at: "2026-10-11T02:00:00.000Z", superseded_at: null }];
+    t.pm_employee_evals = Array.from({ length: 5 }, (_, i) => ({
+      id: `ev${i}`, pm_report_id: "r1", location_id: SHOP, employee_id: `emp-${i}`, author_id: ANA, area_to_improve: i % 2 ? "pace" : null, note: i % 2 ? null : "watch the line", superseded_at: null,
+    }));
+    return t;
+  }
+  it("team: KH Ana's 5 notes on a report GM Ben submitted count for Ana, not Ben", async () => {
+    const facts = await loadPeopleFacts(createFakeDb(evalTables()).client as unknown as SupabaseClient, {
+      locationId: SHOP, subject: { kind: "team", memberIds: [ANA, BEN] }, window: CUR, families: LEGACY_TEAM_FAMILIES,
+    });
+    const team = teamWindow(facts, crew, CUR);
+    expect(team.members.find((m) => m.userId === ANA)!.counts.notes).toBe(5);
+    expect(team.members.find((m) => m.userId === BEN)!.counts.notes).toBe(0);
+  });
+  it("person: Ana's detail counts the 5; Ben's detail counts none of them", async () => {
+    const load = (personId: string) => loadPeopleFacts(createFakeDb(evalTables()).client as unknown as SupabaseClient, {
+      locationId: SHOP, subject: { kind: "person", personId }, window: CUR, families: LEGACY_PERSON_FAMILIES,
+    });
+    const ana = personMetrics(await load(ANA), { role: "key_holder", createdAt: "2026-01-01T00:00:00Z" }, CUR, "2026-10-14");
+    const ben = personMetrics(await load(BEN), { role: "gm", createdAt: "2026-01-01T00:00:00Z" }, CUR, "2026-10-14");
+    expect(ana.counts.notes).toBe(5);
+    expect(ben.counts.notes).toBe(0);
+    expect(ben.counts.finalizations).toBeGreaterThanOrEqual(1); // Ben still gets his submit
+  });
+});
