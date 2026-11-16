@@ -45,7 +45,7 @@ import {
 } from "@/components/ordering/delivery-affordances";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { PoDetail, VendorPoSku } from "@/lib/purchase-orders";
-import { renderPoBodyText } from "@/lib/po-body";
+import { renderPoBodyText, vendorT } from "@/lib/po-body";
 import { buildDraftEditPayload } from "@/lib/po-draft-edits-shared";
 import { groupByGuideSection, hasGuideHeader, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
 import type { OrderEmailPreview } from "@/lib/po-email-shared";
@@ -85,7 +85,7 @@ export function PoPanel({
   actorLevel,
   language,
   shopLabel,
-  dateLabel,
+  vendorDateLabel,
   onClose,
   onChanged,
 }: {
@@ -94,7 +94,8 @@ export function PoPanel({
   actorLevel: number;
   language: "en" | "es";
   shopLabel: string;
-  dateLabel: string;
+  /** The walk date formatted in ENGLISH — it only ever lands in vendor-facing text (W19/B190). */
+  vendorDateLabel: string;
   onClose: () => void;
   /** Called after any successful mutation so the parent refreshes its chip list. */
   onChanged: () => void;
@@ -271,6 +272,11 @@ export function PoPanel({
     if (res.ok) {
       await load();
       onChanged();
+    } else if (res.code === "lines_changed") {
+      // W19/B109: someone changed the lines while this confirm ran. Reload so the confirmer sees the new quantities
+      // before confirming again, and keep the message (load clears it).
+      await load();
+      setErrFromCode(res.code);
     }
   };
 
@@ -320,6 +326,10 @@ export function PoPanel({
     if (res.ok) {
       await load();
       onChanged();
+    } else if (res.code === "send_uncertain" || res.code === "send_conflict") {
+      // W19/B108: reload so the "email unconfirmed" note shows, then put back the message (load clears it).
+      await load();
+      setErrFromCode(res.code);
     }
   };
 
@@ -328,12 +338,13 @@ export function PoPanel({
   const bodyText = useMemo(() => {
     if (!detail) return "";
     return renderPoBodyText({
-      displayCode: detail.displayCode, shopLabel, dateLabel,
+      displayCode: detail.displayCode, shopLabel, dateLabel: vendorDateLabel,
       lines: detail.lines.map((l) => ({ skuName: l.skuName, orderQty: l.orderQty, orderUnitLabel: l.orderUnitLabel, itemNumber: l.itemNumber, guidePosition: l.guidePositionSnapshot, guideSection: l.guideSection })),
-    }, t);
-  }, [detail, shopLabel, dateLabel, t]);
+    }, vendorT);
+  }, [detail, shopLabel, vendorDateLabel]);
 
-  const subject = t("ordering.email.subject", { shop: shopLabel, date: dateLabel });
+  // W19/B190: vendor-facing text (this subject, the body above) is English for every viewer — vendorT, never t.
+  const subject = vendorT("ordering.email.subject", { shop: shopLabel, date: vendorDateLabel });
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-co-bg">
@@ -391,6 +402,17 @@ export function PoPanel({
             {err && (
               <div role="alert" className="mt-3 rounded-lg border-2 border-co-danger bg-co-danger-surface px-3 py-3 text-sm text-co-text">
                 {err}
+              </div>
+            )}
+
+            {/* W19/B108: an order email got an UNCLEAR answer — it may have reached the vendor. Shown (alert, always
+                visible) until the vendor confirms; a retry from here cannot send a duplicate within 23 hours of the first try,
+                and the server refuses one after that (send_window_expired, fix round 1). */}
+            {detail.emailSendUncertainAt && !detail.ack && (
+              <div role="status" className="mt-3 rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-3 text-sm text-co-warning-text">
+                {t(detail.status === "confirmed" ? "ordering.po.send_unconfirmed.confirmed" : "ordering.po.send_unconfirmed.placed", {
+                  time: formatTime(detail.emailSendUncertainAt, language),
+                })}
               </div>
             )}
 

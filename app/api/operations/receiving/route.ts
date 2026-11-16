@@ -4,6 +4,7 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { recordDelivery, ReceivingError, type RecordDeliveryInput } from "@/lib/receiving";
+import { parseDeliveryLineInputs } from "@/lib/receiving-shared";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** V2-D4: cap the redelivery-closure batch. A door delivery closing >50 credits at
@@ -30,6 +31,11 @@ export async function POST(req: NextRequest) {
     return jsonError(400, "invalid_payload");
   }
   if (!Array.isArray(b.lines)) return jsonError(400, "no_lines");
+  // W20/B197: shape-check every line BEFORE any write (the same check the continue route runs).
+  // A bad flag or a non-text note used to get past this route, fail the line insert AFTER the
+  // delivery header was written, and leave a lineless delivery that blocked the retry.
+  const narrowed = parseDeliveryLineInputs(b.lines);
+  if (!narrowed.ok) return jsonError(400, "invalid_payload", { field: narrowed.field });
 
   // V2-D4: makeUpCreditIds — optional array of ≤50 UUID strings (the open credits this
   // delivery makes up). Reject a malformed batch rather than silently dropping it, so a
@@ -71,7 +77,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const res = await recordDelivery(ctx, b as RecordDeliveryInput);
+    const res = await recordDelivery(ctx, { ...(b as RecordDeliveryInput), lines: narrowed.lines });
     return jsonOk(
       {
         deliveryId: res.deliveryId,

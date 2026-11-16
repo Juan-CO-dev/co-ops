@@ -172,6 +172,9 @@ interface ChecklistItemProps {
   /** Location id — threaded to PhotoCapture for expects_photo items (photo
    *  uploader seam, 0164); the upload is location-bound. */
   locationId: string;
+  /** The checklist instance — names a task photo's instance so the upload binds by the shop-task
+   *  rule (audit W05B: level 8+ at any active shop). Optional; absent = the membership bind. */
+  instanceId?: string;
   /** Read-only override (per Build #1 step 9). */
   readOnly?: boolean;
   /** Async completion callback (existing). */
@@ -436,6 +439,7 @@ export function ChecklistItem({
   actorUserId,
   instanceStatus,
   locationId,
+  instanceId,
   readOnly = false,
   onComplete,
   onRevoke,
@@ -1339,6 +1343,7 @@ export function ChecklistItem({
               <PhotoCapture
                 className="mt-1"
                 locationId={locationId}
+                instanceId={instanceId}
                 initialPhotoId={liveCompletion?.photoId ?? null}
                 onUploaded={setPhotoDraft}
               />

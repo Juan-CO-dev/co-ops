@@ -12,7 +12,7 @@ vi.mock("@/lib/operational-task-access", () => ({ canDoOperationalTask: vi.fn(as
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/prep-consumption", () => ({
   loadMeasures: vi.fn(async () => new Map()), loadSkuPackChains: vi.fn(async () => new Map()),
-  loadShopPackEpochs: vi.fn(async () => new Map()),
+  loadShopPackEpochs: vi.fn(async () => new Map()), loadShopPackEpochsAt: vi.fn(async () => new Map()),
 }));
 vi.mock("@/lib/vendor-rhythm", () => ({
   loadRhythmByVendor: walkerMocks.rhythms,
@@ -48,7 +48,7 @@ function walkerClient(selfLoaded: boolean) {
       ? [{ id: SKU, name: "Foreign", vendor_id: VENDOR, location_id: FOREIGN }]
       : [];
     const q: Record<string, unknown> = {};
-    for (const op of ["select", "eq", "gte", "lte", "order", "or"]) q[op] = () => q;
+    for (const op of ["select", "eq", "gte", "lte", "order", "or", "in"]) q[op] = () => q;
     q.range = () => q;
     q.returns = () => q;
     q.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data, error: null }).then(resolve);

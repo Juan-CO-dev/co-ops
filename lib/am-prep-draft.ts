@@ -24,7 +24,7 @@ import {
   type AmPrepDraftItem,
   type AmPrepDraftRestore,
 } from "./am-prep-draft-shared";
-import { lockLocationContext } from "./locations";
+import { canWorkShopTasks } from "./locations";
 import type { RoleCode } from "./roles";
 
 export * from "./am-prep-draft-shared";
@@ -199,7 +199,7 @@ export async function saveAmPrepDraft(
     throw new AmPrepDraftError(404, "instance_not_found", `Instance ${args.instanceId} not found`);
   }
 
-  if (!lockLocationContext({ role: actor.role, locations: actor.locations }, instance.location_id)) {
+  if (!canWorkShopTasks({ role: actor.role, locations: actor.locations }, instance.location_id)) {
     throw new AmPrepDraftError(403, "location_access_denied", "You don't have access to this location.");
   }
 
@@ -281,7 +281,7 @@ export async function consumeAmPrepDraft(
   },
 ): Promise<number> {
   if (
-    !lockLocationContext({ role: args.actor.role, locations: args.actor.locations }, args.locationId)
+    !canWorkShopTasks({ role: args.actor.role, locations: args.actor.locations }, args.locationId)
   ) {
     throw new AmPrepDraftError(403, "location_access_denied", "You don't have access to this location.");
   }

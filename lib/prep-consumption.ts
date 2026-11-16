@@ -295,6 +295,27 @@ export async function loadShopPackEpochs(skuIds: string[], locationId: string): 
 }
 
 /**
+ * EVERY current pack epoch at one shop (0259 sku_pack_epochs; D3), with NO id list — for a reader
+ * that must read the epoch BEFORE it knows which SKUs it will stamp (audit W18/B106 fix round 2:
+ * the nightly ledger reads the epoch first, then the par'd-SKU universe whose global pars it stamps).
+ * Bounded by the catalog (one row per SKU per shop that ever changed pack), paged under the primary
+ * key's order; a SKU with no row is at epoch 0 and is absent. Throws on error, like the chunked twin.
+ */
+export async function loadShopPackEpochsAt(locationId: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const sb = getServiceRoleClient();
+  const rows = await selectAllRows<{ sku_id: string; epoch: number | string }>(async (from, to) => {
+    const { data, error } = await sb.from("sku_pack_epochs").select("sku_id, epoch")
+      .eq("location_id", assertScopeToken(locationId))
+      .order("sku_id", { ascending: true }).range(from, to).returns<Array<{ sku_id: string; epoch: number | string }>>();
+    if (error) throw new Error(`loadShopPackEpochsAt: ${error.message}`);
+    return { data };
+  });
+  for (const r of rows) out.set(r.sku_id, Number(r.epoch));
+  return out;
+}
+
+/**
  * EVERY pack BOUNDARY (a version opening or closing) visible to `scope`, ascending, de-duplicated
  * (epoch ms). Between two consecutive boundaries nothing about the packs `scope` sees changes, so
  * every instant in that interval resolves to the SAME graph. Paged (one row per version).

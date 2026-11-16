@@ -2,7 +2,7 @@
  * POST /api/admin/catalog/sku/[id]/pack/apply — "It arrives differently now", saved (catalog Phase 2b).
  * Body: { target: { kind: "shop", shopId } | { kind: "global" }, levels: [...],
  *         conversions: [{ locationId: uuid | null, slot, expected, to }], requestId?: uuid | null,
- *         previewToken: string }
+ *         previewToken: string, restoredFromVersionId?: uuid | null }   (a Restore from History, W18/B107)
  * Tier E. ONE transaction (apply_sku_pack_change): the version, the accepted conversions bound to the
  * values the person was shown, and the door report. A stale preview is 409 preview_stale.
  */
@@ -42,8 +42,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (requestId === undefined) return jsonError(400, "invalid_payload", { field: "requestId" });
   const previewToken = typeof b.previewToken === "string" && /^[0-9a-f]{8}$/.test(b.previewToken) ? b.previewToken : null;
   if (!previewToken) return jsonError(400, "invalid_payload", { field: "previewToken" });
+  const restoredFromVersionId = b.restoredFromVersionId === null || b.restoredFromVersionId === undefined ? null
+    : typeof b.restoredFromVersionId === "string" && UUID_RE.test(b.restoredFromVersionId) ? b.restoredFromVersionId : undefined;
+  if (restoredFromVersionId === undefined) return jsonError(400, "invalid_payload", { field: "restoredFromVersionId" });
   try {
-    const r = await applyPackChange(ctx, { skuId: id, target, levels, conversions, requestId, previewToken });
+    const r = await applyPackChange(ctx, { skuId: id, target, levels, conversions, requestId, previewToken, restoredFromVersionId });
     return jsonOk(r, 201);
   } catch (e) {
     if (e instanceof CatalogItemError) return jsonError(e.status, e.code, { message: e.message });

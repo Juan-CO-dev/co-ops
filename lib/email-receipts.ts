@@ -1,5 +1,5 @@
 import { auditOperationalTaskOverride, canDoOperationalTask, canTriageUnattributedReceipt } from "@/lib/operational-task-access";
-import { receiptAutomationAllowed, type ReceiptAutomationState } from "@/lib/receipt-attribution-shared";
+import { receiptAutomationAllowed, receiptConflictKind, type ReceiptAutomationState } from "@/lib/receipt-attribution-shared";
 /**
  * Email-receipt ledger — the vendor-claim side of the two-way match (delivery-intake
  * P2, spec D4/D6; migration 0170). SERVER-ONLY, service-role client; the `receipts`
@@ -50,7 +50,8 @@ import { lockLocationContext, accessibleLocations, type LocationActor } from "@/
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { autoPlaceOnEmailEvidence } from "@/lib/purchase-orders";
-import { extractPoCodes } from "@/lib/email-receipts-matching-shared";
+import { assembleMatchBody, extractPoCodes } from "@/lib/email-receipts-matching-shared";
+import { rpcNotInstalled, tableNotInstalled } from "@/lib/receiving-shared";
 
 // Re-export the pure code extractor so server callers keep their `@/lib/email-receipts`
 // import path (the *-shared.ts law). Task 7's SMS leg imports the leaf directly (client-safe).
@@ -64,6 +65,9 @@ const SIGNED_URL_TTL_SECONDS = 60;
 
 /** ±2 days: an inbound receipt's received-at date vs a candidate delivery's date. */
 const AUTO_LINK_DAY_WINDOW = 2;
+/** W20/B112: the only document kind the AUTOMATIC delivery link (either direction) and the
+ *  "is this the invoice?" suggestion will take. */
+const AUTO_LINK_DOC_KIND = "invoice";
 
 export class EmailReceiptError extends Error {
   constructor(public status: number, public code: string, message?: string) {
@@ -521,18 +525,27 @@ const PG_UNIQUE_VIOLATION = "23505";
  * INTERNAL — only meaningful when the receipt carries BOTH a vendor_guess_id AND a
  * location_id. Candidates = deliveries at that vendor+location with email_receipt_id
  * null and delivery_date within ±2 days of received_at::date. Links only on a unique
- * candidate (both sides set, error-checked). NEVER throws to the caller on zero/many —
- * it just returns (the receipt stays unlinked for manual triage).
+ * candidate, through the one automatic writer (claimAutomaticDeliveryLink: both sides in
+ * one database transaction, which also refuses a pair a manager unlinked). NEVER throws to
+ * the caller on zero/many — it just returns (the receipt stays unlinked for manual triage).
+ *
+ * ONLY AN INVOICE LINKS BY ITSELF (W20/B112). A delivery has ONE receipt slot (0171
+ * vendor_deliveries_email_receipt_uq), and an order confirmation or a statement used to take
+ * it, locking the real invoice out. doc_kind must be 'invoice': a confirmation, statement,
+ * "other" or a receipt not classified yet (doc_kind null, e.g. the pre-parse call at legacy
+ * ingest) is a no-op here; parseReceipt calls this again once the kind is known. Manual
+ * linking (linkReceipt / uploadManualReceipt) deliberately takes any kind: a person chose it.
  */
 export async function attemptAutoLink(receiptId: string): Promise<void> {
   const sb = getServiceRoleClient();
   const { data: r, error } = await sb
     .from("email_receipts")
-    .select("id, location_id, vendor_guess_id, linked_delivery_id, received_at, inbound_message_id, parse_state, attribution_conflict")
+    .select("id, location_id, vendor_guess_id, linked_delivery_id, received_at, inbound_message_id, parse_state, attribution_conflict, doc_kind")
     .eq("id", receiptId)
-    .maybeSingle<ReceiptAutomationState & { id: string; vendor_guess_id: string | null; linked_delivery_id: string | null; received_at: string }>();
+    .maybeSingle<ReceiptAutomationState & { id: string; vendor_guess_id: string | null; linked_delivery_id: string | null; received_at: string; doc_kind: string | null }>();
   if (error) return; // best-effort — never poison the ingest on an auto-link read failure
   if (!r || !receiptAutomationAllowed(r) || r.linked_delivery_id || !r.vendor_guess_id || !r.location_id) return;
+  if (r.doc_kind !== AUTO_LINK_DOC_KIND) return; // B112: only an invoice may take the delivery's receipt slot.
 
   // ±2-day window around the receipt's received-at date (bare-date comparison).
   const receivedMs = Date.parse(r.received_at);
@@ -551,54 +564,80 @@ export async function attemptAutoLink(receiptId: string): Promise<void> {
     .lte("delivery_date", hi)
     .returns<Array<{ id: string; delivery_date: string }>>();
   if (cErr) return;
-  const list = candidates ?? [];
+  let list = candidates ?? [];
+  if (list.length > 0) {
+    // A delivery a manager unlinked this receipt from is never offered to it again.
+    let undone: Set<string>;
+    try { undone = await unlinkedCounterparts(sb, "receipt_id", r.id); } catch { return; }
+    list = list.filter((c) => !undone.has(c.id));
+  }
   if (list.length !== 1) return; // zero or many → leave unlinked for manual triage
   const deliveryId = list[0]!.id;
 
   await claimAutomaticDeliveryLink(sb, r, deliveryId, list[0]!.delivery_date, "receipt");
 }
 
+/**
+ * The other side of every pair a manager UNLINKED for this delivery or this receipt
+ * (delivery_receipt_unlinks, migration 0327; owner decision W20-2). The automatic link and the
+ * "is this the invoice?" prompt leave those pairs alone: a person said they do not belong
+ * together, and putting the link back by itself would undo that. A person can still link the
+ * pair by hand. No table yet (0327 not applied) means nothing was ever unlinked. Any other read
+ * failure THROWS: the callers are best-effort and then link nothing.
+ *
+ * THIS READ ONLY CHOOSES CANDIDATES (what is offered, what counts as a rival). It is not the
+ * guard: an unlink can commit after it. The guard is delivery_receipt_auto_link, which reads the
+ * same table under the delivery's row lock in the transaction that writes the link (W20-r4).
+ */
+async function unlinkedCounterparts(sb: ServiceClient, by: "delivery_id" | "receipt_id", id: string): Promise<Set<string>> {
+  const { data, error } = await sb.from("delivery_receipt_unlinks").select("delivery_id, receipt_id").eq(by, id)
+    .returns<Array<{ delivery_id: string; receipt_id: string }>>();
+  if (error) {
+    if (tableNotInstalled(error)) return new Set();
+    throw new Error("Receipt unlink history unavailable");
+  }
+  return new Set((data ?? []).map((row) => (by === "delivery_id" ? row.receipt_id : row.delivery_id)).filter((v): v is string => typeof v === "string"));
+}
+
 type AutoLinkReceipt = ReceiptAutomationState & {
   id: string; vendor_guess_id: string | null; linked_delivery_id: string | null; received_at: string;
 };
 
-/** Both automatic directions use the same receipt-first CAS and compensating writer.
- * Snapshot predicates prevent a concurrent manual assignment from changing the shop/vendor
- * between candidate selection and the claim. Neither side can replace an existing link. */
+/**
+ * THE ONE AUTOMATIC LINK WRITER (review W20-r4). Both automatic directions end here, and this makes
+ * ONE call: delivery_receipt_auto_link (migration 0327). The function takes the delivery's row lock,
+ * then the receipt's (the manager unlink's order, so the two run one after the other), and in that
+ * same transaction refuses a pair on delivery_receipt_unlinks, re-checks the snapshot this caller
+ * chose its candidate on (shop, vendor, delivery date, parse state, received-at, no conflict, an
+ * invoice, neither side linked) and writes BOTH sides or neither.
+ *
+ * Why not two guarded updates from here: the unlink history was read in one request and the link
+ * written in two more. A worker that chose its pair, stalled, and resumed after another worker
+ * linked it and a manager unlinked it found both link columns NULL again, exactly as it had read
+ * them, and put the rejected pair back. The candidate reads above still leave unlinked pairs out
+ * (so they are not offered and are not rivals); the REFUSAL is the function's, under the lock.
+ *
+ * NO FALLBACK. PostgREST cannot express "and no row in delivery_receipt_unlinks" in an UPDATE's
+ * WHERE, so no request-by-request write can keep that rule atomic. Before 0327 (the function is
+ * not there) the automatic link links NOTHING: the receipt waits in the queue and in the "is this
+ * the invoice?" prompt for a person. Any other error is the same: nothing linked, nothing thrown
+ * (this is the internal best-effort path). Never add a second automatic writer of
+ * email_receipts.linked_delivery_id / vendor_deliveries.email_receipt_id.
+ */
 async function claimAutomaticDeliveryLink(
   sb: ServiceClient, r: AutoLinkReceipt, deliveryId: string, deliveryDate: string, direction: "receipt" | "receiving",
 ): Promise<void> {
-  // LINK ORDER: claim the RECEIPT side FIRST (count-checked — a loser aborts having
-  // touched nothing), THEN the delivery side (count-checked + 23505-guarded by the
-  // 0171 vendor_deliveries_email_receipt_uq index). If the delivery side loses the
-  // race, COMPENSATE by unsetting the receipt side (best-effort) and return silently —
-  // this is the internal best-effort path (never throws to the caller).
-  const { error: ruErr, count: rCount } = await sb
-    .from("email_receipts")
-    .update({ linked_delivery_id: deliveryId }, { count: "exact" })
-    .eq("id", r.id)
-    .eq("attribution_conflict", false)
-    .eq("location_id", r.location_id!)
-    .eq("vendor_guess_id", r.vendor_guess_id!)
-    .eq("parse_state", r.parse_state)
-    .eq("received_at", r.received_at)
-    .is("linked_delivery_id", null);
-  if (ruErr || rCount !== 1) return; // lost the receipt side (or read error) — abort untouched.
-
-  const { error: duErr, count } = await sb
-    .from("vendor_deliveries")
-    .update({ email_receipt_id: r.id }, { count: "exact" })
-    .eq("id", deliveryId)
-    .eq("location_id", r.location_id!)
-    .eq("vendor_id", r.vendor_guess_id!)
-    .eq("delivery_date", deliveryDate)
-    .is("email_receipt_id", null);
-  if (duErr || count !== 1) {
-    // Delivery side lost (count 0) or tripped the unique index (23505): compensate by
-    // releasing the receipt claim we made, then bail silently for manual triage.
-    await compensateReceiptClaim(sb, r.id, deliveryId);
+  const { data, error } = await sb.rpc("delivery_receipt_auto_link", {
+    p_delivery: deliveryId, p_receipt: r.id, p_location: r.location_id!, p_vendor: r.vendor_guess_id!,
+    p_delivery_date: deliveryDate, p_parse_state: r.parse_state, p_received_at: r.received_at,
+  });
+  if (error) {
+    // Not installed yet (0327 pending) is the expected quiet state; anything else is worth a line.
+    if (!rpcNotInstalled(error)) console.error("[email-receipts] automatic link unavailable");
     return;
   }
+  // { linked: false, reason } = pair_unlinked | delivery_changed | receipt_changed: left for a person.
+  if ((data as { linked?: unknown } | null)?.linked !== true) return;
 
   // audit() is fail-open by contract (lib/audit.ts wraps the insert in try/catch and
   // never throws) — safe to await here without poisoning this best-effort auto-link.
@@ -624,10 +663,17 @@ async function receivingReceiptCandidates(sb: ServiceClient, d: AutoLinkDelivery
     .select("id, location_id, vendor_guess_id, linked_delivery_id, received_at, inbound_message_id, parse_state, attribution_conflict, subject, from_address, parsed_json")
     .eq("location_id", d.location_id).eq("vendor_guess_id", d.vendor_id)
     .is("linked_delivery_id", null).eq("attribution_conflict", false)
+    // W20/B112: this one list feeds the automatic link AND the "is this the invoice?" prompt,
+    // so a confirmation or statement is never linked and never suggested as the invoice.
+    .eq("doc_kind", AUTO_LINK_DOC_KIND)
     .gte("received_at", lo).lt("received_at", hi)
     .order("id").range(from, to).returns<ReceivingCandidateRow[]>());
   // Manual assignment writes vendor_guess_id too (0297); it is the effective vendor.
-  return rows.filter(r => receiptAutomationAllowed(r));
+  const eligible = rows.filter(r => receiptAutomationAllowed(r));
+  if (eligible.length === 0) return eligible;
+  // A receipt a manager unlinked from THIS delivery is neither linked again nor suggested for it.
+  const undone = await unlinkedCounterparts(sb, "delivery_id", d.id);
+  return eligible.filter(r => !undone.has(r.id));
 }
 
 /** Read-only prompt data, under the existing receiving authorization (not vendor-mail's GM gate). */
@@ -666,7 +712,11 @@ export async function attemptReceivingAutoLink(deliveryId: string): Promise<void
       .gte("delivery_date", etYmdMinusDays(day, AUTO_LINK_DAY_WINDOW))
       .lte("delivery_date", etYmdMinusDays(day, -AUTO_LINK_DAY_WINDOW))
       .returns<Array<{ id: string }>>();
-    if (forwardError || forward?.length !== 1 || forward[0]?.id !== deliveryId) return;
+    if (forwardError) return;
+    // The same exclusion as the receipt-side direction: deliveries this receipt was unlinked from.
+    const undone = (forward ?? []).length > 1 ? await unlinkedCounterparts(sb, "receipt_id", receipt.id) : new Set<string>();
+    const open = (forward ?? []).filter((f) => !undone.has(f.id));
+    if (open.length !== 1 || open[0]?.id !== deliveryId) return;
     await claimAutomaticDeliveryLink(sb, receipt, deliveryId, d.delivery_date, "receiving");
   } catch {
     // The delivery is already saved. Leave it unlinked for the existing manual triage UI.
@@ -686,9 +736,17 @@ export async function attemptReceivingAutoLink(deliveryId: string): Promise<void
  *  PO is NOT a valid target (nothing was even confirmed). `confirmed` IS code-linkable
  *  (2026-08-10, Juan-ratified auto-place): a vendor reply carrying OUR display code is
  *  placement evidence — applyReceiptPoEffects auto-advances confirmed→placed on it.
- *  The vendor+window fallback keeps its own narrower placed|invoiced filter inline —
+ *  The vendor+window fallback uses PO_WINDOW_STATUSES below: the same set WITHOUT `confirmed` —
  *  a window guess must never place an order nobody sent. Kept as a Set for O(1). */
 const PO_LINKABLE_STATUSES = new Set(["confirmed", "placed", "invoiced", "received", "reconciled"]);
+/** The orders the vendor+window fallback counts as candidates (W20/B113). It used to be
+ *  placed|invoiced only, so an invoice that arrived AFTER its truck could not see its own order
+ *  (already `received`): the vendor's NEXT open order became the single candidate, took the link
+ *  and was flipped placed→invoiced by the wrong document. With the received and reconciled
+ *  orders in view, that case has two candidates and goes to a person; an invoice whose only
+ *  order in the window is the received one links to it with no status change (the flip only
+ *  matches `placed`). */
+const PO_WINDOW_STATUSES = ["placed", "invoiced", "received", "reconciled"];
 /** ±3 days: the vendor+window fallback tolerance around a receipt's received-at date vs a
  *  candidate PO's placed_at (V2 §4 step 4 — the single-candidate rule). */
 const PO_MATCH_DAY_WINDOW = 3;
@@ -713,8 +771,9 @@ export interface MatchReceiptInput {
  *       AND (vendor agrees when vendorGuessId known) AND (location agrees when locationId
  *       known). Exactly one DISTINCT valid PO → match `po_code`. Two-or-more distinct →
  *       null (ambiguous → triage; we never guess).
- *   (2) VENDOR + WINDOW fallback → only when a vendor is known: placed|invoiced POs for
- *       that vendor (+ location when known) whose placed_at is within ±3 days of receivedAt.
+ *   (2) VENDOR + WINDOW fallback → only when a vendor is known: placed|invoiced|received|
+ *       reconciled POs (PO_WINDOW_STATUSES, B113) for that vendor (+ location when known)
+ *       whose placed_at is within ±3 days of receivedAt.
  *       EXACTLY ONE → match `vendor_window`; else null (the shipped single-candidate P2 law).
  * The link WRITE is a guarded UPDATE (`linked_po_id IS NULL`, count exact) so a concurrent
  * writer (a re-run on parse, a manual attach) never double-links or double-audits: count 0
@@ -807,7 +866,7 @@ async function resolvePoMatch(
     .from("purchase_orders")
     .select("id")
     .eq("vendor_id", receipt.vendorGuessId)
-    .in("status", ["placed", "invoiced"])
+    .in("status", PO_WINDOW_STATUSES)
     .gte("placed_at", lo)
     .lte("placed_at", hi);
   if (receipt.locationId != null) q = q.eq("location_id", receipt.locationId);
@@ -943,6 +1002,45 @@ export async function applyReceiptPoEffects(
   // 'statement' / 'other' → no PO effect (the link alone is the record).
 }
 
+// ── (3c) RE-RUN AFTER A PERSON RESOLVES ATTRIBUTION ─────────────────────────────────
+
+/**
+ * Run the automatic matching a receipt would have had if its attribution had been right from
+ * the start (W20/B193). parseReceipt stops before any effect for a receipt in conflict or with
+ * no shop; when a person then assigns it (vendor mail "assign") or moves it
+ * (moveConflictedReceipt), nothing ran the matching again, so the receipt sat in triage
+ * although a single delivery or order was waiting for it.
+ *
+ * BEST-EFFORT, NEVER THROWS: the human action has already committed. The same gates and the
+ * same single-candidate rules as the parse leg apply (receiptAutomationAllowed; only an invoice
+ * takes a delivery, B112; exactly one candidate or nothing), and each writer only ever ADDS a
+ * link (the delivery link in its one locked transaction, the order link under its own
+ * compare-and-set), so this can never replace a link a person made or undid. The raw
+ * email text is not stored, so the order match reads the subject and the parsed fields.
+ */
+export async function runReceiptAutomation(receiptId: string): Promise<void> {
+  try {
+    const sb = getServiceRoleClient();
+    const { data: r, error } = await sb.from("email_receipts")
+      .select("id, subject, parsed_json, vendor_guess_id, location_id, received_at, linked_po_id, inbound_message_id, parse_state, attribution_conflict")
+      .eq("id", receiptId)
+      .maybeSingle<ReceiptAutomationState & {
+        id: string; subject: string | null; vendor_guess_id: string | null; received_at: string; linked_po_id: string | null;
+        parsed_json: { extraction?: { poCode?: unknown; shipTo?: unknown; vendorName?: unknown } } | null;
+      }>();
+    if (error || !r || !receiptAutomationAllowed(r)) return;
+    await attemptAutoLink(r.id);
+    if (r.linked_po_id) return; // assign and move both refuse linked evidence; nothing to add.
+    const match = await matchReceiptToPo(sb, {
+      id: r.id, subject: r.subject, body: assembleMatchBody(r.parsed_json?.extraction, null),
+      vendorGuessId: r.vendor_guess_id, locationId: r.location_id, receivedAt: r.received_at,
+    });
+    await applyReceiptPoEffects(sb, r.id, match?.matchedBy ?? null);
+  } catch (e) {
+    console.error(`[email-receipts] automation after manual attribution failed for receipt=${receiptId}:`, e instanceof Error ? e.message : e);
+  }
+}
+
 // ── (4) READS — unlinked queue + per-delivery receipt (with signed URLs) ────────────
 
 export interface ReceiptAsset {
@@ -974,6 +1072,13 @@ export interface UnlinkedReceiptView {
   docKind: string | null;
   attributedBy: "address" | "account" | "both" | "manual" | null;
   attributionConflict: boolean;
+  /** W20/B194: why the receipt is flagged. "vendor" = the document's account number is on file
+   *  for a different vendor than the one on the receipt; "shop" = address and account disagree
+   *  on the shop. Null when it is not flagged. */
+  conflictKind: "vendor" | "shop" | null;
+  /** Names for the flag's wording (only loaded for flagged rows; null otherwise or when unknown). */
+  vendorName: string | null;
+  accountVendorName: string | null;
   addressLocationName: string | null;
   accountLocationId: string | null;
   accountLocationName: string | null;
@@ -994,7 +1099,28 @@ export interface UnlinkedReceiptView {
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function listUnlinkedReceipts(actor: AuthContext, locationId: string): Promise<UnlinkedReceiptView[]> {
+/** One page of the triage queue (W20/B195). */
+export const TRIAGE_PAGE_SIZE = 100;
+export interface UnlinkedReceiptPage {
+  receipts: UnlinkedReceiptView[];
+  /** Every unlinked receipt in this queue, not only the ones on this page. */
+  total: number;
+  /** True while older receipts exist past this page. */
+  hasMore: boolean;
+  /** Every FLAGGED receipt in this queue (attribution_conflict), loaded or not: the pill's number. */
+  flagged: number;
+}
+
+/**
+ * W20/B195: PAGED. The queue used to be read with no range, so the API's 1,000-row cap silently
+ * dropped the OLDEST unlinked receipts (the ones most overdue for a person), and it signed one
+ * preview URL per row. Now: newest `pageSize` (1..100) from `offset`, an exact total, a stable
+ * order (received_at, then id), and ONE bulk signing call for the page. A preview that cannot be
+ * signed is null, as before; a storage outage never hides the queue.
+ */
+export async function listUnlinkedReceipts(
+  actor: AuthContext, locationId: string, opts: { offset?: number; pageSize?: number } = {},
+): Promise<UnlinkedReceiptPage> {
   requireLevel(actor, RECEIPT_MIN);
   // UUID guard BEFORE the .or() interpolation below — lockLocationContext returns true
   // unconditionally for all-locations actors, so without this a crafted locationId could
@@ -1005,18 +1131,52 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new EmailReceiptError(404, "not_found", "Location not found");
   }
+  const offset = opts.offset ?? 0;
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new EmailReceiptError(400, "invalid_payload", "offset must be a whole number, zero or more");
+  const requested = opts.pageSize ?? TRIAGE_PAGE_SIZE;
+  const pageSize = Number.isFinite(requested) ? Math.min(TRIAGE_PAGE_SIZE, Math.max(1, Math.floor(requested))) : TRIAGE_PAGE_SIZE;
   if (!(await canDoOperationalTask(actor, locationId, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   const sb = getServiceRoleClient();
-  const { data: rows, error } = await sb
+  const queueFilter = `location_id.eq.${locationId},location_id.is.null`;
+  const { data: rows, error, count } = await sb
     .from("email_receipts")
-    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths, linked_po_id, parse_state, doc_kind, attributed_by, attribution_conflict, account_location_id")
+    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths, linked_po_id, parse_state, doc_kind, attributed_by, attribution_conflict, account_location_id, account_vendor_id", { count: "exact" })
     .is("linked_delivery_id", null)
-    .or(`location_id.eq.${locationId},location_id.is.null`)
+    .or(queueFilter)
     .order("received_at", { ascending: false })
-    .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null; linked_po_id: string | null; parse_state: "unparsed" | "parsed" | "failed"; doc_kind: string | null; attributed_by: UnlinkedReceiptView["attributedBy"]; attribution_conflict: boolean; account_location_id: string | null }>>();
-  if (error) throw new Error(`listUnlinkedReceipts: ${error.message}`);
+    .order("id", { ascending: false })
+    .range(offset, offset + pageSize - 1)
+    .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null; linked_po_id: string | null; parse_state: "unparsed" | "parsed" | "failed"; doc_kind: string | null; attributed_by: UnlinkedReceiptView["attributedBy"]; attribution_conflict: boolean; account_location_id: string | null; account_vendor_id: string | null }>>();
+  let list = rows ?? [];
+  let total = count ?? 0;
+  if (error) {
+    // PostgREST refuses a page that starts past the end (416, PGRST103): the queue shrank while
+    // someone was paging (receipts were linked). That is an empty page with the real total, not
+    // a failure. Anything else is a real error.
+    if (error.code !== "PGRST103") throw new Error(`listUnlinkedReceipts: ${error.message}`);
+    const { count: remaining, error: countError } = await sb
+      .from("email_receipts")
+      .select("id", { count: "exact", head: true })
+      .is("linked_delivery_id", null)
+      .or(queueFilter);
+    if (countError) throw new Error(`listUnlinkedReceipts count: ${countError.message}`);
+    list = [];
+    total = remaining ?? 0;
+  }
+  if (list.length > 0) total = Math.max(total, offset + list.length);
+  const hasMore = offset + list.length < total;
 
-  const list = rows ?? [];
+  // The pill counts every flagged receipt in the queue, so a flag on an older page is never
+  // invisible. One count-only read (no rows).
+  const { count: flaggedCount, error: flaggedError } = await sb
+    .from("email_receipts")
+    .select("id", { count: "exact", head: true })
+    .is("linked_delivery_id", null)
+    .or(queueFilter)
+    .eq("attribution_conflict", true);
+  if (flaggedError) throw new Error(`listUnlinkedReceipts flagged: ${flaggedError.message}`);
+  const flagged = Math.max(flaggedCount ?? 0, list.filter((r) => r.attribution_conflict).length);
+
   const conflictLocations = [...new Set(list.filter((r) => r.attribution_conflict)
     .flatMap((r) => [r.location_id, r.account_location_id]).filter((id): id is string => !!id))];
   const locationNames = new Map<string, string>();
@@ -1024,6 +1184,15 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
     const { data, error: nameError } = await sb.from("locations").select("id, name").in("id", conflictLocations);
     if (nameError) throw new Error("Receipt conflict location lookup failed");
     for (const row of data ?? []) locationNames.set(row.id, row.name);
+  }
+  // W20/B194: a vendor flag names both vendors (the sender's and the account's).
+  const conflictVendors = [...new Set(list.filter((r) => r.attribution_conflict)
+    .flatMap((r) => [r.vendor_guess_id, r.account_vendor_id]).filter((id): id is string => !!id))];
+  const vendorNames = new Map<string, string>();
+  if (conflictVendors.length) {
+    const { data, error: vendorError } = await sb.from("vendors").select("id, name").in("id", conflictVendors);
+    if (vendorError) throw new Error("Receipt conflict vendor lookup failed");
+    for (const row of data ?? []) vendorNames.set(row.id, row.name);
   }
 
   // Batch-join the linked POs' display_code + status (one query over the distinct po ids;
@@ -1040,9 +1209,31 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
     for (const p of poRows ?? []) poById.set(p.id, { display_code: p.display_code, status: p.status });
   }
 
-  return Promise.all(
+  // ONE signing call for the page (was one per row). Null-safe like signReceiptPath: a missing
+  // path, a failed entry or a failed call leaves that preview null.
+  const previewPath = new Map(list.map((r) => [r.id, firstDisplayablePath(r.raw_storage_path, r.attachment_paths)]));
+  const paths = [...new Set([...previewPath.values()].filter((path): path is string => !!path))];
+  const signed = new Map<string, string>();
+  if (paths.length > 0) {
+    try {
+      const { data: urls, error: signError } = await sb.storage.from(RECEIPT_BUCKET).createSignedUrls(paths, SIGNED_URL_TTL_SECONDS);
+      if (!signError) for (const u of urls ?? []) if (!u.error && u.path && u.signedUrl) signed.set(u.path, u.signedUrl);
+    } catch { /* previews are a convenience; the queue itself still renders */ }
+  }
+
+  // The move permission depends only on the two shops, so work each pair out once.
+  const movable = new Map<string, Promise<boolean>>();
+  const canMove = (from: string, to: string) => {
+    const key = `${from}|${to}`;
+    let answer = movable.get(key);
+    if (!answer) { answer = canMoveReceipt(actor, from, to); movable.set(key, answer); }
+    return answer;
+  };
+
+  const receipts = await Promise.all(
     list.map(async (r) => {
       const po = r.linked_po_id ? poById.get(r.linked_po_id) ?? null : null;
+      const path = previewPath.get(r.id) ?? null;
       return {
         id: r.id,
         source: r.source,
@@ -1051,7 +1242,7 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
         receivedAt: r.received_at,
         locationId: r.location_id,
         vendorGuessId: r.vendor_guess_id,
-        previewUrl: await signReceiptPath(sb, firstDisplayablePath(r.raw_storage_path, r.attachment_paths)),
+        previewUrl: path ? signed.get(path) ?? null : null,
         linkedPoId: r.linked_po_id,
         poDisplayCode: po?.display_code ?? null,
         poStatus: po?.status ?? null,
@@ -1059,14 +1250,18 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
         docKind: r.doc_kind,
         attributedBy: r.attributed_by,
         attributionConflict: r.attribution_conflict,
+        conflictKind: receiptConflictKind(r),
+        vendorName: r.attribution_conflict && r.vendor_guess_id ? vendorNames.get(r.vendor_guess_id) ?? null : null,
+        accountVendorName: r.attribution_conflict && r.account_vendor_id ? vendorNames.get(r.account_vendor_id) ?? null : null,
         addressLocationName: r.location_id ? locationNames.get(r.location_id) ?? null : null,
         accountLocationId: r.account_location_id ?? null,
         accountLocationName: r.account_location_id ? locationNames.get(r.account_location_id) ?? null : null,
         canMove: r.attribution_conflict && !!r.location_id && !!r.account_location_id
-          && await canMoveReceipt(actor, r.location_id, r.account_location_id),
+          && await canMove(r.location_id, r.account_location_id),
       };
     }),
   );
+  return { receipts, total, hasMore, flagged };
 }
 
 // ── (5b) MANUAL PO ATTACH — KH+ (triage surface) ────────────────────────────────────
@@ -1411,6 +1606,116 @@ function appendNote(existing: string | null, addition: string): string {
   return existing ? existing + "\n" + addition : addition;
 }
 
+/** What a person is told when a verdict request does not name its receipt: only a page opened
+ *  before the receipt was required sends one like that, and reloading it is the whole fix. */
+const RECEIPT_REQUIRED_MESSAGE = "This page is out of date. Reload and try again.";
+
+/**
+ * A verdict (attest or override) MUST name the receipt the person was looking at (review W20-r2).
+ * Missing, null or empty is 400 `receipt_required`, thrown before anything is read or written.
+ *
+ * Why refuse instead of using the receipt this request reads: that receipt is whatever is linked
+ * NOW. A page that showed receipt A, sent after a manager replaced A with B, would read B and
+ * mark B on A's comparison, and nothing later could tell (the write and the database would both
+ * be handed B). Only the page knows what the person compared, so only the page can say.
+ * Why 400 and not 409 `receipt_changed`: nothing is known to have changed; the request is
+ * incomplete. `receipt_changed` stays the answer for a receipt that WAS named and is not the one linked.
+ */
+function requireNamedReceipt(expectedReceiptId: unknown): string {
+  if (typeof expectedReceiptId !== "string" || !expectedReceiptId) {
+    throw new EmailReceiptError(400, "receipt_required", RECEIPT_REQUIRED_MESSAGE);
+  }
+  return expectedReceiptId;
+}
+
+/** The locked verdict writer's named refusals (delivery_match_verdict, migration 0327), as this
+ *  module's errors. Anything else it raises is a real failure, never a silent success. */
+const VERDICT_REFUSALS: Record<string, [status: number, code: string, message: string]> = {
+  not_found: [404, "not_found", "Delivery not found"],
+  no_receipt: [409, "no_receipt", "This delivery has no linked receipt to compare"],
+  already_overridden: [409, "already_overridden", "This delivery's match is overridden"],
+  receipt_changed: [409, "receipt_changed", "This delivery's receipt changed. Refresh and try again."],
+  receipt_required: [400, "receipt_required", RECEIPT_REQUIRED_MESSAGE],
+  invalid_verdict: [400, "invalid_verdict", "Verdict must be matched or discrepant"],
+  note_required: [400, "note_required", "An override requires a note"],
+  invalid_input: [400, "invalid_payload", "That request was not valid"],
+};
+
+/** The longest existing note the pre-0327 compare-and-set will name in a request filter (URL-encoded
+ *  length). A longer one cannot be compared safely in one request, so the note write is refused. */
+const VERDICT_NOTE_COMPARE_MAX = 4000;
+
+/**
+ * Write an attestation or an override so it can never land on a state the person did not see
+ * (W20/B114). Both writes used to be read → authorize (network waits) → UPDATE by id, with no
+ * guard: an attestation that READ counted_only could WRITE after a manager's override committed,
+ * replacing the terminal `override` and dropping its note, and two notes appended at once lost one.
+ *
+ * `receiptId` is the receipt this verdict is ABOUT: the one the person compared, as named by the
+ * page (never the one this request read; review W20-r2). A verdict is a judgment of one receipt
+ * against the count, so if a manager unlinked that receipt and another was linked before the
+ * write, the write is refused `receipt_changed` instead of marking the replacement on the first
+ * one's comparison (review W20-r1).
+ *
+ * WITH 0327: delivery_match_verdict does the read, the receipt check, the terminal check and the
+ * note append under the delivery's row lock. The request that queued second is judged on what the
+ * first one committed (`already_overridden`, `receipt_changed`), and both notes are kept.
+ * WITHOUT 0327 (function not installed yet): a compare-and-set on everything this request read
+ * and is about to replace: the match_state, the linked receipt and, when it appends a note, the
+ * note it appends to (two notes written from the SAME state used to pass a state-only comparison,
+ * and the second write dropped the first). A request that lost the race matches no row and is
+ * refused `receipt_changed` or `match_changed` (refresh and try again) instead of overwriting.
+ * Returns the state actually replaced, for the audit row.
+ */
+async function writeMatchVerdict(
+  sb: ServiceClient,
+  d: { id: string; match_state: MatchState; note: string | null },
+  receiptId: string,
+  kind: "attest" | "override",
+  verdict: MatchVerdict | null,
+  note: string | null,
+): Promise<MatchState> {
+  const { data, error } = await sb.rpc("delivery_match_verdict", {
+    p_delivery: d.id, p_kind: kind, p_verdict: verdict, p_note: note, p_receipt: receiptId,
+  });
+  if (!error) return (data as { prior_state?: MatchState } | null)?.prior_state ?? d.match_state;
+  if (!rpcNotInstalled(error)) {
+    const refusal = VERDICT_REFUSALS[error.message];
+    if (refusal) throw new EmailReceiptError(refusal[0], refusal[1], refusal[2]);
+    throw new Error(`${kind}Match write: ${error.message}`);
+  }
+  const update: { match_state: MatchState; note?: string } = { match_state: kind === "override" ? "override" : verdict! };
+  // A note is appended (never clobbered): always for an override, and for a discrepancy that carries one.
+  const appends = note != null && (kind === "override" || verdict === "discrepant");
+  if (appends) {
+    if (d.note != null && encodeURIComponent(d.note).length > VERDICT_NOTE_COMPARE_MAX) {
+      throw new EmailReceiptError(503, "verdict_note_unavailable", "This delivery's note is too long to add to safely right now");
+    }
+    update.note = appendNote(d.note, note);
+  }
+  let write = sb
+    .from("vendor_deliveries")
+    .update(update, { count: "exact" })
+    .eq("id", d.id)
+    .eq("match_state", d.match_state)
+    .eq("email_receipt_id", receiptId);
+  // Only a write that replaces the note compares it; a verdict that leaves the note alone cannot drop one.
+  if (appends) write = d.note == null ? write.is("note", null) : write.eq("note", d.note);
+  const { error: uErr, count } = await write;
+  if (uErr) throw new Error(`${kind}Match update: ${uErr.message}`);
+  if (count === 0) {
+    // Name what changed: a different receipt is its own refusal; anything else is the match.
+    const { data: now, error: nErr } = await sb
+      .from("vendor_deliveries").select("email_receipt_id").eq("id", d.id)
+      .maybeSingle<{ email_receipt_id: string | null }>();
+    if (!nErr && now && now.email_receipt_id !== receiptId) {
+      throw new EmailReceiptError(409, "receipt_changed", "This delivery's receipt changed. Refresh and try again.");
+    }
+    throw new EmailReceiptError(409, "match_changed", "This delivery's match changed. Refresh and try again.");
+  }
+  return d.match_state;
+}
+
 /**
  * KH+ + bind: attest a two-way-match verdict on a delivery from the visual compare.
  * REQUIRES a linked receipt (409 no_receipt). The delivery must be match_state
@@ -1419,43 +1724,46 @@ function appendNote(existing: string | null, addition: string): string {
  * terminal-locked). Updates match_state (rowcount-checked). When 'discrepant', a note
  * (if supplied) is APPENDED into vendor_deliveries.note (never clobbered). Audited
  * delivery.match_attested with { verdict }.
+ *
+ * `expectedReceiptId` is the receipt the person compared on screen, and it is REQUIRED: without
+ * one it is 400 `receipt_required` before anything is read (review W20-r2; see requireNamedReceipt).
+ * A different one linked by the time the write runs is 409 `receipt_changed` and nothing changes
+ * (review W20-r1).
  */
 export async function attestMatch(
   actor: AuthContext,
   deliveryId: string,
   verdict: MatchVerdict,
-  note?: string,
+  note: string | undefined,
+  expectedReceiptId: string,
 ): Promise<void> {
   requireLevel(actor, RECEIPT_MIN);
   if (verdict !== "matched" && verdict !== "discrepant") {
     throw new EmailReceiptError(400, "invalid_verdict", "Verdict must be matched or discrepant");
   }
+  const seenReceiptId = requireNamedReceipt(expectedReceiptId);
   const sb = getServiceRoleClient();
   const d = await requireAttestableDelivery(sb, actor, deliveryId);
   if (!d.email_receipt_id) throw new EmailReceiptError(409, "no_receipt", "This delivery has no linked receipt to compare");
+  if (seenReceiptId !== d.email_receipt_id) {
+    throw new EmailReceiptError(409, "receipt_changed", "This delivery's receipt changed. Refresh and try again.");
+  }
   // Re-attestable from counted_only/matched/discrepant; an override is terminal.
   if (d.match_state === "override") {
     throw new EmailReceiptError(409, "already_overridden", "This delivery's match is overridden");
   }
 
-  const trimmedNote = note?.trim() || null;
-  const update: { match_state: MatchVerdict; note?: string } = { match_state: verdict };
   // A discrepancy note is appended (never clobber); no note change when none supplied
-  // or when the verdict is 'matched'.
-  if (verdict === "discrepant" && trimmedNote != null) update.note = appendNote(d.note, trimmedNote);
-
-  const { error: uErr, count } = await sb
-    .from("vendor_deliveries")
-    .update(update, { count: "exact" })
-    .eq("id", deliveryId);
-  if (uErr) throw new Error(`attestMatch update: ${uErr.message}`);
-  if (count === 0) throw new EmailReceiptError(404, "not_found", "Delivery not found");
+  // or when the verdict is 'matched'. The checks above are the friendly early refusal; the
+  // write re-decides them on the state it actually finds (W20/B114).
+  const trimmedNote = note?.trim() || null;
+  const priorState = await writeMatchVerdict(sb, d, seenReceiptId, "attest", verdict, verdict === "discrepant" ? trimmedNote : null);
 
   await auditOperationalTaskOverride(actor, d.location_id, "receiving", "attestMatch");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.match_attested", resourceTable: "vendor_deliveries", resourceId: deliveryId,
-    metadata: { verdict, prior_state: d.match_state, location_id: d.location_id, receipt_id: d.email_receipt_id, noted: verdict === "discrepant" && trimmedNote != null },
+    metadata: { verdict, prior_state: priorState, location_id: d.location_id, receipt_id: seenReceiptId, noted: verdict === "discrepant" && trimmedNote != null },
     ipAddress: null, userAgent: null,
   });
 }
@@ -1465,26 +1773,89 @@ export async function attestMatch(
  * accepts a discrepancy or forces a resolution outside the KH attestation. Note is
  * REQUIRED (non-empty, 400 otherwise) and APPENDED into vendor_deliveries.note (never
  * clobbered). match_state → 'override'; rowcount-checked. Audited delivery.match_overridden.
+ *
+ * `expectedReceiptId` is the receipt on screen when the manager decided, and it is REQUIRED: without
+ * one it is 400 `receipt_required` before anything is read (review W20-r2; see requireNamedReceipt).
+ * The delivery page offers an override only beside a linked receipt, so a delivery with no receipt
+ * has nothing to override: link or attach its receipt first. If the linked receipt is not the one
+ * named (replaced, or unlinked) by the time the write runs, it is 409 `receipt_changed` (review W20-r1).
  */
-export async function overrideMatch(actor: AuthContext, deliveryId: string, note: string): Promise<void> {
+export async function overrideMatch(actor: AuthContext, deliveryId: string, note: string, expectedReceiptId: string): Promise<void> {
   requireLevel(actor, RECEIPT_OVERRIDE_MIN);
   const trimmedNote = note?.trim() || null;
   if (!trimmedNote) throw new EmailReceiptError(400, "note_required", "An override requires a note");
+  const seenReceiptId = requireNamedReceipt(expectedReceiptId);
   const sb = getServiceRoleClient();
   const d = await requireAttestableDelivery(sb, actor, deliveryId);
-
-  const { error: uErr, count } = await sb
-    .from("vendor_deliveries")
-    .update({ match_state: "override", note: appendNote(d.note, trimmedNote) }, { count: "exact" })
-    .eq("id", deliveryId);
-  if (uErr) throw new Error(`overrideMatch update: ${uErr.message}`);
-  if (count === 0) throw new EmailReceiptError(404, "not_found", "Delivery not found");
+  if (seenReceiptId !== d.email_receipt_id) {
+    throw new EmailReceiptError(409, "receipt_changed", "This delivery's receipt changed. Refresh and try again.");
+  }
+  const priorState = await writeMatchVerdict(sb, d, seenReceiptId, "override", null, trimmedNote);
 
   await auditOperationalTaskOverride(actor, d.location_id, "receiving", "overrideMatch");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.match_overridden", resourceTable: "vendor_deliveries", resourceId: deliveryId,
-    metadata: { prior_state: d.match_state, location_id: d.location_id },
+    metadata: { prior_state: priorState, location_id: d.location_id, receipt_id: seenReceiptId },
+    ipAddress: null, userAgent: null,
+  });
+}
+
+const UNLINK_NOTE_MAX = 2000;
+/** delivery_receipt_unlink's named refusals (migration 0327), as this module's errors. */
+const UNLINK_REFUSALS: Record<string, [status: number, code: string, message: string]> = {
+  not_found: [404, "not_found", "Delivery not found"],
+  no_receipt: [409, "no_receipt", "This delivery has no linked receipt"],
+  receipt_changed: [409, "receipt_changed", "This delivery's receipt changed. Refresh and try again."],
+  note_required: [400, "unlink_note_required", "Unlinking a receipt requires a reason"],
+  forbidden: [403, "forbidden", "Insufficient role level for receipts"],
+  invalid_input: [400, "invalid_payload", "That request was not valid"],
+};
+
+/**
+ * AGM+ (the override floor) + bind: UNLINK the receipt from a delivery (owner decision W20-2 b).
+ * The way out for a delivery whose one receipt slot holds the wrong document (B112: an order
+ * confirmation or a statement used to be linked automatically, and nothing could remove it).
+ *
+ * A reason is REQUIRED. One database transaction (delivery_receipt_unlink, migration 0327) clears
+ * both sides of the link, sets the delivery's match back to `counted_only` (a verdict about a
+ * receipt that is no longer linked means nothing, so an override is cleared too: its state is
+ * kept on the unlink record and in the audit row), appends the reason to the delivery note and
+ * records the pair in delivery_receipt_unlinks. NOTHING IS DELETED: the receipt goes back to the
+ * triage queue, and the automatic link never offers this pair again.
+ *
+ * `expectedReceiptId` is the receipt the person was looking at; if another one is linked by the
+ * time the write runs, it is refused `receipt_changed` and nothing changes.
+ * There is NO fallback: without 0327 this answers 503 `unlink_unavailable` (a two-request unlink
+ * could leave one side still linked).
+ */
+export async function unlinkReceipt(actor: AuthContext, deliveryId: string, note: string, expectedReceiptId?: string | null): Promise<void> {
+  requireLevel(actor, RECEIPT_OVERRIDE_MIN);
+  const reason = note?.trim() || null;
+  if (!reason) throw new EmailReceiptError(400, "unlink_note_required", "Unlinking a receipt requires a reason");
+  if (reason.length > UNLINK_NOTE_MAX) throw new EmailReceiptError(400, "invalid_payload", "That reason is too long");
+  const sb = getServiceRoleClient();
+  const d = await requireAttestableDelivery(sb, actor, deliveryId);
+  if (!d.email_receipt_id) throw new EmailReceiptError(409, "no_receipt", "This delivery has no linked receipt");
+
+  const { data, error } = await sb.rpc("delivery_receipt_unlink", {
+    p_delivery: deliveryId, p_receipt: expectedReceiptId ?? d.email_receipt_id, p_note: reason, p_actor: actor.user.id,
+  });
+  if (error) {
+    if (rpcNotInstalled(error)) throw new EmailReceiptError(503, "unlink_unavailable", "Unlinking is not available yet");
+    const refusal = UNLINK_REFUSALS[error.message];
+    if (refusal) throw new EmailReceiptError(refusal[0], refusal[1], refusal[2]);
+    throw new Error(`unlinkReceipt: ${error.message}`);
+  }
+  const done = (data ?? {}) as { unlink_id?: string; receipt_id?: string; prior_state?: string; receipt_released?: boolean };
+
+  await auditOperationalTaskOverride(actor, d.location_id, "receiving", "unlinkReceipt");
+  // The reason stays on the delivery note and the unlink record, not in audit metadata.
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "delivery.receipt_unlinked", resourceTable: "vendor_deliveries", resourceId: deliveryId,
+    metadata: { receipt_id: done.receipt_id ?? d.email_receipt_id, location_id: d.location_id, prior_state: done.prior_state ?? d.match_state,
+      unlink_id: done.unlink_id ?? null, receipt_released: done.receipt_released ?? null },
     ipAddress: null, userAgent: null,
   });
 }
@@ -1532,4 +1903,6 @@ export async function moveConflictedReceipt(actor: AuthContext, receiptId: strin
     metadata: { before: { location_id: r.location_id, vendor_guess_id: r.vendor_guess_id, attribution_conflict: true },
       after: { location_id: r.account_location_id, vendor_guess_id: r.account_vendor_id, attributed_by: "manual", attribution_conflict: false } },
     ipAddress: null, userAgent: null });
+  // W20/B193: the conflict is resolved, so the matching the parse leg skipped can run now.
+  await runReceiptAutomation(r.id);
 }

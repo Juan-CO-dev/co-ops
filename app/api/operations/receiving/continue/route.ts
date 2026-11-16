@@ -4,6 +4,7 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { addDeliveryLines, completeDelivery, ReceivingError, RECEIVE_MIN, type DeliveryLineInput } from "@/lib/receiving";
+import { parseDeliveryLineInputs } from "@/lib/receiving-shared";
 
 // POST { deliveryId, lines } → addDeliveryLines (append lines to an in-progress delivery).
 // POST { deliveryId, complete: true } → completeDelivery (flip to complete).
@@ -31,37 +32,13 @@ export async function POST(req: NextRequest) {
     return jsonError(400, "invalid_payload", { message: "Provide lines to append, complete: true to close, or both" });
   }
 
-  const VALID_DISCREPANCY = new Set(["short", "over", "damaged", "substitution"]);
-
-  // Narrow lines defensively when present (client is untrusted).
+  // Narrow lines defensively when present (client is untrusted). W20/B197: the ONE shape check,
+  // shared with the create route (lib/receiving-shared.ts parseDeliveryLineInputs).
   let lines: DeliveryLineInput[] | undefined;
   if (hasLines) {
-    const rawLines = b.lines as unknown[];
-    const narrow: DeliveryLineInput[] = [];
-    for (const raw of rawLines) {
-      if (typeof raw !== "object" || raw === null) return jsonError(400, "invalid_payload", { field: "lines" });
-      const r = raw as Record<string, unknown>;
-      if (typeof r.skuId !== "string") return jsonError(400, "invalid_payload", { field: "lines[].skuId" });
-      if (typeof r.qtyReceived !== "number") return jsonError(400, "invalid_payload", { field: "lines[].qtyReceived" });
-      const unitPrice = r.unitPrice === null || r.unitPrice === undefined ? null : typeof r.unitPrice === "number" ? r.unitPrice : undefined;
-      if (unitPrice === undefined) return jsonError(400, "invalid_payload", { field: "lines[].unitPrice" });
-      const observedOzPerEach = r.observedOzPerEach === null || r.observedOzPerEach === undefined ? null : typeof r.observedOzPerEach === "number" ? r.observedOzPerEach : undefined;
-      if (observedOzPerEach === undefined) return jsonError(400, "invalid_payload", { field: "lines[].observedOzPerEach" });
-      const notes = r.notes === null || r.notes === undefined ? null : typeof r.notes === "string" ? r.notes : undefined;
-      if (notes === undefined) return jsonError(400, "invalid_payload", { field: "lines[].notes" });
-      const receivedLevelLabel = r.receivedLevelLabel === null || r.receivedLevelLabel === undefined ? null : typeof r.receivedLevelLabel === "string" ? r.receivedLevelLabel : undefined;
-      if (receivedLevelLabel === undefined) return jsonError(400, "invalid_payload", { field: "lines[].receivedLevelLabel" });
-      const photoUrl = r.photoUrl === null || r.photoUrl === undefined ? null : typeof r.photoUrl === "string" ? r.photoUrl : undefined;
-      if (photoUrl === undefined) return jsonError(400, "invalid_payload", { field: "lines[].photoUrl" });
-      const expectedQty = r.expectedQty === null || r.expectedQty === undefined ? null : typeof r.expectedQty === "number" ? r.expectedQty : undefined;
-      if (expectedQty === undefined) return jsonError(400, "invalid_payload", { field: "lines[].expectedQty" });
-      const discrepancyType = r.discrepancyType === null || r.discrepancyType === undefined ? null
-        : typeof r.discrepancyType === "string" && VALID_DISCREPANCY.has(r.discrepancyType) ? (r.discrepancyType as DeliveryLineInput["discrepancyType"])
-        : undefined;
-      if (discrepancyType === undefined) return jsonError(400, "invalid_payload", { field: "lines[].discrepancyType" });
-      narrow.push({ skuId: r.skuId, qtyReceived: r.qtyReceived, unitPrice, observedOzPerEach, notes, receivedLevelLabel, photoUrl, expectedQty, discrepancyType });
-    }
-    lines = narrow;
+    const narrowed = parseDeliveryLineInputs(b.lines);
+    if (!narrowed.ok) return jsonError(400, "invalid_payload", { field: narrowed.field });
+    lines = narrowed.lines;
   }
 
   // After narrowing: if lines was provided but empty and complete is false, nothing would happen.

@@ -8,6 +8,7 @@ import { runVaultScrub } from "@/lib/vault-scrub-run";
 import { runToastSalesPull } from "@/lib/toast-sales-pull-run";
 import { runParseReceipts } from "@/lib/parse-receipts-run";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
+import { parseFits } from "@/lib/receipt-parse-budget-shared";
 
 export { decideCatchUp } from "@/lib/daily-catchup-shared";
 
@@ -18,16 +19,22 @@ const auditBase = {
 // This is the only route that runs catch-up; no secret or HTTP hop is needed.
 const provenance = { via: "catch-up", caller: "toast-catering-scan" } as const;
 
+/** The least route time a caught-up job needs to start (W27 / B225). The sales pull needs room for capture and its
+ *  tail; the receipt run's minimum comes from the shared receipt budget (`parseFits`), never a number of its
+ *  own. Below it the job is skipped BEFORE its claim, so the next 10-minute tick can still run it. prune-sessions
+ *  is quick and is not gated. */
+export const CATCH_UP_MIN_JOB_MS: Readonly<Record<string, number>> = { "toast-sales-pull": 90_000 };
+
 /** Fail open to the pinger, fail closed to work on lookup/claim errors.
  * A claim buys one attempt per UTC day, including failed attempts. It does not
  * lock out a late Vercel invocation; the existing jobs retain their retry semantics.
+ *
+ * `deadline` is when the HOST route must be done with its work (audit W20/B115). The receipt
+ * catch-up runs after the scan and after the other catch-ups, so it cannot assume a full run of
+ * its own: it parses only inside what is left, and when not even one whole parse fits it is left
+ * for the next scan WITHOUT spending its one attempt for the day.
  */
-/** The least route time a caught-up job needs to start (W27 / B225). Parse receipts keeps an 80 s reserve plus one
- *  model call; the sales pull needs room for capture and its tail. Below it the job is skipped BEFORE its claim, so
- *  the next 10-minute tick can still run it. prune-sessions is quick and is not gated. */
-export const CATCH_UP_MIN_JOB_MS: Readonly<Record<string, number>> = { "toast-sales-pull": 90_000, "parse-receipts": 100_000 };
-
-export async function catchUpDailyJobs(opts?: { now?: Date; deadlineAt?: number; signal?: AbortSignal }): Promise<{ ran: string[]; skipped: string[] }> {
+export async function catchUpDailyJobs(opts: { now?: Date; deadline: number; signal?: AbortSignal }): Promise<{ ran: string[]; skipped: string[] }> {
   const ran: string[] = [];
   const skipped: string[] = [];
   for (const registered of JOBS_REGISTRY) {
@@ -35,7 +42,7 @@ export async function catchUpDailyJobs(opts?: { now?: Date; deadlineAt?: number;
     const entry = registered.catchUp;
     let failureContext: Record<string, unknown> = {};
     try {
-      const now = opts?.now ?? new Date();
+      const now = opts.now ?? new Date();
       if (!decideCatchUp(entry, now, null)) { skipped.push(entry.job); continue; }
       // Dormant means no work and no heartbeat, just like the route's 503.
       if (entry.job === "parse-receipts" && !process.env.ANTHROPIC_API_KEY
@@ -54,8 +61,10 @@ export async function catchUpDailyJobs(opts?: { now?: Date; deadlineAt?: number;
         skipped.push(entry.job); continue;
       }
       // The caller's route has one budget; a job that cannot finish inside it must not spend the day's one claim.
+      // Asked last, right before the claim, so the lookup's own time is already spent (W27 / B225 r1).
       const minMs = CATCH_UP_MIN_JOB_MS[entry.job];
-      if (opts?.deadlineAt !== undefined && minMs !== undefined && opts.deadlineAt - Date.now() < minMs) {
+      if (minMs !== undefined && opts.deadline - Date.now() < minMs) { skipped.push(entry.job); continue; }
+      if (entry.job === "parse-receipts" && process.env.ANTHROPIC_API_KEY && !parseFits(Date.now(), opts.deadline)) {
         skipped.push(entry.job); continue;
       }
       const claim = await sb.rpc("portal_rate_limit_hit", {
@@ -83,7 +92,7 @@ export async function catchUpDailyJobs(opts?: { now?: Date; deadlineAt?: number;
         case "toast-sales-pull": {
           const businessDate = etYmdMinusDays(etCalendarDate(now.toISOString()), 1);
           failureContext = { business_date: businessDate };
-          const result = await runToastSalesPull({ businessDate, deadlineAt: opts?.deadlineAt, signal: opts?.signal });
+          const result = await runToastSalesPull({ businessDate, deadlineAt: opts.deadline, signal: opts.signal });
           metadata = result.metadata;
           if (!result.healthy) {
             failureContext = metadata;
@@ -92,7 +101,7 @@ export async function catchUpDailyJobs(opts?: { now?: Date; deadlineAt?: number;
           break;
         }
         case "parse-receipts": {
-          const result = await runParseReceipts({ deadlineAt: opts?.deadlineAt });
+          const result = await runParseReceipts(opts.deadline);
           if (result.dormant) { skipped.push(entry.job); continue; }
           metadata = result.metadata;
           break;

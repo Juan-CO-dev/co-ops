@@ -13,7 +13,9 @@
  *
  * Forwards lib's ChecklistError taxonomy through the standard mapper:
  *   400 completion_not_found  — id not visible to caller, revoked, or superseded
- *   403 role_level_insufficient — actor is below KH AND not self
+ *   403 role_level_insufficient — actor is below KH AND not self, or the shop rule refuses
+ *                                 (not an active member of the shop and below level 8; W05B r3)
+ *   503 checklist_actor_unavailable — the fresh actor read failed
  *
  * No write side effects; no audit row (read-only operation).
  */
@@ -23,6 +25,7 @@ import { type NextRequest } from "next/server";
 import { ChecklistError, loadPickerCandidatesForCompletion } from "@/lib/checklists";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { requireSession, SESSION_COOKIE_NAME } from "@/lib/session";
+import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError, ChecklistActorTransientError } from "@/lib/checklist-write-actor";
 import { createAuthedClient } from "@/lib/supabase-server";
 
 import { mapChecklistError } from "../../../_helpers";
@@ -48,10 +51,14 @@ export async function GET(
   try {
     const candidates = await loadPickerCandidatesForCompletion(authed, {
       completionId,
-      actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
+      // W05B r3: the same verified actor (fresh role + ACTIVE memberships) as the tag POST, so the
+      // picker applies the tagging shop rule.
+      actor: await resolveChecklistWriteActor(ctx),
     });
     return jsonOk({ candidates });
   } catch (err) {
+    if (err instanceof ChecklistActorTransientError) return jsonError(503, "checklist_actor_unavailable");
+    if (err instanceof ChecklistActorNotAuthorizedError) return jsonError(403, "role_level_insufficient", { message: "Not permitted for this session" });
     if (err instanceof ChecklistError) return mapChecklistError(err);
     const msg = err instanceof Error ? err.message : String(err);
     console.error(
