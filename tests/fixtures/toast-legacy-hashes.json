@@ -1,0 +1,1693 @@
+{
+ "_note": "Frozen from origin/main 6c317088 BEFORE the item 1 PR B change (normalizer output, sha256 content_hash, or the exact error). Regenerate only with a written reason in the PR.",
+ "frozen_from": "6c317088",
+ "window": {
+  "start": "2026-10-08T17:30:00.000Z",
+  "end": "2026-10-08T18:30:00.000Z"
+ },
+ "modifiedDate": "2026-10-08T18:00:00.000Z",
+ "entries": [
+  {
+   "label": "sample:order-1",
+   "capture": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "order-1",
+      "business_date": "2026-07-22",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": null,
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": "do-takeout",
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "check-1",
+        "selection_guid": "sel-1",
+        "parent_selection_guid": null,
+        "item_guid": "tg-italian",
+        "name": "Italian Sub",
+        "quantity": 2,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "check-1",
+        "selection_guid": "sel-1m1",
+        "parent_selection_guid": "sel-1",
+        "item_guid": "tg-hotpeppers",
+        "name": "Add Hot Peppers",
+        "quantity": 2,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "check-1",
+        "selection_guid": "sel-2",
+        "parent_selection_guid": null,
+        "item_guid": "tg-chips",
+        "name": "Kettle Chips",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "check-1",
+       "amount_cents": null,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": null,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": null
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": []
+    },
+    "hash": "3359cf04a8a7772ca1073b64e24c33bc4e2c891231fdfe4a3437f99762922a77"
+   },
+   "modified": null
+  },
+  {
+   "label": "sample:order-2",
+   "capture": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "order-2",
+      "business_date": "2026-07-22",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": null,
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": "do-catering",
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "check-2",
+        "selection_guid": "sel-3",
+        "parent_selection_guid": null,
+        "item_guid": "tg-italian",
+        "name": "Italian Sub",
+        "quantity": 20,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "check-2",
+       "amount_cents": null,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": null,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": null
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": []
+    },
+    "hash": "7b972b71862d920e09c0e5f6ccec11c7bff4f599dd976d2f86d51935c5f59e5c"
+   },
+   "modified": null
+  },
+  {
+   "label": "sample:order-3",
+   "capture": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "order-3",
+      "business_date": "2026-07-22",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": null,
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": "do-dinein",
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "check-3",
+        "selection_guid": "sel-4",
+        "parent_selection_guid": null,
+        "item_guid": "tg-turkey",
+        "name": "Turkey Sub",
+        "quantity": 1,
+        "voided": true,
+        "deleted": false
+       },
+       {
+        "check_guid": "check-3",
+        "selection_guid": "sel-5",
+        "parent_selection_guid": null,
+        "item_guid": "tg-soda",
+        "name": "Fountain Soda",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "check-4",
+        "selection_guid": "sel-6",
+        "parent_selection_guid": null,
+        "item_guid": "tg-meatball",
+        "name": "Meatball Sub",
+        "quantity": 3,
+        "voided": true,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "check-3",
+       "amount_cents": null,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": null,
+        "discounts_comps_cents": 0,
+        "voids_cents": null,
+        "service_charges_cents": 0,
+        "pre_refund_cents": null
+       }
+      },
+      {
+       "check_guid": "check-4",
+       "amount_cents": null,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": true,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": null,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": null
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": []
+    },
+    "hash": "dea9355cf1f10d6c3cf12591af570046ccc3c9983e30359da7a2d48dc40dac79"
+   },
+   "modified": null
+  },
+  {
+   "label": "payment-states",
+   "capture": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "synthetic-status-order",
+      "business_date": "2026-07-23",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": null,
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": []
+     },
+     "checks": [
+      {
+       "check_guid": "deleted-check",
+       "amount_cents": 3000,
+       "tax_cents": 300,
+       "total_cents": 3300,
+       "voided": false,
+       "deleted": true,
+       "accounting": {
+        "version": 1,
+        "gross_cents": null,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": null
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": [
+      {
+       "check_guid": "deleted-check",
+       "payment_guid": "voided-payment",
+       "payment_status": "VOIDED",
+       "refund_status": "NONE",
+       "type": "CREDIT",
+       "amount_cents": 1100,
+       "tip_cents": 0,
+       "paid_business_date": "2026-07-23",
+       "refund_amount_cents": null,
+       "refund_tip_cents": null,
+       "refund_business_date": null,
+       "void_business_date": "2026-07-24",
+       "server_guid": null,
+       "sales_refund_cents": 0
+      },
+      {
+       "check_guid": "deleted-check",
+       "payment_guid": "denied-payment",
+       "payment_status": "DENIED",
+       "refund_status": "NONE",
+       "type": "CREDIT",
+       "amount_cents": 1100,
+       "tip_cents": 0,
+       "paid_business_date": "2026-07-23",
+       "refund_amount_cents": null,
+       "refund_tip_cents": null,
+       "refund_business_date": null,
+       "void_business_date": null,
+       "server_guid": null,
+       "sales_refund_cents": 0
+      },
+      {
+       "check_guid": "deleted-check",
+       "payment_guid": "refunded-payment",
+       "payment_status": "CAPTURED",
+       "refund_status": "FULL",
+       "type": "CREDIT",
+       "amount_cents": 1100,
+       "tip_cents": 200,
+       "paid_business_date": "2026-07-23",
+       "refund_amount_cents": 1100,
+       "refund_tip_cents": 200,
+       "refund_business_date": "2026-07-25",
+       "void_business_date": null,
+       "server_guid": null,
+       "sales_refund_cents": null
+      }
+     ]
+    },
+    "hash": "47085620f1ec441ba9e76191a6202a5055554c1520b502da2d88b8bb432f8972"
+   },
+   "modified": null
+  },
+  {
+   "label": "valid:lp-instore",
+   "capture": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-instore",
+      "business_date": "2026-10-08",
+      "opened_at": "2026-10-08T15:30:00.000Z",
+      "closed_at": "2026-10-08T15:45:00.000Z",
+      "paid_at": null,
+      "modified_at": "2026-10-08T16:00:00.000Z",
+      "promised_at": null,
+      "source": "In Store",
+      "revenue_center_guid": "rc-1",
+      "dining_option_guid": "do-takeout",
+      "server_guid": "srv-1",
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "lp-instore-c1",
+        "selection_guid": "lp-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-italian",
+        "name": "Italian",
+        "quantity": 2,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-instore-c1",
+        "selection_guid": "lp-s1m1",
+        "parent_selection_guid": "lp-s1",
+        "item_guid": "it-peppers",
+        "name": "Hot peppers",
+        "quantity": 2,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-instore-c1",
+        "selection_guid": "lp-s2",
+        "parent_selection_guid": null,
+        "item_guid": "it-chips",
+        "name": "Chips",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-instore-c1",
+       "amount_cents": 2650,
+       "tax_cents": 265,
+       "total_cents": 2915,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 2750,
+        "discounts_comps_cents": 100,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 2650
+       }
+      }
+     ],
+     "discounts": [
+      {
+       "check_guid": "lp-instore-c1",
+       "ordinal": 0,
+       "selection_guid": null,
+       "applied_discount_guid": "ad-1",
+       "discount_guid": "d-1",
+       "name": "Loyalty",
+       "amount_cents": 100,
+       "reason_guid": null,
+       "reason_name": null,
+       "approver_guid": null
+      }
+     ],
+     "service_charges": [],
+     "payments": [
+      {
+       "check_guid": "lp-instore-c1",
+       "payment_guid": "pay-1",
+       "payment_status": "CAPTURED",
+       "refund_status": null,
+       "type": "CREDIT",
+       "amount_cents": 2915,
+       "tip_cents": 300,
+       "paid_business_date": "2026-10-08",
+       "refund_amount_cents": null,
+       "refund_tip_cents": null,
+       "refund_business_date": null,
+       "void_business_date": null,
+       "server_guid": null,
+       "sales_refund_cents": 0
+      }
+     ]
+    },
+    "hash": "8a4298fa8a15229cbb1a1d69cf34bc767caa020fb9d825e14e602de44c3e876a"
+   },
+   "modified": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-instore",
+      "business_date": "2026-10-08",
+      "opened_at": "2026-10-08T15:30:00.000Z",
+      "closed_at": "2026-10-08T15:45:00.000Z",
+      "paid_at": null,
+      "modified_at": "2026-10-08T18:00:00.000Z",
+      "promised_at": null,
+      "source": "In Store",
+      "revenue_center_guid": "rc-1",
+      "dining_option_guid": "do-takeout",
+      "server_guid": "srv-1",
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "lp-instore-c1",
+        "selection_guid": "lp-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-italian",
+        "name": "Italian",
+        "quantity": 2,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-instore-c1",
+        "selection_guid": "lp-s1m1",
+        "parent_selection_guid": "lp-s1",
+        "item_guid": "it-peppers",
+        "name": "Hot peppers",
+        "quantity": 2,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-instore-c1",
+        "selection_guid": "lp-s2",
+        "parent_selection_guid": null,
+        "item_guid": "it-chips",
+        "name": "Chips",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-instore-c1",
+       "amount_cents": 2650,
+       "tax_cents": 265,
+       "total_cents": 2915,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 2750,
+        "discounts_comps_cents": 100,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 2650
+       }
+      }
+     ],
+     "discounts": [
+      {
+       "check_guid": "lp-instore-c1",
+       "ordinal": 0,
+       "selection_guid": null,
+       "applied_discount_guid": "ad-1",
+       "discount_guid": "d-1",
+       "name": "Loyalty",
+       "amount_cents": 100,
+       "reason_guid": null,
+       "reason_name": null,
+       "approver_guid": null
+      }
+     ],
+     "service_charges": [],
+     "payments": [
+      {
+       "check_guid": "lp-instore-c1",
+       "payment_guid": "pay-1",
+       "payment_status": "CAPTURED",
+       "refund_status": null,
+       "type": "CREDIT",
+       "amount_cents": 2915,
+       "tip_cents": 300,
+       "paid_business_date": "2026-10-08",
+       "refund_amount_cents": null,
+       "refund_tip_cents": null,
+       "refund_business_date": null,
+       "void_business_date": null,
+       "server_guid": null,
+       "sales_refund_cents": 0
+      }
+     ]
+    },
+    "hash": "833ef51653e0829196a163fcf6078b241d2385e0fe7357358d2d4b649ff1c385"
+   }
+  },
+  {
+   "label": "valid:lp-marketplace",
+   "capture": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-marketplace",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": "2026-10-08T17:00:00.000Z",
+      "promised_at": null,
+      "source": "API",
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": "prov-dd",
+      "third_party_provider_name": "DoorDash",
+      "selection_units": [
+       {
+        "check_guid": "lp-mk-c1",
+        "selection_guid": "lp-mk-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-italian",
+        "name": "Italian",
+        "quantity": 2,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-mk-c1",
+       "amount_cents": 2798,
+       "tax_cents": 280,
+       "total_cents": 3078,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 2798,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 2798
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": [
+      {
+       "check_guid": "lp-mk-c1",
+       "payment_guid": "pay-mk",
+       "payment_status": "CAPTURED",
+       "refund_status": null,
+       "type": "OTHER",
+       "amount_cents": 3078,
+       "tip_cents": null,
+       "paid_business_date": "2026-10-08",
+       "refund_amount_cents": null,
+       "refund_tip_cents": null,
+       "refund_business_date": null,
+       "void_business_date": null,
+       "server_guid": null,
+       "sales_refund_cents": 0
+      }
+     ]
+    },
+    "hash": "5f0c0f4748836bc293540dad98fddf0c4db77cd9aa358cb300d7c307716e969b"
+   },
+   "modified": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-marketplace",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": "2026-10-08T18:00:00.000Z",
+      "promised_at": null,
+      "source": "API",
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": "prov-dd",
+      "third_party_provider_name": "DoorDash",
+      "selection_units": [
+       {
+        "check_guid": "lp-mk-c1",
+        "selection_guid": "lp-mk-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-italian",
+        "name": "Italian",
+        "quantity": 2,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-mk-c1",
+       "amount_cents": 2798,
+       "tax_cents": 280,
+       "total_cents": 3078,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 2798,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 2798
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": [
+      {
+       "check_guid": "lp-mk-c1",
+       "payment_guid": "pay-mk",
+       "payment_status": "CAPTURED",
+       "refund_status": null,
+       "type": "OTHER",
+       "amount_cents": 3078,
+       "tip_cents": null,
+       "paid_business_date": "2026-10-08",
+       "refund_amount_cents": null,
+       "refund_tip_cents": null,
+       "refund_business_date": null,
+       "void_business_date": null,
+       "server_guid": null,
+       "sales_refund_cents": 0
+      }
+     ]
+    },
+    "hash": "6bd458f7bade35e48b440b385ac3e056148e08412bf24c2708b4c34f641e981d"
+   }
+  },
+  {
+   "label": "valid:lp-giftcard",
+   "capture": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-giftcard",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": null,
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "lp-gc-c1",
+        "selection_guid": "lp-gc-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-turkey",
+        "name": "Turkey",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-gc-c1",
+        "selection_guid": "lp-gc-s1m1",
+        "parent_selection_guid": "lp-gc-s1",
+        "item_guid": "it-giftcard",
+        "name": "Gift card add",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-gc-c1",
+        "selection_guid": "lp-gc-s2",
+        "parent_selection_guid": null,
+        "item_guid": "it-giftcard",
+        "name": "Gift card",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-gc-c1",
+       "amount_cents": 3500,
+       "tax_cents": 100,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 1000,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 1000
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": []
+    },
+    "hash": "5f4422b96b278d83a9f98a0e8bc9e5b8edfa21efca800b2c243f7f091b87c2ee"
+   },
+   "modified": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-giftcard",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": "2026-10-08T18:00:00.000Z",
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "lp-gc-c1",
+        "selection_guid": "lp-gc-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-turkey",
+        "name": "Turkey",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-gc-c1",
+        "selection_guid": "lp-gc-s1m1",
+        "parent_selection_guid": "lp-gc-s1",
+        "item_guid": "it-giftcard",
+        "name": "Gift card add",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-gc-c1",
+        "selection_guid": "lp-gc-s2",
+        "parent_selection_guid": null,
+        "item_guid": "it-giftcard",
+        "name": "Gift card",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-gc-c1",
+       "amount_cents": 3500,
+       "tax_cents": 100,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 1000,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 1000
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": []
+    },
+    "hash": "f35d7faa068f689c45a7c2f6dab7418b3057030e2dd83184d66c29c432da9b92"
+   }
+  },
+  {
+   "label": "valid:lp-voids",
+   "capture": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-voids",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": null,
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "lp-v-c1",
+        "selection_guid": "lp-v-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-meatball",
+        "name": "Meatball",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-v-c1",
+        "selection_guid": "lp-v-s1m1",
+        "parent_selection_guid": "lp-v-s1",
+        "item_guid": "it-cheese",
+        "name": "Cheese",
+        "quantity": 1,
+        "voided": true,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-v-c1",
+        "selection_guid": "lp-v-s2",
+        "parent_selection_guid": null,
+        "item_guid": "it-soda",
+        "name": "Soda",
+        "quantity": 1,
+        "voided": true,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-v-c1",
+        "selection_guid": "lp-v-s3",
+        "parent_selection_guid": null,
+        "item_guid": "it-cookie",
+        "name": "Cookie",
+        "quantity": 1,
+        "voided": false,
+        "deleted": true
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-v-c1",
+       "amount_cents": 1200,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 1700,
+        "discounts_comps_cents": 0,
+        "voids_cents": 500,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 1200
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": []
+    },
+    "hash": "55d944e710bb41df2b8639c68360a4bc253b7207d9dee5eaccce233f62c08c07"
+   },
+   "modified": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-voids",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": "2026-10-08T18:00:00.000Z",
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "lp-v-c1",
+        "selection_guid": "lp-v-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-meatball",
+        "name": "Meatball",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-v-c1",
+        "selection_guid": "lp-v-s1m1",
+        "parent_selection_guid": "lp-v-s1",
+        "item_guid": "it-cheese",
+        "name": "Cheese",
+        "quantity": 1,
+        "voided": true,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-v-c1",
+        "selection_guid": "lp-v-s2",
+        "parent_selection_guid": null,
+        "item_guid": "it-soda",
+        "name": "Soda",
+        "quantity": 1,
+        "voided": true,
+        "deleted": false
+       },
+       {
+        "check_guid": "lp-v-c1",
+        "selection_guid": "lp-v-s3",
+        "parent_selection_guid": null,
+        "item_guid": "it-cookie",
+        "name": "Cookie",
+        "quantity": 1,
+        "voided": false,
+        "deleted": true
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-v-c1",
+       "amount_cents": 1200,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 1700,
+        "discounts_comps_cents": 0,
+        "voids_cents": 500,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 1200
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": []
+    },
+    "hash": "422b76cb2a5ffcb0b324855e1c1fa9d96fe6430b23c4601ac532e580e2a1eb24"
+   }
+  },
+  {
+   "label": "valid:lp-uncaptured",
+   "capture": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-uncaptured",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": null,
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "lp-u-c1",
+        "selection_guid": "lp-u-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-italian",
+        "name": "Italian",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-u-c1",
+       "amount_cents": 1500,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 1500,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 1500
+       }
+      },
+      {
+       "check_guid": "lp-u-c2",
+       "amount_cents": 400,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": null,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": null
+       }
+      },
+      {
+       "check_guid": "lp-u-c3",
+       "amount_cents": 0,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 0,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 0
+       }
+      },
+      {
+       "check_guid": "lp-u-c4",
+       "amount_cents": 0,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": null,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": null
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": []
+    },
+    "hash": "ddcd8106277e61fff5371a20b5d1def762c0e2ff580ca480fd2a93b62e7e16d2"
+   },
+   "modified": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-uncaptured",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": "2026-10-08T18:00:00.000Z",
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "lp-u-c1",
+        "selection_guid": "lp-u-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-italian",
+        "name": "Italian",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-u-c1",
+       "amount_cents": 1500,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 1500,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 1500
+       }
+      },
+      {
+       "check_guid": "lp-u-c2",
+       "amount_cents": 400,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": null,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": null
+       }
+      },
+      {
+       "check_guid": "lp-u-c3",
+       "amount_cents": 0,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 0,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 0
+       }
+      },
+      {
+       "check_guid": "lp-u-c4",
+       "amount_cents": 0,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": null,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": null
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": []
+    },
+    "hash": "8b50297600f9e883acde08a92e20a038bac763b859081f7be7638297389bd5b7"
+   }
+  },
+  {
+   "label": "valid:lp-service",
+   "capture": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-service",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": null,
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "lp-sc-c1",
+        "selection_guid": "lp-sc-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-blt",
+        "name": "BLT",
+        "quantity": 1.5,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-sc-c1",
+       "amount_cents": 2300,
+       "tax_cents": 200,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 2200,
+        "discounts_comps_cents": 200,
+        "voids_cents": 0,
+        "service_charges_cents": 300,
+        "pre_refund_cents": 2000
+       }
+      }
+     ],
+     "discounts": [
+      {
+       "check_guid": "lp-sc-c1",
+       "ordinal": 0,
+       "selection_guid": "lp-sc-s1",
+       "applied_discount_guid": "ad-2",
+       "discount_guid": null,
+       "name": "Comp",
+       "amount_cents": 220,
+       "reason_guid": null,
+       "reason_name": null,
+       "approver_guid": null
+      }
+     ],
+     "service_charges": [
+      {
+       "check_guid": "lp-sc-c1",
+       "ordinal": 0,
+       "service_charge_guid": "sc-1",
+       "name": "Delivery",
+       "amount_cents": 300,
+       "gratuity": false,
+       "taxable": true
+      },
+      {
+       "check_guid": "lp-sc-c1",
+       "ordinal": 1,
+       "service_charge_guid": "sc-2",
+       "name": "Tip",
+       "amount_cents": 200,
+       "gratuity": true,
+       "taxable": false
+      }
+     ],
+     "payments": [
+      {
+       "check_guid": "lp-sc-c1",
+       "payment_guid": "pay-sc",
+       "payment_status": "CAPTURED",
+       "refund_status": null,
+       "type": "CASH",
+       "amount_cents": 2500,
+       "tip_cents": null,
+       "paid_business_date": "2026-10-08",
+       "refund_amount_cents": 500,
+       "refund_tip_cents": 0,
+       "refund_business_date": "2026-10-09",
+       "void_business_date": null,
+       "server_guid": null,
+       "sales_refund_cents": null
+      }
+     ]
+    },
+    "hash": "6dcd194cc8ea083c5c41b48e6a885543d83dcce1cfe04183745099d25e60c929"
+   },
+   "modified": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "lp-service",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": "2026-10-08T18:00:00.000Z",
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "lp-sc-c1",
+        "selection_guid": "lp-sc-s1",
+        "parent_selection_guid": null,
+        "item_guid": "it-blt",
+        "name": "BLT",
+        "quantity": 1.5,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "lp-sc-c1",
+       "amount_cents": 2300,
+       "tax_cents": 200,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 2200,
+        "discounts_comps_cents": 200,
+        "voids_cents": 0,
+        "service_charges_cents": 300,
+        "pre_refund_cents": 2000
+       }
+      }
+     ],
+     "discounts": [
+      {
+       "check_guid": "lp-sc-c1",
+       "ordinal": 0,
+       "selection_guid": "lp-sc-s1",
+       "applied_discount_guid": "ad-2",
+       "discount_guid": null,
+       "name": "Comp",
+       "amount_cents": 220,
+       "reason_guid": null,
+       "reason_name": null,
+       "approver_guid": null
+      }
+     ],
+     "service_charges": [
+      {
+       "check_guid": "lp-sc-c1",
+       "ordinal": 0,
+       "service_charge_guid": "sc-1",
+       "name": "Delivery",
+       "amount_cents": 300,
+       "gratuity": false,
+       "taxable": true
+      },
+      {
+       "check_guid": "lp-sc-c1",
+       "ordinal": 1,
+       "service_charge_guid": "sc-2",
+       "name": "Tip",
+       "amount_cents": 200,
+       "gratuity": true,
+       "taxable": false
+      }
+     ],
+     "payments": [
+      {
+       "check_guid": "lp-sc-c1",
+       "payment_guid": "pay-sc",
+       "payment_status": "CAPTURED",
+       "refund_status": null,
+       "type": "CASH",
+       "amount_cents": 2500,
+       "tip_cents": null,
+       "paid_business_date": "2026-10-08",
+       "refund_amount_cents": 500,
+       "refund_tip_cents": 0,
+       "refund_business_date": "2026-10-09",
+       "void_business_date": null,
+       "server_guid": null,
+       "sales_refund_cents": null
+      }
+     ]
+    },
+    "hash": "cbb8d0906a464a303d70610356ee02a06379a8cf38952a0b5f1dc363aca02d1f"
+   }
+  },
+  {
+   "label": "malformed:root price not money",
+   "capture": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   },
+   "modified": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   }
+  },
+  {
+   "label": "malformed:root preDiscountPrice not money on a voided root",
+   "capture": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   },
+   "modified": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   }
+  },
+  {
+   "label": "malformed:modifier price is an object",
+   "capture": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "bad-mod",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": null,
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "bad-mod-c",
+        "selection_guid": "bad-mod-s",
+        "parent_selection_guid": null,
+        "item_guid": "it-x",
+        "name": "it-x",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "bad-mod-c",
+        "selection_guid": "bad-mod-m",
+        "parent_selection_guid": "bad-mod-s",
+        "item_guid": "it-y",
+        "name": "it-y",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "bad-mod-c",
+       "amount_cents": 1000,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 1000,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 1000
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": []
+    },
+    "hash": "998eda5b68774107c0479b91f73cdd1f9501892b72c30c8191868f70257e70dd"
+   },
+   "modified": {
+    "ok": true,
+    "out": {
+     "order": {
+      "order_guid": "bad-mod",
+      "business_date": "2026-10-08",
+      "opened_at": null,
+      "closed_at": null,
+      "paid_at": null,
+      "modified_at": "2026-10-08T18:00:00.000Z",
+      "promised_at": null,
+      "source": null,
+      "revenue_center_guid": null,
+      "dining_option_guid": null,
+      "server_guid": null,
+      "deleted": false,
+      "voided": false,
+      "excess_food": false,
+      "third_party_provider_guid": null,
+      "third_party_provider_name": null,
+      "selection_units": [
+       {
+        "check_guid": "bad-mod-c",
+        "selection_guid": "bad-mod-s",
+        "parent_selection_guid": null,
+        "item_guid": "it-x",
+        "name": "it-x",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       },
+       {
+        "check_guid": "bad-mod-c",
+        "selection_guid": "bad-mod-m",
+        "parent_selection_guid": "bad-mod-s",
+        "item_guid": "it-y",
+        "name": "it-y",
+        "quantity": 1,
+        "voided": false,
+        "deleted": false
+       }
+      ]
+     },
+     "checks": [
+      {
+       "check_guid": "bad-mod-c",
+       "amount_cents": 1000,
+       "tax_cents": null,
+       "total_cents": null,
+       "voided": false,
+       "deleted": false,
+       "accounting": {
+        "version": 1,
+        "gross_cents": 1000,
+        "discounts_comps_cents": 0,
+        "voids_cents": 0,
+        "service_charges_cents": 0,
+        "pre_refund_cents": 1000
+       }
+      }
+     ],
+     "discounts": [],
+     "service_charges": [],
+     "payments": []
+    },
+    "hash": "9110c958929532f32d1f1613c134f53b8c4e252d97b2e1a4a80061923a82a1f3"
+   }
+  },
+  {
+   "label": "malformed:check amount not money",
+   "capture": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   },
+   "modified": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   }
+  },
+  {
+   "label": "malformed:discount amount not money",
+   "capture": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   },
+   "modified": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   }
+  },
+  {
+   "label": "malformed:refund amount not money",
+   "capture": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   },
+   "modified": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   }
+  },
+  {
+   "label": "malformed:service charge not money",
+   "capture": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   },
+   "modified": {
+    "ok": false,
+    "error": "toast_capture_invalid_money"
+   }
+  },
+  {
+   "label": "malformed:quantity missing on an item",
+   "capture": {
+    "ok": false,
+    "error": "toast_capture_invalid_quantity"
+   },
+   "modified": {
+    "ok": false,
+    "error": "toast_capture_invalid_quantity"
+   }
+  }
+ ]
+}

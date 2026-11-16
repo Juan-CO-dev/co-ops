@@ -1,11 +1,12 @@
 import "server-only";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { lockLocationContext } from "@/lib/locations";
 import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { toastConfigured, toastGet, toastGetPage } from "./client";
 import { normalizeToastOrder } from "./capture-shared";
+import { toastContentHash, toastLinePricesEnabled } from "./content-hash";
 import { backfillDates, captureBudget, captureErrorCode, runCapturePages } from "./capture-runner";
 import { persistCapturedCatering } from "./capture-catering";
 import { persistCapturedCustomers } from "@/lib/customers/capture";
@@ -144,9 +145,10 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
     },
     async save(page, orders) {
       budget.check();
+      const linePrices = toastLinePricesEnabled();
       const normalized = orders.map((raw) => {
-        const order = normalizeToastOrder(raw, date);
-        return { ...order, content_hash: createHash("sha256").update(JSON.stringify(order)).digest("hex") };
+        const order = normalizeToastOrder(raw, date, { linePrices });
+        return { ...order, content_hash: toastContentHash(order) };
       });
       // Identical replay is idempotent even if the first response was lost after commit.
       const pageArgs = { ...args, p_page: page, p_orders: normalized };
@@ -209,6 +211,33 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
     customers = { ok: false, linked: 0, error: budget.signal.aborted ? "customer_capture_deadline" : "customer_capture_failed" };
   }
   return { runId, ...result, skipped: false, catering, customers };
+}
+
+/** Item 1 PR B canary (plan r3 §4 step 3): read-only like probeToastDate — consumes every page,
+ * persists nothing — and normalizes with line prices ON regardless of TOAST_LINE_PRICES, returning
+ * only each order's identity, content_hash and modified_at (no prices, no payload). */
+export async function canaryToastDate(locationId: string, date: string): Promise<{ skipped?: string; orders: { order_guid: string; content_hash: string; modified_at: string | null }[] }> {
+  backfillDates(date, date);
+  if (!captureEnabled()) return { skipped: "capture_disabled_or_fixture", orders: [] };
+  const orders: { order_guid: string; content_hash: string; modified_at: string | null }[] = [];
+  const budget = captureBudget();
+  try {
+    await budget.wait(async () => {
+      const guid = await restaurantForLocation(locationId);
+      return runCapturePages({
+        page: (page) => budget.request(() => toastGet<unknown>(`/orders/v2/ordersBulk?businessDate=${date.replaceAll("-", "")}&page=${page}&pageSize=100`, guid, budget.signal)),
+        save: async (_page, raws) => {
+          budget.check();
+          for (const raw of raws) {
+            const order = normalizeToastOrder(raw, date, { linePrices: true });
+            orders.push({ order_guid: order.order.order_guid, content_hash: toastContentHash(order), modified_at: order.order.modified_at });
+          }
+        },
+        complete: async () => { budget.check(); }, fail: async () => {},
+      });
+    });
+  } finally { budget.close(); }
+  return { orders };
 }
 
 /** Read-only retention probe: consumes every page but persists no orders or manifest. */

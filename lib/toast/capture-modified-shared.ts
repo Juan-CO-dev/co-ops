@@ -1,4 +1,4 @@
-import { captureBusinessDate, normalizeToastOrder } from "./capture-shared";
+import { captureBusinessDate, normalizeToastOrder, type NormalizeOptions } from "./capture-shared";
 import { toastModifiedParam } from "./dates-shared";
 
 export const MODIFIED_MAX_WINDOWS = 4;
@@ -46,7 +46,7 @@ export function modifiedRequestDates(window: ModifiedWindow): { startDate: strin
 }
 
 /** Preserve the original business date; adjacent windows own out-of-range orders. */
-export function normalizeModifiedOrder(raw: unknown, window: ModifiedWindow) {
+export function normalizeModifiedOrder(raw: unknown, window: ModifiedWindow, options: NormalizeOptions = {}) {
   // Compare before normalization, which reduces provider timestamps to milliseconds.
   const modified = microseconds(raw && typeof raw === "object" ? (raw as Record<string, unknown>).modifiedDate : null);
   const start = microseconds(window.start), end = microseconds(window.end);
@@ -55,7 +55,7 @@ export function normalizeModifiedOrder(raw: unknown, window: ModifiedWindow) {
   if (modified < start || modified >= end) return null;
   const date = captureBusinessDate(raw && typeof raw === "object" ? (raw as Record<string, unknown>).businessDate : null);
   if (!date) throw new Error("capture_modified_bad_date");
-  const order = normalizeToastOrder(raw, date);
+  const order = normalizeToastOrder(raw, date, options);
   order.payments.sort((a, b) => a.payment_guid < b.payment_guid ? -1 : a.payment_guid > b.payment_guid ? 1 : 0);
   return order;
 }

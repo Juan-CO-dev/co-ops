@@ -10,6 +10,16 @@ export interface CaptureSelection {
 }
 
 import { projectCheckSales, projectSalesRefunds, type CheckSalesAccounting } from "./sales-accounting-shared";
+import { captureCents, lineCents } from "./money-shared";
+import { checkLinePrices, lineFields, type CheckLinePrices, type LinePriceFields } from "./line-prices-shared";
+
+export { captureCents };
+/** A captured selection with TOAST_LINE_PRICES on: the eight original keys, then §3.1's fields. */
+export type PricedCaptureSelection = CaptureSelection & Partial<LinePriceFields>;
+/** Accounting with TOAST_LINE_PRICES on: the six original keys, then the per-check flags. */
+export type CapturedCheckAccounting = CheckSalesAccounting & { line_prices?: CheckLinePrices };
+/** Passed in by the server capture (`TOAST_LINE_PRICES=1`); a -shared module never reads env. */
+export interface NormalizeOptions { linePrices?: boolean }
 
 /** Pure, explicit allowlist for the accounting capture. Never retain a raw object. */
 type Row = Record<string, unknown>;
@@ -36,13 +46,6 @@ function instant(x: unknown): string | null {
   if (!Number.isFinite(d.valueOf())) throw new Error("toast_capture_invalid_timestamp");
   return d.toISOString();
 }
-export function captureCents(x: unknown): number | null {
-  if (x == null) return null;
-  const n = typeof x === "number" ? x : typeof x === "string" && /^-?\d+(\.\d+)?$/.test(x) ? Number(x) : NaN;
-  const cents = Math.round((n + Math.sign(n) * Number.EPSILON) * 100);
-  if (!Number.isSafeInteger(cents)) throw new Error("toast_capture_invalid_money");
-  return cents;
-}
 function date(x: unknown): string | null {
   if (x == null || x === 0 || x === "0") return null;
   const value = captureBusinessDate(x);
@@ -50,13 +53,14 @@ function date(x: unknown): string | null {
   return value;
 }
 export interface ToastCapturedOrder {
-  order: { order_guid: string; business_date: string; opened_at: string | null; closed_at: string | null; paid_at: string | null; modified_at: string | null; promised_at: string | null; source: string | null; revenue_center_guid: string | null; dining_option_guid: string | null; server_guid: string | null; deleted: boolean; voided: boolean; excess_food: boolean; third_party_provider_guid: string | null; third_party_provider_name: string | null; selection_units: CaptureSelection[]; };
-  checks: { check_guid: string; amount_cents: number | null; tax_cents: number | null; total_cents: number | null; voided: boolean; deleted: boolean; accounting: CheckSalesAccounting }[];
+  order: { order_guid: string; business_date: string; opened_at: string | null; closed_at: string | null; paid_at: string | null; modified_at: string | null; promised_at: string | null; source: string | null; revenue_center_guid: string | null; dining_option_guid: string | null; server_guid: string | null; deleted: boolean; voided: boolean; excess_food: boolean; third_party_provider_guid: string | null; third_party_provider_name: string | null; selection_units: PricedCaptureSelection[]; };
+  checks: { check_guid: string; amount_cents: number | null; tax_cents: number | null; total_cents: number | null; voided: boolean; deleted: boolean; accounting: CapturedCheckAccounting }[];
   discounts: { check_guid: string; ordinal: number; selection_guid: string | null; applied_discount_guid: string | null; discount_guid: string | null; name: string | null; amount_cents: number | null; reason_guid: string | null; reason_name: string | null; approver_guid: string | null }[];
   service_charges: { check_guid: string; ordinal: number; service_charge_guid: string | null; name: string | null; amount_cents: number | null; gratuity: boolean; taxable: boolean }[];
   payments: { check_guid: string; payment_guid: string; payment_status: string | null; refund_status: string | null; type: string | null; amount_cents: number | null; tip_cents: number | null; paid_business_date: string | null; refund_amount_cents: number | null; refund_tip_cents: number | null; refund_business_date: string | null; void_business_date: string | null; server_guid: string | null; sales_refund_cents: number | null }[];
 }
-export function normalizeToastOrder(input: unknown, businessDate: string): ToastCapturedOrder {
+export function normalizeToastOrder(input: unknown, businessDate: string, options: NormalizeOptions = {}): ToastCapturedOrder {
+  const linePrices = options.linePrices === true;
   const raw = obj(input);
   const business_date = date(raw.businessDate);
   if (!business_date || business_date !== businessDate) throw new Error("toast_capture_business_date_mismatch");
@@ -67,7 +71,9 @@ export function normalizeToastOrder(input: unknown, businessDate: string): Toast
   };
   for (const check of rows(raw.checks)) {
     const check_guid = required(check.guid);
-    result.checks.push({ check_guid, amount_cents: captureCents(check.amount), tax_cents: captureCents(check.taxAmount), total_cents: captureCents(check.totalAmount), voided: check.voided === true, deleted: check.deleted === true, accounting: projectCheckSales(check, captureCents) });
+    const accounting: CapturedCheckAccounting = linePrices ? projectCheckSales(check, captureCents, lineCents) : projectCheckSales(check, captureCents);
+    if (linePrices) accounting.line_prices = checkLinePrices(check, accounting, captureCents);
+    result.checks.push({ check_guid, amount_cents: captureCents(check.amount), tax_cents: captureCents(check.taxAmount), total_cents: captureCents(check.totalAmount), voided: check.voided === true, deleted: check.deleted === true, accounting });
     const salesRefunds = projectSalesRefunds(check, captureCents, captureBusinessDate);
     let ordinal = 0;
     const discounts = (owner: Row, selection_guid: string | null) => {
@@ -85,7 +91,7 @@ export function normalizeToastOrder(input: unknown, businessDate: string): Toast
         if (item_guid) {
           if (typeof s.quantity !== "number" || !Number.isFinite(s.quantity)) throw new Error("toast_capture_invalid_quantity");
           result.order.selection_units.push({ check_guid, selection_guid, parent_selection_guid: parent,
-            item_guid, name: text(s.displayName) ?? item_guid, quantity: s.quantity, voided, deleted });
+            item_guid, name: text(s.displayName) ?? item_guid, quantity: s.quantity, voided, deleted, ...(linePrices ? lineFields(s) : {}) });
         }
         selections(s.modifiers, selection_guid, voided, deleted);
       }
@@ -98,5 +104,22 @@ export function normalizeToastOrder(input: unknown, businessDate: string): Toast
     }
   }
   return result;
+}
+
+/** The content_hash input, rebuilt over main's field set only (item 1 PR B, plan r3 §1): every
+ * selection keeps exactly its eight original keys and every accounting its six, in their original
+ * order. Line prices therefore never re-hash an unchanged order, so they never create a snapshot,
+ * never detach an ezCater link and never move a report. The frozen golden pins it. */
+export function legacyHashInput(order: ToastCapturedOrder): ToastCapturedOrder {
+  return {
+    ...order,
+    order: { ...order.order, selection_units: order.order.selection_units.map((s) => ({
+      check_guid: s.check_guid, selection_guid: s.selection_guid, parent_selection_guid: s.parent_selection_guid,
+      item_guid: s.item_guid, name: s.name, quantity: s.quantity, voided: s.voided, deleted: s.deleted })) },
+    checks: order.checks.map((c) => ({ ...c, accounting: {
+      version: c.accounting.version, gross_cents: c.accounting.gross_cents, discounts_comps_cents: c.accounting.discounts_comps_cents,
+      voids_cents: c.accounting.voids_cents, service_charges_cents: c.accounting.service_charges_cents,
+      pre_refund_cents: c.accounting.pre_refund_cents } })),
+  };
 }
 

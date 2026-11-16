@@ -1,0 +1,122 @@
+{
+  "_note": "Synthetic Toast ordersBulk payloads for the item 1 PR B line-price work. No real customer data. Business date 2026-10-08 unless stated. The valid set must normalize on main; the malformed set records main's exact error (or success).",
+  "valid": [
+    {
+      "guid": "lp-instore", "businessDate": 20261008, "source": "In Store", "modifiedDate": "2026-10-08T16:00:00.000Z",
+      "openedDate": "2026-10-08T15:30:00.000Z", "closedDate": "2026-10-08T15:45:00.000Z",
+      "diningOption": { "guid": "do-takeout" }, "revenueCenter": { "guid": "rc-1" }, "server": { "guid": "srv-1" },
+      "checks": [{
+        "guid": "lp-instore-c1", "amount": 26.5, "taxAmount": 2.65, "totalAmount": 29.15,
+        "appliedDiscounts": [{ "guid": "ad-1", "discount": { "guid": "d-1" }, "name": "Loyalty", "discountAmount": 1, "nonTaxDiscountAmount": 1 }],
+        "selections": [
+          { "guid": "lp-s1", "item": { "guid": "it-italian" }, "displayName": "Italian", "quantity": 2, "price": 24, "preDiscountPrice": 25,
+            "receiptLinePrice": 11.5, "tax": 2.4, "taxInclusion": "NOT_INCLUDED", "selectionType": "NONE",
+            "externalPriceAmount": 13.99, "openPriceAmount": 0,
+            "modifiers": [
+              { "guid": "lp-s1m1", "item": { "guid": "it-peppers" }, "displayName": "Hot peppers", "quantity": 2, "price": 1, "preDiscountPrice": 1, "receiptLinePrice": 0.5, "tax": 0.1, "taxInclusion": "NOT_INCLUDED", "selectionType": "NONE" },
+              { "guid": "lp-s1m2", "item": null, "selectionType": "SPECIAL_REQUEST", "displayName": "PRIVATE no onions", "quantity": 1, "price": 0 }
+            ] },
+          { "guid": "lp-s2", "item": { "guid": "it-chips" }, "displayName": "Chips", "quantity": 1, "price": 2.5, "preDiscountPrice": 2.5,
+            "receiptLinePrice": 2.5, "tax": 0.25, "taxInclusion": "NOT_INCLUDED", "selectionType": "NONE", "deferred": false }
+        ],
+        "appliedServiceCharges": [],
+        "payments": [{ "guid": "pay-1", "type": "CREDIT", "paymentStatus": "CAPTURED", "amount": 29.15, "tipAmount": 3, "paidBusinessDate": 20261008 }]
+      }]
+    },
+    {
+      "guid": "lp-marketplace", "businessDate": 20261008, "source": "API", "modifiedDate": "2026-10-08T17:00:00.000Z",
+      "thirdPartyProviderInfo": { "guid": "prov-dd", "providerName": "DoorDash", "thirdPartyOrderId": "PRIVATE-DD-1", "customerName": "PRIVATE CUSTOMER" },
+      "checks": [{
+        "guid": "lp-mk-c1", "amount": "27.98", "taxAmount": "2.80", "totalAmount": "30.78",
+        "selections": [
+          { "guid": "lp-mk-s1", "item": { "guid": "it-italian" }, "displayName": "Italian", "quantity": 2, "price": "27.98", "preDiscountPrice": "27.98",
+            "receiptLinePrice": "13.99", "tax": "2.80", "taxInclusion": "NOT_INCLUDED", "selectionType": "NONE", "externalPriceAmount": "13.99" }
+        ],
+        "payments": [{ "guid": "pay-mk", "type": "OTHER", "paymentStatus": "CAPTURED", "amount": "30.78", "paidBusinessDate": 20261008 }]
+      }]
+    },
+    {
+      "guid": "lp-giftcard", "businessDate": 20261008,
+      "checks": [{
+        "guid": "lp-gc-c1", "amount": 35, "taxAmount": 1,
+        "selections": [
+          { "guid": "lp-gc-s1", "item": { "guid": "it-turkey" }, "displayName": "Turkey", "quantity": 1, "price": 10, "preDiscountPrice": 10, "receiptLinePrice": 10, "tax": 1, "taxInclusion": "NOT_INCLUDED", "selectionType": "NONE",
+            "modifiers": [{ "guid": "lp-gc-s1m1", "item": { "guid": "it-giftcard" }, "displayName": "Gift card add", "quantity": 1, "price": 0, "preDiscountPrice": 0, "selectionType": "TOAST_CARD_SELL" }] },
+          { "guid": "lp-gc-s2", "item": { "guid": "it-giftcard" }, "displayName": "Gift card", "quantity": 1, "price": 25, "preDiscountPrice": 25, "receiptLinePrice": 25, "tax": 0, "selectionType": "TOAST_CARD_SELL", "deferred": true }
+        ]
+      }]
+    },
+    {
+      "guid": "lp-voids", "businessDate": 20261008,
+      "checks": [{
+        "guid": "lp-v-c1", "amount": 12,
+        "selections": [
+          { "guid": "lp-v-s1", "item": { "guid": "it-meatball" }, "displayName": "Meatball", "quantity": 1, "price": 12, "preDiscountPrice": 14, "receiptLinePrice": 12, "tax": 1.2, "taxInclusion": "INCLUDED", "selectionType": "NONE",
+            "modifiers": [{ "guid": "lp-v-s1m1", "item": { "guid": "it-cheese" }, "displayName": "Cheese", "quantity": 1, "price": 2, "preDiscountPrice": 2, "voided": true }] },
+          { "guid": "lp-v-s2", "item": { "guid": "it-soda" }, "displayName": "Soda", "quantity": 1, "price": 3, "preDiscountPrice": 3, "voided": true },
+          { "guid": "lp-v-s3", "item": { "guid": "it-cookie" }, "displayName": "Cookie", "quantity": 1, "price": 9, "preDiscountPrice": 9, "deleted": true }
+        ]
+      }]
+    },
+    {
+      "guid": "lp-uncaptured", "businessDate": 20261008,
+      "checks": [
+        { "guid": "lp-u-c1", "amount": 15,
+          "selections": [
+            { "guid": "lp-u-s1", "item": { "guid": "it-italian" }, "displayName": "Italian", "quantity": 1, "price": 10, "preDiscountPrice": 10, "receiptLinePrice": 10 },
+            { "guid": "lp-u-s2", "item": null, "displayName": "PRIVATE open item", "quantity": 1, "price": 5, "preDiscountPrice": 5 }
+          ] },
+        { "guid": "lp-u-c2", "amount": 4,
+          "selections": [
+            { "guid": "lp-u-s3", "selectionType": "SPECIAL_REQUEST", "displayName": "PRIVATE extra bag", "quantity": 1, "price": 4 }
+          ] },
+        { "guid": "lp-u-c3", "amount": 0, "selections": [] },
+        { "guid": "lp-u-c4", "amount": 0 }
+      ]
+    },
+    {
+      "guid": "lp-service", "businessDate": 20261008, "voided": false,
+      "checks": [{
+        "guid": "lp-sc-c1", "amount": 23, "taxAmount": 2,
+        "appliedServiceCharges": [{ "serviceCharge": { "guid": "sc-1" }, "name": "Delivery", "chargeAmount": 3, "gratuity": false, "taxable": true },
+                                  { "serviceCharge": { "guid": "sc-2" }, "name": "Tip", "chargeAmount": 2, "gratuity": true }],
+        "selections": [
+          { "guid": "lp-sc-s1", "item": { "guid": "it-blt" }, "displayName": "BLT", "quantity": 1.5, "price": 20, "preDiscountPrice": 22, "receiptLinePrice": 14.6667, "tax": 2, "taxInclusion": "lower case bad", "selectionType": "free text NOT an enum",
+            "appliedDiscounts": [{ "guid": "ad-2", "name": "Comp", "discountAmount": 2.2, "nonTaxDiscountAmount": 2 }] }
+        ],
+        "payments": [{ "guid": "pay-sc", "type": "CASH", "paymentStatus": "CAPTURED", "amount": 25, "paidBusinessDate": 20261008,
+          "refund": { "refundAmount": 5, "tipRefundAmount": 0, "refundBusinessDate": 20261009, "refundTransaction": { "guid": "rtx" } } }]
+      }]
+    }
+  ],
+  "malformed": [
+    { "label": "root price not money",
+      "raw": { "guid": "bad-root", "businessDate": 20261008, "checks": [{ "guid": "bad-root-c", "amount": 10,
+        "selections": [{ "guid": "bad-root-s", "item": { "guid": "it-x" }, "quantity": 1, "price": "abc", "preDiscountPrice": 10 }] }] } },
+    { "label": "root preDiscountPrice not money on a voided root",
+      "raw": { "guid": "bad-pre", "businessDate": 20261008, "checks": [{ "guid": "bad-pre-c", "amount": 0,
+        "selections": [{ "guid": "bad-pre-s", "item": { "guid": "it-x" }, "quantity": 1, "price": 0, "preDiscountPrice": true, "voided": true }] }] } },
+    { "label": "modifier price is an object",
+      "raw": { "guid": "bad-mod", "businessDate": 20261008, "checks": [{ "guid": "bad-mod-c", "amount": 10,
+        "selections": [{ "guid": "bad-mod-s", "item": { "guid": "it-x" }, "quantity": 1, "price": 10, "preDiscountPrice": 10,
+          "modifiers": [{ "guid": "bad-mod-m", "item": { "guid": "it-y" }, "quantity": 1, "price": {} }] }] }] } },
+    { "label": "check amount not money",
+      "raw": { "guid": "bad-amount", "businessDate": 20261008, "checks": [{ "guid": "bad-amount-c", "amount": "abc",
+        "selections": [{ "guid": "bad-amount-s", "item": { "guid": "it-x" }, "quantity": 1, "price": 10 }] }] } },
+    { "label": "discount amount not money",
+      "raw": { "guid": "bad-discount", "businessDate": 20261008, "checks": [{ "guid": "bad-discount-c", "amount": 10,
+        "selections": [{ "guid": "bad-discount-s", "item": { "guid": "it-x" }, "quantity": 1, "price": 10,
+          "appliedDiscounts": [{ "name": "Bad", "discountAmount": 1, "nonTaxDiscountAmount": "x" }] }] }] } },
+    { "label": "refund amount not money",
+      "raw": { "guid": "bad-refund", "businessDate": 20261008, "checks": [{ "guid": "bad-refund-c", "amount": 10,
+        "selections": [{ "guid": "bad-refund-s", "item": { "guid": "it-x" }, "quantity": 1, "price": 10 }],
+        "payments": [{ "guid": "bad-refund-p", "amount": 10, "refund": { "refundAmount": "nope", "refundBusinessDate": 20261009 } }] }] } },
+    { "label": "service charge not money",
+      "raw": { "guid": "bad-service", "businessDate": 20261008, "checks": [{ "guid": "bad-service-c", "amount": 10,
+        "appliedServiceCharges": [{ "chargeAmount": "nope" }],
+        "selections": [{ "guid": "bad-service-s", "item": { "guid": "it-x" }, "quantity": 1, "price": 10 }] }] } },
+    { "label": "quantity missing on an item",
+      "raw": { "guid": "bad-qty", "businessDate": 20261008, "checks": [{ "guid": "bad-qty-c", "amount": 10,
+        "selections": [{ "guid": "bad-qty-s", "item": { "guid": "it-x" }, "price": 10 }] }] } }
+  ]
+}
