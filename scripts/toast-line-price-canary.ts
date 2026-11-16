@@ -1,12 +1,15 @@
 /** Item 1 PR B canary — CC operator entry, READ-ONLY. Runbook: docs/runbooks/toast-line-prices.md.
  * Run with TOAST_LINE_PRICES UNSET, after PR B is deployed, BEFORE the switch is turned on.
- *   npx tsx scripts/toast-line-price-canary.ts [--date YYYY-MM-DD ...] [--location <uuid>]
+ *   npx tsx --conditions=react-server --env-file=.env.local scripts/toast-line-price-canary.ts [--date YYYY-MM-DD ...] [--location <uuid>]
+ * The react-server condition is required: lib/supabase-server imports "server-only", which throws without it
+ * (the CLI then prints needs_react_server_condition). The env file is the operator's; the script reads none itself.
  * Default days: T−10 and T−11, T = today's ET calendar date. A day must be closed (≤ T−4).
  * For every shop-day: re-reads Toast ordersBulk, normalizes with line prices ON, hashes, and compares
  * with toast_orders (SELECT only). Exit 1 unless every day is representative (≥ 50 orders) and has zero
  * absent-with-same-modified_at orders. Prints counts and order GUIDs only; never prices or payloads.
- * Never imports env files; never writes (no insert / update / upsert / rpc). */
+ * Never writes (no insert / update / upsert / rpc). */
 import { pathToFileURL } from "node:url";
+import { scriptErrorCode } from "./script-error-code";
 import { etCalendarDate, etYmdMinusDays } from "../lib/operational-day";
 import { classifyCanaryDay, type CanaryDay, type CanaryFetchedOrder, type CanaryStoredSnapshot } from "../lib/toast/line-price-canary-shared";
 
@@ -125,5 +128,5 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => { console.error(error instanceof Error && /^canary_|^capture_/.test(error.message) ? error.message : "canary_failed"); process.exitCode = 1; });
+  main().catch((error: unknown) => { console.error(scriptErrorCode(error, /^canary_|^capture_/, "canary_failed")); process.exitCode = 1; });
 }

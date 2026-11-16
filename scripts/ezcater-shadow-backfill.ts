@@ -6,6 +6,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { materializeEzcaterLinks, materializeEzcaterReconciliation } from "@/lib/ezcater/reconcile";
 import { etYmdMinusDays } from "@/lib/operational-day";
+import { scriptErrorCode } from "./script-error-code";
 
 export function parseShadowArgs(args: string[]) {
   let execute = false, linksOnly = false, from = "", to = "", expect: number | undefined;
@@ -44,5 +45,5 @@ export async function runShadowBackfill(options: ReturnType<typeof parseShadowAr
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runShadowBackfill(parseShadowArgs(process.argv.slice(2))).then((r) => console.log(JSON.stringify(r)))
-    .catch(() => { console.error("shadow_backfill_failed"); process.exitCode = 1; });
+    .catch((error: unknown) => { console.error(scriptErrorCode(error, /^shadow_/, "shadow_backfill_failed")); process.exitCode = 1; });
 }

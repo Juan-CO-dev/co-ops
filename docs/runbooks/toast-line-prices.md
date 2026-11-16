@@ -19,12 +19,14 @@ Plan: `C:\co\audit\item1-toast-r3.md` §1, §3, §4 (Astra r3 cleared phase 1). 
 
 1. **Merge and deploy PR B with `TOAST_LINE_PRICES` unset.** It is pinned byte-identical, so this is not an upgraded capture. Note the deploy time.
 2. **Baseline B0** at time `t0`. Counts only, read-only, SQL below. Toast days from (min ezCater event date − 1) to T−4, where T = the ET calendar date of the reading.
-3. **Canary.** With the switch still unset:
+3. **Canary.** With the switch still unset, from a checkout of the deployed commit, with `.env.local` holding the target's Supabase service role and Toast credentials (`TOAST_ORDER_CAPTURE=1`, `TOAST_LINE_PRICES` unset):
    ```
-   npx tsx scripts/toast-line-price-canary.ts            # T−10 and T−11, every Toast shop
-   npx tsx scripts/toast-line-price-canary.ts --date 2026-10-20 --date 2026-10-21   # other closed days
+   npx tsx --conditions=react-server --env-file=.env.local scripts/toast-line-price-canary.ts            # T−10 and T−11, every Toast shop
+   npx tsx --conditions=react-server --env-file=.env.local scripts/toast-line-price-canary.ts --date 2026-10-20 --date 2026-10-21   # other closed days
    ```
+   - `--conditions=react-server` is required (the script's server modules import `server-only`). Without it the canary prints `needs_react_server_condition` and checks nothing. `tests/toast-line-price-runbook-commands.test.ts` runs these exact lines offline.
    - It refuses a day newer than T−4.
+   - It reads every history row or refuses by name, exit 1, never PASS: `canary_history_truncated` (a row cap or a short page), `canary_history_uncounted`, `canary_page_cap`, `canary_snapshot_history_missing` (a latest pointer whose snapshot it could not read), `canary_latest_pointer_missing`. Re-run; if it repeats, stop and report to CC.
    - Gate: prints `{"canary":"PASS"}` and exits 0, with every shop-day `representative` (≥ 50 orders) and `absent_same_modified = 0`.
    - `absent_edited` lines are real Toast edits and are fine.
    - `absent_never_captured` lines are orders the capture never stored. They don't fail the gate but are worth a look.
@@ -110,14 +112,15 @@ Each step can be repeated safely. A partial run resumes at the first date that d
 3. **Rebuild links over all of R:**
    ```
    # name-code and daily-batch links (SQL): reconcile_ezcater_toast(R1, R2)
-   npx tsx scripts/ezcater-shadow-backfill.ts --links-only --from R1 --to R2              # dry run: prints the order count N
-   npx tsx scripts/ezcater-shadow-backfill.ts --links-only --from R1 --to R2 --expect N --execute
+   npx tsx --conditions=react-server --env-file=.env.local scripts/ezcater-shadow-backfill.ts --links-only --from R1 --to R2              # dry run: prints the order count N
+   npx tsx --conditions=react-server --env-file=.env.local scripts/ezcater-shadow-backfill.ts --links-only --from R1 --to R2 --expect N --execute
    ```
+   - Same runtime as the canary: `--conditions=react-server`, and `.env.local` holding the target's credentials.
    - `--links-only` runs pass 2, then `reconcile_ezcater_toast`, per event date.
    - It **never** reads capture coverage and **never** records a comparison, so R2 may be tomorrow (today + 1).
    - It prints `{date, ok, …}` per date and stops on a failed, deferred or skipped pass 2 or a reconcile error.
 4. **Record comparisons only up to C**, the last date where `loadReconciledSalesWindow` reports no gaps (normally yesterday, after the nightly). Run the normal mode over [R1, min(R2, C)]:
-   `npx tsx scripts/ezcater-shadow-backfill.ts --from R1 --to C --expect N --execute`. Dates after C get their comparison from the regular nightly once they're covered.
+   `npx tsx --conditions=react-server --env-file=.env.local scripts/ezcater-shadow-backfill.ts --from R1 --to C --expect N --execute`. Dates after C get their comparison from the regular nightly once they're covered.
 5. **Parity against B0 over R.** Any difference: stop and report to CC.
 
 Before step 4 of the turn-on, CC rehearses recovery steps 1–5 on **sim** with an injected wrong hash.
