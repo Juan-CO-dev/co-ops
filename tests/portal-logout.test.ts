@@ -92,7 +92,7 @@ it("a session lookup error keeps the cookie and reports a retryable failure", as
   state.lookupError = { message: "upstream timeout" };
   const res = await post(jwt);
   expect(res.status).toBe(303);
-  expect(res.headers.get("location")).toBe(`${ORIGIN}/order/account?signout=failed`);
+  expect(res.headers.get("location")).toBe(`${ORIGIN}/order/sign-out-failed`);
   expect(res.headers.get("set-cookie") ?? "").not.toContain(`${PORTAL_COOKIE_NAME}=`);
   expect(state.revoked).toEqual([]);
 });
@@ -102,7 +102,7 @@ it("a revoke error keeps the cookie and reports a retryable failure; the retry r
   state.row = { id: "sess-1", token_hash: await hashToken(jwt) };
   state.revokeThrows = true;
   const res = await post(jwt);
-  expect(res.headers.get("location")).toBe(`${ORIGIN}/order/account?signout=failed`);
+  expect(res.headers.get("location")).toBe(`${ORIGIN}/order/sign-out-failed`);
   expect(res.headers.get("set-cookie") ?? "").not.toContain(`${PORTAL_COOKIE_NAME}=`);
   state.revokeThrows = false;
   const retry = await post(jwt);
@@ -111,11 +111,24 @@ it("a revoke error keeps the cookie and reports a retryable failure; the retry r
   expect(retry.headers.get("set-cookie") ?? "").toMatch(/Max-Age=0/i);
 });
 
-it("the account page tells the customer the sign-out failed, in en + es", async () => {
+// Review r2 (BC-032/BC-042): the failure page must not depend on the database that just failed.
+// /order/account needs the session lookup, so a persistent failure bounced the customer to
+// /order/start without the message (the cookie still live). The route now sends the browser to a
+// static page that reads no session and no account (proved by tests/portal-sign-out-failed-page.test.ts).
+it("a persistent lookup failure lands on the static failure page, never on a session-gated one", async () => {
+  const jwt = await signCustomerJwt(claims);
+  state.lookupError = { message: "upstream timeout" };
+  for (let i = 0; i < 2; i++) {
+    const res = await post(jwt);
+    const location = new URL(res.headers.get("location") ?? "");
+    expect(location.pathname).toBe("/order/sign-out-failed");
+    expect(location.pathname).not.toBe("/order/account");
+    expect(res.headers.get("set-cookie") ?? "").not.toContain(`${PORTAL_COOKIE_NAME}=`);
+  }
+});
+
+it("the failure message ships in en + es", async () => {
   const { readFileSync } = await import("node:fs");
-  const page = readFileSync("app/order/account/page.tsx", "utf8");
-  expect(page).toMatch(/signout === "failed"/);
-  expect(page).toContain("PortalSignOutFailed");
   for (const lang of ["en", "es"]) {
     const dict = JSON.parse(readFileSync(`lib/i18n/${lang}.json`, "utf8")) as Record<string, string>;
     expect(dict["order.portal.sign_out_failed"], lang).toBeTruthy();

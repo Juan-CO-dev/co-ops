@@ -5294,6 +5294,7 @@
   "order.quote.pay_full": "Pay in full",
   "order.portal.sign_out": "Sign out",
   "order.portal.sign_out_failed": "We couldn't sign you out just now, so you're still signed in. Tap Sign out to try again.",
+  "order.portal.back_to_orders": "Back to your orders",
   "order.quote.working": "Working…",
   "order.quote.redirecting": "Taking you to secure checkout…",
   "order.quote.recorded": "Your order is recorded.",

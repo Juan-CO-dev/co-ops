@@ -5294,6 +5294,7 @@
   "order.quote.pay_full": "Pagar todo",
   "order.portal.sign_out": "Cerrar sesión",
   "order.portal.sign_out_failed": "No pudimos cerrar tu sesión ahora, así que sigues conectado. Toca Cerrar sesión para intentarlo de nuevo.",
+  "order.portal.back_to_orders": "Volver a tus pedidos",
   "order.quote.working": "Trabajando…",
   "order.quote.redirecting": "Te llevamos al pago seguro…",
   "order.quote.recorded": "Tu pedido quedó registrado.",

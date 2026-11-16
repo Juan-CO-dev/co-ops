@@ -12,8 +12,10 @@
  * Review r1 (BC-032/BC-033): a DATABASE failure (the session lookup or the revoke) is not a
  * sign-out. Clearing the cookie then would leave the server-side session live for the rest of its
  * life with no way to retry, while telling the customer they were signed out. So the cookie is
- * KEPT — it is the retry's only handle on the session — and the browser goes back to
- * /order/account?signout=failed, which says the sign-out did not go through and offers it again.
+ * KEPT — it is the retry's only handle on the session — and the browser goes to the STATIC
+ * /order/sign-out-failed page, which says the sign-out did not go through and offers it again.
+ * Review r2 (BC-032/BC-042): that page reads no session and no account, so it renders even while
+ * the same database keeps failing (the session-gated /order/account bounced to /order/start).
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -44,7 +46,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         if (row && row.token_hash === await hashToken(raw)) await revokeCustomerSession(row.id);
       } catch (e) {
         console.error("portal_logout_revoke_failed", e instanceof Error ? e.message : String(e));
-        return NextResponse.redirect(new URL("/order/account?signout=failed", req.nextUrl.origin), 303);
+        return NextResponse.redirect(new URL("/order/sign-out-failed", req.nextUrl.origin), 303);
       }
     }
   }

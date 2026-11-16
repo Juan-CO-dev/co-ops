@@ -16,13 +16,25 @@ export function PortalSignOut({ lang }: { lang: "en" | "es" }) {
   );
 }
 
-/** Review r1 (BC-032/BC-033): shown on /order/account?signout=failed, where the logout route sends
- *  the browser when the server could not end the session. The cookie was kept, so the header's
- *  Sign out simply tries again. */
+/** Review r1 (BC-032/BC-033) + r2 (BC-042): shown on the static /order/sign-out-failed page, where
+ *  the logout route sends the browser when the server could not end the session. The cookie was
+ *  kept, so Sign out (PortalSignOutRetry) simply tries again. */
 export function PortalSignOutFailed({ lang }: { lang: "en" | "es" }) {
   return (
     <p role="alert" className="mb-6 rounded-2xl border border-co-danger bg-co-danger-surface px-5 py-4 text-sm font-semibold text-co-cta-text">
       {serverT(lang, "order.portal.sign_out_failed")}
     </p>
+  );
+}
+
+/** The retry control on the light failure page (the header's PortalSignOut is styled for the dark bar). */
+export function PortalSignOutRetry({ lang }: { lang: "en" | "es" }) {
+  return (
+    <form method="post" action="/api/portal/logout">
+      <button type="submit"
+        className="inline-flex min-h-[48px] items-center justify-center rounded-full bg-co-text px-8 text-sm font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90">
+        {serverT(lang, "order.portal.sign_out")}
+      </button>
+    </form>
   );
 }
