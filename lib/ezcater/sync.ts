@@ -17,6 +17,19 @@ function missingApply(error: { code?: string } | null): boolean {
   return !!error?.code && ["PGRST202", "42883", "42P01", "42703", "PGRST204", "PGRST205"].includes(error.code);
 }
 
+/** W23/B125: apply_ezcater_order raises unmapped_location when no single active shop carries the
+ * caterer UUID (a cleared or deactivated mapping). Retrying cannot help, so the order is parked:
+ * the signed receipt records "unmapped_location", the webhook answers 200, and sync_error marks it
+ * failed for the nightly refresh and the operator scripts. */
+function isUnmapped(error: { message?: string } | null): boolean {
+  return error?.message === "unmapped_location";
+}
+function unmappedResult(providerUuid: string): EzcaterApplyResult {
+  const result: EzcaterApplyResult = { lead_id: null, result: "unmapped_location", sync_error: "unmapped_location" };
+  auditApplied(result, providerUuid);
+  return result;
+}
+
 /** 0223 rejects reassigned orders before 0225 exists. Probe without writing. */
 async function assertReassignmentSchema(sb: ReturnType<typeof getServiceRoleClient>, error: { message?: string } | null): Promise<void> {
   if (error?.message !== "location_mismatch") return;
@@ -65,6 +78,8 @@ export async function syncEzcaterOrder(providerUuid: string, catererUuid: string
       p_snapshot: { ...snapshot, locationObservedAt }, p_digest: digest, p_event_key: eventKey, p_error: null,
     }).abortSignal(signal);
     if (missingApply(error)) throw new Error("ezcater_schema_unavailable");
+    // Never fall into the retry branch: it would raise the same thing again.
+    if (isUnmapped(error)) return unmappedResult(providerUuid);
     await assertReassignmentSchema(sb, error);
     if (error || !data) throw new Error("apply_failed");
     const result = data as EzcaterApplyResult;
@@ -83,6 +98,7 @@ export async function syncEzcaterOrder(providerUuid: string, catererUuid: string
       p_snapshot: null, p_digest: null, p_event_key: eventKey, p_error: code,
     }).abortSignal(AbortSignal.timeout(1_000));
     if (missingApply(saved.error)) throw new Error("ezcater_schema_unavailable");
+    if (isUnmapped(saved.error)) return unmappedResult(providerUuid);
     await assertReassignmentSchema(sb, saved.error);
     if (saved.error || !saved.data) throw new Error("apply_failed");
     const result = saved.data as EzcaterApplyResult;

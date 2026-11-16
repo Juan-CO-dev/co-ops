@@ -23,6 +23,9 @@ export const SHOP_OWNED_ERROR_CODES = [
   "invalid_yield", "incomplete_recipe", "invalid_payload", "line_other_shop", "output_other_shop",
   "global_recipe_makes_shop_item", "recipe_has_no_shop_versions", "menu_item_has_no_shop_settings",
   "toast_other_shop", "owner_is_set_at_creation", "owned_not_catering",
+  // App-only (no SQL raise): the new-item setup's "use in a recipe" step found its SKU already in that recipe with
+  // another amount (W27 / B143).
+  "already_in_recipe",
 ] as const;
 export type ShopOwnedErrorCode = typeof SHOP_OWNED_ERROR_CODES[number];
 type RefusalStatus = 400 | 403 | 404 | 409;
@@ -37,6 +40,7 @@ export const RPC_STATUS: Record<ShopOwnedErrorCode, RefusalStatus> = {
   invalid_yield: 400, incomplete_recipe: 400, invalid_payload: 400, line_other_shop: 400, output_other_shop: 400,
   global_recipe_makes_shop_item: 400, recipe_has_no_shop_versions: 409, menu_item_has_no_shop_settings: 409,
   toast_other_shop: 400, owner_is_set_at_creation: 400, owned_not_catering: 400,
+  already_in_recipe: 409,
 };
 function refusal(code: ShopOwnedErrorCode): OwnerRefusal {
   return { ok: false, status: RPC_STATUS[code], code };

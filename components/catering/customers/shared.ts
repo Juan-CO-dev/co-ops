@@ -53,6 +53,8 @@ const KNOWN_ERROR_CODES = new Set([
   // catering_customers_one_active_email. Without the key here the operator got the generic
   // "something went wrong" and no idea the remedy is a human one.
   "email_taken",
+  // W23/B130: the address belongs to a deactivated contact — reactivate that one instead.
+  "email_inactive_contact",
   "generic",
 ]);
 

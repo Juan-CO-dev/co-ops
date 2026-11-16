@@ -10,11 +10,12 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import { normalizeEmail } from "@/lib/catering/companies";
+import { escapeLike, normalizeEmail } from "@/lib/catering/companies";
 import { loadCateringReader } from "@/lib/catering/ezcater-detail";
 import { canReadCateringContact } from "@/lib/catering/ezcater-detail-shared";
 
@@ -105,15 +106,20 @@ function mapCustomer(r: DbCustomerRow): CateringCustomer {
 export async function loadCustomers(actor: AuthContext): Promise<CateringCustomer[]> {
   requireLevel(actor, CUSTOMER_READ_MIN);
   const sb = getServiceRoleClient();
-  let q = sb.from("catering_customers").select(CUSTOMER_COLS);
   const scope = readScopeOr(actor);
-  if (scope) q = q.or(scope);
-  const { data, error } = await q
-    .order("company", { ascending: true, nullsFirst: false })
-    .order("name", { ascending: true })
-    .returns<DbCustomerRow[]>();
-  if (error) throw new Error(`loadCustomers: ${error.message}`);
-  return (data ?? []).map(mapCustomer);
+  // W23/B207: paged past PostgREST's 1,000-row cap (it truncated silently), with `id` as the
+  // unique tiebreak so no row repeats or drops across pages.
+  const data = await selectAllRows<DbCustomerRow>((from, to) => {
+    let q = sb.from("catering_customers").select(CUSTOMER_COLS);
+    if (scope) q = q.or(scope);
+    return q
+      .order("company", { ascending: true, nullsFirst: false })
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<DbCustomerRow[]>();
+  });
+  return data.map(mapCustomer);
 }
 
 export interface CustomerHistoryLead {
@@ -250,6 +256,29 @@ export async function loadCustomer(actor: AuthContext, id: string): Promise<Cust
 }
 
 // ── Mutations ───────────────────────────────────────────────────────────────
+/**
+ * W23/B130 (owner decision W23-2 a): a hand-typed email that an existing contact already holds is
+ * refused BEFORE any write — an active holder is `email_taken` (409, as the partial unique index
+ * would say), a deactivated holder is `email_inactive_contact` (409: reactivate that contact
+ * instead). Before, an active duplicate was a bare 23505 → 500, and a deactivated one forked the
+ * person into a second identity (the portal then signed them in as the new row and their old
+ * quotes vanished for them). The portal and quote paths keep reviving, unchanged.
+ */
+async function assertEmailFree(sb: ReturnType<typeof getServiceRoleClient>, email: string, exceptId: string | null): Promise<void> {
+  let q = sb.from("catering_customers").select("id, active").ilike("email", escapeLike(email));
+  if (exceptId) q = q.neq("id", exceptId);
+  const { data, error } = await q.limit(20).returns<Array<{ id: string; active: boolean | null }>>();
+  if (error) throw new Error(`catering customer email lookup: ${error.message}`);
+  const holders = data ?? [];
+  if (holders.some((h) => h.active === true)) {
+    throw new CateringCustomerError(409, "email_taken", "Another active contact already uses that email address");
+  }
+  if (holders.length > 0) {
+    throw new CateringCustomerError(409, "email_inactive_contact",
+      "A deactivated contact already has this email — reactivate them instead");
+  }
+}
+
 export interface CreateCustomerInput {
   name: string;
   company?: string | null;
@@ -267,13 +296,15 @@ export async function createCustomer(actor: AuthContext, input: CreateCustomerIn
     throw new CateringCustomerError(400, "invalid_payload", "name is required");
   }
   const sb = getServiceRoleClient();
+  const email = normalizeEmail(input.email ?? "") || null;
+  if (email) await assertEmailFree(sb, email, null);
   const { data: inserted, error } = await sb
     .from("catering_customers")
     .insert({
       name: input.name.trim(),
       company: input.company ?? null,
       contact_person: input.contactPerson ?? null,
-      email: normalizeEmail(input.email ?? "") || null,
+      email,
       phone: input.phone ?? null,
       primary_location_id: primaryLocationId,
       notes: input.notes ?? null,
@@ -282,7 +313,11 @@ export async function createCustomer(actor: AuthContext, input: CreateCustomerIn
     })
     .select("id")
     .single<{ id: string }>();
-  if (error) throw new Error(`createCustomer: ${error.message}`);
+  // A concurrent add of the same address loses the race on the partial unique index.
+  if (error?.code === PG_UNIQUE_VIOLATION) {
+    throw new CateringCustomerError(409, "email_taken", "Another active contact already uses that email address");
+  }
+  if (error || !inserted) throw new Error(`createCustomer: ${error?.message ?? "no row"}`);
 
   void audit({
     actorId: actor.user.id,
@@ -326,7 +361,10 @@ export async function editCustomer(actor: AuthContext, id: string, input: EditCu
   }
   if (input.company !== undefined) patch.company = input.company;
   if (input.contactPerson !== undefined) patch.contact_person = input.contactPerson;
-  if (input.email !== undefined) patch.email = normalizeEmail(input.email ?? "") || null;
+  if (input.email !== undefined) {
+    patch.email = normalizeEmail(input.email ?? "") || null;
+    if (patch.email) await assertEmailFree(sb, patch.email as string, id);
+  }
   if (input.phone !== undefined) patch.phone = input.phone;
   if (input.notes !== undefined) patch.notes = input.notes;
   if (Object.keys(patch).length === 0) return;

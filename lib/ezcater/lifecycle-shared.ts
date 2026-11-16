@@ -98,3 +98,30 @@ export function handoffLabel(iso: string | null): string | null {
   const label = formatTime(iso, "en");
   return label === "" ? iso : label;
 }
+
+/**
+ * W23/B127 — is this ezCater order cancelled for every reader that counts it? The same tests
+ * depletion.ts and pass2.ts apply (status /cancel|reject|fail/, the lead lost), plus a loss
+ * notification still waiting for its refetch (pending_event_key). The SQL twin is
+ * customer_orders_sync_ezcater_cancelled (0330).
+ */
+export function isEzcaterOrderCancelled(o: { status: string | null; leadStage: string | null; pendingEventKey: string | null }): boolean {
+  return /cancel|reject|fail/i.test(o.status ?? "") || o.leadStage === "lost" || LOSS_KEYS.has(o.pendingEventKey ?? "");
+}
+
+/**
+ * W23/B126 (owner decision W23-1 a) — may a LOST ezCater lead be reopened, and to which stage?
+ * Only when ezCater un-cancelled the order AFTER its last loss notification and the order is no
+ * longer cancelled: back to Confirmed when ezCater says "accepted" (inquiry = not paid yet),
+ * else Inquiry. Decides whether the drawer offers the button; reopen_ezcater_lead (0330) is the
+ * authority and re-checks every rule under the provider lock.
+ */
+export function ezcaterReopenTarget(x: {
+  stage: string; leadSource: string | null; orderStatus: string | null; pendingEventKey: string | null;
+  lastLossAt: string | null; lastUncancelAt: string | null;
+}): "confirmed" | "inquiry" | null {
+  if (x.stage !== "lost" || x.leadSource !== "ezcater" || !x.lastUncancelAt) return null;
+  if (x.lastLossAt && Date.parse(x.lastUncancelAt) <= Date.parse(x.lastLossAt)) return null;
+  if (/cancel|reject|fail/i.test(x.orderStatus ?? "") || LOSS_KEYS.has(x.pendingEventKey ?? "")) return null;
+  return (x.orderStatus ?? "").toLowerCase() === "accepted" ? "confirmed" : "inquiry";
+}

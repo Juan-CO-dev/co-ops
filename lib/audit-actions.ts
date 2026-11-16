@@ -352,6 +352,7 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // ── SEED & INFRA ──────────────────────────────────────────────────────
   // Scripts, cron and one-shot provenance.
   "audit.metadata_correction",
+  "cron.deferred",
   "cron.failure",
   "cron.success",
   "ezcater.set_location_uuid",
@@ -391,6 +392,9 @@ export const RESERVED_ACTIONS = [
   // and sets destructive=true literally. There is no TypeScript call site and there may
   // never be one: no app code path deletes catering rows.
   "catering.test_data_purge",
+  // SQL-only: migration 0330 (audit W23 B129, owner decision W23-4 b) switches off empty duplicate
+  // catering companies and INSERTs one audit row per company itself. No TypeScript call site.
+  "catering.company.deactivate_duplicate",
   // Emitted from SQL only — migration 0198 rewrote the PostgREST-role grants on public.users
   // (LRA-001 credential columns readable, LRA-214 self-promotion via PATCH) and INSERTs its own
   // audit row with destructive=true literally. Grant changes never go through app code.

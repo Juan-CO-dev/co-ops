@@ -67,6 +67,15 @@ const KNOWN_ERROR_CODES = new Set([
   "mixed_concerns",
   "stage_changed",
   "illegal_transition", // guarded moveStage 409 (concurrent move) — actionable, not generic
+  // W23/B126: the ezCater reopen's named refusals.
+  "reopen_forbidden",
+  "reopen_not_ezcater",
+  "reopen_lead_moved",
+  "reopen_not_lost",
+  "reopen_no_uncancel",
+  "reopen_still_cancelled",
+  "reopen_target_changed", // review r2: ezCater's status changed while reopening
+  "reopen_unavailable",
   "event_date_required_confirmed", // W22/B120: a confirmed order keeps a date (its kitchen prep sits on it)
   "generic",
   "network",

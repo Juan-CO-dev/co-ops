@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     await watchSiblings("digest-tick");
     return jsonOk({ mode: summary?.mode ?? "off", counts: summary?.counts ?? null });
   } catch (e) {
-    void audit({
+    await audit({
       actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: { job: "digest-tick", error: truncateErr(e) },
       ipAddress: null, userAgent: null,

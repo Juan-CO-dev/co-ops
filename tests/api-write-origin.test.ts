@@ -149,8 +149,8 @@ it('classifies every route and runtime HTTP export, including aliases and re-exp
     expect(mutations.some(e => `${e.path} ${e.method}` === key), key).toBe(true);
     expect(entry.reason.length).toBeGreaterThanOrEqual(15);
   }
-  expect(mutations.length).toBe(114); // +1 W26: POST /api/notifications/mark-all-read (same-origin first)
-  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(91);
+  expect(mutations.length).toBe(116); // +1 W26: POST /api/notifications/mark-all-read; +2 W23: reopen + portal logout
+  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(93);
 }, 120_000);
 
 // Full parsed stub source includes alias targets and module initializers: an implemented
@@ -208,6 +208,11 @@ describe.each(covered)('$path $method real guard', ({ path, method }) => {
     } else if (mocks.customerSession.mock.calls.length) {
       expect(response.status).toBe(401);
       expect(mocks.customerSession).toHaveBeenCalledOnce();
+      expect(json).not.toHaveBeenCalled();
+    } else if (path === 'app/api/portal/logout/route.ts') {
+      // W23/B210: the portal sign-out reads no body and no session gate; with no cookie it only
+      // clears the cookie and 303s to /order/start (no database, no parse).
+      expect(response.status).toBe(303);
       expect(json).not.toHaveBeenCalled();
     } else {
       expect(json).toHaveBeenCalledOnce();

@@ -406,13 +406,19 @@ export async function updateUserProfile(
   // The writer (0279) re-checks the actor under the target's lock, refuses a taken email, and revokes the sessions on
   // an email change in the same transaction (email is the login identifier for email-auth roles).
   const r = await userAdminRpc(getServiceRoleClient(), updateUserProfileCall({ actorId: actor.user.id, userId: id, patch: send }));
+  const fields = Array.isArray(r.fields) ? r.fields : Object.keys(send);
   if (r.email_changed === true) {
     await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "user.change_email",
       resourceTable: "users", resourceId: id,
       // reset_links_retired (0307, audit W07 B052): the open password-reset links the email change retired. Absent before 0307.
-      metadata: { fields: r.fields ?? Object.keys(send), sessions_revoked: r.sessions_revoked ?? 0,
+      metadata: { fields, sessions_revoked: r.sessions_revoked ?? 0,
         ...(typeof r.reset_links_retired === "number" ? { reset_links_retired: r.reset_links_retired } : {}) },
       ipAddress: null, userAgent: null });
+  } else if (fields.length > 0) {
+    // A name / phone edit used to leave no row at all (W27 / B229) — and the phone is the rehire key. ONE row per edit
+    // (an email change's row above already lists every field); field names only, never the values.
+    await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "user.update_profile",
+      resourceTable: "users", resourceId: id, metadata: { fields }, ipAddress: null, userAgent: null });
   }
 }
 

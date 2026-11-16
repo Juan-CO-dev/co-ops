@@ -23,7 +23,7 @@ import { MenuSectionList, PackagesCard } from "./MenuSectionList";
 import { MenuPreview } from "./MenuPreview";
 import { MenuRow } from "./MenuRow";
 
-const KNOWN = new Set(["forbidden", "not_found", "invalid_payload", "invalid_size", "invalid_serves", "size_exists", "step_up_required", "step_up_stale", "generic"]);
+const KNOWN = new Set(["forbidden", "not_found", "invalid_payload", "invalid_size", "invalid_serves", "invalid_flags", "size_exists", "step_up_required", "step_up_stale", "generic"]);
 function errKey(code: string): TranslationKey {
   return (KNOWN.has(code) ? `admin.catering.menu.error.${code}` : "admin.catering.menu.error.generic") as TranslationKey;
 }

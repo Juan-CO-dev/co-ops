@@ -13,6 +13,7 @@ import { isBookableSignal } from "@/lib/catering/capacity-shared";
 import { EzcaterReconciliationPanel } from "./EzcaterReconciliationPanel";
 import { TransferLead } from "./TransferLead";
 import { EzcaterDetail } from "./EzcaterDetail";
+import { ReopenLead } from "./ReopenLead";
 import type { EzcaterOrderDetail } from "@/lib/catering/ezcater-detail-shared";
 import { humanEzcaterNotes } from "@/lib/catering/ezcater-detail-shared";
 import { postJson, resolveErrorKey } from "./shared";
@@ -453,9 +454,11 @@ function LeadDetail({
   onClose: () => void;
 }) {
   const { t, language } = useTranslation();
-  const [detail, setDetail] = useState<{ leadId: string; ezcater: EzcaterOrderDetail | null; capacity: CateringCapacityResult | null } | null>(null);
+  const [detail, setDetail] = useState<{ leadId: string; ezcater: EzcaterOrderDetail | null; capacity: CateringCapacityResult | null;
+    reopen: { target: "confirmed" | "inquiry" } | null } | null>(null);
   // Key the response to its lead: a switch hides old details before the next effect runs.
   const ezcater = detail?.leadId === lead.id ? detail.ezcater : null;
+  const reopen = detail?.leadId === lead.id ? detail.reopen : null;
   const capacity = detail?.leadId === lead.id ? detail.capacity : null;
   // D-49: the final stage awaiting a second tap (Completed / Lost), or null.
   const [confirming, setConfirming] = useState<PipelineStage | null>(null);
@@ -465,8 +468,8 @@ function LeadDetail({
     let alive = true;
     void fetch(`/api/catering/pipeline/${lead.id}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: { capacity?: CateringCapacityResult; ezcater?: EzcaterOrderDetail | null } | null) => {
-        if (alive) setDetail({ leadId: lead.id, capacity: d?.capacity ?? null, ezcater: d?.ezcater ?? null });
+      .then((d: { capacity?: CateringCapacityResult; ezcater?: EzcaterOrderDetail | null; reopen?: { target: "confirmed" | "inquiry" } | null } | null) => {
+        if (alive) setDetail({ leadId: lead.id, capacity: d?.capacity ?? null, ezcater: d?.ezcater ?? null, reopen: d?.reopen ?? null });
       })
       .catch(() => { if (alive) setDetail(null); });
     return () => {
@@ -541,6 +544,8 @@ function LeadDetail({
       </dl>
 
       {ezcater && <EzcaterDetail detail={ezcater} />}
+
+      {canWrite && reopen && lead.stage === "lost" && <ReopenLead leadId={lead.id} target={reopen.target} onReopened={onClose} />}
 
       <EzcaterReconciliationPanel leadId={lead.id} />
 

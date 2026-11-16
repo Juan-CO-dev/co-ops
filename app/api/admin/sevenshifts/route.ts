@@ -1,7 +1,7 @@
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
-import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
+import { jsonError, jsonOk, ownEntry, parseJsonBody } from "@/lib/api-helpers";
 import { peopleActorFromAuth } from "@/lib/people/access-shared";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   if (body instanceof Response) return body;
   if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(400, "invalid_payload");
   const b = body as Record<string, unknown>;
-  const allowed = typeof b.action === "string" ? ACTIONS[b.action] : undefined;
+  const allowed = ownEntry(ACTIONS, b.action);
   if (!allowed || Object.keys(b).some((k) => !allowed.includes(k)) || allowed.some((k) => typeof b[k] !== "string")) {
     return jsonError(400, "invalid_payload");
   }

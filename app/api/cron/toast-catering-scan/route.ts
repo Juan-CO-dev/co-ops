@@ -39,11 +39,11 @@ export async function GET(req: NextRequest) {
     await audit({ actorId: null, actorRole: null, action: healthy ? "cron.success" : "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: { job: "toast-catering-scan", dates, seen: sum("seen"), catering: sum("catering"), attributed: sum("attributed"), created_leads: sum("createdLeads"), lost_leads: sum("lostLeads"), refreshed: sum("refreshed"), skipped: sum("skipped"), errors: sum("errors"), unparsed_amounts: sum("unparsedAmounts"), per_location_failures: results.filter((r) => !r.ok).length, pending_dates: results.flatMap((r) => (r.pendingDates ?? []).map((d) => r.locationId + ":" + d)) },
       ipAddress: null, userAgent: null });
-    await catchUpDailyJobs({ deadline });
+    await catchUpDailyJobs({ deadline, signal: req.signal });
     await watchSiblings("toast-catering-scan");
     return jsonOk({ dates, results, healthy });
   } catch (e) {
-    void audit({ actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null, metadata: { job: "toast-catering-scan", dates, error: truncateErr(e) }, ipAddress: null, userAgent: null });
+    await audit({ actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null, metadata: { job: "toast-catering-scan", dates, error: truncateErr(e) }, ipAddress: null, userAgent: null });
     return jsonError(500, "scan_failed");
   }
 }
