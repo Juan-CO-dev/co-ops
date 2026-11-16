@@ -582,9 +582,14 @@ test('Auto restarts a full loop after it has stopped on its own', async ({page})
   await expect(auto).toHaveAttribute('aria-pressed','true');
   const cards = await page.locator('[data-lineup] li').count();
   await expect.poll(async()=>{await page.clock.runFor(1000);return auto.getAttribute('aria-pressed');},{timeout:(cards+4)*5000}).toBe('false');
+  const select = page.locator('.landing-v3-select');
+  await expect(select).toHaveAttribute('data-running','false');
   const stoppedOn = await page.locator('.landing-v3-plate h3').textContent();
   await auto.click();
   await expect(auto).toHaveAttribute('aria-pressed','true');
+  // The timer is armed by the roster's IntersectionObserver callback, a rendering step after the
+  // press; under CI load that can land after a clock advance, so wait for it before advancing.
+  await expect(select).toHaveAttribute('data-running','true');
   await page.clock.runFor(6000);
   await expect(page.locator('.landing-v3-plate h3')).not.toHaveText(stoppedOn!);
   await expect(auto).toHaveAttribute('aria-pressed','true');

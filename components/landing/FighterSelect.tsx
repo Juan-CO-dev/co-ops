@@ -28,6 +28,9 @@ export function FighterSelect({fighters,shops,delivery,spin,sprites,labels}:{del
   const [enhanced,setEnhanced]=useState(false);
   // Reduced motion and Save-Data get the same static screen: no auto-advance or animation.
   const [calm,setCalm]=useState(false);
+  // True only while the auto-advance timer is actually scheduled (in view, tab visible): the roster
+  // arms it from its IntersectionObserver callback, which lands a rendering step after Auto turns on.
+  const [running,setRunning]=useState(false);
   const advanced=useRef(0);
   const fighter=fighters[selected]!;
   useEffect(()=>{
@@ -40,8 +43,8 @@ export function FighterSelect({fighters,shops,delivery,spin,sprites,labels}:{del
     const element=root.current;if(!element||!auto||typeof IntersectionObserver==='undefined')return;
     if(prefersCalm()){setAuto(false);return;}
     let visible=false,timer:ReturnType<typeof setInterval>|undefined;
-    const stop=()=>{clearInterval(timer);timer=undefined;};
-    const start=()=>{if(timer||!visible||document.hidden)return;timer=setInterval(()=>{
+    const stop=()=>{if(timer===undefined)return;clearInterval(timer);timer=undefined;setRunning(false);};
+    const start=()=>{if(timer||!visible||document.hidden)return;setRunning(true);timer=setInterval(()=>{
       setSelected(current=>{
         const next=nextFighter(current,fighters.length,advanced.current);
         if(next===null){stop();setAuto(false);return current;}
@@ -63,7 +66,7 @@ export function FighterSelect({fighters,shops,delivery,spin,sprites,labels}:{del
     list.scrollTo({left:Math.max(0,left),behavior:prefersCalm()?'auto':'smooth'});
   },[selected]);
   const choose=(index:number)=>{setAuto(false);setSelected(index);setPicked(value=>value+1);};
-  return <div ref={root} className="landing-v3-select" data-enhanced={enhanced} data-calm={calm} onPointerDownCapture={event=>{if(!autoButton.current?.contains(event.target as Node))setAuto(false);}} onFocusCapture={event=>{if(!autoButton.current?.contains(event.target as Node))setAuto(false);}}>
+  return <div ref={root} className="landing-v3-select" data-enhanced={enhanced} data-calm={calm} data-running={running} onPointerDownCapture={event=>{if(!autoButton.current?.contains(event.target as Node))setAuto(false);}} onFocusCapture={event=>{if(!autoButton.current?.contains(event.target as Node))setAuto(false);}}>
     <div className="landing-v3-stage" data-fighter={fighter.id}>
       <div key={`${fighter.id}-${picked}`} className="landing-v3-stage-media" data-pop={picked>0||selected!==0}>
         {fighter.id==='crunchy-boi'
