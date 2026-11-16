@@ -4704,6 +4704,7 @@
   "admin.catering.menu.serves": "porciones",
   "admin.catering.menu.serves_hint": "Personas cubiertas por unidad (una caja de 24 papitas cubre 24). Vacío = 1.",
   "admin.catering.menu.error.invalid_serves": "Las porciones deben ser un número positivo.",
+  "admin.catering.menu.error.invalid_flags": "Un artículo no puede ser solo de catering si no está en el menú de catering.",
   "admin.catering.menu.section_count": "{n} artículos",
   "admin.catering.menu.section_available": "{n} disponibles",
   "admin.catering.menu.legend_title": "Cómo funciona esta lista",

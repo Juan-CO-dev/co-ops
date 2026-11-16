@@ -4704,6 +4704,7 @@
   "admin.catering.menu.serves": "serves",
   "admin.catering.menu.serves_hint": "People covered per one unit (e.g. a 24-bag chip case serves 24). Blank = 1.",
   "admin.catering.menu.error.invalid_serves": "Serves must be a positive number.",
+  "admin.catering.menu.error.invalid_flags": "An item can't be catering-only while it's off the catering menu.",
   "admin.catering.menu.section_count": "{n} items",
   "admin.catering.menu.section_available": "{n} available",
   "admin.catering.menu.legend_title": "How this list works",
