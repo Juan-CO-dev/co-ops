@@ -1822,7 +1822,8 @@ export async function submitParPass(
           if (err instanceof PurchaseOrderError && err.code === "po_exists" && err.displayCode) {
             // Read the exact arbiter winner, including a PO placed since the pre-check.
             const { data: existing, error } = await sb.from("purchase_orders")
-              .select("id, status").eq("location_id", locationId).eq("display_code", err.displayCode)
+              // W19/B111: bound to THIS vendor too, so a same-prefix vendor's PO can never be merged into.
+              .select("id, status").eq("location_id", locationId).eq("display_code", err.displayCode).eq("vendor_id", vendorId)
               .maybeSingle<{ id: string; status: string }>();
             if (error) throw new Error(`submitParPass race winner: ${error.message}`);
             if (!existing) throw new Error("submitParPass race winner missing");

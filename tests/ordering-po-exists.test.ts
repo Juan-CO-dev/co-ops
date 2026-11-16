@@ -354,8 +354,11 @@ describe("LRA-206 / LRA-229: a PO conflict never refuses the walk", () => {
     expect(guard).toContain('.gte("created_at", startIso).lt("created_at", endExclusiveIso)');
     const po = readFileSync("lib/purchase-orders.ts", "utf8");
     expect(po.match(/throw new PurchaseOrderError\(409, "po_exists"[^;]+/g)).toHaveLength(2);
-    expect(po).toMatch(/throw new PurchaseOrderError\(409, "po_exists"[^;]+, base\)/);
+    // W19/B111: the day check names this VENDOR's PO (never "the base code is taken"); the 23505 branch
+    // throws only when the winner is the same vendor (tests/po-display-code-vendor.test.ts runs both).
+    expect(po).toMatch(/throw new PurchaseOrderError\(409, "po_exists"[^;]+, \(live \?\? latest\)\.display_code\)/);
     expect(po).toMatch(/throw new PurchaseOrderError\(409, "po_exists"[^;]+, code\)/);
+    expect(po).toContain("if (!winner || winner.vendor_id === vendorId) {");
     expect(body("generateDraftForVendor")).toContain("{ noCodeSuffixRetry: true }");
     expect(body("submitParPass")).toContain("{ noCodeSuffixRetry: true }");
   });

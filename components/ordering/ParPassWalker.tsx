@@ -42,6 +42,7 @@ import { CopyButton, DeliveryRow } from "@/components/ordering/delivery-affordan
 import { ParSuggestionRow } from "@/components/ordering/ParSuggestionRow";
 import { ParSilencePanel } from "@/components/ordering/ParSilencePanel";
 import { formatDateLabel } from "@/lib/i18n/format";
+import { vendorT } from "@/lib/po-body";
 import type {
   WalkerData,
   WalkerVendor,
@@ -99,13 +100,13 @@ export function ParPassWalker({
   recent,
   locationId,
   shopLabel,
-  dateLabel,
+  vendorDateLabel,
 }: {
   walker: WalkerData;
   recent: ParPassSummary[];
   locationId: string;
   shopLabel: string;
-  dateLabel: string;
+  vendorDateLabel: string;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -318,7 +319,7 @@ export function ParPassWalker({
           <p className="text-[13px] italic text-co-text-muted">{t("ordering.done.no_orders")}</p>
         ) : (
           result.draftOrders.map((o) => (
-            <DraftOrderCard key={o.vendorId} order={o} shopLabel={shopLabel} dateLabel={dateLabel} />
+            <DraftOrderCard key={o.vendorId} order={o} shopLabel={shopLabel} vendorDateLabel={vendorDateLabel} />
           ))
         )}
 
@@ -567,7 +568,7 @@ export function ParPassWalker({
 
       {/* Recent-passes history affordance — collapsible, default-collapsed (D3). Each
           links to its recorded draft orders via the eventId GET (opened in a new view). */}
-      {recent.length > 0 && <HistoryPanel recent={recent} shopLabel={shopLabel} dateLabel={dateLabel} />}
+      {recent.length > 0 && <HistoryPanel recent={recent} shopLabel={shopLabel} vendorDateLabel={vendorDateLabel} />}
 
       {walker.vendors.length === 0 ? (
         <EmptyState message={t("ordering.walk.no_skus")} />
@@ -991,11 +992,11 @@ function roundUnits(n: number): string {
 function DraftOrderCard({
   order,
   shopLabel,
-  dateLabel,
+  vendorDateLabel,
 }: {
   order: DraftOrder;
   shopLabel: string;
-  dateLabel: string;
+  vendorDateLabel: string;
 }) {
   const { t } = useTranslation();
 
@@ -1003,21 +1004,22 @@ function DraftOrderCard({
   // deterministic attribution key in every transmitted body), then the shop+date header,
   // then one line per SKU. The PO line is omitted when the draft PO failed to create
   // (displayCode null) — the order text still sends; only the code is missing.
+  // W19/B190: the vendor reads English whatever the staff language — vendorT, never the viewer's t.
   const bodyText = useMemo(() => {
-    const poLine = order.displayCode ? `${t("ordering.email.body_po", { code: order.displayCode })}\n` : "";
-    const header = t("ordering.email.body_header", { shop: shopLabel, date: dateLabel });
+    const poLine = order.displayCode ? `${vendorT("ordering.email.body_po", { code: order.displayCode })}\n` : "";
+    const header = vendorT("ordering.email.body_header", { shop: shopLabel, date: vendorDateLabel });
     const lines = order.lines.map((l) =>
-      t("ordering.email.body_line", {
+      vendorT("ordering.email.body_line", {
         sku: l.skuName,
         qty: l.orderQty,
-        unit: l.orderUnitLabel ?? t("ordering.unit_generic"),
+        unit: l.orderUnitLabel ?? vendorT("ordering.unit_generic"),
         item: l.itemNumber ?? "—",
       }),
     );
     return `${poLine}${header}\n\n${lines.join("\n")}`;
-  }, [order, shopLabel, dateLabel, t]);
+  }, [order, shopLabel, vendorDateLabel]);
 
-  const subject = t("ordering.email.subject", { shop: shopLabel, date: dateLabel });
+  const subject = vendorT("ordering.email.subject", { shop: shopLabel, date: vendorDateLabel });
 
   return (
     <section className="co-card p-4">
@@ -1083,11 +1085,11 @@ function DraftOrderCard({
 function HistoryPanel({
   recent,
   shopLabel,
-  dateLabel,
+  vendorDateLabel,
 }: {
   recent: ParPassSummary[];
   shopLabel: string;
-  dateLabel: string;
+  vendorDateLabel: string;
 }) {
   const { t, language } = useTranslation();
   // Which event's detail is expanded (its draft orders lazy-fetched on first open).
@@ -1162,7 +1164,7 @@ function HistoryPanel({
                   ) : (
                     <div className="flex flex-col gap-3">
                       {d.map((o) => (
-                        <DraftOrderCard key={o.vendorId} order={o} shopLabel={shopLabel} dateLabel={dateLabel} />
+                        <DraftOrderCard key={o.vendorId} order={o} shopLabel={shopLabel} vendorDateLabel={vendorDateLabel} />
                       ))}
                     </div>
                   )}

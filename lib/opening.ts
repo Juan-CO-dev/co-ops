@@ -63,6 +63,7 @@ import {
   type BatchContractCode,
 } from "@/lib/batch-prep-shared";
 import type { RoleCode } from "./roles";
+import { findDayInstance } from "@/lib/checklist-day-instance";
 import {
   OPENING_CONFIRM_FLOOR_LEVEL,
   applyEffectiveResolution,
@@ -811,6 +812,8 @@ export async function loadOpeningState(
     date: string;
     actor: OpeningActor;
   },
+  /** Internal: set on the one re-load after a create lost to another version (never by callers). */
+  retry: { afterLineageTaken?: boolean } = {},
 ): Promise<{
   template: { id: string; name: string };
   templateItems: ChecklistTemplateItem[];
@@ -847,17 +850,38 @@ export async function loadOpeningState(
   // PR-3: date-aware resolution on the opening date (args.date). Newest active
   // version effective on that day — a pending next-day version is invisible until
   // its day, so a mid-shift publish can never strand the opener.
-  const openingBase = service
-    .from("checklist_templates")
-    .select("id, name")
-    .eq("location_id", args.locationId)
-    .eq("type", "opening") as unknown as EffectiveResolvableBuilder;
-  const { data: tmplRow, error: tmplErr } = await applyEffectiveResolution(
-    openingBase,
-    args.date,
-  ).maybeSingle<{ id: string; name: string }>();
-  if (tmplErr) {
-    throw new Error(`loadOpeningState: load template: ${tmplErr.message}`);
+  // W15/B084 + B086: a day that already has its opening (on ANY version, retired included)
+  // keeps that instance's own version — an apply-now publish mid-open never starts a second
+  // opening, and a past day's opening is never hidden by a retirement.
+  const dayInstance = await findDayInstance<{ id: string; template_id: string; status: string; created_at: string | null }>(service, {
+    locationId: args.locationId,
+    type: "opening",
+    date: args.date,
+    columns: "id, template_id, status, created_at",
+  });
+  let tmplRow: { id: string; name: string } | null = null;
+  if (dayInstance) {
+    const { data, error } = await service
+      .from("checklist_templates")
+      .select("id, name")
+      .eq("id", dayInstance.template_id)
+      .maybeSingle<{ id: string; name: string }>();
+    if (error) throw new Error(`loadOpeningState: load instance template: ${error.message}`);
+    tmplRow = data;
+  } else {
+    const openingBase = service
+      .from("checklist_templates")
+      .select("id, name")
+      .eq("location_id", args.locationId)
+      .eq("type", "opening") as unknown as EffectiveResolvableBuilder;
+    const { data, error: tmplErr } = await applyEffectiveResolution(
+      openingBase,
+      args.date,
+    ).maybeSingle<{ id: string; name: string }>();
+    if (tmplErr) {
+      throw new Error(`loadOpeningState: load template: ${tmplErr.message}`);
+    }
+    tmplRow = data;
   }
   if (!tmplRow) return null;
 
@@ -905,7 +929,9 @@ export async function loadOpeningState(
     line_count: number | null;
     back_up_count: number | null;
   }> = [];
-  if (phase2Items.length > 0) {
+  // W15 round 1: a day that already has its opening reads it as it is — the snapshots were frozen
+  // when it was created, so a reload computes none and creates nothing.
+  if (!dayInstance && phase2Items.length > 0) {
     const liveSnapshotMap = await materializeCloserCountSnapshots(service, {
       locationId: args.locationId,
       priorOperationalDate: yesterday,
@@ -943,34 +969,50 @@ export async function loadOpeningState(
   // partial-state failure mode flagged in Step 11 review (Confirm 2). Race
   // handling is in the RPC: ON CONFLICT DO NOTHING on the instance INSERT;
   // race-loss returns was_created=false and skips snapshot insert.
-  const { data: rpcData, error: rpcErr } = await service.rpc(
-    "create_opening_instance_atomic",
-    {
-      p_template_id: tmplRow.id,
-      p_location_id: args.locationId,
-      p_date: args.date,
-      p_actor_user_id: args.actor.userId,
-      p_snapshots: snapshotsJson,
-    },
-  );
-  if (rpcErr) {
-    throw new Error(
-      `loadOpeningState: atomic instance create failed: ${rpcErr.message}`,
-    );
-  }
-  const rpcResult = rpcData as {
+  //
+  // W15 round 1 (B084 under 0320): ONLY when the day has no opening yet. A reload of an existing
+  // opening (a legacy pair included) uses it and never asks to create — 0320's lineage guard could
+  // refuse that INSERT. A first open that loses to ANOTHER version's concurrent first open
+  // (`checklist_instance_lineage_taken`) re-reads the day and serves the winner, on its template.
+  type CreateResult = {
     instance_id: string;
     was_created: boolean;
     snapshot_count?: number;
     with_closer_count?: number;
     without_closer_count?: number;
   };
+  let rpcResult: CreateResult | null = null;
+  if (!dayInstance) {
+    const { data: rpcData, error: rpcErr } = await service.rpc(
+      "create_opening_instance_atomic",
+      {
+        p_template_id: tmplRow.id,
+        p_location_id: args.locationId,
+        p_date: args.date,
+        p_actor_user_id: args.actor.userId,
+        p_snapshots: snapshotsJson,
+      },
+    );
+    if (rpcErr) {
+      if (!retry.afterLineageTaken && /\bchecklist_instance_lineage_taken\b/.test(rpcErr.message ?? "")) {
+        const winner = await findDayInstance(service, {
+          locationId: args.locationId, type: "opening", date: args.date, columns: "id, template_id, status, created_at",
+        });
+        if (winner) return loadOpeningState(service, args, { afterLineageTaken: true });
+      }
+      throw new Error(
+        `loadOpeningState: atomic instance create failed: ${rpcErr.message}`,
+      );
+    }
+    rpcResult = rpcData as CreateResult;
+  }
+  const instanceId = dayInstance ? dayInstance.id : rpcResult!.instance_id;
 
   // Follow-up SELECT for the full instance row (RPC returns id only).
   const { data: instanceData, error: instReadErr } = await service
     .from("checklist_instances")
     .select(INSTANCE_COLUMNS)
-    .eq("id", rpcResult.instance_id)
+    .eq("id", instanceId)
     .maybeSingle<InstanceRow>();
   if (instReadErr || !instanceData) {
     throw new Error(
@@ -978,13 +1020,12 @@ export async function loadOpeningState(
     );
   }
   const instanceRow: InstanceRow = instanceData;
-  const wasCreated = rpcResult.was_created;
 
   // Audits fire only when this caller won the create. Race-loss path
   // (was_created=false) emits no audit because nothing happened in this call —
   // the winner already emitted theirs. Best-effort fire-and-forget per
   // existing audit() helper convention.
-  if (wasCreated) {
+  if (rpcResult?.was_created) {
     void audit({
       actorId: args.actor.userId,
       actorRole: args.actor.role,
