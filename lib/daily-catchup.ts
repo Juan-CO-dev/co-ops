@@ -103,6 +103,10 @@ export async function catchUpDailyJobs(opts: { now?: Date; deadline: number; sig
         case "parse-receipts": {
           const result = await runParseReceipts(opts.deadline);
           if (result.dormant) { skipped.push(entry.job); continue; }
+          // Admission leaves the handoff plus one whole window, so this is the backstop (W27/B225 r2): a run that
+          // started nothing while work was waiting did no work, and is never written down as a success. The claim
+          // is already spent (0131's claim has no release); the 15-minute receipt cron still reads that mail.
+          if (result.startedNothing) { skipped.push(entry.job); continue; }
           metadata = result.metadata;
           break;
         }

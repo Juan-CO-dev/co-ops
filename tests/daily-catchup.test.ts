@@ -68,7 +68,7 @@ beforeEach(() => {
     ezcater_shadow: { processed: 0, failed: 0, deferred: false },
     elapsed_completed: 0, elapsed_failed: 0, elapsed_error: null,
   } });
-  vi.mocked(runParseReceipts).mockResolvedValue({ dormant: false, swept: 0, parsed: 0, failed: 0,
+  vi.mocked(runParseReceipts).mockResolvedValue({ dormant: false, swept: 0, parsed: 0, failed: 0, startedNothing: false,
     metadata: { job: "parse-receipts", swept: 0, parsed: 0, failed: 0, inbound: { swept: 0, failed: 0 } } });
 });
 afterEach(() => vi.unstubAllEnvs());

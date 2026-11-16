@@ -72,7 +72,7 @@ const receiptHeartbeats = () => vi.mocked(audit).mock.calls.map(([e]) => e)
 describe("the catch-up's receipt admission comes from the shared receipt budget", () => {
   it("is one whole parse plus the handoff to it (parse key) or one fetch window (fetch only)", () => {
     expect(receiptRunMinimumMs(true)).toBe(PARSE_ROW_RESERVE_MS + PARSE_HANDOFF_MS);
-    expect(receiptRunMinimumMs(false)).toBe(INBOUND_FETCH_WINDOW_MS);
+    expect(receiptRunMinimumMs(false)).toBe(PARSE_HANDOFF_MS + INBOUND_FETCH_WINDOW_MS);
   });
 
   it("the reviewer's case: 100 s left and a 40 s inbound sweep — not admitted, today's attempt kept", async () => {
@@ -114,9 +114,9 @@ describe("the catch-up's receipt admission comes from the shared receipt budget"
     expect(claimed).not.toContain(parseClaim);
   });
 
-  it("a fetch-only setup with less than one fetch window left keeps today's attempt", async () => {
+  it("a fetch-only setup with less than the handoff and one fetch window left keeps today's attempt", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "");
-    const short = await catchUpDailyJobs({ now: today, deadline: clock + cost.lookup + INBOUND_FETCH_WINDOW_MS - 1 });
+    const short = await catchUpDailyJobs({ now: today, deadline: clock + cost.lookup + receiptRunMinimumMs(false) - 1 });
     expect(short.skipped).toContain("parse-receipts");
     expect(claimed).not.toContain(parseClaim);
     expect(mocks.sweep).not.toHaveBeenCalled();

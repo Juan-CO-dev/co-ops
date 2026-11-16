@@ -91,7 +91,7 @@ it("failed fetch persists failed, and bounded sweep retries successfully", async
   vi.stubEnv("RESEND_INBOUND_SECRET", randomBytes(20).toString("hex"));
   vi.stubEnv("RESEND_API_KEY", randomBytes(20).toString("hex"));
   const retry = database([{ data: [{ id: row.id }] }, { data: { ...row, fetch_attempts: 1, route_reason: "shop_address", lane: "vendor_receipt", location_id: "one" } }, { data: { id: row.id } }, { count: 1 }, { data: null }, { count: 1 }]);
-  expect(await sweepInboundMessages(retry.sb)).toEqual({ swept: 1, failed: 0 });
+  expect(await sweepInboundMessages(retry.sb)).toEqual({ swept: 1, failed: 0, deferred: 0 });
   expect(mocks.fetch).toHaveBeenCalledTimes(2); expect(mocks.ingest).toHaveBeenCalledTimes(1);
   expect(retry.calls).toContainEqual({ table: "inbound_messages", method: "limit", args: [25] });
   expect(retry.calls).toContainEqual({ table: "inbound_messages", method: "lt", args: ["fetch_attempts", 5] });
@@ -220,7 +220,7 @@ it("ledger insert stamps eligibility from the app clock, not a skewed database c
 it("does not start fetch work without a full time window", async () => {
   vi.stubEnv("RESEND_INBOUND_SECRET", "fixture"); vi.stubEnv("RESEND_API_KEY", "fixture");
   const db = database([{ data: [{ id: row.id }] }]);
-  expect(await sweepInboundMessages(db.sb, Date.now() + 10_000)).toEqual({ swept: 0, failed: 0 });
+  expect(await sweepInboundMessages(db.sb, Date.now() + 10_000)).toEqual({ swept: 0, failed: 0, deferred: 1 });
   expect(mocks.fetch).not.toHaveBeenCalled();
 });
 

@@ -52,7 +52,7 @@ export async function runParseReceipts(deadline: number) {
   if (!parseEnabled && !inboundEnabled) return { dormant: true as const };
   const sb = getServiceRoleClient();
   const fetchDeadline = parseEnabled ? fetchShareDeadline(deadline) : deadline;
-  let inbound: { swept: number; failed: number; overran?: true } = { swept: 0, failed: 0 };
+  let inbound: { swept: number; failed: number; deferred?: number; overran?: true } = { swept: 0, failed: 0 };
   if (inboundEnabled && Date.now() < fetchDeadline) {
     const fetching = sweepInboundMessages(sb, fetchDeadline);
     const leg = await settledBy(fetching, fetchDeadline);
@@ -65,6 +65,7 @@ export async function runParseReceipts(deadline: number) {
     }
   }
   if (!parseEnabled) return { dormant: false as const, swept: 0, parsed: 0, failed: 0,
+    startedNothing: deferredOnly(inbound, 0, 0),
     metadata: { job: "parse-receipts", swept: 0, parsed: 0, failed: 0, inbound } };
   const { data: rows, error } = await sb
     .from("email_receipts")
@@ -100,5 +101,17 @@ export async function runParseReceipts(deadline: number) {
   // Heartbeat (fail-open): cron.success row lets the admin hub show "last run OK". audit()
   // never throws. Metadata style mirrors toast-sales-pull's per-item counts.
   const metadata = { job: "parse-receipts", swept, parsed, failed, inbound };
-  return { dormant: false as const, swept, parsed, failed, metadata };
+  return { dormant: false as const, swept, parsed, failed,
+    startedNothing: deferredOnly(inbound, list.length - swept, swept), metadata };
+}
+
+/**
+ * Work was waiting and the run started none of it (W27/B225 r2): due mail the sweep deferred for want of a fetch
+ * window, or unparsed receipts no whole parse fitted for, with no message and no receipt started. A run like this
+ * did no work, so its caller must not report it as a success. An overrun fetch leg had a message in flight: that
+ * is work started.
+ */
+function deferredOnly(inbound: { swept: number; deferred?: number; overran?: true }, parseDeferred: number, parseStarted: number): boolean {
+  if (inbound.overran || inbound.swept > 0 || parseStarted > 0) return false;
+  return (inbound.deferred ?? 0) > 0 || parseDeferred > 0;
 }

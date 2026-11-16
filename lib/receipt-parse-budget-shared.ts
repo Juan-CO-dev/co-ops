@@ -55,11 +55,14 @@ export const INBOUND_FETCH_WINDOW_MS = 60_000;
  * always leaves over, so a run admitted here parses at least one receipt however slow fetching is.
  * The catch-up asks it AFTER its heartbeat lookup, so what is still spent before the first parse
  * starts is the claim and the queue read, and both sit inside the handoff.
- * Fetch-only (no parse key) needs one fetch window. The daily catch-up asks this before it spends
- * its one claim for the day; anything less is left for the next scan.
+ * Fetch-only (no parse key) is the same shape (review r2): the handoff (the claim and the inbound queue read,
+ * both spent before the sweep judges its first message) plus one whole fetch window, so the sweep, which starts
+ * a message only with a full window before it, still starts one. A bare window let the claim and the queue read
+ * eat into it: nothing started and the day's claim was spent anyway. The daily catch-up asks this before it
+ * spends its one claim for the day; anything less is left for the next scan.
  */
 export function receiptRunMinimumMs(parseEnabled: boolean): number {
-  return parseEnabled ? PARSE_HANDOFF_MS + PARSE_ROW_RESERVE_MS : INBOUND_FETCH_WINDOW_MS;
+  return PARSE_HANDOFF_MS + (parseEnabled ? PARSE_ROW_RESERVE_MS : INBOUND_FETCH_WINDOW_MS);
 }
 
 /** May a receipt run start at `now` and still do its work before `deadline`? */

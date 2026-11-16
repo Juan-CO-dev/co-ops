@@ -165,7 +165,7 @@ export async function processInboundMessage(id: string, sb = getServiceRoleClien
 }
 /** Bounded concurrent fetches; reserve a full fetch+storage window before starting. */
 export async function sweepInboundMessages(sb = getServiceRoleClient(), deadline = Date.now() + 140_000) {
-  if (!process.env.RESEND_INBOUND_SECRET || !process.env.RESEND_API_KEY) return { swept: 0, failed: 0 };
+  if (!process.env.RESEND_INBOUND_SECRET || !process.env.RESEND_API_KEY) return { swept: 0, failed: 0, deferred: 0 };
   const { data, error } = await sb.from("inbound_messages").select("id").in("content_state", ["pending", "failed", "blocked_config"])
     .lt("fetch_attempts", INBOUND_MAX_ATTEMPTS).lte("next_attempt_at", new Date().toISOString())
     .order("next_attempt_at", { ascending: true }).limit(25).returns<Array<{ id: string }>>();
@@ -185,5 +185,7 @@ export async function sweepInboundMessages(sb = getServiceRoleClient(), deadline
     }
   }
   await Promise.all([worker(), worker(), worker()]);
-  return { swept, failed };
+  // Messages that were due but not started because no whole fetch window was left (W27/B225 r2).
+  const deferred = Math.max(0, (data?.length ?? 0) - cursor);
+  return { swept, failed, deferred };
 }
