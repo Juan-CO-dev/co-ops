@@ -4552,6 +4552,8 @@
   "catering.quotes.mark_declined": "Mark declined",
   "catering.quotes.labels": "Print labels",
   "catering.quotes.error.status_changed": "This quote changed since you loaded it — reload and try again.",
+  "catering.quotes.prep_not_resynced": "Saved. Kitchen prep still shows this order's previous package choices — the customer's package picks don't carry over to a revision yet. Check Prep demand before the event.",
+  "catering.quotes.prep_not_resynced_ok": "Got it",
   "catering.quotes.error.quote_expired": "This quote has expired — revise it before accepting.",
   "catering.quotes.error.payments_unreconciled": "This order's earlier payments couldn't be moved onto this revision yet, so nothing was sent or changed. Try again in a moment. If it keeps happening, tell your manager before taking any payment.",
   "catering.quotes.error.delivery_unavailable": "This delivery order's shop has no active delivery zone, so the delivery can't be priced. Add a zone or revise the quote before accepting.",

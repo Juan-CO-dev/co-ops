@@ -4552,6 +4552,8 @@
   "catering.quotes.mark_declined": "Marcar rechazada",
   "catering.quotes.labels": "Imprimir etiquetas",
   "catering.quotes.error.status_changed": "Esta cotización cambió desde que la cargaste — actualiza e inténtalo de nuevo.",
+  "catering.quotes.prep_not_resynced": "Guardado. La preparación de cocina todavía muestra las opciones de paquete anteriores de este pedido — las elecciones del cliente aún no pasan a una revisión. Revisa Demanda de preparación antes del evento.",
+  "catering.quotes.prep_not_resynced_ok": "Entendido",
   "catering.quotes.error.quote_expired": "Esta cotización venció — revísala antes de aceptar.",
   "catering.quotes.error.payments_unreconciled": "Los pagos anteriores de este pedido todavía no se pudieron pasar a esta revisión, así que no se envió ni se cambió nada. Inténtalo de nuevo en un momento. Si sigue pasando, avísale a tu gerente antes de cobrar algo.",
   "catering.quotes.error.delivery_unavailable": "La tienda de este pedido con entrega no tiene una zona de entrega activa, así que no se puede cobrar la entrega. Agrega una zona o revisa la cotización antes de aceptar.",

@@ -18,6 +18,7 @@ import {
   isBarePackageLine,
   isQuoteLineKind,
   resolveDemandFromLines,
+  resyncWouldDropPicks,
   unkindedPackageLineIds,
   type DemandQuoteLine,
   type ResolvedDemand,
@@ -265,46 +266,53 @@ export async function releasePrepDemand(actor: AuthContext, pipelineId: string):
   void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.release", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: {}, ipAddress: null, userAgent: null });
 }
 
+/** What a resync did. `skipped_package_picks` is the one outcome the manager must hear about: the kitchen
+ *  still shows the previous package choices (the route answers `prepDemandResynced: false`). */
+export type ResyncOutcome = "resynced" | "not_confirmed" | "no_quote" | "skipped_package_picks";
+
 /**
  * Re-resolve a lead's reserved demand from its CURRENT quote after a quote
  * revision (hardening 2026-07-31, council P1: this existed but was never called,
  * so a revise on a confirmed lead left the kitchen's W4a/W4b demand pointing at
  * the pre-revision quantities). SELF-GUARDING on stage: only a CONFIRMED lead
  * carries reserved demand — reserving here for a non-confirmed lead would create
- * demand before the lead is confirmed, so we no-op unless confirmed. reserve
- * already release-then-reinserts (idempotent), and reads the CURRENT quote, so
- * it picks up the new revision automatically.
+ * demand before the lead is confirmed, so we no-op unless confirmed (and the 0329
+ * reserve re-checks that under the lead's row lock).
+ *
+ * PACKAGE PICKS (audit W22/B121). A staff revise does not yet copy the customer's
+ * choice-slot picks (catering_quote_item_options) onto the new version, so a
+ * re-resolve could turn concrete sub demand back into "needs a pick" rows. The old
+ * guard skipped the resync for ANY quote with a package line — fixed package
+ * components included, which carry concrete refs and need no picks — so a package
+ * order's quantities never followed a revision, and the route still said
+ * `prepDemandResynced: true`. Now the skip happens only when the new revision would
+ * really drop a stored pick (`resyncWouldDropPicks`), and it is returned so the
+ * manager is told. (Copying the picks forward on revise is the complete fix; filed.)
  */
-export async function resyncPrepDemand(actor: AuthContext, pipelineId: string): Promise<void> {
+export async function resyncPrepDemand(actor: AuthContext, pipelineId: string): Promise<ResyncOutcome> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
   const sb = getServiceRoleClient();
   const { data: lead, error } = await sb
     .from("catering_pipeline").select("stage").eq("id", pipelineId)
     .maybeSingle<{ stage: string }>();
   if (error) throw new Error(`resyncPrepDemand load stage: ${error.message}`);
-  if (lead?.stage !== "confirmed") return; // no reserved demand to resync
+  if (lead?.stage !== "confirmed") return "not_confirmed"; // no reserved demand to resync
 
-  // PACKAGE CARRY-FORWARD GAP (adversarial review C1, 2026-07-31): a staff quote
-  // revise does NOT copy the customer's choice-slot picks
-  // (catering_quote_item_options) onto the new quote version. Re-resolving a
-  // package-bearing quote here would therefore REGRESS concrete sub demand to
-  // advisory "needs-pick" rows. Until revise carries picks forward (tracked
-  // follow-up), SKIP the resync when the current quote holds any package line —
-  // leaving the existing (concrete) reserved rows intact (no worse than today,
-  // where resync never ran). Item/sub-only leads resync fully — the common case
-  // and the actual P1 this fix targets.
   const quote = await loadCurrentQuote(sb, pipelineId);
-  if (!quote) return;
-  const { data: pkgLines, error: pErr } = await sb
-    .from("catering_quote_items").select("id")
-    .eq("quote_id", quote.id).not("package_id", "is", null).limit(1)
-    .returns<Array<{ id: string }>>();
-  if (pErr) throw new Error(`resyncPrepDemand package-line check: ${pErr.message}`);
-  if (pkgLines && pkgLines.length > 0) {
+  if (!quote) return "no_quote";
+  const [newDemand, { data: prior, error: pErr }] = await Promise.all([
+    resolveQuoteDemand(sb, quote.id),
+    sb.from("catering_prep_demand").select("choice_package_item_id")
+      .eq("pipeline_id", pipelineId).eq("status", "reserved")
+      .returns<Array<{ choice_package_item_id: string | null }>>(),
+  ]);
+  if (pErr) throw new Error(`resyncPrepDemand prior reserved: ${pErr.message}`);
+  if (resyncWouldDropPicks(newDemand, (prior ?? []).map((r) => ({ choicePackageItemId: r.choice_package_item_id })))) {
     void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.resync_skipped_package", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { quote_id: quote.id, reason: "package_picks_not_carried_forward" }, ipAddress: null, userAgent: null });
-    return;
+    return "skipped_package_picks";
   }
-  await reservePrepDemand(actor, pipelineId);
+  const outcome = await reservePrepDemand(actor, pipelineId);
+  return outcome === "reserved" ? "resynced" : outcome === "no_quote" ? "no_quote" : "not_confirmed";
 }
 
 // ── Read: overlay (over-par) + per-lead breakdown ───────────────────────────────────

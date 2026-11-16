@@ -184,3 +184,24 @@ export function resolveDemandFromLines(input: {
   }
   return out;
 }
+
+/**
+ * Would re-resolving a confirmed lead's demand from its revised quote LOSE the customer's stored package
+ * picks? (audit W22/B121.) A staff revise does not yet copy `catering_quote_item_options` onto the new
+ * version, so a header whose slot the customer had filled resolves, on the new revision, to an advisory
+ * "needs a pick" row (`choicePackageItemId` set) instead of the concrete subs that are reserved today.
+ *
+ * True ONLY when the new revision resolves a "needs a pick" slot the prior reserved set did not have as one.
+ * Fixed package components resolve to concrete refs with no picks at all, so a revision that changes their
+ * quantity (or anything else) returns false and resyncs — the old rule skipped EVERY quote with a package
+ * line, which left package orders at their old quantities. An item-only quote is always false.
+ * Conservative by design: a new, never-picked package added in the revision also reads as true (the manager
+ * is told to re-confirm), because a lost pick and a never-made pick look the same from the ledger.
+ */
+export function resyncWouldDropPicks(
+  newDemand: ReadonlyArray<Pick<ResolvedDemand, "choicePackageItemId">>,
+  priorReserved: ReadonlyArray<{ choicePackageItemId: string | null }>,
+): boolean {
+  const priorSlots = new Set(priorReserved.map((r) => r.choicePackageItemId).filter((id): id is string => id != null));
+  return newDemand.some((d) => d.choicePackageItemId != null && !priorSlots.has(d.choicePackageItemId));
+}
