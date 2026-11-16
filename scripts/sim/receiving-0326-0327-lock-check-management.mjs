@@ -33,7 +33,7 @@ export const HOLD_MS = 6000;
 export const MUTATE = 'public.vendor_mail_mutate(uuid,integer,uuid,uuid,uuid,text,jsonb)';
 export const functions = {
   record: 'public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)',
-  verdict: 'public.delivery_match_verdict(uuid,text,text,text)',
+  verdict: 'public.delivery_match_verdict(uuid,text,text,text,uuid)',
   unlink: 'public.delivery_receipt_unlink(uuid,uuid,text,uuid)',
 };
 /** The proofs, in run order: [name, migration it proves]. */
@@ -121,7 +121,8 @@ export function parse(out) {
 }
 
 export function calls(f) {
-  const verdict = (d, kind, v, note) => `v_out := public.delivery_match_verdict(${U(d)},${q(kind)},${v ? q(v) : 'null'},${note ? q(note) : 'null'})::text;`;
+  // The last argument is the receipt the verdict is about (the one the person compared).
+  const verdict = (d, kind, v, note, r) => `v_out := public.delivery_match_verdict(${U(d)},${q(kind)},${v ? q(v) : 'null'},${note ? q(note) : 'null'},${U(r)})::text;`;
   const header = n => JSON.stringify({ vendor_id: f.vendor, location_id: f.shop, delivery_date: '2099-02-01', invoice_number: `${f.tag}-INV-${n}`,
     invoice_total: 10, notes: f.tag, note: f.tag, receipt_url: null, received_by: f.actor, delivery_status: 'complete', purchase_order_id: null });
   const line = (extra = {}) => ({ vendor_item_id: f.sku, qty_received: 4, vendor_id: f.vendor, unit_price: 2.5, observed_oz_per_each: null, notes: null,
@@ -136,12 +137,12 @@ export function calls(f) {
     // The parser's guarded failed-write (lib/receipt-parse.ts writeFailed): fires vendor_mail_receipt_event.
     parserWrite: `update public.email_receipts set parse_state='failed', parsed_json='{"reason":"sim_w20"}'::jsonb where id=${U(f.mailReceipt)} and parse_state='unparsed';
       v_out := '"parser write committed"';`,
-    override: verdict(f.dOverride, 'override', null, 'accepted per vendor call'),
-    attestAfterOverride: verdict(f.dOverride, 'attest', 'discrepant', 'short 2 cases'),
-    attestA: verdict(f.dNotes, 'attest', 'discrepant', 'first note'),
-    attestB: verdict(f.dNotes, 'attest', 'discrepant', 'second note'),
+    override: verdict(f.dOverride, 'override', null, 'accepted per vendor call', f.rOverride),
+    attestAfterOverride: verdict(f.dOverride, 'attest', 'discrepant', 'short 2 cases', f.rOverride),
+    attestA: verdict(f.dNotes, 'attest', 'discrepant', 'first note', f.rNotes),
+    attestB: verdict(f.dNotes, 'attest', 'discrepant', 'second note', f.rNotes),
     unlink: `v_out := public.delivery_receipt_unlink(${U(f.dUnlink)},${U(f.rUnlink)},'wrong document',${U(f.actor)})::text;`,
-    attestAfterUnlink: verdict(f.dUnlink, 'attest', 'matched', null),
+    attestAfterUnlink: verdict(f.dUnlink, 'attest', 'matched', null, f.rUnlink),
     recordValid: record(1, [line(), line({ discrepancy_type: null })], [{ line_index: 1, reason: 'short', sku_id: f.sku, qty: 1, amount_cents: 250 }]),
     recordBadFlag: record(2, [line({ discrepancy_type: null }), line({ discrepancy_type: 'bogus' })]),
     recordDuplicate: record(1, [line({ discrepancy_type: null })]),

@@ -3681,6 +3681,7 @@
   "receiving.claim.error.location_mismatch": "Ese comprobante pertenece a otra ubicación.",
   "receiving.claim.error.no_receipt": "No hay comprobante vinculado para comparar.",
   "receiving.claim.error.match_changed": "Alguien más acaba de cambiar esta comparación. Actualiza e inténtalo de nuevo.",
+  "receiving.claim.error.verdict_note_unavailable": "La nota de esta entrega es demasiado larga para agregarle más por ahora. Avísale a un gerente.",
   "receiving.claim.error.unlink_note_required": "Indica por qué lo desvinculas.",
   "receiving.claim.error.unlink_unavailable": "Desvincular aún no está disponible. Inténtalo más tarde.",
   "receiving.claim.error.receipt_changed": "El comprobante de esta entrega cambió. Actualiza e inténtalo de nuevo.",

@@ -14,8 +14,9 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  *
  * PATCH { deliveryId?, action, receiptId?, poId?, verdict?, note? }
  *        action "link"      → RECEIPT_MIN     → linkReceipt(actor, receiptId, deliveryId)
- *        action "attest"    → RECEIPT_MIN     → attestMatch(actor, deliveryId, verdict)
- *        action "override"  → RECEIPT_OVERRIDE_MIN → overrideMatch(actor, deliveryId, note)
+ *        action "attest"    → RECEIPT_MIN     → attestMatch(actor, deliveryId, verdict, note, receiptId)
+ *        action "override"  → RECEIPT_OVERRIDE_MIN → overrideMatch(actor, deliveryId, note, receiptId)
+ *        (`receiptId` = the receipt on screen; a different one linked by then is 409 receipt_changed)
  *        action "unlink"    → RECEIPT_OVERRIDE_MIN → unlinkReceipt(actor, deliveryId, note, receiptId?) (W20-2)
  *        action "attach_po" → RECEIPT_MIN     → attachReceiptToPo(actor, receiptId, poId)
  *        action "parse_now" → RECEIPT_MIN     → parseReceiptForActor(actor, receiptId) (V2 §4)
@@ -50,6 +51,7 @@ export const maxDuration = 180;
 
 // 15 MB hard cap for manual receipt uploads (staff photos/PDFs of paper invoices).
 const MAX_RECEIPT_BYTES = 15 * 1024 * 1024;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ── GET ?locationId=<uuid>  |  ?candidatesForReceipt=<uuid> ──────────────────────────────
 export async function GET(req: NextRequest) {
@@ -224,15 +226,23 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
+  // The receipt the person was looking at (attest / override / unlink). Optional, but a value that
+  // is sent must be a receipt id: the lib refuses `receipt_changed` when another one is linked by
+  // the time the write runs (review W20-r1), so a verdict never lands on a receipt nobody compared.
+  const seenReceipt = b.receiptId;
+  const seenReceiptId = typeof seenReceipt === "string" && UUID_RE.test(seenReceipt) ? seenReceipt : null;
+  const badSeenReceipt = seenReceipt !== undefined && seenReceipt !== null && seenReceiptId === null;
+
   if (action === "attest") {
     if (ROLES[ctx.user.role].level < RECEIPT_MIN) return jsonError(403, "forbidden");
     const verdict = b.verdict;
     if (verdict !== "matched" && verdict !== "discrepant") {
       return jsonError(400, "invalid_payload", { message: "verdict must be matched or discrepant", field: "verdict" });
     }
+    if (badSeenReceipt) return jsonError(400, "invalid_payload", { message: "receiptId must be a receipt id", field: "receiptId" });
     const note = typeof b.note === "string" ? b.note : undefined;
     try {
-      await attestMatch(ctx, deliveryId, verdict as MatchVerdict, note);
+      await attestMatch(ctx, deliveryId, verdict as MatchVerdict, note, seenReceiptId);
       return jsonOk({ ok: true });
     } catch (e) {
       if (e instanceof EmailReceiptError) return jsonError(e.status, e.code, { message: e.message });
@@ -248,12 +258,9 @@ export async function PATCH(req: NextRequest) {
     if (typeof reason !== "string" || !reason.trim()) {
       return jsonError(400, "unlink_note_required", { message: "A reason is required for action=unlink", field: "note" });
     }
-    const seen = b.receiptId;
-    if (seen !== undefined && seen !== null && (typeof seen !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seen))) {
-      return jsonError(400, "invalid_payload", { message: "receiptId must be a receipt id", field: "receiptId" });
-    }
+    if (badSeenReceipt) return jsonError(400, "invalid_payload", { message: "receiptId must be a receipt id", field: "receiptId" });
     try {
-      await unlinkReceipt(ctx, deliveryId, reason, typeof seen === "string" ? seen : null);
+      await unlinkReceipt(ctx, deliveryId, reason, seenReceiptId);
       return jsonOk({ ok: true });
     } catch (e) {
       if (e instanceof EmailReceiptError) return jsonError(e.status, e.code, { message: e.message });
@@ -267,8 +274,9 @@ export async function PATCH(req: NextRequest) {
   if (typeof note !== "string" || !note.trim()) {
     return jsonError(400, "invalid_payload", { message: "A non-empty note is required for action=override", field: "note" });
   }
+  if (badSeenReceipt) return jsonError(400, "invalid_payload", { message: "receiptId must be a receipt id", field: "receiptId" });
   try {
-    await overrideMatch(ctx, deliveryId, note);
+    await overrideMatch(ctx, deliveryId, note, seenReceiptId);
     return jsonOk({ ok: true });
   } catch (e) {
     if (e instanceof EmailReceiptError) return jsonError(e.status, e.code, { message: e.message });

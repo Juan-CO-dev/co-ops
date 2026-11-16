@@ -52,8 +52,29 @@ describe("0327 receiving atomic writers", () => {
     expect(verdict.indexOf("for no key update")).toBeLessThan(verdict.indexOf("if d.match_state = 'override' then raise exception 'already_overridden'"));
   });
 
+  it("review W20-r1: a verdict names its receipt, compared under the lock (attest and override)", () => {
+    const at = statements.indexOf("create or replace function public.delivery_match_verdict(");
+    const verdict = statements.slice(at, statements.indexOf("end $$;", at));
+    expect(verdict).toContain("delivery_match_verdict(p_delivery uuid, p_kind text, p_verdict text, p_note text, p_receipt uuid)");
+    const lock = verdict.indexOf("for no key update");
+    const attest = verdict.indexOf("if d.email_receipt_id <> p_receipt then raise exception 'receipt_changed'");
+    const override = verdict.indexOf("if d.email_receipt_id is distinct from p_receipt then raise exception 'receipt_changed'");
+    expect(attest).toBeGreaterThan(lock);
+    expect(override).toBeGreaterThan(lock);
+    // Both checks come before their own UPDATE.
+    const updates = [...verdict.matchAll(/update public\.vendor_deliveries/g)].map((m) => m.index!);
+    expect(updates).toHaveLength(2);
+    expect(attest).toBeLessThan(updates[0]!);
+    expect(override).toBeGreaterThan(updates[0]!);
+    expect(override).toBeLessThan(updates[1]!);
+    expect(verdict).toContain("if p_kind = 'attest' and p_receipt is null then raise exception 'invalid_input'");
+    // The four-argument form is refused at apply and exists nowhere in the file as a function.
+    expect(statements).toContain("to_regprocedure('public.delivery_match_verdict(uuid,text,text,text)') is not null");
+    expect(statements).not.toContain("delivery_match_verdict(p_delivery uuid, p_kind text, p_verdict text, p_note text)");
+  });
+
   it("grants execute to service_role only and asserts the ceilings itself", () => {
-    for (const signature of ["record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)", "delivery_match_verdict(uuid,text,text,text)", "delivery_receipt_unlink(uuid,uuid,text,uuid)"]) {
+    for (const signature of ["record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)", "delivery_match_verdict(uuid,text,text,text,uuid)", "delivery_receipt_unlink(uuid,uuid,text,uuid)"]) {
       expect(statements).toContain(`revoke all on function public.${signature} from public, anon, authenticated, service_role;`);
       expect(statements).toContain(`grant execute on function public.${signature} to service_role;`);
     }
@@ -80,6 +101,12 @@ describe("0327 receiving atomic writers", () => {
       "...and the manager's decision and note are untouched",
       "two discrepancy notes are both kept, trimmed, in order",
       "a different receipt than the one the person saw is receipt_changed",
+      "unlink, a replacement, then the stale attestation: refused receipt_changed",
+      "...and the replacement receipt is NOT marked on the first one's comparison: state and note untouched",
+      "an override decided on the first receipt is refused receipt_changed too",
+      "an attestation that names no receipt is invalid_input",
+      "the four-argument form does not exist: no caller can skip naming the receipt",
+      "a four-argument draft of the verdict writer (one that cannot name its receipt) is refused, never left beside the real one",
       "the delivery has no receipt and its match is back to counted_only (an override is cleared too)",
       "the unlink is recorded: pair, shop, prior state, reason, who",
       "service_role cannot delete unlink history",

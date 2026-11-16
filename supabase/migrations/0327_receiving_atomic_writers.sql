@@ -14,10 +14,14 @@
 --      rolls ALL of it back, so nothing is left behind and the retry works. It is a writer only: every business
 --      rule (who may receive, the shop bind, the PO state, SKU / photo / missing-item validation, oz resolution,
 --      credit amounts) stays in lib/receiving.ts and runs BEFORE this call, exactly as it does today.
---   2. delivery_match_verdict(p_delivery, p_kind 'attest'|'override', p_verdict, p_note) -> jsonb
+--   2. delivery_match_verdict(p_delivery, p_kind 'attest'|'override', p_verdict, p_note, p_receipt) -> jsonb
 --      The read-check-write of attestMatch / overrideMatch under the delivery ROW LOCK: an attestation that
 --      queued behind an override is refused `already_overridden` instead of replacing it and dropping its note,
 --      and two notes appended at once are both kept, in order.
+--      `p_receipt` is the receipt the verdict is ABOUT (the one the person compared on screen; for an override,
+--      null = "no receipt was linked when I looked"). It is compared with the linked receipt UNDER THE LOCK: if a
+--      manager unlinked it and another was linked in between, the verdict is refused `receipt_changed` instead of
+--      marking the replacement on the first receipt's comparison (review W20-r1). An attestation must name one.
 --   3. delivery_receipt_unlink(p_delivery, p_receipt, p_note, p_actor) -> jsonb
 --      Clears BOTH sides of a delivery <-> receipt link in one transaction, sets the delivery's match back to
 --      `counted_only` (a verdict about a receipt that is no longer linked means nothing; an override is cleared
@@ -63,6 +67,8 @@
 --   select routine_name, grantee, privilege_type from information_schema.routine_privileges
 --    where routine_schema='public' and routine_name in ('record_delivery_atomic','delivery_match_verdict','delivery_receipt_unlink')
 --    order by 1, 2;                                                          -- service_role (+ postgres) only
+--   select to_regprocedure('public.delivery_match_verdict(uuid,text,text,text,uuid)') is not null as five_args,
+--          to_regprocedure('public.delivery_match_verdict(uuid,text,text,text)') is null as no_four_args;   -- t, t
 --   select grantee, privilege_type from information_schema.role_table_grants
 --    where table_schema='public' and table_name='delivery_receipt_unlinks' and grantee in ('anon','authenticated','service_role');
 --                                                                            -- service_role SELECT, nothing else
@@ -70,7 +76,7 @@
 --
 -- ROLLBACK: revert the app (it falls back by itself once the functions are gone), then
 --   drop function public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb);
---   drop function public.delivery_match_verdict(uuid,text,text,text);
+--   drop function public.delivery_match_verdict(uuid,text,text,text,uuid);
 --   drop function public.delivery_receipt_unlink(uuid,uuid,text,uuid);
 --   Keep delivery_receipt_unlinks: it is the record of what people unlinked.
 -- PROOF: scripts/sql-harness-0327.mjs (PGlite: the real 0100 / 0168 / 0169 / 0178 DDL and the real 0160 / 0170 /
@@ -112,6 +118,11 @@ begin
   if to_regclass('public.vendor_deliveries_dedupe_uq') is null or to_regclass('public.vendor_deliveries_email_receipt_uq') is null
      or to_regclass('public.vendor_credits_line_reason_uq') is null then
     raise exception '0327: the 0168 / 0169 / 0171 unique indexes must exist first';
+  end if;
+  -- A verdict must name the receipt it is about. A four-argument draft of this function (one that cannot) must
+  -- not be left callable beside the real one: refuse, never drop it from here.
+  if to_regprocedure('public.delivery_match_verdict(uuid,text,text,text)') is not null then
+    raise exception '0327: an earlier draft delivery_match_verdict(uuid,text,text,text) is installed; drop that function first';
   end if;
   -- 0326 first, wherever vendor mail is installed (see LOCK ORDER above).
   v_mutate := to_regprocedure('public.vendor_mail_mutate(uuid,integer,uuid,uuid,uuid,text,jsonb)');
@@ -227,7 +238,7 @@ begin
 end $$;
 
 -- ── 3. A VERDICT UNDER THE DELIVERY'S ROW LOCK (B114) ──────────────────────────────────────────────────────
-create or replace function public.delivery_match_verdict(p_delivery uuid, p_kind text, p_verdict text, p_note text)
+create or replace function public.delivery_match_verdict(p_delivery uuid, p_kind text, p_verdict text, p_note text, p_receipt uuid)
 returns jsonb
 language plpgsql security definer set search_path = pg_catalog, public as $$
 declare
@@ -238,12 +249,17 @@ begin
   if p_delivery is null or p_kind is null or p_kind not in ('attest', 'override') then
     raise exception 'invalid_input';
   end if;
+  -- An attestation is a judgment of ONE receipt against the count: it must say which.
+  if p_kind = 'attest' and p_receipt is null then raise exception 'invalid_input'; end if;
   select * into d from public.vendor_deliveries where id = p_delivery for no key update;
   if not found then raise exception 'not_found'; end if;
 
   if p_kind = 'attest' then
     if p_verdict is null or p_verdict not in ('matched', 'discrepant') then raise exception 'invalid_verdict'; end if;
     if d.email_receipt_id is null then raise exception 'no_receipt'; end if;
+    -- The receipt the person compared is no longer the one linked (unlinked and replaced while they looked):
+    -- change nothing. Read AFTER the wait, like the terminal check below.
+    if d.email_receipt_id <> p_receipt then raise exception 'receipt_changed'; end if;
     -- Re-attestable from counted_only / matched / discrepant; an override is terminal. Read AFTER the wait.
     if d.match_state = 'override' then raise exception 'already_overridden'; end if;
     v_state := p_verdict;
@@ -255,6 +271,8 @@ begin
      where id = d.id;
   else
     if v_note is null then raise exception 'note_required'; end if;
+    -- An override needs no receipt, but it was decided on what was (or was not) linked: null-safe, under the lock.
+    if d.email_receipt_id is distinct from p_receipt then raise exception 'receipt_changed'; end if;
     v_state := 'override';
     update public.vendor_deliveries
        set match_state = 'override',
@@ -312,10 +330,10 @@ end $$;
 -- Functions: service_role only (the staff JWT is a PostgREST bearer; `authenticated` must never execute these).
 -- Table: service_role SELECT only (append-only by grant; the definer function is the one writer).
 revoke all on function public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb) from public, anon, authenticated, service_role;
-revoke all on function public.delivery_match_verdict(uuid,text,text,text) from public, anon, authenticated, service_role;
+revoke all on function public.delivery_match_verdict(uuid,text,text,text,uuid) from public, anon, authenticated, service_role;
 revoke all on function public.delivery_receipt_unlink(uuid,uuid,text,uuid) from public, anon, authenticated, service_role;
 grant execute on function public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb) to service_role;
-grant execute on function public.delivery_match_verdict(uuid,text,text,text) to service_role;
+grant execute on function public.delivery_match_verdict(uuid,text,text,text,uuid) to service_role;
 grant execute on function public.delivery_receipt_unlink(uuid,uuid,text,uuid) to service_role;
 revoke all on public.delivery_receipt_unlinks from public, anon, authenticated, service_role;
 grant select on public.delivery_receipt_unlinks to service_role;
@@ -325,7 +343,7 @@ declare f regprocedure; r text; p text;
 begin
   foreach f in array array[
       'public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)'::regprocedure,
-      'public.delivery_match_verdict(uuid,text,text,text)'::regprocedure,
+      'public.delivery_match_verdict(uuid,text,text,text,uuid)'::regprocedure,
       'public.delivery_receipt_unlink(uuid,uuid,text,uuid)'::regprocedure] loop
     assert not has_function_privilege('anon', f, 'EXECUTE') and not has_function_privilege('authenticated', f, 'EXECUTE'),
       '0327: receiving RPC escape';

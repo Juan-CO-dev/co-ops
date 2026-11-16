@@ -1608,10 +1608,15 @@ const VERDICT_REFUSALS: Record<string, [status: number, code: string, message: s
   not_found: [404, "not_found", "Delivery not found"],
   no_receipt: [409, "no_receipt", "This delivery has no linked receipt to compare"],
   already_overridden: [409, "already_overridden", "This delivery's match is overridden"],
+  receipt_changed: [409, "receipt_changed", "This delivery's receipt changed. Refresh and try again."],
   invalid_verdict: [400, "invalid_verdict", "Verdict must be matched or discrepant"],
   note_required: [400, "note_required", "An override requires a note"],
   invalid_input: [400, "invalid_payload", "That request was not valid"],
 };
+
+/** The longest existing note the pre-0327 compare-and-set will name in a request filter (URL-encoded
+ *  length). A longer one cannot be compared safely in one request, so the note write is refused. */
+const VERDICT_NOTE_COMPARE_MAX = 4000;
 
 /**
  * Write an attestation or an override so it can never land on a state the person did not see
@@ -1619,21 +1624,31 @@ const VERDICT_REFUSALS: Record<string, [status: number, code: string, message: s
  * guard: an attestation that READ counted_only could WRITE after a manager's override committed,
  * replacing the terminal `override` and dropping its note, and two notes appended at once lost one.
  *
- * WITH 0327: delivery_match_verdict does the read, the terminal check and the note append under
- * the delivery's row lock. The request that queued second is judged on what the first one
- * committed (`already_overridden`), and both notes are kept.
- * WITHOUT 0327 (function not installed yet): a compare-and-set on the match_state this request
- * read. A request that lost the race matches no row and is refused `match_changed` (refresh and
- * try again) instead of overwriting. Returns the state actually replaced, for the audit row.
+ * `d.email_receipt_id` is the receipt this verdict is ABOUT: the one the person compared (the
+ * callers put it there). A verdict is a judgment of one receipt against the count, so if a manager
+ * unlinked that receipt and another was linked before the write, the write is refused
+ * `receipt_changed` instead of marking the replacement on the first one's comparison (review W20-r1).
+ *
+ * WITH 0327: delivery_match_verdict does the read, the receipt check, the terminal check and the
+ * note append under the delivery's row lock. The request that queued second is judged on what the
+ * first one committed (`already_overridden`, `receipt_changed`), and both notes are kept.
+ * WITHOUT 0327 (function not installed yet): a compare-and-set on everything this request read
+ * and is about to replace: the match_state, the linked receipt and, when it appends a note, the
+ * note it appends to (two notes written from the SAME state used to pass a state-only comparison,
+ * and the second write dropped the first). A request that lost the race matches no row and is
+ * refused `receipt_changed` or `match_changed` (refresh and try again) instead of overwriting.
+ * Returns the state actually replaced, for the audit row.
  */
 async function writeMatchVerdict(
   sb: ServiceClient,
-  d: { id: string; match_state: MatchState; note: string | null },
+  d: { id: string; match_state: MatchState; note: string | null; email_receipt_id: string | null },
   kind: "attest" | "override",
   verdict: MatchVerdict | null,
   note: string | null,
 ): Promise<MatchState> {
-  const { data, error } = await sb.rpc("delivery_match_verdict", { p_delivery: d.id, p_kind: kind, p_verdict: verdict, p_note: note });
+  const { data, error } = await sb.rpc("delivery_match_verdict", {
+    p_delivery: d.id, p_kind: kind, p_verdict: verdict, p_note: note, p_receipt: d.email_receipt_id,
+  });
   if (!error) return (data as { prior_state?: MatchState } | null)?.prior_state ?? d.match_state;
   if (!rpcNotInstalled(error)) {
     const refusal = VERDICT_REFUSALS[error.message];
@@ -1642,14 +1657,33 @@ async function writeMatchVerdict(
   }
   const update: { match_state: MatchState; note?: string } = { match_state: kind === "override" ? "override" : verdict! };
   // A note is appended (never clobbered): always for an override, and for a discrepancy that carries one.
-  if (note != null && (kind === "override" || verdict === "discrepant")) update.note = appendNote(d.note, note);
-  const { error: uErr, count } = await sb
+  const appends = note != null && (kind === "override" || verdict === "discrepant");
+  if (appends) {
+    if (d.note != null && encodeURIComponent(d.note).length > VERDICT_NOTE_COMPARE_MAX) {
+      throw new EmailReceiptError(503, "verdict_note_unavailable", "This delivery's note is too long to add to safely right now");
+    }
+    update.note = appendNote(d.note, note);
+  }
+  let write = sb
     .from("vendor_deliveries")
     .update(update, { count: "exact" })
     .eq("id", d.id)
     .eq("match_state", d.match_state);
+  write = d.email_receipt_id == null ? write.is("email_receipt_id", null) : write.eq("email_receipt_id", d.email_receipt_id);
+  // Only a write that replaces the note compares it; a verdict that leaves the note alone cannot drop one.
+  if (appends) write = d.note == null ? write.is("note", null) : write.eq("note", d.note);
+  const { error: uErr, count } = await write;
   if (uErr) throw new Error(`${kind}Match update: ${uErr.message}`);
-  if (count === 0) throw new EmailReceiptError(409, "match_changed", "This delivery's match changed. Refresh and try again.");
+  if (count === 0) {
+    // Name what changed: a different receipt is its own refusal; anything else is the match.
+    const { data: now, error: nErr } = await sb
+      .from("vendor_deliveries").select("email_receipt_id").eq("id", d.id)
+      .maybeSingle<{ email_receipt_id: string | null }>();
+    if (!nErr && now && (now.email_receipt_id ?? null) !== (d.email_receipt_id ?? null)) {
+      throw new EmailReceiptError(409, "receipt_changed", "This delivery's receipt changed. Refresh and try again.");
+    }
+    throw new EmailReceiptError(409, "match_changed", "This delivery's match changed. Refresh and try again.");
+  }
   return d.match_state;
 }
 
@@ -1661,12 +1695,17 @@ async function writeMatchVerdict(
  * terminal-locked). Updates match_state (rowcount-checked). When 'discrepant', a note
  * (if supplied) is APPENDED into vendor_deliveries.note (never clobbered). Audited
  * delivery.match_attested with { verdict }.
+ *
+ * `expectedReceiptId` is the receipt the person compared on screen. A different one linked by the
+ * time the write runs is 409 `receipt_changed` and nothing changes (review W20-r1). A caller that
+ * does not name one is judged on the receipt this request read.
  */
 export async function attestMatch(
   actor: AuthContext,
   deliveryId: string,
   verdict: MatchVerdict,
   note?: string,
+  expectedReceiptId?: string | null,
 ): Promise<void> {
   requireLevel(actor, RECEIPT_MIN);
   if (verdict !== "matched" && verdict !== "discrepant") {
@@ -1675,6 +1714,9 @@ export async function attestMatch(
   const sb = getServiceRoleClient();
   const d = await requireAttestableDelivery(sb, actor, deliveryId);
   if (!d.email_receipt_id) throw new EmailReceiptError(409, "no_receipt", "This delivery has no linked receipt to compare");
+  if (expectedReceiptId && expectedReceiptId !== d.email_receipt_id) {
+    throw new EmailReceiptError(409, "receipt_changed", "This delivery's receipt changed. Refresh and try again.");
+  }
   // Re-attestable from counted_only/matched/discrepant; an override is terminal.
   if (d.match_state === "override") {
     throw new EmailReceiptError(409, "already_overridden", "This delivery's match is overridden");
@@ -1700,20 +1742,27 @@ export async function attestMatch(
  * accepts a discrepancy or forces a resolution outside the KH attestation. Note is
  * REQUIRED (non-empty, 400 otherwise) and APPENDED into vendor_deliveries.note (never
  * clobbered). match_state → 'override'; rowcount-checked. Audited delivery.match_overridden.
+ *
+ * An override needs no receipt. `expectedReceiptId` is the receipt on screen when the manager
+ * decided; without one, what this request read (possibly none). If the linked receipt is not that
+ * one by the time the write runs, it is 409 `receipt_changed` (review W20-r1).
  */
-export async function overrideMatch(actor: AuthContext, deliveryId: string, note: string): Promise<void> {
+export async function overrideMatch(actor: AuthContext, deliveryId: string, note: string, expectedReceiptId?: string | null): Promise<void> {
   requireLevel(actor, RECEIPT_OVERRIDE_MIN);
   const trimmedNote = note?.trim() || null;
   if (!trimmedNote) throw new EmailReceiptError(400, "note_required", "An override requires a note");
   const sb = getServiceRoleClient();
   const d = await requireAttestableDelivery(sb, actor, deliveryId);
+  if (expectedReceiptId && expectedReceiptId !== d.email_receipt_id) {
+    throw new EmailReceiptError(409, "receipt_changed", "This delivery's receipt changed. Refresh and try again.");
+  }
   const priorState = await writeMatchVerdict(sb, d, "override", null, trimmedNote);
 
   await auditOperationalTaskOverride(actor, d.location_id, "receiving", "overrideMatch");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.match_overridden", resourceTable: "vendor_deliveries", resourceId: deliveryId,
-    metadata: { prior_state: priorState, location_id: d.location_id },
+    metadata: { prior_state: priorState, location_id: d.location_id, receipt_id: d.email_receipt_id },
     ipAddress: null, userAgent: null,
   });
 }

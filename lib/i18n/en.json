@@ -3682,6 +3682,7 @@
   "receiving.claim.error.no_receipt": "There's no linked receipt to compare.",
   "receiving.claim.error.already_overridden": "This match was already overridden.",
   "receiving.claim.error.match_changed": "Someone else just changed this match. Refresh and try again.",
+  "receiving.claim.error.verdict_note_unavailable": "This delivery's note is too long to add to right now. Tell a manager.",
   "receiving.claim.error.unlink_note_required": "Say why you are unlinking it.",
   "receiving.claim.error.unlink_unavailable": "Unlinking isn't available yet. Try again later.",
   "receiving.claim.error.receipt_changed": "This delivery's receipt changed. Refresh and try again.",

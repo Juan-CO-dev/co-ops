@@ -551,7 +551,8 @@ export function VendorClaimPanel({
     setErr(null);
   };
 
-  // PATCH attest matched / discrepant.
+  // PATCH attest matched / discrepant. Names the receipt on screen: a verdict is about THAT receipt,
+  // so one that was swapped underneath is refused instead of being marked on this comparison.
   const attest = async (verdict: "matched" | "discrepant") => {
     if (busy) return;
     if (verdict === "discrepant" && mode !== "discrepancy") {
@@ -567,6 +568,7 @@ export function VendorClaimPanel({
       body: JSON.stringify({
         deliveryId,
         action: "attest",
+        receiptId: receipt?.id,
         verdict,
         note: verdict === "discrepant" ? note.trim() || undefined : undefined,
       }),
@@ -593,7 +595,7 @@ export function VendorClaimPanel({
     const res = await fetch(API, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ deliveryId, action: "override", note: note.trim() }),
+      body: JSON.stringify({ deliveryId, action: "override", receiptId: receipt?.id, note: note.trim() }),
     });
     setBusy(false);
     if (res.ok) {

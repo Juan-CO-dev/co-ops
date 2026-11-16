@@ -39,7 +39,7 @@ describe("W20 Management API proof (offline only)", () => {
     expect(proofs.map((p: string[]) => p[0])).toEqual(["mail-vs-parse", "override>attest", "attest>attest", "unlink>attest", "atomic write"]);
     expect(proofs.filter((p: string[]) => p[1] === "0326")).toHaveLength(1);
     expect(Object.values(functions)).toEqual([
-      "public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)", "public.delivery_match_verdict(uuid,text,text,text)", "public.delivery_receipt_unlink(uuid,uuid,text,uuid)",
+      "public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)", "public.delivery_match_verdict(uuid,text,text,text,uuid)", "public.delivery_receipt_unlink(uuid,uuid,text,uuid)",
     ]);
     const c = calls(allocated());
     // The deadlock repro: the message with the installed function's lock clause, a pause, then the receipt.
@@ -50,6 +50,13 @@ describe("W20 Management API proof (offline only)", () => {
     // The racer is the parser's own guarded write (the one that fires the receipt-event trigger).
     expect(c.parserWrite).toMatch(/update public\.email_receipts set parse_state='failed'[\s\S]*and parse_state='unparsed'/);
     expect(c.attestAfterOverride).toContain("'attest','discrepant'");
+    // Review W20-r1: every verdict names the receipt it is about (the delivery's own fixture receipt).
+    const f = allocated(); const named = calls(f);
+    expect(named.override).toContain(`'accepted per vendor call','${f.rOverride}'::uuid)`);
+    expect(named.attestAfterOverride).toContain(`'short 2 cases','${f.rOverride}'::uuid)`);
+    expect(named.attestA).toContain(`'first note','${f.rNotes}'::uuid)`);
+    expect(named.attestB).toContain(`'second note','${f.rNotes}'::uuid)`);
+    expect(named.attestAfterUnlink).toContain(`null,'${f.rUnlink}'::uuid)`);
     expect(c.recordBadFlag).toContain("bogus");
   });
 

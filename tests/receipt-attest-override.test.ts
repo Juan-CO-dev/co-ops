@@ -6,6 +6,13 @@
  * With migration 0327 the write is delivery_match_verdict (the check and the note append under
  * the row lock; proven on real SQL in scripts/sql-harness-0327.mjs). Until it is applied, the
  * write is a compare-and-set on the state the request read. Both are pinned here.
+ *
+ * Fix round 1 (review W20-r1):
+ *   - a verdict names the receipt the person compared. If a manager unlinked it and another one
+ *     was linked before the write, the verdict is refused `receipt_changed` (it used to mark the
+ *     replacement matched on the first receipt's comparison);
+ *   - the pre-0327 compare-and-set also compares the note it appends to, so two notes written
+ *     from the SAME state no longer drop one.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
@@ -40,6 +47,7 @@ function client() {
       const q: Record<string, unknown> = {};
       q.select = () => q;
       q.eq = (k: string, v: unknown) => { filters[k] = v; return q; };
+      q.is = (k: string, v: unknown) => { filters[k] = v; return q; };
       q.update = (v: Row) => { patch = v; return q; };
       q.maybeSingle = async () => ({ data: { ...delivery }, error: null });
       q.then = (resolve: (v: unknown) => unknown) => {
@@ -66,7 +74,7 @@ beforeEach(() => {
 describe("with migration 0327: the locked writer decides", () => {
   it("attest sends kind, verdict and the trimmed discrepancy note, and issues no UPDATE of its own", async () => {
     await attestMatch(keyHolder, "d1", "discrepant", "  short 2 cases ");
-    expect(rpcCalls).toEqual([{ fn: "delivery_match_verdict", args: { p_delivery: "d1", p_kind: "attest", p_verdict: "discrepant", p_note: "short 2 cases" } }]);
+    expect(rpcCalls).toEqual([{ fn: "delivery_match_verdict", args: { p_delivery: "d1", p_kind: "attest", p_verdict: "discrepant", p_note: "short 2 cases", p_receipt: "r1" } }]);
     expect(updates).toEqual([]);
   });
   it("a note typed on a 'matched' verdict is not sent", async () => {
@@ -75,7 +83,7 @@ describe("with migration 0327: the locked writer decides", () => {
   });
   it("override sends its required note", async () => {
     await overrideMatch(agm, "d1", " accepted per vendor call ");
-    expect(rpcCalls).toEqual([{ fn: "delivery_match_verdict", args: { p_delivery: "d1", p_kind: "override", p_verdict: null, p_note: "accepted per vendor call" } }]);
+    expect(rpcCalls).toEqual([{ fn: "delivery_match_verdict", args: { p_delivery: "d1", p_kind: "override", p_verdict: null, p_note: "accepted per vendor call", p_receipt: "r1" } }]);
   });
   it("the B114 race: the attestation that read counted_only is refused, the override and its note stand", async () => {
     // The manager's override commits while the key holder's request is being authorized.
@@ -101,9 +109,50 @@ describe("with migration 0327: the locked writer decides", () => {
   it.each([
     ["not_found", 404, "not_found"], ["no_receipt", 409, "no_receipt"], ["already_overridden", 409, "already_overridden"],
     ["invalid_verdict", 400, "invalid_verdict"], ["note_required", 400, "note_required"], ["invalid_input", 400, "invalid_payload"],
+    ["receipt_changed", 409, "receipt_changed"],
   ])("maps the writer's %s to %s %s", async (message, status, code) => {
     verdictRpc = () => ({ data: null, error: { code: "P0001", message } });
     await expect(attestMatch(keyHolder, "d1", "matched")).rejects.toMatchObject({ status, code });
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it("the receipt the person compared is sent; without one, the receipt this request read", async () => {
+    await attestMatch(keyHolder, "d1", "matched", undefined, "r1");
+    expect(rpcCalls[0]!.args).toMatchObject({ p_receipt: "r1" });
+    await attestMatch(keyHolder, "d1", "matched");
+    expect(rpcCalls[1]!.args).toMatchObject({ p_receipt: "r1" });
+    await overrideMatch(agm, "d1", "accepted", "r1");
+    expect(rpcCalls[2]!.args).toMatchObject({ p_kind: "override", p_receipt: "r1" });
+    // An override needs no receipt: "none was linked when I looked" is sent as null, and compared.
+    delivery.email_receipt_id = null;
+    await overrideMatch(agm, "d1", "no paperwork came");
+    expect(rpcCalls[3]!.args).toMatchObject({ p_kind: "override", p_receipt: null });
+  });
+  it("review W20-r1: unlink, a replacement receipt, then the stale attestation is refused receipt_changed", async () => {
+    // The key holder compared r1. A manager unlinks r1 and links r2 while the request is being authorized.
+    betweenReadAndWrite = () => { delivery.email_receipt_id = "r2"; delivery.match_state = "counted_only"; };
+    verdictRpc = (args) => args.p_receipt !== delivery.email_receipt_id
+      ? { data: null, error: { code: "P0001", message: "receipt_changed" } }
+      : { data: { prior_state: delivery.match_state }, error: null };
+    await expect(attestMatch(keyHolder, "d1", "matched", undefined, "r1")).rejects.toMatchObject({ status: 409, code: "receipt_changed" });
+    expect(rpcCalls[0]!.args).toMatchObject({ p_receipt: "r1" });
+    expect(delivery).toMatchObject({ match_state: "counted_only", email_receipt_id: "r2" });
+    expect(updates).toEqual([]);
+    expect(mocks.audit).not.toHaveBeenCalled();
+    // An older page that does not name its receipt is judged on the receipt this request read (r1), not on r2.
+    delivery.email_receipt_id = "r1";
+    await expect(attestMatch(keyHolder, "d1", "matched")).rejects.toMatchObject({ status: 409, code: "receipt_changed" });
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it("a replacement that already happened is refused before the writer is called (attest and override)", async () => {
+    betweenReadAndWrite = undefined;
+    delivery.email_receipt_id = "r2";
+    await expect(attestMatch(keyHolder, "d1", "matched", undefined, "r1")).rejects.toMatchObject({ status: 409, code: "receipt_changed" });
+    await expect(overrideMatch(agm, "d1", "accepted", "r1")).rejects.toMatchObject({ status: 409, code: "receipt_changed" });
+    // The receipt was unlinked and nothing replaced it: an attestation has nothing to compare, an override saw one that is gone.
+    delivery.email_receipt_id = null;
+    await expect(attestMatch(keyHolder, "d1", "matched", undefined, "r1")).rejects.toMatchObject({ status: 409, code: "no_receipt" });
+    await expect(overrideMatch(agm, "d1", "accepted", "r1")).rejects.toMatchObject({ status: 409, code: "receipt_changed" });
+    expect(rpcCalls).toEqual([]); expect(updates).toEqual([]);
     expect(mocks.audit).not.toHaveBeenCalled();
   });
   it("an unknown database error is a failure, never a silent fallback to the unguarded write", async () => {
@@ -118,20 +167,72 @@ describe("before 0327 is applied: a compare-and-set on the state the request rea
   beforeEach(() => { verdictRpc = () => ({ data: null, error: MISSING }); });
   it("an uncontended attest and override write as before", async () => {
     await attestMatch(keyHolder, "d1", "discrepant", "short 2 cases");
-    expect(updates).toEqual([{ patch: { match_state: "discrepant", note: "N0\nshort 2 cases" }, filters: { id: "d1", match_state: "counted_only" }, count: 1 }]);
+    expect(updates).toEqual([{ patch: { match_state: "discrepant", note: "N0\nshort 2 cases" }, filters: { id: "d1", match_state: "counted_only", email_receipt_id: "r1", note: "N0" }, count: 1 }]);
     await overrideMatch(agm, "d1", "accepted per vendor call");
     expect(delivery).toMatchObject({ match_state: "override", note: "N0\nshort 2 cases\naccepted per vendor call" });
-    expect(updates[1]!.filters).toEqual({ id: "d1", match_state: "discrepant" });
+    expect(updates[1]!.filters).toEqual({ id: "d1", match_state: "discrepant", email_receipt_id: "r1", note: "N0\nshort 2 cases" });
   });
-  it("matched leaves the note alone", async () => {
+  it("matched leaves the note alone, and does not compare it (it writes none)", async () => {
     await attestMatch(keyHolder, "d1", "matched", "ignored");
     expect(updates[0]!.patch).toEqual({ match_state: "matched" });
+    expect(updates[0]!.filters).toEqual({ id: "d1", match_state: "counted_only", email_receipt_id: "r1" });
+  });
+  it("review W20-r1: two discrepancy notes from the SAME state: the second is refused, the first note is kept", async () => {
+    delivery.match_state = "discrepant";
+    // Another key holder's discrepancy note commits while this request is being authorized. The state does not change.
+    betweenReadAndWrite = () => { delivery.note = "N0\nfirst person's note"; };
+    await expect(attestMatch(keyHolder, "d1", "discrepant", "second person's note")).rejects.toMatchObject({ status: 409, code: "match_changed" });
+    expect(delivery).toMatchObject({ match_state: "discrepant", note: "N0\nfirst person's note" });
+    expect(updates).toEqual([{ patch: { match_state: "discrepant", note: "N0\nsecond person's note" },
+      filters: { id: "d1", match_state: "discrepant", email_receipt_id: "r1", note: "N0" }, count: 0 }]);
+    expect(mocks.audit).not.toHaveBeenCalled();
+    // Refresh and try again: the retry appends after the first person's note.
+    betweenReadAndWrite = undefined;
+    await attestMatch(keyHolder, "d1", "discrepant", "second person's note");
+    expect(delivery.note).toBe("N0\nfirst person's note\nsecond person's note");
+  });
+  it("review W20-r1: two overrides from `override`: the second is refused, the first manager's note is kept", async () => {
+    delivery.match_state = "override"; delivery.note = "N0\naccepted";
+    betweenReadAndWrite = () => { delivery.note = "N0\naccepted\nfirst manager: vendor credited it"; };
+    await expect(overrideMatch(agm, "d1", "second manager: closing this out")).rejects.toMatchObject({ status: 409, code: "match_changed" });
+    expect(delivery.note).toBe("N0\naccepted\nfirst manager: vendor credited it");
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it("a first note on a delivery with no note compares against null (null-safe)", async () => {
+    delivery.note = null;
+    await attestMatch(keyHolder, "d1", "discrepant", "short 2 cases");
+    expect(updates[0]).toEqual({ patch: { match_state: "discrepant", note: "short 2 cases" }, filters: { id: "d1", match_state: "counted_only", email_receipt_id: "r1", note: null }, count: 1 });
+    delivery = { id: "d1", location_id: "shop", match_state: "discrepant", note: null, email_receipt_id: "r1" };
+    betweenReadAndWrite = () => { delivery.note = "someone else's first note"; };
+    await expect(attestMatch(keyHolder, "d1", "discrepant", "mine")).rejects.toMatchObject({ status: 409, code: "match_changed" });
+    expect(delivery.note).toBe("someone else's first note");
+  });
+  it("a replaced receipt is refused receipt_changed by the compare-and-set too", async () => {
+    betweenReadAndWrite = () => { delivery.email_receipt_id = "r2"; };
+    await expect(attestMatch(keyHolder, "d1", "matched", undefined, "r1")).rejects.toMatchObject({ status: 409, code: "receipt_changed" });
+    expect(delivery).toMatchObject({ match_state: "counted_only", email_receipt_id: "r2" });
+    // An override written with no receipt on screen is refused once one is linked.
+    delivery = { id: "d1", location_id: "shop", match_state: "counted_only", note: "N0", email_receipt_id: null };
+    betweenReadAndWrite = () => { delivery.email_receipt_id = "r9"; };
+    await expect(overrideMatch(agm, "d1", "no paperwork came")).rejects.toMatchObject({ status: 409, code: "receipt_changed" });
+    expect(updates.at(-1)!.filters).toEqual({ id: "d1", match_state: "counted_only", email_receipt_id: null, note: "N0" });
+    expect(delivery.match_state).toBe("counted_only");
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it("a note too long to compare in one request is refused by name, never written unguarded", async () => {
+    delivery.note = "x".repeat(5000);
+    await expect(attestMatch(keyHolder, "d1", "discrepant", "one more")).rejects.toMatchObject({ status: 503, code: "verdict_note_unavailable" });
+    await expect(overrideMatch(agm, "d1", "accepted")).rejects.toMatchObject({ status: 503, code: "verdict_note_unavailable" });
+    expect(updates).toEqual([]);
+    // A verdict that writes no note is not affected.
+    await attestMatch(keyHolder, "d1", "matched");
+    expect(delivery.match_state).toBe("matched");
   });
   it("the B114 race: the attestation that lost matches no row and is refused, never overwrites", async () => {
     betweenReadAndWrite = () => { delivery.match_state = "override"; delivery.note = "N0\naccepted per vendor call"; };
     await expect(attestMatch(keyHolder, "d1", "discrepant", "short 2 cases")).rejects.toMatchObject({ status: 409, code: "match_changed" });
     expect(delivery).toMatchObject({ match_state: "override", note: "N0\naccepted per vendor call" });
-    expect(updates).toEqual([{ patch: { match_state: "discrepant", note: "N0\nshort 2 cases" }, filters: { id: "d1", match_state: "counted_only" }, count: 0 }]);
+    expect(updates).toEqual([{ patch: { match_state: "discrepant", note: "N0\nshort 2 cases" }, filters: { id: "d1", match_state: "counted_only", email_receipt_id: "r1", note: "N0" }, count: 0 }]);
     expect(mocks.audit).not.toHaveBeenCalled();
   });
   it("an override that lost the race is refused too (the manager re-reads what was attested)", async () => {

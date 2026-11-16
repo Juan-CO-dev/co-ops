@@ -9,7 +9,8 @@
  *   R. record_delivery_atomic: the header, lines, lined credits (by line_index) and line-less
  *      credits land together or not at all; each named failure leaves ZERO rows behind.
  *   V. delivery_match_verdict: attest / override under the row lock, the named refusals, notes
- *      appended in order, an override is terminal.
+ *      appended in order, an override is terminal, and a verdict is refused `receipt_changed`
+ *      when the receipt it was made about is no longer the one linked (review W20-r1).
  *   U. delivery_receipt_unlink: both sides cleared, match reset, the append-only record, refusals.
  *   C. privilege ceilings and RLS. G. the pre-flight guards and idempotent re-apply.
  *
@@ -112,6 +113,15 @@ try {
       await noIndex.exec('rollback');
       check(true, 'refuses without the duplicate-delivery index (the arbiter the writer relies on)');
     } finally { await noIndex.close(); }
+
+    const draft = await fresh();
+    try {
+      await draft.exec(`create function public.delivery_match_verdict(uuid,text,text,text) returns jsonb language sql as $f$ select null::jsonb $f$;`);
+      await assert.rejects(() => draft.exec(migration), /0327: an earlier draft delivery_match_verdict\(uuid,text,text,text\) is installed; drop that function first/);
+      await draft.exec('rollback');
+      check((await draft.query("select to_regprocedure('public.delivery_match_verdict(uuid,text,text,text,uuid)') f")).rows[0].f === null,
+        'a four-argument draft of the verdict writer (one that cannot name its receipt) is refused, never left beside the real one');
+    } finally { await draft.close(); }
 
     const before0326 = await fresh();
     try {
@@ -217,39 +227,67 @@ try {
   check(nullCredits.item_ids.length === 1, 'null credit lists mean no credits');
 
   // ── V. delivery_match_verdict ──────────────────────────────────────────────────────────────────
-  const verdict = (delivery, kind, v, note) => rpc('delivery_match_verdict', [delivery, kind, v ?? null, note ?? null], ['uuid', 'text', 'text', 'text']);
+  // `seen` = the receipt the person compared (null = "none was linked when I looked").
+  const verdict = (delivery, kind, v, note, seen = null) => rpc('delivery_match_verdict', [delivery, kind, v ?? null, note ?? null, seen], ['uuid', 'text', 'text', 'text', 'uuid']);
   const state = async id => one('select match_state, note, email_receipt_id from public.vendor_deliveries where id=$1', [id]);
   const D = saved.delivery_id;
   const receipt = uuid(), receipt2 = uuid();
   await db.query("insert into public.email_receipts(id, source, location_id) values ($1,'inbound',$3),($2,'upload',$3)", [receipt, receipt2, shop]);
   const link = async (delivery, r) => { await db.query('update public.email_receipts set linked_delivery_id=$1 where id=$2', [delivery, r]); await db.query('update public.vendor_deliveries set email_receipt_id=$2 where id=$1', [delivery, r]); };
 
-  await refuses(() => verdict(D, 'attest', 'matched'), /no_receipt/, 'attest without a linked receipt is no_receipt');
-  await refuses(() => verdict(uuid(), 'attest', 'matched'), /not_found/, 'an unknown delivery is not_found');
-  await refuses(() => verdict(D, 'approve', 'matched'), /invalid_input/, 'an unknown kind is invalid_input');
-  await refuses(() => verdict(null, 'attest', 'matched'), /invalid_input/, 'a null delivery is invalid_input');
+  await refuses(() => verdict(D, 'attest', 'matched', null, receipt), /no_receipt/, 'attest without a linked receipt is no_receipt');
+  await refuses(() => verdict(uuid(), 'attest', 'matched', null, receipt), /not_found/, 'an unknown delivery is not_found');
+  await refuses(() => verdict(D, 'approve', 'matched', null, receipt), /invalid_input/, 'an unknown kind is invalid_input');
+  await refuses(() => verdict(null, 'attest', 'matched', null, receipt), /invalid_input/, 'a null delivery is invalid_input');
   await link(D, receipt);
-  await refuses(() => verdict(D, 'attest', 'maybe'), /invalid_verdict/, 'a verdict that is not matched / discrepant is invalid_verdict');
-  await refuses(() => verdict(D, 'attest', null), /invalid_verdict/, 'a missing verdict is invalid_verdict');
-  const first = await verdict(D, 'attest', 'matched', 'ignored on a match');
+  await refuses(() => verdict(D, 'attest', 'maybe', null, receipt), /invalid_verdict/, 'a verdict that is not matched / discrepant is invalid_verdict');
+  await refuses(() => verdict(D, 'attest', null, null, receipt), /invalid_verdict/, 'a missing verdict is invalid_verdict');
+  await refuses(() => verdict(D, 'attest', 'matched'), /invalid_input/, 'an attestation that names no receipt is invalid_input');
+  check((await state(D)).match_state === 'counted_only', '...and writes nothing');
+  await refuses(() => service(() => one('select public.delivery_match_verdict($1::uuid, $2::text, $3::text, $4::text) result', [D, 'attest', 'matched', null])),
+    /function public\.delivery_match_verdict\(uuid, text, text, text\) does not exist/, 'the four-argument form does not exist: no caller can skip naming the receipt');
+  const first = await verdict(D, 'attest', 'matched', 'ignored on a match', receipt);
   check(first.prior_state === 'counted_only' && first.match_state === 'matched' && first.location_id === shop && first.receipt_id === receipt, 'attest returns the state it replaced, read under the lock');
   check((await state(D)).match_state === 'matched' && (await state(D)).note === 'dock 2', 'matched sets the state and leaves the note alone');
-  await verdict(D, 'attest', 'discrepant', '  short 2 cases  ');
-  await verdict(D, 'attest', 'discrepant', 'and one damaged');
+  await verdict(D, 'attest', 'discrepant', '  short 2 cases  ', receipt);
+  await verdict(D, 'attest', 'discrepant', 'and one damaged', receipt);
   check((await state(D)).note === 'dock 2\nshort 2 cases\nand one damaged', 'two discrepancy notes are both kept, trimmed, in order');
-  await verdict(D, 'attest', 'discrepant');
-  await verdict(D, 'attest', 'discrepant', '   ');
+  await verdict(D, 'attest', 'discrepant', null, receipt);
+  await verdict(D, 'attest', 'discrepant', '   ', receipt);
   check((await state(D)).note === 'dock 2\nshort 2 cases\nand one damaged', 'a discrepancy with no note appends nothing');
-  await refuses(() => verdict(D, 'override', null, '   '), /note_required/, 'an override needs a note');
-  const over = await verdict(D, 'override', null, 'accepted per vendor call');
+
+  // Review W20-r1, the stale attestation: the key holder compared `receipt`; a manager unlinks it and links
+  // `receipt2` before the verdict takes the lock. The verdict is about a receipt that is no longer the one linked.
+  {
+    const unlinkFirst = await rpc('delivery_receipt_unlink', [D, receipt, 'wrong document: this is the statement', actor], ['uuid', 'uuid', 'text', 'uuid']);
+    check(unlinkFirst.receipt_id === receipt && (await state(D)).match_state === 'counted_only', 'a manager unlinks the receipt that was being compared');
+    await link(D, receipt2);
+    const replaced = await state(D);
+    await refuses(() => verdict(D, 'attest', 'matched', null, receipt), /receipt_changed/, 'unlink, a replacement, then the stale attestation: refused receipt_changed');
+    await refuses(() => verdict(D, 'attest', 'discrepant', 'short 2 cases', receipt), /receipt_changed/, '...for either verdict');
+    await refuses(() => verdict(D, 'override', null, 'accepted', receipt), /receipt_changed/, 'an override decided on the first receipt is refused receipt_changed too');
+    await refuses(() => verdict(D, 'override', null, 'accepted'), /receipt_changed/, 'an override decided when no receipt was linked is refused once one is');
+    const untouched = await state(D);
+    check(untouched.match_state === 'counted_only' && untouched.note === replaced.note && untouched.email_receipt_id === receipt2,
+      '...and the replacement receipt is NOT marked on the first one\'s comparison: state and note untouched');
+    const fresh = await verdict(D, 'attest', 'matched', null, receipt2);
+    check(fresh.receipt_id === receipt2 && fresh.prior_state === 'counted_only' && (await state(D)).match_state === 'matched', 'an attestation that names the receipt now linked is written');
+    // Put the delivery back on the first receipt for the rest of the proof (unlink the replacement, link the first again).
+    await rpc('delivery_receipt_unlink', [D, receipt2, 'harness: back to the first receipt', actor], ['uuid', 'uuid', 'text', 'uuid']);
+    await link(D, receipt);
+    await verdict(D, 'attest', 'discrepant', null, receipt);
+    check((await state(D)).email_receipt_id === receipt && (await state(D)).match_state === 'discrepant' && await n('delivery_receipt_unlinks') === 2, 'both unlinks are on record; the first receipt is linked again');
+  }
+  await refuses(() => verdict(D, 'override', null, '   ', receipt), /note_required/, 'an override needs a note');
+  const over = await verdict(D, 'override', null, 'accepted per vendor call', receipt);
   check(over.prior_state === 'discrepant' && (await state(D)).match_state === 'override' && (await state(D)).note.endsWith('\naccepted per vendor call'), 'override sets the terminal state and appends its note');
   // The B114 repro, in commit order: the attestation that read counted_only BEFORE the override now waits for the
   // row lock and re-reads the state after it.
   const beforeRace = (await state(D)).note;
-  await refuses(() => verdict(D, 'attest', 'discrepant', 'short 2 cases'), /already_overridden/, 'an attestation after an override is refused already_overridden');
-  await refuses(() => verdict(D, 'attest', 'matched'), /already_overridden/, '...for either verdict');
+  await refuses(() => verdict(D, 'attest', 'discrepant', 'short 2 cases', receipt), /already_overridden/, 'an attestation after an override is refused already_overridden');
+  await refuses(() => verdict(D, 'attest', 'matched', null, receipt), /already_overridden/, '...for either verdict');
   check((await state(D)).match_state === 'override' && (await state(D)).note === beforeRace, "...and the manager's decision and note are untouched");
-  await verdict(D, 'override', null, 'second look: still accepted');
+  await verdict(D, 'override', null, 'second look: still accepted', receipt);
   check((await state(D)).note === `${beforeRace}\nsecond look: still accepted`, 'a second override appends (never clobbers)');
   const blank = await record(header({ invoice_number: 'INV-5', notes: null, note: null }), [line(skuA)]);
   await verdict(blank.delivery_id, 'override', null, 'no paperwork came');
@@ -265,7 +303,7 @@ try {
   await refuses(() => unlink(uuid(), receipt, 'wrong doc'), /not_found/, 'an unknown delivery is not_found');
   await refuses(() => unlink(blank.delivery_id, null, 'wrong doc'), /no_receipt/, 'a delivery with no receipt is no_receipt');
   await refuses(() => unlink(D, receipt2, 'wrong doc'), /receipt_changed/, 'a different receipt than the one the person saw is receipt_changed');
-  check((await state(D)).email_receipt_id === receipt && await n('delivery_receipt_unlinks') === 0, '...and every refusal changes nothing');
+  check((await state(D)).email_receipt_id === receipt && await n('delivery_receipt_unlinks') === 2, '...and every refusal changes nothing');
   const noteBefore = (await state(D)).note;
   const undone = await unlink(D, receipt, '  this is the order confirmation, not the invoice ');
   check(undone.receipt_id === receipt && undone.prior_state === 'override' && undone.location_id === shop && undone.receipt_released === true, 'unlink returns what it undid');
@@ -276,12 +314,12 @@ try {
   const row = await one('select * from public.delivery_receipt_unlinks where id=$1', [undone.unlink_id]);
   check(row.delivery_id === D && row.receipt_id === receipt && row.location_id === shop && row.prior_match_state === 'override'
     && row.note === 'this is the order confirmation, not the invoice' && row.unlinked_by === actor, 'the unlink is recorded: pair, shop, prior state, reason, who');
-  await refuses(() => verdict(D, 'attest', 'matched'), /no_receipt/, 'after an unlink there is nothing to attest');
+  await refuses(() => verdict(D, 'attest', 'matched', null, receipt), /no_receipt/, 'after an unlink there is nothing to attest');
   await refuses(() => unlink(D, receipt, 'again'), /no_receipt/, 'a second unlink of the same delivery is no_receipt (no double record)');
   await link(D, receipt2);
   check((await state(D)).email_receipt_id === receipt2, 'the freed slot takes another receipt (the 0171 one-receipt index is clear)');
   const any = await unlink(D, null, 'no receipt named: unlink whatever is linked');
-  check(any.receipt_id === receipt2 && await n('delivery_receipt_unlinks') === 2, 'without a named receipt the linked one is unlinked');
+  check(any.receipt_id === receipt2 && await n('delivery_receipt_unlinks') === 4, 'without a named receipt the linked one is unlinked');
   // A receipt whose own side already points elsewhere is left alone; the delivery is still cleared.
   await db.query('update public.vendor_deliveries set email_receipt_id=$2 where id=$1', [D, receipt]);
   await db.query('update public.email_receipts set linked_delivery_id=$1 where id=$2', [blank.delivery_id, receipt]);
@@ -291,7 +329,7 @@ try {
     "a receipt already pointing at another delivery keeps that link; this delivery's side is cleared");
 
   // ── C. ceilings ────────────────────────────────────────────────────────────────────────────────
-  for (const f of ['record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)', 'delivery_match_verdict(uuid,text,text,text)', 'delivery_receipt_unlink(uuid,uuid,text,uuid)']) {
+  for (const f of ['record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)', 'delivery_match_verdict(uuid,text,text,text,uuid)', 'delivery_receipt_unlink(uuid,uuid,text,uuid)']) {
     const meta = await one(`select prosecdef, proconfig from pg_proc where oid='public.${f}'::regprocedure`);
     assert.equal(meta.prosecdef, true); assert.ok(meta.proconfig.includes('search_path=pg_catalog, public'));
     for (const role of ['anon', 'authenticated', 'service_role']) {
@@ -310,20 +348,20 @@ try {
     /permission denied/, 'service_role cannot forge an unlink row');
   await refuses(() => service(() => db.query('delete from public.delivery_receipt_unlinks')), /permission denied/, 'service_role cannot delete unlink history');
   await refuses(() => service(() => db.query("update public.delivery_receipt_unlinks set note='edited'")), /permission denied/, 'service_role cannot rewrite unlink history');
-  check((await service(() => q('select id from public.delivery_receipt_unlinks'))).length === 3, 'service_role can read the history');
+  check((await service(() => q('select id from public.delivery_receipt_unlinks'))).length === 5, 'service_role can read the history');
   const policies = (await q("select policyname, cmd, qual, with_check from pg_policies where tablename='delivery_receipt_unlinks' order by policyname")).map(p => `${p.policyname}:${p.cmd}:${p.qual ?? p.with_check}`);
   check((await one("select relrowsecurity from pg_class where oid='public.delivery_receipt_unlinks'::regclass")).relrowsecurity === true
     && policies.join('|') === 'delivery_receipt_unlinks_no_user_delete:DELETE:false|delivery_receipt_unlinks_no_user_insert:INSERT:false|delivery_receipt_unlinks_no_user_select:SELECT:false|delivery_receipt_unlinks_no_user_update:UPDATE:false',
     'RLS is on with the four deny policies, split per operation (never FOR ALL)');
-  await db.exec('grant execute on function public.delivery_match_verdict(uuid,text,text,text) to authenticated; grant insert on public.delivery_receipt_unlinks to service_role;');
+  await db.exec('grant execute on function public.delivery_match_verdict(uuid,text,text,text,uuid) to authenticated; grant insert on public.delivery_receipt_unlinks to service_role;');
   await db.exec(migration);
-  check((await one("select has_function_privilege('authenticated','public.delivery_match_verdict(uuid,text,text,text)','EXECUTE') ok")).ok === false
+  check((await one("select has_function_privilege('authenticated','public.delivery_match_verdict(uuid,text,text,text,uuid)','EXECUTE') ok")).ok === false
     && (await one("select has_table_privilege('service_role','public.delivery_receipt_unlinks','INSERT') ok")).ok === false, 're-applying closes drifted grants');
   await assert.rejects(() => db.exec(migration.replace('grant select on public.delivery_receipt_unlinks to service_role;', 'grant select, insert on public.delivery_receipt_unlinks to service_role;')), /0327: delivery_receipt_unlinks privilege escape/);
   await db.exec('rollback');
   await assert.rejects(() => db.exec(migration.replace('grant execute on function public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb) to service_role;', 'grant execute on function public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb) to authenticated, service_role;')), /0327: receiving RPC escape/);
   await db.exec('rollback');
-  check(await n('delivery_receipt_unlinks') === 3, 'a variant that widens a grant fails its own assertion, rolls back, and keeps the history');
+  check(await n('delivery_receipt_unlinks') === 5, 'a variant that widens a grant fails its own assertion, rolls back, and keeps the history');
 
   console.log(`PASS 0327: ${checks} checks (single-session PGlite; the two-session proofs are the sim script)`);
 } finally { await db.close(); }
