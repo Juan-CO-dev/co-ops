@@ -761,6 +761,7 @@
   "catering.customers.error.location_access_denied": "You do not manage that location.",
   "catering.customers.error.mixed_concerns": "Save one change at a time.",
   "catering.customers.error.email_taken": "Another active contact already uses that email. Merge the two contacts, or change one of the addresses.",
+  "catering.customers.error.email_inactive_contact": "A deactivated contact already has this email. Reactivate that contact instead of adding a new one.",
   "catering.pipeline.title": "Catering Pipeline",
   "catering.pipeline.subtitle": "Leads from inquiry to completed — track, follow up, and confirm.",
   "catering.pipeline.add_lead": "Add lead",

@@ -761,6 +761,7 @@
   "catering.customers.error.location_access_denied": "No administras esa ubicación.",
   "catering.customers.error.mixed_concerns": "Guarda un cambio a la vez.",
   "catering.customers.error.email_taken": "Otro contacto activo ya usa ese correo. Combina los dos contactos o cambia una de las direcciones.",
+  "catering.customers.error.email_inactive_contact": "Un contacto desactivado ya tiene este correo. Reactiva ese contacto en vez de agregar uno nuevo.",
   "catering.pipeline.title": "Flujo de catering",
   "catering.pipeline.subtitle": "Prospectos de consulta a completado — sigue, da seguimiento y confirma.",
   "catering.pipeline.add_lead": "Agregar prospecto",
