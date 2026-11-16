@@ -1,6 +1,6 @@
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
-import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
+import { jsonError, jsonOk, ownEntry, parseJsonBody } from "@/lib/api-helpers";
 import { canViewPeople, peopleActorFromAuth } from "@/lib/people/access-shared";
 import { adjustSkill, PeopleSkillError, rateNewHire } from "@/lib/people/skills";
 import { requireSession } from "@/lib/session";
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (body instanceof Response) return body;
   if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(400, "invalid_payload");
   const b = body as Record<string, unknown>;
-  const spec = typeof b.action === "string" ? FIELDS[b.action] : undefined;
+  const spec = ownEntry(FIELDS, b.action);
   if (!spec || Object.keys(b).some((k) => !spec.required.includes(k) && !spec.optional.includes(k)) || spec.required.some((k) => !(k in b))) {
     return jsonError(400, "invalid_payload");
   }

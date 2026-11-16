@@ -1,6 +1,6 @@
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import { type NextRequest } from "next/server";
-import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
+import { jsonError, jsonOk, ownEntry, parseJsonBody } from "@/lib/api-helpers";
 import { lockLocationContext } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { canDoOperationalTask } from "@/lib/operational-task-access";
@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
   if (raw instanceof Response) return raw;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return jsonError(400, "invalid_payload");
   const b = raw as Record<string, unknown>;
-  const allowed = typeof b.action === "string" ? FIELDS[b.action] : undefined;
+  const allowed = ownEntry(FIELDS, b.action);
   if (!allowed || Object.keys(b).some((k) => !allowed.includes(k))) return jsonError(400, "invalid_payload");
   if (typeof b.locationId !== "string" || !UUID.test(b.locationId)) return jsonError(400, "invalid_payload", { field: "locationId" });
   const locationId = b.locationId;

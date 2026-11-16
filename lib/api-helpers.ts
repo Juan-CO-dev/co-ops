@@ -57,6 +57,15 @@ export function extractIp(req: NextRequest): string | null {
 }
 
 /**
+ * Own-property lookup in an allowlist keyed by a request string — never the prototype chain. `FIELDS[b.action]`
+ * with `action: "constructor"` returned `Object` (and `"__proto__"` returned `Object.prototype`), so the route's
+ * `.includes` threw → 500 (W27 / B227). Anything not an own key of `table` is `undefined`.
+ */
+export function ownEntry<T>(table: Readonly<Record<string, T>>, key: unknown): T | undefined {
+  return typeof key === "string" && Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
+/**
  * Attempt to parse the request body as JSON.
  *
  *   On success → returns the parsed value as `unknown`. Caller MUST narrow
