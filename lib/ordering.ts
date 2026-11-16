@@ -86,6 +86,7 @@ import { etCalendarDate, etWallClockToUtcIso, etYmdMinusDays, operationalDayUtcR
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { formatTime } from "@/lib/i18n/format";
 import { cutoffMissed } from "@/lib/dashboard-status-shared";
+import { PO_AT_OR_BEYOND_CONFIRMED } from "@/lib/po-status-shared";
 
 /**
  * How far ahead the walk looks for BOOKED CATERING when naming the event advisory.
@@ -2160,8 +2161,9 @@ export interface OrderingCutoffAttention {
  * today) — the mid-shift pulse's ordering-cutoff attention (spec §4). KH+ read + location-bind.
  * CHEAP + fail-open-friendly (the pulse composer wraps this in try/catch like shrinkage): at
  * most THREE batched queries — today's active cutoffs on this dow, today's POs for those
- * vendors (status + created window), then the vendor names. A vendor with a confirmed/placed/
- * received/reconciled PO today is CLEARED (the order is in flight); a draft-only vendor stays
+ * vendors (status + created window), then the vendor names. A vendor with a PO today at or
+ * beyond confirmed (`PO_AT_OR_BEYOND_CONFIRMED`: confirmed / placed / invoiced / received /
+ * reconciled) is CLEARED (the order is in flight); a draft-only vendor stays
  * on the list with hasDraft true ("draft ready"). Earliest cutoff first (the binding deadline).
  */
 export async function loadOrderingAttention(
@@ -2210,11 +2212,10 @@ export async function loadOrderingAttention(
     .returns<Array<{ vendor_id: string; status: string }>>();
   if (pErr) throw new Error(`loadOrderingAttention pos: ${pErr.message}`);
   // A PO ≥ confirmed CLEARS the vendor (the order is in flight); track draft presence for hasDraft.
-  const PLACED_OR_BEYOND = new Set(["confirmed", "placed", "received", "reconciled"]);
   const clearedVendors = new Set<string>();
   const hasDraftVendors = new Set<string>();
   for (const p of poRows ?? []) {
-    if (PLACED_OR_BEYOND.has(p.status)) clearedVendors.add(p.vendor_id);
+    if (PO_AT_OR_BEYOND_CONFIRMED.has(p.status)) clearedVendors.add(p.vendor_id);
     if (p.status === "draft") hasDraftVendors.add(p.vendor_id);
   }
 
