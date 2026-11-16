@@ -45,7 +45,7 @@ describe("routed inbound parse attribution gates", () => {
     ["shop-b", "001", "shop-b", "address", true],
     [null, undefined, null, null, false],
   ] as const)("persists %s/%s before effects", async (address, number, location, source, conflict) => {
-    const { sb, writes } = service(address, [{ vendor_id: "account-vendor", location_id: "shop-a", account_number: "001" }]);
+    const { sb, writes } = service(address, [{ vendor_id: "sender-vendor", location_id: "shop-a", account_number: "001" }]);
     const fetched = response(number);
     await expect(parseReceipt(sb, "receipt")).resolves.toEqual({ ok: true, docKind: "invoice" });
     expect(writes[0]).toMatchObject({ parse_state: "parsed", location_id: location, attributed_by: source, attribution_conflict: conflict });
@@ -56,6 +56,18 @@ describe("routed inbound parse attribution gates", () => {
     const request = fetched.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(request[1].body)).model).toBe("claude-sonnet-5-5");
   });
+  // W20/B194 (decision W20-1 b): another vendor's account number flags the receipt for a person.
+  it.each([["shop-a", "shop-a", "address"], [null, null, null]] as const)(
+    "another vendor's account flags the receipt and runs no automation (address %s)", async (address, location, source) => {
+      const { sb, writes } = service(address, [{ vendor_id: "account-vendor", location_id: "shop-a", account_number: "001" }]);
+      response("001");
+      await expect(parseReceipt(sb, "receipt")).resolves.toEqual({ ok: true, docKind: "invoice" });
+      expect(writes[0]).toMatchObject({ parse_state: "parsed", location_id: location, vendor_guess_id: "sender-vendor",
+        attributed_by: source, attribution_conflict: true, account_location_id: "shop-a", account_vendor_id: "account-vendor" });
+      expect(matchReceiptToPo).not.toHaveBeenCalled();
+      expect(applyReceiptPoEffects).not.toHaveBeenCalled();
+      expect(attemptAutoLink).not.toHaveBeenCalled();
+    });
   it("fails closed on account lookup failure", async () => {
     const { sb, writes } = service("shop-a", [], true);
     response("001");

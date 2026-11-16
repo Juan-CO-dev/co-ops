@@ -1,5 +1,5 @@
 import { auditOperationalTaskOverride, canDoOperationalTask, canTriageUnattributedReceipt } from "@/lib/operational-task-access";
-import { receiptAutomationAllowed, type ReceiptAutomationState } from "@/lib/receipt-attribution-shared";
+import { receiptAutomationAllowed, receiptConflictKind, type ReceiptAutomationState } from "@/lib/receipt-attribution-shared";
 /**
  * Email-receipt ledger — the vendor-claim side of the two-way match (delivery-intake
  * P2, spec D4/D6; migration 0170). SERVER-ONLY, service-role client; the `receipts`
@@ -974,6 +974,13 @@ export interface UnlinkedReceiptView {
   docKind: string | null;
   attributedBy: "address" | "account" | "both" | "manual" | null;
   attributionConflict: boolean;
+  /** W20/B194: why the receipt is flagged. "vendor" = the document's account number is on file
+   *  for a different vendor than the one on the receipt; "shop" = address and account disagree
+   *  on the shop. Null when it is not flagged. */
+  conflictKind: "vendor" | "shop" | null;
+  /** Names for the flag's wording (only loaded for flagged rows; null otherwise or when unknown). */
+  vendorName: string | null;
+  accountVendorName: string | null;
   addressLocationName: string | null;
   accountLocationId: string | null;
   accountLocationName: string | null;
@@ -1009,11 +1016,11 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb
     .from("email_receipts")
-    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths, linked_po_id, parse_state, doc_kind, attributed_by, attribution_conflict, account_location_id")
+    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths, linked_po_id, parse_state, doc_kind, attributed_by, attribution_conflict, account_location_id, account_vendor_id")
     .is("linked_delivery_id", null)
     .or(`location_id.eq.${locationId},location_id.is.null`)
     .order("received_at", { ascending: false })
-    .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null; linked_po_id: string | null; parse_state: "unparsed" | "parsed" | "failed"; doc_kind: string | null; attributed_by: UnlinkedReceiptView["attributedBy"]; attribution_conflict: boolean; account_location_id: string | null }>>();
+    .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null; linked_po_id: string | null; parse_state: "unparsed" | "parsed" | "failed"; doc_kind: string | null; attributed_by: UnlinkedReceiptView["attributedBy"]; attribution_conflict: boolean; account_location_id: string | null; account_vendor_id: string | null }>>();
   if (error) throw new Error(`listUnlinkedReceipts: ${error.message}`);
 
   const list = rows ?? [];
@@ -1024,6 +1031,15 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
     const { data, error: nameError } = await sb.from("locations").select("id, name").in("id", conflictLocations);
     if (nameError) throw new Error("Receipt conflict location lookup failed");
     for (const row of data ?? []) locationNames.set(row.id, row.name);
+  }
+  // W20/B194: a vendor flag names both vendors (the sender's and the account's).
+  const conflictVendors = [...new Set(list.filter((r) => r.attribution_conflict)
+    .flatMap((r) => [r.vendor_guess_id, r.account_vendor_id]).filter((id): id is string => !!id))];
+  const vendorNames = new Map<string, string>();
+  if (conflictVendors.length) {
+    const { data, error: vendorError } = await sb.from("vendors").select("id, name").in("id", conflictVendors);
+    if (vendorError) throw new Error("Receipt conflict vendor lookup failed");
+    for (const row of data ?? []) vendorNames.set(row.id, row.name);
   }
 
   // Batch-join the linked POs' display_code + status (one query over the distinct po ids;
@@ -1059,6 +1075,9 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
         docKind: r.doc_kind,
         attributedBy: r.attributed_by,
         attributionConflict: r.attribution_conflict,
+        conflictKind: receiptConflictKind(r),
+        vendorName: r.attribution_conflict && r.vendor_guess_id ? vendorNames.get(r.vendor_guess_id) ?? null : null,
+        accountVendorName: r.attribution_conflict && r.account_vendor_id ? vendorNames.get(r.account_vendor_id) ?? null : null,
         addressLocationName: r.location_id ? locationNames.get(r.location_id) ?? null : null,
         accountLocationId: r.account_location_id ?? null,
         accountLocationName: r.account_location_id ? locationNames.get(r.account_location_id) ?? null : null,

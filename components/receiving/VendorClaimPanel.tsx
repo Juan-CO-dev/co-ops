@@ -360,10 +360,20 @@ function UnlinkedReceiptRow({
       </p>
       {r.attributionConflict ? (
         <div role="alert" className="text-xs text-co-cta-text">
-          <p>{t("receiving.claim.attribution_conflict")}</p>
-          <p>{t("receiving.claim.conflict_shops", { address: r.addressLocationName ?? "?", account: r.accountLocationName ?? "?" })}</p>
-          {r.canMove && r.accountLocationName ? <button type="button" className="min-h-[44px] px-3 font-bold underline" disabled={moving || busy} onClick={() => void move()}>
-            {t("receiving.claim.move_to", { shop: r.accountLocationName })}
+          {/* W20/B194: a vendor flag (the account number is on file for another vendor) reads
+              differently from a shop conflict; both stop every automatic match. */}
+          {r.conflictKind === "vendor" ? (
+            <p>{t("receiving.claim.vendor_mismatch", { account: r.accountVendorName ?? "?", sender: r.vendorName ?? "?" })}</p>
+          ) : (
+            <p>{t("receiving.claim.attribution_conflict")}</p>
+          )}
+          {r.conflictKind !== "vendor" || (r.locationId != null && r.accountLocationId != null && r.accountLocationId !== r.locationId) ? (
+            <p>{t("receiving.claim.conflict_shops", { address: r.addressLocationName ?? "?", account: r.accountLocationName ?? "?" })}</p>
+          ) : null}
+          {r.canMove && r.accountLocationName ? <button type="button" className="inline-flex min-h-[44px] items-center px-3 text-left font-bold underline" disabled={moving || busy} onClick={() => void move()}>
+            {r.conflictKind === "vendor" && r.accountLocationId === r.locationId
+              ? t("receiving.claim.use_account_vendor", { vendor: r.accountVendorName ?? "?" })
+              : t("receiving.claim.move_to", { shop: r.accountLocationName })}
           </button> : null}
           <PasswordModal open={stepUpOpen} onConfirm={() => { setStepUpOpen(false); void move(); }} onCancel={() => setStepUpOpen(false)} />
         </div>
