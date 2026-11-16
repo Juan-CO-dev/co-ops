@@ -5,6 +5,13 @@ export interface DetailOrder extends CustomerOrderRow {
   customer_id: string;
   source_kind: "toast" | "catering" | "ezcater";
   contact_masked?: boolean;
+  /** 0312 (W12/B176): set when Toast voided or deleted the order after it was linked; absent before 0312. */
+  voided_at?: string | null;
+}
+
+/** Orders that count: a voided order stays in the history (labelled) but never in visits or spend. */
+export function liveOrders<T extends { voided_at?: string | null }>(orders: readonly T[]): T[] {
+  return orders.filter((o) => !o.voided_at);
 }
 
 export function spendTotal(orders: readonly { total_cents: number | null }[]): number | null {
@@ -44,7 +51,7 @@ export function orderHistory(orders: readonly DetailOrder[], requestedPage: numb
       const items = (o.items ?? []).filter((i) => typeof i?.name === "string" && Number.isFinite(i.qty))
         .map((i) => ({ name: i.name, qty: i.qty })).sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name));
       return { date: o.business_date, locationId: o.location_id, channel: o.channel, source: o.source_kind,
-        totalCents: spendTotal([o]), items: items.slice(0, 3), moreItems: Math.max(0, items.length - 3) };
+        totalCents: spendTotal([o]), items: items.slice(0, 3), moreItems: Math.max(0, items.length - 3), voided: !!o.voided_at };
     });
   return { rows, total: orders.length, page, pages };
 }
