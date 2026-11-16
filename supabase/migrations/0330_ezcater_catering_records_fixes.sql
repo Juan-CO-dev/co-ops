@@ -32,7 +32,7 @@
 --      It needs 0312's customer_orders.voided_at at CALL time, not at create time (PL/pgSQL resolves
 --      columns when it runs), so 0330 and 0312 apply in either order; until both are in, the app
 --      treats the call as unavailable (42883 / 42703) and changes nothing.
---   4. B126, owner decision W23-1 a - reopen_ezcater_lead(lead, actor, expected shop) (NEW): the one
+--   4. B126, owner decision W23-1 a - reopen_ezcater_lead(lead, actor, expected shop, expected target) (NEW): the one
 --      human path out of Lost for an ezCater lead whose order ezCater UN-cancelled. Refuses by name
 --      unless: the actor is active at level 6+ (`reopen_forbidden`), the lead is an ezCater lead
 --      (`reopen_not_ezcater`), still at the shop the app authorized the actor for (`reopen_lead_moved`,
@@ -41,7 +41,10 @@
 --      (`reopen_not_lost`), a signed `uncancelled` notification is newer
 --      than every signed cancelled/rejected/failed one (`reopen_no_uncancel`), and the order is no
 --      longer cancelled (`reopen_still_cancelled`). Target: Confirmed when ezCater's status is
---      "accepted" (inquiry = not paid yet), else Inquiry. Writes the stage and one pipeline event;
+--      "accepted" (inquiry = not paid yet), else Inquiry, decided here under the lock; it must equal
+--      the target the app pre-validated (`reopen_target_changed`, review r2: the app checks the quote
+--      is readable by prep only when it expects Confirmed, so an accepted webhook committed between
+--      its read and this lock would otherwise confirm an unchecked quote). Writes the stage and one pipeline event;
 --      the app (lib/catering/pipeline.ts reopenEzcaterLead) binds the shop first, re-reserves prep on
 --      Confirmed and audits `catering.pipeline.reopen`. canTransition and the board are unchanged.
 --   5. B209 - reconcile_ezcater_toast(from, to) <- 0229, ONE change: it no longer takes one advisory
@@ -99,7 +102,7 @@ declare v_def text; v_dupes bigint; v_ack text;
 begin
   if to_regprocedure('public.create_catering_company(uuid,text,text,text[])') is not null
      or to_regprocedure('public.customer_orders_sync_ezcater_cancelled()') is not null
-     or to_regprocedure('public.reopen_ezcater_lead(uuid,uuid,uuid)') is not null then
+     or to_regprocedure('public.reopen_ezcater_lead(uuid,uuid,uuid,text)') is not null then
     raise exception '0330: already applied';
   end if;
   if to_regprocedure('public.reconcile_ezcater_toast(date,date)') is null
@@ -224,7 +227,7 @@ revoke all on function public.customer_orders_sync_ezcater_cancelled() from publ
 grant execute on function public.customer_orders_sync_ezcater_cancelled() to service_role;
 
 -- ───────────────────────────── 4. B126: reopen an un-cancelled ezCater lead ─────────────────────────────
-create function public.reopen_ezcater_lead(p_lead_id uuid, p_actor_id uuid, p_expected_location_id uuid)
+create function public.reopen_ezcater_lead(p_lead_id uuid, p_actor_id uuid, p_expected_location_id uuid, p_expected_target text)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_provider text; v_stage text; v_location uuid; v_status text; v_pending text; v_loss timestamptz; v_unc timestamptz; v_target text;
 begin
@@ -254,14 +257,17 @@ begin
   end if;
   -- Owner decision W23-1 a: accepted = confirmed (inquiry = not paid yet).
   v_target := case when lower(coalesce(v_status, '')) = 'accepted' then 'confirmed' else 'inquiry' end;
+  -- Review r2 (BC-007/BC-040): prep readiness was checked by the app only for the target it expected.
+  -- A target that moved since (an accepted webhook in between) is refused; the app re-reads and retries.
+  if v_target is distinct from p_expected_target then raise exception 'reopen_target_changed'; end if;
   update public.catering_pipeline set stage = v_target, updated_at = clock_timestamp()
    where id = p_lead_id and stage = 'lost';
   insert into public.catering_pipeline_events(pipeline_id, from_stage, to_stage, note, actor_id)
     values (p_lead_id, 'lost', v_target, 'Reopened after ezCater un-cancel', p_actor_id);
   return jsonb_build_object('from_stage', 'lost', 'to_stage', v_target);
 end $$;
-revoke all on function public.reopen_ezcater_lead(uuid,uuid,uuid) from public, anon, authenticated;
-grant execute on function public.reopen_ezcater_lead(uuid,uuid,uuid) to service_role;
+revoke all on function public.reopen_ezcater_lead(uuid,uuid,uuid,text) from public, anon, authenticated;
+grant execute on function public.reopen_ezcater_lead(uuid,uuid,uuid,text) to service_role;
 
 -- ───────────────────────────── 5. B209: reconcile_ezcater_toast <- 0229, provider locks bounded ─────────────────────────────
 create or replace function public.reconcile_ezcater_toast(p_from date,p_to date) returns jsonb
@@ -350,7 +356,7 @@ begin
   foreach f in array array[
     'public.create_catering_company(uuid,text,text,text[])'::regprocedure,
     'public.customer_orders_sync_ezcater_cancelled()'::regprocedure,
-    'public.reopen_ezcater_lead(uuid,uuid,uuid)'::regprocedure,
+    'public.reopen_ezcater_lead(uuid,uuid,uuid,text)'::regprocedure,
     'public.reconcile_ezcater_toast(date,date)'::regprocedure
   ] loop
     if has_function_privilege('anon', f, 'EXECUTE') or has_function_privilege('authenticated', f, 'EXECUTE')

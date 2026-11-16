@@ -812,6 +812,7 @@
   "catering.pipeline.error.reopen_not_lost": "This lead is no longer Lost. Reload to see where it is.",
   "catering.pipeline.error.reopen_no_uncancel": "ezCater hasn't un-cancelled this order since it was cancelled.",
   "catering.pipeline.error.reopen_still_cancelled": "ezCater still shows this order as cancelled. Check ezManage.",
+  "catering.pipeline.error.reopen_target_changed": "ezCater changed this order while you were reopening it. Try again.",
   "catering.pipeline.error.reopen_unavailable": "Reopening isn't available yet. Try again later.",
   "catering.pipeline.no_moves": "This lead is closed — no further moves.",
   "catering.pipeline.confirm_final.title": "Move this lead to {stage}?",

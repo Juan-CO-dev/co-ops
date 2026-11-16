@@ -16,11 +16,15 @@ const state = vi.hoisted(() => ({
   rpc: vi.fn(),
 }));
 const reserve = vi.hoisted(() => vi.fn(async () => undefined));
+const prep = vi.hoisted(() => {
+  class PrepDemandNeedsRepairError extends Error {}
+  return { PrepDemandNeedsRepairError, ready: vi.fn(async (_sb: unknown, _id: string) => undefined) };
+});
 const audit = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined));
 vi.mock("@/lib/audit", () => ({ audit }));
 vi.mock("@/lib/catering/prep-demand", () => ({
   reservePrepDemand: reserve, consumePrepDemand: vi.fn(), releasePrepDemand: vi.fn(),
-  assertQuoteReadyForPrep: vi.fn(async () => undefined), PrepDemandNeedsRepairError: class extends Error {},
+  assertQuoteReadyForPrep: prep.ready, PrepDemandNeedsRepairError: prep.PrepDemandNeedsRepairError,
 }));
 vi.mock("@/lib/catering/ezcater-detail", () => ({ loadCateringReader: vi.fn(), canReadCateringLead: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({
@@ -45,6 +49,7 @@ const lostLead = { id: "lead-1", stage: "lost", lead_source: "ezcater", external
 
 beforeEach(() => {
   vi.clearAllMocks();
+  prep.ready.mockImplementation(async () => undefined);
   state.lead = { ...lostLead };
   state.order = { status: "accepted", pending_event_key: null };
   state.events = [{ event_key: "cancelled", received_at: "2026-11-10T10:00:00Z" }, { event_key: "uncancelled", received_at: "2026-11-10T11:00:00Z" }];
@@ -76,7 +81,10 @@ describe("ezcaterReopenTarget (the button rule)", () => {
 describe("reopenEzcaterLead", () => {
   it("reopens to Confirmed, re-reserves prep and audits catering.pipeline.reopen", async () => {
     expect(await reopenEzcaterLead(actor("gm", [SHOP]), "lead-1")).toEqual({ fromStage: "lost", toStage: "confirmed" });
-    expect(state.rpc).toHaveBeenCalledWith("reopen_ezcater_lead", { p_lead_id: "lead-1", p_actor_id: "u-1", p_expected_location_id: SHOP });
+    expect(state.rpc).toHaveBeenCalledWith("reopen_ezcater_lead", {
+      p_lead_id: "lead-1", p_actor_id: "u-1", p_expected_location_id: SHOP, p_expected_target: "confirmed",
+    });
+    expect(prep.ready).toHaveBeenCalledTimes(1);
     expect(reserve).toHaveBeenCalledTimes(1);
     expect(audit.mock.calls.map(([a]) => (a as { action: string }).action)).toContain("catering.pipeline.reopen");
   });
@@ -85,7 +93,51 @@ describe("reopenEzcaterLead", () => {
     state.order = { status: null, pending_event_key: null };
     state.rpc.mockResolvedValue({ data: { from_stage: "lost", to_stage: "inquiry" }, error: null });
     expect((await reopenEzcaterLead(actor("gm", [SHOP]), "lead-1")).toStage).toBe("inquiry");
+    expect(state.rpc.mock.calls[0]?.[1]).toMatchObject({ p_expected_target: "inquiry" });
     expect(reserve).not.toHaveBeenCalled();
+  });
+
+  describe("review r2 (BC-007/BC-040): the target can change between the advisory read and the lock", () => {
+    // The advisory read sees ezCater 'submitted' (Inquiry: no readiness check); an accepted webhook
+    // commits before the RPC takes the provider lock; SQL refuses `reopen_target_changed`.
+    const interleave = () => {
+      state.order = { status: "submitted", pending_event_key: null };
+      state.rpc.mockImplementationOnce(async () => {
+        state.order = { status: "accepted", pending_event_key: null }; // the webhook won the race
+        return { data: null, error: { code: "P0001", message: "reopen_target_changed" } };
+      });
+    };
+
+    it("an unrepaired quote is refused quote_needs_repair on the re-read; the lead is never confirmed", async () => {
+      interleave();
+      prep.ready.mockImplementation(async () => { throw new prep.PrepDemandNeedsRepairError("legacy package line"); });
+      await expect(reopenEzcaterLead(actor("gm", [SHOP]), "lead-1")).rejects.toMatchObject({ status: 409, code: "quote_needs_repair" });
+      expect(state.rpc).toHaveBeenCalledTimes(1);
+      expect(state.rpc.mock.calls[0]?.[1]).toMatchObject({ p_expected_target: "inquiry" });
+      expect(reserve).not.toHaveBeenCalled();
+      expect(audit.mock.calls.map(([a]) => (a as { action: string }).action)).not.toContain("catering.pipeline.reopen");
+    });
+
+    it("a ready quote is re-checked and the retry passes the new target", async () => {
+      interleave();
+      expect(await reopenEzcaterLead(actor("gm", [SHOP]), "lead-1")).toEqual({ fromStage: "lost", toStage: "confirmed" });
+      expect(state.rpc.mock.calls.map((c) => (c[1] as { p_expected_target: string }).p_expected_target)).toEqual(["inquiry", "confirmed"]);
+      expect(prep.ready).toHaveBeenCalledTimes(1);
+      expect(reserve).toHaveBeenCalledTimes(1);
+    });
+
+    it("a target that keeps changing is a named 409 after one retry, with its own en + es message", async () => {
+      state.rpc.mockResolvedValue({ data: null, error: { code: "P0001", message: "reopen_target_changed" } });
+      await expect(reopenEzcaterLead(actor("gm", [SHOP]), "lead-1")).rejects.toMatchObject({ status: 409, code: "reopen_target_changed" });
+      expect(state.rpc).toHaveBeenCalledTimes(2);
+      const { resolveErrorKey } = await import("@/components/catering/pipeline/shared");
+      const { readFileSync } = await import("node:fs");
+      expect(resolveErrorKey("reopen_target_changed")).toBe("catering.pipeline.error.reopen_target_changed");
+      for (const lang of ["en", "es"]) {
+        const dict = JSON.parse(readFileSync(`lib/i18n/${lang}.json`, "utf8")) as Record<string, string>;
+        expect(dict["catering.pipeline.error.reopen_target_changed"], lang).toBeTruthy();
+      }
+    });
   });
 
   it("a GM of another shop is refused before any RPC", async () => {

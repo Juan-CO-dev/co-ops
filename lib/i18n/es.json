@@ -812,6 +812,7 @@
   "catering.pipeline.error.reopen_not_lost": "Este pedido ya no está en Perdido. Recarga para ver dónde está.",
   "catering.pipeline.error.reopen_no_uncancel": "ezCater no ha reactivado este pedido desde que se canceló.",
   "catering.pipeline.error.reopen_still_cancelled": "ezCater todavía muestra este pedido como cancelado. Revisa ezManage.",
+  "catering.pipeline.error.reopen_target_changed": "ezCater cambió este pedido mientras lo reabrías. Inténtalo de nuevo.",
   "catering.pipeline.error.reopen_unavailable": "Reabrir todavía no está disponible. Inténtalo más tarde.",
   "catering.pipeline.no_moves": "Este lead está cerrado: no hay más movimientos.",
   "catering.pipeline.confirm_final.title": "¿Mover este lead a {stage}?",

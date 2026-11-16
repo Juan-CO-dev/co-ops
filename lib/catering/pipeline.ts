@@ -605,7 +605,7 @@ export async function loadEzcaterReopenTarget(sb: ReturnType<typeof getServiceRo
   });
 }
 
-const REOPEN_REFUSALS = new Set(["reopen_forbidden", "reopen_not_ezcater", "reopen_lead_moved", "reopen_not_lost", "reopen_no_uncancel", "reopen_still_cancelled"]);
+const REOPEN_REFUSALS = new Set(["reopen_forbidden", "reopen_not_ezcater", "reopen_lead_moved", "reopen_not_lost", "reopen_no_uncancel", "reopen_still_cancelled", "reopen_target_changed"]);
 
 export async function reopenEzcaterLead(actor: AuthContext, id: string): Promise<{ fromStage: "lost"; toStage: "confirmed" | "inquiry" }> {
   const sb = getServiceRoleClient();
@@ -614,27 +614,36 @@ export async function reopenEzcaterLead(actor: AuthContext, id: string): Promise
   if (lErr) throw new Error(`reopenEzcaterLead load: ${lErr.message}`);
   if (!lead) throw new CateringPipelineError(404, "not_found", "Lead not found");
   assertCanWriteLead(actor, lead.location_id); // before any write or RPC
-  const expected = await loadEzcaterReopenTarget(sb, id);
-  // Same B7c r5 rule as moveStage: never confirm a quote prep demand cannot read.
-  if (expected === "confirmed") {
-    try { await assertQuoteReadyForPrep(sb, id); }
-    catch (e) {
-      if (e instanceof PrepDemandNeedsRepairError) throw new CateringPipelineError(409, "quote_needs_repair", "This quote was saved during an app update and can't be used for prep yet");
-      throw e;
+  let result: { from_stage: "lost"; to_stage: "confirmed" | "inquiry" } | null = null;
+  // Review r2 (BC-007/BC-040): the target read here is advisory. SQL decides it again under the
+  // provider lock and refuses `reopen_target_changed` when it differs from the one validated below
+  // (an accepted webhook committed in between would otherwise confirm a quote whose prep readiness
+  // was never checked). One re-read + re-check + retry, then the named 409.
+  for (let attempt = 0; attempt < 2 && !result; attempt++) {
+    const expected = await loadEzcaterReopenTarget(sb, id);
+    // Same B7c r5 rule as moveStage: never confirm a quote prep demand cannot read.
+    if (expected === "confirmed") {
+      try { await assertQuoteReadyForPrep(sb, id); }
+      catch (e) {
+        if (e instanceof PrepDemandNeedsRepairError) throw new CateringPipelineError(409, "quote_needs_repair", "This quote was saved during an app update and can't be used for prep yet");
+        throw e;
+      }
     }
+    // Review r1 (BC-001/BC-007): the RPC re-checks, under the provider lock, that the lead is still at
+    // the shop authorized above; a transfer committed in between is `reopen_lead_moved`, never a reopen
+    // of another shop's order.
+    const { data, error } = await sb.rpc("reopen_ezcater_lead", {
+      p_lead_id: id, p_actor_id: actor.user.id, p_expected_location_id: lead.location_id, p_expected_target: expected,
+    });
+    if (error && ["PGRST202", "42883"].includes(String(error.code))) {
+      throw new CateringPipelineError(503, "reopen_unavailable", "Reopen isn't available yet");
+    }
+    if (error?.message === "reopen_target_changed" && attempt === 0) continue;
+    if (error && REOPEN_REFUSALS.has(error.message)) throw new CateringPipelineError(409, error.message);
+    if (error || !data) throw new Error(`reopenEzcaterLead: ${error?.message ?? "no result"}`);
+    result = data as { from_stage: "lost"; to_stage: "confirmed" | "inquiry" };
   }
-  // Review r1 (BC-001/BC-007): the RPC re-checks, under the provider lock, that the lead is still at
-  // the shop authorized above; a transfer committed in between is `reopen_lead_moved`, never a reopen
-  // of another shop's order.
-  const { data, error } = await sb.rpc("reopen_ezcater_lead", {
-    p_lead_id: id, p_actor_id: actor.user.id, p_expected_location_id: lead.location_id,
-  });
-  if (error && ["PGRST202", "42883"].includes(String(error.code))) {
-    throw new CateringPipelineError(503, "reopen_unavailable", "Reopen isn't available yet");
-  }
-  if (error && REOPEN_REFUSALS.has(error.message)) throw new CateringPipelineError(409, error.message);
-  if (error || !data) throw new Error(`reopenEzcaterLead: ${error?.message ?? "no result"}`);
-  const result = data as { from_stage: "lost"; to_stage: "confirmed" | "inquiry" };
+  if (!result) throw new CateringPipelineError(409, "reopen_target_changed");
   try {
     if (result.to_stage === "confirmed") await reservePrepDemand(actor, id);
   } catch (e) {

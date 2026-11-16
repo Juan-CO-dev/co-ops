@@ -203,38 +203,59 @@ async function reopenCases(db) {
         ('${id('9000', 3)}', 'lost', 'ezcater', 'R3'),   -- uncancelled but status still cancelled -> no
         ('${id('9000', 4)}', 'lost', 'web', null),       -- not ezCater
         ('${id('9000', 5)}', 'lost', 'ezcater', 'R5'),   -- uncancel, status null -> inquiry
-        ('${id('9000', 6)}', 'lost', 'ezcater', 'R6');   -- uncancel only UNSIGNED -> no
+        ('${id('9000', 6)}', 'lost', 'ezcater', 'R6'),   -- uncancel only UNSIGNED -> no
+        ('${id('9000', 7)}', 'lost', 'ezcater', 'R7');   -- r2: app read Inquiry, then ezCater accepted
       insert into ezcater_orders(provider_uuid, lead_id, status, pending_event_key) values
         ('R1', '${id('9000', 1)}', 'accepted', null), ('R2', '${id('9000', 2)}', 'accepted', null),
-        ('R3', '${id('9000', 3)}', 'cancelled', null), ('R5', '${id('9000', 5)}', null, null), ('R6', '${id('9000', 6)}', 'accepted', null);
+        ('R3', '${id('9000', 3)}', 'cancelled', null), ('R5', '${id('9000', 5)}', null, null), ('R6', '${id('9000', 6)}', 'accepted', null),
+        ('R7', '${id('9000', 7)}', 'submitted', null);
       insert into ezcater_events(entity_id, event_key, signature_valid, received_at) values
         ('R1', 'cancelled', true, now() - interval '2 hours'), ('R1', 'uncancelled', true, now() - interval '1 hour'),
         ('R2', 'uncancelled', true, now() - interval '2 hours'), ('R2', 'cancelled', true, now() - interval '1 hour'),
         ('R3', 'cancelled', true, now() - interval '2 hours'), ('R3', 'uncancelled', true, now() - interval '1 hour'),
         ('R5', 'cancelled', true, now() - interval '2 hours'), ('R5', 'uncancelled', true, now() - interval '1 hour'),
-        ('R6', 'cancelled', true, now() - interval '2 hours'), ('R6', 'uncancelled', false, now() - interval '1 hour');
+        ('R6', 'cancelled', true, now() - interval '2 hours'), ('R6', 'uncancelled', false, now() - interval '1 hour'),
+        ('R7', 'cancelled', true, now() - interval '2 hours'), ('R7', 'uncancelled', true, now() - interval '1 hour');
       update catering_pipeline set location_id = '${SHOP}' where id = '${id('9000', 1)}';`);
     await db.exec('set local role service_role');
-    const reopen = (lead, actor = ACTOR, shop = null) => db.query(`select reopen_ezcater_lead($1, $2, $3) r`, [lead, actor, shop]);
-    await refuses(db, () => reopen(id('9000', 1), EMPLOYEE, SHOP), 'reopen_forbidden');
+    // r2: the 4th argument is the target the app pre-validated (prep readiness only runs for Confirmed).
+    const reopen = (lead, actor = ACTOR, shop = null, target = 'inquiry') =>
+      db.query(`select reopen_ezcater_lead($1, $2, $3, $4) r`, [lead, actor, shop, target]);
+    await refuses(db, () => reopen(id('9000', 1), EMPLOYEE, SHOP, 'confirmed'), 'reopen_forbidden');
     // Review r1 P2 (BC-001/BC-007): the app authorized the actor for the lead's shop BEFORE the
     // provider lock; a transfer committed in between moved the lead. Under the lock the RPC compares
     // the shop the app authorized with the lead's shop now, and refuses by name.
-    await refuses(db, () => reopen(id('9000', 1), ACTOR, id('8000', 4)), 'reopen_lead_moved');
-    await refuses(db, () => reopen(id('9000', 1), ACTOR, null), 'reopen_lead_moved');
+    await refuses(db, () => reopen(id('9000', 1), ACTOR, id('8000', 4), 'confirmed'), 'reopen_lead_moved');
+    await refuses(db, () => reopen(id('9000', 1), ACTOR, null, 'confirmed'), 'reopen_lead_moved');
     check((await one(db, `select stage from catering_pipeline where id = $1`, [id('9000', 1)])).stage === 'lost', 'B126 r1: a moved lead stays Lost');
-    const r1 = (await one(db, `select reopen_ezcater_lead($1, $2, $3) r`, [id('9000', 1), ACTOR, SHOP])).r;
+    // Review r2 P2 (BC-007/BC-040): the app checks prep readiness only when it expects Confirmed.
+    // A target that differs under the lock (here: the app read Inquiry, so it skipped the check) is
+    // refused by name and the lead stays Lost; the app re-reads, re-checks and retries.
+    await refuses(db, () => reopen(id('9000', 1), ACTOR, SHOP, 'inquiry'), 'reopen_target_changed');
+    await refuses(db, () => reopen(id('9000', 1), ACTOR, SHOP, null), 'reopen_target_changed');
+    check((await one(db, `select stage from catering_pipeline where id = $1`, [id('9000', 1)])).stage === 'lost', 'B126 r2: a changed target stays Lost');
+    const r1 = (await one(db, `select reopen_ezcater_lead($1, $2, $3, $4) r`, [id('9000', 1), ACTOR, SHOP, 'confirmed'])).r;
     check(r1.from_stage === 'lost' && r1.to_stage === 'confirmed', 'B126: accepted -> Confirmed (W23-1 a)');
     check((await one(db, `select stage from catering_pipeline where id = $1`, [id('9000', 1)])).stage === 'confirmed', 'B126: stage written');
     const ev = await one(db, `select count(*)::int n, max(from_stage) f, max(to_stage) t, max(actor_id::text) a from catering_pipeline_events where pipeline_id = $1`, [id('9000', 1)]);
     check(ev.n === 1 && ev.f === 'lost' && ev.t === 'confirmed' && ev.a === ACTOR, 'B126: one pipeline event by the actor');
-    await refuses(db, () => reopen(id('9000', 1), ACTOR, SHOP), 'reopen_not_lost');
+    await refuses(db, () => reopen(id('9000', 1), ACTOR, SHOP, 'confirmed'), 'reopen_not_lost');
     await refuses(db, () => reopen(id('9000', 2)), 'reopen_no_uncancel');
     await refuses(db, () => reopen(id('9000', 3)), 'reopen_still_cancelled');
     await refuses(db, () => reopen(id('9000', 4)), 'reopen_not_ezcater');
     await refuses(db, () => reopen(id('9000', 6)), 'reopen_no_uncancel');
-    const r5 = (await one(db, `select reopen_ezcater_lead($1, $2, $3) r`, [id('9000', 5), ACTOR, null])).r;
+    await refuses(db, () => reopen(id('9000', 5), ACTOR, null, 'confirmed'), 'reopen_target_changed');
+    const r5 = (await one(db, `select reopen_ezcater_lead($1, $2, $3, $4) r`, [id('9000', 5), ACTOR, null, 'inquiry'])).r;
     check(r5.to_stage === 'inquiry', 'B126: not accepted -> Inquiry');
+    // r2 interleaving: the app's advisory read saw 'submitted' (Inquiry, readiness skipped); an
+    // accepted webhook then commits before the RPC takes the provider lock.
+    check((await one(db, `select stage from catering_pipeline where id = $1`, [id('9000', 7)])).stage === 'lost', 'B126 r2: R7 starts Lost');
+    await db.exec(`update ezcater_orders set status = 'accepted' where provider_uuid = 'R7'`);
+    await refuses(db, () => reopen(id('9000', 7), ACTOR, null, 'inquiry'), 'reopen_target_changed');
+    check((await one(db, `select stage from catering_pipeline where id = $1`, [id('9000', 7)])).stage === 'lost', 'B126 r2: never Confirmed without the readiness check');
+    check((await one(db, `select count(*)::int n from catering_pipeline_events where pipeline_id = $1`, [id('9000', 7)])).n === 0, 'B126 r2: no event on refusal');
+    const r7 = (await one(db, `select reopen_ezcater_lead($1, $2, $3, $4) r`, [id('9000', 7), ACTOR, null, 'confirmed'])).r;
+    check(r7.to_stage === 'confirmed', 'B126 r2: the retry with the re-checked target reopens');
   } finally { await db.exec('rollback'); }
 }
 

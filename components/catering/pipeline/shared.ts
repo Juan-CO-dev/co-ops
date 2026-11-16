@@ -74,6 +74,7 @@ const KNOWN_ERROR_CODES = new Set([
   "reopen_not_lost",
   "reopen_no_uncancel",
   "reopen_still_cancelled",
+  "reopen_target_changed", // review r2: ezCater's status changed while reopening
   "reopen_unavailable",
   "generic",
   "network",
