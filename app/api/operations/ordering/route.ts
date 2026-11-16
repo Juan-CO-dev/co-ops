@@ -88,11 +88,13 @@ export async function POST(req: NextRequest) {
         poError: res.poError,
         poSkipped: res.poSkipped,
         poMerged: res.poMerged,
+        poZeroFailed: res.poZeroFailed,
       },
       201,
     );
   } catch (e) {
-    if (e instanceof OrderingError) return jsonError(e.status, e.code, { message: e.message });
+    // A per-line refusal names its SKU (`no_par`, W18/B026) so the walk can point at the row.
+    if (e instanceof OrderingError) return jsonError(e.status, e.code, { message: e.message, ...(e.skuId ? { skuId: e.skuId } : {}) });
     throw e;
   }
 }

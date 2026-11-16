@@ -38,8 +38,8 @@ const view: SkuItemView = {
   connections: { uses: [{ id: "r", name: "Italian build" }], menuItems: [{ id: "m", name: "Italian", nameEs: "Italiano", cost: 2.1 }] },
   missing: [{ code: "no_rhythm", blocks: [], degrades: ["order"] }],
   history: [
-    { id: "sv", scope: "shop", active: true, effectiveFrom: "2026-10-10T00:00:00Z", retiredAt: null, who: "Ana", labels: ["case", "bag"] },
-    { id: "gv-old", scope: "global", active: false, effectiveFrom: "2026-08-01T00:00:00Z", retiredAt: "2026-09-01T00:00:00Z", who: null, labels: ["case", "bag"] },
+    { id: "sv", scope: "shop", active: true, effectiveFrom: "2026-10-10T00:00:00Z", retiredAt: null, who: "Ana", labels: ["case", "bag"], baseline: false },
+    { id: "gv-old", scope: "global", active: false, effectiveFrom: "2026-08-01T00:00:00Z", retiredAt: "2026-09-01T00:00:00Z", who: null, labels: ["case", "bag"], baseline: false },
   ],
   openRequests: [{ id: "req", filedBy: "Luis", filedAt: "2026-10-14T13:00:00Z", note: "Bags are bigger", proposal: { innerCount: 4, eachWeight: 10, eachUnit: "lb" }, photoId: "ph-door-1",
     additions: [{ id: "add-1", filedBy: "Mia", filedAt: "2026-10-14T15:00:00Z", note: "Second case too", proposal: null, photoId: "ph-door-2" }] }],

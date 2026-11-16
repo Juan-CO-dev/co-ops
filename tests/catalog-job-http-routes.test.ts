@@ -282,7 +282,7 @@ it("localizes malformed JSON without exposing parser details",async()=>{
 const legacyWrite = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/admin/catalog', async original => ({ ...await original<typeof import('@/lib/admin/catalog')>(), setItemType: legacyWrite }));
 vi.mock('@/lib/admin/sku-versions', async original => ({ ...await original<typeof import('@/lib/admin/sku-versions')>(), saveSkuPackVersion: legacyWrite, restoreSkuPackVersion: legacyWrite, retireShopPackVersion: legacyWrite, saveSkuPrice: legacyWrite, retireShopPriceLane: legacyWrite }));
-vi.mock('@/lib/catalog/sku-item', async original => ({ ...await original<typeof import('@/lib/catalog/sku-item')>(), applyPackChange: legacyWrite, applyPriceChange: legacyWrite, setSkuPriceBasis: legacyWrite }));
+vi.mock('@/lib/catalog/sku-item', async original => ({ ...await original<typeof import('@/lib/catalog/sku-item')>(), applyPackChange: legacyWrite, applyPackBackToDefault: legacyWrite, applyPriceChange: legacyWrite, setSkuPriceBasis: legacyWrite }));
 vi.mock('@/lib/pack-change-requests', async original => ({ ...await original<typeof import('@/lib/pack-change-requests')>(), dismissPackChangeRequest: legacyWrite }));
 vi.mock('@/lib/admin/recipe-versions', async original => ({ ...await original<typeof import('@/lib/admin/recipe-versions')>(), saveRecipeLines: legacyWrite, restoreRecipeVersion: legacyWrite, retireShopRecipeVersion: legacyWrite }));
 vi.mock('@/lib/catalog/recipe-item', async original => ({ ...await original<typeof import('@/lib/catalog/recipe-item')>(), applyRecipeChange: legacyWrite }));
@@ -302,8 +302,8 @@ const legacy = [
  ['recipe/[id]/restore','POST',{locationId:shop,fromVersionId:id,expectedVersionId:null,basedOnVersionId:null}],
  ['sku/[id]/pack','POST',{locationId:shop,levels,expectedLiveVersionId:null}],
  ['sku/[id]/pack/apply','POST',{target,levels,conversions:[],previewToken:'12345678'}],
- ['sku/[id]/pack/restore','POST',{locationId:shop,fromVersionId:id,expectedLiveVersionId:null}],
- ['sku/[id]/pack/back-to-default','POST',{locationId:shop,versionId:id}],
+ // W18/B107: /pack/restore no longer writes (its own contract below); Back to default carries its preview.
+ ['sku/[id]/pack/back-to-default','POST',{locationId:shop,versionId:id,conversions:[],previewToken:'12345678'}],
  ['sku/[id]/price','POST',{locationId:shop,unitPrice:12,effectiveDate:'2026-10-16'}],
  ['sku/[id]/price/apply','POST',{target,unitPrice:12,effectiveDate:'2026-10-16',previewToken:'12345678'}],
  ['sku/[id]/price/back-to-default','POST',{locationId:shop}],
@@ -336,5 +336,25 @@ describe.each(legacy)('%s existing mutation contract', (path, method, body) => {
   mocks.step.mockReturnValue({ok:false,code:'step_up_stale'});
   const response=await invoke();expect(response.status).toBe(403);
   expect(await response.json()).toMatchObject({code:'step_up_stale'});expect(legacyWrite).not.toHaveBeenCalled();
+ });
+});
+
+// W18/B107: an old tab's un-previewed Restore / Back to default is refused by name after the same
+// origin, session, floor and Tier E checks, and nothing reaches a writer.
+describe('the un-previewed pack restore and back to default', () => {
+ const post = async (path: string, body: unknown) => {
+  const route = await import(/* @vite-ignore */ `../app/api/admin/catalog/${path}/route`);
+  return route.POST(new NextRequest(`http://localhost/api/admin/catalog/${path}`,{method:'POST',body:JSON.stringify(body),headers:{origin:'http://localhost'}}),{params:Promise.resolve({id})}) as Promise<Response>;
+ };
+ it.each([
+  ['sku/[id]/pack/restore',{locationId:shop,fromVersionId:id,expectedLiveVersionId:null}],
+  ['sku/[id]/pack/back-to-default',{locationId:shop,versionId:id}],
+ ] as const)('%s answers 409 preview_required and writes nothing', async (path, body) => {
+  legacyWrite.mockReset();
+  const response = await post(path, body);
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ code: 'preview_required' });
+  expect(mocks.step).toHaveBeenCalledWith(actor,'E');
+  expect(legacyWrite).not.toHaveBeenCalled();
  });
 });

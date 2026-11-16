@@ -4,7 +4,7 @@ export const VENDOR_MAIL_CONTENT_STATES = ["pending", "fetched", "failed", "bloc
 export type VendorMailContentState = typeof VENDOR_MAIL_CONTENT_STATES[number];
 export const VENDOR_MAIL_STATUSES = ["received", "fetched", "parsed", "matched_po", "matched_delivery", "needs_person", "failed", "handled"] as const;
 export type VendorMailStatus = typeof VENDOR_MAIL_STATUSES[number];
-export const VENDOR_MAIL_FAILURE_CODES = ["no_content", "no_api_key", "api_error", "empty_response", "unparseable_json"] as const;
+export const VENDOR_MAIL_FAILURE_CODES = ["no_content", "no_api_key", "api_error", "empty_response", "unparseable_json", "truncated_output"] as const;
 export type VendorMailFailureCode = typeof VENDOR_MAIL_FAILURE_CODES[number];
 export interface VendorMailReader { role: RoleCode; active: boolean; locations: string[] }
 export function vendorMailRoleAllowed(role: string): role is RoleCode {

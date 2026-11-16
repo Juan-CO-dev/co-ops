@@ -25,7 +25,9 @@ beforeEach(() => {
       table === "vendor_items" ? [{ id: sku, vendor_id: vendor, location_id: null, units_per_pack: 1, each_size: null, each_measure: null, avg_oz_per_each: null }] : []
     }).then(resolve);
     return q;
-  } });
+  },
+  // W20/B197: recordDelivery writes a new delivery through ONE call (record_delivery_atomic).
+  rpc: async (fn: string, args: unknown) => { mocks.writes(fn, args); return { data: fn === "record_delivery_atomic" ? { delivery_id: delivery, item_ids: [] } : null, error: null }; } });
 });
 const writers = [
   ["recordDelivery", () => recordDelivery(actor, { locationId: shop, vendorId: vendor, deliveryDate: "2026-11-11", lines })],

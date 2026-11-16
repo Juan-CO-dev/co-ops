@@ -1,3 +1,5 @@
+import { SHOP_TASK_ALL_LOCATIONS_LEVEL } from "./locations";
+
 /** R7 policy floor only. Existing assignment, PIN, item validation and hard gates
  * remain additional app requirements; these predicates do not replace them. */
 export interface ChecklistWriteAuthority {
@@ -19,6 +21,20 @@ export interface ChecklistWriteTarget {
   referencesTemplateItemId: string | null;
 }
 
+/**
+ * Audit W05B (Juan 2026-11-15: "we routinely do tasks at the shops depending on what's needed and
+ * who is available"): the shop rule of every checklist task writer — getOrCreateInstance's create
+ * branch, completeItem, submitBatch, confirmInstance — and of the closing page's write UI. An ACTIVE
+ * actor who is an active member of the shop (`locations` holds active memberships only), or level 8+
+ * (MoO, owner, CGS) at any shop with no membership row. Below level 8 the membership stays required.
+ * The correction writers (requireCorrectionShop) and tagActualCompleter apply the same rule; SQL
+ * repeats it under the instance lock (checklist_actor_level, 0318).
+ */
+export function worksShopTasks(actor: ChecklistWriteAuthority, locationId: string): boolean {
+  return actor.active && (actor.locations.includes(locationId) || actor.level >= SHOP_TASK_ALL_LOCATIONS_LEVEL);
+}
+
+/** The R7 parity model of the pre-0277 PostgREST policies (tests only); not the writer gate. */
 function member(actor: ChecklistWriteAuthority | null, target: ChecklistWriteTarget): actor is ChecklistWriteAuthority {
   return actor !== null && actor.active && actor.locations.includes(target.locationId);
 }

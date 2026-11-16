@@ -14,6 +14,7 @@
  */
 import { capturedDayPulse, type PulseCapturedOrder } from "@/lib/toast/capture-pulse-shared";
 import { pctDelta } from "@/lib/midshift-sales-shared";
+import { PO_AT_OR_BEYOND_CONFIRMED } from "@/lib/po-status-shared";
 import { cutoffForOrderDay, cutoffMinutes, type CutoffRow, type RhythmRow, type RhythmSkip } from "@/lib/vendor-rhythm-shared";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { addDays, etClock, etWallTime } from "@/lib/report-digests-shared";
@@ -198,13 +199,13 @@ export interface OrderingInput {
   receivedPoIds: ReadonlySet<string>;
 }
 
-const AT_OR_BEYOND_CONFIRMED = new Set(["confirmed", "placed", "invoiced", "received", "reconciled"]);
 const OPEN_ORDER = new Set(["confirmed", "placed", "invoiced"]);
 const DAY_MS = 86_400_000;
 
 /** The instant a vendor's governing cutoff falls on ET day `day` at the shop, or null. */
 export function cutoffInstant(cutoffs: readonly VendorCutoff[], vendorId: string, locationId: string, day: string): { time: string; at: Date } | null {
-  // Another shop's row never governs here (cutoffForOrderDay falls back to ANY row on the dow).
+  // Another shop's row never governs here. cutoffForOrderDay refuses it too since W18/B105;
+  // this prefilter stays as defence in depth.
   const rows = cutoffs.filter((c) => c.vendorId === vendorId && (c.locationId === null || c.locationId === locationId));
   const time = cutoffForOrderDay(rows, locationId, etDayFromDate(day).dow);
   const mins = time === null ? null : cutoffMinutes(time);
@@ -246,7 +247,7 @@ export function orderingForDay(input: OrderingInput): OrderingDay {
     if (!cut || cut.at.getTime() > now.getTime()) continue;
     const from = cut.at.getTime() - DAY_MS;
     const orderedAt = (p: PoFact) => Date.parse(p.placedAt ?? p.confirmedAt ?? p.createdAt);
-    const orders = input.pos.filter((p) => p.vendorId === v.id && AT_OR_BEYOND_CONFIRMED.has(p.status)
+    const orders = input.pos.filter((p) => p.vendorId === v.id && PO_AT_OR_BEYOND_CONFIRMED.has(p.status)
       && orderedAt(p) > from && orderedAt(p) < dayEnd);
     if (orders.some((p) => orderedAt(p) <= cut.at.getTime())) continue;
     const name = vendorName.get(v.id) ?? v.name;
@@ -313,7 +314,7 @@ export function cutoffsTomorrow(input: Pick<OrderingInput, "day" | "locationId" 
     if (!cut) continue;
     const mine = input.pos.filter((p) => p.vendorId === v.id);
     const hasDraft = mine.some((p) => p.status === "draft" && (etDayOf(p.createdAt) === input.day || etDayOf(p.createdAt) === tomorrow));
-    const ordered = mine.some((p) => AT_OR_BEYOND_CONFIRMED.has(p.status) && Date.parse(p.placedAt ?? p.confirmedAt ?? p.createdAt) > cut.at.getTime() - DAY_MS);
+    const ordered = mine.some((p) => PO_AT_OR_BEYOND_CONFIRMED.has(p.status) && Date.parse(p.placedAt ?? p.confirmedAt ?? p.createdAt) > cut.at.getTime() - DAY_MS);
     out.push({ vendorId: v.id, vendorName: v.name, cutoffTime: cut.time, hasDraft, ordered });
   }
   return out.sort((a, b) => a.cutoffTime.localeCompare(b.cutoffTime) || a.vendorName.localeCompare(b.vendorName));

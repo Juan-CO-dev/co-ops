@@ -29,7 +29,8 @@ describe("a shop switch remounts the page body", () => {
     expect(readFileSync("app/admin/catalog/sku/[id]/page.tsx", "utf8")).toContain("key={itemClientKey(view.sku.id, view.scope)}");
     expect(itemClientKey("s", "a")).not.toBe(itemClientKey("s", "b"));
     const client = readFileSync("components/catalog/SkuItemClient.tsx", "utf8");
-    expect(client.match(/guard\.run\(/g)?.length).toBe(2);
+    // pack, price, and (W18/B107) the Back-to-default and Restore previews.
+    expect(client.match(/guard\.run\(/g)?.length).toBe(4);
     expect(client).toContain("target: preview.target,");
     expect(client).toContain("previewToken: preview.token");
   });
