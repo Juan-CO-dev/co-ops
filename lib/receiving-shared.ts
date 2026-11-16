@@ -338,6 +338,9 @@ export interface AppendLine {
  * NOTE: this is a pragmatic 60s window guard for P1 (no UI drives the append route
  * yet — continue-mode is deferred). A proper client-supplied idempotency token ships
  * with the continue-mode UI; this guard retires when that lands.
+ *
+ * It compares with ONE batch. addDeliveryLines calls it per earlier append through
+ * isDuplicateOfAnyBatch (W20/B199), never with the union of every line in the window.
  */
 export function isDuplicateAppend(incoming: AppendLine[], recent: AppendLine[]): boolean {
   if (incoming.length === 0 || recent.length === 0) return false;
@@ -352,6 +355,52 @@ export function isDuplicateAppend(incoming: AppendLine[], recent: AppendLine[]):
     counts.set(k, c - 1);
   }
   return true; // exact multiset match (equal lengths + every incoming tuple consumed)
+}
+
+/** A recently written line with the instant its insert stamped on it. */
+export interface DatedAppendLine extends AppendLine {
+  createdAt: string;
+}
+
+/** How long after the delivery header its CREATION lines can land (the two-step write that
+ *  predates migration 0327 inserts them a moment later; one transaction stamps the same instant). */
+export const CREATION_BATCH_SLACK_MS = 5_000;
+
+/**
+ * Split recently written lines into the APPENDS that wrote them, leaving out the lines the
+ * delivery was created with (W20/B199). `vendor_delivery_items.created_at` defaults to now(), the
+ * statement's transaction time, so every line of one insert carries one instant: equal
+ * `createdAt` = one batch. The creation batch is the delivery's FIRST line instant, when it sits
+ * at (or just after) the header's own instant. A delivery whose first lines came later (an
+ * in-progress delivery saved empty) has no creation batch among its lines: they were an append.
+ * Batches come back oldest first; timestamps are compared as the API returned them.
+ */
+export function priorAppendBatches(
+  recent: readonly DatedAppendLine[],
+  creation: { headerCreatedAt: string | null; firstLineCreatedAt: string | null },
+): AppendLine[][] {
+  const header = creation.headerCreatedAt == null ? Number.NaN : Date.parse(creation.headerCreatedAt);
+  const first = creation.firstLineCreatedAt == null ? Number.NaN : Date.parse(creation.firstLineCreatedAt);
+  const creationInstant = Number.isFinite(header) && Number.isFinite(first) && first - header >= 0 && first - header <= CREATION_BATCH_SLACK_MS
+    ? creation.firstLineCreatedAt : null;
+  const batches = new Map<string, AppendLine[]>();
+  for (const line of [...recent].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))) {
+    if (line.createdAt === creationInstant) continue;
+    const batch = batches.get(line.createdAt) ?? [];
+    batch.push({ skuId: line.skuId, level: line.level, qty: line.qty });
+    batches.set(line.createdAt, batch);
+  }
+  return [...batches.values()];
+}
+
+/**
+ * Is `incoming` an exact repeat of ONE earlier append (W20/B199)? The guard used to compare with
+ * the union of everything written in the window, which was wrong both ways: it refused a real
+ * second pallet identical to the creation lines, and it missed a repeat of append A once a
+ * different append B had followed it.
+ */
+export function isDuplicateOfAnyBatch(incoming: AppendLine[], batches: readonly AppendLine[][]): boolean {
+  return batches.some((batch) => isDuplicateAppend(incoming, batch));
 }
 
 // ── Offline intake drafts: the per-location draft SHELF ────────────────────────

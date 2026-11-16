@@ -61,11 +61,13 @@ import {
   findVendorMismatch,
   receivingPriceRows,
   storeRootPackPrice,
-  isDuplicateAppend,
+  isDuplicateOfAnyBatch,
   photoIdFromRef,
+  priorAppendBatches,
   rpcNotInstalled,
   sameInvoiceNumber,
   type AppendLine,
+  type DatedAppendLine,
   type MissingExpectedLine,
 } from "@/lib/receiving-shared";
 import { advanceToReceived } from "@/lib/purchase-orders";
@@ -1420,9 +1422,9 @@ export async function addDeliveryLines(
   requireReceive(actor);
   const sb = getServiceRoleClient();
   const { data: h, error } = await sb.from("vendor_deliveries")
-    .select("id, vendor_id, location_id, delivery_date, delivery_status")
+    .select("id, vendor_id, location_id, delivery_date, delivery_status, created_at")
     .eq("id", deliveryId)
-    .maybeSingle<{ id: string; vendor_id: string; location_id: string; delivery_date: string; delivery_status: string | null }>();
+    .maybeSingle<{ id: string; vendor_id: string; location_id: string; delivery_date: string; delivery_status: string | null; created_at: string | null }>();
   if (error) throw new Error(`addDeliveryLines header: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
@@ -1439,23 +1441,41 @@ export async function addDeliveryLines(
 
   // Double-submit guard (P1 pragmatic window): a network retry / double-tap on the
   // append route would duplicate every line (and each dup spawns its own credit).
-  // If the incoming batch is an EXACT multiset match of a batch already appended to
+  // If the incoming batch is an EXACT multiset match of ONE batch already appended to
   // THIS delivery in the last 60s, reject it. No UI drives this route yet
   // (continue-mode deferred); a proper client idempotency token ships with that UI.
+  //
+  // W20/B199: "one batch" is one earlier APPEND (the lines of one insert share one
+  // created_at), never the union of every line in the window, and never the lines the
+  // delivery was CREATED with. The union refused a real second pallet identical to the
+  // first one, added within a minute of creating the delivery, and it missed a repeat of
+  // an earlier append once a different append had followed it.
   const appendCutoff = new Date(Date.now() - 60_000).toISOString();
   const { data: recentRows, error: rErr } = await sb.from("vendor_delivery_items")
-    .select("vendor_item_id, received_level_label, received_qty_at_level, qty_received")
+    .select("vendor_item_id, received_level_label, received_qty_at_level, qty_received, created_at")
     .eq("delivery_id", h.id).gte("created_at", appendCutoff)
-    .returns<Array<{ vendor_item_id: string; received_level_label: string | null; received_qty_at_level: number | string | null; qty_received: number | string | null }>>();
+    .returns<Array<{ vendor_item_id: string; received_level_label: string | null; received_qty_at_level: number | string | null; qty_received: number | string | null; created_at: string }>>();
   if (rErr) throw new Error(`addDeliveryLines recent: ${rErr.message}`);
-  const recentAppend: AppendLine[] = (recentRows ?? []).map((r) => ({
+  const recentAppend: DatedAppendLine[] = (recentRows ?? []).map((r) => ({
     skuId: r.vendor_item_id, level: r.received_level_label,
     qty: num(r.received_qty_at_level) ?? num(r.qty_received) ?? 0,
+    createdAt: r.created_at,
   }));
   const incomingAppend: AppendLine[] = lines.map((l) => ({
     skuId: l.skuId, level: l.receivedLevelLabel?.trim() || null, qty: l.qtyReceived,
   }));
-  if (isDuplicateAppend(incomingAppend, recentAppend)) {
+  let firstLineCreatedAt: string | null = null;
+  if (recentAppend.length > 0) {
+    // The delivery's first line instant: with the header's own instant it says which recent
+    // lines (if any) are the ones the delivery was created with.
+    const { data: firstRows, error: fErr } = await sb.from("vendor_delivery_items")
+      .select("created_at").eq("delivery_id", h.id)
+      .order("created_at", { ascending: true }).limit(1)
+      .returns<Array<{ created_at: string }>>();
+    if (fErr) throw new Error(`addDeliveryLines first line: ${fErr.message}`);
+    firstLineCreatedAt = firstRows?.[0]?.created_at ?? null;
+  }
+  if (isDuplicateOfAnyBatch(incomingAppend, priorAppendBatches(recentAppend, { headerCreatedAt: h.created_at, firstLineCreatedAt }))) {
     throw new ReceivingError(409, "duplicate_append", "These lines were just added to this delivery — refresh before appending again.");
   }
 
