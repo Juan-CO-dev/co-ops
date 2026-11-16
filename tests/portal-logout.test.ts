@@ -8,13 +8,16 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { signCustomerJwt, hashToken, PORTAL_COOKIE_NAME } from "@/lib/portal/auth";
 
-const state = vi.hoisted(() => ({ row: null as null | { id: string; token_hash: string }, revoked: [] as string[], reads: 0 }));
+const state = vi.hoisted(() => ({
+  row: null as null | { id: string; token_hash: string }, revoked: [] as string[], reads: 0,
+  lookupError: null as null | { message: string }, revokeThrows: false,
+}));
 vi.mock("@/lib/supabase-server", () => ({
   getServiceRoleClient: () => ({
     from: () => {
       const q = {
         select: () => q, eq: () => q,
-        maybeSingle: async () => { state.reads++; return { data: state.row, error: null }; },
+        maybeSingle: async () => { state.reads++; return { data: state.lookupError ? null : state.row, error: state.lookupError }; },
       };
       return q;
     },
@@ -22,7 +25,10 @@ vi.mock("@/lib/supabase-server", () => ({
 }));
 vi.mock("@/lib/portal/session", async (orig) => {
   const real = await orig<typeof import("@/lib/portal/session")>();
-  return { ...real, revokeCustomerSession: vi.fn(async (id: string) => { state.revoked.push(id); return { rowsAffected: 1 }; }) };
+  return { ...real, revokeCustomerSession: vi.fn(async (id: string) => {
+    if (state.revokeThrows) throw new Error("revokeCustomerSession: connection reset");
+    state.revoked.push(id); return { rowsAffected: 1 };
+  }) };
 });
 
 import { POST } from "@/app/api/portal/logout/route";
@@ -36,7 +42,7 @@ const post = (cookie: string | null, origin: string | null = ORIGIN) => {
 };
 const claims = { customer_id: "cust-1", email: "c@example.test", session_id: "sess-1" };
 
-beforeEach(() => { state.row = null; state.revoked = []; state.reads = 0; });
+beforeEach(() => { state.row = null; state.revoked = []; state.reads = 0; state.lookupError = null; state.revokeThrows = false; });
 
 it("a valid session is revoked, the cookie cleared, and the browser sent to /order/start", async () => {
   const jwt = await signCustomerJwt(claims);
@@ -75,4 +81,43 @@ it("a cross-origin POST is refused with 403 before any read or revoke", async ()
   expect(res.status).toBe(403);
   expect(state.reads).toBe(0);
   expect(state.revoked).toEqual([]);
+});
+
+// Review r1 P2 (BC-032/BC-033): a database failure must not look like a sign-out. The cookie is KEPT
+// (it is the only handle a retry has on the session), and the browser goes back to the account page,
+// which says the sign-out did not go through and offers it again.
+it("a session lookup error keeps the cookie and reports a retryable failure", async () => {
+  const jwt = await signCustomerJwt(claims);
+  state.row = { id: "sess-1", token_hash: await hashToken(jwt) };
+  state.lookupError = { message: "upstream timeout" };
+  const res = await post(jwt);
+  expect(res.status).toBe(303);
+  expect(res.headers.get("location")).toBe(`${ORIGIN}/order/account?signout=failed`);
+  expect(res.headers.get("set-cookie") ?? "").not.toContain(`${PORTAL_COOKIE_NAME}=`);
+  expect(state.revoked).toEqual([]);
+});
+
+it("a revoke error keeps the cookie and reports a retryable failure; the retry revokes", async () => {
+  const jwt = await signCustomerJwt(claims);
+  state.row = { id: "sess-1", token_hash: await hashToken(jwt) };
+  state.revokeThrows = true;
+  const res = await post(jwt);
+  expect(res.headers.get("location")).toBe(`${ORIGIN}/order/account?signout=failed`);
+  expect(res.headers.get("set-cookie") ?? "").not.toContain(`${PORTAL_COOKIE_NAME}=`);
+  state.revokeThrows = false;
+  const retry = await post(jwt);
+  expect(retry.headers.get("location")).toBe(`${ORIGIN}/order/start`);
+  expect(state.revoked).toEqual(["sess-1"]);
+  expect(retry.headers.get("set-cookie") ?? "").toMatch(/Max-Age=0/i);
+});
+
+it("the account page tells the customer the sign-out failed, in en + es", async () => {
+  const { readFileSync } = await import("node:fs");
+  const page = readFileSync("app/order/account/page.tsx", "utf8");
+  expect(page).toMatch(/signout === "failed"/);
+  expect(page).toContain("PortalSignOutFailed");
+  for (const lang of ["en", "es"]) {
+    const dict = JSON.parse(readFileSync(`lib/i18n/${lang}.json`, "utf8")) as Record<string, string>;
+    expect(dict["order.portal.sign_out_failed"], lang).toBeTruthy();
+  }
 });

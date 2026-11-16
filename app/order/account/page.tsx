@@ -14,7 +14,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCustomerFromHeaders } from "@/lib/portal/session";
-import { PortalSignOut } from "@/components/order/PortalSignOut";
+import { PortalSignOut, PortalSignOutFailed } from "@/components/order/PortalSignOut";
 import { loadCustomerAccount } from "@/lib/portal/account";
 import type { CustomerOrder, CustomerStatus } from "@/lib/portal/account";
 import { quoteSettlement } from "@/lib/portal/payability-shared";
@@ -130,15 +130,22 @@ function OrderCard({ order }: { order: CustomerOrder }) {
   );
 }
 
-export default async function AccountPage() {
+export default async function AccountPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const ctx = await getCustomerFromHeaders();
   if (!ctx) redirect("/order/start"); // sign in first
+  // Review r1 (BC-032/BC-033): the logout route could not end the session and kept the cookie.
+  const signOutFailed = (await searchParams).signout === "failed";
 
   const { customer, orders } = await loadCustomerAccount(ctx.customerId);
   const displayName = customer?.name ?? customer?.email ?? ctx.email;
 
   return (
     <Shell>
+      {signOutFailed && <PortalSignOutFailed lang={PORTAL_LANG} />}
       <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-text-dim">Your account</p>
       <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Your orders</h1>
       <p className="mt-2 text-co-text-muted">

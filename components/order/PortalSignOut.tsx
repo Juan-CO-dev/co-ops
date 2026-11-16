@@ -15,3 +15,14 @@ export function PortalSignOut({ lang }: { lang: "en" | "es" }) {
     </form>
   );
 }
+
+/** Review r1 (BC-032/BC-033): shown on /order/account?signout=failed, where the logout route sends
+ *  the browser when the server could not end the session. The cookie was kept, so the header's
+ *  Sign out simply tries again. */
+export function PortalSignOutFailed({ lang }: { lang: "en" | "es" }) {
+  return (
+    <p role="alert" className="mb-6 rounded-2xl border border-co-danger bg-co-danger-surface px-5 py-4 text-sm font-semibold text-co-cta-text">
+      {serverT(lang, "order.portal.sign_out_failed")}
+    </p>
+  );
+}
