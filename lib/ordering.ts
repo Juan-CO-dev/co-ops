@@ -88,6 +88,7 @@ import { formatTime } from "@/lib/i18n/format";
 import { cutoffMissed } from "@/lib/dashboard-status-shared";
 import { PO_AT_OR_BEYOND_CONFIRMED } from "@/lib/po-status-shared";
 import { loadParSkuUniverse } from "@/lib/par-universe";
+import { resolveRescueTargets, type RescueDroppedPar } from "@/lib/ordering-rescue-shared";
 
 /**
  * How far ahead the walk looks for BOOKED CATERING when naming the event advisory.
@@ -105,10 +106,19 @@ const EVENT_ADVISORY_HORIZON_DAYS = 14;
 export const PAR_PASS_MIN = 4; // key_holder+
 
 export class OrderingError extends Error {
+  /** The SKU a per-line refusal names (`no_par`, W18/B026), so the client can point at it. */
+  public skuId?: string;
   constructor(public status: number, public code: string, message?: string, public existingPoId?: string, public existingPoStatus?: string) {
     super(message ?? code);
     this.name = "OrderingError";
   }
+}
+
+/** A `no_par` refusal that names its SKU (W18/B026). */
+function noParError(skuId: string): OrderingError {
+  const e = new OrderingError(400, "no_par", "A SKU has no par set for today");
+  e.skuId = skuId;
+  return e;
 }
 
 function num(v: number | string | null): number | null {
@@ -913,6 +923,8 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
 
   /** A par'd row that could not be routed today, kept so its product can rescue it. */
   interface DroppedPar {
+    /** `row.id` — the key the shared rescue rule (lib/ordering-rescue-shared.ts) orders on. */
+    skuId: string;
     row: WalkerSkuRow;
     productId: string;
     par: number;
@@ -999,7 +1011,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       // member should carry the demand (0179), rather than it evaporating silently.
       if (s.product_id != null && par != null) {
         const list = droppedByProduct.get(s.product_id) ?? [];
-        list.push({ row: s, productId: s.product_id, par, parIsWeekend, cause: "vendorInactive" });
+        list.push({ skuId: s.id, row: s, productId: s.product_id, par, parIsWeekend, cause: "vendorInactive" });
         droppedByProduct.set(s.product_id, list);
       }
       continue;
@@ -1011,7 +1023,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       unroutable.skuInactive += 1; unroutable.count += 1;
       if (s.product_id != null && par != null) {
         const list = droppedByProduct.get(s.product_id) ?? [];
-        list.push({ row: s, productId: s.product_id, par, parIsWeekend, cause: "skuInactive" });
+        list.push({ skuId: s.id, row: s, productId: s.product_id, par, parIsWeekend, cause: "skuInactive" });
         droppedByProduct.set(s.product_id, list);
       }
       continue;
@@ -1100,36 +1112,25 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     }
   };
 
+  // THE RESCUE DECISION has ONE author, shared with submitParPass (audit W18/B026): the row this
+  // walk shows is the row the submission accepts. The rules (highest dropped par carried, the
+  // resolved member first, a different, active member with a live vendor) live there.
+  //
+  // A RETIRED product cannot reach the decision: the gate at the top of the walk `continue`s
+  // before its members are held in `droppedByProduct`, so there is nothing to rescue. That is
+  // the point — rescuing a dropped par to a sibling member would re-order the very product we
+  // stopped buying, which is exactly what Juan's ruling forbids.
+  const coveredProductIds = new Set(
+    [...candidatesByProduct].filter(([, cs]) => cs.some((c) => walkedSkuIds.has(c.skuId))).map(([productId]) => productId),
+  );
+  const rescueDecision = resolveRescueTargets({
+    droppedByProduct, coveredProductIds, byProduct: productIndex.byProduct, liveVendorIds: new Set(vendorById.keys()),
+  });
+  for (const n of rescueDecision.noEntry) unroutable.productUnroutable += n.dropped.length;
+  for (const c of rescueDecision.covered) { unroutable.reroutedToBackup += 1; releaseDropped(c.dropped); }
+  unroutable.productUnroutable += rescueDecision.unroutable.length;
   /** member sku id → the par it carries + every dropped par its product releases. */
-  const rescueTargets = new Map<string, { carried: DroppedPar; dropped: DroppedPar[] }>();
-  for (const [productId, dropped] of droppedByProduct) {
-    const entry = productIndex.byProduct.get(productId) ?? null;
-    if (entry == null) { unroutable.productUnroutable += dropped.length; continue; }
-    // Highest par first: if two members dropped, the survivor carries the larger demand.
-    // `par` ties are the common case (two twins on the same number), so `row.id` makes
-    // the order TOTAL rather than dependent on the unordered select that filled `skus`.
-    const worst = [...dropped].sort((a, b) => (b.par !== a.par ? b.par - a.par : a.row.id.localeCompare(b.row.id)))[0]!;
-    const covered = (candidatesByProduct.get(productId) ?? []).some((c) => walkedSkuIds.has(c.skuId));
-    if (covered) { unroutable.reroutedToBackup += 1; releaseDropped(dropped); continue; }
-    // Nobody walked for this product — try the resolved member, else any active member
-    // with a live vendor. Both must be a DIFFERENT sku than the one that dropped.
-    //
-    // A RETIRED product cannot reach this loop either: the gate at the top of the
-    // walk `continue`s before its members are held in `droppedByProduct`, so there
-    // is nothing here to rescue. That is the point — rescuing a dropped par to a
-    // sibling member would re-order the very product we stopped buying, which is
-    // exactly what Juan's ruling forbids.
-    const droppedIds = new Set(dropped.map((d) => d.row.id));
-    const byPreference = [
-      ...entry.members.filter((m) => m.skuId === entry.resolution.skuId),
-      ...entry.members,
-    ];
-    const target = byPreference.find(
-      (m) => m.active && !droppedIds.has(m.skuId) && m.vendorId != null && vendorById.has(m.vendorId),
-    );
-    if (!target) { unroutable.productUnroutable += 1; continue; }
-    rescueTargets.set(target.skuId, { carried: worst, dropped });
-  }
+  const rescueTargets = rescueDecision.targets;
 
   if (rescueTargets.size > 0) {
     const rescueIds = [...rescueTargets.keys()];
@@ -1348,6 +1349,69 @@ export async function loadPackAwareOverlay(
   return { overlayBySku, chainsBySku: levelsBySku(packResolution), packResolution, epochs };
 }
 
+/**
+ * The vendor-down rescue for a SUBMISSION (audit W18/B026): for par-less product members the walk
+ * may have shown as a backup, the par each one carries today — decided by `resolveRescueTargets`,
+ * the walk's own rule, over the same inputs the walk read (the product index, the members'
+ * overlay and pack epoch, the live vendor set). Only the products of the held lines are loaded.
+ * A member absent from the result carries nothing, and its line stays `no_par`.
+ */
+async function loadSubmitRescuePars(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  parlessSkus: ReadonlyArray<WalkerSkuRow>,
+  ctx: { overlayBySku: ReadonlyMap<string, OverlayRow>; epochs: ReadonlyMap<string, number>; storeVendorIds: ReadonlySet<string>; weekend: boolean },
+): Promise<Map<string, number>> {
+  const productIds = [...new Set(parlessSkus.map((s) => s.product_id).filter((v): v is string => v != null))];
+  if (productIds.length === 0) return new Map();
+  const productIndex = await loadProductIndex(productIds, locationId);
+  const members = productIds.flatMap((p) => productIndex.byProduct.get(p)?.members ?? []);
+  const memberIds = [...new Set(members.map((m) => m.skuId))];
+  const memberVendorIds = [...new Set(members.map((m) => m.vendorId).filter((v): v is string => v != null))];
+  if (memberIds.length === 0) return new Map();
+  const [{ data: memberRows, error: mErr }, memberEpochs, { data: vendorRows, error: vErr }] = await Promise.all([
+    sb.from("vendor_items").select(WALKER_SKU_COLUMNS).in("id", memberIds).returns<WalkerSkuRow[]>(),
+    loadShopPackEpochs(memberIds, locationId),
+    memberVendorIds.length === 0
+      ? Promise.resolve({ data: [] as Array<{ id: string }>, error: null })
+      : sb.from("vendors").select("id").in("id", memberVendorIds).eq("active", true).eq("source_kind", "vendor")
+        .returns<Array<{ id: string }>>(),
+  ]);
+  if (mErr) throw new Error(`submitParPass rescue members: ${mErr.message}`);
+  if (vErr) throw new Error(`submitParPass rescue vendors: ${vErr.message}`);
+  const liveVendorIds = new Set((vendorRows ?? []).map((v) => v.id));
+  const droppedByProduct = new Map<string, RescueDroppedPar[]>();
+  const coveredProductIds = new Set<string>();
+  for (const s of memberRows ?? []) {
+    // The walk's universe: this shop's scope, a non-store vendor, and a par it can be walked on.
+    if (s.product_id == null || s.vendor_id == null) continue;
+    if (s.location_id != null && s.location_id !== locationId) continue;
+    if (ctx.storeVendorIds.has(s.vendor_id)) continue;
+    const base = ctx.overlayBySku.get(s.id) ?? null;
+    // The member's own pack epoch (the caller stamped only the walk's lines), on a copy.
+    const overlay: OverlayRow | null = base ? { ...base, effectivePackEpoch: memberEpochs.get(s.id) ?? ctx.epochs.get(s.id) ?? 0 } : null;
+    const globalPar = { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) };
+    const inUniverse = globalPar.weekdayPar != null || globalPar.weekendPar != null || overlay?.weekdayPar != null || overlay?.weekendPar != null;
+    if (!inUniverse) continue;
+    const par = resolvePar(overlay, globalPar, ctx.weekend);
+    const entry = productIndex.byProduct.get(s.product_id) ?? null;
+    const disposition = walkDisposition({
+      productRetired: entry?.resolution.reason === "retired_product",
+      vendorKnown: liveVendorIds.has(s.vendor_id),
+      skuActive: resolveActive(overlay?.activeOverride, s.active),
+      par,
+    });
+    if (disposition === "walk") coveredProductIds.add(s.product_id);
+    if ((disposition === "vendorInactive" || disposition === "skuInactive") && par != null) {
+      const list = droppedByProduct.get(s.product_id) ?? [];
+      list.push({ skuId: s.id, par });
+      droppedByProduct.set(s.product_id, list);
+    }
+  }
+  const decision = resolveRescueTargets({ droppedByProduct, coveredProductIds, byProduct: productIndex.byProduct, liveVendorIds });
+  return new Map([...decision.targets].map(([skuId, t]) => [skuId, t.carried.par]));
+}
+
 // ── submitParPass: record the walk + derive draft orders + shrinkage ─────────────
 export interface ParPassLineInput {
   skuId: string;
@@ -1512,7 +1576,8 @@ export async function submitParPass(
 
   // CATALOG PHASE 2a (D3): the SAME pack-aware read the walk rendered from — a stale auto par the
   // manager did not see can never become the par_qty snapshot or the implied on-hand saved here.
-  const [{ chainsBySku, overlayBySku }, measures] = await Promise.all([loadPackAwareOverlay(sb, locationId, skuIds), loadMeasures()]);
+  const [packAware, measures] = await Promise.all([loadPackAwareOverlay(sb, locationId, skuIds), loadMeasures()]);
+  const { chainsBySku, overlayBySku } = packAware;
 
   // Resolve each line: snapshot par, per-order-unit oz, implied on-hand oz.
   interface ResolvedLine {
@@ -1524,6 +1589,26 @@ export async function submitParPass(
     impliedOnHandOz: number | null;
   }
   const resolved: ResolvedLine[] = [];
+  /** Lines of a product member with no par of its own: a vendor-down rescue may carry one (W18/B026). */
+  const parlessMemberLines: Array<{ index: number; line: ParPassLineInput }> = [];
+  const resolveLine = (l: ParPassLineInput, sku: NonNullable<ReturnType<typeof skuById.get>>, par: number): ResolvedLine => {
+    const chain = chainsBySku.get(sku.id) ?? null;
+    const skuShape: RecipeInputSku = {
+      packFormat: sku.pack_format, eachContainerLabel: sku.each_container_label,
+      unitsPerPack: sku.units_per_pack, eachSize: num(sku.each_size), eachMeasure: sku.each_measure,
+      avgOzPerEach: num(sku.avg_oz_per_each), packChain: chain,
+    };
+    const perUnitOz = perOrderUnitOz(skuShape, chain, measures);
+    // implied on-hand = max(par − orderQty, 0) order units × per-unit oz. NEVER fabricate:
+    // perUnitOz null → implied null (the conversion is unknowable).
+    const impliedUnits = Math.max(par - l.orderQty, 0);
+    const impliedOnHandOz = perUnitOz != null ? impliedUnits * perUnitOz : null;
+    return {
+      input: l, sku, parToday: par,
+      orderUnitLabel: orderUnitLabelFor(sku.pack_format, chain),
+      perUnitOz, impliedOnHandOz,
+    };
+  };
   for (const l of lines) {
     const sku = skuById.get(l.skuId)!;
     // Resolve active + par through the per-location overlay (D1). A SKU deactivated at this
@@ -1538,23 +1623,29 @@ export async function submitParPass(
     // The whole overlay, machine lane included — same reasoning as loadWalkerData above.
     const overlayForPar: LocationSkuOverlay | null = overlayRow;
     const par = resolvePar(overlayForPar, { weekdayPar: num(sku.weekday_par), weekendPar: num(sku.weekend_par) }, weekend);
-    if (par == null) throw new OrderingError(400, "no_par", "A SKU has no par set for today");
-    const chain = chainsBySku.get(sku.id) ?? null;
-    const skuShape: RecipeInputSku = {
-      packFormat: sku.pack_format, eachContainerLabel: sku.each_container_label,
-      unitsPerPack: sku.units_per_pack, eachSize: num(sku.each_size), eachMeasure: sku.each_measure,
-      avgOzPerEach: num(sku.avg_oz_per_each), packChain: chain,
-    };
-    const perUnitOz = perOrderUnitOz(skuShape, chain, measures);
-    // implied on-hand = max(par − orderQty, 0) order units × per-unit oz. NEVER fabricate:
-    // perUnitOz null → implied null (the conversion is unknowable).
-    const impliedUnits = Math.max(par - l.orderQty, 0);
-    const impliedOnHandOz = perUnitOz != null ? impliedUnits * perUnitOz : null;
-    resolved.push({
-      input: l, sku, parToday: par,
-      orderUnitLabel: orderUnitLabelFor(sku.pack_format, chain),
-      perUnitOz, impliedOnHandOz,
+    if (par == null) {
+      if (sku.product_id == null) throw noParError(sku.id);
+      // Held: the walk may have shown this member as the vendor-down backup of a dropped twin.
+      parlessMemberLines.push({ index: resolved.length, line: l });
+      continue;
+    }
+    resolved.push(resolveLine(l, sku, par));
+  }
+  if (parlessMemberLines.length > 0) {
+    // THE SAME RESCUE DECISION THE WALK MADE (W18/B026): a backup row shows the dropped twin's
+    // par, so its submission snapshots that par. Known unit caveat, kept as the walk shows it:
+    // the carried par is in the dropped twin's order units while implied_on_hand_oz uses this
+    // member's perUnitOz. Only these products are loaded, so an ordinary walk pays nothing.
+    const carriedBySku = await loadSubmitRescuePars(sb, locationId, parlessMemberLines.map((p) => skuById.get(p.line.skuId)!), {
+      overlayBySku, epochs: packAware.epochs, storeVendorIds, weekend,
     });
+    // Splice in input order so par_pass_lines keep the walk's order.
+    for (const { index, line } of [...parlessMemberLines].reverse()) {
+      const sku = skuById.get(line.skuId)!;
+      const carried = carriedBySku.get(sku.id);
+      if (carried == null) throw noParError(sku.id);
+      resolved.splice(index, 0, resolveLine(line, sku, carried));
+    }
   }
 
   const orderLines = resolved.filter((r) => r.input.orderQty > 0);
