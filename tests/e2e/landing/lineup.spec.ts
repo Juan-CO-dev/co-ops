@@ -572,3 +572,20 @@ test('tapping inside the order sheet padding keeps it open; tapping the backdrop
   await expect(page.locator('dialog.landing-v3-sheet[open]')).toHaveCount(0);
   await context.close();
 });
+
+// W24/B214: after Auto stops on its own (one full loop), pressing it again starts a fresh loop.
+test('Auto restarts a full loop after it has stopped on its own', async ({page}) => {
+  await page.clock.install();
+  await page.goto('/');
+  await page.locator('[data-lineup]').scrollIntoViewIfNeeded();
+  const auto = page.locator('.landing-v3-auto');
+  await expect(auto).toHaveAttribute('aria-pressed','true');
+  const cards = await page.locator('[data-lineup] li').count();
+  await expect.poll(async()=>{await page.clock.runFor(1000);return auto.getAttribute('aria-pressed');},{timeout:(cards+4)*5000}).toBe('false');
+  const stoppedOn = await page.locator('.landing-v3-plate h3').textContent();
+  await auto.click();
+  await expect(auto).toHaveAttribute('aria-pressed','true');
+  await page.clock.runFor(6000);
+  await expect(page.locator('.landing-v3-plate h3')).not.toHaveText(stoppedOn!);
+  await expect(auto).toHaveAttribute('aria-pressed','true');
+});
