@@ -4126,6 +4126,7 @@
   "ordering.po.reconcile_arm": "Tap again to reconcile",
   "ordering.po.error.not_draft": "This order is no longer a draft.",
   "ordering.po.error.confirmed_during_edit": "This order was confirmed while you were editing — your last change did not make it into the confirmed snapshot.",
+  "ordering.po.error.lines_changed": "Someone changed this order while you were confirming. Check the lines and confirm again.",
   "ordering.po.error.lines_contended": "Someone else is editing this order's lines — reload and try again.",
   "ordering.po.error.not_confirmed": "This action needs a confirmed order. Reload to see its current status.",
   "ordering.po.error.not_placed": "Add-on orders start from a placed order. Confirm and place this one first.",

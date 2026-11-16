@@ -57,6 +57,7 @@ import { poLineGuideKey, resolveGuideKey } from "@/lib/order-guides-shared";
 import { compareByGuide } from "@/lib/order-guide-sort";
 import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import { resolveActive } from "@/lib/location-sku-shared";
+import { parseSnapshotLines, type SnapshotLine } from "@/lib/po-snapshot-shared";
 
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
 export const PO_MIN = 4; // key_holder+
@@ -85,6 +86,21 @@ function truncateBody(body: string | null, max: number): string | null {
   if (trimmed.length <= max) return trimmed || null;
   return trimmed.slice(0, max) + "…";
 }
+/** The 0325 function is not installed yet: PostgREST's schema-cache miss (PGRST202) or Postgres's undefined function
+ *  (42883). This, and only this, sends a W19 writer to its pre-0325 statement. */
+function rpcMissing(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+/** 0325's po_lines_draft_only trigger refused a line write because the PO is no longer a draft (W19/B109). */
+function lineWriteRefusedNotDraft(error: { code?: string; message?: string } | null): boolean {
+  return !!error && error.code === "P0001" && (error.message === "po_not_draft" || error.message === "po_line_move_refused");
+}
+const confirmedDuringEdit = () => new PurchaseOrderError(
+  409,
+  "confirmed_during_edit",
+  "This order was confirmed while you were editing — your last change did not make it into the confirmed snapshot",
+);
 function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) {
     throw new PurchaseOrderError(403, "forbidden", "Insufficient role level for purchase orders");
@@ -624,6 +640,7 @@ export async function updateDraftLines(
       const { error: uErr, count } = await sb.from("po_lines")
         .update({ order_qty: l.orderQty, note: l.note?.trim() || null }, { count: "exact" })
         .eq("po_id", poId).eq("sku_id", l.skuId);
+      if (lineWriteRefusedNotDraft(uErr)) throw confirmedDuringEdit(); // W19/B109: the PO was confirmed first
       if (uErr) throw new Error(`updateDraftLines update: ${uErr.message}`);
       if (count === 0) throw new PurchaseOrderError(404, "not_found", "Line not found");
     }
@@ -633,6 +650,7 @@ export async function updateDraftLines(
       // 23505 = a rival landed this (po_id, sku_id) between our read and our insert. Re-read
       // and re-partition: the row is now in `existingSkus`, so the next lap UPDATEs it.
       if (insertErr.code === "23505") continue;
+      if (lineWriteRefusedNotDraft(insertErr)) throw confirmedDuringEdit(); // W19/B109
       throw new Error(`updateDraftLines insert: ${insertErr.message}`);
     }
     counts = { updated: toUpdate.length, inserted: toInsert.length };
@@ -646,8 +664,10 @@ export async function updateDraftLines(
   }
 
 
-  // TOCTOU close (Fix 3): our draft-only guard above is a check-then-act — a concurrent
-  // confirmPO can flip draft→confirmed AFTER we passed the guard but our po_lines writes
+  // TOCTOU close (Fix 3), now the BACKSTOP: since 0325 the po_lines_draft_only trigger refuses a line write once the
+  // PO is past draft, and confirm_purchase_order refuses `lines_changed` when a write landed first (W19/B109), so a
+  // saved edit can no longer silently miss the snapshot. Before 0325 is applied this re-check is still the only net:
+  // a concurrent confirmPO can flip draft→confirmed AFTER we passed the guard but our po_lines writes
   // may still land. confirmPO's snapshot is frozen at its (earlier) linearizing flip, so
   // a write that landed after the flip is in po_lines but NOT in the confirmed snapshot
   // (which is authoritative for transmission/disputes). Re-read the status after writing;
@@ -656,29 +676,12 @@ export async function updateDraftLines(
     .select("status").eq("id", poId)
     .maybeSingle<{ status: string }>();
   if (aErr) throw new Error(`updateDraftLines recheck: ${aErr.message}`);
-  if (after && after.status !== "draft") {
-    throw new PurchaseOrderError(
-      409,
-      "confirmed_during_edit",
-      "This order was confirmed while you were editing — your last change did not make it into the confirmed snapshot",
-    );
-  }
+  if (after && after.status !== "draft") throw confirmedDuringEdit();
   await auditOperationalTaskOverride(actor, po.location_id, "ordering", "updateDraftLines");
   return counts;
 }
 
 // ── confirmPO: freeze the snapshot + governing cutoff ─────────────────────────────
-interface SnapshotLine {
-  skuId: string;
-  name: string;
-  itemNumber: string | null;
-  qty: number;
-  unitLabel: string | null;
-  priceCents: number | null;
-  guidePos: number | null;
-  /** V3-A: section name at draft time; null on pre-0205 snapshots. */
-  guideSection: string | null;
-}
 interface ConfirmedSnapshot {
   displayCode: string;
   vendor: { id: string; name: string };
@@ -738,15 +741,18 @@ export async function reopenPO(actor: AuthContext, poId: string): Promise<void> 
  * and `markPlaced` / `sendOrderEmail` accepted the row happily enough to transmit a
  * blank order to the vendor.
  *
- * A concurrent double-confirm still loses the race (the second UPDATE sees no draft
- * row → 409 `not_draft`), and updateDraftLines' post-write status re-check still
- * throws `confirmed_during_edit` for an editor whose write landed after this flip.
- * THE COST, STATED: the window in which a draft edit can miss the snapshot now
- * opens at the LINE READ rather than at the flip, because the snapshot is built
- * from lines read before the row is ours. That is a wider window on a RECOVERABLE
- * outcome (a qty edit absent from an otherwise-correct frozen order, which the
- * editor is told about) in exchange for closing an UNRECOVERABLE one (a confirmed
- * PO that can never acquire a snapshot). Audited `po.confirmed`.
+ * A concurrent double-confirm still loses the race (the second flip sees no draft
+ * row → 409 `not_draft`).
+ *
+ * ── THE LINE-READ WINDOW IS CLOSED (W19/B109) ───────────────────────────────────
+ * The snapshot is built from lines read BEFORE the flip, so an edit that committed in
+ * between used to be saved (200 OK, its own re-check still saw `draft`) and silently
+ * left out of the confirmed order. Since 0325 the flip is `confirm_purchase_order`: it
+ * locks the PO row, re-reads po_lines and refuses 409 `lines_changed` unless they are
+ * exactly the lines this snapshot was built from (the confirmer reloads and confirms
+ * again); and the po_lines_draft_only trigger refuses any line write once the PO is
+ * past draft (the editor gets `confirmed_during_edit`). Before 0325 is applied the old
+ * guarded UPDATE runs (rpcMissing) and the window is as it was. Audited `po.confirmed`.
  */
 export async function confirmPO(actor: AuthContext, poId: string): Promise<void> {
   requireLevel(actor, PO_MIN);
@@ -843,17 +849,33 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
   // snapshot, the cutoff and the confirmer all ride THIS statement, there is no longer a
   // window in which the row can read `confirmed` without a snapshot — the state the audit
   // found had no repair path at all.
-  const { error: flipErr, count: flipCount } = await sb.from("purchase_orders")
-    .update({
-      status: "confirmed",
-      confirmed_snapshot: snapshot,
-      confirmed_by: actor.user.id,
-      confirmed_at: confirmedAt,
-      cutoff_at_confirm: cutoffAtConfirm,
-    }, { count: "exact" })
-    .eq("id", poId).eq("status", "draft");
-  if (flipErr) throw new Error(`confirmPO confirm: ${flipErr.message}`);
-  if (flipCount === 0) throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
+  // W19/B109: the flip runs in confirm_purchase_order (0325), bound to the exact lines read above.
+  const expectedLines = lines.map((l) => ({ id: l.id, sku_id: l.sku_id, order_qty: num(l.order_qty), order_unit_label: l.order_unit_label }));
+  const { error: rpcErr } = await sb.rpc("confirm_purchase_order", {
+    p_po_id: poId, p_expected_lines: expectedLines, p_snapshot: snapshot, p_actor: actor.user.id,
+    p_confirmed_at: confirmedAt, p_cutoff: cutoffAtConfirm,
+  });
+  if (rpcErr && rpcMissing(rpcErr)) {
+    // Pre-0325: the guarded UPDATE (the line-read window stays open until 0325 is applied).
+    const { error: flipErr, count: flipCount } = await sb.from("purchase_orders")
+      .update({
+        status: "confirmed",
+        confirmed_snapshot: snapshot,
+        confirmed_by: actor.user.id,
+        confirmed_at: confirmedAt,
+        cutoff_at_confirm: cutoffAtConfirm,
+      }, { count: "exact" })
+      .eq("id", poId).eq("status", "draft");
+    if (flipErr) throw new Error(`confirmPO confirm: ${flipErr.message}`);
+    if (flipCount === 0) throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
+  } else if (rpcErr) {
+    if (rpcErr.code === "P0001" && rpcErr.message === "not_draft") throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
+    if (rpcErr.code === "P0001" && rpcErr.message === "lines_changed") {
+      throw new PurchaseOrderError(409, "lines_changed", "Someone changed this order while you were confirming — check the lines and confirm again");
+    }
+    if (rpcErr.code === "P0001" && rpcErr.message === "po_not_found") throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
+    throw new Error(`confirmPO confirm: ${rpcErr.message}`);
+  }
 
   // Freeze the price onto each line (rowcount-checked). Null price → leave null.
   //
@@ -1651,6 +1673,38 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   const skuById = new Map((skuRows ?? []).map((s) => [s.id, s]));
   const userName = new Map((userRows ?? []).map((u) => [u.id, u.name]));
 
+  // W19/B110: a PO past draft SHOWS WHAT WAS CONFIRMED. Its lines (qty, name, item number, unit, price, guide key)
+  // come from confirmed_snapshot — the same reading the vendor email sends (lib/po-snapshot-shared.ts) — so the
+  // panel, its Copy / mailto body and the email cannot diverge; only the note (not in the snapshot) is joined from
+  // po_lines by SKU (unique per PO since 0190). A draft, or a legacy PO with no snapshot lines, reads po_lines as before.
+  const frozenLines = po.status === "draft" ? [] : parseSnapshotLines(po.confirmed_snapshot);
+  const noteBySku = new Map(lines.map((l) => [l.sku_id, l.note] as const));
+  const detailLines: PoDetailLine[] = frozenLines.length > 0
+    ? frozenLines.map((l: SnapshotLine) => ({
+        skuId: l.skuId,
+        skuName: l.name,
+        itemNumber: l.itemNumber,
+        orderQty: l.qty,
+        orderUnitLabel: l.unitLabel,
+        priceCentsAtOrder: l.priceCents,
+        guidePositionSnapshot: l.guidePos,
+        guideSection: l.guideSection,
+        note: noteBySku.get(l.skuId) ?? null,
+      }))
+    : lines.map((l) => {
+        const sku = skuById.get(l.sku_id);
+        return {
+          skuId: l.sku_id,
+          skuName: sku?.name ?? "(sku)",
+          itemNumber: sku?.item_number ?? null,
+          orderQty: num(l.order_qty) ?? 0,
+          orderUnitLabel: l.order_unit_label,
+          priceCentsAtOrder: l.price_cents_at_order,
+          ...(() => { const k = poLineGuideKey({ status: po.status, confirmedSnapshot: po.confirmed_snapshot, skuId: l.sku_id, snapshot: { position: l.guide_position_snapshot, section: l.guide_section_snapshot }, live: liveGuide.get(l.sku_id) }); return { guidePositionSnapshot: k.position, guideSection: k.section }; })(),
+          note: l.note,
+        };
+      });
+
   // Credits summary across the linked deliveries. Reuse lib/credits.ts loader
   // (same KH+ read + per-delivery location-bind) — no parallel query path.
   // V1 = single delivery per PO (spec non-goal); batch this loop when multi-delivery
@@ -1691,19 +1745,7 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     placedAt: po.placed_at,
     placedNote: po.placed_note,
     emailSendUncertainAt,
-    lines: lines.map((l) => {
-      const sku = skuById.get(l.sku_id);
-      return {
-        skuId: l.sku_id,
-        skuName: sku?.name ?? "(sku)",
-        itemNumber: sku?.item_number ?? null,
-        orderQty: num(l.order_qty) ?? 0,
-        orderUnitLabel: l.order_unit_label,
-        priceCentsAtOrder: l.price_cents_at_order,
-        ...(() => { const k = poLineGuideKey({ status: po.status, confirmedSnapshot: po.confirmed_snapshot, skuId: l.sku_id, snapshot: { position: l.guide_position_snapshot, section: l.guide_section_snapshot }, live: liveGuide.get(l.sku_id) }); return { guidePositionSnapshot: k.position, guideSection: k.section }; })(),
-        note: l.note,
-      };
-    }),
+    lines: detailLines,
     transmissions: txs.map((t) => ({
       id: t.id,
       channel: t.channel,

@@ -39,6 +39,7 @@ import { TENANT_NAME } from "@/lib/tenant";
 import { sendEmail } from "@/lib/email";
 import { renderEmailLayout, escapeHtml } from "@/lib/email-templates/_layout";
 import { renderPoBodyLines, vendorT, type PoBodyLine } from "@/lib/po-body";
+import { parseSnapshotLines, type SnapshotLine } from "@/lib/po-snapshot-shared";
 import { groupByGuideSection, hasGuideHeader, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
 import {
   PurchaseOrderError,
@@ -62,20 +63,6 @@ function requireLevel(actor: AuthContext, min: number): void {
 }
 function actorLoc(actor: AuthContext): LocationActor {
   return { role: actor.user.role, locations: actor.locations };
-}
-
-/** The confirmed_snapshot line shape (mirrors confirmPO's SnapshotLine; jsonb is
- *  untyped on read so we validate/narrow defensively at use). */
-interface SnapshotLine {
-  skuId: string;
-  name: string;
-  itemNumber: string | null;
-  qty: number;
-  unitLabel: string | null;
-  priceCents: number | null;
-  guidePos: number | null;
-  /** V3-A: section name frozen with the snapshot; null on pre-0205 snapshots. */
-  guideSection: string | null;
 }
 
 interface PoEmailContext {
@@ -157,26 +144,9 @@ async function loadPoEmailContext(actor: AuthContext, poId: string): Promise<PoE
   // order rendered as if it were real. (This comment used to claim "the caller's no-lines
   // path never fabricates order content"; there was no such caller path, which is audit v2
   // finding F2's second half. The path exists now.)
-  const snapshot = (po.confirmed_snapshot ?? null) as { lines?: unknown } | null;
-  const snapshotLines = snapshot?.lines;
-  const rawLines: unknown[] = Array.isArray(snapshotLines) ? snapshotLines : [];
-  const lines: SnapshotLine[] = rawLines
-    .map((l): SnapshotLine | null => {
-      if (typeof l !== "object" || l === null) return null;
-      const r = l as Record<string, unknown>;
-      const qty = typeof r.qty === "number" && Number.isFinite(r.qty) ? r.qty : 0;
-      return {
-        skuId: typeof r.skuId === "string" ? r.skuId : "",
-        name: typeof r.name === "string" ? r.name : "(sku)",
-        itemNumber: typeof r.itemNumber === "string" ? r.itemNumber : null,
-        qty,
-        unitLabel: typeof r.unitLabel === "string" ? r.unitLabel : null,
-        priceCents: typeof r.priceCents === "number" && Number.isFinite(r.priceCents) ? r.priceCents : null,
-        guidePos: typeof r.guidePos === "number" ? r.guidePos : null,
-        guideSection: typeof r.guideSection === "string" ? r.guideSection : null,
-      };
-    })
-    .filter((l): l is SnapshotLine => l !== null && l.qty > 0); // qty 0 = removed (transmission skips)
+  // W19/B110: the ONE snapshot reader (lib/po-snapshot-shared.ts), shared with the panel's loadPoDetail.
+  const lines: SnapshotLine[] = parseSnapshotLines(po.confirmed_snapshot)
+    .filter((l) => l.qty > 0); // qty 0 = removed (transmission skips)
 
   return {
     poId: po.id,

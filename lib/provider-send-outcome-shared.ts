@@ -1,7 +1,8 @@
 import type { SendEmailResult } from "@/lib/email";
 
 /**
- * lib/email-outcome-shared.ts — PURE, client-safe. The ONE reading of a provider's answer to a send, shared by
+ * lib/provider-send-outcome-shared.ts — PURE, client-safe (no I/O, and no channel word in its path: the no-send
+ * import-closure pins treat a module named for email/sms as a sender). The ONE reading of a provider's answer to a send, shared by
  * every sender that retries under an idempotency key: the catering inbox (lib/catering/inbox-delivery-shared.ts
  * re-exports it as `inboxDeliveryOutcome`) and the vendor order email (lib/po-email.ts, W19/B108). Moved here from
  * the catering module unchanged so ordering code does not import from catering.

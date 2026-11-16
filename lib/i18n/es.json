@@ -4126,6 +4126,7 @@
   "ordering.po.reconcile_arm": "Toca de nuevo para conciliar",
   "ordering.po.error.not_draft": "Este pedido ya no es un borrador.",
   "ordering.po.error.confirmed_during_edit": "El pedido se confirmó mientras editabas — tu último cambio no entró en la instantánea confirmada.",
+  "ordering.po.error.lines_changed": "Alguien cambió este pedido mientras lo confirmabas. Revisa las líneas y confirma otra vez.",
   "ordering.po.error.lines_contended": "Alguien más está editando las líneas de este pedido — recarga e inténtalo de nuevo.",
   "ordering.po.error.not_confirmed": "Esta acción necesita un pedido confirmado. Recarga para ver su estado actual.",
   "ordering.po.error.not_placed": "Un pedido adicional parte de un pedido ya colocado. Confirma y coloca este primero.",

@@ -272,6 +272,11 @@ export function PoPanel({
     if (res.ok) {
       await load();
       onChanged();
+    } else if (res.code === "lines_changed") {
+      // W19/B109: someone changed the lines while this confirm ran. Reload so the confirmer sees the new quantities
+      // before confirming again, and keep the message (load clears it).
+      await load();
+      setErrFromCode(res.code);
     }
   };
 
