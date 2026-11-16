@@ -19,7 +19,7 @@
  * proof is tests/counts-onhand-equivalence.test.ts (old read path vs this one over the
  * same database, both capture sales sources).
  */
-import { salesWindowUntrustworthy } from "@/lib/counts-shared";
+import { etBusinessDate, salesWindowUntrustworthy } from "@/lib/counts-shared";
 import { buildPackChain, chainLeafUnitsFrom, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { CaptureDayManifest, EffectiveSalesRow, SalesCoverage } from "@/lib/toast/effective-depletion";
 
@@ -171,17 +171,17 @@ export function salesSnapshotCovers(snap: SalesSnapshot, fromDate: string, end: 
 }
 
 // ── The receiving + production ledgers, loaded once ───────────────────────────────
-/** One receipt line at the location, with its delivery header's write instant (µs). */
+/** One receipt line at the location. */
 export interface DeliveryLedgerLine {
   id: string;
   skuId: string;
   resolvedOz: number | string | null;
   receivedLevelLabel: string | null;
   receivedQtyAtLevel: number | string | null;
-  /** vendor_delivery_items.created_at, µs. */
+  /** vendor_delivery_items.created_at, µs — the receipt's own write instant, and its ONLY window key. */
   createdUs: number;
-  /** vendor_deliveries.created_at of its header, µs. */
-  deliveryCreatedUs: number;
+  /** The same instant as PostgREST spelled it — the as-of key for the pack in force at this receipt. */
+  createdIso: string;
 }
 /** One delivery header at the location (the retro-edit probe reads headers, lines or not). */
 export interface DeliveryLedgerHeader { createdUs: number; deliveryDate: string | null }
@@ -201,10 +201,13 @@ function inWindowUs(t: number, afterUs: number, untilUs: number | null): boolean
 }
 
 /**
- * Received oz per SKU over (after, until] — sumReceivedOzWindow over the loaded lines:
- * the delivery header AND the line must both fall in the window (the old two-step
- * filtered headers by window, then lines by window). Every SKU starts at 0; a SKU with
- * ANY null resolved_oz line in the window is null (advisory: no clean received term).
+ * Received oz per SKU over (after, until] — sumReceivedOzWindow over the loaded lines.
+ * A RECEIPT IS WINDOWED BY ITS OWN WRITE INSTANT (audit B185). The old two-step also required
+ * the delivery HEADER to fall in the window, so a line appended after a count to a delivery
+ * started before it (addDeliveryLines) belonged to no window at all: it was never "received
+ * since the count", and on-hand silently under-counted by exactly those cases. Every SKU
+ * starts at 0; a SKU with ANY null resolved_oz line in the window is null (advisory: no clean
+ * received term).
  */
 export function receivedOzWindow(
   lines: readonly DeliveryLedgerLine[],
@@ -220,7 +223,7 @@ export function receivedOzWindow(
   const sums = new Map<string, number>();
   const nulled = new Set<string>();
   for (const l of lines) {
-    if (!selected.has(l.skuId) || !inWindowUs(l.deliveryCreatedUs, afterUs, untilUs) || !inWindowUs(l.createdUs, afterUs, untilUs)) continue;
+    if (!selected.has(l.skuId) || !inWindowUs(l.createdUs, afterUs, untilUs)) continue;
     const oz = num(l.resolvedOz);
     if (oz == null) { nulled.add(l.skuId); continue; }
     sums.set(l.skuId, (sums.get(l.skuId) ?? 0) + oz);
@@ -267,11 +270,13 @@ export function productionInputsFrom(inputs: readonly ProductionLedgerInput[], f
 /**
  * Retro-edit staleness — detectRetroEditStaleness over the loaded headers: a delivery
  * written AFTER the anchor whose effective delivery_date is on-or-before the anchor's
- * (UTC) date.
+ * ET operational date. `delivery_date` is the ET calendar date the receiver picks, so the
+ * anchor's day is read in ET too (audit B186: the UTC date put every count taken after
+ * 8 PM ET on the NEXT day, so the following morning's ordinary delivery flagged it stale).
  */
 export function retroEditStale(headers: readonly DeliveryLedgerHeader[], anchorIso: string): boolean {
   const anchorUs = instantMicros(anchorIso);
-  const anchorDate = anchorIso.slice(0, 10); // YYYY-MM-DD for the bare delivery_date compare.
+  const anchorDate = etBusinessDate(anchorIso); // YYYY-MM-DD (ET) for the bare delivery_date compare.
   return headers.some((h) => h.createdUs > anchorUs && h.deliveryDate != null && h.deliveryDate <= anchorDate);
 }
 
@@ -282,6 +287,16 @@ export function retroEditStale(headers: readonly DeliveryLedgerHeader[], anchorI
  * packaging SKUs on prod after the first full count); now it is a filter. No chain → null;
  * no line → 0; any line without a level / qty, or with a level the chain cannot walk →
  * the whole term is advisory-null (never a fabricated count).
+ *
+ * EACH RECEIPT IS PRICED BY THE PACK IN FORCE WHEN IT WAS WRITTEN (audit B100; D1 — the past
+ * resolves as of its day). `vendor_delivery_items` stores a level label and a quantity, never
+ * leaf units, so multiplying every past line by TODAY's chain let one pack edit ("case = 100"
+ * → "case = 200") re-price every case already received: on-hand jumped and the next count
+ * showed a loss that never happened. `chainAtReceipt` answers the chain as of a line (the
+ * caller resolves it through the one pure resolver); `chain` is the LIVE chain and stays the
+ * answer wherever history has none — a receipt older than the SKU's first version, a flat-pack
+ * baseline, or a label only today's chain can walk — which is exactly the old behaviour, so
+ * this can only correct a number, never null one that had a value.
  */
 export function receivedUnitsWindow(
   lines: readonly DeliveryLedgerLine[],
@@ -289,20 +304,31 @@ export function receivedUnitsWindow(
   afterIso: string,
   untilIso: string | null,
   chain: PackChainLevel[] | null,
+  chainAtReceipt?: (line: DeliveryLedgerLine) => PackChainLevel[] | null | undefined,
 ): number | null {
   if (chain == null || chain.length === 0) return null; // no chain → can't map to leaf units.
   const packChain = buildPackChain(chain);
+  // One built chain per distinct level set (the caller hands back the SAME array per version).
+  const built = new Map<PackChainLevel[], ReturnType<typeof buildPackChain>>();
+  const chainThen = (l: DeliveryLedgerLine) => {
+    const levels = chainAtReceipt?.(l);
+    if (levels == null || levels.length === 0) return null;
+    let hit = built.get(levels);
+    if (!hit) { hit = buildPackChain(levels); built.set(levels, hit); }
+    return hit;
+  };
   const afterUs = instantMicros(afterIso);
   const untilUs = untilIso == null ? null : instantMicros(untilIso);
   let any = false;
   let sum = 0;
   for (const l of lines) {
-    if (l.skuId !== skuId || !inWindowUs(l.deliveryCreatedUs, afterUs, untilUs) || !inWindowUs(l.createdUs, afterUs, untilUs)) continue;
+    if (l.skuId !== skuId || !inWindowUs(l.createdUs, afterUs, untilUs)) continue;
     any = true;
     const level = l.receivedLevelLabel?.trim();
     const qty = num(l.receivedQtyAtLevel);
     if (!level || qty == null) return null;
-    const perContainer = chainLeafUnitsFrom(packChain, level);
+    const then = chainThen(l);
+    const perContainer = (then ? chainLeafUnitsFrom(then, level) : null) ?? chainLeafUnitsFrom(packChain, level);
     if (perContainer == null) return null; // unresolvable level → advisory-null.
     sum += qty * perContainer;
   }

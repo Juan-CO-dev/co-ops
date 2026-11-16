@@ -32,6 +32,7 @@ import { ChecklistError, getOrCreateInstance } from "@/lib/checklists";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { requireSession, SESSION_COOKIE_NAME } from "@/lib/session";
 import { createAuthedClient, getServiceRoleClient } from "@/lib/supabase-server";
+import { etCalendarDate } from "@/lib/operational-day";
 
 import { mapChecklistError } from "../_helpers";
 
@@ -70,6 +71,15 @@ export async function POST(req: NextRequest) {
     return jsonError(400, "invalid_payload", {
       field: "date",
       message: "date must be YYYY-MM-DD",
+    });
+  }
+  // W13/B076: a closing is only ever started for TODAY (the ET day the closing page
+  // itself uses). A future-dated row's 16 h release clock ran out before its day came,
+  // so the cron auto-finalized it and the shop had no workable closing on that day.
+  if (date !== etCalendarDate(new Date().toISOString())) {
+    return jsonError(409, "closing_date_not_today", {
+      field: "date",
+      message: "A closing can only be started for today.",
     });
   }
 

@@ -13,16 +13,22 @@
  *   guard turns the replay into a reported no-op instead of a silent second write.
  *   CROSS-SHOP REFUSAL. In per-location mode an event signed by one shop's account may
  *   never advance another shop's money, however well-formed its metadata is.
- *   NOTHING MOVES ON A FAILURE. `expired` / `async_failed` leave the row `due` and write
- *   no payment row at all.
+ *   NOTHING MOVES ON A FAILURE. `expired` / `async_failed` leave the row's status, amount
+ *   and money columns alone; the ONLY write is the guarded clear of the dead session's id.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { audit } from "@/lib/audit";
-import { processStripeEvent, resolveWebhookLocation, type StripeWebhookContext } from "@/lib/stripe/webhook";
+import { isRetryableResult, processStripeEvent, resolveWebhookLocation, type StripeWebhookContext } from "@/lib/stripe/webhook";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 const auditMock = vi.mocked(audit);
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const QUOTE_ID = "11111111-2222-4333-8444-555555555555";
 const PAYMENT_ID = "66666666-7777-4888-8999-000000000000";
@@ -73,6 +79,25 @@ function stubClient(handler: (op: Op) => Settled) {
         op.filters[k] = v;
         return builder;
       },
+      neq: (k: string, v: unknown) => {
+        op.filters[`${k}:neq`] = v;
+        return builder;
+      },
+      // The settlement marker's compare-and-set (`settlement_cleanup_at IS NULL`). Review r7:
+      // without it that write threw inside the stub, read as a FAILED marker write, and a
+      // failed marker write is now `settlement_incomplete` instead of a quiet `paid`.
+      is: (k: string, v: unknown) => {
+        op.filters[`${k}:is`] = v;
+        return builder;
+      },
+      in: (k: string, v: unknown) => {
+        op.filters[`${k}:in`] = v;
+        return builder;
+      },
+      or: (expr: string) => {
+        op.filters.or = expr;
+        return builder;
+      },
       limit: () => builder,
       order: () => builder,
       returns: () => builder,
@@ -93,21 +118,37 @@ function stubClient(handler: (op: Op) => Settled) {
 /** The common happy-path handler; `over` swaps individual answers per test. */
 function handlerFor(over: {
   ledgerInsert?: Settled;
+  /** The SELECT of an already-seen event's ledger row (the 23505 path). */
+  ledgerRow?: Settled;
   paymentById?: Settled;
   paymentBySession?: Settled;
   paymentByRef?: Settled;
   quote?: Settled;
   paymentUpdate?: Settled;
+  /** The write of `settlement_cleanup_at` (review r6 / r7). Default: it lands. */
+  markerUpdate?: Settled;
 } = {}) {
   return (op: Op): Settled => {
     if (op.table === "stripe_events") {
-      return op.kind === "insert" ? (over.ledgerInsert ?? {}) : {};
+      if (op.kind === "insert") return over.ledgerInsert ?? {};
+      // The look for refunds seen before their payment (review r6) filters on `type`: none here.
+      if (op.kind === "select" && "type" in op.filters) return { data: [] };
+      if (op.kind === "select") return over.ledgerRow ?? { data: null };
+      return {};
     }
     if (op.table === "catering_quotes") {
+      // The family read (review r4): the revisions that name this quote as their root. None.
+      if ("root_id" in op.filters) return { data: [] };
       return over.quote ?? { data: { id: QUOTE_ID, location_id: LOCATION_ID } };
     }
     if (op.table === "catering_payments") {
-      if (op.kind === "update") return over.paymentUpdate ?? { count: 1 };
+      // A guarded flip answers with the row it wrote (the paid flip reads it back — review
+      // r4) and its rowcount (the refund flip). `{ count: 0 }` = it matched nothing.
+      if (op.kind === "update") {
+        // The settlement marker's compare-and-set lands (NULL → now) unless a test says not.
+        if (op.payload && "settlement_cleanup_at" in op.payload) return over.markerUpdate ?? { count: 1 };
+        return over.paymentUpdate ?? { count: 1, data: [{ id: PAYMENT_ID, quote_id: QUOTE_ID, provider_session_id: null }] };
+      }
       if ("id" in op.filters) return over.paymentById ?? { data: DUE_ROW };
       if ("provider_session_id" in op.filters) return over.paymentBySession ?? { data: null };
       if ("provider_ref" in op.filters) return over.paymentByRef ?? { data: null };
@@ -145,14 +186,93 @@ beforeEach(() => {
 });
 
 describe("ledger-first idempotency", () => {
-  it("a DUPLICATE event id does nothing at all — no reads, no writes, no audit", async () => {
-    const { client, ops } = stubClient(handlerFor({ ledgerInsert: { error: { code: "23505" } } }));
+  // Review r7: "no payment reads" became ONE read. A terminal verdict on the ledger used to
+  // end the event by itself — including over a settlement whose marker was still NULL, which
+  // then nothing ever read. The duplicate gate now asks the rows first: is a paid row
+  // carrying this charge with its cleanup unrecorded? No → `duplicate`, and still no write.
+  it("a DUPLICATE of a FINISHED event reads its verdict, asks the row ONCE whether its settlement is finished, and does nothing else — no writes, no audit", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({
+        ledgerInsert: { error: { code: "23505" } },
+        ledgerRow: { data: { id: "evt_1", outcome: "paid" } },
+        paymentByRef: { data: [{ id: PAYMENT_ID, status: "paid", provider_ref: "pi_1", settlement_cleanup_at: "2026-11-01T00:00:00.000Z" }] },
+      }),
+    );
     const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
 
     expect(out.result).toBe("duplicate");
-    expect(ops.filter((o) => o.table === "catering_payments")).toEqual([]);
-    expect(ops.filter((o) => o.table === "stripe_events" && o.kind === "update")).toEqual([]);
+    const paymentOps = ops.filter((o) => o.table === "catering_payments");
+    expect(paymentOps).toHaveLength(1);
+    // Found by the CHARGE alone (review r8): the gate reads the row whatever its money status
+    // and asks the marker — a `status = paid` filter here is how a refunded row whose cleanup
+    // was unfinished read as "no such row", i.e. a duplicate.
+    expect(paymentOps[0]).toMatchObject({ kind: "select", filters: { provider_ref: "pi_1" } });
+    expect(paymentOps[0]!.filters).not.toHaveProperty("status");
+    expect(ops.filter((o) => o.kind === "update")).toEqual([]);
     expect(auditMock).not.toHaveBeenCalled();
+    expect(noNotify.notifyPaid).not.toHaveBeenCalled();
+  });
+
+  it("a duplicate of an event that is NOT about a payment (expired, ignored, …) reads no payment at all", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({ ledgerInsert: { error: { code: "23505" } }, ledgerRow: { data: { id: "evt_1", outcome: "expired" } } }),
+    );
+    const out = await processStripeEvent(client, sessionEvent({}, "checkout.session.expired"), SINGLE, noNotify);
+
+    expect(out.result).toBe("duplicate");
+    expect(ops.filter((o) => o.table === "catering_payments")).toEqual([]);
+  });
+
+  it("a duplicate whose row says the settlement is NOT finished (marker NULL) is worked again, whatever verdict the ledger carries", async () => {
+    const { client, ops } = stubClient((op) => {
+      // The gate's question: a paid row carries pi_1 and its cleanup is unrecorded.
+      if (op.table === "catering_payments" && op.kind === "select" && "provider_ref" in op.filters) {
+        return { data: [{ id: PAYMENT_ID, status: "paid", provider_ref: "pi_1", settlement_cleanup_at: null }] };
+      }
+      return handlerFor({
+        ledgerInsert: { error: { code: "23505" } },
+        ledgerRow: { data: { id: "evt_1", outcome: "paid_needs_review" } },
+        paymentById: { data: { ...PAID_ROW, provider_ref: "pi_1", settlement_cleanup_at: null } },
+        paymentUpdate: { count: 0, data: [] },
+      })(op);
+    });
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).toBe("paid"); // the bug: `duplicate`
+    expect(ops.some((o) => o.table === "catering_payments" && o.kind === "update" && o.payload && "settlement_cleanup_at" in o.payload)).toBe(true);
+    expect(noNotify.notifyPaid).toHaveBeenCalledTimes(1);
+  });
+
+  // Review r8: the same question, asked of a row a refund has since been applied to. Round r7
+  // filtered the gate's read on `status = paid`, so this row was "no such row" → `duplicate`.
+  it("…and so is one whose row has since been REFUNDED with the marker still NULL: worked again, the marker written, the money status never written", async () => {
+    const { client, ops } = stubClient((op) => {
+      if (op.table === "catering_payments" && op.kind === "select" && "provider_ref" in op.filters) {
+        return { data: [{ id: PAYMENT_ID, status: "refunded", provider_ref: "pi_1", settlement_cleanup_at: null }] };
+      }
+      return handlerFor({
+        ledgerInsert: { error: { code: "23505" } },
+        ledgerRow: { data: { id: "evt_1", outcome: "already_advanced" } },
+        paymentById: { data: { ...PAID_ROW, status: "refunded", provider_ref: "pi_1", settlement_cleanup_at: null } },
+        paymentUpdate: { count: 0, data: [] },
+      })(op);
+    });
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).not.toBe("duplicate"); // the bug
+    expect(out.result).not.toBe("already_advanced");
+    const updates = ops.filter((o) => o.table === "catering_payments" && o.kind === "update");
+    // The marker write was attempted, guarded on "money was recorded on this row"…
+    const marker = updates.find((o) => o.payload && "settlement_cleanup_at" in o.payload);
+    expect(marker).toBeDefined();
+    expect(Object.keys(marker!.payload ?? {})).toEqual(["settlement_cleanup_at"]);
+    expect(marker!.filters["status:in"]).toEqual(["paid", "refunded"]);
+    // …and nothing this run wrote could have moved a refunded row's money status: the only
+    // status write is the paid flip, which is guarded on due / void.
+    for (const u of updates) {
+      if (u.payload && "status" in u.payload) expect(u.filters["status:in"]).toEqual(["due", "void"]);
+    }
+    // No "payment received" about a payment that was given back.
     expect(noNotify.notifyPaid).not.toHaveBeenCalled();
   });
 
@@ -187,8 +307,10 @@ describe("completed / async_succeeded — the paid flip", () => {
     expect(out.result).toBe("paid");
     const update = ops.find((o) => o.table === "catering_payments" && o.kind === "update");
     expect(update?.payload).toMatchObject({ status: "paid", provider: "stripe", provider_ref: "pi_1" });
-    // The guard is the whole safety property: only a row still `due` may be advanced.
-    expect(update?.filters).toMatchObject({ id: PAYMENT_ID, status: "due" });
+    // The guard is the whole safety property: only a row still `due` may be advanced — or
+    // one we had VOIDED, because a charge on a closed intent is still a charge (W02/B035;
+    // tests/stripe-webhook-review.test.ts pins what happens then). Never `paid`/`refunded`.
+    expect(update?.filters).toMatchObject({ id: PAYMENT_ID, "status:in": ["due", "void"] });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "catering.payment.provider_paid", actorId: null }));
     expect(noNotify.notifyPaid).toHaveBeenCalledOnce();
   });
@@ -200,8 +322,14 @@ describe("completed / async_succeeded — the paid flip", () => {
   });
 
   it("a SECOND completed for the same payment reports `already_advanced` and writes nothing", async () => {
+    // "The same payment" = the same CHARGE: the row already carries this PaymentIntent — and
+    // its settlement cleanup is RECORDED AS DONE (review r6: that marker, not the ledger, is
+    // what makes this the quiet answer).
     const { client, ops } = stubClient(
-      handlerFor({ paymentById: { data: PAID_ROW }, paymentUpdate: { count: 0 } }),
+      handlerFor({
+        paymentById: { data: { ...PAID_ROW, provider_ref: "pi_1", settlement_cleanup_at: "2026-11-01T00:00:00.000Z" } },
+        paymentUpdate: { count: 0 },
+      }),
     );
     const out = await processStripeEvent(client, sessionEvent({}, "checkout.session.completed", "evt_2"), SINGLE, noNotify);
 
@@ -252,15 +380,50 @@ describe("completed / async_succeeded — the paid flip", () => {
 });
 
 describe("failures and expiries leave the row DUE", () => {
-  it.each([
-    ["checkout.session.expired", "expired"],
-    ["checkout.session.async_payment_failed", "async_failed"],
-  ])("%s → %s, and no payment row is written", async (type, expected) => {
+  // Review r5: a FAILED delayed payment is Stripe's own word that the attempt is over — its
+  // session is `complete` and can never be expired, so its id used to stay on the row and
+  // block every retry for good. The id is cleared exactly as an expiry's is; nothing else
+  // about the intent is written, and the failed attempt is recorded.
+  it("checkout.session.async_payment_failed → async_failed: the row's status is untouched; only the failed session's id is cleared, guarded on that id", async () => {
     const { client, ops } = stubClient(handlerFor());
-    const out = await processStripeEvent(client, sessionEvent({ payment_status: "unpaid" }, type, "evt_f"), SINGLE, noNotify);
+    const out = await processStripeEvent(
+      client,
+      sessionEvent({ payment_status: "unpaid" }, "checkout.session.async_payment_failed", "evt_f"),
+      SINGLE,
+      noNotify,
+    );
 
-    expect(out.result).toBe(expected);
-    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
+    expect(out.result).toBe("async_failed");
+    const writes = ops.filter((o) => o.table === "catering_payments" && o.kind === "update");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.payload).toEqual({ provider_session_id: null });
+    expect(writes[0]!.filters).toMatchObject({ id: PAYMENT_ID, provider_session_id: "cs_1", "status:in": ["due", "void"] });
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(auditMock.mock.calls[0]![0]).toMatchObject({
+      action: "catering.payment.provider_payment_failed",
+      resourceId: PAYMENT_ID,
+      metadata: { session_id: "cs_1", session_cleared: true, stripe_event_id: "evt_f", row_status: "due" },
+    });
+    expect(noNotify.notifyPaid).not.toHaveBeenCalled();
+  });
+
+  // Review r3: an expiry is Stripe's own confirmation that a checkout is closed, so the dead
+  // session id is cleared (it would otherwise go on blocking new collection on the quote).
+  // The intent's STATUS, amount and money columns are never written by it.
+  it("checkout.session.expired → expired: the row's status is untouched; only the expired session's id is cleared, guarded on that id", async () => {
+    const { client, ops } = stubClient(handlerFor());
+    const out = await processStripeEvent(
+      client,
+      sessionEvent({ payment_status: "unpaid" }, "checkout.session.expired", "evt_f"),
+      SINGLE,
+      noNotify,
+    );
+
+    expect(out.result).toBe("expired");
+    const writes = ops.filter((o) => o.table === "catering_payments" && o.kind === "update");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.payload).toEqual({ provider_session_id: null });
+    expect(writes[0]!.filters).toMatchObject({ id: PAYMENT_ID, provider_session_id: "cs_1", "status:in": ["due", "void"] });
     expect(auditMock).not.toHaveBeenCalled();
   });
 
@@ -286,7 +449,9 @@ describe("charge.refunded", () => {
     id: "evt_r",
     type: "charge.refunded",
     livemode: false,
-    data: { object: { id: "ch_1", payment_intent: "pi_1", amount_refunded: 2500, metadata: {}, ...over } },
+    // A charge as Stripe sends it: what was captured, what has been refunded so far, and
+    // Stripe's own "all of it" flag. The default is a FULL refund of a $25 charge.
+    data: { object: { id: "ch_1", payment_intent: "pi_1", amount: 2500, amount_refunded: 2500, refunded: true, metadata: {}, ...over } },
   });
 
   it("finds the payment by provider_ref and moves paid → refunded", async () => {
@@ -298,6 +463,84 @@ describe("charge.refunded", () => {
     expect(update?.payload).toEqual({ status: "refunded" });
     expect(update?.filters).toMatchObject({ id: PAYMENT_ID, status: "paid" });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "catering.payment.provider_refunded" }));
+  });
+
+  it("W02/B036 — a PARTIAL refund leaves the row `paid` and audits the amount", async () => {
+    const paid300 = { ...PAID_ROW, amount_cents: 30000 };
+    const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: paid300 } }));
+    const out = await processStripeEvent(
+      client,
+      refundEvent({ amount: 30000, amount_refunded: 2000, refunded: false }),
+      SINGLE,
+      noNotify,
+    );
+
+    expect(out.result).toBe("partially_refunded");
+    // The row is NOT touched: the customer has still paid, and the pay panel must stay shut.
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "catering.payment.provider_refunded",
+        metadata: expect.objectContaining({
+          partial: true,
+          row_status: "paid",
+          refunded_amount_cents: 2000,
+          amount_cents: 30000,
+        }),
+      }),
+    );
+    expect(ops.find((o) => o.table === "stripe_events" && o.kind === "update")?.payload).toMatchObject({
+      outcome: "partially_refunded",
+    });
+  });
+
+  it("W02/B036 — Stripe's own `refunded: true` is a FULL refund and moves the row", async () => {
+    const paid300 = { ...PAID_ROW, amount_cents: 30000 };
+    const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: paid300 } }));
+    const out = await processStripeEvent(
+      client,
+      refundEvent({ amount: 30000, amount_refunded: 30000, refunded: true }),
+      SINGLE,
+      noNotify,
+    );
+
+    expect(out.result).toBe("refunded");
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.payload).toEqual({ status: "refunded" });
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ partial: false, row_status: "refunded" }) }),
+    );
+  });
+
+  it("W02/B036 — partial refunds that TOGETHER cover the CHARGE read as full (amount_refunded is cumulative)", async () => {
+    const paid300 = { ...PAID_ROW, amount_cents: 30000 };
+    const { client } = stubClient(handlerFor({ paymentByRef: { data: paid300 } }));
+    // No boolean on the payload: the cumulative amount, against the charge's own amount, decides.
+    const out = await processStripeEvent(client, refundEvent({ amount: 30000, amount_refunded: 30000, refunded: undefined }), SINGLE, noNotify);
+    expect(out.result).toBe("refunded");
+  });
+
+  it("review r1 — the ROW's amount never decides: a refund covering the row but not the charge is partial", async () => {
+    // The row says $25; Stripe captured $300 and has refunded $25 of it.
+    const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: PAID_ROW } }));
+    const out = await processStripeEvent(client, refundEvent({ amount: 30000, amount_refunded: 2500, refunded: undefined }), SINGLE, noNotify);
+    expect(out.result).toBe("partially_refunded");
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
+  });
+
+  it("W02/B036 — a refund payload with NEITHER signal is treated as partial, never as a re-opened order", async () => {
+    const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: PAID_ROW } }));
+    const out = await processStripeEvent(client, refundEvent({ amount: undefined, refunded: undefined }), SINGLE, noNotify);
+    expect(out.result).toBe("partially_refunded");
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
+  });
+
+  it("W02/B036 — a partial refund against a row that is not `paid` reports `no_paid_row`", async () => {
+    const { client } = stubClient(
+      handlerFor({ paymentByRef: { data: { ...PAID_ROW, amount_cents: 30000, status: "refunded" } } }),
+    );
+    const out = await processStripeEvent(client, refundEvent({ amount_refunded: 2000, refunded: false }), SINGLE, noNotify);
+    expect(out.result).toBe("no_paid_row");
+    expect(auditMock).not.toHaveBeenCalled();
   });
 
   it("reports `no_paid_row` when the guarded update matches nothing (already refunded)", async () => {
@@ -376,8 +619,155 @@ describe("the two deployment shapes", () => {
   });
 });
 
-describe("a processing failure is recorded, not retried forever", () => {
-  it("stamps the ledger and returns rather than throwing past the route", async () => {
+describe("W02/B005 — an event that was SEEN but never FINISHED is worked again", () => {
+  const SEEN = { error: { code: "23505" } };
+
+  it("a redelivery of an event stamped `processing_failed` runs the paid flip", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({ ledgerInsert: SEEN, ledgerRow: { data: { id: "evt_1", outcome: "processing_failed" } } }),
+    );
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).toBe("paid");
+    const update = ops.find((o) => o.table === "catering_payments" && o.kind === "update");
+    expect(update?.payload).toMatchObject({ status: "paid", provider: "stripe", provider_ref: "pi_1" });
+    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "catering.payment.provider_paid" }));
+    expect(noNotify.notifyPaid).toHaveBeenCalledTimes(1);
+    expect(ops.find((o) => o.table === "stripe_events" && o.kind === "update")?.payload).toMatchObject({ outcome: "paid" });
+  });
+
+  it("a redelivery of an event that died mid-flight (outcome NULL) runs the paid flip", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({ ledgerInsert: SEEN, ledgerRow: { data: { id: "evt_1", outcome: null } } }),
+    );
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).toBe("paid");
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.filters).toMatchObject({
+      id: PAYMENT_ID,
+    });
+  });
+
+  // Review r5, then r6. This test used to read "the row is already paid by this charge" as
+  // "all the work landed" and expect `already_advanced` with no audit and no email. Paid is
+  // not finished: an earlier delivery cut off after its flip leaves exactly this state with
+  // the order's other checkouts still open and nobody told. What says the work is done is the
+  // row's own settlement marker (`settlement_cleanup_at`, migration 0303) — NULL here — so
+  // the settlement is run again, and because the report rides on that marker, this is the
+  // delivery that makes it. Every cut point is pinned in tests/stripe-webhook-resume.test.ts.
+  it("a redelivery of an UNSTAMPED event whose charge is already on the row RESUMES the settlement: `paid`, reported once", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({
+        ledgerInsert: SEEN,
+        ledgerRow: { data: { id: "evt_1", outcome: null } },
+        paymentById: { data: { ...PAID_ROW, provider_ref: "pi_1" } },
+        paymentUpdate: { count: 0, data: [] },
+      }),
+    );
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).toBe("paid");
+    expect(ops.find((o) => o.table === "stripe_events" && o.kind === "update")?.payload).toMatchObject({ outcome: "paid" });
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(auditMock.mock.calls[0]![0].metadata).toMatchObject({ resumed: true, row_moved: true, needs_review: [] });
+    expect(noNotify.notifyPaid).toHaveBeenCalledTimes(1);
+  });
+
+  it("…while an event about a charge already on a row whose CLEANUP IS RECORDED AS DONE is the quiet `already_advanced`", async () => {
+    const { client } = stubClient(
+      handlerFor({
+        paymentById: { data: { ...PAID_ROW, provider_ref: "pi_1", settlement_cleanup_at: "2026-11-01T00:00:00.000Z" } },
+        paymentUpdate: { count: 0, data: [] },
+      }),
+    );
+    const out = await processStripeEvent(client, sessionEvent({}, "checkout.session.completed", "evt_other"), SINGLE, noNotify);
+
+    expect(out.result).toBe("already_advanced");
+    expect(auditMock).not.toHaveBeenCalled();
+    expect(noNotify.notifyPaid).not.toHaveBeenCalled();
+  });
+
+  // Review r6 (P1). "First seen" used to be the quiet answer whatever the row said. It is the
+  // delivery that INSERTED the ledger row that the reviewer caught stamping an overlapping
+  // delivery's unfinished settlement as done — so a first-seen event gets no pass either.
+  it("a FIRST-SEEN event about a charge on a row whose cleanup is NOT recorded runs the settlement: never `already_advanced`", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({ paymentById: { data: { ...PAID_ROW, provider_ref: "pi_1" } }, paymentUpdate: { count: 0, data: [] } }),
+    );
+    const out = await processStripeEvent(client, sessionEvent({}, "checkout.session.completed", "evt_other"), SINGLE, noNotify);
+
+    expect(out.result).toBe("paid");
+    expect(ops.find((o) => o.table === "stripe_events" && o.kind === "update")?.payload).toMatchObject({ outcome: "paid" });
+    expect(auditMock.mock.calls[0]![0].metadata).toMatchObject({ resumed: true, stripe_event_id: "evt_other" });
+  });
+
+  it("a redelivered REFUND that failed the first time is retried too", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({
+        ledgerInsert: SEEN,
+        ledgerRow: { data: { id: "evt_r", outcome: "processing_failed" } },
+        paymentByRef: { data: PAID_ROW },
+      }),
+    );
+    const out = await processStripeEvent(
+      client,
+      { id: "evt_r", type: "charge.refunded", livemode: false, data: { object: { id: "ch_1", payment_intent: "pi_1", amount: 2500, amount_refunded: 2500, refunded: true, metadata: {} } } },
+      SINGLE,
+      noNotify,
+    );
+    expect(out.result).toBe("refunded");
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.payload).toMatchObject({ status: "refunded" });
+  });
+
+  it("a FAILED read of the seen event's verdict throws — 500, never a 200 for work that may not have landed", async () => {
+    const { client, ops } = stubClient(
+      handlerFor({ ledgerInsert: SEEN, ledgerRow: { error: { message: "connection reset" } } }),
+    );
+    await expect(processStripeEvent(client, sessionEvent(), SINGLE, noNotify)).rejects.toThrow(/stripe_events read/);
+    expect(ops.filter((o) => o.table === "catering_payments")).toEqual([]);
+  });
+
+  it("the verdict stamp is guarded, so a concurrent retry cannot overwrite a terminal verdict", async () => {
+    const { client, ops } = stubClient(handlerFor());
+    await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    const stamp = ops.find((o) => o.table === "stripe_events" && o.kind === "update");
+    // Only an UNFINISHED row may be stamped: never stamped, `processing_failed`, or
+    // `settlement_incomplete` (review r7 — retryable too, and replaceable by the run that finishes).
+    expect(stamp?.filters).toMatchObject({
+      id: "evt_1",
+      or: "outcome.is.null,outcome.eq.processing_failed,outcome.eq.settlement_incomplete",
+    });
+  });
+
+  it("the ROUTE answers 500 to every retryable result (`processing_failed`, `settlement_incomplete`), so Stripe redelivers the same event", () => {
+    const src = readFileSync(join(ROOT, "app/api/webhooks/stripe/_handler.ts"), "utf8");
+    expect(src).toMatch(/if \(isRetryableResult\(result\)\) return jsonError\(500, result\)/);
+    // …and the 500 sits BEFORE the catch-all 200.
+    expect(src.indexOf("jsonError(500, result)")).toBeGreaterThan(-1);
+    expect(src.indexOf("jsonError(500, result)")).toBeLessThan(src.indexOf("return jsonOk({ result })"));
+    // The one predicate the route reads is exactly those two results.
+    expect(isRetryableResult("processing_failed")).toBe(true);
+    expect(isRetryableResult("settlement_incomplete")).toBe(true);
+    expect(isRetryableResult("paid_needs_review")).toBe(false);
+    expect(isRetryableResult("paid")).toBe(false);
+    expect(isRetryableResult("duplicate")).toBe(false);
+  });
+
+  it("a settlement whose marker write does not land is `settlement_incomplete` — stamped as such, never `paid`", async () => {
+    const { client, ops } = stubClient(handlerFor({ markerUpdate: { error: { message: "connection reset" } } }));
+    const out = await processStripeEvent(client, sessionEvent(), SINGLE, noNotify);
+
+    expect(out.result).toBe("settlement_incomplete");
+    expect(ops.find((o) => o.table === "stripe_events" && o.kind === "update")?.payload).toMatchObject({ outcome: "settlement_incomplete" });
+    // The ordinary "payment received" waits for the run whose marker write lands.
+    expect(noNotify.notifyPaid).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("a processing failure is recorded AND reported as retryable", () => {
+  it("stamps the ledger and returns `processing_failed` rather than throwing past the route", async () => {
     const { client, ops } = stubClient(
       handlerFor({ paymentById: { error: { message: "transport exploded" } } }),
     );

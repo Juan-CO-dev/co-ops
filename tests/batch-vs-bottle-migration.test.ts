@@ -138,15 +138,24 @@ const REEMITS: Reemit[] = [
 /**
  * Later migrations that re-emit a 0215 body FROM 0215 (each has its own line-subsequence pin).
  * 0255 (B11a, under-par alert recipients + par) → tests/under-par-alert-recipients-migration.test.ts.
+ * 0315 (audit W14) re-emits save_phase2_item_atomic FROM 0215 and submit_phase2_atomic FROM 0255 (the
+ * opening instance lock, + blank BACK UP = 0 on the save) → tests/opening-counts-batch-prep-migration.test.ts
+ * pins each as a line-subsequence of its source. (It re-emits revoke_phase2_item_atomic too, which this
+ * file pins on the 0215 text directly.)
  */
 const LATER_REEMITTERS: Readonly<Record<string, string>> = {
-  submit_phase2_atomic: "0255_under_par_alert_recipients.sql",
+  save_phase2_item_atomic: "0315_opening_counts_batch_prep.sql",
+  submit_phase2_atomic: "0315_opening_counts_batch_prep.sql",
   // 0258 (catalog Phase 1, Astra r2 #1): the recipe-graph lock + in-transaction output cycle refusal
   // → tests/recipe-input-write-atomic.test.ts pins both as line-subsequences of 0215.
   // 0262 (catalog Phase 3a) re-emits both FROM 0258 (+ the per-shop cycle sweep, + the journal actor)
   // → tests/recipe-versions-migration.test.ts pins them as line-subsequences of 0258.
   create_recipe_full: "0262_recipe_shop_versions.sql",
   add_recipe_output: "0262_recipe_shop_versions.sql",
+  // 0313 (W13/B019, B073, B074) re-emits both Phase 1 writers FROM 0215 with the checklist-type
+  // guards → tests/checklist-type-guards-migration.test.ts pins them as line-subsequences of 0215.
+  submit_phase1_atomic: "0313_checklist_type_guards.sql",
+  submit_mid_day_phase1_atomic: "0313_checklist_type_guards.sql",
 };
 
 describe("0215 re-emits every RPC from its latest definer — nothing dropped (GO correction 5)", () => {

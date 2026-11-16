@@ -27,6 +27,7 @@ import {
   createMidDayPrepInstance,
   resolveMidDayPrepTemplate,
 } from "@/lib/prep";
+import { etCalendarDate } from "@/lib/operational-day";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -71,6 +72,18 @@ export async function POST(req: NextRequest) {
   }
   const body = validation.body;
 
+  // W13/B178: the day is the SERVER's ET day (the dashboard's etCalendarDate), never the
+  // client's. A tab left open past midnight sent yesterday's date and made yesterday's prep;
+  // any other date is refused so the page can refresh. `date` stays in the body for
+  // compatibility with tabs already open.
+  const today = etCalendarDate(new Date().toISOString());
+  if (body.date !== today) {
+    return jsonError(409, "date_not_today", {
+      message: "This page is from another day. Refresh to start today's mid-day prep.",
+      today,
+    });
+  }
+
   // 3. Location access (defense-in-depth; RLS also gates).
   if (
     !canWorkShopTasks(
@@ -86,7 +99,7 @@ export async function POST(req: NextRequest) {
 
   // 4. Shift-staff gate (C.21 — mid-day prep init open to level >= AM_PREP_BASE_LEVEL).
   const service = getServiceRoleClient();
-  if (!(await hasTaskAccess(service, { userId: ctx.user.id, level: ctx.level, locationId: body.locationId, date: body.date, task: "mid_day_prep" }))) {
+  if (!(await hasTaskAccess(service, { userId: ctx.user.id, level: ctx.level, locationId: body.locationId, date: today, task: "mid_day_prep" }))) {
     return jsonError(403, "role_insufficient", {
       message: "Mid-day prep can be started by shift staff only.",
       required_level: AM_PREP_BASE_LEVEL,
@@ -115,9 +128,15 @@ export async function POST(req: NextRequest) {
     const result = await createMidDayPrepInstance(service, {
       templateId: template.id,
       locationId: body.locationId,
-      date: body.date,
+      date: today,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
     });
+    if (!result.ok && result.reason === "date_not_today") {
+      // The ET day turned between the check above and the RPC (SQL pins it too).
+      return jsonError(409, "date_not_today", {
+        message: "This page is from another day. Refresh to start today's mid-day prep.",
+      });
+    }
     if (!result.ok) {
       return jsonError(409, "midday_cap_reached", {
         message: `Mid-day prep is limited to ${result.cap} per day. Open an existing one to continue.`,

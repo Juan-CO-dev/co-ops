@@ -225,6 +225,22 @@ describe("parseCheckoutEvent — the untrusted-JSON boundary", () => {
     expect(out.amountCents).toBe(2500);
   });
 
+  it("W02/B036 — carries the charge's own `refunded` flag and `amount`, so partial is distinguishable from full", () => {
+    const charge = (object: Record<string, unknown>) =>
+      parseCheckoutEvent({ id: "evt_r", type: "charge.refunded", livemode: false, data: { object: { id: "ch_1", payment_intent: "pi_1", ...object } } });
+
+    expect(charge({ amount: 30000, amount_refunded: 2000, refunded: false })).toMatchObject({
+      kind: "refunded",
+      amountCents: 2000,
+      chargeAmountCents: 30000,
+      chargeFullyRefunded: false,
+    });
+    expect(charge({ amount: 30000, amount_refunded: 30000, refunded: true }).chargeFullyRefunded).toBe(true);
+    // A non-boolean is NOT coerced: "true" from an untrusted body is not a full refund.
+    expect(charge({ amount_refunded: 30000, refunded: "true" }).chargeFullyRefunded).toBeUndefined();
+    expect(charge({ amount_refunded: 30000 }).chargeFullyRefunded).toBeUndefined();
+  });
+
   it("accepts an EXPANDED payment_intent object as well as the id string", () => {
     expect(parseCheckoutEvent(session({ payment_intent: { id: "pi_x" } })).paymentIntentId).toBe("pi_x");
   });

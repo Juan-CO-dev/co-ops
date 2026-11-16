@@ -13,7 +13,7 @@
  * with country code, no "+"; each hashed SHA-256, lowercase hex.
  */
 import { createHash } from "node:crypto";
-import { CSV_BOM, csvField } from "@/lib/report-export-shared";
+import { CSV_BOM, csvField, formatCell } from "@/lib/report-export-shared";
 import { normalizeEmail } from "./identity-shared";
 
 export interface MarketingSourceRow {
@@ -61,7 +61,12 @@ const line = (cells: readonly string[]) => cells.map(csvField).join(",");
 export function marketingCsv(rows: readonly MarketingSourceRow[]): { csv: string; count: number } {
   const kept = optedInOnly(rows);
   const lines = [line(["email", "first_name", "last_name", "opted_in_at", "consent_source"])];
-  for (const r of kept) lines.push(line([r.value, r.first_name ?? "", r.last_name ?? "", r.opted_in_at, r.source]));
+  // W12/B069: every cell is guest-typed or guest-derived text, so it goes through the house formula
+  // defuse (a leading = + - @ tab or CR gets an apostrophe). The Meta file below holds hex hashes only and
+  // is never defused: an apostrophe there would change the hash Meta matches on.
+  for (const r of kept) {
+    lines.push(line([r.value, r.first_name ?? "", r.last_name ?? "", r.opted_in_at, r.source].map((c) => formatCell("text", c))));
+  }
   return { csv: `${CSV_BOM}${lines.join("\r\n")}\r\n`, count: kept.length };
 }
 

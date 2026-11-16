@@ -249,6 +249,10 @@ export async function POST(req: NextRequest) {
       closingReportRefItemId = await resolveClosingReportRefItemId(service, {
         locationId: instance.location_id,
         reportType: "am_prep",
+        // W13/B077: resolve the closing version effective on the AM prep's OWN day. After
+        // midnight, "today" can be a newer closing version whose ref item the instance-date
+        // closing does not hold (submit_am_prep_atomic then refused the submit).
+        opDate: instance.date,
       });
       const assignment = await loadAssignmentForToday(service, {
         userId: ctx.user.id,

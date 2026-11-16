@@ -78,6 +78,10 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
   // EMPTY until somebody makes a shop version — exactly what "no shop versions" means. A fixture that
   // brings its own rows keeps them.
   for (const t of ["recipe_versions", "recipe_version_lines", "menu_item_shop_settings", "recipe_notice_dismissals"]) tables[t] ??= [];
+  // Catalog Phase 2a (0259): `sku_pack_versions` exists in every database too. A fixture that brings no
+  // version rows is one whose packs were never edited: the as-of readers (audit W17 / B100, the counts
+  // receipt ledger) find no version in force and answer with the live chain, as before.
+  tables.sku_pack_versions ??= [];
   const log: QueryLogEntry[] = [];
   const writes: Array<{ table: string; rows: Row[] }> = [];
   // CRITICAL PATH: a query issued after a depth-d query has COMPLETED is at least d + 1.

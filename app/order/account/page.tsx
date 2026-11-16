@@ -16,6 +16,12 @@ import { redirect } from "next/navigation";
 import { getCustomerFromHeaders } from "@/lib/portal/session";
 import { loadCustomerAccount } from "@/lib/portal/account";
 import type { CustomerOrder, CustomerStatus } from "@/lib/portal/account";
+import { quoteSettlement } from "@/lib/portal/payability-shared";
+import { serverT } from "@/lib/i18n/server";
+
+/** The portal renders in English today (the same constant /order/quote/[id] uses); new
+ *  strings on this page still ship as en + es keys so the language switch is one line. */
+const PORTAL_LANG = "en" as const;
 
 const money = (cents: number) =>
   (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -54,13 +60,18 @@ function StatusBadge({ status }: { status: CustomerStatus }) {
           : "bg-co-border/50 text-co-text-dim";
   return (
     <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ${toneClass}`}>
-      {status.label}
+      {/* A status with an i18n key renders through it (en + es); the older ones still carry
+          their English label. */}
+      {status.labelKey ? serverT(PORTAL_LANG, status.labelKey) : status.label}
     </span>
   );
 }
 
 function OrderCard({ order }: { order: CustomerOrder }) {
   const { quote, status } = order;
+  // Paid toward the order but not paid FOR: say what has come in and what is still owed.
+  // Information only — the team raises the balance; there is no second charge to offer here.
+  const paidCents = quoteSettlement(quote.totalCents, order.payments).paidCents;
   return (
     <li className="overflow-hidden rounded-3xl border border-co-border/70 bg-co-surface shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3 px-6 py-5">
@@ -71,6 +82,21 @@ function OrderCard({ order }: { order: CustomerOrder }) {
             {quote.headcount ? `${quote.headcount} guests · ` : ""}
             <span className="font-bold tabular-nums text-co-text">{money(quote.totalCents)}</span>
           </p>
+          {/* Money received on an offer that had already lapsed (review r3): say what came in
+              and that a person is looking at it. Never a balance line, never "all set". */}
+          {status.key === "late_payment" && (
+            <p className="mt-1 text-sm font-semibold text-co-text-muted">
+              {serverT(PORTAL_LANG, "order.account.late_payment", { paid: money(paidCents) })}
+            </p>
+          )}
+          {status.balanceDueCents > 0 && (
+            <p className="mt-1 text-sm font-semibold text-co-text-muted">
+              {serverT(PORTAL_LANG, "order.account.balance_due", {
+                paid: money(paidCents),
+                amount: money(status.balanceDueCents),
+              })}
+            </p>
+          )}
         </div>
         <StatusBadge status={status} />
       </div>

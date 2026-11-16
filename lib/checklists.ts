@@ -55,8 +55,10 @@ import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel, type RoleCode } from "./roles";
 import { lockLocationContext } from "./locations";
 import { worksShopTasks } from "./checklist-write-guard-shared";
+import { etCalendarDate } from "./operational-day";
 import { CLOSING_CONFIRM_FLOOR_LEVEL } from "./admin/template-builder-shared";
 import { canCompleteChecklistItem, evaluateLockUpGate } from "./checklist-constants";
+import { isSystemTrackedItem } from "./checklist-write-guard-shared";
 import {
   applyEffectiveResolution,
   type EffectiveResolvableBuilder,
@@ -139,6 +141,18 @@ export class ChecklistInstanceClosedError extends ChecklistError {
   constructor(public readonly instanceId: string, public readonly status: ChecklistStatus) {
     super(`Instance ${instanceId} is ${status}; only open instances accept writes.`, "instance_closed");
     this.name = "ChecklistInstanceClosedError";
+  }
+}
+
+/**
+ * W13/B072 — the generic complete / submit / confirm writers are the CLOSING screen's.
+ * Opening and prep instances are finished through their own atomic flows (Phase 1/2,
+ * snapshots, notifications); a hand-made request against them is refused here (409).
+ */
+export class ChecklistWrongTemplateTypeError extends ChecklistError {
+  constructor() {
+    super("This checklist is finished from its own screen.", "wrong_checklist_type");
+    this.name = "ChecklistWrongTemplateTypeError";
   }
 }
 
@@ -671,6 +685,8 @@ async function throwChecklistWriteError(
     case "instance_cardinality":
     case "reason_cardinality":
       throw new ChecklistError("The list changed — review it again", error.message);
+    case "wrong_checklist_type":
+      throw new ChecklistWrongTemplateTypeError();
     case "item_mismatch":
       throw new ChecklistRoleViolationError(3, actor.level, "Item does not belong to this checklist");
     case "invalid_reasons":
@@ -806,6 +822,16 @@ export async function requireChecklistTaskAccess(
   }))) throw new ChecklistRoleViolationError(4, actor.level, "An active assignment is required for this task.");
 }
 
+/** W13/B072: refuse the generic writers on any template that is not a closing.
+ *  W05B merge: reads the BOUND instance's own template (service-role, see BoundShopTask) so a
+ *  level-8+ non-member the shop rule admitted is not refused as "wrong type" by an RLS-empty read. */
+async function requireClosingTemplate(bound: BoundShopTask): Promise<void> {
+  const { data, error } = await bound.templateReader.from("checklist_templates")
+    .select("type").eq("id", bound.instance.template_id).maybeSingle<{ type: string }>();
+  if (error) throw new Error(`checklist template type: ${error.message}`);
+  if (data?.type !== "closing") throw new ChecklistWrongTemplateTypeError();
+}
+
 async function auditChecklistOverride(
   authed: SupabaseClient, instanceId: string, actor: ChecklistActor, operation: string, bound?: BoundShopTask,
 ): Promise<void> {
@@ -921,6 +947,12 @@ export async function getOrCreateInstance(
   // W05B (Juan 2026-11-15): level 8+ start a shop's checklist without a membership there too.
   if (actor.level < 3 || !worksShopTasks(actor, locationId)) {
     throw new ChecklistRoleViolationError(3, actor.level);
+  }
+  // W13/B076: never START an instance for a future day. Its 16 h release clock would run
+  // out before the day arrives (release_overdue_closings) and the day's fast path would
+  // then find an auto-finalized row. Existing rows of any date still read (fast path above).
+  if (date > etCalendarDate(new Date().toISOString())) {
+    throw new ChecklistError("A closing can only be started for today.", "closing_date_not_today");
   }
 
   // Build #3 PR 1 — submission gate evaluation. Loads the template's
@@ -1071,6 +1103,7 @@ export async function completeItem(
   const bound = await bindOpenShopTaskInstance(authed, instanceId, actor);
   const instance = bound.instance;
   await requireChecklistTaskAccess(authed, instanceId, actor, bound);
+  await requireClosingTemplate(bound);
   await rejectIfPrepLocked(authed, instanceId, bound);
 
   // W05B r2: the bound instance's own template and items, service-role. An id that names no item
@@ -1190,6 +1223,7 @@ export async function submitBatch(
   const bound = await bindOpenShopTaskInstance(authed, instanceId, actor);
   const instance = bound.instance;
   await requireChecklistTaskAccess(authed, instanceId, actor, bound);
+  await requireClosingTemplate(bound);
   await rejectIfPrepLocked(authed, instanceId, bound);
 
   // Verify every completion exists, belongs to this instance, was authored
@@ -1325,6 +1359,7 @@ export async function confirmInstance(
   const bound = await bindOpenShopTaskInstance(authed, instanceId, actor);
   const instance = bound.instance;
   await requireChecklistTaskAccess(authed, instanceId, actor, bound);
+  await requireClosingTemplate(bound);
   await rejectIfPrepLocked(authed, instanceId, bound);
 
   // Live (non-superseded, non-revoked) completions for gates and SQL snapshot.
@@ -2137,7 +2172,11 @@ export async function tagActualCompleter(
 
   const item = await loadBoundTemplateItem(bound, completion.template_item_id);
   if (!item) throw new Error(`template_item ${completion.template_item_id} not found or not visible to caller`);
-  if (item.report_reference_type) throw new ChecklistError("Reference rows use their report correction path.", "reference_row_not_correctable");
+  // Audit W14 / B182: an item-tracking tick is a system row too (it follows another item and
+  // is fixed there); it refuses with the report-reference code, like the 0315 SQL writers.
+  if (isSystemTrackedItem({ reportReferenceType: item.report_reference_type, refTrackItemCompletion: item.ref_track_item_completion, referencesTemplateItemId: item.references_template_item_id })) {
+    throw new ChecklistError("Reference and item-tracking rows are corrected at their source.", "reference_row_not_correctable");
+  }
   if (completion.prep_data != null) throw new ChecklistError("Prep rows use their prep correction path.", "prep_data_not_correctable");
 
   // Window check: tagging blocked during the actor's silent-correction window.

@@ -166,6 +166,8 @@ interface ActiveScan {
   storedLevel: Level;
   /** The row the receiver actually picked, carried THROUGH the 409 (Astra r2 item 5). */
   lineKey: string | null;
+  /** Twin stage only: the code was taught on THIS vendor's retired item, not another vendor's (B101). */
+  viaOwnRetired?: boolean;
 }
 
 /**
@@ -868,6 +870,7 @@ export function ReceivingForm({
       setActiveScan({
         eventId: ev.id, token: ev.token, code: ev.code, stage: "twin",
         skuId: action.match.skuId, level: action.level, storedLevel: "case", lineKey: null,
+        viaOwnRetired: action.match.viaOwnRetired === true,
       });
       return;
     }
@@ -1530,7 +1533,7 @@ export function ReceivingForm({
                       }}
                       className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-text bg-co-surface px-4 text-sm font-bold text-co-text"
                     >
-                      {t("receiving.scan.twin_confirm", {
+                      {t(activeScan.viaOwnRetired ? "receiving.scan.twin_confirm_retired" : "receiving.scan.twin_confirm", {
                         sku: skuById.get(activeScan.skuId)?.name ?? t("receiving.door.unknown_sku"),
                       })}
                     </button>
