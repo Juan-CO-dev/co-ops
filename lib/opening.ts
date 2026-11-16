@@ -50,7 +50,6 @@ import {
   recordBatchProductionFromPrep,
   recordProductionFromPrep,
   reverseProductionForPrep,
-  skuConsumptionForItem,
   type ConfirmedInput,
   type DerivedSku,
 } from "@/lib/prep-consumption";
@@ -76,6 +75,7 @@ import {
 } from "./template-items";
 import {
   parseOpeningPhase1Draft,
+  type OpeningDraftRev,
   type OpeningPhase1Draft,
 } from "./opening-draft-shared";
 import type {
@@ -117,6 +117,7 @@ export {
   parseOpeningPhase1Draft,
 } from "./opening-draft-shared";
 export type {
+  OpeningDraftRev,
   OpeningPhase1Draft,
   OpeningPhase1DraftItem,
 } from "./opening-draft-shared";
@@ -1556,14 +1557,39 @@ export async function loadOpeningPhase1Draft(
 }
 
 /**
- * saveOpeningPhase1Draft — upsert the draft for one instance. LAST WRITE WINS.
+ * A draft save the WRITE refused (save_opening_phase1_draft, migration 0315). The route's own
+ * reads answer the same cases first; these are the same answers when the state moved between
+ * that read and the write (Phase 1 submitted in the gap).
+ */
+export class OpeningDraftRefusedError extends OpeningError {
+  constructor(public readonly code: "phase1_not_open" | "instance_not_found" | "location_mismatch" | "invalid_payload") {
+    super(`Opening Phase 1 draft refused: ${code}`, code);
+    this.name = "OpeningDraftRefusedError";
+  }
+}
+
+const OPENING_DRAFT_REFUSALS = ["phase1_not_open", "instance_not_found", "location_mismatch", "invalid_payload"] as const;
+
+/**
+ * saveOpeningPhase1Draft — save the draft for one instance.
  *
- * There is no per-field merge, and that is a decision, not an omission: two openers
- * editing the same instance at the same moment is not the shift this fixes (the real
- * sequence is sequential — employee walks, then key holder takes the tablet or opens it
- * on their own device). A field-level merge needs per-field timestamps and a conflict
+ * ACROSS DEVICES: LAST WRITE WINS. There is no per-field merge, and that is a decision, not
+ * an omission: two openers editing the same instance at the same moment is not the shift this
+ * fixes (the real sequence is sequential — employee walks, then key holder takes the tablet or
+ * opens it on their own device). A field-level merge needs per-field timestamps and a conflict
  * story the operator can read, which is its own design; shipping a silent, guessy merge
  * would be worse than a rule everyone can state. Documented as a later refinement.
+ *
+ * WITHIN ONE TAB: IN ORDER (audit W14 / B078). Last-write-wins was never meant to apply to one
+ * tab's own requests, but a slow older autosave (or a page-hide beacon) could commit after a
+ * newer one and leave the OLDER draft stored. The client now sends `rev` — its tab id and a
+ * counter — and `save_opening_phase1_draft` (migration 0315) refuses a request from the same
+ * tab whose counter is not higher, answering `applied: false` (a success: the server already
+ * holds something newer from this tab). It also locks the instance and requires
+ * `status = 'open'` in the write itself, closing the gap after the route's status read.
+ *
+ * BEFORE 0315 IS APPLIED the function does not exist (PGRST202 / 42883) and this falls back to
+ * the 0203 upsert — last write wins, as before — so the app keeps saving drafts.
  *
  * Returns the persisted `saved_at` so the client's status line shows SERVER time, not the
  * browser's.
@@ -1576,9 +1602,37 @@ export async function saveOpeningPhase1Draft(
     draft: OpeningPhase1Draft;
     savedBy: string | null;
     actor: OpeningActor;
+    /** This send's per-tab revision; null/absent = an older client (last write wins). */
+    rev?: OpeningDraftRev | null;
   },
-): Promise<{ savedAt: string }> {
+): Promise<{ savedAt: string; applied: boolean }> {
   if (!(await canAccessOpeningInstance(service, args))) throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
+  const { data: rpcData, error: rpcErr } = await service.rpc("save_opening_phase1_draft", {
+    p_instance_id: args.instanceId,
+    p_location_id: args.locationId,
+    p_draft: args.draft,
+    p_saved_by: args.savedBy,
+    p_client_tab: args.rev?.tab ?? null,
+    p_client_seq: args.rev?.seq ?? null,
+  });
+  if (!rpcErr) {
+    const result = rpcData as { applied?: boolean; savedAt?: string | null } | null;
+    if (!result || typeof result.applied !== "boolean") {
+      throw new Error("saveOpeningPhase1Draft: empty result");
+    }
+    return { savedAt: result.savedAt ?? new Date().toISOString(), applied: result.applied };
+  }
+  if (rpcErr.code === "P0001") {
+    const refusal = OPENING_DRAFT_REFUSALS.find((code) => (rpcErr.message ?? "").includes(`opening_draft:${code}`));
+    if (refusal) throw new OpeningDraftRefusedError(refusal);
+  }
+  const functionMissing =
+    rpcErr.code === "PGRST202" || rpcErr.code === "42883" || /could not find the function/i.test(rpcErr.message ?? "");
+  if (!functionMissing) {
+    throw new Error(`saveOpeningPhase1Draft: ${rpcErr.message}`);
+  }
+
+  // ── 0315 not applied yet: the 0203 upsert (its columns only). ──
   // saved_at is written explicitly: the column DEFAULT fires on INSERT only, and an
   // upsert that lands on the UPDATE arm would otherwise keep the first save's timestamp.
   const savedAt = new Date().toISOString();
@@ -1602,7 +1656,7 @@ export async function saveOpeningPhase1Draft(
     throw new Error(`saveOpeningPhase1Draft: ${error.message}`);
   }
 
-  return { savedAt: data?.saved_at ?? savedAt };
+  return { savedAt: data?.saved_at ?? savedAt, applied: true };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2419,21 +2473,20 @@ export async function savePhase2Item(
         producedAt,
         madeBy,
         source: "opening_p2",
+        completionId: rpcResult.completionId,
       });
     } else if (tItem?.item_id) {
-      let consumption = confirmedConsumption;
-      if (consumption === null) {
-        const m = await skuConsumptionForItem(tItem.item_id, args.entry.openerPrepped, args.locationId);
-        consumption = [...m].map(([skuId, oz]) => ({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz }));
-      }
+      // W16/B183: null (crew / untouched panel) and a confirmed set both go to the fold, which
+      // reconciles them against the server's recipe.
       await recordProductionFromPrep(args.actor, {
         locationId: args.locationId,
         instanceId: args.instanceId,
         templateItemId: args.entry.templateItemId,
         outputItemId: tItem.item_id,
         outputQty: args.entry.openerPrepped,
-        confirmedConsumption: consumption,
+        confirmedConsumption,
         source: "opening_p2",
+        completionId: rpcResult.completionId,
       });
     }
   } catch (e) {
@@ -2466,6 +2519,21 @@ export async function savePhase2Item(
 const PHASE2_QUICK_REVOKE_WINDOW_MS = 60_000;
 
 /** Lib-layer result of {@link revokePhase2Completion}. */
+const CHECKLIST_STATUSES: readonly ChecklistStatus[] = [
+  "open", "phase1_complete", "phase2_complete", "confirmed", "incomplete_confirmed", "auto_finalized",
+];
+
+/**
+ * The status named by revoke_phase2_item_atomic's `phase2_not_eligible` refusal
+ * (`… status is "<status>" (expected phase1_complete)`). An unreadable message reads as
+ * phase2_complete — the one way an opening leaves phase1_complete between the lib's own
+ * status read and the write.
+ */
+function revokeRefusedStatus(message: string): ChecklistStatus {
+  const named = /status is "([a-z0-9_]+)"/.exec(message)?.[1];
+  return CHECKLIST_STATUSES.find((s) => s === named) ?? "phase2_complete";
+}
+
 export interface Phase2RevokeResult {
   completion: ChecklistCompletion;
   templateItemId: string;
@@ -2664,29 +2732,24 @@ export async function revokePhase2Completion(
     revocationNote = reason === "other" ? note : null;
   }
 
-  // ── Append-only revoke. rowCount 0 ⇒ concurrently revoked/superseded between
-  //    load and write (UPDATE-returns-0-rows is silent in Postgres; the lib
-  //    makes it a conflict). 23514 ⇒ revocation_reason CHECK violation
-  //    (defense-in-depth; should never fire — values are constraint-valid). ──
-  // ── 0215 batch vs bottle (correction 1): the revoke consults the SESSION KEY, not the
-  //    JSON. If a prep_batch_sessions row exists for (instance, template_item) — this item
-  //    was saved as a batch row at some point today, whatever the revoked completion's own
-  //    shape says (toss 8 → batch_mode off → single-box correction → revoke) — the revoke
-  //    and the toss retraction run in ONE transaction (revoke_phase2_item_atomic). No
-  //    session row → today's UPDATE, byte-identical. ──
-  const { data: sessionRow, error: sessionErr } = await service
-    .from("prep_batch_sessions")
-    .select("instance_id, template_item_id, tossed_qty")
-    .eq("instance_id", args.instanceId)
-    .eq("template_item_id", liveRow.template_item_id)
-    .maybeSingle<{ instance_id: string; template_item_id: string; tossed_qty: number | string | null }>();
-  if (sessionErr) {
-    throw new Error(`revokePhase2Completion session lookup: ${sessionErr.message}`);
-  }
-
+  // ── Append-only revoke, in ONE transaction, for EVERY row (audit W14 / B080 + B181). ──
+  // The lib used to choose here: a row with a prep_batch_sessions row went through
+  // revoke_phase2_item_atomic, every other row was revoked by a direct UPDATE. Neither
+  // re-checked the instance status nor locked the instance, so an Undo committing after
+  // submit_phase2_atomic had counted its row left a finalized report naming a revoked
+  // completion. Now every Undo calls the RPC. As of migration 0315 it locks the opening
+  // instance, re-checks phase1_complete UNDER that lock (finalize takes the same lock first),
+  // then locks the batch session, then updates the completion — the same order the save
+  // uses, so the two can no longer deadlock. With no session row it is exactly the old
+  // UPDATE (same columns, same predicates), which is also what the pre-0315 body does, so
+  // this path is safe before the migration is applied.
+  //   rowcount 0 ⇒ revoke_conflict (concurrently revoked/superseded between load and write);
+  //   23514      ⇒ revocation_reason CHECK (defense in depth; the values are constraint-valid);
+  //   0215 correction 1 holds: the RPC retracts a toss by the SESSION KEY, whatever the
+  //   revoked completion's own JSON looks like.
   let updatedRow: CompletionRow;
   let tossRetracted = 0;
-  if (sessionRow) {
+  {
     const { data: rpcData, error: rpcErr } = await service.rpc("revoke_phase2_item_atomic", {
       p_instance_id: args.instanceId,
       p_completion_id: args.completionId,
@@ -2713,6 +2776,30 @@ export async function revokePhase2Completion(
         });
         throw new OpeningRevokeConflictError(args.completionId);
       }
+      // 0315: the status moved between the friendly read above and the write — finalize
+      // won the instance lock. The Undo is refused; the finalized report stands.
+      if (rpcErr.code === "P0001" && /phase2_not_eligible/.test(rpcErr.message ?? "")) {
+        const current = revokeRefusedStatus(rpcErr.message ?? "");
+        void audit({
+          ...auditBase,
+          metadata: {
+            outcome: "phase2_not_eligible",
+            instance_id: args.instanceId,
+            phase: "rpc",
+            current_status: current,
+          },
+        });
+        throw new OpeningPhase2NotEligibleError(args.instanceId, current);
+      }
+      // B181: a deadlock victim (40P01) or a lock timeout (55P03) wrote nothing. That is
+      // "try again" (409 revoke_conflict, existing copy), never a 500.
+      if (rpcErr.code === "40P01" || rpcErr.code === "55P03") {
+        void audit({
+          ...auditBase,
+          metadata: { outcome: "revoke_conflict", instance_id: args.instanceId, phase: "lock", sqlstate: rpcErr.code },
+        });
+        throw new OpeningRevokeConflictError(args.completionId);
+      }
       throw new Error(`revokePhase2Completion revoke_phase2_item_atomic: ${rpcErr.message}`);
     }
     const result = rpcData as { completion?: CompletionRow | null; tossRetracted?: number | string | null } | null;
@@ -2721,52 +2808,6 @@ export async function revokePhase2Completion(
     }
     updatedRow = result.completion;
     tossRetracted = Number(result.tossRetracted ?? 0) || 0;
-  } else {
-    const nowIso = new Date().toISOString();
-    const { data: updatedRows, error: updateErr } = await service
-      .from("checklist_completions")
-      .update({
-        revoked_at: nowIso,
-        revoked_by: args.actor.userId,
-        revocation_reason: revocationReason,
-        revocation_note: revocationNote,
-      })
-      .eq("id", args.completionId)
-      .eq("instance_id", args.instanceId)
-      .is("revoked_at", null)
-      .is("superseded_at", null)
-      .select(COMPLETION_COLUMNS);
-
-    if (updateErr) {
-      if (updateErr.code === "23514") {
-        void audit({
-          ...auditBase,
-          metadata: {
-            outcome: "revocation_reason_invalid",
-            instance_id: args.instanceId,
-            attempted_reason: revocationReason,
-          },
-        });
-        throw new OpeningRevocationReasonInvalidError(
-          args.completionId,
-          revocationReason,
-        );
-      }
-      throw new Error(`revokePhase2Completion update: ${updateErr.message}`);
-    }
-    if (!updatedRows || updatedRows.length === 0) {
-      void audit({
-        ...auditBase,
-        metadata: {
-          outcome: "revoke_conflict",
-          instance_id: args.instanceId,
-          phase: "update",
-        },
-      });
-      throw new OpeningRevokeConflictError(args.completionId);
-    }
-
-    updatedRow = updatedRows[0] as CompletionRow;
   }
 
   // 0215: a retracted toss is the human act undone — always audited, even on the silent

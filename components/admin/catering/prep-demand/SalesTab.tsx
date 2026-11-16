@@ -289,6 +289,12 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                         {t("admin.toastsales.all_locations")}
                       </span>
                     )}
+                    {/* W16/B094: Toast captures carry no menu group, so a menu-group rule never matches anything. */}
+                    {ex.kind === "menu_group" && (
+                      <span className="ml-2 rounded-full bg-co-surface-inset px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
+                        {t("admin.toastsales.not_applied")}
+                      </span>
+                    )}
                   </span>
                   {canPull && (
                     <button type="button" className={btn} disabled={busy} onClick={() => write(`/api/admin/toast-sales/exclusions/${ex.id}`, { action: "deactivate" })}>
@@ -304,7 +310,6 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                 <div className="flex flex-wrap items-center gap-2">
                   <select aria-label={t("admin.toastsales.kind_label")} value={exKind} onChange={(e) => setExKind(e.target.value)} className={inputCls}>
                     <option value="dining_option">{t("admin.toastsales.kind.dining_option")}</option>
-                    <option value="menu_group">{t("admin.toastsales.kind.menu_group")}</option>
                     <option value="toast_item_guid">{t("admin.toastsales.kind.toast_item_guid")}</option>
                     <option value="item_name_contains">{t("admin.toastsales.kind.item_name_contains")}</option>
                   </select>
