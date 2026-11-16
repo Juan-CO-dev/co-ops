@@ -13,6 +13,11 @@ import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import type { RecipeInputSku } from "@/lib/recipe-math";
 import { buildRecipeGraph } from "@/lib/prep-consumption-graph";
 import { previewPackChange, type PreviewShopState } from "@/lib/catalog/change-preview-shared";
+import { jsx } from "react/jsx-runtime";
+import { renderToStaticMarkup } from "react-dom/server";
+import { TranslationProvider } from "@/lib/i18n/provider";
+import { ChangePreviewPanel } from "@/components/catalog/ChangePreviewPanel";
+import en from "@/lib/i18n/en.json";
 
 let current: ReturnType<typeof createFakeDb> | null = null;
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => {
@@ -116,5 +121,52 @@ describe("the routes and the page only go through the preview", () => {
         expect(dict[k], `${lang} ${k}`).toBeTruthy();
       }
     }
+  });
+});
+
+// Fix round 1 (W18/B107): a shop's own chain that equals the default is still a real Back to default —
+// the save retires the shop's version, so the shop rides FUTURE default changes and its pack epoch
+// moves (its machine par restarts). The preview must say so and keep the Save, never "no change".
+describe("Back to default with a shop chain identical to the default", () => {
+  const measures = new Map([["oz", { dimension: "weight" as const, toBaseFactor: 1 }]]);
+  const chain: PackChainLevel[] = [
+    { id: "c", label: "case", containsQty: 4, containsLevelId: "b", containsMeasureUnit: null, displayOrdinal: 0 },
+    { id: "b", label: "bag", containsQty: 24, containsLevelId: null, containsMeasureUnit: "oz", displayOrdinal: 1 },
+  ];
+  const pack = (c: PackChainLevel[]): RecipeInputSku => ({ packFormat: "case", eachContainerLabel: null, unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: null, packChain: c });
+  const state: PreviewShopState = {
+    shopId: A, shopName: "P Street", basePack: pack(chain), ownPackVersion: true, ownPriceLane: false,
+    priceHeads: { global: null, lane: null }, graph: buildRecipeGraph([], new Map([["t", pack(chain)]]), measures), prices: new Map(),
+    slots: [{ slot: "weekday", value: 4, lane: "human" }, { slot: "weekend", value: 5, lane: "auto" }], openOrders: [],
+  };
+  const preview = () => previewPackChange({
+    skuId: "t", target: { kind: "shop", shopId: A }, targetBasePack: pack(chain), newChain: chain,
+    shops: [state], globalPars: { weekday: 3, weekend: 2 }, parStep: null, menuItems: [], recipeLines: [],
+    liveVersionId: "shop-v", basedOnVersionId: null, retiresOwnVersion: true,
+  });
+  it("is a change: the human par keeps its count, the machine par's restart is disclosed", () => {
+    const p = preview();
+    expect(p.changed).toBe(true);
+    expect(p.shops[0]?.orderUnitOz).toEqual({ before: 96, after: 96 });
+    expect(p.pars.map((r) => [r.slot, r.lane, r.status])).toEqual([["weekend", "auto", "machine_par"]]);
+  });
+  it("renders the Save for the shop, not 'no change'", () => {
+    const html = renderToStaticMarkup(jsx(TranslationProvider, { initialLanguage: "en", children:
+      jsx(ChangePreviewPanel, { preview: { ...preview(), snapshot: null, token: "t" }, canSave: true, canEditPar: true, chosen: new Set<string>(), onToggleConversion: () => {}, onSave: () => {}, busy: false }) }));
+    expect(html).not.toContain(en["catalog.preview.no_change"]);
+    expect(html).toContain("Save for P Street");
+    expect(html).toContain("Until it recomputes, P Street uses the default par");
+  });
+  it("a plain pack edit to the same chain is still 'no change'", () => {
+    const p = previewPackChange({
+      skuId: "t", target: { kind: "shop", shopId: A }, targetBasePack: pack(chain), newChain: chain,
+      shops: [state], globalPars: { weekday: 3, weekend: 2 }, parStep: null, menuItems: [], recipeLines: [],
+      liveVersionId: "shop-v", basedOnVersionId: null,
+    });
+    expect(p.changed).toBe(false);
+  });
+  it("computeBackToDefaultPreview asks the preview to treat the retire as a change", () => {
+    const src = readFileSync("lib/catalog/sku-item.ts", "utf8");
+    expect(src).toMatch(/kind: "pack_back_to_default"[\s\S]{0,400}retiresOwnVersion: true/);
   });
 });

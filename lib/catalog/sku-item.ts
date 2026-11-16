@@ -519,6 +519,7 @@ export async function computePackPreview(actor: AuthContext, skuId: string, targ
  */
 async function packPreviewFor(
   sb: Sb, row: SkuRow, skuId: string, target: PreviewTarget, newChain: PackChainLevel[], tokenHead: Record<string, unknown>,
+  opts: { retiresOwnVersion?: boolean } = {},
 ): Promise<PackPreview> {
   const scope = scopeOf(target);
   // The snapshot covers what the save reaches: the shop, or EVERY active shop (0261 refuses a global
@@ -551,6 +552,7 @@ async function packPreviewFor(
     skuId, target, targetBasePack: basePackOf(row, tp?.levels ?? []), newChain,
     shops: states, globalPars: { weekday: num(row.weekday_par), weekend: num(row.weekend_par) },
     parStep: num(row.par_step), menuItems, recipeLines, liveVersionId, basedOnVersionId,
+    retiresOwnVersion: opts.retiresOwnVersion,
   });
   return {
     ...body, snapshot,
@@ -595,6 +597,10 @@ export async function computeBackToDefaultPreview(actor: AuthContext, skuId: str
   return packPreviewFor(sb, row, skuId, target, defaultChain, {
     kind: "pack_back_to_default", versionId: ownPack.versionId,
     chain: defaultChain.map((l) => [l.id, l.label, l.containsQty, l.containsLevelId, l.containsMeasureUnit]),
+  }, {
+    // The retire IS the change, even when the shop's chain equals the default (fix round 1): the
+    // shop then inherits future default changes, and its machine par's restart is disclosed.
+    retiresOwnVersion: true,
   });
 }
 
