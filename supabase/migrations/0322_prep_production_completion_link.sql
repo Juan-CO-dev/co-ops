@@ -15,6 +15,12 @@
 --      B091: a SINGLE-BOX re-save keeps the first save's time — produced_at = the superseded live header's
 --      produced_at, else this completion's completed_at (never the fold's clock). A BATCH row takes the
 --      session's produced_at from p_batch (0215 ruling E, unchanged).
+--      KIND (fix round 1): the completion's kind comes from its INSTANCE's template, never from a prep_data key alone.
+--      An 'opening' instance folds as opening_p2 and its completion must be the Phase 2 row ({phase2:{…}}, the batch
+--      object inside phase2; 0215:1856-1893). A 'prep' / 'mid_day_prep' instance folds as mid_day_p2 and its
+--      completion must be the mid-day Phase 2 row ({inputs, snapshot, overUnder}, the batch object a sibling key;
+--      0215:2193-2213) — never the Phase 1 row ({inputs, snapshot}). Any other instance (AM prep, closing), or a
+--      p_source naming the other kind, is 'completion_mismatch'.
 --      Lock order: completion → productions. The save / revoke RPCs (0215) lock the completion and never
 --      touch productions, so there is no cycle; a save that supersedes C waits for a fold holding C, and a fold
 --      that arrives after the save sees C superseded and skips.
@@ -35,7 +41,8 @@
 --   rows are inactive before they could start matching.
 --
 -- DEPENDS ON: 0102 (productions header/lines), 0107 (unique live (instance, template item) index), 0215 (batch
---   columns), 0147 (toast_ingest_exclusions), 0196 (one live completion head per phase kind).
+--   columns), 0147 (toast_ingest_exclusions), 0196 (one live completion head per phase kind), 0059
+--   (checklist_templates.prep_subtype: am_prep vs mid_day_prep).
 --
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select column_name from information_schema.columns where table_schema='public' and table_name='productions'
@@ -77,6 +84,13 @@ begin
         and column_name in ('instance_id','template_item_id','completed_at','superseded_at','revoked_at','prep_data')) <> 6 then
     raise exception '0322: checklist_completions is missing an expected column';
   end if;
+  if to_regclass('public.checklist_templates') is null
+     or not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'checklist_instances'
+                      and column_name = 'template_id')
+     or (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'checklist_templates'
+           and column_name in ('type','prep_subtype')) <> 2 then
+    raise exception '0322: checklist_templates.type / prep_subtype or checklist_instances.template_id missing (expected 0059)';
+  end if;
   if not exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'productions_prep_live_idx'
                    and indexdef ilike 'create unique index%') then
     raise exception '0322: the 0107 unique live index productions_prep_live_idx is missing';
@@ -106,6 +120,7 @@ declare
   v_produced_at timestamptz;
   v_id uuid;
   v_lines integer;
+  v_kind text;
 begin
   if p_completion_id is null or p_location_id is null or p_instance_id is null or p_template_item_id is null
      or p_output_item_id is null or p_source is null or p_source not in ('opening_p2','mid_day_p2')
@@ -128,13 +143,23 @@ begin
 
   -- The completion this fold is for, locked: a save superseding it (or a revoke) waits for this transaction.
   select * into c from public.checklist_completions where id = p_completion_id for no key update;
-  if not found or c.instance_id is distinct from p_instance_id or c.template_item_id is distinct from p_template_item_id
-     or not coalesce(c.prep_data ? 'phase2', false) then
+  if not found or c.instance_id is distinct from p_instance_id or c.template_item_id is distinct from p_template_item_id then
     raise exception 'record_prep_production_atomic: completion_mismatch' using errcode = 'P0001';
   end if;
-  perform 1 from public.checklist_instances where id = p_instance_id and location_id = p_location_id;
+  -- The kind is the instance's template's (fix round 1): opening → opening_p2, mid-day prep → mid_day_p2.
+  select case when t.type::text = 'opening' then 'opening_p2'
+              when t.type::text = 'prep' and t.prep_subtype = 'mid_day_prep' then 'mid_day_p2' end
+    into v_kind
+    from public.checklist_instances i join public.checklist_templates t on t.id = i.template_id
+   where i.id = p_instance_id and i.location_id = p_location_id;
   if not found then
     raise exception 'record_prep_production_atomic: location_mismatch' using errcode = 'P0001';
+  end if;
+  -- …and the completion must be that kind's Phase 2 row, in the shape its 0215 save RPC writes.
+  if v_kind is distinct from p_source or jsonb_typeof(c.prep_data) is distinct from 'object'
+     or (v_kind = 'opening_p2' and not (c.prep_data ? 'phase2'))
+     or (v_kind = 'mid_day_p2' and (c.prep_data ? 'phase2' or not (c.prep_data ? 'inputs') or not (c.prep_data ? 'overUnder'))) then
+    raise exception 'record_prep_production_atomic: completion_mismatch' using errcode = 'P0001';
   end if;
   if c.superseded_at is not null or c.revoked_at is not null then
     -- B090: a newer save (or a revoke) already owns this row's production. Write nothing.

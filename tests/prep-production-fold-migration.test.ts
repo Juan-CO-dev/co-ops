@@ -41,6 +41,21 @@ describe("0322_prep_production_completion_link", () => {
     expect(body.indexOf("update public.productions")).toBeLessThan(body.indexOf("insert into public.productions"));
   });
 
+  it("fix round 1: the completion's kind comes from its instance's template, and mid-day's real shape folds", () => {
+    // the old guard required a phase2 key, which every MID-DAY Phase 2 row ({inputs, snapshot, overUnder}) lacks
+    expect(body).not.toContain("not coalesce(c.prep_data ? 'phase2', false)");
+    expect(body).toContain("from public.checklist_instances i join public.checklist_templates t on t.id = i.template_id");
+    expect(body).toContain("when t.type::text = 'opening' then 'opening_p2'");
+    expect(body).toContain("when t.type::text = 'prep' and t.prep_subtype = 'mid_day_prep' then 'mid_day_p2' end");
+    expect(body).toContain("if v_kind is distinct from p_source");
+    expect(body).toContain("(v_kind = 'mid_day_p2' and (c.prep_data ? 'phase2' or not (c.prep_data ? 'inputs') or not (c.prep_data ? 'overUnder')))");
+    // the kind check runs before the liveness check and before any write
+    expect(body.indexOf("if v_kind is distinct from p_source")).toBeLessThan(body.indexOf("if c.superseded_at is not null or c.revoked_at is not null then"));
+    // the two callers pass exactly the two kinds the function accepts
+    expect(read("lib/opening.ts").match(/source: "opening_p2"/g)?.length).toBe(2);
+    expect(read("lib/prep.ts").match(/source: "mid_day_p2"/g)?.length).toBe(2);
+  });
+
   it("B091: a single-box re-save carries the prior live header's produced_at; a batch row its session's", () => {
     expect(body).toContain("returning produced_at into v_prior_produced_at;");
     expect(body).toContain("else coalesce(v_prior_produced_at, c.completed_at) end;");

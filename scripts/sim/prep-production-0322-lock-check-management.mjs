@@ -46,7 +46,7 @@ export function fixtureSQL(f) {
     insert into public.locations(id,name,code,type,active) values(${q(f.shop)},${q(f.tag)},${q(f.tag)},'permanent',true);
     insert into public.users(id,name,role,pin_hash,active) values(${q(f.actor)},${q(f.tag)},'key_holder','SIM-NO-VALID-CREDENTIAL',true);
     insert into public.user_locations(user_id,location_id,active) values(${q(f.actor)},${q(f.shop)},true);
-    insert into public.checklist_templates(id,location_id,type,name,active) values(${q(f.template)},${q(f.shop)},'prep',${q(f.tag)},true);
+    insert into public.checklist_templates(id,location_id,type,name,active) values(${q(f.template)},${q(f.shop)},'opening',${q(f.tag)},true);
     insert into public.checklist_template_items(id,template_id,label,min_role_level,active) values(${q(f.item)},${q(f.template)},${q(f.tag)},3,true);
     insert into public.checklist_instances(id,template_id,location_id,date,status) values
       ${['r1','r2','s1'].map((k, i) => `(${q(f[k])},${q(f.template)},${q(f.shop)},date '2099-02-01'+${i},'open')`).join(',')};
@@ -60,7 +60,7 @@ export const saveSQL = (f, inst, next) => `update public.checklist_completions s
   insert into public.checklist_completions(id,instance_id,template_item_id,completed_by,completed_at,prep_data)
     values(${q(next)},${q(inst)},${q(f.item)},${q(f.actor)},clock_timestamp(),'{"phase2":{"opener_prepped":4}}'::jsonb)`;
 export const foldSQL = (f, ids, inst, completion, qty) => `select public.record_prep_production_atomic(${q(completion)},${q(f.shop)},${q(inst)},${q(f.item)},
-  ${q(ids.outputItem)},${qty},'mid_day_p2',${q(f.actor)},
+  ${q(ids.outputItem)},${qty},'opening_p2',${q(f.actor)},
   ${q(JSON.stringify([{ sku_id: ids.sku, input_oz: qty * 8, qty_entered: null, unit_entered: null, derived_oz: qty * 8 }]))}::jsonb,null) as result`;
 export const liveSQL = (f, inst) => `select output_qty::float as qty, completion_id, produced_at,
     (select completed_at from public.checklist_completions where id = p.completion_id) as completion_at
