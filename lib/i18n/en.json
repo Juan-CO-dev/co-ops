@@ -3676,6 +3676,7 @@
   "receiving.claim.error.location_mismatch": "That receipt belongs to a different location.",
   "receiving.claim.error.no_receipt": "There's no linked receipt to compare.",
   "receiving.claim.error.already_overridden": "This match was already overridden.",
+  "receiving.claim.error.match_changed": "Someone else just changed this match. Refresh and try again.",
   "receiving.claim.error.invalid_verdict": "Pick matches or discrepancy.",
   "receiving.claim.error.note_required": "An override needs a reason.",
   "receiving.claim.error.file_too_large": "Receipt must be 15 MB or smaller.",

@@ -51,6 +51,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { autoPlaceOnEmailEvidence } from "@/lib/purchase-orders";
 import { assembleMatchBody, extractPoCodes } from "@/lib/email-receipts-matching-shared";
+import { rpcNotInstalled } from "@/lib/receiving-shared";
 
 // Re-export the pure code extractor so server callers keep their `@/lib/email-receipts`
 // import path (the *-shared.ts law). Task 7's SMS leg imports the leaf directly (client-safe).
@@ -1556,6 +1557,57 @@ function appendNote(existing: string | null, addition: string): string {
   return existing ? existing + "\n" + addition : addition;
 }
 
+/** The locked verdict writer's named refusals (delivery_match_verdict, migration 0327), as this
+ *  module's errors. Anything else it raises is a real failure, never a silent success. */
+const VERDICT_REFUSALS: Record<string, [status: number, code: string, message: string]> = {
+  not_found: [404, "not_found", "Delivery not found"],
+  no_receipt: [409, "no_receipt", "This delivery has no linked receipt to compare"],
+  already_overridden: [409, "already_overridden", "This delivery's match is overridden"],
+  invalid_verdict: [400, "invalid_verdict", "Verdict must be matched or discrepant"],
+  note_required: [400, "note_required", "An override requires a note"],
+  invalid_input: [400, "invalid_payload", "That request was not valid"],
+};
+
+/**
+ * Write an attestation or an override so it can never land on a state the person did not see
+ * (W20/B114). Both writes used to be read → authorize (network waits) → UPDATE by id, with no
+ * guard: an attestation that READ counted_only could WRITE after a manager's override committed,
+ * replacing the terminal `override` and dropping its note, and two notes appended at once lost one.
+ *
+ * WITH 0327: delivery_match_verdict does the read, the terminal check and the note append under
+ * the delivery's row lock. The request that queued second is judged on what the first one
+ * committed (`already_overridden`), and both notes are kept.
+ * WITHOUT 0327 (function not installed yet): a compare-and-set on the match_state this request
+ * read. A request that lost the race matches no row and is refused `match_changed` (refresh and
+ * try again) instead of overwriting. Returns the state actually replaced, for the audit row.
+ */
+async function writeMatchVerdict(
+  sb: ServiceClient,
+  d: { id: string; match_state: MatchState; note: string | null },
+  kind: "attest" | "override",
+  verdict: MatchVerdict | null,
+  note: string | null,
+): Promise<MatchState> {
+  const { data, error } = await sb.rpc("delivery_match_verdict", { p_delivery: d.id, p_kind: kind, p_verdict: verdict, p_note: note });
+  if (!error) return (data as { prior_state?: MatchState } | null)?.prior_state ?? d.match_state;
+  if (!rpcNotInstalled(error)) {
+    const refusal = VERDICT_REFUSALS[error.message];
+    if (refusal) throw new EmailReceiptError(refusal[0], refusal[1], refusal[2]);
+    throw new Error(`${kind}Match write: ${error.message}`);
+  }
+  const update: { match_state: MatchState; note?: string } = { match_state: kind === "override" ? "override" : verdict! };
+  // A note is appended (never clobbered): always for an override, and for a discrepancy that carries one.
+  if (note != null && (kind === "override" || verdict === "discrepant")) update.note = appendNote(d.note, note);
+  const { error: uErr, count } = await sb
+    .from("vendor_deliveries")
+    .update(update, { count: "exact" })
+    .eq("id", d.id)
+    .eq("match_state", d.match_state);
+  if (uErr) throw new Error(`${kind}Match update: ${uErr.message}`);
+  if (count === 0) throw new EmailReceiptError(409, "match_changed", "This delivery's match changed. Refresh and try again.");
+  return d.match_state;
+}
+
 /**
  * KH+ + bind: attest a two-way-match verdict on a delivery from the visual compare.
  * REQUIRES a linked receipt (409 no_receipt). The delivery must be match_state
@@ -1583,24 +1635,17 @@ export async function attestMatch(
     throw new EmailReceiptError(409, "already_overridden", "This delivery's match is overridden");
   }
 
-  const trimmedNote = note?.trim() || null;
-  const update: { match_state: MatchVerdict; note?: string } = { match_state: verdict };
   // A discrepancy note is appended (never clobber); no note change when none supplied
-  // or when the verdict is 'matched'.
-  if (verdict === "discrepant" && trimmedNote != null) update.note = appendNote(d.note, trimmedNote);
-
-  const { error: uErr, count } = await sb
-    .from("vendor_deliveries")
-    .update(update, { count: "exact" })
-    .eq("id", deliveryId);
-  if (uErr) throw new Error(`attestMatch update: ${uErr.message}`);
-  if (count === 0) throw new EmailReceiptError(404, "not_found", "Delivery not found");
+  // or when the verdict is 'matched'. The checks above are the friendly early refusal; the
+  // write re-decides them on the state it actually finds (W20/B114).
+  const trimmedNote = note?.trim() || null;
+  const priorState = await writeMatchVerdict(sb, d, "attest", verdict, verdict === "discrepant" ? trimmedNote : null);
 
   await auditOperationalTaskOverride(actor, d.location_id, "receiving", "attestMatch");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.match_attested", resourceTable: "vendor_deliveries", resourceId: deliveryId,
-    metadata: { verdict, prior_state: d.match_state, location_id: d.location_id, receipt_id: d.email_receipt_id, noted: verdict === "discrepant" && trimmedNote != null },
+    metadata: { verdict, prior_state: priorState, location_id: d.location_id, receipt_id: d.email_receipt_id, noted: verdict === "discrepant" && trimmedNote != null },
     ipAddress: null, userAgent: null,
   });
 }
@@ -1617,19 +1662,13 @@ export async function overrideMatch(actor: AuthContext, deliveryId: string, note
   if (!trimmedNote) throw new EmailReceiptError(400, "note_required", "An override requires a note");
   const sb = getServiceRoleClient();
   const d = await requireAttestableDelivery(sb, actor, deliveryId);
-
-  const { error: uErr, count } = await sb
-    .from("vendor_deliveries")
-    .update({ match_state: "override", note: appendNote(d.note, trimmedNote) }, { count: "exact" })
-    .eq("id", deliveryId);
-  if (uErr) throw new Error(`overrideMatch update: ${uErr.message}`);
-  if (count === 0) throw new EmailReceiptError(404, "not_found", "Delivery not found");
+  const priorState = await writeMatchVerdict(sb, d, "override", null, trimmedNote);
 
   await auditOperationalTaskOverride(actor, d.location_id, "receiving", "overrideMatch");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.match_overridden", resourceTable: "vendor_deliveries", resourceId: deliveryId,
-    metadata: { prior_state: d.match_state, location_id: d.location_id },
+    metadata: { prior_state: priorState, location_id: d.location_id },
     ipAddress: null, userAgent: null,
   });
 }

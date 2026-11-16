@@ -3675,6 +3675,7 @@
   "receiving.claim.error.already_linked": "Esta entrega ya tiene un comprobante.",
   "receiving.claim.error.location_mismatch": "Ese comprobante pertenece a otra ubicación.",
   "receiving.claim.error.no_receipt": "No hay comprobante vinculado para comparar.",
+  "receiving.claim.error.match_changed": "Alguien más acaba de cambiar esta comparación. Actualiza e inténtalo de nuevo.",
   "receiving.claim.error.already_overridden": "Esta comparación ya fue anulada.",
   "receiving.claim.error.invalid_verdict": "Elige coincide o discrepancia.",
   "receiving.claim.error.note_required": "La anulación necesita un motivo.",
