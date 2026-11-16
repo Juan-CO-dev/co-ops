@@ -1477,6 +1477,17 @@ export interface SkippedWalkPo {
   existingStatus?: string;
 }
 
+/**
+ * A vendor this walk only marked Full, whose open draft today could NOT be checked or zeroed (audit
+ * W18/B103 fix round 1). The walk is saved; the draft may still carry the earlier walk's quantity, so
+ * the manager is told to check it. `existingPoId` is null when the draft lookup itself failed.
+ */
+export interface ZeroFailedWalkPo {
+  vendorId: string;
+  vendorName: string;
+  existingPoId: string | null;
+}
+
 export interface MergedWalkPo {
   vendorId: string;
   vendorName: string;
@@ -1515,6 +1526,7 @@ export async function submitParPass(
   /** Existing orders preserved while this walk's observations were recorded. */
   poSkipped: SkippedWalkPo[];
   poMerged: MergedWalkPo[];
+  poZeroFailed: ZeroFailedWalkPo[];
 }> {
   requireLevel(actor, PAR_PASS_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) {
@@ -1682,6 +1694,10 @@ export async function submitParPass(
   // nothing was ordered (W18/B103).
   const zeroOnlyExistingByVendor = new Map<string, { id: string; status?: string }>();
   const mergedByVendor = new Map<string, Omit<MergedWalkPo, "vendorId" | "vendorName">>();
+  // Zero-only vendors whose Full could not be applied to today's draft (fix round 1): reported, never
+  // swallowed. `zeroSettled` = the zeroing ran (lines zeroed, or none of the SKUs were on the draft).
+  const zeroFailedByVendor = new Map<string, string | null>();
+  const zeroSettled = new Set<string>();
   let poError = false;
   // PO checks may suppress orders, but must never refuse the observations.
   try {
@@ -1711,6 +1727,8 @@ export async function submitParPass(
         if (err.existingPoStatus === "draft") zeroOnlyExistingByVendor.set(vendorId, { id: err.existingPoId, status: err.existingPoStatus });
         continue;
       }
+      // Unknown whether a draft holds an earlier quantity: say so on the result.
+      zeroFailedByVendor.set(vendorId, null);
       console.error("submitParPass zero-line PO check failed", err);
     }
   }
@@ -1760,6 +1778,7 @@ export async function submitParPass(
         // updates one already on the draft and never inserts a new zero line.
         const mergeLines = zeroOnly ? vendorLines : [...vendorLines, ...(zeroByVendor.get(vendorId) ?? [])];
         const counts = await updateDraftLines(actor, existing.id, mergeLines.map(({ skuId, orderQty, orderUnitLabel, note }) => ({ skuId, orderQty, orderUnitLabel, note })));
+        if (zeroOnly) zeroSettled.add(vendorId);
         // A zero-only vendor whose draft held none of those SKUs: nothing changed, nothing to report.
         if (zeroOnly && counts.updated === 0 && counts.inserted === 0) return;
         const { data: po, error } = await sb.from("purchase_orders").select("display_code").eq("id", existing.id)
@@ -1767,9 +1786,14 @@ export async function submitParPass(
         if (error || !po) throw new Error("Merged PO detail unavailable");
         mergedByVendor.set(vendorId, { poId: existing.id, displayCode: po.display_code, linesUpdated: counts.updated, linesAdded: counts.inserted });
         return;
-      } catch {
-        // Nothing was ordered from a zero-only vendor, so a failed zeroing is never a skip notice.
-        if (zeroOnly) return;
+      } catch (err) {
+        // Nothing was ordered from a zero-only vendor, so a failed zeroing is never a skip notice —
+        // but the draft may still carry the old quantity, so it IS reported (fix round 1).
+        if (zeroOnly) {
+          if (!zeroSettled.has(vendorId)) zeroFailedByVendor.set(vendorId, existing.id);
+          console.error("submitParPass zero-line draft update failed", err);
+          return;
+        }
         // A failed refresh is still a skip; never claim a status we could not read.
         try {
           const { data: current, error } = await sb.from("purchase_orders").select("status").eq("id", existing.id)
@@ -1819,14 +1843,19 @@ export async function submitParPass(
       console.error(`submitParPass draft-PO creation failed [${kind}]`, err);
     }
   }
+  // A zero-only draft the PO step never reached (poError, or a throw before its turn) was not zeroed.
+  for (const [vendorId, existing] of zeroOnlyExistingByVendor) {
+    if (!zeroSettled.has(vendorId) && !zeroFailedByVendor.has(vendorId)) zeroFailedByVendor.set(vendorId, existing.id);
+  }
   const displayCodeByVendor = new Map(pos.map((p) => [p.vendorId, p.displayCode]));
 
   // ── Draft orders: per vendor, the orderQty > 0 lines + delivery affordances + PO code ──
   // A zero-only vendor whose draft was zeroed (W18/B103) rides along only so poMerged can name
   // it; merged vendors are filtered out of draftOrders below, so no zero line is ever shown as
   // an order.
+  // A zero-only vendor whose Full could not be applied rides along the same way, only to be named.
   const zeroMergedLines = resolved.filter((r) => r.input.orderQty === 0 && r.sku.vendor_id != null
-    && !byVendor.has(r.sku.vendor_id) && mergedByVendor.has(r.sku.vendor_id));
+    && !byVendor.has(r.sku.vendor_id) && (mergedByVendor.has(r.sku.vendor_id) || zeroFailedByVendor.has(r.sku.vendor_id)));
   const draftOrders = await buildDraftOrders(sb, [...orderLines, ...zeroMergedLines].map((r) => ({
     vendorId: r.sku.vendor_id, vendorName: null,
     line: {
@@ -1850,7 +1879,8 @@ export async function submitParPass(
 
   return {
     eventId: ev.id,
-    draftOrders: draftOrders.filter((order) => !skippedByVendor.has(order.vendorId) && !mergedByVendor.has(order.vendorId)),
+    draftOrders: draftOrders.filter((order) => !skippedByVendor.has(order.vendorId) && !mergedByVendor.has(order.vendorId)
+      && !(zeroFailedByVendor.has(order.vendorId) && !byVendor.has(order.vendorId))),
     shrinkage,
     pos: pos.map((p) => ({ vendorId: p.vendorId, poId: p.poId, displayCode: p.displayCode })),
     poError,
@@ -1863,6 +1893,9 @@ export async function submitParPass(
       reason: "po_exists",
       existingPoId: skippedByVendor.get(order.vendorId)!.id,
       existingStatus: skippedByVendor.get(order.vendorId)!.status,
+    })),
+    poZeroFailed: draftOrders.filter((order) => zeroFailedByVendor.has(order.vendorId) && !byVendor.has(order.vendorId)).map((order) => ({
+      vendorId: order.vendorId, vendorName: order.vendorName, existingPoId: zeroFailedByVendor.get(order.vendorId) ?? null,
     })),
   };
 }

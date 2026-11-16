@@ -3934,6 +3934,7 @@
   "ordering.done.po_skipped": "{vendor}: el pedido de hoy ya existe — no se duplicó",
   "ordering.done.po_merged": "{vendor}: se agregó al borrador de hoy — OC {code}",
   "ordering.done.po_skipped_confirmed": "{vendor}: el pedido de hoy ya está {status} — no se cambió",
+  "ordering.done.po_zero_failed": "{vendor}: el recorrido se guardó, pero lo marcado como lleno puede seguir en el borrador de hoy. Revísalo antes de enviarlo.",
   "ordering.po.add_item": "Agregar un artículo",
   "ordering.po.add_item_label": "Elige un artículo",
   "ordering.po.add_item_none": "Todos los SKU activos de este proveedor ya están en el pedido.",

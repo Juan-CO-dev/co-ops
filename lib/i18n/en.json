@@ -3934,6 +3934,7 @@
   "ordering.done.po_skipped": "{vendor}: today's order already exists — not duplicated",
   "ordering.done.po_merged": "{vendor}: added to today's draft — PO {code}",
   "ordering.done.po_skipped_confirmed": "{vendor}: today's order is already {status} — not changed",
+  "ordering.done.po_zero_failed": "{vendor}: the walk was saved, but items marked full may still be on today's draft order. Check it before it goes out.",
   "ordering.po.add_item": "Add an item",
   "ordering.po.add_item_label": "Choose an item",
   "ordering.po.add_item_none": "Every active SKU for this vendor is already on the order.",

@@ -248,6 +248,70 @@ describe("LRA-206 / LRA-229: a PO conflict never refuses the walk", () => {
     expect(result.pos.map(p => p.vendorId)).toEqual(["b"]);
   });
 
+  // Fix round 1 (W18/B103): a Full that could not be applied to today's draft is SAID, never swallowed.
+  // The walk is still saved; the draft's old quantity is still there, so the manager must check it.
+  it("a failed zeroing of a zero-only vendor's draft is reported, and the walk is still saved", async () => {
+    const f = setup();
+    f.guard.mockImplementation(async (_sb, _loc, vendor) => {
+      if (vendor === "a") throw new OrderingError(409, "po_exists", "exists", "existing-a", "draft");
+    });
+    f.update.mockRejectedValueOnce(new Error("write failed"));
+    const result = await f.runLines([{ skuId: "a", orderQty: 0 }]);
+    expect(f.update).toHaveBeenCalledWith(expect.anything(), "existing-a", [{ skuId: "a", orderQty: 0, orderUnitLabel: "case", note: null }]);
+    expect(result.poZeroFailed).toEqual([{ vendorId: "a", vendorName: "Vendor a", existingPoId: "existing-a" }]);
+    expect(result.poMerged).toEqual([]);
+    expect(result.poSkipped).toEqual([]);
+    expect(result.draftOrders).toEqual([]);
+    expect(f.writes[1]!.data).toEqual([expect.objectContaining({ sku_id: "a", order_qty: 0 })]);
+  });
+
+  it("a failed draft lookup for a zero-only vendor is reported (no PO id is claimed)", async () => {
+    const f = setup();
+    f.guard.mockImplementation(async (_sb, _loc, vendor) => {
+      if (vendor === "a") throw new Error("lookup failed");
+    });
+    const result = await f.runLines([{ skuId: "a", orderQty: 0 }, { skuId: "b", orderQty: 2 }]);
+    expect(f.update).not.toHaveBeenCalled();
+    expect(result.poZeroFailed).toEqual([{ vendorId: "a", vendorName: "Vendor a", existingPoId: null }]);
+    expect(result.pos.map(p => p.vendorId)).toEqual(["b"]);
+    expect(result.draftOrders.map(p => p.vendorId)).toEqual(["b"]);
+    expect(result.poError).toBe(false);
+  });
+
+  it("a zero-only draft left unzeroed because the PO step failed is reported too", async () => {
+    const f = setup();
+    f.guard.mockImplementation(async (_sb, _loc, vendor) => {
+      if (vendor === "a") throw new OrderingError(409, "po_exists", "exists", "existing-a", "draft");
+      if (vendor === "b") throw new Error("lookup failed");
+    });
+    const result = await f.runLines([{ skuId: "a", orderQty: 0 }, { skuId: "b", orderQty: 2 }]);
+    expect(result.poError).toBe(true);
+    expect(f.update).not.toHaveBeenCalled();
+    expect(result.poZeroFailed).toEqual([{ vendorId: "a", vendorName: "Vendor a", existingPoId: "existing-a" }]);
+  });
+
+  it("a successful zeroing, a no-op zero and a past-draft zero report no failure", async () => {
+    const f = setup();
+    f.guard.mockImplementation(async (_sb, _loc, vendor) => {
+      if (vendor === "a" || vendor === "b") throw new OrderingError(409, "po_exists", "exists", `existing-${vendor}`, "draft");
+      if (vendor === "c") throw new OrderingError(409, "po_exists", "exists", "existing-c", "confirmed");
+    });
+    f.update.mockImplementationOnce(async () => ({ updated: 1, inserted: 0 })).mockImplementationOnce(async () => ({ updated: 0, inserted: 0 }));
+    const result = await f.runLines([{ skuId: "a", orderQty: 0 }, { skuId: "b", orderQty: 0 }, { skuId: "c", orderQty: 0 }]);
+    expect(result.poZeroFailed).toEqual([]);
+    expect(result.poMerged.map(m => m.vendorId)).toEqual(["a"]);
+  });
+
+  it("the walker shows each unapplied Full as a warning linking the draft (en + es)", () => {
+    const src = readFileSync("components/ordering/ParPassWalker.tsx", "utf8");
+    expect(src).toContain("result.poZeroFailed.map(");
+    expect(src).toContain('"ordering.done.po_zero_failed"');
+    for (const lang of ["en", "es"] as const) {
+      const dict = JSON.parse(readFileSync(`lib/i18n/${lang}.json`, "utf8")) as Record<string, string>;
+      expect(dict["ordering.done.po_zero_failed"], lang).toContain("{vendor}");
+    }
+  });
+
   it("keeps single-vendor cutoff generation's early 409", async () => {
     const loadWalkerData = vi.fn();
     const generate = execute("generateDraftForVendor", {
