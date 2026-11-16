@@ -161,3 +161,17 @@ describe("0291 request identity route", () => {
     expect(submitAmPrep).not.toHaveBeenCalled();
   });
 });
+
+describe("W13/B077 — the closing reference is resolved on the AM prep's own day", () => {
+  it("resolves the closing reference on the AM prep's own day, not today", async () => {
+    const { resolveClosingReportRefItemId } = await import("@/lib/prep");
+    vi.mocked(submitAmPrep).mockResolvedValue(okResult);
+    const res = await POST(req({ instanceId: INSTANCE, entries: [] }));
+    expect(res.status).toBe(200);
+    expect(resolveClosingReportRefItemId).toHaveBeenCalledWith(expect.anything(), {
+      locationId: SHOP_A,
+      reportType: "am_prep",
+      opDate: DAY,
+    });
+  });
+});

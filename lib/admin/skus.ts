@@ -752,7 +752,8 @@ async function applyMembershipChange(
   if (change === "none") return;
   try {
     if (change === "detach") {
-      await detachMember(actor, { skuId });
+      // "detach" means a non-null current product: name it, so the write is conditional on it.
+      await detachMember(actor, { skuId, productId: data.product_id! });
     } else {
       // "reparent" goes to attachMember too: whether a member may move products is
       // attachMember's ruling to make (it refuses with a named 409), not a second opinion

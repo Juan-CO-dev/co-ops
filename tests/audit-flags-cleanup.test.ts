@@ -213,12 +213,15 @@ describe("pm-report — an eval or an MVP cannot be written into a submitted rep
     expect(body).toContain("if (count === 0) refuseClosedReport");
   });
 
-  it("saveEmployeeEval checks status ahead of BOTH of its writes", () => {
+  it("saveEmployeeEval writes through the one transactional RPC that checks status under the day-row lock (W09/B164)", () => {
+    // The pre-check + supersede + insert (three round trips) became save_pm_employee_eval (migration 0309): the
+    // status, the format and the self rule are judged under the day row's lock in the same transaction as the
+    // writes, and a closed report still answers report_already_submitted (409) by name.
     const body = bodyOf(src(), "export async function saveEmployeeEval");
-    const guard = body.indexOf('if (status !== "open") refuseClosedReport(status)');
-    expect(guard).toBeGreaterThan(-1);
-    expect(body.indexOf("superseded_at")).toBeGreaterThan(guard);
-    expect(body.indexOf(".insert({")).toBeGreaterThan(guard);
+    expect(body).toContain('service.rpc("save_pm_employee_eval"');
+    expect(body).not.toContain(".insert({");
+    expect(body).not.toContain('.from("pm_employee_evals")');
+    expect(src()).toMatch(/report_already_submitted: 409/);
   });
 
   it("the refusal distinguishes a missing report from a closed one", () => {

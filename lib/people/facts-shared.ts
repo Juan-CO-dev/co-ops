@@ -97,7 +97,11 @@ export interface CompletionFact {
 export interface ConfirmationFact { date: string; confirmed_at: string }
 export interface CashFact { signed_by?: string | null; signed_at: string | null; over_short_note: string | null; report_date?: string }
 export interface PmReportFact { id: string; submitted_by?: string | null; submitted_at: string | null; report_date?: string }
-export interface PmNoteFact { pm_report_id: string; area_to_improve: string | null; note: string | null }
+/**
+ * A live v1 eval's free text, credited to its AUTHOR at its report's submit instant (W09/B061: it was credited
+ * to the report's submitter, whoever wrote it). `submitted_at` is attached by the loader from the report.
+ */
+export interface PmNoteFact { pm_report_id: string; author_id: string; submitted_at: string | null; area_to_improve: string | null; note: string | null }
 
 /** The audit_log columns the oversight location bind reads. */
 export interface OversightAuditRow {
@@ -195,7 +199,7 @@ export interface PmV2CopyFact { id: string; pm_report_id: string; author_id: str
 /** A live grade; `grade` NULL = "Didn't see" (never counted). */
 export interface PmV2GradeFact { id: string; copy_id: string; subject_id: string; position_id: string | null; criterion_id: string; grade: "great" | "good" | "needs_work" | null }
 /** A live note (only its existence counts; the text is never loaded here). */
-export interface PmV2NoteFact { id: string; copy_id: string }
+export interface PmV2NoteFact { id: string; copy_id: string; subject_id: string }
 export interface PmV2Facts { days: PmV2DayFact[]; copies: PmV2CopyFact[]; grades: PmV2GradeFact[]; notes: PmV2NoteFact[] }
 export function emptyPmV2Facts(): PmV2Facts {
   return { days: [], copies: [], grades: [], notes: [] };

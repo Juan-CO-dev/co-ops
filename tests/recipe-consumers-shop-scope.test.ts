@@ -6,6 +6,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFakeDb } from "./fixtures/counts-fake-db";
+import { withInListGuard } from "./fixtures/in-list-guard";
 import { buildRecipeVersionsFixture, withBackfilledRecipeVersions, LOC, OTHER } from "./fixtures/recipe-versions-fixture";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadRecipeInputsAcrossScopes, loadResolvedRecipeInputs } from "@/lib/prep-consumption";
@@ -129,6 +130,22 @@ describe("production follows the shop's recipe", () => {
     expect(Object.keys(atOther.skuToItems)).not.toContain("s-store-ham");
     const atLoc = await loadProductionFormData(owner, LOC);
     expect(atLoc.skus.map((s) => s.id)).toContain("s-store-ham");
+  });
+
+  it("W17/B098: loadSkuToItems with 250 SKU ids does not spend them in the request line", async () => {
+    // The production page passes EVERY active SKU. The product-membership read used to filter
+    // `vendor_items` by that whole list — past the request-line ceiling at ~210 ids.
+    const real = ["s-ham-a", "s-store-ham", "s-mayo"];
+    current = createFakeDb(withSlicedHam());
+    const few = await loadSkuToItems(real, LOC);
+    expect((few["s-ham-a"] ?? []).map((x) => x.itemId)).toContain("i-ham-sliced"); // the product pass ran
+    expect((few["s-store-ham"] ?? []).map((x) => x.itemId)).toContain("i-ham-sliced");
+
+    const guarded = createFakeDb(withSlicedHam());
+    current = { ...guarded, client: withInListGuard(guarded.client) };
+    const padding = Array.from({ length: 247 }, (_, i) => `s-pad-${String(i).padStart(3, "0")}`);
+    const many = await loadSkuToItems([...padding, ...real], LOC);
+    expect(many).toEqual(few);
   });
 });
 
