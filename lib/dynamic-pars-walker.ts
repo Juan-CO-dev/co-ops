@@ -25,12 +25,13 @@ import "server-only";
 import type { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { loadParSkuUniverse } from "@/lib/par-universe";
+import { loadShopPackEpochs } from "@/lib/prep-consumption";
 import {
   loadRhythmByVendor, loadRhythmSkips, loadAllCutoffsByVendor,
 } from "@/lib/vendor-rhythm";
 import { addDaysEt, coverageWindow } from "@/lib/vendor-rhythm-shared";
 import {
-  DYNAMIC_PARS, EMPTY_PAR_SILENCE, resolveWalkerSuggestion, rollupParSilence,
+  DYNAMIC_PARS, EMPTY_PAR_SILENCE, ledgerEpochStands, resolveWalkerSuggestion, rollupParSilence,
   type DayClass, type GuardName, type ParReasonCode, type ParSilenceSummary,
   type PersistedDemandTerms, type SilenceLedgerRow, type WalkerParSuggestion,
 } from "@/lib/dynamic-pars-shared";
@@ -201,10 +202,13 @@ export async function loadParSuggestions(
       .map((r) => index.get(r.sku_id)?.vendorId)
       .filter((v): v is string => v != null),
   )];
-  const [rhythmByVendor, skipsByVendor, cutoffsByVendor] = await Promise.all([
+  const [rhythmByVendor, skipsByVendor, cutoffsByVendor, packEpochs] = await Promise.all([
     loadRhythmByVendor(sb, vendorIds, locationId),
     loadRhythmSkips(sb, vendorIds, locationId, walkInstant.walkDateEt),
     loadAllCutoffsByVendor(sb, vendorIds),
+    // The shop's live pack epoch per ledger SKU (W18/B106): a row computed in an older pack is
+    // dropped below, never offered in the old case size. One chunked read.
+    loadShopPackEpochs([...new Set([...latest.values()].map((r) => r.sku_id))], locationId),
   ]);
 
   for (const row of latest.values()) {
@@ -231,14 +235,17 @@ export async function loadParSuggestions(
     // Pairing on run_date is the point: the engine writes both halves in one pass, so a
     // half from a different night means the ledger is partially written — and blending two
     // runs' terms into one number is a second opinion. Honest null instead.
+    const liveEpoch = packEpochs.get(skuId) ?? 0;
+    const detail = row.detail ?? {};
+    if (!ledgerEpochStands(detail.pack_epoch, liveEpoch)) continue;
     const other = latest.get(
       `${skuId}:${walkInstant.dayClass === "weekend" ? "weekday" : "weekend"}`,
     );
-    const otherRate = other?.run_date === row.run_date
+    // The paired half must be from the same run AND the same pack epoch, or its rate is null.
+    const otherRate = other?.run_date === row.run_date && ledgerEpochStands((other.detail ?? {}).pack_epoch, liveEpoch)
       ? num(other.base_rate_oz_per_day)
       : null;
     const ownRate = num(row.base_rate_oz_per_day);
-    const detail = row.detail ?? {};
     const suppressedBy =
       row.suppressed_by != null && GUARD_NAMES.has(row.suppressed_by)
         ? (row.suppressed_by as GuardName)

@@ -265,6 +265,8 @@ export interface DemandInputs {
   recipeEditedAt: string | null;
   /** No observed day at all at this location — the cold-start seam (not wired in v1). */
   noLocalHistory: boolean;
+  /** skuId → this shop's current pack epoch (absent = 0). Stamped on every ledger row (W18/B106). */
+  packEpochBySku?: ReadonlyMap<string, number>;
 }
 
 /** The per-slot overlay the engine reads: the human lane, the machine lane, the pin. */
@@ -457,7 +459,11 @@ export async function loadDemandInputs(
   if (actionRows.error) throw new Error(`loadDemandInputs suggestion actions: ${actionRows.error.message}`);
   // CATALOG PHASE 2a (D3): the epoch stamp that retires an auto par computed in any other pack epoch
   // (one chunked read for the whole shop — the batch law holds).
-  stampEffectivePack(overlayBySku, await loadShopPackEpochs(skuIds, locationId));
+  // The same map stamps every ledger row (`detail.pack_epoch`, audit W18/B106): the walk drops a
+  // row computed in an older pack, whose `per_order_unit_oz` and `current_par` count a case size
+  // this shop no longer receives.
+  const packEpochBySku = await loadShopPackEpochs(skuIds, locationId);
+  stampEffectivePack(overlayBySku, packEpochBySku);
 
   // ⑦ the production lane. Bounded by the window's production ids, so the `.in()` list is
   //    the same shape loadSkuUsageRank already spends.
@@ -646,6 +652,7 @@ export async function loadDemandInputs(
     budgetSpentBySlot,
     recipeEditedAt,
     noLocalHistory: window.every((d) => !d.salesObserved && !d.productionObserved),
+    packEpochBySku,
   };
 }
 
@@ -866,6 +873,10 @@ export async function runParShadowForLocation(
           write_home_sku_id: sku.writeHomeSkuId,
           grain_key: sku.grainKey,
           horizon_basis: "nightly_start_of_order_day",
+          // The pack epoch these order-unit terms were computed in (W18/B106). NOT part of the
+          // generation id: the trust ramp counts distinct generations, and a format change would
+          // mint a new one for every standing suggestion overnight.
+          pack_epoch: inputs.packEpochBySku?.get(sku.skuId) ?? 0,
         },
       });
       const advisoryNullRow = (reason: ParReasonCode): LedgerRow => ({

@@ -1215,6 +1215,23 @@ export interface WalkerSuggestionInput {
  *     "suggestion" — the machine may not acquire an auto verdict on a read path that cannot
  *     see the guards it would have to clear. The NUMBER is still the live, honest one.
  */
+/**
+ * Does a ledger row's PACK EPOCH stand at walk time (audit W18/B106)? The row's
+ * `per_order_unit_oz` and `current_par` count a case size; after a pack change the shop counts in
+ * another one, and a suggestion from the old row would write an old-case number onto the slot.
+ *   · a numeric stamp stands only at the live epoch;
+ *   · no stamp (a row written before the engine stamped) stands only at epoch 0, a pack that never
+ *     changed, so it cannot be in an older one;
+ *   · anything else is not a proof and does not stand.
+ * Pure; the walker drops a row that does not stand, and the accept route then answers
+ * `409 suggestion_superseded` as it already does for a superseded generation.
+ */
+export function ledgerEpochStands(detailEpoch: unknown, liveEpoch: number): boolean {
+  if (detailEpoch === undefined || detailEpoch === null) return liveEpoch === 0;
+  if (typeof detailEpoch === "number" && Number.isFinite(detailEpoch)) return detailEpoch === liveEpoch;
+  return false;
+}
+
 export function resolveWalkerSuggestion(input: WalkerSuggestionInput): WalkerParSuggestion | null {
   const t = input.terms;
   if (SILENCING_REASONS.has(t.reasonCode)) return null;
