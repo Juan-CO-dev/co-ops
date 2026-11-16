@@ -271,8 +271,8 @@ async function loadEzcater(service: SupabaseClient, locationId: string, dates: r
  * 0301: a person holds one 7shifts account PER SHOP, so the wage is read through the link made for THIS
  * shop (`linked_at_location_id`), never "any link of the user" — the other shop's rate is that shop's.
  */
-async function loadWages(service: SupabaseClient, locationId: string, memberIds: readonly string[]): Promise<{ wages: SchedulingInputs["wages"]; overtimeH: number | null }> {
-  if (sevenShiftsStatus().state !== "ready" || memberIds.length === 0) return { wages: { byUserCents: {}, source: "none" }, overtimeH: null };
+async function loadWages(service: SupabaseClient, locationId: string, memberIds: readonly string[]): Promise<{ wages: SchedulingInputs["wages"]; overtimeH: number | null; overtimeMultiplier: number | null }> {
+  if (sevenShiftsStatus().state !== "ready" || memberIds.length === 0) return { wages: { byUserCents: {}, source: "none" }, overtimeH: null, overtimeMultiplier: null };
   const links: Array<{ sevenshifts_user_id: string; user_id: string }> = [];
   for (const ids of chunks(memberIds)) {
     links.push(...await selectAllRows<{ sevenshifts_user_id: string; user_id: string }>((f, t) => service.from("sevenshifts_user_links")
@@ -323,9 +323,12 @@ async function loadWages(service: SupabaseClient, locationId: string, memberIds:
   const run = await firstRow<{ company_id: number | string | null }>(service.from("sevenshifts_sync_runs").select("company_id")
     .not("company_id", "is", null).in("status", ["ok", "partial"]).order("finished_at", { ascending: false }).limit(1));
   const companyId = run?.company_id ?? null;
-  const ls = companyId === null ? null : await firstRow<{ weekly_ot_threshold: number | string | null }>(service.from("sevenshifts_labor_settings")
-    .select("weekly_ot_threshold").eq("company_id", companyId).limit(1));
-  return { wages: { byUserCents, source: "sevenshifts" }, overtimeH: num(ls?.weekly_ot_threshold ?? null) };
+  const ls = companyId === null ? null : await firstRow<{ weekly_ot_threshold: number | string | null; multipliers: Record<string, unknown> | null }>(service
+    .from("sevenshifts_labor_settings").select("weekly_ot_threshold, multipliers").eq("company_id", companyId).limit(1));
+  // B133: the weekly overtime pay multiplier as 7shifts names it (normalizeLaborSettings keeps every `*_multiplier`).
+  const m = num(ls?.multipliers?.weekly_overtime_multiplier ?? null);
+  const overtimeMultiplier = m !== null && Number.isFinite(m) && m >= 1 ? m : null;
+  return { wages: { byUserCents, source: "sevenshifts" }, overtimeH: num(ls?.weekly_ot_threshold ?? null), overtimeMultiplier };
 }
 
 /** The `schedule.budget_kept` digests of the shop (a kept suggestion stays quiet). */
@@ -374,14 +377,14 @@ export async function loadSchedulingInputs(service: SupabaseClient, args: LoadSc
       families: ["closingLines", "closingFinalization"],
     });
     const closing = closingDuration(closingFacts(facts.skills), structure.structure.shopDay.serviceCloseQ);
-    const { wages, overtimeH } = await loadWages(service, locationId, members.map((m) => m.userId));
+    const { wages, overtimeH, overtimeMultiplier } = await loadWages(service, locationId, members.map((m) => m.userId));
     const keptBudgetDigests = await loadKeptDigests(service, locationId);
     // Staff separations (0279): on leave / separated members never reach the roster (a missing 0279 = nobody).
     const employment = await loadEmploymentStates(service, members.map((m) => m.userId));
     const employmentExcluded = members.filter((m) => excludedFromScheduling(stateOf(employment, m.userId).status)).map((m) => m.userId);
     return {
       locationId, asOf, shopSettings, structure, structuresById, members, skills, skillBands: { building: tunables.bands.building, strong: tunables.bands.strong },
-      personSettings, budget, dayTypes, pins, weeks, demand, catering, punches, closing, wages, overtimeH, keptBudgetDigests, employmentExcluded,
+      personSettings, budget, dayTypes, pins, weeks, demand, catering, punches, closing, wages, overtimeH, overtimeMultiplier, keptBudgetDigests, employmentExcluded,
     };
   } catch (e) {
     if (e instanceof ScheduleError) throw e;

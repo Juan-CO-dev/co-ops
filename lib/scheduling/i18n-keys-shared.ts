@@ -26,11 +26,11 @@ export const BOARD_LABEL_KEYS = [
   "schedule.board.day_type.auto", "schedule.board.day_type.slow", "schedule.board.day_type.normal", "schedule.board.day_type.busy", "schedule.board.day_type.weekend",
   "schedule.board.money.hours_vs_budget", "schedule.board.money.hourly_cost", "schedule.board.money.salaried", "schedule.board.money.total_pct",
   "schedule.board.money.ot_risk", "schedule.board.money.flex_used", "schedule.board.money.manager_floor", "schedule.board.money.manager_mod", "schedule.board.money.blank",
-  "schedule.board.money.errand_set_wage", "schedule.board.money.hidden",
+  "schedule.board.money.errand_set_wage", "schedule.board.money.hidden", "schedule.board.money.overtime_premium", "schedule.board.money.overtime_premium_sub",
   "schedule.board.day_tab.done",
   "schedule.board.flag.assumed_availability", "schedule.board.flag.manager_set_availability", "schedule.board.flag.starting_point", "schedule.board.flag.not_linked", "schedule.board.flag.flex_later",
   "schedule.board.gap.unresolved_try", "schedule.board.problem.earlier", "schedule.board.demand.basis", "schedule.board.ready_for_7shifts",
-  "schedule.diff.cost_partial",
+  "schedule.diff.cost_partial", "schedule.diff.overtime_premium", "schedule.diff.overtime_premium_unknown",
   "schedule.board.crew_unassigned", "schedule.gap.certificate.open_shifts", "schedule.gap.certificate.station_short",
 ] as const;
 

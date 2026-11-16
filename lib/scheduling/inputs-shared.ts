@@ -96,6 +96,11 @@ export interface SchedulingInputs {
   closing: ClosingDurationResult;
   wages: { byUserCents: Record<string, number>; source: "sevenshifts" | "none" };
   overtimeH: number | null;
+  /**
+   * B133: 7shifts' weekly overtime pay multiplier for the connected company (`weekly_overtime_multiplier`); absent / null
+   * = the default (`DEFAULT_OVERTIME_MULTIPLIER`, 1.5×, DC law). Only the premium's price — never a rule input.
+   */
+  overtimeMultiplier?: number | null;
   keptBudgetDigests: string[];
   /**
    * Staff separations (0279, 2026-10-20): members who are ON LEAVE (while on leave) or SEPARATED (for good — even if their

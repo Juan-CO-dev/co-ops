@@ -129,7 +129,7 @@ export async function loadBoard(deps: ScheduleDeps, args: { actor: PeopleActor; 
     liveStructureId: inputs.structure.id, liveEngine: scheduleEngine(structure), demand, names, roles, positions,
     skills: makeSkillLookup(inputs.skills, inputs.skillBands),
     wageCentsByUser, shopEstimateHourlyCents: inputs.shopSettings.estimatedHourlyCents,
-    salariedWeeklyCents: inputs.shopSettings.estimatedSalariedWeeklyCents, forecastWeekCents,
+    salariedWeeklyCents: inputs.shopSettings.estimatedSalariedWeeklyCents, forecastWeekCents, overtimeMultiplier: inputs.overtimeMultiplier ?? null,
     budget: budgetForDates(inputs.budget.entries, inputs.budget.rows, dates), suggestion, advisory,
     week: head && w ? {
       ...(scheduleEngine(structure) === "crew" ? { historicalCrewDates: historicalCrewDates(w).filter((d) => d >= today) } : {}),

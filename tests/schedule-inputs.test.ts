@@ -249,7 +249,7 @@ describe("loadSchedulingInputs — the one batch loader", () => {
     const t = baseTables();
     t.sevenshifts_user_links = [{ id: "ul1", sevenshifts_user_id: "701", user_id: EMP, linked_at_location_id: A, active: true }];
     t.sevenshifts_wages = [{ user_id: "701", wage_id: 1, role_id: null, wage_type: "hourly", wage_cents: 2000, upcoming: false, effective_date: "2026-01-01", active: true }];
-    t.sevenshifts_labor_settings = [{ company_id: 100, weekly_ot_threshold: 48, multipliers: {} }, { company_id: 200, weekly_ot_threshold: 40, multipliers: {} }];
+    t.sevenshifts_labor_settings = [{ company_id: 100, weekly_ot_threshold: 48, multipliers: {} }, { company_id: 200, weekly_ot_threshold: 40, multipliers: { weekly_overtime_multiplier: 2, daily_overtime_multiplier: 3 } }];
     const prev = { t: process.env.SEVENSHIFTS_ACCESS_TOKEN, s: process.env.SEVENSHIFTS_SYNC };
     process.env.SEVENSHIFTS_ACCESS_TOKEN = "test-token-not-real";
     process.env.SEVENSHIFTS_SYNC = "1";
@@ -261,7 +261,11 @@ describe("loadSchedulingInputs — the one batch loader", () => {
         { id: "r3", status: "failed", company_id: 100, finished_at: "2026-11-03T10:00:00Z" },
         { id: "r4", status: "failed", company_id: null, finished_at: "2026-11-04T10:00:00Z" },
       ];
-      expect((await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW })).overtimeH).toBe(40);
+      const got = await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
+      expect(got.overtimeH).toBe(40);
+      expect(got.overtimeMultiplier).toBe(2); // B133: the weekly multiplier of the connected company, never the daily one
+      t.sevenshifts_labor_settings[1]!.multipliers = {};
+      expect((await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW })).overtimeMultiplier).toBeNull(); // → 1.5× at use
     } finally {
       if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
       if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;

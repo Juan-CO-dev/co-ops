@@ -41,6 +41,11 @@ export function WhatChanged({ diff, names, positions }: {
   return (
     <div className="grid gap-1" data-section="what-changed">
       <p className="text-sm text-co-text">{line(diff.summaryLine)}</p>
+      {/* B133: the week's overtime premium change, a week-level line (money viewers only — the key is absent otherwise). */}
+      {diff.summary.overtimePremiumDeltaCents === null ? <p className="text-sm text-co-text-muted">{t("schedule.diff.overtime_premium_unknown")}</p>
+        : diff.summary.overtimePremiumDeltaCents !== undefined && diff.summary.overtimePremiumDeltaCents !== 0
+          ? <p className="text-sm text-co-text">{t("schedule.diff.overtime_premium", { amount: `${diff.summary.overtimePremiumDeltaCents > 0 ? "+" : ""}${formatCentsWhole(diff.summary.overtimePremiumDeltaCents, language)}` })}</p>
+          : null}
       {total > 0 ? (
         <>
           <button type="button" aria-expanded={open} aria-controls={id} data-days={diff.days.length} onClick={() => setOpen((o) => !o)}

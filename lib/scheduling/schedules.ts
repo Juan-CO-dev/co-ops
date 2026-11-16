@@ -162,7 +162,10 @@ function headSnapshotOf(w: StoredWeek | undefined) {
 function diffOf(inputs: SchedulingInputs, actor: PeopleActor, w: StoredWeek | undefined, out: GeneratorOutput): WeekDiff {
   const canSeeMoney = canSeeScheduleMoney(actor, inputs.locationId);
   const wageCentsByUser = canSeeMoney ? Object.fromEntries(Object.values(out.context.people).map((p) => [p.userId, inputs.wages.byUserCents[p.userId] ?? inputs.shopSettings.estimatedHourlyCents])) : undefined;
-  return diffWeeks(headSnapshotOf(w), { shifts: out.shifts, gaps: out.gaps, days: out.days }, { people: out.context.people, canSeeMoney, ...(wageCentsByUser ? { wageCentsByUser } : {}) });
+  // B133: the week's overtime premium change, priced on the line the built context judges overtime by.
+  const firstDay = out.context.days[out.context.dates[0] ?? ""] ?? Object.values(out.context.days)[0];
+  const ot = canSeeMoney && firstDay ? { overtimeH: firstDay.structure.limits.overtimeH, overtimeMultiplier: inputs.overtimeMultiplier ?? null } : {};
+  return diffWeeks(headSnapshotOf(w), { shifts: out.shifts, gaps: out.gaps, days: out.days }, { people: out.context.people, canSeeMoney, ...(wageCentsByUser ? { wageCentsByUser } : {}), ...ot });
 }
 
 export interface WeekResult { weekStart: string; revisionId: string; kind: "generated" | "regenerated"; problems: ProblemsSplit; gaps: number; whatChanged: WeekDiff }
