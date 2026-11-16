@@ -57,6 +57,7 @@ async function errorKeyForResponse(res: Response): Promise<TranslationKey> {
     if (body.code === "report_already_submitted") {
       return "pm.error.already_submitted" as TranslationKey;
     }
+    if (body.code === "self_evaluation") return "pm.error.self_evaluation" as TranslationKey;
   } catch {
     /* opaque body — fall through to generic */
   }

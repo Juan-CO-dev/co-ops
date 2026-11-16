@@ -56,8 +56,10 @@ export async function processInboundMessage(id: string, sb = getServiceRoleClien
   if (!row) return "busy";
   const token = randomUUID();
   const attempt = row.fetch_attempts + 1;
+  // The attempt is spent AT the claim (audit W11/B017): a run the platform kills mid-work never reaches the catch below,
+  // and a poison message must still exhaust INBOUND_MAX_ATTEMPTS. blocked_config gives it back in the catch.
   const { data: claimed, error: claimError } = await sb.from("inbound_messages").update({
-    lease_token: token, next_attempt_at: new Date(Date.now() + 300_000).toISOString(),
+    lease_token: token, fetch_attempts: attempt, next_attempt_at: new Date(Date.now() + 300_000).toISOString(),
   }).eq("id", id).eq("fetch_attempts", row.fetch_attempts).lte("next_attempt_at", now)
     .in("content_state", ["pending", "failed", "blocked_config"]).select("id").maybeSingle();
   if (claimError) throw new Error("inbound_claim_failed");

@@ -1,6 +1,6 @@
 import { checklistActor } from "./helpers/checklist-actor";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 vi.mock("@/lib/assignments", () => ({ hasTaskAccess: vi.fn(), auditTaskOverride: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
@@ -92,6 +92,10 @@ describe("assignment gates at the writer boundary", () => {
   });
 
   it("cash rejects a revoked assignment before superseding any history", async () => {
+    // W03 follow-up: below GM the date must be in the current week — run on 2026-10-07 itself.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-07T16:00:00.000Z"));
+    onTestFinished(() => { vi.useRealTimers(); });
     const { service, from, rpc } = instanceClient();
     const result = await submitCashReport(service, { actor: { ...actor, locations: ["shop"] }, locationId: "shop", date: "2026-10-07", projectedCents: 0, drawerTotalCents: 0, floatCents: 0, countMethod: "hand", denominations: null, cashTipsCents: 0, onShift: [], overShortNote: null, toastProjected: null });
     expect(result).toEqual({ ok: false, reason: "assignment_required" });

@@ -8,7 +8,8 @@ describe("inbox classification", () => {
     ["Catering November 20", "intake", null],
     ["Catering el 20 de noviembre", "intake", null],
     ["Catering", "unclassified", "insufficient_content"],
-    ["We offer catering services", "noise", "solicitation"],
+    ["We offer catering software, book a demo", "noise", "solicitation"],
+    ["We offer catering services", "unclassified", "solicitation"],
     ["We need catering; we offer SEO", "unclassified", "conflicting_intent"],
     ["We need catering. Unsubscribe here", "unclassified", "conflicting_intent"],
     ["We do not need catering", "unclassified", "conflicting_intent"],
@@ -80,4 +81,24 @@ it("followups retain urgent and noise reasons; platform disputes never draft", (
   for (const body of ["urgent", "Payment dispute", "Cobro doble"]) {
     expect(classifyCateringInbox({ ...base, sender: "notice@ezcater.com", subject: "RE: order", body })).toMatchObject({ classification: "platform_notification", disposition: "needs_human", reason: "urgent" });
   }
+});
+
+// Audit W11/B018: real customer mail (cancellations, "your restaurant", a "Partner" signature) was filed as noise.
+describe("real customer mail is never noise", () => {
+  it.each([
+    [{ subject: "Friday lunch order", body: "Hi, we no longer need the order for Friday, please cancel it.", identity: "resolved", artifact: "resolved" }, "payment_or_edit"],
+    [{ subject: "Friday lunch order", body: "Hi, we no longer need the order for Friday, please cancel it." }, "payment_or_edit"],
+    [{ body: "Love your restaurant, can we order 40 subs for Tuesday?" }, "solicitation"],
+    [{ body: "Can you do lunch for 30 on Friday?\nJane Doe, Partner, Smith LLP" }, "solicitation"],
+    [{ body: "We no longer need it", identity: "resolved", artifact: "resolved" }, "conflicting_intent"],
+    [{ body: "We no longer need it" }, "conflicting_intent"],
+    [{ body: "Love your restaurant and your platform", identity: "resolved" }, "solicitation"],
+  ] as const)("%j", (input, reason) => {
+    const decision = classifyCateringInbox({ ...base, ...input });
+    expect(decision.disposition).not.toBe("noise");
+    expect(decision).toMatchObject({ disposition: "needs_human", reason });
+  });
+  it("strong pitches from unknown senders are still noise", () => {
+    expect(classifyCateringInbox({ ...base, body: "Book a demo of our platform to increase your sales" })).toMatchObject({ disposition: "noise", reason: "solicitation" });
+  });
 });
