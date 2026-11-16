@@ -92,6 +92,7 @@ class Q {
   or(expr: string) { const p = splitTop(expr).map(parseTerm); this.preds.push((r) => p.some((f) => f(r))); return this; }
   order() { return this; }
   limit() { return this; }
+  range() { return this; } // W23/B208: searchPipeline pages its reads (fixtures stay under one page)
   returns() { return this; }
   update(patch: Row) { this.mode = "update"; this.patch = patch; return this; }
   insert(rows: Row | Row[]) { this.mode = "insert"; this.toInsert = Array.isArray(rows) ? rows : [rows]; return this; }

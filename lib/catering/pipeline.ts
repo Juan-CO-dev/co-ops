@@ -14,6 +14,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { lockLocationContext } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -256,6 +257,11 @@ export interface PipelineBoardLead extends PipelineLead {
 
 /** Ids per `.in()` read — keeps the request line well under the 414 found at ~220 ids. */
 const QUOTE_STATUS_CHUNK = 100;
+function chunked<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
 
 /** The current (latest non-superseded) quote status per lead id. Status only — no contact. */
 async function currentQuoteStatuses(
@@ -319,65 +325,83 @@ export async function searchPipeline(actor: AuthContext, args: { query: string }
   const customerReadable = (primaryLocationId: string | null) =>
     !!reader && canReadCateringContact(reader, primaryLocationId);
 
+  // W23/B208: no read here spends an unbounded id list in the request line (a broad term like
+  // "gmail" put ~250 customer ids into one .or() and the gateway refused it), and none truncates
+  // at the 1,000-row cap: id filters go in chunks of QUOTE_STATUS_CHUNK, row reads page, and every
+  // enrichment read checks its error instead of silently dropping an email or a quote status.
   // 1. Customer ids matching email/phone/name, plus customers of companies whose name matches —
   //    readable customers only.
   const matchedCustomerIds = new Set<string>();
-  const { data: custRows, error: cErr } = await sb
+  const custRows = await selectAllRows<{ id: string; primary_location_id: string | null }>((from, to) => sb
     .from("catering_customers")
     .select("id, primary_location_id")
     .or(`email.ilike.${term},phone.ilike.${term},name.ilike.${term}`)
-    .returns<Array<{ id: string; primary_location_id: string | null }>>();
-  if (cErr) throw new Error(`searchPipeline customers: ${cErr.message}`);
-  for (const c of custRows ?? []) if (customerReadable(c.primary_location_id)) matchedCustomerIds.add(c.id);
+    .order("id", { ascending: true }).range(from, to)
+    .returns<Array<{ id: string; primary_location_id: string | null }>>());
+  for (const c of custRows) if (customerReadable(c.primary_location_id)) matchedCustomerIds.add(c.id);
 
-  const { data: compRows, error: coErr } = await sb
+  const compRows = await selectAllRows<{ id: string }>((from, to) => sb
     .from("catering_companies")
     .select("id")
     .ilike("name", term)
-    .returns<Array<{ id: string }>>();
-  if (coErr) throw new Error(`searchPipeline companies: ${coErr.message}`);
-  const companyIds = (compRows ?? []).map((c) => c.id);
-  if (companyIds.length) {
-    const { data: compCust, error: ccErr } = await sb
+    .order("id", { ascending: true }).range(from, to)
+    .returns<Array<{ id: string }>>());
+  const companyIds = compRows.map((c) => c.id);
+  for (const chunk of chunked(companyIds, QUOTE_STATUS_CHUNK)) {
+    const compCust = await selectAllRows<{ id: string; primary_location_id: string | null }>((from, to) => sb
       .from("catering_customers")
       .select("id, primary_location_id")
-      .in("company_id", companyIds)
-      .returns<Array<{ id: string; primary_location_id: string | null }>>();
-    if (ccErr) throw new Error(`searchPipeline company customers: ${ccErr.message}`);
-    for (const c of compCust ?? []) if (customerReadable(c.primary_location_id)) matchedCustomerIds.add(c.id);
+      .in("company_id", chunk)
+      .order("id", { ascending: true }).range(from, to)
+      .returns<Array<{ id: string; primary_location_id: string | null }>>());
+    for (const c of compCust) if (customerReadable(c.primary_location_id)) matchedCustomerIds.add(c.id);
   }
 
-  // 2. Search leads: own text fields OR matched customer ids, location-scoped.
-  const orParts = [`contact_name.ilike.${term}`, `company.ilike.${term}`, `contact_phone.ilike.${term}`, `event_name.ilike.${term}`];
-  if (matchedCustomerIds.size) orParts.push(`customer_id.in.(${[...matchedCustomerIds].join(",")})`);
-  let q = sb.from("catering_pipeline").select(LEAD_COLS);
+  // 2. Search leads: own text fields OR matched customer ids, location-scoped. The OR is split
+  //    into one text query plus one query per customer-id chunk, each AND-ed with the same scope,
+  //    then merged by id — the same row set as the single OR, without the unbounded list.
   const scope = await readScopeOr(actor);
-  if (scope) q = q.or(scope); // AND-ed with the identity OR-group below (two .or() calls = AND of groups)
-  q = q.or(orParts.join(","));
-  const { data: leadRows, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
-  if (error) throw new Error(`searchPipeline leads: ${error.message}`);
-  const leads = await withLocationNames(sb, (leadRows ?? []).map(mapLead));
+  const textOr = [`contact_name.ilike.${term}`, `company.ilike.${term}`, `contact_phone.ilike.${term}`, `event_name.ilike.${term}`].join(",");
+  const leadQuery = (customerIds: string[] | null) =>
+    selectAllRows<DbLeadRow>((from, to) => {
+      let q = sb.from("catering_pipeline").select(LEAD_COLS);
+      if (scope) q = q.or(scope); // AND-ed with the identity filter below (two filters = AND)
+      q = customerIds ? q.in("customer_id", customerIds) : q.or(textOr);
+      return q.order("created_at", { ascending: false }).order("id", { ascending: true }).range(from, to).returns<DbLeadRow[]>();
+    });
+  const byId = new Map<string, DbLeadRow>();
+  for (const r of await leadQuery(null)) byId.set(r.id, r);
+  for (const chunk of chunked([...matchedCustomerIds], QUOTE_STATUS_CHUNK)) {
+    for (const r of await leadQuery(chunk)) byId.set(r.id, r);
+  }
+  const leadRows = [...byId.values()].sort((a, b) =>
+    a.created_at === b.created_at ? (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) : (a.created_at < b.created_at ? 1 : -1));
+  const leads = await withLocationNames(sb, leadRows.map(mapLead));
   if (leads.length === 0) return [];
 
   // 3. Enrich: email (per customer) + current quote (latest non-superseded per lead).
   const custIds = [...new Set(leads.map((l) => l.customerId).filter((x): x is string => !!x))];
   const emailByCustomer = new Map<string, string | null>();
-  if (custIds.length) {
-    const { data } = await sb.from("catering_customers").select("id, email, primary_location_id").in("id", custIds)
+  for (const chunk of chunked(custIds, QUOTE_STATUS_CHUNK)) {
+    const { data, error: eErr } = await sb.from("catering_customers").select("id, email, primary_location_id").in("id", chunk)
       .returns<Array<{ id: string; email: string | null; primary_location_id: string | null }>>();
+    if (eErr) throw new Error(`searchPipeline emails: ${eErr.message}`);
     // An unreadable customer's email is omitted, never returned (review 3).
     for (const c of data ?? []) emailByCustomer.set(c.id, customerReadable(c.primary_location_id) ? c.email : null);
   }
   const leadIds = leads.map((l) => l.id);
   const quoteByLead = new Map<string, { status: string; total_cents: number }>();
-  const { data: qRows } = await sb
-    .from("catering_quotes")
-    .select("pipeline_id, status, total_cents, created_at")
-    .in("pipeline_id", leadIds)
-    .is("superseded_at", null)
-    .order("created_at", { ascending: false })
-    .returns<Array<{ pipeline_id: string; status: string; total_cents: number; created_at: string }>>();
-  for (const qr of qRows ?? []) if (!quoteByLead.has(qr.pipeline_id)) quoteByLead.set(qr.pipeline_id, { status: qr.status, total_cents: qr.total_cents }); // first seen = latest (desc order)
+  // A lead id sits in exactly one chunk, so "first seen per lead in created_at desc" holds per chunk.
+  for (const chunk of chunked(leadIds, QUOTE_STATUS_CHUNK)) {
+    const qRows = await selectAllRows<{ pipeline_id: string; status: string; total_cents: number; created_at: string }>((from, to) => sb
+      .from("catering_quotes")
+      .select("pipeline_id, status, total_cents, created_at")
+      .in("pipeline_id", chunk)
+      .is("superseded_at", null)
+      .order("created_at", { ascending: false }).order("id", { ascending: true }).range(from, to)
+      .returns<Array<{ pipeline_id: string; status: string; total_cents: number; created_at: string }>>());
+    for (const qr of qRows) if (!quoteByLead.has(qr.pipeline_id)) quoteByLead.set(qr.pipeline_id, { status: qr.status, total_cents: qr.total_cents }); // first seen = latest (desc order)
+  }
 
   return leads.map((l) => {
     const quote = quoteByLead.get(l.id);
