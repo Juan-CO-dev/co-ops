@@ -53,8 +53,33 @@ describe("adset_id (delivery routing rule b)", () => {
     expect(result).toMatchObject({ ok: true });
     if (result.ok) expect("adset_id" in result.lead).toBe(false);
   });
-  it.each([123, "abc", "", { id: "1" }])("refuses a malformed adset_id %j", async adset_id => {
+  // Item 1 (P2-5): attribution ids are NOT identity. A malformed one is left out and the lead is still
+  // fetched (it then routes by history / the default shop) instead of failing the whole intake.
+  it.each([123, "abc", "", { id: "1" }, "1".repeat(31), " 777", null, true])("omits a malformed adset_id %j and still returns the lead", async adset_id => {
     const send = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: "123", form_id: "456", adset_id, field_data: [] }));
-    expect(await fetchMetaLead(expected, { ...dependencies, send })).toEqual({ ok: false, error: "invalid_payload" });
+    const result = await fetchMetaLead(expected, { ...dependencies, send });
+    expect(result).toMatchObject({ ok: true });
+    if (result.ok) expect("adset_id" in result.lead).toBe(false);
+  });
+  it.each([123, "abc", "", { id: "1" }, "1".repeat(31), " 1", null, false])("omits a malformed ad_id %j and still returns the lead", async ad_id => {
+    const send = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: "123", form_id: "456", ad_id, adset_id: "777", field_data: [] }));
+    const result = await fetchMetaLead(expected, { ...dependencies, send });
+    expect(result).toMatchObject({ ok: true, lead: { adset_id: "777" } });
+    if (result.ok) expect("ad_id" in result.lead).toBe(false);
+  });
+  it("keeps 30-digit ids (the widest the ledger stores)", async () => {
+    const send = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: "123", form_id: "456", ad_id: "9".repeat(30), adset_id: "8".repeat(30), field_data: [] }));
+    expect(await fetchMetaLead(expected, { ...dependencies, send })).toMatchObject({ ok: true, lead: { ad_id: "9".repeat(30), adset_id: "8".repeat(30) } });
+  });
+  it("asks Graph for no new fields (campaign_id stays out until a test lead proves it valid)", async () => {
+    const send = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ id: "123", form_id: "456", field_data: [] }));
+    await fetchMetaLead(expected, { ...dependencies, send });
+    expect(new URL(String(send.mock.calls[0]![0])).searchParams.get("fields")).toBe("id,created_time,form_id,ad_id,adset_id,field_data,custom_disclaimer_responses");
+  });
+  it("identity stays strict: a wrong lead id, form or field_data is still refused next to a malformed ad id", async () => {
+    for (const fields of [{ id: "999", form_id: "456", ad_id: "abc" }, { id: "123", form_id: "999", adset_id: "abc" }, { id: "123", form_id: 456, ad_id: "1" }, { id: "123", form_id: "456", field_data: "x" }]) {
+      const send = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ field_data: [], ...fields }));
+      expect(await fetchMetaLead(expected, { ...dependencies, send })).toEqual({ ok: false, error: "invalid_payload" });
+    }
   });
 });
