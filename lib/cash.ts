@@ -9,6 +9,7 @@ import {
   DEFAULT_FLOAT_CENTS,
   DENOMINATION_UNITS_CENTS,
   computeCashTotals,
+  cashDateRefusal,
   closingLocksCash,
   sumDenominations,
   type Denominations,
@@ -121,7 +122,7 @@ export async function cashLockedByClosing(
 
 export type CashSubmitResult =
   | { ok: true; id: string }
-  | { ok: false; reason: "closing_finalized" | "assignment_required" | "location_access_denied" | "concurrent_submit" };
+  | { ok: false; reason: "closing_finalized" | "assignment_required" | "location_access_denied" | "concurrent_submit" | "outside_current_week" };
 
 /** Postgres unique violation: cash_reports_one_live_per_day refused a second live row. */
 const PG_UNIQUE_VIOLATION = "23505";
@@ -241,6 +242,12 @@ export async function submitCashReport(
   if (!lockLocationContext(args.actor, args.locationId)) {
     return { ok: false, reason: "location_access_denied" };
   }
+  // W03 follow-up (Juan 2026-11-15): below GM, only this business week (Mon–Sun, ET). Pure, before
+  // any I/O; the clock is read once and the same instant is the write's signed_at.
+  const nowIso = new Date().toISOString();
+  if (cashDateRefusal(args.actor.level, args.date, nowIso)) {
+    return { ok: false, reason: "outside_current_week" };
+  }
   if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "cash_report" }))) {
     return { ok: false, reason: "assignment_required" };
   }
@@ -256,7 +263,6 @@ export async function submitCashReport(
     drawerTotalCents: args.drawerTotalCents,
     floatCents: args.floatCents,
   });
-  const nowIso = new Date().toISOString();
 
   // The early refusal above is the friendly one; this is the binding one (inside the transaction).
   const atomic = await writeCashReportAtomic(service, cashAtomicRpcArgs(args, { overShortCents, depositCents, nowIso }));

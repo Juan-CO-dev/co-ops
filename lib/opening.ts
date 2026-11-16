@@ -565,6 +565,32 @@ export class OpeningPhase3NotEligibleError extends OpeningPhaseError {
 }
 
 /**
+ * W13/B074 — Phase 1 submitted without a spot-check status for every live closer-count
+ * snapshot item (snapshot row ∩ active template item). Refused by submit_phase1_atomic
+ * (0313) before anything is written, because Phase 2 can never save those items.
+ */
+export class OpeningPhase1IncompleteError extends OpeningError {
+  constructor(
+    public readonly instanceId: string,
+    public readonly missingCount: number,
+  ) {
+    super(
+      `Phase 1 submit rejected: instance ${instanceId} has ${missingCount} spot-check item(s) without a Phase 1 entry.`,
+      "phase1_incomplete",
+    );
+    this.name = "OpeningPhase1IncompleteError";
+  }
+}
+
+/** W13/B073 — a Phase 1 entry named a template item that is not on the instance's template (0313). */
+export class OpeningItemNotInTemplateError extends OpeningError {
+  constructor(public readonly templateItemId: string) {
+    super(`Item ${templateItemId} does not belong to this opening's checklist.`, "item_not_in_template");
+    this.name = "OpeningItemNotInTemplateError";
+  }
+}
+
+/**
  * C.53 Phase 2 — finalize (`submit_phase2_atomic`) refuses to advance when one
  * or more items in the Phase 2 universe (every `openingPhase2` template item)
  * lack a live (non-superseded, non-revoked) phase2 completion. The opener must
@@ -745,11 +771,18 @@ export async function canAccessOpeningInstance(
   service: SupabaseClient,
   args: { instanceId: string; actor: OpeningActor },
 ): Promise<boolean> {
+  // W13/B073: the template rides the SAME read — a closing or prep instance id is never an
+  // opening, so every opening writer (Phase 1/2, draft, item save, revoke) refuses it here,
+  // before the assignment lookup and before any RPC.
+  type OpeningTemplateEmbed = { type: string };
   const { data, error } = await service.from("checklist_instances")
-    .select("location_id, date").eq("id", args.instanceId)
-    .maybeSingle<{ location_id: string; date: string }>();
+    .select("location_id, date, template:checklist_templates!inner(type)").eq("id", args.instanceId)
+    .maybeSingle<{ location_id: string; date: string; template: OpeningTemplateEmbed | OpeningTemplateEmbed[] | null }>();
   if (error) throw new Error(`opening access: ${error.message}`);
-  return !!data && hasTaskAccess(service, { ...args.actor, locationId: data.location_id, date: data.date, task: "opening_report" });
+  if (!data) return false;
+  const tmpl = Array.isArray(data.template) ? data.template[0] : data.template;
+  if (tmpl?.type !== "opening") return false;
+  return hasTaskAccess(service, { ...args.actor, locationId: data.location_id, date: data.date, task: "opening_report" });
 }
 
 async function auditOpeningOverride(
@@ -1871,6 +1904,49 @@ export async function submitPhase1Atomic(
             userAgent: args.userAgent ?? null,
           });
           throw new OpeningRecountSplitError(splitCode, itemId);
+        }
+        // W13/B073 + B074 (0313): wrong checklist, foreign item, incomplete Phase 1.
+        if (msg.includes("wrong_checklist_type")) {
+          void audit({
+            actorId: args.actor.userId,
+            actorRole: args.actor.role,
+            action: "opening.phase1_submit",
+            resourceTable: "checklist_instances",
+            resourceId: args.instanceId,
+            metadata: { outcome: "wrong_checklist_type", rpc_error: msg },
+            ipAddress: args.ipAddress ?? null,
+            userAgent: args.userAgent ?? null,
+          });
+          throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
+        }
+        if (msg.includes("item_not_in_template")) {
+          const itemId = extractTemplateItemId(msg) ?? "<unknown>";
+          void audit({
+            actorId: args.actor.userId,
+            actorRole: args.actor.role,
+            action: "opening.phase1_submit",
+            resourceTable: "checklist_instances",
+            resourceId: args.instanceId,
+            metadata: { outcome: "item_not_in_template", rpc_error: msg, template_item_id: itemId },
+            ipAddress: args.ipAddress ?? null,
+            userAgent: args.userAgent ?? null,
+          });
+          throw new OpeningItemNotInTemplateError(itemId);
+        }
+        if (msg.includes("phase1_incomplete")) {
+          const m = /phase1_incomplete\D*(\d+)/.exec(msg);
+          const missingCount = m ? Number(m[1]) : 0;
+          void audit({
+            actorId: args.actor.userId,
+            actorRole: args.actor.role,
+            action: "opening.phase1_submit",
+            resourceTable: "checklist_instances",
+            resourceId: args.instanceId,
+            metadata: { outcome: "phase1_incomplete", rpc_error: msg, missing_count: missingCount },
+            ipAddress: args.ipAddress ?? null,
+            userAgent: args.userAgent ?? null,
+          });
+          throw new OpeningPhase1IncompleteError(args.instanceId, missingCount);
         }
         if (msg.includes("phase1_not_eligible")) {
           // RPC's race-loss path. Fetch current status for accurate typed-error
