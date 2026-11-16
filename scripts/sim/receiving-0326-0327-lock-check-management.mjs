@@ -15,6 +15,10 @@
  *                                  override and its note stand.
  *   0327 (B114)  attest>attest     Two discrepancy notes written at once are both kept, in commit order.
  *   0327 (W20-2) unlink>attest     An attestation that queued behind an unlink is refused no_receipt.
+ *   0327 (W20-r4) unlink>auto-link The reviewer's interleaving: worker A's automatic link commits; a manager's unlink
+ *                                  of that pair is in flight (its locks held); worker B, which chose the same pair
+ *                                  before any of this, resumes with the SAME call. PASS = B waits on the delivery
+ *                                  row behind the unlink, then is refused pair_unlinked, and neither side is linked.
  *   0327 (B197)  atomic write      On the sim's REAL schema: a valid delivery saves (header, lines, credits); a bad flag
  *                                  on line 2 and a duplicate invoice leave no row behind.
  *
@@ -35,10 +39,11 @@ export const functions = {
   record: 'public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)',
   verdict: 'public.delivery_match_verdict(uuid,text,text,text,uuid)',
   unlink: 'public.delivery_receipt_unlink(uuid,uuid,text,uuid)',
+  autoLink: 'public.delivery_receipt_auto_link(uuid,uuid,uuid,uuid,date,text,timestamptz)',
 };
 /** The proofs, in run order: [name, migration it proves]. */
 export const proofs = [
-  ['mail-vs-parse', '0326'], ['override>attest', '0327'], ['attest>attest', '0327'], ['unlink>attest', '0327'], ['atomic write', '0327'],
+  ['mail-vs-parse', '0326'], ['override>attest', '0327'], ['attest>attest', '0327'], ['unlink>attest', '0327'], ['unlink>auto-link', '0327'], ['atomic write', '0327'],
 ];
 /** Every column the fixture writes, per table: checked against the sim's catalog before anything is inserted. */
 export const fixtureColumns = {
@@ -47,21 +52,24 @@ export const fixtureColumns = {
   vendors: ['id', 'name', 'active', 'created_by'],
   vendor_items: ['id', 'name', 'vendor_id', 'location_id', 'active', 'created_by', 'notes'],
   vendor_deliveries: ['id', 'vendor_id', 'location_id', 'delivery_date', 'invoice_number', 'notes', 'note', 'received_by', 'delivery_status', 'email_receipt_id'],
-  email_receipts: ['id', 'source', 'subject', 'location_id', 'linked_delivery_id', 'inbound_message_id', 'received_at'],
+  email_receipts: ['id', 'source', 'subject', 'location_id', 'linked_delivery_id', 'inbound_message_id', 'received_at', 'vendor_guess_id', 'parse_state', 'doc_kind'],
   inbound_messages: ['id', 'provider_email_id', 'lane', 'content_state', 'subject', 'email_receipt_id'],
 };
 
 export function fixture() {
   const f = Object.fromEntries(['actor', 'shop', 'vendor', 'sku', 'message', 'mailReceipt',
-    'dOverride', 'rOverride', 'dNotes', 'rNotes', 'dUnlink', 'rUnlink'].map(key => [key, randomUUID()]));
+    'dOverride', 'rOverride', 'dNotes', 'rNotes', 'dUnlink', 'rUnlink', 'dAuto', 'rAuto'].map(key => [key, randomUUID()]));
   f.tag = `SIM-W20-${f.shop.slice(0, 8)}`;
   return f;
 }
 const U = id => `${q(id)}::uuid`;
+/** The automatic-link pair's snapshot: the instant its receipt is inserted with, and the instant every call names. */
+const AUTO_RECEIVED_AT = "timestamptz '2099-01-05 12:00+00'";
 
-/** INSERT-only. Three linked delivery/receipt pairs for the 0327 races, one mail + receipt for 0326. */
+/** INSERT-only. Three linked delivery/receipt pairs for the 0327 races, one mail + receipt for 0326, and one
+ *  UNLINKED delivery + parsed invoice (dAuto / rAuto) that the automatic link may take (the W20-r4 pairing). */
 export function fixtureSQL(f) {
-  const delivery = (d, r, n) => `(${U(d)},${U(f.vendor)},${U(f.shop)},date '2099-01-0${n}',${q(`${f.tag}-${n}`)},'N0','N0',${U(f.actor)},'complete',${U(r)})`;
+  const delivery = (d, r, n) => `(${U(d)},${U(f.vendor)},${U(f.shop)},date '2099-01-0${n}',${q(`${f.tag}-${n}`)},'N0','N0',${U(f.actor)},'complete',${r ? U(r) : 'null'})`;
   return `begin;
     insert into public.users(id,name,role,pin_hash,active) values(${U(f.actor)},${q(f.tag)},'agm','SIM-NO-VALID-CREDENTIAL',true);
     insert into public.locations(id,name,code,type,active) values(${U(f.shop)},${q(f.tag)},${q(f.tag)},'permanent',true);
@@ -72,10 +80,12 @@ export function fixtureSQL(f) {
       (${U(f.rNotes)},'upload',${q(f.tag)},${U(f.shop)},timestamptz '2099-01-02 12:00+00'),
       (${U(f.rUnlink)},'upload',${q(f.tag)},${U(f.shop)},timestamptz '2099-01-03 12:00+00');
     insert into public.vendor_deliveries(id,vendor_id,location_id,delivery_date,invoice_number,notes,note,received_by,delivery_status,email_receipt_id) values
-      ${delivery(f.dOverride, f.rOverride, 1)}, ${delivery(f.dNotes, f.rNotes, 2)}, ${delivery(f.dUnlink, f.rUnlink, 3)};
+      ${delivery(f.dOverride, f.rOverride, 1)}, ${delivery(f.dNotes, f.rNotes, 2)}, ${delivery(f.dUnlink, f.rUnlink, 3)}, ${delivery(f.dAuto, null, 5)};
     insert into public.inbound_messages(id,provider_email_id,lane,content_state,subject) values(${U(f.message)},${q(`${f.tag}-mail`)},'vendor_receipt','skipped',${q(f.tag)});
     insert into public.email_receipts(id,source,subject,location_id,inbound_message_id,received_at)
       values(${U(f.mailReceipt)},'inbound',${q(f.tag)},${U(f.shop)},${U(f.message)},timestamptz '2099-01-04 12:00+00');
+    insert into public.email_receipts(id,source,subject,location_id,vendor_guess_id,parse_state,doc_kind,received_at)
+      values(${U(f.rAuto)},'upload',${q(f.tag)},${U(f.shop)},${U(f.vendor)},'parsed','invoice',${AUTO_RECEIVED_AT});
     select 1 as done; commit;`;
 }
 /** UPDATE-only, each statement on the fixture's own ids: links both sides, exactly as the app's two writes do. */
@@ -143,6 +153,10 @@ export function calls(f) {
     attestB: verdict(f.dNotes, 'attest', 'discrepant', 'second note', f.rNotes),
     unlink: `v_out := public.delivery_receipt_unlink(${U(f.dUnlink)},${U(f.rUnlink)},'wrong document',${U(f.actor)})::text;`,
     attestAfterUnlink: verdict(f.dUnlink, 'attest', 'matched', null, f.rUnlink),
+    // Review W20-r4. ONE call text for worker A and worker B: both chose (dAuto, rAuto) on the same snapshot
+    // (shop, vendor, delivery date, parse state, received-at), before anything was linked or unlinked.
+    autoLink: `v_out := public.delivery_receipt_auto_link(${U(f.dAuto)},${U(f.rAuto)},${U(f.shop)},${U(f.vendor)},date '2099-01-05','parsed',${AUTO_RECEIVED_AT})::text;`,
+    unlinkAuto: `v_out := public.delivery_receipt_unlink(${U(f.dAuto)},${U(f.rAuto)},'wrong document',${U(f.actor)})::text;`,
     recordValid: record(1, [line(), line({ discrepancy_type: null })], [{ line_index: 1, reason: 'short', sku_id: f.sku, qty: 1, amount_cents: 250 }]),
     recordBadFlag: record(2, [line({ discrepancy_type: null }), line({ discrepancy_type: 'bogus' })]),
     recordDuplicate: record(1, [line({ discrepancy_type: null })]),
@@ -155,6 +169,9 @@ export function evidenceSQL(f) {
     (select json_build_object('state', match_state, 'receipt', email_receipt_id,
        'receipt_side', (select linked_delivery_id from public.email_receipts where id=${U(f.rUnlink)}),
        'unlinks', (select count(*) from public.delivery_receipt_unlinks where delivery_id=${U(f.dUnlink)})) from public.vendor_deliveries where id=${U(f.dUnlink)}) as unlink_pair,
+    (select json_build_object('receipt', email_receipt_id,
+       'receipt_side', (select linked_delivery_id from public.email_receipts where id=${U(f.rAuto)}),
+       'unlinks', (select count(*) from public.delivery_receipt_unlinks where delivery_id=${U(f.dAuto)} and receipt_id=${U(f.rAuto)})) from public.vendor_deliveries where id=${U(f.dAuto)}) as auto_pair,
     (select json_build_object('deliveries', count(*), 'lines', (select count(*) from public.vendor_delivery_items i join public.vendor_deliveries d on d.id=i.delivery_id where d.notes=${q(f.tag)} and d.delivery_date=date '2099-02-01'),
        'credits', (select count(*) from public.vendor_credits c join public.vendor_deliveries d on d.id=c.delivery_id where d.notes=${q(f.tag)} and d.delivery_date=date '2099-02-01'))
        from public.vendor_deliveries where notes=${q(f.tag)} and delivery_date=date '2099-02-01') as atomic,
@@ -170,6 +187,7 @@ export function preflightSQL() {
     coalesce((select position('for no key update' in prosrc) > 0 from pg_proc where oid = to_regprocedure(${q(MUTATE)})), false) as has_0326,
     to_regprocedure(${q(functions.record)}) is not null and to_regprocedure(${q(functions.verdict)}) is not null
       and to_regprocedure(${q(functions.unlink)}) is not null and to_regclass('public.delivery_receipt_unlinks') is not null as has_0327,
+    to_regprocedure(${q(functions.autoLink)}) is not null as has_auto_link,
     coalesce((select json_agg(t || '.' || c order by t, c) from (values ${listed}) need(t, c)
        where not exists (select 1 from information_schema.columns k where k.table_schema='public' and k.table_name=need.t and k.column_name=need.c)), '[]'::json) as missing_columns,
     coalesce((select json_agg(k.table_name || '.' || k.column_name order by 1) from information_schema.columns k
@@ -266,6 +284,20 @@ export async function runProof(query, log = console.log, raceOptions = {}) {
         && e.unlink_pair.state === 'counted_only' && e.unlink_pair.receipt === null && e.unlink_pair.receipt_side === null && Number(e.unlink_pair.unlinks) === 1,
         x.error ?? `attest ${x.blocked ? 'waited for' : 'did NOT wait for'} the unlink, then: ${show(x.racer)}; delivery ${JSON.stringify(e.unlink_pair)}`);
 
+      // ── 0327 (review W20-r4): A links, a manager unlinks, B resumes with the pair it chose earlier ──
+      if (!pre.has_auto_link) {
+        record('unlink>auto-link', false, 'delivery_receipt_auto_link is NOT installed: this project has an earlier draft of 0327. Apply the reviewed file again (it is idempotent), then rerun.');
+      } else {
+        // Worker A: its own committed request. Then the manager's unlink holds its locks while worker B sends the SAME call.
+        const workerA = parse((await query(wrap(`zzw20-link-a-${randomUUID().slice(0, 8)}`, c.autoLink))).at(-1)?.out);
+        x = await race(query, 'auto', n => wrap(n, c.unlinkAuto, { hold: HOLD_MS }), n => wrap(n, c.autoLink), raceOptions);
+        e = await evidence(query, f);
+        record('unlink>auto-link', workerA.ok && workerA.value?.linked === true && !x.error && x.holder.ok && x.blocked && !x.racerFirst
+          && x.racer.ok && x.racer.value?.linked === false && x.racer.value?.reason === 'pair_unlinked'
+          && e.auto_pair.receipt === null && e.auto_pair.receipt_side === null && Number(e.auto_pair.unlinks) === 1,
+          x.error ?? `worker A: ${show(workerA)}; worker B ${x.blocked ? 'waited for' : 'did NOT wait for'} the unlink, then: ${show(x.racer)}; pair ${JSON.stringify(e.auto_pair)}`);
+      }
+
       // ── 0327: the atomic write on the sim's real schema (single session, committed) ──
       const send = async body => parse((await query(wrap(`zzw20-atomic-${randomUUID().slice(0, 8)}`, body))).at(-1)?.out);
       const valid = await send(c.recordValid);
@@ -278,7 +310,7 @@ export async function runProof(query, log = console.log, raceOptions = {}) {
     }
   } finally {
     await query(retireSQL(f));
-    log(`retired fixture configuration (shop, user, vendor, SKU deactivated). Kept as history: deliveries ${f.dOverride}, ${f.dNotes}, ${f.dUnlink} and any dated 2099-02-01 with notes ${f.tag}; receipts ${f.rOverride}, ${f.rNotes}, ${f.rUnlink}, ${f.mailReceipt}; inbound message ${f.message}.`);
+    log(`retired fixture configuration (shop, user, vendor, SKU deactivated). Kept as history: deliveries ${f.dOverride}, ${f.dNotes}, ${f.dUnlink}, ${f.dAuto} and any dated 2099-02-01 with notes ${f.tag}; receipts ${f.rOverride}, ${f.rNotes}, ${f.rUnlink}, ${f.rAuto}, ${f.mailReceipt}; inbound message ${f.message}.`);
   }
   return { refused: false, results };
 }

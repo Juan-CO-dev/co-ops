@@ -1,5 +1,6 @@
 /**
- * Migration 0327 (audit W20: B197 atomic delivery write, B114 locked verdict, the manager unlink).
+ * Migration 0327 (audit W20: B197 atomic delivery write, B114 locked verdict, the manager unlink,
+ * and the one automatic link writer that reads the unlink record under the lock, review W20-r4).
  * FILE ONLY: never applied from here. The executable proof is scripts/sql-harness-0327.mjs (PGlite,
  * the real receiving DDL); this file runs it and pins the file's contract.
  */
@@ -24,7 +25,7 @@ describe("0327 receiving atomic writers", () => {
 
   it("is idempotent by construction and touches no existing row", () => {
     expect(statements).toContain("create table if not exists public.delivery_receipt_unlinks");
-    expect(statements.match(/create or replace function public\./g)).toHaveLength(3);
+    expect(statements.match(/create or replace function public\./g)).toHaveLength(4);
     expect(statements).not.toMatch(/\bcreate function\b/i);
     expect(statements.match(/drop policy if exists/g)).toHaveLength(4);
     // No statement outside a function body or a guard block deletes, truncates or rewrites data.
@@ -41,7 +42,7 @@ describe("0327 receiving atomic writers", () => {
 
   it("locks the delivery FOR NO KEY UPDATE, and the receipt only after it", () => {
     const fn = (name: string) => { const at = statements.indexOf(`create or replace function public.${name}(`); return statements.slice(at, statements.indexOf("end $$;", at)); };
-    for (const name of ["delivery_match_verdict", "delivery_receipt_unlink"]) {
+    for (const name of ["delivery_match_verdict", "delivery_receipt_unlink", "delivery_receipt_auto_link"]) {
       expect(fn(name)).toContain("select * into d from public.vendor_deliveries where id = p_delivery for no key update;");
       expect(fn(name)).not.toMatch(/for update;/);
     }
@@ -90,16 +91,52 @@ describe("0327 receiving atomic writers", () => {
     for (const column of ["('vendor_deliveries','created_at')", "('vendor_delivery_items','created_at')"]) expect(statements).toContain(column);
   });
 
+  it("review W20-r4: the automatic link reads the unlink record under the locks, in the transaction that writes", () => {
+    const at = statements.indexOf("create or replace function public.delivery_receipt_auto_link(");
+    expect(at).toBeGreaterThan(-1);
+    const auto = statements.slice(at, statements.indexOf("end $$;", at));
+    expect(auto).toContain("p_delivery uuid, p_receipt uuid, p_location uuid, p_vendor uuid, p_delivery_date date, p_parse_state text, p_received_at timestamptz)");
+    // The unlink's lock order: the delivery, then the receipt. Then the history, then the snapshot, then both writes.
+    const order = [
+      "select * into d from public.vendor_deliveries where id = p_delivery for no key update;",
+      "select * into r from public.email_receipts where id = p_receipt for no key update;",
+      "if exists (select 1 from public.delivery_receipt_unlinks u where u.delivery_id = d.id and u.receipt_id = r.id) then",
+      "return jsonb_build_object('linked', false, 'reason', 'pair_unlinked');",
+      "if d.email_receipt_id is not null",
+      "if r.linked_delivery_id is not null",
+      "or r.doc_kind is distinct from 'invoice'",
+      "update public.email_receipts set linked_delivery_id = d.id where id = r.id;",
+      "update public.vendor_deliveries set email_receipt_id = r.id where id = d.id;",
+      "return jsonb_build_object('linked', true, 'location_id', d.location_id);",
+    ].map((text) => { const i = auto.indexOf(text); expect(i, text).toBeGreaterThan(-1); return i; });
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // Exactly two writes (the two sides), nothing else: no history row, no match state, no delete.
+    expect(auto.match(/\bupdate public\./g)).toHaveLength(2);
+    expect(auto).not.toMatch(/\binsert into\b|\bdelete from\b|match_state/);
+    // The same two locks, in the same order, as the manager unlink.
+    const unlinkAt = statements.indexOf("create or replace function public.delivery_receipt_unlink(");
+    const unlink = statements.slice(unlinkAt, statements.indexOf("end $$;", unlinkAt));
+    expect(unlink.indexOf("from public.vendor_deliveries where id = p_delivery for no key update")).toBeLessThan(unlink.indexOf("from public.email_receipts r where r.id = d.email_receipt_id for no key update"));
+    // The receipt columns it reads are in the pre-flight, and the header says what happens before the file is applied.
+    for (const column of ["('email_receipts','doc_kind')", "('email_receipts','attribution_conflict')", "('email_receipts','vendor_guess_id')", "('email_receipts','parse_state')", "('email_receipts','received_at')"]) {
+      expect(statements).toContain(column);
+    }
+    expect(sql).toContain("THE AUTOMATIC LINK LINKS NOTHING");
+    expect(sql).toContain("pair_unlinked, delivery_changed, receipt_changed.");
+    expect(sql).toContain("--   drop function public.delivery_receipt_auto_link(uuid,uuid,uuid,uuid,date,text,timestamptz);");
+  });
+
   it("grants execute to service_role only and asserts the ceilings itself", () => {
-    for (const signature of ["record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)", "delivery_match_verdict(uuid,text,text,text,uuid)", "delivery_receipt_unlink(uuid,uuid,text,uuid)"]) {
+    for (const signature of ["record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)", "delivery_match_verdict(uuid,text,text,text,uuid)", "delivery_receipt_unlink(uuid,uuid,text,uuid)",
+      "delivery_receipt_auto_link(uuid,uuid,uuid,uuid,date,text,timestamptz)"]) {
       expect(statements).toContain(`revoke all on function public.${signature} from public, anon, authenticated, service_role;`);
       expect(statements).toContain(`grant execute on function public.${signature} to service_role;`);
     }
     expect(statements).toContain("revoke all on public.delivery_receipt_unlinks from public, anon, authenticated, service_role;");
     expect(statements).toContain("grant select on public.delivery_receipt_unlinks to service_role;");
-    expect(statements.match(/\bgrant\b/gi)).toHaveLength(4);
+    expect(statements.match(/\bgrant\b/gi)).toHaveLength(5);
     for (const guard of ["'0327: receiving RPC escape'", "'0327: delivery_receipt_unlinks privilege escape'", "'0327: delivery_receipt_unlinks must have RLS on'"]) expect(statements).toContain(guard);
-    expect(statements.match(/security definer set search_path = pg_catalog, public/g)).toHaveLength(3);
+    expect(statements.match(/security definer set search_path = pg_catalog, public/g)).toHaveLength(4);
   });
 
   it("real DDL: atomic write, locked verdict, unlink, guards and ceilings", () => {
@@ -136,6 +173,18 @@ describe("0327 receiving atomic writers", () => {
       "a four-argument draft of the verdict writer (one that cannot name its receipt) is refused, never left beside the real one",
       "the delivery has no receipt and its match is back to counted_only (an override is cleared too)",
       "the unlink is recorded: pair, shop, prior state, reason, who",
+      "a receipt table without the columns the automatic link reads (0175 doc_kind, 0294 attribution_conflict) is refused by name",
+      "automatic link: BOTH sides are written, in the one call",
+      "automatic link: a delivery that already has a receipt is never given another (nothing is replaced)",
+      "a manager unlinks it: both link columns are NULL again, exactly as worker B read them, and the pair is on record",
+      "A links, a manager unlinks, B resumes with the pair it chose earlier: B is refused pair_unlinked",
+      "...and the unlinked pair is NOT put back: both sides still empty, the record unchanged",
+      "the unlink record is read first: an unlinked pair is pair_unlinked whatever else moved",
+      "the unlinked receipt still links to a DIFFERENT delivery it was never unlinked from",
+      "a PERSON can still link the pair they unlinked (the rule binds automation only)",
+      "automatic link: a receipt of kind statement is refused (only an invoice links by itself, B112, inside the writer)",
+      "...and the receipt side is rolled back with it: no half link, nothing to compensate",
+      "the four functions: SECURITY DEFINER, pinned search_path, service_role execute only, no PUBLIC",
       "service_role cannot delete unlink history",
       "RLS is on with the four deny policies, split per operation (never FOR ALL)",
       "a variant that widens a grant fails its own assertion, rolls back, and keeps the history",

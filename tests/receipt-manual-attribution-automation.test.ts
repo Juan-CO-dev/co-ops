@@ -19,6 +19,7 @@ vi.mock("@/lib/purchase-orders", () => ({ autoPlaceOnEmailEvidence: vi.fn() }));
 
 import { moveConflictedReceipt, runReceiptAutomation } from "@/lib/email-receipts";
 import { assembleMatchBody } from "@/lib/email-receipts-matching-shared";
+import { AUTO_LINK_RPC, autoLinkModel } from "./helpers/receipt-auto-link-model";
 
 type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
@@ -63,7 +64,11 @@ beforeEach(() => {
     vendor_deliveries: [{ id: "d1", location_id: "shop", vendor_id: "vendor", delivery_date: "2026-11-11", email_receipt_id: null }],
     purchase_orders: [{ id: "po1", vendor_id: "vendor", location_id: "shop", status: "placed", placed_at: "2026-11-10T15:00:00.000Z", ack: null, display_code: "SHOP-20261110-VENDOR" }],
   };
-  mocks.client.mockReturnValue({ from: query });
+  // The automatic delivery link is ONE call (delivery_receipt_auto_link, 0327); the model answers as the function does.
+  mocks.client.mockReturnValue({ from: query, rpc: async (fn: string, args: Row) => {
+    if (fn !== AUTO_LINK_RPC) throw new Error(`unexpected rpc ${fn}`);
+    return { data: autoLinkModel(tables, args), error: null };
+  } });
 });
 
 describe("runReceiptAutomation (B193)", () => {

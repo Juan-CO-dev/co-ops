@@ -35,11 +35,12 @@ describe("W20 Management API proof (offline only)", () => {
     expect(lines.every((l) => l.startsWith("REFUSED:"))).toBe(true);
   });
 
-  it("covers the deadlock, the three lock races and the atomic write", () => {
-    expect(proofs.map((p: string[]) => p[0])).toEqual(["mail-vs-parse", "override>attest", "attest>attest", "unlink>attest", "atomic write"]);
+  it("covers the deadlock, the four lock races and the atomic write", () => {
+    expect(proofs.map((p: string[]) => p[0])).toEqual(["mail-vs-parse", "override>attest", "attest>attest", "unlink>attest", "unlink>auto-link", "atomic write"]);
     expect(proofs.filter((p: string[]) => p[1] === "0326")).toHaveLength(1);
     expect(Object.values(functions)).toEqual([
       "public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)", "public.delivery_match_verdict(uuid,text,text,text,uuid)", "public.delivery_receipt_unlink(uuid,uuid,text,uuid)",
+      "public.delivery_receipt_auto_link(uuid,uuid,uuid,uuid,date,text,timestamptz)",
     ]);
     const c = calls(allocated());
     // The deadlock repro: the message with the installed function's lock clause, a pause, then the receipt.
@@ -58,6 +59,17 @@ describe("W20 Management API proof (offline only)", () => {
     expect(named.attestB).toContain(`'second note','${f.rNotes}'::uuid)`);
     expect(named.attestAfterUnlink).toContain(`null,'${f.rUnlink}'::uuid)`);
     expect(c.recordBadFlag).toContain("bogus");
+    // Review W20-r4: worker A and worker B send the SAME automatic-link call (the pair and snapshot both chose
+    // earlier); the manager's unlink in between names that pair.
+    expect(named.autoLink).toBe(`v_out := public.delivery_receipt_auto_link('${f.dAuto}'::uuid,'${f.rAuto}'::uuid,'${f.shop}'::uuid,'${f.vendor}'::uuid,date '2099-01-05','parsed',timestamptz '2099-01-05 12:00+00')::text;`);
+    expect(named.unlinkAuto).toBe(`v_out := public.delivery_receipt_unlink('${f.dAuto}'::uuid,'${f.rAuto}'::uuid,'wrong document','${f.actor}'::uuid)::text;`);
+    // The pair starts UNLINKED on both sides, and its receipt is what the automatic link may take: a parsed invoice
+    // for the delivery's vendor and shop, received at the instant the call names.
+    const insert = fixtureSQL(f);
+    expect(insert).toContain(`('${f.dAuto}'::uuid,'${f.vendor}'::uuid,'${f.shop}'::uuid,date '2099-01-05','${f.tag}-5','N0','N0','${f.actor}'::uuid,'complete',null)`);
+    expect(insert).toContain(`values('${f.rAuto}'::uuid,'upload','${f.tag}','${f.shop}'::uuid,'${f.vendor}'::uuid,'parsed','invoice',timestamptz '2099-01-05 12:00+00');`);
+    expect(linkSQL(f)).not.toContain(f.dAuto);
+    expect(evidenceSQL(f)).toContain(`from public.delivery_receipt_unlinks where delivery_id='${f.dAuto}'::uuid and receipt_id='${f.rAuto}'::uuid`);
   });
 
   it("allocates its own ids, only inserts them, and retires configuration without deleting anything", () => {
@@ -68,7 +80,7 @@ describe("W20 Management API proof (offline only)", () => {
     const insert = fixtureSQL(f);
     expect(insert).not.toMatch(/\b(update|delete|truncate|drop|alter)\b/i);
     expect(insert.match(/insert into public\.(\w+)/g)!.map((m) => m.replace("insert into public.", "")))
-      .toEqual(["users", "locations", "vendors", "vendor_items", "email_receipts", "vendor_deliveries", "inbound_messages", "email_receipts"]);
+      .toEqual(["users", "locations", "vendors", "vendor_items", "email_receipts", "vendor_deliveries", "inbound_messages", "email_receipts", "email_receipts"]);
     // Every fixture date is in 2099, and the mail is parked where the fetch worker never looks.
     expect(insert).toContain("date '2099-01-0"); expect(insert).toContain("'vendor_receipt','skipped'");
     for (const sql of [linkSQL(f), retireSQL(f)]) {
@@ -103,23 +115,27 @@ describe("W20 Management API proof (offline only)", () => {
   });
 
   // ── the orchestration, against a scripted transport ──────────────────────────────────────────
-  type Scenario = { has0326: boolean; has0327: boolean; unfilled?: string[] };
+  type Scenario = { has0326: boolean; has0327: boolean; unfilled?: string[]; noAutoLink?: boolean; relinks?: boolean };
   function transport(scenario: Scenario) {
     const sent: string[] = [];
     const later = <T,>(ms: number, value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
     const out = (value: string) => [{ out: value }];
     const query = async (sql: string): Promise<Array<Record<string, unknown>>> => {
       sent.push(sql);
-      if (sql.includes("as has_0326")) return [{ has_mutate: true, has_0326: scenario.has0326, has_0327: scenario.has0327, missing_columns: [], unfilled_required: scenario.unfilled ?? [] }];
+      if (sql.includes("as has_0326")) return [{ has_mutate: true, has_0326: scenario.has0326, has_0327: scenario.has0327, has_auto_link: scenario.has0327 && !scenario.noAutoLink, missing_columns: [], unfilled_required: scenario.unfilled ?? [] }];
       if (sql.includes("wait_event='PgSleep'")) return [{ ready: true }];
       if (sql.includes("pg_blocking_pids")) return [{ blocked: !sql.includes("zzw20-mail-r-") || !scenario.has0326 }];
       if (sql.includes("as override_pair")) return [{
         override_pair: { state: "override", note: "N0\naccepted per vendor call", receipt: "r" }, notes_pair: JSON.stringify({ state: "discrepant", note: "N0\nfirst note\nsecond note" }),
         unlink_pair: { state: "counted_only", receipt: null, receipt_side: null, unlinks: 1 }, atomic: { deliveries: 1, lines: 2, credits: 1 }, mail_receipt_state: scenario.has0326 ? "failed" : "unparsed",
+        auto_pair: scenario.relinks ? { receipt: "r-auto", receipt_side: "d-auto", unlinks: 1 } : { receipt: null, receipt_side: null, unlinks: 1 },
       }];
       const app = /application_name='(zzw20-[a-z]+-[a-z]+)-/.exec(sql)?.[1];
       if (app === "zzw20-mail-h") return later(40, out(scenario.has0326 ? 'ok:"locked both"' : "err:40P01:deadlock detected"));
       if (app === "zzw20-mail-r") return scenario.has0326 ? later(0, out('ok:"parser write committed"')) : later(60, out('ok:"parser write committed"'));
+      if (app === "zzw20-link-a") return out('ok:{"linked":true,"location_id":"shop"}');
+      // Worker B, queued behind the manager's unlink. `relinks` scripts the bug review W20-r4 reported: B's write lands.
+      if (app === "zzw20-auto-r") return later(40, out(scenario.relinks ? 'ok:{"linked":true,"location_id":"shop"}' : 'ok:{"linked":false,"reason":"pair_unlinked"}'));
       if (app?.endsWith("-h")) return later(20, out('ok:{"prior_state":"counted_only"}'));
       if (app === "zzw20-over-r") return later(40, out("err:P0001:already_overridden"));
       if (app === "zzw20-note-r") return later(40, out('ok:{"prior_state":"discrepant"}'));
@@ -141,7 +157,18 @@ describe("W20 Management API proof (offline only)", () => {
     const { refused, results } = await runProof(t.query, (l: string) => lines.push(l), instant);
     expect(refused).toBe(false);
     expect(results.map((r: { name: string; pass: boolean | null }) => [r.name, r.pass])).toEqual(proofs.map((p: string[]) => [p[0], true]));
-    expect(lines.filter((l) => l.startsWith("PASS"))).toHaveLength(5);
+    expect(lines.filter((l) => l.startsWith("PASS"))).toHaveLength(6);
+    // Review W20-r4, on the wire: worker A's link is its own committed request, THEN the manager's unlink (held),
+    // THEN worker B sends the very same call text as A.
+    const linkA = t.sent.findIndex((s) => s.includes("zzw20-link-a-"));
+    const unlinkHeld = t.sent.findIndex((s) => s.includes("zzw20-auto-h-"));
+    const workerB = t.sent.findIndex((s) => s.includes("zzw20-auto-r-"));
+    expect(linkA).toBeGreaterThan(-1); expect(unlinkHeld).toBeGreaterThan(linkA); expect(workerB).toBeGreaterThan(unlinkHeld);
+    const call = /v_out := public\.delivery_receipt_auto_link\([^;]+;/;
+    expect(call.exec(t.sent[workerB]!)![0]).toBe(call.exec(t.sent[linkA]!)![0]);
+    expect(t.sent[unlinkHeld]).toContain("public.delivery_receipt_unlink("); expect(t.sent[unlinkHeld]).toContain("select pg_sleep(6);");
+    expect(t.sent[workerB]).not.toContain("pg_sleep");
+    expect(lines.find((l) => l.startsWith("PASS unlink>auto-link"))).toContain("worker B waited for the unlink, then: {\"linked\":false,\"reason\":\"pair_unlinked\"}");
     // Order on the wire: read-only pre-check, inserts, links, ..., and the retirement LAST.
     expect(t.sent[0]).toContain("as has_0326");
     expect(t.sent[1]).toContain("insert into public.users");
@@ -161,8 +188,26 @@ describe("W20 Management API proof (offline only)", () => {
     expect(results.find((r: { name: string }) => r.name === "mail-vs-parse")).toMatchObject({ pass: false });
     expect(lines.find((l) => l.startsWith("FAIL mail-vs-parse"))).toContain("0326 is NOT applied");
     expect(t.sent.find((s) => s.includes("zzw20-mail-h-"))).toContain("$1 for update'");
-    expect(results.filter((r: { pass: boolean | null }) => r.pass === null).map((r: { name: string }) => r.name)).toEqual(["override>attest", "attest>attest", "unlink>attest", "atomic write"]);
+    expect(results.filter((r: { pass: boolean | null }) => r.pass === null).map((r: { name: string }) => r.name)).toEqual(["override>attest", "attest>attest", "unlink>attest", "unlink>auto-link", "atomic write"]);
     expect(t.sent.at(-1)).toContain("set active=false");
+  });
+
+  it("review W20-r4: a worker B whose link lands after the unlink FAILS the proof, and so does a draft 0327 without the function", async () => {
+    const relinked = transport({ has0326: true, has0327: true, relinks: true });
+    const lines: string[] = [];
+    const first = await runProof(relinked.query, (l: string) => lines.push(l), instant);
+    expect(first.results.find((r: { name: string }) => r.name === "unlink>auto-link")).toMatchObject({ pass: false });
+    expect(lines.find((l) => l.startsWith("FAIL unlink>auto-link"))).toContain('"receipt":"r-auto"');
+    expect(first.results.filter((r: { pass: boolean | null }) => r.pass === false)).toHaveLength(1);
+
+    const draft = transport({ has0326: true, has0327: true, noAutoLink: true });
+    const draftLines: string[] = [];
+    const second = await runProof(draft.query, (l: string) => draftLines.push(l), instant);
+    expect(second.results.find((r: { name: string }) => r.name === "unlink>auto-link")).toMatchObject({ pass: false });
+    expect(draftLines.find((l) => l.startsWith("FAIL unlink>auto-link"))).toContain("delivery_receipt_auto_link is NOT installed");
+    // Nothing of that pairing was sent, and the fixture is still retired.
+    expect(draft.sent.some((s) => s.includes("delivery_receipt_auto_link(") && s.includes("v_out"))).toBe(false);
+    expect(draft.sent.at(-1)).toContain("set active=false");
   });
 
   it("a schema the fixture does not fit is refused before any write", async () => {

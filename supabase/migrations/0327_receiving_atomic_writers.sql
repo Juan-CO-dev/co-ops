@@ -4,8 +4,11 @@
 --   blocked saving it again), B114 (two people confirming a receipt at once could overwrite a manager's final
 --   decision), and owner decision W20-2 (b): build a manager "unlink" for a receipt linked to the wrong delivery
 --   (B112 left confirmations and statements sitting in a delivery's only receipt slot, with no way out).
+--   Review W20-r4 (2026-11-16, file still unapplied): the automatic link checked the unlink record in one request
+--   and wrote the link in two more, so a worker that chose its pair before a manager unlinked it put the pair
+--   back when it resumed. Function 5 makes that check part of the link's own transaction.
 --
--- WHAT (three service-role functions and one append-only table; no existing row is read or rewritten at apply):
+-- WHAT (four service-role functions and one append-only table; no existing row is read or rewritten at apply):
 --   1. record_delivery_atomic(p_header, p_lines, p_line_credits, p_missing_credits) -> jsonb {delivery_id, item_ids}
 --      ONE transaction for what lib/receiving.ts recordDelivery wrote as four separate requests: the delivery
 --      header, its lines (in the order sent), the credits for flagged lines (each names its line by 1-based
@@ -34,27 +37,52 @@
 --      in delivery_receipt_unlinks. `p_receipt` is the receipt the person SAW: a different one is `receipt_changed`.
 --   4. delivery_receipt_unlinks: one row per unlink (delivery, receipt, shop, prior match state, reason, who,
 --      when). Append-only by grant: deny-all RLS, service_role SELECT only, written only by function 3. The app
---      reads it so the automatic link and the "is this the invoice?" prompt never put back a pair a person undid.
+--      reads it so the "is this the invoice?" prompt and the automatic link's choice of a candidate leave out a
+--      pair a person undid; function 5 is what REFUSES to write such a pair.
+--   5. delivery_receipt_auto_link(p_delivery, p_receipt, p_location, p_vendor, p_delivery_date, p_parse_state,
+--      p_received_at) -> jsonb {linked: true, location_id} | {linked: false, reason}
+--      THE ONE AUTOMATIC WRITER of a delivery <-> receipt link (both directions in lib/email-receipts.ts call it;
+--      a person's manual link is not this function). Under the delivery ROW LOCK and then the receipt's, in ONE
+--      transaction, it (a) REFUSES a pair that is on delivery_receipt_unlinks (`pair_unlinked`: automation never
+--      puts back a link a manager undid), (b) re-checks, on the locked rows, the snapshot the caller chose its
+--      candidate on: the delivery's shop, vendor and date with no receipt yet (`delivery_changed`), the receipt's
+--      shop, vendor, parse state and received-at, not flagged for a person, an INVOICE (B112, now inside the
+--      writer), not linked, and no other delivery pointing at it (`receipt_changed`), and (c) writes BOTH sides.
+--      Any failure rolls both sides back, so there is no half link and nothing to compensate. It takes the same
+--      locks in the same order as function 3, so an unlink and an automatic link of one delivery run one after
+--      the other: the reviewer's interleaving (worker A links, a manager unlinks, worker B resumes with the pair
+--      it chose earlier) ends with B reading the unlink record under the lock and being refused. A refusal is a
+--      returned answer, not an error: automation is best-effort and a refused pair simply waits for a person.
 --
 -- NAMED REFUSALS (P0001, message = the code; the app maps them): invalid_input, not_found, no_receipt,
 --   invalid_verdict, note_required, already_overridden, receipt_changed, receipt_required, forbidden.
+--   Function 5 raises only invalid_input (a missing argument); its refusals are the `reason` it returns:
+--   pair_unlinked, delivery_changed, receipt_changed.
 --
--- LOCK ORDER: the delivery row FOR NO KEY UPDATE (functions 2 and 3; compatible with the key-share checks of the
---   rows that reference a delivery), then, in function 3 only, its receipt row. Nothing takes a delivery after a
---   receipt. Function 3's receipt update fires 0297's receipt-event trigger, which key-shares the inbound message:
---   that is why 0326 comes first (it stops a vendor mail action's lock from blocking that key-share).
+-- LOCK ORDER: the delivery row FOR NO KEY UPDATE (functions 2, 3 and 5; compatible with the key-share checks of
+--   the rows that reference a delivery), then, in functions 3 and 5 only, the receipt row. Nothing takes a
+--   delivery after a receipt. The receipt update of functions 3 and 5 fires 0297's receipt-event trigger, which
+--   key-shares the inbound message: that is why 0326 comes first (it stops a vendor mail action's lock from
+--   blocking that key-share). The app's manual link stays two single-statement requests (receipt, then
+--   delivery), each holding one row lock at a time, so it cannot form a cycle with these.
 --
 -- EXISTING ROWS: untouched. Deliveries already linked to a confirmation or statement are NOT repaired here; a
 --   manager unlinks them one at a time through the app. Empty deliveries left by past failed saves are NOT
 --   deleted (owner decision W20-3: Juan confirms the list first; the read-only query is in the PR).
 --
--- APP COMPATIBILITY: the app works before and after this file. Before it: recordDelivery and the attest /
---   override writes fall back to their previous statements (the function is not there: PGRST202 / 42883), the
---   unlink button answers "not available yet" (503 unlink_unavailable), and the unlink history read finds no
---   table and treats that as "nothing was unlinked". After it: the three functions are used.
+-- APP COMPATIBILITY: the app runs before and after this file, with ONE thing off until it is applied. Before it:
+--   recordDelivery and the attest / override writes fall back to their previous statements (the function is not
+--   there: PGRST202 / 42883), the unlink button answers "not available yet" (503 unlink_unavailable), the unlink
+--   history read finds no table and treats that as "nothing was unlinked", and THE AUTOMATIC LINK LINKS NOTHING
+--   (function 5 is the only automatic writer; PostgREST cannot put a NOT EXISTS on another table into an
+--   UPDATE's WHERE, so there is no request-by-request fallback that could keep the unlink rule atomic, and the
+--   app does not keep an unguarded second writer). Receipts then wait in the queue and the "is this the
+--   invoice?" prompt, where a person links them by hand. APPLY THIS FILE BEFORE THE APP THAT CALLS IT IS
+--   DEPLOYED, or accept that pause. After it: the four functions are used.
 --
--- DEPENDS ON: 0100, 0160, 0168, 0169, 0170, 0171, 0174, 0178 (the columns, checks and indexes named in the
---   pre-flight) and 0326 when vendor mail (0297) is installed.
+-- DEPENDS ON: 0100, 0160, 0168, 0169, 0170, 0171, 0174, 0175, 0178, 0294 (the columns, checks and indexes named
+--   in the pre-flight; 0175 and 0294 are the receipt's doc_kind and attribution_conflict) and 0326 when vendor
+--   mail (0297) is installed.
 --
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select table_name, count(*) from information_schema.columns where table_schema='public'
@@ -70,8 +98,8 @@
 --
 -- VERIFY AFTER APPLY:
 --   select routine_name, grantee, privilege_type from information_schema.routine_privileges
---    where routine_schema='public' and routine_name in ('record_delivery_atomic','delivery_match_verdict','delivery_receipt_unlink')
---    order by 1, 2;                                                          -- service_role (+ postgres) only
+--    where routine_schema='public' and routine_name in ('record_delivery_atomic','delivery_match_verdict','delivery_receipt_unlink',
+--      'delivery_receipt_auto_link') order by 1, 2;                          -- service_role (+ postgres) only
 --   select to_regprocedure('public.delivery_match_verdict(uuid,text,text,text,uuid)') is not null as five_args,
 --          to_regprocedure('public.delivery_match_verdict(uuid,text,text,text)') is null as no_four_args;   -- t, t
 --   select grantee, privilege_type from information_schema.role_table_grants
@@ -79,10 +107,12 @@
 --                                                                            -- service_role SELECT, nothing else
 --   Two-session proof (sim only, CC runs it): scripts/sim/receiving-0326-0327-lock-check-management.mjs
 --
--- ROLLBACK: revert the app (it falls back by itself once the functions are gone), then
+-- ROLLBACK: revert the app (it falls back by itself once the functions are gone; the automatic link pauses,
+--   it does not fall back), then
 --   drop function public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb);
 --   drop function public.delivery_match_verdict(uuid,text,text,text,uuid);
 --   drop function public.delivery_receipt_unlink(uuid,uuid,text,uuid);
+--   drop function public.delivery_receipt_auto_link(uuid,uuid,uuid,uuid,date,text,timestamptz);
 --   Keep delivery_receipt_unlinks: it is the record of what people unlinked.
 -- PROOF: scripts/sql-harness-0327.mjs (PGlite: the real 0100 / 0168 / 0169 / 0178 DDL and the real 0160 / 0170 /
 --   0171 / 0174 / 0175 statements, synthetic rows), pinned by tests/receiving-atomic-writers-migration.test.ts.
@@ -113,7 +143,9 @@ begin
     ('vendor_credits','location_id'), ('vendor_credits','vendor_id'), ('vendor_credits','delivery_id'),
     ('vendor_credits','delivery_item_id'), ('vendor_credits','reason'), ('vendor_credits','sku_id'),
     ('vendor_credits','qty'), ('vendor_credits','amount_cents'), ('vendor_credits','created_by'),
-    ('email_receipts','id'), ('email_receipts','linked_delivery_id'), ('users','id'), ('users','active')
+    ('email_receipts','id'), ('email_receipts','linked_delivery_id'), ('email_receipts','location_id'),
+    ('email_receipts','vendor_guess_id'), ('email_receipts','parse_state'), ('email_receipts','received_at'),
+    ('email_receipts','doc_kind'), ('email_receipts','attribution_conflict'), ('users','id'), ('users','active')
   ) as need(t, c)
   where not exists (select 1 from information_schema.columns k
                      where k.table_schema = 'public' and k.table_name = need.t and k.column_name = need.c);
@@ -338,15 +370,69 @@ begin
     'location_id', d.location_id, 'receipt_released', v_released = 1);
 end $$;
 
+-- ── 5. THE AUTOMATIC LINK, IN ONE TRANSACTION WITH THE UNLINK RECORD (review W20-r4) ───────────────────────
+create or replace function public.delivery_receipt_auto_link(
+  p_delivery uuid, p_receipt uuid, p_location uuid, p_vendor uuid, p_delivery_date date, p_parse_state text, p_received_at timestamptz)
+returns jsonb
+language plpgsql security definer set search_path = pg_catalog, public as $$
+declare
+  d public.vendor_deliveries%rowtype;
+  r public.email_receipts%rowtype;
+begin
+  -- The caller says what it chose on. A missing value is a caller bug, never "any".
+  if p_delivery is null or p_receipt is null or p_location is null or p_vendor is null or p_delivery_date is null
+     or p_parse_state is null or p_received_at is null then
+    raise exception 'invalid_input';
+  end if;
+
+  -- Lock order: the delivery, then the receipt (delivery_receipt_unlink's order). An unlink and an automatic link
+  -- of one delivery therefore run one after the other, and each reads what the other committed.
+  select * into d from public.vendor_deliveries where id = p_delivery for no key update;
+  if not found then return jsonb_build_object('linked', false, 'reason', 'delivery_changed'); end if;
+  select * into r from public.email_receipts where id = p_receipt for no key update;
+  if not found then return jsonb_build_object('linked', false, 'reason', 'receipt_changed'); end if;
+
+  -- A pair a manager unlinked is never put back by automation. Read AFTER the waits, under both locks, in the
+  -- transaction that writes the link: an unlink that committed while this call waited (or at any time before)
+  -- is seen here, whatever the caller read earlier.
+  if exists (select 1 from public.delivery_receipt_unlinks u where u.delivery_id = d.id and u.receipt_id = r.id) then
+    return jsonb_build_object('linked', false, 'reason', 'pair_unlinked');
+  end if;
+
+  -- The delivery is still the one the caller chose, and has no receipt (nothing is ever replaced).
+  if d.email_receipt_id is not null or d.location_id is distinct from p_location or d.vendor_id is distinct from p_vendor
+     or d.delivery_date is distinct from p_delivery_date then
+    return jsonb_build_object('linked', false, 'reason', 'delivery_changed');
+  end if;
+  -- The receipt is still the one the caller chose: same shop, vendor, parse state and instant, not flagged for a
+  -- person, not linked. Only an INVOICE takes a delivery's one receipt slot by itself (B112). And no other
+  -- delivery may already point at it (a one-sided leftover is a refusal here, not a unique-index error).
+  if r.linked_delivery_id is not null or r.attribution_conflict is distinct from false
+     or r.location_id is distinct from p_location or r.vendor_guess_id is distinct from p_vendor
+     or r.parse_state is distinct from p_parse_state or r.received_at is distinct from p_received_at
+     or r.doc_kind is distinct from 'invoice'
+     or exists (select 1 from public.vendor_deliveries x where x.email_receipt_id = r.id) then
+    return jsonb_build_object('linked', false, 'reason', 'receipt_changed');
+  end if;
+
+  -- Both sides, in this transaction: a failure of either rolls back both.
+  update public.email_receipts set linked_delivery_id = d.id where id = r.id;
+  update public.vendor_deliveries set email_receipt_id = r.id where id = d.id;
+
+  return jsonb_build_object('linked', true, 'location_id', d.location_id);
+end $$;
+
 -- ── PRIVILEGE CEILINGS ─────────────────────────────────────────────────────────────────────────────────────
 -- Functions: service_role only (the staff JWT is a PostgREST bearer; `authenticated` must never execute these).
 -- Table: service_role SELECT only (append-only by grant; the definer function is the one writer).
 revoke all on function public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.delivery_match_verdict(uuid,text,text,text,uuid) from public, anon, authenticated, service_role;
 revoke all on function public.delivery_receipt_unlink(uuid,uuid,text,uuid) from public, anon, authenticated, service_role;
+revoke all on function public.delivery_receipt_auto_link(uuid,uuid,uuid,uuid,date,text,timestamptz) from public, anon, authenticated, service_role;
 grant execute on function public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb) to service_role;
 grant execute on function public.delivery_match_verdict(uuid,text,text,text,uuid) to service_role;
 grant execute on function public.delivery_receipt_unlink(uuid,uuid,text,uuid) to service_role;
+grant execute on function public.delivery_receipt_auto_link(uuid,uuid,uuid,uuid,date,text,timestamptz) to service_role;
 revoke all on public.delivery_receipt_unlinks from public, anon, authenticated, service_role;
 grant select on public.delivery_receipt_unlinks to service_role;
 
@@ -356,7 +442,8 @@ begin
   foreach f in array array[
       'public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)'::regprocedure,
       'public.delivery_match_verdict(uuid,text,text,text,uuid)'::regprocedure,
-      'public.delivery_receipt_unlink(uuid,uuid,text,uuid)'::regprocedure] loop
+      'public.delivery_receipt_unlink(uuid,uuid,text,uuid)'::regprocedure,
+      'public.delivery_receipt_auto_link(uuid,uuid,uuid,uuid,date,text,timestamptz)'::regprocedure] loop
     assert not has_function_privilege('anon', f, 'EXECUTE') and not has_function_privilege('authenticated', f, 'EXECUTE'),
       '0327: receiving RPC escape';
     assert has_function_privilege('service_role', f, 'EXECUTE'), '0327: service_role must execute the receiving RPCs';

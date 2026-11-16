@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 
 const mocks = vi.hoisted(() => ({ client: vi.fn(), audit: vi.fn(), allowed: vi.fn().mockResolvedValue(true) }));
@@ -7,12 +7,16 @@ vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
 vi.mock("@/lib/operational-task-access", () => ({ canDoOperationalTask: mocks.allowed, auditOperationalTaskOverride: vi.fn(), canTriageUnattributedReceipt: vi.fn() }));
 vi.mock("@/lib/purchase-orders", () => ({ autoPlaceOnEmailEvidence: vi.fn() }));
 import { attemptReceivingAutoLink, attemptAutoLink, loadReceivingReceiptCandidates } from "@/lib/email-receipts";
+import { AUTO_LINK_RPC, autoLinkModel } from "./helpers/receipt-auto-link-model";
 
 type Row = Record<string, unknown>;
 let deliveries: Row[];
 let receipts: Row[];
+/** Runs between the candidate reads and the write (the one call to delivery_receipt_auto_link). */
 let beforeClaim: (() => void) | undefined;
-let loseDelivery: boolean;
+/** Client-side writes to a link column: the automatic path makes none (review W20-r4). */
+let linkColumnWrites: number;
+let rpcCalls: string[];
 function query(table: string) {
   const rows = table === "vendor_deliveries" ? deliveries : receipts;
   const filters: ((r: Row) => boolean)[] = [];
@@ -28,8 +32,8 @@ function query(table: string) {
     update: (v: Row) => { patch = v; return q; },
     maybeSingle: () => { single = true; return q; },
     then: (resolve: (v: unknown) => void) => {
-      if (patch?.linked_delivery_id && beforeClaim) { beforeClaim(); beforeClaim = undefined; }
-      const matched = patch && table === "vendor_deliveries" && loseDelivery ? [] : rows.filter(r => filters.every(f => f(r)));
+      if (patch && ("linked_delivery_id" in patch || "email_receipt_id" in patch)) linkColumnWrites++;
+      const matched = rows.filter(r => filters.every(f => f(r)));
       if (patch) matched.forEach(r => Object.assign(r, patch));
       resolve({ data: single ? matched[0] ? { ...matched[0] } : null : matched.map(r => ({ ...r })), error: null, count: matched.length });
     },
@@ -42,9 +46,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.allowed.mockResolvedValue(true);
   deliveries = [{ id: "d1", location_id: "shop", vendor_id: "vendor", delivery_date: "2026-11-11", email_receipt_id: null }];
-  receipts = []; beforeClaim = undefined; loseDelivery = false;
-  mocks.client.mockReturnValue({ from: query });
+  receipts = []; beforeClaim = undefined; linkColumnWrites = 0; rpcCalls = [];
+  // The write is ONE call; the model answers as migration 0327's function does (proven in scripts/sql-harness-0327.mjs).
+  mocks.client.mockReturnValue({ from: query, rpc: async (fn: string, args: Row) => {
+    rpcCalls.push(fn);
+    if (fn !== AUTO_LINK_RPC) throw new Error(`unexpected rpc ${fn}`);
+    if (beforeClaim) { beforeClaim(); beforeClaim = undefined; }
+    return { data: autoLinkModel({ vendor_deliveries: deliveries, email_receipts: receipts }, args), error: null };
+  } });
 });
+afterEach(() => { expect(linkColumnWrites, "the automatic path writes no link column from the client").toBe(0); });
 describe("receiving reverse invoice match", () => {
   it("links exactly one and audits as system; retries do not relink or audit", async () => {
     receipts = [receipt()];
@@ -96,21 +107,32 @@ describe("receiving reverse invoice match", () => {
     expect(receipts[0]?.linked_delivery_id).toBeNull();
     expect(deliveries[0]?.email_receipt_id).toBe("existing");
   });
-  it("CAS refuses a vendor reassignment after the read", async () => {
+  it("refuses a vendor reassignment after the read (the snapshot is re-checked in the writer)", async () => {
     receipts = [receipt()]; beforeClaim = () => { receipts[0]!.vendor_guess_id = "other"; };
     await attemptReceivingAutoLink("d1");
     expect(deliveries[0]?.email_receipt_id).toBeNull();
+    expect(receipts[0]?.linked_delivery_id).toBeNull();
+    expect(rpcCalls).toEqual([AUTO_LINK_RPC]);
     expect(mocks.audit).not.toHaveBeenCalled();
   });
-  it("CAS refuses a changed delivery date", async () => {
+  it("refuses a changed delivery date", async () => {
     receipts = [receipt()]; beforeClaim = () => { deliveries[0]!.delivery_date = "2026-12-01"; };
     await attemptReceivingAutoLink("d1");
     expect(receipts[0]?.linked_delivery_id).toBeNull();
     expect(mocks.audit).not.toHaveBeenCalled();
   });
-  it("compensates the receipt claim when the delivery race is lost", async () => {
-    receipts = [receipt()]; loseDelivery = true;
+  it("a delivery that took another receipt in between is left alone, and the receipt side is never claimed", async () => {
+    // The old two-request writer claimed the receipt first and compensated afterwards; the one transaction writes neither.
+    receipts = [receipt()]; beforeClaim = () => { deliveries[0]!.email_receipt_id = "someone-else"; };
     await attemptReceivingAutoLink("d1");
+    expect(receipts[0]?.linked_delivery_id).toBeNull();
+    expect(deliveries[0]?.email_receipt_id).toBe("someone-else");
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it("a receipt reclassified away from invoice after the read is refused by the writer (B112 holds at the write)", async () => {
+    receipts = [receipt()]; beforeClaim = () => { receipts[0]!.doc_kind = "statement"; };
+    await attemptReceivingAutoLink("d1");
+    expect(deliveries[0]?.email_receipt_id).toBeNull();
     expect(receipts[0]?.linked_delivery_id).toBeNull();
     expect(mocks.audit).not.toHaveBeenCalled();
   });

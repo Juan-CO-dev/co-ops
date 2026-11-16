@@ -525,8 +525,9 @@ const PG_UNIQUE_VIOLATION = "23505";
  * INTERNAL — only meaningful when the receipt carries BOTH a vendor_guess_id AND a
  * location_id. Candidates = deliveries at that vendor+location with email_receipt_id
  * null and delivery_date within ±2 days of received_at::date. Links only on a unique
- * candidate (both sides set, error-checked). NEVER throws to the caller on zero/many —
- * it just returns (the receipt stays unlinked for manual triage).
+ * candidate, through the one automatic writer (claimAutomaticDeliveryLink: both sides in
+ * one database transaction, which also refuses a pair a manager unlinked). NEVER throws to
+ * the caller on zero/many — it just returns (the receipt stays unlinked for manual triage).
  *
  * ONLY AN INVOICE LINKS BY ITSELF (W20/B112). A delivery has ONE receipt slot (0171
  * vendor_deliveries_email_receipt_uq), and an order confirmation or a statement used to take
@@ -583,6 +584,10 @@ export async function attemptAutoLink(receiptId: string): Promise<void> {
  * together, and putting the link back by itself would undo that. A person can still link the
  * pair by hand. No table yet (0327 not applied) means nothing was ever unlinked. Any other read
  * failure THROWS: the callers are best-effort and then link nothing.
+ *
+ * THIS READ ONLY CHOOSES CANDIDATES (what is offered, what counts as a rival). It is not the
+ * guard: an unlink can commit after it. The guard is delivery_receipt_auto_link, which reads the
+ * same table under the delivery's row lock in the transaction that writes the link (W20-r4).
  */
 async function unlinkedCounterparts(sb: ServiceClient, by: "delivery_id" | "receipt_id", id: string): Promise<Set<string>> {
   const { data, error } = await sb.from("delivery_receipt_unlinks").select("delivery_id, receipt_id").eq(by, id)
@@ -598,43 +603,41 @@ type AutoLinkReceipt = ReceiptAutomationState & {
   id: string; vendor_guess_id: string | null; linked_delivery_id: string | null; received_at: string;
 };
 
-/** Both automatic directions use the same receipt-first CAS and compensating writer.
- * Snapshot predicates prevent a concurrent manual assignment from changing the shop/vendor
- * between candidate selection and the claim. Neither side can replace an existing link. */
+/**
+ * THE ONE AUTOMATIC LINK WRITER (review W20-r4). Both automatic directions end here, and this makes
+ * ONE call: delivery_receipt_auto_link (migration 0327). The function takes the delivery's row lock,
+ * then the receipt's (the manager unlink's order, so the two run one after the other), and in that
+ * same transaction refuses a pair on delivery_receipt_unlinks, re-checks the snapshot this caller
+ * chose its candidate on (shop, vendor, delivery date, parse state, received-at, no conflict, an
+ * invoice, neither side linked) and writes BOTH sides or neither.
+ *
+ * Why not two guarded updates from here: the unlink history was read in one request and the link
+ * written in two more. A worker that chose its pair, stalled, and resumed after another worker
+ * linked it and a manager unlinked it found both link columns NULL again, exactly as it had read
+ * them, and put the rejected pair back. The candidate reads above still leave unlinked pairs out
+ * (so they are not offered and are not rivals); the REFUSAL is the function's, under the lock.
+ *
+ * NO FALLBACK. PostgREST cannot express "and no row in delivery_receipt_unlinks" in an UPDATE's
+ * WHERE, so no request-by-request write can keep that rule atomic. Before 0327 (the function is
+ * not there) the automatic link links NOTHING: the receipt waits in the queue and in the "is this
+ * the invoice?" prompt for a person. Any other error is the same: nothing linked, nothing thrown
+ * (this is the internal best-effort path). Never add a second automatic writer of
+ * email_receipts.linked_delivery_id / vendor_deliveries.email_receipt_id.
+ */
 async function claimAutomaticDeliveryLink(
   sb: ServiceClient, r: AutoLinkReceipt, deliveryId: string, deliveryDate: string, direction: "receipt" | "receiving",
 ): Promise<void> {
-  // LINK ORDER: claim the RECEIPT side FIRST (count-checked — a loser aborts having
-  // touched nothing), THEN the delivery side (count-checked + 23505-guarded by the
-  // 0171 vendor_deliveries_email_receipt_uq index). If the delivery side loses the
-  // race, COMPENSATE by unsetting the receipt side (best-effort) and return silently —
-  // this is the internal best-effort path (never throws to the caller).
-  const { error: ruErr, count: rCount } = await sb
-    .from("email_receipts")
-    .update({ linked_delivery_id: deliveryId }, { count: "exact" })
-    .eq("id", r.id)
-    .eq("attribution_conflict", false)
-    .eq("location_id", r.location_id!)
-    .eq("vendor_guess_id", r.vendor_guess_id!)
-    .eq("parse_state", r.parse_state)
-    .eq("received_at", r.received_at)
-    .is("linked_delivery_id", null);
-  if (ruErr || rCount !== 1) return; // lost the receipt side (or read error) — abort untouched.
-
-  const { error: duErr, count } = await sb
-    .from("vendor_deliveries")
-    .update({ email_receipt_id: r.id }, { count: "exact" })
-    .eq("id", deliveryId)
-    .eq("location_id", r.location_id!)
-    .eq("vendor_id", r.vendor_guess_id!)
-    .eq("delivery_date", deliveryDate)
-    .is("email_receipt_id", null);
-  if (duErr || count !== 1) {
-    // Delivery side lost (count 0) or tripped the unique index (23505): compensate by
-    // releasing the receipt claim we made, then bail silently for manual triage.
-    await compensateReceiptClaim(sb, r.id, deliveryId);
+  const { data, error } = await sb.rpc("delivery_receipt_auto_link", {
+    p_delivery: deliveryId, p_receipt: r.id, p_location: r.location_id!, p_vendor: r.vendor_guess_id!,
+    p_delivery_date: deliveryDate, p_parse_state: r.parse_state, p_received_at: r.received_at,
+  });
+  if (error) {
+    // Not installed yet (0327 pending) is the expected quiet state; anything else is worth a line.
+    if (!rpcNotInstalled(error)) console.error("[email-receipts] automatic link unavailable");
     return;
   }
+  // { linked: false, reason } = pair_unlinked | delivery_changed | receipt_changed: left for a person.
+  if ((data as { linked?: unknown } | null)?.linked !== true) return;
 
   // audit() is fail-open by contract (lib/audit.ts wraps the insert in try/catch and
   // never throws) — safe to await here without poisoning this best-effort auto-link.
@@ -1011,7 +1014,8 @@ export async function applyReceiptPoEffects(
  * BEST-EFFORT, NEVER THROWS: the human action has already committed. The same gates and the
  * same single-candidate rules as the parse leg apply (receiptAutomationAllowed; only an invoice
  * takes a delivery, B112; exactly one candidate or nothing), and each writer only ever ADDS a
- * link under its own compare-and-set, so this can never replace a link a person made. The raw
+ * link (the delivery link in its one locked transaction, the order link under its own
+ * compare-and-set), so this can never replace a link a person made or undid. The raw
  * email text is not stored, so the order match reads the subject and the parsed fields.
  */
 export async function runReceiptAutomation(receiptId: string): Promise<void> {

@@ -3,8 +3,8 @@
  *
  * Schema: the Foundation Spec's `vendor_deliveries` (it predates the migrations folder), then the
  * REAL migrations 0100 / 0168 / 0169 / 0178 whole and the real statements of 0160 / 0170 / 0171 /
- * 0174 / 0175 that touch these tables, so every CHECK, unique index and foreign key the functions
- * meet here is production's. Synthetic rows only.
+ * 0174 / 0175 / 0294 that touch these tables, so every CHECK, unique index and foreign key the
+ * functions meet here is production's. Synthetic rows only.
  *
  *   R. record_delivery_atomic: the header, lines, lined credits (by line_index) and line-less
  *      credits land together or not at all; each named failure leaves ZERO rows behind.
@@ -12,6 +12,10 @@
  *      appended in order, an override is terminal, and a verdict is refused `receipt_changed`
  *      when the receipt it was made about is no longer the one linked (review W20-r1).
  *   U. delivery_receipt_unlink: both sides cleared, match reset, the append-only record, refusals.
+ *   A. delivery_receipt_auto_link (review W20-r4): the one automatic link writer. Both sides or
+ *      neither, never over an existing link, only an invoice, only on the snapshot the caller chose
+ *      on, and NEVER a pair on the unlink record: A links, a manager unlinks, B resumes with the
+ *      pair it chose earlier and is refused `pair_unlinked`.
  *   C. privilege ceilings and RLS. G. the pre-flight guards and idempotent re-apply.
  *
  * One PGlite backend is ONE session: "the racer waits, then is refused" needs two, and is
@@ -63,6 +67,10 @@ const realSchema = () => [
   extract('0171_receipt_link_integrity.sql', /create unique index if not exists vendor_deliveries_email_receipt_uq[\s\S]*?;/i),
   extract('0174_vendor_ordering.sql', /ALTER TABLE public\.vendor_deliveries\s+ADD COLUMN IF NOT EXISTS purchase_order_id[^;]*;/),
   extract('0175_vendor_ordering_v2.sql', /ALTER TABLE public\.vendor_credits\s+ADD COLUMN IF NOT EXISTS resolved_by_delivery_id[^;]*;/),
+  // The receipt columns the automatic link reads: doc_kind (0175, with its CHECK) and attribution_conflict
+  // (0294; that statement's other columns reference the inbound router's tables, so only this column is taken).
+  extract('0175_vendor_ordering_v2.sql', /ALTER TABLE public\.email_receipts\s+ADD COLUMN IF NOT EXISTS linked_po_id[^;]*;/),
+  `alter table public.email_receipts ${extract('0294_inbound_router.sql', /add column attribution_conflict boolean not null default false/)};`,
   read('0178_delivery_line_vendor_binding.sql'),
 ].join('\n');
 
@@ -105,6 +113,15 @@ try {
       check((await drifted.query("select to_regclass('public.delivery_receipt_unlinks') t")).rows[0].t === null,
         'a schema missing a column the writer names is refused by name, nothing created');
     } finally { await drifted.close(); }
+
+    const noKind = await fresh();
+    try {
+      await noKind.exec('alter table public.email_receipts drop column doc_kind; alter table public.email_receipts drop column attribution_conflict;');
+      await assert.rejects(() => noKind.exec(migration), /0327: missing column\(s\): email_receipts\.attribution_conflict, email_receipts\.doc_kind/);
+      await noKind.exec('rollback');
+      check((await noKind.query("select to_regprocedure('public.delivery_receipt_auto_link(uuid,uuid,uuid,uuid,date,text,timestamptz)') f")).rows[0].f === null,
+        'a receipt table without the columns the automatic link reads (0175 doc_kind, 0294 attribution_conflict) is refused by name');
+    } finally { await noKind.close(); }
 
     const noIndex = await fresh();
     try {
@@ -365,8 +382,103 @@ try {
     && (await one('select linked_delivery_id from public.email_receipts where id=$1', [receipt])).linked_delivery_id === blank.delivery_id,
     "a receipt already pointing at another delivery keeps that link; this delivery's side is cleared");
 
+  // ── A. delivery_receipt_auto_link (review W20-r4) ──────────────────────────────────────────────
+  {
+    const AUTO = 'delivery_receipt_auto_link';
+    const DAY = '2026-11-20', AT = '2026-11-20T12:00:00.123456Z';
+    const casts = ['uuid', 'uuid', 'uuid', 'uuid', 'date', 'text', 'timestamptz'];
+    // The snapshot the caller chose on: (delivery, receipt, shop, vendor, delivery date, parse state, received at).
+    const auto = (delivery, r, over = {}) => rpc(AUTO, Object.values({ delivery, r, shop, vendor, day: DAY, parse: 'parsed', at: AT, ...over }), casts);
+    const invoice = async (extra = {}) => {
+      const row = { id: uuid(), source: 'inbound', location_id: shop, vendor_guess_id: vendor, parse_state: 'parsed', doc_kind: 'invoice', received_at: AT, attribution_conflict: false, ...extra };
+      await db.query('insert into public.email_receipts(id, source, location_id, vendor_guess_id, parse_state, doc_kind, received_at, attribution_conflict) values ($1,$2,$3,$4,$5,$6,$7,$8)',
+        [row.id, row.source, row.location_id, row.vendor_guess_id, row.parse_state, row.doc_kind, row.received_at, row.attribution_conflict]);
+      return row.id;
+    };
+    const receiptSide = async id => (await one('select linked_delivery_id from public.email_receipts where id=$1', [id])).linked_delivery_id;
+    const pair = async (delivery, r) => `${(await state(delivery)).email_receipt_id ?? 'none'}|${await receiptSide(r) ?? 'none'}`;
+    const DA = (await record(header({ invoice_number: 'INV-AL-1', delivery_date: DAY, notes: null, note: null }), [line(skuA)])).delivery_id;
+    const DB = (await record(header({ invoice_number: 'INV-AL-2', delivery_date: DAY, notes: null, note: null }), [line(skuA)])).delivery_id;
+    const rA = await invoice();
+    const unlinksBefore = await n('delivery_receipt_unlinks');
+
+    for (const [i, label] of [[0, 'delivery'], [1, 'receipt'], [2, 'shop'], [3, 'vendor'], [4, 'delivery date'], [5, 'parse state'], [6, 'received-at']]) {
+      const args = [DA, rA, shop, vendor, DAY, 'parsed', AT]; args[i] = null;
+      await assert.rejects(() => rpc(AUTO, args, casts), /invalid_input/, `a null ${label}`);
+    }
+    check(true, 'automatic link: any missing argument is invalid_input (the caller must say what it chose on)');
+    const refusal = async (promise, reason, label) => { const out = await promise; check(out.linked === false && out.reason === reason && Object.keys(out).sort().join() === 'linked,reason', label); };
+    await refusal(auto(uuid(), rA), 'delivery_changed', 'automatic link: an unknown delivery is refused delivery_changed (a refusal is an answer, not an error)');
+    await refusal(auto(DA, uuid()), 'receipt_changed', 'automatic link: an unknown receipt is refused receipt_changed');
+    await refusal(auto(DA, rA, { shop: otherShop }), 'delivery_changed', 'automatic link: a delivery at another shop than the caller chose on is delivery_changed');
+    await refusal(auto(DA, rA, { vendor: otherVendor }), 'delivery_changed', 'automatic link: a delivery of another vendor is delivery_changed');
+    await refusal(auto(DA, rA, { day: '2026-11-21' }), 'delivery_changed', 'automatic link: a delivery whose date moved is delivery_changed');
+    await refusal(auto(DA, rA, { parse: 'unparsed' }), 'receipt_changed', 'automatic link: a receipt whose parse state moved is receipt_changed');
+    await refusal(auto(DA, rA, { at: '2026-11-20T12:00:00.123457Z' }), 'receipt_changed', 'automatic link: a receipt whose received-at differs (to the microsecond) is receipt_changed');
+    for (const kind of ['confirmation', 'statement', 'other', null]) {
+      await refusal(auto(DA, await invoice({ doc_kind: kind })), 'receipt_changed', `automatic link: a receipt of kind ${kind ?? 'null (not classified yet)'} is refused (only an invoice links by itself, B112, inside the writer)`);
+    }
+    await refusal(auto(DA, await invoice({ attribution_conflict: true })), 'receipt_changed', 'automatic link: a receipt flagged for a person (attribution conflict) is refused');
+    await refusal(auto(DA, await invoice({ vendor_guess_id: otherVendor })), 'receipt_changed', "automatic link: another vendor's receipt is refused");
+    await refusal(auto(DA, await invoice({ location_id: null })), 'receipt_changed', 'automatic link: an unattributed receipt (no shop) is refused');
+    check(await pair(DA, rA) === 'none|none' && (await state(DA)).match_state === 'counted_only', '...and no refusal writes either side');
+
+    // The reviewer's interleaving, in commit order. Workers A and B both chose (DA, rA) while nothing was
+    // unlinked; each will call with the SAME snapshot.
+    const workerA = await auto(DA, rA);
+    check(workerA.linked === true && workerA.location_id === shop, 'worker A links the pair it chose');
+    check(await pair(DA, rA) === `${rA}|${DA}`, 'automatic link: BOTH sides are written, in the one call');
+    check((await state(DA)).match_state === 'counted_only' && (await state(DA)).note === null, 'automatic link: the match state and the note are untouched');
+    await refusal(auto(DA, rA), 'delivery_changed', 'automatic link: a delivery that already has a receipt is never given another (nothing is replaced)');
+    const managerUnlink = await unlink(DA, rA, 'wrong document: this is last week\'s invoice');
+    check(managerUnlink.receipt_id === rA && await pair(DA, rA) === 'none|none' && await n('delivery_receipt_unlinks') === unlinksBefore + 1,
+      'a manager unlinks it: both link columns are NULL again, exactly as worker B read them, and the pair is on record');
+    await refusal(auto(DA, rA), 'pair_unlinked', 'A links, a manager unlinks, B resumes with the pair it chose earlier: B is refused pair_unlinked');
+    check(await pair(DA, rA) === 'none|none' && await n('delivery_receipt_unlinks') === unlinksBefore + 1, '...and the unlinked pair is NOT put back: both sides still empty, the record unchanged');
+    await refusal(auto(DA, rA), 'pair_unlinked', '...however many times automation tries again');
+    // The history outranks every other answer: an unlinked pair is told so even when the snapshot is stale too.
+    await refusal(auto(DA, rA, { parse: 'failed' }), 'pair_unlinked', 'the unlink record is read first: an unlinked pair is pair_unlinked whatever else moved');
+
+    // The rule is about the PAIR, not the delivery or the receipt.
+    const rOther = await invoice();
+    const other = await auto(DA, rOther);
+    check(other.linked === true && await pair(DA, rOther) === `${rOther}|${DA}`, 'another receipt still links to the delivery a receipt was unlinked from');
+    const elsewhere = await auto(DB, rA);
+    check(elsewhere.linked === true && await pair(DB, rA) === `${rA}|${DB}`, 'the unlinked receipt still links to a DIFFERENT delivery it was never unlinked from');
+    await refusal(auto(DA, rA), 'pair_unlinked', '...and the undone pair stays undone while each side is linked elsewhere');
+    await refusal(auto(DB, await invoice()), 'delivery_changed', 'automatic link: a second receipt never takes a delivery that has one');
+    const DC = (await record(header({ invoice_number: 'INV-AL-3', delivery_date: DAY }), [line(skuA)])).delivery_id;
+    await refusal(auto(DC, rA), 'receipt_changed', 'automatic link: a receipt already linked to a delivery never takes another');
+    check(await pair(DC, rA) === `none|${DB}`, '...and neither side moves');
+
+    // A person may still link an unlinked pair by hand (the app's manual link: two guarded updates).
+    await unlink(DB, rA, 'harness: free the receipt again'); await unlink(DA, rOther, 'harness: free the delivery again');
+    await link(DA, rA);
+    check(await pair(DA, rA) === `${rA}|${DA}`, 'a PERSON can still link the pair they unlinked (the rule binds automation only)');
+    await unlink(DA, rA, 'harness: unlinked a second time');
+
+    // A one-sided leftover (a delivery already pointing at this receipt) is a refusal, never a 23505.
+    const rStale = await invoice();
+    await db.query('update public.vendor_deliveries set email_receipt_id=$2 where id=$1', [DB, rStale]);
+    await refusal(auto(DC, rStale), 'receipt_changed', 'automatic link: a receipt another delivery already points at is refused (never a unique-index error)');
+    await db.query('update public.vendor_deliveries set email_receipt_id=null where id=$1', [DB]);
+
+    // Both sides or neither: when the delivery side cannot be written, the receipt side is not left claimed.
+    const rAtomic = await invoice();
+    await db.exec(`create function public.zz_refuse_delivery_link() returns trigger language plpgsql as $f$ begin raise exception 'zz_delivery_side_failed'; end $f$;
+      create trigger zz_refuse_delivery_link before update of email_receipt_id on public.vendor_deliveries for each row execute function public.zz_refuse_delivery_link();`);
+    try {
+      await refuses(() => auto(DC, rAtomic), /zz_delivery_side_failed/, 'automatic link: a failure on the delivery side fails the call');
+      check(await pair(DC, rAtomic) === 'none|none', '...and the receipt side is rolled back with it: no half link, nothing to compensate');
+    } finally { await db.exec('drop trigger zz_refuse_delivery_link on public.vendor_deliveries; drop function public.zz_refuse_delivery_link();'); }
+    const afterAll = await auto(DC, rAtomic);
+    check(afterAll.linked === true && await pair(DC, rAtomic) === `${rAtomic}|${DC}`, 'the same call links once the delivery side can be written');
+  }
+
   // ── C. ceilings ────────────────────────────────────────────────────────────────────────────────
-  for (const f of ['record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)', 'delivery_match_verdict(uuid,text,text,text,uuid)', 'delivery_receipt_unlink(uuid,uuid,text,uuid)']) {
+  const unlinkRows = await n('delivery_receipt_unlinks');
+  for (const f of ['record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)', 'delivery_match_verdict(uuid,text,text,text,uuid)', 'delivery_receipt_unlink(uuid,uuid,text,uuid)',
+    'delivery_receipt_auto_link(uuid,uuid,uuid,uuid,date,text,timestamptz)']) {
     const meta = await one(`select prosecdef, proconfig from pg_proc where oid='public.${f}'::regprocedure`);
     assert.equal(meta.prosecdef, true); assert.ok(meta.proconfig.includes('search_path=pg_catalog, public'));
     for (const role of ['anon', 'authenticated', 'service_role']) {
@@ -374,7 +486,7 @@ try {
     }
     assert.equal((await one(`select count(*)::int n from pg_proc p, lateral aclexplode(p.proacl) a where p.oid='public.${f}'::regprocedure and a.grantee=0`)).n, 0);
   }
-  check(true, 'the three functions: SECURITY DEFINER, pinned search_path, service_role execute only, no PUBLIC');
+  check(true, 'the four functions: SECURITY DEFINER, pinned search_path, service_role execute only, no PUBLIC');
   for (const role of ['anon', 'authenticated', 'service_role']) {
     for (const p of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
       assert.equal((await one("select has_table_privilege($1,'public.delivery_receipt_unlinks',$2) ok", [role, p])).ok, role === 'service_role' && p === 'SELECT');
@@ -385,7 +497,7 @@ try {
     /permission denied/, 'service_role cannot forge an unlink row');
   await refuses(() => service(() => db.query('delete from public.delivery_receipt_unlinks')), /permission denied/, 'service_role cannot delete unlink history');
   await refuses(() => service(() => db.query("update public.delivery_receipt_unlinks set note='edited'")), /permission denied/, 'service_role cannot rewrite unlink history');
-  check((await service(() => q('select id from public.delivery_receipt_unlinks'))).length === 5, 'service_role can read the history');
+  check((await service(() => q('select id from public.delivery_receipt_unlinks'))).length === unlinkRows, 'service_role can read the history');
   const policies = (await q("select policyname, cmd, qual, with_check from pg_policies where tablename='delivery_receipt_unlinks' order by policyname")).map(p => `${p.policyname}:${p.cmd}:${p.qual ?? p.with_check}`);
   check((await one("select relrowsecurity from pg_class where oid='public.delivery_receipt_unlinks'::regclass")).relrowsecurity === true
     && policies.join('|') === 'delivery_receipt_unlinks_no_user_delete:DELETE:false|delivery_receipt_unlinks_no_user_insert:INSERT:false|delivery_receipt_unlinks_no_user_select:SELECT:false|delivery_receipt_unlinks_no_user_update:UPDATE:false',
@@ -398,7 +510,7 @@ try {
   await db.exec('rollback');
   await assert.rejects(() => db.exec(migration.replace('grant execute on function public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb) to service_role;', 'grant execute on function public.record_delivery_atomic(jsonb,jsonb,jsonb,jsonb) to authenticated, service_role;')), /0327: receiving RPC escape/);
   await db.exec('rollback');
-  check(await n('delivery_receipt_unlinks') === 5, 'a variant that widens a grant fails its own assertion, rolls back, and keeps the history');
+  check(await n('delivery_receipt_unlinks') === unlinkRows, 'a variant that widens a grant fails its own assertion, rolls back, and keeps the history');
 
   console.log(`PASS 0327: ${checks} checks (single-session PGlite; the two-session proofs are the sim script)`);
 } finally { await db.close(); }
