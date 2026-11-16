@@ -52,15 +52,26 @@ describe("0330 header and shape", () => {
 });
 
 describe("B209: reconcile_ezcater_toast changes only its provider locking", () => {
-  it("drops the lock-every-order statement and keeps every other 0229 line in order", () => {
+  it("drops the lock-every-order statement, restricts the two writes to the locked providers, keeps every other 0229 line in order", () => {
     expect(changedLines()).toEqual([
       "-- Acquire the same provider locks as snapshot/transfer/publisher before row locks.",
       "perform pg_advisory_xact_lock(hashtext(provider_uuid)) from public.ezcater_orders order by provider_uuid;",
+      "update public.ezcater_toast_links l set is_current=false where l.is_current and not exists(",
+      "select x.* from pg_temp.ezcater_reconcile_plan x where not exists(",
     ]);
     const dst = body(sql, true).join("\n");
     expect(dst).not.toContain("from public.ezcater_orders order by provider_uuid");
     expect(dst).toContain("perform pg_advisory_xact_lock(hashtext(p)) from unnest(v_need) p order by p;");
     expect(dst).toContain("insert into pg_temp.ezcater_reconcile_plan select * from public.plan_ezcater_toast();");
+  });
+  it("review r1 (BC-007/BC-030): the retire and the insert write only the providers the run locked", () => {
+    const dst = body(sql, true).join("\n");
+    const restrict = "order_id in(select k.order_id from pg_temp.ezcater_reconcile_locked k)";
+    expect(dst.split(restrict).length - 1).toBe(2);
+    expect(dst).toContain("select o.id as order_id from public.ezcater_orders o where o.provider_uuid=any(v_locked);");
+    // Materialized AFTER the lock loop, so nothing below can widen it.
+    expect(dst.indexOf("create temporary table ezcater_reconcile_locked")).toBeGreaterThan(dst.indexOf("end loop;"));
+    expect(dst).toContain("drop table pg_temp.ezcater_reconcile_locked;");
   });
 });
 
@@ -68,4 +79,5 @@ it("0330 offline proof: B209 red before, every W23 SQL fix green after; guard, r
   const output = execFileSync(process.execPath, ["scripts/sql-harness-0330.mjs"], { encoding: "utf8", timeout: 400_000 });
   expect(output).toMatch(/EXPECTED FAIL 0330 broken variant: 0229 reconcile held 301 advisory locks/);
   expect(output).toMatch(/^PASS 0330: \d+ checks/m);
+  expect(output).not.toMatch(/race:/);
 }, 400_000);

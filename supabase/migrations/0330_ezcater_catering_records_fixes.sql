@@ -45,8 +45,12 @@
 --      lock per ezCater order EVER stored (at ~64 x max_connections orders that is "out of shared
 --      memory" and every capture tick fails). It plans, takes the provider locks only for the orders
 --      this run will retire or insert links for, re-plans, and repeats until the plan needs no new
---      lock (at most 4 rounds, else `ezcater_reconcile_unstable`). The write block is 0229's,
---      verbatim. plan_ezcater_toast (0231) is untouched.
+--      lock (at most 4 rounds, else `ezcater_reconcile_unstable`). The write block is 0229's with
+--      ONE added restriction (review r1, BC-007/BC-030): the retire and the insert touch only the
+--      orders of the providers it LOCKED (materialized after the last lock). A provider whose links
+--      already matched the final plan is never locked, so a concurrent transfer may retire its links;
+--      the run leaves it alone (no stale re-insert at the old shop) and the next run reconciles it.
+--      plan_ezcater_toast (0231) is untouched.
 -- LOCK ORDER: create_catering_company and the switch-off take no advisory lock. reopen_ezcater_lead
 --   takes the provider lock, then the lead row FOR UPDATE (apply / transfer's order). The reconciler
 --   keeps the global reconcile lock first; it then takes provider locks in sorted batches while it
@@ -288,9 +292,17 @@ begin
   perform pg_advisory_xact_lock(hashtext(p)) from unnest(v_need) p order by p;
   v_locked:=v_locked||v_need;
  end loop;
+ -- W23 r1 (BC-007/BC-030): write ONLY the providers locked above, all of them re-planned under their
+ -- locks. A provider whose links already matched the final plan was never locked, so a transfer may
+ -- move it and retire its links after that plan; writing it from the (now stale) plan would re-create
+ -- a link at the old shop. It is left alone and the next run reconciles it. Materialized once, after
+ -- the last lock: nothing below can widen the set.
+ create temporary table ezcater_reconcile_locked on commit drop as
+  select o.id as order_id from public.ezcater_orders o where o.provider_uuid=any(v_locked);
  -- Plan globally: a batch's D presence/fallback must not depend on the caller's window.
  -- Publishing globally also retires previously linked cancelled/transferred orders.
- update public.ezcater_toast_links l set is_current=false where l.is_current and not exists(
+ update public.ezcater_toast_links l set is_current=false where l.is_current
+ and l.order_id in(select k.order_id from pg_temp.ezcater_reconcile_locked k) and not exists(
  select 1 from pg_temp.ezcater_reconcile_plan x where x.order_id=l.order_id and x.snapshot_id=l.snapshot_id
  and x.location_id=l.location_id and x.toast_snapshot_id=l.toast_snapshot_id and x.order_guid=l.order_guid
  and x.check_guid=l.check_guid and x.selection_guid=l.selection_guid and x.business_date=l.business_date and x.evidence=l.evidence
@@ -298,7 +310,8 @@ begin
  and x.reconciliation_details=l.reconciliation_details);
  get diagnostics retired=row_count;
  insert into public.ezcater_toast_links(order_id,snapshot_id,location_id,toast_snapshot_id,order_guid,check_guid,selection_guid,business_date,evidence,amount_diff_cents,amount_mismatch,reconciliation_details)
- select x.* from pg_temp.ezcater_reconcile_plan x where not exists(
+ select x.* from pg_temp.ezcater_reconcile_plan x
+ where x.order_id in(select k.order_id from pg_temp.ezcater_reconcile_locked k) and not exists(
  select 1 from public.ezcater_toast_links l where l.is_current and l.order_id=x.order_id and l.location_id=x.location_id
  and l.check_guid=x.check_guid and l.selection_guid=x.selection_guid);
  get diagnostics changed=row_count;
@@ -318,6 +331,7 @@ begin
  jsonb_build_object('added',changed,'retired',retired,'resolved',resolved,'from',p_from,'to',p_to),false);
  end if;
  drop table pg_temp.ezcater_reconcile_plan;
+ drop table pg_temp.ezcater_reconcile_locked;
  return jsonb_build_object('added',changed,'retired',retired,'resolved',resolved);
 end $$;
 revoke all on function public.reconcile_ezcater_toast(date,date) from public,anon,authenticated;

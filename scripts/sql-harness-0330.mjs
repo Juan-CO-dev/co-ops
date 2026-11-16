@@ -99,6 +99,41 @@ async function reconcileWithLocks(db) {
   } finally { await db.exec('rollback'); }
 }
 
+/** Review r1 P2 (BC-007/BC-030): a transfer that commits AFTER the reconcile's final plan, for a
+ * provider whose links already matched that plan (so the reconcile never locked it), must not be
+ * undone by the reconcile's write. One PGlite backend cannot interleave two sessions, so the
+ * interleaving is placed deterministically: an AFTER STATEMENT trigger on the reconcile's own
+ * retire UPDATE performs transfer_catering_lead's writes for order 4 (move the order, retire its
+ * current links) - exactly the state a concurrent transfer holding prov-4's lock leaves between the
+ * reconcile's retire and its insert. The reconcile must write only the providers it locked. */
+async function staleLinkRaceCase(db) {
+  const ORDER4 = id('a000', 4), SHOP2 = id('8000', 4);
+  await db.exec('begin');
+  try {
+    await db.exec(`create table harness_race(fired boolean not null);
+      insert into harness_race values (false);
+      create function harness_transfer_mid_reconcile() returns trigger language plpgsql as $t$
+      begin
+        if pg_trigger_depth() > 1 or (select fired from harness_race) then return null; end if;
+        update harness_race set fired = true;
+        update ezcater_orders set location_id = '${SHOP2}' where id = '${ORDER4}';
+        update ezcater_toast_links set is_current = false where order_id = '${ORDER4}' and is_current;
+        return null;
+      end $t$;
+      create trigger harness_race after update on ezcater_toast_links
+        for each statement execute function harness_transfer_mid_reconcile();
+      grant all on harness_race to service_role;`);
+    await db.exec('set local role service_role');
+    const r = (await one(db, `select reconcile_ezcater_toast('2026-11-01', '2026-11-30') r`)).r;
+    check((await one(db, `select fired from harness_race`)).fired, 'race: the transfer ran between the retire and the insert');
+    const current4 = (await one(db, `select count(*)::int n from ezcater_toast_links where order_id = $1 and is_current`, [ORDER4])).n;
+    check(current4 === 0, `race: the reconcile must not re-create the link a concurrent transfer retired (order 4 has ${current4} current link(s))`);
+    check(r.added === 2 && r.retired === 1, `race: only the locked providers were written, got ${JSON.stringify(r)}`);
+    const locked = (await one(db, `select count(*)::int n from pg_locks where locktype = 'advisory' and pid = pg_backend_pid()`)).n;
+    check(locked === 1 + 3, `race: still the global lock + the 3 providers written, got ${locked}`);
+  } finally { await db.exec('rollback'); }
+}
+
 async function seedCompanies(db) {
   await db.exec(`insert into catering_companies(id, name, created_at) values
       ('${id('d000', 1)}', 'Acme', now() - interval '3 days'),   -- empty orphan; a later Acme exists -> OFF
@@ -257,6 +292,7 @@ try {
   check(second.added === 0 && second.retired === 0, 'a re-run with nothing to change changes nothing');
   await db.exec('rollback');
 
+  await staleLinkRaceCase(db);
   await companyCases(db);
   await cancelledLinkCases(db);
   await reopenCases(db);
