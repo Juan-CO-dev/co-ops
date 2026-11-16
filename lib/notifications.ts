@@ -382,6 +382,8 @@ export async function loadUnreadForUser(
     .eq("delivery_method", "in_app")
     .neq("delivery_status", "disabled")
     .order("notifications(created_at)", { ascending: false })
+    // Deterministic tiebreak: equal timestamps sort by notification id desc, the same every time.
+    .order("notification_id", { ascending: false })
     .limit(limit);
 
   if (args?.locationContext && args.locationContext.length > 0) {

@@ -99,16 +99,19 @@ describe("B030 — loadUnreadForUser is one bounded embedded read", () => {
     );
   });
 
-  it("sends limit(50) and orders by the embedded created_at desc", async () => {
+  it("sends limit(50) and orders by the embedded created_at desc, then notification id desc", async () => {
     const { client, calls } = fakeClient(seedRows(500));
     await loadUnreadForUser(client, USER);
 
     // (c)
     expect(calls.filter((c) => c.method === "limit").map((c) => c.args[0])).toEqual([50]);
     const orders = calls.filter((c) => c.method === "order");
-    expect(orders).toHaveLength(1);
+    // Equal timestamps sort the same every time: created_at desc, then the notification id desc (fix round 3).
+    expect(orders).toHaveLength(2);
     expect(orders[0]?.args[0]).toBe("notifications(created_at)");
     expect(orders[0]?.args[1]).toMatchObject({ ascending: false });
+    expect(orders[1]?.args[0]).toBe("notification_id");
+    expect(orders[1]?.args[1]).toMatchObject({ ascending: false });
     // no location context → no location filter
     expect(calls.filter((c) => c.method === "or")).toEqual([]);
     // the recipient filters are kept
