@@ -856,6 +856,7 @@
   "admin.catering.error.last_active_row": "Debe quedar al menos uno.",
   "admin.catering.error.invalid_ref": "Ese artículo no está disponible para catering.",
   "admin.catering.error.not_choice": "Las opciones solo se pueden agregar a un espacio de elección.",
+  "admin.catering.error.invalid_item_ref": "Un artículo de esta oferta ya no existe. No se creó nada — quítalo e inténtalo de nuevo.",
   "admin.catering.packages.title": "Paquetes de catering",
   "admin.catering.packages.subtitle": "Arma los paquetes de catering que los clientes pueden pedir, con precio y qué incluye.",
   "admin.catering.packages.add_package": "Agregar paquete",

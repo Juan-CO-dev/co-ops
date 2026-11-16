@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 
 const src = readFileSync("supabase/migrations/0329_catering_prep_demand_lifecycle.sql", "utf8").replace(/\r\n/g, "\n");
 const prepLib = readFileSync("lib/catering/prep-demand.ts", "utf8");
+const pipelineLib = readFileSync("lib/catering/pipeline.ts", "utf8");
+const ltoLib = readFileSync("lib/catering/lto.ts", "utf8");
 
 describe("0329_catering_prep_demand_lifecycle", () => {
   it("house header and gate line — and a later APPLIED stamp under it never breaks the pin", () => {
@@ -63,5 +65,17 @@ describe("0329_catering_prep_demand_lifecycle", () => {
       expect(prepLib).toContain(`${arg}:`);
       expect(src).toContain(arg);
     }
+  });
+
+  it("the lib reschedules and creates LTO events through the RPCs, falling back ONLY when the function is missing", () => {
+    expect(pipelineLib).toContain('sb.rpc("reschedule_catering_lead", { p_lead_id: id, p_event_date: eventDate, p_actor_id: actorId })');
+    expect(pipelineLib).toContain('error.code === "PGRST202" || error.code === "42883"');
+    expect(ltoLib).toContain('sb.rpc("create_lto_event", { p_actor_id: actor.user.id, p_event: event, p_items: itemRows })');
+    expect(ltoLib).toContain('error.code === "PGRST202" || error.code === "42883"');
+    for (const arg of ["p_lead_id", "p_event_date", "p_event", "p_items"]) expect(src).toContain(arg);
+  });
+
+  it("the backfill is never called by app code (CC runs it with the manifest)", () => {
+    for (const lib of [prepLib, pipelineLib, ltoLib]) expect(lib).not.toContain("catering_prep_demand_backfill_stale");
   });
 });

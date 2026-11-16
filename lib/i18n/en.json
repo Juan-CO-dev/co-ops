@@ -856,6 +856,7 @@
   "admin.catering.error.last_active_row": "At least one must remain.",
   "admin.catering.error.invalid_ref": "That item is not catering-available.",
   "admin.catering.error.not_choice": "Options can only be added to a choice slot.",
+  "admin.catering.error.invalid_item_ref": "An item on this offer no longer exists. Nothing was created — remove it and try again.",
   "admin.catering.packages.title": "Catering Packages",
   "admin.catering.packages.subtitle": "Build the catering packages customers can order, with pricing and what's included.",
   "admin.catering.packages.add_package": "Add package",
