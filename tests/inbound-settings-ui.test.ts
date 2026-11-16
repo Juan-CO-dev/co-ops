@@ -61,19 +61,56 @@ it("failed writes keep edits and show the error outside the drawer", async () =>
   expect(screen.getByRole("status").closest(".co-card")).toBeNull();
   expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("account-fixture");
 });
-it("removal posts a soft-deactivation request, without sending email", async () => {
+it("removal posts a soft-deactivation request only after the confirm, without sending email", async () => {
   mount(jsx(InboundAliasesPanel, { shops, aliases: [{ id: "alias", address: "original@example.test", location_id: "shop-a", lane: "vendor_receipt" }] }));
   fireEvent.click(screen.getByRole("button", { name: /North shop/ }));
   fireEvent.click(screen.getByRole("button", { name: "Remove address" }));
+  expect(h.post).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: en["admin.inbound.remove_yes"] }));
   await waitFor(() => expect(h.post).toHaveBeenCalledWith("/api/admin/inbound/aliases", { id: "alias", remove: true }));
   expect(h.post).toHaveBeenCalledTimes(1);
 });
 
-it("account removal posts the scoped soft-deactivation action", async () => {
+it("account removal posts the scoped soft-deactivation action only after the confirm", async () => {
   mount(jsx(VendorAccountsPanel, { vendorId: "vendor", shops, accounts: [{ location_id: "shop-a", account_number: "account" }] }));
   fireEvent.click(screen.getByRole("button", { name: /North shop/ }));
   fireEvent.click(screen.getByRole("button", { name: "Remove account mapping" }));
+  expect(h.post).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: en["admin.inbound.remove_yes"] }));
   await waitFor(() => expect(h.post).toHaveBeenCalledWith("/api/admin/inbound/vendor-accounts", { vendorId: "vendor", locationId: "shop-a", remove: true }));
+});
+
+// W19/B192: removing an address (mail to it is skipped from then on) or an account mapping is never one tap.
+it.each(["en", "es"] as const)("alias Remove asks first, names the address, and Cancel posts nothing (%s)", async language => {
+  const dictionary = (language === "en" ? en : es) as Record<string, string>;
+  mount(jsx(InboundAliasesPanel, { shops, aliases: [{ id: "alias", address: "original@example.test", location_id: "shop-a", lane: "vendor_receipt" }] }), language);
+  fireEvent.click(screen.getByRole("button", { name: /North shop/ }));
+  fireEvent.click(screen.getByRole("button", { name: dictionary["admin.inbound.remove"] }));
+  expect(h.post).not.toHaveBeenCalled();
+  expect(h.step).not.toHaveBeenCalled();
+  expect(screen.getByText(dictionary["admin.inbound.remove_alias_confirm"]!.replace("{address}", "original@example.test"))).toBeTruthy();
+  const yes = screen.getByRole("button", { name: dictionary["admin.inbound.remove_yes"] });
+  const cancel = screen.getByRole("button", { name: dictionary["admin.inbound.cancel"] });
+  for (const control of [yes, cancel]) { expect(control.className).toContain("min-h-[44px]"); expect(control.className).toContain("items-center"); }
+  fireEvent.click(cancel);
+  expect(screen.queryByRole("button", { name: dictionary["admin.inbound.remove_yes"] })).toBeNull();
+  expect(h.post).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: dictionary["admin.inbound.remove"] }));
+  fireEvent.click(screen.getByRole("button", { name: dictionary["admin.inbound.remove_yes"] }));
+  await waitFor(() => expect(h.post).toHaveBeenCalledWith("/api/admin/inbound/aliases", { id: "alias", remove: true }));
+  expect(h.post).toHaveBeenCalledTimes(1);
+});
+
+it.each(["en", "es"] as const)("account Remove asks first, names the account and shop, and Cancel posts nothing (%s)", async language => {
+  const dictionary = (language === "en" ? en : es) as Record<string, string>;
+  mount(jsx(VendorAccountsPanel, { vendorId: "vendor", shops, accounts: [{ location_id: "shop-a", account_number: "ACCT-9" }] }), language);
+  fireEvent.click(screen.getByRole("button", { name: /North shop/ }));
+  fireEvent.click(screen.getByRole("button", { name: dictionary["admin.inbound.remove_account"] }));
+  expect(h.post).not.toHaveBeenCalled();
+  expect(screen.getByText(dictionary["admin.inbound.remove_account_confirm"]!.replace("{account}", "ACCT-9").replace("{shop}", "North shop"))).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: dictionary["admin.inbound.cancel"] }));
+  expect(h.post).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: dictionary["admin.inbound.remove_yes"] })).toBeNull();
 });
 it.each(["en", "es"] as const)("health exposes count and a Tier A 44px retry (%s)", async language => {
   const dictionary = language === "en" ? en : es;

@@ -115,6 +115,9 @@ export default async function OrderingPage({
   // hardcoded location literal — tenant law; code + name from the locations row).
   const shopLabel = loc ? `${loc.code} · ${loc.name}` : "";
   const dateLabel = formatDateLabel(walker.walkDate, language);
+  // W19/B190: the date that lands in VENDOR text (copied order, mailto subject/body) is English for every viewer,
+  // like the automatic email; `dateLabel` above stays the viewer's language for the screen.
+  const vendorDateLabel = formatDateLabel(walker.walkDate, "en");
 
   return (
     <TranslationProvider initialLanguage={language}>
@@ -187,7 +190,7 @@ export default async function OrderingPage({
           actorLevel={auth.level}
           language={language}
           shopLabel={shopLabel}
-          dateLabel={dateLabel}
+          vendorDateLabel={vendorDateLabel}
           initialPoId={po ?? null}
         />
 
@@ -196,7 +199,7 @@ export default async function OrderingPage({
           recent={recent}
           locationId={locationId}
           shopLabel={shopLabel}
-          dateLabel={dateLabel}
+          vendorDateLabel={vendorDateLabel}
         />
       </main>
     </TranslationProvider>

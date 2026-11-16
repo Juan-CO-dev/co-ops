@@ -5,8 +5,13 @@
  */
 import { groupByGuideSection, hasGuideHeader, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
 import type { TranslationKey, TranslationParams } from "@/lib/i18n/types";
+import { serverT } from "@/lib/i18n/server";
 
 export type BodyT = (key: TranslationKey, vars?: TranslationParams) => string;
+/** W19/B190: THE vendor-facing translator. A vendor reads English whatever the staff member's app language, so the
+ *  copied body, the mailto subject/body, the draft card and the automatic email all render through this one, never
+ *  the viewer's `t` (which stays for on-screen chrome). lib/i18n/server is pure and client-safe (no server-only). */
+export const vendorT: BodyT = (key, vars) => serverT("en", key, vars);
 export interface PoBodyLine {
   skuName: string; orderQty: number; orderUnitLabel: string | null; itemNumber: string | null;
   guidePosition: number | null; guideSection: string | null;
