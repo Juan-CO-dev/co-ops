@@ -140,7 +140,7 @@ function salesDeps(world: { stamp: string | null; cents: number; stampFails?: bo
     sales: async () => { d.loads++; return facts(world.cents, world.stamp); },
     salesStamp: async () => { d.probes++; if (world.stampFails) throw new Error("probe down"); return world.stamp; },
   } as unknown as PulseDeps & { loads: number; probes: number };
-  for (const k of ["board", "reports", "fridges", "cateringToday", "cateringTomorrow", "notRung", "unlinkedClockIns", "lastParPass", "deliveries", "cutoffs", "handoff", "layout"] as const) {
+  for (const k of ["board", "reports", "fridges", "cateringToday", "cateringTomorrow", "notRung", "unlinkedClockIns", "lastParPass", "priorAmPrep", "deliveries", "cutoffs", "handoff", "layout"] as const) {
     (d as unknown as Record<string, unknown>)[k] = async () => { throw new Error(`${k} not read`); };
   }
   return d;
