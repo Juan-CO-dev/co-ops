@@ -65,6 +65,22 @@ export interface LtoEventView {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** PostgREST's / Postgres's "that function does not exist (yet)": migration 0329 is not applied. */
+function ltoRpcMissing(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+
+/** create_lto_event's refusals (and a bad item ref from either path) → the lib's own errors. */
+function ltoRpcError(error: { code?: string; message?: string }): Error {
+  const msg = (error.message ?? "").trim();
+  if (error.code === "23503" || error.code === "22P02") return new LtoError(400, "invalid_item_ref", "An item on this offer no longer exists");
+  if (msg === "lto_forbidden") return new LtoError(403, "forbidden", "Insufficient role level");
+  if (msg === "lto_location_not_found") return new LtoError(404, "location_not_found", "Location not found or inactive");
+  if (msg === "lto_no_items") return new LtoError(400, "no_items", "At least one item is required");
+  if (msg === "lto_invalid_event") return new LtoError(400, "invalid_window", "Check the offer details");
+  return new Error(`createLtoEvent: ${error.message ?? "rpc failed"}`);
+}
+
 /**
  * Create an LTO/discount from surplus. ≥ LTO_MIN + Tier-A step-up (route).
  *
@@ -113,23 +129,41 @@ export async function createLtoEvent(actor: AuthContext, input: CreateLtoEventIn
   if (locErr) throw new Error(`createLtoEvent location: ${locErr.message}`);
   if (!loc) throw new LtoError(404, "location_not_found", "Location not found or inactive");
 
-  const { data: ev, error: evErr } = await sb
-    .from("lto_events")
-    .insert({
-      location_id: input.locationId, kind: input.kind, name,
-      discount_bps: discountBps ?? null, promo_price_cents: promoPriceCents ?? null,
-      starts_on: input.startsOn, ends_on: input.endsOn, status: "active",
-      note: input.note?.trim() || null, created_by: actor.user.id,
-    })
-    .select("id").single<{ id: string }>();
-  if (evErr) throw new Error(`createLtoEvent event: ${evErr.message}`);
-
+  // THE EVENT AND ITS ITEMS COMMIT TOGETHER (audit W22/B205, migration 0329 create_lto_event): the event
+  // used to be inserted first, so an item that failed its FK / type / CHECK left a LIVE offer with no items
+  // on the staff board. The RPC re-checks the actor (active, level >= 6) and the shop (active) in SQL.
+  const event = {
+    location_id: input.locationId, kind: input.kind, name,
+    discount_bps: discountBps ?? null, promo_price_cents: promoPriceCents ?? null,
+    starts_on: input.startsOn, ends_on: input.endsOn, note: input.note?.trim() || null,
+  };
   const itemRows = input.items.map((it) => ({
-    event_id: ev.id, item_id: it.itemId, menu_item_id: it.menuItemId,
+    item_id: it.itemId, menu_item_id: it.menuItemId,
     name_snapshot: it.nameSnapshot.trim(), qty: it.qty, source_pipeline_id: it.sourcePipelineId,
   }));
-  const { error: itErr } = await sb.from("lto_event_items").insert(itemRows);
-  if (itErr) throw new Error(`createLtoEvent items: ${itErr.message}`);
+  const { data: rpcId, error: rpcErr } = await sb.rpc("create_lto_event", { p_actor_id: actor.user.id, p_event: event, p_items: itemRows });
+  let ev: { id: string };
+  if (rpcErr && !ltoRpcMissing(rpcErr)) throw ltoRpcError(rpcErr);
+  if (!rpcErr) {
+    if (typeof rpcId !== "string") throw new Error("createLtoEvent: create_lto_event returned no id");
+    ev = { id: rpcId };
+  } else {
+    // 0329 not applied yet: the previous two inserts, with the half-made event cancelled if its items fail.
+    const { data: inserted, error: evErr } = await sb
+      .from("lto_events")
+      .insert({ ...event, status: "active", created_by: actor.user.id })
+      .select("id").single<{ id: string }>();
+    if (evErr) throw new Error(`createLtoEvent event: ${evErr.message}`);
+    ev = inserted;
+    const { error: itErr } = await sb.from("lto_event_items").insert(itemRows.map((r) => ({ ...r, event_id: ev.id })));
+    if (itErr) {
+      const { error: cErr } = await sb.from("lto_events")
+        .update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancelled_by: actor.user.id })
+        .eq("id", ev.id).eq("status", "active");
+      if (cErr) console.error(`[lto] createLtoEvent: could not cancel event ${ev.id} after its items failed: ${cErr.message}`);
+      throw ltoRpcError(itErr);
+    }
+  }
 
   // Stubbed provider-agnostic POS push (never throws). Record the disposition when non-default.
   const push = await pushLtoToPos({ id: ev.id, kind: input.kind, locationId: input.locationId });

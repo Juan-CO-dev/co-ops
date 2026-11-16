@@ -330,6 +330,9 @@ function EventRow({ ev, busy, setBusy, onSuccess }: EventRowProps) {
   const { t } = useTranslation();
   const { requestStepUp } = useStepUp();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Two-step cancel (audit W22/B206): the first tap only asks; the cancel itself runs from the
+  // confirm button. A cancelled event cannot be reactivated, so one stray tap must never end it.
+  const [confirming, setConfirming] = useState(false);
 
   const handleCancel = async () => {
     if (busy) return;
@@ -339,6 +342,7 @@ function EventRow({ ev, busy, setBusy, onSuccess }: EventRowProps) {
     const result = await postJson(`/api/admin/catering/lto/events/${ev.id}/cancel`, {}, "POST");
     setBusy(false);
     if (result.ok) {
+      setConfirming(false);
       onSuccess();
     } else {
       setErrorMsg(t(resolveErrorKey(result.code)));
@@ -379,17 +383,40 @@ function EventRow({ ev, busy, setBusy, onSuccess }: EventRowProps) {
           )}
           {ev.note && <p className="mt-0.5 text-xs italic text-co-text-muted">{ev.note}</p>}
         </div>
-        {ev.status === "active" && (
+        {ev.status === "active" && !confirming && (
           <button
             type="button"
             disabled={busy}
-            onClick={() => void handleCancel()}
+            onClick={() => { setErrorMsg(null); setConfirming(true); }}
             className="shrink-0 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border px-3 text-xs font-bold uppercase tracking-[0.08em] text-co-cta-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
           >
             {t("admin.catering.lto.cancel_event" as TranslationKey)}
           </button>
         )}
       </div>
+      {ev.status === "active" && confirming && (
+        <div className="mt-2 flex flex-col gap-2">
+          <p className="text-xs text-co-text-muted">{t("admin.catering.lto.cancel_warning" as TranslationKey)}</p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setConfirming(false)}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+            >
+              {t("admin.catering.lto.cancel_keep" as TranslationKey)}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void handleCancel()}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta-text bg-co-surface px-3 text-xs font-bold text-co-cta-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+            >
+              {t("admin.catering.lto.cancel_confirm" as TranslationKey)}
+            </button>
+          </div>
+        </div>
+      )}
       {errorMsg && <p className="mt-1 text-xs text-co-cta-text">{errorMsg}</p>}
     </li>
   );
