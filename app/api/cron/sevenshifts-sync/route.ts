@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
       persistenceErrors: outcome.persistenceErrors });
   } catch {
     // Counts and fixed codes only: never a provider message, URL or token.
-    void audit({
+    await audit({
       actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: { job: "sevenshifts-sync", error: "sync_route_failed" }, ipAddress: null, userAgent: null,
     });

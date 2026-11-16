@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
   } catch (e) {
     // A LIVE failure is otherwise silent (console only). Write a fail-open audit row so the
     // admin hub can surface it. audit() never throws.
-    void audit({
+    await audit({
       actorId: null,
       actorRole: null,
       action: "cron.failure",

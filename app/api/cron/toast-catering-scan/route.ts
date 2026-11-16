@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     await watchSiblings("toast-catering-scan");
     return jsonOk({ dates, results, healthy });
   } catch (e) {
-    void audit({ actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null, metadata: { job: "toast-catering-scan", dates, error: truncateErr(e) }, ipAddress: null, userAgent: null });
+    await audit({ actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null, metadata: { job: "toast-catering-scan", dates, error: truncateErr(e) }, ipAddress: null, userAgent: null });
     return jsonError(500, "scan_failed");
   }
 }
