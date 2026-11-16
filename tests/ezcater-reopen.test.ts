@@ -16,7 +16,7 @@ const state = vi.hoisted(() => ({
   rpc: vi.fn(),
 }));
 const reserve = vi.hoisted(() => vi.fn(async () => undefined));
-const audit = vi.hoisted(() => vi.fn(async () => undefined));
+const audit = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined));
 vi.mock("@/lib/audit", () => ({ audit }));
 vi.mock("@/lib/catering/prep-demand", () => ({
   reservePrepDemand: reserve, consumePrepDemand: vi.fn(), releasePrepDemand: vi.fn(),

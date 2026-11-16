@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => { throw new Error("no real client"); } }));
-const audit = vi.hoisted(() => vi.fn(async () => undefined));
+const audit = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined));
 vi.mock("@/lib/audit", () => ({ audit }));
 
 import { linkCateringOrders } from "@/lib/customers/customers";

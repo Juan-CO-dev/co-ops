@@ -14,7 +14,7 @@ const state = vi.hoisted(() => ({
   inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
   heldDomains: [] as string[],
 }));
-const audit = vi.hoisted(() => vi.fn(async () => undefined));
+const audit = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined));
 vi.mock("@/lib/audit", () => ({ audit }));
 vi.mock("@/lib/catering/ezcater-detail", () => ({ loadCateringReader: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ rpc: state.rpc, from: state.from }) }));
