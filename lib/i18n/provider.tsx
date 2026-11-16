@@ -43,6 +43,21 @@ interface TranslationContextValue {
 
 const TranslationContext = createContext<TranslationContextValue | null>(null);
 
+/**
+ * Every mounted provider's language and nesting depth. `<html lang>` follows the INNERMOST mounted provider (the
+ * last-changed among equals), and "en" when none is left — so unmounting a nested provider never resets the page to
+ * "en" under an outer Spanish one (W27 / B228), and a provider-less surface (public portal, login) still never
+ * inherits a stale "es". Depth comes from context: child effects run before the parent's, so mount order cannot say
+ * which provider is inside which.
+ */
+const mountedLanguages = new Map<symbol, { depth: number; language: Language }>();
+const ProviderDepth = createContext(0);
+function applyDocumentLanguage(): void {
+  let pick: { depth: number; language: Language } | null = null;
+  for (const entry of mountedLanguages.values()) if (pick === null || entry.depth >= pick.depth) pick = entry;
+  document.documentElement.lang = pick?.language ?? "en";
+}
+
 export function TranslationProvider({
   initialLanguage,
   children,
@@ -57,12 +72,15 @@ export function TranslationProvider({
   // etc.) reads document.documentElement.lang, so it must follow the actual UI language
   // here, where the value lives, rather than staying hardcoded "en" app-wide. Portal
   // pages that hardcode initialLanguage="en" are unaffected (already the default).
+  const [key] = useState(() => Symbol("i18n-provider"));
+  const depth = useContext(ProviderDepth) + 1;
   useEffect(() => {
-    document.documentElement.lang = language;
-    // Restore the root layout's default on unmount so a provider-less surface
-    // (public portal, login) never inherits a stale "es" from an authed session.
-    return () => { document.documentElement.lang = "en"; };
-  }, [language]);
+    mountedLanguages.delete(key);
+    mountedLanguages.set(key, { depth, language });
+    applyDocumentLanguage();
+    // On unmount the root layout's default "en" returns only when no provider is left (see `mountedLanguages`).
+    return () => { mountedLanguages.delete(key); applyDocumentLanguage(); };
+  }, [key, depth, language]);
 
   const t = useCallback(
     (key: TranslationKey, params?: TranslationParams): string => {
@@ -82,7 +100,11 @@ export function TranslationProvider({
     [language, t],
   );
 
-  return <TranslationContext.Provider value={value}>{children}</TranslationContext.Provider>;
+  return (
+    <ProviderDepth.Provider value={depth}>
+      <TranslationContext.Provider value={value}>{children}</TranslationContext.Provider>
+    </ProviderDepth.Provider>
+  );
 }
 
 export function useTranslation(): TranslationContextValue {
