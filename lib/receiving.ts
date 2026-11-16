@@ -45,6 +45,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { trailingEtWindow } from "@/lib/operational-day";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { isPulseReadActor, requirePulseReadScope, type PulseScopedReadActor } from "@/lib/pulse/read-actor";
@@ -365,10 +366,11 @@ async function loadSkuUsageRank(
   };
 
   // 30-day window. Productions compare on produced_at (timestamptz); the depletion
-  // ledger compares on business_date (a bare date) — derive both from the same instant.
-  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const cutoffIso = cutoff.toISOString();
-  const cutoffDate = cutoffIso.slice(0, 10); // YYYY-MM-DD for the business_date filter.
+  // ledger compares on business_date (a bare ET date). W20/B200: both bounds come from ONE ET
+  // business day (today's ET date minus 30, and the instant that day starts). The old bound
+  // was the UTC date of "now minus 30 days", a day ahead of the Eastern date every evening,
+  // so the sales lane lost a business day the production lane kept.
+  const { fromDate, startIso } = trailingEtWindow(new Date().toISOString(), 30);
 
   // Production lane — live productions at this location in the window, then their inputs.
   // PAGED (the PR #63 lesson; mirrors lib/ordering.ts's twin of this function): 30 days
@@ -380,7 +382,7 @@ async function loadSkuUsageRank(
         .select("id")
         .eq("location_id", locationId)
         .is("superseded_at", null).is("revoked_at", null)
-        .gt("produced_at", cutoffIso)
+        .gte("produced_at", startIso)
         .order("id", { ascending: true })
         .range(from, to)
         .returns<Array<{ id: string }>>();
@@ -419,7 +421,7 @@ async function loadSkuUsageRank(
   }
 
   // Sales direct lane — the materialized depletion ledger over the window (0166).
-  const sales = await loadEffectiveSalesWindow(sb, { locationId, fromDate: cutoffDate });
+  const sales = await loadEffectiveSalesWindow(sb, { locationId, fromDate });
   for (const r of sales.rows) add(r.sku_id, num(r.direct_oz) ?? 0);
 
   return { usage, coverage: sales.coverage };

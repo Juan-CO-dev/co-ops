@@ -143,6 +143,21 @@ export function operationalDayUtcRange(dateYmd: string): { startIso: string; end
 }
 
 /**
+ * A trailing window of ET business days ending today (W20/B200): `fromDate` is the ET calendar
+ * date `days` before the ET date of `nowIso`, and `startIso` is the UTC instant that day begins.
+ * A date-keyed lane (`business_date >= fromDate`) and a timestamp-keyed lane
+ * (`produced_at >= startIso`) then cover the SAME days: today plus the previous `days`.
+ * Never derive the date from `iso.slice(0, 10)`: that is the UTC date, a day ahead of the
+ * Eastern one every evening.
+ */
+export function trailingEtWindow(nowIso: string, days: number): { fromDate: string; startIso: string } {
+  if (!Number.isInteger(days) || days < 0) throw new Error(`trailingEtWindow: bad days "${days}"`);
+  if (Number.isNaN(Date.parse(nowIso))) throw new Error(`trailingEtWindow: bad instant "${nowIso}"`);
+  const fromDate = etYmdMinusDays(etCalendarDate(nowIso), days);
+  return { fromDate, startIso: operationalDayUtcRange(fromDate).startIso };
+}
+
+/**
  * True once operational day `dateYmd` (YYYY-MM-DD, ET) has reached the ET wall-clock time
  * `hhmm` (24-hour "HH:mm"), or the day is already over; false before it, and for a day that
  * has not started. Business-day aware the only way CO's day works: the ET calendar date
