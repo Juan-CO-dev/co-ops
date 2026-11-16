@@ -19,7 +19,7 @@ const { computeSkillMatrixForShop, loadSkillMatrix } = await import("@/lib/peopl
 const { loadPeopleFacts } = await import("@/lib/people/facts");
 const { loadSchedulingInputs, loadSchedulingDemand } = await import("@/lib/scheduling/inputs");
 const {
-  STRUCTURE_DEFAULTS_ID, closingFacts, eventQFromWindow, firstSeenFor, generatorInputFor, memberSinceDate, overrideFor, sqlStructureVersion, toCateringEvents, tsStructureVersion,
+  STRUCTURE_DEFAULTS_ID, closingFacts, eventQFromWindow, firstSeenFor, generatorInputFor, memberSinceDate, overrideFor, pickShopWage, sqlStructureVersion, toCateringEvents, tsStructureVersion,
 } = await import("@/lib/scheduling/inputs-shared");
 const { ScheduleError } = await import("@/lib/scheduling/errors-shared");
 const { forecastWeek } = await import("@/lib/scheduling/demand-shared");
@@ -181,10 +181,10 @@ describe("loadSchedulingInputs — the one batch loader", () => {
       { id: "ul4", sevenshifts_user_id: "704", user_id: KH, linked_at_location_id: A, active: false }, // an unlinked row never counts
     ];
     t.sevenshifts_wages = [
-      { user_id: "701", wage_type: "hourly", wage_cents: 2000, upcoming: false, effective_date: "2026-01-01", active: true },
-      { user_id: "702", wage_type: "hourly", wage_cents: 2600, upcoming: false, effective_date: "2026-01-01", active: true },
-      { user_id: "703", wage_type: "hourly", wage_cents: 2200, upcoming: false, effective_date: "2026-01-01", active: true },
-      { user_id: "704", wage_type: "hourly", wage_cents: 9900, upcoming: false, effective_date: "2026-01-01", active: true },
+      { user_id: "701", wage_id: 1, role_id: null, wage_type: "hourly", wage_cents: 2000, upcoming: false, effective_date: "2026-01-01", active: true },
+      { user_id: "702", wage_id: 2, role_id: null, wage_type: "hourly", wage_cents: 2600, upcoming: false, effective_date: "2026-01-01", active: true },
+      { user_id: "703", wage_id: 3, role_id: null, wage_type: "hourly", wage_cents: 2200, upcoming: false, effective_date: "2026-01-01", active: true },
+      { user_id: "704", wage_id: 4, role_id: null, wage_type: "hourly", wage_cents: 9900, upcoming: false, effective_date: "2026-01-01", active: true },
     ];
     t.sevenshifts_labor_settings = [{ company_id: 1, weekly_ot_threshold: 40 }];
     const prev = { t: process.env.SEVENSHIFTS_ACCESS_TOKEN, s: process.env.SEVENSHIFTS_SYNC };
@@ -197,6 +197,49 @@ describe("loadSchedulingInputs — the one batch loader", () => {
         schedule_shop_settings: [{ location_id: B, enabled: true, estimated_hourly_cents: 1800, estimated_salaried_weekly_cents: 120000, agm_access: "read" }] }, emptyHistory),
         { locationId: B, weekStarts: [WEEK], now: NOW });
       expect(other.wages).toEqual({ byUserCents: { [EMP]: 2600, [EMP2]: 2200 }, source: "sevenshifts" });
+    } finally {
+      if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
+      if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;
+    }
+  });
+  it("pickShopWage: undated loses to dated; the primary role at this shop wins; another location's role is never picked (B216)", () => {
+    const w = (wage_id: number, role_id: number | null, wage_cents: number, effective_date: string | null, wage_type = "hourly") => ({ wage_id, role_id, wage_type, wage_cents, effective_date });
+    const shop = new Set(["10", "11"]);
+    // The audit's repro: role A (primary) 1840 dated, role B 2100 undated → 1840.
+    expect(pickShopWage([w(1, 10, 1840, "2026-07-01"), w(2, 11, 2100, null)], { primaryRoleIds: new Set(["10"]), shopRoleIds: shop })).toBe(1840);
+    // Same role, two dates: the later wins; undated is oldest; order-independent.
+    expect(pickShopWage([w(3, 10, 2000, "2026-07-01"), w(2, 10, 1900, null), w(1, 10, 1800, "2026-01-01")], { primaryRoleIds: new Set(["10"]), shopRoleIds: shop })).toBe(2000);
+    expect(pickShopWage([w(1, 10, 1800, "2026-01-01"), w(3, 10, 2000, "2026-07-01"), w(2, 10, 1900, null)], { primaryRoleIds: new Set(["10"]), shopRoleIds: shop })).toBe(2000);
+    // Same date: the higher wage id.
+    expect(pickShopWage([w(9, 10, 2500, "2026-07-01"), w(10, 10, 2600, "2026-07-01")], { primaryRoleIds: new Set(), shopRoleIds: shop })).toBe(2600);
+    // Another location's role is never picked; a no-role wage is the fallback.
+    expect(pickShopWage([w(1, 99, 3000, "2026-10-01"), w(2, null, 1840, null)], { primaryRoleIds: new Set(["99"]), shopRoleIds: shop })).toBe(1840);
+    expect(pickShopWage([w(1, 99, 3000, "2026-10-01")], { primaryRoleIds: new Set(), shopRoleIds: shop })).toBeNull();
+    // A role at this shop beats a no-role wage; the primary beats another shop role even when older.
+    expect(pickShopWage([w(1, null, 1700, "2026-10-01"), w(2, 11, 1900, "2026-01-01")], { primaryRoleIds: new Set(), shopRoleIds: shop })).toBe(1900);
+    expect(pickShopWage([w(1, 10, 1840, "2026-01-01"), w(2, 11, 2100, "2026-10-01")], { primaryRoleIds: new Set(["10"]), shopRoleIds: shop })).toBe(1840);
+    // Salaried rows are not hourly rates.
+    expect(pickShopWage([w(1, 10, 99999, "2026-10-01", "weekly_salary")], { primaryRoleIds: new Set(["10"]), shopRoleIds: shop })).toBeNull();
+    // No live location link (shopRoleIds null): any role counts, still dated-latest.
+    expect(pickShopWage([w(1, 10, 1840, "2026-07-01"), w(2, 11, 2100, null)], { primaryRoleIds: new Set(), shopRoleIds: null })).toBe(1840);
+  });
+  it("loadWages picks by the primary role at the shop's linked 7shifts location (B216)", async () => {
+    const t = baseTables();
+    t.sevenshifts_user_links = [{ id: "ul1", sevenshifts_user_id: "701", user_id: EMP, linked_at_location_id: A, active: true }];
+    t.sevenshifts_location_links = [{ location_id: A, sevenshifts_location_id: 5001, active: true }];
+    t.sevenshifts_roles = [{ id: 10, location_id: 5001 }, { id: 11, location_id: 5001 }, { id: 99, location_id: 5002 }];
+    t.sevenshifts_user_assignments = [{ user_id: "701", edge_key: "701:5001:-:10", location_id: 5001, role_id: 10, is_primary: true, active: true },
+      { user_id: "701", edge_key: "701:5001:-:11", location_id: 5001, role_id: 11, is_primary: false, active: true }];
+    t.sevenshifts_wages = [
+      { user_id: "701", wage_id: 1, role_id: 10, wage_type: "hourly", wage_cents: 1840, upcoming: false, effective_date: "2026-07-01", active: true },
+      { user_id: "701", wage_id: 2, role_id: 11, wage_type: "hourly", wage_cents: 2100, upcoming: false, effective_date: null, active: true },
+      { user_id: "701", wage_id: 3, role_id: 99, wage_type: "hourly", wage_cents: 3000, upcoming: false, effective_date: "2026-10-01", active: true },
+    ];
+    const prev = { t: process.env.SEVENSHIFTS_ACCESS_TOKEN, s: process.env.SEVENSHIFTS_SYNC };
+    process.env.SEVENSHIFTS_ACCESS_TOKEN = "test-token-not-real";
+    process.env.SEVENSHIFTS_SYNC = "1";
+    try {
+      expect((await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW })).wages).toEqual({ byUserCents: { [EMP]: 1840 }, source: "sevenshifts" });
     } finally {
       if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
       if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;

@@ -140,6 +140,43 @@ export function eventQFromWindow(text: string | null): number | null {
   return Math.floor((h * 60 + min) / 15);
 }
 
+/** One current 7shifts wage row of a person (B216). */
+export interface ShopWageRow { wage_id: number | string; role_id: number | string | null; wage_type: string; wage_cents: number; effective_date: string | null }
+
+/**
+ * B216: the ONE hourly rate a person is priced at for THIS shop. The schedule has no position → 7shifts role mapping,
+ * so every hour is priced at one rate, chosen in tiers: (1) a wage of the person's PRIMARY role at this shop's 7shifts
+ * location, (2) a wage of any role at that location (`shopRoleIds = null` when the shop has no live 7shifts location
+ * link: then any role counts here, as before), (3) a wage with no role. A role at another location is never picked.
+ * Within a tier the latest effective date wins — an UNDATED wage is the oldest, never the winner — then the highest
+ * wage id. Order-independent. Null = no hourly wage.
+ */
+export function pickShopWage(rows: readonly ShopWageRow[], opts: { primaryRoleIds: ReadonlySet<string>; shopRoleIds: ReadonlySet<string> | null }): number | null {
+  const tier = (r: ShopWageRow): number => {
+    if (r.role_id === null || r.role_id === undefined) return 3;
+    const role = String(r.role_id);
+    if (opts.primaryRoleIds.has(role) && (opts.shopRoleIds === null || opts.shopRoleIds.has(role))) return 1;
+    if (opts.shopRoleIds === null || opts.shopRoleIds.has(role)) return 2;
+    return 0; // another location's role
+  };
+  const later = (a: ShopWageRow, b: ShopWageRow): boolean => {
+    const da = a.effective_date ?? "";
+    const db = b.effective_date ?? "";
+    if (da !== db) return da > db;
+    const ia = String(a.wage_id);
+    const ib = String(b.wage_id);
+    return ia.length !== ib.length ? ia.length > ib.length : ia > ib; // digit strings (bigint ids): numeric order
+  };
+  let best: { row: ShopWageRow; tier: number } | null = null;
+  for (const r of rows) {
+    if (r.wage_type !== "hourly") continue;
+    const t = tier(r);
+    if (t === 0) continue;
+    if (!best || t < best.tier || (t === best.tier && later(r, best.row))) best = { row: r, tier: t };
+  }
+  return best ? best.row.wage_cents : null;
+}
+
 /** The ezCater orders not already in the pipeline, as booked events (named, never summed). */
 export interface EzcaterOrderRow { id: string; event_date: string | null; event_timestamp: string | null; handoff_time: string | null; headcount: number | null; total_cents: number | null; status: string | null }
 

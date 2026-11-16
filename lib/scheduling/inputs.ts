@@ -40,8 +40,8 @@ import { forecastWeek, withCatering, type DayTypeOverride, type SalesBaselineRes
 import { ScheduleError } from "./errors-shared";
 import type { Pin } from "./generator/build-shared";
 import {
-  DEFAULT_SCHEDULE_SHOP_SETTINGS, STRUCTURE_DEFAULTS_ID, closingFacts, datesOfWeeks, memberSinceDate, toCateringEvents, tsStructureVersion,
-  type DayTypeRow, type EzcaterOrderRow, type MemberRow, type ScheduleShopSettings, type SchedulingInputs, type StoredRevision, type StoredWeek,
+  DEFAULT_SCHEDULE_SHOP_SETTINGS, STRUCTURE_DEFAULTS_ID, closingFacts, datesOfWeeks, memberSinceDate, pickShopWage, toCateringEvents, tsStructureVersion,
+  type DayTypeRow, type EzcaterOrderRow, type MemberRow, type ShopWageRow, type ScheduleShopSettings, type SchedulingInputs, type StoredRevision, type StoredWeek,
 } from "./inputs-shared";
 import type { PersonSettingsRow } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, RuleProblem, Segment, Shift } from "./rules-shared";
@@ -279,14 +279,44 @@ async function loadWages(service: SupabaseClient, locationId: string, memberIds:
       .select("sevenshifts_user_id, user_id").in("user_id", ids).eq("linked_at_location_id", locationId).eq("active", true).order("user_id", { ascending: true }).range(f, t)));
   }
   const byRemote = new Map(links.map((l) => [String(l.sevenshifts_user_id), l.user_id]));
-  const byUserCents: Record<string, number> = {};
-  for (const ids of chunks([...byRemote.keys()])) {
-    for (const w of await selectAllRows<{ user_id: string; wage_type: string; wage_cents: number; upcoming: boolean; effective_date: string | null }>((f, t) => service
-      .from("sevenshifts_wages").select("user_id, wage_type, wage_cents, upcoming, effective_date").in("user_id", ids).eq("active", true).eq("upcoming", false)
-      .order("user_id", { ascending: true }).order("effective_date", { ascending: true }).range(f, t))) {
-      const u = byRemote.get(String(w.user_id));
-      if (u && w.wage_type === "hourly") byUserCents[u] = w.wage_cents; // ascending effective date: the latest current wage wins
+  // B216: the wage is picked per person by ROLE at this shop's 7shifts location (pickShopWage), never "the last row".
+  const shopLink = await firstRow<{ sevenshifts_location_id: number | string }>(service.from("sevenshifts_location_links")
+    .select("sevenshifts_location_id").eq("location_id", locationId).eq("active", true).limit(1));
+  const remoteLoc = shopLink ? shopLink.sevenshifts_location_id : null;
+  let shopRoleIds: Set<string> | null = null;
+  const primaryByRemote = new Map<string, Set<string>>();
+  if (remoteLoc !== null) {
+    shopRoleIds = new Set((await selectAllRows<{ id: number | string }>((f, t) => service.from("sevenshifts_roles").select("id")
+      .eq("location_id", remoteLoc).order("id", { ascending: true }).range(f, t))).map((r) => String(r.id)));
+    for (const ids of chunks([...byRemote.keys()])) {
+      for (const a of await selectAllRows<{ user_id: number | string; role_id: number | string | null; is_primary: boolean | null }>((f, t) => service
+        .from("sevenshifts_user_assignments").select("user_id, role_id, is_primary").in("user_id", ids).eq("location_id", remoteLoc).eq("active", true)
+        .order("user_id", { ascending: true }).order("edge_key", { ascending: true }).range(f, t))) {
+        if (a.role_id === null) continue;
+        shopRoleIds.add(String(a.role_id));
+        if (a.is_primary === true) {
+          const set = primaryByRemote.get(String(a.user_id)) ?? new Set<string>();
+          set.add(String(a.role_id));
+          primaryByRemote.set(String(a.user_id), set);
+        }
+      }
     }
+  }
+  const rowsByRemote = new Map<string, ShopWageRow[]>();
+  for (const ids of chunks([...byRemote.keys()])) {
+    for (const w of await selectAllRows<ShopWageRow & { user_id: number | string }>((f, t) => service
+      .from("sevenshifts_wages").select("user_id, wage_id, role_id, wage_type, wage_cents, effective_date").in("user_id", ids).eq("active", true).eq("upcoming", false)
+      .order("user_id", { ascending: true }).order("effective_date", { ascending: true, nullsFirst: true }).order("wage_id", { ascending: true }).range(f, t))) {
+      const k = String(w.user_id);
+      const list = rowsByRemote.get(k) ?? [];
+      list.push(w);
+      rowsByRemote.set(k, list);
+    }
+  }
+  const byUserCents: Record<string, number> = {};
+  for (const [remote, u] of [...byRemote.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) {
+    const cents = pickShopWage(rowsByRemote.get(remote) ?? [], { primaryRoleIds: primaryByRemote.get(remote) ?? new Set(), shopRoleIds });
+    if (cents !== null) byUserCents[u] = cents;
   }
   // B217: the labor settings of the CONNECTED company — the one the newest finished sync ran against (its ledger row
   // names it) — never "whichever company row sorts first": a token switch leaves the old company's row behind.
