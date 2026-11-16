@@ -66,9 +66,15 @@ export function extractIp(req: NextRequest): string | null {
  * Distinguish via `result instanceof Response` (NextResponse extends Response).
  */
 export async function parseJsonBody(req: NextRequest): Promise<unknown | NextResponse> {
+  let body: unknown;
   try {
-    return await req.json();
+    body = await req.json();
   } catch {
     return jsonError(400, "invalid_json", { message: "Request body must be valid JSON" });
   }
+  // No route accepts a bare JSON `null`: it is never a payload, and the routes' cast-then-read (`raw as Record<…>`,
+  // then `b.field`) threw a TypeError → 500 on it (W27 / B226). Arrays and other values still pass through (the
+  // weights route takes an array body; a property read on a number or string is `undefined`, a field-level 400).
+  if (body === null) return jsonError(400, "invalid_payload", { message: "Request body must not be null" });
+  return body;
 }
