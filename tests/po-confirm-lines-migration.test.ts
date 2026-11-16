@@ -39,6 +39,8 @@ describe("0325_po_confirm_lines_and_vendor_child_removal", () => {
 
   it("is idempotent: re-runnable objects only, nothing rewritten", () => {
     expect(m0325).toContain("add column if not exists email_send_uncertain_at");
+    expect(m0325).toContain("add column if not exists email_attempt_key text null");
+    expect(m0325).toContain("add column if not exists email_attempt_at timestamptz null");
     expect(m0325).toContain("drop trigger if exists po_lines_draft_only on public.po_lines;");
     const outside = m0325.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n")
       .replace(/create or replace function[\s\S]*?end \$\$;/g, "");

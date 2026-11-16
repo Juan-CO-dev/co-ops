@@ -200,6 +200,17 @@ for (const [table, fn, last, cols] of [
   const col = await one(db, `select is_nullable n, column_default d, data_type t from information_schema.columns
     where table_name='purchase_orders' and column_name='email_send_uncertain_at'`);
   check(col?.n === "YES" && col.d === null && col.t === "timestamp with time zone", "P4 email_send_uncertain_at: nullable timestamptz, no default");
+  for (const [name, type] of [["email_attempt_key", "text"], ["email_attempt_at", "timestamp with time zone"]]) {
+    const c = await one(db, `select is_nullable n, column_default d, data_type t from information_schema.columns
+      where table_name='purchase_orders' and column_name=$1`, [name]);
+    check(c?.n === "YES" && c.d === null && c.t === type, `P4 ${name}: nullable ${type}, no default (B108 fix round 1)`);
+  }
+  // The attempt record is a plain row write the app makes after the confirmed->placed flip: no trigger refuses it.
+  await draft(db, I.po2, "CH-2-V");
+  await db.query("update purchase_orders set status='placed' where id=$1", [I.po2]);
+  await db.query("update purchase_orders set email_attempt_key='po-order/k', email_attempt_at=now() where id=$1", [I.po2]);
+  const att = await one(db, "select email_attempt_key k from purchase_orders where id=$1", [I.po2]);
+  check(att?.k === "po-order/k", "P4 the attempt record is writable on a placed PO");
   // The trigger fires for service_role writes too (a trigger needs no EXECUTE grant).
   await draft(db);
   await db.query("update purchase_orders set status='confirmed' where id=$1", [I.po]);

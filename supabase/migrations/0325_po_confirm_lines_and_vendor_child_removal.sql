@@ -9,6 +9,12 @@
 --      per-confirmation Resend idempotency key (a retry cannot duplicate it), puts the PO back to confirmed, and
 --      stamps this column the first time; the PO panel shows "email unconfirmed" while it is set and the vendor has
 --      not confirmed (ack null). Nullable, no default, no backfill.
+--   1b. purchase_orders.email_attempt_key / email_attempt_at (B108 fix round 1). Resend keeps an idempotency key for
+--      24 hours only, so a retry two days after a lost response would be a NEW email. The app records the FIRST send
+--      attempt for a confirmation (its idempotency key + when) BEFORE calling the provider, clears it again on a
+--      definite rejection (nothing went out), and refuses a same-key retry past 23 hours (409 send_window_expired:
+--      staff check with the vendor). A reopened + re-confirmed PO has a new key and replaces the record. Nullable,
+--      no default, no backfill. Written by lib/po-email.ts only.
 --   2. Trigger po_lines_draft_only (B109, B110). A purchase order's lines may change only while the PO is a DRAFT.
 --      Before every INSERT / UPDATE of a po_lines row it takes FOR SHARE on the parent PO (so it waits for a
 --      concurrent confirm / reopen holding the row) and refuses 'po_not_draft' (P0001) when the PO is past draft and
@@ -37,12 +43,13 @@
 -- APP COMPATIBILITY: the app works before and after this file.
 --   Before: confirmPO, removeVendorContact and removeVendorOrderingDetail fall back to their pre-0325 statements
 --   when the RPC is missing (PGRST202 / 42883) — the races stay open until this is applied; the unconfirmed-email
---   mark is not written or shown (the idempotency key still makes a retry safe).
+--   mark is not written or shown, and the attempt record is skipped (a retry is deduplicated by the idempotency key
+--   alone, i.e. only within Resend's 24 h; the past-window refusal needs this file).
 --   After, with OLD code still deployed: the old confirm is a plain guarded UPDATE (still works; the race stays open
 --   for that deployment), and an old updateDraftLines that loses the race gets a 500 instead of a named 409 (it
 --   was a silent wrong success before). Recommended order: deploy the W19 PR, then apply.
--- ROLLBACK: drop trigger po_lines_draft_only on public.po_lines; drop the four functions; the column is harmless
---   (the app reads it tolerantly). The app falls back by itself when the RPCs are gone.
+-- ROLLBACK: drop trigger po_lines_draft_only on public.po_lines; drop the four functions; the three columns are
+--   harmless (the app reads them tolerantly). The app falls back by itself when the RPCs are gone.
 --
 -- DEPENDS ON: 0092 (vendor_contacts, vendor_ordering_details), 0174 (purchase_orders, po_lines), 0190
 --   (po_lines_po_sku_uq), 0205 (po_lines.guide_section_snapshot). Re-applies cleanly (idempotent).
@@ -96,6 +103,12 @@ end $$;
 alter table public.purchase_orders add column if not exists email_send_uncertain_at timestamptz null;
 comment on column public.purchase_orders.email_send_uncertain_at is
   'W19/B108: first time a vendor order email got an unclear provider answer (it may have reached the vendor). Shown as "email unconfirmed" until ack is filled. Written by lib/po-email.ts only.';
+alter table public.purchase_orders add column if not exists email_attempt_key text null;
+alter table public.purchase_orders add column if not exists email_attempt_at timestamptz null;
+comment on column public.purchase_orders.email_attempt_key is
+  'W19/B108 fix round 1: the Resend idempotency key of the confirmation whose first vendor-email attempt email_attempt_at records. Written by lib/po-email.ts only.';
+comment on column public.purchase_orders.email_attempt_at is
+  'W19/B108 fix round 1: when the first vendor-email attempt for email_attempt_key started (before the provider call). A same-key retry past 23 h is refused: Resend keeps keys 24 h only. Cleared on a definite rejection. Written by lib/po-email.ts only.';
 
 -- ── 2. PO LINES CHANGE ONLY WHILE THE PO IS A DRAFT (B109, B110) ────────────────────────────────
 create or replace function public.po_lines_draft_only()

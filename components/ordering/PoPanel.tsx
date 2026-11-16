@@ -406,7 +406,8 @@ export function PoPanel({
             )}
 
             {/* W19/B108: an order email got an UNCLEAR answer — it may have reached the vendor. Shown (alert, always
-                visible) until the vendor confirms; a retry from here cannot send a duplicate within 24 hours. */}
+                visible) until the vendor confirms; a retry from here cannot send a duplicate within 23 hours of the first try,
+                and the server refuses one after that (send_window_expired, fix round 1). */}
             {detail.emailSendUncertainAt && !detail.ack && (
               <div role="status" className="mt-3 rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-3 text-sm text-co-warning-text">
                 {t(detail.status === "confirmed" ? "ordering.po.send_unconfirmed.confirmed" : "ordering.po.send_unconfirmed.placed", {

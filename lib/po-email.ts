@@ -18,7 +18,8 @@ import { canDoOperationalTask } from "@/lib/operational-task-access";
  *        a definite rejection throws 502 `send_failed`; an UNCLEAR answer throws 502 `send_uncertain`
  *        (409 `send_conflict` for same key / different body) and marks the PO "email unconfirmed"
  *        (W19/B108); either way the PO is left CONFIRMED (manual affordances remain — no pipe
- *        failure blocks ordering) and a retry cannot duplicate the email,
+ *        failure blocks ordering) and a retry cannot duplicate the email: the first attempt is recorded before
+ *        the send and a retry past the 23 h safe window is refused 409 `send_window_expired` (fix round 1),
  *     5. on success: audit `po.email_sent`, then recordPlacement (the ONE confirmed→placed
  *        machinery, channel email, target = joined recipients, provider_message_id = Resend
  *        id). A racing second tap loses recordPlacement's guarded flip → 409.
@@ -46,7 +47,7 @@ import {
   PO_MIN,
   recordPlacement,
 } from "@/lib/purchase-orders";
-import { emailOrderingAvailable, isPlausibleEmail, poOrderIdempotencyKey, type OrderEmailPreview } from "@/lib/po-email-shared";
+import { emailOrderingAvailable, isPlausibleEmail, poOrderIdempotencyKey, PO_EMAIL_RETRY_WINDOW_MS, type OrderEmailPreview } from "@/lib/po-email-shared";
 import { providerSendOutcome } from "@/lib/provider-send-outcome-shared";
 
 // Re-export the pure gate + preview type so tests + server callers have one import site;
@@ -292,6 +293,55 @@ async function markEmailSendUncertain(actor: AuthContext, ctx: PoEmailContext, c
 }
 
 /**
+ * W19/B108 fix round 1: durably record the FIRST send attempt for this confirmation, BEFORE the provider call, and
+ * refuse a retry once Resend no longer dedupes the key. Resend keeps an idempotency key for 24 hours only; a retry
+ * two days after a lost response would otherwise email the vendor a second order. Runs inside recordPlacement's
+ * transmit callback, after the guarded confirmed->placed flip, so one attempt per PO is in flight at a time.
+ *   - The row carries the key of the confirmation it belongs to (0325 email_attempt_key / email_attempt_at). A
+ *     record for another key (a reopened + re-confirmed PO) is replaced: that is a new order and a new key.
+ *   - Same key, first attempt older than PO_EMAIL_RETRY_WINDOW_MS -> 409 `send_window_expired`; nothing is sent.
+ *   - Before 0325 (the columns are missing) -> logged, and the send goes with the key alone (as before this fix).
+ *   - Any other read / write error -> 503 `attempt_not_recorded`; nothing is sent (the claim is reverted).
+ * Returns `fresh: true` when this call wrote the record (the caller clears it again on a definite rejection).
+ */
+async function beginEmailAttempt(poId: string, key: string): Promise<{ fresh: boolean }> {
+  const sb: ServiceClient = getServiceRoleClient();
+  const { data, error } = await sb.from("purchase_orders")
+    .select("email_attempt_key, email_attempt_at").eq("id", poId)
+    .maybeSingle<{ email_attempt_key: string | null; email_attempt_at: string | null }>();
+  if (error) {
+    if (error.code === "42703" || error.code === "PGRST204") {
+      console.error(`beginEmailAttempt: po ${poId} has no attempt record columns; is 0325 applied? (key-only retry safety)`);
+      return { fresh: false };
+    }
+    throw new PurchaseOrderError(503, "attempt_not_recorded", "Could not record the send attempt; nothing was sent");
+  }
+  if (data?.email_attempt_key === key && data.email_attempt_at) {
+    const firstMs = Date.parse(data.email_attempt_at);
+    if (!Number.isFinite(firstMs) || Date.now() - firstMs >= PO_EMAIL_RETRY_WINDOW_MS) {
+      throw new PurchaseOrderError(409, "send_window_expired", "The first send attempt is too old for a safe automatic retry; check with the vendor");
+    }
+    return { fresh: false };
+  }
+  const { error: wErr } = await sb.from("purchase_orders")
+    .update({ email_attempt_key: key, email_attempt_at: new Date().toISOString() })
+    .eq("id", poId);
+  if (wErr) throw new PurchaseOrderError(503, "attempt_not_recorded", "Could not record the send attempt; nothing was sent");
+  return { fresh: true };
+}
+
+/** W19/B108 fix round 1: a DEFINITE rejection sent nothing, so the attempt record this call wrote is removed (a later
+ *  send is a first attempt again). Only the row still holding this key is cleared. Best-effort: a failure is logged
+ *  and leaves the record (the safe direction: at worst a later retry is refused and staff call the vendor). */
+async function clearEmailAttempt(poId: string, key: string): Promise<void> {
+  const sb: ServiceClient = getServiceRoleClient();
+  const { error } = await sb.from("purchase_orders")
+    .update({ email_attempt_key: null, email_attempt_at: null })
+    .eq("id", poId).eq("email_attempt_key", key);
+  if (error) console.error(`clearEmailAttempt: could not clear po ${poId} (${error.code ?? "error"})`);
+}
+
+/**
  * SEND the confirmed PO to its vendor by email, then place it (KH+ + location-bind). The
  * SERVER re-derives the whole email — the client's tap carries only poId. Gates (spec §3/§6):
  *   - 409 `po_not_confirmed` (via loadPoEmailContext) — a mis-tapped Confirm never emails.
@@ -343,7 +393,8 @@ export async function sendOrderEmail(actor: AuthContext, poId: string): Promise<
   // W19/B108 — AN UNCLEAR ANSWER IS NOT A FAILURE. A lost response, a 5xx or `application_error` can arrive after
   // Resend already sent the email, and the revert puts the PO back to confirmed for a retry. So the send carries a
   // per-confirmation idempotency key (a retry within Resend's 24 h returns the first message: one email, one
-  // transmission row), and the answer is classified by the ONE shared reading (lib/provider-send-outcome-shared.ts):
+  // transmission row; fix round 1: the first attempt is recorded before the send and a retry past
+  // PO_EMAIL_RETRY_WINDOW_MS is refused 409 `send_window_expired`), and the answer is classified by the ONE shared reading (lib/provider-send-outcome-shared.ts):
   //   sent -> placed, as before; a definite rejection -> 502 `send_failed` (nothing went out);
   //   uncertain -> 502 `send_uncertain`; same key, different body (recipients changed between taps) -> 409
   //   `send_conflict`. Both unclear outcomes mark the PO "email unconfirmed" (owner decision W19-1 a + note), shown
@@ -353,6 +404,8 @@ export async function sendOrderEmail(actor: AuthContext, poId: string): Promise<
       actor, poId,
       { channel: "email", target, note: null },
       async () => {
+        const idempotencyKey = poOrderIdempotencyKey(ctx.poId, ctx.confirmedAt);
+        const attempt = await beginEmailAttempt(ctx.poId, idempotencyKey);
         const result = await sendEmail({
           to: ctx.recipients,
           from: alias,
@@ -360,7 +413,7 @@ export async function sendOrderEmail(actor: AuthContext, poId: string): Promise<
           subject,
           html: htmlBody,
           text: textBody,
-          idempotencyKey: poOrderIdempotencyKey(ctx.poId, ctx.confirmedAt),
+          idempotencyKey,
         });
         const outcome = providerSendOutcome(result);
         if (outcome.outcome === "sent") {
@@ -368,6 +421,7 @@ export async function sendOrderEmail(actor: AuthContext, poId: string): Promise<
           return { providerMessageId: outcome.providerId };
         }
         if (outcome.outcome === "failed") {
+          if (attempt.fresh) await clearEmailAttempt(ctx.poId, idempotencyKey);
           throw new PurchaseOrderError(502, "send_failed", `Vendor email failed to send: ${"error" in result ? result.error : ""}`);
         }
         if (outcome.code === "idempotency_conflict") {
