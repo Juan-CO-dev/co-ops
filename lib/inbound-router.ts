@@ -164,7 +164,12 @@ export async function processInboundMessage(id: string, sb = getServiceRoleClien
   }
 }
 /** Bounded concurrent fetches; reserve a full fetch+storage window before starting. */
-export async function sweepInboundMessages(sb = getServiceRoleClient(), deadline = Date.now() + 140_000) {
+/**
+ * `progress.started` counts messages whose fetch BEGAN, and it is written as each one begins, so a caller that stops
+ * waiting for this sweep (its share ended) still knows whether any unit of work started (W27/B225 r5). A sweep still
+ * waiting on its queue read at that moment has started nothing, and the counter says so.
+ */
+export async function sweepInboundMessages(sb = getServiceRoleClient(), deadline = Date.now() + 140_000, progress: { started: number } = { started: 0 }) {
   if (!process.env.RESEND_INBOUND_SECRET || !process.env.RESEND_API_KEY) return { swept: 0, failed: 0, deferred: 0 };
   const { data, error } = await sb.from("inbound_messages").select("id").in("content_state", ["pending", "failed", "blocked_config"])
     .lt("fetch_attempts", INBOUND_MAX_ATTEMPTS).lte("next_attempt_at", new Date().toISOString())
@@ -178,6 +183,7 @@ export async function sweepInboundMessages(sb = getServiceRoleClient(), deadline
       const row = data?.[cursor++];
       if (!row) break;
       swept++;
+      progress.started++;
       try {
         const outcome = await processInboundMessage(row.id, sb);
         if (outcome === "failed" || outcome === "blocked_config") failed++;

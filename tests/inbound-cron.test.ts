@@ -61,7 +61,7 @@ it("fetching stops where one whole parse is still left, and only parses begun wi
   const result = await runParseReceipts(started + RUN_MS);
   // The fetch share is worked out, not typed: the run less one parse and the handoff to it.
   expect(fetchShareDeadline(started + RUN_MS)).toBe(started + RUN_MS - PARSE_ROW_RESERVE_MS - PARSE_HANDOFF_MS);
-  expect(mocks.sweep).toHaveBeenCalledExactlyOnceWith(client, started + 100_000);
+  expect(mocks.sweep).toHaveBeenCalledExactlyOnceWith(client, started + 100_000, { started: 0 });
   expect(query.limit).toHaveBeenCalledWith(10);
   expect(parseReceipt).toHaveBeenCalledExactlyOnceWith(client, "first");
   expect(result).toMatchObject({ swept: 1, parsed: 1, failed: 0,
@@ -167,7 +167,7 @@ it("with no parse key there is no parse to keep time for: fetching gets the whol
   mocks.service.mockReturnValue(client);
   const deadline = Date.now() + RUN_MS;
   await runParseReceipts(deadline);
-  expect(mocks.sweep).toHaveBeenCalledExactlyOnceWith(client, deadline);
+  expect(mocks.sweep).toHaveBeenCalledExactlyOnceWith(client, deadline, { started: 0 });
 });
 
 it.each([[110_000, 1], [110_001, 0]])("parse admission boundary: with %s ms of the run gone, %s rows begin", async (elapsed, expected) => {
