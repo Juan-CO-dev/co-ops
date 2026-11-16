@@ -14,9 +14,12 @@ import { canDoOperationalTask } from "@/lib/operational-task-access";
  *     2. gate: 409 `email_dormant` when the auto leg isn't awake (alias × EMAIL_FROM domain),
  *     3. gate: 409 `no_email_target` when zero plausible email recipients,
  *     3b. gate: 409 `no_order_lines` when the snapshot yields zero sendable lines,
- *     4. sendEmail(from=alias, replyTo=alias, to=[recipients]) — on {error}, throw a
- *        502-shaped `send_failed` and leave the PO CONFIRMED (manual affordances remain —
- *        no pipe failure blocks ordering),
+ *     4. sendEmail(from=alias, replyTo=alias, to=[recipients], idempotencyKey per confirmation) —
+ *        a definite rejection throws 502 `send_failed`; an UNCLEAR answer throws 502 `send_uncertain`
+ *        (409 `send_conflict` for same key / different body) and marks the PO "email unconfirmed"
+ *        (W19/B108); either way the PO is left CONFIRMED (manual affordances remain — no pipe
+ *        failure blocks ordering) and a retry cannot duplicate the email: the first attempt is recorded before
+ *        the send and a retry past the 23 h safe window is refused 409 `send_window_expired` (fix round 1),
  *     5. on success: audit `po.email_sent`, then recordPlacement (the ONE confirmed→placed
  *        machinery, channel email, target = joined recipients, provider_message_id = Resend
  *        id). A racing second tap loses recordPlacement's guarded flip → 409.
@@ -36,15 +39,16 @@ import type { AuthContext } from "@/lib/session";
 import { TENANT_NAME } from "@/lib/tenant";
 import { sendEmail } from "@/lib/email";
 import { renderEmailLayout, escapeHtml } from "@/lib/email-templates/_layout";
-import { renderPoBodyLines, type PoBodyLine } from "@/lib/po-body";
+import { renderPoBodyLines, vendorT, type PoBodyLine } from "@/lib/po-body";
+import { parseSnapshotLines, type SnapshotLine } from "@/lib/po-snapshot-shared";
 import { groupByGuideSection, hasGuideHeader, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
-import { serverT } from "@/lib/i18n/server";
 import {
   PurchaseOrderError,
   PO_MIN,
   recordPlacement,
 } from "@/lib/purchase-orders";
-import { emailOrderingAvailable, isPlausibleEmail, type OrderEmailPreview } from "@/lib/po-email-shared";
+import { emailOrderingAvailable, isPlausibleEmail, poOrderIdempotencyKey, PO_EMAIL_RETRY_WINDOW_MS, type OrderEmailPreview } from "@/lib/po-email-shared";
+import { providerSendOutcome } from "@/lib/provider-send-outcome-shared";
 
 // Re-export the pure gate + preview type so tests + server callers have one import site;
 // the client (PoPanel) imports OrderEmailPreview from the shared leaf directly.
@@ -62,20 +66,6 @@ function actorLoc(actor: AuthContext): LocationActor {
   return { role: actor.user.role, locations: actor.locations };
 }
 
-/** The confirmed_snapshot line shape (mirrors confirmPO's SnapshotLine; jsonb is
- *  untyped on read so we validate/narrow defensively at use). */
-interface SnapshotLine {
-  skuId: string;
-  name: string;
-  itemNumber: string | null;
-  qty: number;
-  unitLabel: string | null;
-  priceCents: number | null;
-  guidePos: number | null;
-  /** V3-A: section name frozen with the snapshot; null on pre-0205 snapshots. */
-  guideSection: string | null;
-}
-
 interface PoEmailContext {
   poId: string;
   locationId: string;
@@ -84,6 +74,8 @@ interface PoEmailContext {
   locationName: string;
   locationAddress: string | null;
   receiptEmail: string | null;
+  /** The confirmation this email sends (W19/B108: half of the idempotency key). */
+  confirmedAt: string | null;
   lines: SnapshotLine[];
   recipients: string[];
 }
@@ -99,11 +91,11 @@ async function loadPoEmailContext(actor: AuthContext, poId: string): Promise<PoE
   const sb: ServiceClient = getServiceRoleClient();
 
   const { data: po, error: poErr } = await sb.from("purchase_orders")
-    .select("id, location_id, vendor_id, display_code, status, confirmed_snapshot")
+    .select("id, location_id, vendor_id, display_code, status, confirmed_snapshot, confirmed_at")
     .eq("id", poId)
     .maybeSingle<{
       id: string; location_id: string; vendor_id: string; display_code: string;
-      status: string; confirmed_snapshot: unknown | null;
+      status: string; confirmed_snapshot: unknown | null; confirmed_at: string | null;
     }>();
   if (poErr) throw new Error(`loadPoEmailContext load: ${poErr.message}`);
   if (!po) throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
@@ -153,26 +145,9 @@ async function loadPoEmailContext(actor: AuthContext, poId: string): Promise<PoE
   // order rendered as if it were real. (This comment used to claim "the caller's no-lines
   // path never fabricates order content"; there was no such caller path, which is audit v2
   // finding F2's second half. The path exists now.)
-  const snapshot = (po.confirmed_snapshot ?? null) as { lines?: unknown } | null;
-  const snapshotLines = snapshot?.lines;
-  const rawLines: unknown[] = Array.isArray(snapshotLines) ? snapshotLines : [];
-  const lines: SnapshotLine[] = rawLines
-    .map((l): SnapshotLine | null => {
-      if (typeof l !== "object" || l === null) return null;
-      const r = l as Record<string, unknown>;
-      const qty = typeof r.qty === "number" && Number.isFinite(r.qty) ? r.qty : 0;
-      return {
-        skuId: typeof r.skuId === "string" ? r.skuId : "",
-        name: typeof r.name === "string" ? r.name : "(sku)",
-        itemNumber: typeof r.itemNumber === "string" ? r.itemNumber : null,
-        qty,
-        unitLabel: typeof r.unitLabel === "string" ? r.unitLabel : null,
-        priceCents: typeof r.priceCents === "number" && Number.isFinite(r.priceCents) ? r.priceCents : null,
-        guidePos: typeof r.guidePos === "number" ? r.guidePos : null,
-        guideSection: typeof r.guideSection === "string" ? r.guideSection : null,
-      };
-    })
-    .filter((l): l is SnapshotLine => l !== null && l.qty > 0); // qty 0 = removed (transmission skips)
+  // W19/B110: the ONE snapshot reader (lib/po-snapshot-shared.ts), shared with the panel's loadPoDetail.
+  const lines: SnapshotLine[] = parseSnapshotLines(po.confirmed_snapshot)
+    .filter((l) => l.qty > 0); // qty 0 = removed (transmission skips)
 
   return {
     poId: po.id,
@@ -182,6 +157,7 @@ async function loadPoEmailContext(actor: AuthContext, poId: string): Promise<PoE
     locationName: loc?.name ?? "",
     locationAddress: loc?.address ?? null,
     receiptEmail: loc?.receipt_email_address ?? null,
+    confirmedAt: po.confirmed_at,
     lines,
     recipients,
   };
@@ -189,7 +165,7 @@ async function loadPoEmailContext(actor: AuthContext, poId: string): Promise<PoE
 
 /** V3-A: the vendor reads English; the ONE renderer (lib/po-body) decides the line order and
  *  wording, so the emailed lines equal the copied lines in the PO panel byte for byte. */
-const bodyT = (key: Parameters<typeof serverT>[1], params?: Parameters<typeof serverT>[2]) => serverT("en", key, params);
+const bodyT = vendorT;
 const asBodyLine = (l: SnapshotLine): PoBodyLine =>
   ({ skuName: l.name, orderQty: l.qty, orderUnitLabel: l.unitLabel, itemNumber: l.itemNumber, guidePosition: l.guidePos, guideSection: l.guideSection });
 
@@ -296,6 +272,77 @@ export async function orderEmailPreview(actor: AuthContext, poId: string): Promi
 }
 
 /**
+ * W19/B108: record that a vendor order email MAY have gone out. The PO is back to confirmed (recordPlacement
+ * reverted it) and carries `email_send_uncertain_at` (0325), which the panel shows until the vendor confirms (ack).
+ * The FIRST unclear attempt is kept (`is null`): it starts Resend's 24 h idempotency window. Best-effort: before
+ * 0325 the column does not exist and the write is logged and skipped (the retry is still safe through the key).
+ * The audit row carries a count and the code only: never an address, never provider text.
+ */
+async function markEmailSendUncertain(actor: AuthContext, ctx: PoEmailContext, code: "send_uncertain" | "send_conflict"): Promise<void> {
+  const sb: ServiceClient = getServiceRoleClient();
+  const { error } = await sb.from("purchase_orders")
+    .update({ email_send_uncertain_at: new Date().toISOString() })
+    .eq("id", ctx.poId).is("email_send_uncertain_at", null);
+  if (error) console.error(`markEmailSendUncertain: could not mark po ${ctx.poId} (${error.code ?? "error"}); is 0325 applied?`);
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "po.email_send_uncertain", resourceTable: "purchase_orders", resourceId: ctx.poId,
+    metadata: { location_id: ctx.locationId, recipient_count: ctx.recipients.length, code },
+    ipAddress: null, userAgent: null,
+  });
+}
+
+/**
+ * W19/B108 fix round 1: durably record the FIRST send attempt for this confirmation, BEFORE the provider call, and
+ * refuse a retry once Resend no longer dedupes the key. Resend keeps an idempotency key for 24 hours only; a retry
+ * two days after a lost response would otherwise email the vendor a second order. Runs inside recordPlacement's
+ * transmit callback, after the guarded confirmed->placed flip, so one attempt per PO is in flight at a time.
+ *   - The row carries the key of the confirmation it belongs to (0325 email_attempt_key / email_attempt_at). A
+ *     record for another key (a reopened + re-confirmed PO) is replaced: that is a new order and a new key.
+ *   - Same key, first attempt older than PO_EMAIL_RETRY_WINDOW_MS -> 409 `send_window_expired`; nothing is sent.
+ *   - Fix round 2: before 0325 (the columns are missing) -> logged, then 503 `attempt_not_recorded`; nothing is sent.
+ *     0325 is applied BEFORE this code ships. A send with no durable record could be retried days later, after
+ *     Resend forgot the key, so missing attempt history is never read as "nothing was sent".
+ *   - Any other read / write error -> 503 `attempt_not_recorded`; nothing is sent (the claim is reverted).
+ * Returns `fresh: true` when this call wrote the record (the caller clears it again on a definite rejection).
+ */
+async function beginEmailAttempt(poId: string, key: string): Promise<{ fresh: boolean }> {
+  const sb: ServiceClient = getServiceRoleClient();
+  const { data, error } = await sb.from("purchase_orders")
+    .select("email_attempt_key, email_attempt_at").eq("id", poId)
+    .maybeSingle<{ email_attempt_key: string | null; email_attempt_at: string | null }>();
+  if (error) {
+    if (error.code === "42703" || error.code === "PGRST204") {
+      console.error(`beginEmailAttempt: po ${poId} has no attempt record columns; apply 0325 (send refused, nothing sent)`);
+    }
+    throw new PurchaseOrderError(503, "attempt_not_recorded", "Could not record the send attempt; nothing was sent");
+  }
+  if (data?.email_attempt_key === key && data.email_attempt_at) {
+    const firstMs = Date.parse(data.email_attempt_at);
+    if (!Number.isFinite(firstMs) || Date.now() - firstMs >= PO_EMAIL_RETRY_WINDOW_MS) {
+      throw new PurchaseOrderError(409, "send_window_expired", "The first send attempt is too old for a safe automatic retry; check with the vendor");
+    }
+    return { fresh: false };
+  }
+  const { error: wErr } = await sb.from("purchase_orders")
+    .update({ email_attempt_key: key, email_attempt_at: new Date().toISOString() })
+    .eq("id", poId);
+  if (wErr) throw new PurchaseOrderError(503, "attempt_not_recorded", "Could not record the send attempt; nothing was sent");
+  return { fresh: true };
+}
+
+/** W19/B108 fix round 1: a DEFINITE rejection sent nothing, so the attempt record this call wrote is removed (a later
+ *  send is a first attempt again). Only the row still holding this key is cleared. Best-effort: a failure is logged
+ *  and leaves the record (the safe direction: at worst a later retry is refused and staff call the vendor). */
+async function clearEmailAttempt(poId: string, key: string): Promise<void> {
+  const sb: ServiceClient = getServiceRoleClient();
+  const { error } = await sb.from("purchase_orders")
+    .update({ email_attempt_key: null, email_attempt_at: null })
+    .eq("id", poId).eq("email_attempt_key", key);
+  if (error) console.error(`clearEmailAttempt: could not clear po ${poId} (${error.code ?? "error"})`);
+}
+
+/**
  * SEND the confirmed PO to its vendor by email, then place it (KH+ + location-bind). The
  * SERVER re-derives the whole email — the client's tap carries only poId. Gates (spec §3/§6):
  *   - 409 `po_not_confirmed` (via loadPoEmailContext) — a mis-tapped Confirm never emails.
@@ -308,8 +355,8 @@ export async function orderEmailPreview(actor: AuthContext, poId: string): Promi
  * FLIP-FIRST (V2-D1): the send runs INSIDE recordPlacement's transmit callback, AFTER the
  * guarded confirmed→placed flip. Two concurrent taps → one wins the flip and sends; the
  * loser 409s (`already_placed`/`not_confirmed`) having emailed NOTHING. On sendEmail
- * {error} the callback throws 502 `send_failed`; recordPlacement reverts the claim, so
- * the PO is back to confirmed with no transmission row (manual affordances remain — no
+ * {error} the callback throws (`send_failed` / `send_uncertain` / `send_conflict`, W19/B108);
+ * recordPlacement reverts the claim, so the PO is back to confirmed with no transmission row (manual affordances remain — no
  * pipe failure blocks ordering). `po.email_sent` audits after success (fail-open).
  * Returns the Resend id.
  */
@@ -343,25 +390,53 @@ export async function sendOrderEmail(actor: AuthContext, poId: string): Promise<
 
   // The ONE confirmed→placed machinery (lib/purchase-orders.ts) — flip first, then the
   // callback transmits; claim reverted + error rethrown when the callback throws.
-  await recordPlacement(
-    actor, poId,
-    { channel: "email", target, note: null },
-    async () => {
-      const result = await sendEmail({
-        to: ctx.recipients,
-        from: alias,
-        replyTo: alias,
-        subject,
-        html: htmlBody,
-        text: textBody,
-      });
-      if ("error" in result) {
-        throw new PurchaseOrderError(502, "send_failed", `Vendor email failed to send: ${result.error}`);
-      }
-      sentId = result.id;
-      return { providerMessageId: result.id };
-    },
-  );
+  //
+  // W19/B108 — AN UNCLEAR ANSWER IS NOT A FAILURE. A lost response, a 5xx or `application_error` can arrive after
+  // Resend already sent the email, and the revert puts the PO back to confirmed for a retry. So the send carries a
+  // per-confirmation idempotency key (a retry within Resend's 24 h returns the first message: one email, one
+  // transmission row; fix round 1: the first attempt is recorded before the send and a retry past
+  // PO_EMAIL_RETRY_WINDOW_MS is refused 409 `send_window_expired`), and the answer is classified by the ONE shared reading (lib/provider-send-outcome-shared.ts):
+  //   sent -> placed, as before; a definite rejection -> 502 `send_failed` (nothing went out);
+  //   uncertain -> 502 `send_uncertain`; same key, different body (recipients changed between taps) -> 409
+  //   `send_conflict`. Both unclear outcomes mark the PO "email unconfirmed" (owner decision W19-1 a + note), shown
+  //   on the panel until the vendor confirms.
+  try {
+    await recordPlacement(
+      actor, poId,
+      { channel: "email", target, note: null },
+      async () => {
+        const idempotencyKey = poOrderIdempotencyKey(ctx.poId, ctx.confirmedAt);
+        const attempt = await beginEmailAttempt(ctx.poId, idempotencyKey);
+        const result = await sendEmail({
+          to: ctx.recipients,
+          from: alias,
+          replyTo: alias,
+          subject,
+          html: htmlBody,
+          text: textBody,
+          idempotencyKey,
+        });
+        const outcome = providerSendOutcome(result);
+        if (outcome.outcome === "sent") {
+          sentId = outcome.providerId;
+          return { providerMessageId: outcome.providerId };
+        }
+        if (outcome.outcome === "failed") {
+          if (attempt.fresh) await clearEmailAttempt(ctx.poId, idempotencyKey);
+          throw new PurchaseOrderError(502, "send_failed", `Vendor email failed to send: ${"error" in result ? result.error : ""}`);
+        }
+        if (outcome.code === "idempotency_conflict") {
+          throw new PurchaseOrderError(409, "send_conflict", "The order email changed since the last attempt; check with the vendor before sending again");
+        }
+        throw new PurchaseOrderError(502, "send_uncertain", "The provider's answer was unclear; the vendor may have received the order");
+      },
+    );
+  } catch (err) {
+    if (err instanceof PurchaseOrderError && (err.code === "send_uncertain" || err.code === "send_conflict")) {
+      await markEmailSendUncertain(actor, ctx, err.code);
+    }
+    throw err;
+  }
 
   // recordPlacement also records task.override for the successful send.
   // Send + placement both durable — audit the email leg (fail-open, never blocks).

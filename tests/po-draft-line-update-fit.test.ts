@@ -86,6 +86,9 @@ function world(skus: Sku[], lines: Line[], overlays: Overlay[] = []) {
     canDoOperationalTask: async () => true, assertNoStoreSkus: async () => {},
     partitionDraftLines, assertPoSkusFit, insertNewDraftLines, DRAFT_LINE_LAPS: 3,
     auditOperationalTaskOverride: async () => {},
+    // W19/B109: the 0325 trigger-refusal mapping (the real helpers).
+    lineWriteRefusedNotDraft: new Function(`${fnText("lineWriteRefusedNotDraft")}; return lineWriteRefusedNotDraft;`)(),
+    confirmedDuringEdit: () => new PurchaseOrderError(409, "confirmed_during_edit"),
   };
   const update = new Function(...Object.keys(deps), `${fnText("updateDraftLines")}; return updateDraftLines;`)(...Object.values(deps)) as
     (actor: unknown, poId: string, lines: Array<{ skuId: string; orderQty: number }>) => Promise<{ updated: number; inserted: number }>;
