@@ -24,7 +24,7 @@ import { currentFloorStation, isFloorStation, taskHref, TASK_TYPES, type ShiftBo
 import { loadShiftBoard } from "@/lib/assignments";
 import { loadFridgesToday, type FridgeToday } from "@/lib/pulse/fridges";
 import {
-  computeOverdue, EXPECTED_BY, loadCateringDueToday, loadCateringTomorrow, loadReportStatuses, operationalNow,
+  computeOverdue, EXPECTED_BY, loadCateringDueToday, loadCateringTomorrow, loadPriorAmPrepStatus, loadReportStatuses, operationalNow,
   type CateringDueItem, type CateringTomorrow, type ReportKey, type ReportProgress, type ReportStatusRow,
 } from "@/lib/midshift";
 import { timeWindowMinutes } from "@/lib/midshift-shared";
@@ -91,6 +91,11 @@ export interface PulseDeps {
   notRung(ctx: PulseCtx): Promise<NotInToastOrder[]>;
   unlinkedClockIns(ctx: PulseCtx): Promise<{ count: number; entries: Array<{ employeeGuid: string; firstName: string | null; since: string }> }>;
   lastParPass(ctx: PulseCtx): Promise<ParPassFacts | null>;
+  /**
+   * W21/B027: LAST NIGHT's AM prep (dated the day before `ctx.date`) — the list today's opening, and
+   * so today's catering, runs on. null = the shop has no AM prep list. A shop fact (cached shop-wide).
+   */
+  priorAmPrep(ctx: PulseCtx): Promise<{ reportId: string | null; date: string; progress: ReportProgress } | null>;
   deliveries(ctx: PulseCtx): Promise<DeliveryView[]>;
   cutoffs(ctx: PulseCtx): Promise<{ count: number; vendors: OrderingCutoffAttention[] }>;
   sales(ctx: PulseCtx): Promise<SalesFacts>;
@@ -164,7 +169,7 @@ export function cachedPulseDeps(deps: PulseDeps, opts: { ttlMs?: number; now?: (
     board: async (ctx) => ({ ...(await board(ctx)), viewerId: ctx.auth.user.id, viewerLevel: ctx.auth.level }),
     reports: wrap("reports"), fridges: wrap("fridges"), cateringToday: wrap("cateringToday"),
     cateringTomorrow: wrap("cateringTomorrow"), notRung: wrap("notRung"), unlinkedClockIns: wrap("unlinkedClockIns"),
-    lastParPass: wrap("lastParPass"), deliveries: wrap("deliveries"), cutoffs: wrap("cutoffs"), sales,
+    lastParPass: wrap("lastParPass"), priorAmPrep: wrap("priorAmPrep"), deliveries: wrap("deliveries"), cutoffs: wrap("cutoffs"), sales,
     handoff: wrap("handoff"), layout: wrap("layout"),
   };
 }
@@ -194,7 +199,7 @@ export function memoDeps(deps: PulseDeps): PulseDeps {
   return {
     board: wrap("board"), reports: wrap("reports"), fridges: wrap("fridges"), cateringToday: wrap("cateringToday"),
     cateringTomorrow: wrap("cateringTomorrow"), notRung: wrap("notRung"), unlinkedClockIns: wrap("unlinkedClockIns"),
-    lastParPass: wrap("lastParPass"), deliveries: wrap("deliveries"), cutoffs: wrap("cutoffs"), sales: wrap("sales"),
+    lastParPass: wrap("lastParPass"), priorAmPrep: wrap("priorAmPrep"), deliveries: wrap("deliveries"), cutoffs: wrap("cutoffs"), sales: wrap("sales"),
     handoff: wrap("handoff"), layout: wrap("layout"),
   };
 }
@@ -258,6 +263,8 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
     reports: deps.reports(ctx),
     fridges: deps.fridges(ctx),
     cateringToday: deps.cateringToday(ctx),
+    // B027: last night's AM prep is what today's catering runs on (shop-wide, crew included).
+    priorAmPrep: deps.priorAmPrep(ctx),
     notRung: crew ? null : deps.notRung(ctx),
     parPass: crew ? null : deps.lastParPass(ctx),
     unlinked: crew ? null : deps.unlinkedClockIns(ctx),
@@ -337,16 +344,20 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
     }
   }
   const cateringToday = got("cateringToday");
-  if (cateringToday && reports) {
-    const amPrepDone = reports.rows.find((r) => r.key === "am_prep")?.progress === "done";
-    if (!amPrepDone) {
-      for (const e of cateringToday) {
-        if (e.stage !== "confirmed") continue;
-        const due = timeWindowMinutes(e.timeWindow);
-        if (due !== Infinity && due - minutesOfDay > 180) continue;
-        // Crew see the shop-level timing only (no event / customer name) — the row is shop-wide for them.
-        rows.push({ key: `catering_unprepped:${e.id}`, kind: "catering_unprepped", severity: severityOf("catering_unprepped"), params: crew ? { time: e.timeWindow ?? "" } : { event: e.name, time: e.timeWindow ?? "" }, href: taskHref("am_prep", ctx.locationId), action: "prep", shopWide: true });
-      }
+  const prior = got("priorAmPrep");
+  // B027: today's catering is prepped by LAST NIGHT's AM prep (dated yesterday), never by tonight's.
+  // No AM prep list at this shop (null) → nothing to flag; a failed read is already in `partial`.
+  if (cateringToday && prior && prior.progress !== "done") {
+    // The AM prep form cannot submit a past day, so the button opens last night's report (or that day's list).
+    const priorHref = prior.reportId
+      ? `/reports/am_prep/${encodeURIComponent(prior.reportId)}?location=${loc}`
+      : `/reports/operations?location=${loc}&type=am_prep&from=${prior.date}&to=${prior.date}`;
+    for (const e of cateringToday) {
+      if (e.stage !== "confirmed") continue;
+      const due = timeWindowMinutes(e.timeWindow);
+      if (due !== Infinity && due - minutesOfDay > 180) continue;
+      // Crew see the shop-level timing only (no event / customer name) — the row is shop-wide for them.
+      rows.push({ key: `catering_unprepped:${e.id}`, kind: "catering_unprepped", severity: severityOf("catering_unprepped"), params: crew ? { time: e.timeWindow ?? "" } : { event: e.name, time: e.timeWindow ?? "" }, href: priorHref, action: "open", shopWide: true });
     }
   }
   const unlinked = got("unlinked");
@@ -552,8 +563,9 @@ async function catering(deps: PulseDeps, ctx: PulseCtx): Promise<CateringData> {
   const money = moneyVisible(ctx.auth.level);
   const crew = crewScoped(ctx.auth.level);
   // Crew (Astra #11): shop-level TIMING only — the not-rung orders (order numbers, money) are not read for them.
-  const [today, tomorrow, notRung, reports] = await Promise.all([
+  const [today, tomorrow, notRung, reports, prior] = await Promise.all([
     deps.cateringToday(ctx), deps.cateringTomorrow(ctx), crew ? Promise.resolve<NotInToastOrder[]>([]) : deps.notRung(ctx), deps.reports(ctx),
+    deps.priorAmPrep(ctx),
   ]);
   const progress = (key: ReportKey): ReportProgress => reports.rows.find((r) => r.key === key)?.progress ?? "not_started";
   return {
@@ -566,7 +578,9 @@ async function catering(deps: PulseDeps, ctx: PulseCtx): Promise<CateringData> {
       orderId: o.order_id, orderNumber: o.order_number, readyAt: toastReadyAt(o), headcount: o.headcount,
       timing: toastRingTiming(o, ctx.now, null), ...(money ? { totalCents: o.total_cents } : {}),
     })),
-    prep: { amPrep: progress("am_prep"), midDay: progress("mid_day") },
+    // B027: the AM chip is LAST NIGHT's list (what today's catering runs on); a shop with no AM prep
+    // list keeps today's row as before. Mid-day stays today's.
+    prep: { amPrep: prior ? prior.progress : progress("am_prep"), midDay: progress("mid_day") },
   };
 }
 
@@ -694,6 +708,7 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
       const entries = [...unique.values()];
       return { count: entries.length, entries };
     },
+    priorAmPrep: (ctx) => loadPriorAmPrepStatus(service, { locationId: ctx.locationId, date: shiftReportDate(ctx.date, -1) }),
     lastParPass: async (ctx) => {
       const { data: ev, error } = await service.from("par_pass_events").select("id, walked_at, walked_by")
         .eq("location_id", ctx.locationId).order("walked_at", { ascending: false }).limit(1)
