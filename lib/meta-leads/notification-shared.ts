@@ -1,5 +1,10 @@
-/** Notification identities only: provider replay defense is the leadgen_id primary key. */
-export interface MetaNotification { leadgenId: string; pageId: string; formId: string; createdAt: string }
+/**
+ * Notification identities (provider replay defense is the leadgen_id primary key), plus the webhook's
+ * ad_id / adgroup_id as ATTRIBUTION only (item 1): kept when they pass the same id test, otherwise left
+ * out — a malformed ad id never rejects the notification. adgroup_id's meaning is unverified (it may
+ * equal ad_id); it is stored under its own name and never treated as the ad set.
+ */
+export interface MetaNotification { leadgenId: string; pageId: string; formId: string; createdAt: string; adId?: string; adgroupId?: string }
 const id = (value: unknown): value is string => typeof value === "string" && /^\d{1,30}$/.test(value);
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 export function parseMetaNotifications(value: unknown): MetaNotification[] | null {
@@ -13,7 +18,8 @@ export function parseMetaNotifications(value: unknown): MetaNotification[] | nul
       const v = change.value;
       if (!object(v) || !id(v.leadgen_id) || !id(v.form_id) || !id(v.page_id) || v.page_id !== entry.id
         || typeof v.created_time !== "number" || !Number.isSafeInteger(v.created_time) || v.created_time < 0 || v.created_time > 253402300799) return null;
-      result.push({ leadgenId: v.leadgen_id, pageId: v.page_id, formId: v.form_id, createdAt: new Date(v.created_time * 1000).toISOString() });
+      result.push({ leadgenId: v.leadgen_id, pageId: v.page_id, formId: v.form_id, createdAt: new Date(v.created_time * 1000).toISOString(),
+        ...(id(v.ad_id) ? { adId: v.ad_id } : {}), ...(id(v.adgroup_id) ? { adgroupId: v.adgroup_id } : {}) });
       if (result.length > 100) return null;
     }
   }
