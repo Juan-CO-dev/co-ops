@@ -51,6 +51,28 @@ describe("shared full-day capture job", () => {
     expect(audit).not.toHaveBeenCalled();
   });
 
+  // W27/B225 r5: the caller decides "started anything" from a counter of shop-day pulls that BEGAN.
+  it("progress counts owed shop-days and only the pulls that actually began", async () => {
+    const off = { planned: -1, started: -1 };
+    vi.stubEnv("TOAST_ORDER_CAPTURE", "0");
+    await runOrderCapture(SHOPS, DAYS[0]!, "cron", DAYS, 300_000, undefined, off);
+    expect(off).toEqual({ planned: -1, started: -1 }); // capture off: nothing owed, nothing written
+    vi.stubEnv("TOAST_ORDER_CAPTURE", "1");
+    const exhausted = { planned: 0, started: 0 };
+    await runOrderCapture(SHOPS, DAYS[0]!, "cron", DAYS, 10_000, undefined, exhausted);
+    expect(exhausted).toEqual({ planned: 6, started: 0 });
+    // A budget that times out before the first pull begins (the parent already aborted): NOT skipped, yet nothing began.
+    const parent = new AbortController(); parent.abort();
+    const timedOut = { planned: 0, started: 0 };
+    const result = await runOrderCapture(SHOPS, DAYS[0]!, "cron", DAYS, 300_000, parent.signal, timedOut);
+    expect(result.skipped).toBe(false);
+    expect(timedOut).toEqual({ planned: 6, started: 0 });
+    expect(captureToastDaySystem).not.toHaveBeenCalled();
+    const ran = { planned: 0, started: 0 };
+    await runOrderCapture(SHOPS, DAYS[0]!, "cron", DAYS, 300_000, undefined, ran);
+    expect(ran).toEqual({ planned: 6, started: 6 });
+  });
+
   it("fixture mode cannot masquerade as a completed production capture", async () => {
     vi.stubEnv("TOAST_FIXTURES", "1");
     expect(await runOrderCapture(SHOPS, DAYS[0]!, "cron", DAYS)).toEqual({ failures: 0, skipped: true, results: [] });

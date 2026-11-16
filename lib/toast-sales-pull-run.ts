@@ -30,6 +30,7 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
   let depletionFailures = 0;
   let parRunFailures = 0;
   let capture: Awaited<ReturnType<typeof runOrderCapture>>;
+  const captureProgress = { planned: 0, started: 0 };
   let elapsedCompleted = 0, elapsedFailed = 0;
   let elapsedError: string | null = null;
   const todayEt = etCalendarDate(new Date().toISOString());
@@ -48,7 +49,7 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
       .not("toast_restaurant_guid", "is", null);
     if (locations.error) throw new Error("capture_location_unavailable");
     const ids = (locations.data ?? []).map((r: { id: string }) => r.id);
-    capture = await runOrderCapture(ids, businessDate, "cron", dates, Math.max(0, deadlineAt - Date.now()), opts.signal);
+    capture = await runOrderCapture(ids, businessDate, "cron", dates, Math.max(0, deadlineAt - Date.now()), opts.signal, captureProgress);
     // PASS 3 pars must see this capture's links, including late code/batch matches.
     if (ezcaterEnabled) await reconcile();
     const completed = new Set<string>();
@@ -114,5 +115,9 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
     const left = deadlineAt - Date.now() - 5_000;
     if (left > 5_000) await runToastLaborPull(dates, { deadlineMs: Math.min(45_000, left), context: "cron" });
   } catch (error) { console.error("[toast labor] pull threw:", captureErrorCode(error)); }
-  return { businessDate, results, metadata, healthy };
+  // A COUNTER of units that began (W27/B225 r5), never a skip reason or a timeout flag: the pull's unit of work is a
+  // shop-day capture; shop-days were owed and none began, so no day was pulled. The caller decides what that means
+  // (the catch-up defers it). Capture off / fixture mode / no shop owes nothing, so it is not "started nothing".
+  const startedNothing = captureProgress.planned > 0 && captureProgress.started === 0;
+  return { businessDate, results, metadata, healthy, startedNothing };
 }

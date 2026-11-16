@@ -45,3 +45,37 @@ export function parseFits(now: number, deadline: number): boolean {
 export function fetchShareDeadline(deadline: number): number {
   return deadline - PARSE_ROW_RESERVE_MS - PARSE_HANDOFF_MS;
 }
+
+/** One inbound message's fetch window: the sweep starts a message only with this much left. */
+export const INBOUND_FETCH_WINDOW_MS = 60_000;
+
+/**
+ * Least time a receipt run needs, from its start, to do ANY of its work (audit W27/B225, review r1).
+ * With a parse key that is the queue read plus one whole parse — exactly what `fetchShareDeadline`
+ * always leaves over, so a run admitted here parses at least one receipt however slow fetching is.
+ * The catch-up asks it AFTER its heartbeat lookup, so what is still spent before the first parse
+ * starts is the claim and the queue read, and both sit inside the handoff.
+ * Fetch-only (no parse key) is the same shape (review r2): the handoff (the claim and the inbound queue read,
+ * both spent before the sweep judges its first message) plus one whole fetch window, so the sweep, which starts
+ * a message only with a full window before it, still starts one. A bare window let the claim and the queue read
+ * eat into it: nothing started and the day's claim was spent anyway. The daily catch-up asks this before it
+ * spends its one claim for the day; anything less is left for the next scan.
+ */
+export function receiptRunMinimumMs(parseEnabled: boolean): number {
+  return PARSE_HANDOFF_MS + receiptWorkMinimumMs(parseEnabled);
+}
+
+/**
+ * Least time the receipt run's first unit of WORK needs once the run is under way (W27/B225 r4): one whole parse,
+ * or (fetch-only) one whole fetch window. `receiptRunMinimumMs` is this plus the handoff the claim and the queue read
+ * spend; after the claim has been taken, the catch-up asks this again so a slow claim cannot start a run that can
+ * no longer start anything.
+ */
+export function receiptWorkMinimumMs(parseEnabled: boolean): number {
+  return parseEnabled ? PARSE_ROW_RESERVE_MS : INBOUND_FETCH_WINDOW_MS;
+}
+
+/** May a receipt run start at `now` and still do its work before `deadline`? */
+export function receiptRunFits(now: number, deadline: number, parseEnabled: boolean): boolean {
+  return now + receiptRunMinimumMs(parseEnabled) <= deadline;
+}

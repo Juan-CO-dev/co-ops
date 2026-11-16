@@ -323,16 +323,52 @@ async function loadRow(mapId: string): Promise<DbMapRow & { active: boolean }> {
   return data;
 }
 
+/** 0335's named refusals → the codes this module has always answered with. */
+const CONFIRM_RPC_REFUSALS: Record<string, { status: number; code: string; message: string }> = {
+  "toast_map:not_found": { status: 404, code: "not_found", message: "Mapping not found" },
+  "toast_map:not_candidate": { status: 409, code: "not_candidate", message: "Only candidates confirm" },
+  "toast_map:open_item_guid": { status: 409, code: "open_item_guid", message: "Typed (open) items are matched by alias, not mapped by guid" },
+  "toast_map:conflict": { status: 409, code: "conflict", message: "Concurrent change — reload and retry" },
+};
+
 /** candidate → confirmed. Supersedes (active=false) any OTHER active row for the same
- *  entity or the same guid at this location, so the partial-unique indexes stay satisfiable. */
+ *  guid at this location, so the partial-unique indexes stay satisfiable.
+ *  W27 / B230: the supersede and the confirm are ONE transaction (0335 `confirm_toast_mapping`, under the graph
+ *  lock and the GUID's row locks) — two managers confirming rival rows at once no longer switch each other off and
+ *  leave the GUID with no active row. Until 0335 is applied the pre-0335 statement sequence runs. */
 export async function confirmMapping(actor: AuthContext, mapId: string): Promise<void> {
   requireLevel(actor, TOAST_MAP_MIN);
   const row = await loadRow(mapId);
   assertLocationAccess(actor, row.location_id);
   if (row.match_status !== "candidate") throw new AdminToastMapError(409, "not_candidate", "Only candidates confirm");
   const sb = getServiceRoleClient();
-
   const entityId = row.menu_item_id ?? row.item_id ?? row.package_id ?? row.sku_id ?? null;
+
+  const { data, error } = await sb.rpc("confirm_toast_mapping", { p_map_id: mapId, p_location_id: row.location_id, p_actor: actor.user.id });
+  let superseded: number;
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "")) {
+      superseded = await confirmMappingLegacy(actor, mapId, row);
+    } else {
+      const known = CONFIRM_RPC_REFUSALS[(error.message ?? "").trim()];
+      if (known) throw new AdminToastMapError(known.status, known.code, known.message);
+      throw catalogWriteError(error, AdminToastMapError, "toast-map confirm");
+    }
+  } else {
+    const n = (data as { superseded?: unknown } | null)?.superseded;
+    superseded = typeof n === "number" ? n : 0;
+  }
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "toast_map.confirm", resourceTable: "toast_menu_map", resourceId: mapId,
+    metadata: { location_id: row.location_id, entity_id: entityId, toast_item_guid: row.toast_item_guid, superseded },
+    ipAddress: null, userAgent: null,
+  });
+}
+
+/** The pre-0335 sequence (separate statements, no locks) — used only while 0335 is not applied. */
+async function confirmMappingLegacy(actor: AuthContext, mapId: string, row: DbMapRow & { active: boolean }): Promise<number> {
+  const sb = getServiceRoleClient();
   // Supersede competitors claiming this GUID (each guid maps to ONE entity).
   // Same-entity rows are NOT rivals anymore — multi-guid law (0151).
   const { data: rivals, error: rErr } = await sb.from("toast_menu_map").select("id, disposition")
@@ -354,12 +390,7 @@ export async function confirmMapping(actor: AuthContext, mapId: string): Promise
     .eq("id", mapId).eq("active", true).eq("match_status", "candidate");
   if (error) throw new Error(`toast-map confirm: ${error.message}`);
   if (count === 0) throw new AdminToastMapError(409, "conflict", "Concurrent change — reload and retry");
-  await audit({
-    actorId: actor.user.id, actorRole: actor.user.role,
-    action: "toast_map.confirm", resourceTable: "toast_menu_map", resourceId: mapId,
-    metadata: { location_id: row.location_id, entity_id: entityId, toast_item_guid: row.toast_item_guid, superseded: (rivals ?? []).length },
-    ipAddress: null, userAgent: null,
-  });
+  return (rivals ?? []).length;
 }
 
 /** candidate → rejected (the pair is remembered and excluded from future auto-match runs). */

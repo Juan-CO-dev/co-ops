@@ -54,6 +54,12 @@ describe("POST /api/people/skills", () => {
     expect(assertStepUp).not.toHaveBeenCalled();
   });
 
+  it.each(["constructor", "__proto__", "toString"])("an action named %s is a 400, never a 500 (W27 / B227)", async (action) => {
+    expect((await postSkills({ ...adjust, action })).status).toBe(400);
+    expect((await postSettings({ action, locationId: SHOP })).status).toBe(400);
+    expect(adjustSkill).not.toHaveBeenCalled();
+  });
+
   it("exact payloads: an unknown key, a missing key, an unknown action, a non-string id → 400 before the lib", async () => {
     for (const body of [{ ...adjust, actorId: "x" }, { ...adjust, reasonCode: undefined }, { ...adjust, action: "delete" }, { ...adjust, userId: 5 }, [adjust]]) {
       expect((await postSkills(body)).status).toBe(400);

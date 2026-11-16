@@ -33,16 +33,20 @@ const fullCapture = (): CaptureResult => ({ failures: 0, skipped: false,
 });
 let sequence: string[];
 let captureResult: CaptureResult;
+/** What the mocked capture reports through its progress argument (W27/B225 r5): owed shop-days, and those begun. */
+let captureProgress: { planned: number; started: number };
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("EZCATER_DEPLETION_ENABLED", "");
   sequence = [];
   vi.mocked(loadDepletionWatermark).mockResolvedValue(null);
   captureResult = fullCapture();
+  captureProgress = { planned: DAYS.length * SHOPS.length, started: DAYS.length * SHOPS.length };
   const query = { select: () => query, eq: () => query,
     not: async () => ({ data: SHOPS.map((id) => ({ id })), error: null }) };
   vi.mocked(getServiceRoleClient).mockReturnValue({ from: () => query } as unknown as ReturnType<typeof getServiceRoleClient>);
-  vi.mocked(runOrderCapture).mockImplementation(async () => {
+  vi.mocked(runOrderCapture).mockImplementation(async (...args) => {
+    Object.assign(args[6] ?? {}, captureProgress);
     sequence.push(...DAYS.flatMap((date) => SHOPS.map((id) => `capture:${id}:${date}`)));
     return captureResult;
   });
@@ -60,7 +64,7 @@ afterEach(() => vi.unstubAllEnvs());
 
 it("finishes every requested capture, then every materialization, then shadow pars", async () => {
   const result = await runToastSalesPull({ businessDate: DAYS[0]! });
-  expect(runOrderCapture).toHaveBeenCalledExactlyOnceWith(SHOPS, DAYS[0], "cron", DAYS, expect.any(Number), undefined);
+  expect(runOrderCapture).toHaveBeenCalledExactlyOnceWith(SHOPS, DAYS[0], "cron", DAYS, expect.any(Number), undefined, { planned: 6, started: 6 });
   const expected = (stage: string) => DAYS.flatMap((date) => SHOPS.map((id) => `${stage}:${id}:${date}`));
   expect(sequence).toEqual([...expected("capture"), ...expected("depletion"), ...SHOPS.map((id) => `pars:${id}:${DAYS[0]}`)]);
   expect(result).toMatchObject({ healthy: true, metadata: { capture_failures: 0, depletion_failures: 0, par_run_failures: 0 } });
@@ -177,7 +181,7 @@ it.each([undefined, "legacy", "capture"])("retired setting %s cannot restore the
   vi.stubEnv("DEPLETION_SOURCE", flag);
   const result = await runToastSalesPull({ businessDate: DAYS[0]! });
   expect(materializeCapturedDepletion).toHaveBeenCalledTimes(6);
-  expect(runOrderCapture).toHaveBeenCalledExactlyOnceWith(SHOPS, DAYS[0], "cron", DAYS, expect.any(Number), undefined);
+  expect(runOrderCapture).toHaveBeenCalledExactlyOnceWith(SHOPS, DAYS[0], "cron", DAYS, expect.any(Number), undefined, { planned: 6, started: 6 });
   expect(result).toMatchObject({ healthy: true, metadata: { source: "capture", pars_pending_activation: false } });
 });
 it("disabled capture cannot fall back to legacy health with the retired setting unset", async () => {
@@ -258,4 +262,24 @@ it("the authenticated route emits a successful heartbeat with the explicit fixtu
   expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "cron.success",
     metadata: expect.objectContaining({ job: "toast-sales-pull", capture_skipped: true,
       capture_skip_reason: "capture_fixture_mode" }) }));
+});
+
+// W27/B225 r4/r5: startedNothing is a COUNTER of shop-day captures that began — never a skip reason or a timeout.
+it("startedNothing is true only when shop-days were owed and none began", async () => {
+  captureResult = { failures: 0, skipped: true, results: [], reason: "capture_route_time_exhausted" } as unknown as CaptureResult;
+  captureProgress = { planned: 6, started: 0 };
+  expect(await runToastSalesPull({ businessDate: DAYS[0]! })).toMatchObject({ startedNothing: true, healthy: false });
+  captureResult = fullCapture();
+  captureProgress = { planned: 6, started: 6 };
+  expect(await runToastSalesPull({ businessDate: DAYS[0]! })).toMatchObject({ startedNothing: false, healthy: true });
+  captureResult = { failures: 0, skipped: true, results: [] } as unknown as CaptureResult; // capture disabled: nothing owed
+  captureProgress = { planned: 0, started: 0 };
+  expect((await runToastSalesPull({ businessDate: DAYS[0]! })).startedNothing).toBe(false);
+  // r5: the capture RAN (not skipped) but its budget ended before the first shop-day began: nothing started.
+  captureResult = { failures: 6, skipped: false, results: [] } as unknown as CaptureResult;
+  captureProgress = { planned: 6, started: 0 };
+  expect((await runToastSalesPull({ businessDate: DAYS[0]! })).startedNothing).toBe(true);
+  // One shop-day began before the timeout: work started, so it is a failure to report, not a deferral.
+  captureProgress = { planned: 6, started: 1 };
+  expect((await runToastSalesPull({ businessDate: DAYS[0]! })).startedNothing).toBe(false);
 });

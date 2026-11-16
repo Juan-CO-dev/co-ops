@@ -143,6 +143,9 @@ export const DESTRUCTIVE_ACTIONS = [
   "user.reset_password",
   "user.set_pin",
   "user.change_email",
+  // An admin's name / phone edit (W27 / B229): a human change to the accountability record — the phone is the key
+  // the rehire check matches a separated person on. Field NAMES only in metadata, never values.
+  "user.update_profile",
   // Staff separations (0279): on leave, back from leave, separated, rehired, a correction of the record in force.
   "user.leave_start",
   "user.leave_end",
