@@ -50,7 +50,7 @@ function recordingClient() {
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => recordingClient() }));
 
 import { loadSkuDataReadiness, READINESS_COLUMNS, readinessOrder } from "@/lib/sku-data-readiness-load";
-import { loadAllSkuPackResolution, loadPackBoundaries, loadShopPackEpochs, loadSkuPackResolution } from "@/lib/prep-consumption";
+import { loadAllSkuPackResolution, loadPackBoundaries, loadShopPackEpochs, loadShopPackEpochsAt, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { loadCurrentSkuPriceHeads } from "@/lib/admin/cost";
 import { loadSkuPackVersionHistory, restoreSkuPackVersion, retireShopPackVersion } from "@/lib/admin/sku-versions";
 import { dismissPackChangeRequest, filePackChangeRequest, loadOpenPackChangeRequests, loadRequestAdditions, signPackRequestPhoto } from "@/lib/pack-change-requests";
@@ -76,6 +76,7 @@ beforeAll(async () => {
   await run("loadAllSkuPackResolution(shop)", () => loadAllSkuPackResolution(LOC));
   await run("loadPackBoundaries(shop)", () => loadPackBoundaries(LOC));
   await run("loadShopPackEpochs", () => loadShopPackEpochs([SKU], LOC));
+  await run("loadShopPackEpochsAt", () => loadShopPackEpochsAt(LOC));
   await run("loadCurrentSkuPriceHeads(shop)", () => loadCurrentSkuPriceHeads([SKU], LOC));
   await run("loadSkuPackVersionHistory", () => loadSkuPackVersionHistory(owner, SKU, LOC));
   await run("retireShopPackVersion", () => retireShopPackVersion(owner, { skuId: SKU, versionId: SKU, locationId: LOC }));

@@ -355,13 +355,19 @@ export function previewPackChange(input: {
   recipeLines: readonly PreviewRecipeLine[];
   liveVersionId: string | null;
   basedOnVersionId: string | null;
+  /**
+   * The save RETIRES the target shop's own version (Back to default; audit W18/B107 fix round 1). That is
+   * a change even when the shop's chain equals the default: the shop starts riding future default changes
+   * and its pack epoch moves (0259), so its machine par restarts. Never "no change", never without Save.
+   */
+  retiresOwnVersion?: boolean;
 }): Omit<PackPreview, "token" | "snapshot"> {
   const target = input.target;
   const affected = target.kind === "shop"
     ? input.shops.filter((s) => s.shopId === target.shopId)
     : input.shops.filter((s) => !s.ownPackVersion);
   const unaffected = input.shops.filter((s) => !affected.includes(s)).map((s) => ({ shopId: s.shopId, shopName: s.shopName }));
-  const changed = !sameChain(input.targetBasePack.packChain ?? [], input.newChain);
+  const changed = input.retiresOwnVersion === true || !sameChain(input.targetBasePack.packChain ?? [], input.newChain);
   const shell = { kind: "pack" as const, target, changed, liveVersionId: input.liveVersionId, basedOnVersionId: input.basedOnVersionId, unaffected };
   if (!changed) return { ...shell, shops: [], pars: [], conversions: [] };
 
