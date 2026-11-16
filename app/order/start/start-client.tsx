@@ -18,16 +18,14 @@
  * deliveryNodesExist=false the original legacy flow renders unchanged.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { GoodToKnow } from "@/components/portal/GoodToKnow";
 import { GTK } from "@/components/portal/portal-content";
 import { routeDeliveryAction } from "./actions";
-import {
-  CATERING_DELIVERY_WINDOWS,
-  type DeliveryRouteResult,
-} from "@/lib/catering/fulfillment-shared";
+import { currentRoute, routeKey, type KeyedRoute } from "./route-key";
+import { CATERING_DELIVERY_WINDOWS } from "@/lib/catering/fulfillment-shared";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 
@@ -99,8 +97,11 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
 
   // FR-b routing state
   const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
-  const [route, setRoute] = useState<DeliveryRouteResult | null>(null);
+  // A routing result is kept WITH the inputs it was computed for (audit W22/B203): the shop depends
+  // on the date and the guest count too, so a result for other inputs is treated as missing.
+  const [route, setRoute] = useState<KeyedRoute | null>(null);
   const [locating, setLocating] = useState(false);
+  const latestRouteKey = useRef<string | null>(null);
 
   // ⑤ carry-through: pick up the storefront selection (co_order_preselect) once on mount, then
   // clear it so a back-nav/refresh doesn't re-apply it. Folded into the new-client intake payload.
@@ -121,21 +122,38 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
 
   const set = (patch: Partial<FormState>) => setF((cur) => ({ ...cur, ...patch }));
 
-  // runRoute: call the server action with current coords + form state.
-  const runRoute = async (lat: number, lng: number) => {
+  // runRoute: call the server action with EXPLICIT values (never a stale closure over `f`). A
+  // response for a request that is no longer the latest is dropped.
+  const runRoute = async (lat: number, lng: number, date: string, guests: string) => {
+    const key = routeKey({ date, guests, geo: { lat, lng } });
+    latestRouteKey.current = key;
     setLocating(true);
     try {
       const res = await routeDeliveryAction({
         lat,
         lng,
-        eventDate: f.date || null,
-        headcount: Number(f.guests) || null,
+        eventDate: date || null,
+        headcount: Number(guests) || null,
       });
-      setRoute(res);
+      if (latestRouteKey.current === key) setRoute({ result: res, key });
     } finally {
-      setLocating(false);
+      if (latestRouteKey.current === key) setLocating(false);
     }
   };
+
+  const liveRoute = currentRoute(route, { date: f.date, guests: f.guests, geo });
+
+  // Re-route when the date or the guest count changes after the pin is placed (debounced), so the
+  // shop the order is sent to always matches the date and headcount it is sent with.
+  useEffect(() => {
+    if (!deliveryNodesExist || f.fulfillment !== "delivery" || !geo) return;
+    const key = routeKey({ date: f.date, guests: f.guests, geo });
+    if (route?.key === key || latestRouteKey.current === key) return;
+    const timer = window.setTimeout(() => { void runRoute(geo.lat, geo.lng, f.date, f.guests); }, 400);
+    return () => window.clearTimeout(timer);
+    // runRoute reads only its arguments and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deliveryNodesExist, f.fulfillment, f.date, f.guests, geo, route]);
 
   // locate: button-triggered Nominatim geocode then route. One request, no per-keystroke.
   const locate = async () => {
@@ -152,13 +170,15 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
         const lat = Number(first.lat);
         const lng = Number(first.lon);
         setGeo({ lat, lng });
+        const key = routeKey({ date: f.date, guests: f.guests, geo: { lat, lng } });
+        latestRouteKey.current = key;
         const res = await routeDeliveryAction({
           lat,
           lng,
           eventDate: f.date || null,
           headcount: Number(f.guests) || null,
         });
-        setRoute(res);
+        if (latestRouteKey.current === key) setRoute({ result: res, key });
       }
     } catch {
       /* non-fatal: user can drag the pin */
@@ -169,13 +189,14 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
 
   // Derive the fulfilling locationId for the new-flow delivery path.
   const routedLocationId =
-    deliveryNodesExist && f.fulfillment === "delivery" && route?.status === "routed"
-      ? route.locationId
+    deliveryNodesExist && f.fulfillment === "delivery" && liveRoute?.status === "routed"
+      ? liveRoute.locationId
       : null;
 
-  // canSubmit: for the new delivery flow, block if no routed node yet.
+  // canSubmit: for the new delivery flow, block until a node is routed FOR THE CURRENT inputs
+  // (a re-route in flight blocks too).
   const deliveryBlocked =
-    deliveryNodesExist && f.fulfillment === "delivery" && route?.status !== "routed";
+    deliveryNodesExist && f.fulfillment === "delivery" && (locating || liveRoute?.status !== "routed");
 
   const canSubmit =
     mode === "returning"
@@ -399,21 +420,26 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
                                   lng={geo.lng}
                                   onPinChange={(lat, lng) => {
                                     setGeo({ lat, lng });
-                                    void runRoute(lat, lng);
+                                    void runRoute(lat, lng, f.date, f.guests);
                                   }}
                                 />
                                 <p className="text-xs text-co-text-muted">
                                   {t("order.route.drag_hint" as TranslationKey)}
                                 </p>
-                                {route && (
+                                {!liveRoute && (locating || route) && (
+                                  <p className="text-sm font-semibold text-co-text-muted">
+                                    {t("order.route.rerouting" as TranslationKey)}
+                                  </p>
+                                )}
+                                {liveRoute && (
                                   <p className={`text-sm font-semibold ${
-                                    route.status === "routed"
+                                    liveRoute.status === "routed"
                                       ? "text-co-text"
                                       : "text-co-cta-text"
                                   }`}>
-                                    {route.status === "routed"
-                                      ? t("order.route.in_zone" as TranslationKey, { location: route.locationName })
-                                      : route.status === "out_of_zone"
+                                    {liveRoute.status === "routed"
+                                      ? t("order.route.in_zone" as TranslationKey, { location: liveRoute.locationName })
+                                      : liveRoute.status === "out_of_zone"
                                       ? t("order.route.out_of_zone" as TranslationKey)
                                       : t("order.route.no_capacity" as TranslationKey)}
                                   </p>
@@ -569,7 +595,7 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
                           // FR-b geo + routing fields
                           geoLat: geo?.lat ?? null,
                           geoLng: geo?.lng ?? null,
-                          fulfillmentRouted: route?.status === "routed",
+                          fulfillmentRouted: liveRoute?.status === "routed",
                           // ⑤ storefront carry-through (item + qty; server re-resolves + re-prices)
                           preselect: preselect.length > 0 ? preselect : null,
                         },

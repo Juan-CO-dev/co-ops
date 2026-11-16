@@ -4992,6 +4992,7 @@
   "order.route.in_zone": "✓ You're in our delivery zone — {location} will cater this.",
   "order.route.out_of_zone": "That address is outside our delivery area.",
   "order.route.no_capacity": "You're in our area, but we're fully booked that date — try another date or choose pickup.",
+  "order.route.rerouting": "Finding the right shop for that date and guest count…",
   "order.route.window_label": "Delivery time window",
   "order.route.window_any": "Flexible / any time",
   "order.start.preselect_note": "{count} item(s) from the menu will be added to your order.",
