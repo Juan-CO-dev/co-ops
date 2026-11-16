@@ -12,6 +12,7 @@
  */
 import type { NarrativeLine } from "@/lib/people-narrative";
 import type { DayContext, RuleContext, RulePerson } from "./context-shared";
+import type { DemandResult } from "./demand-shared";
 import { skillOf, type SkillLookup } from "./people-input-shared";
 import { MOD, closingManagerEligible, coversClosingWindow, eligibleForPosition, isFlexSegment, shiftCountsAsMod, salariedWeek, type Shift } from "./rules-shared";
 import { isLineRole, positionIds, positionLimit, type CrewType, type ScheduleStructure } from "./structure-shared";
@@ -172,6 +173,22 @@ function hourlyCostCents(shifts: readonly Shift[], people: Record<string, RulePe
     cents += (wage * q) / 4;
   }
   return Math.round(cents);
+}
+
+/**
+ * B135: the week's forecast sales — the sum of every week date's `dayCents`, and null unless the demand is `ok` for
+ * EVERY date. A partial forecast (one captured weekday, six `no_history`) would divide a whole week of labor by one
+ * day of sales; "—" is the honest answer.
+ */
+export function weekForecastCents(demand: DemandResult, dates: readonly string[]): number | null {
+  if (demand.kind !== "ok") return null;
+  let sum = 0;
+  for (const date of dates) {
+    const d = demand.days.find((x) => x.date === date);
+    if (!d || d.kind !== "ok") return null;
+    sum += d.dayCents;
+  }
+  return sum;
 }
 
 export interface MoneyStripInput {

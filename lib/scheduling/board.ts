@@ -17,6 +17,7 @@ import { operationalNow } from "@/lib/midshift-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { budgetForDates, suggestionHidden } from "./budget-shared";
 import { boardView, type BoardSource, type BoardView, type PositionLabel } from "./board-view-shared";
+import { weekForecastCents } from "./board-shared";
 import { ruleContextFromSnapshot, type DayContext } from "./context-shared";
 import { ScheduleError } from "./errors-shared";
 import { loadScheduleShopSettings, loadSchedulingInputs } from "./inputs";
@@ -103,9 +104,7 @@ export async function loadBoard(deps: ScheduleDeps, args: { actor: PeopleActor; 
   // the labor-target card's HEAD maths (its $ lines and fields are absent then — chunk C's contract).
   const wageCentsByUser: Record<string, number | null> = Object.fromEntries(Object.values(people).map((p) => [p.userId, inputs.wages.byUserCents[p.userId] ?? inputs.shopSettings.estimatedHourlyCents]));
   const demand = inputs.demand.kind;
-  const forecastWeekCents = inputs.demand.kind === "ok"
-    ? inputs.demand.days.filter((d) => dates.includes(d.date)).reduce((n, d) => n + (d.kind === "ok" ? d.dayCents : 0), 0)
-    : null;
+  const forecastWeekCents = weekForecastCents(inputs.demand, dates);
 
   let suggestion: BoardSource["suggestion"] = null;
   if (canBudget && demand !== "unavailable") {

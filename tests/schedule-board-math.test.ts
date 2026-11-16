@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  closingRoleCells, coverageCells, dayTabs, demandCurve, laborPctByHour, modLane, moneyStrip, type BoardDayInput,
+  closingRoleCells, coverageCells, dayTabs, demandCurve, laborPctByHour, modLane, moneyStrip, weekForecastCents, type BoardDayInput,
 } from "@/lib/scheduling/board-shared";
 import type { SkillLookup } from "@/lib/scheduling/people-input-shared";
 import { DATES, MON, P, SUN, THU, TODAY, TUE, U, WED, context, setNeed, shift, structure } from "./fixtures/schedule/rules-fixture";
@@ -151,6 +151,20 @@ describe("the money strip", () => {
     const strip = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: WAGES, forecastWeekCents: 2_000_000, salariedWeeklyCents: 125_000 }, { canSeeMoney: false });
     expect("money" in strip).toBe(false);
     expect(JSON.stringify(strip)).not.toMatch(/Cents|Pct/);
+  });
+});
+
+describe("the week's forecast (B135)", () => {
+  const ok = (date: string, dayCents: number) => ({ kind: "ok" as const, date, hourlyCents: new Array<number>(24).fill(0), dayCents, weeks: 1, basis: "trailing_same_weekday" as const, weeksAhead: 0, confidence: "thin" as const, unknownCents: 0, catering: [] });
+  const none = (date: string) => ({ kind: "no_history" as const, date, weeksAhead: 0, catering: [] });
+  it("forecastWeekCents is null unless every week date is ok; the strip's weekly % is then null", () => {
+    const partial = { kind: "ok" as const, days: [ok(DATES[0]!, 500_000), ...DATES.slice(1).map(none)] };
+    expect(weekForecastCents(partial, DATES)).toBeNull();
+    const strip = moneyStrip({ dates: DATES, shifts: [shift(U.ben, THU, 44, 60, P.REG)], ctx: context(), wageCentsByUser: { [U.ben]: 2000 }, forecastWeekCents: weekForecastCents(partial, DATES), salariedWeeklyCents: null }, { canSeeMoney: true });
+    expect(strip.money?.hourlyPct ?? null).toBeNull();
+    expect(weekForecastCents({ kind: "ok", days: DATES.map((d) => ok(d, 100_000)) }, DATES)).toBe(700_000);
+    expect(weekForecastCents({ kind: "ok", days: DATES.slice(1).map((d) => ok(d, 100_000)) }, DATES)).toBeNull(); // a date missing
+    expect(weekForecastCents({ kind: "no_history", days: [] }, DATES)).toBeNull();
   });
 });
 
