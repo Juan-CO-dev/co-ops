@@ -251,12 +251,14 @@ describe("the REPORT-BOUND photo read (Astra 2b r2)", () => {
     }
     // Audit W10 / B064 (lead ruling, supersedes the 2b r2 "not widened" pin): the generic photo READ follows
     // the report grant (membership, or level 8+), because every /api/photos link sits on a report a MoO can
-    // already open. The UPLOAD keeps the membership bind, and that is the ONLY lockLocationContext call left.
-    // Behaviour is pinned role by role in tests/photos-read-scope.test.ts.
+    // already open. The UPLOAD keeps the membership bind (mayUploadFor), except a TASK photo that names its open
+    // checklist instance, which follows the shop-task rule (audit W05B fix round 1). Behaviour is pinned role by
+    // role in tests/photos-read-scope.test.ts and tests/audit-w05b-task-photo-upload.test.ts.
     const photos = readFileSync("lib/photos.ts", "utf8");
     expect(photos).toContain("if (!canReadReportLocation(actorLoc(actor), row.location_id)) {");
-    expect(photos).toContain("if (!lockLocationContext(actorLoc(actor), input.locationId)) {");
-    expect(photos.split("lockLocationContext(actorLoc(").length - 1).toBe(1);
+    expect(photos).toContain("if (!(await mayUploadFor(actor, input))) {");
+    expect(photos.split("lockLocationContext(loc, input.locationId)").length - 1).toBe(2);
+    expect(photos.split("canWorkShopTasks(loc, input.locationId)").length - 1).toBe(1);
     expect(photos.split("canReadReportLocation(actorLoc(").length - 1).toBe(1);
     expect(readFileSync("components/catalog/DoorPhoto.tsx", "utf8")).not.toContain("/api/photos/");
   });
