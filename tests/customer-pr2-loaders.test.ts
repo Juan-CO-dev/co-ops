@@ -98,6 +98,40 @@ describe("profile and catering privacy boundary", () => {
     for (const key of [MERGED, ERASED]) await expect(loadProfileDetail(viewer(9), key, {}, { client: db as never })).rejects.toMatchObject({ status: 404 });
     expect(db.reads.filter((r) => r.table === "customer_identifiers").every((r) => r.columns === "kind")).toBe(true);
   });
+  it("a voided Toast order stays in the history, labelled, but leaves visits and spend (W12/B176)", async () => {
+    const tables = { customers: [person(ROOT)], customer_orders: [
+      order(ROOT, SHOP, { id: id(21), channel: "online", total_cents: 2500 }),
+      order(ROOT, SHOP, { id: id(22), channel: "online", total_cents: 900, business_date: "2026-10-05", voided_at: "2026-10-06T00:00:00Z" }),
+    ] };
+    const d = await loadProfileDetail(viewer(7), ROOT, {}, { client: database(tables) as never, now });
+    expect(d.profile).toMatchObject({ visits: 1, spendCents: 2500, lastOrder: "2026-10-01" });
+    expect(d.months.at(-1)).toMatchObject({ visits: 1, spendCents: 2500 });
+    expect(d.shops).toEqual([{ locationId: SHOP, visits: 1, spendCents: 2500, lastOrder: "2026-10-01" }]);
+    expect(d.history.total).toBe(2);
+    expect(d.history.rows.map((r) => [r.date, r.voided])).toEqual([["2026-10-05", true], ["2026-10-01", false]]);
+    const catering = await loadCateringAccounts(viewer(8), {}, { client: database({ customers: [person(ROOT)], customer_orders: [
+      order(ROOT), order(ROOT, SHOP, { id: id(23), voided_at: "2026-10-06T00:00:00Z" })] }) as never, now });
+    expect(catering.rows[0]).toMatchObject({ id: ROOT, orders: 1, allVisits: 1, spendCents: 1200 });
+  });
+  it("before 0312 is applied (no voided_at column) every order reads as live (W12/B176)", async () => {
+    const db = database({ customers: [person(ROOT)], customer_orders: [order(ROOT), order(ROOT, SHOP, { id: id(24) })] });
+    const from = (table: string) => {
+      const q = db.from(table) as unknown as Record<string, unknown> & { select: (c: string, o?: unknown) => unknown };
+      if (table !== "customer_orders") return q;
+      const select = q.select;
+      q.select = (columns: string, options?: unknown) => {
+        if (!columns.includes("voided_at")) return select(columns, options);
+        const failing: Record<string, unknown> = {};
+        for (const m of ["in", "eq", "or", "order", "range", "limit", "is"]) failing[m] = () => failing;
+        failing.then = (resolve: (v: unknown) => unknown) => Promise.resolve({ data: null, error: { code: "42703", message: "column customer_orders.voided_at does not exist" } }).then(resolve);
+        return failing;
+      };
+      return q;
+    };
+    const d = await loadProfileDetail(viewer(8), ROOT, {}, { client: { from, rpc: vi.fn() } as never, now });
+    expect(d.profile.visits).toBe(2);
+    expect(d.history.rows.every((r) => r.voided === false)).toBe(true);
+  });
   it("catering scopes both catering and all visits, drops merged/erased roots and never projects contact", async () => {
     const tables = { customers: [person(ROOT), person(GUEST), person(MERGED, { merged_into: ROOT }), person(ERASED, { erased_at: "2026-10-01" })], customer_orders: [
       order(ROOT), order(ROOT, SHOP, { channel: "online", total_cents: 500 }), order(ROOT, OTHER),

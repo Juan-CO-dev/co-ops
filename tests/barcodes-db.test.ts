@@ -128,6 +128,21 @@ describe("lookupScan — normalise, then resolve, and never read a forgotten row
       .resolves.toMatchObject({ kind: "unknown" });
   });
 
+  // Audit B101: the taught row's SKU was deactivated, so it is absent from the ACTIVE vendor SKU read.
+  it("a code taught on this vendor's retired SKU reads unknown, so it can be taught onto the replacement", async () => {
+    queue.push({ data: [taughtRow({ sku_id: SKU_TURKEY })], error: null });
+    queue.push({ data: [{ id: SKU_HAM, product_id: null }], error: null });
+    await expect(lookupScan(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, lineSkuIds: [] }))
+      .resolves.toMatchObject({ kind: "unknown", normalized: { code: UPC } });
+  });
+
+  it("…or offers the replacement when it shares the retired SKU's product", async () => {
+    queue.push({ data: [taughtRow({ sku_id: SKU_TURKEY, product_id: PRODUCT_TURKEY })], error: null });
+    queue.push({ data: [{ id: TWIN_TURKEY, product_id: PRODUCT_TURKEY }], error: null });
+    await expect(lookupScan(actor, { vendorId: VENDOR, locationId: LOCATION, code: UPC, lineSkuIds: [] }))
+      .resolves.toMatchObject({ kind: "twin", skuId: TWIN_TURKEY, viaSkuId: SKU_TURKEY, viaOwnRetired: true });
+  });
+
   it("a code nobody has taught is `unknown` — not an error", async () => {
     queue.push({ data: [], error: null });
     queue.push({ data: [{ id: SKU_TURKEY, product_id: null }], error: null });

@@ -104,6 +104,54 @@ describe("loadSkuUsageRank spends its production ids in WINDOWS, in both twins",
   }
 });
 
+describe("the Counts loaders never spend an ever-growing id list (audit W17)", () => {
+  const src = read("counts.ts");
+  const bodyOf = (name: string) => {
+    const at = src.indexOf(`async function ${name}(`);
+    expect(at).toBeGreaterThan(-1);
+    return src.slice(at, src.indexOf("\n}\n", at));
+  };
+
+  it("lib/counts.ts sumConsumedOzWindow never spends production ids (B023)", () => {
+    // Every count sheet with a product line runs this. The header-id list it used to send
+    // crosses the 221-id cliff above inside a month of ordinary production.
+    const body = bodyOf("sumConsumedOzWindow");
+    expect(body).not.toContain('.in("production_id"');
+    expect(body).toContain("PRODUCTION_HEADER_EMBED");
+    expect(body).toContain("selectAllRows");
+    expect(body).toContain(".range(from, to)");
+  });
+
+  it("lib/counts.ts loadCountsTileState never spends count-event ids (B184)", () => {
+    // Count events never go inactive, so this list only ever grows.
+    const body = bodyOf("loadCountsTileState");
+    expect(body).not.toContain('.in("count_event_id"');
+    expect(body).toContain("COUNT_EVENT_EMBED");
+    expect(body).toContain('.eq("sku_count_events.active", true)');
+  });
+});
+
+describe("the production page never spends the SKU or delivery id lists (audit W17 / B098)", () => {
+  const src = read("production.ts");
+  const at = src.indexOf("export async function loadInStockPacks(");
+  const body = src.slice(at, src.indexOf("\n}\n", at));
+
+  it("loadInStockPacks scopes both ledgers by embed and filters SKUs in memory", () => {
+    expect(at).toBeGreaterThan(-1);
+    expect(body).not.toContain(".in(");
+    expect(body).toContain("DELIVERY_AT_LOCATION_EMBED");
+    expect(body).toContain("LIVE_PRODUCTION_AT_LOCATION_EMBED");
+    // Two FKs join vendor_delivery_items to vendor_deliveries: the embed must name one.
+    expect(src).toContain('"vendor_deliveries!vendor_delivery_items_delivery_id_fkey!inner(location_id)"');
+  });
+
+  it("loadSkuToItems reads product membership without the SKU id list", () => {
+    const skuAt = src.indexOf("export async function loadSkuToItems(");
+    const skuBody = src.slice(skuAt, src.indexOf("\n}\n", skuAt));
+    expect(skuBody).not.toContain('.in("id", skuIds)');
+  });
+});
+
 describe("loadVendorRhythmSkips pages under a STABLE TOTAL order", () => {
   const src = read("vendor-rhythm.ts");
   const at = src.indexOf("export async function loadVendorRhythmSkips");

@@ -226,6 +226,16 @@ export function packsFromVersions(
   return out;
 }
 
+/**
+ * Every pack version {global ∪ one shop} and their levels, loaded once (audit W17 / B100): the input
+ * `resolvePacksAtPoints` needs to answer "which pack was in force when THIS receipt was written" for
+ * a whole ledger of lines with no per-line query. Built by `loadAllSkuPackHistory`.
+ */
+export interface SkuPackHistory {
+  versions: ScopedVersionRow[];
+  levels: ScopedLevelRow[];
+}
+
 /** One (SKU, shop, instant) a caller needs the pack in force at (W04 r1: a delivery line). */
 export interface PackPoint { key: string; skuId: string; scope: VersionScope; asOf: string }
 

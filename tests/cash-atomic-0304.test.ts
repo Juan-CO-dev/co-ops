@@ -10,7 +10,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/assignments", () => ({ hasTaskAccess: vi.fn(async () => true), auditTaskOverride: vi.fn(async () => {}) }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
@@ -18,6 +18,11 @@ vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 import { audit } from "@/lib/audit";
 import { cashAtomicRpcArgs, submitCashReport } from "@/lib/cash";
 import { CASH_LOCKING_CLOSING_STATUSES } from "@/lib/cash-shared";
+
+// W03 follow-up: below GM a cash date must be inside the current business week (Mon–Sun, ET), so the
+// key holder filing 2026-11-10 here runs at a fixed instant in that week, not the machine's clock.
+beforeAll(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-12T17:00:00.000Z")); });
+afterAll(() => { vi.useRealTimers(); });
 
 const SQL = readFileSync("supabase/migrations/0304_cash_report_closing_lock.sql", "utf8");
 const lower = SQL.toLowerCase();

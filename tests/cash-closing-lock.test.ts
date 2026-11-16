@@ -8,12 +8,17 @@
  * read by the write gate, the /cash page's up-front lock and migration 0304's in-transaction check.
  */
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/assignments", () => ({ hasTaskAccess: vi.fn(async () => true), auditTaskOverride: vi.fn(async () => {}) }));
 
 import { submitCashReport } from "@/lib/cash";
 import { CASH_LOCKING_CLOSING_STATUSES, closingLocksCash } from "@/lib/cash-shared";
+
+// W03 follow-up: below GM a cash date must be inside the current business week (Mon–Sun, ET), so the
+// key holder filing 2026-11-10 here runs at a fixed instant in that week, not the machine's clock.
+beforeAll(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-12T17:00:00.000Z")); });
+afterAll(() => { vi.useRealTimers(); });
 
 /** A chainable fake: the day's closing instance has `status` (null = none); records cash writes. */
 function fakeService(status: string | null) {

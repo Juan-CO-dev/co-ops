@@ -73,7 +73,7 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import type { VersionScope } from "@/lib/sku-versions-shared";
+import { resolvePacksAtPoints, type PackPickWarning, type SkuPackHistory, type VersionScope } from "@/lib/sku-versions-shared";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { createCountsReadRefs, type CountsReadRefs, type RosterSku } from "@/lib/counts-read-refs";
 import { type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
@@ -92,9 +92,11 @@ import {
   etBusinessDate,
   salesWindowUntrustworthy,
   isProductCountLine,
+  productCountLineDisposition,
   type CountLineInput,
   type CountLineEntry,
   type CountProductLineInput,
+  type ResolvedCountLine,
   type OnHandResult,
   type OnHandUnitsResult,
   type SkuAnchor,
@@ -469,6 +471,16 @@ interface AllocatedProductLine {
   lotCount: number;
 }
 
+/** A PRODUCT line written as a direct count of the product's one active member (audit B099). */
+interface DirectProductLine {
+  productId: string;
+  productName: string;
+  primarySkuId: string;
+  rung: string;
+  /** The entered level resolved through that member's own chain (skuId = the member). */
+  line: ResolvedCountLine;
+}
+
 /**
  * Record one physical-count EVENT + its lines (council L5). Each line resolves oz
  * at write via the SKU pack chain (L3); an unresolvable line is REJECTED loudly (a
@@ -530,9 +542,9 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
     throw new CountError(503, "count_allocation_schema_pending", "Product counts arrive with migration 0180");
   }
 
-  const allocated = productLineInputs.length > 0
+  const { allocated, directSingleMember } = productLineInputs.length > 0
     ? await allocateProductLines(sb, input.locationId, productLineInputs)
-    : [];
+    : { allocated: [] as AllocatedProductLine[], directSingleMember: [] as DirectProductLine[] };
 
   // A member SKU counted BOTH through its product and directly would be counted
   // twice: the anchor sums a SKU's lines within an event by law (council L5
@@ -545,6 +557,12 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
       if (directSkuIds.has(a.skuId)) {
         throw new CountError(400, "product_line_overlaps_sku", "A SKU is counted both on its own and through its product");
       }
+    }
+  }
+  // The same law for a single-member packaging product (B099): its product row IS that SKU's row.
+  for (const d of directSingleMember) {
+    if (directSkuIds.has(d.primarySkuId)) {
+      throw new CountError(400, "product_line_overlaps_sku", "A SKU is counted both on its own and through its product");
     }
   }
 
@@ -573,7 +591,7 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
       `Can't anchor "${resolution.badLine.levelLabel}" for ${badSku?.name ? `"${badSku.name}"` : "a SKU"} — set the SKU's pack chain (a count leaf like "each" is enough for packaging) or its avg oz first`,
       { levelLabel: resolution.badLine.levelLabel, skuName: badSku?.name ?? null, skuId: resolution.badLine.skuId });
   }
-  if (resolution.resolved.length === 0 && allocated.length === 0) {
+  if (resolution.resolved.length === 0 && allocated.length === 0 && directSingleMember.length === 0) {
     throw new CountError(400, "no_lines", "At least one count line is required");
   }
 
@@ -596,7 +614,9 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
   // count sheet in the building, so the column appears only when this very event also
   // carries derived rows — which can only happen once the migration has applied.
   const withAllocationColumn = allocated.length > 0;
-  const skuRows = resolution.resolved.map((l) => ({
+  // A single-member packaging product's line (B099) is written exactly like a direct SKU line —
+  // count dimension, leaf units, provenance NULL: it was measured AT that SKU, nothing was derived.
+  const skuRows = [...resolution.resolved, ...directSingleMember.map((d) => d.line)].map((l) => ({
     count_event_id: ev.id, sku_id: l.skuId, level_label: l.levelLabel.trim(), qty: l.qty,
     is_loose: l.isLoose === true, partial_fraction: l.partialFraction ?? null,
     anchor_dimension: l.anchorDimension, resolved_oz: l.resolvedOz, resolved_units: l.resolvedUnits,
@@ -653,6 +673,18 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
       // The derivation, reconstructible: which product, which primary answered and on
       // which rung, what the lots could place, and what the primary absorbed.
       allocated_line_count: productRows.length,
+      // Product rows that were written as a direct count of their one active member (B099).
+      direct_product_lines: directSingleMember.map((d) => ({
+        product_id: d.productId,
+        product_name: d.productName,
+        written_as: "direct_single_member",
+        sku_id: d.primarySkuId,
+        resolution_rung: d.rung,
+        level_label: d.line.levelLabel.trim(),
+        qty: d.line.qty,
+        anchor_dimension: d.line.anchorDimension,
+        resolved_units: d.line.resolvedUnits,
+      })),
       product_lines: allocated.map((p) => ({
         product_id: p.productId,
         product_name: p.productName,
@@ -701,7 +733,7 @@ async function allocateProductLines(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
   productLines: CountProductLineInput[],
-): Promise<AllocatedProductLine[]> {
+): Promise<{ allocated: AllocatedProductLine[]; directSingleMember: DirectProductLine[] }> {
   const productIds = [...new Set(productLines.map((l) => l.productId))];
   const { byProduct } = await loadProductIndex(productIds, locationId);
   for (const id of productIds) {
@@ -731,6 +763,7 @@ async function allocateProductLines(
   const [measures, recipeSkus] = await Promise.all([loadMeasures(), loadRecipeSkus(primaryIds, locationId)]);
 
   const out: AllocatedProductLine[] = [];
+  const directSingleMember: DirectProductLine[] = [];
   for (const line of productLines) {
     const entry = byProduct.get(line.productId)!;
     const primarySkuId = entry.resolution.skuId!;
@@ -750,7 +783,19 @@ async function allocateProductLines(
         { levelLabel: line.levelLabel, skuName: entry.name, skuId: null });
     }
     const only = resolved.resolved[0]!;
-    if (only.anchorDimension !== "weight" || only.resolvedOz == null) {
+    const disposition = productCountLineDisposition({
+      anchorDimension: only.anchorDimension,
+      resolvedOz: only.resolvedOz,
+      activeMemberSkuIds: memberIdsByProduct.get(line.productId) ?? [],
+      primarySkuId,
+    });
+    if (disposition === "direct_single_member") {
+      // Packaging with ONE active member (audit B099): that member is the product's whole
+      // shelf, so this is an ordinary direct count of that SKU, in leaf units.
+      directSingleMember.push({ productId: line.productId, productName: entry.name, primarySkuId, rung: entry.resolution.rung, line: only });
+      continue;
+    }
+    if (disposition === "refuse_count_dimension" || only.resolvedOz == null) {
       // A count-terminated chain (packaging) has no honest ounce, so there is nothing
       // to allocate across vendors. Count those per SKU — the split is the way.
       throw new CountError(400, "product_count_dimension", `"${entry.name}" is counted by unit, not by weight — count it by vendor instead`);
@@ -785,7 +830,7 @@ async function allocateProductLines(
       lotCount: lots.length,
     });
   }
-  return out;
+  return { allocated: out, directSingleMember };
 }
 
 /**
@@ -1506,8 +1551,8 @@ async function salesDisclosure(
 }
 
 /**
- * THE RENDER'S ONE READ OF EACH LEDGER (B9 step 2): the location's receipt lines (with
- * their header's write instant, via the service-role embed — see DELIVERY_HEADER_EMBED),
+ * THE RENDER'S ONE READ OF EACH LEDGER (B9 step 2): the location's receipt lines (scoped
+ * to the shop via the service-role embed — see DELIVERY_HEADER_EMBED),
  * its delivery headers (the retro-edit probe), and the inputs of its LIVE productions,
  * each from the earliest instant any tier's window reaches. Extra anchor groups now cost
  * nothing: every group's received / consumed / staleness figure is a filter over these.
@@ -1525,7 +1570,7 @@ interface OnHandLedgers {
  * at ~220 deliveries). Disambiguated by FK name: vendor_delivery_items has TWO FKs to
  * vendor_deliveries.
  */
-const DELIVERY_HEADER_EMBED = "vendor_deliveries!vendor_delivery_items_delivery_id_fkey!inner(location_id, created_at)";
+const DELIVERY_HEADER_EMBED = "vendor_deliveries!vendor_delivery_items_delivery_id_fkey!inner(location_id)";
 /** production_inputs has ONE FK to productions; the embed scopes inputs to live productions here. */
 const PRODUCTION_HEADER_EMBED = "productions!inner(location_id, produced_at, superseded_at, revoked_at)";
 
@@ -1540,7 +1585,7 @@ async function loadOnHandLedgers(
   // as "nothing arrived / nothing was used", which would fabricate on-hand).
   type LineRow = { id: string; vendor_item_id: string; resolved_oz: number | string | null; created_at: string;
     received_level_label: string | null; received_qty_at_level: number | string | null;
-    vendor_deliveries: { location_id: string; created_at: string } };
+    vendor_deliveries: { location_id: string } };
   type HeaderRow = { id: string; created_at: string; delivery_date: string | null };
   type InputRow = { id: string; input_sku_id: string; input_oz: number | string | null; productions: { produced_at: string } };
   const [lines, headers, inputs] = await Promise.all([
@@ -1548,7 +1593,8 @@ async function loadOnHandLedgers(
       const { data, error } = await sb.from("vendor_delivery_items")
         .select(`id, vendor_item_id, resolved_oz, created_at, received_level_label, received_qty_at_level, ${DELIVERY_HEADER_EMBED}`)
         .eq("vendor_deliveries.location_id", locationId)
-        .gt("vendor_deliveries.created_at", deliveriesAfter)
+        // The LINE's own write instant is the window (audit B185): a line appended to a delivery
+        // whose header predates the floor is still a receipt after it. The header only scopes the shop.
         .gt("created_at", deliveriesAfter)
         .order("id", { ascending: true })
         .range(from, to)
@@ -1589,11 +1635,42 @@ async function loadOnHandLedgers(
     deliveryLines: lines.map((l) => ({
       id: l.id, skuId: l.vendor_item_id, resolvedOz: l.resolved_oz,
       receivedLevelLabel: l.received_level_label, receivedQtyAtLevel: l.received_qty_at_level,
-      createdUs: instantMicros(l.created_at), deliveryCreatedUs: instantMicros(l.vendor_deliveries.created_at),
+      createdUs: instantMicros(l.created_at), createdIso: l.created_at,
     })),
     deliveryHeaders: headers.map((h) => ({ createdUs: instantMicros(h.created_at), deliveryDate: h.delivery_date })),
     productionInputs: inputs.map((r) => ({ skuId: r.input_sku_id, inputOz: r.input_oz, producedUs: instantMicros(r.productions.produced_at) })),
   };
+}
+
+/**
+ * The pack chain in force when each count-dimension receipt was written (audit B100; D1).
+ * ONE call into the one pure resolver (`resolvePacksAtPoints`: this shop's version in force
+ * then, else the global one) for every such line in the loaded ledger — no per-line I/O and no
+ * second opinion. A line with no version in force then, or inside a flat-pack baseline, has no
+ * entry: the ledger falls back to the live chain for it (today's behaviour). Lines sharing a
+ * version share ONE levels array, so the ledger builds each chain once.
+ */
+function packChainsAtReceipts(
+  lines: readonly DeliveryLedgerLine[],
+  countSkuIds: ReadonlySet<string>,
+  history: SkuPackHistory,
+  shopScope: string,
+): (line: DeliveryLedgerLine) => PackChainLevel[] | null {
+  if (history.versions.length === 0) return () => null;
+  const points = lines.filter((l) => countSkuIds.has(l.skuId)).map((l) => ({ key: l.id, skuId: l.skuId, scope: shopScope, asOf: l.createdIso }));
+  const warnings: PackPickWarning[] = [];
+  const packs = resolvePacksAtPoints(history.versions, history.levels, points, warnings);
+  // NAMED, never silent (the as-of loaders' posture): a picked version with no loaded level is a data fault.
+  for (const w of warnings) console.warn(`counts_receipt_pack_${w.code}`, { skuId: w.skuId, versionId: w.versionId, locationId: w.locationId, fellBackToVersionId: w.fellBackToVersionId });
+  const levelsByVersion = new Map<string, PackChainLevel[]>();
+  const byLine = new Map<string, PackChainLevel[]>();
+  for (const [lineId, pack] of packs) {
+    if (pack.versionId == null || pack.levels.length === 0) continue; // a flat baseline has no chain
+    let levels = levelsByVersion.get(pack.versionId);
+    if (!levels) { levels = pack.levels; levelsByVersion.set(pack.versionId, levels); }
+    byLine.set(lineId, levels);
+  }
+  return (line) => byLine.get(line.id) ?? null;
 }
 
 /**
@@ -1604,6 +1681,7 @@ async function loadOnHandLedgers(
 function onHandLedgerContext(
   sales: SalesSnapshot | null,
   ledgers: OnHandLedgers,
+  chainAtReceipt: (line: DeliveryLedgerLine) => PackChainLevel[] | null = () => null,
 ): OnHandLedgerContext {
   const requireSales = (): SalesSnapshot => {
     if (!sales) throw new Error("onHand: a sales consumer ran without the render's sales read");
@@ -1624,7 +1702,7 @@ function onHandLedgerContext(
     salesOz: (skuIds, fromDate, untilExclusive, gaps) => salesDirectOz(requireSales(), skuIds, fromDate, untilExclusive, gaps),
     salesRowsFrom: (fromDate) => (sales ? salesRowsFrom(sales, fromDate) : []),
     receivedOz: (skuIds, afterIso, untilIso) => { requireDeliveries(afterIso); return receivedOzWindow(ledgers.deliveryLines, skuIds, afterIso, untilIso); },
-    receivedUnits: (skuId, afterIso, untilIso, chain) => { requireDeliveries(afterIso); return receivedUnitsWindow(ledgers.deliveryLines, skuId, afterIso, untilIso, chain); },
+    receivedUnits: (skuId, afterIso, untilIso, chain) => { requireDeliveries(afterIso); return receivedUnitsWindow(ledgers.deliveryLines, skuId, afterIso, untilIso, chain, chainAtReceipt); },
     consumedOz: (skuIds, afterIso, untilIso) => { requireProductions(afterIso); return consumedOzWindow(ledgers.productionInputs, skuIds, afterIso, untilIso); },
     productionInputsFrom: (fromIso) => { requireProductions(fromIso); return productionInputsFrom(ledgers.productionInputs, fromIso); },
     stale: (anchorIso) => {
@@ -1813,7 +1891,7 @@ async function onHandCore(
   const offRoster = skuIds.filter((id) => !rosterName.has(id));
 
   // ── 4. The second (and last) parallel wave: the sales read, the ledgers, the labels.
-  const [sales, ledgers, nameRes, chainsBySku, measures] = await Promise.all([
+  const [sales, ledgers, nameRes, chainsBySku, measures, packHistory] = await Promise.all([
     loadSalesSnapshot(sb, locationId, now, {
       fromDate: earliestDate([gapSince, laneFrom, disclosureFrom]),
     }),
@@ -1838,11 +1916,14 @@ async function onHandCore(
       : Promise.resolve({ data: [] as OffRosterSku[], error: null as { message: string } | null }),
     countSkuIds.length > 0 ? refs.packChains(countSkuIds) : Promise.resolve(new Map<string, PackChainLevel[]>()),
     countSkuIds.length > 0 ? refs.measures() : Promise.resolve(new Map<string, MeasureUnitFactor>()),
+    // Pack HISTORY, for the count rows only: each packaging receipt is read through the pack in
+    // force when it was written (audit B100), not through today's chain.
+    countSkuIds.length > 0 ? refs.packHistory() : Promise.resolve<SkuPackHistory>({ versions: [], levels: [] }),
   ]);
   // LABEL-ONLY read: names never touch the drift math (rows fall back to "(sku)"), so
   // a failure logs and continues best-effort rather than failing the whole panel.
   if (nameRes.error) console.error(`[counts] loadOnHand sku names lookup failed:`, nameRes.error.message);
-  const ctx = onHandLedgerContext(sales, ledgers);
+  const ctx = onHandLedgerContext(sales, ledgers, packChainsAtReceipts(ledgers.deliveryLines, new Set(countSkuIds), packHistory, locationId));
   const [salesCoverage, salesThrough] = await Promise.all([
     salesDisclosure(sb, locationId, disclosureFrom, sales),
     finishDepletionWatermark(watermarkStart, locationId, sb, sales),
@@ -2149,12 +2230,15 @@ export async function loadCountsTileState(
 
   // (2) Distinct SKUs ever counted here. PostgREST has no DISTINCT, so we page
   // the sku_id column and dedupe in memory (still one batched read, never per-SKU).
-  const eventIds = events.map((e) => e.id);
+  // Scoped through the event embed (service role), the read loadCensusAnchors uses: events
+  // never go inactive, so an event-id `.in()` list crossed the request-line ceiling at
+  // ~220 sessions and the tile went blank (audit B184). Same rows: this shop's ACTIVE events.
   const lines = await selectAllRows<{ sku_id: string }>(
     async (from, to) => {
       const { data, error } = await sb.from("sku_count_lines")
-        .select("sku_id")
-        .in("count_event_id", eventIds)
+        .select(`id, sku_id, ${COUNT_EVENT_EMBED}`)
+        .eq("sku_count_events.location_id", locationId)
+        .eq("sku_count_events.active", true)
         .order("id", { ascending: true })
         .range(from, to)
         .returns<Array<{ sku_id: string }>>();
@@ -2318,7 +2402,8 @@ async function finishDepletionWatermark(
     : await loadSalesCoverageDisclosure(sb, { locationId, fromDate: candidate, untilDateExclusive });
   return coverage.byLocation[locationId]?.hasGaps === false ? candidate : null;
 }
-async function sumConsumedOzWindow(
+/** Exported for tests/counts-product-consumed-window.test.ts. */
+export async function sumConsumedOzWindow(
   sb: ReturnType<typeof getServiceRoleClient>,
   skuIds: string[],
   locationId: string,
@@ -2327,35 +2412,29 @@ async function sumConsumedOzWindow(
 ): Promise<Map<string, number | null>> {
   const out = new Map<string, number | null>();
   for (const id of skuIds) out.set(id, 0);
-  // Live production headers at this location in the window.
-  // BOTH reads are PAGED (the PR #63 lesson): the header set is bounded only by
-  // location + window, and its inputs multiply it — a truncated page would silently
-  // UNDERSTATE the consumed term, inflating computed on-hand. `id` (the PK) gives the
-  // stable total order paging requires; both reads are order-insensitive sums.
-  const hdrs = await selectAllRows<{ id: string }>(
+  // Inputs of LIVE productions at this location in the window (after, until], scoped through
+  // the header embed (service role — the read loadOnHandLedgers uses). It used to read the
+  // header ids first and spend ALL of them in one production-id `.in()` list: past 220 live
+  // productions since the oldest lot the request line was refused, and every count sheet with
+  // a product line answered 500 (audit B023). `skuIds` is one product's members — a small list.
+  // PAGED (the PR #63 lesson): a truncated page would silently UNDERSTATE the consumed term,
+  // inflating computed on-hand. `id` (the PK) gives the stable total order paging requires;
+  // the sum is order-insensitive.
+  type InputRow = { input_sku_id: string; input_oz: number | string | null };
+  const lines = await selectAllRows<InputRow>(
     async (from, to) => {
-      let hq = sb.from("productions").select("id").eq("location_id", locationId)
-        .is("superseded_at", null).is("revoked_at", null).gt("produced_at", afterIso);
-      if (untilIso != null) hq = hq.lte("produced_at", untilIso);
-      const { data, error } = await hq
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ id: string }>>();
-      if (error) throw new Error(`sumConsumedOzWindow productions: ${error.message}`);
-      return { data };
-    },
-  );
-  const prodIds = hdrs.map((h) => h.id);
-  if (prodIds.length === 0) return out;
-  const lines = await selectAllRows<{ input_sku_id: string; input_oz: number | string | null }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("production_inputs")
-        .select("input_sku_id, input_oz")
+      let q = sb.from("production_inputs")
+        .select(`id, input_sku_id, input_oz, ${PRODUCTION_HEADER_EMBED}`)
         .in("input_sku_id", skuIds)
-        .in("production_id", prodIds)
+        .eq("productions.location_id", locationId)
+        .is("productions.superseded_at", null)
+        .is("productions.revoked_at", null)
+        .gt("productions.produced_at", afterIso);
+      if (untilIso != null) q = q.lte("productions.produced_at", untilIso);
+      const { data, error } = await q
         .order("id", { ascending: true })
         .range(from, to)
-        .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+        .returns<InputRow[]>();
       if (error) throw new Error(`sumConsumedOzWindow production_inputs: ${error.message}`);
       return { data };
     },

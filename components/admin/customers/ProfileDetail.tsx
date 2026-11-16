@@ -24,7 +24,9 @@ export function ProfileDetail({ detail: d, language, canRevoke }: { detail: Awai
   // Twelve months always cross a year boundary unless it is December: the labels then carry the year.
   const monthLabels = formatTrendMonthLabels(d.months.map((m) => m.month), language);
   const historyHeadings = ["date", "shop", "channel", "total", "items"] as const;
-  const historyCells = (o: typeof d.history.rows[number]) => [date(o.date), shop(o.locationId), <span key="channel">{channel(o.channel)}{o.source !== "toast" && <span className="block text-xs">{t(`customers.source.${o.source}`)}</span>}</span>, money(o.totalCents),
+  const historyCells = (o: typeof d.history.rows[number]) => [date(o.date), shop(o.locationId), <span key="channel">{channel(o.channel)}{o.source !== "toast" && <span className="block text-xs">{t(`customers.source.${o.source}`)}</span>}</span>,
+    // 0312 (W12/B176, owner decision W12-5 b): a voided Toast order is shown, labelled, and never counted.
+    <span key="total">{money(o.totalCents)}{o.voided && <span className="block text-xs font-bold text-co-warning-text">{t("customers.history.voided")}</span>}</span>,
     `${o.items.map((i) => `${i.name} ×${i.qty}`).join(" · ")}${o.moreItems ? ` ${t("customers.history.more", { count: o.moreItems })}` : ""}`];
   return <>
     <section className="co-card min-w-0 space-y-3 p-4 [overflow-wrap:anywhere]">

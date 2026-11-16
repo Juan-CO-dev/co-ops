@@ -203,7 +203,7 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
   // Never fails the capture; the next tick re-captures today and links again.
   let customers: CaptureDayResult["customers"];
   try {
-    const r = await budget.wait(() => persistCapturedCustomers(locationId, cateringOrders, { signal: budget.signal }));
+    const r = await budget.wait(() => persistCapturedCustomers(locationId, cateringOrders, { signal: budget.signal, businessDate: date }));
     customers = { ok: r.ok, linked: r.linked, error: r.error };
   } catch {
     customers = { ok: false, linked: 0, error: budget.signal.aborted ? "customer_capture_deadline" : "customer_capture_failed" };
