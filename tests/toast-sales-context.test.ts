@@ -116,6 +116,7 @@ describe("per-shop sales context reuse", () => {
     const dates = Array.from({ length: 30 }, (_, i) => `2026-09-${String(i + 1).padStart(2, "0")}`);
     Object.assign(tables, {
       ezcater_orders: [], ezcater_current_toast_links: [], productions: [], audit_log: [], ezcater_item_map: [],
+      recipes: [], recipe_outputs: [], // W16/B092: the production carry window (no recipe rows = the 5-day default)
       locations: [{ id: "shop", active: true, toast_restaurant_guid: "restaurant" }],
       toast_dining_options: [], sales_channel_map: [],
       toast_capture_runs: dates.map((date) => ({ id: `run-${date}`, location_id: "shop", business_date: date, orders: 1, status: "completed", finished_at: `${date}T23:00:00Z` })),
@@ -131,7 +132,8 @@ describe("per-shop sales context reuse", () => {
     expect(result.coverage.degraded).toBe(false);
     expect(result.rows).toHaveLength(90);
     expect(result.rows.filter((row) => row.sku_id === "raw-prov").reduce((n, row) => n + row.direct_oz, 0)).toBe(60);
-    expect(reads.length).toBeLessThanOrEqual(24);
+    // W16/B092: +2 constant reads (recipes + recipe_outputs for the production carry window), 24 → 26.
+    expect(reads.length).toBeLessThanOrEqual(26);
     expect(loadRecipeGraph).toHaveBeenCalledExactlyOnceWith({ locationId: "shop" });
     expect(reads.filter((table) => table === "items")).toHaveLength(1);
     expect(reads.filter((table) => table === "toast_dining_options")).toHaveLength(1);

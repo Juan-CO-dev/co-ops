@@ -88,10 +88,20 @@ it("replaces a genuinely empty day with explicit zero signals and empty aggregat
 });
 
 it("includes reviewed catering exclusions in diagnostic units without counting them as sales", async () => {
+  // W16/B093: only a catering check another source depletes (an ezCater ring) is excluded on the raw path.
   day.orders[0]!.salesChannel = "catering";
+  day.orders[0]!.diningOption = "Ezcater";
   await materializeCapturedDepletion("shop", "2026-10-06");
   expect(rpc.mock.calls[0]?.[1]).toMatchObject({ p_counted_qty: 0, p_suspect_check_count: 0,
     p_aggregates: [], p_diagnostics: { excluded_units: 37, unmapped_units: 0 } });
+});
+
+it("W16/B093: a house catering check rung only on the register is counted like a sale", async () => {
+  day.orders[0]!.salesChannel = "catering";
+  day.orders[0]!.diningOption = "App Catering Delivery";
+  await materializeCapturedDepletion("shop", "2026-10-06");
+  expect(rpc.mock.calls[0]?.[1]).toMatchObject({ p_counted_qty: 30,
+    p_aggregates: [{ sku_id: "sku", direct_oz: 0, flattened_oz: 60 }], p_diagnostics: { excluded_units: 4 } });
 });
 
 it("keeps poisoned menu recipes diagnostic without degrading coverage", async () => {

@@ -315,3 +315,36 @@ function parseNullableText(value: unknown): string | null | typeof INVALID {
   if (typeof value !== "string") return INVALID;
   return normalizeText(value);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The per-tab REVISION (audit W14 / B078, migration 0315)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Which send this is: the browser tab (a random id minted once per page load) and that tab's
+ * send counter. `save_opening_phase1_draft` refuses a request from the SAME tab whose counter
+ * is not higher than the stored one, so a slow older autosave or beacon can never overwrite a
+ * newer draft. It orders one tab's own requests; it is not an identity and not a secret.
+ */
+export interface OpeningDraftRev {
+  tab: string;
+  seq: number;
+}
+
+const DRAFT_REV_TAB_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Parse the optional `rev` of a draft POST. ABSENT is fine (`rev: null`): a client from before
+ * this change, whose save keeps last-write-wins. PRESENT but malformed is refused, never
+ * coerced — a half-read revision would quietly switch the ordering off.
+ */
+export function parseOpeningDraftRev(
+  raw: unknown,
+): { ok: true; rev: OpeningDraftRev | null } | { ok: false } {
+  if (raw === undefined || raw === null) return { ok: true, rev: null };
+  if (!isPlainRecord(raw)) return { ok: false };
+  const { tab, seq } = raw;
+  if (typeof tab !== "string" || !DRAFT_REV_TAB_RE.test(tab)) return { ok: false };
+  if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < 1) return { ok: false };
+  return { ok: true, rev: { tab: tab.toLowerCase(), seq } };
+}

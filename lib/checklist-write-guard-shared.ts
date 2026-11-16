@@ -47,3 +47,26 @@ export function canCreateChecklistInstance(actor: ChecklistWriteAuthority | null
   return member(actor, target)
     && actor.level >= (["opening", "prep"].includes(target.templateType) ? 4 : 3);
 }
+
+/**
+ * A line the SYSTEM completes — never a person's tap, and never a generic correction's target.
+ *   · a REPORT REFERENCE (`report_reference_type`): ticked by its source report's submission;
+ *   · an ITEM-TRACKING line (`ref_track_item_completion` AND a referenced item): ticked by the
+ *     reconciler when the item it follows is completed (lib/prep.ts reconcileRefTrackItems).
+ *
+ * Audit W14 / B182: corrections refused report references only. An item-tracking tick could be
+ * revoked or re-attributed, and once revoked nothing could tick it again (the reconciler never
+ * re-ticks over a revoke; a manual tick is refused), so a hard-gated closing could never be
+ * confirmed. A wrong tracking tick is fixed at the item it follows. The three SQL correction
+ * writers state the same rule (migration 0315); this is its TypeScript twin, and it is by
+ * construction the set of lines `canCompleteChecklistItem` lets nobody tick by hand
+ * (pinned in tests/checklist-write-guard.test.ts).
+ */
+export function isSystemTrackedItem(item: {
+  reportReferenceType: string | null;
+  refTrackItemCompletion?: boolean | null;
+  referencesTemplateItemId?: string | null;
+}): boolean {
+  if (item.reportReferenceType !== null) return true;
+  return item.refTrackItemCompletion === true && item.referencesTemplateItemId != null;
+}
