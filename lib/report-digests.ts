@@ -203,6 +203,32 @@ interface LeadRow {
 // text itself never reaches an email.
 const LEAD_SELECT = "id, contact_name, company, event_date, time_window, headcount, stage, lead_source, location_id, created_at, follow_up_date, external_ref, delivery_address, estimated_revenue_cents, notes";
 
+type RefundRow = { quote_id: string; amount_cents: number; refunded_amount_cents: number | null };
+/**
+ * Yesterday's refunds (W26/B140): by WHEN THE REFUND HAPPENED (`refunded_at`, migration 0333), at
+ * the amount refunded. The old read filtered by `paid_at`, so a refund on any later day than the
+ * payment was never reported. Until 0333 is applied the column is missing (42703): the pre-0333
+ * read runs instead (by paid_at, the payment amount) — the old behaviour, never a failed digest.
+ */
+async function loadRefundsYesterday(sb: Sb, y: { startIso: string; endExclusiveIso: string }): Promise<RefundRow[]> {
+  let columnMissing = false;
+  try {
+    return await selectAllRows<RefundRow>((from, to) =>
+      sb.from("catering_payments").select("quote_id, amount_cents, refunded_amount_cents").eq("status", "refunded")
+        .gte("refunded_at", y.startIso).lt("refunded_at", y.endExclusiveIso).order("id").range(from, to)
+        .then((r: { data: RefundRow[] | null; error: { code?: string; message: string } | null }) => {
+          if (r.error?.code === "42703") columnMissing = true;
+          return r;
+        }));
+  } catch (error) {
+    if (!columnMissing) throw error;
+  }
+  const legacy = await selectAllRows<{ quote_id: string; amount_cents: number }>((from, to) =>
+    sb.from("catering_payments").select("quote_id, amount_cents").eq("status", "refunded")
+      .gte("paid_at", y.startIso).lt("paid_at", y.endExclusiveIso).order("id").range(from, to));
+  return legacy.map((r) => ({ ...r, refunded_amount_cents: null }));
+}
+
 export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promise<CateringFacts> {
   const activeShops = await selectAllRows<{ id: string }>((from, to) =>
     sb.from("locations").select("id").eq("active", true).order("id").range(from, to));
@@ -266,9 +292,7 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
       sb.from("catering_quotes").select("id, location_id, total_cents").gte("sent_at", y.startIso).lt("sent_at", y.endExclusiveIso).order("id").range(from, to)),
     selectAllRows<{ id: string; location_id: string; expires_at: string | null }>((from, to) =>
       sb.from("catering_quotes").select("id, location_id, expires_at").eq("status", "sent").is("superseded_at", null).order("id").range(from, to)),
-    selectAllRows<{ quote_id: string; amount_cents: number }>((from, to) =>
-      sb.from("catering_payments").select("quote_id, amount_cents").eq("status", "refunded")
-        .gte("paid_at", y.startIso).lt("paid_at", y.endExclusiveIso).order("id").range(from, to)),
+    loadRefundsYesterday(sb, y),
   ]);
   const refundQuoteIds = [...new Set(refunds.map((r) => r.quote_id))];
   const refundLoc = new Map<string, string>();
@@ -314,7 +338,7 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
     today, leads: facts, lostYesterdayIds: lostIds,
     quotesSentYesterday: sentYesterday.map((q) => ({ id: q.id, locationId: q.location_id, totalCents: q.total_cents })),
     openQuotes: openQuotes.filter((q) => !q.expires_at || Date.parse(q.expires_at) > now.getTime()).map((q) => ({ id: q.id, locationId: q.location_id })),
-    refundsYesterday: refunds.map((r) => ({ locationId: refundLoc.get(r.quote_id) ?? null, amountCents: r.amount_cents })),
+    refundsYesterday: refunds.map((r) => ({ locationId: refundLoc.get(r.quote_id) ?? null, amountCents: r.refunded_amount_cents ?? r.amount_cents })),
     readiness, staff,
   };
 }
