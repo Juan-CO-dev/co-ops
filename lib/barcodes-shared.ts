@@ -164,12 +164,19 @@ export interface ScanContext {
   vendorId: string;
   lineSkuIds: readonly string[];
   taught: readonly TaughtCode[];
+  /**
+   * This vendor's USABLE SKUs at this shop (active, and shared or this shop's own). It feeds the
+   * twin lane AND gates this vendor's own taught rows: a code taught on a SKU that is no longer
+   * in this list (retired) must not answer as that SKU (audit B101).
+   */
   vendorSkus: readonly { skuId: string; productId: string | null }[];
 }
 export type ScanMatch =
   | { kind: "line"; skuId: string; level: Level; levels: Level[]; ambiguous: boolean }
   | { kind: "sku"; skuId: string; level: Level; levels: Level[]; ambiguous: boolean }
-  | { kind: "twin"; skuId: string; viaSkuId: string; level: Level; levels: Level[]; ambiguous: boolean }
+  | { kind: "twin"; skuId: string; viaSkuId: string; level: Level; levels: Level[]; ambiguous: boolean;
+      /** Set when the code was taught on THIS vendor's own retired SKU, not on another vendor's. */
+      viaOwnRetired?: true }
   | { kind: "unknown" };
 
 /** The levels a code was taught at, case first — case is the default a scan assumes. */
@@ -181,7 +188,13 @@ export function resolveScan(code: string, ctx: ScanContext): ScanMatch {
   const rows = ctx.taught.filter((t) => t.code === code);
   if (rows.length === 0) return { kind: "unknown" };
 
-  const mine = rows.filter((t) => t.vendorId === ctx.vendorId);
+  // This vendor's own rows count only while the SKU is still one it can receive here. A code
+  // taught on a RETIRED SKU used to answer `{ kind: "sku" }` for a SKU the form does not have:
+  // the scan did nothing, and because the code never read as unknown it could not be re-taught
+  // onto the replacement (audit B101). Such a row now falls through to the twin lane (the
+  // replacement shares the product) or to `unknown` (teach it).
+  const usable = new Set(ctx.vendorSkus.map((s) => s.skuId));
+  const mine = rows.filter((t) => t.vendorId === ctx.vendorId && usable.has(t.skuId));
   const skuIds = [...new Set(mine.map((t) => t.skuId))];
   // Two of THIS vendor's SKUs sharing a code is a data error, not a twin. Resolve it, and
   // say so — the UI shows the picker instead of auto-opening a line.
@@ -201,13 +214,16 @@ export function resolveScan(code: string, ctx: ScanContext): ScanMatch {
     return { kind: "sku", skuId: ownSku, level: levels[0] ?? "case", levels, ambiguous };
   }
 
-  // (3) taught only on another vendor's SKU whose product THIS vendor also carries.
+  // (3) taught only on a SKU this vendor cannot receive — another vendor's, or this vendor's own
+  // retired one — whose product THIS vendor still carries. The row is still true evidence about
+  // the PRODUCT, so the vendor's live SKU of it is offered.
   for (const row of rows) {
     if (!row.productId) continue;
     const twin = ctx.vendorSkus.find((s) => s.productId === row.productId);
     if (!twin) continue;
     const levels = levelsOf(rows.filter((r) => r.skuId === row.skuId));
-    return { kind: "twin", skuId: twin.skuId, viaSkuId: row.skuId, level: levels[0] ?? "case", levels, ambiguous: false };
+    const match: ScanMatch = { kind: "twin", skuId: twin.skuId, viaSkuId: row.skuId, level: levels[0] ?? "case", levels, ambiguous: false };
+    return row.vendorId === ctx.vendorId ? { ...match, viaOwnRetired: true } : match;
   }
 
   return { kind: "unknown" };

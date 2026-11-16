@@ -11,6 +11,10 @@
  * prep waste, coverage disclosure, watermark), the read-only digest read, and the walk's
  * seeding read INCLUDING the baseline rows it writes.
  *
+ * NAMED DELTAS (audit W17). The oracle is frozen and is never edited. Where a later fix
+ * DELIBERATELY changes an answer, the change is stated below by name as a transformation of the
+ * oracle's OUTPUT, narrow enough that any other difference still fails, and pinned by its own test.
+ *
  * Then the budget: one page render (catalog + on-hand, shared refs) stays inside a fixed
  * round-trip budget, loads the effective sales window ONCE, and extra anchor GROUPS (par
  * walks, count sessions, inferred instants) cost ZERO extra round trips.
@@ -84,6 +88,36 @@ async function measure<T>(scale: FixtureScale, fn: () => Promise<T>) {
   const out = await fn();
   return { out, writes: db.writes, trips: db.log.length, log: db.log, reconciled: reconciledCalls.length };
 }
+// ── Named deltas vs the frozen oracle (audit W17) ───────────────────────────────────
+/**
+ * B186 — AN ANCHOR'S DAY IS ITS ET OPERATIONAL DATE. Retro-edit staleness compares a delivery's
+ * `delivery_date` (the ET calendar day the receiver picks) with the anchor's day. The oracle reads
+ * that day off the anchor's UTC timestamp, so an anchor taken after 8 PM ET lands on the NEXT day
+ * and an ordinary delivery dated that next day flags it stale. Two fixture anchors sit in that
+ * gap and are stale ONLY by it (no later-written delivery is dated on or before their ET day):
+ *
+ *   2026-10-07T01:11Z  (9:11 PM ET on 10-06; the scaled par walk)  vs d2, dated 2026-10-07
+ *   2026-09-01T00:00Z  (8:00 PM ET on 08-31; s-turkey's inferred baseline) vs d5, dated 2026-09-01
+ *
+ * For exactly those anchors the oracle's `anchorStale: true` is expected to read `false`.
+ */
+const B186_UTC_EVENING_ANCHORS: ReadonlySet<string> = new Set(["2026-10-07T01:11:00+00:00", "2026-09-01T00:00:00+00:00"]);
+/** The oracle's (plain) output with the named deltas applied. `hits` records each row a delta moved. */
+function withNamedDeltas<T>(oldPlain: T, hits: Array<{ delta: string; skuId: unknown; anchorAt: string }> = []): T {
+  const walk = (v: unknown): void => {
+    if (Array.isArray(v)) { v.forEach(walk); return; }
+    if (v == null || typeof v !== "object") return;
+    const o = v as Record<string, unknown>;
+    if (typeof o.anchorAt === "string" && o.anchorStale === true && B186_UTC_EVENING_ANCHORS.has(o.anchorAt)) {
+      o.anchorStale = false;
+      hits.push({ delta: "B186", skuId: o.skuId, anchorAt: o.anchorAt });
+    }
+    Object.values(o).forEach(walk);
+  };
+  walk(oldPlain);
+  return oldPlain;
+}
+
 const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v, (_k, val) => (val instanceof Map ? [...val] : val instanceof Set ? [...val] : val)));
 
 beforeEach(() => {
@@ -108,7 +142,7 @@ describe.each(MODES)("OLD ≡ NEW over the same database — %s sales source", (
       return { ...view, prepWaste: await v0.v0LoadPrepWasteRows(current!.client, LOC) };
     });
     const neu = await measure(scale, () => counts.loadOnHand(actor, LOC, NOW));
-    expect(plain(neu.out)).toEqual(plain(old.out));
+    expect(plain(neu.out)).toEqual(withNamedDeltas(plain(old.out)));
     expect(neu.writes).toEqual([]);
     expect(old.writes).toEqual([]);
     // Non-vacuous: every tier and both dimensions are present and carry real numbers.
@@ -130,7 +164,7 @@ describe.each(MODES)("OLD ≡ NEW over the same database — %s sales source", (
   it.each(SCALES)("the walk's seeding read is identical, including the baselines it writes — %s", async (_label, scale) => {
     const old = await measure(scale, () => v0.v0OnHandCore(LOC, NOW, {}));
     const neu = await measure(scale, () => counts.loadOnHandDerived(actor, LOC, NOW));
-    expect(plain(neu.out)).toEqual(plain(old.out));
+    expect(plain(neu.out)).toEqual(withNamedDeltas(plain(old.out)));
     // The upsert is a SET (ON CONFLICT DO NOTHING per row): compare it as one. Its row order
     // followed an unordered roster read before B9 and the sheet's name-ordered one after.
     const asSet = (w: typeof old.writes) => w.map((x) => ({ table: x.table, rows: [...x.rows].sort((a, b) => String(a.sku_id).localeCompare(String(b.sku_id))) }));
@@ -142,7 +176,7 @@ describe.each(MODES)("OLD ≡ NEW over the same database — %s sales source", (
   it("the actor-less digest read is identical — and the read-only path writes nothing", async () => {
     const old = await measure({}, () => v0.v0OnHandCore(LOC, NOW, { withProducts: false, seedBaselines: false }));
     const neu = await measure({}, () => counts.deriveOnHand(LOC, NOW));
-    expect(plain(neu.out)).toEqual(plain(old.out));
+    expect(plain(neu.out)).toEqual(withNamedDeltas(plain(old.out)));
     expect(neu.writes).toEqual([]);
   });
 
@@ -159,7 +193,37 @@ describe.each(MODES)("OLD ≡ NEW over the same database — %s sales source", (
     const old = plain({ ...oldView, prepWaste: await v0.v0LoadPrepWasteRows(current.client, LOC) });
     current = createFakeDb(tables());
     const neu = plain(await counts.loadOnHand(actor, LOC, NOW));
-    expect(neu).toEqual(old);
+    expect(neu).toEqual(withNamedDeltas(old));
+  });
+
+  // The deltas above are REAL and are EXACTLY these rows: the oracle says one thing, the live
+  // code another, and nothing else in either view moved.
+  it("NAMED DELTA B186: only the two UTC-evening anchors stop reading stale", async () => {
+    const run = async (scale: FixtureScale, edit: (t: ReturnType<typeof buildCountsFixture>) => void) => {
+      const tables = () => { const t = buildCountsFixture(scale); edit(t); return t; };
+      current = createFakeDb(tables());
+      const old = plain(await v0.v0OnHandCore(LOC, NOW, { withProducts: true, seedBaselines: false }));
+      current = createFakeDb(tables());
+      const neu = plain(await counts.deriveOnHand(LOC, NOW, { withProducts: true }));
+      const staleByKey = (rows: Array<{ skuId: string; anchorAt: string | null; anchorStale?: boolean }>) =>
+        new Map(rows.map((r) => [r.skuId, { anchorAt: r.anchorAt, stale: r.anchorStale === true }] as const));
+      const before = staleByKey(old.rows), after = staleByKey(neu.rows);
+      const moved = [...before].filter(([id, b]) => b.stale !== after.get(id)?.stale).map(([id, b]) => ({ skuId: id, anchorAt: b.anchorAt, old: b.stale, neu: after.get(id)?.stale }));
+      const hits: Array<{ delta: string; skuId: unknown; anchorAt: string }> = [];
+      expect(neu).toEqual(withNamedDeltas(old, hits));
+      expect(hits.map((h) => ({ skuId: h.skuId, anchorAt: h.anchorAt }))).toEqual(moved.map((m) => ({ skuId: m.skuId, anchorAt: m.anchorAt })));
+      return moved;
+    };
+    const etDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    // The scaled fixture's second extra par walk is taken at 9:11 PM ET.
+    expect(await run({ parWalks: 4, countSessions: 5, baselineInstants: 3 }, () => {}))
+      .toEqual([{ skuId: "s-xpar-1", anchorAt: "2026-10-07T01:11:00+00:00", old: true, neu: false }]);
+    // With no census, s-turkey falls back to its inferred baseline, computed at 8:00 PM ET.
+    expect(await run({}, (t) => { t.sku_count_events = t.sku_count_events!.filter((e) => e.location_id !== LOC); }))
+      .toEqual([{ skuId: "s-turkey", anchorAt: "2026-09-01T00:00:00+00:00", old: true, neu: false }]);
+    // The base fixture has neither anchor on screen: nothing moves.
+    expect(await run({}, () => {})).toEqual([]);
+    for (const at of B186_UTC_EVENING_ANCHORS) expect(etDay(at)).not.toBe(at.slice(0, 10));
   });
 });
 
@@ -240,7 +304,11 @@ describe("B9 step 4 — reference data read once per page render (sheet + panel 
     const old = await measure({}, v0PageRender);
     const t = byTable(neu.log);
     expect(t.measure_units).toBe(1);
-    expect(t.sku_pack_levels).toBe(1);
+    // Audit W17 / B100: the live chains, plus ONE read of the versioned levels and ONE of the pack
+    // versions — the history the count rows resolve each receipt's pack from (D1: a receipt is
+    // priced by the pack in force when it was written, never re-priced by a later pack edit).
+    expect(t.sku_pack_levels).toBe(2);
+    expect(t.sku_pack_versions).toBe(1);
     expect(t.vendors).toBe(1);
     expect(t.products).toBe(1); // the product index: read once, resolved once (product-identity law)
     expect(t.product_primaries).toBe(1);
@@ -267,13 +335,16 @@ describe("B9 step 5 — independent reads run together", () => {
     }
   });
 
-  it.each(MODES)("THE BUDGET: one page render ≤ 25 round trips on the ledger and reconciled sources (≤ 32 on raw capture), constant as anchor groups grow — %s", async (mode) => {
+  // BUDGET RAISED BY EXACTLY 2 (audit W17 / B100, 2026-11-15): 25 → 27 and 30 → 32. The two added
+  // round trips are the pack-version history (sku_pack_versions + its levels), read once per render
+  // in the same parallel wave and with no id list, so they stay 2 at any catalog or ledger size.
+  // W16/B092 adds 2 more on raw capture only (the production carry window: recipes + recipe_outputs): 32 → 34.
+  it.each(MODES)("THE BUDGET: one page render ≤ 27 round trips on the ledger and reconciled sources (≤ 34 on raw capture), constant as anchor groups grow — %s", async (mode) => {
     setMode(mode);
     await measure({}, pageRender);
     const base = await measure({}, pageRender);
     const scaled = await measure({ parWalks: 10, countSessions: 10, baselineInstants: 10 }, pageRender);
-    // W16/B092: raw capture +2 constant reads (the production carry window: recipes + recipe_outputs), 30 → 32.
-    expect(base.trips).toBeLessThanOrEqual(mode === "capture" ? 32 : 25);
+    expect(base.trips).toBeLessThanOrEqual(mode === "capture" ? 34 : 27);
     expect(scaled.trips).toBe(base.trips);
     expect(scaled.reconciled).toBe(mode === "reconciled" ? 1 : 0);
   });

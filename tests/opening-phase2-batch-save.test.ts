@@ -91,7 +91,7 @@ function service(rpcAnswer: { data: unknown; error: { code: string; message: str
       // #388 merged the task-access gate: savePhase2Item first reads the instance's shop + date
       // (canAccessOpeningInstance). Answer that read like prod so a KH+ actor passes.
       maybeSingle: async () => ({
-        data: table === "checklist_instances" ? { location_id: "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb", date: "2026-10-07" } : row,
+        data: table === "checklist_instances" ? { location_id: "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb", date: "2026-10-07", template: { type: "opening" } } : row,
         error: null,
       }),
       then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve),

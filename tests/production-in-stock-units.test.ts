@@ -105,6 +105,10 @@ describe("W16 fix round 1: injected read failures propagate", () => {
       failOnly(table);
       await expect(predict()).rejects.toThrow(new RegExp(`${table} read denied`));
     });
+  }
+  // loadInStockPacks reads productions only through the production_inputs embed (audit W17 / B098), so its
+  // own reads are the two ledgers plus the conversion reads.
+  for (const table of ["vendor_delivery_items", "production_inputs", "vendor_items", "measure_units", "sku_pack_levels"]) {
     it(`loadInStockPacks throws when only ${table} fails`, async () => {
       failOnly(table);
       await expect(loadInStockPacks(["s-lettuce"], LOC)).rejects.toThrow(new RegExp(`${table} read denied`));

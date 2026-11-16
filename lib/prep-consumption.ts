@@ -22,7 +22,7 @@ import { skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
   asOfForBusinessDate, assertScopeToken, levelsBySku, packsFromVersions, pickVersionsAsOf, resolvePackLevels, resolvePacksAtPoints, unitsPerPackForScope,
-  type PackPickWarning, type PackPoint, type ResolvedPack, type ScopedLevelRow, type ScopedVersionRow, type VersionScope,
+  type PackPickWarning, type PackPoint, type ResolvedPack, type ScopedLevelRow, type ScopedVersionRow, type SkuPackHistory, type VersionScope,
 } from "@/lib/sku-versions-shared";
 import {
   mergeResolvedInputs, pickLiveShopRecipeVersions, pickRecipeVersionsAsOf, recipeLineReplacements, versionIdsNeedingLines,
@@ -236,6 +236,39 @@ export async function loadAllSkuPackResolution(scope: VersionScope): Promise<Map
 
 export async function loadAllSkuPackChains(scope: VersionScope): Promise<Map<string, PackChainLevel[]>> {
   return levelsBySku(await loadAllSkuPackResolution(scope));
+}
+
+/**
+ * EVERY pack version `scope` could ever have resolved — global ∪ this shop's — and their levels
+ * (audit W17 / B100). The counts on-hand read resolves each packaging RECEIPT through the pack in
+ * force when that receipt was written (D1: the past resolves as of its day), for nearly the whole
+ * packaging catalog at once, so this is TWO paged reads with NO id list (the request line stays
+ * constant; a SKU-id `.in()` list sits at the ceiling — see loadAllSkuPackResolution). Levels of
+ * any activity ride along: history is append-only and a retired version's levels are inactive.
+ * Throws on error — an empty history reads as "no pack was ever edited" and would silently
+ * re-price every past receipt through today's chain.
+ */
+export async function loadAllSkuPackHistory(scope: VersionScope): Promise<SkuPackHistory> {
+  const sb = getServiceRoleClient();
+  const [versions, levels] = await Promise.all([
+    selectAllRows<ScopedVersionRow>(async (from, to) => {
+      const base = sb.from("sku_pack_versions").select("id, sku_id, location_id, valid_from, valid_to, flat_snapshot");
+      const scoped = scope == null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
+      const { data, error } = await scoped.order("id", { ascending: true }).range(from, to).returns<ScopedVersionRow[]>();
+      if (error) throw new Error(`loadAllSkuPackHistory versions: ${error.message}`);
+      return { data };
+    }),
+    selectAllRows<ScopedLevelRow>(async (from, to) => {
+      const base = sb.from("sku_pack_levels").select(PACK_LEVEL_COLUMNS).not("version_id", "is", null);
+      const scoped = scope == null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
+      const { data, error } = await scoped
+        .order("display_ordinal", { ascending: true }).order("id", { ascending: true })
+        .range(from, to).returns<ScopedLevelRow[]>();
+      if (error) throw new Error(`loadAllSkuPackHistory levels: ${error.message}`);
+      return { data };
+    }),
+  ]);
+  return { versions, levels };
 }
 
 /**

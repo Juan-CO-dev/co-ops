@@ -1,3 +1,4 @@
+import { etCalendarDate } from "@/lib/operational-day";
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -26,6 +27,7 @@ const OTHER_SHOP = "22222222-2222-4222-8222-222222222222";
 const INSTANCE = "33333333-3333-4333-8333-333333333333";
 const USER = "44444444-4444-4444-8444-444444444444";
 const DATE = "2026-10-07";
+const TODAY = etCalendarDate(new Date().toISOString()); // W13/B178: mid-day create only for the ET today
 const ctx = { user: { id: USER }, session: { id: "session" }, role: "employee", level: 3, locations: [SHOP] };
 function req(body: unknown): NextRequest {
   return new NextRequest("http://localhost/api/test", { method: "POST", headers: { origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -58,9 +60,9 @@ describe("actual API assignment gates for employees", () => {
   });
   it.each([false, true])("mid-day assignment=%s denies or reaches instance creation", async (assigned) => {
     mocks.access.mockResolvedValue(assigned);
-    const response = await midDayPost(req({ locationId: SHOP, date: DATE }));
+    const response = await midDayPost(req({ locationId: SHOP, date: TODAY }));
     expect(response.status).toBe(assigned ? 200 : 403);
-    expect(mocks.access).toHaveBeenCalledWith(mocks.service, { userId: USER, level: 3, locationId: SHOP, date: DATE, task: "mid_day_prep" });
+    expect(mocks.access).toHaveBeenCalledWith(mocks.service, { userId: USER, level: 3, locationId: SHOP, date: TODAY, task: "mid_day_prep" });
     expect(mocks.midDayCreate).toHaveBeenCalledTimes(assigned ? 1 : 0);
     expect(mocks.template).toHaveBeenCalledTimes(assigned ? 1 : 0);
   });
@@ -76,7 +78,7 @@ describe("actual API assignment gates for employees", () => {
     mocks.access.mockResolvedValue(true);
     mocks.openingAccess.mockResolvedValue(true);
     expect((await cashPost(req(cashBody))).status).toBe(403);
-    expect((await midDayPost(req({ locationId: SHOP, date: DATE }))).status).toBe(403);
+    expect((await midDayPost(req({ locationId: SHOP, date: TODAY }))).status).toBe(403);
     expect((await openingPost(req({ instanceId: INSTANCE }))).status).toBe(403);
     expect(mocks.cashSubmit).not.toHaveBeenCalled();
     expect(mocks.midDayCreate).not.toHaveBeenCalled();

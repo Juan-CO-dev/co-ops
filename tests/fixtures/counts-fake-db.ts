@@ -81,6 +81,10 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
   // W16/B092: the production carry window reads the recipes that output prep items (shelf life). A fixture
   // with no recipe rows means every item carries the 5-day default.
   for (const t of ["recipes", "recipe_outputs"]) tables[t] ??= [];
+  // Catalog Phase 2a (0259): `sku_pack_versions` exists in every database too. A fixture that brings no
+  // version rows is one whose packs were never edited: the as-of readers (audit W17 / B100, the counts
+  // receipt ledger) find no version in force and answer with the live chain, as before.
+  tables.sku_pack_versions ??= [];
   const log: QueryLogEntry[] = [];
   const writes: Array<{ table: string; rows: Row[] }> = [];
   // CRITICAL PATH: a query issued after a depth-d query has COMPLETED is at least d + 1.
