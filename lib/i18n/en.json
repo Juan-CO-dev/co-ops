@@ -808,6 +808,7 @@
   "catering.pipeline.error.illegal_transition": "That move is not allowed from this stage. Out for delivery can only go to Completed or Lost; Completed and Lost are final.",
   "catering.pipeline.error.reopen_forbidden": "You can't reopen leads.",
   "catering.pipeline.error.reopen_not_ezcater": "Only an ezCater order can be reopened this way.",
+  "catering.pipeline.error.reopen_lead_moved": "This lead just moved to another shop. Reload to see where it is.",
   "catering.pipeline.error.reopen_not_lost": "This lead is no longer Lost. Reload to see where it is.",
   "catering.pipeline.error.reopen_no_uncancel": "ezCater hasn't un-cancelled this order since it was cancelled.",
   "catering.pipeline.error.reopen_still_cancelled": "ezCater still shows this order as cancelled. Check ezManage.",

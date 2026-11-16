@@ -32,10 +32,13 @@
 --      It needs 0312's customer_orders.voided_at at CALL time, not at create time (PL/pgSQL resolves
 --      columns when it runs), so 0330 and 0312 apply in either order; until both are in, the app
 --      treats the call as unavailable (42883 / 42703) and changes nothing.
---   4. B126, owner decision W23-1 a - reopen_ezcater_lead(lead, actor) (NEW): the one human path out
---      of Lost for an ezCater lead whose order ezCater UN-cancelled. Refuses by name unless: the actor
---      is active at level 6+ (`reopen_forbidden`), the lead is an ezCater lead (`reopen_not_ezcater`)
---      and still Lost under the lock (`reopen_not_lost`), a signed `uncancelled` notification is newer
+--   4. B126, owner decision W23-1 a - reopen_ezcater_lead(lead, actor, expected shop) (NEW): the one
+--      human path out of Lost for an ezCater lead whose order ezCater UN-cancelled. Refuses by name
+--      unless: the actor is active at level 6+ (`reopen_forbidden`), the lead is an ezCater lead
+--      (`reopen_not_ezcater`), still at the shop the app authorized the actor for (`reopen_lead_moved`,
+--      review r1: a transfer committed between the app's shop check and this lock would otherwise
+--      let the old shop's GM reopen the new shop's order) and still Lost under the lock
+--      (`reopen_not_lost`), a signed `uncancelled` notification is newer
 --      than every signed cancelled/rejected/failed one (`reopen_no_uncancel`), and the order is no
 --      longer cancelled (`reopen_still_cancelled`). Target: Confirmed when ezCater's status is
 --      "accepted" (inquiry = not paid yet), else Inquiry. Writes the stage and one pipeline event;
@@ -96,7 +99,7 @@ declare v_def text; v_dupes bigint; v_ack text;
 begin
   if to_regprocedure('public.create_catering_company(uuid,text,text,text[])') is not null
      or to_regprocedure('public.customer_orders_sync_ezcater_cancelled()') is not null
-     or to_regprocedure('public.reopen_ezcater_lead(uuid,uuid)') is not null then
+     or to_regprocedure('public.reopen_ezcater_lead(uuid,uuid,uuid)') is not null then
     raise exception '0330: already applied';
   end if;
   if to_regprocedure('public.reconcile_ezcater_toast(date,date)') is null
@@ -221,11 +224,12 @@ revoke all on function public.customer_orders_sync_ezcater_cancelled() from publ
 grant execute on function public.customer_orders_sync_ezcater_cancelled() to service_role;
 
 -- ───────────────────────────── 4. B126: reopen an un-cancelled ezCater lead ─────────────────────────────
-create function public.reopen_ezcater_lead(p_lead_id uuid, p_actor_id uuid)
+create function public.reopen_ezcater_lead(p_lead_id uuid, p_actor_id uuid, p_expected_location_id uuid)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
-declare v_provider text; v_stage text; v_status text; v_pending text; v_loss timestamptz; v_unc timestamptz; v_target text;
+declare v_provider text; v_stage text; v_location uuid; v_status text; v_pending text; v_loss timestamptz; v_unc timestamptz; v_target text;
 begin
-  -- Parity with PIPELINE_WRITE_MIN (6); the shop bind is the app's (assertCanWriteLead), before this call.
+  -- Parity with PIPELINE_WRITE_MIN (6). The shop bind is the app's (assertCanWriteLead) on the shop
+  -- it passes as p_expected_location_id; this function re-checks that shop under the lock below.
   if not exists (select 1 from public.users where id = p_actor_id and active
       and role in ('agm','catering_mgr','prep_mgr','social_media_mgr','gm','moo','owner','cgs')) then
     raise exception 'reopen_forbidden';
@@ -235,7 +239,9 @@ begin
   if v_provider is null then raise exception 'reopen_not_ezcater'; end if;
   -- Same lock order as apply_ezcater_order / transfer_catering_lead: provider advisory, then the lead.
   perform pg_advisory_xact_lock(hashtext(v_provider));
-  select stage into v_stage from public.catering_pipeline where id = p_lead_id for update;
+  select stage, location_id into v_stage, v_location from public.catering_pipeline where id = p_lead_id for update;
+  -- Review r1 (BC-001/BC-007): the shop the actor was authorized for must still be the lead's shop.
+  if v_location is distinct from p_expected_location_id then raise exception 'reopen_lead_moved'; end if;
   if v_stage is distinct from 'lost' then raise exception 'reopen_not_lost'; end if;
   select max(received_at) filter (where event_key in ('cancelled','rejected','failed')),
          max(received_at) filter (where event_key = 'uncancelled')
@@ -254,8 +260,8 @@ begin
     values (p_lead_id, 'lost', v_target, 'Reopened after ezCater un-cancel', p_actor_id);
   return jsonb_build_object('from_stage', 'lost', 'to_stage', v_target);
 end $$;
-revoke all on function public.reopen_ezcater_lead(uuid,uuid) from public, anon, authenticated;
-grant execute on function public.reopen_ezcater_lead(uuid,uuid) to service_role;
+revoke all on function public.reopen_ezcater_lead(uuid,uuid,uuid) from public, anon, authenticated;
+grant execute on function public.reopen_ezcater_lead(uuid,uuid,uuid) to service_role;
 
 -- ───────────────────────────── 5. B209: reconcile_ezcater_toast <- 0229, provider locks bounded ─────────────────────────────
 create or replace function public.reconcile_ezcater_toast(p_from date,p_to date) returns jsonb
@@ -344,7 +350,7 @@ begin
   foreach f in array array[
     'public.create_catering_company(uuid,text,text,text[])'::regprocedure,
     'public.customer_orders_sync_ezcater_cancelled()'::regprocedure,
-    'public.reopen_ezcater_lead(uuid,uuid)'::regprocedure,
+    'public.reopen_ezcater_lead(uuid,uuid,uuid)'::regprocedure,
     'public.reconcile_ezcater_toast(date,date)'::regprocedure
   ] loop
     if has_function_privilege('anon', f, 'EXECUTE') or has_function_privilege('authenticated', f, 'EXECUTE')

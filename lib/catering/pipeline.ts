@@ -605,7 +605,7 @@ export async function loadEzcaterReopenTarget(sb: ReturnType<typeof getServiceRo
   });
 }
 
-const REOPEN_REFUSALS = new Set(["reopen_forbidden", "reopen_not_ezcater", "reopen_not_lost", "reopen_no_uncancel", "reopen_still_cancelled"]);
+const REOPEN_REFUSALS = new Set(["reopen_forbidden", "reopen_not_ezcater", "reopen_lead_moved", "reopen_not_lost", "reopen_no_uncancel", "reopen_still_cancelled"]);
 
 export async function reopenEzcaterLead(actor: AuthContext, id: string): Promise<{ fromStage: "lost"; toStage: "confirmed" | "inquiry" }> {
   const sb = getServiceRoleClient();
@@ -623,7 +623,12 @@ export async function reopenEzcaterLead(actor: AuthContext, id: string): Promise
       throw e;
     }
   }
-  const { data, error } = await sb.rpc("reopen_ezcater_lead", { p_lead_id: id, p_actor_id: actor.user.id });
+  // Review r1 (BC-001/BC-007): the RPC re-checks, under the provider lock, that the lead is still at
+  // the shop authorized above; a transfer committed in between is `reopen_lead_moved`, never a reopen
+  // of another shop's order.
+  const { data, error } = await sb.rpc("reopen_ezcater_lead", {
+    p_lead_id: id, p_actor_id: actor.user.id, p_expected_location_id: lead.location_id,
+  });
   if (error && ["PGRST202", "42883"].includes(String(error.code))) {
     throw new CateringPipelineError(503, "reopen_unavailable", "Reopen isn't available yet");
   }

@@ -198,7 +198,7 @@ async function reopenCases(db) {
   await db.exec('begin');
   try {
     await db.exec(`insert into catering_pipeline(id, stage, lead_source, external_ref) values
-        ('${id('9000', 1)}', 'lost', 'ezcater', 'R1'),   -- cancel, then uncancel, accepted -> confirmed
+        ('${id('9000', 1)}', 'lost', 'ezcater', 'R1'),   -- cancel, then uncancel, accepted -> confirmed (at SHOP)
         ('${id('9000', 2)}', 'lost', 'ezcater', 'R2'),   -- uncancel, then cancel again -> no
         ('${id('9000', 3)}', 'lost', 'ezcater', 'R3'),   -- uncancelled but status still cancelled -> no
         ('${id('9000', 4)}', 'lost', 'web', null),       -- not ezCater
@@ -212,21 +212,28 @@ async function reopenCases(db) {
         ('R2', 'uncancelled', true, now() - interval '2 hours'), ('R2', 'cancelled', true, now() - interval '1 hour'),
         ('R3', 'cancelled', true, now() - interval '2 hours'), ('R3', 'uncancelled', true, now() - interval '1 hour'),
         ('R5', 'cancelled', true, now() - interval '2 hours'), ('R5', 'uncancelled', true, now() - interval '1 hour'),
-        ('R6', 'cancelled', true, now() - interval '2 hours'), ('R6', 'uncancelled', false, now() - interval '1 hour');`);
+        ('R6', 'cancelled', true, now() - interval '2 hours'), ('R6', 'uncancelled', false, now() - interval '1 hour');
+      update catering_pipeline set location_id = '${SHOP}' where id = '${id('9000', 1)}';`);
     await db.exec('set local role service_role');
-    const reopen = (lead, actor = ACTOR) => db.query(`select reopen_ezcater_lead($1, $2) r`, [lead, actor]);
-    await refuses(db, () => reopen(id('9000', 1), EMPLOYEE), 'reopen_forbidden');
-    const r1 = (await one(db, `select reopen_ezcater_lead($1, $2) r`, [id('9000', 1), ACTOR])).r;
+    const reopen = (lead, actor = ACTOR, shop = null) => db.query(`select reopen_ezcater_lead($1, $2, $3) r`, [lead, actor, shop]);
+    await refuses(db, () => reopen(id('9000', 1), EMPLOYEE, SHOP), 'reopen_forbidden');
+    // Review r1 P2 (BC-001/BC-007): the app authorized the actor for the lead's shop BEFORE the
+    // provider lock; a transfer committed in between moved the lead. Under the lock the RPC compares
+    // the shop the app authorized with the lead's shop now, and refuses by name.
+    await refuses(db, () => reopen(id('9000', 1), ACTOR, id('8000', 4)), 'reopen_lead_moved');
+    await refuses(db, () => reopen(id('9000', 1), ACTOR, null), 'reopen_lead_moved');
+    check((await one(db, `select stage from catering_pipeline where id = $1`, [id('9000', 1)])).stage === 'lost', 'B126 r1: a moved lead stays Lost');
+    const r1 = (await one(db, `select reopen_ezcater_lead($1, $2, $3) r`, [id('9000', 1), ACTOR, SHOP])).r;
     check(r1.from_stage === 'lost' && r1.to_stage === 'confirmed', 'B126: accepted -> Confirmed (W23-1 a)');
     check((await one(db, `select stage from catering_pipeline where id = $1`, [id('9000', 1)])).stage === 'confirmed', 'B126: stage written');
     const ev = await one(db, `select count(*)::int n, max(from_stage) f, max(to_stage) t, max(actor_id::text) a from catering_pipeline_events where pipeline_id = $1`, [id('9000', 1)]);
     check(ev.n === 1 && ev.f === 'lost' && ev.t === 'confirmed' && ev.a === ACTOR, 'B126: one pipeline event by the actor');
-    await refuses(db, () => reopen(id('9000', 1)), 'reopen_not_lost');
+    await refuses(db, () => reopen(id('9000', 1), ACTOR, SHOP), 'reopen_not_lost');
     await refuses(db, () => reopen(id('9000', 2)), 'reopen_no_uncancel');
     await refuses(db, () => reopen(id('9000', 3)), 'reopen_still_cancelled');
     await refuses(db, () => reopen(id('9000', 4)), 'reopen_not_ezcater');
     await refuses(db, () => reopen(id('9000', 6)), 'reopen_no_uncancel');
-    const r5 = (await one(db, `select reopen_ezcater_lead($1, $2) r`, [id('9000', 5), ACTOR])).r;
+    const r5 = (await one(db, `select reopen_ezcater_lead($1, $2, $3) r`, [id('9000', 5), ACTOR, null])).r;
     check(r5.to_stage === 'inquiry', 'B126: not accepted -> Inquiry');
   } finally { await db.exec('rollback'); }
 }

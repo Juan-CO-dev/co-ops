@@ -76,7 +76,7 @@ describe("ezcaterReopenTarget (the button rule)", () => {
 describe("reopenEzcaterLead", () => {
   it("reopens to Confirmed, re-reserves prep and audits catering.pipeline.reopen", async () => {
     expect(await reopenEzcaterLead(actor("gm", [SHOP]), "lead-1")).toEqual({ fromStage: "lost", toStage: "confirmed" });
-    expect(state.rpc).toHaveBeenCalledWith("reopen_ezcater_lead", { p_lead_id: "lead-1", p_actor_id: "u-1" });
+    expect(state.rpc).toHaveBeenCalledWith("reopen_ezcater_lead", { p_lead_id: "lead-1", p_actor_id: "u-1", p_expected_location_id: SHOP });
     expect(reserve).toHaveBeenCalledTimes(1);
     expect(audit.mock.calls.map(([a]) => (a as { action: string }).action)).toContain("catering.pipeline.reopen");
   });
@@ -91,6 +91,26 @@ describe("reopenEzcaterLead", () => {
   it("a GM of another shop is refused before any RPC", async () => {
     await expect(reopenEzcaterLead(actor("gm", ["shop-b"]), "lead-1")).rejects.toMatchObject({ status: 403, code: "location_access_denied" });
     expect(state.rpc).not.toHaveBeenCalled();
+  });
+
+  it("review r1: the RPC is told the shop the actor was authorized for, and a lead moved since is a named 409", async () => {
+    // A transfer commits between assertCanWriteLead and the RPC's lock: the RPC compares the shop
+    // the lib authorized (passed as p_expected_location_id) with the locked lead's shop.
+    state.rpc.mockResolvedValue({ data: null, error: { code: "P0001", message: "reopen_lead_moved" } });
+    await expect(reopenEzcaterLead(actor("gm", [SHOP]), "lead-1")).rejects.toMatchObject({ status: 409, code: "reopen_lead_moved" });
+    expect(state.rpc.mock.calls[0]?.[1]).toMatchObject({ p_expected_location_id: SHOP });
+    expect(reserve).not.toHaveBeenCalled();
+    expect(audit.mock.calls.map(([a]) => (a as { action: string }).action)).not.toContain("catering.pipeline.reopen");
+  });
+
+  it("the moved-lead refusal has its own en + es message on the board", async () => {
+    const { resolveErrorKey } = await import("@/components/catering/pipeline/shared");
+    const { readFileSync } = await import("node:fs");
+    expect(resolveErrorKey("reopen_lead_moved")).toBe("catering.pipeline.error.reopen_lead_moved");
+    for (const lang of ["en", "es"]) {
+      const dict = JSON.parse(readFileSync(`lib/i18n/${lang}.json`, "utf8")) as Record<string, string>;
+      expect(dict["catering.pipeline.error.reopen_lead_moved"], lang).toBeTruthy();
+    }
   });
 
   it("an SQL refusal comes back by name; a missing 0330 is 503 reopen_unavailable", async () => {

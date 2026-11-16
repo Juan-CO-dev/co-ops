@@ -808,6 +808,7 @@
   "catering.pipeline.error.illegal_transition": "Ese cambio no está permitido desde esta etapa. «En camino» solo puede pasar a Completado o Perdido; Completado y Perdido son finales.",
   "catering.pipeline.error.reopen_forbidden": "No puedes reabrir pedidos.",
   "catering.pipeline.error.reopen_not_ezcater": "Solo un pedido de ezCater se puede reabrir así.",
+  "catering.pipeline.error.reopen_lead_moved": "Este pedido acaba de pasar a otra tienda. Recarga para ver dónde está.",
   "catering.pipeline.error.reopen_not_lost": "Este pedido ya no está en Perdido. Recarga para ver dónde está.",
   "catering.pipeline.error.reopen_no_uncancel": "ezCater no ha reactivado este pedido desde que se canceló.",
   "catering.pipeline.error.reopen_still_cancelled": "ezCater todavía muestra este pedido como cancelado. Revisa ezManage.",

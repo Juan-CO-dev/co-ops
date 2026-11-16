@@ -70,6 +70,7 @@ const KNOWN_ERROR_CODES = new Set([
   // W23/B126: the ezCater reopen's named refusals.
   "reopen_forbidden",
   "reopen_not_ezcater",
+  "reopen_lead_moved",
   "reopen_not_lost",
   "reopen_no_uncancel",
   "reopen_still_cancelled",
