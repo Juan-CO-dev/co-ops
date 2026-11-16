@@ -50,6 +50,11 @@ export function floorStations(board: ShiftBoard, args: { nowMinutes: number; vie
     const covering = here.filter((p) => !onBreak.has(p.id));
     const facts = closeTimeFacts(station, args.nowMinutes);
     const positions = station.positions.filter((p) => p.active).length;
+    // B117: once a trim is due, the station is judged against its post-trim head count, so a station
+    // trimmed as planned reads covered, not short. A trim still pending (more people covering than the
+    // trim leaves) keeps the closing-soon nudge; a completed trim does not.
+    const trimmedTo = facts.trimDue && facts.trimTo !== null ? facts.trimTo : null;
+    const trimPending = trimmedTo !== null && covering.length > trimmedTo;
     const names = covering
       .filter((p) => args.showNames || p.id === args.viewerId)
       .map((p) => firstName(p.name));
@@ -60,7 +65,8 @@ export function floorStations(board: ShiftBoard, args: { nowMinutes: number; vie
       sort: station.sort,
       status: stationStatus({
         active: station.active, closed: facts.closedAt !== null,
-        filled: here.length, positions, closingSoon: facts.closingSoon || facts.trimDue, closeDue: facts.closeDue, onBreak: here.length - covering.length,
+        filled: here.length, positions: trimmedTo !== null ? Math.min(positions, trimmedTo) : positions,
+        closingSoon: facts.closingSoon || trimPending, closeDue: facts.closeDue, onBreak: here.length - covering.length,
       }),
       people: names,
       positions,
@@ -70,7 +76,7 @@ export function floorStations(board: ShiftBoard, args: { nowMinutes: number; vie
       trimTo: facts.trimTo,
       closedAt: facts.closedAt,
       closeDue: facts.closeDue,
-      trimDue: facts.trimDue && facts.trimTo !== null && covering.length > facts.trimTo,
+      trimDue: trimPending,
       tasksLeft: here.reduce((n, p) => n + (openTasksBy.get(p.id) ?? 0), 0),
     };
   });
