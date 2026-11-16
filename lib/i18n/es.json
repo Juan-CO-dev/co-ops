@@ -6915,6 +6915,7 @@
   "catalog.error.toast_other_shop": "Elige un producto del menú disponible en esta tienda.",
   "catalog.error.owner_is_set_at_creation": "La tienda propietaria se establece al crear la entrada. Usa la opción de compartir para hacerla compartida.",
   "catalog.error.owned_not_catering": "Comparte este producto del menú antes de ofrecerlo para catering.",
+  "catalog.error.already_in_recipe": "Este artículo ya está en esa receta con otra cantidad. Cámbiala en la página de la receta.",
   "sevenshifts.title": "7shifts",
   "sevenshifts.intro": "Conecta cada tienda con su ubicación de 7shifts y confirma quién es quién. Nada se enlaza por nombre: un gerente confirma a cada persona.",
   "sevenshifts.shopPicker": "Tienda",

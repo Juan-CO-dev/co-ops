@@ -6915,6 +6915,7 @@
   "catalog.error.toast_other_shop": "Choose a menu item available in this shop.",
   "catalog.error.owner_is_set_at_creation": "The owning shop is set when the entry is created. Use the sharing action to make it shared.",
   "catalog.error.owned_not_catering": "Share this menu item before making it available for catering.",
+  "catalog.error.already_in_recipe": "This item is already in that recipe with a different amount. Change it on the recipe page.",
   "sevenshifts.title": "7shifts",
   "sevenshifts.intro": "Connect each shop to its 7shifts location and confirm who is who. Nothing links by name: a manager confirms every person.",
   "sevenshifts.shopPicker": "Shop",
