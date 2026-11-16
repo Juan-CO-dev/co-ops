@@ -456,6 +456,9 @@ export function VendorClaimPanel({
   countedSummary,
   matchState,
   unlinked,
+  unlinkedTotal,
+  unlinkedHasMore = false,
+  unlinkedFlagged,
   invoiceCandidates = [],
 }: {
   deliveryId: string;
@@ -467,6 +470,11 @@ export function VendorClaimPanel({
   /** The location's unlinked receipts — only populated (server-side) when this delivery
    *  has NO linked receipt. Empty/undefined otherwise. */
   unlinked?: UnlinkedReceiptView[];
+  /** W20/B195: the queue is paged. `unlinked` is its first page (newest 100); these are the
+   *  whole queue's size, whether older receipts exist, and how many in it are flagged. */
+  unlinkedTotal?: number;
+  unlinkedHasMore?: boolean;
+  unlinkedFlagged?: number;
   invoiceCandidates?: ReceivingInvoiceCandidate[];
   /** Optional server-passed language; the island reads live via useTranslation (matching
    *  the CreditResolveControls idiom), so this is accepted but unused. */
@@ -487,6 +495,45 @@ export function VendorClaimPanel({
   const [uploading, setUploading] = useState(false);
 
   const overridden = matchState === "override";
+
+  // W20/B195: older pages of the triage queue, loaded on demand and appended. Disclosure-style
+  // local state only: a refresh (after a link, a move, a parse) starts again from the server's
+  // first page, which is the truth.
+  const [older, setOlder] = useState<{ rows: UnlinkedReceiptView[]; hasMore: boolean; total: number } | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderErr, setOlderErr] = useState<string | null>(null);
+  const firstPage = unlinked ?? [];
+  // A refreshed first page (new server props) discards the appended pages: their offsets no
+  // longer line up. During-render compare, not an effect (router.refresh keeps client state).
+  const [seenFirstPage, setSeenFirstPage] = useState(unlinked);
+  if (seenFirstPage !== unlinked) { setSeenFirstPage(unlinked); setOlder(null); setOlderErr(null); }
+  const shown = older ? [...firstPage, ...older.rows.filter((r) => !firstPage.some((f) => f.id === r.id))] : firstPage;
+  const queueTotal = Math.max(older?.total ?? unlinkedTotal ?? firstPage.length, shown.length);
+  const queueHasMore = older ? older.hasMore : unlinkedHasMore;
+  const flaggedCount = Math.max(unlinkedFlagged ?? 0, shown.filter((r) => r.attributionConflict).length);
+
+  const showOlder = async () => {
+    if (loadingOlder) return;
+    setLoadingOlder(true);
+    setOlderErr(null);
+    try {
+      // The next page starts after everything the SERVER has handed out, not after de-duplicated rows.
+      const offset = firstPage.length + (older?.rows.length ?? 0);
+      const res = await fetch(`${API}?locationId=${encodeURIComponent(locationId)}&offset=${offset}`, { method: "GET" });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { code?: string };
+        setOlderErr(t(("receiving.claim.error." + (j?.code ?? "generic")) as TranslationKey));
+        return;
+      }
+      const j = (await res.json().catch(() => ({}))) as { receipts?: UnlinkedReceiptView[]; total?: number; hasMore?: boolean };
+      const rows = j.receipts ?? [];
+      setOlder({ rows: [...(older?.rows ?? []), ...rows], hasMore: j.hasMore === true && rows.length > 0, total: j.total ?? queueTotal });
+    } catch {
+      setOlderErr(t("receiving.claim.error.generic"));
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   const showError = (code: string | undefined) =>
     setErr(t(("receiving.claim.error." + (code ?? "generic")) as TranslationKey));
@@ -776,16 +823,16 @@ export function VendorClaimPanel({
           <CollapsibleSection
             idBase={`claim-link-existing-${deliveryId}`}
             title={t("receiving.claim.link_existing_title")}
-            count={t("receiving.claim.link_existing_count", { n: unlinked?.length ?? 0 })}
-            badge={unlinked?.some((r) => r.attributionConflict) ? (
-              <AlertPill tone="warn">{t("receiving.claim.attribution_conflict_count", { n: unlinked.filter((r) => r.attributionConflict).length })}</AlertPill>
+            count={t("receiving.claim.link_existing_count", { n: queueTotal })}
+            badge={flaggedCount > 0 ? (
+              <AlertPill tone="warn">{t("receiving.claim.attribution_conflict_count", { n: flaggedCount })}</AlertPill>
             ) : undefined}
           >
-            {!unlinked || unlinked.length === 0 ? (
+            {shown.length === 0 ? (
               <p className="text-[11px] italic text-co-text-muted">{t("receiving.claim.link_existing_empty")}</p>
             ) : (
               <ul className="flex flex-col gap-1.5">
-                {unlinked.map((r) => (
+                {shown.map((r) => (
                   <UnlinkedReceiptRow
                     key={r.id}
                     r={r}
@@ -797,6 +844,24 @@ export function VendorClaimPanel({
                 ))}
               </ul>
             )}
+            {/* W20/B195: the queue is paged (newest first). Say how much of it is on screen, and
+                offer the older receipts instead of dropping them. */}
+            {queueHasMore || shown.length < queueTotal ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="text-[11px] text-co-text-dim">{t("receiving.claim.link_existing_showing", { n: shown.length, total: queueTotal })}</span>
+                {queueHasMore ? (
+                  <button
+                    type="button"
+                    disabled={loadingOlder}
+                    onClick={() => void showOlder()}
+                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text disabled:opacity-50"
+                  >
+                    {loadingOlder ? t("receiving.claim.link_existing_older_busy") : t("receiving.claim.link_existing_older")}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {olderErr ? <p role="alert" className="mt-2 text-xs text-co-cta-text">{olderErr}</p> : null}
             {err ? <p className="mt-2 text-xs text-co-cta-text">{err}</p> : null}
           </CollapsibleSection>
         </div>

@@ -1062,7 +1062,28 @@ export interface UnlinkedReceiptView {
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function listUnlinkedReceipts(actor: AuthContext, locationId: string): Promise<UnlinkedReceiptView[]> {
+/** One page of the triage queue (W20/B195). */
+export const TRIAGE_PAGE_SIZE = 100;
+export interface UnlinkedReceiptPage {
+  receipts: UnlinkedReceiptView[];
+  /** Every unlinked receipt in this queue, not only the ones on this page. */
+  total: number;
+  /** True while older receipts exist past this page. */
+  hasMore: boolean;
+  /** Every FLAGGED receipt in this queue (attribution_conflict), loaded or not: the pill's number. */
+  flagged: number;
+}
+
+/**
+ * W20/B195: PAGED. The queue used to be read with no range, so the API's 1,000-row cap silently
+ * dropped the OLDEST unlinked receipts (the ones most overdue for a person), and it signed one
+ * preview URL per row. Now: newest `pageSize` (1..100) from `offset`, an exact total, a stable
+ * order (received_at, then id), and ONE bulk signing call for the page. A preview that cannot be
+ * signed is null, as before; a storage outage never hides the queue.
+ */
+export async function listUnlinkedReceipts(
+  actor: AuthContext, locationId: string, opts: { offset?: number; pageSize?: number } = {},
+): Promise<UnlinkedReceiptPage> {
   requireLevel(actor, RECEIPT_MIN);
   // UUID guard BEFORE the .or() interpolation below — lockLocationContext returns true
   // unconditionally for all-locations actors, so without this a crafted locationId could
@@ -1073,18 +1094,39 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new EmailReceiptError(404, "not_found", "Location not found");
   }
+  const offset = opts.offset ?? 0;
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new EmailReceiptError(400, "invalid_payload", "offset must be a whole number, zero or more");
+  const requested = opts.pageSize ?? TRIAGE_PAGE_SIZE;
+  const pageSize = Number.isFinite(requested) ? Math.min(TRIAGE_PAGE_SIZE, Math.max(1, Math.floor(requested))) : TRIAGE_PAGE_SIZE;
   if (!(await canDoOperationalTask(actor, locationId, "receiving"))) throw new EmailReceiptError(403, "forbidden");
   const sb = getServiceRoleClient();
-  const { data: rows, error } = await sb
+  const queueFilter = `location_id.eq.${locationId},location_id.is.null`;
+  const { data: rows, error, count } = await sb
     .from("email_receipts")
-    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths, linked_po_id, parse_state, doc_kind, attributed_by, attribution_conflict, account_location_id, account_vendor_id")
+    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths, linked_po_id, parse_state, doc_kind, attributed_by, attribution_conflict, account_location_id, account_vendor_id", { count: "exact" })
     .is("linked_delivery_id", null)
-    .or(`location_id.eq.${locationId},location_id.is.null`)
+    .or(queueFilter)
     .order("received_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(offset, offset + pageSize - 1)
     .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null; linked_po_id: string | null; parse_state: "unparsed" | "parsed" | "failed"; doc_kind: string | null; attributed_by: UnlinkedReceiptView["attributedBy"]; attribution_conflict: boolean; account_location_id: string | null; account_vendor_id: string | null }>>();
   if (error) throw new Error(`listUnlinkedReceipts: ${error.message}`);
 
   const list = rows ?? [];
+  const total = Math.max(count ?? 0, offset + list.length);
+  const hasMore = offset + list.length < total;
+
+  // The pill counts every flagged receipt in the queue, so a flag on an older page is never
+  // invisible. One count-only read (no rows).
+  const { count: flaggedCount, error: flaggedError } = await sb
+    .from("email_receipts")
+    .select("id", { count: "exact", head: true })
+    .is("linked_delivery_id", null)
+    .or(queueFilter)
+    .eq("attribution_conflict", true);
+  if (flaggedError) throw new Error(`listUnlinkedReceipts flagged: ${flaggedError.message}`);
+  const flagged = Math.max(flaggedCount ?? 0, list.filter((r) => r.attribution_conflict).length);
+
   const conflictLocations = [...new Set(list.filter((r) => r.attribution_conflict)
     .flatMap((r) => [r.location_id, r.account_location_id]).filter((id): id is string => !!id))];
   const locationNames = new Map<string, string>();
@@ -1117,9 +1159,31 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
     for (const p of poRows ?? []) poById.set(p.id, { display_code: p.display_code, status: p.status });
   }
 
-  return Promise.all(
+  // ONE signing call for the page (was one per row). Null-safe like signReceiptPath: a missing
+  // path, a failed entry or a failed call leaves that preview null.
+  const previewPath = new Map(list.map((r) => [r.id, firstDisplayablePath(r.raw_storage_path, r.attachment_paths)]));
+  const paths = [...new Set([...previewPath.values()].filter((path): path is string => !!path))];
+  const signed = new Map<string, string>();
+  if (paths.length > 0) {
+    try {
+      const { data: urls, error: signError } = await sb.storage.from(RECEIPT_BUCKET).createSignedUrls(paths, SIGNED_URL_TTL_SECONDS);
+      if (!signError) for (const u of urls ?? []) if (!u.error && u.path && u.signedUrl) signed.set(u.path, u.signedUrl);
+    } catch { /* previews are a convenience; the queue itself still renders */ }
+  }
+
+  // The move permission depends only on the two shops, so work each pair out once.
+  const movable = new Map<string, Promise<boolean>>();
+  const canMove = (from: string, to: string) => {
+    const key = `${from}|${to}`;
+    let answer = movable.get(key);
+    if (!answer) { answer = canMoveReceipt(actor, from, to); movable.set(key, answer); }
+    return answer;
+  };
+
+  const receipts = await Promise.all(
     list.map(async (r) => {
       const po = r.linked_po_id ? poById.get(r.linked_po_id) ?? null : null;
+      const path = previewPath.get(r.id) ?? null;
       return {
         id: r.id,
         source: r.source,
@@ -1128,7 +1192,7 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
         receivedAt: r.received_at,
         locationId: r.location_id,
         vendorGuessId: r.vendor_guess_id,
-        previewUrl: await signReceiptPath(sb, firstDisplayablePath(r.raw_storage_path, r.attachment_paths)),
+        previewUrl: path ? signed.get(path) ?? null : null,
         linkedPoId: r.linked_po_id,
         poDisplayCode: po?.display_code ?? null,
         poStatus: po?.status ?? null,
@@ -1143,10 +1207,11 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
         accountLocationId: r.account_location_id ?? null,
         accountLocationName: r.account_location_id ? locationNames.get(r.account_location_id) ?? null : null,
         canMove: r.attribution_conflict && !!r.location_id && !!r.account_location_id
-          && await canMoveReceipt(actor, r.location_id, r.account_location_id),
+          && await canMove(r.location_id, r.account_location_id),
       };
     }),
   );
+  return { receipts, total, hasMore, flagged };
 }
 
 // ── (5b) MANUAL PO ATTACH — KH+ (triage surface) ────────────────────────────────────

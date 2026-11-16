@@ -3,8 +3,9 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
 /**
  * /api/operations/receiving/email-receipts — thin adapter over lib/email-receipts.ts.
  *
- * GET  ?locationId=<uuid>
- *        → RECEIPT_MIN gate → listUnlinkedReceipts → { receipts }
+ * GET  ?locationId=<uuid>[&offset=<n>]
+ *        → RECEIPT_MIN gate → listUnlinkedReceipts → { receipts, total, hasMore, flagged }
+ *          (W20/B195: one page of 100, newest first; `offset` asks for the next older page)
  * GET  ?candidatesForReceipt=<uuid>
  *        → RECEIPT_MIN gate → loadPoCandidatesForReceipt → { candidates } (Attach-to-order picker)
  *
@@ -69,9 +70,16 @@ export async function GET(req: NextRequest) {
   const locationId = req.nextUrl.searchParams.get("locationId");
   if (!locationId) return jsonError(400, "invalid_payload", { message: "locationId is required" });
 
+  // W20/B195: the queue is paged. `offset` is a whole number, zero or more (anything else is a
+  // 400, never a silent first page).
+  const rawOffset = req.nextUrl.searchParams.get("offset");
+  if (rawOffset !== null && !/^\d{1,9}$/.test(rawOffset)) {
+    return jsonError(400, "invalid_payload", { message: "offset must be a whole number, zero or more", field: "offset" });
+  }
+
   try {
-    const receipts = await listUnlinkedReceipts(ctx, locationId);
-    return jsonOk({ receipts });
+    const page = await listUnlinkedReceipts(ctx, locationId, { offset: rawOffset === null ? 0 : Number(rawOffset) });
+    return jsonOk({ receipts: page.receipts, total: page.total, hasMore: page.hasMore, flagged: page.flagged });
   } catch (e) {
     if (e instanceof EmailReceiptError) return jsonError(e.status, e.code, { message: e.message });
     throw e;
