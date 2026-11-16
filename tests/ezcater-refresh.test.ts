@@ -94,6 +94,11 @@ describe("bounded nightly ezCater refresh", () => {
     expect(await refresh.refreshKnownEzcaterOrders("2026-10-08")).toMatchObject({ attempted: 2, failed: 1 });
     expect(JSON.stringify(vi.mocked(audit).mock.calls)).not.toContain("private@example.test");
   });
+
+  it("W23/B125: an order parked as unmapped_location counts as failed, never a silent success", async () => {
+    vi.mocked(syncEzcaterOrder).mockResolvedValueOnce({ lead_id: null, result: "unmapped_location", sync_error: "unmapped_location" });
+    expect(await refresh.refreshKnownEzcaterOrders("2026-10-08")).toMatchObject({ attempted: 1, failed: 1 });
+  });
 });
 
 describe("sales pull keeps generic completion after best-effort refresh", () => {
