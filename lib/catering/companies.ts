@@ -14,6 +14,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
@@ -162,13 +163,15 @@ function mapCompany(r: DbCompanyRow): CateringCompany {
 export async function loadCompanies(actor: AuthContext): Promise<CateringCompany[]> {
   requireLevel(actor, COMPANY_READ_MIN);
   const sb = getServiceRoleClient();
-  const { data, error } = await sb
+  // W23/B207: paged past the 1,000-row cap, `id` the unique tiebreak.
+  const data = await selectAllRows<DbCompanyRow>((from, to) => sb
     .from("catering_companies")
     .select(COMPANY_COLS)
     .order("name", { ascending: true })
-    .returns<DbCompanyRow[]>();
-  if (error) throw new Error(`loadCompanies: ${error.message}`);
-  return (data ?? []).map(mapCompany);
+    .order("id", { ascending: true })
+    .range(from, to)
+    .returns<DbCompanyRow[]>());
+  return data.map(mapCompany);
 }
 
 export async function loadCompany(actor: AuthContext, id: string): Promise<CompanyDetail | null> {
@@ -179,14 +182,19 @@ export async function loadCompany(actor: AuthContext, id: string): Promise<Compa
   if (!row) return null;
 
   // Contacts are per-shop rows: list only the ones this actor may see (customers.ts' scope).
-  let contactsQuery = sb.from("catering_customers").select("id, name, email, active").eq("company_id", id);
   const scope = readScopeOr(actor);
-  if (scope) contactsQuery = contactsQuery.or(scope);
-  const [{ data: domains }, { data: contacts }] = await Promise.all([
+  // W23/B207: both reads are checked (a failed read used to render as "no domains / no contacts")
+  // and the contacts are paged past the 1,000-row cap.
+  const [domainsRes, contacts] = await Promise.all([
     sb.from("catering_company_domains").select("id, domain, active").eq("company_id", id).eq("active", true).order("domain", { ascending: true }).returns<CompanyDomain[]>(),
-    contactsQuery.order("name", { ascending: true }).returns<CompanyContact[]>(),
+    selectAllRows<CompanyContact>((from, to) => {
+      let q = sb.from("catering_customers").select("id, name, email, active").eq("company_id", id);
+      if (scope) q = q.or(scope);
+      return q.order("name", { ascending: true }).order("id", { ascending: true }).range(from, to).returns<CompanyContact[]>();
+    }),
   ]);
-  return { company: mapCompany(row), domains: domains ?? [], contacts: contacts ?? [] };
+  if (domainsRes.error) throw new Error(`loadCompany domains: ${domainsRes.error.message}`);
+  return { company: mapCompany(row), domains: domainsRes.data ?? [], contacts };
 }
 
 // ── Attribution ────────────────────────────────────────────────────────────────

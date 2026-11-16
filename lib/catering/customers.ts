@@ -10,6 +10,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -105,15 +106,20 @@ function mapCustomer(r: DbCustomerRow): CateringCustomer {
 export async function loadCustomers(actor: AuthContext): Promise<CateringCustomer[]> {
   requireLevel(actor, CUSTOMER_READ_MIN);
   const sb = getServiceRoleClient();
-  let q = sb.from("catering_customers").select(CUSTOMER_COLS);
   const scope = readScopeOr(actor);
-  if (scope) q = q.or(scope);
-  const { data, error } = await q
-    .order("company", { ascending: true, nullsFirst: false })
-    .order("name", { ascending: true })
-    .returns<DbCustomerRow[]>();
-  if (error) throw new Error(`loadCustomers: ${error.message}`);
-  return (data ?? []).map(mapCustomer);
+  // W23/B207: paged past PostgREST's 1,000-row cap (it truncated silently), with `id` as the
+  // unique tiebreak so no row repeats or drops across pages.
+  const data = await selectAllRows<DbCustomerRow>((from, to) => {
+    let q = sb.from("catering_customers").select(CUSTOMER_COLS);
+    if (scope) q = q.or(scope);
+    return q
+      .order("company", { ascending: true, nullsFirst: false })
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<DbCustomerRow[]>();
+  });
+  return data.map(mapCustomer);
 }
 
 export interface CustomerHistoryLead {
