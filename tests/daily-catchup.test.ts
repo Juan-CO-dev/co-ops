@@ -131,7 +131,7 @@ it("a thrown client and thrown failure audit cannot escape to the pinger", async
 
 it("only the catering scan catches up, after its heartbeat and before sibling checks", () => {
   const source = readFileSync("app/api/cron/toast-catering-scan/route.ts", "utf8");
-  const catchup = source.indexOf("await catchUpDailyJobs()");
+  const catchup = source.indexOf("await catchUpDailyJobs({ deadlineAt: routeDeadline, signal: req.signal })");
   expect(catchup).toBeGreaterThan(source.indexOf('action: "cron.success"'));
   expect(catchup).toBeLessThan(source.indexOf('await watchSiblings("toast-catering-scan")'));
   expect(readFileSync("app/api/cron/toast-sales-today/route.ts", "utf8")).not.toContain("catchUpDailyJobs");
@@ -145,6 +145,28 @@ it.each([
   expect(readFileSync(`app/api/cron/${job}/route.ts`, "utf8")).toContain(`await ${call}`);
 });
 
+
+it("a catch-up with too little route time skips before claiming (B225)", async () => {
+  const result = await catchUpDailyJobs({ now, deadlineAt: Date.now() + 30_000 });
+  expect(result.skipped).toEqual(expect.arrayContaining(["toast-sales-pull", "parse-receipts"]));
+  expect(rpc).not.toHaveBeenCalledWith("portal_rate_limit_hit", expect.objectContaining({ p_bucket_key: "catchup:toast-sales-pull:2026-09-12" }));
+  expect(rpc).not.toHaveBeenCalledWith("portal_rate_limit_hit", expect.objectContaining({ p_bucket_key: "catchup:parse-receipts:2026-09-12" }));
+  expect(runToastSalesPull).not.toHaveBeenCalled();
+  expect(runParseReceipts).not.toHaveBeenCalled();
+  // prune-sessions is quick and not gated.
+  expect(runPruneSessions).toHaveBeenCalledTimes(1);
+  // The next tick (with room) can still claim and run them.
+  const later = await catchUpDailyJobs({ now, deadlineAt: Date.now() + 250_000 });
+  expect(later.ran).toEqual(expect.arrayContaining(["toast-sales-pull", "parse-receipts"]));
+});
+
+it("catch-up forwards the route deadline and signal to the jobs (B225)", async () => {
+  const deadlineAt = Date.now() + 250_000;
+  const signal = new AbortController().signal;
+  await catchUpDailyJobs({ now, deadlineAt, signal });
+  expect(runToastSalesPull).toHaveBeenCalledWith(expect.objectContaining({ businessDate: "2026-09-11", deadlineAt, signal }));
+  expect(runParseReceipts).toHaveBeenCalledWith({ deadlineAt });
+});
 
 it("partial capture failure cannot emit a successful catch-up heartbeat", async () => {
   const baseline = await vi.mocked(runToastSalesPull)({ businessDate: "2026-09-11" });

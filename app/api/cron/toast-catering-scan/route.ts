@@ -16,7 +16,11 @@ export const maxDuration = 300;
 const MAX_DATE_SKEW_DAYS = 14;
 
 function truncateErr(e: unknown): string { const m = e instanceof Error ? e.message : String(e); return m.length > 500 ? `${m.slice(0, 500)}…` : m; }
+/** Room after the work for the catch-up's heartbeats, the sibling watch and the response (W27 / B225). */
+const ROUTE_TAIL_MS = 20_000;
+
 export async function GET(req: NextRequest) {
+  const routeDeadline = Date.now() + maxDuration * 1000 - ROUTE_TAIL_MS;
   const auth = cronAuthStatus(req.headers);
   if (auth) return jsonError(auth, auth === 503 ? "cron_disabled" : "unauthorized");
   const today = etCalendarDate(new Date().toISOString());
@@ -36,7 +40,7 @@ export async function GET(req: NextRequest) {
     await audit({ actorId: null, actorRole: null, action: healthy ? "cron.success" : "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: { job: "toast-catering-scan", dates, seen: sum("seen"), catering: sum("catering"), attributed: sum("attributed"), created_leads: sum("createdLeads"), lost_leads: sum("lostLeads"), refreshed: sum("refreshed"), skipped: sum("skipped"), errors: sum("errors"), unparsed_amounts: sum("unparsedAmounts"), per_location_failures: results.filter((r) => !r.ok).length, pending_dates: results.flatMap((r) => (r.pendingDates ?? []).map((d) => r.locationId + ":" + d)) },
       ipAddress: null, userAgent: null });
-    await catchUpDailyJobs();
+    await catchUpDailyJobs({ deadlineAt: routeDeadline, signal: req.signal });
     await watchSiblings("toast-catering-scan");
     return jsonOk({ dates, results, healthy });
   } catch (e) {

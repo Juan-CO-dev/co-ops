@@ -75,3 +75,21 @@ it.each([[200_000, 1], [200_001, 0]])("parse reserve boundary at %s ms begins %s
   expect(result).toMatchObject({ swept: expected, parsed: 0, failed: expected,
     metadata: { swept: expected, parsed: 0, failed: expected } });
 });
+
+it("parse-receipts honours a caller deadline earlier than its own (W27 / B225)", async () => {
+  vi.stubEnv("ANTHROPIC_API_KEY", "test-parse");
+  vi.stubEnv("RESEND_API_KEY", "test-fetch");
+  vi.stubEnv("RESEND_INBOUND_SECRET", "test-inbound");
+  const started = 1_800_000_000_000;
+  let now = started;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const { client } = receiptQuery(["first"]);
+  mocks.sweep.mockImplementation(async () => { now += 30_000; return { swept: 1, failed: 0 }; });
+  vi.mocked(parseReceipt).mockResolvedValue({ ok: true } as Awaited<ReturnType<typeof parseReceipt>>);
+  // The route has 100 s left: the inbound sweep gets no more than that, and with 70 s left after it no parse (80 s
+  // reserve) begins — on its own 280 s budget the row would have been parsed.
+  const result = await runParseReceipts({ deadlineAt: started + 100_000 });
+  expect(mocks.sweep).toHaveBeenCalledExactlyOnceWith(client, started + 100_000);
+  expect(parseReceipt).not.toHaveBeenCalled();
+  expect(result).toMatchObject({ swept: 0, parsed: 0 });
+});

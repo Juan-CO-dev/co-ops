@@ -10,13 +10,14 @@ function truncateErr(e: unknown): string {
 
 const SWEEP_LIMIT = 10;
 
-export async function runParseReceipts() {
+/** `deadlineAt`: a caller's own end (the catch-up inside a route, W27 / B225); the earlier of it and our 280 s wins. */
+export async function runParseReceipts(opts?: { deadlineAt?: number }) {
   const inboundEnabled = !!process.env.RESEND_INBOUND_SECRET && !!process.env.RESEND_API_KEY;
   if (!process.env.ANTHROPIC_API_KEY && !inboundEnabled) return { dormant: true as const };
   const started = Date.now();
-  const deadline = started + 280_000; // 20 seconds reserved for heartbeat/watch
+  const deadline = Math.min(started + 280_000, opts?.deadlineAt ?? Infinity); // 20 seconds reserved for heartbeat/watch
   const sb = getServiceRoleClient();
-  const inbound = inboundEnabled ? await sweepInboundMessages(sb, started + 140_000) : { swept: 0, failed: 0 };
+  const inbound = inboundEnabled ? await sweepInboundMessages(sb, Math.min(started + 140_000, deadline)) : { swept: 0, failed: 0 };
   if (!process.env.ANTHROPIC_API_KEY) return { dormant: false as const, swept: 0, parsed: 0, failed: 0,
     metadata: { job: "parse-receipts", swept: 0, parsed: 0, failed: 0, inbound } };
   const { data: rows, error } = await sb
