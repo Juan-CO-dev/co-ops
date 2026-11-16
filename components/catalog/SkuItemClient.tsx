@@ -101,6 +101,9 @@ function SkuItemBody({ view, job, requestId }: SkuItemProps) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<"pack" | "price" | null>(null);
+  // A previewed Restore or Back to default (W18/B107): which act the pack preview in `preview` belongs to.
+  // `levels` is the restored chain exactly as the server read it; the save posts it back unchanged.
+  const [packAct, setPackAct] = useState<{ kind: "restore"; versionId: string; levels: unknown } | { kind: "back" } | null>(null);
 
   const money = (n: number | null) => (n == null ? "—" : `$${n.toFixed(2)}`);
   const oz = (n: number | null) => (n == null ? "—" : `${formatQuantity(n, language)} oz`);
@@ -108,10 +111,11 @@ function SkuItemBody({ view, job, requestId }: SkuItemProps) {
   const day = (iso: string) => formatDateLabel(etDisplayDate(iso), language);
   const toggle = (s: ItemSection) => setOpen((o) => ({ ...o, [s]: !o[s] }));
   const fail = (code: string) => setMessage(t(errorKey(code)));
-  const done = (key: TranslationKey) => { guard.invalidate(); setMessage(t(key)); setEditing(null); setPreview(null); router.refresh(); };
+  const done = (key: TranslationKey) => { guard.invalidate(); setMessage(t(key)); setEditing(null); setPreview(null); setPackAct(null); router.refresh(); };
+  const cancelPackAct = () => { guard.invalidate(); setPackAct(null); setPreview(null); setChosen(new Set()); };
 
   const startJob = (j: ItemJob, reqId: string | null = activeRequestId) => {
-    guard.invalidate(); setEditing(j); setPreview(null); setMessage(null); setChosen(new Set()); setSentenceError(null);
+    guard.invalidate(); setEditing(j); setPreview(null); setPackAct(null); setMessage(null); setChosen(new Set()); setSentenceError(null);
     setOpen((o) => ({ ...o, [j === "pack" ? "arrives" : "price"]: true }));
     if (j === "pack") { setActiveRequestId(reqId); setDraft(draftFor(reqId)); }
   };
@@ -190,26 +194,56 @@ function SkuItemBody({ view, job, requestId }: SkuItemProps) {
   };
 
   // ── Back to default / Restore / door reports ──
+  // The PACK's Back to default and every Restore are PREVIEWED first (W18/B107): the par keep-or-convert
+  // rows a pack change offers, then Save. The price's Back to default keeps its two-tap confirm.
   const backToDefault = async (kind: "pack" | "price") => {
+    if (view.scope === null) return;
+    if (kind === "pack") {
+      setMessage(null); setPreview(null); setChosen(new Set()); setEditing(null);
+      setBusy(true);
+      const r = await guard.run(() => postJson(`${base}/preview`, { kind: "pack_back_to_default", target: { kind: "shop", shopId: view.scope } }));
+      setBusy(false);
+      if (r === null) return;
+      if (r.ok) { setPackAct({ kind: "back" }); setPreview(r.data.preview as PackPreview); } else fail(r.code);
+      return;
+    }
     if (confirming !== kind) { setConfirming(kind); return; }
     setConfirming(null);
-    if (view.scope === null) return;
     if ((await requestStepUp("E")) !== "ok") return;
     setBusy(true);
-    const r = kind === "pack"
-      ? await send(`${base}/pack/back-to-default`, { locationId: view.scope, versionId: view.pack.versionId })
-      : await send(`${base}/price/back-to-default`, { locationId: view.scope });
+    const r = await send(`${base}/price/back-to-default`, { locationId: view.scope });
+    setBusy(false);
+    if (r.ok) done("catalog.item.saved"); else fail(r.code);
+  };
+  const saveBackToDefault = async () => {
+    if (preview?.kind !== "pack" || packAct?.kind !== "back" || view.scope === null) return;
+    if ((await requestStepUp("E")) !== "ok") return;
+    setBusy(true);
+    const r = await send(`${base}/pack/back-to-default`, {
+      locationId: view.scope, versionId: preview.liveVersionId,
+      conversions: preview.conversions.filter((c) => chosen.has(conversionKey(c))), previewToken: preview.token,
+    });
     setBusy(false);
     if (r.ok) done("catalog.item.saved"); else fail(r.code);
   };
   const restore = async (h: SkuItemView["history"][number]) => {
-    if ((await requestStepUp("E")) !== "ok") return;
-    const shop = h.scope === "shop";
+    const target: PreviewTarget | null = h.scope === "shop" ? (view.scope !== null ? { kind: "shop", shopId: view.scope } : null) : { kind: "global" };
+    if (!target) return;
+    setMessage(null); setPreview(null); setChosen(new Set()); setEditing(null);
     setBusy(true);
-    const r = await send(`${base}/pack/restore`, {
-      locationId: shop ? view.scope : null,
-      fromVersionId: h.id,
-      expectedLiveVersionId: shop ? (view.pack.isShopVersion ? view.pack.versionId : null) : view.pack.globalVersionId,
+    const r = await guard.run(() => postJson(`${base}/preview`, { kind: "pack_restore", target, fromVersionId: h.id }));
+    setBusy(false);
+    if (r === null) return;
+    if (r.ok) { setPackAct({ kind: "restore", versionId: h.id, levels: r.data.levels }); setPreview(r.data.preview as PackPreview); } else fail(r.code);
+  };
+  const saveRestore = async () => {
+    if (preview?.kind !== "pack" || packAct?.kind !== "restore") return;
+    if ((await requestStepUp("E")) !== "ok") return;
+    setBusy(true);
+    const r = await send(`${base}/pack/apply`, {
+      target: preview.target, levels: packAct.levels,
+      conversions: preview.conversions.filter((c) => chosen.has(conversionKey(c))),
+      requestId: null, previewToken: preview.token, restoredFromVersionId: packAct.versionId,
     });
     setBusy(false);
     if (r.ok) done("catalog.item.saved"); else fail(r.code);
@@ -416,13 +450,21 @@ function SkuItemBody({ view, job, requestId }: SkuItemProps) {
                 ) : (
                   <div className="flex flex-wrap gap-2">
                     {canEditPack ? <button type="button" className={btnPrimary} onClick={() => startJob("pack", null)}>{t("catalog.item.job_pack")}</button> : null}
-                    {view.pack.isShopVersion && canSaveShop ? (
+                    {view.pack.isShopVersion && canSaveShop && packAct?.kind !== "back" ? (
                       <button type="button" className={btnDanger} disabled={busy} onClick={() => void backToDefault("pack")}>
-                        {confirming === "pack" ? t("catalog.item.back_to_default_confirm", { shop: view.scopeName ?? "" }) : t("catalog.item.back_to_default")}
+                        {t("catalog.item.back_to_default")}
                       </button>
                     ) : null}
                   </div>
                 )}
+                {packAct?.kind === "back" && preview?.kind === "pack" ? (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-sm font-bold text-co-text">{t("catalog.item.back_to_default_preview", { pack: preview.shops[0]?.orderUnit.after ?? "—" })}</p>
+                    <ChangePreviewPanel preview={preview} canSave={canSaveShop} canEditPar={view.can.editPar}
+                      chosen={chosen} onToggleConversion={toggleConversion} onSave={() => void saveBackToDefault()} busy={busy} />
+                    <button type="button" className={`${btn} w-fit`} disabled={busy} onClick={cancelPackAct}>{t("catalog.item.cancel")}</button>
+                  </div>
+                ) : null}
               </div>
             </CollapsibleSection>
           </div>
@@ -559,6 +601,14 @@ function SkuItemBody({ view, job, requestId }: SkuItemProps) {
                         </p>
                       </div>
                       {canRestore ? <button type="button" className={btn} disabled={busy} onClick={() => void restore(h)}>{t("catalog.history.restore")}</button> : null}
+                      {packAct?.kind === "restore" && packAct.versionId === h.id && preview?.kind === "pack" ? (
+                        <div className="flex w-full flex-col gap-2">
+                          <p className="text-sm font-bold text-co-text">{t("catalog.history.restore_preview", { pack: h.labels.join(" → ") })}</p>
+                          <ChangePreviewPanel preview={preview} canSave={canSaveFor(preview)} canEditPar={view.can.editPar}
+                            chosen={chosen} onToggleConversion={toggleConversion} onSave={() => void saveRestore()} busy={busy} />
+                          <button type="button" className={`${btn} w-fit`} disabled={busy} onClick={cancelPackAct}>{t("catalog.item.cancel")}</button>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}

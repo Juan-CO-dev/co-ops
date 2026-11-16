@@ -210,6 +210,6 @@ export const CATALOG_ITEM_ERROR_CODES = [
   "not_live", "not_one_root", "par_changed", "price_changed", "par_forbidden", "par_lane_mismatch", "preview_stale",
   "request_mismatch", "request_not_open", "self_reference", "shared_child", "sku_inactive", "sku_not_found",
   "sku_owned_by_other_shop", "step_up_required", "step_up_stale", "unknown_measure", "version_changed",
-  "version_sku_mismatch", "baseline_not_restorable",
+  "version_sku_mismatch", "baseline_not_restorable", "preview_required", "back_to_default_unavailable",
 ] as const;
 export type CatalogItemErrorCode = (typeof CATALOG_ITEM_ERROR_CODES)[number];

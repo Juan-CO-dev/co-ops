@@ -28,7 +28,8 @@ import type { ResolvedRecipeInput } from "@/lib/recipe-versions-shared";
 import { loadPackAwareOverlay, type OverlayRow } from "@/lib/ordering";
 import { loadCurrentSkuPriceHeads, loadCurrentSkuPrices } from "@/lib/admin/cost";
 import {
-  loadSkuPackVersionHistory, preparePackVersionWrite, rpcLevels, saveSkuPrice, SkuVersionError, versionErrorFromRpc,
+  loadRestorableLevels, loadSkuPackVersionHistory, preparePackVersionWrite, retireShopPackVersion, rpcLevels, saveSkuPrice,
+  SkuVersionError, versionErrorFromRpc,
 } from "@/lib/admin/sku-versions";
 import { loadMeasureLabels, loadMeasuresMap, PackChainError, validateSubmission, type PackChainLevelInput } from "@/lib/admin/pack-chain";
 import { loadOpenPackChangeRequests, PackChangeRequestError } from "@/lib/pack-change-requests";
@@ -508,6 +509,18 @@ export async function computePackPreview(actor: AuthContext, skuId: string, targ
   const [labels, measures] = await Promise.all([loadMeasureLabels(), loadMeasuresMap()]);
   let validated: PackChainLevelInput[] = [];
   try { validated = validateSubmission(levels, labels, measures, num(row.avg_oz_per_each), skuClassOf(row.sku_class)); } catch (e) { rethrow(e); }
+  return packPreviewFor(sb, row, skuId, target, toChainLevels(validated), { kind: "pack", levels: rpcLevels(validated) });
+}
+
+/**
+ * The shared half of every pack preview: the dependency snapshot, each reached shop's state and the
+ * delta to `newChain`. `tokenHead` names WHAT is being saved (a new chain's levels, or a Back to default)
+ * and rides in the token, so a preview for one act can never be presented to save another.
+ */
+async function packPreviewFor(
+  sb: Sb, row: SkuRow, skuId: string, target: PreviewTarget, newChain: PackChainLevel[], tokenHead: Record<string, unknown>,
+): Promise<PackPreview> {
+  const scope = scopeOf(target);
   // The snapshot covers what the save reaches: the shop, or EVERY active shop (0261 refuses a global
   // save whose snapshot misses one). The preview lists only the shops that can carry the SKU.
   const snapshotShops = target.kind === "shop" ? [await loadShop(sb, target.shopId)] : await loadActiveShops(sb);
@@ -535,7 +548,7 @@ export async function computePackPreview(actor: AuthContext, skuId: string, targ
   const liveVersionId = tp != null && tp.locationId === scope ? tp.versionId : null;
   const basedOnVersionId = scope !== null && tp != null && tp.locationId === null ? tp.versionId : null;
   const body = previewPackChange({
-    skuId, target, targetBasePack: basePackOf(row, tp?.levels ?? []), newChain: toChainLevels(validated),
+    skuId, target, targetBasePack: basePackOf(row, tp?.levels ?? []), newChain,
     shops: states, globalPars: { weekday: num(row.weekday_par), weekend: num(row.weekend_par) },
     parStep: num(row.par_step), menuItems, recipeLines, liveVersionId, basedOnVersionId,
   });
@@ -545,8 +558,44 @@ export async function computePackPreview(actor: AuthContext, skuId: string, targ
     // order unit, $/oz, sandwich costs, broken lines, open orders, par rows and offered conversions),
     // the chain, the dependency snapshot, and each shop's input versions (pack version, price heads).
     // Anything displayed that changes — a price, a pack, a recipe line, an open order — is a new token.
-    token: previewToken({ kind: "pack", levels: rpcLevels(validated), snapshot, body, deps: states.map((st) => st.deps) }),
+    token: previewToken({ ...tokenHead, snapshot, body, deps: states.map((st) => st.deps) }),
   };
+}
+
+/**
+ * "What Restore changes" (audit W18/B107): the restored version's levels, previewed EXACTLY like a new
+ * pack for the same target, so the par keep-or-convert rows a pack change offers are offered here too.
+ * The levels come from the server (loadRestorableLevels: this SKU's version, global or this scope's own;
+ * never the flat baseline) and are returned so the page saves the very chain it was shown.
+ */
+export async function computeRestorePreview(
+  actor: AuthContext, skuId: string, target: PreviewTarget, fromVersionId: string,
+): Promise<{ preview: PackPreview; levels: PackChainLevelInput[] }> {
+  let levels: PackChainLevelInput[] = [];
+  try { levels = await loadRestorableLevels(actor, { skuId, scope: scopeOf(target), fromVersionId }); } catch (e) { rethrow(e); }
+  return { preview: await computePackPreview(actor, skuId, target, levels), levels };
+}
+
+/**
+ * "What Back to default changes" (audit W18/B107): the shop's pack goes from its own version to the
+ * DEFAULT chain (or the default's flat pack when it has no chain), with the same par conversion rows a
+ * pack change offers. `liveVersionId` is the shop's own live version — the one the save retires.
+ */
+export async function computeBackToDefaultPreview(actor: AuthContext, skuId: string, shopId: string): Promise<PackPreview> {
+  const target: PreviewTarget = { kind: "shop", shopId };
+  requireRead(actor, shopId);
+  const sb = getServiceRoleClient();
+  const row = await loadSkuRow(sb, skuId);
+  requireOwnerScope(row, shopId);
+  const [own, globalPack] = await Promise.all([loadSkuPackResolution([skuId], shopId), loadSkuPackResolution([skuId], null)]);
+  const ownPack = own.get(skuId) ?? null;
+  // Nothing to go back from: the shop already rides the default.
+  if (ownPack == null || ownPack.locationId !== shopId || ownPack.versionId == null) throw new CatalogItemError(409, "not_live");
+  const defaultChain = globalPack.get(skuId)?.levels ?? [];
+  return packPreviewFor(sb, row, skuId, target, defaultChain, {
+    kind: "pack_back_to_default", versionId: ownPack.versionId,
+    chain: defaultChain.map((l) => [l.id, l.label, l.containsQty, l.containsLevelId, l.containsMeasureUnit]),
+  });
 }
 
 /** "What this changes" for a new price, for THE SAVE TARGET (a shop → its lane; global → every shop without one). */
@@ -591,6 +640,12 @@ export interface ApplyPackChangeInput {
   requestId: string | null;
   /** The token of the preview the person saw — for THIS target. */
   previewToken: string;
+  /**
+   * A Restore from History (audit W18/B107): the version whose levels this save brings back. The server
+   * re-reads them (loadRestorableLevels) and refuses `preview_stale` unless the posted levels are exactly
+   * those; the source rides in the audit row and the version's note.
+   */
+  restoredFromVersionId?: string | null;
 }
 
 /**
@@ -629,6 +684,13 @@ export async function applyPackChange(
     const shopOfRequest = await requestShop(sb, input.requestId);
     if (shopOfRequest === null || !catalogShopAllowed(actor, shopOfRequest)) throw new CatalogItemError(404, "not_found");
   }
+  // 4b) A Restore saves exactly the restored version's levels, re-read and re-checked here.
+  const restoredFrom = input.restoredFromVersionId ?? null;
+  if (restoredFrom != null) {
+    let restorable: PackChainLevelInput[] = [];
+    try { restorable = await loadRestorableLevels(actor, { skuId: input.skuId, scope, fromVersionId: restoredFrom }); } catch (e) { rethrow(e); }
+    if (JSON.stringify(rpcLevels(restorable)) !== JSON.stringify(rpcLevels(input.levels))) throw new CatalogItemError(409, "preview_stale");
+  }
   // 5) The save must present the preview it was shown, for THIS target, and accept only what it offered.
   const preview = await computePackPreview(actor, input.skuId, input.target, input.levels);
   if (preview.token !== input.previewToken) throw new CatalogItemError(409, "preview_stale");
@@ -639,7 +701,8 @@ export async function applyPackChange(
   // 6) ONE transaction.
   const { data, error } = await sb.rpc("apply_sku_pack_change", {
     p_sku: input.skuId, p_location: scope, p_levels: rpcLevels(prepared.levels),
-    p_expected_live: preview.liveVersionId, p_based_on: preview.basedOnVersionId, p_note: null,
+    p_expected_live: preview.liveVersionId, p_based_on: preview.basedOnVersionId,
+    p_note: restoredFrom != null ? `restored from ${restoredFrom}` : null,
     p_actor: actor.user.id, p_first_only: prepared.firstOnly,
     p_par_changes: input.conversions.map((c) => {
       // A SHOP par's patch comes from THE one decider (parWriteColumns, kind "admin"): the human value,
@@ -671,6 +734,7 @@ export async function applyPackChange(
       retired_version_id: r.retired_version_id, based_on_version_id: preview.basedOnVersionId ?? r.retired_version_id,
       first_only: prepared.firstOnly, labels: prepared.levels.map((l) => l.label.trim()), level_count: prepared.levels.length,
       flat_fields_synced: r.mirror_synced, pars_converted: r.pars_converted, request_id: input.requestId,
+      restored_from_version_id: restoredFrom,
     },
     ipAddress: null, userAgent: null,
   });
@@ -695,6 +759,99 @@ export async function applyPackChange(
     });
   }
   return { versionId: r.version_id, retiredVersionId: r.retired_version_id, parsConverted: r.pars_converted, requestApplied: r.request_applied };
+}
+
+export interface ApplyPackBackToDefaultInput {
+  skuId: string;
+  locationId: string;
+  /** The shop's own live version the preview showed (its `liveVersionId`) — the one retired. */
+  versionId: string;
+  /** The conversions the person accepted — each EXACTLY as the preview offered it. */
+  conversions: ParConversion[];
+  previewToken: string;
+}
+
+/** True when PostgREST answers that a function does not exist yet (0324 not applied). */
+const missingFunction = (e: { code?: string; message?: string }) =>
+  e.code === "PGRST202" || e.code === "42883" || /could not find the function/i.test(e.message ?? "");
+
+/**
+ * Save a previewed "Back to default" (audit W18/B107): the shop retires its own pack version and rides
+ * the default again, and every par conversion the person accepted lands IN THE SAME TRANSACTION
+ * (0324 apply_sku_pack_back_to_default), bound to the value the preview showed. The gates mirror
+ * applyPackChange: 2a's version bind, the par role gate, the preview recomputed and its token matched,
+ * only offered conversions accepted.
+ *
+ * BEFORE 0324 IS APPLIED: a Back to default with NO accepted conversion falls back to the legacy retire
+ * (audited `via: "back_to_default_pre_0324"`); one WITH conversions answers 503
+ * `back_to_default_unavailable` — never a retire without the conversion the person accepted.
+ */
+export async function applyPackBackToDefault(
+  actor: AuthContext,
+  input: ApplyPackBackToDefaultInput,
+): Promise<{ versionId: string; parsConverted: number }> {
+  // 1) THE BIND: 2a's version gate for the shop (role + shop), pure, before any I/O.
+  const gate = versionWriteGate({ kind: "pack", role: actor.role, level: actor.level, scope: input.locationId, scopeAllowed: catalogShopAllowed(actor, input.locationId) });
+  if (!gate.ok) throw new CatalogItemError(gate.status, gate.code);
+  // 2) Human par role gate; a Back to default converts only THIS shop's own pars.
+  if (input.conversions.length > 0) {
+    if (!parWriteRoleAllowed(actor.user.role)) throw new CatalogItemError(403, "par_forbidden");
+    for (const c of input.conversions) {
+      if (c.locationId !== input.locationId) throw new CatalogItemError(400, "par_lane_mismatch");
+    }
+  }
+  // 3) The save must present the preview it was shown, and accept only what it offered.
+  const preview = await computeBackToDefaultPreview(actor, input.skuId, input.locationId);
+  if (preview.token !== input.previewToken || preview.liveVersionId !== input.versionId) throw new CatalogItemError(409, "preview_stale");
+  const offered = new Set(preview.conversions.map(conversionKey));
+  for (const c of input.conversions) {
+    if (!offered.has(conversionKey(c))) throw new CatalogItemError(409, "preview_stale");
+  }
+  // 4) ONE transaction.
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb.rpc("apply_sku_pack_back_to_default", {
+    p_sku: input.skuId, p_location: input.locationId, p_version: input.versionId, p_actor: actor.user.id,
+    p_par_changes: input.conversions.map((c) => {
+      // THE one decider of what a human par write does to the machine lane and the pin.
+      const eff = parWriteColumns({ kind: "admin", dayClass: c.slot, value: c.to });
+      return {
+        location_id: c.locationId, slot: c.slot, expected: c.expected, to: c.to,
+        inherited: c.inherited === true, from: c.inherited === true ? (c.from ?? "global") : null,
+        patch: { ...eff.human, ...eff.autoLane },
+      };
+    }),
+    p_snapshot: preview.snapshot,
+  });
+  if (error) {
+    if (missingFunction(error)) {
+      if (input.conversions.length > 0) throw new CatalogItemError(503, "back_to_default_unavailable");
+      try {
+        await retireShopPackVersion(actor, { skuId: input.skuId, versionId: input.versionId, locationId: input.locationId, via: "back_to_default_pre_0324" });
+      } catch (e) { rethrow(e); }
+      return { versionId: input.versionId, parsConverted: 0 };
+    }
+    try { versionErrorFromRpc(error.message); } catch (e) { rethrow(e); }
+  }
+  const r = data as { version_id: string; pars_converted: number };
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "sku.pack_version_retire", resourceTable: "sku_pack_versions", resourceId: r.version_id,
+    metadata: { sku_id: input.skuId, location_id: input.locationId, via: "pack_back_to_default", pars_converted: r.pars_converted },
+    ipAddress: null, userAgent: null,
+  });
+  for (const c of input.conversions) {
+    await audit({
+      actorId: actor.user.id, actorRole: actor.user.role,
+      action: "vendor_item.update", resourceTable: "vendor_items", resourceId: input.skuId,
+      metadata: {
+        scope: "location_settings", location_id: c.locationId,
+        inherited: c.inherited === true, from: c.inherited === true ? (c.from ?? "global") : null,
+        edited_slots: [c.slot], before: c.expected, after: c.to, via: "pack_back_to_default_conversion", version_id: r.version_id,
+      },
+      ipAddress: null, userAgent: null,
+    });
+  }
+  return { versionId: r.version_id, parsConverted: r.pars_converted };
 }
 
 /** Save "Price changed" for THE previewed target: the bind, the token must still match, then 2a's gated writer. */
