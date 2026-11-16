@@ -13,6 +13,7 @@
  * whole board (keeps the board loader lean).
  */
 
+import { randomUUID } from "node:crypto";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { lockLocationContext } from "@/lib/locations";
@@ -672,7 +673,12 @@ export interface EditLeadInput {
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
 /** What a reschedule did (0329 reschedule_catering_lead's answer, or the same steps without it). */
-interface RescheduleResult { moved: boolean; fromDate: string | null; quoteUpdated: boolean; prepRowsMoved: number; quoteId: string | null }
+interface RescheduleResult {
+  moved: boolean; fromDate: string | null; quoteUpdated: boolean; prepRowsMoved: number; quoteId: string | null;
+  /** The reschedule's catering_pipeline_events row (null when the date did not move): the persisted occurrence
+   *  the customer email is keyed by. */
+  eventId: string | null;
+}
 
 function rpcMissing(error: { code?: string; message?: string }): boolean {
   return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
@@ -696,8 +702,8 @@ async function rescheduleLead(sb: ReturnType<typeof getServiceRoleClient>, id: s
     throw new Error(`rescheduleLead: ${error.message}`);
   }
   if (!error) {
-    const r = (data ?? {}) as { result?: string; from_date?: string | null; quote_updated?: boolean; prep_rows_moved?: number };
-    return { moved: r.result === "moved", fromDate: r.from_date ?? null, quoteUpdated: r.quote_updated === true, prepRowsMoved: r.prep_rows_moved ?? 0, quoteId };
+    const r = (data ?? {}) as { result?: string; from_date?: string | null; quote_updated?: boolean; prep_rows_moved?: number; event_id?: string | null };
+    return { moved: r.result === "moved", fromDate: r.from_date ?? null, quoteUpdated: r.quote_updated === true, prepRowsMoved: r.prep_rows_moved ?? 0, quoteId, eventId: r.event_id ?? null };
   }
   // 0329 not applied yet: the same steps, one call at a time (not atomic).
   const before = await sb.from("catering_pipeline").select("event_date, stage").eq("id", id).maybeSingle<{ event_date: string | null; stage: string }>();
@@ -732,15 +738,17 @@ async function rescheduleLead(sb: ReturnType<typeof getServiceRoleClient>, id: s
     })));
     if (ins.error) throw new Error(`rescheduleLead prep insert: ${ins.error.message}`);
   }
+  let eventId: string | null = null;
   if (fromDate !== eventDate) {
     const ev = await sb.from("catering_pipeline_events").insert({
       pipeline_id: id, from_stage: before.data.stage, to_stage: before.data.stage,
       note: `Rescheduled: ${fromDate ?? "no date"} -> ${eventDate}`, actor_id: actorId,
-    });
+    }).select("id").maybeSingle<{ id: string }>();
     if (ev.error) throw new Error(`rescheduleLead event: ${ev.error.message}`);
+    eventId = ev.data?.id ?? null;
   }
   const quoteUpdated = (q.count ?? 0) + (qNull.count ?? 0) > 0;
-  return { moved: fromDate !== eventDate || quoteUpdated || rows.length > 0, fromDate, quoteUpdated, prepRowsMoved: rows.length, quoteId };
+  return { moved: fromDate !== eventDate || quoteUpdated || rows.length > 0, fromDate, quoteUpdated, prepRowsMoved: rows.length, quoteId, eventId };
 }
 
 /** Edit a lead's mutable CRM fields in place (never stage — use moveStage). */
@@ -830,7 +838,10 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
       customerId: lead.customer_id,
       quoteId: moved.quoteId,
       changes: orderChanges({ eventDate: moved.fromDate }, { eventDate: reschedule }),
-      idempotencyKey: `order-update:${id}:${moved.fromDate ?? "none"}:${reschedule}`,
+      // Keyed by THIS reschedule's persisted event row (fix round 1, BC-061): a date-pair key made Fri → Tue →
+      // Fri → Tue reuse the first change's key, so the provider dropped the latest email. Without an event id
+      // (never expected: the date moved, so the row was written) each call is its own occurrence.
+      idempotencyKey: `order-update:event:${moved.eventId ?? randomUUID()}`,
     });
   }
 

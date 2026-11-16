@@ -44,7 +44,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   lead = { id: "L", location_id: "shop", event_date: "2026-11-20", stage: "confirmed", customer_id: "C", assigned_to: null };
   mode = "off";
-  rpcAnswer = { data: { result: "moved", from_date: "2026-11-20", to_date: "2026-11-24", quote_updated: true, prep_rows_moved: 3 } };
+  rpcAnswer = { data: { result: "moved", from_date: "2026-11-20", to_date: "2026-11-24", quote_updated: true, prep_rows_moved: 3, event_id: "E1" } };
   delete process.env.CATERING_ORDER_UPDATE_EMAIL_ALLOWLIST;
   delete process.env.PORTAL_MAGIC_LINK_ALLOWLIST;
   install();
@@ -121,8 +121,46 @@ describe("B120: the customer email (NEW, ships closed)", () => {
     expect(mail.subject).toBe("Your catering order was updated — Compliments Only");
     expect(mail.text).toContain("Event date: Friday, November 20, 2026 → Tuesday, November 24, 2026");
     expect(mail.html).toContain("Dana &lt;Admin&gt;");
-    expect(mail.idempotencyKey).toBe("order-update:L:2026-11-20:2026-11-24");
+    // Keyed by the persisted reschedule (its catering_pipeline_events row), never by the dates (fix round 1).
+    expect(mail.idempotencyKey).toBe("order-update:event:E1");
     expect(editAudit().metadata).toMatchObject({ customer_email: "sent" });
+  });
+
+  // Fix round 1 (review r1 P2, BC-061): Fri → Tue → Fri → Tue within 24 h. A date-pair key made the last change
+  // reuse the first change's key, the provider deduplicated it, and the customer's latest email said Friday.
+  it("distinct reschedules with the same date pair get distinct keys (each its own event row)", async () => {
+    mode = "live";
+    process.env.CATERING_ORDER_UPDATE_EMAIL_ALLOWLIST = "*";
+    process.env.PORTAL_MAGIC_LINK_ALLOWLIST = "*";
+    await editLead(actor, "L", { eventDate: "2026-11-24" });                 // Fri → Tue (event E1)
+    lead.event_date = "2026-11-24";
+    rpcAnswer = { data: { result: "moved", from_date: "2026-11-24", to_date: "2026-11-20", quote_updated: true, prep_rows_moved: 3, event_id: "E2" } };
+    await editLead(actor, "L", { eventDate: "2026-11-20" });                 // Tue → Fri (event E2)
+    lead.event_date = "2026-11-20";
+    rpcAnswer = { data: { result: "moved", from_date: "2026-11-20", to_date: "2026-11-24", quote_updated: true, prep_rows_moved: 3, event_id: "E3" } };
+    await editLead(actor, "L", { eventDate: "2026-11-24" });                 // Fri → Tue again (event E3)
+    const keys = vi.mocked(sendEmail).mock.calls.map((c) => c[0].idempotencyKey);
+    expect(keys).toEqual(["order-update:event:E1", "order-update:event:E2", "order-update:event:E3"]);
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  it("before 0329, the key is the inserted event row's id", async () => {
+    mode = "live";
+    process.env.CATERING_ORDER_UPDATE_EMAIL_ALLOWLIST = "*";
+    process.env.PORTAL_MAGIC_LINK_ALLOWLIST = "*";
+    rpcAnswer = { error: { code: "PGRST202", message: "Could not find the function" } };
+    const fake = fakeSupabase((call) => {
+      if (call.table === "catering_pipeline" && call.kind === "update") return { count: 1 };
+      if (call.table === "catering_pipeline") return { data: lead };
+      if (call.table === "catering_pipeline_events" && call.kind === "insert") return { data: { id: "EV-legacy" } };
+      if (call.table === "catering_quotes") return { data: { id: "Q" } };
+      if (call.table === "report_settings") return { data: { value: mode } };
+      if (call.table === "catering_customers") return { data: { name: "Dana", email: "dana@example.com" } };
+      return { data: null };
+    }, () => rpcAnswer);
+    vi.mocked(getServiceRoleClient).mockReturnValue(fake.client as unknown as ReturnType<typeof getServiceRoleClient>);
+    await editLead(actor, "L", { eventDate: "2026-11-24" });
+    expect(vi.mocked(sendEmail).mock.calls[0]![0].idempotencyKey).toBe("order-update:event:EV-legacy");
   });
 
   it("no email when the date did not move (unchanged) or the lead has no quote", async () => {

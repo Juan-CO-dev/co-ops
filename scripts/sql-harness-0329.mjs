@@ -229,15 +229,24 @@ try {
   check(after.length === 3 && after.every((x) => x.d === '2030-11-24' && x.quote_id === RQ), 'reserved rows re-dated to the new day');
   check(JSON.stringify(after.map((x) => `${x.item_id}|${x.c}|${Number(x.q)}`).sort()) === JSON.stringify(before), 'same refs, picks and quantities');
   check(d.filter((x) => x.status === 'released' && x.d === '2030-11-20').length === 3, 'the old-day rows are retired, not deleted');
-  const ev = await all("select from_stage, to_stage, note from catering_pipeline_events where pipeline_id=$1", [R1]);
+  const firstEventId = r.event_id;
+  const ev = await all("select id::text, from_stage, to_stage, note from catering_pipeline_events where pipeline_id=$1", [R1]);
   check(ev.length === 1 && ev[0].from_stage === 'confirmed' && ev[0].to_stage === 'confirmed' && ev[0].note === 'Rescheduled: 2030-11-20 -> 2030-11-24', 'one no-stage-change event row');
+  check(typeof firstEventId === 'string' && firstEventId === ev[0].id, 'the answer names that event row (event_id: the email occurrence key)');
   r = await reschedule(R1, '2030-11-24', mgr);
   check(r.result === 'unchanged' && r.prep_rows_moved === 0 && r.quote_updated === false, 'same date again → unchanged, nothing written');
+  check(r.event_id === null, 'unchanged → no event_id');
   check((await all("select 1 from catering_pipeline_events where pipeline_id=$1", [R1])).length === 1, 'unchanged writes no event');
   // Self-healing: a quote that drifted off the lead's date is repaired by re-saving the date.
   await db.query("update catering_quotes set event_date='2030-11-20' where id=$1", [RQ]);
   r = await reschedule(R1, '2030-11-24', mgr);
   check(r.result === 'moved' && r.quote_updated === true && r.prep_rows_moved === 0, 'a drifted quote is repaired on re-save');
+  // Fix round 1 (BC-061): Fri → Tue → Fri → Tue — every move is its own event row, so no two share an email key.
+  const RF = await newLead();
+  await newQuote(RF, '2030-11-22');
+  const keys = [];
+  for (const date of ['2030-11-26', '2030-11-22', '2030-11-26']) keys.push((await reschedule(RF, date, mgr)).event_id);
+  check(keys.every((k) => typeof k === 'string') && new Set(keys).size === 3, 'Fri → Tue → Fri → Tue: three distinct event ids');
   // A lead with no quote and no prep (ezCater / plain inquiry): only the lead moves.
   const R2 = await newLead('inquiry', null);
   r = await reschedule(R2, '2030-12-01', mgr);

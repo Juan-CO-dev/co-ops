@@ -66,6 +66,25 @@ describe("sendQuote of a revision the customer already saw", () => {
     expect(meta).toMatchObject({ order_update_email: "sent", email_outcome: "sent" });
   });
 
+  // Fix round 1 (review r1 P2, BC-061): repeated explicit sends of one revision used one key, so the provider
+  // swallowed the second. Each send is keyed by the sent_at it writes (the persisted send occurrence).
+  it("two explicit sends of one revision get distinct keys, each the sent_at it wrote", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-16T15:00:00.000Z"));
+      await sendQuote(actor, "Q2");
+      vi.setSystemTime(new Date("2026-11-16T15:05:00.000Z"));
+      await sendQuote(actor, "Q2");
+    } finally {
+      vi.useRealTimers();
+    }
+    const keys = vi.mocked(sendEmail).mock.calls.map((c) => c[0].idempotencyKey);
+    expect(keys).toEqual([
+      "order-update:quote:Q1:Q2:2026-11-16T15:00:00.000Z",
+      "order-update:quote:Q1:Q2:2026-11-16T15:05:00.000Z",
+    ]);
+  });
+
   it("the outbound switch off → exactly today's quote email", async () => {
     mode = "off";
     await sendQuote(actor, "Q2");

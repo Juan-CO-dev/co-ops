@@ -1480,9 +1480,10 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
   // The recipient is authorized BEFORE the status write and the email (`resolveQuoteRecipient`).
   const to = await resolveQuoteRecipient(sb, actor, row.customer_id, "sendQuote");
 
+  const sentAt = new Date().toISOString();
   const { error: uErr, count } = await sb
     .from("catering_quotes")
-    .update({ status: "sent", sent_at: new Date().toISOString(), sent_by: actor.user.id }, { count: "exact" })
+    .update({ status: "sent", sent_at: sentAt, sent_by: actor.user.id }, { count: "exact" })
     .eq("id", id)
     .is("superseded_at", null)
     // Guarded on the status validated above (audit W22/B204; silent-UPDATE law, as setQuoteStatus):
@@ -1498,7 +1499,7 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
   // quote email — a NEW customer email that ships CLOSED (lib/catering/order-update-email-shared.ts). Whenever
   // it does not go out (any switch closed, nothing changed, a first send), the quote email below is exactly
   // today's.
-  const orderUpdate = await emailRevisionUpdate(sb, row);
+  const orderUpdate = await emailRevisionUpdate(sb, row, sentAt);
   const sent = orderUpdate?.outcome === "sent"
     ? { emailed: true, emailOutcome: "sent" as const, recipient: to.recipientHidden ? null : (to.cust?.email ?? null), emailError: null }
     : await emailQuoteToCustomer(id, row.total_cents, row.customer_id, to);
@@ -1524,10 +1525,13 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
 /**
  * The order-update email for a revision whose family was already SENT to the customer (W22). Null when this
  * is a first send or nothing the customer reads changed; otherwise the order-update outcome (never throws).
+ * `sentAt` is the sent_at THIS send wrote: the persisted send occurrence the email is keyed by (fix round 1,
+ * BC-061 — a key of the two revision ids alone made a second explicit send of one revision a provider no-op).
  */
 async function emailRevisionUpdate(
   sb: ReturnType<typeof getServiceRoleClient>,
   row: { id: string; root_id: string | null; version: number | null; customer_id: string | null; total_cents: number; event_date: string | null; headcount: number | null },
+  sentAt: string,
 ): Promise<OrderUpdateEmailOutcome | null> {
   if (!row.root_id || (row.version ?? 1) <= 1) return null;
   const { data: prev, error } = await sb
@@ -1545,7 +1549,7 @@ async function emailRevisionUpdate(
     { eventDate: row.event_date, headcount: row.headcount, totalCents: row.total_cents },
   );
   if (changes.length === 0) return null;
-  return emailOrderUpdate(sb, { customerId: row.customer_id, quoteId: row.id, changes, idempotencyKey: `order-update:quote:${prev.id}:${row.id}` });
+  return emailOrderUpdate(sb, { customerId: row.customer_id, quoteId: row.id, changes, idempotencyKey: `order-update:quote:${prev.id}:${row.id}:${sentAt}` });
 }
 
 // ── THE ONE QUOTE EMAIL PATH ────────────────────────────────────────────────────────

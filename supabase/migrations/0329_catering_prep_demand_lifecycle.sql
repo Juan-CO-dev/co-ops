@@ -45,7 +45,10 @@
 --     copy, 0225 — package picks are kept, nothing is re-resolved, the ledger stays append-only); and, when the
 --     lead's date moved, one catering_pipeline_events row (from = to = the stage, "Rescheduled: <old> -> <new>").
 --     Idempotent and self-healing: each step touches only what differs, so re-saving a date repairs a lead whose
---     quote or prep had drifted. → {result:'moved'|'unchanged', from_date, to_date, quote_updated, prep_rows_moved}.
+--     quote or prep had drifted. → {result:'moved'|'unchanged', from_date, to_date, quote_updated, prep_rows_moved,
+--     event_id}. event_id = the reschedule's catering_pipeline_events row (null when the date did not move): the
+--     persisted occurrence the customer's order-update email is keyed by (fix round 1), so two reschedules with the
+--     same date pair (Fri → Tue → Fri → Tue) never share an email idempotency key.
 --     Refusals (raise exception): reschedule_invalid_date (null date) · reschedule_lead_not_found.
 --
 --   create_lto_event(p_actor_id, p_event, p_items) → uuid                                       [service_role]
@@ -213,7 +216,7 @@ end $$;
 -- ── B120: the reschedule ─────────────────────────────────────────────────────────────────────────────────
 create function public.reschedule_catering_lead(p_lead_id uuid, p_event_date date, p_actor_id uuid)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
-declare v_lead public.catering_pipeline%rowtype; v_quotes integer := 0; v_moved integer := 0;
+declare v_lead public.catering_pipeline%rowtype; v_quotes integer := 0; v_moved integer := 0; v_event_id uuid;
 begin
   if p_event_date is null then raise exception 'reschedule_invalid_date'; end if;
   select * into v_lead from public.catering_pipeline where id = p_lead_id for update;          -- the lead first
@@ -242,12 +245,14 @@ begin
   if v_lead.event_date is distinct from p_event_date then
     insert into public.catering_pipeline_events (pipeline_id, from_stage, to_stage, note, actor_id)
     values (p_lead_id, v_lead.stage, v_lead.stage,
-            'Rescheduled: ' || coalesce(v_lead.event_date::text, 'no date') || ' -> ' || p_event_date::text, p_actor_id);
+            'Rescheduled: ' || coalesce(v_lead.event_date::text, 'no date') || ' -> ' || p_event_date::text, p_actor_id)
+    returning id into v_event_id;
   end if;
 
   return jsonb_build_object(
     'result', case when v_lead.event_date is distinct from p_event_date or v_quotes > 0 or v_moved > 0 then 'moved' else 'unchanged' end,
-    'from_date', v_lead.event_date, 'to_date', p_event_date, 'quote_updated', v_quotes > 0, 'prep_rows_moved', v_moved);
+    'from_date', v_lead.event_date, 'to_date', p_event_date, 'quote_updated', v_quotes > 0, 'prep_rows_moved', v_moved,
+    'event_id', v_event_id);
 end $$;
 
 -- ── B205: an LTO event and its items, together ───────────────────────────────────────────────────────────
