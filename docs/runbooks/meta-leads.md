@@ -96,7 +96,27 @@ shop in the worker, in this order, and the WHY lands on the lead as a notes line
 3. **Default** — the tenant's `defaultShopCode` (CO: `MEP`, Capitol Hill). Note: "Routed: default
    shop — please confirm (delivery, no shop chosen)". A missing/inactive default = `invalid_location`.
 
+A malformed Graph `adset_id` (not 1–30 digits) is LEFT OUT, never a refusal (item 1, 0336): such a
+lead routes by history, then the default shop, instead of failing as `invalid_payload`.
+
 Pickup leads carry no routing line. Keith can move a lead between shops as before (existing feature).
+
+### Ad ids on the ledger (item 1, migration 0336)
+
+Apply 0336 (sim, then prod on Juan's word) BEFORE the app that sends the seven-argument
+`meta_lead_record` deploys. Every id is attribution, never identity, and never fails a receipt or
+an intake: `meta_ad_ref()` stores anything but 1–30 digits as NULL. Columns on `meta_lead_events`
+(service-role only; managers will see aggregates, never per-lead ids):
+
+- `webhook_ad_id`, `webhook_adgroup_id` — from the leadgen webhook, written once at receipt (a
+  duplicate receipt changes nothing). What `adgroup_id` means is unverified (it may equal the ad id);
+  it is never treated as the ad set.
+- `ad_id`, `adset_id`, `ad_refs_at` — from the Graph Lead node, written by the worker under its lease
+  right after the fetch (`meta_lead_record_ad_refs`, before mapping, so a `needs_human` lead keeps
+  them), or later by `meta_lead_backfill_ad_refs` on TERMINAL rows only (created / attached /
+  needs_human). Both fill a column only while it is NULL; a different later value is never written
+  (compare the webhook and Graph columns to see a disagreement).
+- A database error writing the ids is the ordinary transient `database` failure (retry, 5 attempts).
 **Both tables — the labels and the ad sets — plus the default shop are tenant DATA in
 `config/tenant/meta-leads.ts`, never logic**; a second tenant edits that file only.
 

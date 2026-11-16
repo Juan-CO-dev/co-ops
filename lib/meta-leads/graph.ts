@@ -6,7 +6,9 @@ import { readBoundedBytes } from "./request";
 export type MetaGraphError = "configuration" | "graph_auth" | "graph_rate_limit" | "graph_timeout" | "graph_unavailable" | "graph_not_found" | "invalid_payload";
 /** `adset_id` is a documented Lead-node field (Marketing API Lead reference); the worker's delivery routing rule (b) maps it through the tenant ad-set table. */
 export interface MetaGraphLead { id: string; form_id?: string; ad_id?: string; adset_id?: string; created_time?: string; field_data: unknown[]; custom_disclaimer_responses?: unknown }
-export async function fetchMetaLead(expected: { leadgenId: string; formId?: string | null; adId?: string | null },
+/** Item 1 (P2-5): ad ids are attribution, not identity — kept only as 1–30 digits, otherwise LEFT OUT (never a refusal). */
+const adRef = (value: unknown): string | undefined => typeof value === "string" && /^\d{1,30}$/.test(value) ? value : undefined;
+export async function fetchMetaLead(expected: { leadgenId: string; formId?: string | null },
   dependencies: { pageToken: string; appSecret: string; send?: typeof fetch }): Promise<{ ok: true; lead: MetaGraphLead } | { ok: false; error: MetaGraphError }> {
   const fail = (error: MetaGraphError): { ok: false; error: MetaGraphError } => ({ ok: false, error });
   if (!/^\d{1,30}$/.test(expected.leadgenId) || !dependencies.pageToken || !dependencies.appSecret) return fail("configuration");
@@ -38,13 +40,14 @@ export async function fetchMetaLead(expected: { leadgenId: string; formId?: stri
     try { lead = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body.bytes)); } catch { return fail("invalid_payload"); }
     if (!lead || typeof lead !== "object" || Array.isArray(lead)) return fail("invalid_payload");
     const value = lead as Record<string, unknown>;
+    // Identity stays strict (lead id, form, field_data, created_time). The ad ids are normalized below.
     if (value.id !== expected.leadgenId || !Array.isArray(value.field_data)
-      || (expected.formId && value.form_id !== expected.formId) || (expected.adId && value.ad_id !== expected.adId)
-      || (value.form_id !== undefined && typeof value.form_id !== "string") || (value.ad_id !== undefined && typeof value.ad_id !== "string")
-      || (value.adset_id !== undefined && (typeof value.adset_id !== "string" || !/^\d{1,30}$/.test(value.adset_id)))
+      || (expected.formId && value.form_id !== expected.formId)
+      || (value.form_id !== undefined && typeof value.form_id !== "string")
       || (value.created_time !== undefined && (typeof value.created_time !== "string" || value.created_time.length > 40 || !Number.isFinite(Date.parse(value.created_time))))) return fail("invalid_payload");
+    const adId = adRef(value.ad_id), adsetId = adRef(value.adset_id);
     return { ok: true, lead: { id: expected.leadgenId, field_data: value.field_data,
-      ...(typeof value.form_id === "string" ? { form_id: value.form_id } : {}), ...(typeof value.ad_id === "string" ? { ad_id: value.ad_id } : {}), ...(typeof value.adset_id === "string" ? { adset_id: value.adset_id } : {}),
+      ...(typeof value.form_id === "string" ? { form_id: value.form_id } : {}), ...(adId ? { ad_id: adId } : {}), ...(adsetId ? { adset_id: adsetId } : {}),
       ...(typeof value.created_time === "string" ? { created_time: value.created_time } : {}), custom_disclaimer_responses: value.custom_disclaimer_responses } };
   } catch (error) { return fail(error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "graph_timeout" : "graph_unavailable"); }
 }

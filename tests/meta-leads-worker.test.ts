@@ -29,9 +29,14 @@ const fields = (opted = false, extra: Partial<Record<LiveKey | string, string>> 
 };
 const delivery = (extra: Partial<Record<string, string>> = {}) => fields(false, { fulfillment_method: "Delivery", preferred_shop: "Our catering team picks the closest shop", ...extra });
 /** A table-aware PostgREST stand-in: every builder call is recorded; the reply is per table (an array = one reply per query, the last one sticks). */
-function database(replies: Reply[] = [claim, created], tables: Record<string, Reply | Reply[]> = {}) {
+/** Item 1: `meta_lead_record_ad_refs` is answered by its own mock (`adRefs`, default "recorded"), so the
+ *  sequenced `rpc` replies and call counts below keep describing the intake RPCs only. Call order is
+ *  still comparable across both mocks (vitest's invocationCallOrder is global). */
+function database(replies: Reply[] = [claim, created], tables: Record<string, Reply | Reply[]> = {}, adRefsReply: Reply = { data: "recorded" }) {
   const merged: Record<string, Reply | Reply[]> = { locations: { data: { id: "shop-id", name: "Capitol Hill" } }, catering_customers: { data: null }, catering_pipeline: { data: null }, ...tables };
+  const adRefs = vi.fn(async (...args: unknown[]) => { void args; return adRefsReply; });
   const rpc = vi.fn(async (...args: unknown[]) => { void args; const reply = replies.shift(); if (!reply) throw new Error("unexpected rpc"); return reply; });
+  const dispatch = (name: string, args: unknown) => name === "meta_lead_record_ad_refs" ? adRefs(name, args) : rpc(name, args);
   const queries: Array<{ table: string; ops: Op[] }> = [];
   const from = vi.fn((table: string) => {
     const record = { table, ops: [] as Op[] }; queries.push(record);
@@ -42,11 +47,11 @@ function database(replies: Reply[] = [claim, created], tables: Record<string, Re
     chain.then = (resolve: (v: Reply) => unknown, reject?: (e: unknown) => unknown) => Promise.resolve(reply()).then(resolve, reject);
     return chain;
   });
-  const sb = { rpc, from } as unknown as NonNullable<Parameters<typeof processMetaLead>[1]>;
+  const sb = { rpc: dispatch, from } as unknown as NonNullable<Parameters<typeof processMetaLead>[1]>;
   mocks.db.mockReturnValue(sb);
   const ops = (table: string) => queries.filter(q => q.table === table).map(q => q.ops);
   const applied = () => rpc.mock.calls.find(c => c[0] === "meta_lead_intake_apply")?.[1] as { p_location_id: string; p_intake: { notes: string | null; location_id: string } } | undefined;
-  return { sb, rpc, from, queries, ops, applied };
+  return { sb, rpc, adRefs, from, queries, ops, applied };
 }
 beforeEach(() => {
   vi.resetAllMocks();
@@ -343,6 +348,69 @@ it("unknown refusal names cannot escape the closed error vocabulary", async () =
   const db = database([claim, { error: { message: "constructor" } }, { data: true }]);
   expect(await processMetaLead("11", db.sb)).toBe("retry");
   expect(db.rpc).toHaveBeenLastCalledWith("meta_lead_fail", expect.objectContaining({ p_error_code: "database", p_retryable: true }));
+});
+
+describe("Ad refs (item 1): stored under the lease, before mapping", () => {
+  const leaseOf = (db: ReturnType<typeof database>) => (db.rpc.mock.calls[0]![1] as { p_lease_id: string }).p_lease_id;
+  it("records the Graph ad_id / adset_id with the claim's lease, after the fetch and before mapping, identity or the apply", async () => {
+    mocks.graph.mockResolvedValue({ ok: true, lead: { id: "11", ad_id: "1", adset_id: "777", field_data: fields() } });
+    const db = database();
+    expect(await processMetaLead("11", db.sb)).toBe("created");
+    expect(db.adRefs).toHaveBeenCalledExactlyOnceWith("meta_lead_record_ad_refs", { p_leadgen_id: "11", p_lease_id: leaseOf(db), p_ad_id: "1", p_adset_id: "777" });
+    expect(db.adRefs.mock.invocationCallOrder[0]!).toBeGreaterThan(mocks.graph.mock.invocationCallOrder[0]!);
+    expect(db.adRefs.mock.invocationCallOrder[0]!).toBeLessThan(mocks.customer.mock.invocationCallOrder[0]!);
+    expect(db.adRefs.mock.invocationCallOrder[0]!).toBeLessThan(db.rpc.mock.invocationCallOrder[1]!);
+  });
+  it("missing ids are sent as SQL NULLs", async () => {
+    const db = database();
+    expect(await processMetaLead("11", db.sb)).toBe("created");
+    expect(db.adRefs).toHaveBeenCalledWith("meta_lead_record_ad_refs", expect.objectContaining({ p_ad_id: null, p_adset_id: null }));
+  });
+  it("a lead that fails mapping (needs_human) still keeps its ids", async () => {
+    mocks.graph.mockResolvedValue({ ok: true, lead: { id: "11", ad_id: "1", adset_id: "777", field_data: fields(false, { preferred_shop: "Somewhere" }) } });
+    const db = database([claim, { data: true }]);
+    expect(await processMetaLead("11", db.sb)).toBe("needs_human");
+    expect(db.adRefs).toHaveBeenCalledWith("meta_lead_record_ad_refs", expect.objectContaining({ p_ad_id: "1", p_adset_id: "777" }));
+    expect(db.rpc).toHaveBeenLastCalledWith("meta_lead_fail", expect.objectContaining({ p_error_code: "invalid_payload" }));
+  });
+  it("a Graph failure records nothing (there are no Graph ids)", async () => {
+    mocks.graph.mockResolvedValue({ ok: false, error: "graph_timeout" });
+    const db = database([claim, { data: true }]);
+    expect(await processMetaLead("11", db.sb)).toBe("retry");
+    expect(db.adRefs).not.toHaveBeenCalled();
+  });
+  it("stale_lease returns busy at once: no identity, consent, apply or failure write", async () => {
+    mocks.graph.mockResolvedValue({ ok: true, lead: { id: "11", ad_id: "1", field_data: fields(true) } });
+    const db = database([claim], {}, { data: "stale_lease" });
+    expect(await processMetaLead("11", db.sb)).toBe("busy");
+    expect(db.rpc).toHaveBeenCalledTimes(1);
+    expect(mocks.customer).not.toHaveBeenCalled(); expect(mocks.manager).not.toHaveBeenCalled(); expect(mocks.continuation).not.toHaveBeenCalled();
+    expect(db.from).not.toHaveBeenCalled();
+  });
+  it.each([[{ error: { message: "boom" } }], [{ data: "not_found" }], [{ data: null }], [{ data: "constructor" }]])("an RPC error or unknown answer %j is a retryable database failure", async reply => {
+    const db = database([claim, { data: true }], {}, reply as Reply);
+    expect(await processMetaLead("11", db.sb)).toBe("retry");
+    expect(db.rpc).toHaveBeenLastCalledWith("meta_lead_fail", expect.objectContaining({ p_error_code: "database", p_retryable: true }));
+    expect(mocks.customer).not.toHaveBeenCalled();
+  });
+  it("'unchanged' (a retry, or ids already stored) proceeds normally", async () => {
+    const db = database([claim, created], {}, { data: "unchanged" });
+    expect(await processMetaLead("11", db.sb)).toBe("created");
+  });
+  it("webhook and Graph ids that disagree are both stored and the intake proceeds (attribution is not identity)", async () => {
+    const receipt = database([{ data: { inserted: true } }]);
+    expect(await recordMetaLead({ leadgenId: "11", pageId: "22", formId: "33", createdAt: "2026-11-11T12:00:00Z", adId: "5", adgroupId: "6" }, true, receipt.sb)).toBe(true);
+    expect(receipt.rpc).toHaveBeenCalledWith("meta_lead_record", { p_leadgen_id: "11", p_page_id: "22", p_form_id: "33", p_created_at: "2026-11-11T12:00:00Z", p_enabled: true, p_webhook_ad_id: "5", p_webhook_adgroup_id: "6" });
+    mocks.graph.mockResolvedValue({ ok: true, lead: { id: "11", ad_id: "1", adset_id: "2", field_data: fields() } });
+    const db = database();
+    expect(await processMetaLead("11", db.sb)).toBe("created");
+    expect(db.adRefs).toHaveBeenCalledWith("meta_lead_record_ad_refs", expect.objectContaining({ p_ad_id: "1", p_adset_id: "2" }));
+  });
+  it("a receipt without webhook ids sends NULLs (the named 7-argument call)", async () => {
+    const db = database([{ data: { inserted: true } }]);
+    await recordMetaLead({ leadgenId: "11", pageId: "22", formId: "33", createdAt: "2026-11-11T12:00:00Z" }, true, db.sb);
+    expect(db.rpc).toHaveBeenCalledWith("meta_lead_record", expect.objectContaining({ p_webhook_ad_id: null, p_webhook_adgroup_id: null }));
+  });
 });
 
 // W24/B211: a lead CREATED whose email was never attempted (a lost apply response, or a claim RPC

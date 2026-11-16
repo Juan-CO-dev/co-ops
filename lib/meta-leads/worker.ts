@@ -21,9 +21,11 @@ interface Routing { shop: Shop; note: string }
 
 /** SQL INSERT ON CONFLICT DO NOTHING never overwrites receipt evidence. */
 export async function recordMetaLead(item: MetaNotification, enabled: boolean, client?: Client): Promise<boolean> {
+  // Item 1: the webhook's ad ids ride along (0336's two trailing parameters; NULL when absent).
   const { data, error } = await (client ?? getServiceRoleClient()).rpc("meta_lead_record", {
     p_leadgen_id: item.leadgenId, p_page_id: item.pageId, p_form_id: item.formId,
     p_created_at: item.createdAt, p_enabled: enabled,
+    p_webhook_ad_id: item.adId ?? null, p_webhook_adgroup_id: item.adgroupId ?? null,
   });
   if (error || typeof data?.inserted !== "boolean") throw new Error("meta_ledger_failed");
   return data.inserted;
@@ -128,6 +130,14 @@ export async function processMetaLead(leadgenId: string, client?: Client): Promi
       pageToken: process.env.META_LEADS_PAGE_TOKEN, appSecret: process.env.META_LEADS_APP_SECRET,
     });
     if (!fetched.ok) throw new WorkerFailure(fetched.error);
+    // Item 1: store the Graph ad ids under THIS lease, before mapping, so a lead that later fails
+    // (needs_human) keeps them. Null-only fill in SQL; a stored id is never overwritten.
+    const refs = await sb.rpc("meta_lead_record_ad_refs", {
+      p_leadgen_id: leadgenId, p_lease_id: leaseId, p_ad_id: fetched.lead.ad_id ?? null, p_adset_id: fetched.lead.adset_id ?? null,
+    });
+    // A stale worker no longer owns the receipt: no identity, consent or business work, no failure write.
+    if (!refs.error && refs.data === "stale_lease") return "busy";
+    if (refs.error || (refs.data !== "recorded" && refs.data !== "unchanged")) throw new WorkerFailure("database");
     const mapped = mapMetaLeadFields(fetched.lead.field_data, fetched.lead.custom_disclaimer_responses);
     rawKeys = mapped.rawKeys;
     if (!mapped.ok) throw new WorkerFailure(mapped.error);

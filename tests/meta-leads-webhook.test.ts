@@ -95,6 +95,22 @@ it("ignores unrelated notification fields and unknown metadata", async () => {
   expect(mocks.record).toHaveBeenCalledOnce();
   expect(mocks.record.mock.calls[0]![0].leadgenId).toBe("101");
 });
+it("records the webhook's ad_id and adgroup_id with the receipt (item 1)", async () => {
+  const body = payload();
+  Object.assign(body.entry[0]!.changes[0]!.value, { ad_id: "555", adgroup_id: "666" });
+  expect((await POST(signed(JSON.stringify(body)))).status).toBe(200);
+  expect(mocks.record).toHaveBeenCalledExactlyOnceWith({ leadgenId: "101", pageId: "22", formId: "33", createdAt: "2027-01-15T08:00:00.000Z", adId: "555", adgroupId: "666" }, true);
+});
+it("malformed ad ids never cost the receipt: it is recorded without them", async () => {
+  const body = payload();
+  Object.assign(body.entry[0]!.changes[0]!.value, { ad_id: "not-an-id", adgroup_id: 666 });
+  expect((await POST(signed(JSON.stringify(body)))).status).toBe(200);
+  expect(mocks.record).toHaveBeenCalledOnce();
+  const item = mocks.record.mock.calls[0]![0] as Record<string, unknown>;
+  expect(item).toEqual({ leadgenId: "101", pageId: "22", formId: "33", createdAt: "2027-01-15T08:00:00.000Z" });
+  expect("adId" in item || "adgroupId" in item).toBe(false);
+  expect(mocks.after).toHaveBeenCalledOnce();
+});
 it("bounds streamed bytes before persistence even without content length", async () => {
   expect((await POST(signed(" ".repeat(262145)))).status).toBe(413);
   expect(mocks.record).not.toHaveBeenCalled();
