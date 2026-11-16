@@ -5,7 +5,7 @@ import { runParseReceipts } from "@/lib/parse-receipts-run";
 const mocks = vi.hoisted(() => ({ sweep: vi.fn(), service: vi.fn() }));
 vi.mock("@/lib/inbound-router", () => ({ sweepInboundMessages: mocks.sweep }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: mocks.service }));
-vi.mock("@/lib/receipt-parse", () => ({ parseReceipt: vi.fn() }));
+vi.mock("@/lib/receipt-parse", () => ({ parseReceipt: vi.fn(), PARSE_CALL_TIMEOUT_MS: 150_000 }));
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("ANTHROPIC_API_KEY", ""); vi.stubEnv("RESEND_API_KEY", ""); vi.stubEnv("RESEND_INBOUND_SECRET", "");
@@ -34,6 +34,7 @@ function receiptQuery(ids: string[]) {
   return { client, query };
 }
 
+// W20/B115: a row is started only with the full 170 s (150 s model call + 20 s) still in hand.
 it("gives fetch work 140 seconds and counts only parses begun with the full reserve", async () => {
   vi.stubEnv("ANTHROPIC_API_KEY", "test-parse");
   vi.stubEnv("RESEND_API_KEY", "test-fetch");
@@ -43,7 +44,7 @@ it("gives fetch work 140 seconds and counts only parses begun with the full rese
   vi.spyOn(Date, "now").mockImplementation(() => now);
   const { client, query } = receiptQuery(["first", "second", "third"]);
   mocks.sweep.mockImplementation(async () => {
-    now += 140_000;
+    now += 50_000;
     return { swept: 25, failed: 2 };
   });
   vi.mocked(parseReceipt).mockImplementation(async () => {
@@ -58,7 +59,20 @@ it("gives fetch work 140 seconds and counts only parses begun with the full rese
     metadata: { swept: 1, parsed: 1, failed: 0, inbound: { swept: 25, failed: 2 } } });
 });
 
-it.each([[200_000, 1], [200_001, 0]])("parse reserve boundary at %s ms begins %s rows", async (elapsed, expected) => {
+it("a fetch leg that used its whole 140 seconds starts no parse this run (the next sweep does)", async () => {
+  vi.stubEnv("ANTHROPIC_API_KEY", "test-parse");
+  vi.stubEnv("RESEND_API_KEY", "test-fetch");
+  vi.stubEnv("RESEND_INBOUND_SECRET", "test-inbound");
+  let now = 1_800_000_000_000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  receiptQuery(["first"]);
+  mocks.sweep.mockImplementation(async () => { now += 140_000; return { swept: 25, failed: 0 }; });
+  const result = await runParseReceipts();
+  expect(parseReceipt).not.toHaveBeenCalled();
+  expect(result).toMatchObject({ swept: 0, parsed: 0, failed: 0 });
+});
+
+it.each([[110_000, 1], [110_001, 0]])("parse reserve boundary at %s ms begins %s rows", async (elapsed, expected) => {
   vi.stubEnv("ANTHROPIC_API_KEY", "test-parse");
   vi.stubEnv("RESEND_API_KEY", "test-fetch");
   vi.stubEnv("RESEND_INBOUND_SECRET", "test-inbound");

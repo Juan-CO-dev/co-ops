@@ -1,6 +1,6 @@
 import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { parseReceipt } from "@/lib/receipt-parse";
+import { parseReceipt, PARSE_CALL_TIMEOUT_MS } from "@/lib/receipt-parse";
 import { sweepInboundMessages } from "@/lib/inbound-router";
 
 function truncateErr(e: unknown): string {
@@ -9,6 +9,11 @@ function truncateErr(e: unknown): string {
 }
 
 const SWEEP_LIMIT = 10;
+/** Time one row may need: the full model call plus downloads, the write and matching (W20/B115).
+ *  A row is only started while this much of the run's budget is left, so a long invoice can use
+ *  its whole call and the sweep still ends inside the function's limit. With the longer call a
+ *  sweep reads fewer rows; the 15-minute cadence works through a backlog oldest-first. */
+export const PARSE_ROW_RESERVE_MS = PARSE_CALL_TIMEOUT_MS + 20_000;
 
 export async function runParseReceipts() {
   const inboundEnabled = !!process.env.RESEND_INBOUND_SECRET && !!process.env.RESEND_API_KEY;
@@ -34,7 +39,7 @@ export async function runParseReceipts() {
   let parsed = 0;
   let failed = 0;
   for (const row of list) {
-    if (Date.now() + 80_000 > deadline) break; // full 60s model call + storage/matching reserve
+    if (Date.now() + PARSE_ROW_RESERVE_MS > deadline) break; // full model call + storage/matching reserve
     swept++;
     try {
       const result = await parseReceipt(sb, row.id);

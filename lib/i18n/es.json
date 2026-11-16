@@ -8887,6 +8887,7 @@
   "vendorMail.failure.api_error": "Falló el servicio de extracción.",
   "vendorMail.failure.empty_response": "La extracción no devolvió resultados.",
   "vendorMail.failure.unparseable_json": "No se pudo leer la extracción.",
+  "vendorMail.failure.truncated_output": "El documento era demasiado largo para leerlo completo.",
   "vendorMail.event.baseline": "Registro inicial",
   "vendorMail.event.received": "Recibido",
   "vendorMail.event.transport": "Procesamiento actualizado",

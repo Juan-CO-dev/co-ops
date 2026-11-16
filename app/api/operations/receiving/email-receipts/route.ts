@@ -41,6 +41,10 @@ import {
 } from "@/lib/email-receipts";
 import { parseReceiptForActor } from "@/lib/receipt-parse";
 
+// W20/B115: "Parse now" (PATCH action=parse_now) runs the model call inside the request. A long
+// invoice's call is bounded at 150 s (PARSE_CALL_TIMEOUT_MS), plus downloads and matching.
+export const maxDuration = 180;
+
 // 15 MB hard cap for manual receipt uploads (staff photos/PDFs of paper invoices).
 const MAX_RECEIPT_BYTES = 15 * 1024 * 1024;
 
