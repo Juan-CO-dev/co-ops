@@ -257,7 +257,8 @@ export function vendorDownRewriter(skuIds: ReadonlySet<string>): RowRewriter {
  * not exist in live data — every product has exactly one par'd member today — so the
  * dedupe it was built for can only be walked by injecting the second par.
  *
- * The walker's own query PRE-FILTERS on `or(weekday_par.not.is.null,...)`, so a
+ * The walker's own query PRE-FILTERS on `or(weekday_par.not.is.null,...)` (the global-par leg
+ * of lib/par-universe.ts; a SHOP-par SKU arrives by a second, by-id read), so a
  * par-less twin never appears in the response at all and rewriting fields cannot
  * reach it: the row has to be ADDED. `urlMatch` keeps that addition on the one query
  * that means "the par'd catalogue" and off every other vendor_items read.

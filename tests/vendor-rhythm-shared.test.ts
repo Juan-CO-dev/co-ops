@@ -136,6 +136,21 @@ describe("cutoffForOrderDay", () => {
     expect(cutoffForOrderDay(rows, LOC_A, 1)).toBe("08:00");
   });
 
+  // Audit W18/B105: the fallback pool is the ALL-SHOPS rows only. Another shop's own
+  // deadline never governs this shop (`loadAllCutoffsByVendor` is not shop-filtered).
+  it("never falls back to ANOTHER shop's row", () => {
+    const rows: CutoffRow[] = [
+      { locationId: null, orderDay: 1, cutoffTime: "14:00" },
+      { locationId: LOC_B, orderDay: 1, cutoffTime: "10:00" },
+    ];
+    expect(cutoffForOrderDay(rows, LOC_A, 1)).toBe("14:00");
+  });
+
+  it("another shop's row alone governs nothing here", () => {
+    const rows: CutoffRow[] = [{ locationId: LOC_B, orderDay: 1, cutoffTime: "10:00" }];
+    expect(cutoffForOrderDay(rows, LOC_A, 1)).toBeNull();
+  });
+
   it("takes the EARLIEST time among equally-specific rows (the binding deadline)", () => {
     const rows: CutoffRow[] = [
       { locationId: LOC_A, orderDay: 1, cutoffTime: "14:30" },
@@ -265,6 +280,18 @@ describe("coverageWindow", () => {
     // Four, where the un-skipped walk had two — the outage is absorbed as coverage,
     // never as par disagreement.
     expect(w?.coveredDays.length).toBeGreaterThan(2);
+  });
+
+  it("another shop's earlier deadline does not make this shop miss today's order (W18/B105)", () => {
+    const cutoffs: CutoffRow[] = [
+      { locationId: null, orderDay: 1, cutoffTime: "14:00" },
+      { locationId: LOC_B, orderDay: 1, cutoffTime: "10:00" },
+      { locationId: LOC_A, orderDay: 3, cutoffTime: "10:00" },
+      { locationId: LOC_A, orderDay: 5, cutoffTime: "10:00" },
+    ];
+    const w = coverageWindow(walk(MON, at(11, 0), { cutoffs }));
+    expect(w?.orderDateEt).toBe(MON);
+    expect(w?.nextDeliveryDate).toBe(TUE);
   });
 
   it("a single-order-day vendor covers through nextDelivery + 7", () => {
