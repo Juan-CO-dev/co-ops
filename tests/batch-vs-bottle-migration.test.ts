@@ -137,15 +137,14 @@ const REEMITS: Reemit[] = [
 
 /**
  * Later migrations that re-emit a 0215 body FROM 0215 (each has its own line-subsequence pin).
- * 0255 (B11a, under-par alert recipients + par) → tests/under-par-alert-recipients-migration.test.ts.
- * 0315 (audit W14) re-emits save_phase2_item_atomic FROM 0215 and submit_phase2_atomic FROM 0255 (the
- * opening instance lock, + blank BACK UP = 0 on the save) → tests/opening-counts-batch-prep-migration.test.ts
- * pins each as a line-subsequence of its source. (It re-emits revoke_phase2_item_atomic too, which this
- * file pins on the 0215 text directly.)
+ * 0255 (B11a, under-par alert recipients + par) → tests/under-par-alert-recipients-migration.test.ts;
+ * 0315 (audit W14, applied to sim and prod) re-emits save_phase2_item_atomic FROM 0215 and submit_phase2_atomic
+ * FROM 0255 (W14's tests/opening-counts-batch-prep-migration.test.ts pins both);
+ * 0320 (audit W15/B085) re-emits 0315's submit_phase2_atomic → tests/checklist-publish-activation-migration.test.ts.
  */
 const LATER_REEMITTERS: Readonly<Record<string, string>> = {
   save_phase2_item_atomic: "0315_opening_counts_batch_prep.sql",
-  submit_phase2_atomic: "0315_opening_counts_batch_prep.sql",
+  submit_phase2_atomic: "0320_checklist_publish_activation.sql",
   // 0258 (catalog Phase 1, Astra r2 #1): the recipe-graph lock + in-transaction output cycle refusal
   // → tests/recipe-input-write-atomic.test.ts pins both as line-subsequences of 0215.
   // 0262 (catalog Phase 3a) re-emits both FROM 0258 (+ the per-shop cycle sweep, + the journal actor)

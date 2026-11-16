@@ -70,7 +70,7 @@ import { loadItemDefns, loadItemOverrides, operationalDayOfWeek, pickOverride, r
 import { operationalNow } from "@/lib/midshift";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { loadPrepSections } from "@/lib/prep-sections.server";
-import { loadBatchDerivedForItems, loadDerivedForItems, recordBatchProductionFromPrep, recordProductionFromPrep, skuConsumptionForItem, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
+import { loadBatchDerivedForItems, loadDerivedForItems, recordBatchProductionFromPrep, recordProductionFromPrep, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
 import { consumptionOverrideFor } from "@/lib/consumption-edit-shared";
 import { loadBatchContextForItems, type BatchItemContext } from "@/lib/batch-prep";
 import { batchContractCodeFromMessage, toBatchPayload, type BatchContractCode, type BatchEntry } from "@/lib/batch-prep-shared";
@@ -1784,25 +1784,23 @@ export async function saveMidDayPhase2Item(
         producedAt,
         madeBy,
         source: "mid_day_p2",
+        completionId: rpcOut.completionId,
       });
     } catch (e) {
       console.error(`saveMidDayPhase2Item: batch production capture failed (completion committed):`, e);
     }
   } else if (item.itemId) {
     try {
-      let consumption = confirmedConsumption;
-      if (consumption === null) {
-        const derivedMap = await skuConsumptionForItem(item.itemId, args.prepped, state.instance.locationId);
-        consumption = [...derivedMap].map(([skuId, oz]) => ({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz }));
-      }
+      // W16/B183: null and a confirmed set both go to the fold, which reconciles against the recipe.
       await recordProductionFromPrep(args.actor, {
         locationId: state.instance.locationId,
         instanceId: args.instanceId,
         templateItemId: args.templateItemId,
         outputItemId: item.itemId,
         outputQty: args.prepped,
-        confirmedConsumption: consumption,
+        confirmedConsumption,
         source: "mid_day_p2",
+        completionId: rpcOut.completionId,
       });
     } catch (e) {
       console.error(`saveMidDayPhase2Item: production capture failed (completion committed):`, e);

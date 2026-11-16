@@ -2,11 +2,15 @@ import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { batchSkuOzForItemFromGraph, buildRecipeGraph, type GraphRecipe } from "@/lib/prep-consumption-graph";
 
-const mocks = vi.hoisted(() => ({ productIndex: vi.fn(), inserts: [] as Array<{ table: string; value: unknown }> }));
+const mocks = vi.hoisted(() => ({ productIndex: vi.fn(), inserts: [] as Array<{ table: string; value: unknown }>, rpc: [] as Array<{ fn: string; args: Record<string, unknown> }> }));
 vi.mock("@/lib/products", () => ({ loadProductIndex: mocks.productIndex }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({
-  getServiceRoleClient: () => ({ from: (table: string) => {
+  // W16/B090: the fold writes through record_prep_production_atomic (0322); its args are the persisted rows.
+  getServiceRoleClient: () => ({ rpc: async (fn: string, args: Record<string, unknown>) => {
+    mocks.rpc.push({ fn, args });
+    return { data: { status: "recorded", production_id: "production" }, error: null };
+  }, from: (table: string) => {
     const rows: Record<string, unknown> = {
       recipes: [{ id: "recipe", batch_yield: 2, active: true, location_id: null }],
       recipe_inputs: [{ recipe_id: "recipe", quantity: 12, unit: "oz", component_sku_id: null, component_item_id: null, component_product_id: "product" }],
@@ -33,6 +37,7 @@ import { loadBatchDerivedForItems, recordBatchProductionFromPrep } from "@/lib/p
 
 beforeEach(() => {
   mocks.inserts.length = 0;
+  mocks.rpc.length = 0;
   mocks.productIndex.mockReset().mockImplementation((_ids: string[], locationId?: string) => {
     const skuId = locationId === "shop-A" ? "regular-A" : "shop-B-store";
     return { index: {
@@ -52,11 +57,15 @@ describe("BC-025: batch preview and production shop resolution", () => {
     await recordBatchProductionFromPrep({ userId: "maker", role: "agm" }, {
       locationId, instanceId: "instance", templateItemId: "line", outputItemId: "prep",
       batches: 2, cameOutTo: 4, confirmedConsumption: null, producedAt: "2026-10-08T12:00:00Z", madeBy: "maker", source: "opening_p2",
+      completionId: "completion",
     });
     expect(mocks.productIndex.mock.calls.map((call) => call[1])).toEqual([locationId, locationId]);
-    expect(mocks.inserts.find((row) => row.table === "productions")?.value).toMatchObject({ location_id: locationId, output_qty: 4 });
-    expect(mocks.inserts.find((row) => row.table === "production_inputs")?.value).toEqual([
-      { production_id: "production", input_sku_id: skuId, input_oz: 24, qty_entered: null, unit_entered: null, derived_oz: 24 },
+    expect(mocks.inserts).toEqual([]);
+    expect(mocks.rpc).toHaveLength(1);
+    expect(mocks.rpc[0]).toMatchObject({ fn: "record_prep_production_atomic",
+      args: { p_location_id: locationId, p_output_qty: 4, p_completion_id: "completion" } });
+    expect(mocks.rpc[0]!.args.p_lines).toEqual([
+      { sku_id: skuId, input_oz: 24, qty_entered: null, unit_entered: null, derived_oz: 24 },
     ]);
   });
   it("requires the shop at both preview callers and uses it in the production graph", () => {

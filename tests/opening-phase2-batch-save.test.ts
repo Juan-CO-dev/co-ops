@@ -213,6 +213,8 @@ describe("batched save", () => {
     expect(foldArgs.madeBy).toBe("maker-0000-4000-8000-000000000001");
     expect(foldArgs.madeBy).not.toBe(ACTOR_ID);
     expect(foldArgs.batches).toBe(2);
+    // W16/B090: the fold is tied to the completion this save committed.
+    expect(foldArgs.completionId).toBe(ROW.id);
   });
   it("without session attribution in the RPC answer the fold is SKIPPED (loudly), the completion still stands", async () => {
     const svc = service(BATCH_RPC_OK({ producedAt: null, madeBy: null }), TEMPLATE_ITEM_ROW);

@@ -56,7 +56,7 @@ const shops = [{ id: "a", name: "Shop A", code: "A" }, { id: "b", name: "Shop B"
 describe("actual report pages expose consistent navigation", () => {
   beforeEach(() => {
     mocks.personLocations.mockResolvedValue(["a", "b"]);
-    const query = { select: () => query, eq: () => query, order: () => query, in: () => query, then: (resolve: (value: unknown) => unknown) => resolve({ data: shops, error: null }) };
+    const query = { select: () => query, eq: () => query, order: () => query, in: () => query, range: () => query, /* W15/B022: the fridge-linked line read pages */ then: (resolve: (value: unknown) => unknown) => resolve({ data: shops, error: null }) };
     mocks.service.mockReturnValue({ from: () => query });
   });
   it("round-trips a shop list and cursor through detail before restoring the all-shop hub", async () => {
