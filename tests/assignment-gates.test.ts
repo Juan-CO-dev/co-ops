@@ -137,7 +137,10 @@ describe("generic checklist routes cannot bypass task assignment", () => {
   });
 
   it("blocks complete, submit, confirm, self-revoke and drop before mutation", async () => {
-    const { service } = genericClient();
+    const { service, from } = genericClient();
+    // W05B r2: once the shop rule admits the actor, the writers read the instance's own template
+    // through the service-role client, so it serves the same opening template here.
+    Object.assign(assignmentService, { from });
     const base = { actor: checklistActor({ ...actor, locations: ["stored-shop"] }), instanceId: "instance" };
     await expect(completeItem(service, { ...base, templateItemId: "item" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(submitBatch(service, { ...base, completionIds: ["completion"] })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
@@ -146,6 +149,7 @@ describe("generic checklist routes cannot bypass task assignment", () => {
     await expect(revokeCompletion(service, { actor: base.actor, completionId: "completion" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(revokeWithReason(service, { actor: base.actor, completionId: "completion", reason: "not_actually_done" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(dropInstance(service, { ...base, reason: "change" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
+    delete (assignmentService as { from?: unknown }).from;
   });
 });
 

@@ -84,10 +84,21 @@ describe("every task surface binds through the task rule before it writes", () =
 
   it("lib/checklists.ts: the four task writers use worksShopTasks; no membership-only check is left in them", () => {
     const src = readFileSync("lib/checklists.ts", "utf8");
+    const bodyOf = (decl: string) => {
+      const start = src.indexOf(decl);
+      expect(start, decl).toBeGreaterThan(-1);
+      return src.slice(start, src.indexOf("\n}\n", start) + 2);
+    };
+    expect(bodyOf("export async function getOrCreateInstance(")).toContain("worksShopTasks(actor, ");
+    // Fix round 2: completeItem / submitBatch / confirmInstance bind through ONE helper (load, open,
+    // worksShopTasks), which is what mints the BoundShopTask their template reads need.
+    const binder = bodyOf("async function bindOpenShopTaskInstance(");
+    expect(binder).toContain("worksShopTasks(actor, instance.location_id)");
+    expect(binder.indexOf("ensureInstanceOpen(instance)")).toBeLessThan(binder.indexOf("worksShopTasks("));
+    expect(binder.indexOf("worksShopTasks(")).toBeLessThan(binder.indexOf("bindShopTask(instance)"));
     for (const fn of ["getOrCreateInstance", "completeItem", "submitBatch", "confirmInstance"]) {
-      const start = src.indexOf(`export async function ${fn}(`);
-      const body = src.slice(start, src.indexOf("\nexport ", start + 1));
-      expect(body, fn).toContain("worksShopTasks(actor, ");
+      const body = bodyOf(`export async function ${fn}(`);
+      if (fn !== "getOrCreateInstance") expect(body, fn).toContain("await bindOpenShopTaskInstance(authed, instanceId, actor)");
       expect(body, fn).not.toMatch(/!actor\.locations\.includes\(/);
     }
   });

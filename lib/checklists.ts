@@ -715,6 +715,59 @@ async function loadTemplateItemOrThrow(
   return data;
 }
 
+/**
+ * Audit W05B fix round 2 (review W05B-r2 P2). `checklist_templates` and `checklist_template_items`
+ * are readable through the user's own JWT only by a member of the template's shop or level 9+
+ * (0058, kept by 0217), while the instance itself is readable at level 8+ (0217). So once a writer
+ * admits a level-8 non-member (MoO) by the shop-task rule, every user-context read of the template
+ * or its items comes back EMPTY: a 403 at requireChecklistTaskAccess, and on confirm an empty item
+ * list that would wave the cash, hard-gate and required-line checks through.
+ *
+ * A BoundShopTask is minted ONLY after (1) the instance was read through the caller's own RLS and
+ * (2) the writer's shop rule (worksShopTasks / requireCorrectionShop / tagActualCompleter's bind)
+ * admitted the verified actor for that instance's shop. Its service-role reader is then used for
+ * exactly that instance's template (`instance.template_id`) and that template's items, never for a
+ * caller-supplied template id. Every other check (item min level, item belongs to the template, the
+ * single-submission lock, the assignment gate) is unchanged. The RLS policies are NOT changed here.
+ */
+const boundShopTaskBrand: unique symbol = Symbol("boundShopTask");
+interface BoundShopTask {
+  readonly [boundShopTaskBrand]: true;
+  readonly instance: InstanceRow;
+  /** Service-role: read ONLY `instance.template_id`'s template and items through it. */
+  readonly templateReader: SupabaseClient;
+}
+
+function bindShopTask(instance: InstanceRow): BoundShopTask {
+  return Object.freeze({ [boundShopTaskBrand]: true as const, instance, templateReader: getServiceRoleClient() });
+}
+
+/** Binds an OPEN instance the caller can see to a writer the shop-task rule admitted (completeItem,
+ *  submitBatch, confirmInstance). Same order as before: load, open, shop rule. */
+async function bindOpenShopTaskInstance(
+  authed: SupabaseClient, instanceId: string, actor: ChecklistWriteActor,
+): Promise<BoundShopTask> {
+  const instance = await loadInstanceOrThrow(authed, instanceId);
+  ensureInstanceOpen(instance);
+  if (!worksShopTasks(actor, instance.location_id)) {
+    throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
+  }
+  return bindShopTask(instance);
+}
+
+/** A template item of the BOUND instance's own template (service-role, filtered by the instance's
+ *  template_id), or null when the id names no item of that template. */
+async function loadBoundTemplateItem(bound: BoundShopTask, templateItemId: string): Promise<TemplateItemRow | null> {
+  const { data, error } = await bound.templateReader
+    .from("checklist_template_items")
+    .select("id, template_id, min_role_level, required, expects_count, expects_photo, active, input_type, report_reference_type, ref_track_item_completion, references_template_item_id")
+    .eq("id", templateItemId)
+    .eq("template_id", bound.instance.template_id)
+    .maybeSingle<TemplateItemRow>();
+  if (error) throw new Error(`load template_item ${templateItemId}: ${error.message}`);
+  return data ?? null;
+}
+
 function ensureInstanceOpen(instance: InstanceRow): void {
   if (instance.status !== "open") {
     throw new ChecklistInstanceClosedError(instance.id, instance.status);
@@ -743,9 +796,14 @@ export async function requireChecklistTaskAccess(
   authed: SupabaseClient,
   instanceId: string,
   actor: ChecklistActor,
+  bound?: BoundShopTask,
 ): Promise<void> {
-  const instance = await loadInstanceOrThrow(authed, instanceId);
-  const { data: template, error } = await authed.from("checklist_templates")
+  if (bound && bound.instance.id !== instanceId) throw new Error("checklist task access: bound instance mismatch");
+  // Bound (W05B r2): the instance was already read through the caller's RLS and the shop rule
+  // admitted the actor, so its OWN template is read service-role. Unbound: unchanged.
+  const instance = bound ? bound.instance : await loadInstanceOrThrow(authed, instanceId);
+  const templateReader = bound ? bound.templateReader : authed;
+  const { data: template, error } = await templateReader.from("checklist_templates")
     .select("type, prep_subtype").eq("id", instance.template_id)
     .maybeSingle<{ type: string; prep_subtype: string | null }>();
   if (error) throw new Error(`checklist task access: ${error.message}`);
@@ -763,12 +821,13 @@ export async function requireChecklistTaskAccess(
 }
 
 async function auditChecklistOverride(
-  authed: SupabaseClient, instanceId: string, actor: ChecklistActor, operation: string,
+  authed: SupabaseClient, instanceId: string, actor: ChecklistActor, operation: string, bound?: BoundShopTask,
 ): Promise<void> {
   if (actor.level < 4) return;
   try {
-    const instance = await loadInstanceOrThrow(authed, instanceId);
-    const { data: template, error } = await authed.from("checklist_templates")
+    const useBound = bound !== undefined && bound.instance.id === instanceId;
+    const instance = useBound ? bound.instance : await loadInstanceOrThrow(authed, instanceId);
+    const { data: template, error } = await (useBound ? bound.templateReader : authed).from("checklist_templates")
       .select("type, prep_subtype").eq("id", instance.template_id)
       .maybeSingle<{ type: string; prep_subtype: string | null }>();
     if (error || !template) return;
@@ -785,17 +844,25 @@ async function auditChecklistOverride(
 export async function rejectIfPrepLocked(
   authed: SupabaseClient,
   instanceId: string,
+  bound?: BoundShopTask,
 ): Promise<void> {
+  if (bound && bound.instance.id !== instanceId) throw new Error("rejectIfPrepLocked: bound instance mismatch");
   // Need the template's single_submission_only via the instance.
-  const { data: ix, error: ixErr } = await authed
-    .from("checklist_instances")
-    .select("id, template_id")
-    .eq("id", instanceId)
-    .maybeSingle<{ id: string; template_id: string }>();
-  if (ixErr) throw new Error(`rejectIfPrepLocked: load instance ${instanceId}: ${ixErr.message}`);
+  let ix: { id: string; template_id: string } | null = bound
+    ? { id: bound.instance.id, template_id: bound.instance.template_id } : null;
+  if (!ix) {
+    const { data, error: ixErr } = await authed
+      .from("checklist_instances")
+      .select("id, template_id")
+      .eq("id", instanceId)
+      .maybeSingle<{ id: string; template_id: string }>();
+    if (ixErr) throw new Error(`rejectIfPrepLocked: load instance ${instanceId}: ${ixErr.message}`);
+    ix = data;
+  }
   if (!ix) throw new Error(`rejectIfPrepLocked: instance ${instanceId} not found`);
 
-  const { data: tmpl, error: tmplErr } = await authed
+  // W05B r2: bound means the instance's own template, read service-role (see BoundShopTask).
+  const { data: tmpl, error: tmplErr } = await (bound ? bound.templateReader : authed)
     .from("checklist_templates")
     .select("id, single_submission_only")
     .eq("id", ix.template_id)
@@ -1015,16 +1082,16 @@ export async function completeItem(
 ): Promise<{ completion: ChecklistCompletion }> {
   const { instanceId, templateItemId, actor } = args;
 
-  const instance = await loadInstanceOrThrow(authed, instanceId);
-  ensureInstanceOpen(instance);
-  if (!worksShopTasks(actor, instance.location_id)) {
-    throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
-  }
-  await requireChecklistTaskAccess(authed, instanceId, actor);
-  await rejectIfPrepLocked(authed, instanceId);
+  const bound = await bindOpenShopTaskInstance(authed, instanceId, actor);
+  const instance = bound.instance;
+  await requireChecklistTaskAccess(authed, instanceId, actor, bound);
+  await rejectIfPrepLocked(authed, instanceId, bound);
 
-  const item = await loadTemplateItemOrThrow(authed, templateItemId);
-  const { data: template, error: templateError } = await authed.from("checklist_templates")
+  // W05B r2: the bound instance's own template and items, service-role. An id that names no item
+  // of THIS template is refused like an item of another template.
+  const item = await loadBoundTemplateItem(bound, templateItemId);
+  if (!item) throw new ChecklistRoleViolationError(3, actor.level, "Item does not belong to this checklist");
+  const { data: template, error: templateError } = await bound.templateReader.from("checklist_templates")
     .select("type").eq("id", instance.template_id).maybeSingle<{ type: string }>();
   if (templateError) throw new Error(`completeItem template: ${templateError.message}`);
   if (!template || item.template_id !== instance.template_id || !item.active || !canCompleteChecklistItem({
@@ -1096,7 +1163,7 @@ export async function completeItem(
     userAgent: args.userAgent ?? null,
   });
 
-  await auditChecklistOverride(authed, instanceId, actor, "completeItem");
+  await auditChecklistOverride(authed, instanceId, actor, "completeItem", bound);
 
   return { completion: rowToCompletion(inserted) };
 }
@@ -1134,13 +1201,10 @@ export async function submitBatch(
     throw new ChecklistError("submitBatch: completionIds must be non-empty.", "empty_batch");
   }
 
-  const instance = await loadInstanceOrThrow(authed, instanceId);
-  ensureInstanceOpen(instance);
-  if (!worksShopTasks(actor, instance.location_id)) {
-    throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
-  }
-  await requireChecklistTaskAccess(authed, instanceId, actor);
-  await rejectIfPrepLocked(authed, instanceId);
+  const bound = await bindOpenShopTaskInstance(authed, instanceId, actor);
+  const instance = bound.instance;
+  await requireChecklistTaskAccess(authed, instanceId, actor, bound);
+  await rejectIfPrepLocked(authed, instanceId, bound);
 
   // Verify every completion exists, belongs to this instance, was authored
   // by the actor. (RLS will let any caller in this location read these
@@ -1194,7 +1258,7 @@ export async function submitBatch(
     userAgent: args.userAgent ?? null,
   });
 
-  await auditChecklistOverride(authed, instanceId, actor, "submitBatch");
+  await auditChecklistOverride(authed, instanceId, actor, "submitBatch", bound);
 
   return { submission: rowToSubmission(inserted) };
 }
@@ -1272,13 +1336,10 @@ export async function confirmInstance(
     throw new ChecklistError("Invalid checklist write payload.", "invalid_payload");
   }
 
-  const instance = await loadInstanceOrThrow(authed, instanceId);
-  ensureInstanceOpen(instance);
-  if (!worksShopTasks(actor, instance.location_id)) {
-    throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
-  }
-  await requireChecklistTaskAccess(authed, instanceId, actor);
-  await rejectIfPrepLocked(authed, instanceId);
+  const bound = await bindOpenShopTaskInstance(authed, instanceId, actor);
+  const instance = bound.instance;
+  await requireChecklistTaskAccess(authed, instanceId, actor, bound);
+  await rejectIfPrepLocked(authed, instanceId, bound);
 
   // Live (non-superseded, non-revoked) completions for gates and SQL snapshot.
   const { data: liveCompletions, error: liveErr } = await authed
@@ -1290,8 +1351,10 @@ export async function confirmInstance(
   if (liveErr) throw new Error(`confirmInstance load completions: ${liveErr.message}`);
   const completedItemIds = new Set((liveCompletions ?? []).map((r) => r.template_item_id as string));
 
-  // Required template items for this template.
-  const { data: items, error: itemsErr } = await authed
+  // Required template items: the bound instance's own template, service-role (W05B r2). Through a
+  // level-8 non-member's RLS this list would be EMPTY and every gate below (lock-up, cash, hard
+  // gate, required reasons) would pass vacuously.
+  const { data: items, error: itemsErr } = await bound.templateReader
     .from("checklist_template_items")
     .select("id, label, station, min_role_level, required, active, report_reference_type, hard_gate")
     .eq("template_id", instance.template_id)
@@ -1315,7 +1378,7 @@ export async function confirmInstance(
   // semantics; opening confirms via its own atomic RPCs which already gate
   // level ≥ 4). Runs alongside the cash/hard_gate gates so a direct
   // /api/checklist/confirm POST can no longer bypass the browser check.
-  const { data: tmplRow, error: tErr } = await authed
+  const { data: tmplRow, error: tErr } = await bound.templateReader
     .from("checklist_templates")
     .select("type")
     .eq("id", instance.template_id)
@@ -1554,7 +1617,7 @@ export async function confirmInstance(
     userAgent: args.userAgent ?? null,
   });
 
-  await auditChecklistOverride(authed, instanceId, actor, "confirmInstance");
+  await auditChecklistOverride(authed, instanceId, actor, "confirmInstance", bound);
 
   return {
     instance: rowToInstance(updatedRow),
@@ -1788,9 +1851,10 @@ async function requireCorrectionShop(
   instanceId: string,
   actor: ChecklistWriteActor,
   operation: "revoke" | "revoke_with_reason" | "revoke_by_authority",
-): Promise<void> {
+): Promise<BoundShopTask> {
   const instance = await loadInstanceOrThrow(authed, instanceId);
-  if (actor.active && (actor.locations.includes(instance.location_id) || actor.level >= 8)) return;
+  // The shop rule admitted the actor: the instance's own template may be read service-role (W05B r2).
+  if (actor.active && (actor.locations.includes(instance.location_id) || actor.level >= 8)) return bindShopTask(instance);
   if (operation !== "revoke_by_authority") throw new ChecklistError("Completion not found.", "completion_not_found");
   throw new ChecklistRoleViolationError(4, actor.level, "You do not manage that location");
 }
@@ -1823,8 +1887,8 @@ export async function revokeCompletion(
 ): Promise<{ completion: ChecklistCompletion }> {
   const { completionId, actor } = args;
   const target = await loadLiveCompletionOrThrow(authed, completionId);
-  await requireCorrectionShop(authed, target.instance_id, actor, "revoke");
-  await requireChecklistTaskAccess(authed, target.instance_id, actor);
+  const bound = await requireCorrectionShop(authed, target.instance_id, actor, "revoke");
+  await requireChecklistTaskAccess(authed, target.instance_id, actor, bound);
   // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
   const { data, error } = await getServiceRoleClient().rpc("checklist_revoke_completion", {
     p_completion: completionId, p_actor: actor.userId,
@@ -1852,7 +1916,7 @@ export async function revokeCompletion(
     userAgent: args.userAgent ?? null,
   });
 
-  await auditChecklistOverride(authed, completion.instance_id, actor, "revokeCompletion");
+  await auditChecklistOverride(authed, completion.instance_id, actor, "revokeCompletion", bound);
 
   return { completion: rowToCompletion(updatedRow) };
 }
@@ -1897,8 +1961,8 @@ export async function revokeWithReason(
   if (!["not_actually_done", "other"].includes(reason)) throw new ChecklistError("Invalid correction reason.", "invalid_payload");
   if (reason === "other" && note.length === 0) throw new ChecklistRevocationNoteRequiredError(completionId);
   const target = await loadLiveCompletionOrThrow(authed, completionId);
-  await requireCorrectionShop(authed, target.instance_id, actor, "revoke_with_reason");
-  await requireChecklistTaskAccess(authed, target.instance_id, actor);
+  const bound = await requireCorrectionShop(authed, target.instance_id, actor, "revoke_with_reason");
+  await requireChecklistTaskAccess(authed, target.instance_id, actor, bound);
   // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
   const { data, error } = await getServiceRoleClient().rpc("checklist_revoke_with_reason", {
     p_completion: completionId, p_actor: actor.userId, p_reason: reason, p_note: note,
@@ -1927,7 +1991,7 @@ export async function revokeWithReason(
     userAgent: args.userAgent ?? null,
   });
 
-  await auditChecklistOverride(authed, completion.instance_id, actor, "revokeWithReason");
+  await auditChecklistOverride(authed, completion.instance_id, actor, "revokeWithReason", bound);
 
   return { completion: rowToCompletion(updatedRow) };
 }
@@ -1983,8 +2047,8 @@ export async function markNotDoneByAuthority(
   const note = args.note?.trim() ?? "";
   if (note.length === 0) throw new ChecklistRevocationNoteRequiredError(completionId);
   const target = await loadLiveCompletionOrThrow(authed, completionId);
-  await requireCorrectionShop(authed, target.instance_id, actor, "revoke_by_authority");
-  await requireChecklistTaskAccess(authed, target.instance_id, actor);
+  const bound = await requireCorrectionShop(authed, target.instance_id, actor, "revoke_by_authority");
+  await requireChecklistTaskAccess(authed, target.instance_id, actor, bound);
   // Mutable state, authority and the 60-second clock are checked after the SQL parent lock.
   const { data, error } = await getServiceRoleClient().rpc("checklist_mark_not_done", {
     p_completion: completionId, p_actor: actor.userId, p_note: note,
@@ -2016,7 +2080,7 @@ export async function markNotDoneByAuthority(
     userAgent: args.userAgent ?? null,
   });
 
-  await auditChecklistOverride(authed, completion.instance_id, actor, "markNotDoneByAuthority");
+  await auditChecklistOverride(authed, completion.instance_id, actor, "markNotDoneByAuthority", bound);
 
   return { completion: rowToCompletion(updatedRow) };
 }
@@ -2080,9 +2144,13 @@ export async function tagActualCompleter(
   if (!actor.active || (!actor.locations.includes(instance.location_id) && actor.level < 8)) {
     throw new ChecklistRoleViolationError(4, actor.level, "You do not manage that location");
   }
-  await requireChecklistTaskAccess(authed, completion.instance_id, actor);
+  // W05B r2: the shop rule admitted the actor, so the instance's own template and the completion's
+  // item (of that template) are read service-role.
+  const bound = bindShopTask(instance);
+  await requireChecklistTaskAccess(authed, completion.instance_id, actor, bound);
 
-  const item = await loadTemplateItemOrThrow(authed, completion.template_item_id);
+  const item = await loadBoundTemplateItem(bound, completion.template_item_id);
+  if (!item) throw new Error(`template_item ${completion.template_item_id} not found or not visible to caller`);
   if (item.report_reference_type) throw new ChecklistError("Reference rows use their report correction path.", "reference_row_not_correctable");
   if (completion.prep_data != null) throw new ChecklistError("Prep rows use their prep correction path.", "prep_data_not_correctable");
 
@@ -2212,7 +2280,7 @@ export async function tagActualCompleter(
     userAgent: args.userAgent ?? null,
   });
 
-  await auditChecklistOverride(authed, completion.instance_id, actor, "tagActualCompleter");
+  await auditChecklistOverride(authed, completion.instance_id, actor, "tagActualCompleter", bound);
 
   return { completion: rowToCompletion(updatedRow), replacedPriorTag: replacingPriorTag };
 }
