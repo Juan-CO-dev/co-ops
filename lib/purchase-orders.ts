@@ -178,15 +178,16 @@ export interface CreatedDraft {
  * Emits ONE `po.draft_created` audit row for the whole batch with the po_ids +
  * source. Vendors with no lines are skipped. Append-only.
  *
- * opts.noCodeSuffixRetry (cutoff draft and walk-submit paths): repurpose the display-code
- * unique index as the DAY-IDEMPOTENCY arbiter for each vendor. Instead
- * of retrying the 23505 at the next suffix (-2, -3…), attempt ONLY the unsuffixed
- * base code and, on a unique-violation, throw PurchaseOrderError(409, "po_exists").
- * This closes the double-call race generateDraftForVendor's pre-check can't (two
- * concurrent generates both pass the pre-check, then only ONE wins the base code).
- * TRADEOFF (documented): a PO that was PLACED earlier today already holds the base
- * code → a later generate 409s. Accepted — an order already went out for this
- * vendor today. Cutoff generation refuses; walk submission reports a vendor skip.
+ * opts.noCodeSuffixRetry (cutoff draft and walk-submit paths): DAY IDEMPOTENCY per vendor — at most
+ * one PO per (shop, vendor, ET day) from these paths. Decided by VENDOR ID (W19/B111), never by the
+ * display code: the code's fragment is the vendor name's first 6 letters, so two vendors can share a
+ * base code, and the second one simply gets the next suffix (-2, -3…). The display-code unique index
+ * still arbitrates the double-call race generateDraftForVendor's pre-check can't: two concurrent
+ * generates for one vendor walk the same base, -2, -3… list, meet on one code, and the loser's 23505
+ * (winner = same vendor) is PurchaseOrderError(409, "po_exists").
+ * TRADEOFF (documented): a PO for this vendor that was PLACED earlier today still counts → a later
+ * generate 409s. Accepted — an order already went out for this vendor today. Cutoff generation
+ * refuses; walk submission reports a vendor skip.
  */
 export async function createDraftsFromLines(
   actor: AuthContext,
@@ -239,11 +240,12 @@ export async function createDraftsFromLines(
   // resolution is in-memory (the 23505 retry handles the rare cross-request race).
   const { startIso, endExclusiveIso } = operationalDayUtcRange(dateEt);
   const { data: existingRows, error: exErr } = await sb.from("purchase_orders")
-    .select("display_code")
+    .select("id, display_code, vendor_id, status, created_at")
     .eq("location_id", locationId)
     .gte("created_at", startIso).lt("created_at", endExclusiveIso)
-    .returns<Array<{ display_code: string }>>();
+    .returns<Array<{ id: string; display_code: string; vendor_id: string; status: string; created_at: string }>>();
   if (exErr) throw new Error(`createDraftsFromLines existing codes: ${exErr.message}`);
+  // Codes of EVERY vendor are taken for allocation; day idempotency is decided per VENDOR (W19/B111).
   const takenCodes = new Set((existingRows ?? []).map((r) => r.display_code));
 
   const created: CreatedDraft[] = [];
@@ -260,21 +262,25 @@ export async function createDraftsFromLines(
     // 23505 race retry: another request may claim a code between our in-memory scan
     // and the INSERT. On a unique-violation we add that code to takenCodes and
     // re-scan — nextFreeCode then skips it and yields the next free suffix. Bounded.
-    // opts.noCodeSuffixRetry (ordering paths): ONE attempt at the base code only; a
-    // 23505 means a PO already holds today's base code for this vendor → treat the
-    // unique index as the day-idempotency arbiter and 409 `po_exists` (never suffix).
-    // Day-idempotency (ordering paths, noCodeSuffixRetry): the base code IS the
-    // whole allocation — never a suffix. A concurrent double-generate loses either
-    // (a) at the in-memory scan (a rival's base already present → nextFreeCode
-    // would have suffixed, silently defeating idempotency — the sim-2 bug), or
-    // (b) at the INSERT (23505). BOTH mean an order for this vendor already exists
-    // today → 409 po_exists, never a -2 second order. The suffix loop remains only
-    // for callers that do not opt into day idempotency.
-    if (opts?.noCodeSuffixRetry && takenCodes.has(base)) {
-      throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", base);
+    //
+    // W19/B111: the base code is the vendor's first 6 letters, so "Baldor" and "Baldor Specialty" SHARE it. The
+    // day-idempotency question is "does THIS vendor already have an order here today?", answered by vendor id —
+    // never by "is the base code taken?", which let one vendor's PO block (and, through the walk's race handler,
+    // absorb) the other's daily draft. A base held by a DIFFERENT vendor is just a taken code: allocate the next
+    // suffix (-2, -3 …). Codes are never freed and every caller walks the same base, -2, -3 … list, so two
+    // concurrent calls for the same vendor still meet on ONE code and the unique index refuses the loser (below).
+    if (opts?.noCodeSuffixRetry) {
+      const mine = (existingRows ?? []).filter((r) => r.vendor_id === vendorId);
+      if (mine.length > 0) {
+        // Report the live order (draft/confirmed) when there is one, else the most recent — "placed earlier
+        // today → po_exists" stays the documented tradeoff, now decided by vendor.
+        const live = mine.find((r) => r.status === "draft" || r.status === "confirmed");
+        const latest = [...mine].sort((a, b) => b.created_at.localeCompare(a.created_at))[0]!;
+        throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", (live ?? latest).display_code);
+      }
     }
     for (let attempt = 0; attempt < 25; attempt++) {
-      const code = opts?.noCodeSuffixRetry ? base : nextFreeCode(base, takenCodes);
+      const code = nextFreeCode(base, takenCodes);
       const { data: po, error: poErr } = await sb.from("purchase_orders").insert({
         location_id: locationId,
         vendor_id: vendorId,
@@ -287,10 +293,18 @@ export async function createDraftsFromLines(
         // 23505 = unique_violation on the display_code unique index.
         if ((poErr as { code?: string }).code === "23505") {
           if (opts?.noCodeSuffixRetry) {
-            // The base code is already taken today → an order for this vendor already
-            // exists (draft/confirmed/placed). Day-idempotency: reject the duplicate
-            // generate rather than mint a -2 second order for the same day.
-            throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", code);
+            // W19/B111: a rival committed this code first. The SAME vendor → an order for it already exists
+            // today (day idempotency: never a second order). ANOTHER vendor (same name prefix) → only the code
+            // is taken; move on to the next suffix.
+            const { data: winner, error: wErr } = await sb.from("purchase_orders")
+              .select("id, vendor_id").eq("display_code", code)
+              .maybeSingle<{ id: string; vendor_id: string }>();
+            if (wErr) throw new Error(`createDraftsFromLines code winner: ${wErr.message}`);
+            if (!winner || winner.vendor_id === vendorId) {
+              throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", code);
+            }
+            takenCodes.add(code);
+            continue;
           }
           // Retry-enabled caller: mark taken and re-scan for the next free suffix.
           takenCodes.add(code);
