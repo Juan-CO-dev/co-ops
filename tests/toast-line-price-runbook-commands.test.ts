@@ -20,7 +20,7 @@ const commands = runbook.split(/\r?\n/).map((l) => l.replace(/^\s*`?|`?\s*(#.*)?
 function runDocumented(command: string, { dropCondition = false } = {}) {
   const args = command.replace(/^npx tsx /, "").split(/\s+/)
     .filter((a) => !a.startsWith("--env-file") && !(dropCondition && a === "--conditions=react-server"))
-    .map((a) => (a === "R1" ? "2026-10-01" : a === "R2" || a === "C" ? "2026-10-02" : a === "N" ? "0" : a))
+    .map((a) => (a === "R1" ? "2026-10-01" : a === "R2" || a === "C" ? "2026-10-02" : a === "N" || a === "M" ? "0" : a))
     .filter((a) => a !== "--execute"); // offline: never the write mode
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/SUPABASE|TOAST|EZCATER|STRIPE|NODE_OPTIONS|VITEST/.test(k)));
   const out = spawnSync(process.execPath, [TSX_CLI, ...args], { cwd: ROOT, env, encoding: "utf8", timeout: 90_000 });
@@ -50,6 +50,26 @@ describe("runbook commands (docs/runbooks/toast-line-prices.md)", () => {
     const unloaded = runDocumented(recovery, { dropCondition: true });
     expect(unloaded.status).not.toBe(0);
     expect(unloaded.stderr).toContain("cannot be imported from a Client Component module");
+  }, 120_000);
+});
+
+// Churn fix PR 1 (Astra r2 P1): the canonical-hash transition recovery. A links-only run clears the
+// recorded comparisons (0229:205/237), so the runbook must follow every links-only EXECUTE with the
+// normal mode (record_ezcater_reconciled_comparison, 0229:257) over the covered dates.
+describe("runbook commands (docs/runbooks/toast-hash-canonical.md)", () => {
+  const hashRunbook = readFileSync(path.join(ROOT, "docs", "runbooks", "toast-hash-canonical.md"), "utf8");
+  const hashCommands = hashRunbook.split(/\r?\n/).map((l) => l.replace(/^\s*`?|`?\s*(#.*)?$/g, "").trim())
+    .filter((l) => /^npx tsx .*scripts\/ezcater-shadow-backfill\.ts/.test(l));
+  it("runs every command under the react-server condition, and ends the sitting with the normal mode over [R1, C]", () => {
+    expect(hashCommands.length).toBe(4);
+    for (const command of hashCommands) expect(command).toMatch(/^npx tsx --conditions=react-server --env-file=\.env\.local scripts\//);
+    const executes = hashCommands.filter((c) => c.includes("--execute"));
+    expect(executes.map((c) => c.includes("--links-only"))).toEqual([true, false]);
+    expect(executes[1]).toContain("--from R1 --to C --expect M --execute");
+  });
+  it("the comparison-restoring (normal mode) command loads its whole server import graph (offline)", () => {
+    const normal = hashCommands.find((c) => !c.includes("--links-only") && !c.includes("--execute"))!;
+    expect(runDocumented(normal)).toEqual({ status: 1, stderr: "shadow_backfill_failed" });
   }, 120_000);
 });
 
