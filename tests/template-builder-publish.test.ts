@@ -144,6 +144,33 @@ describe("W15/B083 a publish from an out-of-date screen is refused", () => {
     expect(h.rpc).toHaveBeenCalledWith("checklist_template_activate_version", expect.objectContaining({ p_source: "v2", p_new: out.newTemplateId }));
   });
 
+  it("round 2: past 1000 versions the current head still publishes and an older source is still refused", async () => {
+    // 1001 retired versions stored BEFORE the live rows: an un-paged lineage read would get
+    // only these from the 1000-row cap and lose the head.
+    const retired = Array.from({ length: 1001 }, (_, i) =>
+      tpl(`old-${String(i).padStart(4, "0")}`, { active: false, effective_from: "2025-01-01", created_at: `2025-01-01T00:00:00Z` }));
+    tables.checklist_templates!.unshift(...retired);
+    await expect(publishTemplateVersion(actor, { templateId: "v1", edits: [], effectiveMode: "next_day" }))
+      .rejects.toMatchObject({ status: 409, code: "stale_source" });
+    const out = await publishTemplateVersion(actor, { templateId: "v2", edits: [], effectiveMode: "next_day" });
+    expect(h.rpc).toHaveBeenCalledWith("checklist_template_activate_version", expect.objectContaining({ p_source: "v2", p_new: out.newTemplateId }));
+  });
+
+  it("round 2: past 1000 versions the apply-now gate still sees today's instance on a late version", async () => {
+    const retired = Array.from({ length: 1001 }, (_, i) =>
+      tpl(`old-${String(i).padStart(4, "0")}`, { active: false, effective_from: "2025-01-01" }));
+    tables.checklist_templates!.unshift(...retired);
+    tables.checklist_templates!.push(tpl("zz-late", { active: false, effective_from: "2026-11-15" }));
+    tables.checklist_instances!.push({ id: "inst-today", template_id: "zz-late", location_id: SHOP, date: "2026-11-15" });
+    // Another list's instance today does not block (lineage key: name).
+    tables.checklist_templates!.push(tpl("other-list", { name: "Deep clean" }));
+    await expect(publishTemplateVersion(actor, { templateId: "v2", edits: [], effectiveMode: "apply_now" }))
+      .rejects.toMatchObject({ status: 409, code: "apply_now_blocked_open_instance" });
+    tables.checklist_instances!.splice(0, 1, { id: "inst-other", template_id: "other-list", location_id: SHOP, date: "2026-11-15" });
+    await publishTemplateVersion(actor, { templateId: "v2", edits: [], effectiveMode: "apply_now" });
+    expect(h.rpc).toHaveBeenCalledWith("checklist_template_activate_version", expect.objectContaining({ p_source: "v2", p_apply_now: true }));
+  });
+
   it("the activation RPC's own stale_source (a race the early check missed) is a 409 too", async () => {
     h.rpc.mockResolvedValueOnce({ data: null, error: { code: "P0001", message: "stale_source" } });
     await expect(publishTemplateVersion(actor, { templateId: "v2", edits: [], effectiveMode: "next_day" }))

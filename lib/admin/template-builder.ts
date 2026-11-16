@@ -28,6 +28,7 @@ import { randomUUID } from "node:crypto";
 import { syncStationsFromClosing } from "@/lib/closing-stations";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { audit } from "@/lib/audit";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
 // The 0181 column probe lives with the needs-link layer so ONE function decides
@@ -830,26 +831,27 @@ export async function publishTemplateVersion(
       ? args.templatePatch.submissionGatePredicate ?? null
       : src.submission_gate_predicate;
 
-  // Enumerate the whole lineage's template ids (all versions — active or not) at
-  // this location for the apply-now gate + the retirement pass. Lineage key =
-  // (location_id, type, name, prep_subtype); prep_subtype is NULL for opening/closing
-  // so the .is() form matches.
-  let lineageQuery = sb
-    .from("checklist_templates")
-    .select("id, active, effective_from, created_at")
-    .eq("location_id", src.location_id)
-    .eq("type", src.type)
-    .eq("name", src.name);
-  lineageQuery =
-    src.prep_subtype === null
-      ? lineageQuery.is("prep_subtype", null)
-      : lineageQuery.eq("prep_subtype", src.prep_subtype);
-  const { data: lineageRows, error: lErr } = await lineageQuery.returns<
-    Array<{ id: string; active: boolean; effective_from: string | null; created_at: string }>
-  >();
-  if (lErr) throw new Error(`publishTemplateVersion lineage read: ${lErr.message}`);
-  const lineage = lineageRows ?? [];
-  const lineageIds = lineage.map((r) => r.id);
+  // The lineage's ACTIVE versions at this location (lineage key = (location_id, type, name,
+  // prep_subtype); prep_subtype is NULL for opening/closing so the .is() form matches). Every
+  // consumer below — the head (B083), the currently-effective row and both retirement passes —
+  // looks only at active rows. W15 round 2: read active rows only and PAGE them in a stable
+  // order, so retired versions piling up past the 1000-row cap can never push the head out
+  // of the response (a current template would read as stale and could never be published).
+  const lineage = await selectAllRows<{ id: string; active: boolean; effective_from: string | null; created_at: string }>(
+    (from, to) => {
+      let q = sb
+        .from("checklist_templates")
+        .select("id, active, effective_from, created_at")
+        .eq("location_id", src.location_id)
+        .eq("type", src.type)
+        .eq("name", src.name)
+        .eq("active", true);
+      q = src.prep_subtype === null ? q.is("prep_subtype", null) : q.eq("prep_subtype", src.prep_subtype);
+      return q.order("id", { ascending: true }).range(from, to);
+    },
+  ).catch((e: unknown) => {
+    throw new Error(`publishTemplateVersion lineage read: ${e instanceof Error ? e.message : String(e)}`);
+  });
 
   // W15/B083 — STALE SOURCE. The builder edits the lineage head (a pending version wins);
   // a publish from any other row was made on an out-of-date screen and would silently
@@ -860,22 +862,16 @@ export async function publishTemplateVersion(
   }
 
   // 3. APPLY-NOW GATE — a live-today publish is blocked if TODAY's list is already
-  // in use on ANY version of the lineage (a mid-shift swap would strand closers).
-  if (applyNow && lineageIds.length > 0) {
-    const { count: todayCount, error: instErr } = await sb
-      .from("checklist_instances")
-      .select("id", { count: "exact", head: true })
-      .in("template_id", lineageIds)
-      .eq("location_id", src.location_id)
-      .eq("date", today);
-    if (instErr) throw new Error(`publishTemplateVersion apply-now gate: ${instErr.message}`);
-    if ((todayCount ?? 0) > 0) {
-      throw new TemplateBuilderError(
-        409,
-        "apply_now_blocked_open_instance",
-        "Today's list is already in use — publish for tomorrow morning",
-      );
-    }
+  // in use on ANY version of the lineage, retired ones included (a mid-shift swap would
+  // strand closers). W15 round 2: start from TODAY's instances at this shop (a handful),
+  // then ask which of their templates are this lineage — never an id list of every
+  // version ever published (that outgrows both the row cap and the request line).
+  if (applyNow && (await lineageInUseOn(sb, src, today))) {
+    throw new TemplateBuilderError(
+      409,
+      "apply_now_blocked_open_instance",
+      "Today's list is already in use — publish for tomorrow morning",
+    );
   }
 
   // Load the source items (SELECT * — MUST carry columns TEMPLATE_ITEM_COLUMNS omits).
@@ -1149,6 +1145,44 @@ export async function publishTemplateVersion(
     }
   }
   return { newTemplateId, effectiveFrom, diff };
+}
+
+/**
+ * W15 round 2: does any instance on `date` at the template's shop belong to a version of its
+ * lineage (active or retired)? Today's instances are paged; their template ids are checked
+ * against the lineage key in chunks of 100, so neither the row cap nor the request line bounds it.
+ */
+async function lineageInUseOn(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  src: Pick<SourceTemplateRow, "location_id" | "type" | "name" | "prep_subtype">,
+  date: string,
+): Promise<boolean> {
+  const instances = await selectAllRows<{ template_id: string }>((from, to) =>
+    sb
+      .from("checklist_instances")
+      .select("id, template_id")
+      .eq("location_id", src.location_id)
+      .eq("date", date)
+      .order("id", { ascending: true })
+      .range(from, to),
+  ).catch((e: unknown) => {
+    throw new Error(`publishTemplateVersion apply-now gate: ${e instanceof Error ? e.message : String(e)}`);
+  });
+  const templateIds = [...new Set(instances.map((r) => r.template_id))];
+  for (let i = 0; i < templateIds.length; i += 100) {
+    let q = sb
+      .from("checklist_templates")
+      .select("id", { count: "exact", head: true })
+      .in("id", templateIds.slice(i, i + 100))
+      .eq("location_id", src.location_id)
+      .eq("type", src.type)
+      .eq("name", src.name);
+    q = src.prep_subtype === null ? q.is("prep_subtype", null) : q.eq("prep_subtype", src.prep_subtype);
+    const { count, error } = await q;
+    if (error) throw new Error(`publishTemplateVersion apply-now gate: ${error.message}`);
+    if ((count ?? 0) > 0) return true;
+  }
+  return false;
 }
 
 /** The mint audit row (one place for both activation paths). */
