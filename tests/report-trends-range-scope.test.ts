@@ -7,14 +7,15 @@ import { parseReportRange } from "@/lib/report-range";
 type Row = Record<string, unknown>;
 function fake(tables: Record<string, Row[]>) {
   const reads: string[] = [];
-  return { reads, service: { from(table: string) {
+  const ins: Array<{ table: string; key: string; size: number }> = [];
+  return { reads, ins, service: { from(table: string) {
     reads.push(table);
     let rows = [...(tables[table] ?? [])];
     const q = {
       select: () => q, order: () => q,
       eq: (key: string, value: unknown) => { rows = rows.filter(r => r[key] === value); return q; },
       is: (key: string, value: unknown) => { rows = rows.filter(r => (r[key] ?? null) === value); return q; },
-      in: (key: string, values: unknown[]) => { rows = rows.filter(r => values.includes(r[key])); return q; },
+      in: (key: string, values: unknown[]) => { ins.push({ table, key, size: values.length }); rows = rows.filter(r => values.includes(r[key])); return q; },
       gte: (key: string, value: string) => { rows = rows.filter(r => String(r[key]) >= value); return q; },
       lte: (key: string, value: string) => { rows = rows.filter(r => String(r[key]) <= value); return q; },
       lt: (key: string, value: string) => { rows = rows.filter(r => String(r[key]) < value); return q; },
@@ -61,6 +62,27 @@ describe("trends loader scope and independent clipped windows", () => {
       expect(clippedBucketKeys(r.from, r.to, grain)).toHaveLength(cap);
       expect(clippedBucketKeys(r.previous.from, r.previous.to, grain).length).toBeLessThanOrEqual(cap);
     }
+  });
+  it("reads completions in chunks of at most 50 instance ids (W26/B029)", async () => {
+    const start = "2026-06-01";
+    const day = (n: number) => { const d = new Date(`${start}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+    const instances = Array.from({ length: 120 }, (_, n) => ({ id: `i${String(n).padStart(3, "0")}`, location_id: "mine", date: day(n), status: "finalized", template_id: "opening" }));
+    const f = fake({
+      checklist_instances: instances,
+      checklist_templates: [{ id: "opening", type: "opening", prep_subtype: null }],
+      checklist_template_items: [{ id: "item", template_id: "opening", required: true, active: true }],
+      checklist_completions: instances.map((i, n) => ({ id: `c${n}`, instance_id: i.id, template_item_id: "item", count_value: null, prep_data: null })),
+    });
+    const range = parseReportRange({ range: "custom", from: day(0), to: day(119) }, args.today, "week");
+    const result = await loadTrendSeries(f.service, { ...args, granularity: "week", range, viewer: { userId: "kh", level: 4, locations: ["mine"] } });
+    const reads = f.ins.filter(c => c.table === "checklist_completions" && c.key === "instance_id");
+    expect(reads.length).toBeGreaterThanOrEqual(3);
+    for (const r of reads) expect(r.size).toBeLessThanOrEqual(50);
+    expect(reads.reduce((n, r) => n + r.size, 0)).toBe(120);
+    const withData = result.current.filter(b => b.hasData);
+    expect(withData.length).toBeGreaterThan(0);
+    for (const b of result.current) expect(b.notStarted).toBe(0);
+    for (const b of withData) expect(b.completionPct).toBe(100);
   });
   it("keeps historical unfinished instances but excludes today's unfinished work", async () => {
     const f = fake({

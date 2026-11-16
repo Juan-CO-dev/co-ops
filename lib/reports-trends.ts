@@ -285,7 +285,12 @@ async function loadTrendWindow(
     string,
     Array<{ template_item_id: string; count_value: number | null; prep_data: unknown }>
   >();
-  if (instIds.length) {
+  // Bounded request line (W26/B029): a month or 12-week window holds hundreds
+  // of instances, and one `.in()` of every id is a 9–20 KB URL the proxy
+  // refuses. Chunks of 50, sequential (the reports-hub idiom); each id falls in
+  // exactly one chunk, so every row is still read once.
+  for (let chunk = 0; chunk < instIds.length; chunk += 50) {
+    const chunkIds = instIds.slice(chunk, chunk + 50);
     const comps = await selectAllRows<{
       instance_id: string;
       template_item_id: string;
@@ -295,7 +300,7 @@ async function loadTrendWindow(
       service
         .from("checklist_completions")
         .select("instance_id, template_item_id, count_value, prep_data")
-        .in("instance_id", instIds)
+        .in("instance_id", chunkIds)
         .is("superseded_at", null)
         .is("revoked_at", null)
         .order("id", { ascending: true })
