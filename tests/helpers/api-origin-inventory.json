@@ -21,6 +21,7 @@
   "app/api/catering/inbox/route.ts": "GET",
   "app/api/catering/pipeline/[id]/reconciliation/route.ts": "GET",
   "app/api/catering/pipeline/[id]/route.ts": "GET PATCH",
+  "app/api/catering/pipeline/[id]/reopen/route.ts": "POST",
   "app/api/catering/pipeline/[id]/transfer/route.ts": "POST",
   "app/api/catering/pipeline/route.ts": "POST",
   "app/api/catering/quotes/[id]/payments/route.ts": "GET POST",

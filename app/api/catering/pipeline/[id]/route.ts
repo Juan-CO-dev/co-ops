@@ -4,11 +4,13 @@ import { requireSession } from "@/lib/session";
 import { loadEzcaterOrderDetail } from "@/lib/catering/ezcater-detail";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
+import { getServiceRoleClient } from "@/lib/supabase-server";
 import {
   moveStage,
   editLead,
   loadLead,
   leadCapacity,
+  loadEzcaterReopenTarget,
   isPipelineStage,
   CateringPipelineError,
   PIPELINE_WRITE_MIN,
@@ -27,7 +29,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!lead) return jsonError(404, "not_found");
     const capacity = await leadCapacity(ctx, id);
     const ezcater = await loadEzcaterOrderDetail(ctx, id);
-    return jsonOk({ lead, capacity, ezcater });
+    // W23/B126: a lost ezCater lead whose order was un-cancelled offers "Reopen" (the target stage).
+    // Advisory only — the reopen RPC is the authority — so a failed read hides the button.
+    const reopenTarget = await loadEzcaterReopenTarget(getServiceRoleClient(), id).catch(() => null);
+    return jsonOk({ lead, capacity, ezcater, reopen: reopenTarget ? { target: reopenTarget } : null });
   } catch (e) {
     if (e instanceof CateringPipelineError) return jsonError(e.status, e.code);
     throw e;

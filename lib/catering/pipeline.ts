@@ -28,6 +28,7 @@ import { reservePrepDemand, consumePrepDemand, releasePrepDemand, assertQuoteRea
 import { PIPELINE_STAGES, type PipelineStage, canTransition, normalizeLeadEmail, normalizeLeadPhone } from "./pipeline-shared";
 import { resolveOrCreateContact } from "./companies";
 import { isLeadSource } from "./intake-shared";
+import { ezcaterReopenTarget } from "@/lib/ezcater/lifecycle-shared";
 // Client-safe stage vocabulary lives in pipeline-shared.ts; re-exported for
 // existing server consumers.
 export { PIPELINE_STAGES, type PipelineStage };
@@ -571,6 +572,81 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
 }
 
 /** Move a lead to a new stage: mutate the lead's stage + append a stage event. */
+// ── W23/B126: reopen an un-cancelled ezCater lead ────────────────────────────────
+/**
+ * An ezCater order that was cancelled and then UN-cancelled left its lead in Lost for good: the
+ * webhook flags `uncancelled_needs_human`, and the board refuses every move out of Lost
+ * (`canTransition`, unchanged). This is the narrow human path: only an ezCater lead, only from
+ * Lost, only when ezCater's un-cancel is newer than its last loss notification and the order is
+ * no longer cancelled. Target (owner decision W23-1 a): Confirmed when ezCater says "accepted"
+ * (re-reserving prep), else Inquiry. The 0330 RPC `reopen_ezcater_lead` re-checks all of it
+ * under the provider lock and writes the stage + the pipeline event in one transaction.
+ */
+export async function loadEzcaterReopenTarget(sb: ReturnType<typeof getServiceRoleClient>, leadId: string): Promise<"confirmed" | "inquiry" | null> {
+  const { data: lead, error } = await sb.from("catering_pipeline").select("id, stage, lead_source, external_ref")
+    .eq("id", leadId).maybeSingle<{ id: string; stage: string; lead_source: string | null; external_ref: string | null }>();
+  if (error) throw new Error(`loadEzcaterReopenTarget lead: ${error.message}`);
+  if (!lead || lead.stage !== "lost" || lead.lead_source !== "ezcater" || !lead.external_ref) return null;
+  const [order, events] = await Promise.all([
+    sb.from("ezcater_orders").select("status, pending_event_key").eq("provider_uuid", lead.external_ref)
+      .maybeSingle<{ status: string | null; pending_event_key: string | null }>(),
+    sb.from("ezcater_events").select("event_key, received_at").eq("entity_id", lead.external_ref).eq("signature_valid", true)
+      .in("event_key", ["cancelled", "rejected", "failed", "uncancelled"])
+      .returns<Array<{ event_key: string; received_at: string }>>(),
+  ]);
+  if (order.error) throw new Error(`loadEzcaterReopenTarget order: ${order.error.message}`);
+  if (events.error) throw new Error(`loadEzcaterReopenTarget events: ${events.error.message}`);
+  const latest = (keys: string[]) => (events.data ?? []).filter((e) => keys.includes(e.event_key))
+    .map((e) => e.received_at).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
+  return ezcaterReopenTarget({
+    stage: lead.stage, leadSource: lead.lead_source, orderStatus: order.data?.status ?? null,
+    pendingEventKey: order.data?.pending_event_key ?? null,
+    lastLossAt: latest(["cancelled", "rejected", "failed"]), lastUncancelAt: latest(["uncancelled"]),
+  });
+}
+
+const REOPEN_REFUSALS = new Set(["reopen_forbidden", "reopen_not_ezcater", "reopen_not_lost", "reopen_no_uncancel", "reopen_still_cancelled"]);
+
+export async function reopenEzcaterLead(actor: AuthContext, id: string): Promise<{ fromStage: "lost"; toStage: "confirmed" | "inquiry" }> {
+  const sb = getServiceRoleClient();
+  const { data: lead, error: lErr } = await sb.from("catering_pipeline").select("id, location_id")
+    .eq("id", id).maybeSingle<{ id: string; location_id: string | null }>();
+  if (lErr) throw new Error(`reopenEzcaterLead load: ${lErr.message}`);
+  if (!lead) throw new CateringPipelineError(404, "not_found", "Lead not found");
+  assertCanWriteLead(actor, lead.location_id); // before any write or RPC
+  const expected = await loadEzcaterReopenTarget(sb, id);
+  // Same B7c r5 rule as moveStage: never confirm a quote prep demand cannot read.
+  if (expected === "confirmed") {
+    try { await assertQuoteReadyForPrep(sb, id); }
+    catch (e) {
+      if (e instanceof PrepDemandNeedsRepairError) throw new CateringPipelineError(409, "quote_needs_repair", "This quote was saved during an app update and can't be used for prep yet");
+      throw e;
+    }
+  }
+  const { data, error } = await sb.rpc("reopen_ezcater_lead", { p_lead_id: id, p_actor_id: actor.user.id });
+  if (error && ["PGRST202", "42883"].includes(String(error.code))) {
+    throw new CateringPipelineError(503, "reopen_unavailable", "Reopen isn't available yet");
+  }
+  if (error && REOPEN_REFUSALS.has(error.message)) throw new CateringPipelineError(409, error.message);
+  if (error || !data) throw new Error(`reopenEzcaterLead: ${error?.message ?? "no result"}`);
+  const result = data as { from_stage: "lost"; to_stage: "confirmed" | "inquiry" };
+  try {
+    if (result.to_stage === "confirmed") await reservePrepDemand(actor, id);
+  } catch (e) {
+    void audit({
+      actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.sync_failed",
+      resourceTable: "catering_pipeline", resourceId: id,
+      metadata: { to_stage: result.to_stage, error: e instanceof Error ? e.message : String(e) }, ipAddress: null, userAgent: null,
+    });
+  }
+  void audit({
+    actorId: actor.user.id, actorRole: actor.user.role, action: "catering.pipeline.reopen",
+    resourceTable: "catering_pipeline", resourceId: id,
+    metadata: { from_stage: result.from_stage, to_stage: result.to_stage, reason: "ezcater_uncancelled" }, ipAddress: null, userAgent: null,
+  });
+  return { fromStage: result.from_stage, toStage: result.to_stage };
+}
+
 export async function moveStage(
   actor: AuthContext,
   args: { id: string; toStage: PipelineStage; note?: string | null },
