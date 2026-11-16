@@ -53,6 +53,20 @@ function refuse(code: PmV2ErrorCode): never {
 function requireUuid(v: unknown): asserts v is string {
   if (typeof v !== "string" || !UUID.test(v)) refuse("invalid_payload");
 }
+/**
+ * W09 fix round 1: a validated UUID in CANONICAL (lowercase) form. The routes accept any case and Postgres
+ * resolves "CAFE..." and "cafe..." to the same user, so every self / subject / author comparison below runs on
+ * canonical ids; a case-sensitive `===` let an uppercased own id past subject_is_author (the
+ * lib/scheduling/settings.ts precedent). The writers send the canonical ids on to the RPCs and audits too.
+ */
+function canonUuid(v: unknown): string {
+  requireUuid(v);
+  return v.toLowerCase();
+}
+function canonNullableUuid(v: unknown): string | null {
+  return v === null ? null : canonUuid(v);
+}
+const isSelf = (actor: PeopleActor, id: string): boolean => id === actor.userId.toLowerCase();
 function chunk<T>(xs: readonly T[], n = ID_CHUNK): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
@@ -173,6 +187,26 @@ function dayRef(day: DayRow, copies: readonly CopyRow[]): PmDayRef {
   return { locationId: day.location_id, status: day.status, authorIds: copies.map((c) => c.author_id) };
 }
 
+/**
+ * The copies that WROTE something live: a grade (incl. "Didn't see") or a note about someone other than the
+ * copy's own author (W09: B016/B058/B059). An opened-but-empty copy is not an author of the day.
+ */
+async function copiesWithSubstance(service: SupabaseClient, copies: readonly CopyRow[]): Promise<Set<string>> {
+  if (!copies.length) return new Set();
+  const ids = copies.map((c) => c.id);
+  const byId = new Map(copies.map((c) => [c.id, c] as const));
+  const [g, n] = await Promise.all([
+    loadLive<{ copy_id: string; subject_id: string }>(service, "pm_copy_grades", "copy_id, subject_id", ids),
+    loadLive<{ copy_id: string; subject_id: string }>(service, "pm_copy_notes", "copy_id, subject_id", ids),
+  ]);
+  return new Set([...g, ...n].filter((r) => r.subject_id !== byId.get(r.copy_id)?.author_id).map((r) => r.copy_id));
+}
+
+/** The GM / Op-6 / MoO+ path of `canReadPmDayResults`: reads every submitted day of the shop with no I/O. */
+function readsAsManager(actor: PeopleActor, day: DayRow): boolean {
+  return canReadPmDayResults(actor, { locationId: day.location_id, status: day.status, authorIds: [] });
+}
+
 // ─── the actor's copy ────────────────────────────────────────────────────────
 
 /** Open (or return) the actor's copy of today's v2 day. A v1 day answers `format_mismatch`. Audited when created. */
@@ -222,7 +256,9 @@ export async function loadMyCopy(service: SupabaseClient, args: {
   const mine = copies.find((c) => c.author_id === args.actor.userId);
   if (!mine) return null;
   const others = copies.filter((c) => c.author_id !== args.actor.userId);
-  const subjectIds = args.presenceRoster.map((p) => p.id);
+  // B059: the author never gets their own card (they never grade themselves).
+  const presenceRoster = args.presenceRoster.filter((p) => p.id !== args.actor.userId);
+  const subjectIds = presenceRoster.map((p) => p.id);
   const [intervals, { positions, stations }, criteria, added, grades, notes] = await Promise.all([
     loadDayIntervals(service, args.locationId, args.date, subjectIds, args.now),
     loadShopPositions(service, args.locationId),
@@ -234,7 +270,7 @@ export async function loadMyCopy(service: SupabaseClient, args: {
   const posById = new Map(positions.map((p) => [p.id, p] as const));
   const addedPositions: AddedPosition[] = added.map((a) => ({ subjectId: a.subject_id, positionId: a.position_id, byAuthorId: mine.author_id, reason: a.reason }));
   const crit = criteria.map((c) => ({ id: c.id, positionId: c.position_id, label: c.label, labelEs: c.label_es, sort: c.sort, active: c.active }));
-  const roster = rosterForCopy(args.presenceRoster, intervals, addedPositions);
+  const roster = rosterForCopy(presenceRoster, intervals, addedPositions);
   const people = roster.map((person) => {
     const positionsView: PmCopyPositionView[] = person.positions.map((p) => {
       const row = p.positionId ? posById.get(p.positionId) : undefined;
@@ -325,45 +361,46 @@ export interface PmCopyWriteArgs { actor: PeopleActor; locationId: string; copyI
 
 /** One grade (or null = "Didn't see"). Audited `pm_report.copy_grade` (ids and the grade; never a note). */
 export async function saveGrade(service: SupabaseClient, args: PmCopyWriteArgs & { subjectId: unknown; positionId: unknown; criterionId: unknown; grade: unknown }): Promise<{ id: string }> {
-  requireUuid(args.subjectId); requireUuid(args.criterionId);
-  if (args.positionId !== null) requireUuid(args.positionId);
+  const subjectId = canonUuid(args.subjectId), criterionId = canonUuid(args.criterionId);
+  if (isSelf(args.actor, subjectId)) refuse("subject_is_author");
+  const positionId = canonNullableUuid(args.positionId);
   if (args.grade !== null && !(PM_GRADES as readonly unknown[]).includes(args.grade)) refuse("invalid_payload");
   const { copy, day } = await copyForAct(service, args.actor, args.locationId, args.copyId, "write");
-  const positionId = args.positionId as string | null;
-  await targetProblem(service, copy, day, args.subjectId, positionId, args.criterionId);
+  await targetProblem(service, copy, day, subjectId, positionId, criterionId);
   const { data, error } = await service.rpc("save_pm_copy_grade", {
-    p_actor: args.actor.userId, p_copy: copy.id, p_subject: args.subjectId, p_position: positionId, p_criterion: args.criterionId, p_grade: args.grade,
+    p_actor: args.actor.userId, p_copy: copy.id, p_subject: subjectId, p_position: positionId, p_criterion: criterionId, p_grade: args.grade,
   });
   if (error) pmRpcFailure(error);
   const id = (data as { id: string }).id;
-  await auditCopy(args.actor, "pm_report.copy_grade", copy.id, { grade_id: id, subject_id: args.subjectId, position_id: positionId, criterion_id: args.criterionId, grade: args.grade });
+  await auditCopy(args.actor, "pm_report.copy_grade", copy.id, { grade_id: id, subject_id: subjectId, position_id: positionId, criterion_id: criterionId, grade: args.grade });
   return { id };
 }
 
 /** The free text for a person (≤ 500; blank clears). Audited WITHOUT the text (R9). */
 export async function saveNote(service: SupabaseClient, args: PmCopyWriteArgs & { subjectId: unknown; positionId: unknown; note: unknown }): Promise<{ id: string | null }> {
-  requireUuid(args.subjectId);
-  if (args.positionId !== null) requireUuid(args.positionId);
+  const subjectId = canonUuid(args.subjectId);
+  if (isSelf(args.actor, subjectId)) refuse("subject_is_author");
+  const positionId = canonNullableUuid(args.positionId);
   if (args.note !== null && typeof args.note !== "string") refuse("invalid_payload");
   const note = typeof args.note === "string" ? args.note.trim() : "";
   if (note.length > PM_V2_NOTE_MAX) refuse("invalid_note");
   const { copy, day } = await copyForAct(service, args.actor, args.locationId, args.copyId, "write");
-  const positionId = args.positionId as string | null;
-  await targetProblem(service, copy, day, args.subjectId, positionId);
-  const { data, error } = await service.rpc("save_pm_copy_note", { p_actor: args.actor.userId, p_copy: copy.id, p_subject: args.subjectId, p_position: positionId, p_note: note || null });
+  await targetProblem(service, copy, day, subjectId, positionId);
+  const { data, error } = await service.rpc("save_pm_copy_note", { p_actor: args.actor.userId, p_copy: copy.id, p_subject: subjectId, p_position: positionId, p_note: note || null });
   if (error) pmRpcFailure(error);
   const id = (data as { id: string | null }).id;
-  await auditCopy(args.actor, "pm_report.copy_note", copy.id, { note_id: id, subject_id: args.subjectId, position_id: positionId, cleared: id === null });
+  await auditCopy(args.actor, "pm_report.copy_note", copy.id, { note_id: id, subject_id: subjectId, position_id: positionId, cleared: id === null });
   return { id };
 }
 
 /** "Worked somewhere else?": checks 5–6 only (that is its purpose), a reason. Audited without the reason text. */
 export async function addPosition(service: SupabaseClient, args: PmCopyWriteArgs & { subjectId: unknown; positionId: unknown; reason: unknown }): Promise<{ id: string }> {
-  requireUuid(args.subjectId); requireUuid(args.positionId);
+  const subjectId = canonUuid(args.subjectId), positionId = canonUuid(args.positionId);
+  if (isSelf(args.actor, subjectId)) refuse("subject_is_author");
   const reason = typeof args.reason === "string" ? args.reason.trim() : "";
   if (reason.length < 1 || reason.length > PM_V2_REASON_MAX) refuse("invalid_reason");
   const { copy } = await copyForAct(service, args.actor, args.locationId, args.copyId, "write");
-  const { data: p, error: pe } = await service.from("station_positions").select("id, station_id, location_id, active").eq("id", args.positionId).maybeSingle();
+  const { data: p, error: pe } = await service.from("station_positions").select("id, station_id, location_id, active").eq("id", positionId).maybeSingle();
   if (pe) throw new Error(`pm v2 position: ${pe.message}`);
   const row = p as { station_id: string; location_id: string; active: boolean } | null;
   let usable: { locationId: string; active: boolean } | null = null;
@@ -374,10 +411,10 @@ export async function addPosition(service: SupabaseClient, args: PmCopyWriteArgs
   }
   const problem = addedPositionProblem(usable, copy.location_id);
   if (problem) refuse(problem);
-  const { data, error } = await service.rpc("add_pm_copy_position", { p_actor: args.actor.userId, p_copy: copy.id, p_subject: args.subjectId, p_position: args.positionId, p_reason: reason });
+  const { data, error } = await service.rpc("add_pm_copy_position", { p_actor: args.actor.userId, p_copy: copy.id, p_subject: subjectId, p_position: positionId, p_reason: reason });
   if (error) pmRpcFailure(error);
   const id = (data as { id: string }).id;
-  await auditCopy(args.actor, "pm_report.copy_position_add", copy.id, { added_id: id, subject_id: args.subjectId, position_id: args.positionId });
+  await auditCopy(args.actor, "pm_report.copy_position_add", copy.id, { added_id: id, subject_id: subjectId, position_id: positionId });
   return { id };
 }
 
@@ -435,12 +472,13 @@ export async function submitDay(service: SupabaseClient, args: { actor: PeopleAc
  */
 export async function setMvpV2(service: SupabaseClient, args: { actor: PeopleActor; locationId: string; date: string; mvpUserId: string | null; mvpNote: string | null }): Promise<void> {
   await requireManagerAt(service, args.actor, args.locationId);
-  if (args.mvpUserId !== null) requireUuid(args.mvpUserId);
+  const mvpUserId = canonNullableUuid(args.mvpUserId);
+  if (mvpUserId !== null && isSelf(args.actor, mvpUserId)) refuse("subject_is_author");
   const day = await loadDay(service, args.locationId, args.date);
   if (!day) refuse("not_found");
   if (day.format !== "v2") refuse("format_mismatch");
   const { error, count } = await service.from("pm_reports")
-    .update({ mvp_user_id: args.mvpUserId, mvp_note: args.mvpNote }, { count: "exact" })
+    .update({ mvp_user_id: mvpUserId, mvp_note: args.mvpNote }, { count: "exact" })
     .eq("id", day.id).eq("status", "open").eq("format", "v2").is("superseded_at", null);
   if (error) throw new Error(`setMvpV2: ${error.message}`);
   if (count === 0) refuse("report_already_submitted");
@@ -476,16 +514,32 @@ export async function loadDayResults(service: SupabaseClient, args: { actor: Peo
   if (args.actor.role === "social_media_mgr" || args.actor.level < 4) refuse("forbidden");
   const day = await loadDay(service, args.locationId, args.date);
   if (!day || day.format !== "v2") return null;
-  const copies = await loadCopies(service, day.id);
-  if (!canReadPmDayResults(args.actor, dayRef(day, copies))) refuse("forbidden");
-  const copyIds = copies.map((c) => c.id);
-  const [grades, notes, added, { positions }, criteria] = await Promise.all([
+  const allCopies = await loadCopies(service, day.id);
+  // B058: an author is a copy that WROTE something; opening the page creates an empty copy, which is not one.
+  // The GM / Op-6 / MoO+ path needs no extra read.
+  if (!readsAsManager(args.actor, day)) {
+    const mine = allCopies.filter((c) => c.author_id === args.actor.userId);
+    const wrote = await copiesWithSubstance(service, mine);
+    const authorIds = mine.filter((c) => wrote.has(c.id)).map((c) => c.author_id);
+    if (!canReadPmDayResults(args.actor, { ...dayRef(day, allCopies), authorIds })) refuse("forbidden");
+  }
+  const copyIds = allCopies.map((c) => c.id);
+  // R9 / W09-2: the reader never sees the rows written ABOUT them (their superiors still do). B059: a row whose
+  // subject is its own copy's author (an old self-grade) counts nowhere.
+  const authorOf = new Map(allCopies.map((c) => [c.id, c.author_id] as const));
+  const notAboutReader = <T extends { copy_id: string; subject_id: string }>(rows: T[]): T[] =>
+    rows.filter((r) => r.subject_id !== args.actor.userId && r.subject_id !== authorOf.get(r.copy_id));
+  const [gradesRaw, notesRaw, addedRaw, { positions }, criteria] = await Promise.all([
     loadLive<GradeRow>(service, "pm_copy_grades", "id, copy_id, location_id, subject_id, position_id, criterion_id, grade", copyIds),
     loadLive<NoteRow>(service, "pm_copy_notes", "id, copy_id, subject_id, position_id, note", copyIds),
     loadLive<AddedRow>(service, "pm_copy_positions", "id, copy_id, subject_id, position_id, reason", copyIds),
     loadShopPositions(service, args.locationId),
     loadCriteria(service, args.locationId, false),
   ]);
+  const grades = notAboutReader(gradesRaw), notes = notAboutReader(notesRaw), added = notAboutReader(addedRaw);
+  // An empty copy (nothing left after the filters) is not listed: it would only say who opened the page.
+  const withRows = new Set([...grades.map((g) => g.copy_id), ...notes.map((n) => n.copy_id)]);
+  const copies = allCopies.filter((c) => withRows.has(c.id));
   const subjects = [...new Set([...grades.map((g) => g.subject_id), ...notes.map((n) => n.subject_id)])];
   const intervals = await loadDayIntervals(service, args.locationId, args.date, subjects, args.now);
   const names = await loadNames(service, [...subjects, ...copies.map((c) => c.author_id), ...(day.submitted_by ? [day.submitted_by] : [])]);
@@ -503,7 +557,7 @@ export async function loadDayResults(service: SupabaseClient, args: { actor: Peo
     weights.set(key, observationMinutes({ copyId: copy.id, authorId: copy.author_id, from: copy.observed_from, to: copy.observed_to }, intervals, g.subject_id, g.position_id, { added: addedHere }));
   }
   const cells = averageGrades(grades.map((g) => ({ copyId: g.copy_id, authorId: copyById.get(g.copy_id)!.author_id, subjectId: g.subject_id, positionId: g.position_id, criterionId: g.criterion_id, grade: g.grade })), weights);
-  const themesFor = await themeNotes(service, args.locationId, args.date, subjects);
+  const themesFor = await themeNotes(service, args.actor, args.locationId, args.date, subjects);
 
   const people = subjects.map((subjectId) => {
     const keys = [...new Set([...cells.filter((c) => c.subjectId === subjectId).map((c) => c.positionId ?? ""), ...notes.filter((n) => n.subject_id === subjectId).map((n) => n.position_id ?? "")])];
@@ -550,15 +604,28 @@ export async function loadDayResults(service: SupabaseClient, args: { actor: Peo
   };
 }
 
-/** The notes of SUBMITTED v2 days at the shop in the last 30 days for these subjects, attributed (the themes' input). */
-async function themeNotes(service: SupabaseClient, locationId: string, date: string, subjects: readonly string[]): Promise<(subjectId: string, positionId: string | null) => AttributedNote[]> {
+/**
+ * The notes of SUBMITTED v2 days at the shop in the last 30 days for these subjects, attributed (the themes' input).
+ * B016: only from days the READER may read (`canReadPmDayResults` per day): the GM / Op-6 / MoO+ path reads every
+ * day; a KH/SL reads only the days where their own copy wrote something. The copies of an unreadable day are
+ * dropped BEFORE any note is loaded, so its text and author never leave the database. Self-notes (subject = the
+ * copy's author, B059) never count.
+ */
+async function themeNotes(service: SupabaseClient, actor: PeopleActor, locationId: string, date: string, subjects: readonly string[]): Promise<(subjectId: string, positionId: string | null) => AttributedNote[]> {
   if (!subjects.length) return () => [];
   const days = await selectAllRows<DayRow>((from, to) => service.from("pm_reports").select("*").eq("location_id", locationId).eq("format", "v2")
     .neq("status", "open").is("superseded_at", null).gte("report_date", etYmdMinusDays(date, PM_V2_THEME_DAYS - 1)).lte("report_date", date)
     .order("report_date", { ascending: true }).range(from, to));
-  const copies: CopyRow[] = [];
-  for (const d of days) copies.push(...await loadCopies(service, d.id));
-  const notes = await loadLive<NoteRow>(service, "pm_copy_notes", "id, copy_id, subject_id, position_id, note", copies.map((c) => c.id), subjects);
+  const allCopies: CopyRow[] = [];
+  for (const d of days) allCopies.push(...await loadCopies(service, d.id));
+  const free = new Set(days.filter((d) => readsAsManager(actor, d)).map((d) => d.id));
+  const mineElsewhere = allCopies.filter((c) => c.author_id === actor.userId && !free.has(c.pm_report_id));
+  const wrote = await copiesWithSubstance(service, mineElsewhere);
+  const readable = new Set([...free, ...mineElsewhere.filter((c) => wrote.has(c.id)).map((c) => c.pm_report_id)]);
+  const copies = allCopies.filter((c) => readable.has(c.pm_report_id));
+  const copyAuthor = new Map(copies.map((c) => [c.id, c.author_id] as const));
+  const notes = (await loadLive<NoteRow>(service, "pm_copy_notes", "id, copy_id, subject_id, position_id, note", copies.map((c) => c.id), subjects))
+    .filter((n) => n.subject_id !== copyAuthor.get(n.copy_id));
   const names = await loadNames(service, copies.map((c) => c.author_id));
   const copyById = new Map(copies.map((c) => [c.id, c] as const));
   const dayById = new Map(days.map((d) => [d.id, d] as const));
@@ -580,7 +647,8 @@ export interface MyFeedbackV2Day {
  * minutes each manager observed them), as BANDS. No author, no number, no note text (R9). Before 0271 is
  * applied it answers [] (the page shows v1 feedback only).
  */
-export async function loadMyFeedbackV2(service: SupabaseClient, args: { userId: string }): Promise<MyFeedbackV2Day[]> {
+/** `only` narrows to ONE day of one shop (the reports hub, W09/B062). */
+export async function loadMyFeedbackV2(service: SupabaseClient, args: { userId: string; only?: { locationId: string; date: string } }): Promise<MyFeedbackV2Day[]> {
   requireUuid(args.userId);
   let grades: GradeRow[];
   try {
@@ -603,9 +671,11 @@ export async function loadMyFeedbackV2(service: SupabaseClient, args: { userId: 
     days.push(...await selectAllRows<DayRow>((from, to) => service.from("pm_reports").select("*").in("id", ids).is("superseded_at", null)
       .order("id", { ascending: true }).range(from, to)));
   }
-  const submitted = new Map(days.filter((d) => d.format === "v2" && d.status !== "open").map((d) => [d.id, d] as const));
+  const submitted = new Map(days.filter((d) => d.format === "v2" && d.status !== "open"
+    && (!args.only || (d.location_id === args.only.locationId && d.report_date === args.only.date))).map((d) => [d.id, d] as const));
   const copyById = new Map(copies.filter((c) => submitted.has(c.pm_report_id)).map((c) => [c.id, c] as const));
-  const live = grades.filter((g) => copyById.has(g.copy_id));
+  // B059: a self-grade (subject = the grading copy's author) never counts.
+  const live = grades.filter((g) => copyById.has(g.copy_id) && copyById.get(g.copy_id)!.author_id !== g.subject_id);
   if (!live.length) return [];
   const out: MyFeedbackV2Day[] = [];
   const byDay = new Map<string, GradeRow[]>();

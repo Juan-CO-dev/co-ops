@@ -36,7 +36,7 @@ import {
 } from "@/lib/catering/quotes-shared";
 import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
 import type { Payment } from "@/lib/catering/payments";
-import { postJson, resolveErrorKey, isStepUpCode } from "./shared";
+import { postJson, resolveErrorKey, isStepUpCode, quoteDetailActions } from "./shared";
 
 const WRITE_MIN = 6;
 
@@ -844,10 +844,12 @@ function QuoteDetailPanel({
 
   const q = detail.quote;
   const effectiveStatus = q.isExpired && q.status === "sent" ? "expired" : q.status;
-  const sendable = canWrite && (q.status === "draft" || q.status === "sent") && !q.isExpired;
-  const decidable = canWrite && q.status === "sent" && !q.isExpired;
+  // Send / Accept / Decline come from the ONE shared rule (audit W01/B004: a self-serve
+  // 'submitted' order is decidable exactly like a 'sent' quote).
+  const { sendable, decidable } = quoteDetailActions(q, canWrite);
   // An open offer (sent, or a self-serve submitted order) past its date: the ONE shared clock
-  // rule the server's gates read. The server re-decides; this only chooses what to draw.
+  // rule the server's gates read (audit W02/B037). The server re-decides; this only chooses
+  // what to draw.
   const resendable = canWrite && quoteTimeExpired(q.status, q.expiresAt);
 
   return (

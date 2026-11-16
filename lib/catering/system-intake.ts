@@ -30,10 +30,15 @@ export async function systemMoveStage(
   note: string,
   actorContext: string,
   signal: AbortSignal = new AbortController().signal,
+  /** `eventDateBefore`: the guarded UPDATE also requires `event_date < this`, so a lead whose date moved after the
+   *  caller's select is left alone (`stage_changed`), never completed with a future date (audit W11/B172). */
+  opts: { eventDateBefore?: string } = {},
 ): Promise<SystemMoveOutcome> {
-  const { error, count } = await sb.from("catering_pipeline")
+  let move = sb.from("catering_pipeline")
     .update({ stage: toStage, updated_at: new Date().toISOString() }, { count: "exact" })
-    .eq("id", lead.id).eq("stage", lead.stage).abortSignal(signal);
+    .eq("id", lead.id).eq("stage", lead.stage);
+  if (opts.eventDateBefore) move = move.lt("event_date", opts.eventDateBefore);
+  const { error, count } = await move.abortSignal(signal);
   if (error) return "update_failed";
   if (count === 0) return "stage_changed"; // a concurrent delivery already moved it
   const { error: evErr } = await sb.from("catering_pipeline_events").insert({ pipeline_id: lead.id, from_stage: lead.stage, to_stage: toStage, note, actor_id: null }).abortSignal(signal);
@@ -119,7 +124,7 @@ export async function completeElapsedCateringEvents(todayEt: string): Promise<El
     }
     let outcome: SystemMoveOutcome;
     try {
-      outcome = await systemMoveStage(sb, { id: lead.id, stage: lead.stage }, "completed", "auto: event date passed", "cron_rollover");
+      outcome = await systemMoveStage(sb, { id: lead.id, stage: lead.stage }, "completed", "auto: event date passed", "cron_rollover", undefined, { eventDateBefore: todayEt });
     } catch (e) {
       out.failed.push({ id: lead.id, result: "threw" });
       console.error(`[catering rollover] complete threw for lead ${lead.id} (location ${lead.location_id}):`, e instanceof Error ? e.message : String(e));

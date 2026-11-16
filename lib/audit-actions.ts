@@ -403,6 +403,10 @@ export const RESERVED_ACTIONS = [
   // collapse superseded under their live Phase 2 siblings, and writes this row itself with
   // destructive=true. No TypeScript call site: no app code path un-supersedes a completion.
   "checklist_completion.restore",
+  // Emitted from SQL only — migration 0309 (W09/B164, owner decision W09-4 a) supersedes the older of any
+  // duplicate live v1 evaluations, keeping the newest, and writes this row itself (ids only) with
+  // destructive=true. No TypeScript call site.
+  "pm_report.eval_duplicate_collapse",
   // Location lifecycle — the admin surface for it does not exist yet.
   "location.create",
   "location.activate",

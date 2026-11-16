@@ -11,7 +11,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import { lockLocationContext } from "@/lib/locations";
+import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
+import { integrationsReadScope } from "@/lib/admin/integrations-scope";
 
 export const EZCATER_ADMIN_MIN = 7; // GM+ — mirrors toast-map
 export const EZCATER_READ_MIN = 6;  // AGM+ — events visibility
@@ -39,22 +40,51 @@ export interface EzcaterAdminState {
 export async function loadEzcaterAdminState(actor: AuthContext): Promise<EzcaterAdminState> {
   requireLevel(actor, EZCATER_READ_MIN);
   const sb = getServiceRoleClient();
-  const [{ data: locs, error: lErr }, { data: evts, error: eErr }] = await Promise.all([
-    sb.from("locations").select("id, name, ezcater_caterer_uuid").eq("active", true)
-      .order("name", { ascending: true })
-      .returns<Array<{ id: string; name: string; ezcater_caterer_uuid: string | null }>>(),
-    sb.from("ezcater_events")
-      .select("id, event_key, entity_id, processing_result, signature_valid, received_at, lead_id")
-      .order("received_at", { ascending: false }).limit(20)
-      .returns<Array<{ id: string; event_key: string | null; entity_id: string | null; processing_result: string | null; signature_valid: boolean; received_at: string; lead_id: string | null }>>(),
-  ]);
-  if (lErr) throw new Error(`ezcater locations: ${lErr.message}`);
-  if (eErr) throw new Error(`ezcater events: ${eErr.message}`);
+  // W08/B161: a GM / AGM sees only their own shops (their caterer UUIDs) and the events whose lead belongs to
+  // one of them. The MoO, owner and CGS roles see every shop and every shop's events by role (owner ruling
+  // 2026-11-15; lib/admin/integrations-scope.ts). ezcater_events has no location column (0149): its only shop link is
+  // lead_id → catering_pipeline.location_id (the one FK between the two tables). The shop filter rides an
+  // inner embed on that FK so it applies BEFORE the limit — another shop's traffic can never push this
+  // shop's events out of the window (fix round 1). Service-role read, so the embed is the AGENTS.md
+  // "service-role embed" case, not the RLS-scoped hazard. An event with no lead (unmatched caterer, bad
+  // signature) has no shop, so only all-locations viewers (owner, CGS) see it; the MoO sees every shop's
+  // LINKED events, filtered in the query before the limit like the per-shop case.
+  const scope = integrationsReadScope(actor);
+  const seesUnlinked = scope === null && isAllLocationsAccess({ role: actor.user.role, locations: actor.locations });
+  type LocRow = { id: string; name: string; ezcater_caterer_uuid: string | null };
+  type EvtRow = { id: string; event_key: string | null; entity_id: string | null; processing_result: string | null; signature_valid: boolean; received_at: string; lead_id: string | null };
+  const EVENT_COLS = "id, event_key, entity_id, processing_result, signature_valid, received_at, lead_id";
+  let locs: LocRow[] = [];
+  let evts: EvtRow[] = [];
+  if (scope === null) {
+    const [{ data: l, error: lErr }, { data: e, error: eErr }] = await Promise.all([
+      sb.from("locations").select("id, name, ezcater_caterer_uuid").eq("active", true)
+        .order("name", { ascending: true }).returns<LocRow[]>(),
+      (seesUnlinked
+        ? sb.from("ezcater_events").select(EVENT_COLS)
+        : sb.from("ezcater_events").select(`${EVENT_COLS}, catering_pipeline!inner(location_id)`))
+        .order("received_at", { ascending: false }).limit(20).returns<EvtRow[]>(),
+    ]);
+    if (lErr) throw new Error(`ezcater locations: ${lErr.message}`);
+    if (eErr) throw new Error(`ezcater events: ${eErr.message}`);
+    locs = l ?? []; evts = e ?? [];
+  } else if (scope.length > 0) {
+    const [{ data: l, error: lErr }, { data: e, error: eErr }] = await Promise.all([
+      sb.from("locations").select("id, name, ezcater_caterer_uuid").eq("active", true).in("id", scope)
+        .order("name", { ascending: true }).returns<LocRow[]>(),
+      sb.from("ezcater_events").select(`${EVENT_COLS}, catering_pipeline!inner(location_id)`)
+        .in("catering_pipeline.location_id", scope)
+        .order("received_at", { ascending: false }).limit(20).returns<EvtRow[]>(),
+    ]);
+    if (lErr) throw new Error(`ezcater locations: ${lErr.message}`);
+    if (eErr) throw new Error(`ezcater events: ${eErr.message}`);
+    locs = l ?? []; evts = e ?? [];
+  }
   return {
     webhookConfigured: Boolean(process.env.EZCATER_WEBHOOK_SECRET),
     apiConfigured: Boolean(process.env.EZCATER_API_TOKEN),
-    locations: (locs ?? []).map((l) => ({ id: l.id, name: l.name, ezcaterCatererUuid: l.ezcater_caterer_uuid })),
-    events: (evts ?? []).map((e) => ({
+    locations: locs.map((l) => ({ id: l.id, name: l.name, ezcaterCatererUuid: l.ezcater_caterer_uuid })),
+    events: evts.map((e) => ({
       id: e.id, eventKey: e.event_key, entityId: e.entity_id,
       processingResult: e.processing_result, signatureValid: e.signature_valid,
       receivedAt: e.received_at, leadId: e.lead_id,

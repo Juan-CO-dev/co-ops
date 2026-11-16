@@ -153,10 +153,8 @@ export function InboxPane({ initial }: { initial: InboxList }) {
     <div role="group" aria-label={t("catering.inbox.aria.groups")}>
       {INBOX_GROUPS.map(group => {
         const messages = rows.filter(m => m.group === group);
+        // Noise opens like every other group (collapsed by default): it is where real mail filed as noise is caught (audit W11/B018).
         const expanded = openGroups.includes(group);
-        if (group === "noise") return <section key={group} className="mb-3 rounded border p-3">
-          <h2 className="flex min-h-11 items-center justify-between gap-2"><span>{t("catering.inbox.group.noise")}</span><span>{messages.length === 1 ? t("catering.inbox.count_one") : t("catering.inbox.count", { n: messages.length })}</span></h2>
-        </section>;
         return <section key={group} className="mb-3 rounded border p-3">
           <h2><button className={`${control} w-full flex-wrap justify-between gap-2 text-left`} aria-expanded={expanded} aria-controls={expanded ? `inbox-${group}` : undefined} onClick={() => setOpenGroups(groups => expanded ? groups.filter(g => g !== group) : [...groups, group])}>
             <span>{t(`catering.inbox.group.${group}`)}</span><span>{messages.length === 1 ? t("catering.inbox.count_one") : t("catering.inbox.count", { n: messages.length })}</span>
