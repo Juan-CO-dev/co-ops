@@ -38,9 +38,11 @@ const suggestions = (detail: Record<string, unknown>) =>
 beforeEach(() => vi.clearAllMocks());
 
 describe("the walk drops a ledger row from an older pack epoch", () => {
-  it("control: a row stamped with the live epoch is offered", async () => {
+  it("control: a row stamped with the live epoch is offered, carrying that epoch for the accept (fix round 1)", async () => {
     h.epochs.mockResolvedValue(new Map([[SKU, 2]]));
-    expect((await suggestions({ pack_epoch: 2 })).has(SKU)).toBe(true);
+    const out = await suggestions({ pack_epoch: 2 });
+    expect(out.has(SKU)).toBe(true);
+    expect(out.get(SKU)!.packEpoch).toBe(2);
   });
   it("a suggestion computed in an older pack epoch is not offered (accept then answers suggestion_superseded)", async () => {
     h.epochs.mockResolvedValue(new Map([[SKU, 2]]));
@@ -67,6 +69,7 @@ it("ledgerEpochStands: a numeric stamp must equal the live epoch; no stamp means
 it("the nightly engine stamps the pack epoch on every ledger row, outside the generation id", () => {
   const src = readFileSync("lib/dynamic-pars.ts", "utf8");
   expect(src).toContain("pack_epoch: inputs.packEpochBySku?.get(sku.skuId) ?? 0,");
-  expect(src).toMatch(/const packEpochBySku = await loadShopPackEpochs\(skuIds, locationId\);\s+stampEffectivePack\(overlayBySku, packEpochBySku\);/);
+  expect(src).toContain("const packEpochBySku = await loadShopPackEpochs(skuIds, locationId);");
+  expect(src).toContain("stampEffectivePack(overlayBySku, packEpochBySku);");
   expect(src).not.toMatch(/generationIdFor\([^)]*pack_epoch/);
 });
