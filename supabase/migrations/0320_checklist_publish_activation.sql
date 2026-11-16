@@ -35,17 +35,21 @@
 --      refuses `checklist_instance_lineage_taken` when an instance of ANOTHER version of the same lineage
 --      already exists for (shop, date). The 0059 partial unique index is per TEMPLATE, so an apply-now publish
 --      landing between a closer's first open and their refresh made a second closing on the new version and
---      stranded the first one's ticks. A same-template duplicate still reaches the index (create_opening_
---      instance_atomic's ON CONFLICT and the app's 23505 re-read are unchanged). Prep, mid-day and other
---      types return at once without a lock. Existing duplicate pairs are not touched (new inserts only).
---   D. submit_phase2_atomic ← 0255, B085, exactly two changes: the completeness count and the per-item loop
+--      stranded the first one's ticks. When THIS version already has the day's instance the guard returns at
+--      once (fix round 1): the insert is a re-open, and the 0059 index answers it (create_opening_instance_
+--      atomic's ON CONFLICT returns the existing row; the app's 23505 re-read finds it) — even when a legacy
+--      pair also has the day on another version, so a reload never fails on a strand made before 0320. Prep,
+--      mid-day and other types return at once without a lock. Existing duplicate pairs are not touched.
+--   D. submit_phase2_atomic ← 0315 (W14, applied to sim + prod), B085, exactly two changes: the completeness
+--      count and the per-item loop
 --      both keep only openingPhase2 items that have a LIVE Phase 1 row on THIS instance. An item mirrored onto
 --      today's opening after its Phase 1 snapshot (mid-shift "opening verification" on, or a new AM-prep line)
 --      had no Phase 1 row, could never be saved (`phase1_not_resolved`) and made finalize impossible for the
 --      day (`phase2_incomplete`). Owner decision W15-2 (a): it starts with tomorrow's opening, which snapshots
 --      it at creation. The loop's phase1_not_resolved raise stays as a belt-and-braces check. Every other line,
---      the signature, SECURITY DEFINER, the search_path and the grants are 0255's
---      (tests/checklist-publish-activation-migration.test.ts pins the 0255 body as a line-subsequence).
+--      including 0315's instance lock (FOR NO KEY UPDATE, B080), the signature, SECURITY DEFINER, the
+--      search_path and the grants are 0315's (tests/checklist-publish-activation-migration.test.ts pins the 0315
+--      body as a line-subsequence).
 --
 -- LOCK ORDER (AGENTS.md: AM instance → closing instance → completion rows; parent locks FOR NO KEY UPDATE;
 --   never a parent after a completion). The lineage key is taken FIRST by both B and C and by nothing else:
@@ -56,26 +60,27 @@
 --        other row; no SQL writer inserts an instance after locking a completion: grep of
 --        `insert into checklist_instances` across supabase/migrations = 0052, 0063, 0215 only).
 --   So the key adds no edge into the checklist order and B / C cannot deadlock (both take the key first).
---   D adds no lock (0255 took none; W14's 0315 adds the instance lock — see REBASE below).
+--   D adds no lock: 0315's instance lock (opening instance FOR NO KEY UPDATE, first) is kept as it is.
 --
 -- APP: lib/admin/template-builder.ts calls B after the copy. Until 0320 is applied the RPC is missing
 --   (PGRST202 / 42883) and the publish falls back to the pre-0320 four-step activation (+ the pointer move as
 --   separate updates), so the app keeps working before the apply; B083's stale check and B084's count also run
 --   in the app as early refusals. Without C and D the old races / the stuck mid-shift mirror remain until apply.
 --
--- REBASE: W14 (fix/audit-w14, migration 0315, unmerged at authoring) also re-emits submit_phase2_atomic from
---   0255 (one change: the instance row FOR NO KEY UPDATE). Section D refuses by name unless the LIVE body is
---   0255's (or already this one), so applying 0320 after 0315 can never silently drop 0315's lock: re-base D
---   onto 0315 instead (add the same two EXISTS clauses to 0315's body).
+-- REBASE (fix round 1): W14's 0315 is applied to sim and prod; it re-emitted submit_phase2_atomic from 0255 with
+--   one change (the instance row FOR NO KEY UPDATE, B080). Section D is now 0315's body plus the two EXISTS
+--   clauses, and the pre-flight refuses by name unless the LIVE body is 0315's (or already this one), so 0320
+--   can never silently drop 0315's lock or anything later. supabase/migrations/0315_opening_counts_batch_prep.sql
+--   is carried byte-identical from fix/audit-w14 (3d4814bb) so the pins and the harness read the real source.
 --
 -- DEPENDS ON: 0059 (allows_multiple_per_day + checklist_instances_single_per_day_key), 0070 (maintenance_
---   equipment pointers), 0162 (effective_from / supersedes_template_id), 0255 (submit_phase2_atomic).
+--   equipment pointers), 0162 (effective_from / supersedes_template_id), 0315 (submit_phase2_atomic).
 --
 -- PRE-FLIGHT (MCP, read-only, before apply; paste into the PR):
 --   select to_regprocedure('public.checklist_template_activate_version(uuid,uuid,uuid,boolean,date,jsonb)');  -- NULL
---   select md5(btrim(regexp_replace(prosrc, '[[:space:]]+', ' ', 'g'))) from pg_proc
+--   select md5(regexp_replace(prosrc, '[^\x21-\x7E]+', '', 'g')) from pg_proc
 --    where oid = 'public.submit_phase2_atomic(uuid,uuid,boolean,uuid,text,text)'::regprocedure;
---     -- b9c7e346da007e37befb87ec07b716bb = the 0255 body (whitespace-normalised); anything else refuses
+--     -- 13a3433b03ac9732dd33a061dba41a7f = the 0315 body (0315's own fingerprint); anything else refuses
 --   -- stale fridge pointers (pointer item on an inactive version; the registry already serves their readings):
 --   select me.id, me.location_id, 'AM' side, t.id tpl from maintenance_equipment me
 --     join checklist_template_items cti on cti.id = me.opening_temp_item_id join checklist_templates t on t.id = cti.template_id where not t.active
@@ -103,7 +108,8 @@
 --    and routine_name in ('checklist_lineage_lock_key','checklist_template_activate_version','checklist_instance_lineage_guard','submit_phase2_atomic')
 --    and grantee in ('PUBLIC','anon','authenticated');                                                      -- NO ROWS
 --   select tgname, tgenabled from pg_trigger where tgrelid = 'public.checklist_instances'::regclass and tgname = 'checklist_instances_lineage_guard'; -- O
---   select prosrc ~ 'W15/B085' from pg_proc where oid = 'public.submit_phase2_atomic(uuid,uuid,boolean,uuid,text,text)'::regprocedure; -- t
+--   select md5(regexp_replace(prosrc, '[^\x21-\x7E]+', '', 'g')) from pg_proc
+--    where oid = 'public.submit_phase2_atomic(uuid,uuid,boolean,uuid,text,text)'::regprocedure;  -- b0473d28679e82a7bbfd70b73e0b8f33
 --
 -- SIM PROOF (two sessions; CC runs it on sim, never CI): scripts/sim/checklist-0320-lineage-lock-check-management.mjs.
 -- OFFLINE PROOF: scripts/sql-harness-0320.mjs (PGlite), run by tests/checklist-publish-activation-migration.test.ts.
@@ -135,15 +141,18 @@ begin
      and to_regprocedure('public.checklist_instance_lineage_guard()') is null then
     raise exception '0320: a checklist_instances_lineage_guard trigger exists with another function: refusing';
   end if;
-  -- D: the live submit_phase2_atomic must be 0255's body (whitespace-normalised hash) or already this one.
+  -- D: the live submit_phase2_atomic must be 0315's body or already this one (0315's fingerprint: the md5 of
+  -- prosrc with every non-printing / space character removed). 0255's body (0315 not applied) and anything
+  -- else refuse: re-emitting from the wrong body would drop a lock or a later change.
   select prosrc into v_body from pg_proc
    where oid = to_regprocedure('public.submit_phase2_atomic(uuid,uuid,boolean,uuid,text,text)');
   if v_body is null then
     raise exception '0320: submit_phase2_atomic(uuid,uuid,boolean,uuid,text,text) is missing';
   end if;
-  if strpos(v_body, '0320 (W15/B085)') = 0
-     and md5(btrim(regexp_replace(v_body, '[[:space:]]+', ' ', 'g'))) <> 'b9c7e346da007e37befb87ec07b716bb' then
-    raise exception '0320: submit_phase2_atomic is not the 0255 body (0315 applied?): re-base section D onto the live body';
+  if md5(regexp_replace(v_body, '[^\x21-\x7E]+', '', 'g'))
+       not in ('13a3433b03ac9732dd33a061dba41a7f', 'b0473d28679e82a7bbfd70b73e0b8f33') then
+    raise exception '0320: submit_phase2_atomic is not the 0315 body (md5 %): re-base section D onto the live body',
+      md5(regexp_replace(v_body, '[^\x21-\x7E]+', '', 'g'));
   end if;
 end $$;
 
@@ -315,6 +324,17 @@ begin
   select * into t from public.checklist_templates where id = new.template_id;
   if not found or t.type not in ('opening', 'closing') then return new; end if;
   perform pg_advisory_xact_lock(public.checklist_lineage_lock_key(new.template_id));
+  -- Round 1: this version already has the day's instance, so the insert is a re-open, not a second
+  -- instance. Let the 0059 index decide (create_opening_instance_atomic's ON CONFLICT returns the
+  -- existing row; the app's 23505 re-read finds it) — even when a legacy pair (a B084 strand made
+  -- before 0320) also has the day on another version.
+  if exists (
+    select 1 from public.checklist_instances ci
+     where ci.template_id = new.template_id and ci.location_id = new.location_id
+       and ci.date = new.date and not ci.allows_multiple_per_day
+  ) then
+    return new;
+  end if;
   if exists (
     select 1
       from public.checklist_instances ci
@@ -337,7 +357,7 @@ create trigger checklist_instances_lineage_guard
   before insert on public.checklist_instances
   for each row execute function public.checklist_instance_lineage_guard();
 
--- ── D. submit_phase2_atomic ← 0255 (B085: the Phase 2 universe is frozen at this instance's Phase 1) ───────
+-- ── D. submit_phase2_atomic ← 0315 (B085: the Phase 2 universe is frozen at this instance's Phase 1) ───────
 CREATE OR REPLACE FUNCTION public.submit_phase2_atomic(p_opening_instance_id uuid, p_actor_id uuid, p_is_update boolean DEFAULT false, p_original_submission_id uuid DEFAULT NULL::uuid, p_ip_address text DEFAULT NULL::text, p_user_agent text DEFAULT NULL::text)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -388,6 +408,14 @@ BEGIN
     RAISE EXCEPTION 'submit_phase2_atomic: phase2_chain_edit_not_implemented — re-finalize (C.46) deferred pending scope ruling'
       USING ERRCODE = 'P0001';
   END IF;
+
+  -- 0315 (audit W14 / B080): the opening instance lock FIRST, before the completeness count.
+  -- Finalize used to count live Phase 2 rows with no lock, so an Undo (or a save) committing
+  -- after the count left a finalized report naming a revoked or superseded row. Under READ
+  -- COMMITTED every statement below starts after this wait: a finalize that queued behind an
+  -- Undo counts the row as missing (phase2_incomplete), and an Undo that queued behind this
+  -- finalize is refused phase2_not_eligible. FOR NO KEY UPDATE = the 0287 parent-lock mode.
+  PERFORM 1 FROM checklist_instances WHERE id = p_opening_instance_id FOR NO KEY UPDATE;
 
   -- ──── Pre-load instance + location ────
   SELECT ci.location_id, ci.date, ci.template_id, l.code
@@ -656,8 +684,9 @@ begin
                   and tgfoid = 'public.checklist_instance_lineage_guard()'::regprocedure) then
     raise exception '0320: the lineage guard trigger is not installed and enabled';
   end if;
-  if (select prosrc from pg_proc where oid = 'public.submit_phase2_atomic(uuid,uuid,boolean,uuid,text,text)'::regprocedure)
-       !~ 'W15/B085' then
+  if (select md5(regexp_replace(prosrc, '[^\x21-\x7E]+', '', 'g')) from pg_proc
+       where oid = 'public.submit_phase2_atomic(uuid,uuid,boolean,uuid,text,text)'::regprocedure)
+       is distinct from 'b0473d28679e82a7bbfd70b73e0b8f33' then
     raise exception '0320: submit_phase2_atomic is not the 0320 body';
   end if;
   if (select prosrc from pg_proc where oid = 'public.checklist_template_activate_version(uuid,uuid,uuid,boolean,date,jsonb)'::regprocedure)

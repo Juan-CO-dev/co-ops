@@ -1,7 +1,8 @@
 /**
  * Migration 0320 (bug audit 2026-11-14, wave W15). The executable proof is scripts/sql-harness-0320.mjs
- * (the real 0255 body + the real 0320 in ephemeral PGlite). This pin runs it in CI, pins section D's
- * re-emit of submit_phase2_atomic as a line-subsequence of 0255, and pins the file's gate and guards.
+ * (the real 0315 body + the real 0320 in ephemeral PGlite). This pin runs it in CI, pins section D's
+ * re-emit of submit_phase2_atomic as a line-subsequence of 0315 (W14, applied to sim and prod — the source of
+ * record since fix round 1), and pins the file's gate and guards.
  */
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
@@ -10,7 +11,8 @@ import { describe, expect, it } from "vitest";
 const MIGRATIONS = "supabase/migrations";
 const read = (f: string) => readFileSync(`${MIGRATIONS}/${f}`, "utf8").replace(/\r\n/g, "\n");
 const FILE = "0320_checklist_publish_activation.sql";
-const SOURCE = "0255_under_par_alert_recipients.sql";
+const SOURCE = "0315_opening_counts_batch_prep.sql";
+const BEFORE_SOURCE = "0255_under_par_alert_recipients.sql";
 const START = "CREATE OR REPLACE FUNCTION public.submit_phase2_atomic(";
 const END = "$function$;";
 const sql = read(FILE);
@@ -38,7 +40,7 @@ describe("0320 checklist publish activation", () => {
     const output = execFileSync(process.execPath, ["scripts/sql-harness-0320.mjs"], { encoding: "utf8", timeout: 300_000 });
     expect(output).toContain("PASS 0320:");
     expect(output).not.toContain("FAIL");
-  });
+  }, 320_000);
 
   it("is file-only, in one transaction, and refuses by name", () => {
     expect(sql).toMatch(/^-- Migration 0320_checklist_publish_activation\n-- AUTHORED 2026-11-15\. NOT YET APPLIED/);
@@ -46,19 +48,25 @@ describe("0320 checklist publish activation", () => {
     expect(sql.match(/^begin;$/gm)).toHaveLength(1);
     expect(sql.match(/^commit;$/gm)).toHaveLength(1);
     expect(sql).toContain("re-base section D onto the live body");
-    expect(sql).toContain("'b9c7e346da007e37befb87ec07b716bb'");
+    // The pre-flight accepts exactly 0315's fingerprint (0315's own) or this file's, and never 0255's.
+    expect(sql).toContain("not in ('13a3433b03ac9732dd33a061dba41a7f', 'b0473d28679e82a7bbfd70b73e0b8f33')");
+    expect(sql).not.toContain("b9c7e346da007e37befb87ec07b716bb");
+    expect(sql).not.toContain("7a9d437044cc4db2aece57dbc15878ce");
+    expect(read(SOURCE)).toContain("'13a3433b03ac9732dd33a061dba41a7f'");
   });
 
-  it("section D: 0255 is the previous latest definer of submit_phase2_atomic", () => {
+  it("section D: 0315 is the previous latest definer of submit_phase2_atomic (0255 before it)", () => {
     const files = readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
     const defining = files.filter((f) => read(f).includes(START));
     expect(defining[defining.length - 1]).toBe(FILE);
     expect(defining[defining.length - 2]).toBe(SOURCE);
+    expect(defining[defining.length - 3]).toBe(BEFORE_SOURCE);
   });
 
-  it("section D: the 0255 body is a line-subsequence of the 0320 body (nothing dropped)", () => {
+  it("section D: the 0315 body is a line-subsequence of the 0320 body (nothing dropped, the B080 lock kept)", () => {
     const check = isLineSubsequence(extract(read(SOURCE)), extract(sql));
-    expect(check.ok, `0255 line missing from 0320 → ${check.missing}`).toBe(true);
+    expect(check.ok, `0315 line missing from 0320 → ${check.missing}`).toBe(true);
+    expect(extract(sql)).toContain("  PERFORM 1 FROM checklist_instances WHERE id = p_opening_instance_id FOR NO KEY UPDATE;");
   });
 
   it("section D: BOTH universe queries keep only items with a live Phase 1 row on this instance (B085)", () => {

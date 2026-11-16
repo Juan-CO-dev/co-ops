@@ -8,6 +8,11 @@ import { PGlite } from '@electric-sql/pglite';
 
 const read = name => readFileSync(`supabase/migrations/${name}`, 'utf8');
 const MIGRATION = read('0320_checklist_publish_activation.sql');
+// Fix round 1: W14's 0315 is applied to sim and prod, so its submit_phase2_atomic is the live body 0320 re-emits.
+const SUBMIT_START = 'CREATE OR REPLACE FUNCTION public.submit_phase2_atomic(';
+const BODY_0315 = () => extract('0315_opening_counts_batch_prep.sql', SUBMIT_START, '$function$;');
+const BODY_0255 = () => extract('0255_under_par_alert_recipients.sql', SUBMIT_START, '$function$;');
+const OWN_FINGERPRINT = 'b0473d28679e82a7bbfd70b73e0b8f33';
 const id = n => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
 const SHOP = id(1), OTHER = id(2), ACTOR = id(3);
 const V1 = id(10), V2 = id(11), V3 = id(12), PREP = id(13), OTHER_LIST = id(14), OTHER_SHOP_V1 = id(15);
@@ -73,7 +78,7 @@ async function setup({ submitBody } = {}) {
       ('${FRIDGE}', '${SHOP}', 'fridge', null, '${C1}', true),
       ('${FRIDGE_OTHER}', '${OTHER}', 'fridge', null, '${OTHER_SHOP_ITEM}', true);`);
   await db.exec(extract('0056_create_submit_phase2_atomic_rpc.sql', 'CREATE OR REPLACE FUNCTION public.opening_phase2_compute_delta(', '$function$;'));
-  await db.exec(submitBody ?? extract('0255_under_par_alert_recipients.sql', 'CREATE OR REPLACE FUNCTION public.submit_phase2_atomic(', '$function$;'));
+  await db.exec(submitBody ?? BODY_0315());
   await db.exec(`revoke execute on function public.submit_phase2_atomic(uuid, uuid, boolean, uuid, text, text) from public, anon, authenticated;
     grant execute on function public.submit_phase2_atomic(uuid, uuid, boolean, uuid, text, text) to service_role;`);
   return db;
@@ -103,7 +108,7 @@ async function mint(db, newId, source, effectiveFrom, items) {
 const activeIds = async db => (await db.query(`select id from checklist_templates where location_id = $1 and type = 'closing' and name = 'Closing' and active order by id`, [SHOP])).rows.map(r => r.id);
 
 async function main() {
-  // ── 0. Before 0320: the B085 bug is real on the 0255 body ─────────────────────────────────────────────
+  // ── 0. Before 0320: the B085 bug is real on the live (0315) body ──────────────────────────────────────
   {
     const db = await setup();
     await db.exec(`insert into checklist_templates(id, location_id, type, name, active, effective_from) values ('${id(40)}', '${SHOP}', 'opening', 'Opening', true, '2026-01-01');
@@ -118,16 +123,29 @@ async function main() {
     await db.close();
   }
 
-  // ── 1. Pre-flight refuses a submit_phase2_atomic body that is not 0255's (W14 / 0315 rebase guard) ────
-  {
-    const moved = extract('0255_under_par_alert_recipients.sql', 'CREATE OR REPLACE FUNCTION public.submit_phase2_atomic(', '$function$;')
-      .replace('  -- ──── Completeness over the Model Y universe ────', '  PERFORM 1 FROM checklist_instances WHERE id = p_opening_instance_id FOR NO KEY UPDATE;\n  -- ──── Completeness over the Model Y universe ────');
-    const db = await setup({ submitBody: moved });
+  // ── 1. Pre-flight refuses a submit_phase2_atomic body that is not 0315's: 0255's (0315 not applied —
+  //       re-emitting would drop B080's lock) and a later one (a moved body) ─────────────────────────────
+  for (const [label, body] of [
+    ['the 0255 body', BODY_0255()],
+    ['a moved 0315 body', BODY_0315().replace('  -- ──── Pre-load instance + location ────', '  -- a later change\n  -- ──── Pre-load instance + location ────')],
+  ]) {
+    const db = await setup({ submitBody: body });
     let error;
     try { await db.exec(MIGRATION); } catch (e) { error = e; await db.exec('rollback'); }
-    check(/re-base section D/.test(error?.message ?? ''), `0320 must refuse a moved submit_phase2_atomic, got ${error?.message ?? 'success'}`);
+    check(/re-base section D/.test(error?.message ?? ''), `0320 must refuse ${label}, got ${error?.message ?? 'success'}`);
     check(!(await one(db, `select to_regprocedure('public.checklist_template_activate_version(uuid,uuid,uuid,boolean,date,jsonb)') is not null as p`)).p,
       'a refused 0320 leaves nothing behind');
+    await db.close();
+  }
+  // 0320 over itself passes the pre-flight (its own fingerprint), and the body keeps 0315's instance lock.
+  {
+    const db = await setup();
+    await db.exec(MIGRATION);
+    await db.exec(MIGRATION);
+    const fp = await one(db, String.raw`select md5(regexp_replace(prosrc, '[^\x21-\x7E]+', '', 'g')) m,
+      strpos(prosrc, 'PERFORM 1 FROM checklist_instances WHERE id = p_opening_instance_id FOR NO KEY UPDATE;') > 0 l
+      from pg_proc where proname = 'submit_phase2_atomic'`);
+    check(fp.m === OWN_FINGERPRINT && fp.l, `0320 body keeps 0315's lock under its own fingerprint: ${JSON.stringify(fp)}`);
     await db.close();
   }
 
@@ -216,6 +234,17 @@ async function main() {
     const conflict = await db.query(`insert into checklist_instances(template_id, location_id, date) values ($1, $2, $3)
       on conflict (template_id, location_id, date) where not allows_multiple_per_day do nothing returning id`, [V1, SHOP, TODAY]);
     check(conflict.rows.length === 0, 'the same-template ON CONFLICT path still resolves to the existing row');
+    // Round 1: a LEGACY pair (V1 and V2 both hold the day, made before 0320). Re-opening either version is
+    // answered by the index (ON CONFLICT → nothing inserted), never by checklist_instance_lineage_taken.
+    await db.exec('reset role; alter table checklist_instances disable trigger checklist_instances_lineage_guard');
+    await db.query('insert into checklist_instances(template_id, location_id, date) values ($1, $2, $3)', [V2, SHOP, TODAY]);
+    await db.exec('alter table checklist_instances enable trigger checklist_instances_lineage_guard; set local role service_role');
+    for (const v of [V1, V2]) {
+      const again = await db.query(`insert into checklist_instances(template_id, location_id, date) values ($1, $2, $3)
+        on conflict (template_id, location_id, date) where not allows_multiple_per_day do nothing returning id`, [v, SHOP, TODAY]);
+      check(again.rows.length === 0, 'a re-open of a legacy-pair version resolves through ON CONFLICT');
+    }
+    await refuses(db, () => db.query('insert into checklist_instances(template_id, location_id, date) values ($1, $2, $3)', [V2, SHOP, TODAY]), '23505');
     await db.query('insert into checklist_instances(template_id, location_id, date) values ($1, $2, $3)', [V2, SHOP, TOMORROW]);
     await db.query('insert into checklist_instances(template_id, location_id, date) values ($1, $2, $3)', [OTHER_LIST, SHOP, TODAY]);
     await db.query('insert into checklist_instances(template_id, location_id, date) values ($1, $2, $3)', [OTHER_SHOP_V1, OTHER, TODAY]);
