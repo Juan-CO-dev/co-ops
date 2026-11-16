@@ -1,3 +1,4 @@
+import { refundEventAmounts, type RefundEventRow } from '@/lib/catering/refund-events-shared';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
@@ -51,8 +52,29 @@ describe('0333 marketing entry moves, spend removal and refund time', () => {
     expect(sql).not.toMatch(/alter table public\.catering_payments/);
     expect(sql).not.toContain("<> 'true'");
   });
-  it('executes the real migrations and the adversarial SQL proofs offline', () => {
+  it('executes the real migrations and the adversarial SQL proofs offline; the backfilled rows read back right (review r2)', () => {
     const output = execFileSync(process.execPath, ['scripts/sql-harness-0333.mjs'], { encoding: 'utf8', timeout: 120_000 });
     expect(output).toMatch(/0333 SQL harness: \d+ checks passed/);
+    // Migration → reader: the rows the backfill stored, fed to the digest's own derivation.
+    const line = output.split('\n').find((l) => l.startsWith('0333 refund events: '));
+    const rows = JSON.parse(line!.slice('0333 refund events: '.length)) as RefundEventRow[];
+    const at = (k: string) => rows.find((r) => r.stripe_event_id === k)?.refunded_at;
+    expect(Object.fromEntries(refundEventAmounts(rows))).toMatchObject({
+      evt_tue: 1000, evt_wed: 9000,             // delayed delivery: $10 then $90
+      evt_part104: 1000, evt_final104: 4000,    // final delivered before the partial (no audit row): $10 then $40
+      evt_part105: 2000, evt_final105: 4000,    // audit-only partial (approximate time) before a ledger final
+    });
+    // The $10 is Tuesday's (event time), never Wednesday's (delivery / audit time).
+    expect(Date.parse(at('evt_tue')!)).toBe(Date.parse('2026-11-03T15:00:00Z'));
+    expect(Date.parse(at('evt_part104')!)).toBe(Date.parse('2026-11-04T10:00:00Z'));
+    for (const v of refundEventAmounts(rows).values()) expect(v).toBeGreaterThanOrEqual(0);
   }, 130_000);
+  it('backfills from the webhook ledger at the Stripe event time, the audit trail only as an approximate fallback (review r2)', () => {
+    expect(sql).toContain("if to_regclass('public.stripe_events') is null then raise exception '0333: stripe_events missing (0204)'");
+    expect(sql).toContain("from public.stripe_events e");
+    expect(sql).toContain("where e.type = 'charge.refunded' and e.outcome is distinct from 'location_mismatch'");
+    expect(sql).toContain("then least(to_timestamp(l.created_txt::bigint), l.received_at) end as event_time");
+    expect(sql).toContain('refunded_at_approximate boolean not null default false');
+    expect(sql).toContain("join public.catering_payments p on p.provider_ref = f.payment_intent and p.status in ('paid','refunded')");
+  });
 });

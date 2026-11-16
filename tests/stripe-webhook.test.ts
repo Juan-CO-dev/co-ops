@@ -480,8 +480,8 @@ describe("charge.refunded", () => {
     expect((await processStripeEvent(wed.client, { ...refundEvent({ amount: 10000, amount_refunded: 10000, refunded: true }), id: "evt_wed", created: wedSec }, SINGLE, noNotify)).result).toBe("refunded");
     const rows = [...refundEventRows(tue.ops), ...refundEventRows(wed.ops)];
     expect(rows).toEqual([
-      { stripe_event_id: "evt_tue", payment_id: PAYMENT_ID, refunded_at: "2026-11-10T15:00:00.000Z", cumulative_refunded_cents: 1000, charge_amount_cents: 10000 },
-      { stripe_event_id: "evt_wed", payment_id: PAYMENT_ID, refunded_at: "2026-11-11T15:00:00.000Z", cumulative_refunded_cents: 10000, charge_amount_cents: 10000 },
+      { stripe_event_id: "evt_tue", payment_id: PAYMENT_ID, refunded_at: "2026-11-10T15:00:00.000Z", cumulative_refunded_cents: 1000, charge_amount_cents: 10000, refunded_at_approximate: false },
+      { stripe_event_id: "evt_wed", payment_id: PAYMENT_ID, refunded_at: "2026-11-11T15:00:00.000Z", cumulative_refunded_cents: 10000, charge_amount_cents: 10000, refunded_at_approximate: false },
     ]);
     // The money-status rules are unchanged: the partial moved nothing, the completion flipped paid → refunded.
     expect(tue.ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
@@ -497,6 +497,14 @@ describe("charge.refunded", () => {
     const stamped = Date.parse(String(refundEventRows(ops)[0]?.refunded_at));
     expect(stamped).toBeGreaterThanOrEqual(before);
     expect(stamped).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("W26/B140 r2 — an event with no `created` is stamped at processing time and marked approximate", async () => {
+    const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: PAID_ROW } }));
+    const ev = { ...refundEvent() } as Record<string, unknown>;
+    delete ev.created;
+    await processStripeEvent(client, ev as never, SINGLE, noNotify);
+    expect(refundEventRows(ops)[0]).toMatchObject({ refunded_at_approximate: true });
   });
 
   it("W26/B140 — a partial refund delivered AFTER the completion (row already refunded) is still appended", async () => {

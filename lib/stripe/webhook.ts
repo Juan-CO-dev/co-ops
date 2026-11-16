@@ -1517,6 +1517,8 @@ async function appendRefundEvent(sb: ServiceClient, outcome: CheckoutEventOutcom
     refunded_at: refundedAt,
     cumulative_refunded_cents: outcome.amountCents,
     charge_amount_cents: outcome.chargeAmountCents ?? null,
+    // No `created` on the event: the time is when it was processed, and says so (review r2).
+    refunded_at_approximate: outcome.createdSec == null,
   });
   if (!error || error.code === "23505" || refundEventsTableMissing(error)) return;
   throw new Error(`stripe refund event append: ${error.message}`);

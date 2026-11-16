@@ -32,17 +32,20 @@
 --      event id, so a redelivery adds nothing), holding the payment, the event's own time (capped at now — the
 --      paid_at rule) and the charge's CUMULATIVE amount_refunded. The webhook (lib/stripe/webhook.ts refund())
 --      appends it for partial AND whole refunds, BEFORE the paid → refunded flip (unchanged). What one refund gave
---      back is derived at read time (lib/catering/refund-events-shared.ts: its cumulative minus the highest
---      cumulative of the same payment's earlier events), and the daily catering digest reports every event on
+--      back is derived at read time (lib/catering/refund-events-shared.ts: its cumulative minus the previous
+--      cumulative of the same payment, ordered by the cumulative figure — review r2), and the daily catering digest reports every event on
 --      the day it happened at that amount: $10 refunded Tuesday then the remaining $90 Wednesday reads $10 on
 --      Tuesday and $90 on Wednesday (the first cut of this file stamped the payment row, which reported $100 on
 --      the flip day and nothing for a partial). catering_payments is NOT altered.
 --
--- EXISTING ROWS: marketing entries untouched (voided = false). Refund events are backfilled from EVERY
---   'catering.payment.provider_refunded' audit row (partial and whole) whose payment exists and whose
---   metadata.refunded_amount_cents is a number: key = metadata.stripe_event_id (else 'audit:<audit id>'), time =
---   the audit row's created_at, figure = that cumulative amount; a repeated key keeps its earliest row. An audit
---   row without a numeric amount is skipped (it cannot say how much). No other row is written.
+-- EXISTING ROWS: marketing entries untouched (voided = false). Refund events are backfilled (review r2) from
+--   (A) every `charge.refunded` delivery in the webhook ledger stripe_events — including the ones that wrote
+--   no audit row (a partial refund delivered after the whole-charge refund, `no_paid_row`) — at the Stripe
+--   EVENT's own time (`payload->>'created'`, capped at received_at), bound to the payment by its
+--   payment_intent = provider_ref; then (B) every 'catering.payment.provider_refunded' audit row (A) did not
+--   cover, at the audit row's created_at (its metadata carries no event time), marked
+--   refunded_at_approximate = true and pulled back to no later than any higher-cumulative event of the same
+--   payment. A row with no numeric cumulative figure or no payment we hold is skipped. No other row is written.
 --
 -- APP (same PR, W26): works before AND after this file is applied.
 --   · The scorecard reads `voided` and, when the column is missing (42703), re-reads without it (nothing voided).
@@ -53,14 +56,17 @@
 --   Until this file is applied a correction still cannot move an entry (B139 stays open) and the digest keeps
 --   missing later-day refunds (B140 stays open); nothing breaks.
 --
--- DEPENDS ON: 0289 (marketing ledgers + writers + marketing_assert_actor), 0127 (catering_payments), 0303
+-- DEPENDS ON: 0289 (marketing ledgers + writers + marketing_assert_actor), 0127 (catering_payments), 0204
+--   (stripe_events, the backfill's event-time source), 0303
 --   (settlement_cleanup_at — the payments table at its current shape).
 --
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select column_name, data_type from information_schema.columns where table_schema='public'
 --    and table_name='audit_log' and column_name in ('action','resource_table','resource_id','metadata','created_at');
 --   select count(*) from public.catering_payments where status = 'refunded';            -- report it in the PR
---   select count(*) from public.audit_log where action = 'catering.payment.provider_refunded';  -- the backfill's source
+--   select count(*) from public.audit_log where action = 'catering.payment.provider_refunded';  -- backfill source (B)
+--   select count(*), count(*) filter (where payload ? 'created') from public.stripe_events
+--    where type = 'charge.refunded';                                                      -- backfill source (A)
 --   select count(*) from public.marketing_manual_entries;                                 -- untouched
 --   select md5(prosrc) from pg_proc where oid =
 --     'public.record_marketing_manual_entry(uuid,text,uuid,text,date,date,bigint,integer,text,uuid,text)'::regprocedure;
@@ -70,7 +76,8 @@
 --   select to_regprocedure('public.void_marketing_manual_entry(uuid,uuid,text)');         -- not null
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema='public'
 --    and routine_name in ('record_marketing_manual_entry','void_marketing_manual_entry') order by 1,2;  -- service_role (+ owner)
---   select count(*) from public.catering_payment_refund_events;                          -- = the distinct backfill keys
+--   select count(*), count(*) filter (where refunded_at_approximate) from public.catering_payment_refund_events;
+--     -- = the distinct backfill keys; report how many times are approximate (delivery time) in the PR
 --   select privilege_type from information_schema.role_table_grants where table_name='catering_payment_refund_events'
 --    and grantee='service_role';                                                           -- SELECT, INSERT only
 --
@@ -86,6 +93,7 @@ do $$ begin
     raise exception '0333: 0289 not installed';
   end if;
   if to_regclass('public.catering_payments') is null then raise exception '0333: catering_payments missing'; end if;
+  if to_regclass('public.stripe_events') is null then raise exception '0333: stripe_events missing (0204)'; end if;
   if exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'catering_payments'
       and column_name = 'settlement_cleanup_at') is not true then
     raise exception '0333: apply 0303 first';
@@ -194,6 +202,9 @@ create table public.catering_payment_refund_events (
   refunded_at timestamptz not null,
   cumulative_refunded_cents bigint not null check (cumulative_refunded_cents >= 0),
   charge_amount_cents bigint check (charge_amount_cents is null or charge_amount_cents >= 0),
+  -- true = `refunded_at` is a DELIVERY time (Stripe's event time was not available), not the
+  -- refund's own time (review r2). Amounts never depend on it: they follow the cumulative figure.
+  refunded_at_approximate boolean not null default false,
   recorded_at timestamptz not null default now()
 );
 create index catering_payment_refund_events_refunded_at on public.catering_payment_refund_events (refunded_at);
@@ -206,17 +217,75 @@ create policy catering_payment_refund_events_no_user_delete on public.catering_p
 revoke all on table public.catering_payment_refund_events from public, anon, authenticated, service_role;
 grant select, insert on table public.catering_payment_refund_events to service_role;
 
-insert into public.catering_payment_refund_events (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents, charge_amount_cents)
-select distinct on (k.event_key) k.event_key, k.payment_id, k.created_at, k.cumulative, k.charge
-  from (select coalesce(nullif(a.metadata->>'stripe_event_id', ''), 'audit:' || a.id::text) as event_key,
-               p.id as payment_id, a.created_at, a.id as audit_id,
-               (a.metadata->>'refunded_amount_cents')::bigint as cumulative,
-               case when (a.metadata->>'charge_amount_cents') ~ '^[0-9]+$' then (a.metadata->>'charge_amount_cents')::bigint end as charge
-          from public.audit_log a
-          join public.catering_payments p on p.id::text = a.resource_id::text
-         where a.action = 'catering.payment.provider_refunded' and a.resource_table = 'catering_payments'
-           and (a.metadata->>'refunded_amount_cents') ~ '^[0-9]+$') k
- order by k.event_key, k.created_at, k.audit_id;
+-- Backfill (review r2). Two sources, one row per Stripe event, append-only by construction:
+--  (A) the webhook ledger `stripe_events` (0204): every `charge.refunded` delivery is stored VERBATIM
+--      before it is worked — including the ones that wrote NO audit row (a partial refund delivered
+--      after the whole-charge refund answers `no_paid_row`; a refund seen before its payment). The
+--      time is the Stripe EVENT's own `created` (`payload->>'created'`, epoch seconds — the same
+--      field the webhook reads as `createdSec`), capped at `received_at`; the figure is the charge's
+--      cumulative `payload->'data'->'object'->>'amount_refunded'`; the payment is bound by
+--      `payment_intent` (a string, or an expanded object's `id`) = `catering_payments.provider_ref`,
+--      exactly the live path's binding, on a row money was recorded on (paid / refunded).
+--      A `location_mismatch` delivery is skipped (the live path appends nothing for it).
+--  (B) the audit trail (`catering.payment.provider_refunded`), only for an event (A) did not yield.
+--      Its metadata carries `stripe_event_id`, `refunded_amount_cents` and `charge_amount_cents` and
+--      NO event time — so its time is the audit row's `created_at` (the DELIVERY time) and the row
+--      is marked `refunded_at_approximate = true`.
+-- An approximate time never reorders history: amounts are derived in the order of the cumulative
+-- figure (`refundEventAmounts`), and an approximate time is pulled back to no later than the
+-- earliest time of any event of the same payment with a HIGHER cumulative figure (that refund
+-- happened after this one, so its time bounds this one's from above).
+-- Unparseable payloads, non-numeric figures and payments we do not hold are skipped, never guessed.
+with ledger as (
+  select e.id as event_key, e.received_at, e.payload->'data'->'object' as obj, e.payload->>'created' as created_txt
+    from public.stripe_events e
+   where e.type = 'charge.refunded' and e.outcome is distinct from 'location_mismatch'
+     and jsonb_typeof(e.payload->'data'->'object') = 'object'
+), from_ledger as (
+  select l.event_key,
+         case jsonb_typeof(l.obj->'payment_intent') when 'string' then l.obj->>'payment_intent'
+              when 'object' then l.obj->'payment_intent'->>'id' end as payment_intent,
+         case when jsonb_typeof(l.obj->'amount_refunded') = 'number' and (l.obj->>'amount_refunded') ~ '^[0-9]{1,15}$'
+              then (l.obj->>'amount_refunded')::bigint end as cumulative,
+         case when jsonb_typeof(l.obj->'amount') = 'number' and (l.obj->>'amount') ~ '^[0-9]{1,15}$'
+              then (l.obj->>'amount')::bigint end as charge,
+         case when l.created_txt ~ '^[0-9]{1,12}$' and l.created_txt::bigint > 0
+              then least(to_timestamp(l.created_txt::bigint), l.received_at) end as event_time,
+         l.received_at
+    from ledger l
+), cand as (
+  -- (A)
+  (select distinct on (f.event_key) f.event_key, p.id as payment_id,
+         coalesce(f.event_time, f.received_at) as at, f.event_time is null as approximate,
+         f.cumulative, f.charge, 0 as source
+    from from_ledger f
+    join public.catering_payments p on p.provider_ref = f.payment_intent and p.status in ('paid','refunded')
+   where f.cumulative is not null and f.payment_intent is not null
+   order by f.event_key, p.id)
+  union all
+  -- (B)
+  (select distinct on (k.event_key) k.event_key, k.payment_id, k.created_at, true, k.cumulative, k.charge, 1
+    from (select coalesce(nullif(a.metadata->>'stripe_event_id', ''), 'audit:' || a.id::text) as event_key,
+                 p.id as payment_id, a.created_at, a.id as audit_id,
+                 (a.metadata->>'refunded_amount_cents')::bigint as cumulative,
+                 case when (a.metadata->>'charge_amount_cents') ~ '^[0-9]+$' then (a.metadata->>'charge_amount_cents')::bigint end as charge
+            from public.audit_log a
+            join public.catering_payments p on p.id::text = a.resource_id::text
+           where a.action = 'catering.payment.provider_refunded' and a.resource_table = 'catering_payments'
+             and (a.metadata->>'refunded_amount_cents') ~ '^[0-9]{1,15}$') k
+   order by k.event_key, k.created_at, k.audit_id)
+), chosen as (
+  select distinct on (c.event_key) c.* from cand c order by c.event_key, c.source
+)
+insert into public.catering_payment_refund_events
+  (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents, charge_amount_cents, refunded_at_approximate)
+select c.event_key, c.payment_id,
+       case when c.approximate then least(c.at, coalesce((select min(h.at) from chosen h
+              where h.payment_id = c.payment_id and h.cumulative > c.cumulative), c.at))
+            else c.at end,
+       c.cumulative, c.charge, c.approximate
+  from chosen c
+on conflict (stripe_event_id) do nothing;
 
 -- ── Privileges and owners (0289's ceiling) ─────────────────────────────────────────────────────────────
 do $$ declare f regprocedure; owner_oid oid; begin
