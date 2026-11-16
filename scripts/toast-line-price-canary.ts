@@ -34,24 +34,49 @@ export function parseCanaryArgs(args: string[], today = etCalendarDate(new Date(
   return { dates, location };
 }
 
-type Thenable<T> = PromiseLike<{ data: T | null; error: unknown }>;
-type Query = { select(c: string): Query; eq(k: string, v: unknown): Query; not(k: string, op: string, v: unknown): Query; order(k: string): Query; in(k: string, v: string[]): Query } & Thenable<unknown[]>;
+type Thenable<T> = PromiseLike<{ data: T | null; error: unknown; count?: number | null }>;
+type Query = {
+  select(c: string, opts?: { count: "exact" }): Query; eq(k: string, v: unknown): Query; not(k: string, op: string, v: unknown): Query;
+  order(k: string): Query; in(k: string, v: string[]): Query; range(from: number, to: number): Query;
+} & Thenable<unknown[]>;
 interface Deps {
   sb: { from(table: string): Query };
   fetchDay(locationId: string, date: string): Promise<{ skipped?: string; orders: CanaryFetchedOrder[] }>;
+  /** Rows asked per request. Below PostgREST's 1000 default so a short page is never mistaken for a cap. */
+  pageSize?: number;
+  /** A read that would need more pages than this REFUSES (`canary_page_cap`) rather than judge a partial set. */
+  maxPages?: number;
 }
 export type CanaryReport = { pass: boolean; days: (Partial<CanaryDay> & { location: string; date: string; skipped?: string; pass: boolean })[] };
 
-async function rows<T>(query: Query, code: string): Promise<T[]> {
-  const { data, error } = await query;
-  if (error || !data) throw new Error(code);
-  return data as T[];
+const PAGE_SIZE = 500;
+const MAX_PAGES = 200;
+
+/** Fix round 1 (ITEM1B-r1 P2 #1): read EVERY row or refuse. Each request carries `count: "exact"` and a stable
+ *  order; the collected set must equal the server's count — a server row cap, a short page or a count that moved
+ *  under the read is `canary_history_truncated`, a missing count `canary_history_uncounted`, too many pages
+ *  `canary_page_cap`. The canary never judges a partial history (a cut-off latest snapshot reads as "never captured"). */
+async function readAll<T>(build: () => Query, code: string, pageSize: number, maxPages: number): Promise<T[]> {
+  const out: T[] = [];
+  for (let page = 0; ; page++) {
+    if (page >= maxPages) throw new Error("canary_page_cap");
+    const { data, error, count } = await build().range(page * pageSize, page * pageSize + pageSize - 1);
+    if (error || !data) throw new Error(code);
+    if (typeof count !== "number") throw new Error("canary_history_uncounted");
+    out.push(...(data as T[]));
+    if (out.length > count) throw new Error("canary_history_truncated");
+    if (out.length === count) return out;
+    if (data.length < pageSize) throw new Error("canary_history_truncated");
+  }
 }
 
 export async function runCanary(options: ReturnType<typeof parseCanaryArgs>, deps: Deps): Promise<CanaryReport> {
-  let shops = deps.sb.from("locations").select("id").eq("active", true).not("toast_restaurant_guid", "is", null);
-  if (options.location) shops = shops.eq("id", options.location);
-  const locations = await rows<{ id: string }>(shops.order("id"), "canary_locations_unavailable");
+  const pageSize = deps.pageSize ?? PAGE_SIZE, maxPages = deps.maxPages ?? MAX_PAGES;
+  const shops = () => {
+    const q = deps.sb.from("locations").select("id", { count: "exact" }).eq("active", true).not("toast_restaurant_guid", "is", null);
+    return (options.location ? q.eq("id", options.location) : q).order("id");
+  };
+  const locations = await readAll<{ id: string }>(shops, "canary_locations_unavailable", pageSize, maxPages);
   if (!locations.length) throw new Error("canary_locations_unavailable");
   const report: CanaryReport = { pass: true, days: [] };
   for (const { id: location } of locations) {
@@ -62,10 +87,21 @@ export async function runCanary(options: ReturnType<typeof parseCanaryArgs>, dep
       const stored: CanaryStoredSnapshot[] = [];
       for (let i = 0; i < guids.length; i += 50) {
         const chunk = guids.slice(i, i + 50);
-        const snapshots = await rows<{ id: string; order_guid: string; content_hash: string; modified_at: string | null }>(
-          deps.sb.from("toast_orders").select("id,order_guid,content_hash,modified_at").eq("location_id", location).in("order_guid", chunk), "canary_snapshots_read_failed");
-        const pointers = await rows<{ order_guid: string; snapshot_id: string }>(
-          deps.sb.from("toast_order_latest_pointers").select("order_guid,snapshot_id").eq("location_id", location).in("order_guid", chunk), "canary_pointers_read_failed");
+        const snapshots = await readAll<{ id: string; order_guid: string; content_hash: string; modified_at: string | null }>(
+          () => deps.sb.from("toast_orders").select("id,order_guid,content_hash,modified_at", { count: "exact" }).eq("location_id", location).in("order_guid", chunk).order("id"),
+          "canary_snapshots_read_failed", pageSize, maxPages);
+        const pointers = await readAll<{ order_guid: string; snapshot_id: string }>(
+          () => deps.sb.from("toast_order_latest_pointers").select("order_guid,snapshot_id", { count: "exact" }).eq("location_id", location).in("order_guid", chunk).order("order_guid"),
+          "canary_pointers_read_failed", pageSize, maxPages);
+        // Every stored order must have its latest pointer, and every pointer's snapshot must be in the history
+        // read; otherwise an order would be judged without its latest snapshot. Refuse by name.
+        const byId = new Map(snapshots.map((s) => [s.id, s]));
+        const pointed = new Set<string>();
+        for (const p of pointers) {
+          if (byId.get(p.snapshot_id)?.order_guid !== p.order_guid) throw new Error("canary_snapshot_history_missing");
+          pointed.add(p.order_guid);
+        }
+        if (snapshots.some((s) => !pointed.has(s.order_guid))) throw new Error("canary_latest_pointer_missing");
         const latest = new Set(pointers.map((p) => p.snapshot_id));
         stored.push(...snapshots.map((s) => ({ ...s, latest: latest.has(s.id) })));
       }

@@ -95,11 +95,14 @@ describe("scripts/toast-line-price-canary", () => {
         let ids: string[] = [];
         const q = {
           select: () => { ops.push(`select:${table}`); return q; },
-          eq: () => q, not: () => q, order: () => q,
+          eq: () => q, not: () => q, order: () => q, range: () => q,
           in: (_k: string, values: string[]) => { ids = values; expect(values.length).toBeLessThanOrEqual(50); return q; },
-          then: (resolve: (v: unknown) => void) => resolve({ error: null, data: table === "locations" ? [{ id: "shop" }]
-            : table === "toast_orders" ? ids.map((g) => ({ id: `s-${g}`, order_guid: g, content_hash: "a".repeat(64), modified_at: T }))
-            : ids.map((g) => ({ order_guid: g, snapshot_id: `s-${g}` })) }),
+          then: (resolve: (v: unknown) => void) => {
+            const data = table === "locations" ? [{ id: "shop" }]
+              : table === "toast_orders" ? ids.map((g) => ({ id: `s-${g}`, order_guid: g, content_hash: "a".repeat(64), modified_at: T }))
+              : ids.map((g) => ({ order_guid: g, snapshot_id: `s-${g}` }));
+            resolve({ error: null, data, count: data.length });
+          },
           insert: () => { throw new Error("write"); }, update: () => { throw new Error("write"); }, upsert: () => { throw new Error("write"); },
         };
         return q;
@@ -112,9 +115,79 @@ describe("scripts/toast-line-price-canary", () => {
     expect(new Set(ops)).toEqual(new Set(["select:locations", "select:toast_orders", "select:toast_order_latest_pointers"]));
     expect(report).toMatchObject({ pass: true, days: [{ location: "shop", date: "2026-10-01", present: 120, pass: true }, { date: "2026-10-02", pass: true }] });
   });
+  // Fix round 1 (ITEM1B-r1 P2 #1): a truncated history must REFUSE, never pass. The mock below is a
+  // PostgREST stand-in: it honours select's `count: "exact"`, .range() and a server row cap (`cap`).
+  type Snap = { id: string; order_guid: string; content_hash: string; modified_at: string | null };
+  const history = (snaps: Snap[], pointers: { order_guid: string; snapshot_id: string }[], cap = Infinity, log: string[] = []) => ({
+    from: (table: string) => {
+      let ids: string[] | null = null; let range: [number, number] | null = null; let counted = false;
+      const q = {
+        select: (_c: string, opts?: { count?: string }) => { counted = opts?.count === "exact"; return q; },
+        eq: () => q, not: () => q, order: () => q,
+        in: (_k: string, values: string[]) => { ids = values; return q; },
+        range: (from: number, to: number) => { range = [from, to]; log.push(`${table}:${from}-${to}`); return q; },
+        then: (resolve: (v: unknown) => void) => {
+          const all: unknown[] = table === "locations" ? [{ id: "shop" }]
+            : table === "toast_orders" ? snaps.filter((s) => !ids || ids.includes(s.order_guid))
+            : pointers.filter((p) => !ids || ids.includes(p.order_guid));
+          const window = range ? all.slice(range[0], range[1] + 1) : all;
+          resolve({ error: null, data: window.slice(0, cap), count: counted ? all.length : null });
+        },
+      };
+      return q;
+    },
+  });
+  /** 50 orders, each with 3 snapshots (the 3rd is latest); order o0's latest has the SAME modified_at but
+   *  another hash than Toast now returns = a violation that only the LAST page of history can reveal. */
+  const violationFixture = () => {
+    const snaps: Snap[] = []; const pointers: { order_guid: string; snapshot_id: string }[] = [];
+    for (let i = 0; i < CANARY_MIN_ORDERS; i++) {
+      for (let v = 0; v < 3; v++) snaps.push({ id: `s${String(i).padStart(3, "0")}-${v}`, order_guid: `o${i}`, content_hash: (v === 2 ? "a" : String(v)).repeat(64), modified_at: v === 2 ? T : "2026-10-08T10:00:00Z" });
+      pointers.push({ order_guid: `o${i}`, snapshot_id: `s${String(i).padStart(3, "0")}-2` });
+    }
+    const orders = Array.from({ length: CANARY_MIN_ORDERS }, (_, i) => order(i, i === 0 ? "z".repeat(64) : "a".repeat(64)));
+    return { snaps, pointers, orders };
+  };
+  const one = { dates: ["2026-10-01"], location: null };
+
+  it("pages every history read to completion: a violation on a later page still FAILS", async () => {
+    const { snaps, pointers, orders } = violationFixture();
+    const log: string[] = [];
+    const report = await runCanary(one, { sb: history(snaps, pointers, Infinity, log) as never, fetchDay: async () => ({ orders }), pageSize: 40 });
+    expect(log.some((l) => l.startsWith("toast_orders:40-"))).toBe(true);
+    expect(report).toMatchObject({ pass: false, days: [{ absent_same_modified: 1, violations: ["o0"] }] });
+  });
+  it("REFUSES (never PASS) when the server row cap truncates the snapshot history", async () => {
+    const { snaps, pointers, orders } = violationFixture();
+    // The server returns at most 100 rows per request whatever range was asked: o0's latest is cut off.
+    await expect(runCanary(one, { sb: history(snaps, pointers, 100) as never, fetchDay: async () => ({ orders }) })).rejects.toThrow("canary_history_truncated");
+  });
+  it("REFUSES when a latest pointer names a snapshot the history does not contain", async () => {
+    const { snaps, pointers, orders } = violationFixture();
+    await expect(runCanary(one, { sb: history(snaps.filter((s) => s.id !== "s000-2"), pointers) as never, fetchDay: async () => ({ orders }) }))
+      .rejects.toThrow("canary_snapshot_history_missing");
+  });
+  it("REFUSES when an order has stored snapshots but no latest pointer", async () => {
+    const { snaps, pointers, orders } = violationFixture();
+    await expect(runCanary(one, { sb: history(snaps, pointers.filter((p) => p.order_guid !== "o0")) as never, fetchDay: async () => ({ orders }) }))
+      .rejects.toThrow("canary_latest_pointer_missing");
+  });
+  it("REFUSES when a read hits the page cap", async () => {
+    const { snaps, pointers, orders } = violationFixture();
+    await expect(runCanary(one, { sb: history(snaps, pointers) as never, fetchDay: async () => ({ orders }), pageSize: 10, maxPages: 3 }))
+      .rejects.toThrow("canary_page_cap");
+  });
+  it("REFUSES when the server does not report a row count", async () => {
+    const { snaps, pointers, orders } = violationFixture();
+    const sb = history(snaps, pointers);
+    const from = sb.from;
+    const uncounted = { from: (t: string) => { const q = from(t); const select = q.select; q.select = (c: string) => select(c); return q; } };
+    await expect(runCanary(one, { sb: uncounted as never, fetchDay: async () => ({ orders }) })).rejects.toThrow("canary_history_uncounted");
+  });
+
   it("fails overall on any violation or any day that could not be judged", async () => {
-    const sb = { from: () => { const q = { select: () => q, eq: () => q, not: () => q, order: () => q, in: () => q,
-      then: (r: (v: unknown) => void) => r({ error: null, data: [{ id: "shop" }] }) }; return q; } };
+    const sb = { from: () => { const q = { select: () => q, eq: () => q, not: () => q, order: () => q, in: () => q, range: () => q,
+      then: (r: (v: unknown) => void) => r({ error: null, data: [{ id: "shop" }], count: 1 }) }; return q; } };
     const report = await runCanary({ dates: ["2026-10-01"], location: null }, { sb: sb as never, fetchDay: async () => ({ skipped: "capture_disabled_or_fixture", orders: [] }) });
     expect(report).toMatchObject({ pass: false, days: [{ skipped: "capture_disabled_or_fixture", pass: false }] });
   });
