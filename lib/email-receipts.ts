@@ -1143,10 +1143,23 @@ export async function listUnlinkedReceipts(
     .order("id", { ascending: false })
     .range(offset, offset + pageSize - 1)
     .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null; linked_po_id: string | null; parse_state: "unparsed" | "parsed" | "failed"; doc_kind: string | null; attributed_by: UnlinkedReceiptView["attributedBy"]; attribution_conflict: boolean; account_location_id: string | null; account_vendor_id: string | null }>>();
-  if (error) throw new Error(`listUnlinkedReceipts: ${error.message}`);
-
-  const list = rows ?? [];
-  const total = Math.max(count ?? 0, offset + list.length);
+  let list = rows ?? [];
+  let total = count ?? 0;
+  if (error) {
+    // PostgREST refuses a page that starts past the end (416, PGRST103): the queue shrank while
+    // someone was paging (receipts were linked). That is an empty page with the real total, not
+    // a failure. Anything else is a real error.
+    if (error.code !== "PGRST103") throw new Error(`listUnlinkedReceipts: ${error.message}`);
+    const { count: remaining, error: countError } = await sb
+      .from("email_receipts")
+      .select("id", { count: "exact", head: true })
+      .is("linked_delivery_id", null)
+      .or(queueFilter);
+    if (countError) throw new Error(`listUnlinkedReceipts count: ${countError.message}`);
+    list = [];
+    total = remaining ?? 0;
+  }
+  if (list.length > 0) total = Math.max(total, offset + list.length);
   const hasMore = offset + list.length < total;
 
   // The pill counts every flagged receipt in the queue, so a flag on an older page is never

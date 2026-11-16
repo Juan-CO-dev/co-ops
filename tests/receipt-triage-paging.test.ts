@@ -24,6 +24,8 @@ let queue: Row[];
 let calls: { range: Array<[number, number]>; order: Array<[string, unknown]>; select: Array<[string, unknown]>; signBulk: string[][]; signOne: number; headCounts: number };
 let signFails: Set<string>;
 let bulkError = false;
+/** PostgREST answers 416 / PGRST103 for a page that starts past the end; the fake does too when set. */
+let strictRange = false;
 
 const row = (i: number, extra: Row = {}): Row => ({
   id: `r${String(i).padStart(4, "0")}`, source: "inbound", from_address: "billing@vendor.example", subject: `Invoice ${i}`,
@@ -51,6 +53,9 @@ function client() {
         if (head) { calls.headCounts += 1; return Promise.resolve({ data: null, error: null, count: matched.length }).then(resolve); }
         // Newest first, id as the tiebreak: the order the query asks for.
         const sorted = [...matched].sort((a, b) => String(b.received_at).localeCompare(String(a.received_at)) || String(b.id).localeCompare(String(a.id)));
+        if (strictRange && range && sorted.length > 0 && range[0] >= sorted.length) {
+          return Promise.resolve({ data: null, error: { code: "PGRST103", message: "Requested range not satisfiable" }, count: null }).then(resolve);
+        }
         const page = range ? sorted.slice(range[0], range[1] + 1) : sorted.slice(0, 1000); // no range = the API's silent cap
         return Promise.resolve({ data: page, error: null, count: matched.length }).then(resolve);
       };
@@ -71,7 +76,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.allowed.mockResolvedValue(true);
   calls = { range: [], order: [], select: [], signBulk: [], signOne: 0, headCounts: 0 };
-  signFails = new Set(); bulkError = false;
+  signFails = new Set(); bulkError = false; strictRange = false;
   queue = Array.from({ length: 1500 }, (_, i) => row(i));
   mocks.client.mockReturnValue(client());
 });
@@ -94,6 +99,15 @@ describe("W20/B195 the triage queue is paged", () => {
     expect(page).toMatchObject({ total: 1500, hasMore: false });
     const past = await listUnlinkedReceipts(actor, SHOP, { offset: 1500 });
     expect(past).toMatchObject({ receipts: [], total: 1500, hasMore: false });
+  });
+  it("a page past the end (the queue shrank while paging) is an empty page with the real total, not an error", async () => {
+    strictRange = true;
+    queue = queue.slice(0, 150);
+    expect(await listUnlinkedReceipts(actor, SHOP, { offset: 200 })).toEqual({ receipts: [], total: 150, hasMore: false, flagged: 0 });
+    expect(await listUnlinkedReceipts(actor, SHOP, { offset: 150 })).toMatchObject({ receipts: [], total: 150, hasMore: false });
+    const last = await listUnlinkedReceipts(actor, SHOP, { offset: 100 });
+    expect(last.receipts).toHaveLength(50);
+    expect(last).toMatchObject({ total: 150, hasMore: false });
   });
   it("walking every page returns every receipt exactly once", async () => {
     const seen: string[] = [];
