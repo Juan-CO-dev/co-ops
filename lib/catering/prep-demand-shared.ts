@@ -197,11 +197,21 @@ export function resolveDemandFromLines(input: {
  * line, which left package orders at their old quantities. An item-only quote is always false.
  * Conservative by design: a new, never-picked package added in the revision also reads as true (the manager
  * is told to re-confirm), because a lost pick and a never-made pick look the same from the ledger.
+ *
+ * MIXED HEADERS SHARING A SLOT (fix round 1, review r1 BC-031/BC-042). Two headers of one package share its
+ * slot ids; header A held stored picks (concrete subs reserved today) and header B none (an advisory slot row).
+ * After a revise both resolve to the slot, so "the prior set already had that slot unresolved" proved nothing:
+ * the resync replaced A's subs with a "needs a pick" row. The ledger rows do not say which quote line they
+ * came from, so the rule cannot match lines — it refuses: `priorPickedSlots` names every slot that held a
+ * stored pick on the quote(s) the prior reserved set was resolved from (other than the current one), and a new
+ * revision that resolves any of those slots to "needs a pick" is true.
  */
 export function resyncWouldDropPicks(
   newDemand: ReadonlyArray<Pick<ResolvedDemand, "choicePackageItemId">>,
   priorReserved: ReadonlyArray<{ choicePackageItemId: string | null }>,
+  priorPickedSlots: ReadonlyArray<string> = [],
 ): boolean {
   const priorSlots = new Set(priorReserved.map((r) => r.choicePackageItemId).filter((id): id is string => id != null));
-  return newDemand.some((d) => d.choicePackageItemId != null && !priorSlots.has(d.choicePackageItemId));
+  const picked = new Set(priorPickedSlots);
+  return newDemand.some((d) => d.choicePackageItemId != null && (!priorSlots.has(d.choicePackageItemId) || picked.has(d.choicePackageItemId)));
 }

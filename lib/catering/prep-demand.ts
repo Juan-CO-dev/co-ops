@@ -350,6 +350,8 @@ export type ResyncOutcome = "resynced" | "not_confirmed" | "no_quote" | "skipped
  * `prepDemandResynced: true`. Now the skip happens only when the new revision would
  * really drop a stored pick (`resyncWouldDropPicks`), and it is returned so the
  * manager is told. (Copying the picks forward on revise is the complete fix; filed.)
+ * Fix round 1: the prior reserved set's quotes are read for stored picks too, so two headers of one package
+ * sharing a slot (one picked, one not) can no longer pass as "nothing to lose".
  */
 export async function resyncPrepDemand(actor: AuthContext, pipelineId: string): Promise<ResyncOutcome> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
@@ -364,17 +366,43 @@ export async function resyncPrepDemand(actor: AuthContext, pipelineId: string): 
   if (!quote) return "no_quote";
   const [newDemand, { data: prior, error: pErr }] = await Promise.all([
     resolveQuoteDemand(sb, quote.id),
-    sb.from("catering_prep_demand").select("choice_package_item_id")
+    sb.from("catering_prep_demand").select("choice_package_item_id, quote_id")
       .eq("pipeline_id", pipelineId).eq("status", "reserved")
-      .returns<Array<{ choice_package_item_id: string | null }>>(),
+      .returns<Array<{ choice_package_item_id: string | null; quote_id: string | null }>>(),
   ]);
   if (pErr) throw new Error(`resyncPrepDemand prior reserved: ${pErr.message}`);
-  if (resyncWouldDropPicks(newDemand, (prior ?? []).map((r) => ({ choicePackageItemId: r.choice_package_item_id })))) {
+  const priorRows = prior ?? [];
+  const priorPickedSlots = await loadPickedSlots(sb, priorRows.map((r) => r.quote_id).filter((id): id is string => id != null && id !== quote.id));
+  if (resyncWouldDropPicks(newDemand, priorRows.map((r) => ({ choicePackageItemId: r.choice_package_item_id })), priorPickedSlots)) {
     void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.resync_skipped_package", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { quote_id: quote.id, reason: "package_picks_not_carried_forward" }, ipAddress: null, userAgent: null });
     return "skipped_package_picks";
   }
   const outcome = await reservePrepDemand(actor, pipelineId);
   return outcome === "reserved" ? "resynced" : outcome === "no_quote" ? "no_quote" : "not_confirmed";
+}
+
+/** The choice slots (package_item ids) that held a stored customer pick on any package line of these quotes
+ *  (fix round 1: the prior reserved set's quotes, for `resyncWouldDropPicks`). Id lists are chunked. */
+async function loadPickedSlots(sb: Sb, quoteIds: readonly string[]): Promise<string[]> {
+  const ids = [...new Set(quoteIds)];
+  if (ids.length === 0) return [];
+  const lineIds: string[] = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const { data, error } = await sb.from("catering_quote_items").select("id")
+      .in("quote_id", ids.slice(i, i + 50)).not("package_id", "is", null)
+      .returns<Array<{ id: string }>>();
+    if (error) throw new Error(`resyncPrepDemand prior lines: ${error.message}`);
+    for (const r of data ?? []) lineIds.push(r.id);
+  }
+  const slots = new Set<string>();
+  for (let i = 0; i < lineIds.length; i += 100) {
+    const { data, error } = await sb.from("catering_quote_item_options").select("package_item_id")
+      .in("quote_item_id", lineIds.slice(i, i + 100))
+      .returns<Array<{ package_item_id: string }>>();
+    if (error) throw new Error(`resyncPrepDemand prior picks: ${error.message}`);
+    for (const r of data ?? []) slots.add(r.package_item_id);
+  }
+  return [...slots];
 }
 
 // ── Read: overlay (over-par) + per-lead breakdown ───────────────────────────────────
