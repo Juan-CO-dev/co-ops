@@ -36,13 +36,15 @@ import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/typ
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { DerivedSku } from "@/lib/prep-consumption";
 import {
-  batchFormFromRecord,
   needForLine,
-  readBatchFromPrepData,
+  sessionBackupBefore,
   type BatchItemContext,
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
-import { phase2SaveGate } from "@/lib/opening-phase2-gate";
+import { hydratePhase2Row, phase2Signature, type HydratedPhase2Row } from "@/lib/opening-phase2-form-shared";
+import { phase2BlankOutcome, phase2RevokeSettle, phase2SaveGate, phase2SaveSettle } from "@/lib/opening-phase2-gate";
+import { OpeningDraftAutosaver } from "@/lib/opening-draft-autosave";
+import { createClientRequestId } from "@/lib/client-request-id";
 import { isDuplicateInFlight } from "@/lib/made-the-need-shared";
 import { openingFooterHint } from "@/lib/prep-display-shared";
 import type {
@@ -71,17 +73,10 @@ import {
   type Phase2IncompleteReason,
   type Phase2RevokeOutcome,
   type Phase2RevokeReason,
+  type Phase2SaveSettled,
   type Phase2SaveState,
 } from "@/components/opening/OpeningPrepEntry";
-import {
-  isOverParReasonCategory,
-  type ManagerOption,
-  type OverParCapture,
-} from "@/components/opening/OverParModal";
-import {
-  isUnderParReasonCategory,
-  type UnderParCapture,
-} from "@/components/opening/UnderParModal";
+import type { ManagerOption } from "@/components/opening/OverParModal";
 
 interface OpeningClientProps {
   instance: ChecklistInstance;
@@ -137,7 +132,7 @@ interface OpeningClientProps {
    * loadOpeningState. Under dual-membership an openingPhase2 item carries TWO
    * live rows once Phase 2 saves exist — a phase1 row (prep_data ? 'phase1')
    * and a phase2 row (prep_data ? 'phase2'). The phase2Values seed filters to
-   * the phase2 rows ONLY (see readPhase2SaveState); the phase1 `values` seed
+   * the phase2 rows ONLY (see hydratePhase2Row); the phase1 `values` seed
    * reads no completions, so it can never pick up a phase2 row.
    */
   completions: ReadonlyArray<ChecklistCompletion>;
@@ -166,6 +161,7 @@ interface OpeningClientProps {
  * well inside the window too.
  */
 const DRAFT_AUTOSAVE_DEBOUNCE_MS = 800;
+const DRAFT_ENDPOINT = "/api/opening/phase1/draft";
 
 interface SubmitState {
   status: "idle" | "submitting" | "error";
@@ -174,51 +170,6 @@ interface SubmitState {
   // Interpolation params for the error banner's i18n lookup (e.g. {count} for
   // opening.error.phase2_incomplete). Undefined for codes without placeholders.
   errorParams?: TranslationParams;
-}
-
-/**
- * Shape of a persisted Phase 2 save, as written by save_phase2_item_atomic
- * (migration 0056) into completions.prep_data->'phase2'. snake_case mirrors the
- * RPC's jsonb_build_object exactly. NOT modeled by lib/types.ts PrepData (which
- * only covers the AM-Prep inputs/snapshot shape), so it's defined locally for
- * the hydration seed. Review Gate #1: this is the persisted-row → form-value
- * contract Triad A scrutinizes before Lane B.
- *
- * Forward-bind (Triad A, Review Gate #1): promote this to lib/types.ts as a
- * PrepData union arm ({ inputs, snapshot } | { phase2 }) when the verify-then-
- * prep primitive is designed — NOT now. Widening PrepData mid-build forces every
- * existing consumer to handle the new arm; local is correct for Lane A, the
- * promotion belongs to the primitive-design pass.
- */
-interface OpeningPhase2SaveState {
-  phase: 2;
-  closer_count: number | null;
-  spot_check_status: string | null;
-  opener_recount: number | null;
-  ground_truth_count: number | null;
-  prep_need: number | null;
-  opener_prepped: number | null;
-  delta_vs_prep_need: number | null;
-  over_under_status: "at_par" | "over_prep" | "under_prep";
-  over_under_reason_category: string | null;
-  over_under_reason_text: string | null;
-  directed_by: string | null;
-  saved_at: string;
-  saved_by: string;
-}
-
-/**
- * Explicit prep_data ? 'phase2' filter. Under dual-membership an openingPhase2
- * item carries a phase1 row AND a phase2 row once saves exist; this guard
- * returns non-null ONLY for the phase2 row, so the phase2Values seed can never
- * incidentally hydrate from a phase1 completion.
- */
-function readPhase2SaveState(prepData: unknown): OpeningPhase2SaveState | null {
-  if (prepData == null || typeof prepData !== "object") return null;
-  if (!("phase2" in prepData)) return null;
-  const p2 = (prepData as { phase2: unknown }).phase2;
-  if (p2 == null || typeof p2 !== "object") return null;
-  return p2 as OpeningPhase2SaveState;
 }
 
 /**
@@ -240,7 +191,7 @@ function isPhase2Row(prepData: unknown): boolean {
  * sub-object (the 8-key spot-check contract written by submit_opening_atomic,
  * migration 0053). Returns null when the completion carries no phase1 sub-object
  * — non-spot-check items store prep_data = null and never have a recount. Mirrors
- * readPhase2SaveState's untyped-boundary discipline: prep_data->phase1 is NOT
+ * the phase2 reader's untyped-boundary discipline: prep_data->phase1 is NOT
  * modeled by lib/types.ts PrepData, so it's read defensively here.
  */
 function readPhase1OpenerRecount(prepData: unknown): number | null {
@@ -293,115 +244,6 @@ function readPhase1Resolved(
     groundTruth: typeof gt === "number" ? gt : null,
     prepNeed: typeof pn === "number" ? pn : null,
   };
-}
-
-/**
- * Map a persisted phase2 save onto the controlled form value. The numeric beats
- * (openerRecount, openerPrepped) always hydrate. The over/under capture is
- * reconstructed from over_under_status, but the persisted reason category is an
- * UNTYPED text column — so it's validated at the boundary against the canonical
- * vocabulary (isOver/UnderParReasonCategory, derived from the modals' REASON_
- * OPTIONS). An unrecognized category does NOT get blind-cast in: the capture is
- * left null (forcing the operator to re-pick, since the numeric that triggered
- * over/under still hydrates) and a console.warn makes the bad value observable
- * rather than silently swallowed. (Review Gate #1 required fix.)
- */
-function saveStateToFormValue(
-  s: OpeningPhase2SaveState,
-  itemId: string,
-  /** 0215 — the row's whole prep_data, so the persisted batch object (phase2.batch) hydrates too. */
-  prepData?: unknown,
-): OpeningPhase2FormValue {
-  const batchRecord = prepData === undefined ? null : readBatchFromPrepData(prepData);
-  let overPar: OverParCapture | null = null;
-  if (s.over_under_status === "over_prep") {
-    const cat = s.over_under_reason_category;
-    if (cat != null && isOverParReasonCategory(cat)) {
-      overPar = {
-        reasonCategory: cat,
-        directedBy: s.directed_by,
-        freeText: s.over_under_reason_text,
-      };
-    } else if (process.env.NODE_ENV === "development") {
-      // Dev-only observability (projects F7): operators/managers should not see
-      // this hydration noise in DevTools during support calls.
-      console.warn(
-        `[opening] Phase 2 hydration: invalid over-par reasonCategory ${JSON.stringify(
-          cat,
-        )} on item ${itemId} (saved_at=${s.saved_at}); leaving capture unset for re-pick.`,
-      );
-    }
-  }
-
-  let underPar: UnderParCapture | null = null;
-  if (s.over_under_status === "under_prep") {
-    const cat = s.over_under_reason_category;
-    if (cat != null && isUnderParReasonCategory(cat)) {
-      underPar = {
-        reasonCategory: cat,
-        freeText: s.over_under_reason_text ?? "",
-      };
-    } else if (process.env.NODE_ENV === "development") {
-      // Dev-only observability (projects F7) — see the over-par branch above.
-      console.warn(
-        `[opening] Phase 2 hydration: invalid under-par reasonCategory ${JSON.stringify(
-          cat,
-        )} on item ${itemId} (saved_at=${s.saved_at}); leaving capture unset for re-pick.`,
-      );
-    }
-  }
-
-  return {
-    openerRecount: s.opener_recount,
-    openerPrepped: s.opener_prepped,
-    overPar,
-    underPar,
-    // Panel confirmation is not persisted into the phase2 completion's read-back
-    // shape (it lives on the productions ledger). A hydrated row starts untouched;
-    // the server re-derives the default on any subsequent blur-save.
-    confirmedConsumption: null,
-    batch: batchRecord ? batchFormFromRecord(batchRecord) : null,
-  };
-}
-
-/**
- * Serialize the persistable beats of a Phase 2 form value into a stable string
- * for value-diff dedup. Mirrors the /api/opening/prep/item route body shape
- * exactly: openerPrepped + the over/under captures, in the same field order the
- * route validates. openerRecount is intentionally EXCLUDED — recount is a
- * Phase 1 (verify-beat) concern, not in the route body, and a recount change
- * alone must not trigger a Phase 2 save. Used both to seed savedSignature from a
- * hydrated save and to compute the current signature at dispatch time, so the
- * two are computed by the identical code path and can be compared safely.
- */
-function phase2Signature(v: OpeningPhase2FormValue): string {
-  return JSON.stringify({
-    openerPrepped: v.openerPrepped,
-    overPar: v.overPar
-      ? {
-          reasonCategory: v.overPar.reasonCategory,
-          directedBy: v.overPar.directedBy,
-          freeText: v.overPar.freeText,
-        }
-      : null,
-    underPar: v.underPar
-      ? {
-          reasonCategory: v.underPar.reasonCategory,
-          freeText: v.underPar.freeText,
-        }
-      : null,
-    // Production-in-prep fold — MUST fold in the panel confirmation, else a
-    // panel-only edit (same openerPrepped/over/under) produces an identical
-    // signature and the value-diff guard silently skips the re-POST that would
-    // persist the confirmed consumption.
-    confirmedConsumption: v.confirmedConsumption,
-    // 0215 — the batch half rides the signature for the same reason (a stepper tap with
-    // the same bottled number must still POST). null on single-box rows, so their
-    // signature only gains a constant key.
-    batch: v.batch
-      ? { batches: v.batch.batches, cameOutTo: v.batch.cameOutTo, tossed: v.batch.tossed, overBatchReason: v.batch.overBatchReason }
-      : null,
-  });
 }
 
 export function OpeningClient({
@@ -577,27 +419,21 @@ export function OpeningClient({
   // Phase 2 form state — C.50 redesign: openerRecount replaces openerActual.
   // Hydrated from persisted phase2 completions so a returning prepper sees their
   // prior saves (Lane A). The seed filters completions to phase2 rows ONLY via
-  // readPhase2SaveState (explicit prep_data ? 'phase2' guard) — under dual-
+  // hydratePhase2Row (explicit prep_data ? 'phase2' guard) — under dual-
   // membership the same item also carries a phase1 row, which must never seed
   // this map. Items with no phase2 save start blank.
   const [phase2Values, setPhase2Values] = useState<Map<string, OpeningPhase2FormValue>>(() => {
-    const savedByItem = new Map<string, OpeningPhase2SaveState>();
-    const prepDataByItem = new Map<string, unknown>();
+    const hydratedByItem = new Map<string, HydratedPhase2Row>();
     for (const c of completions) {
-      const save = readPhase2SaveState(c.prepData);
-      if (save) {
-        savedByItem.set(c.templateItemId, save);
-        prepDataByItem.set(c.templateItemId, c.prepData);
-      }
+      const hydrated = hydratePhase2Row(c.prepData, c.templateItemId);
+      if (hydrated) hydratedByItem.set(c.templateItemId, hydrated);
     }
     const map = new Map<string, OpeningPhase2FormValue>();
     for (const item of phase2Items) {
-      const saved = savedByItem.get(item.id);
       map.set(
         item.id,
-        saved
-          ? saveStateToFormValue(saved, item.id, prepDataByItem.get(item.id))
-          : { openerRecount: null, openerPrepped: null, overPar: null, underPar: null, confirmedConsumption: null, batch: null },
+        hydratedByItem.get(item.id)?.formValue
+          ?? { openerRecount: null, openerPrepped: null, overPar: null, underPar: null, confirmedConsumption: null, batch: null },
       );
     }
     return map;
@@ -635,7 +471,7 @@ export function OpeningClient({
   // 0215 batch vs bottle — the batch row's context per batch_mode item. The counted bulk
   // backup is the opener's recount BACK UP when there was one (persisted beside
   // opener_recount by the Phase 1 RPC), else last night's closing BACK UP from the
-  // snapshot; LINE likewise; need_for_line = max(0, par − LINE). The RPC re-derives every
+  // snapshot, else 0 when the LINE is known (sessionBackupBefore); LINE likewise; need_for_line = max(0, par − LINE). The RPC re-derives every
   // number from the same two sources, so what the row previews is what the server accepts.
   const batchByItem = useMemo(() => {
     const map = new Map<string, BatchRowContext>();
@@ -650,7 +486,13 @@ export function OpeningClient({
       const snapshot = closerSnapshotsMap.get(templateItemId) ?? null;
       const split = splitByItem.get(templateItemId) ?? null;
       const lineCount = split?.line ?? snapshot?.lineCount ?? null;
-      const backupBefore = split?.backUp ?? snapshot?.backUpCount ?? null;
+      // Audit W14 / B020 — a BACK UP the closer left blank is 0 when the LINE is known (the
+      // RPC states the same rule, 0315); only a missing LINE leaves the backup unknown.
+      const backupBefore = sessionBackupBefore({
+        recountBackUp: split?.backUp ?? null,
+        snapshotBackUp: snapshot?.backUpCount ?? null,
+        line: lineCount,
+      });
       map.set(templateItemId, {
         recipeName: ctx.recipeName,
         yieldPerBatch: ctx.yieldPerBatch ?? 0,
@@ -672,32 +514,35 @@ export function OpeningClient({
   // `saveStates`) AND the finalize outstanding-count (savedPhase2Count /
   // outstandingCount below) — the badge and the finalize gate read the same Map
   // so they can never disagree. Seeded from the SAME phase2 completions the
-  // phase2Values hydration uses (readPhase2SaveState), so a returning prepper's
-  // already-persisted items render "saved" and don't inflate the outstanding
-  // count. Items with no persisted phase2 save start "unsaved".
+  // phase2Values hydration uses, THROUGH THE SAME hydratePhase2Row (audit W14 / B179: the
+  // saved signature used to be seeded by a second call that dropped the row's prep_data, so
+  // a batch row's signature said batch:null while its form value carried the batch object,
+  // and the first untouched blur re-saved the row under the second opener's name). A
+  // returning prepper's already-persisted items render "saved" and don't inflate the
+  // outstanding count. Items with no persisted phase2 save start "unsaved".
   const [saveStates, setSaveStates] = useState<Map<string, Phase2SaveState>>(() => {
-    const savedByItem = new Map<string, OpeningPhase2SaveState>();
+    const hydratedByItem = new Map<string, HydratedPhase2Row>();
     // completions.id of each live phase2 row, keyed by templateItemId — the
     // revoke POST target a returning prepper needs to revert an already-saved row.
     const idByItem = new Map<string, string>();
     for (const c of completions) {
-      const save = readPhase2SaveState(c.prepData);
-      if (save) {
-        savedByItem.set(c.templateItemId, save);
+      const hydrated = hydratePhase2Row(c.prepData, c.templateItemId);
+      if (hydrated) {
+        hydratedByItem.set(c.templateItemId, hydrated);
         idByItem.set(c.templateItemId, c.id);
       }
     }
     const map = new Map<string, Phase2SaveState>();
     for (const item of phase2Items) {
-      const saved = savedByItem.get(item.id);
-      if (saved) {
+      const hydrated = hydratedByItem.get(item.id);
+      if (hydrated) {
         map.set(item.id, {
           status: "saved",
-          savedById: saved.saved_by,
-          savedAt: saved.saved_at,
+          savedById: hydrated.save.saved_by,
+          savedAt: hydrated.save.saved_at,
           errorCode: null,
           incompleteReason: null,
-          savedSignature: phase2Signature(saveStateToFormValue(saved, item.id)),
+          savedSignature: hydrated.savedSignature,
           completionId: idByItem.get(item.id) ?? null,
         });
       } else {
@@ -868,8 +713,13 @@ export function OpeningClient({
   // 'open': past that the submit RPC owns the truth and the route 409s anyway.
   //
   // NEVER BLOCKS THE OPERATOR. A failed save sets a calm status line and nothing else —
-  // no modal, no disabled control, no retry loop. Because `draftSentRef` is advanced only
-  // on SUCCESS, the very next edit re-sends the full latest draft, which is the retry.
+  // no modal, no disabled control, no retry loop. Because the saver's "sent" marker advances
+  // only on SUCCESS, the very next edit re-sends the full latest draft, which is the retry.
+  //
+  // The send logic lives in OpeningDraftAutosaver (lib/opening-draft-autosave.ts, framework-
+  // free and unit-tested; audit W14 / B078): every send carries this tab's revision, an older
+  // ack can never pull the marker back, and a settled send re-sends when the newest draft is
+  // still not the saved one. This component only wires the browser to it.
   const draftEnabled = instance.status === "open";
   const [draftState, setDraftState] = useState(initialSaveStatus);
   const draftStatusRef = useRef(initialSaveStatus);
@@ -880,16 +730,30 @@ export function OpeningClient({
     return next;
   }, []);
 
-  /** The serialized body of the last SUCCESSFULLY persisted draft. Dedup + retry anchor. */
-  const draftSentRef = useRef<string | null>(null);
   /**
    * B11a (Astra r1 P2-2) — per Phase 2 row, the signature of the save in flight. A second
    * request for the SAME value while it is pending (the "Made the need" save, then the box's
    * later blur) is dropped, so one gesture is one save.
    */
   const phase2InFlightSigRef = useRef<Map<string, string>>(new Map());
-  /** The serialized body of the newest local state, for the pagehide/visibility beacon. */
-  const draftLatestRef = useRef<string | null>(null);
+  /**
+   * Audit W14 / B180, fix round 1 — a clear queued behind an in-flight save. Per Phase 2 row:
+   * how many saves are in flight, and a counter that goes up each time the amount box is left
+   * BLANK. A save remembers the counter when it leaves; a higher one when its answer arrives
+   * means the prepper cleared the amount meanwhile, and the answer is judged by
+   * phase2SaveSettle instead of marking the row Saved.
+   */
+  const phase2InFlightCountRef = useRef<Map<string, number>>(new Map());
+  const phase2BlankBlurRef = useRef<Map<string, number>>(new Map());
+  /**
+   * The Phase 2 rows AS THEY ARE NOW, for the handlers that must look again after their own
+   * round trip (the Undo, and a save's answer): a closure only knows the row as it was when the
+   * request left. Written in an effect, never during render.
+   */
+  const phase2LiveRef = useRef({ saveStates, phase2Values });
+  useEffect(() => {
+    phase2LiveRef.current = { saveStates, phase2Values };
+  });
 
   // Serialized here (not in the effect) so the effect's dependency is a plain string:
   // the debounce then coalesces a burst of keystrokes into one POST, and a change that
@@ -922,76 +786,93 @@ export function OpeningClient({
     [instance.id, values, sectionVerifications, attestationReason],
   );
 
-  const flushDraft = useCallback(async (body: string) => {
-    const revision = stepDraft({ type: "start" }).revision;
-    try {
-      const res = await fetch("/api/opening/phase1/draft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-      if (!res.ok) throw new Error(`draft save ${res.status}`);
-      draftSentRef.current = body;
-      stepDraft({ type: "ack", revision });
-    } catch {
-      // Deliberately swallowed past the status line: an autosave failure is not an
-      // operator error and must not interrupt the walk. draftSentRef stays put, so the
-      // next edit resends.
-      stepDraft({ type: "fail", revision });
-    }
-  }, [stepDraft]);
+  // The saver lives for exactly one MOUNT: created in the mount effect, disposed in its
+  // cleanup (a disposed saver never sends again). A remount — React strict mode in dev — gets a fresh one, seeded from the current
+  // form (adopted as already saved: the form was hydrated FROM the server's draft, so the
+  // first payload is by construction what the server holds, and posting it would be a write
+  // per page load). The latest props ride in a ref, written only in an effect.
+  const draftSaverRef = useRef<OpeningDraftAutosaver | null>(null);
+  const draftLatest = useRef({ draftEnabled, draftBody });
+  useEffect(() => {
+    draftLatest.current = { draftEnabled, draftBody };
+  });
 
   useEffect(() => {
-    if (!draftEnabled) return;
-    draftLatestRef.current = draftBody;
-    // Mount: adopt the current body as "already saved" WITHOUT a POST. The form was just
-    // hydrated FROM this draft, so the first render's payload is by construction what the
-    // server already holds — posting it would be a write per page load.
-    if (draftSentRef.current === null) {
-      draftSentRef.current = draftBody;
-      return;
-    }
-    if (draftSentRef.current === draftBody) return;
-    stepDraft({ type: "edit" });
-    const timer = setTimeout(() => {
-      void flushDraft(draftBody);
-    }, DRAFT_AUTOSAVE_DEBOUNCE_MS);
-    // Cleanup on every re-run IS the coalescing: a burst of keystrokes cancels each
-    // pending send and only the last one, 800ms after the operator stops, goes out.
-    return () => clearTimeout(timer);
-  }, [draftEnabled, draftBody, flushDraft, stepDraft]);
-
-  // Navigating away, backgrounding the tab, or locking the tablet must not lose the last
-  // edit inside the debounce window. `fetch` is cancelled on unload; `sendBeacon` is
-  // queued by the browser and survives it. It cannot set headers, so the body goes out as
-  // text/plain — which the route accepts on purpose (it parses the body text without
-  // consulting Content-Type; see the route doc).
-  useEffect(() => {
-    if (!draftEnabled) return;
-    const flushBeacon = () => {
-      const body = draftLatestRef.current;
-      if (body === null || body === draftSentRef.current) return;
-      if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") {
-        return;
-      }
-      const queued = navigator.sendBeacon(
-        "/api/opening/phase1/draft",
-        new Blob([body], { type: "text/plain;charset=UTF-8" }),
-      );
-      // Only claim it on a successful ENQUEUE. A refused beacon (over the UA's queue
-      // budget) leaves the ref untouched so an ordinary save still retries it.
-      if (queued) draftSentRef.current = body;
-    };
+    const saver = new OpeningDraftAutosaver(
+      {
+        post: async (body) => {
+          const res = await fetch(DRAFT_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+          });
+          if (!res.ok) return { ok: false, applied: false };
+          const answer = (await res.json().catch(() => ({}))) as { applied?: boolean };
+          // `applied: false` = the server refused an OLDER request from this tab (0315).
+          return { ok: true, applied: answer.applied !== false };
+        },
+        // Navigating away, backgrounding the tab, or locking the tablet must not lose the
+        // last edit inside the debounce window. `fetch` is cancelled on unload; `sendBeacon`
+        // is queued by the browser and survives it. It cannot set headers, so the body goes
+        // out as text/plain — which the route accepts on purpose (it parses the body text
+        // without consulting Content-Type; see the route doc).
+        beacon: (body) => {
+          if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") {
+            return false;
+          }
+          return navigator.sendBeacon(
+            DRAFT_ENDPOINT,
+            new Blob([body], { type: "text/plain;charset=UTF-8" }),
+          );
+        },
+        setTimer: (fn, ms) => setTimeout(fn, ms),
+        clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+        onEdit: () => {
+          stepDraft({ type: "edit" });
+        },
+        onStart: () => stepDraft({ type: "start" }).revision,
+        onAck: (revision) => {
+          stepDraft({ type: "ack", revision });
+        },
+        onFail: (revision) => {
+          stepDraft({ type: "fail", revision });
+        },
+      },
+      // Per page load, not per person: it orders THIS tab's own requests on the server.
+      createClientRequestId(),
+      DRAFT_AUTOSAVE_DEBOUNCE_MS,
+    );
+    const init = draftLatest.current;
+    saver.setEnabled(init.draftEnabled);
+    saver.observe(init.draftBody);
+    draftSaverRef.current = saver;
     const onVisibility = () => {
-      if (document.visibilityState === "hidden") flushBeacon();
+      if (document.visibilityState === "hidden") saver.onHidden();
     };
+    const onPageHide = () => saver.onHidden();
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("pagehide", flushBeacon);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pagehide", flushBeacon);
+      window.removeEventListener("pagehide", onPageHide);
+      // Unmount by a client-side navigation fires no pagehide: dispose() sends the edit
+      // still inside the debounce window as one last beacon (audit W14 / B079).
+      saver.dispose();
+      if (draftSaverRef.current === saver) draftSaverRef.current = null;
     };
+  }, [stepDraft]);
+
+  // Past 'open' the submit RPC owns the truth (and the route 409s): stop saving.
+  useEffect(() => {
+    draftSaverRef.current?.setEnabled(draftEnabled);
   }, [draftEnabled]);
+
+  // Every change of the serialized draft. The saver coalesces a burst of keystrokes into
+  // one POST, 800ms after the operator stops, and a change that normalizes back to the
+  // already-saved payload costs nothing at all.
+  useEffect(() => {
+    draftSaverRef.current?.observe(draftBody);
+  }, [draftBody]);
 
   // Group Phase 1 items by station — same pattern as closing-client.tsx.
   const stationGroups = useMemo(() => {
@@ -1279,10 +1160,14 @@ export function OpeningClient({
   // stale closure over phase2Values). The savability pre-gate IS the coalescing
   // mechanism: a blur while a required reason is still missing is a no-op, so
   // the only dispatch that lands is the one that follows the modal save.
+  //
+  // Resolves `{ undoCompletionId }` when the amount was cleared while this save was in flight
+  // and the box is still blank at its answer (B180, fix round 1): the row's caller
+  // (OpeningPrepEntry) then runs the ordinary Undo on that entry. Nothing otherwise.
   const handlePhase2ItemSave = async (
     templateItemId: string,
     valueToSave: OpeningPhase2FormValue,
-  ) => {
+  ): Promise<Phase2SaveSettled | void> => {
     const item = phase2ItemById.get(templateItemId);
     if (!item) return;
 
@@ -1345,7 +1230,22 @@ export function OpeningClient({
         batch: batchByItem.get(templateItemId) ?? null,
       },
     );
-    if (gate.kind === "blank") return;
+    if (gate.kind === "blank") {
+      // Audit W14 / B180 (owner decision W14-2 b) — a blank box on a row with a SAVED entry
+      // is not "nothing typed yet": the prepper deleted the amount. The row stops counting
+      // as done right here (so finalize can never submit the old number behind an empty
+      // box), and OpeningPrepEntry — reading the same rule on the same row state — runs the
+      // ordinary Undo. An untouched row stays "unsaved", exactly as before.
+      //
+      // Fix round 1 — every blank the prepper commits is counted, so a save still in flight
+      // knows at its answer that the amount was cleared after it left ("after_save": the
+      // clear is queued behind that save; nothing is on file to undo yet, and the row stays
+      // "saving", which is not done).
+      phase2BlankBlurRef.current.set(templateItemId, (phase2BlankBlurRef.current.get(templateItemId) ?? 0) + 1);
+      const blank = phase2BlankOutcome(saveStates.get(templateItemId));
+      if (blank === "undo" || blank === "mark_cleared") markIncomplete("cleared_saved");
+      return;
+    }
     if (gate.kind === "incomplete") {
       markIncomplete(gate.reason);
       return;
@@ -1359,6 +1259,47 @@ export function OpeningClient({
     if (current?.status === "saved" && current.savedSignature === newSig) return;
     if (isDuplicateInFlight(phase2InFlightSigRef.current.get(templateItemId), newSig)) return;
     phase2InFlightSigRef.current.set(templateItemId, newSig);
+    phase2InFlightCountRef.current.set(templateItemId, (phase2InFlightCountRef.current.get(templateItemId) ?? 0) + 1);
+    const blankBlursAtRequest = phase2BlankBlurRef.current.get(templateItemId) ?? 0;
+
+    // Audit W14 / B180, fix round 1 — this save's ANSWER, judged against the row as it is when
+    // the answer arrives (phase2SaveSettle, lib/opening-phase2-gate.ts). Unless the amount was
+    // cleared after the request left AND the box is still blank, the verdict is "as_answered"
+    // and the row takes the answer exactly as it always did.
+    const judgeAnswer = (answer: "saved" | "failed", completionOnFile: string | null) => {
+      const live = phase2LiveRef.current;
+      return phase2SaveSettle({
+        answer,
+        clearedSince: (phase2BlankBlurRef.current.get(templateItemId) ?? 0) !== blankBlursAtRequest,
+        preppedNow: live.phase2Values.get(templateItemId)?.openerPrepped ?? null,
+        otherSaveInFlight: (phase2InFlightCountRef.current.get(templateItemId) ?? 0) > 1,
+        row: live.saveStates.get(templateItemId) ?? null,
+        completionOnFile,
+      });
+    };
+    // A failed save. With a queued clear still standing, the entry this save failed to replace
+    // is the one the clear undoes; the row reads "cleared" (not done), never "failed" behind an
+    // empty box it cannot retry.
+    const settleFailure = (errorCode: string): Phase2SaveSettled | void => {
+      const onFile = phase2LiveRef.current.saveStates.get(templateItemId)?.completionId ?? null;
+      const verdict = judgeAnswer("failed", onFile);
+      setSaveStates((prev) => {
+        if (verdict === "wait") return prev;
+        const updated = new Map(prev);
+        const prior = prev.get(templateItemId);
+        updated.set(templateItemId, {
+          status: verdict === "as_answered" ? "failed" : "incomplete",
+          savedById: prior?.savedById ?? null,
+          savedAt: prior?.savedAt ?? null,
+          errorCode: verdict === "as_answered" ? errorCode : null,
+          incompleteReason: verdict === "as_answered" ? null : "cleared_saved",
+          savedSignature: prior?.savedSignature ?? null,
+          completionId: prior?.completionId ?? null,
+        });
+        return updated;
+      });
+      if (verdict === "undo" && onFile !== null) return { undoCompletionId: onFile };
+    };
 
     // Optimistic "saving" — preserve prior saved attribution so a re-save shows
     // "saving" without dropping the existing "saved by" line if it fails.
@@ -1411,8 +1352,7 @@ export function OpeningClient({
         // would only race again — so this must never render as the red "failed"
         // badge. Instead the client ADOPTS the winner: its numbers go into
         // phase2Values and its attribution into saveStates, through the EXACT
-        // helpers the initial hydration uses (readPhase2SaveState →
-        // saveStateToFormValue → phase2Signature), so an adopted row is
+        // helper the initial hydration uses (hydratePhase2Row), so an adopted row is
         // indistinguishable from one loaded on a fresh page open — which is what
         // makes "showing the latest" true rather than a hopeful label. The status
         // is "saved" because a live head genuinely exists, so the finalize gate
@@ -1421,9 +1361,10 @@ export function OpeningClient({
         // rest of the server-rendered page).
         if (res.status === 409 && body.code === "phase2_save_conflict") {
           const winner = body.completion ?? null;
-          const winnerSave = winner ? readPhase2SaveState(winner.prepData) : null;
-          if (winnerSave) {
-            const adopted = saveStateToFormValue(winnerSave, templateItemId, winner?.prepData);
+          const hydrated = winner ? hydratePhase2Row(winner.prepData, templateItemId) : null;
+          if (hydrated) {
+            const adopted = hydrated.formValue;
+            const winnerSave = hydrated.save;
             setPhase2Values((prev) => {
               const updated = new Map(prev);
               updated.set(templateItemId, adopted);
@@ -1441,7 +1382,7 @@ export function OpeningClient({
                 // path computes it — so the prepper's next edit diffs against what
                 // is actually persisted, and a re-blur on the winner's own numbers
                 // correctly skips the round-trip.
-                savedSignature: phase2Signature(adopted),
+                savedSignature: hydrated.savedSignature,
                 completionId: winner?.id ?? null,
                 raceNotice: true,
               });
@@ -1453,15 +1394,19 @@ export function OpeningClient({
             // still no error badge; notice plus refresh, and savedSignature clears
             // so this prepper's next edit round-trips instead of being skipped by
             // the value-diff guard against a value that never persisted.
+            // Fix round 1 (B180): the winner is unknown, so there is no id to undo — but a
+            // box the prepper cleared meanwhile never reads Saved ("cleared", or still
+            // "saving" while another save of this row is out).
+            const verdict = judgeAnswer("saved", null);
             setSaveStates((prev) => {
               const updated = new Map(prev);
               const prior = prev.get(templateItemId);
               updated.set(templateItemId, {
-                status: "saved",
+                status: verdict === "as_answered" ? "saved" : verdict === "wait" ? "saving" : "incomplete",
                 savedById: prior?.savedById ?? null,
                 savedAt: prior?.savedAt ?? null,
                 errorCode: null,
-                incompleteReason: null,
+                incompleteReason: verdict === "cleared" ? "cleared_saved" : null,
                 savedSignature: null,
                 completionId: prior?.completionId ?? null,
                 raceNotice: true,
@@ -1472,60 +1417,42 @@ export function OpeningClient({
           router.refresh();
           return;
         }
-        const errorCode = res.status >= 500 ? "fallback" : (body.code ?? "fallback");
-        setSaveStates((prev) => {
-          const updated = new Map(prev);
-          const prior = prev.get(templateItemId);
-          updated.set(templateItemId, {
-            status: "failed",
-            savedById: prior?.savedById ?? null,
-            savedAt: prior?.savedAt ?? null,
-            errorCode,
-            incompleteReason: null,
-            savedSignature: prior?.savedSignature ?? null,
-            completionId: prior?.completionId ?? null,
-          });
-          return updated;
-        });
-        return;
+        return settleFailure(res.status >= 500 ? "fallback" : (body.code ?? "fallback"));
       }
 
       const body = (await res.json().catch(() => ({}))) as {
         completion?: { completedBy?: string; completedAt?: string };
         completionId?: string;
       };
+      // Fix round 1 (B180): a late success never marks a row Saved behind a box the prepper
+      // cleared after this save left. "undo" / "cleared" → the row reads "cleared" (not done)
+      // holding the entry this save just wrote; "wait" → another save of the row is still out.
+      const writtenId = body.completionId ?? null;
+      const verdict = judgeAnswer("saved", writtenId);
       setSaveStates((prev) => {
         const updated = new Map(prev);
         updated.set(templateItemId, {
-          status: "saved",
+          status: verdict === "as_answered" ? "saved" : verdict === "wait" ? "saving" : "incomplete",
           savedById: body.completion?.completedBy ?? null,
           savedAt: body.completion?.completedAt ?? null,
           errorCode: null,
-          incompleteReason: null,
+          incompleteReason: verdict === "undo" || verdict === "cleared" ? "cleared_saved" : null,
           savedSignature: newSig,
-          completionId: body.completionId ?? null,
+          completionId: writtenId,
         });
         return updated;
       });
+      // The queued clear: the caller runs the ordinary Undo on the entry just written.
+      if (verdict === "undo" && writtenId !== null) return { undoCompletionId: writtenId };
     } catch {
-      setSaveStates((prev) => {
-        const updated = new Map(prev);
-        const prior = prev.get(templateItemId);
-        updated.set(templateItemId, {
-          status: "failed",
-          savedById: prior?.savedById ?? null,
-          savedAt: prior?.savedAt ?? null,
-          errorCode: "network",
-          incompleteReason: null,
-          savedSignature: prior?.savedSignature ?? null,
-          completionId: prior?.completionId ?? null,
-        });
-        return updated;
-      });
+      return settleFailure("network");
     } finally {
       if (phase2InFlightSigRef.current.get(templateItemId) === newSig) {
         phase2InFlightSigRef.current.delete(templateItemId);
       }
+      const stillOut = (phase2InFlightCountRef.current.get(templateItemId) ?? 1) - 1;
+      if (stillOut > 0) phase2InFlightCountRef.current.set(templateItemId, stillOut);
+      else phase2InFlightCountRef.current.delete(templateItemId);
     }
   };
 
@@ -1541,11 +1468,19 @@ export function OpeningClient({
     templateItemId: string,
     reason?: Phase2RevokeReason | null,
     note?: string | null,
+    // Fix round 1 (B180) — the Undo of a clear that was queued behind a save names the entry
+    // that save just wrote. It is dispatched from the SAVE's continuation, whose closure is as
+    // old as the save: the id is handed over, and the box is read as it is now.
+    queuedClearCompletionId?: string,
   ): Promise<Phase2RevokeOutcome> => {
-    const completionId = saveStates.get(templateItemId)?.completionId ?? null;
+    const completionId = queuedClearCompletionId ?? saveStates.get(templateItemId)?.completionId ?? null;
     // No live completion to revoke (row never saved, or raced gone). The badge
     // is already non-"saved", so there's nothing to undo client-side.
     if (completionId === null) return { status: "error", code: "revoke_conflict" };
+    // What the amount box held when the Undo left (null when the Undo IS the clear, B180).
+    const preppedAtRequest =
+      (queuedClearCompletionId !== undefined ? phase2LiveRef.current.phase2Values : phase2Values)
+        .get(templateItemId)?.openerPrepped ?? null;
 
     try {
       const res = await fetch("/api/opening/prep/item/revoke", {
@@ -1577,13 +1512,33 @@ export function OpeningClient({
         path?: "silent" | "structured";
       };
 
+      // The Undo took a round trip. Since clearing a saved amount now runs it (audit W14 /
+      // B180), the prepper may have typed a NEW amount meanwhile — look at the row as it is
+      // now (phase2RevokeSettle, lib/opening-phase2-gate.ts) before resetting anything:
+      //   · a newer save already landed on this row → it is that save's row; touch nothing;
+      //   · a save is in flight → the revoked id is gone, the save's answer decides the row;
+      //   · otherwise → the row re-opens, as before.
+      const live = phase2LiveRef.current;
+      const preppedNow = live.phase2Values.get(templateItemId)?.openerPrepped ?? null;
+      const settle = phase2RevokeSettle({
+        revokedCompletionId: completionId,
+        row: live.saveStates.get(templateItemId) ?? null,
+        preppedAtRequest,
+        preppedNow,
+      });
+
       // Post-revoke Map reset (Juan's check #1): the row returns to "unsaved" —
       // NOT "incomplete"/blank — so outstandingCount re-blocks finalize via the
       // single-Map invariant. completionId clears (the revoked row is gone).
+      // Re-judged inside the updater on the freshest row, so a save that lands between this
+      // line and the render can never be overwritten by the Undo's reset.
       setSaveStates((prev) => {
+        const cur = prev.get(templateItemId) ?? null;
+        const fresh = phase2RevokeSettle({ revokedCompletionId: completionId, row: cur, preppedAtRequest, preppedNow });
+        if (fresh.row === "keep") return prev;
         const updated = new Map(prev);
         updated.set(templateItemId, {
-          status: "unsaved",
+          status: fresh.row === "forget_id" ? "saving" : "unsaved",
           savedById: null,
           savedAt: null,
           errorCode: null,
@@ -1595,22 +1550,26 @@ export function OpeningClient({
       });
       // Clear the prep entry so the re-opened row is empty, but preserve
       // openerRecount — that's a Phase 1 verify-beat value, not part of the
-      // revoked Phase 2 write.
-      setPhase2Values((prev) => {
-        const updated = new Map(prev);
-        const cur = prev.get(templateItemId);
-        updated.set(templateItemId, {
-          openerRecount: cur?.openerRecount ?? null,
-          openerPrepped: null,
-          overPar: null,
-          underPar: null,
-          confirmedConsumption: null,
-          // 0215 — the batch half is part of the revoked write (the server retracted any
-          // toss with it), so the row re-opens empty.
-          batch: null,
+      // revoked Phase 2 write. An amount typed during the round trip is the prepper's
+      // newest word and is never wiped (checked again on the freshest value).
+      if (settle.clearForm) {
+        setPhase2Values((prev) => {
+          const cur = prev.get(templateItemId);
+          if ((cur?.openerPrepped ?? null) !== preppedAtRequest) return prev;
+          const updated = new Map(prev);
+          updated.set(templateItemId, {
+            openerRecount: cur?.openerRecount ?? null,
+            openerPrepped: null,
+            overPar: null,
+            underPar: null,
+            confirmedConsumption: null,
+            // 0215 — the batch half is part of the revoked write (the server retracted any
+            // toss with it), so the row re-opens empty.
+            batch: null,
+          });
+          return updated;
         });
-        return updated;
-      });
+      }
 
       return { status: "revoked", path: body.path ?? "structured" };
     } catch {
@@ -2131,7 +2090,7 @@ export function OpeningClient({
               <SaveStatus phase={draftState.phase}
                 detail={draftState.phase === "saving" ? t("opening.draft.saving")
                   : draftState.phase === "saved" ? t("opening.draft.saved") : t("opening.draft.error")}
-                onRetry={draftState.phase === "failed" ? () => void flushDraft(draftLatestRef.current ?? draftBody) : undefined} />
+                onRetry={draftState.phase === "failed" ? () => draftSaverRef.current?.retry() : undefined} />
             ) : null}
           </div>
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center">

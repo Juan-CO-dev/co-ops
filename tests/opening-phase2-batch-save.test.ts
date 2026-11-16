@@ -271,31 +271,36 @@ describe("batched save", () => {
 describe("revoke consults the SESSION KEY (correction 1)", () => {
   const src = read("lib", "opening.ts");
   const fn = src.slice(src.indexOf("export async function revokePhase2Completion("), src.indexOf("export async function submitPhase2Atomic("));
-  it("looks up prep_batch_sessions by (instance_id, template_item_id) BEFORE deciding the write path", () => {
-    const sessionAt = fn.indexOf('.from("prep_batch_sessions")');
-    const rpcAt = fn.indexOf('rpc("revoke_phase2_item_atomic"');
-    const updateAt = fn.indexOf(".update({");
-    expect(sessionAt).toBeGreaterThan(-1);
-    expect(sessionAt).toBeLessThan(rpcAt);
-    expect(sessionAt).toBeLessThan(updateAt);
-    expect(fn).toMatch(/\.eq\("template_item_id", liveRow\.template_item_id\)/);
-  });
-  it("with a session row the revoke and the toss retraction are ONE RPC; without one the UPDATE is today's", () => {
-    expect(fn).toMatch(/if \(sessionRow\) \{/);
+  // Audit W14 / B080 (migration 0315): the lib no longer decides "session or not" from its own
+  // unlocked read — EVERY Phase 2 undo is the one RPC, which locks the opening instance, then
+  // looks the session up by (instance_id, template_item_id) under that lock (correction 1,
+  // now enforced where it cannot race), then revokes. tests/opening-phase2-revoke.test.ts and
+  // tests/opening-counts-batch-prep-migration.test.ts pin the behaviour and the SQL.
+  it("every revoke is the ONE RPC: no session lookup and no direct UPDATE left in the lib", () => {
+    expect(fn).toContain('service.rpc("revoke_phase2_item_atomic"');
+    expect(fn).not.toContain('.from("prep_batch_sessions")');
+    expect(fn).not.toContain("if (sessionRow) {");
+    expect(fn).not.toContain(".update({");
     expect(fn).toContain("p_revocation_reason: revocationReason,");
     expect(fn).toContain("p_revocation_note: revocationNote,");
-    // The UPDATE body is byte-for-byte the pre-0215 statement.
-    expect(fn).toContain(`.update({
-        revoked_at: nowIso,
-        revoked_by: args.actor.userId,
-        revocation_reason: revocationReason,
-        revocation_note: revocationNote,
-      })
-      .eq("id", args.completionId)
-      .eq("instance_id", args.instanceId)
-      .is("revoked_at", null)
-      .is("superseded_at", null)
-      .select(COMPLETION_COLUMNS);`);
+  });
+  it("the SESSION KEY lookup and the pre-0215 completion UPDATE live in the RPC, in that order", () => {
+    const sql = readFileSync("supabase/migrations/0315_opening_counts_batch_prep.sql", "utf8").split("\r\n").join("\n");
+    const start = sql.indexOf("create or replace function public.revoke_phase2_item_atomic(");
+    const body = sql.slice(start, sql.indexOf("$function$;", start));
+    const sessionAt = body.indexOf("where s.instance_id = p_instance_id and s.template_item_id = v_template_item_id\n  for update;");
+    const updateAt = body.indexOf("update checklist_completions cc");
+    expect(sessionAt).toBeGreaterThan(-1);
+    expect(sessionAt).toBeLessThan(updateAt);
+    // The UPDATE is the statement the lib used to send, column for column and predicate for predicate.
+    expect(body).toContain(`  set revoked_at = v_now,
+      revoked_by = p_actor_id,
+      revocation_reason = p_revocation_reason,
+      revocation_note = p_revocation_note
+  where cc.id = p_completion_id
+    and cc.instance_id = p_instance_id
+    and cc.revoked_at is null
+    and cc.superseded_at is null`);
   });
   it("a retracted toss is audited as backup.toss_retracted whatever the revoke path", () => {
     expect(fn).toMatch(/if \(tossRetracted > 0\) \{/);
