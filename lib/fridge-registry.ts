@@ -161,6 +161,22 @@ export async function loadTempItemRegistry(service: SupabaseClient, locationId: 
   return buildTempItemRegistry(rows, linked);
 }
 
+/**
+ * W15 round 1 (review r1 P2 2): registry item ids per request. The registry claims every fridge line
+ * on every version, so it grows with every publish; a completion read filtered by it sends the ids in
+ * chunks of this size — one `.in()` over the whole registry outgrows the request line (414) after enough
+ * publishes. 50 uuids ≈ 1.9 KB, well inside REQUEST_LINE_BUDGET_BYTES beside an instance chunk of 50.
+ */
+export const REGISTRY_IN_CHUNK = 50;
+
+/** Split ids into request-sized chunks (an empty list gives no chunk). */
+export function chunkIds(ids: Iterable<string>, size: number = REGISTRY_IN_CHUNK): string[][] {
+  const all = [...ids];
+  const out: string[][] = [];
+  for (let i = 0; i < all.length; i += size) out.push(all.slice(i, i + size));
+  return out;
+}
+
 /** The items whose readings belong to this fridge (never an item another fridge owns). */
 export function itemsOwnedBy(registry: TempItemRegistry, fridgeId: string): string[] {
   return [...registry].filter(([, owner]) => owner.fridgeId === fridgeId).map(([item]) => item);

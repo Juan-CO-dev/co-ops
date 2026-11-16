@@ -11,7 +11,7 @@ import {
   type MaintenanceReportDetail,
 } from "@/lib/maintenance";
 import { derivePrepHave, parStatusFromHave, reportParDeviation, isTempFlag, type TempItemRegistry } from "@/lib/report-signals";
-import { loadTempItemRegistry, type TempItemOwner } from "@/lib/fridge-registry";
+import { chunkIds, loadTempItemRegistry, type TempItemOwner } from "@/lib/fridge-registry";
 import { loadShiftWrapUp, PmReportError } from "@/lib/pm-report";
 import type { ShiftWrapUpRow } from "@/lib/pm-report";
 import { loadDayResults, loadMyFeedbackV2, type MyFeedbackV2Day, type PmDayResultsView } from "@/lib/pm-report-v2";
@@ -1419,10 +1419,12 @@ export async function countHotTempReadings(service: SupabaseClient, f: Pick<List
   const instances = await selectAllRows<{ id: string }>((from, to) => service.from("checklist_instances").select("id")
     .eq("location_id", f.locationId).gte("date", range.from).lte("date", range.to).order("id").range(from, to));
   let hot = 0;
-  for (let i = 0; i < instances.length; i += 50) {
+  // W15 round 1: the registry grows with every publish — its ids go 50 at a time beside each instance chunk.
+  const registryChunks = chunkIds(registry.keys());
+  for (let i = 0; i < instances.length; i += 50) for (const itemChunk of registryChunks) {
     const rows = await selectAllRows<{ template_item_id: string; count_value: number | null }>((from, to) =>
       service.from("checklist_completions").select("template_item_id, count_value")
-        .in("instance_id", instances.slice(i, i + 50).map((r) => r.id)).in("template_item_id", [...registry.keys()])
+        .in("instance_id", instances.slice(i, i + 50).map((r) => r.id)).in("template_item_id", itemChunk)
         .match(f.viewer.level < 4 ? { completed_by: f.viewer.userId } : {})
         .is("superseded_at", null).is("revoked_at", null).order("id").range(from, to));
     for (const r of rows) if (isTempFlag(registry, r.template_item_id, r.count_value)) hot++;

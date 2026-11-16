@@ -9,7 +9,7 @@
  *      temp-item registry (lib/fridge-registry, B8 #4 r4) decides which fridge owns each item; only
  *      active fridges are shown,
  *   2. today's checklist instances at the shop (ids),
- *   3. the live completions on those instances for those temp items (paged).
+ *   3. the live completions on those instances for those temp items (paged; both id lists chunked by 50, W15 round 1).
  * Statuses reuse lib/maintenance's `computeFridgeStatus`. An optional AbortSignal rides into every
  * query so the pulse's deadline cancels database work instead of merely abandoning the promise.
  * The spark is TODAY's readings (AM → PM), never a history window.
@@ -17,7 +17,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeFridgeStatus, type FridgeStatus, type TempReading } from "@/lib/maintenance";
-import { buildTempItemRegistry, FRIDGE_REGISTRY_COLUMNS, FRIDGE_DEFAULT_SAFE_MAX_F, itemsOwnedBy, loadFridgeLinkedLines } from "@/lib/fridge-registry";
+import { buildTempItemRegistry, chunkIds, FRIDGE_REGISTRY_COLUMNS, FRIDGE_DEFAULT_SAFE_MAX_F, itemsOwnedBy, loadFridgeLinkedLines } from "@/lib/fridge-registry";
 import { selectAllRows } from "@/lib/supabase-paginate";
 
 export interface FridgeToday {
@@ -62,12 +62,18 @@ export async function loadFridgesToday(service: SupabaseClient, args: { location
   ));
   if (instances.length === 0) return empty();
 
-  const comps = await selectAllRows<CompRow>((from, to) => withSignal(
-    service.from("checklist_completions").select("template_item_id, count_value, completed_at")
-      .in("instance_id", instances.map((i) => i.id)).in("template_item_id", itemIds)
-      .is("superseded_at", null).is("revoked_at", null).order("id").range(from, to).returns<CompRow[]>(),
-    signal,
-  ), 500);
+  // W15 round 1: the registry grows with every publish — both id lists go in request-sized chunks.
+  const comps: CompRow[] = [];
+  for (const instanceChunk of chunkIds(instances.map((i) => i.id))) {
+    for (const itemChunk of chunkIds(itemIds)) {
+      comps.push(...await selectAllRows<CompRow>((from, to) => withSignal(
+        service.from("checklist_completions").select("template_item_id, count_value, completed_at")
+          .in("instance_id", instanceChunk).in("template_item_id", itemChunk)
+          .is("superseded_at", null).is("revoked_at", null).order("id").range(from, to).returns<CompRow[]>(),
+        signal,
+      ), 500));
+    }
+  }
 
   return fridges.map((f) => {
     const mine: TempReading[] = comps

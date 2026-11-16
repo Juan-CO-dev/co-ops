@@ -4,7 +4,7 @@ import type { RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { etDisplayDate, operationalDayUtcRange } from "@/lib/operational-day";
-import { FRIDGE_DEFAULT_SAFE_MAX_F, itemsOwnedBy, loadTempItemRegistry, type TempItemRegistry } from "@/lib/fridge-registry";
+import { chunkIds, FRIDGE_DEFAULT_SAFE_MAX_F, itemsOwnedBy, loadTempItemRegistry, type TempItemRegistry } from "@/lib/fridge-registry";
 
 export { FRIDGE_DEFAULT_SAFE_MAX_F };
 
@@ -123,43 +123,52 @@ async function loadFridgeReadings(
     const instances = await selectAllRows<{id:string}>((from,to)=>service.from("checklist_instances").select("id")
       .eq("location_id",reportContext.locationId).eq("date",reportContext.date).order("id").range(from,to));
     const result: TempReading[] = [];
-    for (let i=0;i<instances.length;i+=50) {
-      const rows = await selectAllRows<{template_item_id:string;count_value:number|null;completed_at:string;notes:string|null}>((from,to)=>
-        service.from("checklist_completions").select("template_item_id,count_value,completed_at,notes")
-          .in("instance_id",instances.slice(i,i+50).map(r=>r.id)).in("template_item_id",itemIds)
-          .match(ownUserId ? {completed_by:ownUserId} : {}).is("superseded_at",null).is("revoked_at",null).order("id").range(from,to));
-      for (const r of rows) if (r.count_value !== null) result.push({date:reportContext.date,phase:phaseOf(r.template_item_id),valueF:r.count_value,at:r.completed_at,note:r.notes});
+    // W15 round 1: the registry grows with every publish — item ids go in request-sized chunks too.
+    for (const instanceChunk of chunkIds(instances.map((r) => r.id))) {
+      for (const itemChunk of chunkIds(itemIds)) {
+        const rows = await selectAllRows<{template_item_id:string;count_value:number|null;completed_at:string;notes:string|null}>((from,to)=>
+          service.from("checklist_completions").select("template_item_id,count_value,completed_at,notes")
+            .in("instance_id",instanceChunk).in("template_item_id",itemChunk)
+            .match(ownUserId ? {completed_by:ownUserId} : {}).is("superseded_at",null).is("revoked_at",null).order("id").range(from,to));
+        for (const r of rows) if (r.count_value !== null) result.push({date:reportContext.date,phase:phaseOf(r.template_item_id),valueF:r.count_value,at:r.completed_at,note:r.notes});
+      }
     }
     return result.sort((a,b)=>a.at.localeCompare(b.at));
   }
 
-
-  const { data: comps, error } = await service
-    .from("checklist_completions")
-    .select("template_item_id, instance_id, count_value, completed_at, notes")
-    .match(ownUserId ? { completed_by: ownUserId } : {})
-    .in("template_item_id", itemIds)
-    .is("superseded_at", null)
-    .is("revoked_at", null);
-  if (error) throw new Error(`loadFridgeReadings: ${error.message}`);
-  const rows = (comps ?? []) as Array<{
+  type ReadingRow = {
     template_item_id: string;
     instance_id: string;
     count_value: number | null;
     completed_at: string;
     notes: string | null;
-  }>;
+  };
+  // W15 round 1: item ids (every version's fridge lines) chunked, each chunk paged.
+  const rows: ReadingRow[] = [];
+  for (const itemChunk of chunkIds(itemIds)) {
+    rows.push(...await selectAllRows<ReadingRow>((from, to) => service
+      .from("checklist_completions")
+      .select("template_item_id, instance_id, count_value, completed_at, notes")
+      .match(ownUserId ? { completed_by: ownUserId } : {})
+      .in("template_item_id", itemChunk)
+      .is("superseded_at", null)
+      .is("revoked_at", null)
+      .order("id")
+      .range(from, to)));
+  }
   if (rows.length === 0) return [];
 
-  // Resolve each completion's instance operational date in one query.
+  // Resolve each completion's instance operational date (ids chunked).
   const instanceIds = [...new Set(rows.map((r) => r.instance_id))];
-  const { data: insts, error: instErr } = await service
-    .from("checklist_instances")
-    .select("id, date")
-    .in("id", instanceIds);
-  if (instErr) throw new Error(`loadFridgeReadings: instances: ${instErr.message}`);
   const dateById = new Map<string, string>();
-  for (const i of (insts ?? []) as Array<{ id: string; date: string }>) dateById.set(i.id, i.date);
+  for (const idChunk of chunkIds(instanceIds)) {
+    const { data: insts, error: instErr } = await service
+      .from("checklist_instances")
+      .select("id, date")
+      .in("id", idChunk);
+    if (instErr) throw new Error(`loadFridgeReadings: instances: ${instErr.message}`);
+    for (const i of (insts ?? []) as Array<{ id: string; date: string }>) dateById.set(i.id, i.date);
+  }
 
   const out: TempReading[] = [];
   for (const r of rows) {
@@ -304,33 +313,47 @@ function isEquipmentLinkPending(err: { code?: string | null; message?: string | 
 }
 
 /**
- * The checklist lines feeding one asset. ONE query for the lines plus ONE for their
- * template names — never per-line. Degrades to an empty list + a pending flag until
+ * The checklist lines feeding one asset. The lines (paged) plus their template names (ids chunked)
+ * — never per-line. Degrades to an empty list + a pending flag until
  * 0181 lands rather than throwing.
  */
 async function loadEquipmentSourceLines(
   service: SupabaseClient,
   equip: Equipment,
 ): Promise<{ lines: EquipmentSourceLine[]; pending: boolean }> {
-  const { data, error } = await service
-    .from("checklist_template_items")
-    .select("id, label, template_id, active")
-    .eq("equipment_id", equip.id)
-    .returns<Array<{ id: string; label: string | null; template_id: string; active: boolean | null }>>();
-  if (isEquipmentLinkPending(error)) return { lines: [], pending: true };
-  if (error) throw new Error(`loadEquipmentSourceLines: ${error.message}`);
-  const rows = data ?? [];
+  // W15 round 1: a fridge's lines accumulate one per published version — the lines are paged and
+  // their template ids chunked, so neither the response cap nor the request line is reached.
+  type LineRow = { id: string; label: string | null; template_id: string; active: boolean | null };
+  const rows: LineRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await service
+      .from("checklist_template_items")
+      .select("id, label, template_id, active")
+      .eq("equipment_id", equip.id)
+      .order("id")
+      .range(from, from + 999)
+      .returns<LineRow[]>();
+    if (isEquipmentLinkPending(error)) return { lines: [], pending: true };
+    if (error) throw new Error(`loadEquipmentSourceLines: ${error.message}`);
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < 1000) break;
+  }
   if (rows.length === 0) return { lines: [], pending: false };
 
   const templateIds = [...new Set(rows.map((r) => r.template_id))];
-  const { data: tRows } = await service
-    .from("checklist_templates")
-    .select("id, name, type")
-    .in("id", templateIds)
-    .returns<Array<{ id: string; name: string | null; type: string | null }>>();
-  const templateNames = new Map((tRows ?? []).map((t) => [t.id, t.name]));
+  const tRows: Array<{ id: string; name: string | null; type: string | null }> = [];
+  for (const idChunk of chunkIds(templateIds)) {
+    const { data: page } = await service
+      .from("checklist_templates")
+      .select("id, name, type")
+      .in("id", idChunk)
+      .returns<Array<{ id: string; name: string | null; type: string | null }>>();
+    tRows.push(...(page ?? []));
+  }
+  const templateNames = new Map(tRows.map((t) => [t.id, t.name]));
   // W15/B022: an older version's line is neither pointer; its list type still says AM / PM.
-  const templateTypes = new Map((tRows ?? []).map((t) => [t.id, t.type]));
+  const templateTypes = new Map(tRows.map((t) => [t.id, t.type]));
   const typePhase = (templateId: string): EquipmentSourceLine["phase"] => {
     if (equip.kind !== "fridge") return null;
     const ty = templateTypes.get(templateId);
@@ -410,15 +433,21 @@ export async function loadEquipmentDetail(
   // checklist notes left on this fridge's temp items → append as read-only history
   const itemIds = itemsOwnedBy(registry, equip.id);
   if (itemIds.length) {
-    const { data: cNotes } = await service
-      .from("checklist_completions")
-      .select("notes, completed_at")
-      .in("template_item_id", itemIds)
-      .is("superseded_at", null)
-      .is("revoked_at", null)
-      .not("notes", "is", null)
-      .gte("completed_at", operationalDayUtcRange(args.sinceDate).startIso);
-    for (const r of (cNotes ?? []) as Array<{ notes: string | null; completed_at: string }>) {
+    // W15 round 1: every version's fridge lines — item ids chunked, each chunk paged.
+    const cNotes: Array<{ notes: string | null; completed_at: string }> = [];
+    for (const itemChunk of chunkIds(itemIds)) {
+      cNotes.push(...await selectAllRows<{ notes: string | null; completed_at: string }>((from, to) => service
+        .from("checklist_completions")
+        .select("notes, completed_at")
+        .in("template_item_id", itemChunk)
+        .is("superseded_at", null)
+        .is("revoked_at", null)
+        .not("notes", "is", null)
+        .gte("completed_at", operationalDayUtcRange(args.sinceDate).startIso)
+        .order("id")
+        .range(from, to)));
+    }
+    for (const r of cNotes) {
       if (r.notes && r.notes.trim()) {
         notes.push({ id: `c-${r.completed_at}`, equipmentId: equip.id, otherLabel: null, note: r.notes, byName: null, at: r.completed_at });
       }
@@ -507,8 +536,9 @@ export async function listMaintenanceReportDates(
 
   if (itemIds.length && boundedInstances.length) {
     const comps: Array<{ template_item_id: string; instance_id: string; count_value: number | null }> = [];
-    // Bound UUID filters to avoid PostgREST request-line limits on long windows.
-    for (let i = 0; i < boundedInstances.length; i += 50) {
+    // Bound UUID filters to avoid PostgREST request-line limits on long windows — the instance ids
+    // AND (W15 round 1: the registry grows with every publish) the item ids, 50 at a time.
+    for (let i = 0; i < boundedInstances.length; i += 50) for (const itemChunk of chunkIds(itemIds)) {
       comps.push(...await selectAllRows<{
         template_item_id: string; instance_id: string; count_value: number | null;
       }>((from, to) =>
@@ -516,7 +546,7 @@ export async function listMaintenanceReportDates(
         .select(skeletonOnly ? "template_item_id, instance_id" : "template_item_id, instance_id, count_value")
         .in("instance_id", boundedInstances.slice(i, i + 50).map(instance => instance.id))
         .match(ownUserId ? { completed_by: ownUserId } : {})
-        .in("template_item_id", itemIds)
+        .in("template_item_id", itemChunk)
         .is("superseded_at", null).is("revoked_at", null)
         .not("count_value", "is", null)
         .order("instance_id", { ascending: true }).order("id", { ascending: true }).range(from, to)
