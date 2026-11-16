@@ -37,15 +37,19 @@ describe('0333 marketing entry moves, spend removal and refund time', () => {
     expect(sql).toContain('v_head.kind <> p_kind or v_head.location_id is distinct from p_location_id');
     expect(sql.match(/and not e\.voided/g)?.length).toBeGreaterThanOrEqual(3);
   });
-  it('adds the removal as an append-only correction and the refund columns with a bounded backfill', () => {
+  it('adds the removal as an append-only correction and the per-event refund ledger with its backfill', () => {
     expect(sql).toContain('add column voided boolean not null default false');
     expect(sql).toContain('check (not voided or corrects_id is not null)');
     expect(sql).toContain('drop index public.marketing_manual_entries_root;');
     expect(sql).toContain("if v_series.kind not in ('meta_spend','promo_spend') then raise exception 'entry_invalid'");
-    expect(sql).toContain('add column refunded_at timestamptz');
-    expect(sql).toContain('refunded_amount_cents bigint check (refunded_amount_cents is null or refunded_amount_cents >= 0)');
-    expect(sql).toContain("where p.id::text = a.payment_id and p.status = 'refunded' and p.refunded_at is null");
-    expect(sql).toContain("coalesce(metadata->>'partial', 'false') <> 'true'");
+    // B140 review r1: one append-only row per refund EVENT (partial ones too), never a stamp on the payment row.
+    expect(sql).toContain('create table public.catering_payment_refund_events (');
+    expect(sql).toContain('stripe_event_id text primary key');
+    expect(sql).toContain('cumulative_refunded_cents bigint not null check (cumulative_refunded_cents >= 0)');
+    expect(sql).toContain('grant select, insert on table public.catering_payment_refund_events to service_role;');
+    expect(sql).toContain("coalesce(nullif(a.metadata->>'stripe_event_id', ''), 'audit:' || a.id::text)");
+    expect(sql).not.toMatch(/alter table public\.catering_payments/);
+    expect(sql).not.toContain("<> 'true'");
   });
   it('executes the real migrations and the adversarial SQL proofs offline', () => {
     const output = execFileSync(process.execPath, ['scripts/sql-harness-0333.mjs'], { encoding: 'utf8', timeout: 120_000 });

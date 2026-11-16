@@ -24,6 +24,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { audit } from "@/lib/audit";
 import { isRetryableResult, processStripeEvent, resolveWebhookLocation, type StripeWebhookContext } from "@/lib/stripe/webhook";
+import { refundEventAmounts } from "@/lib/catering/refund-events-shared";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 const auditMock = vi.mocked(audit);
@@ -460,45 +461,66 @@ describe("charge.refunded", () => {
 
     expect(out.result).toBe("refunded");
     const update = ops.find((o) => o.table === "catering_payments" && o.kind === "update");
-    expect(update?.payload).toEqual({ status: "refunded", refunded_at: expect.any(String), refunded_amount_cents: 2500 });
+    expect(update?.payload).toEqual({ status: "refunded" });
     expect(update?.filters).toMatchObject({ id: PAYMENT_ID, status: "paid" });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ action: "catering.payment.provider_refunded" }));
   });
 
-  it("W26/B140 — the flip records WHEN (the event's own time, capped at now) and how much was refunded", async () => {
+  // W26/B140 (review r1): every refund EVENT is appended — partial ones included — with the
+  // event's own time and the charge's cumulative figure; the digest derives each one's amount.
+  const refundEventRows = (ops: Op[]) => ops.filter((o) => o.table === "catering_payment_refund_events" && o.kind === "insert").map((o) => o.payload);
+
+  it("W26/B140 — $10 partial Tuesday, then the remaining $90 Wednesday: two event rows, read back as $10 and $90 on their days", async () => {
+    const paid = { ...PAID_ROW, amount_cents: 10000 };
+    const tue = stubClient(handlerFor({ paymentByRef: { data: paid } }));
+    const tueSec = Math.floor(Date.parse("2026-11-10T15:00:00Z") / 1000);
+    expect((await processStripeEvent(tue.client, { ...refundEvent({ amount: 10000, amount_refunded: 1000, refunded: false }), id: "evt_tue", created: tueSec }, SINGLE, noNotify)).result).toBe("partially_refunded");
+    const wed = stubClient(handlerFor({ paymentByRef: { data: paid } }));
+    const wedSec = Math.floor(Date.parse("2026-11-11T15:00:00Z") / 1000);
+    expect((await processStripeEvent(wed.client, { ...refundEvent({ amount: 10000, amount_refunded: 10000, refunded: true }), id: "evt_wed", created: wedSec }, SINGLE, noNotify)).result).toBe("refunded");
+    const rows = [...refundEventRows(tue.ops), ...refundEventRows(wed.ops)];
+    expect(rows).toEqual([
+      { stripe_event_id: "evt_tue", payment_id: PAYMENT_ID, refunded_at: "2026-11-10T15:00:00.000Z", cumulative_refunded_cents: 1000, charge_amount_cents: 10000 },
+      { stripe_event_id: "evt_wed", payment_id: PAYMENT_ID, refunded_at: "2026-11-11T15:00:00.000Z", cumulative_refunded_cents: 10000, charge_amount_cents: 10000 },
+    ]);
+    // The money-status rules are unchanged: the partial moved nothing, the completion flipped paid → refunded.
+    expect(tue.ops.find((o) => o.table === "catering_payments" && o.kind === "update")).toBeUndefined();
+    expect(wed.ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.payload).toEqual({ status: "refunded" });
+    const amounts = refundEventAmounts(rows as never);
+    expect(Object.fromEntries(amounts)).toEqual({ evt_tue: 1000, evt_wed: 9000 });
+  });
+
+  it("W26/B140 — the event's time is capped at now", async () => {
     const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: PAID_ROW } }));
-    const created = Math.floor(Date.parse("2026-11-04T15:00:00Z") / 1000);
-    await processStripeEvent(client, { ...refundEvent(), created }, SINGLE, noNotify);
-    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.payload).toEqual({
-      status: "refunded", refunded_at: "2026-11-04T15:00:00.000Z", refunded_amount_cents: 2500,
-    });
-    const future = stubClient(handlerFor({ paymentByRef: { data: PAID_ROW } }));
     const before = Date.now();
-    await processStripeEvent(future.client, { ...refundEvent(), created: Math.floor(before / 1000) + 86400 }, SINGLE, noNotify);
-    const stamped = Date.parse(String(future.ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.payload?.refunded_at));
+    await processStripeEvent(client, { ...refundEvent(), created: Math.floor(before / 1000) + 86400 }, SINGLE, noNotify);
+    const stamped = Date.parse(String(refundEventRows(ops)[0]?.refunded_at));
     expect(stamped).toBeGreaterThanOrEqual(before);
     expect(stamped).toBeLessThanOrEqual(Date.now());
   });
 
-  it.each(["PGRST204", "42703"])("W26/B140 — before 0333 is applied (%s) the SAME guarded flip repeats with the status alone", async (code) => {
-    let calls = 0;
-    const base = handlerFor({ paymentByRef: { data: PAID_ROW } });
-    const { client, ops } = stubClient((op) => {
-      if (op.table === "catering_payments" && op.kind === "update") {
-        calls++;
-        if (op.payload && "refunded_at" in op.payload) return { error: { code, message: "column missing" } };
-      }
-      return base(op);
-    });
-    const out = await processStripeEvent(client, refundEvent(), SINGLE, noNotify);
-    expect(out.result).toBe("refunded");
-    expect(calls).toBe(2);
-    const updates = ops.filter((o) => o.table === "catering_payments" && o.kind === "update");
-    expect(updates[1]?.payload).toEqual({ status: "refunded" });
-    expect(updates[1]?.filters).toMatchObject({ id: PAYMENT_ID, status: "paid", provider_ref: "pi_1" });
+  it("W26/B140 — a partial refund delivered AFTER the completion (row already refunded) is still appended", async () => {
+    const { client, ops } = stubClient(handlerFor({ paymentByRef: { data: { ...PAID_ROW, status: "refunded" } } }));
+    const out = await processStripeEvent(client, { ...refundEvent({ amount: 2500, amount_refunded: 500, refunded: false }), id: "evt_early" }, SINGLE, noNotify);
+    expect(out.result).toBe("no_paid_row");
+    expect(refundEventRows(ops)).toEqual([expect.objectContaining({ stripe_event_id: "evt_early", cumulative_refunded_cents: 500 })]);
   });
 
-  it("W26/B140 — any other refund write error still throws (retryable), never a silent status-only write", async () => {
+  it.each(["23505", "42P01", "PGRST205"])("W26/B140 — append answering %s (redelivery / 0333 not applied) still flips", async (code) => {
+    const base = handlerFor({ paymentByRef: { data: PAID_ROW } });
+    const { client, ops } = stubClient((op) => op.table === "catering_payment_refund_events" ? { error: { code, message: "x" } } : base(op));
+    expect((await processStripeEvent(client, refundEvent(), SINGLE, noNotify)).result).toBe("refunded");
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.payload).toEqual({ status: "refunded" });
+  });
+
+  it("W26/B140 — any other append error throws BEFORE the flip (retryable), never a flip without its event", async () => {
+    const base = handlerFor({ paymentByRef: { data: PAID_ROW } });
+    const { client, ops } = stubClient((op) => op.table === "catering_payment_refund_events" ? { error: { code: "57014", message: "timeout" } } : base(op));
+    await processStripeEvent(client, refundEvent(), SINGLE, noNotify).catch(() => undefined);
+    expect(ops.filter((o) => o.table === "catering_payments" && o.kind === "update")).toHaveLength(0);
+  });
+
+  it("a refund write error still throws (retryable)", async () => {
     const base = handlerFor({ paymentByRef: { data: PAID_ROW } });
     const { client, ops } = stubClient((op) => op.table === "catering_payments" && op.kind === "update" ? { error: { code: "57014", message: "timeout" } } : base(op));
     await processStripeEvent(client, refundEvent(), SINGLE, noNotify).catch(() => undefined);
@@ -545,7 +567,7 @@ describe("charge.refunded", () => {
     );
 
     expect(out.result).toBe("refunded");
-    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.payload).toEqual({ status: "refunded", refunded_at: expect.any(String), refunded_amount_cents: 30000 });
+    expect(ops.find((o) => o.table === "catering_payments" && o.kind === "update")?.payload).toEqual({ status: "refunded" });
     expect(auditMock).toHaveBeenCalledWith(
       expect.objectContaining({ metadata: expect.objectContaining({ partial: false, row_status: "refunded" }) }),
     );

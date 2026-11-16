@@ -20,6 +20,7 @@ import { easternBoundary, easternDay } from "@/lib/job-watch";
 import { listReports } from "@/lib/reports-hub";
 import { loadShopV2Facts } from "@/lib/report-digests-v2";
 import { selectAllRows } from "@/lib/supabase-paginate";
+import { refundEventAmounts, type RefundEventRow } from "@/lib/catering/refund-events-shared";
 import { etCalendarDate } from "@/lib/operational-day";
 import { readNotInToast } from "@/lib/catering/not-in-toast";
 import { resolveRefs } from "@/lib/catering/prep-demand";
@@ -203,30 +204,62 @@ interface LeadRow {
 // text itself never reaches an email.
 const LEAD_SELECT = "id, contact_name, company, event_date, time_window, headcount, stage, lead_source, location_id, created_at, follow_up_date, external_ref, delivery_address, estimated_revenue_cents, notes";
 
-type RefundRow = { quote_id: string; amount_cents: number; refunded_amount_cents: number | null };
+type RefundRow = { quote_id: string; amount_cents: number };
+const REFUND_EVENT_COLS = "stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents";
+const REFUND_ID_CHUNK = 50;
 /**
- * Yesterday's refunds (W26/B140): by WHEN THE REFUND HAPPENED (`refunded_at`, migration 0333), at
- * the amount refunded. The old read filtered by `paid_at`, so a refund on any later day than the
- * payment was never reported. Until 0333 is applied the column is missing (42703): the pre-0333
- * read runs instead (by paid_at, the payment amount) — the old behaviour, never a failed digest.
+ * Yesterday's refunds (W26/B140, review r1): every refund EVENT that happened yesterday, at what
+ * THAT refund gave back — partial refunds included. Read from `catering_payment_refund_events`
+ * (migration 0333, one row per Stripe `charge.refunded`, the charge's cumulative figure); the
+ * per-event amount is derived by `refundEventAmounts` over the payment's events up to the end
+ * of yesterday, so $10 on Tuesday then the remaining $90 on Wednesday is $10 in Wednesday's
+ * digest and $90 in Thursday's — never $100 on the day the row flipped to `refunded`.
+ * Until 0333 is applied the table is missing (42P01 / PGRST205): the pre-0333 read runs instead
+ * (whole payments by paid_at) — the old behaviour, never a failed digest.
  */
 async function loadRefundsYesterday(sb: Sb, y: { startIso: string; endExclusiveIso: string }): Promise<RefundRow[]> {
-  let columnMissing = false;
+  let tableMissing = false;
+  let yesterdays: RefundEventRow[] | null = null;
   try {
-    return await selectAllRows<RefundRow>((from, to) =>
-      sb.from("catering_payments").select("quote_id, amount_cents, refunded_amount_cents").eq("status", "refunded")
-        .gte("refunded_at", y.startIso).lt("refunded_at", y.endExclusiveIso).order("id").range(from, to)
-        .then((r: { data: RefundRow[] | null; error: { code?: string; message: string } | null }) => {
-          if (r.error?.code === "42703") columnMissing = true;
+    yesterdays = await selectAllRows<RefundEventRow>((from, to) =>
+      sb.from("catering_payment_refund_events").select(REFUND_EVENT_COLS)
+        .gte("refunded_at", y.startIso).lt("refunded_at", y.endExclusiveIso).order("stripe_event_id").range(from, to)
+        .then((r: { data: RefundEventRow[] | null; error: { code?: string; message: string } | null }) => {
+          if (r.error?.code === "42P01" || r.error?.code === "PGRST205") tableMissing = true;
           return r;
         }));
   } catch (error) {
-    if (!columnMissing) throw error;
+    if (!tableMissing) throw error;
   }
-  const legacy = await selectAllRows<{ quote_id: string; amount_cents: number }>((from, to) =>
+  if (yesterdays) {
+    if (yesterdays.length === 0) return [];
+    const paymentIds = [...new Set(yesterdays.map((e) => e.payment_id))];
+    const history: RefundEventRow[] = [];
+    const quoteOf = new Map<string, string>();
+    for (let i = 0; i < paymentIds.length; i += REFUND_ID_CHUNK) {
+      const ids = paymentIds.slice(i, i + REFUND_ID_CHUNK);
+      const [events, payments] = await Promise.all([
+        selectAllRows<RefundEventRow>((from, to) =>
+          sb.from("catering_payment_refund_events").select(REFUND_EVENT_COLS).in("payment_id", ids)
+            .lt("refunded_at", y.endExclusiveIso).order("stripe_event_id").range(from, to)),
+        selectAllRows<{ id: string; quote_id: string }>((from, to) =>
+          sb.from("catering_payments").select("id, quote_id").in("id", ids).order("id").range(from, to)),
+      ]);
+      history.push(...events);
+      for (const p of payments) quoteOf.set(p.id, p.quote_id);
+    }
+    const amounts = refundEventAmounts(history);
+    const out: RefundRow[] = [];
+    for (const e of [...yesterdays].sort((a, b) => a.refunded_at.localeCompare(b.refunded_at) || a.stripe_event_id.localeCompare(b.stripe_event_id))) {
+      const cents = amounts.get(e.stripe_event_id) ?? 0;
+      const quoteId = quoteOf.get(e.payment_id);
+      if (cents > 0 && quoteId) out.push({ quote_id: quoteId, amount_cents: cents });
+    }
+    return out;
+  }
+  return selectAllRows<RefundRow>((from, to) =>
     sb.from("catering_payments").select("quote_id, amount_cents").eq("status", "refunded")
       .gte("paid_at", y.startIso).lt("paid_at", y.endExclusiveIso).order("id").range(from, to));
-  return legacy.map((r) => ({ ...r, refunded_amount_cents: null }));
 }
 
 export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promise<CateringFacts> {
@@ -338,7 +371,7 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
     today, leads: facts, lostYesterdayIds: lostIds,
     quotesSentYesterday: sentYesterday.map((q) => ({ id: q.id, locationId: q.location_id, totalCents: q.total_cents })),
     openQuotes: openQuotes.filter((q) => !q.expires_at || Date.parse(q.expires_at) > now.getTime()).map((q) => ({ id: q.id, locationId: q.location_id })),
-    refundsYesterday: refunds.map((r) => ({ locationId: refundLoc.get(r.quote_id) ?? null, amountCents: r.refunded_amount_cents ?? r.amount_cents })),
+    refundsYesterday: refunds.map((r) => ({ locationId: refundLoc.get(r.quote_id) ?? null, amountCents: r.amount_cents })),
     readiness, staff,
   };
 }

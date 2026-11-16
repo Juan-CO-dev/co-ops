@@ -1492,6 +1492,36 @@ export function chargeFullyRefunded(outcome: Pick<CheckoutEventOutcome, "chargeF
   );
 }
 
+/** PostgREST / Postgres naming a missing table: 0333 (catering_payment_refund_events) not applied yet. */
+function refundEventsTableMissing(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST205" || error.code === "42P01";
+}
+
+/**
+ * Append THIS refund event (W26/B140 review r1, migration 0333): one row per Stripe event id,
+ * holding the event's own time (capped at now — the `paid_at` rule) and the charge's
+ * CUMULATIVE `amount_refunded`. What this one refund gave back is derived at read time
+ * (`refundEventAmounts`, lib/catering/refund-events-shared.ts), so a $10 refund Tuesday and the
+ * remaining $90 Wednesday report as $10 and $90 on their own days. Idempotent: a redelivery
+ * hits the primary key (23505) and adds nothing. Until 0333 is applied the table is missing and
+ * nothing is appended (the digest keeps its pre-0333 read). Any other error throws, BEFORE the
+ * status flip, so Stripe redelivers and the row is never lost behind a flip already made.
+ */
+async function appendRefundEvent(sb: ServiceClient, outcome: CheckoutEventOutcome, paymentId: string): Promise<void> {
+  if (outcome.amountCents == null || !outcome.eventId) return;
+  const nowMs = Date.now();
+  const refundedAt = new Date(outcome.createdSec != null ? Math.min(outcome.createdSec * 1000, nowMs) : nowMs).toISOString();
+  const { error } = await sb.from("catering_payment_refund_events").insert({
+    stripe_event_id: outcome.eventId,
+    payment_id: paymentId,
+    refunded_at: refundedAt,
+    cumulative_refunded_cents: outcome.amountCents,
+    charge_amount_cents: outcome.chargeAmountCents ?? null,
+  });
+  if (!error || error.code === "23505" || refundEventsTableMissing(error)) return;
+  throw new Error(`stripe refund event append: ${error.message}`);
+}
+
 /**
  * `charge.refunded` — the only event that moves a row BACKWARDS. It is located by
  * `provider_ref = the charge's payment_intent`, which is exactly the id the paid flip
@@ -1520,11 +1550,6 @@ export function chargeFullyRefunded(outcome: Pick<CheckoutEventOutcome, "chargeF
  * treated as partial: when we cannot tell, the conservative reading is the one that does
  * not invite a second charge.
  */
-/** PostgREST / Postgres naming a missing column: 0333 (refunded_at, refunded_amount_cents) not applied yet. */
-function refundColumnsMissing(error: { code?: string; message?: string }): boolean {
-  return error.code === "PGRST204" || error.code === "42703";
-}
-
 async function refund(
   sb: ServiceClient,
   outcome: CheckoutEventOutcome,
@@ -1548,40 +1573,26 @@ async function refund(
 
   const fullyRefunded = chargeFullyRefunded(outcome);
 
+  // Money was recorded on this row (paid, or refunded by an earlier event): this refund is a
+  // fact about it, appended before the status moves (W26/B140 review r1).
+  if (payment.status === "paid" || payment.status === "refunded") {
+    await appendRefundEvent(sb, outcome, payment.id);
+  }
+
   if (fullyRefunded) {
     // Guarded on the row as it was read (review r5): still `paid`, and still carrying THIS
     // charge. The row was found by `provider_ref`, so the write is bound to the same fact —
     // a refund can only ever move the payment whose money it gives back. Not bound to a
     // revision on purpose: a refund is about a charge, and a paid row keeps its charge
     // wherever a revise carries it.
-    //
-    // WHEN and HOW MUCH (W26/B140, migration 0333): the flip stamps `refunded_at` — the event's own
-    // `created`, never later than now (the `paid_at` rule) — and the charge's cumulative
-    // `amount_refunded`, so the daily catering digest reports the refund on the day it happened.
-    // Until 0333 is applied the columns do not exist: the SAME guarded flip is repeated with the
-    // status alone (exactly the pre-0333 write), never skipped.
-    const nowMs = Date.now();
-    const refundedAt = new Date(outcome.createdSec != null ? Math.min(outcome.createdSec * 1000, nowMs) : nowMs).toISOString();
-    let flip: { status: "refunded"; refunded_at?: string; refunded_amount_cents?: number | null } = {
-      status: "refunded",
-      refunded_at: refundedAt,
-      refunded_amount_cents: outcome.amountCents ?? null,
-    };
-    for (;;) {
-      const { error, count } = await sb
-        .from("catering_payments")
-        .update(flip, { count: "exact" })
-        .eq("id", payment.id)
-        .eq("status", "paid")
-        .eq("provider_ref", outcome.paymentIntentId);
-      if (error && "refunded_at" in flip && refundColumnsMissing(error)) {
-        flip = { status: "refunded" };
-        continue;
-      }
-      if (error) throw new Error(`stripe refund update: ${error.message}`);
-      if (count === 0) return { result: "no_paid_row", locationId };
-      break;
-    }
+    const { error, count } = await sb
+      .from("catering_payments")
+      .update({ status: "refunded" }, { count: "exact" })
+      .eq("id", payment.id)
+      .eq("status", "paid")
+      .eq("provider_ref", outcome.paymentIntentId);
+    if (error) throw new Error(`stripe refund update: ${error.message}`);
+    if (count === 0) return { result: "no_paid_row", locationId };
   } else if (payment.status !== "paid") {
     // A partial refund against a row that is not `paid` has nothing to annotate.
     return { result: "no_paid_row", locationId };

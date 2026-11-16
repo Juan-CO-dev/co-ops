@@ -51,35 +51,53 @@ async function setup({ payments = true } = {}) {
 
 const db = await setup();
 try {
-  // ── B140 fixture BEFORE the migration: four payments, three audit rows ──
+  // ── B140 fixture BEFORE the migration: four payments, audit rows (partial, whole, a repeat, a bad one) ──
   await db.exec(`insert into catering_payments(id,amount_cents,status,paid_at) values
       ('${id(100)}',10000,'refunded','2026-11-02T15:00:00Z'),
       ('${id(101)}',5000,'refunded','2026-11-02T15:00:00Z'),
       ('${id(102)}',7000,'paid','2026-11-02T15:00:00Z'),
       ('${id(103)}',4000,'refunded','2026-11-02T15:00:00Z');
     insert into audit_log(action,resource_table,resource_id,metadata,created_at) values
-      ('catering.payment.provider_refunded','catering_payments','${id(100)}','{"partial":true,"refunded_amount_cents":1000}','2026-11-03T15:00:00Z'),
-      ('catering.payment.provider_refunded','catering_payments','${id(100)}','{"partial":false,"refunded_amount_cents":10000}','2026-11-04T15:00:00Z'),
-      ('catering.payment.provider_refunded','catering_payments','${id(100)}','{"partial":false,"refunded_amount_cents":10000}','2026-11-05T15:00:00Z'),
-      ('catering.payment.provider_refunded','catering_payments','${id(101)}','{"refunded_amount_cents":"x"}','2026-11-06T15:00:00Z'),
-      ('catering.payment.provider_refunded','catering_payments','${id(102)}','{"partial":true,"refunded_amount_cents":700}','2026-11-07T15:00:00Z');`);
+      ('catering.payment.provider_refunded','catering_payments','${id(100)}','{"partial":true,"refunded_amount_cents":1000,"charge_amount_cents":10000,"stripe_event_id":"evt_tue"}','2026-11-03T15:00:00Z'),
+      ('catering.payment.provider_refunded','catering_payments','${id(100)}','{"partial":false,"refunded_amount_cents":10000,"charge_amount_cents":10000,"stripe_event_id":"evt_wed"}','2026-11-04T15:00:00Z'),
+      ('catering.payment.provider_refunded','catering_payments','${id(100)}','{"partial":false,"refunded_amount_cents":10000,"stripe_event_id":"evt_wed"}','2026-11-05T15:00:00Z'),
+      ('catering.payment.provider_refunded','catering_payments','${id(101)}','{"refunded_amount_cents":"x","stripe_event_id":"evt_bad"}','2026-11-06T15:00:00Z'),
+      ('catering.payment.provider_refunded','catering_payments','${id(102)}','{"partial":true,"refunded_amount_cents":700}','2026-11-07T15:00:00Z'),
+      ('catering.payment.provider_refunded','catering_payments','${id(999)}','{"partial":true,"refunded_amount_cents":300,"stripe_event_id":"evt_orphan"}','2026-11-07T15:00:00Z');`);
   const fingerprintBefore = await scalar(db, "select md5(prosrc) from pg_proc where proname='record_marketing_manual_entry'");
 
   await db.exec(migration);
   check(await scalar(db, "select md5(prosrc) from pg_proc where proname='record_marketing_manual_entry'") !== fingerprintBefore, 'writer re-emitted');
 
-  // B140: the backfill takes the earliest NON-partial refund audit row, only on refunded rows.
-  const pay = async n => (await db.query(`select refunded_at::text, refunded_amount_cents from catering_payments where id='${id(n)}'`)).rows[0];
-  const p100 = await pay(100);
-  check(p100.refunded_at.startsWith('2026-11-04') && Number(p100.refunded_amount_cents) === 10000, 'earliest whole-charge refund audit row backfilled');
-  const p101 = await pay(101);
-  check(p101.refunded_at.startsWith('2026-11-06') && p101.refunded_amount_cents === null, 'legacy audit row (no partial key, bad amount) backfills time only');
-  const p102 = await pay(102);
-  check(p102.refunded_at === null && p102.refunded_amount_cents === null, 'a still-paid row is never backfilled');
-  const p103 = await pay(103);
-  check(p103.refunded_at === null, 'a refunded row without an audit row keeps refunded_at null');
-  await refuses(db, `update catering_payments set refunded_amount_cents = -1 where id='${id(102)}'`, 'check');
-  check(await scalar(db, "select count(*)=1 from pg_indexes where indexname='catering_payments_refunded_at'"), 'refunded_at index');
+  // B140 (review r1): one event row per refund EVENT, partial ones included; the figure is cumulative.
+  const evs = (await db.query(`select stripe_event_id, payment_id::text, refunded_at::text, cumulative_refunded_cents::int as cum, charge_amount_cents::int as charge
+    from catering_payment_refund_events order by refunded_at, stripe_event_id`)).rows;
+  check(evs.length === 3, `three backfilled events (got ${evs.length})`);
+  check(evs[0].stripe_event_id === 'evt_tue' && evs[0].cum === 1000 && evs[0].charge === 10000 && evs[0].refunded_at.startsWith('2026-11-03'), 'the partial refund is its own event');
+  check(evs[1].stripe_event_id === 'evt_wed' && evs[1].cum === 10000 && evs[1].refunded_at.startsWith('2026-11-04'), 'a repeated event id keeps its earliest audit row');
+  check(evs[2].stripe_event_id.startsWith('audit:') && evs[2].payment_id === id(102) && evs[2].cum === 700, 'an audit row without an event id gets an audit key; a still-paid row\'s partial refund counts');
+  check(!evs.some(e => e.stripe_event_id === 'evt_bad' || e.stripe_event_id === 'evt_orphan'), 'non-numeric amounts and unknown payments are skipped');
+  // The digest's derivation, in SQL: cumulative minus the payment's earlier maximum → $10 then $90.
+  const deltas = (await db.query(`select stripe_event_id, (cumulative_refunded_cents - coalesce(max(cumulative_refunded_cents) over (partition by payment_id
+      order by refunded_at, stripe_event_id rows between unbounded preceding and 1 preceding), 0))::int as d
+    from catering_payment_refund_events where payment_id='${id(100)}' order by refunded_at`)).rows;
+  check(deltas.map(r => r.d).join() === '1000,9000', 'per-event amounts: $10 then $90');
+  // Append-only by grant; idempotent by event id; checks hold.
+  await refuses(db, `insert into catering_payment_refund_events(stripe_event_id,payment_id,refunded_at,cumulative_refunded_cents) values('evt_tue','${id(100)}',now(),1)`, 'duplicate key');
+  await refuses(db, `insert into catering_payment_refund_events(stripe_event_id,payment_id,refunded_at,cumulative_refunded_cents) values('evt_neg','${id(100)}',now(),-1)`, 'check');
+  await refuses(db, `insert into catering_payment_refund_events(stripe_event_id,payment_id,refunded_at,cumulative_refunded_cents) values('evt_fk','${id(998)}',now(),1)`, 'foreign key');
+  await db.exec(`set role service_role`);
+  await db.exec(`insert into catering_payment_refund_events(stripe_event_id,payment_id,refunded_at,cumulative_refunded_cents) values('evt_sr','${id(102)}',now(),900)`);
+  check((await db.query(`select count(*)::int as n from catering_payment_refund_events`)).rows[0].n === 4, 'service_role may SELECT and INSERT');
+  await refuses(db, `update catering_payment_refund_events set cumulative_refunded_cents = 1 where stripe_event_id='evt_sr'`, 'permission denied');
+  await refuses(db, `delete from catering_payment_refund_events where stripe_event_id='evt_sr'`, 'permission denied');
+  await db.exec(`reset role`);
+  for (const r of ['anon', 'authenticated']) {
+    await db.exec(`set role ${r}`);
+    await refuses(db, `select 1 from catering_payment_refund_events`, 'permission denied');
+    await db.exec(`reset role`);
+  }
+  check(await scalar(db, "select count(*)=0 from information_schema.columns where table_name='catering_payments' and column_name like 'refunded%'"), 'catering_payments is not altered');
 
   // ── B139: corrections move by id; W26-2 b: remove ──
   const entry = (o = {}) => {

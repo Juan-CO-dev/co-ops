@@ -27,23 +27,29 @@
 --      entry for a period an old, moved or removed chain started on. "At most one live entry per series per
 --      period" is enforced as before by the writers: the per-series advisory lock, then the exact-period head
 --      lookup and the overlap check, all under that lock.
---   4. B140 — catering_payments.refunded_at timestamptz + refunded_amount_cents bigint (>= 0) + a partial index on
---      refunded_at. The Stripe refund writer stamps them on the paid → refunded flip (lib/stripe/webhook.ts
---      refund(): the event's own time, capped at now — the paid_at rule; the charge's cumulative amount_refunded)
---      and the daily catering digest reads yesterday's refunds by refunded_at (it read paid_at, so a refund on
---      any later day was never reported).
+--   4. B140 (review r1) — refunds are recorded PER EVENT: the new append-only table
+--      public.catering_payment_refund_events, one row per Stripe `charge.refunded` event (primary key = Stripe's
+--      event id, so a redelivery adds nothing), holding the payment, the event's own time (capped at now — the
+--      paid_at rule) and the charge's CUMULATIVE amount_refunded. The webhook (lib/stripe/webhook.ts refund())
+--      appends it for partial AND whole refunds, BEFORE the paid → refunded flip (unchanged). What one refund gave
+--      back is derived at read time (lib/catering/refund-events-shared.ts: its cumulative minus the highest
+--      cumulative of the same payment's earlier events), and the daily catering digest reports every event on
+--      the day it happened at that amount: $10 refunded Tuesday then the remaining $90 Wednesday reads $10 on
+--      Tuesday and $90 on Wednesday (the first cut of this file stamped the payment row, which reported $100 on
+--      the flip day and nothing for a partial). catering_payments is NOT altered.
 --
--- EXISTING ROWS: marketing entries untouched (voided = false). catering_payments: rows already 'refunded' are
---   backfilled from their earliest NON-partial 'catering.payment.provider_refunded' audit row (its created_at and
---   metadata.refunded_amount_cents); a refunded row with no such audit row keeps refunded_at NULL and is never
---   reported (today's behaviour). No other row is written.
+-- EXISTING ROWS: marketing entries untouched (voided = false). Refund events are backfilled from EVERY
+--   'catering.payment.provider_refunded' audit row (partial and whole) whose payment exists and whose
+--   metadata.refunded_amount_cents is a number: key = metadata.stripe_event_id (else 'audit:<audit id>'), time =
+--   the audit row's created_at, figure = that cumulative amount; a repeated key keeps its earliest row. An audit
+--   row without a numeric amount is skipped (it cannot say how much). No other row is written.
 --
 -- APP (same PR, W26): works before AND after this file is applied.
 --   · The scorecard reads `voided` and, when the column is missing (42703), re-reads without it (nothing voided).
 --   · The remove route answers 503 marketing_unavailable while void_marketing_manual_entry is missing.
---   · The Stripe refund flip writes the two new columns and, when PostgREST says a column is missing
---     (PGRST204 / 42703), repeats the SAME guarded flip without them (status only, exactly as before).
---   · The digest reads by refunded_at and, when the column is missing, falls back to the pre-0333 paid_at read.
+--   · The Stripe refund writer appends the event and, when the table is missing (42P01 / PGRST205), appends
+--     nothing; the status flip is exactly as before either way.
+--   · The digest reads the events and, when the table is missing, falls back to the pre-0333 paid_at read.
 --   Until this file is applied a correction still cannot move an entry (B139 stays open) and the digest keeps
 --   missing later-day refunds (B140 stays open); nothing breaks.
 --
@@ -54,6 +60,7 @@
 --   select column_name, data_type from information_schema.columns where table_schema='public'
 --    and table_name='audit_log' and column_name in ('action','resource_table','resource_id','metadata','created_at');
 --   select count(*) from public.catering_payments where status = 'refunded';            -- report it in the PR
+--   select count(*) from public.audit_log where action = 'catering.payment.provider_refunded';  -- the backfill's source
 --   select count(*) from public.marketing_manual_entries;                                 -- untouched
 --   select md5(prosrc) from pg_proc where oid =
 --     'public.record_marketing_manual_entry(uuid,text,uuid,text,date,date,bigint,integer,text,uuid,text)'::regprocedure;
@@ -63,12 +70,14 @@
 --   select to_regprocedure('public.void_marketing_manual_entry(uuid,uuid,text)');         -- not null
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema='public'
 --    and routine_name in ('record_marketing_manual_entry','void_marketing_manual_entry') order by 1,2;  -- service_role (+ owner)
---   select count(*) from public.catering_payments where status='refunded' and refunded_at is null;  -- rows with no audit row
+--   select count(*) from public.catering_payment_refund_events;                          -- = the distinct backfill keys
+--   select privilege_type from information_schema.role_table_grants where table_name='catering_payment_refund_events'
+--    and grantee='service_role';                                                           -- SELECT, INSERT only
 --
 -- PROOF: scripts/sql-harness-0333.mjs (PGlite: real 0273 → 0289 → 0292 → 0333, plus a minimal payments fixture),
 --   CI-pinned by tests/marketing-entry-moves-migration.test.ts. The per-series lock is unchanged from 0289 (two
 --   sessions queue on the same advisory key); no new lock, no sim lock script.
--- ROLLBACK: a new migration. The columns and the voided rows are append-only evidence; never delete them.
+-- ROLLBACK: a new migration. The voided rows and the refund events are append-only evidence; never delete them.
 begin;
 
 do $$ begin
@@ -82,8 +91,8 @@ do $$ begin
     raise exception '0333: apply 0303 first';
   end if;
   if exists(select 1 from information_schema.columns where table_schema = 'public'
-      and ((table_name = 'marketing_manual_entries' and column_name = 'voided')
-        or (table_name = 'catering_payments' and column_name in ('refunded_at','refunded_amount_cents')))) then
+      and table_name = 'marketing_manual_entries' and column_name = 'voided')
+    or to_regclass('public.catering_payment_refund_events') is not null then
     raise exception '0333: already installed';
   end if;
   -- The re-emitted writer must still be 0289's: a later definer would be silently overwritten.
@@ -178,22 +187,36 @@ begin
   return v_id;
 end $$;
 
--- ── 4. Catering refunds (B140) ─────────────────────────────────────────────────────────────────────────
-alter table public.catering_payments
-  add column refunded_at timestamptz,
-  add column refunded_amount_cents bigint check (refunded_amount_cents is null or refunded_amount_cents >= 0);
-create index catering_payments_refunded_at on public.catering_payments (refunded_at) where refunded_at is not null;
+-- ── 4. Catering refund events (B140, review r1) ────────────────────────────────────────────────────────
+create table public.catering_payment_refund_events (
+  stripe_event_id text primary key check (length(stripe_event_id) between 1 and 255),
+  payment_id uuid not null references public.catering_payments(id),
+  refunded_at timestamptz not null,
+  cumulative_refunded_cents bigint not null check (cumulative_refunded_cents >= 0),
+  charge_amount_cents bigint check (charge_amount_cents is null or charge_amount_cents >= 0),
+  recorded_at timestamptz not null default now()
+);
+create index catering_payment_refund_events_refunded_at on public.catering_payment_refund_events (refunded_at);
+create index catering_payment_refund_events_payment on public.catering_payment_refund_events (payment_id, refunded_at);
+alter table public.catering_payment_refund_events enable row level security;
+create policy catering_payment_refund_events_no_user_select on public.catering_payment_refund_events for select using (false);
+create policy catering_payment_refund_events_no_user_insert on public.catering_payment_refund_events for insert with check (false);
+create policy catering_payment_refund_events_no_user_update on public.catering_payment_refund_events for update using (false);
+create policy catering_payment_refund_events_no_user_delete on public.catering_payment_refund_events for delete using (false);
+revoke all on table public.catering_payment_refund_events from public, anon, authenticated, service_role;
+grant select, insert on table public.catering_payment_refund_events to service_role;
 
-update public.catering_payments p
-   set refunded_at = a.created_at,
-       refunded_amount_cents = case when (a.metadata->>'refunded_amount_cents') ~ '^[0-9]+$'
-                                    then (a.metadata->>'refunded_amount_cents')::bigint end
-  from (select distinct on (resource_id::text) resource_id::text as payment_id, created_at, metadata
-          from public.audit_log
-         where action = 'catering.payment.provider_refunded' and resource_table = 'catering_payments'
-           and coalesce(metadata->>'partial', 'false') <> 'true'
-         order by resource_id::text, created_at) a
- where p.id::text = a.payment_id and p.status = 'refunded' and p.refunded_at is null;
+insert into public.catering_payment_refund_events (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents, charge_amount_cents)
+select distinct on (k.event_key) k.event_key, k.payment_id, k.created_at, k.cumulative, k.charge
+  from (select coalesce(nullif(a.metadata->>'stripe_event_id', ''), 'audit:' || a.id::text) as event_key,
+               p.id as payment_id, a.created_at, a.id as audit_id,
+               (a.metadata->>'refunded_amount_cents')::bigint as cumulative,
+               case when (a.metadata->>'charge_amount_cents') ~ '^[0-9]+$' then (a.metadata->>'charge_amount_cents')::bigint end as charge
+          from public.audit_log a
+          join public.catering_payments p on p.id::text = a.resource_id::text
+         where a.action = 'catering.payment.provider_refunded' and a.resource_table = 'catering_payments'
+           and (a.metadata->>'refunded_amount_cents') ~ '^[0-9]+$') k
+ order by k.event_key, k.created_at, k.audit_id;
 
 -- ── Privileges and owners (0289's ceiling) ─────────────────────────────────────────────────────────────
 do $$ declare f regprocedure; owner_oid oid; begin
@@ -212,6 +235,13 @@ do $$ declare f regprocedure; owner_oid oid; begin
   if has_table_privilege('service_role','public.marketing_manual_entries','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
     or has_any_column_privilege('service_role','public.marketing_manual_entries','INSERT,UPDATE,REFERENCES') then
     raise exception '0333: service_role above SELECT ceiling';
+  end if;
+  if has_table_privilege('service_role','public.catering_payment_refund_events','UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+    or not has_table_privilege('service_role','public.catering_payment_refund_events','SELECT')
+    or not has_table_privilege('service_role','public.catering_payment_refund_events','INSERT')
+    or has_table_privilege('anon','public.catering_payment_refund_events','SELECT,INSERT,UPDATE,DELETE')
+    or has_table_privilege('authenticated','public.catering_payment_refund_events','SELECT,INSERT,UPDATE,DELETE') then
+    raise exception '0333: catering_payment_refund_events outside its SELECT + INSERT ceiling';
   end if;
 end $$;
 
