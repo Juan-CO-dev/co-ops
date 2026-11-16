@@ -1,8 +1,11 @@
 /** Offline, ephemeral PostgreSQL proof of 0333: real 0273 → 0289 → 0292 → 0333 in PGlite, plus a minimal
- * catering_payments / audit_log fixture for the B140 columns and backfill. No network, no env.
+ * catering_payments fixture for the B140 columns and backfill. `audit_log` is the REAL table (fix round 3): no
+ * migration in this repo creates it (the lineage starts at 0044), so its CREATE TABLE is taken verbatim from the
+ * Foundation Spec (the DDL 0044's header verified against the live columns), followed by every ALTER TABLE of
+ * audit_log any migration carries. A column the live table lacks (e.g. `created_at`) fails here. No network, no env.
  * Single-backend PGlite cannot prove blocking; the per-series advisory lock is 0289's, unchanged.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { PGlite } from '@electric-sql/pglite';
 
@@ -12,6 +15,12 @@ const m0289 = read('0289_marketing_scorecard.sql');
 const m0292 = read('0292_landing_click_intent.sql');
 const migration = read('0333_marketing_entry_moves_and_refund_time.sql');
 const sales = read('0232_reports_sales_reads.sql');
+// The real audit_log DDL: the spec's CREATE TABLE + every migration's ALTER TABLE audit_log (in file order).
+const spec = readFileSync('docs/CO-OPS_Foundation_Spec_v1.3.md', 'utf8');
+const auditCreate = spec.match(/CREATE TABLE audit_log \([\s\S]*?\n\);/)?.[0];
+if (!auditCreate) throw new Error('Foundation Spec: CREATE TABLE audit_log not found');
+const auditAlters = readdirSync('supabase/migrations').filter(f => /^\d{4}_.*\.sql$/.test(f) && f < '0333').sort()
+  .flatMap(f => read(f).match(/alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(?:public\.)?audit_log\b[^;]*;/gi) ?? []);
 const id = n => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
 const owner = id(1), moo = id(2), gm = id(5), loc = id(10), loc2 = id(11);
 const q = v => v === null ? 'null' : `'${String(v).replaceAll("'", "''")}'`;
@@ -37,8 +46,8 @@ async function setup({ payments = true, stripeEvents = true } = {}) {
     create table fixture_facts(location_id uuid,business_date date,snapshot_id uuid,order_guid text,check_guid text,
       opened_at timestamptz,server_guid text,dining_option text,channel text,provider text,sale_class text,
       amount_cents bigint,tax_cents bigint,selection_units jsonb);
-    create table audit_log(id uuid primary key default gen_random_uuid(), action text, resource_table text, resource_id uuid,
-      metadata jsonb, created_at timestamptz not null default now());`);
+    ${auditCreate}
+    ${auditAlters.join('\n    ')}`);
   if (payments) await db.exec(`create table catering_payments(id uuid primary key, quote_id uuid, kind text, amount_cents integer not null,
       status text not null check (status in ('due','paid','refunded','void')), paid_at timestamptz, provider_ref text,
       settlement_cleanup_at timestamptz);`);
@@ -88,7 +97,7 @@ try {
       ('evt_strpi','charge.refunded',true,'2026-11-05T10:01:00Z','{"id":"evt_strpi","type":"charge.refunded","created":1762336800,"data":{"object":{"payment_intent":"pi_103","amount_refunded":"4000","amount":4000}}}'::jsonb,'refunded'),
       ('evt_nocreated','charge.refunded',true,'2026-11-10T09:00:00Z','{"id":"evt_nocreated","type":"charge.refunded","data":{"object":{"payment_intent":{"id":"pi_106","object":"payment_intent"},"amount_refunded":3000,"amount":3000}}}'::jsonb,'refunded'),
       ('evt_other','checkout.session.completed',true,'2026-11-05T10:01:00Z','{"data":{"object":{"payment_intent":"pi_103","amount_refunded":4000}}}'::jsonb,'paid');
-    insert into audit_log(action,resource_table,resource_id,metadata,created_at) values
+    insert into audit_log(action,resource_table,resource_id,metadata,occurred_at) values
       ('catering.payment.provider_refunded','catering_payments','${id(100)}','{"partial":true,"refunded_amount_cents":1000,"charge_amount_cents":10000,"stripe_event_id":"evt_tue"}','2026-11-04T16:00:00Z'),
       ('catering.payment.provider_refunded','catering_payments','${id(100)}','{"partial":false,"refunded_amount_cents":10000,"charge_amount_cents":10000,"stripe_event_id":"evt_wed"}','2026-11-04T15:01:00Z'),
       ('catering.payment.provider_refunded','catering_payments','${id(100)}','{"partial":false,"refunded_amount_cents":10000,"stripe_event_id":"evt_wed"}','2026-11-05T15:00:00Z'),
