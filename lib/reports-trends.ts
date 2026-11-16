@@ -168,6 +168,26 @@ export function resolveTrendRange(params: Record<string, string | undefined>, to
   return parseReportRange({ ...params, range: "custom", from: defaults.loadFrom, to: defaults.loadTo }, today, granularity);
 }
 
+function shiftMonthsClamped(date: string, months: number): string {
+  const y = Number(date.slice(0, 4)); const m = Number(date.slice(5, 7)) - 1; const d = Number(date.slice(8, 10));
+  const target = new Date(Date.UTC(y, m + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(d, lastDay));
+  return target.toISOString().slice(0, 10);
+}
+/**
+ * Month grain (W26/B222): the comparison window is the SAME calendar days N
+ * months earlier (N = the current window's month buckets), clamped to month
+ * end, so previous bucket i pairs with current bucket i and both sides span
+ * the same number of months. Day and week grain return the range unchanged
+ * (equal days already give equal, aligned buckets). Ops trends only: the
+ * team / person pages keep the shared resolver (people-layer golden).
+ */
+export function alignTrendCompare(range: TrendRange, granularity: TrendGranularity): TrendRange {
+  if (granularity !== "month") return range;
+  const n = clippedBucketKeys(range.from, range.to, "month").length;
+  return { ...range, previous: { from: shiftMonthsClamped(range.from, -n), to: shiftMonthsClamped(range.to, -n) } };
+}
 export function trendLocationAllowed(viewer: Viewer, locationId: string): boolean {
   return locationId !== "all" && (viewer.level >= 8 || (Array.isArray(viewer.locations) && viewer.locations.includes(locationId)));
 }
@@ -182,7 +202,7 @@ interface TrendArgs {
 }
 export async function loadTrendSeries(service: SupabaseClient, args: TrendArgs): Promise<TrendSeries> {
   if (args.viewer.level < OPS_TRENDS_LEVEL || !trendLocationAllowed(args.viewer, args.locationId)) throw new Error("Forbidden report trends scope");
-  const range = args.range ? resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) : resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity);
+  const range = alignTrendCompare(args.range ? resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) : resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity), args.granularity);
   const current = await loadTrendWindow(service, { ...args, compare: false, window: range });
   if (!range.compare) return current;
   const previous = await loadTrendWindow(service, { ...args, compare: false, window: range.previous });

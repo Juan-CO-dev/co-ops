@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { clippedBucketKeys, loadTrendSeries, resolveTrendRange } from "@/lib/reports-trends";
+import { alignTrendCompare, clippedBucketKeys, loadTrendSeries, resolveTrendRange } from "@/lib/reports-trends";
 import { loadPersonDetail, loadPersonReportLocations, loadTeamOperatingHealth } from "@/lib/team-metrics";
 import { parseReportRange } from "@/lib/report-range";
 
@@ -43,7 +43,7 @@ describe("trends loader scope and independent clipped windows", () => {
   it("does not merge overlapping month bucket keys or leak the other shop's cash", async () => {
     const f = fake({ cash_reports: [
       { id: "a", location_id: "mine", report_date: "2026-10-06", over_short_cents: 120 },
-      { id: "b", location_id: "mine", report_date: "2026-10-03", over_short_cents: 30 },
+      { id: "b", location_id: "mine", report_date: "2026-09-06", over_short_cents: 30 },
       { id: "c", location_id: "other", report_date: "2026-10-06", over_short_cents: 9999 },
       { id: "d", location_id: "mine", report_date: "2026-10-01", over_short_cents: 9999 },
     ] });
@@ -51,7 +51,7 @@ describe("trends loader scope and independent clipped windows", () => {
     const result = await loadTrendSeries(f.service, { ...args, range, viewer: { userId: "kh", level: 4, locations: ["mine"] } });
     expect(result.totals.cash).toEqual({ current: 120, previous: 30, delta: 90 });
     expect(result.current[0]?.key).toBe("2026-10-01");
-    expect(result.previous?.[0]?.key).toBe("2026-10-01");
+    expect(result.previous?.[0]?.key).toBe("2026-09-01");
     expect(result.current[0]?.cashOverShortCents).toBe(120);
   });
   it("preserves six-month defaults and bounds grain-specific bucket counts", () => {
@@ -83,6 +83,28 @@ describe("trends loader scope and independent clipped windows", () => {
     expect(withData.length).toBeGreaterThan(0);
     for (const b of result.current) expect(b.notStarted).toBe(0);
     for (const b of withData) expect(b.completionPct).toBe(100);
+  });
+  it("month compare is bucket-aligned (W26/B222)", () => {
+    const at = (today: string) => alignTrendCompare(resolveTrendRange({ compare: "1" }, today, "month"), "month");
+    const a = at("2026-03-01");
+    expect(a.previous).toEqual({ from: "2025-04-01", to: "2025-09-01" });
+    expect(clippedBucketKeys(a.previous.from, a.previous.to, "month")).toEqual(["2025-04-01", "2025-05-01", "2025-06-01", "2025-07-01", "2025-08-01", "2025-09-01"]);
+    expect(clippedBucketKeys(a.from, a.to, "month")).toHaveLength(6);
+    const b = at("2026-01-29");
+    expect(b.previous).toEqual({ from: "2025-02-01", to: "2025-07-29" });
+    expect(clippedBucketKeys(b.previous.from, b.previous.to, "month")).toHaveLength(6);
+    const c = alignTrendCompare(parseReportRange({ range: "custom", from: "2026-03-31", to: "2026-03-31", compare: "1" }, "2026-04-05", "month"), "month");
+    expect(c.previous).toEqual({ from: "2026-02-28", to: "2026-02-28" });
+    for (const g of ["day", "week"] as const) {
+      const r = resolveTrendRange({ compare: "1" }, "2026-03-01", g);
+      expect(alignTrendCompare(r, g)).toBe(r);
+    }
+  });
+  it("loads a month compare with as many previous buckets as current ones (W26/B222)", async () => {
+    const f = fake({});
+    const result = await loadTrendSeries(f.service, { ...args, compare: true, today: "2026-03-01", viewer: { userId: "kh", level: 4, locations: ["mine"] } });
+    expect(result.previous?.length).toBe(result.current.length);
+    expect(result.previous?.[0]?.key).toBe("2025-04-01");
   });
   it("keeps historical unfinished instances but excludes today's unfinished work", async () => {
     const f = fake({
