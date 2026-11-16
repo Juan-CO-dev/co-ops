@@ -169,6 +169,15 @@ export function formatDateLabelWithYear(yyyymmdd: string, language: Language): s
   }).format(new Date(Date.UTC(y, m - 1, d)));
 }
 
+/** "Friday, November 20, 2026" (en) / "viernes, 20 de noviembre de 2026" (es): a full date for customer emails. */
+export function formatDateLongWithWeekday(yyyymmdd: string, language: Language): string {
+  const [y, m, d] = yyyymmdd.split("-").map(Number);
+  if (!y || !m || !d) return yyyymmdd;
+  return new Intl.DateTimeFormat(language === "es" ? "es-US" : "en-US", {
+    weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
 /**
  * Translation function shape compatible with both serverT (lib/i18n/server.ts)
  * and the client-side t from useTranslation (lib/i18n/provider.tsx). Used by

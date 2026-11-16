@@ -802,6 +802,7 @@
   "catering.pipeline.capacity.unconfigured": "Sin límites configurados",
   "catering.pipeline.capacity.remaining": "{n} lugares libres",
   "catering.pipeline.error.illegal_transition": "Ese cambio no está permitido desde esta etapa. «En camino» solo puede pasar a Completado o Perdido; Completado y Perdido son finales.",
+  "catering.pipeline.error.event_date_required_confirmed": "Un pedido confirmado necesita una fecha — su preparación de cocina está planeada para ese día. Elige la nueva fecha, o primero regresa el pedido de etapa.",
   "catering.pipeline.no_moves": "Este lead está cerrado: no hay más movimientos.",
   "catering.pipeline.confirm_final.title": "¿Mover este lead a {stage}?",
   "catering.pipeline.confirm_final.body": "Completado y Perdido son finales: después de esto el lead ya no se puede mover.",

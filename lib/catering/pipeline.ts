@@ -22,6 +22,8 @@ import { canReadCateringContact } from "./ezcater-detail-shared";
 import type { AuthContext } from "@/lib/session";
 import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/catering/capacity";
 import { reservePrepDemand, consumePrepDemand, releasePrepDemand, assertQuoteReadyForPrep, PrepDemandNeedsRepairError } from "@/lib/catering/prep-demand";
+import { emailOrderUpdate, type OrderUpdateEmailOutcome } from "@/lib/catering/order-update-email";
+import { orderChanges } from "@/lib/catering/order-update-email-shared";
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
 import { PIPELINE_STAGES, type PipelineStage, canTransition, normalizeLeadEmail, normalizeLeadPhone } from "./pipeline-shared";
@@ -667,17 +669,106 @@ export interface EditLeadInput {
   estimatedRevenueCents?: number | null;
 }
 
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/** What a reschedule did (0329 reschedule_catering_lead's answer, or the same steps without it). */
+interface RescheduleResult { moved: boolean; fromDate: string | null; quoteUpdated: boolean; prepRowsMoved: number; quoteId: string | null }
+
+function rpcMissing(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+
+/**
+ * Move a lead to a new event date — the lead, its LIVE quote revision and its reserved prep demand together
+ * (audit W22/B120). The kitchen plans from the quote's date (reservePrepDemand reads it) and the customer's
+ * order page shows it, so moving only the lead left both on the old day. 0329's reschedule_catering_lead does
+ * the three under the lead's row lock in one transaction (reserved rows are retired and re-appended on the new
+ * day, picks and quantities carried). Until 0329 is applied the same steps run one call at a time.
+ */
+async function rescheduleLead(sb: ReturnType<typeof getServiceRoleClient>, id: string, eventDate: string, actorId: string): Promise<RescheduleResult> {
+  const live = await sb.from("catering_quotes").select("id").eq("pipeline_id", id).is("superseded_at", null)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle<{ id: string }>();
+  if (live.error) throw new Error(`rescheduleLead quote: ${live.error.message}`);
+  const quoteId = live.data?.id ?? null;
+  const { data, error } = await sb.rpc("reschedule_catering_lead", { p_lead_id: id, p_event_date: eventDate, p_actor_id: actorId });
+  if (error && !rpcMissing(error)) {
+    if ((error.message ?? "").includes("reschedule_lead_not_found")) throw new CateringPipelineError(404, "not_found", "Lead not found");
+    throw new Error(`rescheduleLead: ${error.message}`);
+  }
+  if (!error) {
+    const r = (data ?? {}) as { result?: string; from_date?: string | null; quote_updated?: boolean; prep_rows_moved?: number };
+    return { moved: r.result === "moved", fromDate: r.from_date ?? null, quoteUpdated: r.quote_updated === true, prepRowsMoved: r.prep_rows_moved ?? 0, quoteId };
+  }
+  // 0329 not applied yet: the same steps, one call at a time (not atomic).
+  const before = await sb.from("catering_pipeline").select("event_date, stage").eq("id", id).maybeSingle<{ event_date: string | null; stage: string }>();
+  if (before.error) throw new Error(`rescheduleLead load: ${before.error.message}`);
+  if (!before.data) throw new CateringPipelineError(404, "not_found", "Lead not found");
+  const fromDate = before.data.event_date;
+  const now = new Date().toISOString();
+  if (fromDate !== eventDate) {
+    const u = await sb.from("catering_pipeline").update({ event_date: eventDate, updated_at: now }).eq("id", id);
+    if (u.error) throw new Error(`rescheduleLead lead: ${u.error.message}`);
+  }
+  const q = await sb.from("catering_quotes").update({ event_date: eventDate }, { count: "exact" })
+    .eq("pipeline_id", id).is("superseded_at", null).neq("event_date", eventDate);
+  if (q.error) throw new Error(`rescheduleLead quote update: ${q.error.message}`);
+  const qNull = await sb.from("catering_quotes").update({ event_date: eventDate }, { count: "exact" })
+    .eq("pipeline_id", id).is("superseded_at", null).is("event_date", null);
+  if (qNull.error) throw new Error(`rescheduleLead quote update: ${qNull.error.message}`);
+  const { data: reserved, error: rErr } = await sb.from("catering_prep_demand")
+    .select("id, quote_id, location_id, item_id, menu_item_id, choice_package_item_id, portion, qty")
+    .eq("pipeline_id", id).eq("status", "reserved").neq("need_date", eventDate)
+    .returns<Array<{ id: string; quote_id: string; location_id: string; item_id: string | null; menu_item_id: string | null; choice_package_item_id: string | null; portion: string | null; qty: number | string }>>();
+  if (rErr) throw new Error(`rescheduleLead prep read: ${rErr.message}`);
+  const rows = reserved ?? [];
+  if (rows.length > 0) {
+    const rel = await sb.from("catering_prep_demand").update({ status: "released", released_at: now })
+      .in("id", rows.map((r) => r.id)).eq("status", "reserved");
+    if (rel.error) throw new Error(`rescheduleLead prep release: ${rel.error.message}`);
+    const ins = await sb.from("catering_prep_demand").insert(rows.map((r) => ({
+      pipeline_id: id, quote_id: r.quote_id, location_id: r.location_id, need_date: eventDate, item_id: r.item_id,
+      menu_item_id: r.menu_item_id, choice_package_item_id: r.choice_package_item_id, portion: r.portion, qty: r.qty,
+      status: "reserved", created_by: actorId,
+    })));
+    if (ins.error) throw new Error(`rescheduleLead prep insert: ${ins.error.message}`);
+  }
+  if (fromDate !== eventDate) {
+    const ev = await sb.from("catering_pipeline_events").insert({
+      pipeline_id: id, from_stage: before.data.stage, to_stage: before.data.stage,
+      note: `Rescheduled: ${fromDate ?? "no date"} -> ${eventDate}`, actor_id: actorId,
+    });
+    if (ev.error) throw new Error(`rescheduleLead event: ${ev.error.message}`);
+  }
+  const quoteUpdated = (q.count ?? 0) + (qNull.count ?? 0) > 0;
+  return { moved: fromDate !== eventDate || quoteUpdated || rows.length > 0, fromDate, quoteUpdated, prepRowsMoved: rows.length, quoteId };
+}
+
 /** Edit a lead's mutable CRM fields in place (never stage — use moveStage). */
 export async function editLead(actor: AuthContext, id: string, input: EditLeadInput): Promise<void> {
   const sb = getServiceRoleClient();
   const { data: lead, error: lErr } = await sb
     .from("catering_pipeline")
-    .select("id, location_id")
+    .select("id, location_id, event_date, stage, customer_id")
     .eq("id", id)
-    .maybeSingle<{ id: string; location_id: string | null }>();
+    .maybeSingle<{ id: string; location_id: string | null; event_date: string | null; stage: string; customer_id: string | null }>();
   if (lErr) throw new Error(`editLead load: ${lErr.message}`);
   if (!lead) throw new CateringPipelineError(404, "not_found", "Lead not found");
   assertCanWriteLead(actor, lead.location_id);
+
+  // A NEW DATE MOVES THE WHOLE ORDER (W22/B120): the lead, the customer's live quote and the reserved prep,
+  // through rescheduleLead below — never the lead column alone. A confirmed order cannot lose its date: its
+  // reserved prep would have no day, and dropping it silently takes the order off the kitchen's plan.
+  let reschedule: string | null = null;
+  if (input.eventDate !== undefined && input.eventDate !== lead.event_date) {
+    if (input.eventDate === null) {
+      if (lead.stage === "confirmed") {
+        throw new CateringPipelineError(409, "event_date_required_confirmed", "A confirmed order needs an event date");
+      }
+    } else {
+      if (!YMD.test(input.eventDate)) throw new CateringPipelineError(400, "invalid_payload", "eventDate must be YYYY-MM-DD");
+      reschedule = input.eventDate;
+    }
+  }
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (input.contactName !== undefined) {
@@ -687,7 +778,8 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
     patch.contact_name = input.contactName.trim();
   }
   if (input.company !== undefined) patch.company = input.company;
-  if (input.eventDate !== undefined) patch.event_date = input.eventDate;
+  // A date change goes through rescheduleLead (below); only CLEARING an unconfirmed lead's date is a plain patch.
+  if (input.eventDate !== undefined && reschedule === null && input.eventDate !== lead.event_date) patch.event_date = input.eventDate;
   if (input.headcount !== undefined) patch.headcount = input.headcount;
   if (input.contactPhone !== undefined) patch.contact_phone = leadPhone(input.contactPhone);
   if (input.deliveryAddress !== undefined) patch.delivery_address = input.deliveryAddress;
@@ -720,12 +812,27 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
   if (bErr) throw new Error(`editLead pre-read: ${bErr.message}`);
   if (!beforeRow) throw new CateringPipelineError(404, "not_found", "Lead not found");
 
+  const moved = reschedule ? await rescheduleLead(sb, id, reschedule, actor.user.id) : null;
+
   const { error: uErr, count } = await sb
     .from("catering_pipeline")
     .update(patch, { count: "exact" })
     .eq("id", id);
   if (uErr) throw new Error(`editLead update: ${uErr.message}`);
   if (count === 0) throw new CateringPipelineError(404, "not_found", "Lead not found");
+
+  // The customer hears about it (owner decision W22-1): a NEW CUSTOMER EMAIL showing old vs new, sent only
+  // when every switch is open (lib/catering/order-update-email-shared.ts). Only when the date really moved
+  // and the customer has an order page (a live quote) that now shows the new date.
+  let customerEmail: OrderUpdateEmailOutcome | null = null;
+  if (moved && reschedule && moved.fromDate !== reschedule && moved.quoteId) {
+    customerEmail = await emailOrderUpdate(sb, {
+      customerId: lead.customer_id,
+      quoteId: moved.quoteId,
+      changes: orderChanges({ eventDate: moved.fromDate }, { eventDate: reschedule }),
+      idempotencyKey: `order-update:${id}:${moved.fromDate ?? "none"}:${reschedule}`,
+    });
+  }
 
   void audit({
     actorId: actor.user.id,
@@ -734,7 +841,11 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
     resourceTable: "catering_pipeline",
     resourceId: id,
     metadata: {
-      fields: Object.keys(patch).filter((k) => k !== "updated_at"),
+      fields: [...Object.keys(patch).filter((k) => k !== "updated_at"), ...(reschedule ? ["event_date"] : [])],
+      ...(moved
+        ? { event_date_changed: moved.fromDate !== reschedule, event_date_from: moved.fromDate, event_date_to: reschedule, quote_date_updated: moved.quoteUpdated, prep_rows_moved: moved.prepRowsMoved }
+        : {}),
+      ...(customerEmail ? { customer_email: customerEmail.outcome, ...("reason" in customerEmail ? { customer_email_reason: customerEmail.reason } : {}), ...("error" in customerEmail ? { customer_email_error: customerEmail.error } : {}) } : {}),
       ...(beforeRow.assigned_to != null && beforeRow.assigned_to !== actor.user.id
         ? { non_assignee_edit: true, order_lead: beforeRow.assigned_to }
         : {}),
