@@ -101,7 +101,7 @@ it('uses the frozen baseline, flags live drift, and excludes future days from cu
   expect(data.baseline?.classifiedCents.value).toBe(2500);
   expect(data.baselineDrift).toBe(true);
   const current = data.series.at(-1)!;
-  expect(current.window.daysSoFar).toBe(3);
+  expect(current.window.daysSoFar).toBe(2);
   expect(current.score.coverage.expectedDays).toBe(2);
   expect(current.costPerExtraOrder.value).toBeNull();
 });

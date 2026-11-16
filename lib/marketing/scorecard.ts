@@ -142,7 +142,8 @@ export async function loadMarketingScorecard(viewer: Viewer, locationId: string 
     const counterOn = milestones.find(r => r.kind === "counter_on")?.milestone_date ?? null;
     const series: MarketingSeries[] = [];
     for (const window of windows.weeks) {
-      const measuredWindow = window.complete ? window : { from: window.from, to: etYmdMinusDays(windows.today, 1) };
+      // One source for the measured span (W26/B220): through `throughDay`; no full day yet = an empty window.
+      const measuredWindow = { from: window.from, to: window.throughDay ?? etYmdMinusDays(window.from, 1) };
       const score = computeScorecard(await readWindowInput(sb, selected, measuredWindow));
       const taps = await readTaps(sb, window.complete ? window : { from: window.from, to: windows.today }, counterOn, storeKeys);
       // Meta spend has no shop allocation. Never divide all-shop spend by one shop's taps.

@@ -8381,6 +8381,8 @@
   "marketing.baseline_weekly": "Baseline weekly average",
   "marketing.change": "Change",
   "marketing.no_change": "No comparison available",
+  "marketing.so_far_one": "So far (1 day); no comparison yet",
+  "marketing.so_far_none": "No full day yet this week; no comparison yet",
   "marketing.coverage": "Captured {captured} of {expected} shop-days",
   "marketing.sources": "Sources: completed Toast captures, reviewed channel map and ezCater by event date. Toast totals exclude tax and tips, include discounts, and exclude checks over $5,000. Unknown labels never enter shares.",
   "marketing.close": "Close details",

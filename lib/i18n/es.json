@@ -8381,6 +8381,8 @@
   "marketing.baseline_weekly": "Promedio semanal de la base",
   "marketing.change": "Cambio",
   "marketing.no_change": "Comparación no disponible",
+  "marketing.so_far_one": "Hasta ahora (1 día); todavía sin comparación",
+  "marketing.so_far_none": "Todavía no hay un día completo esta semana; todavía sin comparación",
   "marketing.coverage": "Capturados {captured} de {expected} días por tienda",
   "marketing.sources": "Fuentes: capturas completas de Toast, mapa revisado de canales y ezCater por fecha del evento. Los totales de Toast excluyen impuestos, propinas y cuentas de más de $5,000 e incluyen descuentos. Las etiquetas desconocidas nunca entran en las proporciones.",
   "marketing.close": "Cierra los detalles",
