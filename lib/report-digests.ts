@@ -211,8 +211,8 @@ const REFUND_ID_CHUNK = 50;
  * Yesterday's refunds (W26/B140, review r1): every refund EVENT that happened yesterday, at what
  * THAT refund gave back — partial refunds included. Read from `catering_payment_refund_events`
  * (migration 0333, one row per Stripe `charge.refunded`, the charge's cumulative figure); the
- * per-event amount is derived by `refundEventAmounts` over the payment's events up to the end
- * of yesterday, so $10 on Tuesday then the remaining $90 on Wednesday is $10 in Wednesday's
+ * per-event amount is derived by `refundEventAmounts` over the payment's events, in the order of
+ * the charge's cumulative figure (review r2), so $10 on Tuesday then the remaining $90 on Wednesday is $10 in Wednesday's
  * digest and $90 in Thursday's — never $100 on the day the row flipped to `refunded`.
  * Until 0333 is applied the table is missing (42P01 / PGRST205): the pre-0333 read runs instead
  * (whole payments by paid_at) — the old behaviour, never a failed digest.
@@ -240,8 +240,11 @@ async function loadRefundsYesterday(sb: Sb, y: { startIso: string; endExclusiveI
       const ids = paymentIds.slice(i, i + REFUND_ID_CHUNK);
       const [events, payments] = await Promise.all([
         selectAllRows<RefundEventRow>((from, to) =>
+          // The payment's WHOLE history, not only rows stamped before the end of yesterday
+          // (review r2): the amount follows the cumulative figure, and an approximate
+          // backfilled row may carry a later time than the event it preceded.
           sb.from("catering_payment_refund_events").select(REFUND_EVENT_COLS).in("payment_id", ids)
-            .lt("refunded_at", y.endExclusiveIso).order("stripe_event_id").range(from, to)),
+            .order("stripe_event_id").range(from, to)),
         selectAllRows<{ id: string; quote_id: string }>((from, to) =>
           sb.from("catering_payments").select("id, quote_id").in("id", ids).order("id").range(from, to)),
       ]);

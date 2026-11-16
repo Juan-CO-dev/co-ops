@@ -77,4 +77,18 @@ describe("catering digest refunds (W26/B140)", () => {
     expect(selects.filter(s => s.table === "catering_payments").at(-1)?.filters).toContain("gte:paid_at");
     expect(facts.refundsYesterday).toEqual([{ locationId: A, amountCents: 5000 }, { locationId: A, amountCents: 700 }]);
   });
+  // Review r2: a backfilled partial refund can carry a LATER (approximate, delivery) time than the
+  // final refund's own event time. The amount follows the charge's cumulative figure, so the
+  // final refund is still $90 — the payment's whole history is read, not only rows stamped
+  // before the end of yesterday.
+  it("a final refund is $90 even when the earlier $10 partial row is stamped after it (review r2)", async () => {
+    const t = tables();
+    t.catering_payment_refund_events = [
+      { stripe_event_id: "audit:partial", payment_id: "p1", refunded_at: "2026-11-12T16:00:00Z", cumulative_refunded_cents: 1000 },
+      { stripe_event_id: "evt_wed", payment_id: "p1", refunded_at: "2026-11-11T16:00:00Z", cumulative_refunded_cents: 10000 },
+    ];
+    const { sb } = fakeSb(t);
+    const facts = await loadCateringFacts(sb, "2026-11-12", new Date("2026-11-12T12:00:00Z"));
+    expect(facts.refundsYesterday).toEqual([{ locationId: A, amountCents: 9000 }]);
+  });
 });
