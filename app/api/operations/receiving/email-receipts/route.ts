@@ -16,6 +16,7 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  *        action "link"      → RECEIPT_MIN     → linkReceipt(actor, receiptId, deliveryId)
  *        action "attest"    → RECEIPT_MIN     → attestMatch(actor, deliveryId, verdict)
  *        action "override"  → RECEIPT_OVERRIDE_MIN → overrideMatch(actor, deliveryId, note)
+ *        action "unlink"    → RECEIPT_OVERRIDE_MIN → unlinkReceipt(actor, deliveryId, note, receiptId?) (W20-2)
  *        action "attach_po" → RECEIPT_MIN     → attachReceiptToPo(actor, receiptId, poId)
  *        action "parse_now" → RECEIPT_MIN     → parseReceiptForActor(actor, receiptId) (V2 §4)
  *
@@ -33,6 +34,7 @@ import {
   linkReceipt,
   attestMatch,
   overrideMatch,
+  unlinkReceipt,
   attachReceiptToPo,
   loadPoCandidatesForReceipt,
   EmailReceiptError,
@@ -147,8 +149,8 @@ export async function PATCH(req: NextRequest) {
   const action = b.action;
   const deliveryId = b.deliveryId;
 
-  if (action !== "move" && action !== "link" && action !== "attest" && action !== "override" && action !== "attach_po" && action !== "parse_now") {
-    return jsonError(400, "invalid_payload", { message: "action must be move, link, attest, override, attach_po, or parse_now", field: "action" });
+  if (action !== "move" && action !== "link" && action !== "attest" && action !== "override" && action !== "unlink" && action !== "attach_po" && action !== "parse_now") {
+    return jsonError(400, "invalid_payload", { message: "action must be move, link, attest, override, unlink, attach_po, or parse_now", field: "action" });
   }
 
   if (action === "move") {
@@ -231,6 +233,27 @@ export async function PATCH(req: NextRequest) {
     const note = typeof b.note === "string" ? b.note : undefined;
     try {
       await attestMatch(ctx, deliveryId, verdict as MatchVerdict, note);
+      return jsonOk({ ok: true });
+    } catch (e) {
+      if (e instanceof EmailReceiptError) return jsonError(e.status, e.code, { message: e.message });
+      throw e;
+    }
+  }
+
+  // W20-2: a manager unlinks the receipt from this delivery (reason required). `receiptId` is the
+  // receipt the person was looking at; the lib refuses if a different one is linked by then.
+  if (action === "unlink") {
+    if (ROLES[ctx.user.role].level < RECEIPT_OVERRIDE_MIN) return jsonError(403, "forbidden");
+    const reason = b.note;
+    if (typeof reason !== "string" || !reason.trim()) {
+      return jsonError(400, "unlink_note_required", { message: "A reason is required for action=unlink", field: "note" });
+    }
+    const seen = b.receiptId;
+    if (seen !== undefined && seen !== null && (typeof seen !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seen))) {
+      return jsonError(400, "invalid_payload", { message: "receiptId must be a receipt id", field: "receiptId" });
+    }
+    try {
+      await unlinkReceipt(ctx, deliveryId, reason, typeof seen === "string" ? seen : null);
       return jsonOk({ ok: true });
     } catch (e) {
       if (e instanceof EmailReceiptError) return jsonError(e.status, e.code, { message: e.message });

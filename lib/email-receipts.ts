@@ -51,7 +51,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { autoPlaceOnEmailEvidence } from "@/lib/purchase-orders";
 import { assembleMatchBody, extractPoCodes } from "@/lib/email-receipts-matching-shared";
-import { rpcNotInstalled } from "@/lib/receiving-shared";
+import { rpcNotInstalled, tableNotInstalled } from "@/lib/receiving-shared";
 
 // Re-export the pure code extractor so server callers keep their `@/lib/email-receipts`
 // import path (the *-shared.ts law). Task 7's SMS leg imports the leaf directly (client-safe).
@@ -563,11 +563,35 @@ export async function attemptAutoLink(receiptId: string): Promise<void> {
     .lte("delivery_date", hi)
     .returns<Array<{ id: string; delivery_date: string }>>();
   if (cErr) return;
-  const list = candidates ?? [];
+  let list = candidates ?? [];
+  if (list.length > 0) {
+    // A delivery a manager unlinked this receipt from is never offered to it again.
+    let undone: Set<string>;
+    try { undone = await unlinkedCounterparts(sb, "receipt_id", r.id); } catch { return; }
+    list = list.filter((c) => !undone.has(c.id));
+  }
   if (list.length !== 1) return; // zero or many → leave unlinked for manual triage
   const deliveryId = list[0]!.id;
 
   await claimAutomaticDeliveryLink(sb, r, deliveryId, list[0]!.delivery_date, "receipt");
+}
+
+/**
+ * The other side of every pair a manager UNLINKED for this delivery or this receipt
+ * (delivery_receipt_unlinks, migration 0327; owner decision W20-2). The automatic link and the
+ * "is this the invoice?" prompt leave those pairs alone: a person said they do not belong
+ * together, and putting the link back by itself would undo that. A person can still link the
+ * pair by hand. No table yet (0327 not applied) means nothing was ever unlinked. Any other read
+ * failure THROWS: the callers are best-effort and then link nothing.
+ */
+async function unlinkedCounterparts(sb: ServiceClient, by: "delivery_id" | "receipt_id", id: string): Promise<Set<string>> {
+  const { data, error } = await sb.from("delivery_receipt_unlinks").select("delivery_id, receipt_id").eq(by, id)
+    .returns<Array<{ delivery_id: string; receipt_id: string }>>();
+  if (error) {
+    if (tableNotInstalled(error)) return new Set();
+    throw new Error("Receipt unlink history unavailable");
+  }
+  return new Set((data ?? []).map((row) => (by === "delivery_id" ? row.receipt_id : row.delivery_id)).filter((v): v is string => typeof v === "string"));
 }
 
 type AutoLinkReceipt = ReceiptAutomationState & {
@@ -642,7 +666,11 @@ async function receivingReceiptCandidates(sb: ServiceClient, d: AutoLinkDelivery
     .gte("received_at", lo).lt("received_at", hi)
     .order("id").range(from, to).returns<ReceivingCandidateRow[]>());
   // Manual assignment writes vendor_guess_id too (0297); it is the effective vendor.
-  return rows.filter(r => receiptAutomationAllowed(r));
+  const eligible = rows.filter(r => receiptAutomationAllowed(r));
+  if (eligible.length === 0) return eligible;
+  // A receipt a manager unlinked from THIS delivery is neither linked again nor suggested for it.
+  const undone = await unlinkedCounterparts(sb, "delivery_id", d.id);
+  return eligible.filter(r => !undone.has(r.id));
 }
 
 /** Read-only prompt data, under the existing receiving authorization (not vendor-mail's GM gate). */
@@ -681,7 +709,11 @@ export async function attemptReceivingAutoLink(deliveryId: string): Promise<void
       .gte("delivery_date", etYmdMinusDays(day, AUTO_LINK_DAY_WINDOW))
       .lte("delivery_date", etYmdMinusDays(day, -AUTO_LINK_DAY_WINDOW))
       .returns<Array<{ id: string }>>();
-    if (forwardError || forward?.length !== 1 || forward[0]?.id !== deliveryId) return;
+    if (forwardError) return;
+    // The same exclusion as the receipt-side direction: deliveries this receipt was unlinked from.
+    const undone = (forward ?? []).length > 1 ? await unlinkedCounterparts(sb, "receipt_id", receipt.id) : new Set<string>();
+    const open = (forward ?? []).filter((f) => !undone.has(f.id));
+    if (open.length !== 1 || open[0]?.id !== deliveryId) return;
     await claimAutomaticDeliveryLink(sb, receipt, deliveryId, d.delivery_date, "receiving");
   } catch {
     // The delivery is already saved. Leave it unlinked for the existing manual triage UI.
@@ -1669,6 +1701,65 @@ export async function overrideMatch(actor: AuthContext, deliveryId: string, note
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.match_overridden", resourceTable: "vendor_deliveries", resourceId: deliveryId,
     metadata: { prior_state: priorState, location_id: d.location_id },
+    ipAddress: null, userAgent: null,
+  });
+}
+
+const UNLINK_NOTE_MAX = 2000;
+/** delivery_receipt_unlink's named refusals (migration 0327), as this module's errors. */
+const UNLINK_REFUSALS: Record<string, [status: number, code: string, message: string]> = {
+  not_found: [404, "not_found", "Delivery not found"],
+  no_receipt: [409, "no_receipt", "This delivery has no linked receipt"],
+  receipt_changed: [409, "receipt_changed", "This delivery's receipt changed. Refresh and try again."],
+  note_required: [400, "unlink_note_required", "Unlinking a receipt requires a reason"],
+  forbidden: [403, "forbidden", "Insufficient role level for receipts"],
+  invalid_input: [400, "invalid_payload", "That request was not valid"],
+};
+
+/**
+ * AGM+ (the override floor) + bind: UNLINK the receipt from a delivery (owner decision W20-2 b).
+ * The way out for a delivery whose one receipt slot holds the wrong document (B112: an order
+ * confirmation or a statement used to be linked automatically, and nothing could remove it).
+ *
+ * A reason is REQUIRED. One database transaction (delivery_receipt_unlink, migration 0327) clears
+ * both sides of the link, sets the delivery's match back to `counted_only` (a verdict about a
+ * receipt that is no longer linked means nothing, so an override is cleared too: its state is
+ * kept on the unlink record and in the audit row), appends the reason to the delivery note and
+ * records the pair in delivery_receipt_unlinks. NOTHING IS DELETED: the receipt goes back to the
+ * triage queue, and the automatic link never offers this pair again.
+ *
+ * `expectedReceiptId` is the receipt the person was looking at; if another one is linked by the
+ * time the write runs, it is refused `receipt_changed` and nothing changes.
+ * There is NO fallback: without 0327 this answers 503 `unlink_unavailable` (a two-request unlink
+ * could leave one side still linked).
+ */
+export async function unlinkReceipt(actor: AuthContext, deliveryId: string, note: string, expectedReceiptId?: string | null): Promise<void> {
+  requireLevel(actor, RECEIPT_OVERRIDE_MIN);
+  const reason = note?.trim() || null;
+  if (!reason) throw new EmailReceiptError(400, "unlink_note_required", "Unlinking a receipt requires a reason");
+  if (reason.length > UNLINK_NOTE_MAX) throw new EmailReceiptError(400, "invalid_payload", "That reason is too long");
+  const sb = getServiceRoleClient();
+  const d = await requireAttestableDelivery(sb, actor, deliveryId);
+  if (!d.email_receipt_id) throw new EmailReceiptError(409, "no_receipt", "This delivery has no linked receipt");
+
+  const { data, error } = await sb.rpc("delivery_receipt_unlink", {
+    p_delivery: deliveryId, p_receipt: expectedReceiptId ?? d.email_receipt_id, p_note: reason, p_actor: actor.user.id,
+  });
+  if (error) {
+    if (rpcNotInstalled(error)) throw new EmailReceiptError(503, "unlink_unavailable", "Unlinking is not available yet");
+    const refusal = UNLINK_REFUSALS[error.message];
+    if (refusal) throw new EmailReceiptError(refusal[0], refusal[1], refusal[2]);
+    throw new Error(`unlinkReceipt: ${error.message}`);
+  }
+  const done = (data ?? {}) as { unlink_id?: string; receipt_id?: string; prior_state?: string; receipt_released?: boolean };
+
+  await auditOperationalTaskOverride(actor, d.location_id, "receiving", "unlinkReceipt");
+  // The reason stays on the delivery note and the unlink record, not in audit metadata.
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "delivery.receipt_unlinked", resourceTable: "vendor_deliveries", resourceId: deliveryId,
+    metadata: { receipt_id: done.receipt_id ?? d.email_receipt_id, location_id: d.location_id, prior_state: done.prior_state ?? d.match_state,
+      unlink_id: done.unlink_id ?? null, receipt_released: done.receipt_released ?? null },
     ipAddress: null, userAgent: null,
   });
 }

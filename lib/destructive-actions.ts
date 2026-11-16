@@ -46,6 +46,7 @@ export const DESTRUCTIVE_ACTIONS = [
   "vendor_location_account.deactivate",
   "inbound.redrive",
   "receipt.location_moved",
+  "delivery.receipt_unlinked", // W20: a manager removed a receipt from a delivery (the match verdict is cleared with it).
   "inbound_alias.save",
   "inbound_alias.deactivate",
   "marketing.milestone_record",

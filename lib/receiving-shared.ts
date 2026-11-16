@@ -224,6 +224,13 @@ export function rpcNotInstalled(error: { code?: string | null; message?: string 
   return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
 }
 
+/** The table this read names is not installed yet (PostgREST PGRST205, Postgres 42P01): what
+ *  "0327 is not applied" looks like for delivery_receipt_unlinks. Nothing can have been unlinked. */
+export function tableNotInstalled(error: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === "PGRST205" || error.code === "42P01" || /could not find the table/i.test(error.message ?? "");
+}
+
 export type DeliveryDiscrepancy = "short" | "over" | "damaged" | "substitution";
 const DELIVERY_DISCREPANCIES: ReadonlySet<string> = new Set(["short", "over", "damaged", "substitution"]);
 const LINE_SKU_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

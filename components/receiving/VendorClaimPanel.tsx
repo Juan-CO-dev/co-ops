@@ -8,6 +8,8 @@
  *   LINKED   → a side-by-side compare: "What we counted" (the door count) vs "Vendor
  *              claim" (the emailed/uploaded receipt), plus an attestation bar (Matches /
  *              Discrepancy / AGM+ Override). The current match_state shows as an AlertPill.
+ *              AGM+ also get "Wrong receipt? Unlink it" (W20-2): a required reason, then the
+ *              receipt goes back to the waiting list and the match is cleared. Nothing is deleted.
  *   UNLINKED → an attach affordance (file upload → POST multipart) + a default-collapsed
  *              "Link an existing receipt" disclosure (D3/D4) listing the location's
  *              unlinked receipts with a per-row Link action.
@@ -490,6 +492,11 @@ export function VendorClaimPanel({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Unlink state (linked view, AGM+; W20-2).
+  const [unlinkOpen, setUnlinkOpen] = useState(false);
+  const [unlinkNote, setUnlinkNote] = useState("");
+  const [unlinkErr, setUnlinkErr] = useState<string | null>(null);
+
   // Upload state (unlinked view).
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -596,6 +603,38 @@ export function VendorClaimPanel({
     }
     const j = (await res.json().catch(() => ({}))) as { code?: string };
     showError(j?.code);
+  };
+
+  // PATCH unlink (AGM+, reason required). Names the receipt on screen, so a receipt that changed
+  // underneath is refused instead of the wrong one being unlinked.
+  const unlink = async () => {
+    if (busy || !receipt) return;
+    if (!unlinkNote.trim()) {
+      setUnlinkErr(t("receiving.claim.error.unlink_note_required"));
+      return;
+    }
+    setBusy(true);
+    setUnlinkErr(null);
+    try {
+      const res = await fetch(API, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ deliveryId, action: "unlink", receiptId: receipt.id, note: unlinkNote.trim() }),
+      });
+      if (res.ok) {
+        setUnlinkOpen(false);
+        setUnlinkNote("");
+        resetAttest();
+        router.refresh();
+        return;
+      }
+      const j = (await res.json().catch(() => ({}))) as { code?: string };
+      setUnlinkErr(t(("receiving.claim.error." + (j?.code ?? "generic")) as TranslationKey));
+    } catch {
+      setUnlinkErr(t("receiving.claim.error.generic"));
+    } finally {
+      setBusy(false);
+    }
   };
 
   // POST multipart upload → link to this delivery.
@@ -772,6 +811,49 @@ export function VendorClaimPanel({
               {err ? <p className="mt-2 text-xs text-co-cta-text">{err}</p> : null}
             </div>
           )}
+
+          {/* W20-2: the way out when the WRONG document sits in this delivery's one receipt slot.
+              AGM+ (the override floor), in every match state, an override included. */}
+          {canOverride ? (
+            <div className="mt-3">
+              {unlinkOpen ? (
+                <div className="flex flex-col gap-2 rounded-lg border-2 border-dashed border-co-border p-2">
+                  <p className="text-[11px] text-co-text-dim">{t("receiving.claim.unlink_hint")}</p>
+                  <label className="text-[11px] font-bold text-co-text-dim" htmlFor={`claim-unlink-note-${deliveryId}`}>
+                    {t("receiving.claim.unlink_note_label")}
+                  </label>
+                  <input
+                    id={`claim-unlink-note-${deliveryId}`}
+                    className="min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60"
+                    value={unlinkNote}
+                    maxLength={2000}
+                    disabled={busy}
+                    onChange={(e) => setUnlinkNote(e.target.value)}
+                    placeholder={t("receiving.claim.unlink_note_placeholder")}
+                    aria-label={t("receiving.claim.unlink_note_label")}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton variant="danger" disabled={busy} onClick={() => void unlink()}>
+                      {t("receiving.claim.unlink_confirm")}
+                    </ActionButton>
+                    <ActionButton variant="secondary" disabled={busy} onClick={() => { setUnlinkOpen(false); setUnlinkNote(""); setUnlinkErr(null); }}>
+                      {t("receiving.claim.cancel")}
+                    </ActionButton>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => { setUnlinkOpen(true); setUnlinkErr(null); }}
+                  className="inline-flex min-h-[44px] items-center px-1 text-xs font-bold text-co-text-muted underline underline-offset-2 hover:text-co-text disabled:opacity-50"
+                >
+                  {t("receiving.claim.unlink_open")}
+                </button>
+              )}
+              {unlinkErr ? <p role="alert" className="mt-2 text-xs text-co-cta-text">{unlinkErr}</p> : null}
+            </div>
+          ) : null}
         </>
       ) : (
         // ── UNLINKED: attach + link-existing ────────────────────────────────────────
