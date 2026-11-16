@@ -98,7 +98,7 @@ describe("every pulse reader uses the predicate", () => {
     const never = async () => { throw new Error("not read"); };
     return {
       board: async () => b, reports: async () => reports, fridges: async () => [], cateringToday: async () => [], cateringTomorrow: async () => ({ count: 0, firstWindow: null }),
-      notRung: async () => [], unlinkedClockIns: async () => ({ count: 0, entries: [] }), lastParPass: async () => null, deliveries: async () => [], cutoffs: async () => ({ count: 0, vendors: [] }),
+      notRung: async () => [], unlinkedClockIns: async () => ({ count: 0, entries: [] }), lastParPass: async () => null, priorAmPrep: async () => null, deliveries: async () => [], cutoffs: async () => ({ count: 0, vendors: [] }),
       sales: never as never, handoff: async () => ({ notes: [], acks: [], names: {} }), layout: async () => ({ foh: { x: 0, y: 0 }, line: { x: 2, y: 2 } }),
     };
   }
@@ -229,5 +229,94 @@ describe("assignments board + dashboard station lists use the predicate", () => 
     const floor = mixedBoard(4);
     floor.events = [];
     expect(assignmentSectionDefaults(floor, false)).toMatchObject({ stations: true, tasks: false });
+  });
+});
+
+// W21/B117: a station trimmed as planned is not "Short" for the rest of the day.
+describe("a planned trim is not Short (B117)", () => {
+  const trimBoard = (people: number, over: Partial<Station> = {}): ShiftBoard => {
+    const ids = ["me", "ana", "bo"].slice(0, people);
+    return {
+      locationId: LOC, date: "2026-10-10", stationDate: "2026-10-10", viewerId: "me", viewerLevel: 5, whosHere: true,
+      stations: [station("line", 1, { positions: [pos("line", 1), pos("line", 2), pos("line", 3)], trims: [{ at: "14:00", to_count: 2 }], ...over })],
+      people: ["me", "ana", "bo"].map((id) => ({ id, name: `${id} Person`, level: 3, hasWork: true, presence: { onShift: true, source: "toast_clock" as const, since: "2026-10-10T14:00:00Z" } })),
+      events: ids.map((id, i) => ev(id, "line", i + 1)),
+      tasks: [],
+    };
+  };
+  const line = (b: ShiftBoard, minutes: number) => floorStations(b, { nowMinutes: minutes, viewerId: "me", showNames: true })[0]!;
+
+  it("3 people before the trim: covered", () => {
+    expect(line(trimBoard(3), 13 * 60).status).toBe("covered");
+  });
+  it("2 people after a trim to 2: covered, nothing pending, positions unchanged for display", () => {
+    const s = line(trimBoard(2), 14 * 60 + 5);
+    expect(s).toMatchObject({ status: "covered", trimDue: false, positions: 3, filled: 2 });
+  });
+  it("3 people after the trim time: the trim is pending (closing soon + trimDue)", () => {
+    expect(line(trimBoard(3), 14 * 60 + 5)).toMatchObject({ status: "closing_soon", trimDue: true });
+  });
+  it("1 person after a trim to 2: still short", () => {
+    expect(line(trimBoard(1), 14 * 60 + 5).status).toBe("short");
+  });
+  it("the 0230 fallback (usually_trims_at on the sort-3 position) behaves the same", () => {
+    const b = trimBoard(2, { trims: [], positions: [pos("line", 1), pos("line", 2), { ...pos("line", 3), usuallyTrimsAt: "14:00:00" }] });
+    expect(line(b, 13 * 60).status).toBe("short");
+    expect(line(b, 14 * 60 + 5)).toMatchObject({ status: "covered", trimDue: false, positions: 3 });
+  });
+  it("Needs attention raises no closing-soon or trim row for a completed trim", async () => {
+    const auth = { user: { id: "me", role: "key_holder", language: "en" }, session: {}, role: "key_holder", level: 5, locations: [LOC] } as unknown as AuthContext;
+    const b = trimBoard(2, { usuallyClosesAt: "20:00:00" });
+    const deps = {
+      board: async () => b, reports: async () => ({ rows: [], closingDone: false, midDayDoneCount: 0 }), fridges: async () => [], cateringToday: async () => [],
+      cateringTomorrow: async () => ({ count: 0, firstWindow: null }), notRung: async () => [], unlinkedClockIns: async () => ({ count: 0, entries: [] }),
+      lastParPass: async () => null, priorAmPrep: async () => null, deliveries: async () => [], cutoffs: async () => ({ count: 0, vendors: [] }),
+      sales: (async () => { throw new Error("not read"); }) as never, handoff: async () => ({ notes: [], acks: [], names: {} }), layout: async () => null,
+    } as unknown as PulseDeps;
+    // 14:05 ET on 2026-10-10 = 18:05Z
+    const r = await loadPulseSection(deps, { auth, locationId: LOC, date: "2026-10-10", now: new Date("2026-10-10T18:05:00Z") }, "attention");
+    if (r.state !== "ok") throw new Error(r.state);
+    const kinds = (r.data as AttentionData).items.map((i) => i.kind);
+    expect(kinds).not.toContain("station_closing_soon");
+    expect(kinds).not.toContain("station_trim_due");
+  });
+});
+
+
+// W21/B118: the floor drawer's "tasks left" drops a task whose report is done.
+describe("floor drawer tasksLeft drops a finished task (B118)", () => {
+  const taskBoard = (): ShiftBoard => {
+    const b = mixedBoard(5);
+    b.tasks = [
+      { id: "t1", task: "am_prep", assigneeId: "me", assignerId: "mgr", assignerName: "Mgr", note: null, available: true },
+      { id: "t2", task: "receiving", assigneeId: "me", assignerId: "mgr", assignerName: "Mgr", note: null, available: true },
+    ];
+    return b;
+  };
+  const amPrepDone = { rows: [{ key: "am_prep" as const, reportId: "r1", progress: "done" as const, doneAt: "2026-10-10T15:00:00Z", doneByName: "Val" }], closingDone: false, midDayDoneCount: 0 };
+  const auth = { user: { id: "me", role: "key_holder", language: "en" }, session: {}, role: "key_holder", level: 5, locations: [LOC] } as unknown as AuthContext;
+  const deps = (reports: () => Promise<unknown>): PulseDeps => ({
+    board: async () => taskBoard(), reports, fridges: async () => [], cateringToday: async () => [],
+    cateringTomorrow: async () => ({ count: 0, firstWindow: null }), notRung: async () => [], unlinkedClockIns: async () => ({ count: 0, entries: [] }),
+    lastParPass: async () => null, priorAmPrep: async () => null, deliveries: async () => [], cutoffs: async () => ({ count: 0, vendors: [] }),
+    sales: (async () => { throw new Error("not read"); }) as never, handoff: async () => ({ notes: [], acks: [], names: {} }), layout: async () => null,
+  }) as unknown as PulseDeps;
+  const floorData = async (reports: () => Promise<unknown>) => {
+    const r = await loadPulseSection(deps(reports), { auth, locationId: LOC, date: "2026-10-10", now: new Date("2026-10-10T19:30:00Z") }, "floor");
+    if (r.state !== "ok") throw new Error(r.state);
+    return r.data as FloorData;
+  };
+
+  it("pure: a taskDone predicate excludes only the finished task", () => {
+    const out = floorStations(taskBoard(), { nowMinutes: 15 * 60, viewerId: "me", showNames: true, taskDone: (t) => t === "am_prep" });
+    expect(out.find((s) => s.id === "line")?.tasksLeft).toBe(1);
+    expect(floorStations(taskBoard(), { nowMinutes: 15 * 60, viewerId: "me", showNames: true }).find((s) => s.id === "line")?.tasksLeft).toBe(2);
+  });
+  it("floor section: AM prep done → only receiving is left", async () => {
+    expect((await floorData(async () => amPrepDone)).stations.find((s) => s.id === "line")?.tasksLeft).toBe(1);
+  });
+  it("floor section: a failed reports read still renders the floor and counts every task as open", async () => {
+    const f = await floorData(async () => { throw new Error("boom"); });
+    expect(f.stations.find((s) => s.id === "line")?.tasksLeft).toBe(2);
   });
 });

@@ -28,7 +28,8 @@ describe("marketing calendar windows", () => {
     expect(windowDays(result.weeks[0]!)).toHaveLength(7);
     expect(windowDays(result.baseline!)).toHaveLength(28);
     expect(result.baselineWeeks).toHaveLength(4);
-    expect(result.weeks[1]?.daysSoFar).toBe(1);
+    expect(result.weeks[1]?.daysSoFar).toBe(0);
+    expect(result.weeks[1]?.throughDay).toBeNull();
   });
   it.each(["2026-10-26", "2026-10-28"])("anchors baseline and spend weeks to D (%s), not Monday", d => {
     const result = scorecardWindows(d, "2026-11-05T17:00:00Z");
@@ -36,7 +37,18 @@ describe("marketing calendar windows", () => {
     expect(result.baseline?.to).toBe(d === "2026-10-26" ? "2026-10-25" : "2026-10-27");
     expect(result.weeks[0]?.compare).toBe(true);
     expect(result.weeks[1]?.compare).toBe(false);
-    expect(result.weeks[1]?.daysSoFar).toBe(d === "2026-10-26" ? 4 : 2);
+    expect(result.weeks[1]?.daysSoFar).toBe(d === "2026-10-26" ? 3 : 1);
+  });
+  it("daysSoFar and throughDay match the measured window (W26/B220)", () => {
+    for (let offset = 0; offset < 7; offset++) {
+      const now = new Date(Date.UTC(2026, 10, 2 + offset, 17)).toISOString();
+      const result = scorecardWindows("2026-11-02", now);
+      const week = result.weeks.at(-1)!;
+      expect(week.complete).toBe(false);
+      expect(week.daysSoFar).toBe(offset);
+      if (week.throughDay === null) expect(offset).toBe(0);
+      else expect(windowDays({ from: week.from, to: week.throughDay })).toHaveLength(week.daysSoFar);
+    }
   });
   it("uses ET midnight, not UTC midnight, to complete a spend week", () => {
     expect(scorecardWindows(day, "2026-11-02T04:59:59Z").weeks[0]?.complete).toBe(false);

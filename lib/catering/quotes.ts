@@ -35,6 +35,8 @@ import { carryPaymentsToRevision, reconcileFamilyPayments, retireSessionFor, typ
 import { canReadCateringContact } from "./ezcater-detail-shared";
 import { offerTakenUpInTime, quoteTimeExpired } from "@/lib/portal/payability-shared";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
+import { emailOrderUpdate, type OrderUpdateEmailOutcome } from "./order-update-email";
+import { orderChanges } from "./order-update-email-shared";
 
 export const QUOTE_READ_MIN = 5; // shift_lead+ may VIEW (a lead viewer sees its quote)
 export const QUOTE_WRITE_MIN = 6; // catering_mgr+ may build/revise/send
@@ -1448,11 +1450,12 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
   const sb = getServiceRoleClient();
   const { data: row, error: lErr } = await sb
     .from("catering_quotes")
-    .select("id, root_id, location_id, status, superseded_at, customer_id, total_cents, deposit_cents, expires_at")
+    .select("id, root_id, version, location_id, status, superseded_at, customer_id, total_cents, deposit_cents, expires_at, event_date, headcount")
     .eq("id", id)
     .maybeSingle<{
       id: string;
       root_id: string | null;
+      version: number | null;
       location_id: string;
       status: string;
       superseded_at: string | null;
@@ -1460,6 +1463,8 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
       total_cents: number;
       deposit_cents: number;
       expires_at: string | null;
+      event_date: string | null;
+      headcount: number | null;
     }>();
   if (lErr) throw new Error(`sendQuote load: ${lErr.message}`);
   if (!row) throw new CateringQuoteError(404, "not_found", "Quote not found");
@@ -1475,15 +1480,30 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
   // The recipient is authorized BEFORE the status write and the email (`resolveQuoteRecipient`).
   const to = await resolveQuoteRecipient(sb, actor, row.customer_id, "sendQuote");
 
+  const sentAt = new Date().toISOString();
   const { error: uErr, count } = await sb
     .from("catering_quotes")
-    .update({ status: "sent", sent_at: new Date().toISOString(), sent_by: actor.user.id }, { count: "exact" })
+    .update({ status: "sent", sent_at: sentAt, sent_by: actor.user.id }, { count: "exact" })
     .eq("id", id)
-    .is("superseded_at", null);
+    .is("superseded_at", null)
+    // Guarded on the status validated above (audit W22/B204; silent-UPDATE law, as setQuoteStatus):
+    // a concurrent accept/decline that landed during the recipient read is not flipped back to
+    // 'sent', and — because this throws before the email — the customer gets no re-send.
+    .eq("status", row.status);
   if (uErr) throw new Error(`sendQuote update: ${uErr.message}`);
-  if (count === 0) throw new CateringQuoteError(404, "not_found", "Quote not found");
+  if (count === 0) throw new CateringQuoteError(409, "status_changed", "Quote status changed since it was loaded — reload and retry");
 
-  const { emailed, emailOutcome, recipient, emailError } = await emailQuoteToCustomer(id, row.total_cents, row.customer_id, to);
+  // A REVISION THE CUSTOMER ALREADY SAW (audit W22, owner decision W22-1: any order update → a customer email
+  // showing old vs new). When this revision changes the date, guests or total of a version that was sent
+  // before, the customer gets "Your catering order was updated" with the old → new lines INSTEAD of the generic
+  // quote email — a NEW customer email that ships CLOSED (lib/catering/order-update-email-shared.ts). Whenever
+  // it does not go out (any switch closed, nothing changed, a first send), the quote email below is exactly
+  // today's.
+  const orderUpdate = await emailRevisionUpdate(sb, row, sentAt);
+  const sent = orderUpdate?.outcome === "sent"
+    ? { emailed: true, emailOutcome: "sent" as const, recipient: to.recipientHidden ? null : (to.cust?.email ?? null), emailError: null }
+    : await emailQuoteToCustomer(id, row.total_cents, row.customer_id, to);
+  const { emailed, emailOutcome, recipient, emailError } = sent;
   const { recipientHidden } = to;
 
   void audit({
@@ -1492,11 +1512,44 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
     action: "catering.quote.send",
     resourceTable: "catering_quotes",
     resourceId: id,
-    metadata: { emailed, email_outcome: emailOutcome, recipient, recipient_hidden: recipientHidden, email_error: emailError, total_cents: row.total_cents },
+    metadata: {
+      emailed, email_outcome: emailOutcome, recipient, recipient_hidden: recipientHidden, email_error: emailError, total_cents: row.total_cents,
+      ...(orderUpdate ? { order_update_email: orderUpdate.outcome, ...("reason" in orderUpdate ? { order_update_email_reason: orderUpdate.reason } : {}) } : {}),
+    },
     ipAddress: null,
     userAgent: null,
   });
   return { emailed, emailOutcome, recipient, recipientHidden, emailError };
+}
+
+/**
+ * The order-update email for a revision whose family was already SENT to the customer (W22). Null when this
+ * is a first send or nothing the customer reads changed; otherwise the order-update outcome (never throws).
+ * `sentAt` is the sent_at THIS send wrote: the persisted send occurrence the email is keyed by (fix round 1,
+ * BC-061 — a key of the two revision ids alone made a second explicit send of one revision a provider no-op).
+ */
+async function emailRevisionUpdate(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  row: { id: string; root_id: string | null; version: number | null; customer_id: string | null; total_cents: number; event_date: string | null; headcount: number | null },
+  sentAt: string,
+): Promise<OrderUpdateEmailOutcome | null> {
+  if (!row.root_id || (row.version ?? 1) <= 1) return null;
+  const { data: prev, error } = await sb
+    .from("catering_quotes")
+    .select("id, event_date, headcount, total_cents")
+    .or(`id.eq.${row.root_id},root_id.eq.${row.root_id}`)
+    .neq("id", row.id)
+    .not("sent_at", "is", null)
+    .order("version", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string; event_date: string | null; headcount: number | null; total_cents: number }>();
+  if (error || !prev) return null;
+  const changes = orderChanges(
+    { eventDate: prev.event_date, headcount: prev.headcount, totalCents: prev.total_cents },
+    { eventDate: row.event_date, headcount: row.headcount, totalCents: row.total_cents },
+  );
+  if (changes.length === 0) return null;
+  return emailOrderUpdate(sb, { customerId: row.customer_id, quoteId: row.id, changes, idempotencyKey: `order-update:quote:${prev.id}:${row.id}:${sentAt}` });
 }
 
 // ── THE ONE QUOTE EMAIL PATH ────────────────────────────────────────────────────────

@@ -63,6 +63,15 @@ describe("the run (lib/scheduling/draft.ts)", () => {
     expect(skipped.metadata).toMatchObject({ code: "demand_unavailable", cause: "rpc_error", actor_context: "cron" });
   });
 
+  it("B134 r1: the other shops' shifts did not load → that shop is skipped (other_shop_check_unavailable), audited, NOTHING written", async () => {
+    const s = scheduleStore(shopTables());
+    const loadInputs = async (svc: Parameters<typeof loadSchedulingInputs>[0], a: Parameters<typeof loadSchedulingInputs>[1]) => ({ ...(await loadSchedulingInputs(svc, a)), elsewhere: [], elsewhereUnavailable: true });
+    const r = await runWednesdayDraft({ service: s.client, now: new Date("2026-10-21T10:15:00Z"), loadInputs });
+    expect(r).toMatchObject({ ran: true, shops: [{ locationId: A, outcome: "skipped", reason: "other_shop_check_unavailable" }] });
+    expect(commits(s.calls)).toEqual([]);
+    expect(vi.mocked(audit).mock.calls.find(([a]) => a.action === "schedule.draft_skipped")![0].metadata).toMatchObject({ code: "other_shop_check_unavailable" });
+  });
+
   it("only ENABLED shops; one shop's failure never stops the next; no shop enabled → nothing runs", async () => {
     const t = shopTables();
     t.schedule_shop_settings!.push({ location_id: B, enabled: true, estimated_hourly_cents: null, estimated_salaried_weekly_cents: null, agm_access: "read" });

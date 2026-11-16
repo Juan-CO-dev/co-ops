@@ -37,7 +37,10 @@
  * tap was registered.
  */
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+
+import { withDeadline } from "@/lib/bounded-fetch";
 
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -50,6 +53,9 @@ import {
 import { markNotificationReadAction } from "@/app/(authed)/dashboard/actions";
 
 const OPERATIONAL_TZ = "America/New_York";
+
+/** "Mark all read" request deadline (bounded-fetch house rule). */
+const MARK_ALL_TIMEOUT_MS = 10_000;
 
 interface NotificationListProps {
   id: string;
@@ -94,6 +100,34 @@ export function NotificationList({
   );
 
   const todayDate = useMemo(() => nyDateString(new Date()), []);
+
+  // "Mark all read" (owner decision W26-5 b). The server marks exactly what
+  // this widget can show (session user + the widget's location context);
+  // router.refresh() re-runs the dashboard's loadUnreadForUser so the list
+  // and the bell count empty from server truth, not from client state.
+  const router = useRouter();
+  const [markAll, setMarkAll] = useState<"idle" | "pending" | "error">("idle");
+  const onMarkAll = useCallback(async () => {
+    setMarkAll("pending");
+    let ok = false;
+    try {
+      ok = await withDeadline(MARK_ALL_TIMEOUT_MS, async (signal) => {
+        const res = await fetch("/api/notifications/mark-all-read", {
+          method: "POST",
+          signal,
+        });
+        return res.ok;
+      });
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      setMarkAll("error");
+      return;
+    }
+    setMarkAll("idle");
+    router.refresh();
+  }, [router]);
 
   const onTapCard = useCallback(
     (recipientId: string) => {
@@ -164,6 +198,26 @@ export function NotificationList({
           >
             {t("notifications.sheet.heading")}
           </h2>
+          <div className="flex items-center gap-2">
+          {visibleNotifications.length > 0 ? (
+            <button
+              type="button"
+              onClick={onMarkAll}
+              disabled={markAll === "pending"}
+              aria-label={t("notifications.sheet.mark_all_read_aria")}
+              className="
+                inline-flex min-h-[44px] items-center justify-center rounded-xl
+                border-2 border-co-border-2 px-3 text-xs font-bold uppercase
+                tracking-[0.1em] text-co-text transition hover:border-co-text
+                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+                disabled:cursor-not-allowed disabled:opacity-50
+              "
+            >
+              {markAll === "pending"
+                ? t("notifications.sheet.mark_all_read_pending")
+                : t("notifications.sheet.mark_all_read")}
+            </button>
+          ) : null}
           <button
             ref={closeButtonRef}
             type="button"
@@ -178,7 +232,13 @@ export function NotificationList({
           >
             <CloseIcon />
           </button>
+          </div>
         </header>
+        {markAll === "error" ? (
+          <p role="alert" className="shrink-0 px-4 pt-3 text-sm font-bold text-co-cta-text sm:px-5">
+            {t("notifications.sheet.mark_all_read_error")}
+          </p>
+        ) : null}
 
         {/* List or empty state */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-4">

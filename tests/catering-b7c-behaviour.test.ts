@@ -101,7 +101,13 @@ class Q {
     return this.exec().then(res, rej);
   }
 }
-const sbFake = { from: (t: string) => new Q(t) };
+// W22/B122: reserve now calls 0329's reserve_catering_prep_demand first. This fake is a database WITHOUT 0329,
+// so the lib takes its previous two-call path (the behaviour these cases pin); the RPC path has its own tests
+// (tests/catering-prep-demand-reserve-rpc.test.ts, scripts/sql-harness-0329.mjs).
+const sbFake = {
+  from: (t: string) => new Q(t),
+  rpc: async () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function" } }),
+};
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => sbFake }));
 vi.mock("@/lib/audit", () => ({ audit }));
 vi.mock("@/lib/session", () => ({ requireSession: async () => session.ctx }));

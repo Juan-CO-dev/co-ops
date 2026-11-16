@@ -3,7 +3,7 @@
  *
  * Every edit is on 15-minute snaps and is one of: `move` (the whole shift), `start` / `end` (the segments scale
  * proportionally, each ≥ `limits.segmentMinQ`), `divider` (the boundary between two segments), `addShift`,
- * `removeShift`, `setSegmentPosition`. Only STRUCTURAL failures are refused, by name: `edit_off_grid`,
+ * `removeShift`, `setSegmentPosition`. (A MOD piece has no minimum beyond one quarter — B136.) Only STRUCTURAL failures are refused, by name: `edit_off_grid`,
  * `edit_overlap`, `edit_segments_malformed`, `edit_below_segment_min`, `day_locked` (a past day — an inherited
  * past day is never touched), `position_not_at_shop`, `person_not_at_shop`, `head_moved` (the shift is not there:
  * a stale board) and — CC chunk B ruling 3, HARD — `shift_over_maximum`. An edit that breaks a RULE is ALLOWED and
@@ -72,17 +72,26 @@ const sameRef = (s: Shift, r: ShiftRef) => s.date === r.date && s.userId === r.u
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
+ * B136: the segment minimum applies to STATION holds only — a manager-on-duty (MOD) piece is unassigned time and has
+ * no minimum beyond one quarter (the rule the crew generator follows: it emits short MOD lead-ins deliberately).
+ */
+export const segmentMinFor = (g: Pick<Segment, "positionId">, minQ: number): number => (g.positionId === MOD ? 1 : minQ);
+
+/**
  * The mockup's `scaleSegments`, with the shop's segment minimum: each boundary moves proportionally to the new span,
- * every segment keeps at least `minQ`; the last segment ends exactly at the new end. Refused when the span cannot
- * hold every segment at its minimum.
+ * every segment keeps at least its own minimum (`segmentMinFor`: `minQ` for a station, one quarter for MOD); the last
+ * segment ends exactly at the new end. Refused when the span cannot hold every segment at its minimum.
  */
 export function scaleSegments(parts: readonly Segment[], oldStart: number, oldEnd: number, start: number, end: number, minQ: number): Segment[] {
-  if (end - start < parts.length * minQ) refuse("edit_below_segment_min", { minutes: minQ * 15 });
+  const mins = parts.map((g) => segmentMinFor(g, minQ));
+  const total = mins.reduce((n, m) => n + m, 0);
+  if (end - start < total) refuse("edit_below_segment_min", { minutes: minQ * 15 });
   let cursor = start;
+  let after = total;
   return parts.map((g, i) => {
-    const remaining = parts.length - i - 1;
+    after -= mins[i]!;
     const next = i === parts.length - 1 ? end
-      : Math.max(cursor + minQ, Math.min(end - remaining * minQ, Math.round(start + ((g.endQ - oldStart) * (end - start)) / (oldEnd - oldStart))));
+      : Math.max(cursor + mins[i]!, Math.min(end - after, Math.round(start + ((g.endQ - oldStart) * (end - start)) / (oldEnd - oldStart))));
     const seg: Segment = { ...g, startQ: cursor, endQ: next };
     cursor = next;
     return seg;
@@ -94,8 +103,19 @@ function validateShape(sh: Shift, minQ: number, maxQ: number): void {
   const segs = sh.segments;
   if (segs.length === 0 || sh.startQ >= sh.endQ || segs[0]!.startQ !== sh.startQ || segs[segs.length - 1]!.endQ !== sh.endQ
     || segs.some((g, i) => g.startQ >= g.endQ || (i > 0 && segs[i - 1]!.endQ !== g.startQ))) refuse("edit_segments_malformed");
-  if (segs.some((g) => g.endQ - g.startQ < minQ)) refuse("edit_below_segment_min", { minutes: minQ * 15 });
+  if (segs.some((g) => g.endQ - g.startQ < segmentMinFor(g, minQ))) refuse("edit_below_segment_min", { minutes: minQ * 15 });
   if (sh.endQ - sh.startQ > maxQ) refuse("shift_over_maximum", { minutes: (sh.endQ - sh.startQ) * 15, maximumMinutes: maxQ * 15 });
+}
+
+/**
+ * B218: the identity an edit gives the shift it touches — `move` shifts its start by Δ, `start` sets it; every other
+ * kind keeps the shift's key (and `addShift` / `removeShift` have no before-and-after pair). One rule for the crew
+ * override record and for carrying a shift's stored reasons to its new key.
+ */
+export function editedShiftRefs(op: EditOp): { from: ShiftRef; to: ShiftRef } | null {
+  if (op.kind === "addShift" || op.kind === "removeShift") return null;
+  const nextStart = op.kind === "move" ? op.shift.startQ + op.deltaQ : op.kind === "start" ? op.toQ : op.shift.startQ;
+  return { from: op.shift, to: { ...op.shift, startQ: nextStart } };
 }
 
 /** Collapse repeated edits onto the original generated identity; deletion remains a tombstone. */
@@ -103,7 +123,7 @@ export function recordCrewManualOverride(prior: readonly CrewManualOverride[], b
   const original = op.kind === "addShift" ? { date: op.date, userId: op.userId, startQ: op.startQ } : op.shift;
   const previous = op.kind === "addShift" ? undefined : before.shifts.find((sh) => sameRef(sh, original));
   if (op.kind !== "addShift" && !previous) refuse("head_moved");
-  const nextStart = op.kind === "move" ? original.startQ + op.deltaQ : op.kind === "start" ? op.toQ : original.startQ;
+  const nextStart = editedShiftRefs(op)?.to.startQ ?? original.startQ;
   const replacement = op.kind === "removeShift" ? null : after.shifts.find((sh) => sameRef(sh, { ...original, startQ: nextStart }));
   if (replacement === undefined) refuse("head_moved");
   const result = structuredClone([...prior]);

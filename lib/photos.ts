@@ -26,6 +26,13 @@
  * grant only. Operational writes retain lockLocationContext."):
  *   - UPLOAD is an operational write: lockLocationContext — a member of the shop,
  *     or level 9+.
+ *     EXCEPT a TASK photo (audit W05B fix round 1): an upload that names the checklist
+ *     instance it is for (`instanceId`) is allowed by the shop-task rule
+ *     (canWorkShopTasks: a member, or level 8+ at any shop — Juan 2026-11-15), and only
+ *     while that instance is OPEN, its shop is the upload's shop, and the shop is
+ *     ACTIVE. The photo is stored for that shop, so completeItem's W08/B163 binding
+ *     (the photo exists and belongs to the instance's shop) holds unchanged. An upload
+ *     that names no instance (receiving, receipts, case photos) keeps lockLocationContext.
  *   - READ follows the reports the photo links are shown on: canReadReportLocation
  *     — a member of the shop, or level 8+ (the Manager of Operations opens every
  *     shop's closing / opening / receiving reports, so the photos on them open
@@ -36,7 +43,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { canReadReportLocation, lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canReadReportLocation, canWorkShopTasks, lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import {
@@ -67,6 +74,40 @@ export interface UploadPhotoInput {
   locationId: string;
   bytes: Buffer | Uint8Array;
   contentType: string;
+  /** The checklist instance this photo is for (a TASK photo, W05B). Absent = an operational upload. */
+  instanceId?: string | null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * May the actor upload a photo for `locationId`? An operational upload: lockLocationContext. A task
+ * photo (instanceId given): canWorkShopTasks against the instance's own shop, which must equal
+ * `locationId`, with the instance open and the shop active. Never throws for a refusal (false = 404).
+ */
+async function mayUploadFor(actor: AuthContext, input: UploadPhotoInput): Promise<boolean> {
+  const loc = actorLoc(actor);
+  if (input.instanceId === undefined || input.instanceId === null || input.instanceId === "") {
+    return lockLocationContext(loc, input.locationId);
+  }
+  // A member (or level 9+) keeps the bind it always had — the instance check only ever WIDENS it.
+  if (lockLocationContext(loc, input.locationId)) return true;
+  if (!canWorkShopTasks(loc, input.locationId) || !UUID_RE.test(input.instanceId)) return false;
+  const sb = getServiceRoleClient();
+  const { data: instance, error } = await sb
+    .from("checklist_instances")
+    .select("id, location_id, status")
+    .eq("id", input.instanceId)
+    .maybeSingle<{ id: string; location_id: string; status: string }>();
+  if (error) throw new Error(`uploadPhoto instance: ${error.message}`);
+  if (!instance || instance.location_id !== input.locationId || instance.status !== "open") return false;
+  const { data: shop, error: shopError } = await sb
+    .from("locations")
+    .select("id, active")
+    .eq("id", input.locationId)
+    .maybeSingle<{ id: string; active: boolean }>();
+  if (shopError) throw new Error(`uploadPhoto location: ${shopError.message}`);
+  return shop?.active === true;
 }
 
 /**
@@ -78,7 +119,7 @@ export async function uploadPhoto(
   actor: AuthContext,
   input: UploadPhotoInput,
 ): Promise<{ photoId: string }> {
-  if (!lockLocationContext(actorLoc(actor), input.locationId)) {
+  if (!(await mayUploadFor(actor, input))) {
     throw new PhotoError(404, "not_found", "Location not found");
   }
   if (!isAllowedContentType(input.contentType)) {

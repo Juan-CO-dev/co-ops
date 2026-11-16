@@ -4,7 +4,11 @@ import { readFileSync } from 'node:fs';
 import { randomUUID as uuid, createHash } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 const read = name => readFileSync(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8');
-const migration = read('0297_vendor_mail.sql') + '\n' + read('0299_vendor_mail_b2.sql');
+// A later migration that re-emits vendor_mail_mutate (0326, W20/B196) re-runs every scenario below on its own
+// body: `VENDOR_MAIL_HARNESS_APPEND=<file>` appends it after 0299. Unset = exactly the 0297 + 0299 run.
+const appended = process.env.VENDOR_MAIL_HARNESS_APPEND ?? '';
+assert.ok(appended === '' || /^\d{4}_[a-z0-9_]+\.sql$/.test(appended), 'VENDOR_MAIL_HARNESS_APPEND must name one migration file');
+const migration = read('0297_vendor_mail.sql') + '\n' + read('0299_vendor_mail_b2.sql') + (appended ? '\n' + read(appended) : '');
 const extract = (file, pattern) => { const found=read(file).match(pattern); assert.ok(found,`real prerequisite ${file}`); return found[0]; };
 const db = new PGlite();
 let checks=0;
@@ -186,5 +190,5 @@ try {
   check((await one('select handled_at,revision from inbound_messages where id=$1',[rollback])).handled_at===null && (await one('select revision from inbound_messages where id=$1',[rollback])).revision===0,'event failure rolls back projection');
   await reject(()=>machine("update inbound_messages set content_state='failed' where id=$1",[rollback]),/event_failure/,'event failure refuses machine transition');
   check((await one('select content_state from inbound_messages where id=$1',[rollback])).content_state==='pending','event failure rolls back machine state');
-  console.log(`PASS 0299: ${checks} checks (single-session PGlite; concurrency requires separate sim proof)`);
+  console.log(`PASS 0299${appended ? ` + ${appended.slice(0, 4)}` : ''}: ${checks} checks (single-session PGlite; concurrency requires separate sim proof)`);
 } finally { await db.close(); }

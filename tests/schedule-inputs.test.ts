@@ -19,7 +19,7 @@ const { computeSkillMatrixForShop, loadSkillMatrix } = await import("@/lib/peopl
 const { loadPeopleFacts } = await import("@/lib/people/facts");
 const { loadSchedulingInputs, loadSchedulingDemand } = await import("@/lib/scheduling/inputs");
 const {
-  STRUCTURE_DEFAULTS_ID, closingFacts, eventQFromWindow, firstSeenFor, generatorInputFor, memberSinceDate, overrideFor, sqlStructureVersion, toCateringEvents, tsStructureVersion,
+  STRUCTURE_DEFAULTS_ID, closingFacts, eventQFromWindow, firstSeenFor, generatorInputFor, memberSinceDate, overrideFor, pickShopWage, sqlStructureVersion, toCateringEvents, tsStructureVersion,
 } = await import("@/lib/scheduling/inputs-shared");
 const { ScheduleError } = await import("@/lib/scheduling/errors-shared");
 const { forecastWeek } = await import("@/lib/scheduling/demand-shared");
@@ -64,6 +64,7 @@ function baseTables(): Tables {
       { location_id: A, time_entry_guid: "t2", business_date: "2026-10-12", user_id: null, in_at: "2026-10-12T14:00:00Z", out_at: "2026-10-12T20:00:00Z", hours: 6, deleted: false },
     ],
     audit_log: [{ id: 1, action: "schedule.budget_kept", resource_id: A, metadata: { digest: "abc123" } }],
+    sevenshifts_sync_runs: [], sevenshifts_location_links: [], sevenshifts_user_assignments: [], sevenshifts_roles: [],
   };
 }
 
@@ -180,10 +181,10 @@ describe("loadSchedulingInputs — the one batch loader", () => {
       { id: "ul4", sevenshifts_user_id: "704", user_id: KH, linked_at_location_id: A, active: false }, // an unlinked row never counts
     ];
     t.sevenshifts_wages = [
-      { user_id: "701", wage_type: "hourly", wage_cents: 2000, upcoming: false, effective_date: "2026-01-01", active: true },
-      { user_id: "702", wage_type: "hourly", wage_cents: 2600, upcoming: false, effective_date: "2026-01-01", active: true },
-      { user_id: "703", wage_type: "hourly", wage_cents: 2200, upcoming: false, effective_date: "2026-01-01", active: true },
-      { user_id: "704", wage_type: "hourly", wage_cents: 9900, upcoming: false, effective_date: "2026-01-01", active: true },
+      { user_id: "701", wage_id: 1, role_id: null, wage_type: "hourly", wage_cents: 2000, upcoming: false, effective_date: "2026-01-01", active: true },
+      { user_id: "702", wage_id: 2, role_id: null, wage_type: "hourly", wage_cents: 2600, upcoming: false, effective_date: "2026-01-01", active: true },
+      { user_id: "703", wage_id: 3, role_id: null, wage_type: "hourly", wage_cents: 2200, upcoming: false, effective_date: "2026-01-01", active: true },
+      { user_id: "704", wage_id: 4, role_id: null, wage_type: "hourly", wage_cents: 9900, upcoming: false, effective_date: "2026-01-01", active: true },
     ];
     t.sevenshifts_labor_settings = [{ company_id: 1, weekly_ot_threshold: 40 }];
     const prev = { t: process.env.SEVENSHIFTS_ACCESS_TOKEN, s: process.env.SEVENSHIFTS_SYNC };
@@ -200,6 +201,109 @@ describe("loadSchedulingInputs — the one batch loader", () => {
       if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
       if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;
     }
+  });
+  it("pickShopWage: undated loses to dated; the primary role at this shop wins; another location's role is never picked (B216)", () => {
+    const w = (wage_id: number, role_id: number | null, wage_cents: number, effective_date: string | null, wage_type = "hourly") => ({ wage_id, role_id, wage_type, wage_cents, effective_date });
+    const shop = new Set(["10", "11"]);
+    // The audit's repro: role A (primary) 1840 dated, role B 2100 undated → 1840.
+    expect(pickShopWage([w(1, 10, 1840, "2026-07-01"), w(2, 11, 2100, null)], { primaryRoleIds: new Set(["10"]), shopRoleIds: shop })).toBe(1840);
+    // Same role, two dates: the later wins; undated is oldest; order-independent.
+    expect(pickShopWage([w(3, 10, 2000, "2026-07-01"), w(2, 10, 1900, null), w(1, 10, 1800, "2026-01-01")], { primaryRoleIds: new Set(["10"]), shopRoleIds: shop })).toBe(2000);
+    expect(pickShopWage([w(1, 10, 1800, "2026-01-01"), w(3, 10, 2000, "2026-07-01"), w(2, 10, 1900, null)], { primaryRoleIds: new Set(["10"]), shopRoleIds: shop })).toBe(2000);
+    // Same date: the higher wage id.
+    expect(pickShopWage([w(9, 10, 2500, "2026-07-01"), w(10, 10, 2600, "2026-07-01")], { primaryRoleIds: new Set(), shopRoleIds: shop })).toBe(2600);
+    // Another location's role is never picked; a no-role wage is the fallback.
+    expect(pickShopWage([w(1, 99, 3000, "2026-10-01"), w(2, null, 1840, null)], { primaryRoleIds: new Set(["99"]), shopRoleIds: shop })).toBe(1840);
+    expect(pickShopWage([w(1, 99, 3000, "2026-10-01")], { primaryRoleIds: new Set(), shopRoleIds: shop })).toBeNull();
+    // A role at this shop beats a no-role wage; the primary beats another shop role even when older.
+    expect(pickShopWage([w(1, null, 1700, "2026-10-01"), w(2, 11, 1900, "2026-01-01")], { primaryRoleIds: new Set(), shopRoleIds: shop })).toBe(1900);
+    expect(pickShopWage([w(1, 10, 1840, "2026-01-01"), w(2, 11, 2100, "2026-10-01")], { primaryRoleIds: new Set(["10"]), shopRoleIds: shop })).toBe(1840);
+    // Salaried rows are not hourly rates.
+    expect(pickShopWage([w(1, 10, 99999, "2026-10-01", "weekly_salary")], { primaryRoleIds: new Set(["10"]), shopRoleIds: shop })).toBeNull();
+    // No live location link (shopRoleIds null): any role counts, still dated-latest.
+    expect(pickShopWage([w(1, 10, 1840, "2026-07-01"), w(2, 11, 2100, null)], { primaryRoleIds: new Set(), shopRoleIds: null })).toBe(1840);
+  });
+  it("loadWages picks by the primary role at the shop's linked 7shifts location (B216)", async () => {
+    const t = baseTables();
+    t.sevenshifts_user_links = [{ id: "ul1", sevenshifts_user_id: "701", user_id: EMP, linked_at_location_id: A, active: true }];
+    t.sevenshifts_location_links = [{ location_id: A, sevenshifts_location_id: 5001, active: true }];
+    t.sevenshifts_roles = [{ id: 10, location_id: 5001 }, { id: 11, location_id: 5001 }, { id: 99, location_id: 5002 }];
+    t.sevenshifts_user_assignments = [{ user_id: "701", edge_key: "701:5001:-:10", location_id: 5001, role_id: 10, is_primary: true, active: true },
+      { user_id: "701", edge_key: "701:5001:-:11", location_id: 5001, role_id: 11, is_primary: false, active: true }];
+    t.sevenshifts_wages = [
+      { user_id: "701", wage_id: 1, role_id: 10, wage_type: "hourly", wage_cents: 1840, upcoming: false, effective_date: "2026-07-01", active: true },
+      { user_id: "701", wage_id: 2, role_id: 11, wage_type: "hourly", wage_cents: 2100, upcoming: false, effective_date: null, active: true },
+      { user_id: "701", wage_id: 3, role_id: 99, wage_type: "hourly", wage_cents: 3000, upcoming: false, effective_date: "2026-10-01", active: true },
+    ];
+    const prev = { t: process.env.SEVENSHIFTS_ACCESS_TOKEN, s: process.env.SEVENSHIFTS_SYNC };
+    process.env.SEVENSHIFTS_ACCESS_TOKEN = "test-token-not-real";
+    process.env.SEVENSHIFTS_SYNC = "1";
+    try {
+      expect((await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW })).wages).toEqual({ byUserCents: { [EMP]: 1840 }, source: "sevenshifts" });
+    } finally {
+      if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
+      if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;
+    }
+  });
+  it("overtime threshold comes from the connected company, not the lowest id (B217)", async () => {
+    const t = baseTables();
+    t.sevenshifts_user_links = [{ id: "ul1", sevenshifts_user_id: "701", user_id: EMP, linked_at_location_id: A, active: true }];
+    t.sevenshifts_wages = [{ user_id: "701", wage_id: 1, role_id: null, wage_type: "hourly", wage_cents: 2000, upcoming: false, effective_date: "2026-01-01", active: true }];
+    t.sevenshifts_labor_settings = [{ company_id: 100, weekly_ot_threshold: 48, multipliers: {} }, { company_id: 200, weekly_ot_threshold: 40, multipliers: { weekly_overtime_multiplier: 2, daily_overtime_multiplier: 3 } }];
+    const prev = { t: process.env.SEVENSHIFTS_ACCESS_TOKEN, s: process.env.SEVENSHIFTS_SYNC };
+    process.env.SEVENSHIFTS_ACCESS_TOKEN = "test-token-not-real";
+    process.env.SEVENSHIFTS_SYNC = "1";
+    try {
+      expect((await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW })).overtimeH).toBeNull(); // no run: no company
+      t.sevenshifts_sync_runs = [
+        { id: "r1", status: "ok", company_id: 100, finished_at: "2026-11-01T10:00:00Z" },
+        { id: "r2", status: "ok", company_id: 200, finished_at: "2026-11-02T10:00:00Z" },
+        { id: "r3", status: "failed", company_id: 100, finished_at: "2026-11-03T10:00:00Z" },
+        { id: "r4", status: "failed", company_id: null, finished_at: "2026-11-04T10:00:00Z" },
+      ];
+      const got = await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
+      expect(got.overtimeH).toBe(40);
+      expect(got.overtimeMultiplier).toBe(2); // B133: the weekly multiplier of the connected company, never the daily one
+      t.sevenshifts_labor_settings[1]!.multipliers = {};
+      expect((await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW })).overtimeMultiplier).toBeNull(); // → 1.5× at use
+    } finally {
+      if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
+      if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;
+    }
+  });
+  it("another shop's head shifts of this shop's members are loaded; the roster narrows around them and an overlapping pin is dropped (B134)", async () => {
+    const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const t = baseTables();
+    t.schedule_weeks = [{ id: "wB", location_id: B, week_start: WEEK, head_revision_id: "revB", approved_revision_id: null },
+      { id: "wB-old", location_id: B, week_start: "2026-10-19", head_revision_id: "revOld", approved_revision_id: null }];
+    t.schedule_revision_shifts = [
+      { revision_id: "revB", location_id: B, user_id: EMP, business_date: "2026-10-27", start_q: 44, end_q: 76, segments: [], closing_manager: false, flex: false, pinned: false, reasons: null },
+      { revision_id: "revB", location_id: B, user_id: "someone-else", business_date: "2026-10-27", start_q: 44, end_q: 76, segments: [], closing_manager: false, flex: false, pinned: false, reasons: null },
+      { revision_id: "revOld", location_id: B, user_id: EMP, business_date: "2026-10-20", start_q: 0, end_q: 96, segments: [], closing_manager: false, flex: false, pinned: false, reasons: null },
+    ];
+    t.schedule_pins = [
+      { id: "pin-over", location_id: A, business_date: "2026-10-27", user_id: EMP, start_q: 60, end_q: 80, positions: [], kind: "added", active: true, retires_id: null },
+      { id: "pin-free", location_id: A, business_date: "2026-10-28", user_id: EMP, start_q: 60, end_q: 80, positions: [], kind: "added", active: true, retires_id: null },
+    ];
+    const inputs = await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
+    expect(inputs.elsewhere).toEqual([{ userId: EMP, date: "2026-10-27", startQ: 44, endQ: 76 }]);
+    const g = generatorInputFor(inputs, WEEK, { today: inputs.asOf });
+    expect(g.pins.map((p) => p.id)).toEqual(["pin-free"]);
+    const eli = g.people.find((p) => p.userId === EMP)!;
+    expect(eli.elsewhere).toEqual({ "2026-10-27": [[44, 76]] });
+    const w = eli.availability["2026-10-27"]!;
+    expect(w.toQ <= 44 || w.fromQ >= 76).toBe(true);
+    expect(inputs.elsewhereUnavailable).toBeUndefined();
+    // B134 r1: a missing / failing read is UNAVAILABLE, never "none" (that would be fabricated free time). The board
+    // still loads (elsewhere empty, flagged); Generate / the horizon / the draft / Approve refuse on the flag.
+    const broken = { ...t };
+    delete (broken as Record<string, unknown>).schedule_revision_shifts;
+    const { loadOtherShopShifts } = await import("@/lib/scheduling/inputs");
+    expect(await loadOtherShopShifts(client(broken, emptyHistory), A, [EMP], [WEEK])).toEqual({ status: "unavailable" });
+    expect(await loadOtherShopShifts(client(t, emptyHistory), A, [EMP], [WEEK])).toEqual({ status: "ok", shifts: [{ userId: EMP, date: "2026-10-27", startQ: 44, endQ: 76 }] });
+    const degraded = await loadSchedulingInputs(client(broken, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
+    expect(degraded.elsewhere).toEqual([]);
+    expect(degraded.elsewhereUnavailable).toBe(true);
   });
   it("demand that does not load is `unavailable` with its cause (never a flat curve)", async () => {
     const inputs = await loadSchedulingInputs(client(baseTables(), async () => ({ data: null, error: { code: "PGRST202", message: "missing" } })), { locationId: A, weekStarts: [WEEK], now: NOW });
@@ -287,6 +391,29 @@ describe("the pure assembly (generatorInputFor and its readers)", () => {
     const walk = (v: unknown) => { if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) { keys.add(k); walk(x); } };
     walk(ctx);
     expect([...keys].filter((k) => /wage|cents_per|rate/i.test(k))).toEqual([]);
+  });
+  it("a range with one trailing meridiem applies it to the first time (B028)", () => {
+    expect(eventQFromWindow("1:00\u20131:30 PM")).toBe(52);
+    expect(eventQFromWindow("1:30-2:00 PM")).toBe(54);
+    expect(eventQFromWindow("12:30\u20131:00 PM")).toBe(50);
+    expect(eventQFromWindow("11:30 AM\u201312:00 PM")).toBe(46);
+    expect(eventQFromWindow("12:00\u201312:30 AM")).toBe(0);
+    expect(eventQFromWindow("1:15 PM")).toBe(53);
+    expect(eventQFromWindow("13:15")).toBe(53);
+    expect(eventQFromWindow("2026-09-08T15:30:00Z")).toBeNull();
+    const ev = toCateringEvents([{ id: "p1", eventDate: "2026-10-29", timeWindow: "1:00\u20131:30 PM", headcount: 30, contactName: "A", company: null, valueCents: 1 }], [], () => 0);
+    expect(ev[0]?.eventQ).toBe(52);
+  });
+  it("a trailing meridiem is resolved across noon and midnight from BOTH endpoints (B028 r1)", () => {
+    expect(eventQFromWindow("11:30-12:00 PM")).toBe(46); // 11:30 AM, not 11:30 PM
+    expect(eventQFromWindow("11:30\u201312 PM")).toBe(46);
+    expect(eventQFromWindow("11:30-1:00 PM")).toBe(46); // 11:30 AM
+    expect(eventQFromWindow("11 - 1 pm")).toBe(44);
+    expect(eventQFromWindow("10-11 PM")).toBe(88); // 10 PM
+    expect(eventQFromWindow("12-1 PM")).toBe(48); // noon
+    expect(eventQFromWindow("11-12 AM")).toBe(92); // 11 PM → midnight
+    expect(eventQFromWindow("11:30 to 1 a.m.")).toBe(94); // 11:30 PM → 1 AM
+    expect(eventQFromWindow("9-10:30 AM")).toBe(36);
   });
   it("readers: the catering window's first clock time; ezCater orders not in the pipeline; the person-specific first day", () => {
     expect(eventQFromWindow("11:30 AM - 1 PM")).toBe(46);

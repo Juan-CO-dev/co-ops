@@ -18,6 +18,7 @@ import {
   isBarePackageLine,
   isQuoteLineKind,
   resolveDemandFromLines,
+  resyncWouldDropPicks,
   unkindedPackageLineIds,
   type DemandQuoteLine,
   type ResolvedDemand,
@@ -148,29 +149,78 @@ export async function assertQuoteReadyForPrep(sb: Sb, pipelineId: string): Promi
 
 // ── Lifecycle: reserve / consume / release / resync ─────────────────────────────────
 
+/** What one reserve did. `reserved` is the only outcome that wrote rows; the others are the expected
+ *  losers of a race (the lead left `confirmed`, or a newer revision exists) or an undated / consumed
+ *  lead — returned, never thrown, so the caller can say so. */
+export type ReserveOutcome = "reserved" | "no_quote" | "no_event_date" | "not_confirmed" | "quote_changed" | "already_consumed";
+
+/** PostgREST's / Postgres's "that function does not exist (yet)": the migration is not applied. */
+function rpcMissing(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+let reserveLegacyWarned = false;
+
 /**
- * Reserve prep demand for a confirmed lead. Idempotent: releases any existing 'reserved'
- * rows for the lead, then inserts fresh from the current quote (so a re-confirm / resync
- * re-resolves without double-counting). No-op if there's no current quote or no event_date.
+ * Reserve prep demand for a confirmed lead. Idempotent: retires any existing 'reserved' rows for the
+ * lead, then inserts fresh from the current quote (so a re-confirm / resync re-resolves without
+ * double-counting). No-op if there's no current quote or no event_date.
+ *
+ * ONE DATABASE CALL, UNDER THE LEAD'S ROW LOCK (audit W22/B122, migration 0329). The retire and the
+ * insert used to be two PostgREST calls with no lock, so a second manager's `confirmed → lost` could
+ * land between them: its release found nothing, then this inserted a full reserved set on a lost lead.
+ * `reserve_catering_prep_demand` locks the catering_pipeline row FOR UPDATE and re-checks, under that
+ * lock, that the lead is still `confirmed` and `quote.id` is still its live revision — so either the
+ * stage flip commits first (nothing is written here) or it waits for this transaction (its own
+ * release/consume, which runs after its flip, then catches these rows). The rows are still resolved
+ * here (pure rules, read-only); the SQL only writes them.
  */
-export async function reservePrepDemand(actor: AuthContext, pipelineId: string): Promise<void> {
+export async function reservePrepDemand(actor: AuthContext, pipelineId: string): Promise<ReserveOutcome> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
   const sb = getServiceRoleClient();
   const quote = await loadCurrentQuote(sb, pipelineId);
-  if (!quote || !quote.event_date) return; // can't prep-plan without a dated quote
+  if (!quote) return "no_quote";
+  if (!quote.event_date) return "no_event_date"; // can't prep-plan without a dated quote
   // Inner guard (B7c r5): never retire a lead's reserved rows to replace them with a silent zero.
   // moveStage checks this before the stage changes; this covers every other path in.
   await assertQuoteReadyForPrep(sb, pipelineId);
 
-  // Idempotency: retire prior reserved rows (append-only — mark released, never delete).
+  const demand = await resolveQuoteDemand(sb, quote.id);
+  const { data, error } = await sb.rpc("reserve_catering_prep_demand", {
+    p_pipeline_id: pipelineId,
+    p_quote_id: quote.id,
+    p_rows: demand.map((d) => ({ item_id: d.itemId, menu_item_id: d.menuItemId, choice_package_item_id: d.choicePackageItemId, portion: d.portion, qty: d.qty })),
+    p_actor_id: actor.user.id,
+  });
+  if (error && !rpcMissing(error)) throw new Error(`reservePrepDemand: ${error.message}`);
+  if (error) {
+    // 0329 not applied yet: the previous two-call path (B122 stays open until it is).
+    if (!reserveLegacyWarned) {
+      reserveLegacyWarned = true;
+      console.warn("[prep-demand] reservePrepDemand: migration 0329 not applied — using the unlocked two-call path");
+    }
+    await reserveLegacy(sb, actor, pipelineId, quote, demand);
+    void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.reserve", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { quote_id: quote.id, rows: demand.length, path: "legacy" }, ipAddress: null, userAgent: null });
+    return "reserved";
+  }
+  const result = (data ?? {}) as { result?: string; released?: number; inserted?: number };
+  if (result.result === "reserved") {
+    void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.reserve", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { quote_id: quote.id, rows: result.inserted ?? demand.length, released: result.released ?? 0 }, ipAddress: null, userAgent: null });
+    return "reserved";
+  }
+  if (result.result === "not_confirmed" || result.result === "quote_changed" || result.result === "no_event_date" || result.result === "already_consumed") {
+    return result.result;
+  }
+  throw new Error(`reservePrepDemand: unexpected result ${JSON.stringify(result.result ?? null)}`);
+}
+
+/** The pre-0329 path: retire, then insert, as two separate calls (no lock). */
+async function reserveLegacy(sb: Sb, actor: AuthContext, pipelineId: string, quote: { id: string; location_id: string; event_date: string | null }, demand: ResolvedDemand[]): Promise<void> {
   const { error: relErr } = await sb
     .from("catering_prep_demand")
     .update({ status: "released", released_at: new Date().toISOString() })
     .eq("pipeline_id", pipelineId)
     .eq("status", "reserved");
   if (relErr) throw new Error(`reservePrepDemand release-prior: ${relErr.message}`);
-
-  const demand = await resolveQuoteDemand(sb, quote.id);
   if (demand.length) {
     const rows = demand.map((d) => ({
       pipeline_id: pipelineId,
@@ -188,34 +238,99 @@ export async function reservePrepDemand(actor: AuthContext, pipelineId: string):
     const { error: insErr } = await sb.from("catering_prep_demand").insert(rows);
     if (insErr) throw new Error(`reservePrepDemand insert: ${insErr.message}`);
   }
-  void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.reserve", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { quote_id: quote.id, rows: demand.length }, ipAddress: null, userAgent: null });
+}
+
+/** What one settle did: `settled` wrote (or found nothing to write); `stage_changed` is the expected loser
+ *  of a race — the lead has since moved to a stage that does not settle this way (it was re-confirmed and
+ *  re-reserved, say) — and wrote nothing. */
+type SettleResult = { outcome: "settled" } | { outcome: "stage_changed"; stage: string | null };
+
+let settleLegacyWarned = false;
+
+/**
+ * THE one write that moves a lead's still-reserved demand to consumed or released.
+ *
+ * ONE DATABASE CALL, UNDER THE LEAD'S ROW LOCK, RE-CHECKING THE STAGE (audit W22 fix round 1, migration 0329).
+ * The plain UPDATE checked only pipeline id + status, so a release that ran late flipped rows reserved AFTER
+ * it was decided: manager A moves confirmed → quote_sent and stalls before the release; manager B re-confirms
+ * and reserves a fresh set; A's release resumes and releases B's set — the confirmed order vanishes from
+ * kitchen demand. `settle_catering_prep_demand` locks the catering_pipeline row FOR UPDATE (the lock the
+ * reserve and every stage flip contend on) and settles only while the lead's CURRENT stage is one that settles
+ * that way (consumed: out / completed; released: lost / inquiry / quote_sent); otherwise it answers
+ * `stage_changed` and writes nothing — the stage that won owns the ledger. Until 0329 is applied the previous
+ * unguarded UPDATE runs (this race stays open until it is).
+ */
+async function flipReserved(sb: Sb, pipelineId: string, to: "consumed" | "released", caller: string): Promise<SettleResult> {
+  const { data, error } = await sb.rpc("settle_catering_prep_demand", { p_pipeline_id: pipelineId, p_to: to });
+  if (error && !rpcMissing(error)) throw new Error(`${caller}: ${error.message}`);
+  if (!error) {
+    const r = (data ?? {}) as { result?: string; stage?: string | null };
+    if (r.result === to) return { outcome: "settled" };
+    if (r.result === "stage_changed") return { outcome: "stage_changed", stage: r.stage ?? null };
+    throw new Error(`${caller}: unexpected settle result ${JSON.stringify(r.result ?? null)}`);
+  }
+  if (!settleLegacyWarned) {
+    settleLegacyWarned = true;
+    console.warn("[prep-demand] settle: migration 0329 not applied — using the unguarded update");
+  }
+  const now = new Date().toISOString();
+  const { error: uErr } = await sb
+    .from("catering_prep_demand")
+    .update(to === "consumed" ? { status: "consumed", consumed_at: now } : { status: "released", released_at: now })
+    .eq("pipeline_id", pipelineId)
+    .eq("status", "reserved");
+  if (uErr) throw new Error(`${caller}: ${uErr.message}`);
+  return { outcome: "settled" };
+}
+
+/** A settle that lost the race: recorded (ids and stage names only), never an error. */
+function auditSettleSkipped(actor: { id: string | null; role: AuthContext["user"]["role"] | null }, pipelineId: string, to: "consumed" | "released", r: { stage: string | null }, extra: Record<string, unknown> = {}): void {
+  void audit({ actorId: actor.id, actorRole: actor.role, action: "catering.prep_demand.settle_skipped", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { to, reason: "stage_changed", stage: r.stage, ...extra }, ipAddress: null, userAgent: null });
 }
 
 /** Consume (deplete) still-reserved demand when the lead goes out/completed. */
 export async function consumePrepDemand(actor: AuthContext, pipelineId: string): Promise<void> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
-  const sb = getServiceRoleClient();
-  const { error } = await sb
-    .from("catering_prep_demand")
-    .update({ status: "consumed", consumed_at: new Date().toISOString() })
-    .eq("pipeline_id", pipelineId)
-    .eq("status", "reserved");
-  if (error) throw new Error(`consumePrepDemand: ${error.message}`);
+  const r = await flipReserved(getServiceRoleClient(), pipelineId, "consumed", "consumePrepDemand");
+  if (r.outcome === "stage_changed") return auditSettleSkipped({ id: actor.user.id, role: actor.user.role }, pipelineId, "consumed", r);
   void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.consume", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: {}, ipAddress: null, userAgent: null });
 }
 
 /** Release still-reserved demand when the lead reverts / is lost. Consumed rows stay consumed. */
 export async function releasePrepDemand(actor: AuthContext, pipelineId: string): Promise<void> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
-  const sb = getServiceRoleClient();
-  const { error } = await sb
-    .from("catering_prep_demand")
-    .update({ status: "released", released_at: new Date().toISOString() })
-    .eq("pipeline_id", pipelineId)
-    .eq("status", "reserved");
-  if (error) throw new Error(`releasePrepDemand: ${error.message}`);
+  const r = await flipReserved(getServiceRoleClient(), pipelineId, "released", "releasePrepDemand");
+  if (r.outcome === "stage_changed") return auditSettleSkipped({ id: actor.user.id, role: actor.user.role }, pipelineId, "released", r);
   void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.release", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: {}, ipAddress: null, userAgent: null });
 }
+
+/**
+ * The ledger follows a SYSTEM stage move (audit W22/B201) — the nightly rollover's `completed`, the Toast
+ * scan's `lost`, the ezCater lifecycle. Server-internal, NO operator actor: the caller is a cron or a
+ * webhook, never a request. `out`/`completed` consume, `lost`/`inquiry`/`quote_sent` release, exactly as
+ * moveStage does for a person; `confirmed` is a no-op (a system move never reserves — reserving needs a
+ * resolved quote and the 0329 lock path, which a person's confirm takes). Before this, a house lead with
+ * a quote that the rollover completed kept its demand 'reserved' forever, feeding W4b SKU demand, the
+ * digest and the surplus scan. A lead that moved on again before the settle ran (`stage_changed`) settles
+ * nothing and answers "none".
+ */
+export async function applySystemStageToPrepDemand(sb: Sb, pipelineId: string, toStage: string, actorContext: string): Promise<"consumed" | "released" | "none"> {
+  const to = toStage === "out" || toStage === "completed" ? "consumed"
+    : toStage === "lost" || toStage === "inquiry" || toStage === "quote_sent" ? "released"
+    : null;
+  if (to === null) return "none";
+  const r = await flipReserved(sb, pipelineId, to, "applySystemStageToPrepDemand");
+  if (r.outcome === "stage_changed") {
+    auditSettleSkipped({ id: null, role: null }, pipelineId, to, r, { actor_context: actorContext, to_stage: toStage });
+    return "none";
+  }
+  void audit({ actorId: null, actorRole: null, action: to === "consumed" ? "catering.prep_demand.consume" : "catering.prep_demand.release", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { actor_context: actorContext, to_stage: toStage }, ipAddress: null, userAgent: null });
+  return to;
+}
+
+/** What a resync did. `skipped_package_picks` is the one outcome the manager must hear about: the kitchen
+ *  still shows the previous package choices (the route answers `prepDemandResynced: false`). */
+export type ResyncOutcome = "resynced" | "not_confirmed" | "no_quote" | "skipped_package_picks";
 
 /**
  * Re-resolve a lead's reserved demand from its CURRENT quote after a quote
@@ -223,40 +338,71 @@ export async function releasePrepDemand(actor: AuthContext, pipelineId: string):
  * so a revise on a confirmed lead left the kitchen's W4a/W4b demand pointing at
  * the pre-revision quantities). SELF-GUARDING on stage: only a CONFIRMED lead
  * carries reserved demand — reserving here for a non-confirmed lead would create
- * demand before the lead is confirmed, so we no-op unless confirmed. reserve
- * already release-then-reinserts (idempotent), and reads the CURRENT quote, so
- * it picks up the new revision automatically.
+ * demand before the lead is confirmed, so we no-op unless confirmed (and the 0329
+ * reserve re-checks that under the lead's row lock).
+ *
+ * PACKAGE PICKS (audit W22/B121). A staff revise does not yet copy the customer's
+ * choice-slot picks (catering_quote_item_options) onto the new version, so a
+ * re-resolve could turn concrete sub demand back into "needs a pick" rows. The old
+ * guard skipped the resync for ANY quote with a package line — fixed package
+ * components included, which carry concrete refs and need no picks — so a package
+ * order's quantities never followed a revision, and the route still said
+ * `prepDemandResynced: true`. Now the skip happens only when the new revision would
+ * really drop a stored pick (`resyncWouldDropPicks`), and it is returned so the
+ * manager is told. (Copying the picks forward on revise is the complete fix; filed.)
+ * Fix round 1: the prior reserved set's quotes are read for stored picks too, so two headers of one package
+ * sharing a slot (one picked, one not) can no longer pass as "nothing to lose".
  */
-export async function resyncPrepDemand(actor: AuthContext, pipelineId: string): Promise<void> {
+export async function resyncPrepDemand(actor: AuthContext, pipelineId: string): Promise<ResyncOutcome> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
   const sb = getServiceRoleClient();
   const { data: lead, error } = await sb
     .from("catering_pipeline").select("stage").eq("id", pipelineId)
     .maybeSingle<{ stage: string }>();
   if (error) throw new Error(`resyncPrepDemand load stage: ${error.message}`);
-  if (lead?.stage !== "confirmed") return; // no reserved demand to resync
+  if (lead?.stage !== "confirmed") return "not_confirmed"; // no reserved demand to resync
 
-  // PACKAGE CARRY-FORWARD GAP (adversarial review C1, 2026-07-31): a staff quote
-  // revise does NOT copy the customer's choice-slot picks
-  // (catering_quote_item_options) onto the new quote version. Re-resolving a
-  // package-bearing quote here would therefore REGRESS concrete sub demand to
-  // advisory "needs-pick" rows. Until revise carries picks forward (tracked
-  // follow-up), SKIP the resync when the current quote holds any package line —
-  // leaving the existing (concrete) reserved rows intact (no worse than today,
-  // where resync never ran). Item/sub-only leads resync fully — the common case
-  // and the actual P1 this fix targets.
   const quote = await loadCurrentQuote(sb, pipelineId);
-  if (!quote) return;
-  const { data: pkgLines, error: pErr } = await sb
-    .from("catering_quote_items").select("id")
-    .eq("quote_id", quote.id).not("package_id", "is", null).limit(1)
-    .returns<Array<{ id: string }>>();
-  if (pErr) throw new Error(`resyncPrepDemand package-line check: ${pErr.message}`);
-  if (pkgLines && pkgLines.length > 0) {
+  if (!quote) return "no_quote";
+  const [newDemand, { data: prior, error: pErr }] = await Promise.all([
+    resolveQuoteDemand(sb, quote.id),
+    sb.from("catering_prep_demand").select("choice_package_item_id, quote_id")
+      .eq("pipeline_id", pipelineId).eq("status", "reserved")
+      .returns<Array<{ choice_package_item_id: string | null; quote_id: string | null }>>(),
+  ]);
+  if (pErr) throw new Error(`resyncPrepDemand prior reserved: ${pErr.message}`);
+  const priorRows = prior ?? [];
+  const priorPickedSlots = await loadPickedSlots(sb, priorRows.map((r) => r.quote_id).filter((id): id is string => id != null && id !== quote.id));
+  if (resyncWouldDropPicks(newDemand, priorRows.map((r) => ({ choicePackageItemId: r.choice_package_item_id })), priorPickedSlots)) {
     void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.resync_skipped_package", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { quote_id: quote.id, reason: "package_picks_not_carried_forward" }, ipAddress: null, userAgent: null });
-    return;
+    return "skipped_package_picks";
   }
-  await reservePrepDemand(actor, pipelineId);
+  const outcome = await reservePrepDemand(actor, pipelineId);
+  return outcome === "reserved" ? "resynced" : outcome === "no_quote" ? "no_quote" : "not_confirmed";
+}
+
+/** The choice slots (package_item ids) that held a stored customer pick on any package line of these quotes
+ *  (fix round 1: the prior reserved set's quotes, for `resyncWouldDropPicks`). Id lists are chunked. */
+async function loadPickedSlots(sb: Sb, quoteIds: readonly string[]): Promise<string[]> {
+  const ids = [...new Set(quoteIds)];
+  if (ids.length === 0) return [];
+  const lineIds: string[] = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const { data, error } = await sb.from("catering_quote_items").select("id")
+      .in("quote_id", ids.slice(i, i + 50)).not("package_id", "is", null)
+      .returns<Array<{ id: string }>>();
+    if (error) throw new Error(`resyncPrepDemand prior lines: ${error.message}`);
+    for (const r of data ?? []) lineIds.push(r.id);
+  }
+  const slots = new Set<string>();
+  for (let i = 0; i < lineIds.length; i += 100) {
+    const { data, error } = await sb.from("catering_quote_item_options").select("package_item_id")
+      .in("quote_item_id", lineIds.slice(i, i + 100))
+      .returns<Array<{ package_item_id: string }>>();
+    if (error) throw new Error(`resyncPrepDemand prior picks: ${error.message}`);
+    for (const r of data ?? []) slots.add(r.package_item_id);
+  }
+  return [...slots];
 }
 
 // ── Read: overlay (over-par) + per-lead breakdown ───────────────────────────────────

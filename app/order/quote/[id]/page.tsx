@@ -30,6 +30,7 @@ import { TranslationProvider } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { Quote, QuoteItem } from "@/lib/catering/quotes";
 import { PayButtons } from "./pay-buttons";
+import { orderDateNeedsReview } from "@/lib/catering/fulfillment-routing";
 
 /**
  * The portal has no per-customer language preference yet — every /order surface mounts
@@ -157,6 +158,11 @@ export default async function QuotePage({
   // never as "paid in full" and never under "nothing left to pay": a person is reviewing it.
   const paidLate = panel.notice === "expired_paid_late";
   const payOptions = panel.showOptions ? plan.options : [];
+  // W22/B123 (owner decision W22-2 as modified): an order not yet accepted, on a date this shop can't take,
+  // is WARNED here — never refused; the deposit stays payable (refunded in full if the manager refuses).
+  const dateNeedsReview = await orderDateNeedsReview({
+    pipelineId: quote.pipelineId, locationId: quote.locationId, eventDate: quote.eventDate, headcount: quote.headcount,
+  });
   // What the customer still owes AFTER what has cleared. The closed panel must not read as
   // "nothing left to pay" when only the deposit landed (LRA-236): the balance is real money
   // the team raises later, so name it and say when it comes.
@@ -254,6 +260,12 @@ export default async function QuotePage({
             ))}
           </ul>
         </section>
+      )}
+
+      {dateNeedsReview && (
+        <p className="mt-5 rounded-2xl border-2 border-co-warning bg-co-warning-surface px-4 py-3 text-sm font-semibold text-co-warning-text" role="status">
+          {t("order.quote.date_needs_review")}
+        </p>
       )}
 
       {/* Pay panel — options come from the server-side payment plan, minus what is paid */}

@@ -15,7 +15,8 @@ const state = vi.hoisted(() => ({
   events: [] as Array<{ event_key: string; received_at: string }>,
   rpc: vi.fn(),
 }));
-const reserve = vi.hoisted(() => vi.fn(async () => undefined));
+const reserve = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => "reserved"));
+const release = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined));
 const prep = vi.hoisted(() => {
   class PrepDemandNeedsRepairError extends Error {}
   return { PrepDemandNeedsRepairError, ready: vi.fn(async (..._args: unknown[]) => undefined) };
@@ -23,7 +24,7 @@ const prep = vi.hoisted(() => {
 const audit = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined));
 vi.mock("@/lib/audit", () => ({ audit }));
 vi.mock("@/lib/catering/prep-demand", () => ({
-  reservePrepDemand: reserve, consumePrepDemand: vi.fn(), releasePrepDemand: vi.fn(),
+  reservePrepDemand: reserve, consumePrepDemand: vi.fn(), releasePrepDemand: release,
   assertQuoteReadyForPrep: prep.ready, PrepDemandNeedsRepairError: prep.PrepDemandNeedsRepairError,
 }));
 vi.mock("@/lib/catering/ezcater-detail", () => ({ loadCateringReader: vi.fn(), canReadCateringLead: vi.fn() }));
@@ -86,7 +87,11 @@ describe("reopenEzcaterLead", () => {
     });
     expect(prep.ready).toHaveBeenCalledTimes(1);
     expect(reserve).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
     expect(audit.mock.calls.map(([a]) => (a as { action: string }).action)).toContain("catering.pipeline.reopen");
+    // merge-fix (main 11-16): W22's reserve answers an outcome; the reopen's audit row carries it.
+    const reopenRow = audit.mock.calls.map(([a]) => a as { action: string; metadata: Record<string, unknown> }).find((a) => a.action === "catering.pipeline.reopen");
+    expect(reopenRow?.metadata).toMatchObject({ prep_reserve: "reserved" });
   });
 
   it("reopening to Inquiry reserves no prep", async () => {
@@ -95,6 +100,9 @@ describe("reopenEzcaterLead", () => {
     expect((await reopenEzcaterLead(actor("gm", [SHOP]), "lead-1")).toStage).toBe("inquiry");
     expect(state.rpc.mock.calls[0]?.[1]).toMatchObject({ p_expected_target: "inquiry" });
     expect(reserve).not.toHaveBeenCalled();
+    // merge-fix (main 11-16): Inquiry settles through W22's guarded release, as moveStage does.
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(release.mock.calls[0]?.[1]).toBe("lead-1");
   });
 
   describe("review r2 (BC-007/BC-040): the target can change between the advisory read and the lock", () => {

@@ -15,13 +15,13 @@ import { hasTaskAccess } from "@/lib/assignments";
  *
  * Authorization: any clocked-in shift staff at level >= AM_PREP_BASE_LEVEL — the
  * canonical "shift staff can prep" threshold, which is C.21's "level 3+". Location
- * access enforced via lockLocationContext (defense-in-depth; RLS also gates).
+ * access enforced via canWorkShopTasks (defense-in-depth; RLS also gates).
  */
 
 import { type NextRequest } from "next/server";
 
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { lockLocationContext } from "@/lib/locations";
+import { canWorkShopTasks } from "@/lib/locations";
 import {
   AM_PREP_BASE_LEVEL,
   createMidDayPrepInstance,
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
 
   // 3. Location access (defense-in-depth; RLS also gates).
   if (
-    !lockLocationContext(
+    !canWorkShopTasks(
       { role: ctx.role, locations: ctx.locations },
       body.locationId,
     )

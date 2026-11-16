@@ -15,7 +15,7 @@ import { hasTaskAccess } from "@/lib/assignments";
 import { type NextRequest } from "next/server";
 
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { lockLocationContext } from "@/lib/locations";
+import { canWorkShopTasks } from "@/lib/locations";
 import { AM_PREP_BASE_LEVEL, saveMidDayPhase2Item, type MidDayOverUnder } from "@/lib/prep";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
   if (!instance) {
     return jsonError(404, "instance_not_found", { message: "Instance not found", instance_id: body.instanceId });
   }
-  if (!lockLocationContext({ role: ctx.role, locations: ctx.locations }, instance.location_id)) {
+  if (!canWorkShopTasks({ role: ctx.role, locations: ctx.locations }, instance.location_id)) {
     return jsonError(403, "location_access_denied", {
       message: "You don't have access to this location.",
       location_id: instance.location_id,

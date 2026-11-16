@@ -93,6 +93,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/marketing/milestones/[id]/correct/route.ts": ["B"],
   "app/api/admin/marketing/entries/route.ts": ["A"],
   "app/api/admin/marketing/entries/[id]/correct/route.ts": ["A"],
+  "app/api/admin/marketing/entries/[id]/void/route.ts": ["A"],
   "app/api/admin/marketing/baseline-snapshot/route.ts": ["B"],
   "app/api/admin/marketing/ad-codes/route.ts": ["A"],
   "app/api/admin/marketing/ad-codes/[code]/retire/route.ts": ["B"],

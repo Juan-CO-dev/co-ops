@@ -13,6 +13,7 @@
  * whole board (keeps the board loader lean).
  */
 
+import { randomUUID } from "node:crypto";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
@@ -23,6 +24,8 @@ import { canReadCateringContact } from "./ezcater-detail-shared";
 import type { AuthContext } from "@/lib/session";
 import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/catering/capacity";
 import { reservePrepDemand, consumePrepDemand, releasePrepDemand, assertQuoteReadyForPrep, PrepDemandNeedsRepairError } from "@/lib/catering/prep-demand";
+import { emailOrderUpdate, type OrderUpdateEmailOutcome } from "@/lib/catering/order-update-email";
+import { orderChanges } from "@/lib/catering/order-update-email-shared";
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
 import { PIPELINE_STAGES, type PipelineStage, canTransition, normalizeLeadEmail, normalizeLeadPhone } from "./pipeline-shared";
@@ -644,8 +647,14 @@ export async function reopenEzcaterLead(actor: AuthContext, id: string): Promise
     result = data as { from_stage: "lost"; to_stage: "confirmed" | "inquiry" };
   }
   if (!result) throw new CateringPipelineError(409, "reopen_target_changed");
+  // The ledger follows the reopen through W22's paths (merge-fix main 11-16), exactly as moveStage does:
+  // Confirmed reserves through the 0329 locked reserve (it re-checks, under the lead's row lock, that the lead
+  // is still confirmed on its live quote); Inquiry releases through the 0329 settle, which writes only while the
+  // lead's CURRENT stage releases — a reopen never settles rows around that rule.
+  let prepReserve: string | null = null;
   try {
-    if (result.to_stage === "confirmed") await reservePrepDemand(actor, id);
+    if (result.to_stage === "confirmed") prepReserve = await reservePrepDemand(actor, id);
+    else await releasePrepDemand(actor, id);
   } catch (e) {
     void audit({
       actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.sync_failed",
@@ -656,7 +665,7 @@ export async function reopenEzcaterLead(actor: AuthContext, id: string): Promise
   void audit({
     actorId: actor.user.id, actorRole: actor.user.role, action: "catering.pipeline.reopen",
     resourceTable: "catering_pipeline", resourceId: id,
-    metadata: { from_stage: result.from_stage, to_stage: result.to_stage, reason: "ezcater_uncancelled" }, ipAddress: null, userAgent: null,
+    metadata: { from_stage: result.from_stage, to_stage: result.to_stage, reason: "ezcater_uncancelled", ...(prepReserve ? { prep_reserve: prepReserve } : {}) }, ipAddress: null, userAgent: null,
   });
   return { fromStage: result.from_stage, toStage: result.to_stage };
 }
@@ -781,17 +790,74 @@ export interface EditLeadInput {
   estimatedRevenueCents?: number | null;
 }
 
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/** What a reschedule did (0329 reschedule_catering_lead's answer, or the same steps without it). */
+interface RescheduleResult {
+  moved: boolean; fromDate: string | null; quoteUpdated: boolean; prepRowsMoved: number; quoteId: string | null;
+  /** The reschedule's catering_pipeline_events row (null when the date did not move): the persisted occurrence
+   *  the customer email is keyed by. */
+  eventId: string | null;
+}
+
+function rpcMissing(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+
+/**
+ * Move a lead to a new event date — the lead, its LIVE quote revision and its reserved prep demand together
+ * (audit W22/B120). The kitchen plans from the quote's date (reservePrepDemand reads it) and the customer's
+ * order page shows it, so moving only the lead left both on the old day. 0329's reschedule_catering_lead does
+ * the three under the lead's row lock in one transaction (reserved rows are retired and re-appended on the new
+ * day, picks and quantities carried). Until 0329 is applied a reschedule is refused (503), nothing written.
+ */
+async function rescheduleLead(sb: ReturnType<typeof getServiceRoleClient>, id: string, eventDate: string, actorId: string): Promise<RescheduleResult> {
+  const live = await sb.from("catering_quotes").select("id").eq("pipeline_id", id).is("superseded_at", null)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle<{ id: string }>();
+  if (live.error) throw new Error(`rescheduleLead quote: ${live.error.message}`);
+  const quoteId = live.data?.id ?? null;
+  const { data, error } = await sb.rpc("reschedule_catering_lead", { p_lead_id: id, p_event_date: eventDate, p_actor_id: actorId });
+  if (error && !rpcMissing(error)) {
+    if ((error.message ?? "").includes("reschedule_lead_not_found")) throw new CateringPipelineError(404, "not_found", "Lead not found");
+    throw new Error(`rescheduleLead: ${error.message}`);
+  }
+  if (!error) {
+    const r = (data ?? {}) as { result?: string; from_date?: string | null; quote_updated?: boolean; prep_rows_moved?: number; event_id?: string | null };
+    return { moved: r.result === "moved", fromDate: r.from_date ?? null, quoteUpdated: r.quote_updated === true, prepRowsMoved: r.prep_rows_moved ?? 0, quoteId, eventId: r.event_id ?? null };
+  }
+  // 0329 not applied yet: REFUSE, nothing written (fix round 2, review r2 P2). The old one-call-at-a-time fallback
+  // wrote the lead first; when a later quote/prep step failed, the retry saw the lead already on the new day,
+  // skipped the reschedule, and left the quote and the kitchen's prep on the old day for good. 0329 is applied
+  // before this ships; until then a date change is unavailable rather than half-done.
+  throw new CateringPipelineError(503, "reschedule_unavailable", "Rescheduling is not available yet. Try again shortly.");
+}
+
 /** Edit a lead's mutable CRM fields in place (never stage — use moveStage). */
 export async function editLead(actor: AuthContext, id: string, input: EditLeadInput): Promise<void> {
   const sb = getServiceRoleClient();
   const { data: lead, error: lErr } = await sb
     .from("catering_pipeline")
-    .select("id, location_id")
+    .select("id, location_id, event_date, stage, customer_id")
     .eq("id", id)
-    .maybeSingle<{ id: string; location_id: string | null }>();
+    .maybeSingle<{ id: string; location_id: string | null; event_date: string | null; stage: string; customer_id: string | null }>();
   if (lErr) throw new Error(`editLead load: ${lErr.message}`);
   if (!lead) throw new CateringPipelineError(404, "not_found", "Lead not found");
   assertCanWriteLead(actor, lead.location_id);
+
+  // A NEW DATE MOVES THE WHOLE ORDER (W22/B120): the lead, the customer's live quote and the reserved prep,
+  // through rescheduleLead below — never the lead column alone. A confirmed order cannot lose its date: its
+  // reserved prep would have no day, and dropping it silently takes the order off the kitchen's plan.
+  let reschedule: string | null = null;
+  if (input.eventDate !== undefined && input.eventDate !== lead.event_date) {
+    if (input.eventDate === null) {
+      if (lead.stage === "confirmed") {
+        throw new CateringPipelineError(409, "event_date_required_confirmed", "A confirmed order needs an event date");
+      }
+    } else {
+      if (!YMD.test(input.eventDate)) throw new CateringPipelineError(400, "invalid_payload", "eventDate must be YYYY-MM-DD");
+      reschedule = input.eventDate;
+    }
+  }
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (input.contactName !== undefined) {
@@ -801,7 +867,8 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
     patch.contact_name = input.contactName.trim();
   }
   if (input.company !== undefined) patch.company = input.company;
-  if (input.eventDate !== undefined) patch.event_date = input.eventDate;
+  // A date change goes through rescheduleLead (below); only CLEARING an unconfirmed lead's date is a plain patch.
+  if (input.eventDate !== undefined && reschedule === null && input.eventDate !== lead.event_date) patch.event_date = input.eventDate;
   if (input.headcount !== undefined) patch.headcount = input.headcount;
   if (input.contactPhone !== undefined) patch.contact_phone = leadPhone(input.contactPhone);
   if (input.deliveryAddress !== undefined) patch.delivery_address = input.deliveryAddress;
@@ -834,12 +901,30 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
   if (bErr) throw new Error(`editLead pre-read: ${bErr.message}`);
   if (!beforeRow) throw new CateringPipelineError(404, "not_found", "Lead not found");
 
+  const moved = reschedule ? await rescheduleLead(sb, id, reschedule, actor.user.id) : null;
+
   const { error: uErr, count } = await sb
     .from("catering_pipeline")
     .update(patch, { count: "exact" })
     .eq("id", id);
   if (uErr) throw new Error(`editLead update: ${uErr.message}`);
   if (count === 0) throw new CateringPipelineError(404, "not_found", "Lead not found");
+
+  // The customer hears about it (owner decision W22-1): a NEW CUSTOMER EMAIL showing old vs new, sent only
+  // when every switch is open (lib/catering/order-update-email-shared.ts). Only when the date really moved
+  // and the customer has an order page (a live quote) that now shows the new date.
+  let customerEmail: OrderUpdateEmailOutcome | null = null;
+  if (moved && reschedule && moved.fromDate !== reschedule && moved.quoteId) {
+    customerEmail = await emailOrderUpdate(sb, {
+      customerId: lead.customer_id,
+      quoteId: moved.quoteId,
+      changes: orderChanges({ eventDate: moved.fromDate }, { eventDate: reschedule }),
+      // Keyed by THIS reschedule's persisted event row (fix round 1, BC-061): a date-pair key made Fri → Tue →
+      // Fri → Tue reuse the first change's key, so the provider dropped the latest email. Without an event id
+      // (never expected: the date moved, so the row was written) each call is its own occurrence.
+      idempotencyKey: `order-update:event:${moved.eventId ?? randomUUID()}`,
+    });
+  }
 
   void audit({
     actorId: actor.user.id,
@@ -848,7 +933,11 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
     resourceTable: "catering_pipeline",
     resourceId: id,
     metadata: {
-      fields: Object.keys(patch).filter((k) => k !== "updated_at"),
+      fields: [...Object.keys(patch).filter((k) => k !== "updated_at"), ...(reschedule ? ["event_date"] : [])],
+      ...(moved
+        ? { event_date_changed: moved.fromDate !== reschedule, event_date_from: moved.fromDate, event_date_to: reschedule, quote_date_updated: moved.quoteUpdated, prep_rows_moved: moved.prepRowsMoved }
+        : {}),
+      ...(customerEmail ? { customer_email: customerEmail.outcome, ...("reason" in customerEmail ? { customer_email_reason: customerEmail.reason } : {}), ...("error" in customerEmail ? { customer_email_error: customerEmail.error } : {}) } : {}),
       ...(beforeRow.assigned_to != null && beforeRow.assigned_to !== actor.user.id
         ? { non_assignee_edit: true, order_lead: beforeRow.assigned_to }
         : {}),

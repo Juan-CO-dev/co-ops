@@ -138,6 +138,9 @@ export async function POST(req: NextRequest) {
         // THE SERVER'S NUMBER, not the client's. Nothing in the payload can move a par.
         value: suggestion.suggestedPar,
         generationId: suggestion.generationId,
+        // The pack epoch the suggestion was validated in (W18/B106): a pack change that commits
+        // between this validation and the write refuses as suggestion_superseded.
+        expectedPackEpoch: suggestion.packEpoch,
       });
       return jsonOk({ action, par: suggestion.suggestedPar });
     }

@@ -56,6 +56,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
       availability: p.availability, workModes: p.workModes, usualShift: p.usualShift,
       flexDates: [...p.flexDates].sort(cmp), untouchableDates: [...p.untouchableDates].sort(cmp),
       newerPositions: [...p.newerPositions].sort(cmp), strongPositions: [...p.strongPositions].sort(cmp),
+      ...(p.elsewhere ? { elsewhere: Object.fromEntries(Object.keys(p.elsewhere).sort(cmp).map((d) => [d, p.elsewhere![d]!.map(([a, z]) => [a, z] as [number, number])])) } : {}),
     };
   }
   const ctx: RuleContext = { version: 1, locationId: input.locationId, weekStart: input.weekStart,

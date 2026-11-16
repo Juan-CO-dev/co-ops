@@ -460,6 +460,22 @@ describe("the location bind — a draft write lands only in the actor's own shop
     expect(f.writes[0]!.payload).toMatchObject({ p_instance_id: INSTANCE });
   });
 
+  // W05B (Juan 2026-11-15): level 8+ work any shop's tasks; below 8 the shop membership stays required.
+  it("lets a MoO (8) with no membership at shop B write shop B's draft", async () => {
+    const f = fakeService({ checklist_instances: openInstance({ location_id: SHOP_B }), checklist_templates: amPrepTemplate });
+    const mooAtA = { user: { id: "u-moo" }, role: "moo" as const, level: 8, locations: [SHOP_A] };
+    await saveAmPrepDraft(f.service, { actor: mooAtA, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "1" } } });
+    expect(f.rpc).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a GM (7) of shop A writing shop B's draft", async () => {
+    const f = fakeService({ checklist_instances: openInstance({ location_id: SHOP_B }), checklist_templates: amPrepTemplate });
+    const gmAtA = { user: { id: "u-gm" }, role: "gm" as const, level: 7, locations: [SHOP_A] };
+    await expect(saveAmPrepDraft(f.service, { actor: gmAtA, instanceId: INSTANCE, patch: { [ITEM_1]: { onHand: "1" } } }))
+      .rejects.toMatchObject({ status: 403, code: "location_access_denied" });
+    expect(f.writes).toEqual([]);
+  });
+
   it("consumeAmPrepDraft binds too: foreign shop refused before the UPDATE", async () => {
     const f = fakeService({});
     await expect(consumeAmPrepDraft(f.service, { actor: keyHolderAtA, instanceId: INSTANCE, locationId: SHOP_B, businessDate: DAY }))
@@ -477,13 +493,14 @@ describe("the location bind — a draft write lands only in the actor's own shop
     expect(w.filters).toEqual([["location_id", SHOP_A], ["business_date", DAY], ["instance_id", INSTANCE], ["consumed_at", null]]);
   });
 
-  it("source pin: both writers call lockLocationContext BEFORE their write", () => {
+  it("source pin: both writers call canWorkShopTasks BEFORE their write", () => {
     const src = readFileSync("lib/am-prep-draft.ts", "utf8");
     for (const [fn, write] of [["saveAmPrepDraft", ".rpc("], ["consumeAmPrepDraft", ".update("]] as const) {
       const start = src.indexOf(`export async function ${fn}(`);
       const next = src.indexOf("\nexport ", start + 1);
       const body = src.slice(start, next === -1 ? undefined : next);
-      const bind = body.indexOf("lockLocationContext(");
+      // W05B: the shop-task bind (a membership, or level 8+ at any shop: Juan 2026-11-15).
+      const bind = body.indexOf("canWorkShopTasks(");
       expect(bind, `${fn} binds`).toBeGreaterThan(-1);
       expect(body.indexOf(write), `${fn} writes after the bind`).toBeGreaterThan(bind);
     }

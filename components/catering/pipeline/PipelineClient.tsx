@@ -9,6 +9,7 @@ import { LEAD_EMAIL_MAX, LEAD_PHONE_MAX, LEGAL_TRANSITIONS, PIPELINE_STAGES, cat
 import type { PipelineLead, PipelineBoardLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
+import { isBookableSignal } from "@/lib/catering/capacity-shared";
 import { EzcaterReconciliationPanel } from "./EzcaterReconciliationPanel";
 import { TransferLead } from "./TransferLead";
 import { EzcaterDetail } from "./EzcaterDetail";
@@ -500,6 +501,11 @@ function LeadDetail({
               ? ` · ${t("catering.pipeline.capacity.remaining").replace("{n}", String(Math.max(0, capacity.remainingCovers)))}`
               : ""}
           </span>
+          {/* W22/B123: an order not yet accepted on a date the shop can't take — the customer was warned and
+              the order waits for the catering manager's answer (confirm = accept, Lost = refuse). */}
+          {!isBookableSignal(capacity) && (lead.stage === "inquiry" || lead.stage === "quote_sent") && (
+            <p className="mt-1 text-xs font-semibold text-co-warning-text">{t("catering.pipeline.capacity.customer_warned" as TranslationKey)}</p>
+          )}
         </div>
       )}
 

@@ -18,6 +18,7 @@ import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { runParseReceipts } from "@/lib/parse-receipts-run";
 import { audit } from "@/lib/audit";
 import { watchSiblings } from "@/lib/job-watch-run";
+import { routeWorkDeadline } from "@/lib/receipt-parse-budget-shared";
 
 // Leave untouched rows for the next 15-minute run when the work budget is spent.
 export const maxDuration = 300;
@@ -40,13 +41,15 @@ function secretOk(req: NextRequest): boolean {
 }
 
 export async function GET(req: NextRequest) {
+  // The run is told when THIS function must be done (the tail is kept for heartbeat and watch).
+  const deadline = routeWorkDeadline(Date.now(), maxDuration);
   if (!process.env.CRON_SECRET) return jsonError(503, "cron_disabled");
   if (!secretOk(req)) return jsonError(401, "unauthorized");
   // Parsing and fetching have independent configuration; only both dormant is a no-op.
   if (!process.env.ANTHROPIC_API_KEY && !(process.env.RESEND_INBOUND_SECRET && process.env.RESEND_API_KEY)) return jsonError(503, "parse_dormant");
 
   try {
-    const result = await runParseReceipts();
+    const result = await runParseReceipts(deadline);
     if (result.dormant) return jsonError(503, "parse_dormant");
     const { swept, parsed, failed, metadata } = result;
     await audit({

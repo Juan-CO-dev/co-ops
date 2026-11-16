@@ -76,6 +76,7 @@ const KNOWN_ERROR_CODES = new Set([
   "reopen_still_cancelled",
   "reopen_target_changed", // review r2: ezCater's status changed while reopening
   "reopen_unavailable",
+  "event_date_required_confirmed", // W22/B120: a confirmed order keeps a date (its kitchen prep sits on it)
   "generic",
   "network",
 ]);

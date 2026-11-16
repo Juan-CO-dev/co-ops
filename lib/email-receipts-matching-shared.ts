@@ -38,3 +38,23 @@ export function extractPoCodes(text: string): string[] {
   }
   return [...seen];
 }
+
+/**
+ * The text the PO matcher scans for a PARSED receipt (W20/B193: one builder for the parse leg and
+ * for the re-run after a person assigns or moves a receipt). The parsed poCode + shipTo +
+ * vendorName ride INTO the body string so extractPoCodes can find a code the subject did not
+ * carry. `textFallback` is the raw email text when the caller still holds it (the parse leg);
+ * it is not stored, so a later re-run passes null. Pure string assembly: no markup, and any
+ * non-string field (untrusted parse output) is ignored.
+ */
+export function assembleMatchBody(
+  extraction: { poCode?: unknown; shipTo?: unknown; vendorName?: unknown } | null | undefined,
+  textFallback: string | null,
+): string {
+  const parts: string[] = [];
+  for (const value of [extraction?.poCode, extraction?.shipTo, extraction?.vendorName]) {
+    if (typeof value === "string" && value) parts.push(value);
+  }
+  if (textFallback) parts.push(textFallback);
+  return parts.join(" \n ");
+}

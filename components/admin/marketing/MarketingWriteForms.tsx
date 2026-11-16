@@ -48,6 +48,20 @@ export function MarketingWriteForms({ lang, locations, milestones, entries, snap
       setMessage(c.saved); setMode(null); router.refresh();
     } catch { setMessage(c.failed); } finally { setBusy(false); }
   }
+  // W26-2 b: remove a recorded spend entry (an append-only voided correction, migration 0333). Same Tier A as a correction.
+  const removable = mode === "entry" && !!entry && (entry.kind === "meta_spend" || entry.kind === "promo_spend");
+  async function remove(form: HTMLFormElement | null) {
+    if (busy || !entry || !form) return;
+    const reason = String(new FormData(form).get("reason") ?? "").trim();
+    if (!reason) { setMessage(c.reason_required); return; }
+    setBusy(true); setMessage("");
+    try {
+      if (await requestStepUp("A") !== "ok") return;
+      const result = await send(`/api/admin/marketing/entries/${entry.id}/void`, { reason });
+      if (!result.ok) { setMessage(marketingRefusalCopy(lang, result.code)); return; }
+      setMessage(c.removed); setMode(null); router.refresh();
+    } catch { setMessage(c.failed); } finally { setBusy(false); }
+  }
   return <section className="min-w-0 space-y-3" aria-label={c.edit}>
     <div className="flex flex-wrap gap-2">{(["milestone", "entry", "baseline"] as const).filter(value => value !== "baseline" || !snapshotId || canCorrectBaseline).map(value => <button key={value} type="button" className="inline-flex min-h-11 items-center rounded border px-3" disabled={busy} onClick={() => open(value)}>{c[value]}</button>)}</div>
     {mode && <form className="grid min-w-0 gap-3 rounded border p-3" onSubmit={submit}>
@@ -66,7 +80,8 @@ export function MarketingWriteForms({ lang, locations, milestones, entries, snap
         <label>{c.note}<input className={control} name="note" maxLength={200} defaultValue={entry?.note ?? ""} /></label>
       </div>}
       {correction && <label>{c.reason}<input className={control} name="reason" maxLength={300} required /></label>}
-      <div className="flex flex-wrap gap-2"><button className="inline-flex min-h-11 items-center rounded border px-3" disabled={busy || (mode === "milestone" && !kind)}>{c.save}</button><button type="button" className="inline-flex min-h-11 items-center rounded border px-3" disabled={busy} onClick={() => setMode(null)}>{c.cancel}</button></div>
+      <div className="flex flex-wrap gap-2"><button className="inline-flex min-h-11 items-center rounded border px-3" disabled={busy || (mode === "milestone" && !kind)}>{c.save}</button><button type="button" className="inline-flex min-h-11 items-center rounded border px-3" disabled={busy} onClick={() => setMode(null)}>{c.cancel}</button>{removable && <button type="button" aria-label={c.remove_aria} className="inline-flex min-h-11 items-center rounded border border-co-cta-text px-3 text-co-cta-text" disabled={busy} onClick={event => remove(event.currentTarget.form)}>{c.remove}</button>}</div>
+      {removable && <p className="text-sm text-co-text-muted">{c.remove_help}</p>}
     </form>}
     {message && <p role="status">{message}</p>}
   </section>;

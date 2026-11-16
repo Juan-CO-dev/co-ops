@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
-import { resolveTrendRange } from "@/lib/reports-trends";
+import { alignTrendCompare, resolveTrendRange } from "@/lib/reports-trends";
 import { reportRangeParams } from "@/lib/report-range";
 /**
  * /reports/trends — operational-signal trend charts (layout A, stacked cards).
@@ -78,7 +78,7 @@ async function renderPage(paramsRange: Record<string, string | undefined>, allSh
   const language = auth.user.language;
   const granularity = parseGranularity(g);
   const today = operationalNow(new Date()).date;
-  const range = resolveTrendRange(paramsRange, today, granularity);
+  const range = alignTrendCompare(resolveTrendRange(paramsRange, today, granularity), granularity);
   const compare = range.compare;
   const context = reportRangeParams(range);
   context.set("g", granularity);

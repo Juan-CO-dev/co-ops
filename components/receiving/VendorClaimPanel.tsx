@@ -8,6 +8,8 @@
  *   LINKED   → a side-by-side compare: "What we counted" (the door count) vs "Vendor
  *              claim" (the emailed/uploaded receipt), plus an attestation bar (Matches /
  *              Discrepancy / AGM+ Override). The current match_state shows as an AlertPill.
+ *              AGM+ also get "Wrong receipt? Unlink it" (W20-2): a required reason, then the
+ *              receipt goes back to the waiting list and the match is cleared. Nothing is deleted.
  *   UNLINKED → an attach affordance (file upload → POST multipart) + a default-collapsed
  *              "Link an existing receipt" disclosure (D3/D4) listing the location's
  *              unlinked receipts with a per-row Link action.
@@ -360,10 +362,20 @@ function UnlinkedReceiptRow({
       </p>
       {r.attributionConflict ? (
         <div role="alert" className="text-xs text-co-cta-text">
-          <p>{t("receiving.claim.attribution_conflict")}</p>
-          <p>{t("receiving.claim.conflict_shops", { address: r.addressLocationName ?? "?", account: r.accountLocationName ?? "?" })}</p>
-          {r.canMove && r.accountLocationName ? <button type="button" className="min-h-[44px] px-3 font-bold underline" disabled={moving || busy} onClick={() => void move()}>
-            {t("receiving.claim.move_to", { shop: r.accountLocationName })}
+          {/* W20/B194: a vendor flag (the account number is on file for another vendor) reads
+              differently from a shop conflict; both stop every automatic match. */}
+          {r.conflictKind === "vendor" ? (
+            <p>{t("receiving.claim.vendor_mismatch", { account: r.accountVendorName ?? "?", sender: r.vendorName ?? "?" })}</p>
+          ) : (
+            <p>{t("receiving.claim.attribution_conflict")}</p>
+          )}
+          {r.conflictKind !== "vendor" || (r.locationId != null && r.accountLocationId != null && r.accountLocationId !== r.locationId) ? (
+            <p>{t("receiving.claim.conflict_shops", { address: r.addressLocationName ?? "?", account: r.accountLocationName ?? "?" })}</p>
+          ) : null}
+          {r.canMove && r.accountLocationName ? <button type="button" className="inline-flex min-h-[44px] items-center px-3 text-left font-bold underline" disabled={moving || busy} onClick={() => void move()}>
+            {r.conflictKind === "vendor" && r.accountLocationId === r.locationId
+              ? t("receiving.claim.use_account_vendor", { vendor: r.accountVendorName ?? "?" })
+              : t("receiving.claim.move_to", { shop: r.accountLocationName })}
           </button> : null}
           <PasswordModal open={stepUpOpen} onConfirm={() => { setStepUpOpen(false); void move(); }} onCancel={() => setStepUpOpen(false)} />
         </div>
@@ -446,6 +458,9 @@ export function VendorClaimPanel({
   countedSummary,
   matchState,
   unlinked,
+  unlinkedTotal,
+  unlinkedHasMore = false,
+  unlinkedFlagged,
   invoiceCandidates = [],
 }: {
   deliveryId: string;
@@ -457,6 +472,11 @@ export function VendorClaimPanel({
   /** The location's unlinked receipts — only populated (server-side) when this delivery
    *  has NO linked receipt. Empty/undefined otherwise. */
   unlinked?: UnlinkedReceiptView[];
+  /** W20/B195: the queue is paged. `unlinked` is its first page (newest 100); these are the
+   *  whole queue's size, whether older receipts exist, and how many in it are flagged. */
+  unlinkedTotal?: number;
+  unlinkedHasMore?: boolean;
+  unlinkedFlagged?: number;
   invoiceCandidates?: ReceivingInvoiceCandidate[];
   /** Optional server-passed language; the island reads live via useTranslation (matching
    *  the CreditResolveControls idiom), so this is accepted but unused. */
@@ -472,11 +492,55 @@ export function VendorClaimPanel({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Unlink state (linked view, AGM+; W20-2).
+  const [unlinkOpen, setUnlinkOpen] = useState(false);
+  const [unlinkNote, setUnlinkNote] = useState("");
+  const [unlinkErr, setUnlinkErr] = useState<string | null>(null);
+
   // Upload state (unlinked view).
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
 
   const overridden = matchState === "override";
+
+  // W20/B195: older pages of the triage queue, loaded on demand and appended. Disclosure-style
+  // local state only: a refresh (after a link, a move, a parse) starts again from the server's
+  // first page, which is the truth.
+  const [older, setOlder] = useState<{ rows: UnlinkedReceiptView[]; hasMore: boolean; total: number } | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderErr, setOlderErr] = useState<string | null>(null);
+  const firstPage = unlinked ?? [];
+  // A refreshed first page (new server props) discards the appended pages: their offsets no
+  // longer line up. During-render compare, not an effect (router.refresh keeps client state).
+  const [seenFirstPage, setSeenFirstPage] = useState(unlinked);
+  if (seenFirstPage !== unlinked) { setSeenFirstPage(unlinked); setOlder(null); setOlderErr(null); }
+  const shown = older ? [...firstPage, ...older.rows.filter((r) => !firstPage.some((f) => f.id === r.id))] : firstPage;
+  const queueTotal = Math.max(older?.total ?? unlinkedTotal ?? firstPage.length, shown.length);
+  const queueHasMore = older ? older.hasMore : unlinkedHasMore;
+  const flaggedCount = Math.max(unlinkedFlagged ?? 0, shown.filter((r) => r.attributionConflict).length);
+
+  const showOlder = async () => {
+    if (loadingOlder) return;
+    setLoadingOlder(true);
+    setOlderErr(null);
+    try {
+      // The next page starts after everything the SERVER has handed out, not after de-duplicated rows.
+      const offset = firstPage.length + (older?.rows.length ?? 0);
+      const res = await fetch(`${API}?locationId=${encodeURIComponent(locationId)}&offset=${offset}`, { method: "GET" });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { code?: string };
+        setOlderErr(t(("receiving.claim.error." + (j?.code ?? "generic")) as TranslationKey));
+        return;
+      }
+      const j = (await res.json().catch(() => ({}))) as { receipts?: UnlinkedReceiptView[]; total?: number; hasMore?: boolean };
+      const rows = j.receipts ?? [];
+      setOlder({ rows: [...(older?.rows ?? []), ...rows], hasMore: j.hasMore === true && rows.length > 0, total: j.total ?? queueTotal });
+    } catch {
+      setOlderErr(t("receiving.claim.error.generic"));
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   const showError = (code: string | undefined) =>
     setErr(t(("receiving.claim.error." + (code ?? "generic")) as TranslationKey));
@@ -487,9 +551,11 @@ export function VendorClaimPanel({
     setErr(null);
   };
 
-  // PATCH attest matched / discrepant.
+  // PATCH attest matched / discrepant. Names the receipt on screen: a verdict is about THAT receipt,
+  // so one that was swapped underneath is refused instead of being marked on this comparison. The
+  // server requires it (400 receipt_required), so nothing is sent without a receipt on screen.
   const attest = async (verdict: "matched" | "discrepant") => {
-    if (busy) return;
+    if (busy || !receipt) return;
     if (verdict === "discrepant" && mode !== "discrepancy") {
       setMode("discrepancy");
       setErr(null);
@@ -503,6 +569,7 @@ export function VendorClaimPanel({
       body: JSON.stringify({
         deliveryId,
         action: "attest",
+        receiptId: receipt.id,
         verdict,
         note: verdict === "discrepant" ? note.trim() || undefined : undefined,
       }),
@@ -517,9 +584,9 @@ export function VendorClaimPanel({
     showError(j?.code);
   };
 
-  // PATCH override (AGM+, note required).
+  // PATCH override (AGM+, note required). Names the receipt on screen, like attest.
   const override = async () => {
-    if (busy) return;
+    if (busy || !receipt) return;
     if (!note.trim()) {
       setErr(t("receiving.claim.error.note_required"));
       return;
@@ -529,7 +596,7 @@ export function VendorClaimPanel({
     const res = await fetch(API, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ deliveryId, action: "override", note: note.trim() }),
+      body: JSON.stringify({ deliveryId, action: "override", receiptId: receipt.id, note: note.trim() }),
     });
     setBusy(false);
     if (res.ok) {
@@ -539,6 +606,38 @@ export function VendorClaimPanel({
     }
     const j = (await res.json().catch(() => ({}))) as { code?: string };
     showError(j?.code);
+  };
+
+  // PATCH unlink (AGM+, reason required). Names the receipt on screen, so a receipt that changed
+  // underneath is refused instead of the wrong one being unlinked.
+  const unlink = async () => {
+    if (busy || !receipt) return;
+    if (!unlinkNote.trim()) {
+      setUnlinkErr(t("receiving.claim.error.unlink_note_required"));
+      return;
+    }
+    setBusy(true);
+    setUnlinkErr(null);
+    try {
+      const res = await fetch(API, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ deliveryId, action: "unlink", receiptId: receipt.id, note: unlinkNote.trim() }),
+      });
+      if (res.ok) {
+        setUnlinkOpen(false);
+        setUnlinkNote("");
+        resetAttest();
+        router.refresh();
+        return;
+      }
+      const j = (await res.json().catch(() => ({}))) as { code?: string };
+      setUnlinkErr(t(("receiving.claim.error." + (j?.code ?? "generic")) as TranslationKey));
+    } catch {
+      setUnlinkErr(t("receiving.claim.error.generic"));
+    } finally {
+      setBusy(false);
+    }
   };
 
   // POST multipart upload → link to this delivery.
@@ -715,6 +814,49 @@ export function VendorClaimPanel({
               {err ? <p className="mt-2 text-xs text-co-cta-text">{err}</p> : null}
             </div>
           )}
+
+          {/* W20-2: the way out when the WRONG document sits in this delivery's one receipt slot.
+              AGM+ (the override floor), in every match state, an override included. */}
+          {canOverride ? (
+            <div className="mt-3">
+              {unlinkOpen ? (
+                <div className="flex flex-col gap-2 rounded-lg border-2 border-dashed border-co-border p-2">
+                  <p className="text-[11px] text-co-text-dim">{t("receiving.claim.unlink_hint")}</p>
+                  <label className="text-[11px] font-bold text-co-text-dim" htmlFor={`claim-unlink-note-${deliveryId}`}>
+                    {t("receiving.claim.unlink_note_label")}
+                  </label>
+                  <input
+                    id={`claim-unlink-note-${deliveryId}`}
+                    className="min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60"
+                    value={unlinkNote}
+                    maxLength={2000}
+                    disabled={busy}
+                    onChange={(e) => setUnlinkNote(e.target.value)}
+                    placeholder={t("receiving.claim.unlink_note_placeholder")}
+                    aria-label={t("receiving.claim.unlink_note_label")}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton variant="danger" disabled={busy} onClick={() => void unlink()}>
+                      {t("receiving.claim.unlink_confirm")}
+                    </ActionButton>
+                    <ActionButton variant="secondary" disabled={busy} onClick={() => { setUnlinkOpen(false); setUnlinkNote(""); setUnlinkErr(null); }}>
+                      {t("receiving.claim.cancel")}
+                    </ActionButton>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => { setUnlinkOpen(true); setUnlinkErr(null); }}
+                  className="inline-flex min-h-[44px] items-center px-1 text-xs font-bold text-co-text-muted underline underline-offset-2 hover:text-co-text disabled:opacity-50"
+                >
+                  {t("receiving.claim.unlink_open")}
+                </button>
+              )}
+              {unlinkErr ? <p role="alert" className="mt-2 text-xs text-co-cta-text">{unlinkErr}</p> : null}
+            </div>
+          ) : null}
         </>
       ) : (
         // ── UNLINKED: attach + link-existing ────────────────────────────────────────
@@ -766,16 +908,16 @@ export function VendorClaimPanel({
           <CollapsibleSection
             idBase={`claim-link-existing-${deliveryId}`}
             title={t("receiving.claim.link_existing_title")}
-            count={t("receiving.claim.link_existing_count", { n: unlinked?.length ?? 0 })}
-            badge={unlinked?.some((r) => r.attributionConflict) ? (
-              <AlertPill tone="warn">{t("receiving.claim.attribution_conflict_count", { n: unlinked.filter((r) => r.attributionConflict).length })}</AlertPill>
+            count={t("receiving.claim.link_existing_count", { n: queueTotal })}
+            badge={flaggedCount > 0 ? (
+              <AlertPill tone="warn">{t("receiving.claim.attribution_conflict_count", { n: flaggedCount })}</AlertPill>
             ) : undefined}
           >
-            {!unlinked || unlinked.length === 0 ? (
+            {shown.length === 0 ? (
               <p className="text-[11px] italic text-co-text-muted">{t("receiving.claim.link_existing_empty")}</p>
             ) : (
               <ul className="flex flex-col gap-1.5">
-                {unlinked.map((r) => (
+                {shown.map((r) => (
                   <UnlinkedReceiptRow
                     key={r.id}
                     r={r}
@@ -787,6 +929,24 @@ export function VendorClaimPanel({
                 ))}
               </ul>
             )}
+            {/* W20/B195: the queue is paged (newest first). Say how much of it is on screen, and
+                offer the older receipts instead of dropping them. */}
+            {queueHasMore || shown.length < queueTotal ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="text-[11px] text-co-text-dim">{t("receiving.claim.link_existing_showing", { n: shown.length, total: queueTotal })}</span>
+                {queueHasMore ? (
+                  <button
+                    type="button"
+                    disabled={loadingOlder}
+                    onClick={() => void showOlder()}
+                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text disabled:opacity-50"
+                  >
+                    {loadingOlder ? t("receiving.claim.link_existing_older_busy") : t("receiving.claim.link_existing_older")}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {olderErr ? <p role="alert" className="mt-2 text-xs text-co-cta-text">{olderErr}</p> : null}
             {err ? <p className="mt-2 text-xs text-co-cta-text">{err}</p> : null}
           </CollapsibleSection>
         </div>

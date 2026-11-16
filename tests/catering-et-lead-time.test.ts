@@ -59,9 +59,13 @@ describe("catering lead time uses the start of the ET event day", () => {
     vi.useFakeTimers();
     vi.setSystemTime(start - 30 * 60_000);
     stubUtcDateParsing();
-    expect(await routeDelivery({ lat: 38.9, lng: -77.03, eventDate: day, headcount: 1 })).toEqual({ status: "no_capacity" });
+    // Audit W22/B123 (owner decision W22-2 as modified): inside the lead time is a WARNING on the nearest shop,
+    // never a refusal — the order is flagged for the catering manager.
+    expect(await routeDelivery({ lat: 38.9, lng: -77.03, eventDate: day, headcount: 1 })).toMatchObject({ status: "routed", locationId: "shop", dateUnavailable: true });
     vi.setSystemTime(start - 90 * 60_000);
-    expect(await routeDelivery({ lat: 38.9, lng: -77.03, eventDate: day, headcount: 1 })).toMatchObject({ status: "routed", locationId: "shop" });
+    const onTime = await routeDelivery({ lat: 38.9, lng: -77.03, eventDate: day, headcount: 1 });
+    expect(onTime).toMatchObject({ status: "routed", locationId: "shop" });
+    expect("dateUnavailable" in onTime && onTime.dateUnavailable).toBeFalsy();
   });
 
   it.each(["bad-date", "2026-7-10", "2026-07-10T00:00:00Z"])(
@@ -70,7 +74,7 @@ describe("catering lead time uses the start of the ET event day", () => {
       mocks.client.mockReturnValue(client());
       const capacity = await checkCateringCapacity({ locationId: "shop", eventDate, requestedCovers: 1 });
       expect(capacity).toMatchObject({ meetsLeadTime: false, signal: "below_lead_time" });
-      expect(await routeDelivery({ lat: 38.9, lng: -77.03, eventDate, headcount: 1 })).toEqual({ status: "no_capacity" });
+      expect(await routeDelivery({ lat: 38.9, lng: -77.03, eventDate, headcount: 1 })).toMatchObject({ status: "routed", locationId: "shop", dateUnavailable: true });
     },
   );
 });

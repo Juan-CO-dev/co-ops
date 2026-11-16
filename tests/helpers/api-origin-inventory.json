@@ -58,6 +58,7 @@
   "app/api/landing/order-click/route.ts": "POST",
   "app/api/locations/route.ts": "GET",
   "app/api/maintenance/note/route.ts": "POST",
+  "app/api/notifications/mark-all-read/route.ts": "POST",
   "app/api/notifications/route.ts": "GET POST",
   "app/api/opening/phase1/draft/route.ts": "POST",
   "app/api/opening/prep/item/revoke/route.ts": "POST",

@@ -4,9 +4,12 @@ import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { recordInboundMessage, processInboundMessage } from "@/lib/inbound-router";
 import { verifySvixSignature } from "@/lib/webhook-verify-shared";
 import { parseFetchedInboundMessage } from "@/lib/inbound-parse";
-export const maxDuration = 180;
+import { routeWorkDeadline } from "@/lib/receipt-parse-budget-shared";
+// Holds one mail fetch and then one WHOLE parse (W20/B115): the model call alone may take 150 s.
+// The response is sent first; the fetch and the parse run in after(), inside this same limit.
+export const maxDuration = 300;
 export async function POST(req: NextRequest) {
-  const deadline = Date.now() + 160_000;
+  const deadline = routeWorkDeadline(Date.now(), maxDuration);
   const secret = process.env.RESEND_INBOUND_SECRET;
   if (!secret) return jsonError(503, "not_configured");
   const rawBody = await req.text();

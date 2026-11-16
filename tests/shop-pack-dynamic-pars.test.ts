@@ -112,12 +112,16 @@ describe("ONE pack-aware overlay loader for the walk and its submission (display
     expect(src.match(/loadPackAwareOverlay\(sb, locationId, skuIds\)/g)?.length).toBe(2);
     expect(src.match(/loadOverlayBySku\(sb, locationId\)/g)?.length).toBe(1); // inside loadPackAwareOverlay only
     const submit = src.slice(src.indexOf("export async function submitParPass("));
-    expect(submit).toContain("const [{ chainsBySku, overlayBySku }, measures] = await Promise.all([loadPackAwareOverlay(sb, locationId, skuIds), loadMeasures()]);");
+    expect(submit).toContain("const [packAware, measures] = await Promise.all([loadPackAwareOverlay(sb, locationId, skuIds), loadMeasures()]);");
+    expect(submit).toContain("const { chainsBySku, overlayBySku } = packAware;");
     expect(submit).toContain("const par = resolvePar(overlayForPar,");
   });
   it("the nightly engine and readiness stamp from the epochs too", () => {
     const pars = readFileSync("lib/dynamic-pars.ts", "utf8");
-    expect(pars).toContain("stampEffectivePack(overlayBySku, await loadShopPackEpochs(skuIds, locationId));");
+    // W18/B106: the same epoch map also stamps every ledger row's detail.pack_epoch.
+    expect(pars).toContain("const shopPackEpochs = await loadShopPackEpochsAt(locationId);");
+    expect(pars).toContain("const packEpochBySku = new Map<string, number>();");
+    expect(pars).toContain("stampEffectivePack(overlayBySku, packEpochBySku);");
     expect(pars).toContain("auto_weekday_pack_epoch");
     const ready = readFileSync("lib/sku-data-readiness.ts", "utf8");
     expect(ready).toContain("effectivePackEpoch: stamped ? epochFor(shopId, id) : undefined");
