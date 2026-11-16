@@ -52,7 +52,7 @@ export function OrderingSurfaces({
   actorLevel,
   language,
   shopLabel,
-  dateLabel,
+  vendorDateLabel,
   initialPoId,
 }: {
   todaysOrders: TodaysOrderVendor[];
@@ -64,7 +64,7 @@ export function OrderingSurfaces({
   actorLevel: number;
   language: "en" | "es";
   shopLabel: string;
-  dateLabel: string;
+  vendorDateLabel: string;
   /**
    * Deep-link target (?po=<id>) — the panel this page should open on load, so a delivery
    * detail can link back to the exact PO. Seeds the panel state ONCE (initial useState);
@@ -258,7 +258,7 @@ export function OrderingSurfaces({
           actorLevel={actorLevel}
           language={language}
           shopLabel={shopLabel}
-          dateLabel={dateLabel}
+          vendorDateLabel={vendorDateLabel}
           onClose={closePanel}
           onChanged={refresh}
         />

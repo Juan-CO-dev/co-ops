@@ -70,3 +70,18 @@ export function isPlausibleEmail(value: string | null | undefined): boolean {
   if (!domain || !domain.includes(".") || domain.startsWith(".") || domain.endsWith(".")) return false;
   return true;
 }
+
+/** W19/B108: the Resend idempotency key for ONE confirmation of a PO. A retry after an unclear send reuses it, so
+ *  Resend returns the first message instead of emailing the vendor a duplicate (within Resend's 24 h window). It
+ *  carries `confirmed_at` because Reopen, edit, Confirm writes a new one: a corrected order is a NEW send, never
+ *  suppressed as a duplicate of the old one. */
+export function poOrderIdempotencyKey(poId: string, confirmedAt: string | null): string {
+  return `po-order/${poId}/${confirmedAt ?? "unconfirmed"}`;
+}
+
+/** W19/B108 fix round 1: how long after the FIRST attempt for a confirmation an automatic retry is still allowed.
+ *  Resend keeps an idempotency key for 24 hours only (https://resend.com/docs/dashboard/emails/idempotency-keys);
+ *  past that a retry with the same key is a NEW email. One hour of margin under 24 h covers clock skew between
+ *  instances and a slow first request. Past it, sendOrderEmail refuses (409 `send_window_expired`): staff check
+ *  with the vendor and use Mark placed or another channel. */
+export const PO_EMAIL_RETRY_WINDOW_MS = 23 * 60 * 60 * 1000;
