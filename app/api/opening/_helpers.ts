@@ -22,6 +22,8 @@
  *                                     winner's row IS the head, so the body carries it as
  *                                     `completion` (null if unnameable) for the client to
  *                                     adopt under a calm notice instead of an error
+ *   422 phase1_incomplete             — W13/B074 Phase 1 submit missing a live spot-check item
+ *   400 item_not_in_template          — W13/B073 a Phase 1 entry from another checklist
  *   422 phase2_incomplete             — C.53 Phase 2 finalize with unsaved prep items (Model Y universe)
  *   422 reason_required              — C.53 §8.4 revoke: structured revoke with no reason (client SIGNAL to open RevokeReasonModal; no display i18n key)
  *   422 revocation_reason_invalid    — C.53 §8.4 revoke: revocation_reason CHECK (23514) defense
@@ -46,6 +48,8 @@ import {
   OpeningInstanceNotOpenError,
   OpeningMissingCountError,
   OpeningOutOfRangeReasonMissingError,
+  OpeningItemNotInTemplateError,
+  OpeningPhase1IncompleteError,
   OpeningPhase1NotEligibleError,
   OpeningPhase2IncompleteError,
   OpeningPhase2NotEligibleError,
@@ -122,6 +126,21 @@ export function mapOpeningError(err: OpeningError): NextResponse {
     // 0215 batch vs bottle: a batch item's recount must be LINE + BACK UP, both present,
     // both >= 0. UI surfaces opening.error.<code>.
     return jsonError(422, err.code, {
+      message: err.message,
+      template_item_id: err.templateItemId,
+    });
+  }
+  if (err instanceof OpeningPhase1IncompleteError) {
+    // 422 — W13/B074: Phase 1 submitted without every live spot-check item.
+    return jsonError(422, err.code, {
+      message: err.message,
+      instance_id: err.instanceId,
+      missing_count: err.missingCount,
+    });
+  }
+  if (err instanceof OpeningItemNotInTemplateError) {
+    // 400 — W13/B073: an entry named an item from another checklist.
+    return jsonError(400, err.code, {
       message: err.message,
       template_item_id: err.templateItemId,
     });

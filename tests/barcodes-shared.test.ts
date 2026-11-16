@@ -132,6 +132,27 @@ describe("resolveScan", () => {
     const dup = { ...ctx, taught: [...ctx.taught, taught("111", "sku-ham-pfg", "v-pfg")] };
     expect(resolveScan("111", dup)).toMatchObject({ kind: "line", skuId: "sku-turkey-pfg", ambiguous: true });
   });
+  // Audit B101: SKU A was retired and replaced by SKU B, which ships the same case code.
+  it("a code taught on this vendor's retired SKU is unknown, not a dead match", () => {
+    const retired = { vendorId: "v-pfg", lineSkuIds: [], taught: [taught("555", "sku-old-pfg", "v-pfg")], vendorSkus: [{ skuId: "sku-new-pfg", productId: null }] };
+    expect(resolveScan("555", retired)).toEqual({ kind: "unknown" }); // so the receiver can teach it onto the replacement
+    // On a delivery line or not, a retired SKU is never the answer.
+    expect(resolveScan("555", { ...retired, lineSkuIds: ["sku-old-pfg"] })).toEqual({ kind: "unknown" });
+  });
+  it("…and lands on the replacement as a twin when both share a product", () => {
+    const shared = {
+      vendorId: "v-pfg", lineSkuIds: [],
+      taught: [taught("555", "sku-old-pfg", "v-pfg", "case", "prod-forks"), taught("555", "sku-old-pfg", "v-pfg", "inner", "prod-forks")],
+      vendorSkus: [{ skuId: "sku-new-pfg", productId: "prod-forks" }],
+    };
+    expect(resolveScan("555", shared)).toEqual({ kind: "twin", skuId: "sku-new-pfg", viaSkuId: "sku-old-pfg", level: "case", levels: ["case", "inner"], ambiguous: false, viaOwnRetired: true });
+    // Another vendor's twin is not "own retired".
+    expect(resolveScan("333", ctx)).not.toHaveProperty("viaOwnRetired");
+  });
+  it("a retired twin no longer makes a live SKU's code ambiguous", () => {
+    const withRetired = { ...ctx, taught: [...ctx.taught, taught("222", "sku-swiss-old", "v-pfg")] };
+    expect(resolveScan("222", withRetired)).toEqual({ kind: "sku", skuId: "sku-swiss-pfg", level: "case", levels: ["case"], ambiguous: false });
+  });
   it("a twin is offered only when this vendor has a SKU of the same product", () => {
     const noTwin = { ...ctx, vendorSkus: ctx.vendorSkus.filter((s) => s.skuId !== "sku-turkey-pfg"), lineSkuIds: ["sku-ham-pfg"], taught: ctx.taught.filter((t) => t.skuId !== "sku-turkey-pfg") };
     expect(resolveScan("333", noTwin)).toEqual({ kind: "unknown" });
