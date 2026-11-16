@@ -23,7 +23,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { GoodToKnow } from "@/components/portal/GoodToKnow";
 import { GTK } from "@/components/portal/portal-content";
-import { routeDeliveryAction } from "./actions";
+import { checkPickupDateAction, routeDeliveryAction } from "./actions";
 import { currentRoute, routeKey, type KeyedRoute } from "./route-key";
 import { CATERING_DELIVERY_WINDOWS } from "@/lib/catering/fulfillment-shared";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -142,6 +142,24 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
   };
 
   const liveRoute = currentRoute(route, { date: f.date, guests: f.guests, geo });
+
+  // PICKUP DATE CHECK (audit W22/B123): pickup had no capacity check. The answer is a WARNING, never a block
+  // (owner decision W22-2 as modified) — the order is flagged for the catering manager to accept or refuse.
+  const [pickupCheck, setPickupCheck] = useState<{ key: string; bookable: boolean } | null>(null);
+  const pickupKey = `${f.locationId}|${f.date}|${Number(f.guests) || 0}`;
+  useEffect(() => {
+    if (mode !== "new" || f.fulfillment !== "pickup" || !f.locationId || !f.date) return;
+    let alive = true;
+    const key = pickupKey;
+    const timer = window.setTimeout(() => {
+      checkPickupDateAction({ locationId: f.locationId, eventDate: f.date, headcount: Number(f.guests) || null })
+        .then((r) => { if (alive) setPickupCheck({ key, bookable: r.bookable }); })
+        .catch(() => { /* advisory: no warning on a failed check */ });
+    }, 400);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [mode, f.fulfillment, f.locationId, f.date, f.guests, pickupKey]);
+  const pickupDateWarning = f.fulfillment === "pickup" && pickupCheck?.key === pickupKey && !pickupCheck.bookable;
+  const deliveryDateWarning = f.fulfillment === "delivery" && liveRoute?.status === "routed" && liveRoute.dateUnavailable === true;
 
   // Re-route when the date or the guest count changes after the pin is placed (debounced), so the
   // shop the order is sent to always matches the date and headcount it is sent with.
@@ -431,6 +449,11 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
                                     {t("order.route.rerouting" as TranslationKey)}
                                   </p>
                                 )}
+                                {deliveryDateWarning && (
+                                  <p className="rounded-xl border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-sm font-semibold text-co-warning-text" role="status">
+                                    {t("order.start.date_warning" as TranslationKey)}
+                                  </p>
+                                )}
                                 {liveRoute && (
                                   <p className={`text-sm font-semibold ${
                                     liveRoute.status === "routed"
@@ -542,6 +565,12 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
                           </div>
                         )}
                       </Field>
+                    )}
+
+                    {pickupDateWarning && (
+                      <p className="rounded-xl border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-sm font-semibold text-co-warning-text" role="status">
+                        {t("order.start.date_warning" as TranslationKey)}
+                      </p>
                     )}
 
                     {/* Dietary notes */}

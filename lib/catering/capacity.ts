@@ -185,14 +185,15 @@ export async function checkCateringCapacity(args: {
     shortfall: null,
   };
 
-  // 4. Signal. Precedence: unconfigured (degrade) → blackout → lead-time →
-  //    covers/events capacity → limited → available.
+  // 4. Signal. Precedence: blackout → unconfigured (degrade) → lead-time →
+  //    covers/events capacity → limited → available. A blackout is an explicit manager act, so it holds
+  //    whether or not caps are seeded (audit W22/B123: with no policy row the blackout was never reported).
   let signal: CapacitySignal;
-  if (policy == null) {
+  if (isBlackout) {
+    signal = "blackout";
+  } else if (policy == null) {
     // No caps seeded yet — the gate is advisory-only (never blocks a booking).
     signal = "unconfigured";
-  } else if (isBlackout) {
-    signal = "blackout";
   } else if (!meetsLeadTime) {
     signal = "below_lead_time";
   } else if (
@@ -213,3 +214,6 @@ export async function checkCateringCapacity(args: {
 
   return { signal, ...base };
 }
+
+// The one "can this date take the order" rule lives in the client-safe half (the *-shared pattern).
+export { isBookableSignal } from "./capacity-shared";

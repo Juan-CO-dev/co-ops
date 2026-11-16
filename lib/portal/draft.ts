@@ -28,6 +28,7 @@ import { createPaymentDue } from "@/lib/catering/payments";
 import { sendEmail } from "@/lib/email";
 import { renderOrderConfirmationEmail } from "@/lib/email-templates/order-confirmation";
 import { allowlistMatches } from "./magic-link-shared";
+import { isDateBookable } from "@/lib/catering/fulfillment-routing";
 import { portalDeliveryInfo, portalDeliveryRefusal, resolvePortalDeliveryZone, type PortalDeliveryInfo } from "./draft-shared";
 
 export { resolvePortalDeliveryZone } from "./draft-shared";
@@ -825,12 +826,42 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
     console.error("[portal draft] confirmation email failed:", err instanceof Error ? err.message : String(err));
   }
 
+  const dateFlagged = await flagUnavailableDate(sb, quoteId, header);
+
   void audit({
     actorId: null, actorRole: null, action: "catering.draft.submit",
     resourceTable: "catering_quotes", resourceId: quoteId,
-    metadata: { customer_id: customerId, total_cents: stack.totalCents, deposit_cents: stack.depositCents, napkins: !!opts.napkins }, ipAddress: null, userAgent: null,
+    metadata: { customer_id: customerId, total_cents: stack.totalCents, deposit_cents: stack.depositCents, napkins: !!opts.napkins, ...(dateFlagged ? { date_needs_review: true } : {}) }, ipAddress: null, userAgent: null,
   });
   return { quoteId, depositCents: stack.depositCents, totalCents: stack.totalCents };
+}
+
+/**
+ * A SUBMITTED ORDER ON A DATE THE SHOP CANNOT TAKE IS FLAGGED, NEVER REFUSED (audit W22/B123, owner decision
+ * W22-2 as modified). The customer was warned on the start form and is warned again on the order page; here
+ * the catering manager is told, on the lead's own history: one no-stage-change event row naming the problem
+ * and the two answers (confirm = accept, Lost = refuse). The lead's capacity pill says the same while it is
+ * true. Best-effort and never throws: the order is already placed.
+ */
+async function flagUnavailableDate(sb: ReturnType<typeof getServiceRoleClient>, quoteId: string, header: DraftHeader): Promise<boolean> {
+  if (!header.pipeline_id) return false;
+  try {
+    const [{ data: q }, { data: lead }] = await Promise.all([
+      sb.from("catering_quotes").select("event_date, headcount").eq("id", quoteId).maybeSingle<{ event_date: string | null; headcount: number | null }>(),
+      sb.from("catering_pipeline").select("stage").eq("id", header.pipeline_id).maybeSingle<{ stage: string }>(),
+    ]);
+    if (!q?.event_date || !lead || (lead.stage !== "inquiry" && lead.stage !== "quote_sent")) return false;
+    if (await isDateBookable({ locationId: header.location_id, eventDate: q.event_date, headcount: q.headcount, excludePipelineId: header.pipeline_id })) return false;
+    const { error } = await sb.from("catering_pipeline_events").insert({
+      pipeline_id: header.pipeline_id, from_stage: lead.stage, to_stage: lead.stage, actor_id: null,
+      note: `Date check: the customer ordered for ${q.event_date}, which this shop can't take (blackout, full, or inside the lead time). They were warned. Confirm to accept the order, or mark it Lost to refuse.`,
+    });
+    if (error) console.error(`[portal draft] date flag event failed for quote ${quoteId}: ${error.message}`);
+    return true;
+  } catch (err) {
+    console.error(`[portal draft] date check failed for quote ${quoteId}:`, err instanceof Error ? err.message : String(err));
+    return false;
+  }
 }
 
 /** The pre-0302 submit writes: separate statements, not one transaction. Every write after the
