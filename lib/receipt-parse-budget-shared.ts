@@ -45,3 +45,24 @@ export function parseFits(now: number, deadline: number): boolean {
 export function fetchShareDeadline(deadline: number): number {
   return deadline - PARSE_ROW_RESERVE_MS - PARSE_HANDOFF_MS;
 }
+
+/** One inbound message's fetch window: the sweep starts a message only with this much left. */
+export const INBOUND_FETCH_WINDOW_MS = 60_000;
+
+/**
+ * Least time a receipt run needs, from its start, to do ANY of its work (audit W27/B225, review r1).
+ * With a parse key that is the queue read plus one whole parse — exactly what `fetchShareDeadline`
+ * always leaves over, so a run admitted here parses at least one receipt however slow fetching is.
+ * The catch-up asks it AFTER its heartbeat lookup, so what is still spent before the first parse
+ * starts is the claim and the queue read, and both sit inside the handoff.
+ * Fetch-only (no parse key) needs one fetch window. The daily catch-up asks this before it spends
+ * its one claim for the day; anything less is left for the next scan.
+ */
+export function receiptRunMinimumMs(parseEnabled: boolean): number {
+  return parseEnabled ? PARSE_HANDOFF_MS + PARSE_ROW_RESERVE_MS : INBOUND_FETCH_WINDOW_MS;
+}
+
+/** May a receipt run start at `now` and still do its work before `deadline`? */
+export function receiptRunFits(now: number, deadline: number, parseEnabled: boolean): boolean {
+  return now + receiptRunMinimumMs(parseEnabled) <= deadline;
+}

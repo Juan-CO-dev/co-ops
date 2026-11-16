@@ -10,6 +10,7 @@ import { inboxAttachmentManifest, inboxContent, inboxHeaders } from "@/lib/cater
 import { inboxExternalReference } from "@/lib/catering/inbox-identity-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { inboundAddresses, normalizeInboundAddress, resolveInboundRoute, INBOUND_MAX_ATTEMPTS, inboundRetryDelayMs, inboundErrorCode, type InboundErrorCode, type InboundAddressRule } from "@/lib/inbound-router-shared";
+import { INBOUND_FETCH_WINDOW_MS } from "@/lib/receipt-parse-budget-shared";
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 interface InboundRow {
   id: string; message_id: string | null; provider_email_id: string; from_address: string | null; subject: string | null;
@@ -173,7 +174,7 @@ export async function sweepInboundMessages(sb = getServiceRoleClient(), deadline
   let swept = 0;
   let cursor = 0;
   async function worker() {
-    while (Date.now() + 60_000 <= deadline) {
+    while (Date.now() + INBOUND_FETCH_WINDOW_MS <= deadline) {
       const row = data?.[cursor++];
       if (!row) break;
       swept++;

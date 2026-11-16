@@ -8,7 +8,7 @@ import { runVaultScrub } from "@/lib/vault-scrub-run";
 import { runToastSalesPull } from "@/lib/toast-sales-pull-run";
 import { runParseReceipts } from "@/lib/parse-receipts-run";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
-import { parseFits } from "@/lib/receipt-parse-budget-shared";
+import { receiptRunFits } from "@/lib/receipt-parse-budget-shared";
 
 export { decideCatchUp } from "@/lib/daily-catchup-shared";
 
@@ -20,7 +20,7 @@ const auditBase = {
 const provenance = { via: "catch-up", caller: "toast-catering-scan" } as const;
 
 /** The least route time a caught-up job needs to start (W27 / B225). The sales pull needs room for capture and its
- *  tail; the receipt run's minimum comes from the shared receipt budget (`parseFits`), never a number of its
+ *  tail; the receipt run's minimum comes from the shared receipt budget (`receiptRunFits`), never a number of its
  *  own. Below it the job is skipped BEFORE its claim, so the next 10-minute tick can still run it. prune-sessions
  *  is quick and is not gated. */
 export const CATCH_UP_MIN_JOB_MS: Readonly<Record<string, number>> = { "toast-sales-pull": 90_000 };
@@ -64,7 +64,7 @@ export async function catchUpDailyJobs(opts: { now?: Date; deadline: number; sig
       // Asked last, right before the claim, so the lookup's own time is already spent (W27 / B225 r1).
       const minMs = CATCH_UP_MIN_JOB_MS[entry.job];
       if (minMs !== undefined && opts.deadline - Date.now() < minMs) { skipped.push(entry.job); continue; }
-      if (entry.job === "parse-receipts" && process.env.ANTHROPIC_API_KEY && !parseFits(Date.now(), opts.deadline)) {
+      if (entry.job === "parse-receipts" && !receiptRunFits(Date.now(), opts.deadline, !!process.env.ANTHROPIC_API_KEY)) {
         skipped.push(entry.job); continue;
       }
       const claim = await sb.rpc("portal_rate_limit_hit", {
