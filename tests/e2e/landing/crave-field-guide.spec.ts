@@ -721,3 +721,44 @@ for(const size of [{width:1536,height:730},{width:390,height:844}])test(`six fou
   await expect(guide.locator('[data-line][data-state="shown"]')).toHaveCount(6);
   await expect(guide.locator('[data-anatomy-label][data-active="true"]')).toHaveCount(0);
 });
+
+// W24/B132: the Field Guide is a pinned stage taller than two viewports, so the section itself never
+// reaches the 0.5 visibility ratio; its title is observed instead (as the crave story's is).
+for(const height of [667,812])for(const language of ['en','es'])for(const consent of ['accepted','rejected'] as const)test(`field-guide ViewContent remains reachable and consent-gated (${height}; ${language}; ${consent})`,async({page,context,baseURL})=>{
+  await page.setViewportSize({width:375,height});
+  await context.addCookies([{name:'landing_consent',value:consent,url:baseURL!}]);
+  await page.route('https://connect.facebook.net/**',route=>route.fulfill({contentType:'application/javascript',body:'/* Offline Pixel queue inspection; no external tracking. */'}));
+  await page.route('https://www.facebook.com/**',route=>route.fulfill({status:204}));
+  await page.goto(`/?lang=${language}`);
+  const count=()=>page.evaluate(()=>window.fbq?.queue?.filter(args=>args[1]==='ViewContent'&&(args[2] as {content_name?:string}|undefined)?.content_name==='field-guide').length??0);
+  const visitIntro=()=>page.locator('#field-guide-title').evaluate(el=>scrollTo(0,el.getBoundingClientRect().top+scrollY-100));
+  await visitIntro();
+  if(consent==='rejected'){
+    await page.waitForTimeout(1200);
+    expect(await count()).toBe(0);
+    await expect(page.locator('#landing-meta-pixel')).toHaveCount(0);
+    return;
+  }
+  await expect.poll(count,{timeout:4000}).toBe(1);
+  await page.evaluate(()=>scrollTo(0,0));
+  await page.waitForTimeout(100);
+  await visitIntro();
+  await page.waitForTimeout(1200);
+  expect(await count()).toBe(1);
+});
+
+// W24/B132 follow-up check (plan): report the lineup section's best visibility ratio at 375x800.
+test('lineup section can reach the 0.5 ViewContent visibility ratio at 375x800',async({page})=>{
+  await page.setViewportSize({width:375,height:800});
+  await page.goto('/');
+  const best=await page.evaluate(async()=>{
+    const el=document.querySelector('#lineup > div');if(!el)return 0;
+    let max=0;
+    const observer=new IntersectionObserver(entries=>{for(const e of entries)max=Math.max(max,e.intersectionRatio);},{threshold:Array.from({length:21},(_,i)=>i/20)});
+    observer.observe(el);
+    const top=el.getBoundingClientRect().top+scrollY,end=top+el.getBoundingClientRect().height;
+    for(let y=Math.max(0,top-800);y<=end;y+=40){scrollTo(0,y);await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));}
+    observer.disconnect();return max;
+  });
+  expect(best).toBeGreaterThanOrEqual(0.5);
+});
