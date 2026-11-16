@@ -29,6 +29,14 @@ import { POST as submissions } from "@/app/api/checklist/submissions/route";
 import { POST as confirm } from "@/app/api/checklist/confirm/route";
 import { POST as reports } from "@/app/api/written-reports/route";
 import { PATCH } from "@/app/api/written-reports/[id]/route";
+import { etCalendarDate } from "@/lib/operational-day";
+
+const TODAY_ET = etCalendarDate(new Date().toISOString());
+const shiftEt = (days: number) => {
+  const d = new Date(`${TODAY_ET}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -36,7 +44,7 @@ beforeEach(() => {
 });
 
 it.each([
-  ["instances", instances, { templateId: "template", locationId: "shop", date: "2026-10-19" }],
+  ["instances", instances, { templateId: "template", locationId: "shop", date: TODAY_ET }],
   ["completions", completions, { instanceId: "instance", templateItemId: "item" }],
   ["submissions", submissions, { instanceId: "instance", completionIds: [] }],
   ["confirm", confirm, { instanceId: "instance", pin: "1234", incompleteReasons: [] }],
@@ -52,3 +60,16 @@ it.each([
   expect(h.actor).toHaveBeenCalledOnce();
   expect(h.write).not.toHaveBeenCalled();
 });
+
+it.each([["today+3", 3], ["today-1", -1]] as const)(
+  "W13/B076 refuses to start a closing for any day but today (%s)", async (_label, offset) => {
+    h.actor.mockResolvedValue({ userId: "user", level: 3, active: true, locations: ["shop"] });
+    const req = new NextRequest("http://localhost/api/checklist/instances", {
+      method: "POST", headers: { origin: "http://localhost", "content-type": "application/json", cookie: "session=test" },
+      body: JSON.stringify({ templateId: "template", locationId: "shop", date: shiftEt(offset) }),
+    });
+    const response = await instances(req);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "closing_date_not_today" });
+    expect(h.write).not.toHaveBeenCalled();
+  });

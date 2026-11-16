@@ -224,7 +224,7 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
   if (err.code === "checklist_corrections_unavailable") return jsonError(503, err.code, { message: err.message });
   if (err.code === "instance_not_found") return jsonError(404, err.code, { message: err.message });
   if (["instance_not_open", "tag_changed", "concurrent_modification", "completion_set_changed", "completion_cardinality",
-    "submission_cardinality", "instance_cardinality", "reason_cardinality"].includes(err.code)) {
+    "submission_cardinality", "instance_cardinality", "reason_cardinality", "closing_date_not_today", "wrong_checklist_type"].includes(err.code)) {
     return jsonError(409, err.code, { message: err.message });
   }
   // Generic ChecklistError with an in-band code (empty_batch,
