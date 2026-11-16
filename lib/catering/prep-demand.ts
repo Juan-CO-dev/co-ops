@@ -148,29 +148,78 @@ export async function assertQuoteReadyForPrep(sb: Sb, pipelineId: string): Promi
 
 // ── Lifecycle: reserve / consume / release / resync ─────────────────────────────────
 
+/** What one reserve did. `reserved` is the only outcome that wrote rows; the others are the expected
+ *  losers of a race (the lead left `confirmed`, or a newer revision exists) or an undated / consumed
+ *  lead — returned, never thrown, so the caller can say so. */
+export type ReserveOutcome = "reserved" | "no_quote" | "no_event_date" | "not_confirmed" | "quote_changed" | "already_consumed";
+
+/** PostgREST's / Postgres's "that function does not exist (yet)": the migration is not applied. */
+function rpcMissing(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+let reserveLegacyWarned = false;
+
 /**
- * Reserve prep demand for a confirmed lead. Idempotent: releases any existing 'reserved'
- * rows for the lead, then inserts fresh from the current quote (so a re-confirm / resync
- * re-resolves without double-counting). No-op if there's no current quote or no event_date.
+ * Reserve prep demand for a confirmed lead. Idempotent: retires any existing 'reserved' rows for the
+ * lead, then inserts fresh from the current quote (so a re-confirm / resync re-resolves without
+ * double-counting). No-op if there's no current quote or no event_date.
+ *
+ * ONE DATABASE CALL, UNDER THE LEAD'S ROW LOCK (audit W22/B122, migration 0329). The retire and the
+ * insert used to be two PostgREST calls with no lock, so a second manager's `confirmed → lost` could
+ * land between them: its release found nothing, then this inserted a full reserved set on a lost lead.
+ * `reserve_catering_prep_demand` locks the catering_pipeline row FOR UPDATE and re-checks, under that
+ * lock, that the lead is still `confirmed` and `quote.id` is still its live revision — so either the
+ * stage flip commits first (nothing is written here) or it waits for this transaction (its own
+ * release/consume, which runs after its flip, then catches these rows). The rows are still resolved
+ * here (pure rules, read-only); the SQL only writes them.
  */
-export async function reservePrepDemand(actor: AuthContext, pipelineId: string): Promise<void> {
+export async function reservePrepDemand(actor: AuthContext, pipelineId: string): Promise<ReserveOutcome> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
   const sb = getServiceRoleClient();
   const quote = await loadCurrentQuote(sb, pipelineId);
-  if (!quote || !quote.event_date) return; // can't prep-plan without a dated quote
+  if (!quote) return "no_quote";
+  if (!quote.event_date) return "no_event_date"; // can't prep-plan without a dated quote
   // Inner guard (B7c r5): never retire a lead's reserved rows to replace them with a silent zero.
   // moveStage checks this before the stage changes; this covers every other path in.
   await assertQuoteReadyForPrep(sb, pipelineId);
 
-  // Idempotency: retire prior reserved rows (append-only — mark released, never delete).
+  const demand = await resolveQuoteDemand(sb, quote.id);
+  const { data, error } = await sb.rpc("reserve_catering_prep_demand", {
+    p_pipeline_id: pipelineId,
+    p_quote_id: quote.id,
+    p_rows: demand.map((d) => ({ item_id: d.itemId, menu_item_id: d.menuItemId, choice_package_item_id: d.choicePackageItemId, portion: d.portion, qty: d.qty })),
+    p_actor_id: actor.user.id,
+  });
+  if (error && !rpcMissing(error)) throw new Error(`reservePrepDemand: ${error.message}`);
+  if (error) {
+    // 0329 not applied yet: the previous two-call path (B122 stays open until it is).
+    if (!reserveLegacyWarned) {
+      reserveLegacyWarned = true;
+      console.warn("[prep-demand] reservePrepDemand: migration 0329 not applied — using the unlocked two-call path");
+    }
+    await reserveLegacy(sb, actor, pipelineId, quote, demand);
+    void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.reserve", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { quote_id: quote.id, rows: demand.length, path: "legacy" }, ipAddress: null, userAgent: null });
+    return "reserved";
+  }
+  const result = (data ?? {}) as { result?: string; released?: number; inserted?: number };
+  if (result.result === "reserved") {
+    void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.reserve", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { quote_id: quote.id, rows: result.inserted ?? demand.length, released: result.released ?? 0 }, ipAddress: null, userAgent: null });
+    return "reserved";
+  }
+  if (result.result === "not_confirmed" || result.result === "quote_changed" || result.result === "no_event_date" || result.result === "already_consumed") {
+    return result.result;
+  }
+  throw new Error(`reservePrepDemand: unexpected result ${JSON.stringify(result.result ?? null)}`);
+}
+
+/** The pre-0329 path: retire, then insert, as two separate calls (no lock). */
+async function reserveLegacy(sb: Sb, actor: AuthContext, pipelineId: string, quote: { id: string; location_id: string; event_date: string | null }, demand: ResolvedDemand[]): Promise<void> {
   const { error: relErr } = await sb
     .from("catering_prep_demand")
     .update({ status: "released", released_at: new Date().toISOString() })
     .eq("pipeline_id", pipelineId)
     .eq("status", "reserved");
   if (relErr) throw new Error(`reservePrepDemand release-prior: ${relErr.message}`);
-
-  const demand = await resolveQuoteDemand(sb, quote.id);
   if (demand.length) {
     const rows = demand.map((d) => ({
       pipeline_id: pipelineId,
@@ -188,7 +237,6 @@ export async function reservePrepDemand(actor: AuthContext, pipelineId: string):
     const { error: insErr } = await sb.from("catering_prep_demand").insert(rows);
     if (insErr) throw new Error(`reservePrepDemand insert: ${insErr.message}`);
   }
-  void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.reserve", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { quote_id: quote.id, rows: demand.length }, ipAddress: null, userAgent: null });
 }
 
 /** Consume (deplete) still-reserved demand when the lead goes out/completed. */
