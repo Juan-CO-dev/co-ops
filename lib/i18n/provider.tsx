@@ -16,7 +16,7 @@
  * MessageFormat — out of scope per C.31 (no plurals, no nested formatting).
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 
 import en from "./en.json";
 import es from "./es.json";
@@ -50,7 +50,7 @@ const TranslationContext = createContext<TranslationContextValue | null>(null);
  * inherits a stale "es". Depth comes from context: child effects run before the parent's, so mount order cannot say
  * which provider is inside which.
  */
-const mountedLanguages = new Map<symbol, { depth: number; language: Language }>();
+const mountedLanguages = new Map<string, { depth: number; language: Language }>();
 const ProviderDepth = createContext(0);
 function applyDocumentLanguage(): void {
   let pick: { depth: number; language: Language } | null = null;
@@ -72,7 +72,7 @@ export function TranslationProvider({
   // etc.) reads document.documentElement.lang, so it must follow the actual UI language
   // here, where the value lives, rather than staying hardcoded "en" app-wide. Portal
   // pages that hardcode initialLanguage="en" are unaffected (already the default).
-  const [key] = useState(() => Symbol("i18n-provider"));
+  const key = useId(); // stable per instance; adds no state slot
   const depth = useContext(ProviderDepth) + 1;
   useEffect(() => {
     mountedLanguages.delete(key);
