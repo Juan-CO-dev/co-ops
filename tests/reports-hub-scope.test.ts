@@ -200,7 +200,10 @@ describe("review regressions", () => {
     expect(reads.slice(readsBeforeEmployeeDetail).filter(r=>r.table==="pm_employee_evals").every(r=>!/(^|,)\s*note\b/.test(r.columns))).toBe(true);
     const senior=await loadReportDetail(client,{viewer:{...viewer,level:5},type:"pm",id:"submitted",locationId:"shop"});
     if(senior?.kind!=="pm") throw new Error("wrong detail");
-    expect(senior.evals[0]?.note).toBe("private manager note");
+    // W09/B060: an L5+ viewer reads a colleague's note, never the note written about themselves.
+    expect(senior.evals.find(e=>e.employeeId==="colleague")?.note).toBe("colleague manager note");
+    expect(senior.evals.find(e=>e.employeeId==="me")?.note).toBeNull();
+    expect(JSON.stringify(senior)).not.toContain("private manager note");
     expect(reads.filter(r=>r.table==="pm_employee_evals").at(-1)?.columns).toMatch(/\bnote\b/);
   });
 });
