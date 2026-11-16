@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
     await watchSiblings("toast-sales-today");
     return jsonOk({ date: today, results, healthy, capture, modified, labor, whosHere });
   } catch (e) {
-    void audit({
+    await audit({
       actorId: null, actorRole: null, action: "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: { job: "toast-sales-today", date: today, error: truncateErr(e) },
       ipAddress: null, userAgent: null,

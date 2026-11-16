@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 import { createFakeDb, type Tables } from "./fixtures/counts-fake-db";
-const mocks = vi.hoisted(() => ({ rpc: vi.fn(), audit: vi.fn(), par: vi.fn(), rhythm: vi.fn(), recipe: vi.fn(), barcode: vi.fn(), loadGuide: vi.fn(), createGuide: vi.fn(), saveGuide: vi.fn() }));
+const mocks = vi.hoisted(() => ({ rpc: vi.fn(), audit: vi.fn(), par: vi.fn(), rhythm: vi.fn(), recipe: vi.fn(), live: vi.fn(), barcode: vi.fn(), loadGuide: vi.fn(), createGuide: vi.fn(), saveGuide: vi.fn() }));
 let db: ReturnType<typeof createFakeDb>;
 let tables: Tables;
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ ...db.client, rpc: mocks.rpc }) }));
@@ -9,7 +9,7 @@ vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
 vi.mock("@/lib/admin/skus", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/admin/skus")>(), upsertLocationSkuSettings: mocks.par }));
 vi.mock("@/lib/vendor-rhythm", () => ({ setVendorRhythmPair: mocks.rhythm }));
 vi.mock("@/lib/barcodes", () => ({ teachBarcode: mocks.barcode }));
-vi.mock("@/lib/admin/recipe-versions", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/admin/recipe-versions")>(), saveRecipeLines: mocks.recipe }));
+vi.mock("@/lib/admin/recipe-versions", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/admin/recipe-versions")>(), saveRecipeLines: mocks.recipe, loadRecipeLiveSet: mocks.live }));
 vi.mock("@/lib/order-guides", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/order-guides")>(), loadOrderGuide: mocks.loadGuide, createEmptyGuide: mocks.createGuide, saveOrderGuide: mocks.saveGuide }));
 import { newItemFormRequest, parseNewItemRequest, parseSetupStep } from "@/lib/catalog/new-item-shared";
 import { createCatalogItem, setUpItemAtShop } from "@/lib/catalog/new-item";
@@ -22,7 +22,8 @@ beforeEach(() => {
   tables = { vendor_items: [{ id: SKU, name: "New", vendor_id: VENDOR, location_id: A, item_number: "42", active: true }], recipes: [{ id: RECIPE, location_id: A, active: true }], measure_units: [{ label: "oz", dimension: "weight", to_base_factor: 1, active: true }] };
   db = createFakeDb(tables);
   mocks.rpc.mockResolvedValue({ data: { id: SKU }, error: null }); mocks.audit.mockResolvedValue(undefined);
-  mocks.par.mockResolvedValue(undefined); mocks.recipe.mockResolvedValue({ versionId: "version", changed: true }); mocks.barcode.mockResolvedValue({ created: true });
+  mocks.par.mockResolvedValue(undefined); mocks.recipe.mockResolvedValue({ versionId: "version", changed: true });
+  mocks.live.mockResolvedValue({ recipeId: RECIPE, scopeVersionId: "live", lines: [] }); mocks.barcode.mockResolvedValue({ created: true });
   mocks.rhythm.mockImplementation(async (_actor, input) => ({ id: `day-${input.orderDow}` }));
 });
 describe("new item parser and atomic consumer", () => {
@@ -74,6 +75,22 @@ describe("independent shop setup", () => {
     tables.recipes![0]!.location_id = owner;
     await setUpItemAtShop(gm, { skuId: SKU, shopId: A, step: { kind: "use_in", recipeId: RECIPE, quantity: 2, unit: "oz", expectedVersionId: B, basedOnVersionId: A } });
     expect(mocks.recipe).toHaveBeenCalledWith(gm, expect.objectContaining({ scope: owner === A ? null : A, expectedVersionId: B, basedOnVersionId: A, op: expect.objectContaining({ kind: "add" }) }));
+  });
+  const liveWith = (quantity: number, unit: string) => mocks.live.mockResolvedValue({ recipeId: RECIPE, scopeVersionId: "v1", lines: [
+    { lineId: "l0", fields: { componentSkuId: B, componentItemId: null, componentProductId: null, quantity: 1, unit: "oz", eachContainerLabel: null, portioned: false } },
+    { lineId: "l1", fields: { componentSkuId: SKU, componentItemId: null, componentProductId: null, quantity, unit, eachContainerLabel: null, portioned: false } }] });
+  it("use_in after a lost-response save does not add the SKU twice (B143)", async () => {
+    liveWith(2, "oz");
+    expect(await setUpItemAtShop(gm, { skuId: SKU, shopId: A, step: { kind: "use_in", recipeId: RECIPE, quantity: 2, unit: "oz", expectedVersionId: B, basedOnVersionId: null } }))
+      .toMatchObject({ step: "use_in", ok: true, detail: { recipeId: RECIPE, versionId: "v1", changed: false, alreadyPresent: true } });
+    expect(mocks.live).toHaveBeenCalledWith(RECIPE, null);
+    expect(mocks.recipe).not.toHaveBeenCalled();
+  });
+  it("use_in with a different amount for an already-present SKU is refused by name (B143)", async () => {
+    liveWith(2, "oz");
+    await expect(setUpItemAtShop(gm, { skuId: SKU, shopId: A, step: { kind: "use_in", recipeId: RECIPE, quantity: 3, unit: "oz", expectedVersionId: B, basedOnVersionId: null } }))
+      .rejects.toMatchObject({ code: "already_in_recipe", status: 409 });
+    expect(mocks.recipe).not.toHaveBeenCalled();
   });
   it("refuses foreign SKU and recipe without delegation", async () => {
     tables.vendor_items![0]!.location_id = B;

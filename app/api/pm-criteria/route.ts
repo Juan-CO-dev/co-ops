@@ -1,7 +1,7 @@
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
-import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
+import { jsonError, jsonOk, ownEntry, parseJsonBody } from "@/lib/api-helpers";
 import { peopleActorFromAuth } from "@/lib/people/access-shared";
 import { createCriterion, moveCriterion, PmCriteriaError, updateCriterion } from "@/lib/pm-criteria";
 import { requireSession } from "@/lib/session";
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   if (body instanceof Response) return body;
   if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError(400, "invalid_payload");
   const b = body as Record<string, unknown>;
-  const allowed = typeof b.action === "string" ? FIELDS[b.action] : undefined;
+  const allowed = ownEntry(FIELDS, b.action);
   if (!allowed || Object.keys(b).some((k) => !allowed.includes(k))) return jsonError(400, "invalid_payload");
   const stepUp = assertStepUp(ctx, "E");
   if (!stepUp.ok) return jsonError(403, stepUp.code);

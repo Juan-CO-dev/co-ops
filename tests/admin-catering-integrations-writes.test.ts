@@ -10,7 +10,9 @@ import type { AuthContext } from "@/lib/session";
 
 let current: ReturnType<typeof createFakeDb>;
 let db: ReturnType<typeof tables>;
-vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => current.client }));
+// No 0335 in this fake: confirmMapping takes its pre-0335 fallback (W27 / B230), the path these role rules cover.
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({ ...current.client,
+  rpc: async () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function public.confirm_toast_mapping" } }) }) }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/toast/client", () => ({ toastConfigured: () => false }));
 vi.mock("@/lib/toast/menus", () => ({

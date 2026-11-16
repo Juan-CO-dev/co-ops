@@ -10,12 +10,19 @@ export interface CaptureJobResult {
 }
 /** One bounded capture phase for all shops/dates. Legacy parity is an operator gate,
  * not a nightly health dependency after the old ledger stops receiving writes. */
-export async function runOrderCapture(locationIds: string[], businessDate: string, context: "cron" | "manual", dates = [businessDate], remainingMs = 300_000, signal?: AbortSignal) {
+/**
+ * `progress` (W27/B225 r5) is the caller's count of real work, written as it happens: `planned` = the shop-days this
+ * capture is meant to pull once the job is on (0 when it is off or in fixture mode: nothing is owed), `started` = the
+ * shop-day pulls that actually BEGAN (their first Toast request). A caller decides "did this start anything" from
+ * `started` alone, never from a skip reason or a timeout.
+ */
+export async function runOrderCapture(locationIds: string[], businessDate: string, context: "cron" | "manual", dates = [businessDate], remainingMs = 300_000, signal?: AbortSignal, progress: { planned: number; started: number } = { planned: 0, started: 0 }) {
   if (process.env.SIM_MODE === "1" && process.env.TOAST_FIXTURES === "1") {
     assertSimTarget(process.env.NEXT_PUBLIC_SUPABASE_URL);
     return { failures: 0, skipped: true, results: [] as CaptureJobResult[], reason: "capture_fixture_mode" as const };
   }
   if (!captureEnabled()) return { failures: 0, skipped: true, results: [] as CaptureJobResult[] };
+  progress.planned = new Set(dates).size * new Set(locationIds).size;
   if (remainingMs <= 10_000) return { failures: 0, skipped: true, results: [] as CaptureJobResult[], reason: "capture_route_time_exhausted" as const };
   const budget = captureBudget(Math.min(context === "cron" ? 150_000 : 60_000, remainingMs - 10_000), signal);
   const results: CaptureJobResult[] = [];
@@ -23,7 +30,7 @@ export async function runOrderCapture(locationIds: string[], businessDate: strin
     for (const date of [...new Set(dates)]) {
       results.push(...await Promise.all([...new Set(locationIds)].map(async (locationId): Promise<CaptureJobResult> => {
         try {
-          const result = await budget.wait(() => captureToastDaySystem(locationId, date, { signal: budget.signal }));
+          const result = await budget.wait(() => { progress.started++; return captureToastDaySystem(locationId, date, { signal: budget.signal }); });
           const complete = !result.skipped && !!result.runId;
           const error = !complete ? result.reason ?? "capture_incomplete"
             : result.catering?.ok === false ? result.catering.error ?? "capture_catering_degraded" : null;

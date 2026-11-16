@@ -7,7 +7,13 @@
  * driver that ignores the signal therefore cannot stall the caller.
  */
 export function withDeadline<T>(p: PromiseLike<T>, signal: AbortSignal, code = "deadline"): Promise<T> {
-  if (signal.aborted) return Promise.reject(new Error(code));
+  if (signal.aborted) {
+    // A STARTED promise (e.g. a fetch on this aborted signal) may still reject later: consume it, or
+    // it is an unhandled rejection (W27 / B141). Only a real Promise — a lazy thenable (a PostgREST
+    // builder) sends its query on `.then`, so it must never be started after the deadline.
+    if (p instanceof Promise) p.catch(() => {});
+    return Promise.reject(new Error(code));
+  }
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(new Error(code));
     signal.addEventListener("abort", onAbort, { once: true });

@@ -352,6 +352,7 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // ── SEED & INFRA ──────────────────────────────────────────────────────
   // Scripts, cron and one-shot provenance.
   "audit.metadata_correction",
+  "cron.deferred",
   "cron.failure",
   "cron.success",
   "ezcater.set_location_uuid",

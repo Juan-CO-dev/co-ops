@@ -10,6 +10,7 @@ import { inboxAttachmentManifest, inboxContent, inboxHeaders } from "@/lib/cater
 import { inboxExternalReference } from "@/lib/catering/inbox-identity-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { inboundAddresses, normalizeInboundAddress, resolveInboundRoute, INBOUND_MAX_ATTEMPTS, inboundRetryDelayMs, inboundErrorCode, type InboundErrorCode, type InboundAddressRule } from "@/lib/inbound-router-shared";
+import { INBOUND_FETCH_WINDOW_MS } from "@/lib/receipt-parse-budget-shared";
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 interface InboundRow {
   id: string; message_id: string | null; provider_email_id: string; from_address: string | null; subject: string | null;
@@ -163,8 +164,13 @@ export async function processInboundMessage(id: string, sb = getServiceRoleClien
   }
 }
 /** Bounded concurrent fetches; reserve a full fetch+storage window before starting. */
-export async function sweepInboundMessages(sb = getServiceRoleClient(), deadline = Date.now() + 140_000) {
-  if (!process.env.RESEND_INBOUND_SECRET || !process.env.RESEND_API_KEY) return { swept: 0, failed: 0 };
+/**
+ * `progress.started` counts messages whose fetch BEGAN, and it is written as each one begins, so a caller that stops
+ * waiting for this sweep (its share ended) still knows whether any unit of work started (W27/B225 r5). A sweep still
+ * waiting on its queue read at that moment has started nothing, and the counter says so.
+ */
+export async function sweepInboundMessages(sb = getServiceRoleClient(), deadline = Date.now() + 140_000, progress: { started: number } = { started: 0 }) {
+  if (!process.env.RESEND_INBOUND_SECRET || !process.env.RESEND_API_KEY) return { swept: 0, failed: 0, deferred: 0 };
   const { data, error } = await sb.from("inbound_messages").select("id").in("content_state", ["pending", "failed", "blocked_config"])
     .lt("fetch_attempts", INBOUND_MAX_ATTEMPTS).lte("next_attempt_at", new Date().toISOString())
     .order("next_attempt_at", { ascending: true }).limit(25).returns<Array<{ id: string }>>();
@@ -173,10 +179,11 @@ export async function sweepInboundMessages(sb = getServiceRoleClient(), deadline
   let swept = 0;
   let cursor = 0;
   async function worker() {
-    while (Date.now() + 60_000 <= deadline) {
+    while (Date.now() + INBOUND_FETCH_WINDOW_MS <= deadline) {
       const row = data?.[cursor++];
       if (!row) break;
       swept++;
+      progress.started++;
       try {
         const outcome = await processInboundMessage(row.id, sb);
         if (outcome === "failed" || outcome === "blocked_config") failed++;
@@ -184,5 +191,7 @@ export async function sweepInboundMessages(sb = getServiceRoleClient(), deadline
     }
   }
   await Promise.all([worker(), worker(), worker()]);
-  return { swept, failed };
+  // Messages that were due but not started because no whole fetch window was left (W27/B225 r2).
+  const deferred = Math.max(0, (data?.length ?? 0) - cursor);
+  return { swept, failed, deferred };
 }

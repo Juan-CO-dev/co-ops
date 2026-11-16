@@ -9,8 +9,9 @@ import { rpcLevels, versionErrorFromRpc } from "@/lib/admin/sku-versions";
 import { AdminSkuError, upsertLocationSkuSettings } from "@/lib/admin/skus";
 import { setVendorRhythmPair } from "@/lib/vendor-rhythm";
 import { applyGuideEdit, createEmptyGuide, loadOrderGuide, ORDER_GUIDE_EDIT_MIN, OrderGuideError, saveOrderGuide } from "@/lib/order-guides";
-import { recipeVersionErrorFromRpc, saveRecipeLines } from "@/lib/admin/recipe-versions";
+import { loadRecipeLiveSet, recipeVersionErrorFromRpc, saveRecipeLines } from "@/lib/admin/recipe-versions";
 import { teachBarcode } from "@/lib/barcodes";
+import { normLineText } from "@/lib/recipe-line-shared";
 import { creationScope, NEW_THING_MIN, ownerVisible, ShopOwnedError, shopOwnedErrorFromRpc } from "@/lib/catalog/shop-owned-shared";
 import { parseNewItemRequest, parseSetupStep, type NewItemRequest, type SetupStep } from "@/lib/catalog/new-item-shared";
 import { logCatalogFailure } from "@/lib/catalog/error-log";
@@ -139,7 +140,17 @@ export async function setUpItemAtShop(actor: AuthContext, input: { skuId: string
       const { data: recipe, error: recipeError } = await sb.from("recipes").select("id, location_id, active").eq("id", step.recipeId).maybeSingle<{ id: string; location_id: string | null; active: boolean }>();
       if (recipeError) throw new Error(`setUpItemAtShop recipe: ${recipeError.message}`);
       if (!recipe || !recipe.active || !ownerVisible(recipe.location_id, input.shopId)) throw new ShopOwnedError(404, "not_found");
-      const saved = await saveRecipeLines(actor, { recipeId: recipe.id, scope: recipe.location_id === input.shopId ? null : input.shopId, expectedVersionId: step.expectedVersionId, basedOnVersionId: step.basedOnVersionId,
+      const scope = recipe.location_id === input.shopId ? null : input.shopId;
+      // The SKU was created by this job, so a line naming it at this scope can only be this job's own earlier save
+      // whose answer was lost (an "unconfirmed" step refreshed, a second tab, a double tap). Never add it twice
+      // (W27 / B143): the same amount is that save, already done; another amount is refused by name.
+      const live = await loadRecipeLiveSet(recipe.id, scope);
+      const mine = live.lines.find((l) => l.fields.componentSkuId === sku.id);
+      if (mine) {
+        if (mine.fields.quantity !== step.quantity || mine.fields.unit !== normLineText(step.unit)) throw new ShopOwnedError(409, "already_in_recipe");
+        return { step: step.kind, ok: true, detail: { recipeId: recipe.id, versionId: live.scopeVersionId, changed: false, alreadyPresent: true } };
+      }
+      const saved = await saveRecipeLines(actor, { recipeId: recipe.id, scope, expectedVersionId: step.expectedVersionId, basedOnVersionId: step.basedOnVersionId,
         op: { kind: "add", line: { componentSkuId: sku.id, componentItemId: null, componentProductId: null, quantity: step.quantity, unit: step.unit, eachContainerLabel: null, portioned: false } } });
       return { step: step.kind, ok: true, detail: { recipeId: recipe.id, versionId: saved.versionId, changed: saved.changed } };
     }
