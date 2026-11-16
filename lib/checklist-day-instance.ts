@@ -22,6 +22,9 @@ export interface DayInstanceCandidate {
   created_at: string | null;
 }
 
+/** PostgREST's response cap: the template read pages at it. */
+const TEMPLATE_PAGE = 1000;
+
 /** Statuses that are still being worked; anything else is a finished (confirmed / finalized) day. */
 const IN_PROGRESS = new Set(["open", "phase1_complete"]);
 
@@ -40,21 +43,30 @@ export function pickDayInstance<T extends DayInstanceCandidate>(rows: readonly T
 
 /**
  * The day's one-per-day instance of `type` at the shop, on any version of the shop's lists of
- * that type (active or retired). Two reads (the instance read chunked by 100 ids), no embed. `columns` must include
+ * that type (active or retired). Two reads (the template read paged at 1000, the instance read chunked by 100 ids), no embed. `columns` must include
  * id, template_id, status, created_at.
  */
 export async function findDayInstance<T extends DayInstanceCandidate>(
   sb: SupabaseClient,
   args: { locationId: string; type: "opening" | "closing"; date: string; columns: string },
 ): Promise<T | null> {
-  const { data: tpls, error: tErr } = await sb
-    .from("checklist_templates")
-    .select("id")
-    .eq("location_id", args.locationId)
-    .eq("type", args.type)
-    .returns<Array<{ id: string }>>();
-  if (tErr) throw new Error(`findDayInstance templates: ${tErr.message}`);
-  const ids = (tpls ?? []).map((t) => t.id);
+  // W15 round 1: every version, paged in a stable order — a shop past 1000 versions of a list would
+  // otherwise lose the newest (or any) version's instance behind the response cap.
+  const ids: string[] = [];
+  for (let from = 0; ; from += TEMPLATE_PAGE) {
+    const { data: tpls, error: tErr } = await sb
+      .from("checklist_templates")
+      .select("id")
+      .eq("location_id", args.locationId)
+      .eq("type", args.type)
+      .order("id", { ascending: true })
+      .range(from, from + TEMPLATE_PAGE - 1)
+      .returns<Array<{ id: string }>>();
+    if (tErr) throw new Error(`findDayInstance templates: ${tErr.message}`);
+    const page = tpls ?? [];
+    ids.push(...page.map((t) => t.id));
+    if (page.length < TEMPLATE_PAGE) break;
+  }
   if (ids.length === 0) return null;
   // Versions accumulate over the years: chunk the id list so the request line stays bounded.
   const rows: T[] = [];

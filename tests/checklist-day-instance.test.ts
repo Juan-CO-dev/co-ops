@@ -96,6 +96,19 @@ describe("W15/B086 a retired version no longer hides a past closing", () => {
     expect(found?.id).toBe("monday");
   });
 
+  it("round 1: the day's instance on version 1,001 is still found (the template read pages past the 1000-row cap)", async () => {
+    // 1,001 versions of the shop's closing; the day's instance sits on the LAST one inserted (and the last id).
+    const versions = Array.from({ length: 1001 }, (_, i) => tpl(`V${String(i + 1).padStart(5, "0")}`, i === 1000, "2026-01-01"));
+    setup({
+      checklist_templates: versions,
+      checklist_instances: [inst("day", "V01001", "2026-10-19")],
+    });
+    const found = await findDayInstance<InstanceRow>(db.client as never, { locationId: shop, type: "closing", date: "2026-10-19", columns: "id, template_id, status, created_at" });
+    expect(found?.id).toBe("day");
+    // Every template read is ranged and in a stable order (the cap applies to each response).
+    expect(db.log.filter((l) => l.table === "checklist_templates").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("the opening's prior-closing check reads yesterday's closing on any version", () => {
     const src = readFileSync("app/(authed)/operations/opening/page.tsx", "utf8");
     const fn = src.slice(src.indexOf("async function loadPriorClosingState"), src.indexOf("interface OpeningPageProps"));
