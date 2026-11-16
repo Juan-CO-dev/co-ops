@@ -28,9 +28,10 @@ describe("W20 Management API proof (offline only)", () => {
 
   it("refuses the production project and a missing token before anything is sent", async () => {
     const lines: string[] = [];
-    expect(await main([`--ref=${PROD_REF}`], { SUPABASE_ACCESS_TOKEN: "not-used" }, (l: string) => lines.push(l))).toBe(2);
-    expect(await main([], {}, (l: string) => lines.push(l))).toBe(2);
-    expect(await main([`--ref=${SIM_REF}`], {}, (l: string) => lines.push(l))).toBe(2);
+    const env = (values: Record<string, string>) => values as unknown as NodeJS.ProcessEnv;
+    expect(await main([`--ref=${PROD_REF}`], env({ SUPABASE_ACCESS_TOKEN: "not-used" }), (l: string) => lines.push(l))).toBe(2);
+    expect(await main([], env({}), (l: string) => lines.push(l))).toBe(2);
+    expect(await main([`--ref=${SIM_REF}`], env({}), (l: string) => lines.push(l))).toBe(2);
     expect(lines.every((l) => l.startsWith("REFUSED:"))).toBe(true);
   });
 
@@ -47,7 +48,7 @@ describe("W20 Management API proof (offline only)", () => {
     expect(holder.indexOf("pg_sleep")).toBeLessThan(holder.indexOf("from public.email_receipts"));
     expect(holder).toContain("for update;");
     // The racer is the parser's own guarded write (the one that fires the receipt-event trigger).
-    expect(c.parserWrite).toMatch(/update public\.email_receipts set parse_state='failed'.*and parse_state='unparsed'/s);
+    expect(c.parserWrite).toMatch(/update public\.email_receipts set parse_state='failed'[\s\S]*and parse_state='unparsed'/);
     expect(c.attestAfterOverride).toContain("'attest','discrepant'");
     expect(c.recordBadFlag).toContain("bogus");
   });
