@@ -5266,6 +5266,7 @@
   "order.quote.checkout_cancel": "No payment was taken. You can pay whenever you're ready.",
   "order.quote.pay_deposit": "Pay deposit",
   "order.quote.pay_full": "Pay in full",
+  "order.portal.sign_out": "Sign out",
   "order.quote.working": "Working…",
   "order.quote.redirecting": "Taking you to secure checkout…",
   "order.quote.recorded": "Your order is recorded.",

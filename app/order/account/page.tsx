@@ -14,6 +14,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCustomerFromHeaders } from "@/lib/portal/session";
+import { PortalSignOut } from "@/components/order/PortalSignOut";
 import { loadCustomerAccount } from "@/lib/portal/account";
 import type { CustomerOrder, CustomerStatus } from "@/lib/portal/account";
 import { quoteSettlement } from "@/lib/portal/payability-shared";
@@ -40,7 +41,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         <div className="mx-auto flex max-w-2xl items-center justify-between px-5 py-3.5">
           <Link href="/order" className="text-sm font-semibold text-co-bg/70 transition hover:text-co-bg">‹ Compliments Only</Link>
           <span className="text-sm font-extrabold uppercase tracking-[0.22em]">Your orders</span>
-          <span className="w-24" />
+          <PortalSignOut lang={PORTAL_LANG} />
         </div>
       </header>
       <main className="mx-auto max-w-2xl px-5 py-8">{children}</main>

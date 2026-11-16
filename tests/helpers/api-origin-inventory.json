@@ -97,6 +97,7 @@
   "app/api/pm-criteria/route.ts": "POST",
   "app/api/pm-report/route.ts": "POST",
   "app/api/pm-report/v2/route.ts": "POST",
+  "app/api/portal/logout/route.ts": "POST",
   "app/api/portal/magic-link/request/route.ts": "POST",
   "app/api/portal/magic-link/verify/route.ts": "POST",
   "app/api/portal/order/draft/[quoteId]/route.ts": "GET",

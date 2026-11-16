@@ -5266,6 +5266,7 @@
   "order.quote.checkout_cancel": "No se cobró nada. Puedes pagar cuando quieras.",
   "order.quote.pay_deposit": "Pagar depósito",
   "order.quote.pay_full": "Pagar todo",
+  "order.portal.sign_out": "Cerrar sesión",
   "order.quote.working": "Trabajando…",
   "order.quote.redirecting": "Te llevamos al pago seguro…",
   "order.quote.recorded": "Tu pedido quedó registrado.",
