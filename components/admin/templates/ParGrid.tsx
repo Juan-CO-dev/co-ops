@@ -19,6 +19,7 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import type { ParMode } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { PrepLineParContext } from "@/lib/admin/templates";
+import { parGridSaveValue } from "@/lib/admin/par-grid-shared";
 import { postJson, resolveErrorKey } from "./shared";
 
 /** Sun–Sat, indexed 0–6 (JS getDay convention). null = all-days base. */
@@ -75,11 +76,13 @@ export function ParGrid({
   const savePar = async (dayOfWeek: number | null, state: DayState) => {
     if (!canEdit || submitting) return;
     setErrorMsg(null);
+    // W15/B089: refuse a value that is not a number 0 or more BEFORE the step-up
+    // (inherit → null = take the recommendation; "1,5" reads as 1.5).
+    const parsed = parGridSaveValue(state);
+    if (!parsed.ok) { setErrorMsg(t(resolveErrorKey(parsed.code))); return; }
     if ((await requestStepUp("A")) !== "ok") return;
     setSubmitting(true);
-    // inherit → take the recommendation: send parValue=null.
-    const parValue =
-      state.parMode === "inherit" ? null : state.parValue.trim() === "" ? null : Number(state.parValue);
+    const parValue = parsed.parValue;
     // parUnit is item-global now (lives on the item) — the /par route + setItemPar
     // ignore it, so we no longer send it.
     const result = await postJson(

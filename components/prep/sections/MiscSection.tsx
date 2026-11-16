@@ -34,7 +34,8 @@ import type { ChecklistTemplateItem } from "@/lib/types";
 import { PrepSection } from "../PrepSection";
 import type { RawPrepInputs } from "../types";
 
-const SECTION_KEY = "Misc";
+/** The default section key; any other yes/no section passes its own slug (W15/B088). */
+const MISC_SECTION_KEY = "Misc";
 
 export interface MiscSectionProps {
   templateItems: ChecklistTemplateItem[];
@@ -51,6 +52,12 @@ export interface MiscSectionProps {
   errors?: Record<string, Partial<Record<keyof RawPrepInputs, string>>>;
   /** DB-backed section labels (slug → { en, es }); preferred over the i18n fallback. */
   sectionLabels?: Record<string, { en: string; es: string | null }>;
+  /**
+   * W15/B088: the section slug this card renders. It keys the title, the progress
+   * count and the collapse state. Defaults to "Misc" so the Misc section is unchanged;
+   * every other yes/no section passes its own slug (as GenericPrepSection does).
+   */
+  section?: string;
 }
 
 /**
@@ -189,6 +196,7 @@ export function MiscSection({
   disabled,
   errors,
   sectionLabels,
+  section = MISC_SECTION_KEY,
 }: MiscSectionProps) {
   const { t, language } = useTranslation();
   const sectionDisplay = (() => {
@@ -198,9 +206,9 @@ export function MiscSection({
         const resolved = resolveTemplateItemContent(first, language);
         if (resolved.station) return resolved.station;
       }
-      return t("am_prep.section.misc");
+      return section === MISC_SECTION_KEY ? t("am_prep.section.misc") : section;
     })();
-    return resolveSectionLabel(sectionLabels ?? {}, SECTION_KEY, language, fallback);
+    return resolveSectionLabel(sectionLabels ?? {}, section, language, fallback);
   })();
 
   // Misc has no numeric column headers — just an empty header row to maintain
@@ -209,7 +217,7 @@ export function MiscSection({
   // card without the column header strip).
   return (
     <PrepSection
-      section={SECTION_KEY}
+      section={section}
       sectionDisplay={sectionDisplay}
       templateItemCount={templateItems.length}
       columnHeaders={[]}

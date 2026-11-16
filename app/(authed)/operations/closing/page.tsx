@@ -42,10 +42,12 @@ import { redirect } from "next/navigation";
 
 import {
   canEditReport,
+  ChecklistLineageTakenError,
   getOrCreateInstance,
   loadChecklistChainAttribution,
   type ChecklistChainEntry,
 } from "@/lib/checklists";
+import { findDayInstance } from "@/lib/checklist-day-instance";
 import {
   COMPLETION_COLUMNS,
   INSTANCE_COLUMNS,
@@ -210,16 +212,31 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   // Per-location scoping via `.eq("location_id", locationParam)` stays LOAD-BEARING
   // — closing templates exist per-location. See sibling pattern in
   // `lib/opening.ts loadOpeningState` and `lib/prep.ts`.
-  const closingBase = sb
-    .from("checklist_templates")
-    .select("id")
-    .eq("location_id", locationParam)
-    .eq("type", "closing") as unknown as EffectiveResolvableBuilder;
-  const { data: templateRow, error: tmplErr } = await applyEffectiveResolution(
-    closingBase,
-    targetDate,
-  ).maybeSingle<{ id: string }>();
-  if (tmplErr) throw new Error(`load template: ${tmplErr.message}`);
+  // W15/B086 + B084: INSTANCE FIRST. A day that already has its closing (on ANY version,
+  // active or retired) renders that instance and its own version's items — a retired
+  // version no longer hides a past closing, and an apply-now publish mid-open never makes
+  // a second closing. Effective resolution below only decides which version a NEW
+  // instance starts on.
+  const dayInstance = await findDayInstance<InstanceRow>(sb, {
+    locationId: locationParam,
+    type: "closing",
+    date: targetDate,
+    columns: INSTANCE_COLUMNS,
+  });
+  let templateRow: { id: string } | null = dayInstance ? { id: dayInstance.template_id } : null;
+  if (!templateRow) {
+    const closingBase = sb
+      .from("checklist_templates")
+      .select("id")
+      .eq("location_id", locationParam)
+      .eq("type", "closing") as unknown as EffectiveResolvableBuilder;
+    const { data: effectiveRow, error: tmplErr } = await applyEffectiveResolution(
+      closingBase,
+      targetDate,
+    ).maybeSingle<{ id: string }>();
+    if (tmplErr) throw new Error(`load template: ${tmplErr.message}`);
+    templateRow = effectiveRow;
+  }
   if (!templateRow) {
     return (
       <NoTemplateView
@@ -250,15 +267,8 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   let instanceRow: InstanceRow | null = null;
   if (isHistorical || auth.level < 3 || writeUnavailable) {
     // Trainees can work an existing close, but cannot create its instance.
-    const { data, error } = await sb
-      .from("checklist_instances")
-      .select(INSTANCE_COLUMNS)
-      .eq("template_id", templateRow.id)
-      .eq("location_id", locationParam)
-      .eq("date", targetDate)
-      .maybeSingle<InstanceRow>();
-    if (error) throw new Error(`load historical instance: ${error.message}`);
-    instanceRow = data;
+    // W15/B086: the day's instance was found above on any version (retired included).
+    instanceRow = dayInstance;
     if (!instanceRow) {
       return (
         <NoInstanceView
@@ -271,12 +281,27 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   } else {
     // Today — get-or-create. Service-role bypasses RLS at INSERT; the audit
     // row records actor metadata correctly via the actor parameter.
-    const result = await getOrCreateInstance(sb, {
-      templateId: templateRow.id,
-      locationId: locationParam,
-      date: today,
-      actor: writeActor!,
-    });
+    // W15/B084: today's instance already found on any version wins; only a day with none
+    // creates one. If another version's instance lands in between (0320's guard refuses
+    // the second), read the day's instance again instead of failing.
+    let result: Awaited<ReturnType<typeof getOrCreateInstance>>;
+    try {
+      result = dayInstance
+        ? { instance: rowToInstance(dayInstance), created: false }
+        : await getOrCreateInstance(sb, {
+            templateId: templateRow.id,
+            locationId: locationParam,
+            date: today,
+            actor: writeActor!,
+          });
+    } catch (error) {
+      if (!(error instanceof ChecklistLineageTakenError)) throw error;
+      const taken = await findDayInstance<InstanceRow>(sb, {
+        locationId: locationParam, type: "closing", date: today, columns: INSTANCE_COLUMNS,
+      });
+      if (!taken) throw error;
+      result = { instance: rowToInstance(taken), created: false };
+    }
     instanceRow = {
       id: result.instance.id,
       template_id: result.instance.templateId,
@@ -318,11 +343,11 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     }
   }
 
-  // Load template items (active only, ordered).
+  // Load template items (active only, ordered) — from the instance's OWN version (W15/B086).
   const { data: itemsRows, error: itemsErr } = await sb
     .from("checklist_template_items")
     .select(TEMPLATE_ITEM_COLUMNS)
-    .eq("template_id", templateRow.id)
+    .eq("template_id", instanceRow.template_id)
     .eq("active", true)
     .order("display_order", { ascending: true });
   if (itemsErr) throw new Error(`load items: ${itemsErr.message}`);

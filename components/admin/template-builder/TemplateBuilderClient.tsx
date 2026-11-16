@@ -44,6 +44,7 @@ import {
   resolveGateTier,
   buildReconcileAddEdit,
   buildBothLocationAdds,
+  planQuickAddTargets,
   makeTempId,
   RECONCILED_REPORT_REF_TYPES,
   type TemplateItemEdit,
@@ -57,6 +58,7 @@ import {
   type ReconciledReportRefType,
   type ReconcileSource,
   type DriftFinding,
+  type SpineLinkTarget,
 } from "@/lib/admin/template-builder-shared";
 import type { LinkTarget } from "@/lib/admin/needs-link-shared";
 import type { GatePredicate, ChecklistType } from "@/lib/types";
@@ -192,26 +194,44 @@ export function TemplateBuilderClient({
   // BOTH-LOCATIONS ADD (default-ON, spec §8): one authored add → a draft add in EVERY
   // template (distinct tempIds, per-template display orders). "This location only" =
   // the caller passes just the active template. One setDrafts so the fan-out is atomic.
+  // W15/B082 (owner decision W15-3): a fridge-linked add goes ONLY to the fridge's
+  // shop; each other shop gets its own line only with the fridge the manager picked
+  // for it (`otherShopLinks`). planQuickAddTargets decides, for any number of shops.
+  const equipmentLocationOf = (id: string): string | null =>
+    linkTargets.find((tg) => tg.kind === "equipment" && tg.id === id)?.locationId ?? null;
   const dispatchAdd = (
     base: Omit<Extract<TemplateItemEdit, { op: "add" }>, "op" | "tempId" | "displayOrder">,
     bothLocations: boolean,
+    otherShopLinks?: Record<string, SpineLinkTarget | null>,
   ) => {
     if (!active) return;
-    const scope: "both" | "one" = bothLocations && view.templates.length > 1 ? "both" : "one";
+    const planned = planQuickAddTargets({
+      base,
+      allShops: bothLocations,
+      activeTemplateId: active.id,
+      templates: view.templates,
+      equipmentLocationOf,
+      otherShopLinks,
+    });
+    const perShopFridge = base.spineLink?.kind === "equipment";
+    const scope: "both" | "one" = !perShopFridge && bothLocations && view.templates.length > 1 ? "both" : "one";
     setDrafts((prev) => {
-      const targets = bothLocations ? view.templates : [active];
-      const fanned = buildBothLocationAdds(
-        base,
-        targets.map((t) => ({ templateId: t.id, nextDisplayOrder: nextOrderFor(t, prev) })),
-        () => makeTempId(Date.now(), Math.random().toString(36).slice(2, 8)),
-      );
-      setAddScope((s) => {
-        const nextScope = { ...s };
-        for (const f of fanned) nextScope[`draft-${f.edit.tempId}`] = scope;
-        return nextScope;
-      });
       const next = { ...prev };
-      for (const f of fanned) next[f.templateId] = [...(next[f.templateId] ?? []), f.edit];
+      const scopes: Record<string, "both" | "one"> = {};
+      for (const p of planned) {
+        const tpl = view.templates.find((t) => t.id === p.templateId);
+        if (!tpl) continue;
+        const fanned = buildBothLocationAdds(
+          p.base,
+          [{ templateId: tpl.id, nextDisplayOrder: nextOrderFor(tpl, prev) }],
+          () => makeTempId(Date.now(), Math.random().toString(36).slice(2, 8)),
+        );
+        for (const f of fanned) {
+          scopes[`draft-${f.edit.tempId}`] = scope;
+          next[f.templateId] = [...(next[f.templateId] ?? []), f.edit];
+        }
+      }
+      setAddScope((s) => ({ ...s, ...scopes }));
       return next;
     });
   };
@@ -394,6 +414,7 @@ export function TemplateBuilderClient({
             onAdd={dispatchAdd}
             multiLocation={view.templates.length > 1}
             otherLocationName={otherLocationName}
+            otherShops={view.templates.filter((tpl) => tpl.id !== active.id).map((tpl) => ({ templateId: tpl.id, name: tpl.name, locationId: tpl.locationId }))}
             addScope={addScope}
           />
         </div>
@@ -804,6 +825,7 @@ function ItemList({
   onAdd,
   multiLocation,
   otherLocationName,
+  otherShops,
   addScope,
 }: {
   template: TemplateBuilderTemplate;
@@ -819,11 +841,14 @@ function ItemList({
   onAdd: (
     base: Omit<Extract<TemplateItemEdit, { op: "add" }>, "op" | "tempId" | "displayOrder">,
     bothLocations: boolean,
+    otherShopLinks?: Record<string, SpineLinkTarget | null>,
   ) => void;
   /** true when >1 location is visible → the "Both locations" toggle shows. */
   multiLocation: boolean;
   /** the peer location's name (for the toggle + the draft-added indicator chip). */
   otherLocationName: string | null;
+  /** W15/B082: every OTHER shop's template (any number), for the per-shop fridge prompt. */
+  otherShops: Array<{ templateId: string; name: string; locationId: string }>;
   /** PR-5 (spec §8): per-draft-add scope ("both" / "one") keyed by `draft-<tempId>`. */
   addScope: Record<string, "both" | "one">;
 }) {
@@ -879,6 +904,9 @@ function ItemList({
           onAdd={onAdd}
           multiLocation={multiLocation}
           otherLocationName={otherLocationName}
+          locationId={template.locationId}
+          shopName={template.name}
+          otherShops={otherShops}
           questionTypesAllowed={questionTypesAllowed}
         />
       )}
@@ -1592,6 +1620,16 @@ function SubmissionGateSetting({
   );
 }
 
+/** Publish refusals with their own copy (W15/B082, B083); everything else is generic. */
+function publishErrorKey(code: string): TranslationKey {
+  switch (code) {
+    case "apply_now_blocked_open_instance": return "admin.templates.builder.apply_now_blocked";
+    case "stale_source": return "admin.templates.builder.publish_stale";
+    case "equipment_location_mismatch": return "admin.templates.builder.publish_equipment_wrong_shop";
+    default: return "admin.templates.builder.publish_error";
+  }
+}
+
 /** Quick-add (spec §7): the 60-second add flow. Label + section + role + required,
  *  defaults carried from the last item; the count toggle reveals a REQUIRED spine-
  *  link picker (dismiss reverts the toggle). PR-5 (spec §8): a "Both locations" toggle
@@ -1603,6 +1641,9 @@ function QuickAdd({
   onAdd,
   multiLocation,
   otherLocationName,
+  locationId,
+  shopName,
+  otherShops,
   questionTypesAllowed,
 }: {
   draftedItems: ChecklistTemplateItem[];
@@ -1610,9 +1651,15 @@ function QuickAdd({
   onAdd: (
     base: Omit<Extract<TemplateItemEdit, { op: "add" }>, "op" | "tempId" | "displayOrder">,
     bothLocations: boolean,
+    otherShopLinks?: Record<string, SpineLinkTarget | null>,
   ) => void;
   multiLocation: boolean;
   otherLocationName: string | null;
+  /** W15/B082: this tab's shop — the picker offers only ITS fridges (items/SKUs are global). */
+  locationId: string;
+  shopName: string;
+  /** W15/B082: the other shops' templates, for the per-shop fridge prompt. */
+  otherShops: Array<{ templateId: string; name: string; locationId: string }>;
   /** Fulledit PR-2: question input types are closing-only in v1. */
   questionTypesAllowed: boolean;
 }) {
@@ -1637,14 +1684,23 @@ function QuickAdd({
   // PR-5 (spec §8): both-locations default ON (explicit, shown). Only meaningful when
   // >1 location is visible; single-location tenants never see the toggle (always "one").
   const [bothLocations, setBothLocations] = useState(true);
+  // W15/B082: per OTHER shop, the fridge the manager picked for that shop's own line.
+  const [otherFridge, setOtherFridge] = useState<Record<string, string>>({});
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return linkTargets.filter((tg) => (q ? tg.name.toLowerCase().includes(q) : true)).slice(0, 12);
-  }, [linkTargets, query]);
+    return linkTargets
+      // LOCATION SCOPE (0181, W15/B082) — the same filter as NeedsLinkInline: a fridge
+      // belongs to one shop, so this tab offers only its own shop's equipment.
+      .filter((tg) => tg.locationId === null || tg.locationId === locationId)
+      .filter((tg) => (q ? tg.name.toLowerCase().includes(q) : true))
+      .slice(0, 12);
+  }, [linkTargets, query, locationId]);
+  const fridgePicked = expectsCount && spine?.kind === "equipment";
+  const perShopPrompt = fridgePicked && multiLocation && bothLocations && otherShops.length > 0;
 
   const reset = () => {
-    setLabel(""); setInputType("tick"); setSpine(null); setQuery(""); setError(null);
+    setLabel(""); setInputType("tick"); setSpine(null); setQuery(""); setError(null); setOtherFridge({});
     // bothLocations scope PERSISTS across repeat-adds (defaults carry, spec §7).
   };
 
@@ -1665,6 +1721,10 @@ function QuickAdd({
         ...(inputType === "yes_no" || inputType === "free_text" ? { inputType } : {}),
       },
       multiLocation ? bothLocations : false,
+      perShopPrompt
+        ? Object.fromEntries(otherShops.map((sh) => [sh.templateId,
+            otherFridge[sh.templateId] ? { kind: "equipment" as const, id: otherFridge[sh.templateId]! } : null]))
+        : undefined,
     );
     reset();
     // Keep the panel open for rapid repeat-adds (defaults carry).
@@ -1819,6 +1879,38 @@ function QuickAdd({
             </span>
           </span>
         </label>
+      )}
+
+      {/* W15/B082 (owner decision W15-3): a fridge is one shop's. With "every shop" on,
+          this line goes to THIS shop only, and the manager picks each other shop's own
+          fridge (any number of shops); a shop left on "no line" gets none. */}
+      {perShopPrompt && (
+        <div className="rounded-lg border-2 border-co-warning bg-co-warning-surface p-2 text-sm text-co-text">
+          <p className="font-semibold">{t("admin.templates.builder.add_equipment_this_shop_only", { shop: shopName })}</p>
+          <p className="mt-0.5 text-xs text-co-text-muted">{t("admin.templates.builder.add_equipment_other_shops_prompt")}</p>
+          <div className="mt-2 flex flex-col gap-2">
+            {otherShops.map((sh) => {
+              const fridges = linkTargets.filter((tg) => tg.kind === "equipment" && tg.locationId === sh.locationId);
+              return (
+                <label key={sh.templateId} className="block text-sm">
+                  <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+                    {t("admin.templates.builder.add_equipment_for_shop", { shop: sh.name })}
+                  </span>
+                  <select
+                    value={otherFridge[sh.templateId] ?? ""}
+                    onChange={(e) => setOtherFridge((prev) => ({ ...prev, [sh.templateId]: e.target.value }))}
+                    className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+                  >
+                    <option value="">{t("admin.templates.builder.add_equipment_no_line")}</option>
+                    {fridges.map((f) => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
+                  </select>
+                </label>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {error && <p className="text-sm font-semibold text-co-cta-text">{t(error)}</p>}
@@ -2184,11 +2276,14 @@ function PublishBar({
         return;
       }
       // Distinguish the apply-now-blocked case for a precise message.
+      // jsonError sends { error: message ?? code, code } — read the CODE (the message
+      // text never matched, so the apply-now case fell to the generic copy).
       let code = "";
-      try { code = ((await res.json()) as { error?: string }).error ?? ""; } catch { /* ignore */ }
-      setErrorKey(code === "apply_now_blocked_open_instance"
-        ? "admin.templates.builder.apply_now_blocked"
-        : "admin.templates.builder.publish_error");
+      try {
+        const body = (await res.json()) as { error?: string; code?: string };
+        code = body.code ?? body.error ?? "";
+      } catch { /* ignore */ }
+      setErrorKey(publishErrorKey(code));
     } catch {
       setErrorKey("admin.templates.builder.publish_error");
     } finally {

@@ -15,7 +15,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import { orderedSectionSlugs, sectionLabelByLang } from "@/lib/prep-sections";
+import { orderedSectionSlugs, sectionLabelByLang, sectionShapeDirty } from "@/lib/prep-sections";
 import { roleLevelOptions } from "@/lib/roles";
 import type { PrepSectionShape, LineInputType } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -132,7 +132,8 @@ function SectionRow({
   const [includeNote, setIncludeNote] = useState(section.columns.includes("free_text"));
 
   const isMisc = section.slug === "Misc";
-  const shapeChanged = shape !== section.shape;
+  // W15/B087: a note-only change on a Yes/No section is a shape change too.
+  const shapeChanged = sectionShapeDirty(section, shape, includeNote);
 
   const shapeOptions: Array<{ value: PrepSectionShape; key: TranslationKey }> = [
     { value: "on_hand", key: "admin.templates.section_shape.on_hand" },

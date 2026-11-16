@@ -12,9 +12,14 @@ import { unitToOz } from "@/lib/production-units-shared";
 import type { AuthContext } from "@/lib/session";
 
 let current: ReturnType<typeof createFakeDb> | null = null;
+const rpcCalls = vi.hoisted(() => [] as Array<{ fn: string; args: Record<string, unknown> }>);
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => {
   if (!current) throw new Error("no fake db installed");
-  return current.client;
+  // W16/B090: the prep fold writes through record_prep_production_atomic (0322); its p_lines are the saved rows.
+  return { from: current.client.from, rpc: async (fn: string, args: Record<string, unknown>) => {
+    rpcCalls.push({ fn, args });
+    return { data: { status: "recorded", production_id: "prod-1" }, error: null };
+  } };
 } }));
 vi.mock("@/lib/audit", () => ({ audit: async () => {} }));
 
@@ -67,24 +72,15 @@ describe("prep's 'each' comes from the SAME pack as its content (Astra 2a r2#1)"
     expect(unitToOz(1, "each", atOther)).toBe(16);
 
     // THE SAVE ITSELF (Astra r3 remark): the prep form's "1 each" goes through recordProductionFromPrep,
-    // and the persisted production_inputs row carries 160 oz. A recording client stands in for the
-    // database here (the fake db has no update(), which the supersede step uses).
-    const saved: Array<Record<string, unknown>> = [];
-    const chain = (table: string): Record<string, unknown> => {
-      const q: Record<string, unknown> = {
-        update: () => q, eq: () => q, is: () => q, select: () => q,
-        insert: (rows: unknown) => { if (table === "production_inputs") saved.push(...(rows as Array<Record<string, unknown>>)); return q; },
-        maybeSingle: async () => ({ data: { id: "prod-1" }, error: null }),
-        then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: null, error: null }).then(resolve),
-      };
-      return q;
-    };
-    current = { client: { from: chain } } as never;
+    // and the persisted production_inputs row carries 160 oz. W16/B183: the fold now reads THIS shop's
+    // recipe graph itself (it reconciles the confirmed set against it), so the fake db stays installed.
     await recordProductionFromPrep({ userId: "u-cook", role: "key_holder" }, {
       locationId: LOC, instanceId: "inst-1", templateItemId: "tpl-1", outputItemId: "i-slaw", outputQty: 2, source: "opening_p2",
+      completionId: "completion-1",
       confirmedConsumption: [{ skuId: "s-lettuce", qtyOz: unitToOz(1, "each", atLoc), qtyEntered: 1, unitEntered: "each", derivedOz: null }],
     });
-    expect(saved).toEqual([expect.objectContaining({ input_sku_id: "s-lettuce", input_oz: 160, qty_entered: 1, unit_entered: "each" })]);
+    const saved = rpcCalls.at(-1)!.args.p_lines as Array<Record<string, unknown>>;
+    expect(saved).toContainEqual(expect.objectContaining({ sku_id: "s-lettuce", input_oz: 160, qty_entered: 1, unit_entered: "each" }));
   });
 });
 

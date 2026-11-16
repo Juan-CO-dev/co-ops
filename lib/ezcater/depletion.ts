@@ -3,7 +3,8 @@ import type { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { perUnitSkuAttributionsForItem } from "@/lib/prep-consumption-graph";
-import { selectSalesDepletion } from "@/lib/depletion-shared";
+import { CARRY_CAP_DAYS, producedItemsForDay, selectSalesDepletion } from "@/lib/depletion-shared";
+import { loadProductionCarryDays, productionDaysByLocation } from "@/lib/toast/production-carry";
 import { etCalendarDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 import { deriveCapturedSalesConsumption, loadSalesConsumptionContext, type SalesConsumptionContext } from "@/lib/catering/toast-sales";
 import { loadCapturedToastWindow } from "@/lib/toast/captured-window";
@@ -56,15 +57,19 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
     }
     return rows;
   };
-  const [links, leads, productions, transfers, locations] = await Promise.all([
+  const [links, leads, productions, transfers, locations, carryDays] = await Promise.all([
     readLinks(), readLeads(),
+    // W16/B092: from fromDate − CARRY_CAP_DAYS so a batch made before the window covers its Toast days; the
+    // ezCater order lane keeps its own exact D / D−1 evidence (shadowAmounts filters by date).
     selectAllRows<ProductionEvidence>((from, to) => sb.from("productions").select("location_id,output_item_id,produced_at")
-      .is("revoked_at", null).is("superseded_at", null).gte("produced_at", operationalDayUtcRange(etYmdMinusDays(window.fromDate, 2)).startIso)
+      .is("revoked_at", null).is("superseded_at", null).gte("produced_at", operationalDayUtcRange(etYmdMinusDays(window.fromDate, CARRY_CAP_DAYS)).startIso)
       .lt("produced_at", operationalDayUtcRange(etYmdMinusDays(end, -1)).startIso).order("id").range(from, to), 250),
     readTransfers(),
     selectAllRows<{ id: string }>((from, to) => sb.from("locations").select("id").eq("active", true)
       .not("toast_restaurant_guid", "is", null).order("id").range(from, to)),
+    loadProductionCarryDays(sb),
   ]);
+  const productionDays = productionDaysByLocation(productions, etCalendarDate);
   const actualTransfers = transfers.filter((row) => !["manual_location_kept", "manual_location_conflict"].includes(row.metadata?.result ?? ""));
   if (actualTransfers.some((row) => !row.metadata?.from_location_id || !row.metadata?.to_location_id)) {
     throw new Error("ezcater_transfer_evidence_incomplete");
@@ -102,7 +107,7 @@ export async function loadReconciledSalesWindow(sb: Client, window: ReconciledWi
       const dayGraph = await context.graphFor!(date); // D1: that day's packs
       const consumption = await deriveCapturedSalesConsumption(locationId, date, day,
         links.filter((link) => link.location_id === locationId && link.business_date === date), context);
-      const produced = new Set(productions.filter((p) => p.location_id === locationId && etCalendarDate(p.produced_at) === date).map((p) => p.output_item_id));
+      const produced = producedItemsForDay(productionDays.get(locationId) ?? new Map(), date, (itemId) => carryDays(locationId, itemId));
       const attributed = consumption.prepConsumed.flatMap((item) => perUnitSkuAttributionsForItem(dayGraph, item.itemId)
         .map((row) => ({ ...row, itemId: item.itemId, oz: row.oz * item.units })));
       const selected = selectSalesDepletion(consumption.skuConsumed, attributed, produced);

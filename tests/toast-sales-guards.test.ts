@@ -70,7 +70,7 @@ describe("toast-sales binds the location, not just the level", () => {
 
   it("refuses a GM at shop A authoring an exclusion TARGETED at shop B", async () => {
     await expect(
-      addExclusion(gmAtA, { locationId: LOCATION_B, kind: "menu_group", value: "Catering" }),
+      addExclusion(gmAtA, { locationId: LOCATION_B, kind: "dining_option", value: "Catering" }),
     ).rejects.toMatchObject({ name: "AdminToastSalesError", status: 403, code: "forbidden" });
   });
 
@@ -80,7 +80,7 @@ describe("toast-sales binds the location, not just the level", () => {
     for (const call of [
       () => pullSales(gmAtA, LOCATION_A, DATE),
       () => salesConsumption(agmAtA, LOCATION_A, DATE),
-      () => addExclusion(gmAtA, { locationId: LOCATION_A, kind: "menu_group", value: "Catering" }),
+      () => addExclusion(gmAtA, { locationId: LOCATION_A, kind: "dining_option", value: "Catering" }),
     ]) {
       const err = await call().catch((e: unknown) => e);
       expect(err).toBeInstanceOf(Error);
@@ -129,6 +129,13 @@ describe("toast-sales binds the location, not just the level", () => {
 // null — a shop-scoped GM writing business-wide ingest config. Juan decided; global
 // authoring is now closed at the type AND at the wire, with no level-9 replacement.
 
+describe("W16/B094: menu_group is not an authorable kind (captures carry no menu group, so it never matched)", () => {
+  it("refuses kind menu_group with 400 invalid_kind, before any I/O", async () => {
+    await expect(addExclusion(gmAtA, { locationId: LOCATION_A, kind: "menu_group", value: "Catering" }))
+      .rejects.toMatchObject({ name: "AdminToastSalesError", status: 400, code: "invalid_kind" });
+  });
+});
+
 describe("addExclusion authors for ONE shop", () => {
   it("refuses a null locationId — 400 location_required, before any I/O", async () => {
     // The type says `string`; this is the wire boundary where an untyped payload lands, and
@@ -136,7 +143,7 @@ describe("addExclusion authors for ONE shop", () => {
     await expect(
       addExclusion(gmAtA, {
         locationId: null as unknown as string,
-        kind: "menu_group",
+        kind: "dining_option",
         value: "Catering",
       }),
     ).rejects.toMatchObject({
@@ -148,7 +155,7 @@ describe("addExclusion authors for ONE shop", () => {
 
   it("refuses an empty-string locationId the same way", async () => {
     await expect(
-      addExclusion(gmAtA, { locationId: "", kind: "menu_group", value: "Catering" }),
+      addExclusion(gmAtA, { locationId: "", kind: "dining_option", value: "Catering" }),
     ).rejects.toMatchObject({ status: 400, code: "location_required" });
   });
 

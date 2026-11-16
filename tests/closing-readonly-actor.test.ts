@@ -43,7 +43,8 @@ function fixtures(existing = true) {
   db = createFakeDb({
     locations: [{ id: shop, name: "Shop", code: "SHOP", active: true }],
     checklist_templates: [{ id: "template", location_id: shop, type: "closing" }],
-    checklist_instances: existing ? [{ ...instance }] : [],
+    // allows_multiple_per_day: the real column (default false) the day-instance read filters on (W15/B086).
+    checklist_instances: existing ? [{ ...instance, allows_multiple_per_day: false }] : [],
     checklist_template_items: [], checklist_completions: [],
   });
   h.db = db.client;
@@ -119,10 +120,19 @@ describe("closing page read authority without write authority", () => {
   });
 
   it("preserves the member owner's create/reconcile path", async () => {
+    fixtures(false);
     auth("owner", 9, true);
     const tree = await page();
     expect(tree.props.initialState.readOnly).toBe(false);
     expect(h.create).toHaveBeenCalledOnce();
+    expect(h.reconcile).toHaveBeenCalledOnce();
+  });
+
+  it("W15/B084: today's existing close is used as it is (no create call), and still reconciled", async () => {
+    auth("owner", 9, true);
+    const tree = await page();
+    expect(tree.props.initialState).toMatchObject({ readOnly: false, instance: { id: instance.id } });
+    expect(h.create).not.toHaveBeenCalled();
     expect(h.reconcile).toHaveBeenCalledOnce();
   });
 });
