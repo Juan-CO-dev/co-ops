@@ -246,6 +246,27 @@ describe("the horizon: preview, token, apply", () => {
     expect(commits(s.calls).length).toBe(n + 1);
   });
 
+  it("a move / start resize carries the shift's reasons to its new key (B218)", async () => {
+    for (const make of [(q: number) => ({ deltaQ: 1, next: q + 1 }), (q: number) => ({ toQ: q - 1, next: q - 1 })] as const) {
+      const s = shop();
+      const g = await lib.generateWeek(s.deps, { actor: gm, locationId: A, weekStart: WEEK, expectedHead: null });
+      const rows = s.tables.schedule_revision_shifts!.filter((r) => r.revision_id === g.revisionId && r.business_date === "2026-10-27" && r.reasons !== null);
+      const pick = rows.find((r) => !rows.some((o) => o !== r && o.user_id === r.user_id)) ?? rows[0]!;
+      expect(pick).toBeTruthy();
+      const startQ = pick.start_q as number;
+      const m = make(startQ);
+      const op = "deltaQ" in m
+        ? { kind: "move" as const, shift: { date: "2026-10-27", userId: pick.user_id as string, startQ }, deltaQ: m.deltaQ }
+        : { kind: "start" as const, shift: { date: "2026-10-27", userId: pick.user_id as string, startQ }, toQ: m.toQ };
+      const e = await lib.saveEdit(s.deps, { actor: gm, locationId: A, weekStart: WEEK, expectedHead: g.revisionId, op });
+      const mine = s.tables.schedule_revision_shifts!.filter((r) => r.revision_id === e.revisionId && r.business_date === "2026-10-27" && r.user_id === pick.user_id);
+      const moved = mine.find((r) => r.start_q === m.next)!;
+      expect(moved).toBeTruthy();
+      expect(moved.reasons).toEqual(pick.reasons);
+      expect(mine.some((r) => r.start_q === startQ)).toBe(false);
+    }
+  });
+
   it("a mid-range failure reports which weeks landed (a named partial result)", async () => {
     const s = shop({ failCommitOnWeek: "2026-11-02" });
     const p = await lib.previewHorizon(s.deps, { actor: gm, locationId: A, request: { mode: "next_weeks", n: 3 } });

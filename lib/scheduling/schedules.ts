@@ -31,7 +31,7 @@ import { gapLine } from "./board-view-shared";
 import type { NarrativeLine } from "@/lib/people-narrative";
 import { assertContextFits, canonicalJson, contextAdvisory, digest64, toContextSnapshot, type AdvisoryItem, type RuleContext } from "./context-shared";
 import { diffWeeks, type WeekDiff } from "./diff-shared";
-import { applyEdit, isEditOp, type EditOp } from "./edit-shared";
+import { applyEdit, editedShiftRefs, isEditOp, type EditOp } from "./edit-shared";
 import { ScheduleError, isScheduleErrorCode, type ScheduleErrorCode } from "./errors-shared";
 import { type GeneratorOutput } from "./generator/build-shared";
 import { generateWeek as generateScheduleWeek } from "./generator/dispatch-shared";
@@ -301,10 +301,15 @@ export async function saveEdit(deps: ScheduleDeps, args: { actor: PeopleActor; l
   const revisionId = newId(deps);
   const r = applyEdit({ locationId: args.locationId, weekStart: args.weekStart, shifts: w.head.shifts, gaps: w.head.gaps, days: w.head.days }, args.op, ctx, { today, newRevisionId: revisionId });
   const days = r.schedule.days.map((d) => (d.date === date ? d : { ...d, inherited: true, problems: d.problems.map((p) => ({ ...p, inherited: true })) }));
+  // B218: a move / start resize gives the shift a new key (its start); its stored reasons follow it there.
+  const shiftKey = (x: { date: string; userId: string; startQ: number }) => `${x.date}|${x.userId}|${x.startQ}`;
+  const refs = editedShiftRefs(args.op);
+  const renamed = refs ? new Map([[shiftKey(refs.to), shiftKey(refs.from)]]) : new Map<string, string>();
   const reasons: Record<string, unknown> = {};
   for (const sh of r.schedule.shifts) {
-    const k = `${sh.date}|${sh.userId}|${sh.startQ}`;
-    if (w.head.reasons[k] !== undefined) reasons[k] = w.head.reasons[k];
+    const k = shiftKey(sh);
+    const src = renamed.get(k) ?? k;
+    if (w.head.reasons[src] !== undefined) reasons[k] = w.head.reasons[src];
   }
   await commit(deps.service, {
     actor: args.actor, locationId: args.locationId, weekStart: args.weekStart, expectedHead: args.expectedHead, kind: "edited", structureVersionId: inputs.structure.id,

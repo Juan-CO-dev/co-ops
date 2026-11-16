@@ -107,12 +107,23 @@ function validateShape(sh: Shift, minQ: number, maxQ: number): void {
   if (sh.endQ - sh.startQ > maxQ) refuse("shift_over_maximum", { minutes: (sh.endQ - sh.startQ) * 15, maximumMinutes: maxQ * 15 });
 }
 
+/**
+ * B218: the identity an edit gives the shift it touches — `move` shifts its start by Δ, `start` sets it; every other
+ * kind keeps the shift's key (and `addShift` / `removeShift` have no before-and-after pair). One rule for the crew
+ * override record and for carrying a shift's stored reasons to its new key.
+ */
+export function editedShiftRefs(op: EditOp): { from: ShiftRef; to: ShiftRef } | null {
+  if (op.kind === "addShift" || op.kind === "removeShift") return null;
+  const nextStart = op.kind === "move" ? op.shift.startQ + op.deltaQ : op.kind === "start" ? op.toQ : op.shift.startQ;
+  return { from: op.shift, to: { ...op.shift, startQ: nextStart } };
+}
+
 /** Collapse repeated edits onto the original generated identity; deletion remains a tombstone. */
 export function recordCrewManualOverride(prior: readonly CrewManualOverride[], before: WeekSchedule, op: EditOp, after: WeekSchedule): CrewManualOverride[] {
   const original = op.kind === "addShift" ? { date: op.date, userId: op.userId, startQ: op.startQ } : op.shift;
   const previous = op.kind === "addShift" ? undefined : before.shifts.find((sh) => sameRef(sh, original));
   if (op.kind !== "addShift" && !previous) refuse("head_moved");
-  const nextStart = op.kind === "move" ? original.startQ + op.deltaQ : op.kind === "start" ? op.toQ : original.startQ;
+  const nextStart = editedShiftRefs(op)?.to.startQ ?? original.startQ;
   const replacement = op.kind === "removeShift" ? null : after.shifts.find((sh) => sameRef(sh, { ...original, startQ: nextStart }));
   if (replacement === undefined) refuse("head_moved");
   const result = structuredClone([...prior]);
