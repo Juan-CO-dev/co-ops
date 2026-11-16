@@ -1,0 +1,120 @@
+{
+  "_note": "Canonical content_hash per corpus entry (Toast churn fix PR 1, plan r2 §1): sha256 of canonicalHashInput. null = the normalizer refuses the entry (see toast-legacy-hashes.json for the exact error). changed_from_legacy names every hash that differs from toast-legacy-hashes.json; each is an order whose arrays are not already in canonical order. Regenerate only with a written reason in the PR.",
+  "frozen_from": "fix/toast-canonical-hash on origin/main a0a78e33",
+  "window": {
+    "start": "2026-10-08T17:30:00.000Z",
+    "end": "2026-10-08T18:30:00.000Z"
+  },
+  "modifiedDate": "2026-10-08T18:00:00.000Z",
+  "entries": [
+    {
+      "label": "sample:order-1",
+      "capture": "3359cf04a8a7772ca1073b64e24c33bc4e2c891231fdfe4a3437f99762922a77",
+      "changed_from_legacy": []
+    },
+    {
+      "label": "sample:order-2",
+      "capture": "7b972b71862d920e09c0e5f6ccec11c7bff4f599dd976d2f86d51935c5f59e5c",
+      "changed_from_legacy": []
+    },
+    {
+      "label": "sample:order-3",
+      "capture": "dea9355cf1f10d6c3cf12591af570046ccc3c9983e30359da7a2d48dc40dac79",
+      "changed_from_legacy": []
+    },
+    {
+      "label": "payment-states",
+      "capture": "181d6339e7cb83d2d3997b050a99149c3e8e3193a051b8b1bddb80f573a09796",
+      "changed_from_legacy": [
+        "capture"
+      ]
+    },
+    {
+      "label": "valid:lp-instore",
+      "capture": "8a4298fa8a15229cbb1a1d69cf34bc767caa020fb9d825e14e602de44c3e876a",
+      "modified": "833ef51653e0829196a163fcf6078b241d2385e0fe7357358d2d4b649ff1c385",
+      "changed_from_legacy": []
+    },
+    {
+      "label": "valid:lp-marketplace",
+      "capture": "5f0c0f4748836bc293540dad98fddf0c4db77cd9aa358cb300d7c307716e969b",
+      "modified": "6bd458f7bade35e48b440b385ac3e056148e08412bf24c2708b4c34f641e981d",
+      "changed_from_legacy": []
+    },
+    {
+      "label": "valid:lp-giftcard",
+      "capture": "5f4422b96b278d83a9f98a0e8bc9e5b8edfa21efca800b2c243f7f091b87c2ee",
+      "modified": "f35d7faa068f689c45a7c2f6dab7418b3057030e2dd83184d66c29c432da9b92",
+      "changed_from_legacy": []
+    },
+    {
+      "label": "valid:lp-voids",
+      "capture": "55d944e710bb41df2b8639c68360a4bc253b7207d9dee5eaccce233f62c08c07",
+      "modified": "422b76cb2a5ffcb0b324855e1c1fa9d96fe6430b23c4601ac532e580e2a1eb24",
+      "changed_from_legacy": []
+    },
+    {
+      "label": "valid:lp-uncaptured",
+      "capture": "ddcd8106277e61fff5371a20b5d1def762c0e2ff580ca480fd2a93b62e7e16d2",
+      "modified": "8b50297600f9e883acde08a92e20a038bac763b859081f7be7638297389bd5b7",
+      "changed_from_legacy": []
+    },
+    {
+      "label": "valid:lp-service",
+      "capture": "6dcd194cc8ea083c5c41b48e6a885543d83dcce1cfe04183745099d25e60c929",
+      "modified": "cbb8d0906a464a303d70610356ee02a06379a8cf38952a0b5f1dc363aca02d1f",
+      "changed_from_legacy": []
+    },
+    {
+      "label": "malformed:root price not money",
+      "capture": null,
+      "modified": null,
+      "changed_from_legacy": []
+    },
+    {
+      "label": "malformed:root preDiscountPrice not money on a voided root",
+      "capture": null,
+      "modified": null,
+      "changed_from_legacy": []
+    },
+    {
+      "label": "malformed:modifier price is an object",
+      "capture": "74ddb87d7fbc8cd02e87c15972a62870711456de4da85e3e1d3c7a30bc2aab1d",
+      "modified": "e46d57afe92d40dd70e76818e48eaecd3d4759bf0a4b04d6d5d14b6a3f1e3099",
+      "changed_from_legacy": [
+        "capture",
+        "modified"
+      ]
+    },
+    {
+      "label": "malformed:check amount not money",
+      "capture": null,
+      "modified": null,
+      "changed_from_legacy": []
+    },
+    {
+      "label": "malformed:discount amount not money",
+      "capture": null,
+      "modified": null,
+      "changed_from_legacy": []
+    },
+    {
+      "label": "malformed:refund amount not money",
+      "capture": null,
+      "modified": null,
+      "changed_from_legacy": []
+    },
+    {
+      "label": "malformed:service charge not money",
+      "capture": null,
+      "modified": null,
+      "changed_from_legacy": []
+    },
+    {
+      "label": "malformed:quantity missing on an item",
+      "capture": null,
+      "modified": null,
+      "changed_from_legacy": []
+    }
+  ]
+}
