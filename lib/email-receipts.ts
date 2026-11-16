@@ -700,9 +700,17 @@ export async function attemptReceivingAutoLink(deliveryId: string): Promise<void
  *  PO is NOT a valid target (nothing was even confirmed). `confirmed` IS code-linkable
  *  (2026-08-10, Juan-ratified auto-place): a vendor reply carrying OUR display code is
  *  placement evidence — applyReceiptPoEffects auto-advances confirmed→placed on it.
- *  The vendor+window fallback keeps its own narrower placed|invoiced filter inline —
+ *  The vendor+window fallback uses PO_WINDOW_STATUSES below: the same set WITHOUT `confirmed` —
  *  a window guess must never place an order nobody sent. Kept as a Set for O(1). */
 const PO_LINKABLE_STATUSES = new Set(["confirmed", "placed", "invoiced", "received", "reconciled"]);
+/** The orders the vendor+window fallback counts as candidates (W20/B113). It used to be
+ *  placed|invoiced only, so an invoice that arrived AFTER its truck could not see its own order
+ *  (already `received`): the vendor's NEXT open order became the single candidate, took the link
+ *  and was flipped placed→invoiced by the wrong document. With the received and reconciled
+ *  orders in view, that case has two candidates and goes to a person; an invoice whose only
+ *  order in the window is the received one links to it with no status change (the flip only
+ *  matches `placed`). */
+const PO_WINDOW_STATUSES = ["placed", "invoiced", "received", "reconciled"];
 /** ±3 days: the vendor+window fallback tolerance around a receipt's received-at date vs a
  *  candidate PO's placed_at (V2 §4 step 4 — the single-candidate rule). */
 const PO_MATCH_DAY_WINDOW = 3;
@@ -727,8 +735,9 @@ export interface MatchReceiptInput {
  *       AND (vendor agrees when vendorGuessId known) AND (location agrees when locationId
  *       known). Exactly one DISTINCT valid PO → match `po_code`. Two-or-more distinct →
  *       null (ambiguous → triage; we never guess).
- *   (2) VENDOR + WINDOW fallback → only when a vendor is known: placed|invoiced POs for
- *       that vendor (+ location when known) whose placed_at is within ±3 days of receivedAt.
+ *   (2) VENDOR + WINDOW fallback → only when a vendor is known: placed|invoiced|received|
+ *       reconciled POs (PO_WINDOW_STATUSES, B113) for that vendor (+ location when known)
+ *       whose placed_at is within ±3 days of receivedAt.
  *       EXACTLY ONE → match `vendor_window`; else null (the shipped single-candidate P2 law).
  * The link WRITE is a guarded UPDATE (`linked_po_id IS NULL`, count exact) so a concurrent
  * writer (a re-run on parse, a manual attach) never double-links or double-audits: count 0
@@ -821,7 +830,7 @@ async function resolvePoMatch(
     .from("purchase_orders")
     .select("id")
     .eq("vendor_id", receipt.vendorGuessId)
-    .in("status", ["placed", "invoiced"])
+    .in("status", PO_WINDOW_STATUSES)
     .gte("placed_at", lo)
     .lte("placed_at", hi);
   if (receipt.locationId != null) q = q.eq("location_id", receipt.locationId);
