@@ -1479,9 +1479,13 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
     .from("catering_quotes")
     .update({ status: "sent", sent_at: new Date().toISOString(), sent_by: actor.user.id }, { count: "exact" })
     .eq("id", id)
-    .is("superseded_at", null);
+    .is("superseded_at", null)
+    // Guarded on the status validated above (audit W22/B204; silent-UPDATE law, as setQuoteStatus):
+    // a concurrent accept/decline that landed during the recipient read is not flipped back to
+    // 'sent', and — because this throws before the email — the customer gets no re-send.
+    .eq("status", row.status);
   if (uErr) throw new Error(`sendQuote update: ${uErr.message}`);
-  if (count === 0) throw new CateringQuoteError(404, "not_found", "Quote not found");
+  if (count === 0) throw new CateringQuoteError(409, "status_changed", "Quote status changed since it was loaded — reload and retry");
 
   const { emailed, emailOutcome, recipient, emailError } = await emailQuoteToCustomer(id, row.total_cents, row.customer_id, to);
   const { recipientHidden } = to;
