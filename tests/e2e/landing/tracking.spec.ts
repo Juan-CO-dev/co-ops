@@ -112,10 +112,11 @@ test('registry lookup starts after consent, precedes Pixel, and admits a new cod
  expect(lookups).toBe(0);expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();
  await page.locator('[data-landing-consent]').getByRole('button').first().click();
  await expect.poll(()=>lookups).toBe(1);expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
- await page.locator('a[href$="catering-inquiry"]').evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
  expect(events).toEqual([]);expect(counters).toEqual([]);
  expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();release();
  await expect(page.locator('#landing-meta-pixel')).toHaveCount(1);
+ // W24/B213: a Lead tapped DURING the lookup is sent at once, unattributed (tested below); the admitted code shows on a Lead after it.
+ await page.locator('a[href$="catering-inquiry"]').evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
  const stored=JSON.parse((await page.evaluate(()=>sessionStorage.getItem('landing_attribution')))!);
  expect(stored).toMatchObject({ad:'campaign-new',utm:{},fbclid:'Captured_Click'});
  expect(page.url()).not.toContain('email');
@@ -136,7 +137,8 @@ test('withdrawal during registry lookup cannot persist attribution or initialize
  await page.locator('footer [data-privacy-settings]').click(); // v4.2: an answered notice is reopened from the footer
  await page.locator('[data-landing-consent]').getByRole('button').nth(1).click();release();await page.waitForTimeout(1100);
  expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
- expect(sends).toEqual([]);
+ // W24/B213: the Lead was tapped while consent was accepted, so it went at once (unattributed); the withdrawal stops everything after it.
+ expect(sends).toHaveLength(1);expect(sends[0]).toMatch(/\/api\/landing\/events$/);
 });
 
 test('restored retired code is revalidated and lookup outage preserves native navigation',async({page,context})=>{
@@ -240,4 +242,22 @@ test('v4.2: the footer "Privacy settings" reopens the same notice and withdrawal
   expect(await page.evaluate(()=>window.fbq?.queue?.at(-1))).toEqual(['consent','revoke']);
   await order.click();await page.waitForTimeout(800);
   expect(counters).toHaveLength(1);expect(events).toHaveLength(1);
+});
+
+// W24/B213: a catering Lead tapped while the ad code is still being looked up is sent to CAPI at once
+// (unattributed, no Pixel) instead of being buffered on a page that is about to leave.
+test('catering Lead tapped during ad-code lookup reaches CAPI',async({page,context})=>{
+  await isolateMeta(page);
+  await context.addCookies([{name:'landing_consent',value:'accepted',url:`http://localhost:${portBase}`}]);
+  const events:Record<string,unknown>[]=[];
+  await page.route('**/api/landing/events',route=>{events.push(route.request().postDataJSON());return route.fulfill({status:204});});
+  let started=false;
+  await page.route('**/api/landing/ad-code',async route=>{started=true;await new Promise(resolve=>setTimeout(resolve,800));await route.fulfill({json:{ad:'campaign-new'}});});
+  await context.route('https://complimentsonlysubs.com/**',route=>route.fulfill({contentType:'text/html',body:'Catering inquiry'}));
+  await page.goto('/?ad=campaign-new');
+  await expect.poll(()=>started).toBe(true);
+  await page.locator('.landing-v3-ask').evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
+  await expect.poll(()=>events.length).toBe(1);
+  expect(events[0]).toMatchObject({event_name:'Lead',placement:'catering',ad:'unattributed'});
+  expect(await page.evaluate(()=>window.fbq?.queue?.filter(args=>args[1]==='Lead').length??0)).toBe(0);
 });

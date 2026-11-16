@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { buildFbc, captureAttribution, persistAttribution, readAttribution, type Attribution, type AttributionPolicy } from '@/lib/landing/attribution-shared';
 import { consentCookie, marketingAllowed, marketingCookieExpiries, readConsent, type ConsentChoice } from '@/lib/landing/consent-shared';
-import { browserTransport, createLandingTracker, lookupAdCode, readAdCandidate, type ActionDetails, type LandingAction } from '@/lib/landing/tracking-client';
+import { browserTransport, createLandingTracker, lookupAdCode, NAVIGATING_ACTIONS, readAdCandidate, type ActionDetails, type LandingAction } from '@/lib/landing/tracking-client';
 import { queryAdCandidate } from '@/lib/landing/ad-codes-shared';
 import { ConsentNotice, type ConsentLabels } from './ConsentNotice';
 
@@ -95,7 +95,7 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
   const context:TrackingContextValue={allowed,
     dispatch(name,details) {
       if(!marketingAllowed(serverApproved,readConsent(document.cookie),signals())) { tracker.current?.setConsent(false); return; }
-      const leavingDuringLookup=resolving.current && (name==='OrderClick' || name==='CateringClick' || name==='FindLocation');
+      const leavingDuringLookup=resolving.current && NAVIGATING_ACTIONS.has(name);
       // Keep the intent in memory; resolve attribution and cookies when it is sent.
       tracker.current?.dispatch(name,cookiesOnly=>{
         const cookies=document.cookie.split(';').map(v=>v.trim());

@@ -2,6 +2,9 @@ import { UNATTRIBUTED, validAdCandidate } from './ad-codes-shared';
 import { ATTRIBUTION_KEY } from './attribution-shared';
 import { LANDING_META_EVENTS, validActionDetails } from './tracking-schema-shared';
 export type LandingAction = 'OrderClick' | 'CateringClick' | 'Lead' | 'FindLocation';
+/** Every LandingAction is an outbound-link tap: during ad-code resolution it is sent at once,
+ *  unattributed, by unload beacon — never buffered. The ONE list (the provider reads it too). */
+export const NAVIGATING_ACTIONS: ReadonlySet<LandingAction> = new Set<LandingAction>(['OrderClick','CateringClick','Lead','FindLocation']);
 export interface ActionDetails { mode?: "pickup" | "delivery"; store?: string; ad?: string; placement: string; vendor?: string; item?: string; fbc?: string; fbp?: string }
 export type DetailsFactory = (cookiesOnly: boolean) => ActionDetails;
 export interface TrackerConfig { serverApproved: boolean; pixelId?: string; capiEnabled?: boolean; sourceUrl: string; allowedStores: readonly string[]; allowedAds: readonly string[]; allowedPlacements: readonly string[] }
@@ -51,7 +54,7 @@ export function createLandingTracker(config: TrackerConfig, transport: TrackingT
       sections.add(section); safe(() => transport.pixel('track','ViewContent',{content_name:section},eventId ?? transport.uuid()));
     },
     dispatch(name: LandingAction, intent: ActionDetails | DetailsFactory, event?: { id: string; time: number }): void {
-      const navigating = resolving && config.serverApproved && (name === 'OrderClick' || name === 'CateringClick' || name === 'FindLocation');
+      const navigating = resolving && config.serverApproved && NAVIGATING_ACTIONS.has(name);
       if (resolving && !navigating && config.serverApproved && buffered.length < 10) {
         const original = event ?? { id: transport.uuid(), time: transport.now() };
         const resolveDetails = typeof intent === 'function' ? intent : () => ({ ...intent });
