@@ -1,7 +1,7 @@
 "use client";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { buildFbc, captureAttribution, persistAttribution, readAttribution, type Attribution, type AttributionPolicy } from '@/lib/landing/attribution-shared';
-import { consentCookie, marketingAllowed, readConsent, type ConsentChoice } from '@/lib/landing/consent-shared';
+import { consentCookie, marketingAllowed, marketingCookieExpiries, readConsent, type ConsentChoice } from '@/lib/landing/consent-shared';
 import { browserTransport, createLandingTracker, lookupAdCode, readAdCandidate, type ActionDetails, type LandingAction } from '@/lib/landing/tracking-client';
 import { queryAdCandidate } from '@/lib/landing/ad-codes-shared';
 import { ConsentNotice, type ConsentLabels } from './ConsentNotice';
@@ -18,11 +18,8 @@ export const useConsentControl=()=>useContext(ConsentControlContext);
 function signals() { return {doNotTrack:navigator.doNotTrack,globalPrivacyControl:(navigator as Navigator & {globalPrivacyControl?:boolean}).globalPrivacyControl}; }
 function storage(): Storage | undefined { try { return window.sessionStorage; } catch { return undefined; } }
 function clearMarketingCookies() {
-  for(const key of ['_fbp','_fbc']) {
-    const base=`${key}=; Path=/; Max-Age=0; SameSite=Lax${window.location.protocol==='https:'?'; Secure':''}`;
-    document.cookie=base;
-    document.cookie=`${base}; Domain=${window.location.hostname}`;
-  }
+  // The Pixel sets _fbp/_fbc on the registrable domain: expire them on the host AND every parent.
+  for(const write of marketingCookieExpiries(window.location.hostname,window.location.protocol==='https:')) document.cookie=write;
 }
 function sanitizeTrackingLocation(attribution:Attribution) {
   // The third-party SDK reads location itself; never let arbitrary query/fragment data reach it.
