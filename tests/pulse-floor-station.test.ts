@@ -282,3 +282,41 @@ describe("a planned trim is not Short (B117)", () => {
   });
 });
 
+
+// W21/B118: the floor drawer's "tasks left" drops a task whose report is done.
+describe("floor drawer tasksLeft drops a finished task (B118)", () => {
+  const taskBoard = (): ShiftBoard => {
+    const b = mixedBoard(5);
+    b.tasks = [
+      { id: "t1", task: "am_prep", assigneeId: "me", assignerId: "mgr", assignerName: "Mgr", note: null, available: true },
+      { id: "t2", task: "receiving", assigneeId: "me", assignerId: "mgr", assignerName: "Mgr", note: null, available: true },
+    ];
+    return b;
+  };
+  const amPrepDone = { rows: [{ key: "am_prep" as const, reportId: "r1", progress: "done" as const, doneAt: "2026-10-10T15:00:00Z", doneByName: "Val" }], closingDone: false, midDayDoneCount: 0 };
+  const auth = { user: { id: "me", role: "key_holder", language: "en" }, session: {}, role: "key_holder", level: 5, locations: [LOC] } as unknown as AuthContext;
+  const deps = (reports: () => Promise<unknown>): PulseDeps => ({
+    board: async () => taskBoard(), reports, fridges: async () => [], cateringToday: async () => [],
+    cateringTomorrow: async () => ({ count: 0, firstWindow: null }), notRung: async () => [], unlinkedClockIns: async () => ({ count: 0, entries: [] }),
+    lastParPass: async () => null, priorAmPrep: async () => null, deliveries: async () => [], cutoffs: async () => ({ count: 0, vendors: [] }),
+    sales: (async () => { throw new Error("not read"); }) as never, handoff: async () => ({ notes: [], acks: [], names: {} }), layout: async () => null,
+  }) as unknown as PulseDeps;
+  const floorData = async (reports: () => Promise<unknown>) => {
+    const r = await loadPulseSection(deps(reports), { auth, locationId: LOC, date: "2026-10-10", now: new Date("2026-10-10T19:30:00Z") }, "floor");
+    if (r.state !== "ok") throw new Error(r.state);
+    return r.data as FloorData;
+  };
+
+  it("pure: a taskDone predicate excludes only the finished task", () => {
+    const out = floorStations(taskBoard(), { nowMinutes: 15 * 60, viewerId: "me", showNames: true, taskDone: (t) => t === "am_prep" });
+    expect(out.find((s) => s.id === "line")?.tasksLeft).toBe(1);
+    expect(floorStations(taskBoard(), { nowMinutes: 15 * 60, viewerId: "me", showNames: true }).find((s) => s.id === "line")?.tasksLeft).toBe(2);
+  });
+  it("floor section: AM prep done → only receiving is left", async () => {
+    expect((await floorData(async () => amPrepDone)).stations.find((s) => s.id === "line")?.tasksLeft).toBe(1);
+  });
+  it("floor section: a failed reports read still renders the floor and counts every task as open", async () => {
+    const f = await floorData(async () => { throw new Error("boom"); });
+    expect(f.stations.find((s) => s.id === "line")?.tasksLeft).toBe(2);
+  });
+});

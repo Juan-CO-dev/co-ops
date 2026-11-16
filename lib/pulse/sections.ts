@@ -217,6 +217,15 @@ function overdueRows(reports: Awaited<ReturnType<PulseDeps["reports"]>>, minutes
   }));
 }
 
+/** B118: the same "done" answer `taskRows` gives — a task is done when its report is done. */
+function doneTaskPredicate(overdue: ReportStatusRow[]): (task: TaskType) => boolean {
+  const done = new Set(overdue.filter((r) => r.progress === "done").map((r) => r.key));
+  return (task) => {
+    const report = REPORT_FOR_TASK[task];
+    return report !== undefined && done.has(report);
+  };
+}
+
 function peopleAtStations(board: ShiftBoard): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const p of board.people) {
@@ -274,7 +283,7 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
 
   if (board) {
     const at = peopleAtStations(board);
-    for (const s of floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: !crew })) {
+    for (const s of floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: !crew, taskDone: reports ? doneTaskPredicate(overdue) : undefined })) {
       const subjects = at.get(s.id) ?? [];
       const params = { station: s.name, stationEs: s.nameEs ?? s.name };
       if (s.status === "uncovered") rows.push({ key: `station_uncovered:${s.id}`, kind: "station_uncovered", severity: severityOf("station_uncovered"), params, href: `/assignments?loc=${loc}`, action: "assign", subjectUserIds: subjects });
@@ -355,11 +364,15 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
 async function floor(deps: PulseDeps, ctx: PulseCtx): Promise<FloorData> {
   const crew = crewScoped(ctx.auth.level);
   const { minutesOfDay } = operationalNow(ctx.now);
-  const [board, layout] = await Promise.all([
+  const [board, layout, reports] = await Promise.all([
     deps.board(ctx),
     deps.layout(ctx).catch((err) => { console.error("pulse floor layout failed", err); return null; }),
+    // B118: the drawer's "tasks left" drops tasks whose report is done. A failed read never blanks the
+    // floor and never reads "0 left": without it every task counts as open, as before.
+    deps.reports(ctx).catch((err) => { console.error("pulse floor reports failed", err); return null; }),
   ]);
-  const stations = floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: !crew });
+  const taskDone = reports ? doneTaskPredicate(overdueRows(reports, minutesOfDay)) : undefined;
+  const stations = floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: !crew, taskDone });
   const mine = currentFloorStation(board, ctx.auth.user.id)?.stationId ?? null;
   return {
     stations,
@@ -456,7 +469,7 @@ async function stations(deps: PulseDeps, ctx: PulseCtx): Promise<StationsData> {
   const { minutesOfDay } = operationalNow(ctx.now);
   const [board, reports] = await Promise.all([deps.board(ctx), deps.reports(ctx)]);
   const overdue = overdueRows(reports, minutesOfDay);
-  const floorRows = floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: !crew });
+  const floorRows = floorStations(board, { nowMinutes: minutesOfDay, viewerId: ctx.auth.user.id, showNames: !crew, taskDone: doneTaskPredicate(overdue) });
   const heads = new Map(board.people.map((p) => [p.id, currentFloorStation(board, p.id)] as const));
   const rows: StationRow[] = floorRows.map((f) => {
     const station = board.stations.find((s) => s.id === f.id)!;

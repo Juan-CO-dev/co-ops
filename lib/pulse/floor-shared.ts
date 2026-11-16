@@ -8,7 +8,7 @@
  * and a GM's one-time drag (saved per shop, audited). Status is always a WORD the UI translates —
  * colour is reinforcement, never the only signal.
  */
-import { currentStation, isFloorStation, type ShiftBoard } from "@/lib/assignments-shared";
+import { currentStation, isFloorStation, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
 import { closeTimeFacts } from "@/lib/pulse/close-times-shared";
 import type { FloorLayout, FloorLayoutPoint, FloorStation, FloorStatus } from "@/lib/pulse/types";
 
@@ -37,12 +37,16 @@ export function stationStatus(f: {
 
 const firstName = (name: string): string => name.trim().split(/\s+/)[0] || "?";
 
-export function floorStations(board: ShiftBoard, args: { nowMinutes: number; viewerId: string; showNames: boolean }): FloorStation[] {
+/**
+ * `taskDone` (B118): a task whose report is known to be done is not "left". Tasks with no report, or
+ * any task when the reports read failed (no predicate), still count as open — never a false "0 left".
+ */
+export function floorStations(board: ShiftBoard, args: { nowMinutes: number; viewerId: string; showNames: boolean; taskDone?: (task: TaskType) => boolean }): FloorStation[] {
   const heads = new Map<string, ReturnType<typeof currentStation>>();
   for (const person of board.people) heads.set(person.id, currentStation(board.events, person.id));
   const onBreak = new Set(board.people.filter((p) => p.onBreak).map((p) => p.id));
   const openTasksBy = new Map<string, number>();
-  for (const t of board.tasks) if (t.available !== false) openTasksBy.set(t.assigneeId, (openTasksBy.get(t.assigneeId) ?? 0) + 1);
+  for (const t of board.tasks) if (t.available !== false && !args.taskDone?.(t.task)) openTasksBy.set(t.assigneeId, (openTasksBy.get(t.assigneeId) ?? 0) + 1);
 
   // Floor stations only: a closing section (unstaffed, or no active position) is never on the floor.
   return board.stations.filter(isFloorStation).sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name)).map((station) => {
