@@ -117,8 +117,11 @@ export function deliveryDowFor(orderDow: number, leadDays: number): number {
 
 /**
  * The governing cutoff for a SPECIFIC order dow at a location. Location-scoped rows beat
- * all-shops rows; among the survivors the EARLIEST time governs (it is the binding
- * deadline). Returns the bare time string, or null when nothing governs that dow.
+ * all-shops rows (`locationId === null`); among the survivors the EARLIEST time governs
+ * (it is the binding deadline). ANOTHER shop's own row never governs here (audit
+ * W18/B105: the callers pass every shop's rows), so a dow with neither a row for this
+ * shop nor an all-shops row returns null — `upcomingDeliveries` reads that as "today's
+ * order unavailable" (conservative). Returns the bare time string, or null.
  * Pure over the passed rows — deliberately NOT lib/ordering.ts's governingCutoffTime.
  */
 export function cutoffForOrderDay(
@@ -129,7 +132,7 @@ export function cutoffForOrderDay(
   const onDay = rows.filter((r) => r.orderDay === dow);
   if (onDay.length === 0) return null;
   const scoped = onDay.filter((r) => r.locationId === locationId);
-  const pool = scoped.length > 0 ? scoped : onDay;
+  const pool = scoped.length > 0 ? scoped : onDay.filter((r) => r.locationId === null);
   return [...pool].sort((a, b) => a.cutoffTime.localeCompare(b.cutoffTime))[0]?.cutoffTime ?? null;
 }
 

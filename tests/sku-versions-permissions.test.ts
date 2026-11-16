@@ -190,8 +190,8 @@ describe("Astra full-branch r1 P3: back to default retires only a version of the
     await retireShopPackVersion(actor("gm", 7, [SHOP_A]), { skuId: "s", versionId: "v-mine", locationId: SHOP_A });
     expect(rpcCalls).toEqual([{ fn: "retire_sku_pack_version", args: { p_version: "v-mine", p_actor: "u1" } }]);
   });
-  it("the route passes the SKU it addresses", () => {
+  it("the route passes the SKU it addresses (W18/B107: through the previewed atomic apply)", () => {
     const src = readFileSync("app/api/admin/catalog/sku/[id]/pack/back-to-default/route.ts", "utf8");
-    expect(src).toContain("retireShopPackVersion(ctx, { skuId: id, versionId: b.versionId, locationId: b.locationId })");
+    expect(src).toContain("applyPackBackToDefault(ctx, { skuId: id, locationId: b.locationId, versionId: b.versionId, conversions, previewToken })");
   });
 });

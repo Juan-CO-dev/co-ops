@@ -167,21 +167,27 @@ export async function saveSkuPackVersion(
   return { versionId: result.version_id, retiredVersionId: result.retired_version_id, flatFieldsSynced };
 }
 
-/** Restore = a NEW version with the old one's levels, based on the old one. Never a delete, never a revive. */
-export async function restoreSkuPackVersion(
+/**
+ * The levels a Restore would bring back (audit W18/B107: Restore now goes through the preview, so the
+ * conversion rows a pack change offers are offered here too). The bind first (role + shop, before I/O);
+ * the source must be THIS SKU's version, global or THIS scope's own (chunk-4 review P3a: adopting another
+ * shop's version is Phase 3's job — refused as not_found, no existence leak); the 0259 flat-pack baseline
+ * carries no levels and is refused by name (W18/B188).
+ */
+export async function loadRestorableLevels(
   actor: AuthContext,
-  input: { skuId: string; scope: VersionScope; fromVersionId: string; expectedLiveVersionId: string | null },
-): Promise<{ versionId: string; retiredVersionId: string | null }> {
+  input: { skuId: string; scope: VersionScope; fromVersionId: string },
+): Promise<PackChainLevelInput[]> {
   requireLocation(actor, "pack", input.scope);
   const sb = getServiceRoleClient();
-  // The source version must be THIS SKU's, and global or THIS scope's own (chunk-4 review P3a):
-  // adopting another shop's version is Phase 3's job. Refused as not_found (no existence leak).
-  const { data: from, error: fromErr } = await sb.from("sku_pack_versions").select("id, sku_id, location_id")
-    .eq("id", input.fromVersionId).maybeSingle<{ id: string; sku_id: string; location_id: string | null }>();
+  const { data: from, error: fromErr } = await sb.from("sku_pack_versions").select("id, sku_id, location_id, flat_snapshot")
+    .eq("id", input.fromVersionId).maybeSingle<{ id: string; sku_id: string; location_id: string | null; flat_snapshot: unknown }>();
   if (fromErr) throw new Error(`restoreSkuPackVersion version: ${fromErr.message}`);
   if (!from || from.sku_id !== input.skuId || (from.location_id !== null && from.location_id !== input.scope)) {
     throw new SkuVersionError(404, "not_found");
   }
+  // The 0259 flat-pack baseline carries no levels: refused by name, never a bare 404 (W18/B188).
+  if (from.flat_snapshot != null) throw new SkuVersionError(409, "baseline_not_restorable");
   const { data: rows, error } = await sb.from("sku_pack_levels")
     .select("id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal")
     .eq("version_id", input.fromVersionId).eq("sku_id", input.skuId)
@@ -190,11 +196,23 @@ export async function restoreSkuPackVersion(
   if (error) throw new Error(`restoreSkuPackVersion read: ${error.message}`);
   if (!rows || rows.length === 0) throw new SkuVersionError(404, "not_found");
   const indexById = new Map(rows.map((r, i) => [r.id, i]));
-  const levels: PackChainLevelInput[] = rows.map((r) => ({
+  return rows.map((r) => ({
     label: r.label, containsQty: Number(r.contains_qty),
     containsIndex: r.contains_level_id != null ? (indexById.get(r.contains_level_id) ?? -1) : null,
     containsMeasureUnit: r.contains_level_id != null ? null : r.contains_measure_unit,
   }));
+}
+
+/**
+ * Restore = a NEW version with the old one's levels, based on the old one. Never a delete, never a revive.
+ * NO PAR CONVERSION: the item page and its routes restore through the preview (lib/catalog/sku-item.ts,
+ * W18/B107); this primitive is kept for scripts and tests only.
+ */
+export async function restoreSkuPackVersion(
+  actor: AuthContext,
+  input: { skuId: string; scope: VersionScope; fromVersionId: string; expectedLiveVersionId: string | null },
+): Promise<{ versionId: string; retiredVersionId: string | null }> {
+  const levels = await loadRestorableLevels(actor, input);
   const saved = await saveSkuPackVersion(actor, {
     skuId: input.skuId, scope: input.scope, levels, expectedLiveVersionId: input.expectedLiveVersionId,
     basedOnVersionId: input.fromVersionId, restoredFromVersionId: input.fromVersionId,
@@ -202,8 +220,13 @@ export async function restoreSkuPackVersion(
   return { versionId: saved.versionId, retiredVersionId: saved.retiredVersionId };
 }
 
-/** A shop goes BACK TO DEFAULT for its pack: retire its live version (never the global one). */
-export async function retireShopPackVersion(actor: AuthContext, input: { skuId: string; versionId: string; locationId: string }): Promise<void> {
+/**
+ * A shop goes BACK TO DEFAULT for its pack: retire its live version (never the global one).
+ * NO PAR CONVERSION: the item page and its route go back to default through the preview and the 0324
+ * atomic apply (lib/catalog/sku-item.ts applyPackBackToDefault, W18/B107); this primitive is the
+ * pre-0324 fallback for a Back to default with no accepted conversion, and is kept for scripts and tests.
+ */
+export async function retireShopPackVersion(actor: AuthContext, input: { skuId: string; versionId: string; locationId: string; via?: string }): Promise<void> {
   requireLocation(actor, "pack", input.locationId);
   const sb = getServiceRoleClient();
   const { data: v, error: vErr } = await sb.from("sku_pack_versions").select("id, sku_id, location_id")
@@ -219,7 +242,7 @@ export async function retireShopPackVersion(actor: AuthContext, input: { skuId: 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "sku.pack_version_retire", resourceTable: "sku_pack_versions", resourceId: input.versionId,
-    metadata: { sku_id: v.sku_id, location_id: input.locationId }, ipAddress: null, userAgent: null,
+    metadata: { sku_id: v.sku_id, location_id: input.locationId, ...(input.via ? { via: input.via } : {}) }, ipAddress: null, userAgent: null,
   });
 }
 
@@ -289,6 +312,11 @@ export async function retireShopPriceLane(actor: AuthContext, input: { skuId: st
 export interface PackVersionHistoryRow {
   id: string; locationId: string | null; active: boolean; basedOnVersionId: string | null;
   validFrom: string; validTo: string | null; createdBy: string | null; note: string | null; labels: string[];
+  /**
+   * The 0259 pre-chain BASELINE: the legacy flat pack recorded (`flat_snapshot`, no levels) when the
+   * SKU got its first global chain. History, never restorable (audit W18/B188).
+   */
+  baseline: boolean;
 }
 
 /** Every pack version of a SKU visible to a scope (global + that shop), newest first. Read floor 6; D2 allowance. */
@@ -296,10 +324,10 @@ export async function loadSkuPackVersionHistory(actor: AuthContext, skuId: strin
   if (!catalogWriteRoleAllowed(actor.role, actor.level)) throw new SkuVersionError(403, "forbidden");
   if (scope !== null && !catalogShopAllowed(actor, scope)) throw new SkuVersionError(404, "not_found");
   const sb = getServiceRoleClient();
-  const base = sb.from("sku_pack_versions").select("id, location_id, active, based_on_version_id, valid_from, valid_to, created_by, note").eq("sku_id", skuId);
+  const base = sb.from("sku_pack_versions").select("id, location_id, active, based_on_version_id, valid_from, valid_to, created_by, note, flat_snapshot").eq("sku_id", skuId);
   const scoped = scope === null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
   const { data: versions, error } = await scoped.order("valid_from", { ascending: false }).order("id", { ascending: false })
-    .returns<Array<{ id: string; location_id: string | null; active: boolean; based_on_version_id: string | null; valid_from: string; valid_to: string | null; created_by: string | null; note: string | null }>>();
+    .returns<Array<{ id: string; location_id: string | null; active: boolean; based_on_version_id: string | null; valid_from: string; valid_to: string | null; created_by: string | null; note: string | null; flat_snapshot: unknown }>>();
   if (error) throw new Error(`loadSkuPackVersionHistory: ${error.message}`);
   const ids = (versions ?? []).map((v) => v.id);
   const labelsBy = new Map<string, string[]>();
@@ -313,5 +341,6 @@ export async function loadSkuPackVersionHistory(actor: AuthContext, skuId: strin
   return (versions ?? []).map((v) => ({
     id: v.id, locationId: v.location_id, active: v.active, basedOnVersionId: v.based_on_version_id,
     validFrom: v.valid_from, validTo: v.valid_to, createdBy: v.created_by, note: v.note, labels: labelsBy.get(v.id) ?? [],
+    baseline: v.flat_snapshot != null,
   }));
 }
