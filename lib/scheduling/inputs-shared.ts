@@ -121,11 +121,19 @@ export function memberSinceDate(assignedAt: string | null | undefined): string |
 /** The first clock time in a free-text catering window ("11:30 AM–1 PM", "12pm", "13:00") as a quarter, else null. */
 export function eventQFromWindow(text: string | null): number | null {
   if (!text) return null;
+  // An ISO instant ("2026-09-08T15:30:00Z") is not a wall-clock label; reading its "20" would be a guess.
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text.trim())) return null;
   const m = /(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?/i.exec(text);
   if (!m) return null;
   let h = Number(m[1]);
   const min = m[2] ? Number(m[2]) : 0;
-  const ap = m[3]?.toLowerCase().replace(/\./g, "") ?? null;
+  let ap = m[3]?.toLowerCase().replace(/\./g, "") ?? null;
+  // B028: "1:00–1:30 PM" carries ONE meridiem for the whole range — the first AM/PM at-or-after the first time governs
+  // it (the rule `timeWindowMinutes` uses), and only for a 12-hour reading (1–12; "13:00" stays 24-hour).
+  if (ap === null && h >= 1 && h <= 12) {
+    const later = /\b([ap])\.?m\.?\b/i.exec(text.slice(m.index + m[0].length));
+    if (later) ap = later[1]!.toLowerCase() === "p" ? "pm" : "am";
+  }
   if (ap === "pm" && h < 12) h += 12;
   if (ap === "am" && h === 12) h = 0;
   if (h > 23 || min > 59) return null;

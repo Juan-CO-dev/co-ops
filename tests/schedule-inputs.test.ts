@@ -288,6 +288,18 @@ describe("the pure assembly (generatorInputFor and its readers)", () => {
     walk(ctx);
     expect([...keys].filter((k) => /wage|cents_per|rate/i.test(k))).toEqual([]);
   });
+  it("a range with one trailing meridiem applies it to the first time (B028)", () => {
+    expect(eventQFromWindow("1:00\u20131:30 PM")).toBe(52);
+    expect(eventQFromWindow("1:30-2:00 PM")).toBe(54);
+    expect(eventQFromWindow("12:30\u20131:00 PM")).toBe(50);
+    expect(eventQFromWindow("11:30 AM\u201312:00 PM")).toBe(46);
+    expect(eventQFromWindow("12:00\u201312:30 AM")).toBe(0);
+    expect(eventQFromWindow("1:15 PM")).toBe(53);
+    expect(eventQFromWindow("13:15")).toBe(53);
+    expect(eventQFromWindow("2026-09-08T15:30:00Z")).toBeNull();
+    const ev = toCateringEvents([{ id: "p1", eventDate: "2026-10-29", timeWindow: "1:00\u20131:30 PM", headcount: 30, contactName: "A", company: null, valueCents: 1 }], [], () => 0);
+    expect(ev[0]?.eventQ).toBe(52);
+  });
   it("readers: the catering window's first clock time; ezCater orders not in the pipeline; the person-specific first day", () => {
     expect(eventQFromWindow("11:30 AM - 1 PM")).toBe(46);
     expect(eventQFromWindow("12pm")).toBe(48);
