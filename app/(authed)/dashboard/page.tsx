@@ -41,7 +41,7 @@ import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import { loadUnreadForUser } from "@/lib/notifications";
+import { loadUnreadForUser, notificationLocationContext } from "@/lib/notifications";
 import { etCalendarDate } from "@/lib/operational-day";
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
@@ -528,8 +528,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   // lock: level 9+ with all-locations override sees everything (no
   // location filter); sub-9 (and level 9+ with explicit user_locations)
   // sees their accessible locations + global (location_id IS NULL).
-  const locationContextForNotifications =
-    allLocationsBadge ? undefined : auth.locations;
+  // ONE rule, shared with "Mark all read" (W26-5 b).
+  const locationContextForNotifications = notificationLocationContext(auth);
   const unreadNotifications = await widget("notifications.sheet.heading", () => loadUnreadForUser(sb, auth.user.id, {
     locationContext: locationContextForNotifications,
   }));

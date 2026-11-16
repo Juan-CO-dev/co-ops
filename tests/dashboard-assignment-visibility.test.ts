@@ -27,7 +27,10 @@ vi.mock("@/lib/assignments", () => ({ loadShiftBoard: async () => { if (state.fa
 }); }, loadOwnTaskAssignments: async () => state.tasks.filter((task) => task.assigneeId === "viewer") }));
 vi.mock("@/lib/checklists", () => ({ canEditReport: () => ({ canEdit: false }), evaluateAutoReleaseForUserLocations: vi.fn() }));
 vi.mock("@/lib/admin/template-builder-shared", () => ({ applyEffectiveResolution: (query: unknown) => query }));
-vi.mock("@/lib/notifications", () => ({ loadUnreadForUser: async () => { if (state.failure === "notifications") throw new Error("offline"); return []; } }));
+vi.mock("@/lib/notifications", () => ({
+  loadUnreadForUser: async () => { if (state.failure === "notifications") throw new Error("offline"); return []; },
+  notificationLocationContext: (a: { level: number; locations: string[] }) => (a.level >= 9 && a.locations.length === 0 ? undefined : a.locations),
+}));
 vi.mock("@/lib/prep", () => ({
   loadAmPrepDashboardState: async () => { if (state.failure === "am") throw new Error("offline"); return { isVisibleToActor: true, hasTemplate: false }; },
   loadMidDayPrepDashboardState: async () => ({ isVisibleToActor: true }),

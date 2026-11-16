@@ -16,6 +16,13 @@ function client(error: { code: string } | null = null) {
   });
   return { from, rpc: vi.fn() };
 }
+/** The taps RPC is paged with `.range` (W26/B138); a PostgREST builder caps every answer at 1,000 rows. */
+type RpcImpl = (name: string, args: { p_from: string; p_to: string; [key: string]: unknown }) => Promise<{ data: unknown; error: unknown }>;
+function pagedTaps(impl: RpcImpl) {
+  return (name: string, args: { p_from: string; p_to: string; [key: string]: unknown }) => name === 'marketing_order_tap_intents'
+    ? { range: async (a: number, b: number) => { const r = await impl(name, args); const rows = (r.data ?? []) as unknown[]; return { ...r, data: rows.slice(a, Math.min(b + 1, a + 1000)) }; } }
+    : impl(name, args);
+}
 afterEach(() => vi.unstubAllEnvs());
 describe('marketing exact-role boundary', () => {
   it.each(Object.values(ROLES))('$code loader and hub visibility', async role => {
@@ -56,13 +63,13 @@ it('normalizes SQL aggregates and keeps the global read concurrency at two', asy
     const query = { select: () => query, order: () => query, range: async () => ({ data: table === 'locations' ? shops : [], error: null }) };
     return query;
   });
-  const rpc = vi.fn(async (name: string, args: { p_from: string; p_to: string }) => {
+  const rpc = vi.fn(pagedTaps(async (name: string, args: { p_from: string; p_to: string }) => {
     active++; peak = Math.max(peak, active); await Promise.resolve(); active--;
     expect((Date.parse(args.p_to) - Date.parse(args.p_from)) / 86400000).toBeLessThanOrEqual(27);
     if (name === 'marketing_order_tap_intents') return { data: [], error: null };
     if (name === 'sales_report_catering_values') return { data: { completed_events: 2, completed_value_cents: 300, completed_unvalued: 0 }, error: null };
     return { data: { channels: [{ business_date: args.p_from, channel: 'online', provider: null, checks: '1', orders: '1', cents: '500', amount_missing: '0' }], direct_online_orders: [{ business_date: args.p_from, orders: '1' }], large_checks: [], unknown_labels: [], ezcater: [], captured_days: [args.p_from] }, error: null };
-  });
+  }));
   const data = await loadMarketingScorecard(viewer, null, { client: { from, rpc } as unknown as MarketingDeps['client'], env, now: new Date('2026-11-01T17:00:00Z') });
   expect(data.state).toBe('ok');
   if (data.state !== 'ok') throw new Error('missing scorecard');
@@ -85,16 +92,16 @@ it('uses the frozen baseline, flags live drift, and excludes future days from cu
     marketing_baseline_snapshots: [{ id: 'snapshot', milestone_id: 'first', payload: { ...frozen, byLocation: { one: frozen } }, coverage: frozen.coverage, corrects_id: null }],
   };
   const from = (table: string) => { const query = { select: () => query, order: () => query, range: async () => ({ data: tables[table] ?? [], error: null }) }; return query; };
-  const rpc = async (name: string, args: { p_from: string }) => ({ error: null, data: name === 'marketing_order_tap_intents' ? [] : name === 'sales_report_catering_values' ? null : {
+  const rpc = pagedTaps(async (name: string, args: { p_from: string }) => ({ error: null, data: name === 'marketing_order_tap_intents' ? [] : name === 'sales_report_catering_values' ? null : {
     channels: [{ business_date: args.p_from, channel: 'online', provider: null, checks: 1, orders: 1, cents: 500, amount_missing: 0 }], direct_online_orders: [], captured_days: [args.p_from], large_checks: [], unknown_labels: [], ezcater: [],
-  } });
+  } }));
   const data = await loadMarketingScorecard(viewer, 'one', { client: { from, rpc } as unknown as MarketingDeps['client'], env, now: new Date('2026-10-28T17:00:00Z') });
   expect(data.state).toBe('ok');
   if (data.state !== 'ok') throw new Error('missing scorecard');
   expect(data.baseline?.classifiedCents.value).toBe(2500);
   expect(data.baselineDrift).toBe(true);
   const current = data.series.at(-1)!;
-  expect(current.window.daysSoFar).toBe(3);
+  expect(current.window.daysSoFar).toBe(2);
   expect(current.score.coverage.expectedDays).toBe(2);
   expect(current.costPerExtraOrder.value).toBeNull();
 });
@@ -114,9 +121,9 @@ function baselineDb(first: string | null = '2026-10-19') {
     const data = table === 'locations' ? [{ id: 'one', name: 'One', code: 'one' }] : table === 'marketing_milestones' && first ? [{ id: 'first', kind: 'first_ad_spend', milestone_date: first, corrects_id: null }] : [];
     const query = { select: () => query, order: () => query, range: async () => ({ data, error: null }) }; return query;
   });
-  const rpc = vi.fn(async (name: string, args: { p_from: string; p_to: string }) => ({ error: null, data: name === 'marketing_order_tap_intents' ? [] : name === 'sales_report_catering_values' ? { completed_events: 1, completed_value_cents: 100, completed_unvalued: 0 } : {
+  const rpc = vi.fn(pagedTaps(async (name: string, args: { p_from: string; p_to: string }) => ({ error: null, data: name === 'marketing_order_tap_intents' ? [] : name === 'sales_report_catering_values' ? { completed_events: 1, completed_value_cents: 100, completed_unvalued: 0 } : {
     channels: [], direct_online_orders: [], captured_days: [args.p_from], large_checks: [], unknown_labels: [], ezcater: [],
-  } }));
+  } })));
   return { from, rpc };
 }
 it('reads baseline sales once and slices four weeks without rereading sales', async () => {
@@ -151,4 +158,69 @@ it('has zero eligible capture days on D and never queries a reversed sales windo
   expect(data.series[0]?.score.coverage.expectedDays).toBe(0);
   expect(data.series[0]?.score.directOnlineOrders.value).toBeNull();
   expect(db.rpc.mock.calls.every(([, args]) => args.p_from <= args.p_to)).toBe(true);
+});
+
+it('campaign taps count past the 1,000-row RPC cap (W26/B138)', async () => {
+  const day = (n: number) => { const d = new Date('2026-10-19T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const taps: unknown[] = [];
+  for (let n = 0; n < 28; n++) for (const store of ['capitol-hill', 'dupont']) for (let code = 0; code < 40; code++) {
+    taps.push({ day: day(n), store_key: store, ad_code: `ad${code}`, active: true, click_count: 1, intent: 'pickup' });
+  }
+  const tables: Record<string, unknown[]> = {
+    locations: [{ id: 'one', name: 'One', code: 'MEP' }, { id: 'two', name: 'Two', code: 'EM' }],
+    marketing_milestones: [
+      { id: 'first', kind: 'first_ad_spend', milestone_date: '2026-10-19', corrects_id: null },
+      { id: 'counter', kind: 'counter_on', milestone_date: '2026-10-19', corrects_id: null },
+    ],
+  };
+  const from = (table: string) => { const query = { select: () => query, order: () => query, range: async () => ({ data: tables[table] ?? [], error: null }) }; return query; };
+  const rpc = pagedTaps(async (name: string, args: { p_from: string; p_to: string }) => ({ error: null, data: name === 'marketing_order_tap_intents'
+    ? taps.filter(r => (r as { day: string }).day >= args.p_from && (r as { day: string }).day <= args.p_to)
+    : name === 'sales_report_catering_values' ? null
+    : { channels: [], direct_online_orders: [], captured_days: [], large_checks: [], unknown_labels: [], ezcater: [] } }));
+  const data = await loadMarketingScorecard(viewer, null, { client: { from, rpc } as unknown as MarketingDeps['client'], env, now: new Date('2026-11-16T17:00:00Z') });
+  if (data.state !== 'ok') throw new Error('missing scorecard');
+  expect(data.taps.total.value).toBe(2240);
+});
+
+describe('removed spend entries (W26-2 b)', () => {
+  const base = { kind: 'meta_spend', location_id: null, platform: null, period_start: '2026-10-19', period_end: '2026-10-25', amount_cents: 500, list_count: null, note: null };
+  const rows = [
+    { ...base, id: 'kept', corrects_id: null, voided: false },
+    { ...base, id: 'gone-root', period_start: '2026-10-26', period_end: '2026-11-01', corrects_id: null, voided: false },
+    { ...base, id: 'gone', period_start: '2026-10-26', period_end: '2026-11-01', corrects_id: 'gone-root', voided: true },
+  ];
+  function db(columnMissing: boolean) {
+    const selects: string[] = [];
+    const from = (table: string) => {
+      let columns = '';
+      const query = { select: (c: string) => { columns = c; if (table === 'marketing_manual_entries') selects.push(c); return query; }, order: () => query,
+        range: async () => {
+          if (table === 'marketing_manual_entries') {
+            if (columnMissing && columns.includes('voided')) return { data: null, error: { code: '42703' } };
+            return { data: rows.map(({ voided, ...rest }) => columns.includes('voided') ? { ...rest, voided } : rest), error: null };
+          }
+          return { data: table === 'locations' ? [{ id: 'one', name: 'One', code: 'MEP' }] : table === 'marketing_milestones' ? [{ id: 'first', kind: 'first_ad_spend', milestone_date: '2026-10-19', corrects_id: null }] : [], error: null };
+        } };
+      return query;
+    };
+    const rpc = pagedTaps(async (name: string, args: { p_from: string }) => ({ error: null, data: name === 'marketing_order_tap_intents' ? [] : name === 'sales_report_catering_values' ? null
+      : { channels: [], direct_online_orders: [], captured_days: [args.p_from], large_checks: [], unknown_labels: [], ezcater: [] } }));
+    return { selects, client: { from, rpc } as unknown as MarketingDeps['client'] };
+  }
+  it('hides a removed head and its spend', async () => {
+    const { client } = db(false);
+    const data = await loadMarketingScorecard(viewer, null, { client, env, now: new Date('2026-11-05T17:00:00Z') });
+    if (data.state !== 'ok') throw new Error('missing scorecard');
+    expect(data.entries.map(r => r.id)).toEqual(['kept']);
+    expect(data.series.map(r => r.metaSpend.value)).toEqual([500, null, null]);
+  });
+  it('before 0333 is applied, re-reads without the column and removes nothing', async () => {
+    const { client, selects } = db(true);
+    const data = await loadMarketingScorecard(viewer, null, { client, env, now: new Date('2026-11-05T17:00:00Z') });
+    if (data.state !== 'ok') throw new Error('missing scorecard');
+    expect(selects.some(c => c.includes('voided'))).toBe(true);
+    expect(selects.at(-1)).not.toContain('voided');
+    expect(data.entries.map(r => r.id).sort()).toEqual(['gone', 'kept']);
+  });
 });

@@ -1492,6 +1492,38 @@ export function chargeFullyRefunded(outcome: Pick<CheckoutEventOutcome, "chargeF
   );
 }
 
+/** PostgREST / Postgres naming a missing table: 0333 (catering_payment_refund_events) not applied yet. */
+function refundEventsTableMissing(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST205" || error.code === "42P01";
+}
+
+/**
+ * Append THIS refund event (W26/B140 review r1, migration 0333): one row per Stripe event id,
+ * holding the event's own time (capped at now — the `paid_at` rule) and the charge's
+ * CUMULATIVE `amount_refunded`. What this one refund gave back is derived at read time
+ * (`refundEventAmounts`, lib/catering/refund-events-shared.ts), so a $10 refund Tuesday and the
+ * remaining $90 Wednesday report as $10 and $90 on their own days. Idempotent: a redelivery
+ * hits the primary key (23505) and adds nothing. Until 0333 is applied the table is missing and
+ * nothing is appended (the digest keeps its pre-0333 read). Any other error throws, BEFORE the
+ * status flip, so Stripe redelivers and the row is never lost behind a flip already made.
+ */
+async function appendRefundEvent(sb: ServiceClient, outcome: CheckoutEventOutcome, paymentId: string): Promise<void> {
+  if (outcome.amountCents == null || !outcome.eventId) return;
+  const nowMs = Date.now();
+  const refundedAt = new Date(outcome.createdSec != null ? Math.min(outcome.createdSec * 1000, nowMs) : nowMs).toISOString();
+  const { error } = await sb.from("catering_payment_refund_events").insert({
+    stripe_event_id: outcome.eventId,
+    payment_id: paymentId,
+    refunded_at: refundedAt,
+    cumulative_refunded_cents: outcome.amountCents,
+    charge_amount_cents: outcome.chargeAmountCents ?? null,
+    // No `created` on the event: the time is when it was processed, and says so (review r2).
+    refunded_at_approximate: outcome.createdSec == null,
+  });
+  if (!error || error.code === "23505" || refundEventsTableMissing(error)) return;
+  throw new Error(`stripe refund event append: ${error.message}`);
+}
+
 /**
  * `charge.refunded` — the only event that moves a row BACKWARDS. It is located by
  * `provider_ref = the charge's payment_intent`, which is exactly the id the paid flip
@@ -1542,6 +1574,12 @@ async function refund(
   }
 
   const fullyRefunded = chargeFullyRefunded(outcome);
+
+  // Money was recorded on this row (paid, or refunded by an earlier event): this refund is a
+  // fact about it, appended before the status moves (W26/B140 review r1).
+  if (payment.status === "paid" || payment.status === "refunded") {
+    await appendRefundEvent(sb, outcome, payment.id);
+  }
 
   if (fullyRefunded) {
     // Guarded on the row as it was read (review r5): still `paid`, and still carrying THIS

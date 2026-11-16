@@ -168,6 +168,38 @@ export function resolveTrendRange(params: Record<string, string | undefined>, to
   return parseReportRange({ ...params, range: "custom", from: defaults.loadFrom, to: defaults.loadTo }, today, granularity);
 }
 
+function shiftMonthsClamped(date: string, months: number): string {
+  const y = Number(date.slice(0, 4)); const m = Number(date.slice(5, 7)) - 1; const d = Number(date.slice(8, 10));
+  const target = new Date(Date.UTC(y, m + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(d, lastDay));
+  return target.toISOString().slice(0, 10);
+}
+/** True when [from, to] is exactly whole calendar months (from = a 1st, to = a month's last day). */
+function isWholeCalendarMonths(from: string, to: string): boolean {
+  return from.endsWith("-01") && from <= to && addDays(to, 1).endsWith("-01");
+}
+/**
+ * Month grain (W26/B222): the comparison window spans the SAME number of
+ * month buckets N, so previous bucket i pairs with current bucket i.
+ *   · A range of WHOLE calendar months (the last_month preset, or a custom
+ *     Feb 1 – Apr 30) compares with the N whole calendar months right before
+ *     it — February vs January 1–31, April vs March 1–31 (review r1: shifting
+ *     the end date by N months clamped January to the 28th and dropped 29–31).
+ *   · A PARTIAL range compares with the same calendar days N months earlier,
+ *     clamped to month end.
+ * Day and week grain return the range unchanged (equal days already give
+ * equal, aligned buckets). Ops trends only: the team / person pages keep the
+ * shared resolver (people-layer golden).
+ */
+export function alignTrendCompare(range: TrendRange, granularity: TrendGranularity): TrendRange {
+  if (granularity !== "month") return range;
+  const n = clippedBucketKeys(range.from, range.to, "month").length;
+  if (isWholeCalendarMonths(range.from, range.to)) {
+    return { ...range, previous: { from: shiftMonthsClamped(range.from, -n), to: addDays(range.from, -1) } };
+  }
+  return { ...range, previous: { from: shiftMonthsClamped(range.from, -n), to: shiftMonthsClamped(range.to, -n) } };
+}
 export function trendLocationAllowed(viewer: Viewer, locationId: string): boolean {
   return locationId !== "all" && (viewer.level >= 8 || (Array.isArray(viewer.locations) && viewer.locations.includes(locationId)));
 }
@@ -182,7 +214,7 @@ interface TrendArgs {
 }
 export async function loadTrendSeries(service: SupabaseClient, args: TrendArgs): Promise<TrendSeries> {
   if (args.viewer.level < OPS_TRENDS_LEVEL || !trendLocationAllowed(args.viewer, args.locationId)) throw new Error("Forbidden report trends scope");
-  const range = args.range ? resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) : resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity);
+  const range = alignTrendCompare(args.range ? resolveTrendRange(Object.fromEntries(reportRangeParams(args.range)), args.today, args.granularity) : resolveTrendRange({ compare: args.compare ? "1" : "0" }, args.today, args.granularity), args.granularity);
   const current = await loadTrendWindow(service, { ...args, compare: false, window: range });
   if (!range.compare) return current;
   const previous = await loadTrendWindow(service, { ...args, compare: false, window: range.previous });
@@ -285,7 +317,12 @@ async function loadTrendWindow(
     string,
     Array<{ template_item_id: string; count_value: number | null; prep_data: unknown }>
   >();
-  if (instIds.length) {
+  // Bounded request line (W26/B029): a month or 12-week window holds hundreds
+  // of instances, and one `.in()` of every id is a 9–20 KB URL the proxy
+  // refuses. Chunks of 50, sequential (the reports-hub idiom); each id falls in
+  // exactly one chunk, so every row is still read once.
+  for (let chunk = 0; chunk < instIds.length; chunk += 50) {
+    const chunkIds = instIds.slice(chunk, chunk + 50);
     const comps = await selectAllRows<{
       instance_id: string;
       template_item_id: string;
@@ -295,7 +332,7 @@ async function loadTrendWindow(
       service
         .from("checklist_completions")
         .select("instance_id, template_item_id, count_value, prep_data")
-        .in("instance_id", instIds)
+        .in("instance_id", chunkIds)
         .is("superseded_at", null)
         .is("revoked_at", null)
         .order("id", { ascending: true })

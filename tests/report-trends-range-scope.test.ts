@@ -1,20 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { clippedBucketKeys, loadTrendSeries, resolveTrendRange } from "@/lib/reports-trends";
+import { alignTrendCompare, clippedBucketKeys, loadTrendSeries, resolveTrendRange } from "@/lib/reports-trends";
 import { loadPersonDetail, loadPersonReportLocations, loadTeamOperatingHealth } from "@/lib/team-metrics";
 import { parseReportRange } from "@/lib/report-range";
 
 type Row = Record<string, unknown>;
 function fake(tables: Record<string, Row[]>) {
   const reads: string[] = [];
-  return { reads, service: { from(table: string) {
+  const ins: Array<{ table: string; key: string; size: number }> = [];
+  return { reads, ins, service: { from(table: string) {
     reads.push(table);
     let rows = [...(tables[table] ?? [])];
     const q = {
       select: () => q, order: () => q,
       eq: (key: string, value: unknown) => { rows = rows.filter(r => r[key] === value); return q; },
       is: (key: string, value: unknown) => { rows = rows.filter(r => (r[key] ?? null) === value); return q; },
-      in: (key: string, values: unknown[]) => { rows = rows.filter(r => values.includes(r[key])); return q; },
+      in: (key: string, values: unknown[]) => { ins.push({ table, key, size: values.length }); rows = rows.filter(r => values.includes(r[key])); return q; },
       gte: (key: string, value: string) => { rows = rows.filter(r => String(r[key]) >= value); return q; },
       lte: (key: string, value: string) => { rows = rows.filter(r => String(r[key]) <= value); return q; },
       lt: (key: string, value: string) => { rows = rows.filter(r => String(r[key]) < value); return q; },
@@ -42,7 +43,7 @@ describe("trends loader scope and independent clipped windows", () => {
   it("does not merge overlapping month bucket keys or leak the other shop's cash", async () => {
     const f = fake({ cash_reports: [
       { id: "a", location_id: "mine", report_date: "2026-10-06", over_short_cents: 120 },
-      { id: "b", location_id: "mine", report_date: "2026-10-03", over_short_cents: 30 },
+      { id: "b", location_id: "mine", report_date: "2026-09-06", over_short_cents: 30 },
       { id: "c", location_id: "other", report_date: "2026-10-06", over_short_cents: 9999 },
       { id: "d", location_id: "mine", report_date: "2026-10-01", over_short_cents: 9999 },
     ] });
@@ -50,7 +51,7 @@ describe("trends loader scope and independent clipped windows", () => {
     const result = await loadTrendSeries(f.service, { ...args, range, viewer: { userId: "kh", level: 4, locations: ["mine"] } });
     expect(result.totals.cash).toEqual({ current: 120, previous: 30, delta: 90 });
     expect(result.current[0]?.key).toBe("2026-10-01");
-    expect(result.previous?.[0]?.key).toBe("2026-10-01");
+    expect(result.previous?.[0]?.key).toBe("2026-09-01");
     expect(result.current[0]?.cashOverShortCents).toBe(120);
   });
   it("preserves six-month defaults and bounds grain-specific bucket counts", () => {
@@ -61,6 +62,82 @@ describe("trends loader scope and independent clipped windows", () => {
       expect(clippedBucketKeys(r.from, r.to, grain)).toHaveLength(cap);
       expect(clippedBucketKeys(r.previous.from, r.previous.to, grain).length).toBeLessThanOrEqual(cap);
     }
+  });
+  it("reads completions in chunks of at most 50 instance ids (W26/B029)", async () => {
+    const start = "2026-06-01";
+    const day = (n: number) => { const d = new Date(`${start}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+    const instances = Array.from({ length: 120 }, (_, n) => ({ id: `i${String(n).padStart(3, "0")}`, location_id: "mine", date: day(n), status: "finalized", template_id: "opening" }));
+    const f = fake({
+      checklist_instances: instances,
+      checklist_templates: [{ id: "opening", type: "opening", prep_subtype: null }],
+      checklist_template_items: [{ id: "item", template_id: "opening", required: true, active: true }],
+      checklist_completions: instances.map((i, n) => ({ id: `c${n}`, instance_id: i.id, template_item_id: "item", count_value: null, prep_data: null })),
+    });
+    const range = parseReportRange({ range: "custom", from: day(0), to: day(119) }, args.today, "week");
+    const result = await loadTrendSeries(f.service, { ...args, granularity: "week", range, viewer: { userId: "kh", level: 4, locations: ["mine"] } });
+    const reads = f.ins.filter(c => c.table === "checklist_completions" && c.key === "instance_id");
+    expect(reads.length).toBeGreaterThanOrEqual(3);
+    for (const r of reads) expect(r.size).toBeLessThanOrEqual(50);
+    expect(reads.reduce((n, r) => n + r.size, 0)).toBe(120);
+    const withData = result.current.filter(b => b.hasData);
+    expect(withData.length).toBeGreaterThan(0);
+    for (const b of result.current) expect(b.notStarted).toBe(0);
+    for (const b of withData) expect(b.completionPct).toBe(100);
+  });
+  it("month compare is bucket-aligned (W26/B222)", () => {
+    const at = (today: string) => alignTrendCompare(resolveTrendRange({ compare: "1" }, today, "month"), "month");
+    const a = at("2026-03-01");
+    expect(a.previous).toEqual({ from: "2025-04-01", to: "2025-09-01" });
+    expect(clippedBucketKeys(a.previous.from, a.previous.to, "month")).toEqual(["2025-04-01", "2025-05-01", "2025-06-01", "2025-07-01", "2025-08-01", "2025-09-01"]);
+    expect(clippedBucketKeys(a.from, a.to, "month")).toHaveLength(6);
+    const b = at("2026-01-29");
+    expect(b.previous).toEqual({ from: "2025-02-01", to: "2025-07-29" });
+    expect(clippedBucketKeys(b.previous.from, b.previous.to, "month")).toHaveLength(6);
+    const c = alignTrendCompare(parseReportRange({ range: "custom", from: "2026-03-31", to: "2026-03-31", compare: "1" }, "2026-04-05", "month"), "month");
+    expect(c.previous).toEqual({ from: "2026-02-28", to: "2026-02-28" });
+    for (const g of ["day", "week"] as const) {
+      const r = resolveTrendRange({ compare: "1" }, "2026-03-01", g);
+      expect(alignTrendCompare(r, g)).toBe(r);
+    }
+  });
+  it("a WHOLE calendar month (the last_month preset) compares with the whole previous calendar month (W26 review r1)", () => {
+    const lastMonth = (today: string) => alignTrendCompare(resolveTrendRange({ range: "last_month", compare: "1" }, today, "month"), "month");
+    // March 10: February vs January 1–31 (not January 1–28).
+    const feb = lastMonth("2026-03-10");
+    expect({ from: feb.from, to: feb.to }).toEqual({ from: "2026-02-01", to: "2026-02-28" });
+    expect(feb.previous).toEqual({ from: "2026-01-01", to: "2026-01-31" });
+    // May 3: April (30 days) vs March 1–31 (not March 1–30).
+    const apr = lastMonth("2026-05-03");
+    expect(apr.previous).toEqual({ from: "2026-03-01", to: "2026-03-31" });
+    // March vs February (28 days) — the shorter month is whole too.
+    expect(lastMonth("2026-04-15").previous).toEqual({ from: "2026-02-01", to: "2026-02-28" });
+    // Several whole months (custom Feb 1 – Apr 30): the three whole months before.
+    const q = alignTrendCompare(parseReportRange({ range: "custom", from: "2026-02-01", to: "2026-04-30", compare: "1" }, "2026-05-10", "month"), "month");
+    expect(q.previous).toEqual({ from: "2025-11-01", to: "2026-01-31" });
+    expect(clippedBucketKeys(q.previous.from, q.previous.to, "month")).toEqual(["2025-11-01", "2025-12-01", "2026-01-01"]);
+  });
+  it("a PARTIAL month range keeps the same-days-N-months-earlier alignment (W26/B222)", () => {
+    const p = alignTrendCompare(parseReportRange({ range: "custom", from: "2026-03-01", to: "2026-03-30", compare: "1" }, "2026-04-05", "month"), "month");
+    expect(p.previous).toEqual({ from: "2026-02-01", to: "2026-02-28" });
+    const mid = alignTrendCompare(parseReportRange({ range: "custom", from: "2026-03-05", to: "2026-03-31", compare: "1" }, "2026-04-05", "month"), "month");
+    expect(mid.previous).toEqual({ from: "2026-02-05", to: "2026-02-28" });
+  });
+  it("loadTrendSeries with the last_month preset counts January 29–31 in the previous window", async () => {
+    const f = fake({ cash_reports: [
+      { id: "jan30", location_id: "mine", report_date: "2026-01-30", over_short_cents: 40 },
+      { id: "feb10", location_id: "mine", report_date: "2026-02-10", over_short_cents: 100 },
+    ] });
+    const range = parseReportRange({ range: "last_month", compare: "1" }, "2026-03-10", "month");
+    const result = await loadTrendSeries(f.service, { ...args, compare: true, today: "2026-03-10", range, viewer: { userId: "kh", level: 4, locations: ["mine"] } });
+    expect(result.previous?.map(b => b.key)).toEqual(["2026-01-01"]);
+    expect(result.current.map(b => b.key)).toEqual(["2026-02-01"]);
+    expect(result.totals.cash).toEqual({ current: 100, previous: 40, delta: 60 });
+  });
+  it("loads a month compare with as many previous buckets as current ones (W26/B222)", async () => {
+    const f = fake({});
+    const result = await loadTrendSeries(f.service, { ...args, compare: true, today: "2026-03-01", viewer: { userId: "kh", level: 4, locations: ["mine"] } });
+    expect(result.previous?.length).toBe(result.current.length);
+    expect(result.previous?.[0]?.key).toBe("2025-04-01");
   });
   it("keeps historical unfinished instances but excludes today's unfinished work", async () => {
     const f = fake({

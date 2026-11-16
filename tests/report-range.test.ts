@@ -43,4 +43,9 @@ describe("report contracts", () => {
   it("retains a year of monthly buckets", () => { expect(parseReportRange({from:"2020-01-01"},"2026-10-07","month").from).toBe("2025-11-01"); });
   it("does not authorize a forged all-shop selection", () => { expect(canReadScopedReport({userId:"u",level:7,locations:["a"]},"b")).toBe(false); expect(canReadScopedReport({userId:"u",level:8,locations:[]},"b")).toBe(true); expect(canReadScopedReport({userId:"u",level:8},"all")).toBe(false); });
   it("compares types before ids and rejects stale cursors", () => { const a = {date:"2026-10-06",type:"opening" as const,id:"z",locationId:"a"}; const b = {...a,type:"closing" as const,id:"a"}; expect(compareReportTuples(a,b)).toBeLessThan(0); expect(decodeReportCursor(encodeReportCursor(a,"x"),"y")).toBeNull(); });
+  it("compares last month with the whole month before it (W26/B221)", () => {
+    expect(parseReportRange({ range: "last_month", compare: "1" }, "2026-11-14").previous).toEqual({ from: "2026-09-01", to: "2026-09-30" });
+    expect(parseReportRange({ range: "last_month", compare: "1" }, "2026-03-10").previous).toEqual({ from: "2026-01-01", to: "2026-01-31" });
+    expect(parseReportRange({ range: "last_month", compare: "1" }, "2026-04-02").previous).toEqual({ from: "2026-02-01", to: "2026-02-28" });
+  });
 });

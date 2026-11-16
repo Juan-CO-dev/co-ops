@@ -20,6 +20,7 @@ import { easternBoundary, easternDay } from "@/lib/job-watch";
 import { listReports } from "@/lib/reports-hub";
 import { loadShopV2Facts } from "@/lib/report-digests-v2";
 import { selectAllRows } from "@/lib/supabase-paginate";
+import { refundEventAmounts, type RefundEventRow } from "@/lib/catering/refund-events-shared";
 import { etCalendarDate } from "@/lib/operational-day";
 import { readNotInToast } from "@/lib/catering/not-in-toast";
 import { resolveRefs } from "@/lib/catering/prep-demand";
@@ -203,6 +204,67 @@ interface LeadRow {
 // text itself never reaches an email.
 const LEAD_SELECT = "id, contact_name, company, event_date, time_window, headcount, stage, lead_source, location_id, created_at, follow_up_date, external_ref, delivery_address, estimated_revenue_cents, notes";
 
+type RefundRow = { quote_id: string; amount_cents: number };
+const REFUND_EVENT_COLS = "stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents";
+const REFUND_ID_CHUNK = 50;
+/**
+ * Yesterday's refunds (W26/B140, review r1): every refund EVENT that happened yesterday, at what
+ * THAT refund gave back — partial refunds included. Read from `catering_payment_refund_events`
+ * (migration 0333, one row per Stripe `charge.refunded`, the charge's cumulative figure); the
+ * per-event amount is derived by `refundEventAmounts` over the payment's events, in the order of
+ * the charge's cumulative figure (review r2), so $10 on Tuesday then the remaining $90 on Wednesday is $10 in Wednesday's
+ * digest and $90 in Thursday's — never $100 on the day the row flipped to `refunded`.
+ * Until 0333 is applied the table is missing (42P01 / PGRST205): the pre-0333 read runs instead
+ * (whole payments by paid_at) — the old behaviour, never a failed digest.
+ */
+async function loadRefundsYesterday(sb: Sb, y: { startIso: string; endExclusiveIso: string }): Promise<RefundRow[]> {
+  let tableMissing = false;
+  let yesterdays: RefundEventRow[] | null = null;
+  try {
+    yesterdays = await selectAllRows<RefundEventRow>((from, to) =>
+      sb.from("catering_payment_refund_events").select(REFUND_EVENT_COLS)
+        .gte("refunded_at", y.startIso).lt("refunded_at", y.endExclusiveIso).order("stripe_event_id").range(from, to)
+        .then((r: { data: RefundEventRow[] | null; error: { code?: string; message: string } | null }) => {
+          if (r.error?.code === "42P01" || r.error?.code === "PGRST205") tableMissing = true;
+          return r;
+        }));
+  } catch (error) {
+    if (!tableMissing) throw error;
+  }
+  if (yesterdays) {
+    if (yesterdays.length === 0) return [];
+    const paymentIds = [...new Set(yesterdays.map((e) => e.payment_id))];
+    const history: RefundEventRow[] = [];
+    const quoteOf = new Map<string, string>();
+    for (let i = 0; i < paymentIds.length; i += REFUND_ID_CHUNK) {
+      const ids = paymentIds.slice(i, i + REFUND_ID_CHUNK);
+      const [events, payments] = await Promise.all([
+        selectAllRows<RefundEventRow>((from, to) =>
+          // The payment's WHOLE history, not only rows stamped before the end of yesterday
+          // (review r2): the amount follows the cumulative figure, and an approximate
+          // backfilled row may carry a later time than the event it preceded.
+          sb.from("catering_payment_refund_events").select(REFUND_EVENT_COLS).in("payment_id", ids)
+            .order("stripe_event_id").range(from, to)),
+        selectAllRows<{ id: string; quote_id: string }>((from, to) =>
+          sb.from("catering_payments").select("id, quote_id").in("id", ids).order("id").range(from, to)),
+      ]);
+      history.push(...events);
+      for (const p of payments) quoteOf.set(p.id, p.quote_id);
+    }
+    const amounts = refundEventAmounts(history);
+    const out: RefundRow[] = [];
+    for (const e of [...yesterdays].sort((a, b) => a.refunded_at.localeCompare(b.refunded_at) || a.stripe_event_id.localeCompare(b.stripe_event_id))) {
+      const cents = amounts.get(e.stripe_event_id) ?? 0;
+      const quoteId = quoteOf.get(e.payment_id);
+      if (cents > 0 && quoteId) out.push({ quote_id: quoteId, amount_cents: cents });
+    }
+    return out;
+  }
+  return selectAllRows<RefundRow>((from, to) =>
+    sb.from("catering_payments").select("quote_id, amount_cents").eq("status", "refunded")
+      .gte("paid_at", y.startIso).lt("paid_at", y.endExclusiveIso).order("id").range(from, to));
+}
+
 export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promise<CateringFacts> {
   const activeShops = await selectAllRows<{ id: string }>((from, to) =>
     sb.from("locations").select("id").eq("active", true).order("id").range(from, to));
@@ -266,9 +328,7 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
       sb.from("catering_quotes").select("id, location_id, total_cents").gte("sent_at", y.startIso).lt("sent_at", y.endExclusiveIso).order("id").range(from, to)),
     selectAllRows<{ id: string; location_id: string; expires_at: string | null }>((from, to) =>
       sb.from("catering_quotes").select("id, location_id, expires_at").eq("status", "sent").is("superseded_at", null).order("id").range(from, to)),
-    selectAllRows<{ quote_id: string; amount_cents: number }>((from, to) =>
-      sb.from("catering_payments").select("quote_id, amount_cents").eq("status", "refunded")
-        .gte("paid_at", y.startIso).lt("paid_at", y.endExclusiveIso).order("id").range(from, to)),
+    loadRefundsYesterday(sb, y),
   ]);
   const refundQuoteIds = [...new Set(refunds.map((r) => r.quote_id))];
   const refundLoc = new Map<string, string>();
