@@ -195,9 +195,9 @@ export function buildPeopleLayerFixture(): Tables {
           const area = pick(["Speed on the line", "", "  ", null, null] as const);
           const note = pick(["Great with guests", "", null, "Late twice"] as const);
           if (r() < 0.1) {
-            pm_employee_evals.push({ id: `ev-${pad(++nEval)}`, pm_report_id: pmId, location_id: loc, employee_id: emp, arrived_ready: g(), attitude: g(), production: g(), team_player: g(), area_to_improve: "old", note: "old", superseded_at: at(date, "23:00") });
+            pm_employee_evals.push({ id: `ev-${pad(++nEval)}`, pm_report_id: pmId, location_id: loc, employee_id: emp, arrived_ready: g(), attitude: g(), production: g(), team_player: g(), area_to_improve: "old", note: "old", author_id: submitter, superseded_at: at(date, "23:00") });
           }
-          pm_employee_evals.push({ id: `ev-${pad(++nEval)}`, pm_report_id: pmId, location_id: loc, employee_id: emp, arrived_ready: g(), attitude: g(), production: g(), team_player: g(), area_to_improve: area, note, superseded_at: null });
+          pm_employee_evals.push({ id: `ev-${pad(++nEval)}`, pm_report_id: pmId, location_id: loc, employee_id: emp, arrived_ready: g(), attitude: g(), production: g(), team_player: g(), area_to_improve: area, note, author_id: submitter, superseded_at: null });
         }
       }
     }
@@ -229,14 +229,14 @@ export function buildPeopleLayerFixture(): Tables {
   );
   // A superseded PM report (the live one for that day stays separate).
   pm_reports.push({ id: "pm-a-superseded", location_id: LOC_A, report_date: "2026-10-01", status: "submitted", submitted_by: U.gm, submitted_at: at("2026-10-01", "23:00"), mvp_user_id: U.emp, superseded_at: at("2026-10-01", "23:30") });
-  pm_employee_evals.push({ id: "ev-on-superseded", pm_report_id: "pm-a-superseded", location_id: LOC_A, employee_id: U.emp, arrived_ready: "great", attitude: "great", production: "great", team_player: "great", area_to_improve: null, note: "on a superseded report", superseded_at: null });
+  pm_employee_evals.push({ id: "ev-on-superseded", pm_report_id: "pm-a-superseded", location_id: LOC_A, employee_id: U.emp, arrived_ready: "great", attitude: "great", production: "great", team_player: "great", area_to_improve: null, note: "on a superseded report", author_id: U.gm, superseded_at: null });
   // Every status at least once, at a fixed spot (independent of the generator's luck).
   for (const [i, status] of (["open", "submitted", "incomplete_confirmed", "auto_finalized"] as const).entries()) {
     const date = addDays("2026-10-02", i);
     const submitted = status === "submitted" || status === "incomplete_confirmed";
     const id = `pm-b-fixed-${i}`;
     pm_reports.push({ id, location_id: LOC_B, report_date: `${date}`, status, submitted_by: submitted ? U.gmB : null, submitted_at: submitted ? at(date, "23:45") : null, mvp_user_id: status === "open" ? null : U.empB, superseded_at: null });
-    pm_employee_evals.push({ id: `ev-b-fixed-${i}`, pm_report_id: id, location_id: LOC_B, employee_id: U.empB, arrived_ready: gradients[i % 3], attitude: gradients[(i + 1) % 3], production: gradients[(i + 2) % 3], team_player: "good", area_to_improve: i === 1 ? "Ask for help sooner" : null, note: "manager-only note", superseded_at: null });
+    pm_employee_evals.push({ id: `ev-b-fixed-${i}`, pm_report_id: id, location_id: LOC_B, employee_id: U.empB, arrived_ready: gradients[i % 3], attitude: gradients[(i + 1) % 3], production: gradients[(i + 2) % 3], team_player: "good", area_to_improve: i === 1 ? "Ask for help sooner" : null, note: "manager-only note", author_id: U.gmB, superseded_at: null });
   }
 
   // ── Rows in the NEW tables (today's loaders never read them) ──────────────────────────────

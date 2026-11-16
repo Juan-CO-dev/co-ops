@@ -169,7 +169,9 @@ export async function loadPmReportForEdit(
     .select("id, employee_id, arrived_ready, attitude, production, team_player, area_to_improve, note")
     .eq("pm_report_id", report.id)
     .is("superseded_at", null);
-  const rows = (evalRows ?? []) as Array<{ id: string; employee_id: string; arrived_ready: Gradient; attitude: Gradient; production: Gradient; team_player: Gradient; area_to_improve: string | null; note: string | null }>;
+  // W09/B060: the viewer never sees their own card, nor the private note a manager wrote about them.
+  const rows = ((evalRows ?? []) as Array<{ id: string; employee_id: string; arrived_ready: Gradient; attitude: Gradient; production: Gradient; team_player: Gradient; area_to_improve: string | null; note: string | null }>)
+    .filter((r) => r.employee_id !== args.actor.userId);
   const ids = [...new Set(rows.map((r) => r.employee_id))];
   const nameById = new Map<string, string>();
   if (ids.length) {
@@ -330,13 +332,10 @@ export class PmReportError extends Error {
  * `/reports/trends/team` then score feedback the employee's submitted report never
  * contained.
  *
- * HONEST ABOUT ATOMICITY. For `setMvp` the guard is IN the UPDATE (`.eq("status","open")`)
- * and this read only DIAGNOSES a zero rowcount — 404 vs 409 — so that path is atomic.
- * `saveEmployeeEval` writes a DIFFERENT table (`pm_employee_evals`), so PostgREST has no
- * way to carry the parent's status into its own statement: this is a pre-check that
- * NARROWS the window to one round trip, exactly the posture #304 took on the templates
- * propagation guard, and it is stated rather than papered over. Closing it completely
- * needs a transactional RPC, which is a migration, not a guard.
+ * ATOMICITY. For `setMvp` the guard is IN the UPDATE (`.eq("status","open")`) and this read
+ * only DIAGNOSES a zero rowcount — 404 vs 409 — so that path is atomic. `saveEmployeeEval`
+ * no longer uses this read: since W09/B164 it writes through the transactional RPC
+ * `save_pm_employee_eval` (migration 0309), which checks the status under the day-row lock.
  */
 async function readReportStatus(
   service: SupabaseClient,
@@ -364,46 +363,57 @@ function refuseClosedReport(status: string | null): never {
   );
 }
 
+/**
+ * W09 fix round 1: every id this lib compares for identity is CANONICAL (lowercase) first. The routes accept a
+ * UUID in any case and Postgres resolves "CAFE..." and "cafe..." to the same user, so a case-sensitive `===`
+ * against the actor let an uppercased own id slip past the self checks (the lib/scheduling/settings.ts precedent).
+ */
+const canonId = (v: string): string => v.toLowerCase();
+const canonActor = (actor: PmActor): PmActor => ({ ...actor, userId: canonId(actor.userId) });
+
 export async function saveEmployeeEval(
   service: SupabaseClient,
-  args: {
+  input: {
     pmReportId: string; locationId: string; employeeId: string;
     arrivedReady: Gradient; attitude: Gradient; production: Gradient; teamPlayer: Gradient;
     areaToImprove: string | null; note: string | null;
     actor: PmActor;
   },
 ): Promise<{ id: string }> {
+  const args = { ...input, employeeId: canonId(input.employeeId), actor: canonActor(input.actor) };
+  // W09/B060: nobody evaluates themselves (it would supersede the manager's evaluation of them). Before any I/O.
+  if (args.employeeId === args.actor.userId) throw new PmReportError(403, "self_evaluation", "You can't evaluate yourself");
   await requirePmTask(service, args.actor, args.locationId);
+  // The friendly early refusal for a v2 day; the RPC judges it again under the day-row lock.
   await refuseV2Day(service, args.pmReportId);
-  // The status guard, ahead of both writes — see readReportStatus for why it is a
-  // pre-check here and an in-UPDATE predicate in setMvp.
-  const status = await readReportStatus(service, args.pmReportId);
-  if (status !== "open") refuseClosedReport(status);
 
-  // Supersede any live eval for this (report, employee), then insert the new one.
-  // BUG 2 fix: check the supersede error. There is no DB uniqueness backstop on
-  // live evals — if the supersede fails silently, the INSERT below creates a 2nd
-  // live eval (duplicate). Throw so the caller never lands a duplicate.
-  const { error: supersedeErr } = await service
-    .from("pm_employee_evals")
-    .update({ superseded_at: new Date().toISOString() })
-    .eq("pm_report_id", args.pmReportId)
-    .eq("employee_id", args.employeeId)
-    .is("superseded_at", null);
-  if (supersedeErr) throw new Error(`saveEmployeeEval: supersede: ${supersedeErr.message}`);
-  const { data, error } = await service
-    .from("pm_employee_evals")
-    .insert({
-      pm_report_id: args.pmReportId, location_id: args.locationId, employee_id: args.employeeId,
-      arrived_ready: args.arrivedReady, attitude: args.attitude, production: args.production,
-      team_player: args.teamPlayer, area_to_improve: args.areaToImprove,
-      note: args.note, author_id: args.actor.userId,
-    })
-    .select("id")
-    .single<{ id: string }>();
-  if (error) throw new Error(`saveEmployeeEval: ${error.message}`);
+  // W09/B164: ONE transaction (migration 0309). save_pm_employee_eval locks the day row, re-checks open / v1 /
+  // the actor / not self / the employee's membership under that lock, then supersedes the live eval for
+  // (report, employee) and inserts the new one — so two concurrent saves serialize (the second supersedes the
+  // first; a partial unique index makes a second live row impossible) and a save can never land after submit.
+  // NO FALLBACK (the 0278 / 0279 rollout precedent): 0309 is applied before this code ships.
+  const { data, error } = await service.rpc("save_pm_employee_eval", {
+    p_actor: args.actor.userId, p_report: args.pmReportId, p_location: args.locationId, p_employee: args.employeeId,
+    p_arrived_ready: args.arrivedReady, p_attitude: args.attitude, p_production: args.production,
+    p_team_player: args.teamPlayer, p_area: args.areaToImprove, p_note: args.note,
+  });
+  if (error) evalRpcFailure(error);
   await auditPmOverride(service, args, "pm_report.evaluate");
-  return { id: data.id };
+  return { id: (data as { id: string }).id };
+}
+
+/** save_pm_employee_eval's refusals by name (0309); a missing function is a named 503, never a fallback write. */
+const EVAL_RPC_REFUSALS: Record<string, number> = {
+  not_found: 404, report_already_submitted: 409, format_mismatch: 409, self_evaluation: 403,
+  forbidden: 403, invalid_target: 400, invalid_payload: 400,
+};
+function evalRpcFailure(error: { code?: string; message: string }): never {
+  if (error.code === "42883" || error.code === "PGRST202" || /could not find the function/i.test(error.message)) {
+    throw new PmReportError(503, "pm_eval_unavailable", "Evaluations are being updated; try again shortly");
+  }
+  const status = EVAL_RPC_REFUSALS[error.message];
+  if (status !== undefined) throw new PmReportError(status, error.message);
+  throw new Error(`saveEmployeeEval: ${error.message}`);
 }
 
 /**
@@ -420,8 +430,11 @@ export async function saveEmployeeEval(
  */
 export async function setMvp(
   service: SupabaseClient,
-  args: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null; actor: PmActor; locationId: string },
+  input: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null; actor: PmActor; locationId: string },
 ): Promise<void> {
+  const args = { ...input, mvpUserId: input.mvpUserId === null ? null : canonId(input.mvpUserId), actor: canonActor(input.actor) };
+  // W09/B060: nobody names themselves the shift's MVP. Before any I/O, on canonical ids (case can't dodge it).
+  if (args.mvpUserId !== null && args.mvpUserId === args.actor.userId) throw new PmReportError(403, "self_evaluation", "You can't name yourself MVP");
   await requirePmTask(service, args.actor, args.locationId);
   await refuseV2Day(service, args.pmReportId);
   const { error, count } = await service

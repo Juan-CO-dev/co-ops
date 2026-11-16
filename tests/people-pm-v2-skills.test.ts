@@ -123,6 +123,16 @@ describe("the skills read PM v2 — submitted days only, switch-independent, nev
     expect(expo.skill.perKind.pm).toBeNull();
   });
 
+  it("B059: a self-grade (the copy's author grading themselves) never enters the skill", async () => {
+    const t = tables();
+    t.pm_report_copies!.push({ id: "c-self", pm_report_id: "d-sub", location_id: A, author_id: EMP, status: "sealed", observed_from: "2026-10-14T20:00:00Z", observed_to: "2026-10-14T23:00:00Z" });
+    t.pm_copy_grades!.push({ id: "g-self", copy_id: "c-self", location_id: A, subject_id: EMP, position_id: P_WALK, criterion_id: "k1", grade: "needs_work", superseded_at: null });
+    const r = await loadSkills(service(t), { actor: gm, locationId: A, personId: EMP, now: NOW });
+    if (!r.available) throw new Error("unavailable");
+    const walk = r.view.rows.find((x) => x.position.positionId === P_WALK)!;
+    expect(walk.skill.perKind.pm).toMatchObject({ count: 1, mean: 1 });
+  });
+
   it("before 0271 (no format column): the skills load, with no PM evidence", async () => {
     const t = tables({ v2Column: false });
     delete t.pm_report_copies; delete t.pm_copy_grades; delete t.pm_copy_notes;
