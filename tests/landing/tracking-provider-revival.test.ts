@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   lookups: [] as ((ad: string) => void)[],
-  transport: undefined as undefined | Record<string, ReturnType<typeof vi.fn>>,
+  transport: undefined as undefined | Record<"loadPixel" | "revokePixel" | "grantPixel" | "pixel" | "post" | "uuid" | "now", ReturnType<typeof vi.fn>>,
   choose: undefined as undefined | ((choice: "accepted" | "rejected") => void),
 }));
 vi.mock("@/lib/landing/tracking-client", async (original) => {

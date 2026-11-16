@@ -201,8 +201,9 @@ export const CONTINUATION_GRACE_MS = 10 * 60_000;
 /** W24/B211: a stranded email older than this is only COUNTED (`stale`), never sent: by then a
  *  person may already have followed up by hand (runbook). */
 export const CONTINUATION_MAX_AGE_MS = 24 * 60 * 60_000;
-export interface ContinuationSweep { sent: number; other: number; unusable: number; failed: number; stale: number }
-export interface MetaSweepResult { processed: number; continuations?: ContinuationSweep }
+export type ContinuationSweep = { sent: number; other: number; unusable: number; failed: number; stale: number };
+// Type aliases (not interfaces): the cron passes the result to jsonOk(Record<string, unknown>).
+export type MetaSweepResult = { processed: number; continuations?: ContinuationSweep };
 
 /**
  * W24/B211: a lead CREATED whose "finish your order" email was never attempted (the apply committed
