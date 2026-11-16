@@ -1572,8 +1572,25 @@ export async function submitParPass(
     });
     byVendor.set(vid, arr);
   }
+  // A "Full" (orderQty 0) line ZEROES that SKU on a draft already open today (audit W18/B103):
+  // without it, an earlier walk's X=5 rides the draft into the vendor's order after the latest
+  // walk said full. Zeros never birth a draft and never insert a line (updateDraftLines skips a
+  // NEW line at qty 0); they only update a line already on today's draft.
+  const zeroByVendor = new Map<string, DraftLineInput[]>();
+  for (const r of resolved) {
+    if (r.input.orderQty !== 0) continue;
+    const vid = r.sku.vendor_id;
+    if (vid == null) continue;
+    const arr = zeroByVendor.get(vid) ?? [];
+    arr.push({ skuId: r.sku.id, orderQty: 0, orderUnitLabel: r.orderUnitLabel, note: r.input.note ?? null });
+    zeroByVendor.set(vid, arr);
+  }
   const skippedByVendor = new Map<string, { id: string; status?: string }>();
   const existingByVendor = new Map<string, { id: string; status?: string }>();
+  // Vendors this walk only marked full: an open DRAFT today gets its lines zeroed; anything
+  // else (no PO, a PO past draft) is left alone and is never reported as skipped, because
+  // nothing was ordered (W18/B103).
+  const zeroOnlyExistingByVendor = new Map<string, { id: string; status?: string }>();
   const mergedByVendor = new Map<string, Omit<MergedWalkPo, "vendorId" | "vendorName">>();
   let poError = false;
   // PO checks may suppress orders, but must never refuse the observations.
@@ -1592,6 +1609,20 @@ export async function submitParPass(
   } catch (err) {
     poError = true;
     console.error("submitParPass PO pre-check failed", err);
+  }
+  // The zero-only vendors' check is best-effort and separate: a failure there only means a
+  // draft line is not zeroed, never a poError on the orders this walk did place.
+  for (const vendorId of zeroByVendor.keys()) {
+    if (byVendor.has(vendorId)) continue;
+    try {
+      await assertNoLivePoToday(sb, locationId, vendorId);
+    } catch (err) {
+      if (err instanceof OrderingError && err.code === "po_exists" && err.existingPoId) {
+        if (err.existingPoStatus === "draft") zeroOnlyExistingByVendor.set(vendorId, { id: err.existingPoId, status: err.existingPoStatus });
+        continue;
+      }
+      console.error("submitParPass zero-line PO check failed", err);
+    }
   }
 
   // 1) Insert the event header (status submitted; append-only). House sequential pattern.
@@ -1631,17 +1662,24 @@ export async function submitParPass(
   // the manager re-generates drafts from the cutoff path. On success, each vendor's display code threads into the
   // draft card + copy/mailto body ("PO {displayCode}"). ──
   // The walk and audit are durable before any draft merge is attempted.
-  const mergeOrSkip = async (vendorId: string, vendorLines: DraftLineInput[], existing: { id: string; status?: string }) => {
+  const mergeOrSkip = async (vendorId: string, vendorLines: DraftLineInput[], existing: { id: string; status?: string }, zeroOnly = false) => {
     if (existing.status === "draft") {
       try {
         // Keep the walk's order unit label: a NEW line on the draft gets it from here (CC review 2026-09-10).
-        const counts = await updateDraftLines(actor, existing.id, vendorLines.map(({ skuId, orderQty, orderUnitLabel, note }) => ({ skuId, orderQty, orderUnitLabel, note })));
+        // This walk's "Full" lines for the vendor ride along at 0 (W18/B103); updateDraftLines
+        // updates one already on the draft and never inserts a new zero line.
+        const mergeLines = zeroOnly ? vendorLines : [...vendorLines, ...(zeroByVendor.get(vendorId) ?? [])];
+        const counts = await updateDraftLines(actor, existing.id, mergeLines.map(({ skuId, orderQty, orderUnitLabel, note }) => ({ skuId, orderQty, orderUnitLabel, note })));
+        // A zero-only vendor whose draft held none of those SKUs: nothing changed, nothing to report.
+        if (zeroOnly && counts.updated === 0 && counts.inserted === 0) return;
         const { data: po, error } = await sb.from("purchase_orders").select("display_code").eq("id", existing.id)
           .maybeSingle<{ display_code: string }>();
         if (error || !po) throw new Error("Merged PO detail unavailable");
         mergedByVendor.set(vendorId, { poId: existing.id, displayCode: po.display_code, linesUpdated: counts.updated, linesAdded: counts.inserted });
         return;
       } catch {
+        // Nothing was ordered from a zero-only vendor, so a failed zeroing is never a skip notice.
+        if (zeroOnly) return;
         // A failed refresh is still a skip; never claim a status we could not read.
         try {
           const { data: current, error } = await sb.from("purchase_orders").select("status").eq("id", existing.id)
@@ -1653,8 +1691,11 @@ export async function submitParPass(
     skippedByVendor.set(vendorId, { id: existing.id, status: existing.status });
   };
   let pos: CreatedDraft[] = [];
-  if (!poError && byVendor.size > 0) {
+  if (!poError && (byVendor.size > 0 || zeroOnlyExistingByVendor.size > 0)) {
     try {
+      for (const [vendorId, existing] of zeroOnlyExistingByVendor) {
+        await mergeOrSkip(vendorId, zeroByVendor.get(vendorId) ?? [], existing, true);
+      }
       for (const [vendorId, vendorLines] of byVendor) {
         const existing = existingByVendor.get(vendorId);
         if (existing) {
@@ -1691,7 +1732,12 @@ export async function submitParPass(
   const displayCodeByVendor = new Map(pos.map((p) => [p.vendorId, p.displayCode]));
 
   // ── Draft orders: per vendor, the orderQty > 0 lines + delivery affordances + PO code ──
-  const draftOrders = await buildDraftOrders(sb, orderLines.map((r) => ({
+  // A zero-only vendor whose draft was zeroed (W18/B103) rides along only so poMerged can name
+  // it; merged vendors are filtered out of draftOrders below, so no zero line is ever shown as
+  // an order.
+  const zeroMergedLines = resolved.filter((r) => r.input.orderQty === 0 && r.sku.vendor_id != null
+    && !byVendor.has(r.sku.vendor_id) && mergedByVendor.has(r.sku.vendor_id));
+  const draftOrders = await buildDraftOrders(sb, [...orderLines, ...zeroMergedLines].map((r) => ({
     vendorId: r.sku.vendor_id, vendorName: null,
     line: {
       skuName: r.sku.name, itemNumber: r.sku.item_number,

@@ -23,10 +23,10 @@ class OrderingError extends Error {
 class PurchaseOrderError extends Error {
   constructor(public status: number, public code: string, message?: string, public displayCode?: string) { super(message); }
 }
-function setup(storeIds: string[] = []) {
+function setup(storeIds: string[] = [], vendorOf: Record<string, string> = {}) {
   const writes: { table: string; data: unknown }[] = [];
   const filters: [string, unknown][] = [];
-  const skus = ["a", "b", "c"].map(id => ({ id, vendor_id: id, active: true, weekday_par: 4, name: id, product_id: null }));
+  const skus = ["a", "b", "c"].map(id => ({ id, vendor_id: vendorOf[id] ?? id, active: true, weekday_par: 4, name: id, product_id: null }));
   const poRead = vi.fn().mockResolvedValue({ data: { id: "existing-race", status: "confirmed", display_code: "SHOP-DATE-B" }, error: null });
   const sb = { from: (table: string) => {
     const query = {
@@ -66,7 +66,9 @@ function setup(storeIds: string[] = []) {
   };
   const submit = execute("submitParPass", deps) as typeof import("@/lib/ordering").submitParPass;
   const run = () => submit({ user: { id: "kh", role: "key_holder" } } as Parameters<typeof submit>[0], "shop", skus.map(s => ({ skuId: s.id, orderQty: 2 })));
-  return { writes, filters, guard, create, update, poRead, audit, run, log };
+  const runLines = (lines: Array<{ skuId: string; orderQty: number }>) =>
+    submit({ user: { id: "kh", role: "key_holder" } } as Parameters<typeof submit>[0], "shop", lines);
+  return { writes, filters, guard, create, update, poRead, audit, run, runLines, log };
 }
 
 describe("LRA-206 / LRA-229: a PO conflict never refuses the walk", () => {
@@ -188,6 +190,62 @@ describe("LRA-206 / LRA-229: a PO conflict never refuses the walk", () => {
     expect(result.pos).toEqual([]);
     expect(f.writes[1]!.data).toHaveLength(3);
     expect(f.log).toHaveBeenCalled();
+  });
+
+  // Audit W18/B103: a later walk marking an item Full must zero it on today's open draft.
+  it("a later Full on a SKU already on today's draft zeroes that draft line", async () => {
+    const f = setup([], { a: "v", b: "v" });
+    f.guard.mockImplementation(async (_sb, _loc, vendor) => {
+      if (vendor === "v") throw new OrderingError(409, "po_exists", "exists", "existing-v", "draft");
+    });
+    f.update.mockImplementationOnce(async () => ({ updated: 1, inserted: 1 }));
+    const result = await f.runLines([{ skuId: "a", orderQty: 0 }, { skuId: "b", orderQty: 1 }]);
+    expect(f.update).toHaveBeenCalledTimes(1);
+    expect(f.update.mock.calls[0]![1]).toBe("existing-v");
+    expect(f.update.mock.calls[0]![2]).toEqual([
+      { skuId: "b", orderQty: 1, orderUnitLabel: "case", note: null },
+      { skuId: "a", orderQty: 0, orderUnitLabel: "case", note: null },
+    ]);
+    expect(result.poMerged).toEqual([{ vendorId: "v", vendorName: "Vendor v", poId: "existing-v", displayCode: "SHOP-DATE-B", linesUpdated: 1, linesAdded: 1 }]);
+    expect(f.create).not.toHaveBeenCalled();
+  });
+
+  it("a zero-only re-walk still zeroes the draft line, and is never reported as skipped", async () => {
+    const f = setup();
+    f.guard.mockImplementation(async (_sb, _loc, vendor) => {
+      if (vendor === "a") throw new OrderingError(409, "po_exists", "exists", "existing-a", "draft");
+    });
+    f.update.mockImplementationOnce(async () => ({ updated: 1, inserted: 0 }));
+    const result = await f.runLines([{ skuId: "a", orderQty: 0 }]);
+    expect(f.update).toHaveBeenCalledWith(expect.anything(), "existing-a", [{ skuId: "a", orderQty: 0, orderUnitLabel: "case", note: null }]);
+    expect(result.poSkipped).toEqual([]);
+    expect(result.poMerged).toEqual([{ vendorId: "a", vendorName: "Vendor a", poId: "existing-a", displayCode: "SHOP-DATE-B", linesUpdated: 1, linesAdded: 0 }]);
+    expect(result.poError).toBe(false);
+    expect(f.create).not.toHaveBeenCalled();
+  });
+
+  it("a zero for a SKU not on the draft inserts nothing and reports nothing", async () => {
+    const f = setup();
+    f.guard.mockImplementation(async (_sb, _loc, vendor) => {
+      if (vendor === "a") throw new OrderingError(409, "po_exists", "exists", "existing-a", "draft");
+    });
+    // updateDraftLines skips a NEW zero line: nothing updated, nothing inserted.
+    f.update.mockImplementationOnce(async () => ({ updated: 0, inserted: 0 }));
+    const result = await f.runLines([{ skuId: "a", orderQty: 0 }]);
+    expect(result.poMerged).toEqual([]);
+    expect(result.poSkipped).toEqual([]);
+    expect(f.create).not.toHaveBeenCalled();
+  });
+
+  it("a zero-only vendor whose PO is past draft is left alone and not reported as skipped", async () => {
+    const f = setup();
+    f.guard.mockImplementation(async (_sb, _loc, vendor) => {
+      if (vendor === "a") throw new OrderingError(409, "po_exists", "exists", "existing-a", "confirmed");
+    });
+    const result = await f.runLines([{ skuId: "a", orderQty: 0 }, { skuId: "b", orderQty: 2 }]);
+    expect(f.update).not.toHaveBeenCalled();
+    expect(result.poSkipped).toEqual([]);
+    expect(result.pos.map(p => p.vendorId)).toEqual(["b"]);
   });
 
   it("keeps single-vendor cutoff generation's early 409", async () => {
