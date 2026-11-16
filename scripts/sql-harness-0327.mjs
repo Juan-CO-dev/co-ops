@@ -176,6 +176,24 @@ try {
     && second.vendor_id === vendor && second.created_by === actor && Number(second.expected_qty) === 5, 'a line keeps every column, nulls included');
   check(byId.get(saved.item_ids[2]).photo_url === '/api/photos/11111111-1111-4111-8111-111111111111' && byId.get(saved.item_ids[0]).discrepancy_type === 'short', 'photo and flag land on their own line');
   check(new Set(items.map(i => i.created_at.toISOString())).size === 1, 'every line of one save shares one created_at (the batch instant B199 groups by)');
+  // Review W20-r1 (P3): the creation lines carry the HEADER's instant, written by the function (compared in SQL, to the microsecond).
+  check((await one('select count(*)::int n from public.vendor_delivery_items i join public.vendor_deliveries d on d.id = i.delivery_id where d.id = $1 and i.created_at = d.created_at', [saved.delivery_id])).n === 3,
+    "the creation lines carry the header's own created_at (the identity the append guard reads)");
+  {
+    // ...and that is the function's doing, not a coincidence of two column defaults: with a line default that
+    // moves inside a transaction, the lines still carry the header's instant.
+    await db.exec('alter table public.vendor_delivery_items alter column created_at set default clock_timestamp()');
+    try {
+      const stamped = await record(header({ invoice_number: 'INV-STAMP' }), [line(skuA), line(skuB), line(skuC)]);
+      const same = await one('select count(*)::int n, count(distinct i.created_at)::int instants from public.vendor_delivery_items i join public.vendor_deliveries d on d.id = i.delivery_id where d.id = $1 and i.created_at = d.created_at', [stamped.delivery_id]);
+      check(same.n === 3 && same.instants === 1, "with a drifting line default the lines STILL carry the header's instant (stamped by the writer, not inferred)");
+      // A later append (its own statement, the column default) never carries the header's instant.
+      await db.query('select pg_sleep(0.01)');
+      await db.query('insert into public.vendor_delivery_items(delivery_id, vendor_item_id, qty_received, vendor_id, created_by) values ($1,$2,1,$3,$4)', [stamped.delivery_id, skuA, vendor, actor]);
+      const later = await one('select count(*)::int n from public.vendor_delivery_items i join public.vendor_deliveries d on d.id = i.delivery_id where d.id = $1 and i.created_at <> d.created_at', [stamped.delivery_id]);
+      check(later.n === 1, "a line appended later does not carry the header's instant");
+    } finally { await db.exec('alter table public.vendor_delivery_items alter column created_at set default now()'); }
+  }
   const credits = await q('select * from public.vendor_credits where delivery_id=$1 order by reason, sku_id', [saved.delivery_id]);
   const credit = (reason, sku) => credits.find(c => c.reason === reason && c.sku_id === sku);
   check(credits.length === 3 && credit('damaged', skuC).delivery_item_id === saved.item_ids[2] && credit('short', skuA).delivery_item_id === saved.item_ids[0],

@@ -73,6 +73,17 @@ describe("0327 receiving atomic writers", () => {
     expect(statements).not.toContain("delivery_match_verdict(p_delivery uuid, p_kind text, p_verdict text, p_note text)");
   });
 
+  it("review W20-r1 (P3): the atomic writer stamps the creation lines with the header's instant", () => {
+    const at = statements.indexOf("create or replace function public.record_delivery_atomic(");
+    const record = statements.slice(at, statements.indexOf("end $$;", at));
+    expect(record).toContain("returning id, created_at into v_id, v_created;");
+    expect(record).toContain("v_created := coalesce(v_created, now());");
+    expect(record).toMatch(/expected_qty, discrepancy_type, created_at\)\s+select v_id,[\s\S]*?l\.discrepancy_type, v_created/);
+    // The line's own instant is never taken from the payload.
+    expect(record).not.toMatch(/l\.created_at/);
+    for (const column of ["('vendor_deliveries','created_at')", "('vendor_delivery_items','created_at')"]) expect(statements).toContain(column);
+  });
+
   it("grants execute to service_role only and asserts the ceilings itself", () => {
     for (const signature of ["record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)", "delivery_match_verdict(uuid,text,text,text,uuid)", "delivery_receipt_unlink(uuid,uuid,text,uuid)"]) {
       expect(statements).toContain(`revoke all on function public.${signature} from public, anon, authenticated, service_role;`);
@@ -92,6 +103,9 @@ describe("0327 receiving atomic writers", () => {
       "where vendor mail is installed, 0327 waits for 0326; with 0326 it applies",
       "applies, and re-applying is a no-op (idempotent)",
       "each lined credit points at the line its line_index named",
+      "the creation lines carry the header's own created_at (the identity the append guard reads)",
+      "with a drifting line default the lines STILL carry the header's instant (stamped by the writer, not inferred)",
+      "a line appended later does not carry the header's instant",
       "a bad discrepancy flag on line 2 is refused",
       "...and leaves no delivery, no line and no credit behind",
       '...so the corrected retry of the SAME invoice saves (it used to be "already received")',

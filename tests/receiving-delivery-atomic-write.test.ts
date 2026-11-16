@@ -38,6 +38,8 @@ const C = "77777777-7777-4777-8777-777777777777";
 const PO = "88888888-8888-4888-8888-888888888888";
 const PHOTO = "99999999-9999-4999-8999-999999999999";
 const actor = { user: { id: "user", role: "key_holder" }, locations: [SHOP] } as never;
+/** The instant the database stamped on the fallback's header insert (microseconds, as PostgREST returns it). */
+const HEADER_AT = "2026-11-14T15:00:00.123456+00:00";
 
 type RpcCall = { fn: string; args: Record<string, unknown> };
 let rpcCalls: RpcCall[] = [];
@@ -57,7 +59,7 @@ function client(opts: { atomic?: { data?: unknown; error?: { code?: string; mess
         if (table === "vendors") data = { id: VENDOR, source_kind: "vendor" };
         else if (table === "purchase_orders") data = { id: PO, vendor_id: VENDOR, location_id: SHOP, status: "placed" };
         else if (table === "photos") data = [{ id: PHOTO, location_id: SHOP }];
-        else if (table === "vendor_deliveries") data = inserts.some((i) => i.table === "vendor_deliveries") ? { id: "legacy-delivery" } : [];
+        else if (table === "vendor_deliveries") data = inserts.some((i) => i.table === "vendor_deliveries") ? { id: "legacy-delivery", created_at: HEADER_AT } : [];
         else if (table === "po_lines") data = (opts.poLines ?? []).filter((l) => ids.includes(l.sku_id));
         else if (table === "vendor_delivery_items") data = opts.itemsBack ?? [];
         else if (table === "vendor_items") data = ids.map((id) => ({ id, vendor_id: VENDOR, location_id: null, pack_format: null,
@@ -164,6 +166,8 @@ describe("recordDelivery writes a new delivery in one transaction (0327)", () =>
       created_by: "user", received_level_label: "case", received_qty_at_level: 4, resolved_oz: null, note: "one crushed", photo_url: null, expected_qty: 5, discrepancy_type: "short" });
     expect(p_lines[2]).toMatchObject({ photo_url: `/api/photos/${PHOTO}`, received_level_label: null, received_qty_at_level: null });
     expect(p_lines.every((l) => !("delivery_id" in l))).toBe(true);
+    // The atomic writer stamps the lines itself (the header's instant); the app sends no created_at.
+    expect(p_lines.every((l) => !("created_at" in l))).toBe(true);
     // Credits name their line by position (1-based), never by an id that does not exist yet.
     // Line 1 was received at a level with no chain to place it: its amount is a judgment call (null).
     expect(p_line_credits).toEqual([
@@ -217,6 +221,9 @@ describe("before 0327 is applied the door keeps working (fallback)", () => {
       expect(result.deliveryId).toBe("legacy-delivery");
       expect(inserts.map((i) => i.table)).toEqual(["vendor_deliveries", "vendor_delivery_items", "vendor_credits"]);
       expect(inserts[1]!.rows).toEqual([expect.objectContaining({ delivery_id: "legacy-delivery", vendor_item_id: A, qty_received: 6 })]);
+      // Review W20-r1 (P3): the creation lines carry the header's own instant, so "created with the
+      // delivery" is an identity the append guard reads, not a guess from how fast the second request ran.
+      expect((inserts[1]!.rows as Array<Record<string, unknown>>).every((r) => r.created_at === HEADER_AT)).toBe(true);
       expect(inserts[2]!.rows).toEqual([expect.objectContaining({ delivery_id: "legacy-delivery", delivery_item_id: "item-1", reason: "over", qty: 2, amount_cents: 400 })]);
       expect(attemptReceivingAutoLink).toHaveBeenCalledExactlyOnceWith("legacy-delivery");
     });

@@ -362,33 +362,49 @@ export interface DatedAppendLine extends AppendLine {
   createdAt: string;
 }
 
-/** How long after the delivery header its CREATION lines can land (the two-step write that
- *  predates migration 0327 inserts them a moment later; one transaction stamps the same instant). */
-export const CREATION_BATCH_SLACK_MS = 5_000;
+/** An instant to the microsecond, whatever its spelling ("Z" or "+00:00", trailing zeros or not).
+ *  Null for anything that is not a timestamp. Postgres keeps microseconds; Date keeps milliseconds. */
+function instantKey(iso: string | null | undefined): string | null {
+  if (typeof iso !== "string") return null;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  const fraction = /[T ]\d{2}:\d{2}:\d{2}\.(\d+)/.exec(iso)?.[1] ?? "";
+  return `${Math.floor(ms / 1000)}.${fraction.padEnd(6, "0").slice(0, 6)}`;
+}
+
+/** Are two timestamps the SAME instant, to the microsecond? Equality only: never "close". */
+export function sameInstant(a: string | null | undefined, b: string | null | undefined): boolean {
+  const ka = instantKey(a);
+  return ka !== null && ka === instantKey(b);
+}
 
 /**
  * Split recently written lines into the APPENDS that wrote them, leaving out the lines the
- * delivery was created with (W20/B199). `vendor_delivery_items.created_at` defaults to now(), the
- * statement's transaction time, so every line of one insert carries one instant: equal
- * `createdAt` = one batch. The creation batch is the delivery's FIRST line instant, when it sits
- * at (or just after) the header's own instant. A delivery whose first lines came later (an
- * in-progress delivery saved empty) has no creation batch among its lines: they were an append.
- * Batches come back oldest first; timestamps are compared as the API returned them.
+ * delivery was created with (W20/B199).
+ *
+ * BATCH IDENTITY IS WRITTEN, NOT INFERRED (review W20-r1). The lines a delivery is CREATED with
+ * carry the header's own `created_at`: record_delivery_atomic (migration 0327) stamps them with
+ * the header row's instant, and the pre-0327 fallback in recordDelivery reads the header's
+ * `created_at` back and writes it on the lines it inserts in the next request. So "a creation
+ * line" is exactly "a line whose instant IS the header's" (`sameInstant`), however long the save
+ * took. Nothing is decided by how close two timestamps are: the earlier rule (first line within
+ * five seconds of the header) classified a slow creation as an append and refused the real
+ * second pallet again.
+ *
+ * Every other line belongs to an append: `vendor_delivery_items.created_at` defaults to now(), the
+ * statement's transaction time, so the lines of one insert share one instant, and an append can
+ * never carry the header's (it runs in a later transaction). A delivery whose creation wrote no
+ * line (a leftover of the old failed saves) has no creation batch: its first lines were an append.
+ * Batches come back oldest first.
  */
-export function priorAppendBatches(
-  recent: readonly DatedAppendLine[],
-  creation: { headerCreatedAt: string | null; firstLineCreatedAt: string | null },
-): AppendLine[][] {
-  const header = creation.headerCreatedAt == null ? Number.NaN : Date.parse(creation.headerCreatedAt);
-  const first = creation.firstLineCreatedAt == null ? Number.NaN : Date.parse(creation.firstLineCreatedAt);
-  const creationInstant = Number.isFinite(header) && Number.isFinite(first) && first - header >= 0 && first - header <= CREATION_BATCH_SLACK_MS
-    ? creation.firstLineCreatedAt : null;
+export function priorAppendBatches(recent: readonly DatedAppendLine[], headerCreatedAt: string | null): AppendLine[][] {
   const batches = new Map<string, AppendLine[]>();
-  for (const line of [...recent].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))) {
-    if (line.createdAt === creationInstant) continue;
-    const batch = batches.get(line.createdAt) ?? [];
+  for (const line of [...recent].sort((x, y) => Date.parse(x.createdAt) - Date.parse(y.createdAt))) {
+    if (sameInstant(line.createdAt, headerCreatedAt)) continue;
+    const key = instantKey(line.createdAt) ?? line.createdAt;
+    const batch = batches.get(key) ?? [];
     batch.push({ skuId: line.skuId, level: line.level, qty: line.qty });
-    batches.set(line.createdAt, batch);
+    batches.set(key, batch);
   }
   return [...batches.values()];
 }

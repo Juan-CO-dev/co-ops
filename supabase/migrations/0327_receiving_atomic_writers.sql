@@ -11,7 +11,10 @@
 --      header, its lines (in the order sent), the credits for flagged lines (each names its line by 1-based
 --      `line_index`, resolved here to the new line id) and the line-less credits for ordered items that never
 --      arrived. Any failure (the 0169 duplicate index, a CHECK, the 0178 vendor binding, the 0168 credit index)
---      rolls ALL of it back, so nothing is left behind and the retry works. It is a writer only: every business
+--      rolls ALL of it back, so nothing is left behind and the retry works. The lines are stamped with the
+--      HEADER's created_at (B199, review W20-r1): "the lines this delivery was created with" is an identity the
+--      append guard reads (line.created_at = delivery.created_at), never a guess from timing. The pre-0327
+--      fallback in lib/receiving.ts writes the same stamp from its second request. It is a writer only: every business
 --      rule (who may receive, the shop bind, the PO state, SKU / photo / missing-item validation, oz resolution,
 --      credit amounts) stays in lib/receiving.ts and runs BEFORE this call, exactly as it does today.
 --   2. delivery_match_verdict(p_delivery, p_kind 'attest'|'override', p_verdict, p_note, p_receipt) -> jsonb
@@ -98,13 +101,13 @@ begin
     ('vendor_deliveries','delivery_date'), ('vendor_deliveries','invoice_number'), ('vendor_deliveries','invoice_total'),
     ('vendor_deliveries','notes'), ('vendor_deliveries','note'), ('vendor_deliveries','receipt_url'),
     ('vendor_deliveries','received_by'), ('vendor_deliveries','delivery_status'), ('vendor_deliveries','purchase_order_id'),
-    ('vendor_deliveries','match_state'), ('vendor_deliveries','email_receipt_id'),
+    ('vendor_deliveries','match_state'), ('vendor_deliveries','email_receipt_id'), ('vendor_deliveries','created_at'),
     ('vendor_delivery_items','id'), ('vendor_delivery_items','delivery_id'), ('vendor_delivery_items','vendor_item_id'),
     ('vendor_delivery_items','qty_received'), ('vendor_delivery_items','vendor_id'), ('vendor_delivery_items','unit_price'),
     ('vendor_delivery_items','observed_oz_per_each'), ('vendor_delivery_items','notes'), ('vendor_delivery_items','created_by'),
     ('vendor_delivery_items','received_level_label'), ('vendor_delivery_items','received_qty_at_level'),
     ('vendor_delivery_items','resolved_oz'), ('vendor_delivery_items','note'), ('vendor_delivery_items','photo_url'),
-    ('vendor_delivery_items','expected_qty'), ('vendor_delivery_items','discrepancy_type'),
+    ('vendor_delivery_items','expected_qty'), ('vendor_delivery_items','discrepancy_type'), ('vendor_delivery_items','created_at'),
     ('vendor_credits','location_id'), ('vendor_credits','vendor_id'), ('vendor_credits','delivery_id'),
     ('vendor_credits','delivery_item_id'), ('vendor_credits','reason'), ('vendor_credits','sku_id'),
     ('vendor_credits','qty'), ('vendor_credits','amount_cents'), ('vendor_credits','created_by'),
@@ -167,6 +170,7 @@ language plpgsql security definer set search_path = pg_catalog, public as $$
 declare
   h record;
   v_id uuid;
+  v_created timestamptz;
   v_item uuid;
   v_ids uuid[] := array[]::uuid[];
   v_line jsonb;
@@ -205,15 +209,18 @@ begin
   values
     (h.vendor_id, h.location_id, h.delivery_date, h.invoice_number, h.invoice_total, h.notes, h.note, h.receipt_url,
      h.received_by, coalesce(h.delivery_status, 'complete'), h.purchase_order_id)
-  returning id into v_id;
+  returning id, created_at into v_id, v_created;
+  -- The instant every creation line carries (the base table's created_at is nullable: never stamp a null).
+  v_created := coalesce(v_created, now());
 
-  -- One row at a time, in the order sent, so each line's new id is known by its position.
+  -- One row at a time, in the order sent, so each line's new id is known by its position. Each line is stamped
+  -- with the header's instant by THIS statement, not left to a column default that happens to agree.
   for v_line in select e.value from jsonb_array_elements(p_lines) with ordinality as e(value, ord) order by e.ord loop
     insert into public.vendor_delivery_items
       (delivery_id, vendor_item_id, qty_received, vendor_id, unit_price, observed_oz_per_each, notes, created_by,
-       received_level_label, received_qty_at_level, resolved_oz, note, photo_url, expected_qty, discrepancy_type)
+       received_level_label, received_qty_at_level, resolved_oz, note, photo_url, expected_qty, discrepancy_type, created_at)
     select v_id, l.vendor_item_id, l.qty_received, l.vendor_id, l.unit_price, l.observed_oz_per_each, l.notes, l.created_by,
-           l.received_level_label, l.received_qty_at_level, l.resolved_oz, l.note, l.photo_url, l.expected_qty, l.discrepancy_type
+           l.received_level_label, l.received_qty_at_level, l.resolved_oz, l.note, l.photo_url, l.expected_qty, l.discrepancy_type, v_created
     from jsonb_to_record(v_line) as l(
       vendor_item_id uuid, qty_received numeric, vendor_id uuid, unit_price numeric, observed_oz_per_each numeric,
       notes text, created_by uuid, received_level_label text, received_qty_at_level numeric, resolved_oz numeric,

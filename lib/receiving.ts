@@ -625,7 +625,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     // 0327 IS NOT APPLIED YET: the previous four-step write, unchanged, so the door keeps
     // working. It is not atomic (that is the bug); the shape check both routes now run and
     // the validation above already refuse the bad lines that used to trigger it.
-    const { data: header, error: hErr } = await sb.from("vendor_deliveries").insert(headerRow).select("id").maybeSingle<{ id: string }>();
+    const { data: header, error: hErr } = await sb.from("vendor_deliveries").insert(headerRow).select("id, created_at").maybeSingle<{ id: string; created_at: string | null }>();
     if (hErr) {
       if (hErr.code === "23505" || /vendor_deliveries_dedupe_uq/.test(hErr.message ?? "")) throw duplicateDelivery();
       throw new Error(`recordDelivery header: ${hErr.message}`);
@@ -633,7 +633,13 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     if (!header) throw new Error("recordDelivery header returned no row");
     deliveryId = header.id;
 
-    const { error: lErr } = await sb.from("vendor_delivery_items").insert(lineRows.map((row) => ({ delivery_id: deliveryId, ...row })));
+    // The creation lines carry the HEADER's instant (review W20-r1): this second request can run any
+    // time after the first, and the append guard must still know these are the lines the delivery was
+    // created with (priorAppendBatches reads that identity; it infers nothing from latency). It is also
+    // what one transaction writes (0327 stamps the same value), so the lot instant does not depend on
+    // which path saved the delivery.
+    const creationStamp = header.created_at ? { created_at: header.created_at } : {};
+    const { error: lErr } = await sb.from("vendor_delivery_items").insert(lineRows.map((row) => ({ delivery_id: deliveryId, ...row, ...creationStamp })));
     if (lErr) throw new Error(`recordDelivery lines: ${lErr.message}`);
 
     // Idempotent vendor credits from any discrepancy-flagged lines (spec D1: the
@@ -1450,6 +1456,8 @@ export async function addDeliveryLines(
   // delivery was CREATED with. The union refused a real second pallet identical to the
   // first one, added within a minute of creating the delivery, and it missed a repeat of
   // an earlier append once a different append had followed it.
+  // The creation lines are the ones that carry the header's own created_at (written by
+  // recordDelivery / record_delivery_atomic): an identity, never a guess from timing.
   const appendCutoff = new Date(Date.now() - 60_000).toISOString();
   const { data: recentRows, error: rErr } = await sb.from("vendor_delivery_items")
     .select("vendor_item_id, received_level_label, received_qty_at_level, qty_received, created_at")
@@ -1464,18 +1472,7 @@ export async function addDeliveryLines(
   const incomingAppend: AppendLine[] = lines.map((l) => ({
     skuId: l.skuId, level: l.receivedLevelLabel?.trim() || null, qty: l.qtyReceived,
   }));
-  let firstLineCreatedAt: string | null = null;
-  if (recentAppend.length > 0) {
-    // The delivery's first line instant: with the header's own instant it says which recent
-    // lines (if any) are the ones the delivery was created with.
-    const { data: firstRows, error: fErr } = await sb.from("vendor_delivery_items")
-      .select("created_at").eq("delivery_id", h.id)
-      .order("created_at", { ascending: true }).limit(1)
-      .returns<Array<{ created_at: string }>>();
-    if (fErr) throw new Error(`addDeliveryLines first line: ${fErr.message}`);
-    firstLineCreatedAt = firstRows?.[0]?.created_at ?? null;
-  }
-  if (isDuplicateOfAnyBatch(incomingAppend, priorAppendBatches(recentAppend, { headerCreatedAt: h.created_at, firstLineCreatedAt }))) {
+  if (isDuplicateOfAnyBatch(incomingAppend, priorAppendBatches(recentAppend, h.created_at))) {
     throw new ReceivingError(409, "duplicate_append", "These lines were just added to this delivery — refresh before appending again.");
   }
 
