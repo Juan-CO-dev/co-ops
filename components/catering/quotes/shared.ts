@@ -59,10 +59,13 @@ const KNOWN_ERROR_CODES = new Set([
   "not_due",
   "status_changed", // guarded setQuoteStatus 409 (stale read) — actionable, not generic
   "quote_expired", // expired→accepted block — needs a revision, not a retry
+  "payments_unreconciled", // send/accept held: earlier payments are not on this revision yet — retry
   "delivery_unavailable", // self-serve delivery accept: no active zone at the shop (Juan 2026-11-15)
   "below_delivery_minimum", // self-serve delivery accept: under the zone's minimum
   "delivery_fee_changed", // self-serve delivery accept: the zones moved since the order was placed
   "invalid_customer", // a client outside the actor's shops (or gone) — pick another client
+  "not_expired", // resend-with-new-expiry on a quote that has not lapsed — Send does that
+  "invalid_expiry", // resend: the new expiry is not a future date within the allowed window
   "lead_location_mismatch", // W05/B011: the picked lead is at another shop (or gone) — match the shop or the lead
   "generic",
 ]);

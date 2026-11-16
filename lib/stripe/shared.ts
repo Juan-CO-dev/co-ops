@@ -168,6 +168,46 @@ export interface CheckoutSessionParamsInput {
   customerEmail: string;
   successUrl: string;
   cancelUrl: string;
+  /**
+   * When the session stops being payable, epoch seconds — from `checkoutSessionExpiry`.
+   * Absent = Stripe's default (24 hours after creation).
+   */
+  expiresAtSec?: number;
+}
+
+/**
+ * Stripe's allowed range for a Checkout Session's `expires_at`, quoted from the API
+ * reference (docs.stripe.com/api/checkout/sessions/create, parameter `expires_at`):
+ *   "The Epoch time in seconds at which the Checkout Session will expire. It can be
+ *    anywhere from 30 minutes to 24 hours after Checkout Session creation. By default,
+ *    this value is 24 hours from creation."
+ */
+export const STRIPE_SESSION_MIN_TTL_SEC = 30 * 60;
+export const STRIPE_SESSION_MAX_TTL_SEC = 24 * 60 * 60;
+/** Our clock and Stripe's are not the same clock: stay this far inside both ends of the
+ *  range, so a value we computed is never one Stripe refuses as out of range. */
+const STRIPE_SESSION_SKEW_SEC = 60;
+
+/**
+ * The `expires_at` to mint a Checkout Session with so that it does NOT OUTLIVE the thing it
+ * pays for (audit W02, review r2). `notAfterSec` is the offer's own deadline (epoch
+ * seconds), or null when nothing bounds the session.
+ *
+ *   no deadline, or one at/after Stripe's own 24 h → undefined: send nothing. The default
+ *       session already ends inside the offer.
+ *   a deadline inside Stripe's range → that deadline.
+ *   a deadline sooner than Stripe's 30-minute minimum → the minimum. Stripe will not mint a
+ *       shorter session, and refusing a customer who tapped Pay while the offer was open is
+ *       not this function's to decide; the webhook flags a payment that settles in the
+ *       overhang (`paid_after_expiry`).
+ * PURE: `nowSec` is a parameter.
+ */
+export function checkoutSessionExpiry(nowSec: number, notAfterSec: number | null): number | undefined {
+  if (notAfterSec == null || !Number.isFinite(notAfterSec)) return undefined;
+  if (notAfterSec >= nowSec + STRIPE_SESSION_MAX_TTL_SEC) return undefined;
+  const earliest = nowSec + STRIPE_SESSION_MIN_TTL_SEC + STRIPE_SESSION_SKEW_SEC;
+  const latest = nowSec + STRIPE_SESSION_MAX_TTL_SEC - STRIPE_SESSION_SKEW_SEC;
+  return Math.max(earliest, Math.min(Math.floor(notAfterSec), latest));
 }
 
 /**
@@ -197,6 +237,8 @@ export function checkoutSessionParams(
     mode: "payment",
     success_url: input.successUrl,
     cancel_url: input.cancelUrl,
+    // Sent only when the session must end early; absent, Stripe's 24-hour default applies.
+    ...(input.expiresAtSec !== undefined ? { expires_at: input.expiresAtSec } : {}),
     customer_email: input.customerEmail,
     "line_items[0][quantity]": 1,
     "line_items[0][price_data][currency]": input.currency,
@@ -222,9 +264,9 @@ export function checkoutSessionParams(
 export type CheckoutEventKind =
   | "completed"        // checkout.session.completed AND already paid → advance the row
   | "async_succeeded"  // checkout.session.async_payment_succeeded → advance the row
-  | "async_failed"     // checkout.session.async_payment_failed → leave it 'due'
-  | "expired"          // checkout.session.expired → leave it 'due'
-  | "refunded"         // charge.refunded → move 'paid' → 'refunded'
+  | "async_failed"     // checkout.session.async_payment_failed → leave it 'due'; clear that session's id
+  | "expired"          // checkout.session.expired → leave it 'due'; clear that session's id
+  | "refunded"         // charge.refunded → 'paid' → 'refunded' ONLY when fully refunded
   | "ignored";         // everything else, INCLUDING a completed-but-unpaid session
 
 export interface CheckoutEventOutcome {
@@ -234,6 +276,13 @@ export interface CheckoutEventOutcome {
   /** Stripe event type, verbatim, even for `ignored`. */
   type: string | null;
   livemode: boolean;
+  /**
+   * The event's own `created` — "Time at which the object was created. Measured in seconds
+   * since the Unix epoch." (docs.stripe.com/api/events/object). For a payment event this is
+   * when the money settled, as opposed to when a (possibly retried) delivery reached us.
+   * Absent when the payload carries no usable value.
+   */
+  createdSec?: number;
   sessionId?: string;
   paymentIntentId?: string;
   /** From `metadata.quote_id` — a HINT, UUID-validated here, re-checked at the DB. */
@@ -242,6 +291,15 @@ export interface CheckoutEventOutcome {
   paymentId?: string;
   /** Session `amount_total`, or a charge's `amount_refunded`. Integer cents, or absent. */
   amountCents?: number;
+  /**
+   * `charge.refunded` ONLY — Stripe's own `refunded` flag on the charge: true exactly when
+   * the WHOLE charge has been refunded, false while any of it is still captured. Absent
+   * when the payload does not carry a boolean there. `charge.refunded` fires for every
+   * refund, partial ones included, so this (not the event type) is what says "fully".
+   */
+  chargeFullyRefunded?: boolean;
+  /** `charge.refunded` ONLY — the charge's own `amount` (what was captured). Evidence. */
+  chargeAmountCents?: number;
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -288,7 +346,14 @@ export function parseCheckoutEvent(event: unknown): CheckoutEventOutcome {
   const eventId = root ? (str(root.id) ?? null) : null;
   const type = root ? (str(root.type) ?? null) : null;
   const livemode = root?.livemode === true;
-  const base: CheckoutEventOutcome = { kind: "ignored", eventId, type, livemode };
+  const created = root ? cents(root.created) : undefined;
+  const base: CheckoutEventOutcome = {
+    kind: "ignored",
+    eventId,
+    type,
+    livemode,
+    ...(created !== undefined && created > 0 ? { createdSec: created } : {}),
+  };
   if (!root || !type) return base;
 
   const object = asRecord(asRecord(root.data)?.object);
@@ -303,6 +368,8 @@ export function parseCheckoutEvent(event: unknown): CheckoutEventOutcome {
       quoteId: isUuid(metadata?.quote_id) ? (metadata?.quote_id as string) : undefined,
       paymentId: isUuid(metadata?.payment_id) ? (metadata?.payment_id as string) : undefined,
       amountCents: cents(object.amount_refunded),
+      chargeFullyRefunded: typeof object.refunded === "boolean" ? object.refunded : undefined,
+      chargeAmountCents: cents(object.amount),
     };
   }
 
