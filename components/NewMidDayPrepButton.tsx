@@ -46,8 +46,14 @@ export function NewMidDayPrepButton({
       }
       let msg = "Could not start mid-day prep.";
       try {
-        const b = (await res.json()) as { message?: string; error?: string };
-        msg = b.message ?? b.error ?? msg;
+        const b = (await res.json()) as { message?: string; error?: string; code?: string };
+        if (b.code === "date_not_today") {
+          // W13/B178: this page was rendered on another day — show why and reload today's.
+          msg = t("dashboard.mid_day_prep.date_not_today");
+          router.refresh();
+        } else {
+          msg = b.message ?? b.error ?? msg;
+        }
       } catch {
         // keep generic message
       }

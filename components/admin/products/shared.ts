@@ -63,6 +63,7 @@ const KNOWN_ERROR_CODES = new Set([
   "sku_not_found",
   "already_member",
   "not_a_member",
+  "member_moved",
   "primary_must_be_reassigned",
   "primary_not_found",
   "products_schema_pending",

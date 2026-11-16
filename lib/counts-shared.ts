@@ -717,6 +717,39 @@ export function resolveCountLinesDim(
   return { ok: true, resolved };
 }
 
+/**
+ * What a PRODUCT count line becomes once its entered level has resolved through the primary's
+ * chain (audit W17 / B099). PURE.
+ *
+ *   allocate_weight        — the chain ends in weight: the oz are allocated across the members'
+ *                            lots (the C-mode path; ordinary per-SKU lines, provenance set).
+ *   direct_single_member   — the chain ends in a COUNT (packaging) and the product has exactly
+ *                            ONE active member, the resolved primary. That member IS the whole
+ *                            product on this shelf, so the line is an ordinary direct count of
+ *                            that SKU: nothing is derived and there is nothing to allocate.
+ *   refuse_count_dimension — a count chain with two or more active members: units of one
+ *                            vendor's pack are not units of another's, so it is counted by
+ *                            vendor (the sheet's "Split by vendor").
+ *
+ * WHY THE MIDDLE CASE EXISTS. The sheet hides every member SKU of an offered product and offers
+ * "Split by vendor" only with two or more active members, so a packaging product whose twin was
+ * switched off had NO path at all: the only row it had refused on submit.
+ */
+export type ProductCountLineDisposition = "allocate_weight" | "direct_single_member" | "refuse_count_dimension";
+export function productCountLineDisposition(input: {
+  anchorDimension: "weight" | "count";
+  /** The weight line's resolved oz (null on a count line). */
+  resolvedOz: number | null;
+  activeMemberSkuIds: ReadonlyArray<string>;
+  primarySkuId: string;
+}): ProductCountLineDisposition {
+  if (input.anchorDimension === "weight" && input.resolvedOz != null) return "allocate_weight";
+  if (input.anchorDimension === "count" && input.activeMemberSkuIds.length === 1 && input.activeMemberSkuIds[0] === input.primarySkuId) {
+    return "direct_single_member";
+  }
+  return "refuse_count_dimension";
+}
+
 /** Root→leaf chain labels for a level picker (mirrors receiving's ordering). */
 export function chainLabelsInWalkOrder(levels: PackChainLevel[]): string[] {
   if (levels.length === 0) return [];

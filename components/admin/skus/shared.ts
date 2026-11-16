@@ -62,6 +62,7 @@ const KNOWN_ERROR_CODES = new Set([
   // Product membership (0179), now delegated to lib/products.ts's attach/detach writers.
   // Their refusals reach this form, and a named 409 with a generic message is half a fix.
   "already_member",
+  "member_moved",
   "primary_must_be_reassigned",
   "invalid_product",
   "products_schema_pending",

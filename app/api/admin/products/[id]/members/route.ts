@@ -8,7 +8,8 @@ import { attachMember, detachMember, ProductError } from "@/lib/products";
 
 // Membership edits (GM+ ≥7, Tier E — a membership change is a SKU-grade edit).
 //   POST   { skuId } — attach the SKU to this product.
-//   DELETE { skuId } — detach it (product_id → NULL = implicit singleton again).
+//   DELETE { skuId } — detach it FROM THIS PRODUCT (product_id → NULL = implicit singleton again);
+//                      409 member_moved when the SKU is no longer in this product (a stale screen).
 // Both refuse with a NAMED 409 when a product_primaries row names the SKU: the
 // composite FK would reject the write anyway, and a named code beats a 500.
 
@@ -52,7 +53,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (typeof b.skuId !== "string") return jsonError(400, "invalid_payload", { field: "skuId" });
 
   try {
-    await detachMember(ctx, { skuId: b.skuId });
+    // The product in the URL is the one the manager is looking at: detach only from THAT product.
+    await detachMember(ctx, { skuId: b.skuId, productId: id });
     return jsonOk({});
   } catch (e) {
     if (e instanceof ProductError) return jsonError(e.status, e.code, { message: e.message });

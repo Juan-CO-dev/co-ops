@@ -61,11 +61,22 @@ function fakeService(tables: Record<string, Row[]>, rpcResult: (name: string, pa
   const from = (table: string) => {
     let rows = [...(tables[table] ?? [])];
     let patch: Row | null = null;
-    const pick = () => (rows[0] ? (patch ? { ...rows[0], ...patch } : rows[0]) : null);
+    // W13/B019: the prep access read embeds the instance's template (one query). Answer it like
+    // PostgREST from this fixture's templates (an AM prep template when the test names none).
+    let embedTemplate = false;
+    const withTemplate = (row: Row): Row => {
+      if (!embedTemplate) return row;
+      const t = (tables.checklist_templates ?? []).find((x) => x.id === row.template_id);
+      return { ...row, template: t ? { type: t.type, prep_subtype: t.prep_subtype } : { type: "prep", prep_subtype: "am_prep" } };
+    };
+    const pick = () => (rows[0] ? withTemplate(patch ? { ...rows[0], ...patch } : rows[0]) : null);
     const b: Record<string, unknown> = {};
     const self = () => b;
     Object.assign(b, {
-      select: self,
+      select: (cols?: string) => {
+        if (table === "checklist_instances" && typeof cols === "string" && cols.includes("template:checklist_templates")) embedTemplate = true;
+        return b;
+      },
       // `is(col, null)` / `in(col, values)` filter like PostgREST; a row without the column passes.
       is: (col: string, val: unknown) => {
         rows = rows.filter((r) => !(col in r) || (r[col] ?? null) === val);
