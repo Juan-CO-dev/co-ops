@@ -9,9 +9,9 @@ vi.mock("@/lib/email-receipts", () => ({
   attemptAutoLink: vi.fn(async () => {}), EmailReceiptError: Error, RECEIPT_MIN: 4,
 }));
 
-function service(locationId: string | null, accounts: unknown[], lookupError = false, writeCount = 1) {
+function service(locationId: string | null, accounts: unknown[], lookupError = false, writeCount = 1, attributedBy?: string) {
   const writes: Record<string, unknown>[] = [];
-  const receipt = { id: "receipt", inbound_message_id: "message", attributed_by: locationId ? "address" : null,
+  const receipt = { id: "receipt", inbound_message_id: "message", attributed_by: attributedBy ?? (locationId ? "address" : null),
     parse_state: "unparsed", source: "inbound", location_id: locationId, vendor_guess_id: "sender-vendor",
     raw_storage_path: "message.eml", attachment_paths: [], linked_po_id: null };
   const sb = {
@@ -68,6 +68,19 @@ describe("routed inbound parse attribution gates", () => {
       expect(applyReceiptPoEffects).not.toHaveBeenCalled();
       expect(attemptAutoLink).not.toHaveBeenCalled();
     });
+  // W20/B193: a person claimed the shop before the parse. The parse must not infer over it, and
+  // the delivery auto-link (skipped before: it only ran when THIS parse inferred attribution)
+  // now runs with the order match.
+  it("a manual pre-parse claim still runs the delivery auto-link after parse", async () => {
+    const { sb, writes } = service("shop-a", [], false, 1, "manual");
+    response("001");
+    await expect(parseReceipt(sb, "receipt")).resolves.toEqual({ ok: true, docKind: "invoice" });
+    expect(writes[0]).toMatchObject({ parse_state: "parsed", doc_kind: "invoice" });
+    expect(writes[0]).not.toHaveProperty("location_id");
+    expect(writes[0]).not.toHaveProperty("attributed_by");
+    expect(attemptAutoLink).toHaveBeenCalledExactlyOnceWith("receipt");
+    expect(matchReceiptToPo).toHaveBeenCalledTimes(1);
+  });
   it("fails closed on account lookup failure", async () => {
     const { sb, writes } = service("shop-a", [], true);
     response("001");

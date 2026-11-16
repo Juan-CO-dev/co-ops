@@ -36,7 +36,7 @@ function query(table: string) {
   };
   return q;
 }
-const receipt = (extra: Row = {}): Row => ({ id: "r1", location_id: "shop", vendor_guess_id: "vendor", received_at: "2026-11-11T12:00:00.000Z", linked_delivery_id: null, inbound_message_id: "m1", parse_state: "parsed", attribution_conflict: false, ...extra });
+const receipt = (extra: Row = {}): Row => ({ id: "r1", location_id: "shop", vendor_guess_id: "vendor", received_at: "2026-11-11T12:00:00.000Z", linked_delivery_id: null, inbound_message_id: "m1", parse_state: "parsed", attribution_conflict: false, doc_kind: "invoice", ...extra });
 const actor = { user: { id: "u", role: "key_holder" }, locations: ["shop"] } as unknown as AuthContext;
 beforeEach(() => {
   vi.clearAllMocks();
@@ -123,6 +123,38 @@ describe("receiving reverse invoice match", () => {
   it("receiving authorization still refuses out-of-shop prompt reads", async () => {
     deliveries[0]!.location_id = "other";
     await expect(loadReceivingReceiptCandidates(actor, "d1")).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+// W20/B112: a delivery has ONE receipt slot. Only an invoice may take it automatically, and only
+// an invoice is offered as "the invoice". Manual linking is untouched.
+describe("only an invoice takes the delivery's receipt slot (B112)", () => {
+  it.each(["confirmation", "statement", "other", null])("a %s never links from the delivery side and is never suggested", async doc_kind => {
+    receipts = [receipt({ doc_kind })];
+    await attemptReceivingAutoLink("d1");
+    expect(deliveries[0]?.email_receipt_id).toBeNull();
+    expect(receipts[0]?.linked_delivery_id).toBeNull();
+    expect(await loadReceivingReceiptCandidates(actor, "d1")).toEqual([]);
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it.each(["confirmation", "statement", "other", null])("a %s never links from the receipt side", async doc_kind => {
+    receipts = [receipt({ doc_kind })];
+    await attemptAutoLink("r1");
+    expect(deliveries[0]?.email_receipt_id).toBeNull();
+    expect(receipts[0]?.linked_delivery_id).toBeNull();
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+  it("the invoice still links when a confirmation for the same order is waiting too", async () => {
+    receipts = [receipt({ id: "conf", doc_kind: "confirmation", received_at: "2026-11-10T12:00:00.000Z" }), receipt({ id: "inv" })];
+    await attemptReceivingAutoLink("d1");
+    expect(deliveries[0]?.email_receipt_id).toBe("inv");
+    expect(receipts.find(r => r.id === "conf")?.linked_delivery_id).toBeNull();
+  });
+  it("positive control: the same receipt as an invoice links from the receipt side", async () => {
+    receipts = [receipt()];
+    await attemptAutoLink("r1");
+    expect(deliveries[0]?.email_receipt_id).toBe("r1");
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ source: "auto", direction: "receipt" }) }));
   });
 });
 

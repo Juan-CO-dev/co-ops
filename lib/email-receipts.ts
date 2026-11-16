@@ -50,7 +50,7 @@ import { lockLocationContext, accessibleLocations, type LocationActor } from "@/
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { autoPlaceOnEmailEvidence } from "@/lib/purchase-orders";
-import { extractPoCodes } from "@/lib/email-receipts-matching-shared";
+import { assembleMatchBody, extractPoCodes } from "@/lib/email-receipts-matching-shared";
 
 // Re-export the pure code extractor so server callers keep their `@/lib/email-receipts`
 // import path (the *-shared.ts law). Task 7's SMS leg imports the leaf directly (client-safe).
@@ -64,6 +64,9 @@ const SIGNED_URL_TTL_SECONDS = 60;
 
 /** ±2 days: an inbound receipt's received-at date vs a candidate delivery's date. */
 const AUTO_LINK_DAY_WINDOW = 2;
+/** W20/B112: the only document kind the AUTOMATIC delivery link (either direction) and the
+ *  "is this the invoice?" suggestion will take. */
+const AUTO_LINK_DOC_KIND = "invoice";
 
 export class EmailReceiptError extends Error {
   constructor(public status: number, public code: string, message?: string) {
@@ -523,16 +526,24 @@ const PG_UNIQUE_VIOLATION = "23505";
  * null and delivery_date within ±2 days of received_at::date. Links only on a unique
  * candidate (both sides set, error-checked). NEVER throws to the caller on zero/many —
  * it just returns (the receipt stays unlinked for manual triage).
+ *
+ * ONLY AN INVOICE LINKS BY ITSELF (W20/B112). A delivery has ONE receipt slot (0171
+ * vendor_deliveries_email_receipt_uq), and an order confirmation or a statement used to take
+ * it, locking the real invoice out. doc_kind must be 'invoice': a confirmation, statement,
+ * "other" or a receipt not classified yet (doc_kind null, e.g. the pre-parse call at legacy
+ * ingest) is a no-op here; parseReceipt calls this again once the kind is known. Manual
+ * linking (linkReceipt / uploadManualReceipt) deliberately takes any kind: a person chose it.
  */
 export async function attemptAutoLink(receiptId: string): Promise<void> {
   const sb = getServiceRoleClient();
   const { data: r, error } = await sb
     .from("email_receipts")
-    .select("id, location_id, vendor_guess_id, linked_delivery_id, received_at, inbound_message_id, parse_state, attribution_conflict")
+    .select("id, location_id, vendor_guess_id, linked_delivery_id, received_at, inbound_message_id, parse_state, attribution_conflict, doc_kind")
     .eq("id", receiptId)
-    .maybeSingle<ReceiptAutomationState & { id: string; vendor_guess_id: string | null; linked_delivery_id: string | null; received_at: string }>();
+    .maybeSingle<ReceiptAutomationState & { id: string; vendor_guess_id: string | null; linked_delivery_id: string | null; received_at: string; doc_kind: string | null }>();
   if (error) return; // best-effort — never poison the ingest on an auto-link read failure
   if (!r || !receiptAutomationAllowed(r) || r.linked_delivery_id || !r.vendor_guess_id || !r.location_id) return;
+  if (r.doc_kind !== AUTO_LINK_DOC_KIND) return; // B112: only an invoice may take the delivery's receipt slot.
 
   // ±2-day window around the receipt's received-at date (bare-date comparison).
   const receivedMs = Date.parse(r.received_at);
@@ -624,6 +635,9 @@ async function receivingReceiptCandidates(sb: ServiceClient, d: AutoLinkDelivery
     .select("id, location_id, vendor_guess_id, linked_delivery_id, received_at, inbound_message_id, parse_state, attribution_conflict, subject, from_address, parsed_json")
     .eq("location_id", d.location_id).eq("vendor_guess_id", d.vendor_id)
     .is("linked_delivery_id", null).eq("attribution_conflict", false)
+    // W20/B112: this one list feeds the automatic link AND the "is this the invoice?" prompt,
+    // so a confirmation or statement is never linked and never suggested as the invoice.
+    .eq("doc_kind", AUTO_LINK_DOC_KIND)
     .gte("received_at", lo).lt("received_at", hi)
     .order("id").range(from, to).returns<ReceivingCandidateRow[]>());
   // Manual assignment writes vendor_guess_id too (0297); it is the effective vendor.
@@ -941,6 +955,44 @@ export async function applyReceiptPoEffects(
     }
   }
   // 'statement' / 'other' → no PO effect (the link alone is the record).
+}
+
+// ── (3c) RE-RUN AFTER A PERSON RESOLVES ATTRIBUTION ─────────────────────────────────
+
+/**
+ * Run the automatic matching a receipt would have had if its attribution had been right from
+ * the start (W20/B193). parseReceipt stops before any effect for a receipt in conflict or with
+ * no shop; when a person then assigns it (vendor mail "assign") or moves it
+ * (moveConflictedReceipt), nothing ran the matching again, so the receipt sat in triage
+ * although a single delivery or order was waiting for it.
+ *
+ * BEST-EFFORT, NEVER THROWS: the human action has already committed. The same gates and the
+ * same single-candidate rules as the parse leg apply (receiptAutomationAllowed; only an invoice
+ * takes a delivery, B112; exactly one candidate or nothing), and each writer only ever ADDS a
+ * link under its own compare-and-set, so this can never replace a link a person made. The raw
+ * email text is not stored, so the order match reads the subject and the parsed fields.
+ */
+export async function runReceiptAutomation(receiptId: string): Promise<void> {
+  try {
+    const sb = getServiceRoleClient();
+    const { data: r, error } = await sb.from("email_receipts")
+      .select("id, subject, parsed_json, vendor_guess_id, location_id, received_at, linked_po_id, inbound_message_id, parse_state, attribution_conflict")
+      .eq("id", receiptId)
+      .maybeSingle<ReceiptAutomationState & {
+        id: string; subject: string | null; vendor_guess_id: string | null; received_at: string; linked_po_id: string | null;
+        parsed_json: { extraction?: { poCode?: unknown; shipTo?: unknown; vendorName?: unknown } } | null;
+      }>();
+    if (error || !r || !receiptAutomationAllowed(r)) return;
+    await attemptAutoLink(r.id);
+    if (r.linked_po_id) return; // assign and move both refuse linked evidence; nothing to add.
+    const match = await matchReceiptToPo(sb, {
+      id: r.id, subject: r.subject, body: assembleMatchBody(r.parsed_json?.extraction, null),
+      vendorGuessId: r.vendor_guess_id, locationId: r.location_id, receivedAt: r.received_at,
+    });
+    await applyReceiptPoEffects(sb, r.id, match?.matchedBy ?? null);
+  } catch (e) {
+    console.error(`[email-receipts] automation after manual attribution failed for receipt=${receiptId}:`, e instanceof Error ? e.message : e);
+  }
 }
 
 // ── (4) READS — unlinked queue + per-delivery receipt (with signed URLs) ────────────
@@ -1551,4 +1603,6 @@ export async function moveConflictedReceipt(actor: AuthContext, receiptId: strin
     metadata: { before: { location_id: r.location_id, vendor_guess_id: r.vendor_guess_id, attribution_conflict: true },
       after: { location_id: r.account_location_id, vendor_guess_id: r.account_vendor_id, attributed_by: "manual", attribution_conflict: false } },
     ipAddress: null, userAgent: null });
+  // W20/B193: the conflict is resolved, so the matching the parse leg skipped can run now.
+  await runReceiptAutomation(r.id);
 }

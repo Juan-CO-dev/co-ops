@@ -46,6 +46,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import type { AuthContext } from "@/lib/session";
 import { matchReceiptToPo, applyReceiptPoEffects, attemptAutoLink, EmailReceiptError, RECEIPT_MIN } from "@/lib/email-receipts";
+import { assembleMatchBody } from "@/lib/email-receipts-matching-shared";
 import { resolveReceiptAttribution, type ReceiptAccountMatch, type ReceiptAttributionSource } from "@/lib/receipt-attribution-shared";
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
@@ -242,7 +243,12 @@ export async function parseReceipt(sb: ServiceClient, receiptId: string, onWritt
   // ride the body text so extractPoCodes (inside matchReceiptToPo) can find a code the raw
   // eml/subject didn't carry.
   try {
-    if (attribution) await attemptAutoLink(r.id);
+    // W20/B193: the delivery auto-link runs after EVERY successful parse, not only when this
+    // parse inferred the attribution. A receipt a person claimed before it was parsed
+    // (attributed_by 'manual') used to skip it for good, and a legacy receipt's only attempt
+    // was the pre-parse one, which is a no-op now that only invoices may link (B112).
+    // attemptAutoLink's own gates decide: resolved attribution, vendor + shop, an invoice.
+    await attemptAutoLink(r.id);
     if (!r.linked_po_id) {
       const matchBody = assembleMatchBody(extraction, textFallbackForMatch);
       const match = await matchReceiptToPo(sb, {
@@ -592,21 +598,6 @@ function cleanSignedCents(v: unknown): number | undefined {
 function cleanFiniteNumber(v: unknown): number | undefined {
   if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
   return v;
-}
-
-/**
- * Assemble the text the PO matcher scans post-parse. The parsed poCode + shipTo + vendorName
- * ride INTO the body string so extractPoCodes (inside matchReceiptToPo) can find a code the
- * raw eml/subject didn't literally contain, and so a shipTo can later inform matching. Include
- * the raw-eml text fallback too so both signals are present. Pure string assembly — no markup.
- */
-function assembleMatchBody(extraction: Extraction, textFallback: string | null): string {
-  const parts: string[] = [];
-  if (extraction.poCode) parts.push(extraction.poCode);
-  if (extraction.shipTo) parts.push(extraction.shipTo);
-  if (extraction.vendorName) parts.push(extraction.vendorName);
-  if (textFallback) parts.push(textFallback);
-  return parts.join(" \n ");
 }
 
 /** utf-8 decode; a decode failure → null (best-effort, never throws). */
