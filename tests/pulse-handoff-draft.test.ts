@@ -31,6 +31,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 function mount() {
   const children = createElement(HandoffSection, { data, mode: "detail", locationId: "shop", onChanged });
+  // eslint-disable-next-line react/no-children-prop -- TranslationProvider types `children` as a required prop
   return render(createElement(TranslationProvider, { initialLanguage: "en", children }));
 }
 const textarea = () => screen.getByLabelText(en["pulse.handoff.body_label"]) as HTMLTextAreaElement;
