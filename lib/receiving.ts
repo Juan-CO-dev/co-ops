@@ -55,8 +55,7 @@ import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
   AVG_FOLD_WEIGHT_CLASS,
   avgFoldSourceNote,
-  creditUnitPrice,
-  deriveCreditDrafts,
+  deriveLineCreditDrafts,
   deriveMissingCreditDrafts,
   disposeAvgFold,
   findVendorMismatch,
@@ -64,9 +63,9 @@ import {
   storeRootPackPrice,
   isDuplicateAppend,
   photoIdFromRef,
+  rpcNotInstalled,
   sameInvoiceNumber,
   type AppendLine,
-  type IntakeLineForCredits,
   type MissingExpectedLine,
 } from "@/lib/receiving-shared";
 import { advanceToReceived } from "@/lib/purchase-orders";
@@ -573,42 +572,79 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   // brain — both mirror the same operator input this PR; a future pass can retire
   // the legacy `notes` once every reader moves to `note`).
   const headerNote = input.notes?.trim() || null;
-  const { data: header, error: hErr } = await sb.from("vendor_deliveries").insert({
+  const headerRow = {
     vendor_id: input.vendorId, location_id: input.locationId, delivery_date: input.deliveryDate,
     invoice_number: invoiceNumber, invoice_total: input.invoiceTotal ?? null,
     notes: headerNote, note: headerNote, receipt_url: photos.receiptUrl, received_by: actor.user.id,
     delivery_status: input.deliveryStatus ?? "complete",
     purchase_order_id: poId,
-  }).select("id").maybeSingle<{ id: string }>();
-  if (hErr) {
-    // The app-level dedupe guard above is the fast path (friendly message), but it
-    // races under concurrent POSTs — migration 0169's partial unique index
-    // (vendor_deliveries_dedupe_uq) is the real arbiter. A 23505 on it means another
-    // request already inserted this (vendor, location, date, lower(invoice)) → 409.
-    if (hErr.code === "23505" || /vendor_deliveries_dedupe_uq/.test(hErr.message ?? "")) {
-      throw new ReceivingError(409, "duplicate_delivery", "This invoice was already received for this vendor today.");
+  };
+  const lineRows = buildLineRows(input.lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku, photos.lineUrls);
+
+  // ── THE WRITE: ONE TRANSACTION (W20/B197, migration 0327) ────────────────────────────
+  // The header, its lines, the lined credits and the line-less credits used to be four
+  // requests. A failure after the first left a delivery with no lines, and with an invoice
+  // number the retry then answered "already received" (the 0169 index). record_delivery_atomic
+  // writes all of it or none of it. The lined credits are derived HERE, from the request's own
+  // lines, by the same rule the read-back path uses (deriveLineCreditDrafts): a line's values
+  // are exactly what is about to be stored, and each credit names its line by position.
+  const lineCredits = deriveLineCreditDrafts(
+    input.lines.map((l, i) => ({
+      deliveryItemId: String(i + 1),
+      skuId: l.skuId,
+      qtyReceived: l.qtyReceived,
+      expectedQty: l.expectedQty ?? null,
+      unitPrice: l.unitPrice ?? null,
+      discrepancyType: l.discrepancyType ?? null,
+      receivedLevelLabel: l.receivedLevelLabel?.trim() || null,
+    })),
+    { chains: resolved.chainsBySku, packFormat: resolved.packFormatBySku, store: vend.source_kind === "store" },
+  );
+  const duplicateDelivery = () => new ReceivingError(409, "duplicate_delivery", "This invoice was already received for this vendor today.");
+  let deliveryId: string;
+  let missingCreditCount = missingCreditDrafts.length;
+  const atomic = await sb.rpc("record_delivery_atomic", {
+    p_header: headerRow,
+    p_lines: lineRows,
+    p_line_credits: lineCredits.map((d) => ({ line_index: Number(d.deliveryItemId), reason: d.reason, sku_id: d.skuId, qty: d.qty, amount_cents: d.amountCents })),
+    p_missing_credits: missingCreditDrafts.map((d) => ({ reason: d.reason, sku_id: d.skuId, qty: d.qty, amount_cents: d.amountCents })),
+  });
+  if (!atomic.error) {
+    const id = (atomic.data as { delivery_id?: unknown } | null)?.delivery_id;
+    if (typeof id !== "string" || id === "") throw new Error("recordDelivery: the atomic writer returned no delivery id");
+    deliveryId = id;
+  } else if (!rpcNotInstalled(atomic.error)) {
+    // Rolled back whole: nothing was written. The app-level dedupe guard above is the fast
+    // path (friendly message) but races under concurrent POSTs; migration 0169's partial
+    // unique index (vendor_deliveries_dedupe_uq) is the real arbiter → 409.
+    if (atomic.error.code === "23505" && !/vendor_credits/.test(atomic.error.message ?? "")) throw duplicateDelivery();
+    throw new Error(`recordDelivery write: ${atomic.error.message}`);
+  } else {
+    // 0327 IS NOT APPLIED YET: the previous four-step write, unchanged, so the door keeps
+    // working. It is not atomic (that is the bug); the shape check both routes now run and
+    // the validation above already refuse the bad lines that used to trigger it.
+    const { data: header, error: hErr } = await sb.from("vendor_deliveries").insert(headerRow).select("id").maybeSingle<{ id: string }>();
+    if (hErr) {
+      if (hErr.code === "23505" || /vendor_deliveries_dedupe_uq/.test(hErr.message ?? "")) throw duplicateDelivery();
+      throw new Error(`recordDelivery header: ${hErr.message}`);
     }
-    throw new Error(`recordDelivery header: ${hErr.message}`);
+    if (!header) throw new Error("recordDelivery header returned no row");
+    deliveryId = header.id;
+
+    const { error: lErr } = await sb.from("vendor_delivery_items").insert(lineRows.map((row) => ({ delivery_id: deliveryId, ...row })));
+    if (lErr) throw new Error(`recordDelivery lines: ${lErr.message}`);
+
+    // Idempotent vendor credits from any discrepancy-flagged lines (spec D1: the
+    // intake unit_price is the credit price authority). Retry-safe via an app-side pre-read
+    // of the existing (delivery_item_id, reason) pairs, backed by the 0168 partial unique
+    // index — a derive that loses the race gets 23505 and no-ops.
+    await deriveAndUpsertCredits(sb, deliveryId, input.vendorId, input.locationId, actor.user.id);
+
+    // Line-less `short` credits for ordered items that never came off the truck.
+    missingCreditCount = await insertMissingExpectedCredits(
+      sb, deliveryId, input.vendorId, input.locationId, missingCreditDrafts, actor.user.id,
+    );
   }
-  if (!header) throw new Error("recordDelivery header returned no row");
-
-  const { error: lErr } = await sb.from("vendor_delivery_items").insert(
-    buildLineRows(header.id, input.lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku, photos.lineUrls),
-  );
-  if (lErr) throw new Error(`recordDelivery lines: ${lErr.message}`);
-
-  // Idempotent vendor credits from any discrepancy-flagged lines (spec D1: the
-  // intake unit_price is the credit price authority). Retry-safe via an app-side pre-read
-  // of the existing (delivery_item_id, reason) pairs, backed by the 0168 partial unique
-  // index — a derive that loses the race gets 23505 and no-ops.
-  await deriveAndUpsertCredits(sb, header.id, input.vendorId, input.locationId, actor.user.id);
-
-  // Line-less `short` credits for ordered items that never came off the truck. Filed
-  // right beside the lined credits so both halves of "what the vendor owes us for this
-  // drop" land in the same write phase.
-  const missingCreditCount = await insertMissingExpectedCredits(
-    sb, header.id, input.vendorId, input.locationId, missingCreditDrafts, actor.user.id,
-  );
 
   const priced = resolved.priceLines;
   if (priced.length > 0) {
@@ -650,7 +686,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     // toward a fact that stopped being true. `created_at` is the lot instant (the same
     // column FIFO attribution uses, AGENTS.md § Product identity), so no join is needed.
     //
-    // The current delivery's own lines were inserted above, before this loop, so the
+    // The current delivery's own lines were written above, before this loop, so the
     // window always contains at least this observation — bounding can never turn the fold
     // into a silent no-op, it can only stop old evidence outvoting new.
     const foldWindowStart = new Date(Date.now() - OBSERVED_FOLD_WINDOW_DAYS * 86_400_000).toISOString();
@@ -682,7 +718,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   await auditOperationalTaskOverride(actor, input.locationId, "receiving", "recordDelivery");
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
-    action: "delivery.received", resourceTable: "vendor_deliveries", resourceId: header.id,
+    action: "delivery.received", resourceTable: "vendor_deliveries", resourceId: deliveryId,
     // avg_skipped_protected = SKUs whose weight_class this door may not overrule.
     // It is the forensic answer to "why didn't the average move after that intake",
     // and the only record that the disagreement exists at all.
@@ -708,17 +744,17 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   const makeUpIds = input.makeUpCreditIds ?? [];
   if (makeUpIds.length > 0) {
     try {
-      const closure = await resolveCreditsRedelivered(actor, header.id, makeUpIds);
+      const closure = await resolveCreditsRedelivered(actor, deliveryId, makeUpIds);
       resolvedCredits = closure.resolved;
       skippedCredits = closure.skipped;
     } catch (e) {
       creditClosureError = true;
-      console.error(`recordDelivery credit closure failed (delivery ${header.id}):`, e instanceof Error ? e.message : e);
+      console.error(`recordDelivery credit closure failed (delivery ${deliveryId}):`, e instanceof Error ? e.message : e);
     }
   }
 
-  await attemptReceivingAutoLink(header.id).catch(() => { /* Advisory matching cannot fail a durable save. */ });
-  return { deliveryId: header.id, resolvedCredits, skippedCredits, creditClosureError };
+  await attemptReceivingAutoLink(deliveryId).catch(() => { /* Advisory matching cannot fail a durable save. */ });
+  return { deliveryId, resolvedCredits, skippedCredits, creditClosureError };
 }
 
 /**
@@ -783,6 +819,10 @@ interface ResolvedLines {
    */
   vendorIdBySku: Map<string, string | null>;
   priceLines: Array<{ skuId: string; unitPrice: number }>;
+  /** The pack chains and pack formats this pass already loaded (W20/B197): what credit pricing
+   *  needs (deriveLineCreditDrafts), so a new delivery's credits are derived with no second read. */
+  chainsBySku: Map<string, PackChainLevel[]>;
+  packFormatBySku: Map<string, string | null>;
 }
 
 /**
@@ -857,7 +897,8 @@ async function validateAndResolveDeliveryLines(
     if (unitPrice == null) throw new ReceivingError(400, "store_price_conversion", "The received level cannot be converted to a root-pack price");
     return { skuId: l.skuId, unitPrice };
   });
-  return { resolvedOzByLineIdx, chained, vendorIdBySku, weightClassBySku, priceLines };
+  const packFormatBySku = new Map((activeSkus ?? []).map((s) => [s.id, s.pack_format]));
+  return { resolvedOzByLineIdx, chained, vendorIdBySku, weightClassBySku, priceLines, chainsBySku, packFormatBySku };
 }
 
 /**
@@ -897,11 +938,13 @@ async function bindDeliveryPhotos(
 }
 
 /** Build the vendor_delivery_items rows for a set of input lines (shared shape for
- *  recordDelivery + addDeliveryLines). resolvedOzByLineIdx is index-aligned with lines.
- *  vendorIdBySku carries each SKU's own vendor onto the row (P3 / migration 0178). */
-function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedOzByLineIdx: Array<number | null>, createdBy: string, vendorIdBySku: Map<string, string | null>, photoUrls: ReadonlyArray<string | null>) {
+ *  recordDelivery + addDeliveryLines), WITHOUT delivery_id: a new delivery's lines are written
+ *  with their header in one transaction (W20/B197), an append adds its delivery id.
+ *  resolvedOzByLineIdx is index-aligned with lines. vendorIdBySku carries each SKU's own vendor
+ *  onto the row (P3 / migration 0178). */
+function buildLineRows(lines: DeliveryLineInput[], resolvedOzByLineIdx: Array<number | null>, createdBy: string, vendorIdBySku: Map<string, string | null>, photoUrls: ReadonlyArray<string | null>) {
   return lines.map((l, i) => ({
-    delivery_id: deliveryId, vendor_item_id: l.skuId, qty_received: l.qtyReceived,
+    vendor_item_id: l.skuId, qty_received: l.qtyReceived,
     vendor_id: vendorIdBySku.get(l.skuId) ?? null,
     unit_price: l.unitPrice ?? null, observed_oz_per_each: l.observedOzPerEach ?? null,
     notes: l.notes?.trim() || null, created_by: createdBy,
@@ -929,10 +972,12 @@ function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedO
  * the row the pre-read wanted: it no-ops (audit v2 F10). Every other write error surfaces
  * a 500 (credit_write_failed) — a swallowed credit is a real loss.
  *
- * KNOWN, NOT FIXED HERE: the recordDelivery path is not self-healing. A credit-write 500
- * at that call site leaves the delivery + lines durable, and a retry hits
- * `vendor_deliveries_dedupe_uq` → 409 duplicate_delivery, so the credits are never
- * re-derived. That needs a re-derive affordance, and it is a named follow-up.
+ * A NEW DELIVERY NO LONGER COMES THROUGH HERE once migration 0327 is applied (W20/B197):
+ * recordDelivery derives its credits from the request's lines with the same rule
+ * (deriveLineCreditDrafts) and writes them in the header's transaction, so a credit failure
+ * rolls the delivery back and the retry works. This function remains the path for
+ * addDeliveryLines, and for recordDelivery only while 0327 is not applied (where the old gap
+ * stands: a credit-write 500 leaves the delivery + lines durable and the retry is a 409).
  */
 async function deriveAndUpsertCredits(
   sb: ServiceClient, deliveryId: string, vendorId: string, locationId: string, createdBy: string,
@@ -944,35 +989,38 @@ async function deriveAndUpsertCredits(
   if (iErr) throw new Error(`deriveAndUpsertCredits select: ${iErr.message}`);
   const flagged = (itemRows ?? []).filter((r) => r.discrepancy_type != null);
   // W04/B046: a credit counts LEVEL units, but a vendor line's price is per ROOT pack. For a
-  // line received at a named level, price the credit per that level (creditUnitPrice); a store
-  // run's price is already per level. A level the chain cannot place leaves the amount null.
+  // line received at a named level, price the credit per that level (creditUnitPrice, inside
+  // deriveLineCreditDrafts); a store run's price is already per level. A level the chain cannot
+  // place leaves the amount null. The chains are only needed when some flagged line names a level.
   const levelled = flagged.filter((r) => r.received_level_label?.trim());
-  let creditPrice = (r: (typeof flagged)[number]) => num(r.unit_price);
+  let chains = new Map<string, PackChainLevel[]>();
+  let packFormat = new Map<string, string | null>();
+  let store = false;
   if (levelled.length > 0) {
     const skuIds = [...new Set(levelled.map((r) => r.vendor_item_id))];
-    const [chains, { data: vendorRow, error: vErr }, { data: skuRows, error: sErr }] = await Promise.all([
+    const [loadedChains, { data: vendorRow, error: vErr }, { data: skuRows, error: sErr }] = await Promise.all([
       loadSkuPackChains(skuIds, locationId),
       sb.from("vendors").select("source_kind").eq("id", vendorId).maybeSingle<{ source_kind: string | null }>(),
       sb.from("vendor_items").select("id, pack_format").in("id", skuIds).returns<Array<{ id: string; pack_format: string | null }>>(),
     ]);
     if (vErr) throw new Error(`deriveAndUpsertCredits vendor: ${vErr.message}`);
     if (sErr) throw new Error(`deriveAndUpsertCredits skus: ${sErr.message}`);
-    const store = vendorRow?.source_kind === "store";
-    const packFormat = new Map((skuRows ?? []).map((s) => [s.id, s.pack_format]));
-    creditPrice = (r) => creditUnitPrice(num(r.unit_price), r.received_level_label,
-      chains.get(r.vendor_item_id) ?? null, packFormat.get(r.vendor_item_id) ?? null, store);
+    chains = loadedChains;
+    store = vendorRow?.source_kind === "store";
+    packFormat = new Map((skuRows ?? []).map((s) => [s.id, s.pack_format]));
   }
-  const forCredits: IntakeLineForCredits[] = flagged
-    .map((r) => ({
-      deliveryItemId: r.id,
-      skuId: r.vendor_item_id,
-      // received_qty_at_level is the level-unit qty when a level was named; fall back to qty_received.
-      qtyReceived: num(r.received_qty_at_level) ?? num(r.qty_received) ?? 0,
-      expectedQty: num(r.expected_qty),
-      unitPrice: creditPrice(r),
-      discrepancyType: r.discrepancy_type,
-    }));
-  const drafts = deriveCreditDrafts(forCredits);
+  // ONE rule for lined credits (W20/B197): the same function prices a new delivery's credits
+  // from its request lines inside recordDelivery's single transaction.
+  const drafts = deriveLineCreditDrafts(flagged.map((r) => ({
+    deliveryItemId: r.id,
+    skuId: r.vendor_item_id,
+    // received_qty_at_level is the level-unit qty when a level was named; fall back to qty_received.
+    qtyReceived: num(r.received_qty_at_level) ?? num(r.qty_received) ?? 0,
+    expectedQty: num(r.expected_qty),
+    unitPrice: num(r.unit_price),
+    discrepancyType: r.discrepancy_type,
+    receivedLevelLabel: r.received_level_label,
+  })), { chains, packFormat, store });
   if (drafts.length === 0) return;
   // SIM-DAY FIND (2026-08-11, P1 — live since V1): vendor_credits_line_reason_uq is a
   // PARTIAL unique index (WHERE delivery_item_id IS NOT NULL) and Postgres refuses a
@@ -1412,7 +1460,8 @@ export async function addDeliveryLines(
   }
 
   const { error: lErr } = await sb.from("vendor_delivery_items").insert(
-    buildLineRows(h.id, lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku, photos.lineUrls),
+    buildLineRows(lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku, photos.lineUrls)
+      .map((row) => ({ delivery_id: h.id, ...row })),
   );
   if (lErr) throw new Error(`addDeliveryLines lines: ${lErr.message}`);
 

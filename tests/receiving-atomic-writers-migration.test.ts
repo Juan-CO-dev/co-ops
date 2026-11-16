@@ -1,0 +1,91 @@
+/**
+ * Migration 0327 (audit W20: B197 atomic delivery write, B114 locked verdict, the manager unlink).
+ * FILE ONLY: never applied from here. The executable proof is scripts/sql-harness-0327.mjs (PGlite,
+ * the real receiving DDL); this file runs it and pins the file's contract.
+ */
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const sql = readFileSync("supabase/migrations/0327_receiving_atomic_writers.sql", "utf8").replace(/\r\n/g, "\n");
+const statements = sql.split("\n").filter((line) => !line.trimStart().startsWith("--")).join("\n");
+
+describe("0327 receiving atomic writers", () => {
+  it("carries the house header and is authored, not applied", () => {
+    expect(sql.startsWith("-- Migration 0327_receiving_atomic_writers\n")).toBe(true);
+    expect(sql).toContain("NOT YET APPLIED");
+    expect(sql).not.toMatch(/APPLIED TO PROD/);
+    for (const part of ["B197", "B114", "W20-2", "-- PRE-FLIGHT", "-- VERIFY AFTER APPLY", "-- ROLLBACK", "-- EXISTING ROWS", "-- APP COMPATIBILITY", "-- LOCK ORDER", "-- DEPENDS ON"]) {
+      expect(sql).toContain(part);
+    }
+    expect(statements.trimStart().startsWith("begin;")).toBe(true);
+    expect(statements.trimEnd().endsWith("commit;")).toBe(true);
+  });
+
+  it("is idempotent by construction and touches no existing row", () => {
+    expect(statements).toContain("create table if not exists public.delivery_receipt_unlinks");
+    expect(statements.match(/create or replace function public\./g)).toHaveLength(3);
+    expect(statements).not.toMatch(/\bcreate function\b/i);
+    expect(statements.match(/drop policy if exists/g)).toHaveLength(4);
+    // No statement outside a function body or a guard block deletes, truncates or rewrites data.
+    const outsideFunctions = statements.replace(/(as|do) \$\$[\s\S]*?end \$\$;/g, "");
+    expect(outsideFunctions).not.toMatch(/\b(delete\s+from|truncate|update\s+public\.|insert\s+into)\b/i);
+    expect(outsideFunctions).not.toMatch(/\bdrop\s+(table|column|function|index)\b/i);
+  });
+
+  it("never deletes: the unlink clears a link and appends a record", () => {
+    expect(statements).not.toMatch(/\bdelete\s+from\b/i);
+    expect(statements).not.toMatch(/\bfor all\b/i);
+    for (const op of ["select", "insert", "update", "delete"]) expect(statements).toContain(`delivery_receipt_unlinks_no_user_${op}`);
+  });
+
+  it("locks the delivery FOR NO KEY UPDATE, and the receipt only after it", () => {
+    const fn = (name: string) => { const at = statements.indexOf(`create or replace function public.${name}(`); return statements.slice(at, statements.indexOf("end $$;", at)); };
+    for (const name of ["delivery_match_verdict", "delivery_receipt_unlink"]) {
+      expect(fn(name)).toContain("select * into d from public.vendor_deliveries where id = p_delivery for no key update;");
+      expect(fn(name)).not.toMatch(/for update;/);
+    }
+    const unlink = fn("delivery_receipt_unlink");
+    expect(unlink.indexOf("from public.vendor_deliveries where id = p_delivery for no key update")).toBeLessThan(unlink.indexOf("from public.email_receipts r where r.id = d.email_receipt_id for no key update"));
+    // The verdict's terminal check is read from the LOCKED row.
+    const verdict = fn("delivery_match_verdict");
+    expect(verdict.indexOf("for no key update")).toBeLessThan(verdict.indexOf("if d.match_state = 'override' then raise exception 'already_overridden'"));
+  });
+
+  it("grants execute to service_role only and asserts the ceilings itself", () => {
+    for (const signature of ["record_delivery_atomic(jsonb,jsonb,jsonb,jsonb)", "delivery_match_verdict(uuid,text,text,text)", "delivery_receipt_unlink(uuid,uuid,text,uuid)"]) {
+      expect(statements).toContain(`revoke all on function public.${signature} from public, anon, authenticated, service_role;`);
+      expect(statements).toContain(`grant execute on function public.${signature} to service_role;`);
+    }
+    expect(statements).toContain("revoke all on public.delivery_receipt_unlinks from public, anon, authenticated, service_role;");
+    expect(statements).toContain("grant select on public.delivery_receipt_unlinks to service_role;");
+    expect(statements.match(/\bgrant\b/gi)).toHaveLength(4);
+    for (const guard of ["'0327: receiving RPC escape'", "'0327: delivery_receipt_unlinks privilege escape'", "'0327: delivery_receipt_unlinks must have RLS on'"]) expect(statements).toContain(guard);
+    expect(statements.match(/security definer set search_path = pg_catalog, public/g)).toHaveLength(3);
+  });
+
+  it("real DDL: atomic write, locked verdict, unlink, guards and ceilings", () => {
+    const output = execFileSync(process.execPath, ["scripts/sql-harness-0327.mjs"], { encoding: "utf8", timeout: 400_000 });
+    for (const pin of [
+      "a schema missing a column the writer names is refused by name, nothing created",
+      "where vendor mail is installed, 0327 waits for 0326; with 0326 it applies",
+      "applies, and re-applying is a no-op (idempotent)",
+      "each lined credit points at the line its line_index named",
+      "a bad discrepancy flag on line 2 is refused",
+      "...and leaves no delivery, no line and no credit behind",
+      '...so the corrected retry of the SAME invoice saves (it used to be "already received")',
+      "the same invoice in another case is refused by the 0169 index",
+      "two credits for one (line, reason) are refused by the 0168 index",
+      "an attestation after an override is refused already_overridden",
+      "...and the manager's decision and note are untouched",
+      "two discrepancy notes are both kept, trimmed, in order",
+      "a different receipt than the one the person saw is receipt_changed",
+      "the delivery has no receipt and its match is back to counted_only (an override is cleared too)",
+      "the unlink is recorded: pair, shop, prior state, reason, who",
+      "service_role cannot delete unlink history",
+      "RLS is on with the four deny policies, split per operation (never FOR ALL)",
+      "a variant that widens a grant fails its own assertion, rolls back, and keeps the history",
+      "PASS 0327:",
+    ]) expect(output).toContain(pin);
+  }, 420_000);
+});
