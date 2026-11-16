@@ -221,6 +221,7 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "catering.prep_demand.release",
   "catering.prep_demand.reserve",
   "catering.prep_demand.resync_skipped_package",
+  "catering.prep_demand.settle_skipped",
   "catering.prep_demand.sync_failed",
   "catering.quote.create",
   "catering.quote.revise",

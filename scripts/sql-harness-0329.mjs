@@ -1,4 +1,4 @@
-/** 0329 offline proof (audit W22: B122 reserve under the lead lock, B120 reschedule, B205 LTO create, B201 stale-reserved repair):
+/** 0329 offline proof (audit W22: B122 reserve and settle under the lead lock, B120 reschedule, B205 LTO create, B201 stale-reserved repair):
  *  the REAL parent DDL + 0329 in PGlite, synthetic rows only. Never touches a real database. */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -18,6 +18,7 @@ const all = async (s, a = []) => (await db.query(s, a)).rows;
 const reject = async (f, re, s) => { await assert.rejects(f, re); check(true, s); };
 
 const reserve = (pipe, quote, rows, actor = null) => one('select public.reserve_catering_prep_demand($1,$2,$3,$4) r', [pipe, quote, JSON.stringify(rows), actor]).then((x) => x.r);
+const settle = (pipe, to) => one('select public.settle_catering_prep_demand($1,$2) r', [pipe, to]).then((x) => x.r);
 const reschedule = (lead, date, actor = null) => one('select public.reschedule_catering_lead($1,$2,$3) r', [lead, date, actor]).then((x) => x.r);
 const createLto = (actor, ev, items) => one('select public.create_lto_event($1,$2,$3) r', [actor, JSON.stringify(ev), JSON.stringify(items)]).then((x) => x.r);
 const demand = (pipe) => all("select status, need_date::text d, item_id::text, choice_package_item_id::text c, qty::numeric q, quote_id::text from catering_prep_demand where pipeline_id=$1 order by status, need_date, item_id", [pipe]);
@@ -73,7 +74,7 @@ try {
   await db.exec('rollback');
 
   // ── Privileges ─────────────────────────────────────────────────────────────────────────────
-  for (const f of ['public.reserve_catering_prep_demand(uuid,uuid,jsonb,uuid)', 'public.reschedule_catering_lead(uuid,date,uuid)', 'public.create_lto_event(uuid,jsonb,jsonb)']) {
+  for (const f of ['public.reserve_catering_prep_demand(uuid,uuid,jsonb,uuid)', 'public.settle_catering_prep_demand(uuid,text)', 'public.reschedule_catering_lead(uuid,date,uuid)', 'public.create_lto_event(uuid,jsonb,jsonb)']) {
     const p = await one(`select has_function_privilege('anon',$1,'EXECUTE') a, has_function_privilege('authenticated',$1,'EXECUTE') b, has_function_privilege('service_role',$1,'EXECUTE') s, (select prosecdef from pg_proc where oid=$1::regprocedure) d, (select proconfig from pg_proc where oid=$1::regprocedure) c`, [f]);
     check(!p.a && !p.b && p.s, `${f}: service_role only`);
     check(p.d === true && p.c.includes('search_path=pg_catalog, public'), `${f}: security definer, pinned search_path`);
@@ -153,6 +154,57 @@ try {
   check(r.result === 'reserved' && r.released === 3 && r.inserted === 0, 'an empty row set releases the old demand and reserves none');
   await reject(() => reserve(randomUUID(), Q5, [], mgr), /reserve_lead_not_found/, 'unknown lead refused by name');
   await reject(() => one('select public.reserve_catering_prep_demand($1,$2,$3,null)', [L5, Q5, '{}']), /reserve_invalid_rows/, 'non-array rows refused by name');
+
+  // ── B122, the reverse order: settle re-checks the CURRENT stage under the lead lock ─────────────
+  // A: confirmed → quote_sent, then stalls before its release. B: re-confirms and reserves a fresh set.
+  // A's release resumes: the lead is confirmed again, so it must leave B's set alone.
+  const RV = await newLead();
+  const RVQ = await newQuote(RV);
+  await reserve(RV, RVQ, rows(2), mgr);                                         // the original confirm
+  await db.query("update catering_pipeline set stage='quote_sent' where id=$1", [RV]);  // A's stage flip
+  await db.query("update catering_pipeline set stage='confirmed' where id=$1", [RV]);   // B's re-confirm
+  r = await reserve(RV, RVQ, rows(5), mgr);                                     // B's fresh reservation
+  check(r.result === 'reserved' && r.released === 3 && r.inserted === 3, 'B re-reserves a fresh set');
+  r = await settle(RV, 'released');                                             // A's delayed release
+  check(r.result === 'stage_changed' && r.stage === 'confirmed', "A's delayed release after B re-confirmed → stage_changed");
+  d = await demand(RV);
+  check(JSON.stringify(d.filter((x) => x.status === 'reserved').map((x) => Number(x.q)).sort((a, b) => a - b)) === '[1,5,15]',
+    "…and B's fresh reservation is still reserved (the confirmed order stays in kitchen demand)");
+  r = await settle(RV, 'consumed');
+  check(r.result === 'stage_changed', 'a consume on a confirmed lead → stage_changed too');
+  check((await demand(RV)).filter((x) => x.status === 'reserved').length === 3, '…writing nothing');
+  // The stages that do settle.
+  await db.query("update catering_pipeline set stage='lost' where id=$1", [RV]);
+  r = await settle(RV, 'released');
+  check(r.result === 'released' && r.rows === 3, 'lost → release settles the reserved rows');
+  d = await demand(RV);
+  check(d.every((x) => x.status === 'released'), '…every row released, nothing reserved');
+  check((await all("select count(*)::int n from catering_prep_demand where pipeline_id=$1 and status='released' and released_at is null", [RV]))[0].n === 0, '…each with released_at');
+  r = await settle(RV, 'released');
+  check(r.result === 'released' && r.rows === 0, 'a repeated settle is a no-op (idempotent)');
+  r = await settle(RV, 'consumed');
+  check(r.result === 'stage_changed' && r.stage === 'lost', 'a consume on a lost lead → stage_changed');
+  for (const stage of ['inquiry', 'quote_sent']) {
+    const X = await newLead(); const XQ = await newQuote(X);
+    await reserve(X, XQ, rows(), mgr);
+    await db.query('update catering_pipeline set stage=$2 where id=$1', [X, stage]);
+    r = await settle(X, 'released');
+    check(r.result === 'released' && r.rows === 3, `${stage} → release settles`);
+  }
+  for (const stage of ['out', 'completed']) {
+    const X = await newLead(); const XQ = await newQuote(X);
+    await reserve(X, XQ, rows(), mgr);
+    await db.query('update catering_pipeline set stage=$2 where id=$1', [X, stage]);
+    r = await settle(X, 'released');
+    check(r.result === 'stage_changed' && r.stage === stage, `a release on a lead now ${stage} → stage_changed`);
+    r = await settle(X, 'consumed');
+    check(r.result === 'consumed' && r.rows === 3, `${stage} → consume settles`);
+    check((await demand(X)).every((x) => x.status === 'consumed'), `${stage}: every row consumed`);
+    check((await all("select count(*)::int n from catering_prep_demand where pipeline_id=$1 and consumed_at is null", [X]))[0].n === 0, `${stage}: each with consumed_at`);
+  }
+  await reject(() => settle(RV, 'reserved'), /settle_invalid_target/, 'settle to reserved refused by name');
+  await reject(() => settle(RV, null), /settle_invalid_target/, 'settle with no target refused by name');
+  await reject(() => settle(randomUUID(), 'released'), /settle_lead_not_found/, 'settle on an unknown lead refused by name');
 
   // Location: the 0225 trigger still binds a reserved insert to the lead's current shop.
   const L6 = await newLead('confirmed', '2030-11-20', loc2);

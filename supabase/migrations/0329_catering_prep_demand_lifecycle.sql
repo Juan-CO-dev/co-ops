@@ -6,7 +6,7 @@
 --   (an LTO event committed before its items, so an item failure left a live offer with no items) and B201 (house
 --   leads completed by the nightly rollover never left 'reserved'; the data repair below).
 --
--- WHAT: four SECURITY DEFINER functions. No table, column, index, policy or grant on a table changes, and applying
+-- WHAT: five SECURITY DEFINER functions. No table, column, index, policy or grant on a table changes, and applying
 --   this file changes NO existing row (the B201 repair is a function CC calls separately, with a manifest).
 --
 --   reserve_catering_prep_demand(p_pipeline_id, p_quote_id, p_rows, p_actor_id) → jsonb      [service_role]
@@ -24,6 +24,19 @@
 --     transaction (then its own release/consume, which runs after its flip, catches the rows inserted here).
 --     The rows are resolved in the app (lib/catering/prep-demand.ts resolveQuoteDemand, pure rules); the table's
 --     own CHECKs (one ref, qty > 0, portion) judge each one, and one bad row aborts the whole call.
+--
+--   settle_catering_prep_demand(p_pipeline_id, p_to) → jsonb                                   [service_role]
+--     THE release / consume writer (fix round 1: the reverse order of B122). Locks the catering_pipeline row FOR
+--     UPDATE, then settles the lead's reserved rows to p_to ('consumed' / 'released', with consumed_at /
+--     released_at) ONLY while the lead's CURRENT stage settles that way — consumed: out, completed; released:
+--     lost, inquiry, quote_sent. Any other stage → {result:'stage_changed', stage}, nothing written. The race it
+--     closes: manager A moves confirmed → quote_sent and stalls before the release; manager B re-confirms and
+--     reserve_catering_prep_demand inserts a fresh set; A's release resumes. The old UPDATE checked only
+--     pipeline_id + status and released B's fresh rows (the confirmed order left kitchen demand); now A's settle
+--     sees 'confirmed' under the lock and writes nothing. With a stage flip committed first, the settle sees it;
+--     with the settle holding the lock, the flip (an UPDATE of the same row) waits, and its own settle / reserve
+--     runs after it. → {result: p_to, rows}. Refusals (raise exception): settle_invalid_target ·
+--     settle_lead_not_found.
 --
 --   reschedule_catering_lead(p_lead_id, p_event_date, p_actor_id) → jsonb                     [service_role]
 --     Locks the lead FOR UPDATE, then: the lead's event_date → p_event_date; the LIVE quote revision's event_date
@@ -62,14 +75,14 @@
 --   bind_catering_insert_location takes the same lead row FOR UPDATE in the same transaction, which is safe). No
 --   advisory lock, so these never invert against apply_ezcater_order / transfer_catering_lead (advisory → lead).
 --
--- PRIVILEGES: the three writers execute for service_role ONLY (revoked from public, anon, authenticated; asserted).
+-- PRIVILEGES: the four writers execute for service_role ONLY (revoked from public, anon, authenticated; asserted).
 --   The backfill executes for no API role at all (revoked from service_role too; asserted). No table grant changes.
 --
 -- APP COMPATIBILITY: lib/catering/prep-demand.ts, lib/catering/pipeline.ts and lib/catering/lto.ts call these
 --   functions first and, when the function does not exist yet (PGRST202 / 42883), run their previous path (for
 --   the reschedule and the LTO create, the previous path plus the same steps done one call at a time). So the
 --   W22 deploy is safe before this file is applied and the file is safe to apply at any time after it; until it
---   is applied B122 and B205 remain open (B120 is fixed non-atomically by the fallback).
+--   is applied B122 (both orders) and B205 remain open (B120 is fixed non-atomically by the fallback).
 --
 -- DEPENDS ON: 0108 (catering_pipeline), 0110 + 0191 (catering_pipeline_events, the 'out' stage), 0120
 --   (catering_quotes), 0137 + 0140 (catering_prep_demand, released_at), 0141 (lto_events, lto_event_items), 0225
@@ -77,16 +90,17 @@
 --
 -- PROOF: scripts/sql-harness-0329.mjs (PGlite, the real parent DDL + this file, synthetic rows), CI-pinned by
 --   tests/catering-prep-demand-lifecycle-migration.test.ts. The two-session races (a stage flip or a reschedule while
---   reserve holds the lead lock, and the reverse) are the Management-API proof sim-0329-lock-check-management.mjs in
+--   reserve or settle holds the lead lock, and the reverse) are the Management-API proof sim-0329-lock-check-management.mjs in
 --   CC's audit folder — sim only (its guard refuses the production ref by name), run by CC, never by the builder.
 --
--- ROLLBACK: drop the four functions; the app falls back to its previous paths by itself.
+-- ROLLBACK: drop the five functions; the app falls back to its previous paths by itself.
 begin;
 
 do $$
 declare v_col text; v_missing text[] := '{}';
 begin
   if to_regprocedure('public.reserve_catering_prep_demand(uuid,uuid,jsonb,uuid)') is not null
+     or to_regprocedure('public.settle_catering_prep_demand(uuid,text)') is not null
      or to_regprocedure('public.reschedule_catering_lead(uuid,date,uuid)') is not null
      or to_regprocedure('public.create_lto_event(uuid,jsonb,jsonb)') is not null
      or to_regprocedure('public.catering_prep_demand_backfill_stale(integer,integer)') is not null then
@@ -168,6 +182,32 @@ begin
     from jsonb_to_recordset(p_rows) as r(item_id uuid, menu_item_id uuid, choice_package_item_id uuid, portion text, qty numeric);
   get diagnostics v_inserted = row_count;
   return jsonb_build_object('result', 'reserved', 'released', v_released, 'inserted', v_inserted, 'quote_id', v_quote.id);
+end $$;
+
+-- ── B122, the reverse order: THE release / consume writer ───────────────────────────────────────────────
+create function public.settle_catering_prep_demand(p_pipeline_id uuid, p_to text)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_lead public.catering_pipeline%rowtype; v_rows integer := 0;
+begin
+  if p_pipeline_id is null or p_to is null or p_to not in ('consumed', 'released') then
+    raise exception 'settle_invalid_target';
+  end if;
+  select * into v_lead from public.catering_pipeline where id = p_pipeline_id for update;   -- THE lock
+  if not found then raise exception 'settle_lead_not_found'; end if;
+  -- The stage that won owns the ledger: settle only while the CURRENT stage settles this way.
+  if not ((p_to = 'consumed' and coalesce(v_lead.stage, '') in ('out', 'completed'))
+       or (p_to = 'released' and coalesce(v_lead.stage, '') in ('lost', 'inquiry', 'quote_sent'))) then
+    return jsonb_build_object('result', 'stage_changed', 'stage', v_lead.stage);
+  end if;
+  if p_to = 'consumed' then
+    update public.catering_prep_demand set status = 'consumed', consumed_at = clock_timestamp()
+     where pipeline_id = p_pipeline_id and status = 'reserved';
+  else
+    update public.catering_prep_demand set status = 'released', released_at = clock_timestamp()
+     where pipeline_id = p_pipeline_id and status = 'reserved';
+  end if;
+  get diagnostics v_rows = row_count;
+  return jsonb_build_object('result', p_to, 'rows', v_rows);
 end $$;
 
 -- ── B120: the reschedule ─────────────────────────────────────────────────────────────────────────────────
@@ -280,10 +320,11 @@ begin
   return jsonb_build_object('consumed', v_consume, 'released', v_release);
 end $$;
 
--- Privileges: service_role executes the three writers; NO API role executes the backfill.
+-- Privileges: service_role executes the four writers; NO API role executes the backfill.
 do $$ declare f regprocedure; begin
   foreach f in array array[
     'public.reserve_catering_prep_demand(uuid,uuid,jsonb,uuid)'::regprocedure,
+    'public.settle_catering_prep_demand(uuid,text)'::regprocedure,
     'public.reschedule_catering_lead(uuid,date,uuid)'::regprocedure,
     'public.create_lto_event(uuid,jsonb,jsonb)'::regprocedure
   ] loop

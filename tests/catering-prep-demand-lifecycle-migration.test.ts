@@ -31,22 +31,26 @@ describe("0329_catering_prep_demand_lifecycle", () => {
     expect(out).toContain("PASS 0329:");
   }, 260_000);
 
-  it("one transaction; reserve and reschedule lock the lead row FIRST; definer + pinned search_path", () => {
+  it("one transaction; reserve, settle and reschedule lock the lead row FIRST; definer + pinned search_path", () => {
     expect(src).toMatch(/\nbegin;\n/);
     expect(src.trimEnd().endsWith("commit;")).toBe(true);
-    expect(src.match(/select \* into v_lead from public\.catering_pipeline where id = p_(pipeline|lead)_id for update;/g)).toHaveLength(2);
-    expect(src.match(/security definer set search_path = pg_catalog, public as \$\$/g)).toHaveLength(4);
+    expect(src.match(/select \* into v_lead from public\.catering_pipeline where id = p_(pipeline|lead)_id for update;/g)).toHaveLength(3);
+    expect(src.match(/security definer set search_path = pg_catalog, public as \$\$/g)).toHaveLength(5);
     expect(src).not.toMatch(/pg_advisory/);
     // reserve re-checks under the lock
     expect(src).toContain("if v_lead.stage is distinct from 'confirmed' then");
     expect(src).toContain("if v_quote.id is distinct from p_quote_id then return jsonb_build_object('result', 'quote_changed'); end if;");
+    // settle re-checks the CURRENT stage under the lock (fix round 1: a delayed release after a re-confirm)
+    expect(src).toContain("if not ((p_to = 'consumed' and coalesce(v_lead.stage, '') in ('out', 'completed'))");
+    expect(src).toContain("or (p_to = 'released' and coalesce(v_lead.stage, '') in ('lost', 'inquiry', 'quote_sent'))) then");
+    expect(src).toContain("return jsonb_build_object('result', 'stage_changed', 'stage', v_lead.stage);");
   });
 
   it("no table, policy or grant on a table changes; applying it changes no row", () => {
     expect(src).not.toMatch(/\n\s*(alter|drop|create) table/i);
     expect(src).not.toMatch(/\n\s*create (policy|index|trigger)/i);
     expect(src).not.toMatch(/grant (select|insert|update|delete|all) on (table )?public\./i);
-    // The only top-level statements: the preflight DO, four create function, the privilege DO.
+    // The only top-level statements: the preflight DO, five create function, the privilege DO.
     const body = src.slice(src.indexOf("\nbegin;\n"));
     const outside = body.replace(/\$\$[\s\S]*?\$\$/g, "$$").split("\n").filter((l) => /^(insert|update|delete|truncate)\b/i.test(l));
     expect(outside).toEqual([]);
@@ -58,8 +62,10 @@ describe("0329_catering_prep_demand_lifecycle", () => {
     expect(src).toContain("and not has_function_privilege('service_role', f, 'EXECUTE'), '0329: backfill privilege escape';");
   });
 
-  it("the lib reserves through the RPC and falls back ONLY when the function is missing", () => {
+  it("the lib reserves and settles through the RPCs and falls back ONLY when the function is missing", () => {
     expect(prepLib).toContain('sb.rpc("reserve_catering_prep_demand", {');
+    expect(prepLib).toContain('sb.rpc("settle_catering_prep_demand", { p_pipeline_id: pipelineId, p_to: to })');
+    expect(src).toContain("create function public.settle_catering_prep_demand(p_pipeline_id uuid, p_to text)");
     expect(prepLib).toContain('error.code === "PGRST202" || error.code === "42883"');
     for (const arg of ["p_pipeline_id", "p_quote_id", "p_rows", "p_actor_id"]) {
       expect(prepLib).toContain(`${arg}:`);

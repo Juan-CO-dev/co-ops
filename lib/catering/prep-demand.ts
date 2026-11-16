@@ -240,28 +240,67 @@ async function reserveLegacy(sb: Sb, actor: AuthContext, pipelineId: string, quo
   }
 }
 
-/** THE one UPDATE shape that moves a lead's still-reserved demand to consumed or released. */
-async function flipReserved(sb: Sb, pipelineId: string, to: "consumed" | "released", caller: string): Promise<void> {
+/** What one settle did: `settled` wrote (or found nothing to write); `stage_changed` is the expected loser
+ *  of a race — the lead has since moved to a stage that does not settle this way (it was re-confirmed and
+ *  re-reserved, say) — and wrote nothing. */
+type SettleResult = { outcome: "settled" } | { outcome: "stage_changed"; stage: string | null };
+
+let settleLegacyWarned = false;
+
+/**
+ * THE one write that moves a lead's still-reserved demand to consumed or released.
+ *
+ * ONE DATABASE CALL, UNDER THE LEAD'S ROW LOCK, RE-CHECKING THE STAGE (audit W22 fix round 1, migration 0329).
+ * The plain UPDATE checked only pipeline id + status, so a release that ran late flipped rows reserved AFTER
+ * it was decided: manager A moves confirmed → quote_sent and stalls before the release; manager B re-confirms
+ * and reserves a fresh set; A's release resumes and releases B's set — the confirmed order vanishes from
+ * kitchen demand. `settle_catering_prep_demand` locks the catering_pipeline row FOR UPDATE (the lock the
+ * reserve and every stage flip contend on) and settles only while the lead's CURRENT stage is one that settles
+ * that way (consumed: out / completed; released: lost / inquiry / quote_sent); otherwise it answers
+ * `stage_changed` and writes nothing — the stage that won owns the ledger. Until 0329 is applied the previous
+ * unguarded UPDATE runs (this race stays open until it is).
+ */
+async function flipReserved(sb: Sb, pipelineId: string, to: "consumed" | "released", caller: string): Promise<SettleResult> {
+  const { data, error } = await sb.rpc("settle_catering_prep_demand", { p_pipeline_id: pipelineId, p_to: to });
+  if (error && !rpcMissing(error)) throw new Error(`${caller}: ${error.message}`);
+  if (!error) {
+    const r = (data ?? {}) as { result?: string; stage?: string | null };
+    if (r.result === to) return { outcome: "settled" };
+    if (r.result === "stage_changed") return { outcome: "stage_changed", stage: r.stage ?? null };
+    throw new Error(`${caller}: unexpected settle result ${JSON.stringify(r.result ?? null)}`);
+  }
+  if (!settleLegacyWarned) {
+    settleLegacyWarned = true;
+    console.warn("[prep-demand] settle: migration 0329 not applied — using the unguarded update");
+  }
   const now = new Date().toISOString();
-  const { error } = await sb
+  const { error: uErr } = await sb
     .from("catering_prep_demand")
     .update(to === "consumed" ? { status: "consumed", consumed_at: now } : { status: "released", released_at: now })
     .eq("pipeline_id", pipelineId)
     .eq("status", "reserved");
-  if (error) throw new Error(`${caller}: ${error.message}`);
+  if (uErr) throw new Error(`${caller}: ${uErr.message}`);
+  return { outcome: "settled" };
+}
+
+/** A settle that lost the race: recorded (ids and stage names only), never an error. */
+function auditSettleSkipped(actor: { id: string | null; role: AuthContext["user"]["role"] | null }, pipelineId: string, to: "consumed" | "released", r: { stage: string | null }, extra: Record<string, unknown> = {}): void {
+  void audit({ actorId: actor.id, actorRole: actor.role, action: "catering.prep_demand.settle_skipped", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { to, reason: "stage_changed", stage: r.stage, ...extra }, ipAddress: null, userAgent: null });
 }
 
 /** Consume (deplete) still-reserved demand when the lead goes out/completed. */
 export async function consumePrepDemand(actor: AuthContext, pipelineId: string): Promise<void> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
-  await flipReserved(getServiceRoleClient(), pipelineId, "consumed", "consumePrepDemand");
+  const r = await flipReserved(getServiceRoleClient(), pipelineId, "consumed", "consumePrepDemand");
+  if (r.outcome === "stage_changed") return auditSettleSkipped({ id: actor.user.id, role: actor.user.role }, pipelineId, "consumed", r);
   void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.consume", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: {}, ipAddress: null, userAgent: null });
 }
 
 /** Release still-reserved demand when the lead reverts / is lost. Consumed rows stay consumed. */
 export async function releasePrepDemand(actor: AuthContext, pipelineId: string): Promise<void> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
-  await flipReserved(getServiceRoleClient(), pipelineId, "released", "releasePrepDemand");
+  const r = await flipReserved(getServiceRoleClient(), pipelineId, "released", "releasePrepDemand");
+  if (r.outcome === "stage_changed") return auditSettleSkipped({ id: actor.user.id, role: actor.user.role }, pipelineId, "released", r);
   void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.release", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: {}, ipAddress: null, userAgent: null });
 }
 
@@ -272,14 +311,19 @@ export async function releasePrepDemand(actor: AuthContext, pipelineId: string):
  * moveStage does for a person; `confirmed` is a no-op (a system move never reserves — reserving needs a
  * resolved quote and the 0329 lock path, which a person's confirm takes). Before this, a house lead with
  * a quote that the rollover completed kept its demand 'reserved' forever, feeding W4b SKU demand, the
- * digest and the surplus scan.
+ * digest and the surplus scan. A lead that moved on again before the settle ran (`stage_changed`) settles
+ * nothing and answers "none".
  */
 export async function applySystemStageToPrepDemand(sb: Sb, pipelineId: string, toStage: string, actorContext: string): Promise<"consumed" | "released" | "none"> {
   const to = toStage === "out" || toStage === "completed" ? "consumed"
     : toStage === "lost" || toStage === "inquiry" || toStage === "quote_sent" ? "released"
     : null;
   if (to === null) return "none";
-  await flipReserved(sb, pipelineId, to, "applySystemStageToPrepDemand");
+  const r = await flipReserved(sb, pipelineId, to, "applySystemStageToPrepDemand");
+  if (r.outcome === "stage_changed") {
+    auditSettleSkipped({ id: null, role: null }, pipelineId, to, r, { actor_context: actorContext, to_stage: toStage });
+    return "none";
+  }
   void audit({ actorId: null, actorRole: null, action: to === "consumed" ? "catering.prep_demand.consume" : "catering.prep_demand.release", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { actor_context: actorContext, to_stage: toStage }, ipAddress: null, userAgent: null });
   return to;
 }
