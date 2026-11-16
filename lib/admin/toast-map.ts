@@ -20,8 +20,7 @@ import { catalogWriteError } from "@/lib/catalog/write-errors-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
-import { lockLocationContext } from "@/lib/locations";
-import { integrationsReadScope } from "@/lib/admin/integrations-scope";
+import { canWriteIntegrationsShop, integrationsReadScope } from "@/lib/admin/integrations-scope";
 import type { AuthContext } from "@/lib/session";
 import { toastConfigured } from "@/lib/toast/client";
 import { fetchToastMenuItems, fetchToastModifierOptions } from "@/lib/toast/menus";
@@ -60,8 +59,10 @@ function requireLevel(actor: AuthContext, min: number): void {
  * all-locations shape). Every location-taking function calls this; the mapId
  * functions bind the loaded row's location. Mirrors lib/admin/templates.ts.
  */
+// W08B (owner ruling 2026-11-15): the MoO, owner and CGS roles may work on either shop by role
+// (canWriteIntegrationsShop); every other role stays bound to its own shops.
 function assertLocationAccess(actor: AuthContext, locationId: string): void {
-  if (!lockLocationContext({ role: actor.user.role, locations: actor.locations }, locationId)) {
+  if (!canWriteIntegrationsShop(actor, locationId)) {
     throw new AdminToastMapError(403, "forbidden", "You do not manage that location");
   }
 }
@@ -163,7 +164,7 @@ export async function loadToastMapState(actor: AuthContext): Promise<ToastMapSta
   const sb = getServiceRoleClient();
   // W08/B161: a GM sees only their own shops, their restaurant GUIDs and crosswalk rows. The MoO, owner and
   // CGS roles see both shops by role (owner ruling 2026-11-15; lib/admin/integrations-scope.ts). The writes
-  // keep assertLocationAccess (lockLocationContext). The entity / package / SKU reads are the shared name
+  // go through assertLocationAccess, which applies the same role rule (W08B). The entity / package / SKU reads are the shared name
   // lookup and matcher pool, so they stay whole.
   const scope = integrationsReadScope(actor);
   const locQuery = () => {

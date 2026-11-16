@@ -11,8 +11,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
-import { integrationsReadScope } from "@/lib/admin/integrations-scope";
+import { isAllLocationsAccess } from "@/lib/locations";
+import { canWriteIntegrationsShop, integrationsReadScope } from "@/lib/admin/integrations-scope";
 
 export const EZCATER_ADMIN_MIN = 7; // GM+ — mirrors toast-map
 export const EZCATER_READ_MIN = 6;  // AGM+ — events visibility
@@ -95,7 +95,8 @@ export async function loadEzcaterAdminState(actor: AuthContext): Promise<Ezcater
 /** Set/clear a location's ezCater caterer UUID (their id format is theirs — non-empty ≤100 chars, no shape guess). */
 export async function setLocationEzcaterUuid(actor: AuthContext, locationId: string, uuid: string | null): Promise<void> {
   requireLevel(actor, EZCATER_ADMIN_MIN);
-  if (!lockLocationContext({ role: actor.user.role, locations: actor.locations }, locationId)) {
+  // W08B (owner ruling 2026-11-15): MoO, owner and CGS may set either shop's caterer id by role.
+  if (!canWriteIntegrationsShop(actor, locationId)) {
     throw new AdminEzcaterError(403, "forbidden", "You do not manage that location");
   }
   const trimmed = uuid?.trim() || null;
