@@ -146,8 +146,9 @@ describe("generic checklist routes cannot bypass task assignment", () => {
     await expect(completeItem(service, { ...base, templateItemId: "item" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(submitBatch(service, { ...base, completionIds: ["completion"] })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(confirmInstance(service, { ...base, pin: "1234", incompleteReasons: [] })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
-    await expect(revokeCompletion(service, { actor, completionId: "completion" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
-    await expect(revokeWithReason(service, { actor, completionId: "completion", reason: "not_actually_done" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
+    // W05/B150: the correction writers take the verified write actor (they bind it to the instance's shop first).
+    await expect(revokeCompletion(service, { actor: base.actor, completionId: "completion" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
+    await expect(revokeWithReason(service, { actor: base.actor, completionId: "completion", reason: "not_actually_done" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(dropInstance(service, { ...base, reason: "change" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
   });
 });

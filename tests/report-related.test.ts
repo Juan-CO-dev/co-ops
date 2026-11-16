@@ -106,13 +106,13 @@ it("renders baseline and PM report references as links only when supplied author
   const openingPlain=renderToStaticMarkup(createElement(OpeningReportDetailView,{detail:opening,language:"en"}));
   const openingLink=renderToStaticMarkup(createElement(OpeningReportDetailView,{detail:opening,language:"en",baselineHrefs:{source:href}}));
   expect(openingPlain).not.toContain('href=');expect(openingLink).toContain("Baseline: AM Prep count");expect(openingLink).toContain(`href="${href}"`);
-  const pm:PmReportDetail={kind:"pm",date:args.date,locationId:"shop",status:"submitted",submittedByName:null,submittedAt:null,mvpUserId:null,mvpName:null,mvpNote:null,evals:[],gradientTally:[],wrapUp:[],reportProgress:[{key:"am_prep",reportId:"source",progress:"done",doneAt:null}]};
+  const pm:PmReportDetail={kind:"pm",format:"v1",v2Results:null,v2OwnBands:null,date:args.date,locationId:"shop",status:"submitted",submittedByName:null,submittedAt:null,mvpUserId:null,mvpName:null,mvpNote:null,evals:[],gradientTally:[],wrapUp:[],reportProgress:[{key:"am_prep",reportId:"source",progress:"done",doneAt:null}]};
   expect(renderToStaticMarkup(createElement(PmReportDetailView,{detail:pm,language:"en"}))).not.toContain('href=');
   expect(renderToStaticMarkup(createElement(PmReportDetailView,{detail:pm,language:"en",relatedReports:[{type:"am_prep",id:"wrong",date:args.date,href:"/reports/am_prep/wrong?location=shop"},{type:"am_prep",id:"source",date:args.date,href}]}))).toContain(`href="${href}"`);
 });
 
 it("keeps a PM reference plain when the actual source is absent even if another same-type report is readable",()=>{
-  const pm:PmReportDetail={kind:"pm",date:args.date,locationId:"shop",status:"submitted",submittedByName:null,submittedAt:null,mvpUserId:null,mvpName:null,mvpNote:null,evals:[],gradientTally:[],wrapUp:[],reportProgress:[{key:"mid_day",reportId:"actual",progress:"done",doneAt:null}]};
+  const pm:PmReportDetail={kind:"pm",format:"v1",v2Results:null,v2OwnBands:null,date:args.date,locationId:"shop",status:"submitted",submittedByName:null,submittedAt:null,mvpUserId:null,mvpName:null,mvpNote:null,evals:[],gradientTally:[],wrapUp:[],reportProgress:[{key:"mid_day",reportId:"actual",progress:"done",doneAt:null}]};
   const html=renderToStaticMarkup(createElement(PmReportDetailView,{detail:pm,language:"en",relatedReports:[{type:"mid_day",id:"wrong",date:args.date,href:"/reports/mid_day/wrong"}]}));
   expect(html).not.toContain('href=');
 });

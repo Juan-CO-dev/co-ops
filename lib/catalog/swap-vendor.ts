@@ -80,6 +80,10 @@ export async function previewSkuSwap(actor: AuthContext, req: SwapRequest): Prom
  const product: SwapPreview["product"] = productSnapshot.product
   ? { kind: "existing", id: productSnapshot.product.id, name: productSnapshot.product.name }
   : { kind: "create", name: req.productName ?? old.name, nameEs: req.productNameEs };
+ // W08/B057: a swap never moves another shop. A shop-scoped swap of an EXISTING product with no default
+ // primary would have to invent one (and every other shop would follow it), so it refuses here, at preview;
+ // 0308 refuses the same in SQL. A product the swap creates still gets its default pinned to the old item.
+ if (req.scope !== null && product.kind === "existing" && !productSnapshot.default_primary) throw new SwapError(409, "product_needs_primary");
  const request = { ...req, productName: product.kind === "create" ? product.name : null, productNameEs: product.kind === "create" ? product.nameEs : null };
  const eligibilityProposal: ProductProposal = product.kind === "existing"
   ? { productId: product.id, primarySkuId: neu.id, joinSkuIds: [old, neu].filter(s => !s.product_id).map(s => s.id) }

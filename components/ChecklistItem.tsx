@@ -321,6 +321,7 @@ type ChecklistErrorCode =
   | "role_level_insufficient"
   | "missing_count"
   | "missing_photo"
+  | "invalid_photo"
   | "pin_mismatch"
   | "missing_reasons"
   | "extra_reasons"
@@ -364,6 +365,8 @@ const errorMessageFor = (t: TFn, err: ChecklistApiError): string => {
       return t("closing.error.missing_count");
     case "missing_photo":
       return t("closing.error.missing_photo");
+    case "invalid_photo":
+      return t("closing.error.invalid_photo");
     case "pin_mismatch":
       return t("closing.error.pin_mismatch");
     case "missing_reasons":

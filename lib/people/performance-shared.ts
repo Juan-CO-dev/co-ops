@@ -252,12 +252,10 @@ export function teamWindow(facts: PeopleFacts, roster: readonly RosterMember[], 
     }
   }
 
-  // 3. NOTES from pm evals (authored by report submitter)
-  const pmReportById = new Map(pmRows.map((row) => [row.id, row] as const));
+  // 3. NOTES from pm evals, for the eval's AUTHOR at the report's submit instant (W09/B061).
   for (const e of facts.pmNotes) {
-    const rep = pmReportById.get(e.pm_report_id);
-    if (rep?.submitted_by && rep.submitted_at && ((e.area_to_improve && e.area_to_improve.trim()) || (e.note && e.note.trim()))) {
-      place(rep.submitted_by, rep.submitted_at, "notes");
+    if (e.submitted_at && inBounds(e.submitted_at, w.bounds) && ((e.area_to_improve && e.area_to_improve.trim()) || (e.note && e.note.trim()))) {
+      place(e.author_id, e.submitted_at, "notes");
     }
   }
 
@@ -399,12 +397,10 @@ function personCounts(facts: PeopleFacts, w: PeopleWindow, inputs: PeopleInputs)
     add(r.submitted_at, "peopleMgmt");
     if (inWindow(r.submitted_at)) { finalsChrono.push({ at: r.submitted_at, inWindow: etCalendarDate(r.submitted_at) === r.report_date }); touch(etCalendarDate(r.submitted_at)); }
   }
-  if (pmMine.length) {
-    const submittedAtById = new Map(pmMine.map((r) => [r.id, r.submitted_at] as const));
-    for (const e of facts.pmNotes) {
-      const at = submittedAtById.get(e.pm_report_id);
-      if (at && ((e.area_to_improve && e.area_to_improve.trim()) || (e.note && e.note.trim()))) add(at, "notes");
-    }
+  // The eval notes the person WROTE (the loader scoped them to author_id = person; W09/B061), at each report's
+  // submit instant — whoever submitted it.
+  for (const e of facts.pmNotes) {
+    if (e.submitted_at && inBounds(e.submitted_at, w.bounds) && ((e.area_to_improve && e.area_to_improve.trim()) || (e.note && e.note.trim()))) add(e.submitted_at, "notes");
   }
 
   // PM v2 notes the person WROTE (Task 23; the shop's switch on) — the twin of the v1 rule above.

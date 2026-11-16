@@ -72,3 +72,28 @@ describe("elapsed catering completion lifecycle backstop", () => {
     expect(updatedIds).toEqual(["house-lead"]);
   });
 });
+
+// Audit W11/B172: a lead rescheduled into the future between the select and the update was completed anyway.
+it("the guarded completion re-checks the date, so a lead rescheduled after the select is left alone", async () => {
+  const updateLt: Array<[string, string]> = [];
+  vi.mocked(getServiceRoleClient).mockReturnValue({
+    from(table: string) {
+      let updating = false;
+      let dateGuard = false;
+      const query = {
+        select: () => query,
+        update: () => { updating = true; return query; },
+        insert: () => query,
+        eq: () => query,
+        in: () => query,
+        lt: (key: string, value: string) => { if (updating) { updateLt.push([key, value]); dateGuard = key === "event_date" && value === "2026-11-14"; } return query; },
+        returns: async () => table === "catering_pipeline" ? { data: [{ id: "moved-lead", stage: "confirmed", location_id: "shop", lead_source: "toast" }], error: null } : { data: [], error: null },
+        // The manager's reschedule committed after the select: the date predicate now matches nothing.
+        abortSignal: async () => ({ error: null, count: updating && dateGuard ? 0 : 1 }),
+      };
+      return query;
+    },
+  } as unknown as ReturnType<typeof getServiceRoleClient>);
+  expect(await completeElapsedCateringEvents("2026-11-14")).toEqual({ completed: [], stageChanged: 1, failed: [] });
+  expect(updateLt).toEqual([["event_date", "2026-11-14"]]);
+});

@@ -139,28 +139,42 @@ export async function loadPeopleFacts(service: SupabaseClient, scope: PeopleFact
     loaded.add("pmReports");
   }
 
-  // NOTES from pm evals (authored by the report submitter)
+  // NOTES from pm evals, credited to each eval's AUTHOR (W09/B061; any KH+ with the task writes evals on a
+  // report someone else may submit) at the report's submit instant.
   if (want.has("pmNotes")) {
+    // The shop's reports submitted in the window: for a team that is `facts.pmReports`; for a person,
+    // `facts.pmReports` is the reports THEY submitted (finalizations), so the notes read their own list.
+    const shopReports = person === null
+      ? facts.pmReports
+      : await selectAllRows<PmReportFact>(
+        (from, to) => service
+          .from("pm_reports").select("id, submitted_at")
+          .eq("location_id", locationId).is("superseded_at", null)
+          .gte("submitted_at", start).lt("submitted_at", end)
+          .order("id", { ascending: true }).range(from, to),
+      );
+    const submittedAt = new Map(shopReports.map((r) => [r.id, r.submitted_at] as const));
     // Chunked (chunk D review, Astra P2): a compare's union load carries BOTH windows' report ids, and
     // one `.in(...)` over 240 of them overflows the 8 KB request line. Every consumer counts, so the
     // concatenated chunks give the same numbers.
-    const reportIds = facts.pmReports.map((r) => r.id);
+    const reportIds = shopReports.map((r) => r.id);
+    type EvalNoteRow = Omit<PmNoteFact, "submitted_at">;
     for (let i = 0; i < reportIds.length; i += ID_CHUNK) {
       const chunk = reportIds.slice(i, i + ID_CHUNK);
       const rows = person === null
-        ? await selectAllRows<PmNoteFact>(
+        ? await selectAllRows<EvalNoteRow>(
           (from, to) => service
-            .from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
+            .from("pm_employee_evals").select("pm_report_id, author_id, area_to_improve, note")
             .in("pm_report_id", chunk).is("superseded_at", null)
             .order("pm_report_id", { ascending: true }).order("id", { ascending: true }).range(from, to),
         )
-        : await selectAllRows<PmNoteFact>(
+        : await selectAllRows<EvalNoteRow>(
           (from, to) => service
-            .from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
-            .in("pm_report_id", chunk).is("superseded_at", null)
+            .from("pm_employee_evals").select("pm_report_id, author_id, area_to_improve, note")
+            .in("pm_report_id", chunk).eq("author_id", person).is("superseded_at", null)
             .order("id", { ascending: true }).range(from, to),
         );
-      facts.pmNotes.push(...rows);
+      facts.pmNotes.push(...rows.map((e) => ({ ...e, submitted_at: submittedAt.get(e.pm_report_id) ?? null })));
     }
     loaded.add("pmNotes");
   }
@@ -273,14 +287,20 @@ async function loadPmV2Families(
         });
         v2.grades.push(...rows.filter((g) => members.has(g.subject_id)));
       }
+      // W09/B059: a self-grade (subject = the grading copy's author) never enters a skill or a tally.
+      const authorOf = new Map(v2.copies.map((c) => [c.id, c.author_id] as const));
+      v2.grades = v2.grades.filter((g) => g.subject_id !== authorOf.get(g.copy_id));
     }
     if (wantNotes) {
       // Only the subject's OWN copies: a note counts for the manager who wrote it.
-      const authored = v2.copies.filter((c) => members.has(c.author_id)).map((c) => c.id);
-      for (const ids of chunk(authored, ID_CHUNK)) {
-        v2.notes.push(...await selectAllRows<PmV2NoteFact>((from, to) => service
-          .from("pm_copy_notes").select("id, copy_id").in("copy_id", ids).is("superseded_at", null)
-          .order("id", { ascending: true }).range(from, to)));
+      const authoredCopies = v2.copies.filter((c) => members.has(c.author_id));
+      const authorOfNote = new Map(authoredCopies.map((c) => [c.id, c.author_id] as const));
+      for (const ids of chunk(authoredCopies.map((c) => c.id), ID_CHUNK)) {
+        const rows = await selectAllRows<PmV2NoteFact>((from, to) => service
+          .from("pm_copy_notes").select("id, copy_id, subject_id").in("copy_id", ids).is("superseded_at", null)
+          .order("id", { ascending: true }).range(from, to));
+        // W09/B059: a note about oneself is not a "notes" act.
+        v2.notes.push(...rows.filter((n) => n.subject_id !== authorOfNote.get(n.copy_id)));
       }
     }
   } catch (e) {

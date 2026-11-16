@@ -25,6 +25,8 @@ const RELATIONS: Record<string, { table: string; local: string; foreign: string 
   "par_pass_lines.par_pass_events": { table: "par_pass_events", local: "event_id", foreign: "id" },
   // Catalog Phase 2b — the item page's open orders (po_lines → purchase_orders, one FK).
   "po_lines.purchase_orders": { table: "purchase_orders", local: "po_id", foreign: "id" },
+  // W08/B161 r1 — the ezCater admin event list's shop filter (ezcater_events.lead_id → catering_pipeline, one FK).
+  "ezcater_events.catering_pipeline": { table: "catering_pipeline", local: "lead_id", foreign: "id" },
 };
 
 const TS = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}(?::?\d{2})?)?$/;
@@ -151,7 +153,10 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
         return { data: null, error: null };
       }
       if (!(table in tables)) return { data: null, error: { message: `relation "${table}" does not exist` } };
-      let rows = (tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
+      const fields = parseSelect(selectStr);
+      // A `rel!inner(...)` embed is an inner join in PostgREST's SQL: a row without its parent is dropped
+      // BEFORE order / range / limit, never after (W08/B161 owner-ruling round).
+      let rows = (tables[table] ?? []).filter((r) => preds.every((p) => p(r)) && project(table, r, fields) !== null);
       if (orders.length) {
         rows = [...rows].sort((a, b) => {
           for (const o of orders) {
@@ -170,7 +175,6 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
       // PostgREST's max-rows: NO response carries more than 1000 rows, ranged or not. An
       // un-paged read past the cap silently loses its tail here exactly as it does live.
       rows = rows.slice(0, MAX_ROWS);
-      const fields = parseSelect(selectStr);
       const projected = rows.map((r) => project(table, r, fields)).filter((r): r is Row => r !== null);
       if (single) return { data: projected[0] ?? null, error: null };
       return wantCount ? { data: projected, error: null, count: projected.length } : { data: projected, error: null };

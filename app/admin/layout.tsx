@@ -26,7 +26,7 @@ import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { accessibleLocations } from "@/lib/locations";
 import { ROLES } from "@/lib/roles";
-import { requireSessionFromHeaders } from "@/lib/session";
+import { requireSessionFromHeaders, sessionIdleMinutes } from "@/lib/session";
 
 const ADMIN_MIN_LEVEL = 6;
 
@@ -46,12 +46,13 @@ export default async function AdminLayout({ children }: { children: ReactNode })
           userEmail={auth.user.email}
           actorLevel={ROLES[auth.user.role].level}
           initialBlurb={auth.user.profileBlurb}
+          sessionId={auth.session.id}
         />
       </div>
       <CanvasWatermark />
       {/* Idle-timeout guard also covers the admin section (its own top-level
           route group, not under (authed)). */}
-      <IdleTimeoutWarning />
+      <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} />
       {/* B2: an explicit ?location= / ?loc= pick becomes the remembered shop (lib/shop-context-shared.ts). */}
       <Suspense fallback={null}>
         <ShopContextSync allowed={accessibleLocations({ role: auth.role, locations: auth.locations })} />
