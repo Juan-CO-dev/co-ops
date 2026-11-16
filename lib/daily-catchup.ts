@@ -23,11 +23,19 @@ const provenance = { via: "catch-up", caller: "toast-catering-scan" } as const;
  *  tail; the receipt run's minimum comes from the shared receipt budget (`receiptRunFits`), never a number of its
  *  own. Below it the job is skipped BEFORE its claim, so the next 10-minute tick can still run it. prune-sessions
  *  is quick and is not gated. */
+/** The second (and last) claim of a day, taken only after a `cron.deferred` (W27 / B225 r3). */
+export const CATCH_UP_RETRY_SUFFIX = ":retry1";
+
 export const CATCH_UP_MIN_JOB_MS: Readonly<Record<string, number>> = { "toast-sales-pull": 90_000 };
 
 /** Fail open to the pinger, fail closed to work on lookup/claim errors.
  * A claim buys one attempt per UTC day, including failed attempts. It does not
  * lock out a late Vercel invocation; the existing jobs retain their retry semantics.
+ *
+ * A claimed run that started NOTHING (too little route time left once the claim was taken) is DEFERRED, not a
+ * success: it writes `cron.deferred`, and a later tick the same UTC day may take ONE retry claim (`<key>:retry1`)
+ * — the claim (0131's `portal_rate_limit_hit`) has no release, so the retry is a second, distinct bucket. At most
+ * two claims per job per UTC day; a deferred retry cannot claim a third time (W27 / B225 r3, CC's ruling).
  *
  * `deadline` is when the HOST route must be done with its work (audit W20/B115). The receipt
  * catch-up runs after the scan and after the other catch-ups, so it cannot assume a full run of
@@ -60,6 +68,13 @@ export async function catchUpDailyJobs(opts: { now?: Date; deadline: number; sig
       if (!decideCatchUp(entry, now, success.data?.occurred_at ?? null)) {
         skipped.push(entry.job); continue;
       }
+      // A claimed run that started nothing wrote cron.deferred: that is the only way to a second (retry) claim today.
+      const deferredLookup = await sb.from("audit_log").select("occurred_at")
+        .eq("action", "cron.deferred").eq("metadata->>job", entry.job)
+        .gte("occurred_at", midnight).order("occurred_at", { ascending: false })
+        .limit(1).maybeSingle<{ occurred_at: string }>();
+      if (deferredLookup.error) throw new Error("Catch-up deferral lookup failed");
+      const attempt = deferredLookup.data ? CATCH_UP_RETRY_SUFFIX : "";
       // The caller's route has one budget; a job that cannot finish inside it must not spend the day's one claim.
       // Asked last, right before the claim, so the lookup's own time is already spent (W27 / B225 r1).
       const minMs = CATCH_UP_MIN_JOB_MS[entry.job];
@@ -68,10 +83,20 @@ export async function catchUpDailyJobs(opts: { now?: Date; deadline: number; sig
         skipped.push(entry.job); continue;
       }
       const claim = await sb.rpc("portal_rate_limit_hit", {
-        p_bucket_key: `catchup:${entry.job}:${day}`, p_window_start: midnight, p_max: 1,
+        p_bucket_key: `catchup:${entry.job}:${day}${attempt}`, p_window_start: midnight, p_max: 1,
       });
       if (claim.error) throw new Error("Catch-up claim failed");
       if (claim.data !== true) { skipped.push(entry.job); continue; }
+      // Started nothing after the claim: write the deferral (never a success) so a later tick may retry once.
+      const deferred = async (reason: string) => {
+        skipped.push(entry.job);
+        await audit({ ...auditBase, action: "cron.deferred", metadata: {
+          job: entry.job, reason, remaining_ms: Math.max(0, opts.deadline - Date.now()),
+          attempt: attempt ? "retry1" : "first", ...provenance,
+        } });
+      };
+      // The claim's own time is spent now: a job with a start minimum that no longer has it starts nothing.
+      if (minMs !== undefined && opts.deadline - Date.now() < minMs) { await deferred("too_little_time_after_claim"); continue; }
 
       let metadata: Record<string, unknown>;
       switch (entry.job) {
@@ -104,9 +129,9 @@ export async function catchUpDailyJobs(opts: { now?: Date; deadline: number; sig
           const result = await runParseReceipts(opts.deadline);
           if (result.dormant) { skipped.push(entry.job); continue; }
           // Admission leaves the handoff plus one whole window, so this is the backstop (W27/B225 r2): a run that
-          // started nothing while work was waiting did no work, and is never written down as a success. The claim
-          // is already spent (0131's claim has no release); the 15-minute receipt cron still reads that mail.
-          if (result.startedNothing) { skipped.push(entry.job); continue; }
+          // started nothing while work was waiting did no work, and is never written down as a success. It is a
+          // deferral, so a later tick may take the one retry claim (r3).
+          if (result.startedNothing) { await deferred("started_nothing"); continue; }
           metadata = result.metadata;
           break;
         }

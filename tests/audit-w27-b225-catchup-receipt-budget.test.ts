@@ -35,11 +35,18 @@ beforeEach(() => {
   vi.stubEnv("RESEND_INBOUND_SECRET", "test-inbound");
   const from = (table: string) => {
     let job = "";
+    let action = "";
     const query = {
       select: () => query, order: () => query, limit: () => query, gte: () => query,
-      eq: (key: string, value: string) => { if (key === "metadata->>job") job = value; return query; },
-      // Only the receipt run is still owed today: the other catch-ups already succeeded.
+      eq: (key: string, value: string) => {
+        if (key === "metadata->>job") job = value;
+        if (key === "action") action = value;
+        return query;
+      },
+      // Only the receipt run is still owed today: the other catch-ups already succeeded. No run deferred
+      // today (the r3 deferral lookup), so it costs nothing here and the admission boundaries stay where they were.
       maybeSingle: async () => {
+        if (action === "cron.deferred") return { data: null, error: null };
         if (job === "parse-receipts") { clock += cost.lookup; return { data: null, error: null }; }
         return { data: { occurred_at: "2026-09-12T10:00:00.000Z" }, error: null };
       },

@@ -99,10 +99,11 @@ describe("fetch-only catch-up admission = the handoff + one whole fetch window",
   it("an admitted run whose claim overran the handoff and so started nothing records no cron.success", async () => {
     cost.claim = PARSE_HANDOFF_MS + 5_000; // a claim far slower than the handoff allows for
     const result = await catchUpDailyJobs({ now: today, deadline: clock + receiptRunMinimumMs(false) });
-    expect(claimed).toContain(parseClaim); // spent: 0131's claim has no release
+    expect(claimed).toContain(parseClaim); // spent (0131's claim has no release); r3: a deferral earns ONE retry claim
     expect(fetchStarts).toBe(0);
     expect(result.skipped).toContain("parse-receipts");
     expect(result.ran).not.toContain("parse-receipts");
     expect(receiptHeartbeats().filter(e => e.action === "cron.success")).toEqual([]);
+    expect(receiptHeartbeats().map(e => e.action)).toEqual(["cron.deferred"]);
   });
 });
