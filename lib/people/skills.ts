@@ -46,6 +46,8 @@ export class PeopleSkillError extends Error {
 const RPC_CODES: Partial<Record<PeopleSkillErrorCode, number>> = {
   invalid_payload: 400, invalid_adjustment: 400, invalid_rating: 400, invalid_reason: 400, invalid_tunables: 400,
   role_insufficient: 403, location_access_denied: 403, assignee_unavailable: 409, position_not_at_shop: 404, position_retired: 409,
+  // W25 / B219 (0334): the PM v2 switch rule, decided again in SQL on the LOCKED row.
+  pm_v2_moo_only: 403,
 };
 export function rpcFailure(error: { code?: string; message: string }): never {
   if (/does not exist|could not find the function/i.test(error.message) || error.code === "42883" || error.code === "PGRST202") {
