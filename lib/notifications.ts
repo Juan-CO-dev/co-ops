@@ -409,6 +409,82 @@ export async function loadUnreadForUser(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// markAllNotificationsRead — "Mark all read" (owner decision W26-5 b)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Rows marked per pass. Each pass's UPDATE carries at most this many ids
+ *  (~4 KB of request line), never an unbounded list (B030). */
+const MARK_ALL_BATCH = 100;
+/** Pass cap — 200 × 100 = 20,000 rows, far beyond any real backlog; a
+ *  runaway loop stops rather than spins. */
+const MARK_ALL_MAX_PASSES = 200;
+
+/**
+ * Marks the actor's OWN unread in-app notifications read — exactly the set
+ * the dashboard widget can show: the same recipient filters as
+ * loadUnreadForUser (user_id, read_at IS NULL, delivery_method='in_app',
+ * delivery_status != 'disabled') and the same location context (pass
+ * `notificationLocationContext(auth)`), not just the 50 on screen.
+ *
+ * Each pass reads up to MARK_ALL_BATCH visible recipient ids (the bounded
+ * embedded read), then UPDATEs those ids with the owner + unread + in-app
+ * guard re-stated (service role bypasses RLS; the WHERE is the access
+ * control, as in markNotificationRead) and counts the rows the UPDATE
+ * actually returned. A row already read keeps its first read_at.
+ *
+ * Not audited: like the per-item mark-read, it is a routine self-act on the
+ * actor's own inbox (AGENTS.md: routine self-updates skip audit).
+ */
+export async function markAllNotificationsRead(
+  service: SupabaseClient,
+  args: { userId: string; locationContext?: string[] },
+): Promise<{ marked: number }> {
+  const now = new Date().toISOString();
+  let marked = 0;
+
+  for (let pass = 0; pass < MARK_ALL_MAX_PASSES; pass++) {
+    let read = service
+      .from("notification_recipients")
+      .select(`id, ${NOTIFICATION_EMBED}`)
+      .eq("user_id", args.userId)
+      .is("read_at", null)
+      .eq("delivery_method", "in_app")
+      .neq("delivery_status", "disabled")
+      .limit(MARK_ALL_BATCH);
+    if (args.locationContext && args.locationContext.length > 0) {
+      read = read.or(locationOrFilter(args.locationContext), {
+        referencedTable: "notifications",
+      });
+    }
+    const { data: rows, error: readErr } = await read;
+    if (readErr) {
+      throw new Error(`markAllNotificationsRead: read failed: ${readErr.message}`);
+    }
+    const ids = ((rows ?? []) as Array<{ id: string }>).map((r) => r.id);
+    if (ids.length === 0) break;
+
+    const { data: updated, error: updateErr } = await service
+      .from("notification_recipients")
+      .update({ read_at: now })
+      .in("id", ids)
+      .eq("user_id", args.userId)
+      .is("read_at", null)
+      .eq("delivery_method", "in_app")
+      .select("id");
+    if (updateErr) {
+      throw new Error(`markAllNotificationsRead: update failed: ${updateErr.message}`);
+    }
+    const n = (updated ?? []).length;
+    marked += n;
+    // A short page is the last one; an UPDATE that changed nothing means the
+    // rows were read meanwhile — stop rather than re-read the same page.
+    if (ids.length < MARK_ALL_BATCH || n === 0) break;
+  }
+
+  return { marked };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // markNotificationRead — idempotent + authorization-safe
 // ─────────────────────────────────────────────────────────────────────────────
 
