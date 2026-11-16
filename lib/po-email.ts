@@ -300,7 +300,9 @@ async function markEmailSendUncertain(actor: AuthContext, ctx: PoEmailContext, c
  *   - The row carries the key of the confirmation it belongs to (0325 email_attempt_key / email_attempt_at). A
  *     record for another key (a reopened + re-confirmed PO) is replaced: that is a new order and a new key.
  *   - Same key, first attempt older than PO_EMAIL_RETRY_WINDOW_MS -> 409 `send_window_expired`; nothing is sent.
- *   - Before 0325 (the columns are missing) -> logged, and the send goes with the key alone (as before this fix).
+ *   - Fix round 2: before 0325 (the columns are missing) -> logged, then 503 `attempt_not_recorded`; nothing is sent.
+ *     0325 is applied BEFORE this code ships. A send with no durable record could be retried days later, after
+ *     Resend forgot the key, so missing attempt history is never read as "nothing was sent".
  *   - Any other read / write error -> 503 `attempt_not_recorded`; nothing is sent (the claim is reverted).
  * Returns `fresh: true` when this call wrote the record (the caller clears it again on a definite rejection).
  */
@@ -311,8 +313,7 @@ async function beginEmailAttempt(poId: string, key: string): Promise<{ fresh: bo
     .maybeSingle<{ email_attempt_key: string | null; email_attempt_at: string | null }>();
   if (error) {
     if (error.code === "42703" || error.code === "PGRST204") {
-      console.error(`beginEmailAttempt: po ${poId} has no attempt record columns; is 0325 applied? (key-only retry safety)`);
-      return { fresh: false };
+      console.error(`beginEmailAttempt: po ${poId} has no attempt record columns; apply 0325 (send refused, nothing sent)`);
     }
     throw new PurchaseOrderError(503, "attempt_not_recorded", "Could not record the send attempt; nothing was sent");
   }

@@ -241,9 +241,26 @@ describe("W19/B108 fix round 1: no automatic retry past Resend's 24 h key retent
     expect(f.row.email_attempt_key).toBe(KEY);
   });
 
-  it("before 0325 (no columns) the send still goes, key-only (the window guard needs 0325)", async () => {
-    const f = windowSetup([{ id: "re_pre" }], { readError: { code: "42703", message: "column does not exist" } });
-    await expect(f.run()).resolves.toEqual({ providerMessageId: "re_pre" });
+  // Fix round 2: 0325 is applied BEFORE this PR merges. Missing attempt columns are NOT proof that nothing was sent,
+  // and a send without a durable record could be retried days later past Resend's 24 h key: refuse, send nothing.
+  for (const code of ["42703", "PGRST204"]) {
+    it(`before 0325 (no attempt columns, ${code}) the send is REFUSED 503 attempt_not_recorded and the provider is never called`, async () => {
+      const f = windowSetup([{ id: "never" }], { readError: { code, message: "column does not exist" } });
+      await expect(f.run()).rejects.toMatchObject({ status: 503, code: "attempt_not_recorded" });
+      expect(f.sendEmail).not.toHaveBeenCalled();
+    });
+  }
+
+  it("rollout: refused before 0325, then after 0325 the first send records its attempt and a 2-day-late retry is refused", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(T0);
+    const pre = windowSetup([{ id: "never" }], { readError: { code: "42703", message: "column does not exist" } });
+    await expect(pre.run()).rejects.toMatchObject({ code: "attempt_not_recorded" });
+    expect(pre.sendEmail).not.toHaveBeenCalled();
+    const post = windowSetup([{ error: "socket hang up" }, { id: "re_dup" }]); // 0325 applied: columns exist, both NULL
+    await expect(post.run()).rejects.toMatchObject({ code: "send_uncertain" });
+    vi.setSystemTime(T0 + 48 * HOUR);
+    await expect(post.run()).rejects.toMatchObject({ status: 409, code: "send_window_expired" });
+    expect(post.sendEmail).toHaveBeenCalledTimes(1);
   });
 
   it("any other read error refuses before sending (503 attempt_not_recorded)", async () => {

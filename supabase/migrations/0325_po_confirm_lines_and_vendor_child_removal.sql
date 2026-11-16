@@ -43,11 +43,14 @@
 -- APP COMPATIBILITY: the app works before and after this file.
 --   Before: confirmPO, removeVendorContact and removeVendorOrderingDetail fall back to their pre-0325 statements
 --   when the RPC is missing (PGRST202 / 42883) — the races stay open until this is applied; the unconfirmed-email
---   mark is not written or shown, and the attempt record is skipped (a retry is deduplicated by the idempotency key
---   alone, i.e. only within Resend's 24 h; the past-window refusal needs this file).
+--   mark is not written or shown, and (fix round 2) the AUTOMATIC VENDOR EMAIL SEND IS REFUSED 503
+--   attempt_not_recorded, nothing sent: without the attempt record a retry could duplicate an order past Resend's
+--   24 h key. Copy / mark-placed by hand still work.
 --   After, with OLD code still deployed: the old confirm is a plain guarded UPDATE (still works; the race stays open
 --   for that deployment), and an old updateDraftLines that loses the race gets a 500 instead of a named 409 (it
---   was a silent wrong success before). Recommended order: deploy the W19 PR, then apply.
+--   was a silent wrong success before). REQUIRED ORDER (fix round 2): apply this file, THEN merge / deploy the W19
+--   PR (house rule: migration right before merge). Before deploying, reconcile with the vendor any PO whose email
+--   send failed under the old code and is still confirmed: the old code sent no key and kept no attempt record.
 -- ROLLBACK: drop trigger po_lines_draft_only on public.po_lines; drop the four functions; the three columns are
 --   harmless (the app reads them tolerantly). The app falls back by itself when the RPCs are gone.
 --
