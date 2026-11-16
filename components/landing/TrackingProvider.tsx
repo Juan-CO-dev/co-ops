@@ -1,8 +1,8 @@
 "use client";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { buildFbc, captureAttribution, persistAttribution, readAttribution, type Attribution, type AttributionPolicy } from '@/lib/landing/attribution-shared';
-import { consentCookie, marketingAllowed, readConsent, type ConsentChoice } from '@/lib/landing/consent-shared';
-import { browserTransport, createLandingTracker, lookupAdCode, readAdCandidate, type ActionDetails, type LandingAction } from '@/lib/landing/tracking-client';
+import { consentCookie, marketingAllowed, marketingCookieExpiries, readConsent, type ConsentChoice } from '@/lib/landing/consent-shared';
+import { browserTransport, createLandingTracker, lookupAdCode, NAVIGATING_ACTIONS, readAdCandidate, type ActionDetails, type LandingAction } from '@/lib/landing/tracking-client';
 import { queryAdCandidate } from '@/lib/landing/ad-codes-shared';
 import { ConsentNotice, type ConsentLabels } from './ConsentNotice';
 
@@ -18,11 +18,8 @@ export const useConsentControl=()=>useContext(ConsentControlContext);
 function signals() { return {doNotTrack:navigator.doNotTrack,globalPrivacyControl:(navigator as Navigator & {globalPrivacyControl?:boolean}).globalPrivacyControl}; }
 function storage(): Storage | undefined { try { return window.sessionStorage; } catch { return undefined; } }
 function clearMarketingCookies() {
-  for(const key of ['_fbp','_fbc']) {
-    const base=`${key}=; Path=/; Max-Age=0; SameSite=Lax${window.location.protocol==='https:'?'; Secure':''}`;
-    document.cookie=base;
-    document.cookie=`${base}; Domain=${window.location.hostname}`;
-  }
+  // The Pixel sets _fbp/_fbc on the registrable domain: expire them on the host AND every parent.
+  for(const write of marketingCookieExpiries(window.location.hostname,window.location.protocol==='https:')) document.cookie=write;
 }
 function sanitizeTrackingLocation(attribution:Attribution) {
   // The third-party SDK reads location itself; never let arbitrary query/fragment data reach it.
@@ -51,6 +48,23 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
   const generation=useRef(0);
   const resolving=useRef(false);
   const enable=useRef<() => Promise<void>>(async()=>{});
+  // W24/B212: a navigating tap during the lookup switches tracking off (the page may be leaving).
+  // If the page proves it stayed (new-tab click, app hand-off, cancelled navigation), the next
+  // sign of USER life re-runs enable — unless consent changed meanwhile (the generation moved).
+  const revive=useRef<(() => void) | null>(null);
+  function armRevival() {
+    revive.current?.();
+    const cancelledAt=generation.current;
+    const targets:[EventTarget,string][]=[[window,'pageshow'],[document,'visibilitychange'],[window,'pointerdown'],[window,'keydown'],[window,'wheel']];
+    const stop=()=>{for(const [target,type] of targets)target.removeEventListener(type,fire,true);revive.current=null;};
+    const fire=(event:Event)=>{
+      if(event.type==='visibilitychange'&&document.visibilityState!=='visible')return;
+      stop();
+      if(generation.current===cancelledAt&&marketingAllowed(serverApproved,readConsent(document.cookie),signals()))void enable.current();
+    };
+    for(const [target,type] of targets)target.addEventListener(type,fire,{capture:true,passive:true});
+    revive.current=stop;
+  }
   useEffect(()=>{
     const cfg=initial.current;
     const lifecycle=generation;
@@ -83,10 +97,11 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
     const saved=readConsent(document.cookie); setChoice(saved);
     if(permitted()) void enable.current();
     else {persistAttribution(storage(),attribution.current,false); clearMarketingCookies();}
-    return ()=>{lifecycle.current++;tracker.current?.setConsent(false);};
+    return ()=>{lifecycle.current++;revive.current?.();tracker.current?.setConsent(false);};
   },[]);
   function choose(next: Exclude<ConsentChoice,'unknown'>) {
     if(!serverApproved) return;
+    revive.current?.();
     document.cookie=consentCookie(next,window.location.protocol==='https:');
     setChoice(next);
     if(marketingAllowed(serverApproved,next,signals())) {void enable.current();return;}
@@ -98,7 +113,7 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
   const context:TrackingContextValue={allowed,
     dispatch(name,details) {
       if(!marketingAllowed(serverApproved,readConsent(document.cookie),signals())) { tracker.current?.setConsent(false); return; }
-      const leavingDuringLookup=resolving.current && (name==='OrderClick' || name==='CateringClick' || name==='FindLocation');
+      const leavingDuringLookup=resolving.current && NAVIGATING_ACTIONS.has(name);
       // Keep the intent in memory; resolve attribution and cookies when it is sent.
       tracker.current?.dispatch(name,cookiesOnly=>{
         const cookies=document.cookie.split(';').map(v=>v.trim());
@@ -109,7 +124,7 @@ export function TrackingProvider({serverApproved,pixelId,capiEnabled,sourceUrl,a
       });
       // Navigation can reject fetch before unmount (WebKit). Do not let that
       // rejection resume enable(), initialize Pixel or flush on a departing page.
-      if(leavingDuringLookup) {generation.current++;resolving.current=false;tracker.current?.setConsent(false);}
+      if(leavingDuringLookup) {generation.current++;resolving.current=false;tracker.current?.setConsent(false);armRevival();}
     },
     sectionView(section) { if(marketingAllowed(serverApproved,readConsent(document.cookie),signals())) tracker.current?.sectionView(section); else tracker.current?.setConsent(false); },
   };

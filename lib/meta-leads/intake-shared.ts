@@ -316,3 +316,29 @@ export function mapMetaLeadFields(fieldData: unknown, disclaimerResponses?: unkn
     headcount, eventDate, shopCode, isDelivery: fulfillment === "delivery", notes: composeMetaNotes(noteParts), timing },
     consent: { optedIn, questionKey: META_CONSENT_QUESTION_KEY, textVersion: META_CONSENT_TEXT_VERSION } };
 }
+
+/** Exactly the intake fields the "finish your order" email reads (lib/meta-leads/continuation.ts). */
+export type ContinuationIntake = Pick<MetaMappedIntake, "contactName" | "contactEmail" | "company" | "eventDate" | "headcount" | "isDelivery" | "contactPhone">;
+export interface ContinuationArgs { locationId: string; language: "en" | "es"; intake: ContinuationIntake }
+const SNAPSHOT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * W24/B211: rebuilds the continuation arguments from `meta_lead_events.intake_snapshot` — the
+ * `p_intake` the worker sent to `meta_lead_intake_apply` (keys written in lib/meta-leads/worker.ts).
+ * Null = unusable (a required key missing or malformed): the sweep then sends nothing.
+ */
+export function continuationFromSnapshot(snapshot: unknown): ContinuationArgs | null {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return null;
+  const s = snapshot as Record<string, unknown>;
+  const text = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
+  const optionalText = (v: unknown): string | null | undefined => (v === null || v === undefined ? null : text(v) ?? undefined);
+  const contactName = text(s.contact_name), contactEmail = text(s.email);
+  const locationId = typeof s.location_id === "string" && SNAPSHOT_UUID.test(s.location_id) ? s.location_id : null;
+  const language = s.language === "en" || s.language === "es" ? s.language : null;
+  if (!contactName || !contactEmail || !locationId || !language) return null;
+  const company = optionalText(s.company), eventDate = optionalText(s.event_date), contactPhone = optionalText(s.contact_phone);
+  if (company === undefined || eventDate === undefined || contactPhone === undefined) return null;
+  const headcount = s.headcount === null || s.headcount === undefined ? null
+    : typeof s.headcount === "number" && Number.isSafeInteger(s.headcount) && s.headcount >= 0 ? s.headcount : undefined;
+  if (headcount === undefined) return null;
+  return { locationId, language, intake: { contactName, contactEmail, company, eventDate, headcount, isDelivery: s.fulfillment === "delivery", contactPhone } };
+}

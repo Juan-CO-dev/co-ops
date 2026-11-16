@@ -25,16 +25,20 @@ describe('landing dispatch', () => {
     expect(f.pixel).not.toHaveBeenCalled();expect(f.post).toHaveBeenCalledTimes(name==='OrderClick'?2:1);
     if(name==='OrderClick')expect(f.post.mock.calls[0]).toEqual(['/api/landing/order-click',{store:'dupont',ad:'unattributed',intent:'pickup'},{unload:true}]);
   });
-  it('flushes a buffered Lead with fresh details and its original ID/time exactly once',()=>{
-    const f=fixture();const current: {fbc?:string;fbp?:string}={};
-    const details=vi.fn(()=>({placement:'hero',...current}));
-    f.tracker.beginResolution();f.tracker.dispatch('Lead',details);
-    expect(details).not.toHaveBeenCalled();expect(f.post).not.toHaveBeenCalled();
-    current.fbc=buildFbc('Captured_Click',123456);current.fbp='fb.1.123.789';
+  // W24/B213: Lead is an outbound-link tap like every LandingAction: during resolution it is sent at once, never buffered.
+  it('a Lead tapped during resolution is sent at once by unload post, unattributed, with no Pixel',()=>{
+    const f=fixture();
+    const details=vi.fn(()=>({placement:'hero',ad:'unresolved',fbc:'fb.1.123.Click',fbp:'fb.1.123.456'}));
+    f.tracker.beginResolution();f.tracker.dispatch('Lead',details,{id:'original',time:123000});
+    expect(details).toHaveBeenCalledExactlyOnceWith(true);
+    expect(f.post).toHaveBeenCalledExactlyOnceWith('/api/landing/events',expect.objectContaining({event_name:'Lead',event_id:'original',event_time:123,ad:'unattributed',fbc:'fb.1.123.Click',fbp:'fb.1.123.456'}),{unload:true});
+    expect(f.pixel).not.toHaveBeenCalled();expect(f.loadPixel).not.toHaveBeenCalled();
     f.tracker.setAcceptedAd('new-campaign');f.tracker.setConsent(true);f.tracker.flushPending('new-campaign');f.tracker.flushPending('new-campaign');
-    expect(details).toHaveBeenCalledExactlyOnceWith(false);
-    expect(f.post).toHaveBeenCalledExactlyOnceWith('/api/landing/events',expect.objectContaining({event_id:'id-1',event_time:123,ad:'new-campaign',fbc:'fb.1.123456.Captured_Click',fbp:current.fbp}));
-    expect(f.pixel.mock.calls[0]?.[3]).toBe('id-1');
+    expect(f.pixel).not.toHaveBeenCalled();expect(f.post).toHaveBeenCalledOnce();
+  });
+  it('every LandingAction is navigating',async()=>{
+    const {NAVIGATING_ACTIONS}=await import('@/lib/landing/tracking-client');
+    expect([...NAVIGATING_ACTIONS].sort()).toEqual(['CateringClick','FindLocation','Lead','OrderClick']);
   });
   it('keeps resolution sends gated by server approval and CAPI flag',()=>{
     const denied=fixture({serverApproved:false});denied.tracker.beginResolution();denied.tracker.dispatch('OrderClick',{mode:'pickup',store:'dupont',placement:'hero'});expect(denied.post).not.toHaveBeenCalled();
@@ -42,15 +46,16 @@ describe('landing dispatch', () => {
     expect(counter.post).toHaveBeenCalledExactlyOnceWith('/api/landing/order-click',{store:'dupont',ad:'unattributed',intent:'pickup'},{unload:true});
   });
   it.each(['withdrawal','generation'])('drops the prior buffer on %s',reason=>{
-    const f=fixture();f.tracker.beginResolution();f.tracker.dispatch('Lead',{placement:'hero'});f.tracker.sectionView('hero');
+    const f=fixture();f.tracker.beginResolution();f.tracker.sectionView('hero');f.tracker.sectionView('menu');
     if(reason==='withdrawal')f.tracker.setConsent(false);else f.tracker.beginResolution();
     f.tracker.setConsent(true);f.tracker.flushPending('unattributed');expect(f.post).not.toHaveBeenCalled();expect(f.pixel).not.toHaveBeenCalled();
   });
   it('bounds queued calls to ten and preserves section deduplication',()=>{
     const f=fixture();f.tracker.beginResolution();f.tracker.sectionView('hero');f.tracker.sectionView('hero');
-    for(let i=0;i<20;i++)f.tracker.dispatch('Lead',{placement:'hero'});
+    for(let i=0;i<20;i++)f.tracker.sectionView(`section-${String.fromCharCode(97+i)}`);
     f.tracker.setConsent(true);f.tracker.flushPending('unattributed');f.tracker.sectionView('hero');
-    expect(f.pixel.mock.calls.filter(call=>call[1]==='ViewContent')).toHaveLength(1);expect(f.post).toHaveBeenCalledTimes(8);
+    const views=f.pixel.mock.calls.filter(call=>call[1]==='ViewContent').map(call=>call[2].content_name);
+    expect(views.filter(name=>name==='hero')).toHaveLength(1);expect(views).toHaveLength(9);expect(f.post).not.toHaveBeenCalled();
   });
   it('loads once, deduplicates page/sections and revokes', () => {
     const f=fixture(); f.tracker.setConsent(true); f.tracker.setConsent(true); f.tracker.pageView(); f.tracker.pageView(); f.tracker.sectionView('hero'); f.tracker.sectionView('hero');

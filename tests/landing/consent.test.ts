@@ -15,3 +15,30 @@ describe('landing consent', () => {
     expect(consentCookie('rejected', false)).not.toMatch(/Domain=/i);
   });
 });
+
+describe('W24/B131 marketing cookie withdrawal', () => {
+  it('withdrawal expires marketing cookies on the host and every parent domain', async () => {
+    const { marketingCookieExpiries } = await import('@/lib/landing/consent-shared');
+    const writes = marketingCookieExpiries('eat.complimentsonlyoperations.com', true);
+    for (const key of ['_fbp', '_fbc']) {
+      const base = `${key}=; Path=/; Max-Age=0; SameSite=Lax; Secure`;
+      expect(writes).toContain(base);
+      expect(writes).toContain(`${base}; Domain=eat.complimentsonlyoperations.com`);
+      expect(writes).toContain(`${base}; Domain=complimentsonlyoperations.com`);
+    }
+    expect(writes.some(w => /Domain=com$/.test(w))).toBe(false);
+    expect(writes).toHaveLength(6);
+    expect(writes.some(w => w.startsWith('landing_consent'))).toBe(false);
+  });
+  it.each(['localhost', '127.0.0.1', '[::1]', '::1'])('%s gets host-only expiries only', async host => {
+    const { marketingCookieExpiries, marketingCookieDomains } = await import('@/lib/landing/consent-shared');
+    expect(marketingCookieDomains(host)).toEqual([]);
+    expect(marketingCookieExpiries(host, false)).toEqual(['_fbp=; Path=/; Max-Age=0; SameSite=Lax', '_fbc=; Path=/; Max-Age=0; SameSite=Lax']);
+  });
+  it('lists the host and each parent, never a bare TLD', async () => {
+    const { marketingCookieDomains } = await import('@/lib/landing/consent-shared');
+    expect(marketingCookieDomains('a.b.example.com')).toEqual(['a.b.example.com', 'b.example.com', 'example.com']);
+    expect(marketingCookieDomains('example.com')).toEqual(['example.com']);
+    expect(marketingCookieDomains('EAT.Example.com.')).toEqual(['eat.example.com', 'example.com']);
+  });
+});

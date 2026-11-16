@@ -2,7 +2,7 @@ import "server-only";
 import type { getServiceRoleClient } from "@/lib/supabase-server";
 import { mintAndSendPortalLink, META_CONTINUATION_TTL_MIN } from "@/lib/portal/magic-link";
 import type { DraftIntake } from "@/lib/portal/draft";
-import type { MetaMappedIntake } from "./intake-shared";
+import type { ContinuationIntake } from "./intake-shared";
 
 /**
  * The ONE "finish your order" email after a Meta lead is CREATED (build 2, A1–A3, A6).
@@ -20,7 +20,8 @@ import type { MetaMappedIntake } from "./intake-shared";
  *   4. meta_lead_email_result — ONE update: sent (confirmed provider id + token → the lead returns
  *      to created), failed, unknown (token kept: the link may have landed), capped, suppressed;
  *      every branch clears the intake snapshot in the same write as the token (A9).
- * Nothing here re-mints or resends. The runbook owns the manual requeue.
+ * Nothing here re-mints or resends. The runbook owns the manual requeue. The worker's sweep (W24/B211)
+ * calls this for a created / pending lead whose email was NEVER attempted — a first send, not a resend.
  */
 export type ContinuationState = "sent" | "failed" | "unknown" | "capped" | "suppressed" | "not_claimable";
 
@@ -32,7 +33,7 @@ function senderConfigured(): boolean {
 }
 
 export async function sendMetaContinuation(sb: Client, args: {
-  leadgenId: string; pipelineId: string; locationId: string; language: "en" | "es"; intake: MetaMappedIntake;
+  leadgenId: string; pipelineId: string; locationId: string; language: "en" | "es"; intake: ContinuationIntake;
 }): Promise<ContinuationState> {
   const claim = await sb.rpc("meta_lead_email_claim", { p_leadgen_id: args.leadgenId });
   if (claim.error || typeof claim.data?.claimed !== "boolean") throw new Error("meta_email_claim_failed");

@@ -552,3 +552,45 @@ for(const language of ['en','es'] as const)for(const scale of ['100%','200%'] as
   for(const label of report)expect(label.style).toBe('normal');
   await page.screenshot({path:testInfo.outputPath(`strip-${language}-${scale}.png`)});
 });
+
+// W24/B215: a tap in the sheet's own padding has the dialog as its target; only the backdrop closes it.
+test('tapping inside the order sheet padding keeps it open; tapping the backdrop closes it', async ({browser,baseURL}) => {
+  const context = await browser.newContext({viewport:{width:375,height:812},reducedMotion:'reduce'});
+  const page = await context.newPage();
+  await page.goto(baseURL!);
+  await page.locator('#lineup').scrollIntoViewIfNeeded();
+  await page.locator('[data-lineup] button',{hasText:'The Frex'}).click();
+  await page.getByRole('button',{name:'Order The Frex'}).click();
+  const sheet = page.locator('dialog.landing-v3-sheet[open]');
+  await expect(sheet).toBeVisible();
+  const box = (await sheet.boundingBox())!;
+  await page.mouse.click(box.x + 8, box.y + box.height / 2);
+  await expect(sheet).toHaveCount(1);
+  await page.mouse.click(box.x + box.width - 8, box.y + box.height - 8);
+  await expect(sheet).toHaveCount(1);
+  await page.mouse.click(5, 5);
+  await expect(page.locator('dialog.landing-v3-sheet[open]')).toHaveCount(0);
+  await context.close();
+});
+
+// W24/B214: after Auto stops on its own (one full loop), pressing it again starts a fresh loop.
+test('Auto restarts a full loop after it has stopped on its own', async ({page}) => {
+  await page.clock.install();
+  await page.goto('/');
+  await page.locator('[data-lineup]').scrollIntoViewIfNeeded();
+  const auto = page.locator('.landing-v3-auto');
+  await expect(auto).toHaveAttribute('aria-pressed','true');
+  const cards = await page.locator('[data-lineup] li').count();
+  await expect.poll(async()=>{await page.clock.runFor(1000);return auto.getAttribute('aria-pressed');},{timeout:(cards+4)*5000}).toBe('false');
+  const select = page.locator('.landing-v3-select');
+  await expect(select).toHaveAttribute('data-running','false');
+  const stoppedOn = await page.locator('.landing-v3-plate h3').textContent();
+  await auto.click();
+  await expect(auto).toHaveAttribute('aria-pressed','true');
+  // The timer is armed by the roster's IntersectionObserver callback, a rendering step after the
+  // press; under CI load that can land after a clock advance, so wait for it before advancing.
+  await expect(select).toHaveAttribute('data-running','true');
+  await page.clock.runFor(6000);
+  await expect(page.locator('.landing-v3-plate h3')).not.toHaveText(stoppedOn!);
+  await expect(auto).toHaveAttribute('aria-pressed','true');
+});

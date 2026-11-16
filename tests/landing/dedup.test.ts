@@ -53,13 +53,15 @@ describe('pixel / CAPI dedup contract', () => {
       expect(f.now).toHaveBeenCalledTimes(explicit ? 0 : 1);
     }
   });
-  it('buffered Lead retains its capture instant after delayed resolution', async () => {
+  // W24/B213: a Lead during resolution is no longer buffered; its immediate unload send keeps the tap instant.
+  it('a Lead tapped during resolution is sent at once with its tap instant', async () => {
     const f = fixture(); f.tracker.beginResolution(); f.tracker.dispatch('Lead', () => ({ placement: 'hero' }));
     f.advance(); f.tracker.setConsent(true); f.tracker.flushPending('unattributed'); f.tracker.flushPending('unattributed');
+    expect(f.post).toHaveBeenCalledTimes(1);
+    expect(f.post.mock.calls[0]![2]).toEqual({ unload: true });
     const capi = await upstream(f.post.mock.calls[0]![1]);
-    expect(f.pixel).toHaveBeenCalledTimes(1);
-    expect(f.pixel.mock.calls[0]?.[3]).toBe(capi.event_id);
-    expect(f.pixel.mock.calls[0]?.[1]).toBe(capi.event_name);
+    expect(f.pixel).not.toHaveBeenCalled();
+    expect(capi.event_name).toBe(LANDING_META_EVENTS.Lead.name);
     expect(capi.event_time).toBe(Math.floor(instant / 1000));
     expect(f.now).toHaveBeenCalledTimes(1);
   });

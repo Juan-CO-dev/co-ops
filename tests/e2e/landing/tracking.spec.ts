@@ -112,10 +112,11 @@ test('registry lookup starts after consent, precedes Pixel, and admits a new cod
  expect(lookups).toBe(0);expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();
  await page.locator('[data-landing-consent]').getByRole('button').first().click();
  await expect.poll(()=>lookups).toBe(1);expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
- await page.locator('a[href$="catering-inquiry"]').evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
  expect(events).toEqual([]);expect(counters).toEqual([]);
  expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();release();
  await expect(page.locator('#landing-meta-pixel')).toHaveCount(1);
+ // W24/B213: a Lead tapped DURING the lookup is sent at once, unattributed (tested below); the admitted code shows on a Lead after it.
+ await page.locator('a[href$="catering-inquiry"]').evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
  const stored=JSON.parse((await page.evaluate(()=>sessionStorage.getItem('landing_attribution')))!);
  expect(stored).toMatchObject({ad:'campaign-new',utm:{},fbclid:'Captured_Click'});
  expect(page.url()).not.toContain('email');
@@ -136,7 +137,8 @@ test('withdrawal during registry lookup cannot persist attribution or initialize
  await page.locator('footer [data-privacy-settings]').click(); // v4.2: an answered notice is reopened from the footer
  await page.locator('[data-landing-consent]').getByRole('button').nth(1).click();release();await page.waitForTimeout(1100);
  expect(await page.evaluate(()=>sessionStorage.getItem('landing_attribution'))).toBeNull();expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
- expect(sends).toEqual([]);
+ // W24/B213: the Lead was tapped while consent was accepted, so it went at once (unattributed); the withdrawal stops everything after it.
+ expect(sends).toHaveLength(1);expect(sends[0]).toMatch(/\/api\/landing\/events$/);
 });
 
 test('restored retired code is revalidated and lookup outage preserves native navigation',async({page,context})=>{
@@ -240,4 +242,88 @@ test('v4.2: the footer "Privacy settings" reopens the same notice and withdrawal
   expect(await page.evaluate(()=>window.fbq?.queue?.at(-1))).toEqual(['consent','revoke']);
   await order.click();await page.waitForTimeout(800);
   expect(counters).toHaveLength(1);expect(events).toHaveLength(1);
+});
+
+// W24/B213: a catering Lead tapped while the ad code is still being looked up is sent to CAPI at once
+// (unattributed, no Pixel) instead of being buffered on a page that is about to leave.
+// The Lead goes by navigator.sendBeacon with a Blob body. Playwright's WebKit routing reports that
+// request with postData() === null although WebKit delivers the body, so receipt is observed at an
+// HTTP server (a test-only relay in front of the Next fixture), on every engine.
+test('catering Lead tapped during ad-code lookup reaches CAPI',async({page,context})=>{
+  await isolateMeta(page);
+  await context.addCookies([{name:'landing_consent',value:'accepted',url:`http://localhost:${portBase}`}]);
+  const events:Record<string,unknown>[]=[];
+  const relay=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    const body=Buffer.concat(chunks);
+    if(new URL(req.url!,'http://localhost').pathname==='/api/landing/events'){
+      // A body that does not parse is recorded by size, so a failure shows what actually arrived.
+      let parsed:Record<string,unknown>;try{parsed=JSON.parse(body.toString());}catch{parsed={unparsed_body_bytes:body.length};}
+      events.push(parsed);res.writeHead(204);res.end();return;
+    }
+    const upstream=httpRequest({hostname:'localhost',port:portBase,path:req.url,method:req.method,headers:{...req.headers,host:`localhost:${portBase}`}},response=>{res.writeHead(response.statusCode!,response.headers);response.pipe(res);});
+    upstream.on('error',()=>{res.writeHead(502);res.end();});upstream.end(body);
+  });
+  await new Promise<void>(resolve=>relay.listen(0,'127.0.0.1',resolve));
+  const origin=`http://localhost:${(relay.address() as AddressInfo).port}`;
+  let started=false;
+  await page.route('**/api/landing/ad-code',async route=>{started=true;await new Promise(resolve=>setTimeout(resolve,800));await route.fulfill({json:{ad:'campaign-new'}});});
+  await context.route('https://complimentsonlysubs.com/**',route=>route.fulfill({contentType:'text/html',body:'Catering inquiry'}));
+  try {
+    await page.goto(`${origin}/?ad=campaign-new`);
+    await expect.poll(()=>started).toBe(true);
+    await page.locator('.landing-v3-ask').evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
+    await expect.poll(()=>events.length).toBe(1);
+    expect(events[0]).toMatchObject({event_name:'Lead',placement:'catering',ad:'unattributed'});
+    expect(await page.evaluate(()=>window.fbq?.queue?.filter(args=>args[1]==='Lead').length??0)).toBe(0);
+    // Exactly one: the resolved lookup must not replay a buffered copy.
+    await page.waitForTimeout(1000);expect(events).toHaveLength(1);
+  } finally {
+    relay.closeAllConnections();await new Promise<void>((resolve,reject)=>relay.close(error=>error?reject(error):resolve()));
+  }
+});
+
+// W24/B212: a navigating tap during the lookup switches tracking off; when the page proves it stayed
+// (here: a modifier-click opened a new tab), the next user input turns tracking back on.
+test('a modifier-click order tap during ad-code lookup does not disable tracking on the page that stayed',async({page,context})=>{
+  await isolateMeta(page);
+  await context.addCookies([{name:'landing_consent',value:'accepted',url:`http://localhost:${portBase}`}]);
+  const counters:Record<string,unknown>[]=[];
+  await page.route('**/api/landing/events',route=>route.fulfill({status:204}));
+  await page.route('**/api/landing/order-click',route=>{counters.push(route.request().postDataJSON());return route.fulfill({status:204});});
+  let lookups=0;
+  await page.route('**/api/landing/ad-code',async route=>{lookups++;await new Promise(resolve=>setTimeout(resolve,800));await route.fulfill({json:{ad:'campaign-new'}});});
+  await context.route('https://order.complimentsonlysubs.com/**',route=>route.fulfill({contentType:'text/html',body:'Native ordering'}));
+  await page.goto('/?ad=campaign-new');
+  await expect.poll(()=>lookups).toBe(1);
+  const link=page.locator('#hero').getByRole('link',{name:'Pick up at Capitol Hill'});
+  const popup=context.waitForEvent('page');
+  await link.click({modifiers:['ControlOrMeta']});
+  await (await popup).close();
+  await page.waitForTimeout(1000);
+  const sentDuringLookup=counters.length;
+  await page.mouse.move(10,300);await page.mouse.wheel(0,200);
+  await expect.poll(()=>page.evaluate(()=>window.fbq?.queue?.filter(args=>args[1]==='PageView').length??0),{timeout:5000}).toBe(1);
+  await page.evaluate(()=>document.addEventListener('click',event=>{if((event.target as Element).closest('a[data-landing-mode]'))event.preventDefault();},true));
+  await link.click();
+  await expect.poll(()=>counters.length).toBe(sentDuringLookup+1);
+});
+
+// W24/B212: withdrawal while the revival is armed must never re-enable tracking.
+test('withdrawing consent after a navigating tap during lookup keeps tracking off',async({page,context})=>{
+  const meta=await isolateMeta(page);
+  await context.addCookies([{name:'landing_consent',value:'accepted',url:`http://localhost:${portBase}`}]);
+  await page.route(/\/api\/landing\/(events|order-click)$/,route=>route.fulfill({status:204}));
+  let release:()=>void=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});let started=false;
+  await page.route('**/api/landing/ad-code',async route=>{started=true;await gate;await route.fulfill({json:{ad:'campaign-new'}});});
+  await page.goto('/?ad=campaign-new');
+  await expect.poll(()=>started).toBe(true);
+  await page.locator('#hero').getByRole('link',{name:'Pick up at Capitol Hill'}).evaluate(el=>{el.addEventListener('click',event=>event.preventDefault());(el as HTMLAnchorElement).click();});
+  // Programmatic clicks raise no pointerdown: the revival stays armed until the withdrawal disarms it.
+  await page.evaluate(()=>{(document.querySelector('footer [data-privacy-settings]') as HTMLButtonElement).click();});
+  await page.locator('[data-landing-consent]').getByRole('button').nth(1).evaluate(el=>(el as HTMLButtonElement).click());
+  release();await page.mouse.wheel(0,200);await page.keyboard.press('Shift');await page.waitForTimeout(1200);
+  expect(await page.evaluate(()=>!!window.fbq)).toBe(false);
+  await expect(page.locator('#landing-meta-pixel')).toHaveCount(0);
+  expect(meta).toEqual([]);
 });

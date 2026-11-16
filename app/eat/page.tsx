@@ -59,7 +59,7 @@ export default async function LandingPage({searchParams}:{searchParams:Promise<R
     <main>
       <Hero language={language} config={{...config,stores:publicStores}} ad={ad} details={details}/>
       {sectionKeys.filter(key=>key !== "shops" || stores.length > 0).map(key=><section key={key} id={key} aria-labelledby={`${key}-title`} className="landing-v2-section">
-        <SectionView section={key} observationTargetId={key === "crave" ? "crave-title" : undefined}>
+        <SectionView section={key} observationTargetId={key === "crave" || key === "field-guide" ? `${key}-title` : undefined}>
           <h2 id={`${key}-title`} className="text-3xl font-black tracking-tight">{serverT(language,`landing.${key}.title`)}</h2>
           <p className="mt-4 max-w-xl text-lg">{serverT(language,`landing.${key}.body`)}</p>
           {key === "crave" && <><CraveScene textureAlt={serverT(language,"landing.texture.alt")} crossAlt={serverT(language,"landing.texture.cross-alt")} stillLabel={serverT(language,"landing.texture.still")} motionLabel={serverT(language,"landing.texture.motion")} captions={[serverT(language,"landing.crave.caption-texture"),serverT(language,"landing.crave.caption-cross")]}/><div className="landing-v4-crave-cta"><CrunchyOrder language={language} stores={stores} placement="crave" label={serverT(language,"landing.crave.order")} details={details}/></div></>}
