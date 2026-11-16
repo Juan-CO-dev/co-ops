@@ -142,6 +142,8 @@ const BIND_PRIMITIVES = [
   "requireLocation",
   // 2a: level ≥ 8 or a membership (D2) — and the owning-shop rule built on it.
   "catalogShopAllowed",
+  // W05B: shop TASKS (checklists, AM / mid-day prep) — level ≥ 8 or a membership (Juan 2026-11-15).
+  "canWorkShopTasks",
   // Phase 5: role-aware par edits bind own shop before I/O (behavior tested separately).
   "parWriteGate",
   "skuOwnerAllowed",

@@ -44,7 +44,7 @@ import { canAccessOpeningInstance } from "@/lib/opening";
 import { type NextRequest } from "next/server";
 
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { lockLocationContext } from "@/lib/locations";
+import { canWorkShopTasks } from "@/lib/locations";
 import { OpeningError, savePhase2Item } from "@/lib/opening";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -241,7 +241,7 @@ export async function POST(req: NextRequest) {
     });
   }
   if (
-    !lockLocationContext({ role: ctx.role, locations: ctx.locations }, instance.location_id)
+    !canWorkShopTasks({ role: ctx.role, locations: ctx.locations }, instance.location_id)
   ) {
     return jsonError(403, "location_access_denied", {
       message: "You don't have access to this location.",
