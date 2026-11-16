@@ -398,6 +398,17 @@ describe("the pure assembly (generatorInputFor and its readers)", () => {
     const ev = toCateringEvents([{ id: "p1", eventDate: "2026-10-29", timeWindow: "1:00\u20131:30 PM", headcount: 30, contactName: "A", company: null, valueCents: 1 }], [], () => 0);
     expect(ev[0]?.eventQ).toBe(52);
   });
+  it("a trailing meridiem is resolved across noon and midnight from BOTH endpoints (B028 r1)", () => {
+    expect(eventQFromWindow("11:30-12:00 PM")).toBe(46); // 11:30 AM, not 11:30 PM
+    expect(eventQFromWindow("11:30\u201312 PM")).toBe(46);
+    expect(eventQFromWindow("11:30-1:00 PM")).toBe(46); // 11:30 AM
+    expect(eventQFromWindow("11 - 1 pm")).toBe(44);
+    expect(eventQFromWindow("10-11 PM")).toBe(88); // 10 PM
+    expect(eventQFromWindow("12-1 PM")).toBe(48); // noon
+    expect(eventQFromWindow("11-12 AM")).toBe(92); // 11 PM → midnight
+    expect(eventQFromWindow("11:30 to 1 a.m.")).toBe(94); // 11:30 PM → 1 AM
+    expect(eventQFromWindow("9-10:30 AM")).toBe(36);
+  });
   it("readers: the catering window's first clock time; ezCater orders not in the pipeline; the person-specific first day", () => {
     expect(eventQFromWindow("11:30 AM - 1 PM")).toBe(46);
     expect(eventQFromWindow("12pm")).toBe(48);

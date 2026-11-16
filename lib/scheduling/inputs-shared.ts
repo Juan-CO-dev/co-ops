@@ -138,11 +138,25 @@ export function eventQFromWindow(text: string | null): number | null {
   let h = Number(m[1]);
   const min = m[2] ? Number(m[2]) : 0;
   let ap = m[3]?.toLowerCase().replace(/\./g, "") ?? null;
-  // B028: "1:00–1:30 PM" carries ONE meridiem for the whole range — the first AM/PM at-or-after the first time governs
-  // it (the rule `timeWindowMinutes` uses), and only for a 12-hour reading (1–12; "13:00" stays 24-hour).
+  // B028: "1:00–1:30 PM" carries ONE meridiem for the whole range, and only a 12-hour reading (1–12; "13:00" stays
+  // 24-hour) borrows it. B028 r1: the borrowed meridiem belongs to the END, so a range that crosses noon or midnight
+  // ("11:30–12:00 PM", "11:30–1 PM", "11–12 AM") is resolved from BOTH endpoints: the start takes whichever meridiem
+  // makes the range shortest going forward (a tie keeps the end's). A later AM/PM that is not a range end ("1 pickup,
+  // done by 2 pm") keeps the old rule: the first AM/PM after the first time governs it.
   if (ap === null && h >= 1 && h <= 12) {
-    const later = /\b([ap])\.?m\.?\b/i.exec(text.slice(m.index + m[0].length));
-    if (later) ap = later[1]!.toLowerCase() === "p" ? "pm" : "am";
+    const rest = text.slice(m.index + m[0].length);
+    const end = /^\s*(?:-|\u2013|\u2014|to)\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?(?![a-z])/i.exec(rest);
+    if (end && Number(end[1]) >= 1 && Number(end[1]) <= 12 && Number(end[2] ?? 0) <= 59) {
+      const endAp = end[3]!.toLowerCase() === "p" ? "pm" : "am";
+      const to24 = (hh: number, a: "am" | "pm") => (hh % 12) + (a === "pm" ? 12 : 0);
+      const endMin = to24(Number(end[1]), endAp) * 60 + Number(end[2] ?? 0);
+      const span = (a: "am" | "pm") => (endMin - (to24(h, a) * 60 + min) + 1440) % 1440;
+      const other = endAp === "pm" ? "am" : "pm";
+      ap = span(other) < span(endAp) ? other : endAp;
+    } else {
+      const later = /\b([ap])\.?m\.?\b/i.exec(rest);
+      if (later) ap = later[1]!.toLowerCase() === "p" ? "pm" : "am";
+    }
   }
   if (ap === "pm" && h < 12) h += 12;
   if (ap === "am" && h === 12) h = 0;
