@@ -36,7 +36,7 @@ import {
   type AssortmentKind,
 } from "@/lib/toast/platter-shared";
 import { loadCapturedToastDay, type CapturedToastDay } from "@/lib/toast/captured-day";
-import { reconciledToastOrders, type DepletionLink } from "@/lib/ezcater/depletion-shared";
+import { isEzcaterDiningOption, reconciledToastOrders, type DepletionLink } from "@/lib/ezcater/depletion-shared";
 
 export const TOAST_SALES_WRITE_MIN = 7; // GM+ — pull + exclusions (mirrors toast-map)
 export const TOAST_SALES_READ_MIN = 6;  // AGM+ — consumption readout (prep-demand page floor)
@@ -310,7 +310,9 @@ export async function loadActiveExclusions(): Promise<ExclusionView[]> {
   return (data ?? []).map((r) => ({ id: r.id, locationId: r.location_id, kind: r.kind, value: r.value, note: r.note, createdAt: r.created_at }));
 }
 
-const KINDS = new Set(["dining_option", "menu_group", "toast_item_guid", "item_name_contains"]);
+// W16/B094: "menu_group" is no longer authorable — a capture selection carries no menu group, so such a rule
+// could never match. Existing rows stay (inert, shown "not applied"); the DB CHECK and the matcher keep the kind.
+const KINDS = new Set(["dining_option", "toast_item_guid", "item_name_contains"]);
 
 /**
  * Author an ingest exclusion FOR ONE SHOP. GM+, and the shop must be one the actor holds.
@@ -326,9 +328,10 @@ const KINDS = new Set(["dining_option", "menu_group", "toast_item_guid", "item_n
  * because a second, higher-privileged spelling of a thing Juan just said should not happen
  * is a capability with no caller and a hole with a lock on it.
  *
- * Global rows still MATCH — the two legacy ones (`Ezcater`, `App Catering Delivery`,
- * authored 2026-07-25) keep working exactly as they do today, and are NOT migrated here;
- * their disposition (keep-as-global vs split-per-shop) is Juan's call and its own change.
+ * Global rows still MATCH. The two legacy ones (`Ezcater`, `App Catering Delivery`, authored
+ * 2026-07-25) never matched anything (the ingest passed dining_option = null until W16/B094);
+ * Juan's disposition (2026-11-15, the recommended pick) is DEACTIVATE, done by migration 0322
+ * before dining-option rules start matching.
  */
 export async function addExclusion(
   actor: AuthContext,
@@ -498,7 +501,12 @@ export async function deriveCapturedSalesConsumption(locationId: string, busines
   let cateringExcludedUnits = 0;
   for (const order of reconciliationLinks ? reconciledToastOrders(day.orders, reconciliationLinks) : day.orders) {
     if (order.deleted || order.voided || order.excessFood) continue;
-    const catering = order.salesChannel === "catering" || order.salesChannel === "gift_card";
+    // W16/B093: a catering check is excluded ONLY where another source depletes it — an ezCater ring on the
+    // raw path (the reconciled path has already removed linked checks and relabelled unlinked rings as
+    // sales). House / app catering rung only on the register (Catering, Catering- Pick Up, DeliverThat, App
+    // Catering Delivery) has no other depletion source, so it depletes like any sale. Gift cards never do.
+    const claimedElsewhere = order.salesChannel === "catering" && !reconciliationLinks && isEzcaterDiningOption(order.diningOption);
+    const catering = order.salesChannel === "gift_card" || claimedElsewhere;
     const eligibleChecks = new Set(order.checks.filter((c) => !c.deleted && !c.voided).map((c) => c.checkGuid));
     for (const s of order.selections) {
       if (!eligibleChecks.has(s.check_guid)) continue;
@@ -506,7 +514,9 @@ export async function deriveCapturedSalesConsumption(locationId: string, busines
       rows.set(`${s.check_guid}:${s.selection_guid}`, {
       check_guid: s.check_guid, selection_guid: s.selection_guid, parent_selection_guid: s.parent_selection_guid,
       toast_item_guid: s.item_guid, item_name: s.name, quantity: s.quantity, price_cents: null,
-      voided: s.voided || s.deleted || catering, dining_option: null, menu_group: null, snapshot_version: 1,
+      // W16/B094: the order's resolved dining option, so a dining_option exclusion can match (it was null,
+      // and every such rule silently matched nothing). A capture carries no menu group: menu_group stays null.
+      voided: s.voided || s.deleted || catering, dining_option: order.diningOption, menu_group: null, snapshot_version: 1,
     });
     }
   }
@@ -645,6 +655,19 @@ export async function deriveSalesConsumptionFrom(locationId: string, businessDat
     const key = `${ent.kind}:${ent.id}`;
     const cur = qtyByEntity.get(key);
     if (cur) cur.quantity += qty; else qtyByEntity.set(key, { ...ent, quantity: qty });
+  }
+  // W16/B095: every MODIFIER selection that STANDS FOR a sub/item (a base guid rung under a bundle, a
+  // package / add-a-sub pick) is recorded before any modifier resolves its parent, so a grandchild
+  // removal ("no bread", GF swap) sees its IMMEDIATE parent's recipe whatever order the lines arrived
+  // in. Lookup only: no quantity changes here, the modifier lane below is untouched.
+  for (const r of modifierLines) {
+    const key = selectionKey(r.check_guid, r.selection_guid);
+    if (entityBySelection.has(key) || assortmentByGuid.has(r.toast_item_guid)) continue;
+    const resolved = resolveLineTarget(true, entityByGuid.get(r.toast_item_guid), modifierByGuid.get(r.toast_item_guid));
+    if (resolved?.kind === "base" && resolved.target.kind !== "package") entityBySelection.set(key, resolved.target);
+    else if (resolved?.kind === "modifier" && resolved.effect.targetKind === "menu_item" && resolved.effect.disposition === "deplete") {
+      entityBySelection.set(key, { kind: "menu_item", id: resolved.effect.targetId });
+    }
   }
 
   // ── Graph load once. BOTH lanes accumulate SIGNED before their clamp:

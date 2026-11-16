@@ -78,6 +78,9 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
   // EMPTY until somebody makes a shop version — exactly what "no shop versions" means. A fixture that
   // brings its own rows keeps them.
   for (const t of ["recipe_versions", "recipe_version_lines", "menu_item_shop_settings", "recipe_notice_dismissals"]) tables[t] ??= [];
+  // W16/B092: the production carry window reads the recipes that output prep items (shelf life). A fixture
+  // with no recipe rows means every item carries the 5-day default.
+  for (const t of ["recipes", "recipe_outputs"]) tables[t] ??= [];
   // Catalog Phase 2a (0259): `sku_pack_versions` exists in every database too. A fixture that brings no
   // version rows is one whose packs were never edited: the as-of readers (audit W17 / B100, the counts
   // receipt ledger) find no version in force and answer with the live chain, as before.
@@ -123,6 +126,7 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
     let upsertRows: Row[] | null = null;
     let insertRows: Row[] | null = null;
     let updatePatch: Row | null = null;
+    let updateSelected = false; // UPDATE … RETURNING (`.update().select(…)`): answer the updated rows
     let wantCount = false;
     let upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
 
@@ -143,7 +147,8 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
         const hit = (tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
         for (const r of hit) Object.assign(r, updatePatch);
         writes.push({ table, rows: hit.map((r) => ({ ...r })) });
-        return { data: null, error: null, count: hit.length };
+        const data = updateSelected ? hit.map((r) => project(table, r, parseSelect(selectStr))).filter((r): r is Row => r !== null) : null;
+        return { data, error: null, count: hit.length };
       }
       if (upsertRows) {
         writes.push({ table, rows: upsertRows });
@@ -185,7 +190,7 @@ export function createFakeDb(tables: Tables, latencyMs = 0) {
     };
 
     const q = {
-      select(cols: string, opts?: { count?: string; head?: boolean }) { selectStr = cols.replace(/\s+/g, " "); wantCount = opts?.count === "exact"; return q; },
+      select(cols: string, opts?: { count?: string; head?: boolean }) { selectStr = cols.replace(/\s+/g, " "); wantCount = opts?.count === "exact"; if (updatePatch) updateSelected = true; return q; },
       eq(col: string, v: unknown) { preds.push((r) => valueAt(table, r, col) === v); return q; },
       neq(col: string, v: unknown) { preds.push((r) => valueAt(table, r, col) !== v); return q; },
       is(col: string, v: unknown) { preds.push((r) => (valueAt(table, r, col) ?? null) === v); return q; },
