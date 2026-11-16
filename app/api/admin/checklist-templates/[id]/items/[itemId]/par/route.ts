@@ -35,8 +35,12 @@ export async function PATCH(
   }
   const dayOfWeek =
     b.dayOfWeek === null || typeof b.dayOfWeek === "number" ? (b.dayOfWeek as number | null) : null;
-  const parValue =
-    b.parValue === null || typeof b.parValue === "number" ? (b.parValue as number | null) : null;
+  // W15/B089: a parValue that is present but not null or a finite number is refused,
+  // never silently read as "no par".
+  if (b.parValue !== undefined && b.parValue !== null && (typeof b.parValue !== "number" || !Number.isFinite(b.parValue))) {
+    return jsonError(400, "invalid_par", { field: "parValue" });
+  }
+  const parValue = typeof b.parValue === "number" ? b.parValue : null;
   const parUnit =
     b.parUnit === null || typeof b.parUnit === "string" ? (b.parUnit as string | null) : null;
 
