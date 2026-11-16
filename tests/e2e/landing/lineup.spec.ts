@@ -552,3 +552,23 @@ for(const language of ['en','es'] as const)for(const scale of ['100%','200%'] as
   for(const label of report)expect(label.style).toBe('normal');
   await page.screenshot({path:testInfo.outputPath(`strip-${language}-${scale}.png`)});
 });
+
+// W24/B215: a tap in the sheet's own padding has the dialog as its target; only the backdrop closes it.
+test('tapping inside the order sheet padding keeps it open; tapping the backdrop closes it', async ({browser,baseURL}) => {
+  const context = await browser.newContext({viewport:{width:375,height:812},reducedMotion:'reduce'});
+  const page = await context.newPage();
+  await page.goto(baseURL!);
+  await page.locator('#lineup').scrollIntoViewIfNeeded();
+  await page.locator('[data-lineup] button',{hasText:'The Frex'}).click();
+  await page.getByRole('button',{name:'Order The Frex'}).click();
+  const sheet = page.locator('dialog.landing-v3-sheet[open]');
+  await expect(sheet).toBeVisible();
+  const box = (await sheet.boundingBox())!;
+  await page.mouse.click(box.x + 8, box.y + box.height / 2);
+  await expect(sheet).toHaveCount(1);
+  await page.mouse.click(box.x + box.width - 8, box.y + box.height - 8);
+  await expect(sheet).toHaveCount(1);
+  await page.mouse.click(5, 5);
+  await expect(page.locator('dialog.landing-v3-sheet[open]')).toHaveCount(0);
+  await context.close();
+});

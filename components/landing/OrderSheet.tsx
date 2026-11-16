@@ -100,7 +100,12 @@ export function OrderSheet({shops,delivery,placement,item,triggerLabel,title,clo
   const show=()=>{if(trigger.current)hop(trigger.current);onOpen?.();dialog.current?.showModal();setOpen(true);};
   return <>
     <button ref={trigger} data-order-control type="button" onClick={show} aria-haspopup="dialog" className={className}>{triggerLabel}</button>
-    <dialog ref={dialog} className="landing-v3-sheet" aria-labelledby={titleId} onClose={()=>{setOpen(false);trigger.current?.focus();}} onClick={event=>{if(event.target===dialog.current)dialog.current?.close();}}>
+    <dialog ref={dialog} className="landing-v3-sheet" aria-labelledby={titleId} onClose={()=>{setOpen(false);trigger.current?.focus();}} onClick={event=>{
+      // The dialog's own padding and border also target the dialog: close only for a tap OUTSIDE its box (the backdrop).
+      const d=dialog.current;if(!d||event.target!==d)return;
+      const r=d.getBoundingClientRect();
+      if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)d.close();
+    }}>
       <div>
         {/* The sheet is a modal: its own top-level heading, not a sub-heading of the card behind it. */}
         <h2 id={titleId}>{title}</h2>
