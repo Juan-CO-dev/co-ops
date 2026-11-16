@@ -240,30 +240,48 @@ async function reserveLegacy(sb: Sb, actor: AuthContext, pipelineId: string, quo
   }
 }
 
+/** THE one UPDATE shape that moves a lead's still-reserved demand to consumed or released. */
+async function flipReserved(sb: Sb, pipelineId: string, to: "consumed" | "released", caller: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await sb
+    .from("catering_prep_demand")
+    .update(to === "consumed" ? { status: "consumed", consumed_at: now } : { status: "released", released_at: now })
+    .eq("pipeline_id", pipelineId)
+    .eq("status", "reserved");
+  if (error) throw new Error(`${caller}: ${error.message}`);
+}
+
 /** Consume (deplete) still-reserved demand when the lead goes out/completed. */
 export async function consumePrepDemand(actor: AuthContext, pipelineId: string): Promise<void> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
-  const sb = getServiceRoleClient();
-  const { error } = await sb
-    .from("catering_prep_demand")
-    .update({ status: "consumed", consumed_at: new Date().toISOString() })
-    .eq("pipeline_id", pipelineId)
-    .eq("status", "reserved");
-  if (error) throw new Error(`consumePrepDemand: ${error.message}`);
+  await flipReserved(getServiceRoleClient(), pipelineId, "consumed", "consumePrepDemand");
   void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.consume", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: {}, ipAddress: null, userAgent: null });
 }
 
 /** Release still-reserved demand when the lead reverts / is lost. Consumed rows stay consumed. */
 export async function releasePrepDemand(actor: AuthContext, pipelineId: string): Promise<void> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
-  const sb = getServiceRoleClient();
-  const { error } = await sb
-    .from("catering_prep_demand")
-    .update({ status: "released", released_at: new Date().toISOString() })
-    .eq("pipeline_id", pipelineId)
-    .eq("status", "reserved");
-  if (error) throw new Error(`releasePrepDemand: ${error.message}`);
+  await flipReserved(getServiceRoleClient(), pipelineId, "released", "releasePrepDemand");
   void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.release", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: {}, ipAddress: null, userAgent: null });
+}
+
+/**
+ * The ledger follows a SYSTEM stage move (audit W22/B201) — the nightly rollover's `completed`, the Toast
+ * scan's `lost`, the ezCater lifecycle. Server-internal, NO operator actor: the caller is a cron or a
+ * webhook, never a request. `out`/`completed` consume, `lost`/`inquiry`/`quote_sent` release, exactly as
+ * moveStage does for a person; `confirmed` is a no-op (a system move never reserves — reserving needs a
+ * resolved quote and the 0329 lock path, which a person's confirm takes). Before this, a house lead with
+ * a quote that the rollover completed kept its demand 'reserved' forever, feeding W4b SKU demand, the
+ * digest and the surplus scan.
+ */
+export async function applySystemStageToPrepDemand(sb: Sb, pipelineId: string, toStage: string, actorContext: string): Promise<"consumed" | "released" | "none"> {
+  const to = toStage === "out" || toStage === "completed" ? "consumed"
+    : toStage === "lost" || toStage === "inquiry" || toStage === "quote_sent" ? "released"
+    : null;
+  if (to === null) return "none";
+  await flipReserved(sb, pipelineId, to, "applySystemStageToPrepDemand");
+  void audit({ actorId: null, actorRole: null, action: to === "consumed" ? "catering.prep_demand.consume" : "catering.prep_demand.release", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: { actor_context: actorContext, to_stage: toStage }, ipAddress: null, userAgent: null });
+  return to;
 }
 
 /** What a resync did. `skipped_package_picks` is the one outcome the manager must hear about: the kitchen
