@@ -16,7 +16,7 @@ import { baselineDrift, computeScorecard, computeOrderTaps, costPerTap, costPerE
 type Viewer = Pick<AuthContext, "role" | "level" | "locations">;
 type Client = Pick<SupabaseClient, "from" | "rpc">;
 export interface Milestone { id: string; kind: string; milestone_date: string; corrects_id: string | null }
-export interface ManualEntry { id: string; kind: string; location_id: string | null; platform: string | null; period_start: string; period_end: string; amount_cents: number | null; list_count: number | null; note: string | null; corrects_id: string | null }
+export interface ManualEntry { id: string; kind: string; location_id: string | null; platform: string | null; period_start: string; period_end: string; amount_cents: number | null; list_count: number | null; note: string | null; corrects_id: string | null; voided?: boolean }
 export type Score = ReturnType<typeof computeScorecard>;
 export interface BaselineSnapshot { id: string; milestone_id: string; window_from: string; window_to: string; payload: Score & { byLocation?: Record<string, Score> }; coverage: Score["coverage"]; corrects_id: string | null }
 export interface MarketingLocation { id: string; name: string; code: string }
@@ -97,13 +97,36 @@ async function readWindowInput(sb: Client, locations: MarketingLocation[], windo
   return input;
 }
 
+const ENTRY_COLUMNS = "id,kind,location_id,platform,period_start,period_end,amount_cents,list_count,note,corrects_id";
+/**
+ * The live entries: chain heads, minus a head that REMOVED its entry (W26-2 b, 0333's `voided`).
+ * Before 0333 is applied the column does not exist (42703): re-read without it — nothing is removed then.
+ */
+async function readManualEntries(sb: Client): Promise<ManualEntry[]> {
+  let rows: ManualEntry[];
+  try {
+    rows = await readRows<ManualEntry>(sb, "marketing_manual_entries", `${ENTRY_COLUMNS},voided`);
+  } catch (error) {
+    if ((error as { code?: string })?.code !== "42703") throw error;
+    rows = await readRows<ManualEntry>(sb, "marketing_manual_entries", ENTRY_COLUMNS);
+  }
+  return marketingHeads(rows).filter(row => row.voided !== true);
+}
+const TAP_PAGE = 1000;
 async function readTaps(sb: Client, window: DateWindow, counterOn: string | null, storeKeys: string[]) {
   const rows: TapDay[] = [];
   for (let from = window.from; from <= window.to; from = etYmdMinusDays(from, -28)) {
     const to = [etYmdMinusDays(from, -27), window.to].sort()[0]!;
-    const result = await sb.rpc("marketing_order_tap_intents", { p_from: from, p_to: to });
-    check(result.error);
-    rows.push(...(result.data ?? []).map((r: { day: string; store_key: string; ad_code: string; active: boolean; click_count: number; intent: TapDay["intent"] }) => ({ intent: r.intent, day: r.day, storeKey: r.store_key, adCode: r.ad_code, active: r.active, clickCount: Number(r.click_count) })));
+    // PostgREST caps an RPC's rows at 1,000 (W26/B138). The function orders by
+    // the table's primary key (day, store, slot, intent), so offset paging is
+    // exact: page until a short page comes back.
+    for (let offset = 0; ; offset += TAP_PAGE) {
+      const result = await sb.rpc("marketing_order_tap_intents", { p_from: from, p_to: to }).range(offset, offset + TAP_PAGE - 1);
+      check(result.error);
+      const page = (result.data ?? []) as { day: string; store_key: string; ad_code: string; active: boolean; click_count: number; intent: TapDay["intent"] }[];
+      rows.push(...page.map(r => ({ intent: r.intent, day: r.day, storeKey: r.store_key, adCode: r.ad_code, active: r.active, clickCount: Number(r.click_count) })));
+      if (page.length < TAP_PAGE) break;
+    }
   }
   return computeOrderTaps({ window, installed: true, counterOn, rows, storeKeys });
 }
@@ -115,7 +138,7 @@ export async function loadMarketingScorecard(viewer: Viewer, locationId: string 
   try {
     const sb = deps.client ?? getServiceRoleClient();
     const milestones = marketingHeads(await readRows<Milestone>(sb, "marketing_milestones", "id,kind,milestone_date,corrects_id"));
-    const entries = marketingHeads(await readRows<ManualEntry>(sb, "marketing_manual_entries", "id,kind,location_id,platform,period_start,period_end,amount_cents,list_count,note,corrects_id"));
+    const entries = await readManualEntries(sb);
     const snapshots = marketingHeads(await readRows<BaselineSnapshot>(sb, "marketing_baseline_snapshots", "id,milestone_id,window_from,window_to,payload,coverage,corrects_id"));
     const locations = await readRows<MarketingLocation>(sb, "locations", "id,name,code");
     if (locationId !== null && !locations.some(r => r.id === locationId)) throw new Error("invalid_location");
@@ -134,7 +157,8 @@ export async function loadMarketingScorecard(viewer: Viewer, locationId: string 
     const counterOn = milestones.find(r => r.kind === "counter_on")?.milestone_date ?? null;
     const series: MarketingSeries[] = [];
     for (const window of windows.weeks) {
-      const measuredWindow = window.complete ? window : { from: window.from, to: etYmdMinusDays(windows.today, 1) };
+      // One source for the measured span (W26/B220): through `throughDay`; no full day yet = an empty window.
+      const measuredWindow = { from: window.from, to: window.throughDay ?? etYmdMinusDays(window.from, 1) };
       const score = computeScorecard(await readWindowInput(sb, selected, measuredWindow));
       const taps = await readTaps(sb, window.complete ? window : { from: window.from, to: windows.today }, counterOn, storeKeys);
       // Meta spend has no shop allocation. Never divide all-shop spend by one shop's taps.

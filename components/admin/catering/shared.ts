@@ -83,6 +83,8 @@ const KNOWN_ERROR_CODES = new Set([
   // polish-c: package-slot lib codes that used to fall to generic.
   "invalid_ref",
   "not_choice",
+  // W22/B205: an LTO item whose catalog row is gone (the create now refuses it whole).
+  "invalid_item_ref",
 ]);
 
 /** Resolve an error `code` to a localized message, falling back to generic. */

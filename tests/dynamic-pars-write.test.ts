@@ -274,7 +274,7 @@ describe("writeParFromSuggestion / dismissSuggestion bind the location", () => {
     // Not a 404: the bind passed. What it hits next is the absent test-env Supabase
     // config — which is exactly the boundary the refused calls above never got to.
     for (const call of [
-      () => writeParFromSuggestion({ actor: ownerAnywhere, actorKind: "accept", value: 4, ...args }),
+      () => writeParFromSuggestion({ actor: ownerAnywhere, actorKind: "accept", value: 4, expectedPackEpoch: 0, ...args }),
       () => dismissSuggestion(ownerAnywhere, { ...args, currentPar: 3 }),
     ]) {
       const err = await call().catch((e: unknown) => e);

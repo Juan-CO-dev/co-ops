@@ -954,6 +954,7 @@ export function AmPrepForm({
         return s.shape === "yes_no" ? (
           <MiscSection
             key={s.slug}
+            section={s.slug}
             templateItems={sectionItems}
             rawValues={rawValues}
             onChange={handleChange}

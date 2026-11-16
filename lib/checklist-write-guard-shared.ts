@@ -1,3 +1,5 @@
+import { SHOP_TASK_ALL_LOCATIONS_LEVEL } from "./locations";
+
 /** R7 policy floor only. Existing assignment, PIN, item validation and hard gates
  * remain additional app requirements; these predicates do not replace them. */
 export interface ChecklistWriteAuthority {
@@ -19,6 +21,20 @@ export interface ChecklistWriteTarget {
   referencesTemplateItemId: string | null;
 }
 
+/**
+ * Audit W05B (Juan 2026-11-15: "we routinely do tasks at the shops depending on what's needed and
+ * who is available"): the shop rule of every checklist task writer — getOrCreateInstance's create
+ * branch, completeItem, submitBatch, confirmInstance — and of the closing page's write UI. An ACTIVE
+ * actor who is an active member of the shop (`locations` holds active memberships only), or level 8+
+ * (MoO, owner, CGS) at any shop with no membership row. Below level 8 the membership stays required.
+ * The correction writers (requireCorrectionShop) and tagActualCompleter apply the same rule; SQL
+ * repeats it under the instance lock (checklist_actor_level, 0318).
+ */
+export function worksShopTasks(actor: ChecklistWriteAuthority, locationId: string): boolean {
+  return actor.active && (actor.locations.includes(locationId) || actor.level >= SHOP_TASK_ALL_LOCATIONS_LEVEL);
+}
+
+/** The R7 parity model of the pre-0277 PostgREST policies (tests only); not the writer gate. */
 function member(actor: ChecklistWriteAuthority | null, target: ChecklistWriteTarget): actor is ChecklistWriteAuthority {
   return actor !== null && actor.active && actor.locations.includes(target.locationId);
 }
@@ -46,4 +62,27 @@ export function canConfirmChecklistInstance(actor: ChecklistWriteAuthority | nul
 export function canCreateChecklistInstance(actor: ChecklistWriteAuthority | null, target: ChecklistWriteTarget): boolean {
   return member(actor, target)
     && actor.level >= (["opening", "prep"].includes(target.templateType) ? 4 : 3);
+}
+
+/**
+ * A line the SYSTEM completes — never a person's tap, and never a generic correction's target.
+ *   · a REPORT REFERENCE (`report_reference_type`): ticked by its source report's submission;
+ *   · an ITEM-TRACKING line (`ref_track_item_completion` AND a referenced item): ticked by the
+ *     reconciler when the item it follows is completed (lib/prep.ts reconcileRefTrackItems).
+ *
+ * Audit W14 / B182: corrections refused report references only. An item-tracking tick could be
+ * revoked or re-attributed, and once revoked nothing could tick it again (the reconciler never
+ * re-ticks over a revoke; a manual tick is refused), so a hard-gated closing could never be
+ * confirmed. A wrong tracking tick is fixed at the item it follows. The three SQL correction
+ * writers state the same rule (migration 0315); this is its TypeScript twin, and it is by
+ * construction the set of lines `canCompleteChecklistItem` lets nobody tick by hand
+ * (pinned in tests/checklist-write-guard.test.ts).
+ */
+export function isSystemTrackedItem(item: {
+  reportReferenceType: string | null;
+  refTrackItemCompletion?: boolean | null;
+  referencesTemplateItemId?: string | null;
+}): boolean {
+  if (item.reportReferenceType !== null) return true;
+  return item.refTrackItemCompletion === true && item.referencesTemplateItemId != null;
 }

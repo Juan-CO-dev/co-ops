@@ -28,8 +28,10 @@ describe("receiving sources stay out of ordering", () => {
       expect(fn?.getText(ast), `${file}:${name}`).toContain('.eq("source_kind", "vendor")');
     }
     const walker = readFileSync("lib/ordering.ts", "utf8");
-    // A store becoming the resolved costing member cannot become the ordering backup.
-    expect(walker).toContain("m.vendorId != null && vendorById.has(m.vendorId)");
+    // A store becoming the resolved costing member cannot become the ordering backup: the shared
+    // rescue rule (W18/B026) only takes a member whose vendor is in the walk's vendor-only set.
+    expect(readFileSync("lib/ordering-rescue-shared.ts", "utf8")).toContain("m.vendorId != null && input.liveVendorIds.has(m.vendorId)");
+    expect(walker).toContain("liveVendorIds: new Set(vendorById.keys())");
     expect(walker).not.toContain('.eq("inventory_only", false)');
   });
 

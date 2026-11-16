@@ -42,6 +42,7 @@ import { CopyButton, DeliveryRow } from "@/components/ordering/delivery-affordan
 import { ParSuggestionRow } from "@/components/ordering/ParSuggestionRow";
 import { ParSilencePanel } from "@/components/ordering/ParSilencePanel";
 import { formatDateLabel } from "@/lib/i18n/format";
+import { vendorT } from "@/lib/po-body";
 import type {
   WalkerData,
   WalkerVendor,
@@ -51,6 +52,7 @@ import type {
   ParPassSummary,
   SkippedWalkPo,
   MergedWalkPo,
+  ZeroFailedWalkPo,
 } from "@/lib/ordering";
 import type { TranslationKey } from "@/lib/i18n/types";
 
@@ -98,13 +100,13 @@ export function ParPassWalker({
   recent,
   locationId,
   shopLabel,
-  dateLabel,
+  vendorDateLabel,
 }: {
   walker: WalkerData;
   recent: ParPassSummary[];
   locationId: string;
   shopLabel: string;
-  dateLabel: string;
+  vendorDateLabel: string;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -123,6 +125,7 @@ export function ParPassWalker({
     poError: boolean;
     poSkipped: SkippedWalkPo[];
     poMerged: MergedWalkPo[];
+    poZeroFailed: ZeroFailedWalkPo[];
   } | null>(null);
 
   const setSku = (skuId: string, patch: Partial<Obs>) =>
@@ -204,6 +207,7 @@ export function ParPassWalker({
         poError?: boolean;
         poSkipped?: SkippedWalkPo[];
         poMerged?: MergedWalkPo[];
+        poZeroFailed?: ZeroFailedWalkPo[];
         code?: string;
       };
       if (!res.ok) {
@@ -211,7 +215,7 @@ export function ParPassWalker({
         setBusy(false);
         return;
       }
-      setResult({ draftOrders: j.draftOrders ?? [], shrinkage: j.shrinkage ?? [], poError: j.poError ?? false, poSkipped: j.poSkipped ?? [], poMerged: j.poMerged ?? [] });
+      setResult({ draftOrders: j.draftOrders ?? [], shrinkage: j.shrinkage ?? [], poError: j.poError ?? false, poSkipped: j.poSkipped ?? [], poMerged: j.poMerged ?? [], poZeroFailed: j.poZeroFailed ?? [] });
       setPhase("done");
       // SIM-18b: a completed walk CREATES draft POs, so the server payload above
       // this island (OrderingSurfaces' "Today's orders" + the draftless-cutoff
@@ -268,6 +272,18 @@ export function ParPassWalker({
           </div>
         ))}
 
+        {result.poZeroFailed.map((z) => (
+          // A Full this walk could not take off today's draft (W18/B103 fix round 1): the walk saved,
+          // but the draft may still order the earlier quantity. Check it before it goes out.
+          <div key={`zero-${z.vendorId}`} role="status" className="rounded-xl border-2 border-co-warning bg-co-warning-surface px-4 py-3 text-[13px] text-co-warning-text">
+            {z.existingPoId ? (
+              <a className="inline-flex min-h-[44px] items-center underline" href={`/ordering?location=${encodeURIComponent(locationId)}&po=${encodeURIComponent(z.existingPoId)}`}>
+                {t("ordering.done.po_zero_failed", { vendor: z.vendorName })}
+              </a>
+            ) : t("ordering.done.po_zero_failed", { vendor: z.vendorName })}
+          </div>
+        ))}
+
         {result.poSkipped.map((skipped) => (
           <div key={skipped.vendorId} role="status" className="rounded-xl border-2 border-co-warning bg-co-warning-surface px-4 py-3 text-[13px] text-co-warning-text">
             {/* A full navigation seeds OrderingSurfaces' initialPoId and opens the panel. */}
@@ -299,11 +315,11 @@ export function ParPassWalker({
         <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">
           {t("ordering.done.orders_title")}
         </h2>
-        {result.draftOrders.length === 0 && result.poSkipped.length === 0 && result.poMerged.length === 0 ? (
+        {result.draftOrders.length === 0 && result.poSkipped.length === 0 && result.poMerged.length === 0 && result.poZeroFailed.length === 0 ? (
           <p className="text-[13px] italic text-co-text-muted">{t("ordering.done.no_orders")}</p>
         ) : (
           result.draftOrders.map((o) => (
-            <DraftOrderCard key={o.vendorId} order={o} shopLabel={shopLabel} dateLabel={dateLabel} />
+            <DraftOrderCard key={o.vendorId} order={o} shopLabel={shopLabel} vendorDateLabel={vendorDateLabel} />
           ))
         )}
 
@@ -552,7 +568,7 @@ export function ParPassWalker({
 
       {/* Recent-passes history affordance — collapsible, default-collapsed (D3). Each
           links to its recorded draft orders via the eventId GET (opened in a new view). */}
-      {recent.length > 0 && <HistoryPanel recent={recent} shopLabel={shopLabel} dateLabel={dateLabel} />}
+      {recent.length > 0 && <HistoryPanel recent={recent} shopLabel={shopLabel} vendorDateLabel={vendorDateLabel} />}
 
       {walker.vendors.length === 0 ? (
         <EmptyState message={t("ordering.walk.no_skus")} />
@@ -976,11 +992,11 @@ function roundUnits(n: number): string {
 function DraftOrderCard({
   order,
   shopLabel,
-  dateLabel,
+  vendorDateLabel,
 }: {
   order: DraftOrder;
   shopLabel: string;
-  dateLabel: string;
+  vendorDateLabel: string;
 }) {
   const { t } = useTranslation();
 
@@ -988,21 +1004,22 @@ function DraftOrderCard({
   // deterministic attribution key in every transmitted body), then the shop+date header,
   // then one line per SKU. The PO line is omitted when the draft PO failed to create
   // (displayCode null) — the order text still sends; only the code is missing.
+  // W19/B190: the vendor reads English whatever the staff language — vendorT, never the viewer's t.
   const bodyText = useMemo(() => {
-    const poLine = order.displayCode ? `${t("ordering.email.body_po", { code: order.displayCode })}\n` : "";
-    const header = t("ordering.email.body_header", { shop: shopLabel, date: dateLabel });
+    const poLine = order.displayCode ? `${vendorT("ordering.email.body_po", { code: order.displayCode })}\n` : "";
+    const header = vendorT("ordering.email.body_header", { shop: shopLabel, date: vendorDateLabel });
     const lines = order.lines.map((l) =>
-      t("ordering.email.body_line", {
+      vendorT("ordering.email.body_line", {
         sku: l.skuName,
         qty: l.orderQty,
-        unit: l.orderUnitLabel ?? t("ordering.unit_generic"),
+        unit: l.orderUnitLabel ?? vendorT("ordering.unit_generic"),
         item: l.itemNumber ?? "—",
       }),
     );
     return `${poLine}${header}\n\n${lines.join("\n")}`;
-  }, [order, shopLabel, dateLabel, t]);
+  }, [order, shopLabel, vendorDateLabel]);
 
-  const subject = t("ordering.email.subject", { shop: shopLabel, date: dateLabel });
+  const subject = vendorT("ordering.email.subject", { shop: shopLabel, date: vendorDateLabel });
 
   return (
     <section className="co-card p-4">
@@ -1068,11 +1085,11 @@ function DraftOrderCard({
 function HistoryPanel({
   recent,
   shopLabel,
-  dateLabel,
+  vendorDateLabel,
 }: {
   recent: ParPassSummary[];
   shopLabel: string;
-  dateLabel: string;
+  vendorDateLabel: string;
 }) {
   const { t, language } = useTranslation();
   // Which event's detail is expanded (its draft orders lazy-fetched on first open).
@@ -1147,7 +1164,7 @@ function HistoryPanel({
                   ) : (
                     <div className="flex flex-col gap-3">
                       {d.map((o) => (
-                        <DraftOrderCard key={o.vendorId} order={o} shopLabel={shopLabel} dateLabel={dateLabel} />
+                        <DraftOrderCard key={o.vendorId} order={o} shopLabel={shopLabel} vendorDateLabel={vendorDateLabel} />
                       ))}
                     </div>
                   )}

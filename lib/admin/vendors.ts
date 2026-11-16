@@ -1418,6 +1418,11 @@ export interface UpdateContactChanges {
   acceptsTextOrders?: boolean;
 }
 
+/** 0325's removal functions are not installed yet (PGRST202 / 42883): only this falls back to the old statements. */
+function vendorRpcMissing(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+
 async function requireContactRow(contactId: string): Promise<{ id: string; vendor_id: string }> {
   const sb = getServiceRoleClient();
   const { data, error } = await sb
@@ -1480,23 +1485,35 @@ export async function removeVendorContact(
   const row = await requireContactRow(args.contactId);
 
   const sb = getServiceRoleClient();
-  // Count active contacts for this vendor — block removal of the last one.
-  const { count, error: cErr } = await sb
-    .from("vendor_contacts")
-    .select("id", { count: "exact", head: true })
-    .eq("vendor_id", row.vendor_id)
-    .eq("active", true);
-  if (cErr) throw new Error(`removeVendorContact count failed: ${cErr.message}`);
-  if ((count ?? 0) <= 1) {
-    throw new AdminVendorError(400, "last_contact", "Cannot remove the last active contact");
+  // W19/B191: count + deactivate in ONE transaction under the vendor row lock (0325 remove_vendor_contact), so two
+  // concurrent removals can never take a vendor's last contact. Pre-0325 the old count-then-update runs.
+  const { error: rpcErr } = await sb.rpc("remove_vendor_contact", { p_contact_id: args.contactId, p_actor: actor.user.id });
+  if (rpcErr && !vendorRpcMissing(rpcErr)) {
+    if (rpcErr.code === "P0001" && rpcErr.message === "last_contact") {
+      throw new AdminVendorError(400, "last_contact", "Cannot remove the last active contact");
+    }
+    if (rpcErr.code === "P0001" && rpcErr.message === "not_found") throw new AdminVendorError(404, "not_found", "Contact not found");
+    throw new Error(`removeVendorContact failed: ${rpcErr.message}`);
   }
+  if (rpcErr) {
+    // Count active contacts for this vendor — block removal of the last one.
+    const { count, error: cErr } = await sb
+      .from("vendor_contacts")
+      .select("id", { count: "exact", head: true })
+      .eq("vendor_id", row.vendor_id)
+      .eq("active", true);
+    if (cErr) throw new Error(`removeVendorContact count failed: ${cErr.message}`);
+    if ((count ?? 0) <= 1) {
+      throw new AdminVendorError(400, "last_contact", "Cannot remove the last active contact");
+    }
 
-  const { error } = await sb
-    .from("vendor_contacts")
-    .update({ active: false, updated_by: actor.user.id, updated_at: new Date().toISOString() })
-    .eq("id", args.contactId)
-    .eq("active", true);
-  if (error) throw new Error(`removeVendorContact failed: ${error.message}`);
+    const { error } = await sb
+      .from("vendor_contacts")
+      .update({ active: false, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+      .eq("id", args.contactId)
+      .eq("active", true);
+    if (error) throw new Error(`removeVendorContact failed: ${error.message}`);
+  }
 
   await audit({
     actorId: actor.user.id,
@@ -1632,22 +1649,34 @@ export async function removeVendorOrderingDetail(
   const row = await requireOrderingRow(args.detailId);
 
   const sb = getServiceRoleClient();
-  const { count, error: cErr } = await sb
-    .from("vendor_ordering_details")
-    .select("id", { count: "exact", head: true })
-    .eq("vendor_id", row.vendor_id)
-    .eq("active", true);
-  if (cErr) throw new Error(`removeVendorOrderingDetail count failed: ${cErr.message}`);
-  if ((count ?? 0) <= 1) {
-    throw new AdminVendorError(400, "last_ordering_detail", "Cannot remove the last active ordering detail");
+  // W19/B191: count + deactivate in ONE transaction under the vendor row lock (0325 remove_vendor_ordering_detail).
+  // Pre-0325 the old count-then-update runs.
+  const { error: rpcErr } = await sb.rpc("remove_vendor_ordering_detail", { p_detail_id: args.detailId, p_actor: actor.user.id });
+  if (rpcErr && !vendorRpcMissing(rpcErr)) {
+    if (rpcErr.code === "P0001" && rpcErr.message === "last_ordering_detail") {
+      throw new AdminVendorError(400, "last_ordering_detail", "Cannot remove the last active ordering detail");
+    }
+    if (rpcErr.code === "P0001" && rpcErr.message === "not_found") throw new AdminVendorError(404, "not_found", "Ordering detail not found");
+    throw new Error(`removeVendorOrderingDetail failed: ${rpcErr.message}`);
   }
+  if (rpcErr) {
+    const { count, error: cErr } = await sb
+      .from("vendor_ordering_details")
+      .select("id", { count: "exact", head: true })
+      .eq("vendor_id", row.vendor_id)
+      .eq("active", true);
+    if (cErr) throw new Error(`removeVendorOrderingDetail count failed: ${cErr.message}`);
+    if ((count ?? 0) <= 1) {
+      throw new AdminVendorError(400, "last_ordering_detail", "Cannot remove the last active ordering detail");
+    }
 
-  const { error } = await sb
-    .from("vendor_ordering_details")
-    .update({ active: false, updated_by: actor.user.id, updated_at: new Date().toISOString() })
-    .eq("id", args.detailId)
-    .eq("active", true);
-  if (error) throw new Error(`removeVendorOrderingDetail failed: ${error.message}`);
+    const { error } = await sb
+      .from("vendor_ordering_details")
+      .update({ active: false, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+      .eq("id", args.detailId)
+      .eq("active", true);
+    if (error) throw new Error(`removeVendorOrderingDetail failed: ${error.message}`);
+  }
 
   await audit({
     actorId: actor.user.id,

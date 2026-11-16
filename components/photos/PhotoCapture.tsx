@@ -31,6 +31,8 @@ import { isAllowedContentType } from "@/lib/photos-shared";
 
 interface Props {
   locationId: string;
+  /** The checklist instance a TASK photo is for (audit W05B): lets level 8+ upload at any active shop. */
+  instanceId?: string | null;
   /** Called with the new photo id after a successful upload. */
   onUploaded: (photoId: string) => void;
   /** Pre-existing photo id (e.g. a receiving slot already has one) — renders the
@@ -41,7 +43,7 @@ interface Props {
   className?: string;
 }
 
-export function PhotoCapture({ locationId, onUploaded, initialPhotoId = null, label, className }: Props) {
+export function PhotoCapture({ locationId, instanceId = null, onUploaded, initialPhotoId = null, label, className }: Props) {
   const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [photoId, setPhotoId] = useState<string | null>(initialPhotoId);
@@ -77,7 +79,7 @@ export function PhotoCapture({ locationId, onUploaded, initialPhotoId = null, la
         return;
       }
       // The POST runs under a deadline and never throws; a platform 413 comes back as too_large.
-      const outcome = await postPhoto(prepared, locationId);
+      const outcome = await postPhoto(prepared, locationId, undefined, { instanceId });
       if (!outcome.ok) {
         setError(t(`photo.capture.error.${outcome.error}`));
         return;

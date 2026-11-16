@@ -17,7 +17,7 @@ import { VendorClaimPanel } from "@/components/receiving/VendorClaimPanel";
 import { ReceiptAttachPanel } from "@/components/receiving/ReceiptAttachPanel";
 import type { DeliveryDetail } from "@/lib/receiving";
 import type { CreditRow } from "@/lib/credits";
-import type { DeliveryReceiptView, UnlinkedReceiptView, ReceivingInvoiceCandidate } from "@/lib/email-receipts";
+import type { DeliveryReceiptView, UnlinkedReceiptPage, ReceivingInvoiceCandidate } from "@/lib/email-receipts";
 import type { TranslationKey } from "@/lib/i18n/types";
 
 /** Per-line discrepancy flag → its i18n label key (shared with the door form flags). */
@@ -61,11 +61,13 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
   // unlinked-receipt triage queue server-side so the manager can link an existing one
   // (the panel keeps that list default-collapsed per the disclosure doctrine). When a
   // receipt IS linked, the queue is irrelevant → don't spend the query.
-  let unlinked: UnlinkedReceiptView[] = [];
+  // W20/B195: the queue arrives as its first page (newest 100) with the total; the panel asks
+  // the route for older pages.
+  let triage: UnlinkedReceiptPage = { receipts: [], total: 0, hasMore: false, flagged: 0 };
   let invoiceCandidates: ReceivingInvoiceCandidate[] = [];
   if (receipt === null) {
     try {
-      [unlinked, invoiceCandidates] = await Promise.all([
+      [triage, invoiceCandidates] = await Promise.all([
         listUnlinkedReceipts(auth, detail.locationId),
         loadReceivingReceiptCandidates(auth, id).catch(() => []),
       ]);
@@ -176,7 +178,10 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
         receipt={receipt}
         countedSummary={countedSummary}
         matchState={detail.matchState}
-        unlinked={unlinked}
+        unlinked={triage.receipts}
+        unlinkedTotal={triage.total}
+        unlinkedHasMore={triage.hasMore}
+        unlinkedFlagged={triage.flagged}
         invoiceCandidates={invoiceCandidates}
         lang={lang}
       />

@@ -43,6 +43,26 @@ export function lockLocationContext(actor: LocationActor, locationId: string): b
   return actor.locations.includes(locationId);
 }
 
+/**
+ * Shop TASKS (checklists: opening, closing, AM / mid-day prep) — Juan's ruling 2026-11-15: "we
+ * routinely do tasks at the shops depending on what's needed and who is available". Level 8+ (MoO,
+ * owner, CGS) may mark tasks done, submit and confirm at ANY shop without a membership row; below
+ * level 8 the actor's (active) membership is required, exactly as lockLocationContext requires it.
+ * The same rule the checklist correction writers and tagActualCompleter use (audit W05) and the
+ * SQL writers enforce (checklist_actor_level, 0318). Task surfaces only: every other operational
+ * write keeps lockLocationContext (all shops at 9+).
+ */
+export const SHOP_TASK_ALL_LOCATIONS_LEVEL = 8;
+
+export function canWorkShopTasks(actor: LocationActor, locationId: string): boolean {
+  return isRoleAtOrAbove(actor.role, SHOP_TASK_ALL_LOCATIONS_LEVEL) || actor.locations.includes(locationId);
+}
+
+/** The shops whose task pages the actor may work: "all" at level 8+, else their memberships. */
+export function shopTaskLocations(actor: LocationActor): string[] | "all" {
+  return isRoleAtOrAbove(actor.role, SHOP_TASK_ALL_LOCATIONS_LEVEL) ? "all" : [...actor.locations];
+}
+
 /** Report navigation grant only. Operational writes retain lockLocationContext. */
 export function canReadReportLocation(actor: LocationActor, locationId: string): boolean {
   return isRoleAtOrAbove(actor.role, REPORT_ALL_LOCATIONS_LEVEL) || lockLocationContext(actor, locationId);

@@ -30,7 +30,13 @@ export function windowDays(window: DateWindow): string[] {
   return Array.from({ length: count }, (_, index) => addDays(window.from, index));
 }
 const inside = (day: string, window: DateWindow) => day >= window.from && day <= window.to;
-export interface ScorecardWeek extends DateWindow { week: number; complete: boolean; daysSoFar: number; compare: boolean }
+/**
+ * `daysSoFar` counts the FULL days measured (W26/B220): the KPIs read through
+ * yesterday, so today never counts. `throughDay` is the last measured day — the
+ * week end for a complete week, yesterday for the current week, null when the
+ * week began today and no full day is in yet.
+ */
+export interface ScorecardWeek extends DateWindow { week: number; complete: boolean; daysSoFar: number; throughDay: string | null; compare: boolean }
 
 /** Calendar arithmetic, never elapsed 24-hour durations across a DST boundary. */
 export function scorecardWindows(firstAdSpend: string | null, nowIso: string) {
@@ -48,7 +54,7 @@ export function scorecardWindows(firstAdSpend: string | null, nowIso: string) {
     const monday = addDays(today, -((weekday + 6) % 7));
     for (let index = 0; index < 4; index++) {
       const from = addDays(monday, -28 + index * 7);
-      weeks.push({ from, to: addDays(from, 6), week: index + 1, complete: true, daysSoFar: 7, compare: false });
+      weeks.push({ from, to: addDays(from, 6), week: index + 1, complete: true, daysSoFar: 7, throughDay: addDays(from, 6), compare: false });
     }
   } else {
     const elapsed = dateNumber(today) - dateNumber(firstAdSpend!);
@@ -56,7 +62,9 @@ export function scorecardWindows(firstAdSpend: string | null, nowIso: string) {
       const from = addDays(firstAdSpend!, index * 7);
       const to = addDays(from, 6);
       const complete = to < today;
-      weeks.push({ from, to, week: index + 1, complete, daysSoFar: complete ? 7 : elapsed % 7 + 1, compare: complete });
+      const measured = elapsed % 7;
+      weeks.push({ from, to, week: index + 1, complete, daysSoFar: complete ? 7 : measured,
+        throughDay: complete ? to : measured === 0 ? null : addDays(today, -1), compare: complete });
     }
   }
   return { today, baseline, baselineWeeks, weeks, olderWeeksHidden: !beforeSpend && weeks[0]!.week > 1, noBaseline: firstAdSpend === null,

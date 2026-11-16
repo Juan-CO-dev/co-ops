@@ -92,3 +92,22 @@ describe("diffWeeks: each change kind", () => {
     expect(fresh.summary.added).toBe(4);
   });
 });
+
+describe("the week's overtime premium change (B133)", () => {
+  it("adding a shift that crosses 40 h moves overtimePremiumDeltaCents by the premium part only; the day's cost stays straight time", async () => {
+    const { DATES } = await import("./fixtures/schedule/rules-fixture");
+    const four = DATES.slice(1, 5).map((d) => shift(U.maya, d, 40, 76, P.REG)); // 36 h
+    const before = snap(four);
+    const after = snap([...four, shift(U.maya, DATES[5]!, 40, 76, P.REG)]); // 45 h
+    const o = { ...opts(true), overtimeH: 40 };
+    const d = diffWeeks(before, after, o);
+    expect(d.summary.overtimePremiumDeltaCents).toBe(5_000);
+    expect(d.summary.costDeltaCents).toBe(9 * 2000);
+    expect(diffWeeks(before, after, { ...o, overtimeMultiplier: 2 }).summary.overtimePremiumDeltaCents).toBe(10_000);
+    expect(diffWeeks(after, before, o).summary.overtimePremiumDeltaCents).toBe(-5_000);
+    expect(diffWeeks(before, after, { ...o, wageCentsByUser: {} }).summary.overtimePremiumDeltaCents).toBeNull();
+    // Absent without money or without the line.
+    expect("overtimePremiumDeltaCents" in diffWeeks(before, after, { ...o, canSeeMoney: false }).summary).toBe(false);
+    expect("overtimePremiumDeltaCents" in diffWeeks(before, after, opts(true)).summary).toBe(false);
+  });
+});

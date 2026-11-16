@@ -89,10 +89,21 @@ function useSettingsSave() {
   return { save, message };
 }
 
+/** W19/B192: a removal is never one tap. The first tap arms ONE row's inline confirm; Yes posts, Cancel disarms. */
+function ConfirmRemove({ prompt, busy, onYes, onCancel }: { prompt: string; busy?: boolean; onYes: () => void; onCancel: () => void }) {
+  const { t } = useTranslation();
+  return <div className="flex w-full flex-wrap items-center gap-2">
+    <p className="w-full break-words text-sm font-bold text-co-text">{prompt}</p>
+    <button className={button} type="button" disabled={busy} onClick={onYes}>{t("admin.inbound.remove_yes")}</button>
+    <button className={button} type="button" disabled={busy} onClick={onCancel}>{t("admin.inbound.cancel")}</button>
+  </div>;
+}
+
 export function VendorAccountsPanel({ vendorId, shops, accounts }: { vendorId: string; shops: InboundShop[]; accounts: VendorShopAccount[] }) {
   const { t } = useTranslation();
   const { save, message } = useSettingsSave();
   const [search, setSearch] = useState("");
+  const [armed, setArmed] = useState<string | null>(null);
   return <section className="mt-4 space-y-3">
     <h2 className="text-base font-bold text-co-text">{t("admin.inbound.accounts")}</h2>
     {message ? <p role="status" className="text-sm text-co-text">{message}</p> : null}
@@ -104,7 +115,11 @@ export function VendorAccountsPanel({ vendorId, shops, accounts }: { vendorId: s
       return <SettingEditor key={shop.id} title={shop.name} count={account ? 1 : 0} description={account?.account_number ?? t("admin.inbound.none")}
         visible={shop.name.toLowerCase().includes(search.toLowerCase())}
         initialValue={account?.account_number ?? ""} onSave={accountNumber => save("/api/admin/inbound/vendor-accounts", { vendorId, locationId: shop.id, accountNumber })}>
-        {account ? <button className={button} type="button" onClick={() => save("/api/admin/inbound/vendor-accounts", { vendorId, locationId: shop.id, remove: true })}>{t("admin.inbound.remove_account")}</button> : null}
+        {account ? armed === shop.id
+          ? <ConfirmRemove prompt={t("admin.inbound.remove_account_confirm", { account: account.account_number, shop: shop.name })}
+              onCancel={() => setArmed(null)}
+              onYes={async () => { setArmed(null); await save("/api/admin/inbound/vendor-accounts", { vendorId, locationId: shop.id, remove: true }); }} />
+          : <button className={button} type="button" onClick={() => setArmed(shop.id)}>{t("admin.inbound.remove_account")}</button> : null}
       </SettingEditor>;
     })}
   </section>;
@@ -114,6 +129,7 @@ export function InboundAliasesPanel({ shops, aliases }: { shops: InboundShop[]; 
   const { t } = useTranslation();
   const { save, message } = useSettingsSave();
   const [removing, setRemoving] = useState(false);
+  const [armed, setArmed] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const groups = [...shops.map(shop => ({ id: shop.id as string | null, name: shop.name, receiving: shop.receipt_email_address })), { id: null, name: t("admin.inbound.catering"), receiving: null }];
   return <div className="mt-4 space-y-3">
@@ -128,9 +144,13 @@ export function InboundAliasesPanel({ shops, aliases }: { shops: InboundShop[]; 
         onSave={address => save("/api/admin/inbound/aliases", { address, lane: group.id ? "vendor_receipt" : "catering", locationId: group.id })}>
         <ul className="space-y-2">{rows.filter(alias => `${group.name} ${alias.address}`.toLowerCase().includes(search.toLowerCase())).map(alias => <li key={alias.id} className="flex flex-wrap items-center justify-between gap-2">
           <span className="min-w-0 break-all text-sm text-co-text">{alias.address}</span>
-          <button className={button} type="button" disabled={removing} onClick={async () => {
-            setRemoving(true); try { await save("/api/admin/inbound/aliases", { id: alias.id, remove: true }); } finally { setRemoving(false); }
-          }}>{t("admin.inbound.remove")}</button>
+          {armed === alias.id
+            ? <ConfirmRemove prompt={t("admin.inbound.remove_alias_confirm", { address: alias.address })} busy={removing}
+                onCancel={() => setArmed(null)}
+                onYes={async () => {
+                  setRemoving(true); try { await save("/api/admin/inbound/aliases", { id: alias.id, remove: true }); } finally { setRemoving(false); setArmed(null); }
+                }} />
+            : <button className={button} type="button" disabled={removing} onClick={() => setArmed(alias.id)}>{t("admin.inbound.remove")}</button>}
         </li>)}</ul>
       </SettingEditor>;
     })}

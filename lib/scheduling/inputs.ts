@@ -40,10 +40,10 @@ import { forecastWeek, withCatering, type DayTypeOverride, type SalesBaselineRes
 import { ScheduleError } from "./errors-shared";
 import type { Pin } from "./generator/build-shared";
 import {
-  DEFAULT_SCHEDULE_SHOP_SETTINGS, STRUCTURE_DEFAULTS_ID, closingFacts, datesOfWeeks, memberSinceDate, toCateringEvents, tsStructureVersion,
-  type DayTypeRow, type EzcaterOrderRow, type MemberRow, type ScheduleShopSettings, type SchedulingInputs, type StoredRevision, type StoredWeek,
+  DEFAULT_SCHEDULE_SHOP_SETTINGS, STRUCTURE_DEFAULTS_ID, closingFacts, datesOfWeeks, memberSinceDate, pickShopWage, toCateringEvents, tsStructureVersion,
+  type DayTypeRow, type EzcaterOrderRow, type MemberRow, type ShopWageRow, type ScheduleShopSettings, type SchedulingInputs, type StoredRevision, type StoredWeek,
 } from "./inputs-shared";
-import type { PersonSettingsRow } from "./people-input-shared";
+import type { ElsewhereShift, PersonSettingsRow } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, RuleProblem, Segment, Shift } from "./rules-shared";
 import { SCHEDULE_STRUCTURE_DEFAULTS, structureFromStations, type ScheduleStructure, type SeedPosition, type SeedStation } from "./structure-shared";
 import { Q_MINUTES } from "./time-shared";
@@ -271,26 +271,94 @@ async function loadEzcater(service: SupabaseClient, locationId: string, dates: r
  * 0301: a person holds one 7shifts account PER SHOP, so the wage is read through the link made for THIS
  * shop (`linked_at_location_id`), never "any link of the user" — the other shop's rate is that shop's.
  */
-async function loadWages(service: SupabaseClient, locationId: string, memberIds: readonly string[]): Promise<{ wages: SchedulingInputs["wages"]; overtimeH: number | null }> {
-  if (sevenShiftsStatus().state !== "ready" || memberIds.length === 0) return { wages: { byUserCents: {}, source: "none" }, overtimeH: null };
+async function loadWages(service: SupabaseClient, locationId: string, memberIds: readonly string[]): Promise<{ wages: SchedulingInputs["wages"]; overtimeH: number | null; overtimeMultiplier: number | null }> {
+  if (sevenShiftsStatus().state !== "ready" || memberIds.length === 0) return { wages: { byUserCents: {}, source: "none" }, overtimeH: null, overtimeMultiplier: null };
   const links: Array<{ sevenshifts_user_id: string; user_id: string }> = [];
   for (const ids of chunks(memberIds)) {
     links.push(...await selectAllRows<{ sevenshifts_user_id: string; user_id: string }>((f, t) => service.from("sevenshifts_user_links")
       .select("sevenshifts_user_id, user_id").in("user_id", ids).eq("linked_at_location_id", locationId).eq("active", true).order("user_id", { ascending: true }).range(f, t)));
   }
   const byRemote = new Map(links.map((l) => [String(l.sevenshifts_user_id), l.user_id]));
-  const byUserCents: Record<string, number> = {};
-  for (const ids of chunks([...byRemote.keys()])) {
-    for (const w of await selectAllRows<{ user_id: string; wage_type: string; wage_cents: number; upcoming: boolean; effective_date: string | null }>((f, t) => service
-      .from("sevenshifts_wages").select("user_id, wage_type, wage_cents, upcoming, effective_date").in("user_id", ids).eq("active", true).eq("upcoming", false)
-      .order("user_id", { ascending: true }).order("effective_date", { ascending: true }).range(f, t))) {
-      const u = byRemote.get(String(w.user_id));
-      if (u && w.wage_type === "hourly") byUserCents[u] = w.wage_cents; // ascending effective date: the latest current wage wins
+  // B216: the wage is picked per person by ROLE at this shop's 7shifts location (pickShopWage), never "the last row".
+  const shopLink = await firstRow<{ sevenshifts_location_id: number | string }>(service.from("sevenshifts_location_links")
+    .select("sevenshifts_location_id").eq("location_id", locationId).eq("active", true).limit(1));
+  const remoteLoc = shopLink ? shopLink.sevenshifts_location_id : null;
+  let shopRoleIds: Set<string> | null = null;
+  const primaryByRemote = new Map<string, Set<string>>();
+  if (remoteLoc !== null) {
+    shopRoleIds = new Set((await selectAllRows<{ id: number | string }>((f, t) => service.from("sevenshifts_roles").select("id")
+      .eq("location_id", remoteLoc).order("id", { ascending: true }).range(f, t))).map((r) => String(r.id)));
+    for (const ids of chunks([...byRemote.keys()])) {
+      for (const a of await selectAllRows<{ user_id: number | string; role_id: number | string | null; is_primary: boolean | null }>((f, t) => service
+        .from("sevenshifts_user_assignments").select("user_id, role_id, is_primary").in("user_id", ids).eq("location_id", remoteLoc).eq("active", true)
+        .order("user_id", { ascending: true }).order("edge_key", { ascending: true }).range(f, t))) {
+        if (a.role_id === null) continue;
+        shopRoleIds.add(String(a.role_id));
+        if (a.is_primary === true) {
+          const set = primaryByRemote.get(String(a.user_id)) ?? new Set<string>();
+          set.add(String(a.role_id));
+          primaryByRemote.set(String(a.user_id), set);
+        }
+      }
     }
   }
-  const ls = await firstRow<{ weekly_ot_threshold: number | string | null }>(service.from("sevenshifts_labor_settings").select("weekly_ot_threshold")
-    .order("company_id", { ascending: true }).limit(1));
-  return { wages: { byUserCents, source: "sevenshifts" }, overtimeH: num(ls?.weekly_ot_threshold ?? null) };
+  const rowsByRemote = new Map<string, ShopWageRow[]>();
+  for (const ids of chunks([...byRemote.keys()])) {
+    for (const w of await selectAllRows<ShopWageRow & { user_id: number | string }>((f, t) => service
+      .from("sevenshifts_wages").select("user_id, wage_id, role_id, wage_type, wage_cents, effective_date").in("user_id", ids).eq("active", true).eq("upcoming", false)
+      .order("user_id", { ascending: true }).order("effective_date", { ascending: true, nullsFirst: true }).order("wage_id", { ascending: true }).range(f, t))) {
+      const k = String(w.user_id);
+      const list = rowsByRemote.get(k) ?? [];
+      list.push(w);
+      rowsByRemote.set(k, list);
+    }
+  }
+  const byUserCents: Record<string, number> = {};
+  for (const [remote, u] of [...byRemote.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) {
+    const cents = pickShopWage(rowsByRemote.get(remote) ?? [], { primaryRoleIds: primaryByRemote.get(remote) ?? new Set(), shopRoleIds });
+    if (cents !== null) byUserCents[u] = cents;
+  }
+  // B217: the labor settings of the CONNECTED company — the one the newest finished sync ran against (its ledger row
+  // names it) — never "whichever company row sorts first": a token switch leaves the old company's row behind.
+  const run = await firstRow<{ company_id: number | string | null }>(service.from("sevenshifts_sync_runs").select("company_id")
+    .not("company_id", "is", null).in("status", ["ok", "partial"]).order("finished_at", { ascending: false }).limit(1));
+  const companyId = run?.company_id ?? null;
+  const ls = companyId === null ? null : await firstRow<{ weekly_ot_threshold: number | string | null; multipliers: Record<string, unknown> | null }>(service
+    .from("sevenshifts_labor_settings").select("weekly_ot_threshold, multipliers").eq("company_id", companyId).limit(1));
+  // B133: the weekly overtime pay multiplier as 7shifts names it (normalizeLaborSettings keeps every `*_multiplier`).
+  const m = num(ls?.multipliers?.weekly_overtime_multiplier ?? null);
+  const overtimeMultiplier = m !== null && Number.isFinite(m) && m >= 1 ? m : null;
+  return { wages: { byUserCents, source: "sevenshifts" }, overtimeH: num(ls?.weekly_ot_threshold ?? null), overtimeMultiplier };
+}
+
+/**
+ * B134: this shop's members' shifts at OTHER shops in the same ISO weeks — each other shop's HEAD revision (the
+ * current plan there), read only for this shop's member ids (chunked, paged), only the time columns. First come,
+ * first served: whichever shop builds first holds the time, the other plans around it. Never fails this shop's
+ * board, and never fabricates free time (B134 r1): any read error (a missing table included) is `unavailable` — the
+ * board still renders, but Generate, the horizon, the Wednesday draft and Approve refuse `other_shop_check_unavailable`.
+ */
+export type OtherShopShifts = { status: "ok"; shifts: ElsewhereShift[] } | { status: "unavailable" };
+export async function loadOtherShopShifts(service: SupabaseClient, locationId: string, memberIds: readonly string[], weekStarts: readonly string[]): Promise<OtherShopShifts> {
+  if (memberIds.length === 0 || weekStarts.length === 0) return { status: "ok", shifts: [] };
+  try {
+    const weeks = await selectAllRows<{ head_revision_id: string | null }>((f, t) => service.from("schedule_weeks").select("head_revision_id")
+      .neq("location_id", locationId).in("week_start", [...weekStarts]).order("id", { ascending: true }).range(f, t));
+    const heads = [...new Set(weeks.map((w) => w.head_revision_id).filter((id): id is string => !!id))].sort();
+    const out: ElsewhereShift[] = [];
+    for (const revs of chunks(heads)) {
+      for (const ids of chunks([...memberIds])) {
+        for (const r of await selectAllRows<{ user_id: string; business_date: string; start_q: number; end_q: number }>((f, t) => service.from("schedule_revision_shifts")
+          .select("user_id, business_date, start_q, end_q").in("revision_id", revs).in("user_id", ids)
+          .order("business_date", { ascending: true }).order("user_id", { ascending: true }).order("start_q", { ascending: true }).range(f, t))) {
+          out.push({ userId: r.user_id, date: r.business_date, startQ: r.start_q, endQ: r.end_q });
+        }
+      }
+    }
+    return { status: "ok", shifts: out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0) || a.startQ - b.startQ) };
+  } catch {
+    return { status: "unavailable" };
+  }
 }
 
 /** The `schedule.budget_kept` digests of the shop (a kept suggestion stays quiet). */
@@ -339,14 +407,17 @@ export async function loadSchedulingInputs(service: SupabaseClient, args: LoadSc
       families: ["closingLines", "closingFinalization"],
     });
     const closing = closingDuration(closingFacts(facts.skills), structure.structure.shopDay.serviceCloseQ);
-    const { wages, overtimeH } = await loadWages(service, locationId, members.map((m) => m.userId));
+    const { wages, overtimeH, overtimeMultiplier } = await loadWages(service, locationId, members.map((m) => m.userId));
     const keptBudgetDigests = await loadKeptDigests(service, locationId);
+    const other = await loadOtherShopShifts(service, locationId, members.map((m) => m.userId), weekStarts);
+    const elsewhere = other.status === "ok" ? other.shifts : [];
+    const elsewhereUnavailable = other.status === "unavailable";
     // Staff separations (0279): on leave / separated members never reach the roster (a missing 0279 = nobody).
     const employment = await loadEmploymentStates(service, members.map((m) => m.userId));
     const employmentExcluded = members.filter((m) => excludedFromScheduling(stateOf(employment, m.userId).status)).map((m) => m.userId);
     return {
       locationId, asOf, shopSettings, structure, structuresById, members, skills, skillBands: { building: tunables.bands.building, strong: tunables.bands.strong },
-      personSettings, budget, dayTypes, pins, weeks, demand, catering, punches, closing, wages, overtimeH, keptBudgetDigests, employmentExcluded,
+      personSettings, budget, dayTypes, pins, weeks, demand, catering, punches, closing, wages, overtimeH, overtimeMultiplier, keptBudgetDigests, employmentExcluded, elsewhere, ...(elsewhereUnavailable ? { elsewhereUnavailable } : {}),
     };
   } catch (e) {
     if (e instanceof ScheduleError) throw e;

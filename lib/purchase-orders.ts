@@ -57,6 +57,7 @@ import { poLineGuideKey, resolveGuideKey } from "@/lib/order-guides-shared";
 import { compareByGuide } from "@/lib/order-guide-sort";
 import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import { resolveActive } from "@/lib/location-sku-shared";
+import { frozenSnapshotLines, type SnapshotLine } from "@/lib/po-snapshot-shared";
 
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
 export const PO_MIN = 4; // key_holder+
@@ -85,6 +86,21 @@ function truncateBody(body: string | null, max: number): string | null {
   if (trimmed.length <= max) return trimmed || null;
   return trimmed.slice(0, max) + "…";
 }
+/** The 0325 function is not installed yet: PostgREST's schema-cache miss (PGRST202) or Postgres's undefined function
+ *  (42883). This, and only this, sends a W19 writer to its pre-0325 statement. */
+function rpcMissing(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+/** 0325's po_lines_draft_only trigger refused a line write because the PO is no longer a draft (W19/B109). */
+function lineWriteRefusedNotDraft(error: { code?: string; message?: string } | null): boolean {
+  return !!error && error.code === "P0001" && (error.message === "po_not_draft" || error.message === "po_line_move_refused");
+}
+const confirmedDuringEdit = () => new PurchaseOrderError(
+  409,
+  "confirmed_during_edit",
+  "This order was confirmed while you were editing — your last change did not make it into the confirmed snapshot",
+);
 function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) {
     throw new PurchaseOrderError(403, "forbidden", "Insufficient role level for purchase orders");
@@ -178,15 +194,16 @@ export interface CreatedDraft {
  * Emits ONE `po.draft_created` audit row for the whole batch with the po_ids +
  * source. Vendors with no lines are skipped. Append-only.
  *
- * opts.noCodeSuffixRetry (cutoff draft and walk-submit paths): repurpose the display-code
- * unique index as the DAY-IDEMPOTENCY arbiter for each vendor. Instead
- * of retrying the 23505 at the next suffix (-2, -3…), attempt ONLY the unsuffixed
- * base code and, on a unique-violation, throw PurchaseOrderError(409, "po_exists").
- * This closes the double-call race generateDraftForVendor's pre-check can't (two
- * concurrent generates both pass the pre-check, then only ONE wins the base code).
- * TRADEOFF (documented): a PO that was PLACED earlier today already holds the base
- * code → a later generate 409s. Accepted — an order already went out for this
- * vendor today. Cutoff generation refuses; walk submission reports a vendor skip.
+ * opts.noCodeSuffixRetry (cutoff draft and walk-submit paths): DAY IDEMPOTENCY per vendor — at most
+ * one PO per (shop, vendor, ET day) from these paths. Decided by VENDOR ID (W19/B111), never by the
+ * display code: the code's fragment is the vendor name's first 6 letters, so two vendors can share a
+ * base code, and the second one simply gets the next suffix (-2, -3…). The display-code unique index
+ * still arbitrates the double-call race generateDraftForVendor's pre-check can't: two concurrent
+ * generates for one vendor walk the same base, -2, -3… list, meet on one code, and the loser's 23505
+ * (winner = same vendor) is PurchaseOrderError(409, "po_exists").
+ * TRADEOFF (documented): a PO for this vendor that was PLACED earlier today still counts → a later
+ * generate 409s. Accepted — an order already went out for this vendor today. Cutoff generation
+ * refuses; walk submission reports a vendor skip.
  */
 export async function createDraftsFromLines(
   actor: AuthContext,
@@ -239,11 +256,12 @@ export async function createDraftsFromLines(
   // resolution is in-memory (the 23505 retry handles the rare cross-request race).
   const { startIso, endExclusiveIso } = operationalDayUtcRange(dateEt);
   const { data: existingRows, error: exErr } = await sb.from("purchase_orders")
-    .select("display_code")
+    .select("id, display_code, vendor_id, status, created_at")
     .eq("location_id", locationId)
     .gte("created_at", startIso).lt("created_at", endExclusiveIso)
-    .returns<Array<{ display_code: string }>>();
+    .returns<Array<{ id: string; display_code: string; vendor_id: string; status: string; created_at: string }>>();
   if (exErr) throw new Error(`createDraftsFromLines existing codes: ${exErr.message}`);
+  // Codes of EVERY vendor are taken for allocation; day idempotency is decided per VENDOR (W19/B111).
   const takenCodes = new Set((existingRows ?? []).map((r) => r.display_code));
 
   const created: CreatedDraft[] = [];
@@ -260,21 +278,25 @@ export async function createDraftsFromLines(
     // 23505 race retry: another request may claim a code between our in-memory scan
     // and the INSERT. On a unique-violation we add that code to takenCodes and
     // re-scan — nextFreeCode then skips it and yields the next free suffix. Bounded.
-    // opts.noCodeSuffixRetry (ordering paths): ONE attempt at the base code only; a
-    // 23505 means a PO already holds today's base code for this vendor → treat the
-    // unique index as the day-idempotency arbiter and 409 `po_exists` (never suffix).
-    // Day-idempotency (ordering paths, noCodeSuffixRetry): the base code IS the
-    // whole allocation — never a suffix. A concurrent double-generate loses either
-    // (a) at the in-memory scan (a rival's base already present → nextFreeCode
-    // would have suffixed, silently defeating idempotency — the sim-2 bug), or
-    // (b) at the INSERT (23505). BOTH mean an order for this vendor already exists
-    // today → 409 po_exists, never a -2 second order. The suffix loop remains only
-    // for callers that do not opt into day idempotency.
-    if (opts?.noCodeSuffixRetry && takenCodes.has(base)) {
-      throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", base);
+    //
+    // W19/B111: the base code is the vendor's first 6 letters, so "Baldor" and "Baldor Specialty" SHARE it. The
+    // day-idempotency question is "does THIS vendor already have an order here today?", answered by vendor id —
+    // never by "is the base code taken?", which let one vendor's PO block (and, through the walk's race handler,
+    // absorb) the other's daily draft. A base held by a DIFFERENT vendor is just a taken code: allocate the next
+    // suffix (-2, -3 …). Codes are never freed and every caller walks the same base, -2, -3 … list, so two
+    // concurrent calls for the same vendor still meet on ONE code and the unique index refuses the loser (below).
+    if (opts?.noCodeSuffixRetry) {
+      const mine = (existingRows ?? []).filter((r) => r.vendor_id === vendorId);
+      if (mine.length > 0) {
+        // Report the live order (draft/confirmed) when there is one, else the most recent — "placed earlier
+        // today → po_exists" stays the documented tradeoff, now decided by vendor.
+        const live = mine.find((r) => r.status === "draft" || r.status === "confirmed");
+        const latest = [...mine].sort((a, b) => b.created_at.localeCompare(a.created_at))[0]!;
+        throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", (live ?? latest).display_code);
+      }
     }
     for (let attempt = 0; attempt < 25; attempt++) {
-      const code = opts?.noCodeSuffixRetry ? base : nextFreeCode(base, takenCodes);
+      const code = nextFreeCode(base, takenCodes);
       const { data: po, error: poErr } = await sb.from("purchase_orders").insert({
         location_id: locationId,
         vendor_id: vendorId,
@@ -287,10 +309,18 @@ export async function createDraftsFromLines(
         // 23505 = unique_violation on the display_code unique index.
         if ((poErr as { code?: string }).code === "23505") {
           if (opts?.noCodeSuffixRetry) {
-            // The base code is already taken today → an order for this vendor already
-            // exists (draft/confirmed/placed). Day-idempotency: reject the duplicate
-            // generate rather than mint a -2 second order for the same day.
-            throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", code);
+            // W19/B111: a rival committed this code first. The SAME vendor → an order for it already exists
+            // today (day idempotency: never a second order). ANOTHER vendor (same name prefix) → only the code
+            // is taken; move on to the next suffix.
+            const { data: winner, error: wErr } = await sb.from("purchase_orders")
+              .select("id, vendor_id").eq("display_code", code)
+              .maybeSingle<{ id: string; vendor_id: string }>();
+            if (wErr) throw new Error(`createDraftsFromLines code winner: ${wErr.message}`);
+            if (!winner || winner.vendor_id === vendorId) {
+              throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", code);
+            }
+            takenCodes.add(code);
+            continue;
           }
           // Retry-enabled caller: mark taken and re-scan for the next free suffix.
           takenCodes.add(code);
@@ -610,6 +640,7 @@ export async function updateDraftLines(
       const { error: uErr, count } = await sb.from("po_lines")
         .update({ order_qty: l.orderQty, note: l.note?.trim() || null }, { count: "exact" })
         .eq("po_id", poId).eq("sku_id", l.skuId);
+      if (lineWriteRefusedNotDraft(uErr)) throw confirmedDuringEdit(); // W19/B109: the PO was confirmed first
       if (uErr) throw new Error(`updateDraftLines update: ${uErr.message}`);
       if (count === 0) throw new PurchaseOrderError(404, "not_found", "Line not found");
     }
@@ -619,6 +650,7 @@ export async function updateDraftLines(
       // 23505 = a rival landed this (po_id, sku_id) between our read and our insert. Re-read
       // and re-partition: the row is now in `existingSkus`, so the next lap UPDATEs it.
       if (insertErr.code === "23505") continue;
+      if (lineWriteRefusedNotDraft(insertErr)) throw confirmedDuringEdit(); // W19/B109
       throw new Error(`updateDraftLines insert: ${insertErr.message}`);
     }
     counts = { updated: toUpdate.length, inserted: toInsert.length };
@@ -632,8 +664,10 @@ export async function updateDraftLines(
   }
 
 
-  // TOCTOU close (Fix 3): our draft-only guard above is a check-then-act — a concurrent
-  // confirmPO can flip draft→confirmed AFTER we passed the guard but our po_lines writes
+  // TOCTOU close (Fix 3), now the BACKSTOP: since 0325 the po_lines_draft_only trigger refuses a line write once the
+  // PO is past draft, and confirm_purchase_order refuses `lines_changed` when a write landed first (W19/B109), so a
+  // saved edit can no longer silently miss the snapshot. Before 0325 is applied this re-check is still the only net:
+  // a concurrent confirmPO can flip draft→confirmed AFTER we passed the guard but our po_lines writes
   // may still land. confirmPO's snapshot is frozen at its (earlier) linearizing flip, so
   // a write that landed after the flip is in po_lines but NOT in the confirmed snapshot
   // (which is authoritative for transmission/disputes). Re-read the status after writing;
@@ -642,29 +676,12 @@ export async function updateDraftLines(
     .select("status").eq("id", poId)
     .maybeSingle<{ status: string }>();
   if (aErr) throw new Error(`updateDraftLines recheck: ${aErr.message}`);
-  if (after && after.status !== "draft") {
-    throw new PurchaseOrderError(
-      409,
-      "confirmed_during_edit",
-      "This order was confirmed while you were editing — your last change did not make it into the confirmed snapshot",
-    );
-  }
+  if (after && after.status !== "draft") throw confirmedDuringEdit();
   await auditOperationalTaskOverride(actor, po.location_id, "ordering", "updateDraftLines");
   return counts;
 }
 
 // ── confirmPO: freeze the snapshot + governing cutoff ─────────────────────────────
-interface SnapshotLine {
-  skuId: string;
-  name: string;
-  itemNumber: string | null;
-  qty: number;
-  unitLabel: string | null;
-  priceCents: number | null;
-  guidePos: number | null;
-  /** V3-A: section name at draft time; null on pre-0205 snapshots. */
-  guideSection: string | null;
-}
 interface ConfirmedSnapshot {
   displayCode: string;
   vendor: { id: string; name: string };
@@ -724,15 +741,18 @@ export async function reopenPO(actor: AuthContext, poId: string): Promise<void> 
  * and `markPlaced` / `sendOrderEmail` accepted the row happily enough to transmit a
  * blank order to the vendor.
  *
- * A concurrent double-confirm still loses the race (the second UPDATE sees no draft
- * row → 409 `not_draft`), and updateDraftLines' post-write status re-check still
- * throws `confirmed_during_edit` for an editor whose write landed after this flip.
- * THE COST, STATED: the window in which a draft edit can miss the snapshot now
- * opens at the LINE READ rather than at the flip, because the snapshot is built
- * from lines read before the row is ours. That is a wider window on a RECOVERABLE
- * outcome (a qty edit absent from an otherwise-correct frozen order, which the
- * editor is told about) in exchange for closing an UNRECOVERABLE one (a confirmed
- * PO that can never acquire a snapshot). Audited `po.confirmed`.
+ * A concurrent double-confirm still loses the race (the second flip sees no draft
+ * row → 409 `not_draft`).
+ *
+ * ── THE LINE-READ WINDOW IS CLOSED (W19/B109) ───────────────────────────────────
+ * The snapshot is built from lines read BEFORE the flip, so an edit that committed in
+ * between used to be saved (200 OK, its own re-check still saw `draft`) and silently
+ * left out of the confirmed order. Since 0325 the flip is `confirm_purchase_order`: it
+ * locks the PO row, re-reads po_lines and refuses 409 `lines_changed` unless they are
+ * exactly the lines this snapshot was built from (the confirmer reloads and confirms
+ * again); and the po_lines_draft_only trigger refuses any line write once the PO is
+ * past draft (the editor gets `confirmed_during_edit`). Before 0325 is applied the old
+ * guarded UPDATE runs (rpcMissing) and the window is as it was. Audited `po.confirmed`.
  */
 export async function confirmPO(actor: AuthContext, poId: string): Promise<void> {
   requireLevel(actor, PO_MIN);
@@ -829,17 +849,33 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
   // snapshot, the cutoff and the confirmer all ride THIS statement, there is no longer a
   // window in which the row can read `confirmed` without a snapshot — the state the audit
   // found had no repair path at all.
-  const { error: flipErr, count: flipCount } = await sb.from("purchase_orders")
-    .update({
-      status: "confirmed",
-      confirmed_snapshot: snapshot,
-      confirmed_by: actor.user.id,
-      confirmed_at: confirmedAt,
-      cutoff_at_confirm: cutoffAtConfirm,
-    }, { count: "exact" })
-    .eq("id", poId).eq("status", "draft");
-  if (flipErr) throw new Error(`confirmPO confirm: ${flipErr.message}`);
-  if (flipCount === 0) throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
+  // W19/B109: the flip runs in confirm_purchase_order (0325), bound to the exact lines read above.
+  const expectedLines = lines.map((l) => ({ id: l.id, sku_id: l.sku_id, order_qty: num(l.order_qty), order_unit_label: l.order_unit_label }));
+  const { error: rpcErr } = await sb.rpc("confirm_purchase_order", {
+    p_po_id: poId, p_expected_lines: expectedLines, p_snapshot: snapshot, p_actor: actor.user.id,
+    p_confirmed_at: confirmedAt, p_cutoff: cutoffAtConfirm,
+  });
+  if (rpcErr && rpcMissing(rpcErr)) {
+    // Pre-0325: the guarded UPDATE (the line-read window stays open until 0325 is applied).
+    const { error: flipErr, count: flipCount } = await sb.from("purchase_orders")
+      .update({
+        status: "confirmed",
+        confirmed_snapshot: snapshot,
+        confirmed_by: actor.user.id,
+        confirmed_at: confirmedAt,
+        cutoff_at_confirm: cutoffAtConfirm,
+      }, { count: "exact" })
+      .eq("id", poId).eq("status", "draft");
+    if (flipErr) throw new Error(`confirmPO confirm: ${flipErr.message}`);
+    if (flipCount === 0) throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
+  } else if (rpcErr) {
+    if (rpcErr.code === "P0001" && rpcErr.message === "not_draft") throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
+    if (rpcErr.code === "P0001" && rpcErr.message === "lines_changed") {
+      throw new PurchaseOrderError(409, "lines_changed", "Someone changed this order while you were confirming — check the lines and confirm again");
+    }
+    if (rpcErr.code === "P0001" && rpcErr.message === "po_not_found") throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
+    throw new Error(`confirmPO confirm: ${rpcErr.message}`);
+  }
 
   // Freeze the price onto each line (rowcount-checked). Null price → leave null.
   //
@@ -1416,6 +1452,9 @@ export interface PoDetail {
   confirmedAt: string | null;
   placedAt: string | null;
   placedNote: string | null;
+  /** W19/B108: the first time a vendor order email got an UNCLEAR provider answer (it may have gone out). The panel
+   *  shows "email unconfirmed" while this is set and the vendor has not confirmed (ack null). Null before 0325. */
+  emailSendUncertainAt: string | null;
   lines: PoDetailLine[];
   transmissions: PoTransmissionRow[];
   /** V2-D2: "placed · vendor confirmed ✓" — null until a matched confirmation fills the
@@ -1609,6 +1648,14 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   const txs = txRows ?? [];
   const deliveryIds = (delivRows ?? []).map((d) => d.id);
 
+  // W19/B108: the "email unconfirmed" mark, read ON ITS OWN so the panel keeps working before 0325 adds the column
+  // (an undefined column is simply "no mark"; any other error is real).
+  const { data: markRow, error: markErr } = await sb.from("purchase_orders")
+    .select("email_send_uncertain_at").eq("id", poId)
+    .maybeSingle<{ email_send_uncertain_at: string | null }>();
+  if (markErr && markErr.code !== "42703" && markErr.code !== "PGRST204") throw new Error(`loadPoDetail send mark: ${markErr.message}`);
+  const emailSendUncertainAt = markErr ? null : markRow?.email_send_uncertain_at ?? null;
+
   // SKU names + transmission sender names (batched).
   const skuIds = [...new Set(lines.map((l) => l.sku_id))];
   const senderIds = [...new Set(txs.map((t) => t.sent_by).filter((v): v is string => v != null))];
@@ -1625,6 +1672,40 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   if (uErr) throw new Error(`loadPoDetail users: ${uErr.message}`);
   const skuById = new Map((skuRows ?? []).map((s) => [s.id, s]));
   const userName = new Map((userRows ?? []).map((u) => [u.id, u.name]));
+
+  // W19/B110: a PO past draft SHOWS WHAT WAS CONFIRMED. Its lines (qty, name, item number, unit, price, guide key)
+  // come from confirmed_snapshot — the same reading the vendor email sends (lib/po-snapshot-shared.ts) — so the
+  // panel, its Copy / mailto body and the email cannot diverge; only the note (not in the snapshot) is joined from
+  // po_lines by SKU (unique per PO since 0190). A frozen EMPTY snapshot is honored as empty (fix round 1: the email
+  // refuses no_order_lines; the panel must not show a line inserted after the freeze). A draft, or a legacy PO with no
+  // snapshot at all, reads po_lines as before.
+  const frozenLines = po.status === "draft" ? null : frozenSnapshotLines(po.confirmed_snapshot);
+  const noteBySku = new Map(lines.map((l) => [l.sku_id, l.note] as const));
+  const detailLines: PoDetailLine[] = frozenLines !== null
+    ? frozenLines.map((l: SnapshotLine) => ({
+        skuId: l.skuId,
+        skuName: l.name,
+        itemNumber: l.itemNumber,
+        orderQty: l.qty,
+        orderUnitLabel: l.unitLabel,
+        priceCentsAtOrder: l.priceCents,
+        guidePositionSnapshot: l.guidePos,
+        guideSection: l.guideSection,
+        note: noteBySku.get(l.skuId) ?? null,
+      }))
+    : lines.map((l) => {
+        const sku = skuById.get(l.sku_id);
+        return {
+          skuId: l.sku_id,
+          skuName: sku?.name ?? "(sku)",
+          itemNumber: sku?.item_number ?? null,
+          orderQty: num(l.order_qty) ?? 0,
+          orderUnitLabel: l.order_unit_label,
+          priceCentsAtOrder: l.price_cents_at_order,
+          ...(() => { const k = poLineGuideKey({ status: po.status, confirmedSnapshot: po.confirmed_snapshot, skuId: l.sku_id, snapshot: { position: l.guide_position_snapshot, section: l.guide_section_snapshot }, live: liveGuide.get(l.sku_id) }); return { guidePositionSnapshot: k.position, guideSection: k.section }; })(),
+          note: l.note,
+        };
+      });
 
   // Credits summary across the linked deliveries. Reuse lib/credits.ts loader
   // (same KH+ read + per-delivery location-bind) — no parallel query path.
@@ -1665,19 +1746,8 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     confirmedAt: po.confirmed_at,
     placedAt: po.placed_at,
     placedNote: po.placed_note,
-    lines: lines.map((l) => {
-      const sku = skuById.get(l.sku_id);
-      return {
-        skuId: l.sku_id,
-        skuName: sku?.name ?? "(sku)",
-        itemNumber: sku?.item_number ?? null,
-        orderQty: num(l.order_qty) ?? 0,
-        orderUnitLabel: l.order_unit_label,
-        priceCentsAtOrder: l.price_cents_at_order,
-        ...(() => { const k = poLineGuideKey({ status: po.status, confirmedSnapshot: po.confirmed_snapshot, skuId: l.sku_id, snapshot: { position: l.guide_position_snapshot, section: l.guide_section_snapshot }, live: liveGuide.get(l.sku_id) }); return { guidePositionSnapshot: k.position, guideSection: k.section }; })(),
-        note: l.note,
-      };
-    }),
+    emailSendUncertainAt,
+    lines: detailLines,
     transmissions: txs.map((t) => ({
       id: t.id,
       channel: t.channel,

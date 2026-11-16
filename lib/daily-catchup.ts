@@ -8,6 +8,7 @@ import { runVaultScrub } from "@/lib/vault-scrub-run";
 import { runToastSalesPull } from "@/lib/toast-sales-pull-run";
 import { runParseReceipts } from "@/lib/parse-receipts-run";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
+import { parseFits } from "@/lib/receipt-parse-budget-shared";
 
 export { decideCatchUp } from "@/lib/daily-catchup-shared";
 
@@ -21,8 +22,13 @@ const provenance = { via: "catch-up", caller: "toast-catering-scan" } as const;
 /** Fail open to the pinger, fail closed to work on lookup/claim errors.
  * A claim buys one attempt per UTC day, including failed attempts. It does not
  * lock out a late Vercel invocation; the existing jobs retain their retry semantics.
+ *
+ * `deadline` is when the HOST route must be done with its work (audit W20/B115). The receipt
+ * catch-up runs after the scan and after the other catch-ups, so it cannot assume a full run of
+ * its own: it parses only inside what is left, and when not even one whole parse fits it is left
+ * for the next scan WITHOUT spending its one attempt for the day.
  */
-export async function catchUpDailyJobs(opts?: { now?: Date }): Promise<{ ran: string[]; skipped: string[] }> {
+export async function catchUpDailyJobs(opts: { now?: Date; deadline: number }): Promise<{ ran: string[]; skipped: string[] }> {
   const ran: string[] = [];
   const skipped: string[] = [];
   for (const registered of JOBS_REGISTRY) {
@@ -30,11 +36,15 @@ export async function catchUpDailyJobs(opts?: { now?: Date }): Promise<{ ran: st
     const entry = registered.catchUp;
     let failureContext: Record<string, unknown> = {};
     try {
-      const now = opts?.now ?? new Date();
+      const now = opts.now ?? new Date();
       if (!decideCatchUp(entry, now, null)) { skipped.push(entry.job); continue; }
       // Dormant means no work and no heartbeat, just like the route's 503.
       if (entry.job === "parse-receipts" && !process.env.ANTHROPIC_API_KEY
         && !(process.env.RESEND_INBOUND_SECRET && process.env.RESEND_API_KEY)) {
+        skipped.push(entry.job); continue;
+      }
+      // Before the claim: a run that could not parse anything must not use up today's attempt.
+      if (entry.job === "parse-receipts" && process.env.ANTHROPIC_API_KEY && !parseFits(Date.now(), opts.deadline)) {
         skipped.push(entry.job); continue;
       }
       const day = now.toISOString().slice(0, 10);
@@ -82,7 +92,7 @@ export async function catchUpDailyJobs(opts?: { now?: Date }): Promise<{ ran: st
           break;
         }
         case "parse-receipts": {
-          const result = await runParseReceipts();
+          const result = await runParseReceipts(opts.deadline);
           if (result.dormant) { skipped.push(entry.job); continue; }
           metadata = result.metadata;
           break;

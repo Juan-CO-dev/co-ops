@@ -54,15 +54,18 @@ describe("static: the only sender is the continuation path", () => {
       expect(src, f).not.toMatch(/sendEmail|@\/lib\/email|@\/lib\/sim-email|from ["']resend["']|nodemailer|twilio/);
     }
   });
-  it("in the transitive closure, the email module is imported ONLY by the three reviewed portal/quote senders", () => {
+  it("in the transitive closure, the email module is imported ONLY by the four reviewed portal/quote senders", () => {
     const closure = importClosure(ENTRIES);
     expect(closure.files.size).toBeGreaterThan(ENTRIES.length);
     expect(closure.files.has(n("lib/email.ts"))).toBe(true); // it IS reachable — through the portal, by design
     const importers = [...closure.files].filter((f) => importSpecifiers(readFileSync(f, "utf8"), f).some((s) => s === "@/lib/email")).sort();
     // Reviewed: quotes.ts = the STAFF "send quote" email (reached only via draft.ts's computeChargeStack import,
     // never called on the Meta path); draft.ts = the order-confirmation on submitDraft (a customer act, not the
-    // worker); magic-link.ts = the continuation (the ONE Meta send). A fourth importer here is a new sender.
-    expect(importers).toEqual([n("lib/catering/quotes.ts"), n("lib/portal/draft.ts"), n("lib/portal/magic-link.ts")]);
+    // worker); magic-link.ts = the continuation (the ONE Meta send). A fifth importer here is a new sender.
+    // Reviewed (audit W22): order-update-email.ts = the "your catering order was updated" email, called only by
+    // a staff reschedule (pipeline.ts editLead) and a staff revision send (quotes.ts sendQuote) — reached here
+    // through quotes.ts's import, never called on the Meta path, and shipped CLOSED behind its own switches.
+    expect(importers).toEqual([n("lib/catering/order-update-email.ts"), n("lib/catering/quotes.ts"), n("lib/portal/draft.ts"), n("lib/portal/magic-link.ts")]);
   });
   it("the portal mint is reached from exactly one Meta module, the continuation", () => {
     const closure = importClosure(ENTRIES);

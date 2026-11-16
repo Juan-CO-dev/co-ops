@@ -26,7 +26,7 @@ export function ProductionForm({ formData, locationId }: { formData: ProductionF
   const refreshPredict = async (sId: string, iId: string, qStr: string) => {
     const q = num(qStr);
     if (!sId || !iId || q == null || !(q > 0)) { setPredicted(null); return; }
-    const res = await fetch("/api/operations/production/predict", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputSkuId: sId, outputItemId: iId, inputQty: q }) });
+    const res = await fetch("/api/operations/production/predict", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ locationId, inputSkuId: sId, outputItemId: iId, inputQty: q }) });
     if (!res.ok) { setPredicted(null); return; }
     const j = await res.json().catch(() => ({ predicted: null }));
     const p = typeof j?.predicted === "number" ? j.predicted : null;

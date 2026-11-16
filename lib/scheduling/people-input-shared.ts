@@ -212,6 +212,44 @@ export interface ToSchedPeopleInput {
   skills: SkillLookup | null;
   /** On leave / separated (0279): never on the roster, whatever their role, settings or account state say. */
   excludedUserIds?: readonly string[];
+  /** B134: this week's shifts of dual-shop members at OTHER shops (their heads). Absent = none. */
+  elsewhere?: ReadonlyArray<ElsewhereShift>;
+}
+
+/** B134: one shift a member holds at another shop (that shop's head revision). */
+export interface ElsewhereShift { userId: string; date: string; startQ: number; endQ: number }
+
+/** Sorted, merged [from, to) runs of a person-date's other-shop shifts. */
+export function mergeElsewhere(blocks: ReadonlyArray<{ startQ: number; endQ: number }>): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const b of [...blocks].sort((x, y) => x.startQ - y.startQ || x.endQ - y.endQ)) {
+    const from = Math.max(0, b.startQ), to = Math.min(96, b.endQ);
+    if (to <= from) continue;
+    const last = out[out.length - 1];
+    if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+    else out.push([from, to]);
+  }
+  return out;
+}
+
+/**
+ * B134: the availability window with another shop's shifts taken out. The model is ONE window per date, so the person
+ * keeps the LONGEST free run inside it (a tie keeps the earlier one) — conservative: the shorter free run on the other
+ * side of the other shop's shift is not offered. No free quarter → null (not available that date). Absent window
+ * (no information) reads as the shop day.
+ */
+export function narrowAroundElsewhere(w: AvailabilityWindow | null | undefined, busy: ReadonlyArray<[number, number]>, shopDay: { fromQ: number; toQ: number }): AvailabilityWindow | null {
+  if (w === null) return null;
+  const base: AvailabilityWindow = w ?? { fromQ: shopDay.fromQ, toQ: shopDay.toQ, source: "insufficient_history" };
+  let best: [number, number] | null = null;
+  let cursor = base.fromQ;
+  for (const [a, z] of [...busy, [base.toQ, base.toQ] as [number, number]]) {
+    const end = Math.min(a, base.toQ);
+    if (end > cursor && (!best || end - cursor > best[1] - best[0])) best = [cursor, end];
+    cursor = Math.max(cursor, z);
+    if (cursor >= base.toQ) break;
+  }
+  return best ? { fromQ: best[0], toQ: best[1], source: base.source } : null;
 }
 
 /**
@@ -229,6 +267,13 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
   const notes: RosterNote[] = [];
   const people: SchedPerson[] = [];
   const away = new Set(input.excludedUserIds ?? []);
+  const busyByUser = new Map<string, Map<string, Array<{ startQ: number; endQ: number }>>>();
+  for (const e of input.elsewhere ?? []) {
+    if (!input.dates.includes(e.date)) continue;
+    const byDate = busyByUser.get(e.userId) ?? new Map<string, Array<{ startQ: number; endQ: number }>>();
+    byDate.set(e.date, [...(byDate.get(e.date) ?? []), { startQ: e.startQ, endQ: e.endQ }]);
+    busyByUser.set(e.userId, byDate);
+  }
   for (const m of [...input.members].sort((a, b) => cmp(a.userId, b.userId))) {
     // Staff separations: on leave (while on leave) and separated (always) are off the schedule.
     if (away.has(m.userId)) continue;
@@ -277,6 +322,18 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
       person.workModes = Object.fromEntries(input.dates.map((d) => [d, st?.availability?.[isoDowOf(d) as keyof PersonAvailability]?.mode ?? null]));
     }
     if (st?.availability) person.offPreferredDates = offPreferredDates;
+    // B134: time already scheduled at another shop is never offered here.
+    const busy = busyByUser.get(m.userId);
+    if (busy) {
+      const elsewhere: Record<string, Array<[number, number]>> = {};
+      for (const d of [...busy.keys()].sort()) {
+        const runs = mergeElsewhere(busy.get(d)!);
+        if (runs.length === 0) continue;
+        elsewhere[d] = runs;
+        person.availability[d] = narrowAroundElsewhere(person.availability[d], runs, input.shopDay);
+      }
+      if (Object.keys(elsewhere).length > 0) person.elsewhere = elsewhere;
+    }
     const share: Record<number, number> = {};
     for (let dow = 1; dow <= 7; dow++) {
       const dp = pattern?.byDow[dow];

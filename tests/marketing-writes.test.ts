@@ -14,6 +14,7 @@ const cases = [
   ["milestones/[id]/correct", "B", "marketing.milestone_correct", { kind: "first_ad_spend", date: "2026-11-01", reason: "correction text" }],
   ["entries", "A", "marketing.manual_entry_record", { kind: "meta_spend", from: "2026-11-01", to: "2026-11-07", amountCents: 100, note: "private note" }],
   ["entries/[id]/correct", "A", "marketing.manual_entry_correct", { kind: "meta_spend", from: "2026-11-01", to: "2026-11-07", amountCents: 100, reason: "correction text" }],
+  ["entries/[id]/void", "A", "marketing.manual_entry_void", { reason: "correction text" }],
   ["baseline-snapshot", "B", "marketing.baseline_snapshot", { payload: "client-forgery", coverage: "client-forgery" }],
 ] as const;
 function request(path: string, body: unknown, origin = "http://localhost") { return new NextRequest(`http://localhost/api/admin/marketing/${path}`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) }); }
@@ -74,4 +75,22 @@ it.each(["42P01", "42883", "PGRST202", "42501"])("fails closed when the spend-we
   const response = await POST(request("entries", { kind: "meta_spend", from: "2026-11-01", to: "2026-11-07", amountCents: 100 }));
   expect(response.status).toBe(code === "42501" ? 500 : 503);
   expect(mocks.rpc).not.toHaveBeenCalled();
+});
+
+it("a correction to the new D-aligned week reaches the RPC by id (W26/B139)", async () => {
+  mocks.milestones.mockResolvedValue({ data: [{ id, milestone_date: "2026-11-05", corrects_id: null }], error: null });
+  vi.setSystemTime(new Date("2026-11-14T15:00:00Z"));
+  const { POST } = await import("@/app/api/admin/marketing/entries/[id]/correct/route");
+  const response = await POST(request("entries/[id]/correct", { kind: "meta_spend", from: "2026-11-05", to: "2026-11-11", amountCents: 100, reason: "D moved" }), context);
+  expect(response.status).toBe(201);
+  expect(mocks.rpc).toHaveBeenCalledWith("record_marketing_manual_entry", expect.objectContaining({ p_corrects: id, p_from: "2026-11-05", p_to: "2026-11-11" }));
+});
+it("removing a spend entry posts only the entry id and the reason (W26-2 b)", async () => {
+  const { POST } = await import("@/app/api/admin/marketing/entries/[id]/void/route");
+  expect((await POST(request("entries/[id]/void", { reason: "x".repeat(301) }), context)).status).toBe(400);
+  expect((await POST(request("entries/[id]/void", { reason: "never ran" }), { params: Promise.resolve({ id: "not-an-id" }) })).status).toBe(400);
+  expect(mocks.rpc).not.toHaveBeenCalled();
+  expect((await POST(request("entries/[id]/void", { reason: "never ran" }), context)).status).toBe(201);
+  expect(mocks.rpc).toHaveBeenCalledWith("void_marketing_manual_entry", { p_entry: id, p_reason: "never ran", p_actor: id });
+  expect(mocks.audit.mock.calls[0]![0]).toMatchObject({ action: "marketing.manual_entry_void", metadata: { entry: id } });
 });

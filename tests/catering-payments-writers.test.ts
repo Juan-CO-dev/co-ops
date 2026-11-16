@@ -293,7 +293,7 @@ const WRITERS: Writer[] = [
     file: "lib/stripe/webhook.ts",
     fn: "refund",
     verb: "update",
-    writes: "charge.refunded (whole charge): paid → refunded",
+    writes: "charge.refunded (whole charge): paid → refunded (the event itself is appended to catering_payment_refund_events first, 0333)",
     guards: ["eq:id", "eq:status", "eq:provider_ref"],
     bind: "status + provider_ref CAS (the charge the row was found by; charge bind added in review r5). Not revision-bound on purpose: a refund is about a charge",
     pinnedBy: { file: "tests/catering-payments-writers.test.ts", title: "the refund is bound to the charge: a row that no longer carries that PaymentIntent is not moved" },

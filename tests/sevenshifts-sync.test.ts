@@ -576,3 +576,38 @@ describe("chunk B review (Astra) — the sync run", () => {
     expect(out).toMatchObject({ ran: true, status: "partial" });
   });
 });
+
+describe("B137 r1: punches stored before the paid-break fix are repaired only by a re-read (watermark reset)", () => {
+  // The mirror keeps only the aggregate break_minutes, never the raw breaks, so a stored row cannot be recomputed in
+  // SQL. The repair is a time_punches watermark reset (Juan's call, NOT done by code): the next run reads the whole
+  // window without modified_since and the upsert on id rewrites break_minutes. 7shifts is mocked; reads only.
+  // A closed punch from Oct 1, untouched in 7shifts since: outside every incremental window.
+  const punch = { ...PAYLOAD.time_punches, clocked_in: "2026-10-01T13:58:00+00:00", clocked_out: "2026-10-01T20:03:00+00:00", modified: "2026-10-01T20:05:00+00:00",
+    breaks: [{ id: 1, user_id: 501, custom_break_id: 0, in: "2026-10-01T17:00:00Z", out: "2026-10-01T17:30:00Z", paid: false, deleted: false },
+      { id: 2, user_id: 501, custom_break_id: 0, in: "2026-10-01T18:00:00Z", out: "2026-10-01T18:15:00Z", paid: true, deleted: false }] };
+  // bigint ids are digit strings in TS (the mirror's convention), so the upsert finds the stored row by its key.
+  const stale = () => [{ id: "7001", user_id: "501", location_id: "4569", department_id: "7890", role_id: "2583", shift_id: "9001",
+    clocked_in: "2026-10-01T13:58:00+00:00", clocked_out: "2026-10-01T20:03:00+00:00", break_minutes: 45, approved: true, auto_clocked_out: false,
+    deleted: false, source_modified_at: "2026-10-01T20:05:00+00:00" }];
+  // 7shifts honours modified_since: an untouched old punch is not returned to an incremental read.
+  const routes = healthyRoutes({ "/v2/company/1234/time_punches": (u) => {
+    const since = u.searchParams.get("modified_since");
+    return list(u.searchParams.get("deleted") === "true" || (since !== null && Date.parse(since) > Date.parse(punch.modified)) ? [] : [punch]);
+  } });
+  const breakOf = (w: ReturnType<typeof world>) => {
+    const rows = w.tables.sevenshifts_time_punches!.filter((r) => String(r.id) === "7001");
+    expect(rows).toHaveLength(1); // one row per punch: the upsert rewrites it, never adds a second
+    return rows[0]!.break_minutes;
+  };
+
+  it("an incremental run leaves the stale 45 (paid 15 counted); with the watermark reset the same punch is re-read → 30", async () => {
+    const wm = { resource: "time_punches", modified_watermark: "2026-10-15T12:00:00.000Z", last_success_at: "2026-10-15T12:00:00.000Z", last_error_code: null };
+    const incremental = world({ routes, tables: { sevenshifts_time_punches: stale(), sevenshifts_sync_state: [wm] } });
+    await run(incremental);
+    expect(breakOf(incremental)).toBe(45);
+    const reset = world({ routes, tables: { sevenshifts_time_punches: stale(), sevenshifts_sync_state: [{ ...wm, modified_watermark: null }] } });
+    await run(reset);
+    expect(reset.requests.find((u) => u.pathname.endsWith("/time_punches"))!.searchParams.has("modified_since")).toBe(false);
+    expect(breakOf(reset)).toBe(30);
+  });
+});

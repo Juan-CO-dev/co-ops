@@ -1505,6 +1505,11 @@ export async function setItemPar(
   if (args.parMode !== "inherit" && args.parMode !== "manual" && args.parMode !== "auto") {
     throw new AdminTemplateError(400, "invalid_par_mode", "Par mode must be inherit, manual, or auto");
   }
+  // W15/B089: a Manual par needs a number. A blank Manual used to deactivate the old row
+  // and insert par_value NULL, quietly removing that day's par. For no par: Inherit or 0.
+  if (args.parMode === "manual" && args.parValue === null) {
+    throw new AdminTemplateError(400, "invalid_par", "A manual par needs a number (0 or more)");
+  }
   if (args.dayOfWeek !== null && (!Number.isInteger(args.dayOfWeek) || args.dayOfWeek < 0 || args.dayOfWeek > 6)) {
     throw new AdminTemplateError(400, "invalid_day_of_week", "Day of week must be 0–6 or null");
   }

@@ -107,7 +107,7 @@ describe("/ordering page surfaces", () => {
   // eslint-disable-next-line react/no-children-prop -- house test pattern: TranslationProvider's children prop is required
   const render = (cutoffAttention: OrderingCutoffAttention[]) => renderToStaticMarkup(createElement(TranslationProvider, {
     initialLanguage: "en",
-    children: createElement(OrderingSurfaces, { todaysOrders: [], history: [], cutoffAttention, locationId: "shop", actorLevel: 7, language: "en", shopLabel: "Shop", dateLabel: "Today" }),
+    children: createElement(OrderingSurfaces, { todaysOrders: [], history: [], cutoffAttention, locationId: "shop", actorLevel: 7, language: "en", shopLabel: "Shop", vendorDateLabel: "Today" }),
   }));
   it("lists every missed vendor (draft or not) in a red alert, and marks a draftless missed row", () => {
     const html = render([c({ vendorId: "pfg", vendorName: "PFG", hasDraft: true, missed: true }), c({ vendorId: "bal", vendorName: "Baldor", cutoffTime: "11:30 AM", missed: true }), c({ vendorId: "fer", vendorName: "Ferraro", cutoffTime: "5:00 PM" })]);

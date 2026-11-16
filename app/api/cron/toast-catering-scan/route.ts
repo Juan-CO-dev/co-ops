@@ -9,6 +9,7 @@ import { watchSiblings } from "@/lib/job-watch-run";
 import { audit } from "@/lib/audit";
 import { scanToastCateringForAllLocations } from "@/lib/catering/toast-catering-scan";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
+import { routeWorkDeadline } from "@/lib/receipt-parse-budget-shared";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -17,6 +18,8 @@ const MAX_DATE_SKEW_DAYS = 14;
 
 function truncateErr(e: unknown): string { const m = e instanceof Error ? e.message : String(e); return m.length > 500 ? `${m.slice(0, 500)}…` : m; }
 export async function GET(req: NextRequest) {
+  // The receipt catch-up below parses only inside what is left of THIS function (W20/B115).
+  const deadline = routeWorkDeadline(Date.now(), maxDuration);
   const auth = cronAuthStatus(req.headers);
   if (auth) return jsonError(auth, auth === 503 ? "cron_disabled" : "unauthorized");
   const today = etCalendarDate(new Date().toISOString());
@@ -36,7 +39,7 @@ export async function GET(req: NextRequest) {
     await audit({ actorId: null, actorRole: null, action: healthy ? "cron.success" : "cron.failure", resourceTable: "cron", resourceId: null,
       metadata: { job: "toast-catering-scan", dates, seen: sum("seen"), catering: sum("catering"), attributed: sum("attributed"), created_leads: sum("createdLeads"), lost_leads: sum("lostLeads"), refreshed: sum("refreshed"), skipped: sum("skipped"), errors: sum("errors"), unparsed_amounts: sum("unparsedAmounts"), per_location_failures: results.filter((r) => !r.ok).length, pending_dates: results.flatMap((r) => (r.pendingDates ?? []).map((d) => r.locationId + ":" + d)) },
       ipAddress: null, userAgent: null });
-    await catchUpDailyJobs();
+    await catchUpDailyJobs({ deadline });
     await watchSiblings("toast-catering-scan");
     return jsonOk({ dates, results, healthy });
   } catch (e) {

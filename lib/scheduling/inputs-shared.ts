@@ -24,7 +24,7 @@ import type { RuleContext } from "./context-shared";
 import { dayTypeFor, type CateringEvent, type DayForecast, type DayTypeOverride, type DemandResult } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
 import type { BuildDayInput, GeneratorInput, HeadSnapshot, Pin } from "./generator/build-shared";
-import { makeSkillLookup, punchPatterns, toSchedPeople, type PersonSettingsRow, type PunchEntry } from "./people-input-shared";
+import { makeSkillLookup, punchPatterns, toSchedPeople, type ElsewhereShift, type PersonSettingsRow, type PunchEntry } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, Shift } from "./rules-shared";
 import { scheduleEngine, scheduledOut, type ScheduleStructure } from "./structure-shared";
 import { addDays, isoWeekStart, weekDays } from "./time-shared";
@@ -96,6 +96,11 @@ export interface SchedulingInputs {
   closing: ClosingDurationResult;
   wages: { byUserCents: Record<string, number>; source: "sevenshifts" | "none" };
   overtimeH: number | null;
+  /**
+   * B133: 7shifts' weekly overtime pay multiplier for the connected company (`weekly_overtime_multiplier`); absent / null
+   * = the default (`DEFAULT_OVERTIME_MULTIPLIER`, 1.5×, DC law). Only the premium's price — never a rule input.
+   */
+  overtimeMultiplier?: number | null;
   keptBudgetDigests: string[];
   /**
    * Staff separations (0279, 2026-10-20): members who are ON LEAVE (while on leave) or SEPARATED (for good — even if their
@@ -103,6 +108,16 @@ export interface SchedulingInputs {
    * history (past shifts, punches, revisions) is untouched. Absent = nobody (fixtures, and before 0279 is applied).
    */
   employmentExcluded?: string[];
+  /**
+   * B134: this week's shifts of this shop's members at OTHER shops (their head revisions). The roster narrows each
+   * person's availability around them and the validator refuses an overlap (`other_shop_overlap`). Absent = none.
+   */
+  elsewhere?: ElsewhereShift[];
+  /**
+   * B134 r1: the other shops' shifts could not be read. `elsewhere` is then EMPTY BUT UNKNOWN — never free time: the
+   * board renders, but nothing is generated (`other_shop_check_unavailable`). Absent = the read succeeded.
+   */
+  elsewhereUnavailable?: boolean;
 }
 
 // ─── Small pure readers ──────────────────────────────────────────────────────
@@ -121,15 +136,74 @@ export function memberSinceDate(assignedAt: string | null | undefined): string |
 /** The first clock time in a free-text catering window ("11:30 AM–1 PM", "12pm", "13:00") as a quarter, else null. */
 export function eventQFromWindow(text: string | null): number | null {
   if (!text) return null;
+  // An ISO instant ("2026-09-08T15:30:00Z") is not a wall-clock label; reading its "20" would be a guess.
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text.trim())) return null;
   const m = /(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?/i.exec(text);
   if (!m) return null;
   let h = Number(m[1]);
   const min = m[2] ? Number(m[2]) : 0;
-  const ap = m[3]?.toLowerCase().replace(/\./g, "") ?? null;
+  let ap = m[3]?.toLowerCase().replace(/\./g, "") ?? null;
+  // B028: "1:00–1:30 PM" carries ONE meridiem for the whole range, and only a 12-hour reading (1–12; "13:00" stays
+  // 24-hour) borrows it. B028 r1: the borrowed meridiem belongs to the END, so a range that crosses noon or midnight
+  // ("11:30–12:00 PM", "11:30–1 PM", "11–12 AM") is resolved from BOTH endpoints: the start takes whichever meridiem
+  // makes the range shortest going forward (a tie keeps the end's). A later AM/PM that is not a range end ("1 pickup,
+  // done by 2 pm") keeps the old rule: the first AM/PM after the first time governs it.
+  if (ap === null && h >= 1 && h <= 12) {
+    const rest = text.slice(m.index + m[0].length);
+    const end = /^\s*(?:-|\u2013|\u2014|to)\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?(?![a-z])/i.exec(rest);
+    if (end && Number(end[1]) >= 1 && Number(end[1]) <= 12 && Number(end[2] ?? 0) <= 59) {
+      const endAp = end[3]!.toLowerCase() === "p" ? "pm" : "am";
+      const to24 = (hh: number, a: "am" | "pm") => (hh % 12) + (a === "pm" ? 12 : 0);
+      const endMin = to24(Number(end[1]), endAp) * 60 + Number(end[2] ?? 0);
+      const span = (a: "am" | "pm") => (endMin - (to24(h, a) * 60 + min) + 1440) % 1440;
+      const other = endAp === "pm" ? "am" : "pm";
+      ap = span(other) < span(endAp) ? other : endAp;
+    } else {
+      const later = /\b([ap])\.?m\.?\b/i.exec(rest);
+      if (later) ap = later[1]!.toLowerCase() === "p" ? "pm" : "am";
+    }
+  }
   if (ap === "pm" && h < 12) h += 12;
   if (ap === "am" && h === 12) h = 0;
   if (h > 23 || min > 59) return null;
   return Math.floor((h * 60 + min) / 15);
+}
+
+/** One current 7shifts wage row of a person (B216). */
+export interface ShopWageRow { wage_id: number | string; role_id: number | string | null; wage_type: string; wage_cents: number; effective_date: string | null }
+
+/**
+ * B216: the ONE hourly rate a person is priced at for THIS shop. The schedule has no position → 7shifts role mapping,
+ * so every hour is priced at one rate, chosen in tiers: (1) a wage of the person's PRIMARY role at this shop's 7shifts
+ * location, (2) a wage of any role at that location (`shopRoleIds = null` when the shop has no live 7shifts location
+ * link: then any role counts here, as before), (3) a wage with no role. A role at another location is never picked.
+ * Within a tier the latest effective date wins — an UNDATED wage is the oldest, never the winner — then the highest
+ * wage id. Order-independent. Null = no hourly wage.
+ */
+export function pickShopWage(rows: readonly ShopWageRow[], opts: { primaryRoleIds: ReadonlySet<string>; shopRoleIds: ReadonlySet<string> | null }): number | null {
+  const tier = (r: ShopWageRow): number => {
+    if (r.role_id === null || r.role_id === undefined) return 3;
+    const role = String(r.role_id);
+    if (opts.primaryRoleIds.has(role) && (opts.shopRoleIds === null || opts.shopRoleIds.has(role))) return 1;
+    if (opts.shopRoleIds === null || opts.shopRoleIds.has(role)) return 2;
+    return 0; // another location's role
+  };
+  const later = (a: ShopWageRow, b: ShopWageRow): boolean => {
+    const da = a.effective_date ?? "";
+    const db = b.effective_date ?? "";
+    if (da !== db) return da > db;
+    const ia = String(a.wage_id);
+    const ib = String(b.wage_id);
+    return ia.length !== ib.length ? ia.length > ib.length : ia > ib; // digit strings (bigint ids): numeric order
+  };
+  let best: { row: ShopWageRow; tier: number } | null = null;
+  for (const r of rows) {
+    if (r.wage_type !== "hourly") continue;
+    const t = tier(r);
+    if (t === 0) continue;
+    if (!best || t < best.tier || (t === best.tier && later(r, best.row))) best = { row: r, tier: t };
+  }
+  return best ? best.row.wage_cents : null;
 }
 
 /** The ezCater orders not already in the pipeline, as booked events (named, never summed). */
@@ -249,12 +323,16 @@ export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, o
     settings: inputs.personSettings, patterns, dates, structure: s, punches: inputs.punches, asOf: inputs.asOf,
     shopDay: { fromQ: s.shopDay.prepStartQ, toQ: s.shopDay.outLatestQ },
     wages: { byUserCents: inputs.wages.byUserCents, estimateHourlyCents: inputs.shopSettings.estimatedHourlyCents }, skills,
+    ...(inputs.elsewhere?.length ? { elsewhere: inputs.elsewhere } : {}),
   });
+  // B134: a pin over time the person already holds at another shop is not placed (that shop planned first).
+  const busy = (p: { userId: string; date: string; startQ: number; endQ: number }) =>
+    (inputs.elsewhere ?? []).some((e) => e.userId === p.userId && e.date === p.date && e.startQ < p.endQ && e.endQ > p.startQ);
   const budget = budgetForDates(inputs.budget.entries, inputs.budget.rows, dates);
   return {
     locationId: inputs.locationId, weekStart, today: opts.today, days, structure: s, structureVersionId: inputs.structure.id, people, skills,
     ...(scheduleEngine(s) === "crew" && inputs.weeks[weekStart]?.head ? { crew: { headContext: inputs.weeks[weekStart]!.head!.context } } : {}),
-    pins: inputs.pins.filter((p) => dates.includes(p.date) && !excluded.has(p.userId)), budgetByDate: budget.byDate, head: headSnapshotFor(inputs.weeks[weekStart]),
+    pins: inputs.pins.filter((p) => dates.includes(p.date) && !excluded.has(p.userId) && !busy(p)), budgetByDate: budget.byDate, head: headSnapshotFor(inputs.weeks[weekStart]),
   };
 }
 
@@ -264,3 +342,13 @@ export function datesOfWeeks(weekStarts: readonly string[]): string[] {
 }
 
 export { closingDuration };
+
+/**
+ * B134 r1 (CC ruling: Approve is the gate): the shifts of a head that overlap another shop's CURRENT head shifts of the
+ * same person, on dates from `fromDate` on (a past day is history and cannot be changed). Pure; sorted.
+ */
+export function otherShopOverlaps(shifts: ReadonlyArray<{ userId: string; date: string; startQ: number; endQ: number }>, elsewhere: readonly ElsewhereShift[], fromDate: string): Array<{ userId: string; date: string; startQ: number; endQ: number }> {
+  const out = shifts.filter((sh) => sh.date >= fromDate && elsewhere.some((e) => e.userId === sh.userId && e.date === sh.date && e.startQ < sh.endQ && e.endQ > sh.startQ))
+    .map((sh) => ({ userId: sh.userId, date: sh.date, startQ: sh.startQ, endQ: sh.endQ }));
+  return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0) || a.startQ - b.startQ);
+}

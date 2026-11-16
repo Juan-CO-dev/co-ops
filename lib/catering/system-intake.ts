@@ -1,11 +1,14 @@
 /**
- * System intake helpers shared by the machine tributaries (ezCater webhook, Toast catering scan).
- * SERVER-ONLY, service-role, NO operator actor. `systemMoveStage` mirrors moveStage's guarded UPDATE +
- * append-only event + audit; it does NOT touch prep demand (machine-created leads carry no quote until
- * 2c-b). FOLLOW-UP: fold into a shared applyStageMove with lib/catering/pipeline.ts once 2c-b lands.
+ * System intake helpers shared by the machine tributaries (ezCater webhook, Toast catering scan, the nightly
+ * rollover). SERVER-ONLY, service-role, NO operator actor. `systemMoveStage` mirrors moveStage's guarded
+ * UPDATE + append-only event + audit, and — like moveStage — the prep-demand ledger follows the move
+ * (audit W22/B201: the rollover completes HOUSE leads that do carry a quote and reserved demand, which
+ * used to stay 'reserved' forever). FOLLOW-UP: fold into a shared applyStageMove with
+ * lib/catering/pipeline.ts once 2c-b lands.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
+import { applySystemStageToPrepDemand } from "@/lib/catering/prep-demand";
 import type { PipelineStage } from "@/lib/catering/pipeline-shared";
 
 export { resolveCateringManager } from "./system-intake-assignee";
@@ -16,9 +19,10 @@ export type ExistingLead = { id: string; stage: PipelineStage };
 export type SystemMoveOutcome = "moved" | "stage_changed" | "event_failed" | "update_failed";
 
 /** System stage move — mirrors moveStage's guarded UPDATE + append-only event + audit, with NO
- *  operator actor (actor_id null, actor_context is the caller's tributary label). Does NOT touch
- *  prep demand: a machine-created lead carries no quote in v1 (2c-b), so reserve/consume/release
- *  would early-return. Returns a discriminated outcome rather than a boolean (I1/C2): "update_failed"
+ *  operator actor (actor_id null, actor_context is the caller's tributary label). Once the stage moved
+ *  ("moved" or "event_failed") the lead's still-reserved prep demand follows it (consume on out/completed,
+ *  release on lost/inquiry/quote_sent) — best-effort: a ledger failure writes a sync_failed audit row and
+ *  never changes the outcome. Returns a discriminated outcome rather than a boolean (I1/C2): "update_failed"
  *  is a hard DB error; "stage_changed" means the guarded UPDATE matched zero rows because a
  *  concurrent delivery already moved this lead — there are no provider retries, so this is the final
  *  word, not a hint to retry; "event_failed" means the stage UPDATE committed but the ledger row did
@@ -42,11 +46,22 @@ export async function systemMoveStage(
   if (error) return "update_failed";
   if (count === 0) return "stage_changed"; // a concurrent delivery already moved it
   const { error: evErr } = await sb.from("catering_pipeline_events").insert({ pipeline_id: lead.id, from_stage: lead.stage, to_stage: toStage, note, actor_id: null }).abortSignal(signal);
+  // The stage moved either way: the prep-demand ledger follows it (W22/B201).
+  await syncSystemPrepDemand(sb, lead.id, toStage, actorContext);
   // The UPDATE above already committed — the stage genuinely moved. The ledger row failing to
   // land is a trail gap, never a failed move, so the caller must not claim "error:stage_move".
   if (evErr) return "event_failed";
   void audit({ actorId: null, actorRole: null, action: "catering.pipeline.stage_move", resourceTable: "catering_pipeline", resourceId: lead.id, metadata: { actor_context: actorContext, from_stage: lead.stage, to_stage: toStage }, ipAddress: null, userAgent: null });
   return "moved";
+}
+
+/** Best-effort: the move already committed, so a ledger failure is recorded, never thrown. */
+async function syncSystemPrepDemand(sb: ReturnType<typeof getServiceRoleClient>, leadId: string, toStage: PipelineStage, actorContext: string): Promise<void> {
+  try {
+    await applySystemStageToPrepDemand(sb, leadId, toStage, actorContext);
+  } catch (e) {
+    void audit({ actorId: null, actorRole: null, action: "catering.prep_demand.sync_failed", resourceTable: "catering_pipeline", resourceId: leadId, metadata: { actor_context: actorContext, to_stage: toStage, error: e instanceof Error ? e.message : String(e) }, ipAddress: null, userAgent: null });
+  }
 }
 
 /** What one nightly completion pass did. `completed` carries the lead ids that genuinely moved

@@ -86,6 +86,8 @@ export interface BoardSource {
   shopEstimateHourlyCents: number | null;
   salariedWeeklyCents: number | null;
   forecastWeekCents: number | null;
+  /** B133: the connected 7shifts company's weekly overtime multiplier; absent / null = 1.5×. Money viewers only. */
+  overtimeMultiplier?: number | null;
   /** The LIVE budget for the week's dates. */
   budget: BudgetForDates;
   /** null = not computed (no budget act, or demand did not load). */
@@ -462,7 +464,7 @@ export function boardView(src: BoardSource): BoardView {
   const ctx = ruleContext(src, week);
   const weekQ = new Map<string, number>();
   for (const sh of week.shifts) weekQ.set(sh.userId, (weekQ.get(sh.userId) ?? 0) + (sh.endQ - sh.startQ));
-  const strip = moneyStrip({ dates, shifts: week.shifts, ctx, wageCentsByUser: wages, forecastWeekCents: money ? src.forecastWeekCents : null, salariedWeeklyCents: money ? src.salariedWeeklyCents : null }, { canSeeMoney: money });
+  const strip = moneyStrip({ dates, shifts: week.shifts, ctx, wageCentsByUser: wages, forecastWeekCents: money ? src.forecastWeekCents : null, salariedWeeklyCents: money ? src.salariedWeeklyCents : null, overtimeMultiplier: money ? src.overtimeMultiplier ?? null : null }, { canSeeMoney: money });
   const gaps = gapLines(week);
   const problems = problemLines(week);
   const headProblems: RuleProblem[] = week.days.flatMap((d) => d.problems.map((p) => ({ ...p, inherited: d.inherited || p.inherited })));

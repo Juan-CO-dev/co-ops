@@ -19,7 +19,16 @@ import {
   type BatchRowContext,
 } from "@/lib/batch-prep-shared";
 
-export type Phase2IncompleteReason = "needs_ground_truth" | "needs_reason" | "needs_batch";
+/**
+ * Why a started row is not saved (the calm "incomplete" nudge, never the red "failed" badge):
+ *   - "needs_ground_truth": section unverified AND no per-item recount.
+ *   - "needs_reason": a non-zero delta (or an over-batch) needs its reason first.
+ *   - "needs_batch": the batch half of the row is not complete yet.
+ *   - "cleared_saved": the amount of an ALREADY-SAVED row was deleted. Deleting a saved amount
+ *     is an Undo (owner decision W14-2 b); the row stops counting as done while that Undo is
+ *     pending, was cancelled at its reason prompt, or failed — and it keeps offering Undo.
+ */
+export type Phase2IncompleteReason = "needs_ground_truth" | "needs_reason" | "needs_batch" | "cleared_saved";
 
 export type Phase2GateOutcome =
   /** Nothing typed yet — the row stays "unsaved", no nudge. */
@@ -92,4 +101,114 @@ export function phase2SaveGate(v: Phase2GateValue, ctx: Phase2GateContext): Phas
   }
   if (v.underPar && !v.underPar.freeText.trim()) return { kind: "incomplete", reason: "needs_reason" };
   return { kind: "ok", batchEntry: null };
+}
+
+/** What the dispatcher knows about a row when its amount box is blank. */
+export interface Phase2BlankRow {
+  status: "unsaved" | "incomplete" | "saving" | "saved" | "failed";
+  /** completions.id of the live phase2 row; non-null whenever a saved entry is on file. */
+  completionId: string | null;
+  incompleteReason: Phase2IncompleteReason | null;
+}
+
+/**
+ * Audit W14 / B180 — what a BLANK amount means for a row (the gate's "blank" outcome).
+ *
+ * It used to mean "nothing typed yet" for every row, so deleting an amount that was already
+ * saved did nothing: the box read empty, the row still read Saved, the finalize counter still
+ * counted it, and finalize submitted the old number. Owner decision W14-2 b: deleting a saved
+ * amount IS an Undo.
+ *   - "ignore"       — nothing is on file (or this row's Undo is already pending): the row
+ *                      stays as it is.
+ *   - "after_save"   — a save of this row is in flight (fix round 1). The clear is QUEUED behind
+ *                      it: the row stays "saving" (never done), and when the save's answer
+ *                      arrives phase2SaveSettle judges it against the box as it is then — the
+ *                      newest thing the prepper did wins.
+ *   - "undo"         — a saved entry is on file: the row stops counting as done
+ *                      ("cleared_saved") and the ordinary revoke runs (the server still decides
+ *                      silent vs reason-required; nothing is revoked without it).
+ *   - "mark_cleared" — the row reads Saved but its completion id is unknown (the 409 path that
+ *                      could not name the winner): it stops counting as done; there is no id to
+ *                      undo, the prepper retypes the amount.
+ * ONE rule read by the dispatcher (opening-client.tsx) and by the row (OpeningPrepEntry.tsx).
+ */
+export function phase2BlankOutcome(
+  row: Phase2BlankRow | null | undefined,
+): "ignore" | "after_save" | "undo" | "mark_cleared" {
+  if (!row) return "ignore";
+  if (row.status === "saving") return "after_save";
+  if (row.incompleteReason === "cleared_saved") return "ignore";
+  if (row.completionId !== null) return "undo";
+  if (row.status === "saved") return "mark_cleared";
+  return "ignore";
+}
+
+/**
+ * Audit W14 / B180, fix round 1 — what a save's ANSWER does to its row when the amount was
+ * cleared while the save was in flight.
+ *
+ * The box stays enabled during a save, so the prepper can delete the amount and leave the box
+ * before the answer arrives. The answer used to mark the row Saved regardless: an empty box, a
+ * row that counted as done, and a Finalize that submitted the deleted amount. The clear is now
+ * queued behind the save and judged here, on the row AS IT IS when the answer arrives:
+ *   "as_answered" — no blank was committed since this save left, or an amount is in the box
+ *                   again (the newest word is an amount; its own save decides), or the save
+ *                   failed with nothing on file: the row takes the answer exactly as before.
+ *   "wait"        — the box is still blank but ANOTHER save of this row is in flight: the row
+ *                   stays "saving" (never Saved); that save's answer decides.
+ *   "undo"        — the box is still blank and nothing else touched the row: it reads
+ *                   "cleared" (not done) and the ordinary Undo runs on the entry on file — the
+ *                   one this save just wrote, or on a failed save the one it failed to replace.
+ *                   The server still decides silent vs reason-required.
+ *   "cleared"     — the box is still blank, but the entry's id is unknown or an Undo already
+ *                   ran on this row meanwhile: the row reads "cleared" (not done) and offers
+ *                   Undo; nothing is undone on its own.
+ * A late success can therefore never mark a blank row Saved.
+ */
+export function phase2SaveSettle(args: {
+  answer: "saved" | "failed";
+  /** A blank amount was committed (the box was left empty) after this save left. */
+  clearedSince: boolean;
+  /** What the amount box holds when the answer arrives. */
+  preppedNow: number | null;
+  /** Another save of this row is still in flight. */
+  otherSaveInFlight: boolean;
+  /** The row when the answer arrives. */
+  row: Phase2BlankRow | null;
+  /** The entry on file once the answer is applied: the save's own id, or on a failure the prior one. */
+  completionOnFile: string | null;
+}): "as_answered" | "wait" | "undo" | "cleared" {
+  if (!args.clearedSince || args.preppedNow !== null) return "as_answered";
+  if (args.otherSaveInFlight) return "wait";
+  if (args.completionOnFile === null) return args.answer === "failed" ? "as_answered" : "cleared";
+  return args.row?.status === "saving" ? "undo" : "cleared";
+}
+
+/**
+ * Audit W14 / B180 — what a SUCCESSFUL Undo may reset on its row, judged against the row as it
+ * is when the answer arrives (not as it was when the request left).
+ *
+ * Clearing a saved amount runs the Undo by itself, so the prepper is often already typing the
+ * next amount while it is in flight. Resetting blindly would wipe that amount, or mark a row
+ * "not saved" that a newer save has just written.
+ *   row:  "keep"      — a NEWER save already landed on this row (another completion id): the
+ *                       row belongs to that save; nothing is reset.
+ *         "forget_id" — a save is in flight: the revoked id is gone, the row stays "saving" and
+ *                       the save's own answer decides it.
+ *         "reopen"    — the ordinary case: the row returns to "unsaved".
+ *   clearForm: the amount box is emptied only when it still holds what it held when the Undo
+ *              left — an amount typed during the round trip is never wiped.
+ */
+export function phase2RevokeSettle(args: {
+  revokedCompletionId: string;
+  row: Phase2BlankRow | null;
+  preppedAtRequest: number | null;
+  preppedNow: number | null;
+}): { row: "keep" | "forget_id" | "reopen"; clearForm: boolean } {
+  const untouched = args.preppedNow === args.preppedAtRequest;
+  if (args.row && args.row.completionId !== null && args.row.completionId !== args.revokedCompletionId) {
+    return { row: "keep", clearForm: false };
+  }
+  if (args.row?.status === "saving") return { row: "forget_id", clearForm: false };
+  return { row: "reopen", clearForm: untouched };
 }

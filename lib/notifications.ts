@@ -31,9 +31,9 @@
  *   - BUILD_3_OPENING_REPORT_DESIGN.md §3.3 (under-par notification routing)
  *   - SPEC_AMENDMENTS.md C.50 PENDING (notifications.priority TEXT-with-CHECK
  *     + notifications.type vocabulary at lib layer not DB layer)
- *   - AGENTS.md "PostgREST embedded-select .eq() filter on relation" lesson
- *     — loadUnreadForUser uses two-step query pattern (recipients → notifications
- *     by id), not embedded-select-with-eq-on-relation
+ *   - AGENTS.md "PostgREST v12+" service-role embed rule — loadUnreadForUser
+ *     is ONE service-role embedded read with the FK named (audit W26 / B030;
+ *     the old two-step read put every unread id in the URL)
  *
  * Locked sub-decisions (Step 5 architectural surface):
  *   Q1: enqueueNotification auto-builds standard data JSONB; PROTECTED_DATA_KEYS
@@ -303,15 +303,58 @@ export async function enqueueNotification(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * The notification columns every in-app read embeds. The embed NAMES its FK
+ * (`notification_recipients.notification_id → notifications.id`, the only FK
+ * between the two tables: Foundation Spec v1.3 `notification_recipients`
+ * declares it inline and unnamed, so Postgres named it
+ * `notification_recipients_notification_id_fkey`) per the AGENTS.md
+ * service-role embed rule.
+ */
+const NOTIFICATION_EMBED =
+  "notifications!notification_recipients_notification_id_fkey!inner(id, type, priority, title, body, data, related_table, related_id, location_id, created_at)";
+
+const RECIPIENT_COLUMNS =
+  "id, notification_id, user_id, delivery_method, delivery_status, read_at, acknowledged_at";
+
+/** PostgREST `or` filter for a location context: the listed shops plus
+ *  shop-wide notifications (location_id IS NULL). Applied on the embedded
+ *  `notifications` table via `referencedTable`. */
+function locationOrFilter(locationContext: readonly string[]): string {
+  return locationContext
+    .map((id) => `location_id.eq.${id}`)
+    .concat(["location_id.is.null"])
+    .join(",");
+}
+
+/**
+ * The location context the dashboard notification widget reads with (Q6
+ * lock): level 9+ with the all-locations override (no explicit shops) sees
+ * everything — no filter; everyone else sees their shops + shop-wide rows.
+ * ONE rule, shared by the widget's read and "Mark all read" so the latter
+ * marks exactly what the widget can show.
+ */
+export function notificationLocationContext(auth: {
+  level: number;
+  locations: string[];
+}): string[] | undefined {
+  return auth.level >= 9 && auth.locations.length === 0 ? undefined : auth.locations;
+}
+
+/**
  * Loads unread in-app notifications for a user, ordered most-recent-first.
- * Two-step query (per AGENTS.md "PostgREST embedded-select" lesson):
- *   Step 1: notification_recipients with delivery_method='in_app' +
- *           delivery_status != 'disabled' + read_at IS NULL filters
- *   Step 2: notifications by id, ordered by created_at DESC, optional
- *           location_id filter, limit applied
  *
- * Result joins both rows into NotificationWithRecipient pairs, ordered by
- * notification.createdAt DESC (matches step 2 ordering).
+ * ONE service-role embedded read (audit W26 / B030): notification_recipients
+ * (user_id, read_at IS NULL, delivery_method='in_app', delivery_status !=
+ * 'disabled') with the parent notification embedded `!inner`, ordered by the
+ * embedded `created_at` desc, limited, and — with a location context —
+ * filtered on the embedded table (`referencedTable: "notifications"`), keeping
+ * shop-wide (location_id NULL) rows. The request line is constant whatever
+ * the unread count. The former two-step read put EVERY unread notification id
+ * in `.in("id", …)` and broke the dashboard past ~210 unread (8 KB URL).
+ *
+ * The AGENTS.md "PostgREST v12+" embedded-filter hazard is RLS-scoped; this is
+ * a service-role read (no RLS), with the FK named. Row-for-row parity against
+ * the old two-step read is verified on sim (CC).
  *
  * Authorization: caller passes userId; the lib does NOT enforce identity
  * here (caller's responsibility — typically the route handler that already
@@ -331,62 +374,116 @@ export async function loadUnreadForUser(
 ): Promise<NotificationWithRecipient[]> {
   const limit = args?.limit ?? 50;
 
-  // Step 1: fetch matching recipient rows.
-  const { data: recipRows, error: recipErr } = await service
+  let query = service
     .from("notification_recipients")
-    .select(
-      "id, notification_id, user_id, delivery_method, delivery_status, read_at, acknowledged_at",
-    )
+    .select(`${RECIPIENT_COLUMNS}, ${NOTIFICATION_EMBED}`)
     .eq("user_id", userId)
     .is("read_at", null)
     .eq("delivery_method", "in_app")
-    .neq("delivery_status", "disabled");
-  if (recipErr) {
-    throw new Error(`loadUnreadForUser: recipients query failed: ${recipErr.message}`);
-  }
-  const recipients = (recipRows ?? []) as RecipientRow[];
-  if (recipients.length === 0) return [];
-
-  const notifIds = recipients.map((r) => r.notification_id);
-
-  // Step 2: fetch notifications, ordered + limited + optional location filter.
-  let notifQuery = service
-    .from("notifications")
-    .select(
-      "id, type, priority, title, body, data, related_table, related_id, location_id, created_at",
-    )
-    .in("id", notifIds)
-    .order("created_at", { ascending: false })
+    .neq("delivery_status", "disabled")
+    .order("notifications(created_at)", { ascending: false })
+    // Deterministic tiebreak: equal timestamps sort by notification id desc, the same every time.
+    .order("notification_id", { ascending: false })
     .limit(limit);
 
   if (args?.locationContext && args.locationContext.length > 0) {
-    // Include global notifications (location_id IS NULL) plus the requested locations.
-    const locFilter = args.locationContext
-      .map((id) => `location_id.eq.${id}`)
-      .concat(["location_id.is.null"])
-      .join(",");
-    notifQuery = notifQuery.or(locFilter);
+    query = query.or(locationOrFilter(args.locationContext), {
+      referencedTable: "notifications",
+    });
   }
 
-  const { data: notifRows, error: notifErr } = await notifQuery;
-  if (notifErr) {
-    throw new Error(`loadUnreadForUser: notifications query failed: ${notifErr.message}`);
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(`loadUnreadForUser: notifications query failed: ${error.message}`);
   }
-
-  // Pair recipients with notifications, preserving notifications order.
-  const recipientByNotif = new Map<string, RecipientRow>();
-  for (const r of recipients) recipientByNotif.set(r.notification_id, r);
 
   const result: NotificationWithRecipient[] = [];
-  for (const n of (notifRows ?? []) as NotificationRow[]) {
-    const r = recipientByNotif.get(n.id);
-    if (!r) continue;
+  for (const row of (data ?? []) as unknown as Array<
+    RecipientRow & { notifications: NotificationRow | null }
+  >) {
+    if (!row.notifications) continue;
     result.push({
-      notification: rowToNotification(n),
-      recipient: rowToRecipient(r),
+      notification: rowToNotification(row.notifications),
+      recipient: rowToRecipient(row),
     });
   }
   return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// markAllNotificationsRead — "Mark all read" (owner decision W26-5 b)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Rows marked per pass. Each pass's UPDATE carries at most this many ids
+ *  (~4 KB of request line), never an unbounded list (B030). */
+const MARK_ALL_BATCH = 100;
+/** Pass cap — 200 × 100 = 20,000 rows, far beyond any real backlog; a
+ *  runaway loop stops rather than spins. */
+const MARK_ALL_MAX_PASSES = 200;
+
+/**
+ * Marks the actor's OWN unread in-app notifications read — exactly the set
+ * the dashboard widget can show: the same recipient filters as
+ * loadUnreadForUser (user_id, read_at IS NULL, delivery_method='in_app',
+ * delivery_status != 'disabled') and the same location context (pass
+ * `notificationLocationContext(auth)`), not just the 50 on screen.
+ *
+ * Each pass reads up to MARK_ALL_BATCH visible recipient ids (the bounded
+ * embedded read), then UPDATEs those ids with the owner + unread + in-app
+ * guard re-stated (service role bypasses RLS; the WHERE is the access
+ * control, as in markNotificationRead) and counts the rows the UPDATE
+ * actually returned. A row already read keeps its first read_at.
+ *
+ * Not audited: like the per-item mark-read, it is a routine self-act on the
+ * actor's own inbox (AGENTS.md: routine self-updates skip audit).
+ */
+export async function markAllNotificationsRead(
+  service: SupabaseClient,
+  args: { userId: string; locationContext?: string[] },
+): Promise<{ marked: number }> {
+  const now = new Date().toISOString();
+  let marked = 0;
+
+  for (let pass = 0; pass < MARK_ALL_MAX_PASSES; pass++) {
+    let read = service
+      .from("notification_recipients")
+      .select(`id, ${NOTIFICATION_EMBED}`)
+      .eq("user_id", args.userId)
+      .is("read_at", null)
+      .eq("delivery_method", "in_app")
+      .neq("delivery_status", "disabled")
+      .limit(MARK_ALL_BATCH);
+    if (args.locationContext && args.locationContext.length > 0) {
+      read = read.or(locationOrFilter(args.locationContext), {
+        referencedTable: "notifications",
+      });
+    }
+    const { data: rows, error: readErr } = await read;
+    if (readErr) {
+      throw new Error(`markAllNotificationsRead: read failed: ${readErr.message}`);
+    }
+    const ids = ((rows ?? []) as Array<{ id: string }>).map((r) => r.id);
+    if (ids.length === 0) break;
+
+    const { data: updated, error: updateErr } = await service
+      .from("notification_recipients")
+      .update({ read_at: now })
+      .in("id", ids)
+      .eq("user_id", args.userId)
+      .is("read_at", null)
+      .eq("delivery_method", "in_app")
+      .select("id");
+    if (updateErr) {
+      throw new Error(`markAllNotificationsRead: update failed: ${updateErr.message}`);
+    }
+    const n = (updated ?? []).length;
+    marked += n;
+    // A short page is the last one; an UPDATE that changed nothing means the
+    // rows were read meanwhile — stop rather than re-read the same page.
+    if (ids.length < MARK_ALL_BATCH || n === 0) break;
+  }
+
+  return { marked };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -8,6 +8,9 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
  *                over 4.5 MB is refused with 413 before this route runs — audit W10 / B065)
  *   locationId — the location the photo belongs to (validated against the actor's
  *                locations — a location-bind IDOR guard)
+ *   instanceId — OPTIONAL: the checklist instance a TASK photo is for (audit W05B). With it,
+ *                the bind is the shop-task rule (level 8+ at any active shop) against that open
+ *                instance's own shop; without it, the membership bind (lib/photos.ts).
  *
  * Response: { photoId: string }. The caller stores photoId in
  * checklist_completions.photo_id, or the URL /api/photos/{photoId} in a receiving
@@ -38,6 +41,8 @@ export async function POST(req: NextRequest) {
 
   const file = form.get("file");
   const locationId = form.get("locationId");
+  const instanceField = form.get("instanceId");
+  const instanceId = typeof instanceField === "string" && instanceField !== "" ? instanceField : null;
   if (!(file instanceof File)) {
     return jsonError(400, "missing_file", { message: "A `file` field is required" });
   }
@@ -52,6 +57,7 @@ export async function POST(req: NextRequest) {
       locationId,
       bytes,
       contentType: file.type,
+      instanceId,
     });
     return jsonOk({ photoId });
   } catch (err) {
