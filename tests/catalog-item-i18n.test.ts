@@ -211,7 +211,7 @@ const REQUIRED = [
   "catalog.ordering.no_days", "catalog.ordering.change_pars", "catalog.counting.unit", "catalog.counting.open",
   "catalog.barcodes.none", "catalog.barcodes.level.case", "catalog.barcodes.level.inner", "catalog.history.live",
   "catalog.history.retired", "catalog.history.restore", "catalog.history.scope_global", "catalog.history.scope_shop",
-  "catalog.history.empty", "catalog.requests.title", "catalog.requests.by", "catalog.requests.proposal_count",
+  "catalog.history.empty", "catalog.history.baseline", "catalog.history.restore_preview", "catalog.item.back_to_default_preview", "catalog.requests.title", "catalog.requests.by", "catalog.requests.proposal_count",
   "catalog.requests.proposal_weight", "catalog.requests.review", "catalog.requests.dismiss",
   "catalog.requests.photo_alt", "catalog.requests.photo_open", "catalog.requests.added_by",
   "catalog.pack.sentence_aria", "catalog.pack.container_label", "catalog.pack.inner_label", "catalog.pack.holds",

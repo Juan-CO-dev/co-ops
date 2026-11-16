@@ -3,11 +3,13 @@
  * computes, it never writes, so it takes no step-up. The TARGET is explicit (D4):
  *   { kind: "pack", target: { kind: "shop", shopId } | { kind: "global" }, levels: [...] }
  *   { kind: "price", target: …, unitPrice: number, effectiveDate: "YYYY-MM-DD" }
+ *   { kind: "pack_restore", target: …, fromVersionId: uuid }        → { preview, levels } (W18/B107)
+ *   { kind: "pack_back_to_default", target: { kind: "shop", shopId } } → { preview }       (W18/B107)
  */
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { CatalogItemError, computePackPreview, computePricePreview } from "@/lib/catalog/sku-item";
+import { CatalogItemError, computeBackToDefaultPreview, computePackPreview, computePricePreview, computeRestorePreview } from "@/lib/catalog/sku-item";
 import { parseLevels, parseTarget } from "@/lib/catalog/sku-item-shared";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -28,6 +30,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const levels = parseLevels(b.levels);
       if (!levels) return jsonError(400, "invalid_payload", { field: "levels" });
       return jsonOk({ preview: await computePackPreview(ctx, id, target, levels) });
+    }
+    // Restore and Back to default are previewed like any pack change (W18/B107): the par
+    // keep-or-convert rows come with them.
+    if (b.kind === "pack_restore") {
+      if (typeof b.fromVersionId !== "string" || !UUID_RE.test(b.fromVersionId)) return jsonError(400, "invalid_payload", { field: "fromVersionId" });
+      return jsonOk(await computeRestorePreview(ctx, id, target, b.fromVersionId));
+    }
+    if (b.kind === "pack_back_to_default") {
+      if (target.kind !== "shop") return jsonError(400, "invalid_payload", { field: "target" });
+      return jsonOk({ preview: await computeBackToDefaultPreview(ctx, id, target.shopId) });
     }
     if (b.kind === "price") {
       if (typeof b.unitPrice !== "number") return jsonError(400, "invalid_price", { field: "unitPrice" });
