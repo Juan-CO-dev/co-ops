@@ -949,6 +949,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
               readOnly={readOnly}
               expanded={collapsible.isOpen(station)}
               locationId={location.id}
+              instanceId={instance.id}
               reportRefChains={reportRefChains}
               reportRefCanEdit={reportRefCanEdit}
               reportRefCanOpen={reportRefCanOpen}
@@ -1171,6 +1172,7 @@ function StationGroup({
   readOnly,
   expanded,
   locationId,
+  instanceId,
   reportRefChains,
   reportRefCanEdit,
   reportRefCanOpen,
@@ -1210,6 +1212,8 @@ function StationGroup({
    * Cleaning rows ignore this prop.
    */
   locationId: string;
+  /** The instance — names a task photo's instance (audit W05B: the upload binds by the shop-task rule). */
+  instanceId: string;
   /** C.46 — chain attribution per template_item_id (report-ref items only). */
   reportRefChains: Record<string, ChecklistChainEntry[]>;
   /** C.46 — canEdit per template_item_id (report-ref items only). */
@@ -1337,6 +1341,7 @@ function StationGroup({
                 tempSafeMaxF={tempSafeMaxF[it.id] ?? null}
                 instanceStatus={instanceStatus}
                 locationId={locationId}
+                instanceId={instanceId}
                 readOnly={readOnly}
                 onComplete={onComplete}
                 onRevoke={onRevoke}

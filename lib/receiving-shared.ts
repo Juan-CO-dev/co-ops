@@ -200,6 +200,126 @@ export function receivingPriceRows(
   }));
 }
 
+/**
+ * Are two invoice numbers the same delivery identity (W20/B198)? Exact apart from case and
+ * outer spaces: the key of the 0169 unique index, lower(invoice_number). Never a pattern, so
+ * "INV_1001" is not "INV-1001". An empty or missing number is never a duplicate (no-invoice
+ * drops are exempt from the index too).
+ */
+export function sameInvoiceNumber(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = a?.trim().toLowerCase() ?? "";
+  const y = b?.trim().toLowerCase() ?? "";
+  return x !== "" && x === y;
+}
+
+// ── W20/B197: one shape check for both intake routes, and one credit rule for both write paths ──
+
+/**
+ * The database function this call names is not installed yet: PostgREST's schema-cache miss
+ * (PGRST202) or Postgres's undefined function (42883). That, and only that, is what "migration
+ * 0327 is not applied yet" looks like; every 0327 caller falls back to its previous path on it.
+ */
+export function rpcNotInstalled(error: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message ?? "");
+}
+
+/** The table this read names is not installed yet (PostgREST PGRST205, Postgres 42P01): what
+ *  "0327 is not applied" looks like for delivery_receipt_unlinks. Nothing can have been unlinked. */
+export function tableNotInstalled(error: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === "PGRST205" || error.code === "42P01" || /could not find the table/i.test(error.message ?? "");
+}
+
+export type DeliveryDiscrepancy = "short" | "over" | "damaged" | "substitution";
+const DELIVERY_DISCREPANCIES: ReadonlySet<string> = new Set(["short", "over", "damaged", "substitution"]);
+const LINE_SKU_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** One delivery line as the intake routes accept it: every optional field present, null when absent. */
+export interface ParsedDeliveryLine {
+  skuId: string;
+  qtyReceived: number;
+  unitPrice: number | null;
+  observedOzPerEach: number | null;
+  notes: string | null;
+  receivedLevelLabel: string | null;
+  photoUrl: string | null;
+  expectedQty: number | null;
+  discrepancyType: DeliveryDiscrepancy | null;
+}
+
+/**
+ * Shape-check the `lines` array of an intake request (the client is untrusted). Used by BOTH
+ * routes, so a malformed line is a 400 naming the field BEFORE any write. The create route used
+ * to skip this: `discrepancyType: "bogus"` or `notes: 123` got past it, the delivery header was
+ * inserted, the line insert then failed, and the lineless header blocked the retry (B197).
+ * Value rules (qty > 0, price > 0, the SKU is active, the photo is this shop's) stay in the lib.
+ */
+export function parseDeliveryLineInputs(raw: unknown): { ok: true; lines: ParsedDeliveryLine[] } | { ok: false; field: string } {
+  if (!Array.isArray(raw)) return { ok: false, field: "lines" };
+  const optional = <T>(value: unknown, type: "number" | "string"): T | null | undefined =>
+    value === null || value === undefined ? null : typeof value === type ? (value as T) : undefined;
+  const lines: ParsedDeliveryLine[] = [];
+  for (const item of raw as unknown[]) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return { ok: false, field: "lines" };
+    const r = item as Record<string, unknown>;
+    if (typeof r.skuId !== "string" || !LINE_SKU_UUID.test(r.skuId)) return { ok: false, field: "lines[].skuId" };
+    if (typeof r.qtyReceived !== "number") return { ok: false, field: "lines[].qtyReceived" };
+    const unitPrice = optional<number>(r.unitPrice, "number");
+    if (unitPrice === undefined) return { ok: false, field: "lines[].unitPrice" };
+    const observedOzPerEach = optional<number>(r.observedOzPerEach, "number");
+    if (observedOzPerEach === undefined) return { ok: false, field: "lines[].observedOzPerEach" };
+    const notes = optional<string>(r.notes, "string");
+    if (notes === undefined) return { ok: false, field: "lines[].notes" };
+    const receivedLevelLabel = optional<string>(r.receivedLevelLabel, "string");
+    if (receivedLevelLabel === undefined) return { ok: false, field: "lines[].receivedLevelLabel" };
+    const photoUrl = optional<string>(r.photoUrl, "string");
+    if (photoUrl === undefined) return { ok: false, field: "lines[].photoUrl" };
+    const expectedQty = optional<number>(r.expectedQty, "number");
+    if (expectedQty === undefined) return { ok: false, field: "lines[].expectedQty" };
+    const flag = optional<string>(r.discrepancyType, "string");
+    if (flag === undefined || (flag !== null && !DELIVERY_DISCREPANCIES.has(flag))) return { ok: false, field: "lines[].discrepancyType" };
+    lines.push({ skuId: r.skuId, qtyReceived: r.qtyReceived, unitPrice, observedOzPerEach, notes, receivedLevelLabel, photoUrl,
+      expectedQty, discrepancyType: flag as DeliveryDiscrepancy | null });
+  }
+  return { ok: true, lines };
+}
+
+/** What a flagged line contributes to credit derivation, whichever side it is read from. */
+export interface LineCreditSource {
+  /** The line's id once it exists; before the write, its 1-based position in the batch. */
+  deliveryItemId: string;
+  skuId: string;
+  /** Level-unit qty: received_qty_at_level when a level was named, else qty_received. */
+  qtyReceived: number;
+  expectedQty: number | null;
+  /** The intake line's own unit_price (per ROOT pack for a vendor line, per level for a store run). */
+  unitPrice: number | null;
+  discrepancyType: DeliveryDiscrepancy | null;
+  receivedLevelLabel: string | null;
+}
+
+/**
+ * THE credit rule for delivery lines (W04/B046 pricing included): only flagged lines, each priced
+ * per the level it was received at (creditUnitPrice), then deriveCreditDrafts. ONE function for
+ * the two places a delivery's lined credits are derived: from the lines read back after an append
+ * (deriveAndUpsertCredits) and from the request's own lines when a NEW delivery is written in one
+ * transaction (recordDelivery, W20/B197). They cannot drift, because there is nothing to copy.
+ */
+export function deriveLineCreditDrafts(
+  lines: readonly LineCreditSource[],
+  ctx: { chains: ReadonlyMap<string, PackChainLevel[]>; packFormat: ReadonlyMap<string, string | null>; store: boolean },
+): CreditDraft[] {
+  return deriveCreditDrafts(lines.filter((l) => l.discrepancyType != null).map((l) => ({
+    deliveryItemId: l.deliveryItemId,
+    skuId: l.skuId,
+    qtyReceived: l.qtyReceived,
+    expectedQty: l.expectedQty,
+    unitPrice: creditUnitPrice(l.unitPrice, l.receivedLevelLabel, ctx.chains.get(l.skuId) ?? null, ctx.packFormat.get(l.skuId) ?? null, ctx.store),
+    discrepancyType: l.discrepancyType,
+  })));
+}
+
 /** A single line as it lands in a delivery-append batch (identity tuple only). */
 export interface AppendLine {
   skuId: string;
@@ -218,6 +338,9 @@ export interface AppendLine {
  * NOTE: this is a pragmatic 60s window guard for P1 (no UI drives the append route
  * yet — continue-mode is deferred). A proper client-supplied idempotency token ships
  * with the continue-mode UI; this guard retires when that lands.
+ *
+ * It compares with ONE batch. addDeliveryLines calls it per earlier append through
+ * isDuplicateOfAnyBatch (W20/B199), never with the union of every line in the window.
  */
 export function isDuplicateAppend(incoming: AppendLine[], recent: AppendLine[]): boolean {
   if (incoming.length === 0 || recent.length === 0) return false;
@@ -232,6 +355,68 @@ export function isDuplicateAppend(incoming: AppendLine[], recent: AppendLine[]):
     counts.set(k, c - 1);
   }
   return true; // exact multiset match (equal lengths + every incoming tuple consumed)
+}
+
+/** A recently written line with the instant its insert stamped on it. */
+export interface DatedAppendLine extends AppendLine {
+  createdAt: string;
+}
+
+/** An instant to the microsecond, whatever its spelling ("Z" or "+00:00", trailing zeros or not).
+ *  Null for anything that is not a timestamp. Postgres keeps microseconds; Date keeps milliseconds. */
+function instantKey(iso: string | null | undefined): string | null {
+  if (typeof iso !== "string") return null;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  const fraction = /[T ]\d{2}:\d{2}:\d{2}\.(\d+)/.exec(iso)?.[1] ?? "";
+  return `${Math.floor(ms / 1000)}.${fraction.padEnd(6, "0").slice(0, 6)}`;
+}
+
+/** Are two timestamps the SAME instant, to the microsecond? Equality only: never "close". */
+export function sameInstant(a: string | null | undefined, b: string | null | undefined): boolean {
+  const ka = instantKey(a);
+  return ka !== null && ka === instantKey(b);
+}
+
+/**
+ * Split recently written lines into the APPENDS that wrote them, leaving out the lines the
+ * delivery was created with (W20/B199).
+ *
+ * BATCH IDENTITY IS WRITTEN, NOT INFERRED (review W20-r1). The lines a delivery is CREATED with
+ * carry the header's own `created_at`: record_delivery_atomic (migration 0327) stamps them with
+ * the header row's instant, and the pre-0327 fallback in recordDelivery reads the header's
+ * `created_at` back and writes it on the lines it inserts in the next request. So "a creation
+ * line" is exactly "a line whose instant IS the header's" (`sameInstant`), however long the save
+ * took. Nothing is decided by how close two timestamps are: the earlier rule (first line within
+ * five seconds of the header) classified a slow creation as an append and refused the real
+ * second pallet again.
+ *
+ * Every other line belongs to an append: `vendor_delivery_items.created_at` defaults to now(), the
+ * statement's transaction time, so the lines of one insert share one instant, and an append can
+ * never carry the header's (it runs in a later transaction). A delivery whose creation wrote no
+ * line (a leftover of the old failed saves) has no creation batch: its first lines were an append.
+ * Batches come back oldest first.
+ */
+export function priorAppendBatches(recent: readonly DatedAppendLine[], headerCreatedAt: string | null): AppendLine[][] {
+  const batches = new Map<string, AppendLine[]>();
+  for (const line of [...recent].sort((x, y) => Date.parse(x.createdAt) - Date.parse(y.createdAt))) {
+    if (sameInstant(line.createdAt, headerCreatedAt)) continue;
+    const key = instantKey(line.createdAt) ?? line.createdAt;
+    const batch = batches.get(key) ?? [];
+    batch.push({ skuId: line.skuId, level: line.level, qty: line.qty });
+    batches.set(key, batch);
+  }
+  return [...batches.values()];
+}
+
+/**
+ * Is `incoming` an exact repeat of ONE earlier append (W20/B199)? The guard used to compare with
+ * the union of everything written in the window, which was wrong both ways: it refused a real
+ * second pallet identical to the creation lines, and it missed a repeat of append A once a
+ * different append B had followed it.
+ */
+export function isDuplicateOfAnyBatch(incoming: AppendLine[], batches: readonly AppendLine[][]): boolean {
+  return batches.some((batch) => isDuplicateAppend(incoming, batch));
 }
 
 // ── Offline intake drafts: the per-location draft SHELF ────────────────────────

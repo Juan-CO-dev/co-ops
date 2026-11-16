@@ -6,7 +6,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { haversineMeters, isWithinRadius } from "@/lib/geo";
-import { operationalDayUtcRange } from "@/lib/operational-day";
+import { checkCateringCapacity, isBookableSignal } from "./capacity";
 
 /** Stages that count against a node's daily capacity (a "booked" event). Matches W4a reserve-at-confirmed. */
 import {
@@ -73,61 +73,54 @@ export async function loadPickupNodes(): Promise<PublicFulfillmentNode[]> {
   return all.filter((n) => n.offersPickup);
 }
 
-interface CapacityPolicy {
-  max_covers_per_day: number | null;
-  max_events_per_day: number | null;
-  min_lead_time_hours: number | null;
-}
-
-/** Advisory capacity check for one node + date. Null policy / null fields = no limit (pass). */
-async function passesCapacity(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  locationId: string,
-  eventDate: string | null,
-  headcount: number | null,
-): Promise<boolean> {
-  if (eventDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) return false;
-  const { data: policyRow, error: pErr } = await sb
-    .from("catering_capacity_policy")
-    .select("max_covers_per_day, max_events_per_day, min_lead_time_hours")
-    .eq("location_id", locationId)
-    .eq("active", true)
-    .maybeSingle<CapacityPolicy>();
-  if (pErr) throw new Error(`passesCapacity policy: ${pErr.message}`);
-  if (!policyRow) return true; // no policy => unlimited
-
-  // min_lead_time_hours (needs a date)
-  if (policyRow.min_lead_time_hours != null && eventDate) {
-    const eventStart = Date.parse(operationalDayUtcRange(eventDate).startIso);
-    const earliest = Date.now() + policyRow.min_lead_time_hours * 3_600_000;
-    if (eventStart < earliest) return false;
-  }
-
-  // max_events / max_covers (need a date to count that day's booked leads)
-  const needsCount =
-    (policyRow.max_events_per_day != null || policyRow.max_covers_per_day != null) && !!eventDate;
-  if (needsCount) {
-    const { data: booked, error: bErr } = await sb
-      .from("catering_pipeline")
-      .select("headcount")
-      .eq("location_id", locationId)
-      .eq("event_date", eventDate)
-      .in("stage", CATERING_BOOKED_STAGES as unknown as string[])
-      .returns<Array<{ headcount: number | null }>>();
-    if (bErr) throw new Error(`passesCapacity booked: ${bErr.message}`);
-    const rows = booked ?? [];
-    if (policyRow.max_events_per_day != null && rows.length + 1 > policyRow.max_events_per_day) return false;
-    if (policyRow.max_covers_per_day != null) {
-      const covers = rows.reduce((s, r) => s + (r.headcount ?? 0), 0);
-      if (covers + (headcount ?? 0) > policyRow.max_covers_per_day) return false;
-    }
-  }
-  return true;
+/**
+ * Can this shop take this date (and headcount)? THE capacity check (lib/catering/capacity.ts) read through the
+ * one rule `isBookableSignal` (audit W22/B123): a blackout counts even with no caps seeded, the lead time, the
+ * day's covers and events (booked = CATERING_BOOKED_STAGES, unbatched orders too). No date = nothing to judge
+ * (true). `excludePipelineId` leaves the order being judged out of its own day's count.
+ */
+export async function isDateBookable(args: {
+  locationId: string;
+  eventDate: string | null;
+  headcount: number | null;
+  excludePipelineId?: string | null;
+}): Promise<boolean> {
+  if (args.eventDate == null) return true;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(args.eventDate)) return false;
+  return isBookableSignal(await checkCateringCapacity({
+    locationId: args.locationId,
+    eventDate: args.eventDate,
+    requestedCovers: args.headcount ?? 0,
+    excludePipelineId: args.excludePipelineId ?? null,
+  }));
 }
 
 /**
- * Route a delivery to the nearest in-zone node that has capacity for the date; fall through to the
- * next-nearest on capacity failure. Advisory (does not reserve). Invalid coords => out_of_zone.
+ * Does this customer order need the catering manager's OK on its date? True only for an order not yet booked
+ * (lead stage inquiry / quote_sent) whose date the shop cannot take. A confirmed order is never flagged (it
+ * always pays). Never throws: a failed check reads as "no warning" (advisory surface).
+ */
+export async function orderDateNeedsReview(args: {
+  pipelineId: string | null;
+  locationId: string;
+  eventDate: string | null;
+  headcount: number | null;
+}): Promise<boolean> {
+  if (!args.pipelineId || args.eventDate == null) return false;
+  try {
+    const sb = getServiceRoleClient();
+    const { data, error } = await sb.from("catering_pipeline").select("stage").eq("id", args.pipelineId).maybeSingle<{ stage: string }>();
+    if (error || !data || (data.stage !== "inquiry" && data.stage !== "quote_sent")) return false;
+    return !(await isDateBookable({ locationId: args.locationId, eventDate: args.eventDate, headcount: args.headcount, excludePipelineId: args.pipelineId }));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Route a delivery to the nearest in-zone node that can take the date (isDateBookable); fall through to the
+ * next-nearest when it cannot; when none can, the nearest with `dateUnavailable` (a warning, never a refusal).
+ * Advisory (does not reserve). Invalid coords => out_of_zone.
  */
 export async function routeDelivery(args: {
   lat: number;
@@ -148,9 +141,8 @@ export async function routeDelivery(args: {
 
   if (candidates.length === 0) return { status: "out_of_zone" };
 
-  const sb = getServiceRoleClient();
   for (const c of candidates) {
-    if (await passesCapacity(sb, c.node.locationId, eventDate, headcount)) {
+    if (await isDateBookable({ locationId: c.node.locationId, eventDate, headcount })) {
       return {
         status: "routed",
         locationId: c.node.locationId,
@@ -159,5 +151,14 @@ export async function routeDelivery(args: {
       };
     }
   }
-  return { status: "no_capacity" };
+  // No in-zone shop can take the date. Never a refusal (W22-2 as modified): the nearest shop, flagged, and
+  // the customer is warned; the catering manager accepts or refuses the order.
+  const nearest = candidates[0]!;
+  return {
+    status: "routed",
+    locationId: nearest.node.locationId,
+    locationName: nearest.node.locationName,
+    distanceMeters: nearest.distanceMeters,
+    dateUnavailable: true,
+  };
 }

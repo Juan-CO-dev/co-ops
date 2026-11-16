@@ -151,7 +151,10 @@ describe("generic checklist routes cannot bypass task assignment", () => {
   });
 
   it("blocks complete, submit, confirm, self-revoke and drop before mutation", async () => {
-    const { service } = genericClient();
+    const { service, from } = genericClient();
+    // W05B r2: once the shop rule admits the actor, the writers read the instance's own template
+    // through the service-role client, so it serves the same opening template here.
+    Object.assign(assignmentService, { from });
     const base = { actor: checklistActor({ ...actor, locations: ["stored-shop"] }), instanceId: "instance" };
     await expect(completeItem(service, { ...base, templateItemId: "item" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(submitBatch(service, { ...base, completionIds: ["completion"] })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
@@ -160,6 +163,7 @@ describe("generic checklist routes cannot bypass task assignment", () => {
     await expect(revokeCompletion(service, { actor: base.actor, completionId: "completion" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(revokeWithReason(service, { actor: base.actor, completionId: "completion", reason: "not_actually_done" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
     await expect(dropInstance(service, { ...base, reason: "change" })).rejects.toBeInstanceOf(ChecklistRoleViolationError);
+    delete (assignmentService as { from?: unknown }).from;
   });
 });
 
@@ -240,7 +244,11 @@ describe("W13/B019 + B073 — writers refuse an instance of another checklist", 
 describe("W13/B072 — generic checklist writers are closing-only", () => {
   it.each([["opening", null], ["prep", "am_prep"], ["prep", "mid_day_prep"]] as const)(
     "refuses complete, submit and confirm on %s/%s even with an assignment", async (type, subtype) => {
-      const { service, rpc } = genericClient(type, subtype);
+      const { service, rpc, from } = genericClient(type, subtype);
+      // W05B merge: once the shop rule binds the instance, its OWN template is read service-role
+      // (BoundShopTask), so the guard's template read goes through the service client here.
+      Object.assign(assignmentService, { from });
+      onTestFinished(() => { delete (assignmentService as { from?: unknown }).from; });
       vi.mocked(hasTaskAccess).mockResolvedValue(true);
       const base = { actor: checklistActor({ ...actor, locations: ["stored-shop"] }), instanceId: "instance" };
       await expect(completeItem(service, { ...base, templateItemId: "item" })).rejects.toMatchObject({ code: "wrong_checklist_type" });

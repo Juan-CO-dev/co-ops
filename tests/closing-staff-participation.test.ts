@@ -26,10 +26,14 @@ function client(type = "closing", reference: string | null = null, floor = 4) {
     };
     return query;
   };
-  return { from, rpc: async (_name: string, payload: unknown) => {
+  const db = { from, rpc: async (_name: string, payload: unknown) => {
     mocks.insert(payload);
     return { data: { completion: { id: "completion", instance_id: "instance", template_item_id: "item", completed_by: "trainee" }, superseded_ids: [], kept_completed_at: false }, error: null };
   } } as unknown as SupabaseClient;
+  // W05B r2: after the shop bind the writers read the instance's own template and items through the
+  // service-role client, so the service double serves the same rows as the reader.
+  mocks.service = db;
+  return db;
 }
 const actor = checklistActor({ userId: "trainee", role: "trainee", level: 2 });
 beforeEach(() => { vi.clearAllMocks(); mocks.service = client(); });

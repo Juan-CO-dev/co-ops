@@ -82,7 +82,7 @@ import {
   type CreatedDraft,
   type DraftLineInput,
 } from "@/lib/purchase-orders";
-import { etCalendarDate, etWallClockToUtcIso, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
+import { etCalendarDate, etWallClockToUtcIso, etYmdMinusDays, operationalDayUtcRange, trailingEtWindow } from "@/lib/operational-day";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { formatTime } from "@/lib/i18n/format";
 import { cutoffMissed } from "@/lib/dashboard-status-shared";
@@ -343,9 +343,10 @@ async function loadSkuUsageRank(
     usage.set(skuId, (usage.get(skuId) ?? 0) + oz);
   };
 
-  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const cutoffIso = cutoff.toISOString();
-  const cutoffDate = cutoffIso.slice(0, 10); // YYYY-MM-DD for the business_date filter.
+  // W20/B200: one ET business-day window for BOTH lanes (mirrors lib/receiving.ts's twin). The
+  // old bound was the UTC date of "now minus 30 days": a day late every ET evening for the
+  // sales lane only, so the walk's order changed between a morning and an evening load.
+  const { fromDate, startIso } = trailingEtWindow(new Date().toISOString(), 30);
 
   // BOTH production reads are PAGED (the PR #63 lesson): 30 days of productions and
   // their inputs each overrun the 1000-row cap, and a truncated page would silently
@@ -357,7 +358,7 @@ async function loadSkuUsageRank(
         .select("id")
         .eq("location_id", locationId)
         .is("superseded_at", null).is("revoked_at", null)
-        .gt("produced_at", cutoffIso)
+        .gte("produced_at", startIso)
         .order("id", { ascending: true })
         .range(from, to)
         .returns<Array<{ id: string }>>();
@@ -399,7 +400,7 @@ async function loadSkuUsageRank(
   // 30 days at (location, business_date, sku) grain overruns PostgREST's 1000-row
   // default cap, and an unordered truncated page would silently drop usage from the
   // rank (the PR #63 lesson) — page it under a stable total order (`id`, the PK).
-  const sales = await loadEffectiveSalesWindow(sb, { locationId, fromDate: cutoffDate });
+  const sales = await loadEffectiveSalesWindow(sb, { locationId, fromDate });
   for (const r of sales.rows) add(r.sku_id, num(r.direct_oz) ?? 0);
 
   return { usage, coverage: sales.coverage };

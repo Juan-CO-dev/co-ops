@@ -29,6 +29,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { operationalDayUtcRange } from "@/lib/operational-day";
+import { CATERING_BOOKED_STAGES } from "./fulfillment-shared";
 
 export type CapacitySignal =
   | "available"      // room for the requested covers
@@ -81,8 +82,10 @@ function meetsLeadTimeForDate(eventDate: string, now: Date, minLeadTimeHours: nu
  * Mode-A capacity check for a location + date + requested covers.
  *
  * Consumption model (dedup-safe): a confirmed booking is counted once.
- *   - catering_pipeline rows with stage in ('confirmed','completed') on the
- *     event_date are the authoritative booked commitments.
+ *   - catering_pipeline rows with a BOOKED stage (CATERING_BOOKED_STAGES:
+ *     confirmed, out, completed) on the event_date are the authoritative booked
+ *     commitments. One definition with the public routing gate (audit W22/B202:
+ *     a hardcoded confirmed+completed freed the day while an event was out).
  *   - catering_orders with a NULL pipeline_id (direct / backfilled orders that
  *     never went through the pipeline) are added on the order_date.
  *   Orders WITH a pipeline_id are NOT counted separately — their booking is
@@ -131,7 +134,7 @@ export async function checkCateringCapacity(args: {
     .select("id, headcount")
     .eq("location_id", args.locationId)
     .eq("event_date", args.eventDate)
-    .in("stage", ["confirmed", "completed"])
+    .in("stage", [...CATERING_BOOKED_STAGES])
     .returns<Array<{ id: string; headcount: number | null }>>();
   if (plErr) throw new Error(`checkCateringCapacity pipeline: ${plErr.message}`);
 
@@ -182,14 +185,15 @@ export async function checkCateringCapacity(args: {
     shortfall: null,
   };
 
-  // 4. Signal. Precedence: unconfigured (degrade) → blackout → lead-time →
-  //    covers/events capacity → limited → available.
+  // 4. Signal. Precedence: blackout → unconfigured (degrade) → lead-time →
+  //    covers/events capacity → limited → available. A blackout is an explicit manager act, so it holds
+  //    whether or not caps are seeded (audit W22/B123: with no policy row the blackout was never reported).
   let signal: CapacitySignal;
-  if (policy == null) {
+  if (isBlackout) {
+    signal = "blackout";
+  } else if (policy == null) {
     // No caps seeded yet — the gate is advisory-only (never blocks a booking).
     signal = "unconfigured";
-  } else if (isBlackout) {
-    signal = "blackout";
   } else if (!meetsLeadTime) {
     signal = "below_lead_time";
   } else if (
@@ -210,3 +214,6 @@ export async function checkCateringCapacity(args: {
 
   return { signal, ...base };
 }
+
+// The one "can this date take the order" rule lives in the client-safe half (the *-shared pattern).
+export { isBookableSignal } from "./capacity-shared";

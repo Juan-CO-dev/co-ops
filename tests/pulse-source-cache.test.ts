@@ -55,12 +55,19 @@ function deps(): PulseDeps & { counts: Record<string, number> } {
     reports: count("reports", { rows: [], closingDone: false, midDayDoneCount: 0 }),
     fridges: count("fridges", []), cateringToday: count("cateringToday", []), cateringTomorrow: count("cateringTomorrow", { count: 0, firstWindow: null }),
     notRung: count("notRung", []), unlinkedClockIns: count("unlinked", { count: 0, entries: [] }), lastParPass: count("parPass", null),
+    priorAmPrep: count("priorAmPrep", null),
     deliveries: count("deliveries", []), cutoffs: count("cutoffs", { count: 0, vendors: [] }),
     sales: count("sales", {} as never), handoff: count("handoff", { notes: [], acks: [], names: {} }), layout: count("layout", null),
   };
 }
 
 describe("cachedPulseDeps — scope-safe sharing", () => {
+  it("last night's AM prep (B027) is a shop fact: one read for every viewer level", async () => {
+    const d = deps();
+    const c = cachedPulseDeps(d, { now: () => 1_000 });
+    await Promise.all([c.priorAmPrep(ctx(7, "gm")), c.priorAmPrep(ctx(4, "kh")), c.priorAmPrep(ctx(3, "crew"))]);
+    expect(d.counts.priorAmPrep).toBe(1);
+  });
   it("the board is read once per shop per poll for any number of viewers, and each viewer gets their own viewer fields", async () => {
     const d = deps();
     const c = cachedPulseDeps(d, { now: () => 1_000 });
