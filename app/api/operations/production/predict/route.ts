@@ -15,8 +15,9 @@ export async function POST(req: NextRequest) {
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < PRODUCE_MIN) return jsonError(403, "forbidden");
 
-  const b = parsed as { inputSkuId?: unknown; outputItemId?: unknown; inputQty?: unknown };
+  const b = parsed as { locationId?: unknown; inputSkuId?: unknown; outputItemId?: unknown; inputQty?: unknown };
   if (
+    typeof b.locationId !== "string" || b.locationId.length === 0 ||
     typeof b.inputSkuId !== "string" ||
     typeof b.outputItemId !== "string" ||
     typeof b.inputQty !== "number"
@@ -25,7 +26,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // W16/B096: the prediction is this shop's own history (the lib binds the shop to the actor).
     const res = await predictOutput(ctx, {
+      locationId: b.locationId,
       inputSkuId: b.inputSkuId,
       outputItemId: b.outputItemId,
       inputQty: b.inputQty,

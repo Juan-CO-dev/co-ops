@@ -129,6 +129,19 @@ describe("ezCater authoritative depletion", () => {
     tables.productions = [{ ...production, revoked_at: "2026-10-07T00:00:00Z" }];
     expect((await loadReconciledSalesWindow(db(), window)).rows[0]!.direct_oz).toBe(12);
   });
+  it("W16/B092: a prep batch logged the day before covers the Toast prep fallback (reconciled path)", async () => {
+    tables.ezcater_orders = []; tables.ezcater_current_toast_links = [];
+    mocks.derive.mockImplementation(async () => ({ skuConsumed: [{ skuId: "sku", directOz: 1, flattenedOz: 4 }],
+      prepConsumed: [{ itemId: "prep", name: "prep", units: 1, removedUnits: 0 }], unmappedToastItems: [], packageIssues: [],
+      modifierStats: { portionNeeded: [] }, suspectedCatering: [], captureRunId: "run", configDegraded: false, missingPointerCount: 0 }));
+    expect((await loadReconciledSalesWindow(db(), window)).rows[0]!.direct_oz).toBe(5); // 1 direct + 4 oz fallback
+    tables.productions = [{ location_id: "shop", output_item_id: "prep", produced_at: "2026-10-05T14:00:00Z", revoked_at: null }];
+    expect((await loadReconciledSalesWindow(db(), window)).rows[0]!.direct_oz).toBe(1); // covered: direct only
+    tables.productions = [{ location_id: "shop", output_item_id: "prep", produced_at: "2026-09-29T14:00:00Z", revoked_at: null }];
+    expect((await loadReconciledSalesWindow(db(), window)).rows[0]!.direct_oz).toBe(5); // D−7: past the 5-day carry
+    tables.productions = [{ location_id: "other", output_item_id: "prep", produced_at: "2026-10-05T14:00:00Z", revoked_at: null }];
+    expect((await loadReconciledSalesWindow(db(), window)).rows[0]!.direct_oz).toBe(5); // another shop never covers
+  });
   it("counts ez orders during a Toast capture gap and discloses the gap", async () => {
     mocks.day.mockResolvedValue(null);
     const result = await loadReconciledSalesWindow(db(), window);
@@ -180,7 +193,9 @@ describe("ezCater authoritative depletion", () => {
     tables.catering_pipeline = tables.ezcater_orders.map((order) => ({ id: order.lead_id, location_id: "shop", stage: "confirmed", lead_source: "ezcater" }));
     tables.ezcater_order_items = tables.ezcater_orders.map((order) => ({ ...item, order_id: order.id, snapshot_id: order.snapshot_id, is_current: true }));
     await loadReconciledSalesWindow(db(), { locationId: "shop", fromDate: "2026-09-01", untilDateExclusive: "2026-10-01" });
-    expect(queries.length).toBeLessThanOrEqual(13);
+    // +2 constant reads (W16/B092: recipes + recipe_outputs for the production carry window), never per day.
+    expect(queries.length).toBeLessThanOrEqual(15);
+    expect(queries.filter((table) => table === "recipes" || table === "recipe_outputs")).toHaveLength(2);
     expect(queries.filter((table) => table === "ezcater_order_items")).toHaveLength(1);
     expect(mocks.window).toHaveBeenCalledTimes(1);
     expect(mocks.graph).toHaveBeenCalledTimes(1);
