@@ -131,37 +131,46 @@ function progressFor(status: string | null, hasAny: boolean): ReportProgress {
  *   - the newest instance that day across EVERY AM prep template version the shop has had, active or
  *     retired: under Path A versioning a version retired today still holds yesterday's report, so an
  *     active-only lookup would read a submitted list as "not started" (W21 r1);
+ *   - ONE bounded read for it (W21 r2): the instance is found directly through a service-role
+ *     `!inner` embed on its template (type / subtype / shop filtered in the join), so no version list
+ *     is ever read or sent — a shop past 1000 versions can neither lose the version holding the report
+ *     behind the response cap nor overflow the request line with an id list (AGENTS.md: a service-role
+ *     embed is legitimate exactly here; checklist_instances has one FK to checklist_templates);
  *   - no instance that day → null when the shop has no ACTIVE AM prep template (nothing to flag), else
- *     "not started".
+ *     "not started" — one `limit(1)` existence read, equally bounded.
  * Every read error throws: a failed read is never a fake "not started".
  */
 export async function loadPriorAmPrepStatus(
   service: SupabaseClient,
   args: { locationId: string; date: string },
 ): Promise<{ reportId: string | null; date: string; progress: ReportProgress } | null> {
-  const { data: tmpls, error: tErr } = await service
-    .from("checklist_templates")
-    .select("id, active")
-    .eq("location_id", args.locationId)
-    .eq("type", "prep")
-    .eq("prep_subtype", "am_prep")
-    .returns<Array<{ id: string; active: boolean | null }>>();
-  if (tErr) throw new Error(`loadPriorAmPrepStatus checklist_templates: ${tErr.message}`);
-  const tmplIds = (tmpls ?? []).map((t) => t.id);
-  if (tmplIds.length === 0) return null;
-  const hasActive = (tmpls ?? []).some((t) => t.active === true);
   const { data: inst, error: iErr } = await service
     .from("checklist_instances")
-    .select("id, status")
-    .in("template_id", tmplIds)
+    .select("id, status, checklist_templates!inner(type, prep_subtype, location_id)")
     .eq("location_id", args.locationId)
     .eq("date", args.date)
+    .eq("checklist_templates.type", "prep")
+    .eq("checklist_templates.prep_subtype", "am_prep")
+    .eq("checklist_templates.location_id", args.locationId)
+    // Newest wins if a duplicate day-instance ever exists (maybeSingle would THROW on 2 rows).
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle<{ id: string; status: string | null }>();
   if (iErr) throw new Error(`loadPriorAmPrepStatus checklist_instances: ${iErr.message}`);
-  if (!inst && !hasActive) return null;
-  return { reportId: inst?.id ?? null, date: args.date, progress: progressFor(inst?.status ?? null, inst != null) };
+  if (inst) return { reportId: inst.id, date: args.date, progress: progressFor(inst.status ?? null, true) };
+
+  const { data: active, error: tErr } = await service
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("type", "prep")
+    .eq("prep_subtype", "am_prep")
+    .eq("active", true)
+    .limit(1)
+    .returns<Array<{ id: string }>>();
+  if (tErr) throw new Error(`loadPriorAmPrepStatus checklist_templates: ${tErr.message}`);
+  if ((active ?? []).length === 0) return null;
+  return { reportId: null, date: args.date, progress: "not_started" };
 }
 
 /** Builds the 5 ReportStatusRows (without overdue — overdue applied by caller). */
