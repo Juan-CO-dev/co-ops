@@ -126,7 +126,9 @@ import { POST as submit } from "@/app/api/checklist/submissions/route";
 import { POST as confirm } from "@/app/api/checklist/confirm/route";
 import { POST as revoke } from "@/app/api/checklist/completions/[id]/revoke/route";
 import { POST as markNotDone } from "@/app/api/checklist/completions/[id]/mark-not-done/route";
-import { completeItem, confirmInstance, tagActualCompleter } from "@/lib/checklists";
+import { GET as pickerCandidates } from "@/app/api/checklist/completions/[id]/picker-candidates/route";
+import { POST as tagRoute } from "@/app/api/checklist/completions/[id]/tag-actual-completer/route";
+import { completeItem, confirmInstance, loadPickerCandidatesForCompletion, tagActualCompleter } from "@/lib/checklists";
 import type { ChecklistWriteActor } from "@/lib/checklist-write-actor";
 
 const ITEM = "00000000-0000-4000-8000-000000000001";
@@ -168,6 +170,10 @@ function request(path: string, body: unknown) {
   return new NextRequest(`https://example.test/api/checklist/${path}`, { method: "POST",
     headers: { origin: "https://example.test", "content-type": "application/json", cookie: "co_session=jwt" }, body: JSON.stringify(body) });
 }
+function getRequest(path: string) {
+  return new NextRequest(`https://example.test/api/checklist/${path}`, { method: "GET", headers: { cookie: "co_session=jwt" } });
+}
+const completionParams = { params: Promise.resolve({ id: "completion" }) };
 const writeActor = (role: string, level: number, locations: string[]) =>
   Object.freeze({ userId: "actor", sessionId: "session", role, level, active: true, locations: Object.freeze(locations) }) as unknown as ChecklistWriteActor;
 
@@ -323,6 +329,74 @@ describe("W05B r2: the service-role read is reached only AFTER the shop bind", (
   it("a member (level 3) is unchanged: completes through the same path", async () => {
     seed("employee", [{ location_id: "shop-b", active: true }]);
     expect((await complete(request("completions", { instanceId: "instance", templateItemId: ITEM }))).status).toBe(200);
+  });
+});
+
+describe("W05B r3: the tagging picker follows the same shop rule as tagging (review W05B-r3 P2)", () => {
+  function rosterCloser() {
+    h.db.user_locations!.push({ user_id: "closer", location_id: "shop-b", active: true });
+    h.db.sessions!.push({ id: "closer-session", user_id: "closer", created_at: new Date().toISOString() });
+  }
+
+  it("a MoO (8) with no membership at shop B loads the picker, then tags through the real routes", async () => {
+    seed("moo", [{ location_id: "shop-a", active: true }]);
+    rosterCloser();
+    const res = await pickerCandidates(getRequest("completions/completion/picker-candidates"), completionParams);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { candidates: Array<{ id: string }> };
+    expect(body.candidates.map(c => c.id).sort()).toEqual(["actor", "closer"]);
+    const tag = await tagRoute(request("completions/completion/tag-actual-completer", { actualCompleterId: "closer" }), completionParams);
+    expect(tag.status).toBe(200);
+  });
+
+  it("candidate rules are unchanged: an off-roster shop-B member and a person below the item's floor are not offered", async () => {
+    seed("moo", [{ location_id: "shop-a", active: true }]);
+    rosterCloser();
+    h.db.users!.push({ id: "absent", name: "Absent", role: "employee", active: true }, { id: "low", name: "Low", role: "employee", active: true });
+    h.db.user_locations!.push({ user_id: "absent", location_id: "shop-b", active: true }, { user_id: "low", location_id: "shop-b", active: true });
+    h.db.sessions!.push({ id: "low-session", user_id: "low", created_at: new Date().toISOString() });
+    h.db.checklist_template_items![0]!.min_role_level = 3;
+    h.db.users!.find(u => u.id === "low")!.role = "trainee";
+    const ids = (await loadPickerCandidatesForCompletion(client(false), { completionId: "completion",
+      actor: writeActor("moo", 8, ["shop-a"]) })).map(c => c.id).sort();
+    expect(ids).toEqual(["actor", "closer"]);
+  });
+
+  it("a GM (7) with no membership at shop B is refused, before any template/items/candidate read", async () => {
+    seed("gm", [{ location_id: "shop-a", active: true }]);
+    rosterCloser();
+    h.serviceReads = [];
+    const res = await pickerCandidates(getRequest("completions/completion/picker-candidates"), completionParams);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+    expect(h.serviceReads).not.toContain("checklist_templates");
+    expect(h.serviceReads).not.toContain("checklist_template_items");
+    expect(h.serviceReads).not.toContain("checklist_completions");
+  });
+
+  it("a GM the RLS still shows the row to, but who is NOT an active member of shop B, is refused by the shop rule", async () => {
+    seed("gm", [{ location_id: "shop-b", active: true }]); // RLS sees it (stale membership in the JWT's view)
+    rosterCloser();
+    h.serviceReads = [];
+    await expect(loadPickerCandidatesForCompletion(client(false), { completionId: "completion",
+      actor: writeActor("gm", 7, ["shop-a"]) })).rejects.toMatchObject({ code: "role_level_insufficient" });
+    expect(h.serviceReads).not.toContain("checklist_templates");
+    expect(h.serviceReads).not.toContain("checklist_template_items");
+    expect(h.serviceReads).not.toContain("checklist_completions");
+  });
+
+  it("a member below KH who is not the completer is still refused (KH+ or self unchanged)", async () => {
+    seed("employee", [{ location_id: "shop-b", active: true }]);
+    h.db.checklist_completions![0]!.completed_by = "closer";
+    const res = await pickerCandidates(getRequest("completions/completion/picker-candidates"), completionParams);
+    expect(res.status).toBe(403);
+  });
+
+  it("a member below KH who IS the completer still loads the picker (self wrong_user_credited)", async () => {
+    seed("employee", [{ location_id: "shop-b", active: true }]);
+    rosterCloser();
+    const res = await pickerCandidates(getRequest("completions/completion/picker-candidates"), completionParams);
+    expect(res.status).toBe(200);
   });
 });
 

@@ -701,20 +701,6 @@ async function loadInstanceOrThrow(
   return data;
 }
 
-async function loadTemplateItemOrThrow(
-  authed: SupabaseClient,
-  templateItemId: string,
-): Promise<TemplateItemRow> {
-  const { data, error } = await authed
-    .from("checklist_template_items")
-    .select("id, template_id, min_role_level, required, expects_count, expects_photo, active, input_type, report_reference_type, ref_track_item_completion, references_template_item_id")
-    .eq("id", templateItemId)
-    .maybeSingle<TemplateItemRow>();
-  if (error) throw new Error(`load template_item ${templateItemId}: ${error.message}`);
-  if (!data) throw new Error(`template_item ${templateItemId} not found or not visible to caller`);
-  return data;
-}
-
 /**
  * Audit W05B fix round 2 (review W05B-r2 P2). `checklist_templates` and `checklist_template_items`
  * are readable through the user's own JWT only by a member of the template's shop or level 9+
@@ -2291,8 +2277,9 @@ export async function tagActualCompleter(
 
 /**
  * Public surface for picker-scope candidate enumeration. Loads the live
- * completion (location-access RLS-gated via authed client), authorizes
- * (KH+ OR self), then returns the candidate list scoped to the completion's
+ * completion (location-access RLS-gated via authed client), binds the shop
+ * with the tagging rule (worksShopTasks, W05B r3), authorizes (KH+ OR self),
+ * then returns the candidate list scoped to the completion's
  * instance + template_item.
  *
  * Self-exclusion (when the actor IS the completed_by and is using the
@@ -2309,13 +2296,24 @@ export async function loadPickerCandidatesForCompletion(
   authed: SupabaseClient,
   args: {
     completionId: string;
-    actor: ChecklistActor;
+    actor: ChecklistWriteActor;
   },
 ): Promise<PickerCandidate[]> {
   const { completionId, actor } = args;
 
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
-  await requireChecklistTaskAccess(authed, completion.instance_id, actor);
+  // Audit W05B r3 (review W05B-r3 P2): the picker is the prerequisite of tagActualCompleter, so it
+  // binds the shop by the SAME rule (worksShopTasks: an active member of the instance's shop, or
+  // level 8+ at any shop), on the instance read through the caller's RLS. Only then are that
+  // instance's own template and the completion's item read service-role (BoundShopTask). Without
+  // this a level-8 non-member got 403 here (templates/items are member-or-9+ to the JWT) and could
+  // never reach the tagging the shop rule already allows.
+  const instance = await loadInstanceOrThrow(authed, completion.instance_id);
+  if (!worksShopTasks(actor, instance.location_id)) {
+    throw new ChecklistRoleViolationError(4, actor.level, "You do not manage that location");
+  }
+  const bound = bindShopTask(instance);
+  await requireChecklistTaskAccess(authed, completion.instance_id, actor, bound);
 
   // KH+ = level >= 4 (key_holder, post-renumber). The 0–10 role-model
   // renumber separated key_holder (4) from employee (3), so the KH+ gate
@@ -2329,8 +2327,8 @@ export async function loadPickerCandidatesForCompletion(
     );
   }
 
-  const instance = await loadInstanceOrThrow(authed, completion.instance_id);
-  const item = await loadTemplateItemOrThrow(authed, completion.template_item_id);
+  const item = await loadBoundTemplateItem(bound, completion.template_item_id);
+  if (!item) throw new Error(`template_item ${completion.template_item_id} not found or not visible to caller`);
 
   return loadPickerCandidates({
     instanceId: completion.instance_id,
