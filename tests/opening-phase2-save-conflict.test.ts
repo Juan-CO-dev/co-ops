@@ -118,7 +118,7 @@ function serviceWithRpcError(
   const rpc = vi.fn(async () => ({ data: null, error }));
   const from = vi.fn((table: string) => {
     if (table === "checklist_instances") {
-      const instanceQuery = { select: () => instanceQuery, eq: () => instanceQuery, maybeSingle: async () => ({ data: { location_id: "shop", date: "2026-10-07" }, error: null }) };
+      const instanceQuery = { select: () => instanceQuery, eq: () => instanceQuery, maybeSingle: async () => ({ data: { location_id: "shop", date: "2026-10-07", template: { type: "opening" } }, error: null }) };
       return instanceQuery;
     }
     if ("throws" in readBack) throw new Error("transport exploded");

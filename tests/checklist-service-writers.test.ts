@@ -27,6 +27,7 @@ import { POST as reasonRevoke } from "@/app/api/checklist/completions/[id]/revok
 import { POST as markNotDone } from "@/app/api/checklist/completions/[id]/mark-not-done/route";
 import { POST as tag } from "@/app/api/checklist/completions/[id]/tag-actual-completer/route";
 import { POST as create } from "@/app/api/checklist/instances/route";
+import { etCalendarDate } from "@/lib/operational-day";
 
 let instance: Record<string, unknown>;
 let template: Record<string, unknown>;
@@ -136,7 +137,8 @@ const endpoints = [
   ["completions", complete, { instanceId: "instance", templateItemId: "00000000-0000-4000-8000-000000000001" }, "checklist_write_completion"],
   ["submissions", submit, { instanceId: "instance", completionIds: ["completion"] }, "checklist_submit_batch"],
   ["confirm", confirm, { instanceId: "instance", pin: "1234", incompleteReasons: [] }, "checklist_confirm_instance"],
-  ["instances", create, { templateId: "template", locationId: "shop", date: "2026-10-19" }, null],
+  // W13/B076: the route starts a closing only for the ET today.
+  ["instances", create, { templateId: "template", locationId: "shop", date: etCalendarDate(new Date().toISOString()) }, null],
 ] as const;
 function request(name: string, body: unknown) {
   return new NextRequest(`https://example.test/api/checklist/${name}`, { method: "POST",
