@@ -90,3 +90,51 @@ export function checkLinePrices(check: Row, accounting: CheckSalesAccounting, ce
     receipt_line_complete: source_complete && allReceipt,
   };
 }
+
+export type LineMeasure = "net" | "gross" | "receipt_line";
+/** One check of the shop-day population. `linePrices` is resolved by the caller: inline
+ * (accounting.line_prices on a snapshot with price_v) or, from phase 2, attached; null = unpriced. */
+export interface LineRevenueCheck { checkGuid: string; saleClass: boolean; linePrices: CheckLinePrices | null | undefined }
+/** The captured selection units of those checks (the latest snapshots), as stored. */
+export interface LineRevenueUnit {
+  check_guid: string; parent_selection_guid: string | null; voided: boolean; deleted: boolean; quantity: number;
+  net_cents?: number | null; gross_cents?: number | null; receipt_line_cents?: number | null; selection_type?: string | null; deferred?: boolean;
+}
+export interface LineRevenue {
+  measure: LineMeasure;
+  covered: boolean;
+  /** Null whenever not covered: unknown is never 0. */
+  cents: number | null;
+  reason: null | "capture_uncovered" | "unpriced_checks" | "incomplete_checks";
+  checks: number;
+  unpriced: number;
+  incomplete: number;
+}
+
+const completeFor = (lp: CheckLinePrices, m: LineMeasure) =>
+  lp.source_complete && (m === "net" ? lp.net_complete : m === "gross" ? lp.gross_complete : lp.receipt_line_complete);
+
+/** §3.3 + §3.4, pure. A shop-day is covered for measure M only when the capture day is covered,
+ * every sale-class check is priced, and every one of them is M-complete (which requires
+ * source_complete). The sum runs over revenue heads only: modifiers are never summed, voided and
+ * deleted lines count as nothing, and only receipt_line_cents is multiplied by quantity. */
+export function lineRevenue(input: { captureCovered: boolean; checks: LineRevenueCheck[]; units: LineRevenueUnit[] }, measure: LineMeasure): LineRevenue {
+  const sale = input.checks.filter((c) => c.saleClass);
+  const unpriced = sale.filter((c) => !c.linePrices).length;
+  const incomplete = sale.filter((c) => c.linePrices && !completeFor(c.linePrices, measure)).length;
+  const base = { measure, checks: sale.length, unpriced, incomplete };
+  const reason = !input.captureCovered ? "capture_uncovered" as const : unpriced ? "unpriced_checks" as const : incomplete ? "incomplete_checks" as const : null;
+  if (reason) return { ...base, covered: false, cents: null, reason };
+  const population = new Set(sale.map((c) => c.checkGuid));
+  let cents = 0;
+  for (const u of input.units) {
+    if (!population.has(u.check_guid) || u.parent_selection_guid !== null || u.voided || u.deleted) continue;
+    const row = { selectionType: u.selection_type ?? undefined, deferred: u.deferred === true };
+    if (u.selection_type === "SPECIAL_REQUEST" || excluded(row)) continue;
+    const value = measure === "net" ? u.net_cents : measure === "gross" ? u.gross_cents
+      : u.receipt_line_cents == null ? null : u.receipt_line_cents * u.quantity;
+    if (value == null || !Number.isFinite(value)) return { ...base, covered: false, cents: null, reason: "incomplete_checks" };
+    cents += value;
+  }
+  return { ...base, covered: true, cents: Math.round(cents), reason: null };
+}

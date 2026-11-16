@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import corpus from "./fixtures/toast/line-price-corpus.json";
 import { captureCents, normalizeToastOrder } from "@/lib/toast/capture-shared";
 import { projectCheckSales } from "@/lib/toast/sales-accounting-shared";
-import { checkLinePrices, lineCents, type CheckLinePrices } from "@/lib/toast/line-prices-shared";
+import { checkLinePrices, lineCents, lineRevenue, type CheckLinePrices } from "@/lib/toast/line-prices-shared";
 
 const on = (raw: unknown, date = "2026-10-08") => normalizeToastOrder(raw, date, { linePrices: true });
 const valid = (guid: string) => corpus.valid.find((o) => o.guid === guid)!;
@@ -189,5 +189,51 @@ describe("valid inputs: strict and lenient accounting are byte-identical", () =>
         appliedServiceCharges: rand() < 0.3 ? [{ chargeAmount: money(), gratuity: rand() < 0.5 }] : [], appliedDiscounts: [] };
       expect(projectCheckSales(check, captureCents, lineCents)).toEqual(projectCheckSales(check, captureCents));
     }
+  });
+});
+
+// §3.3 / §3.4 coverage: the pure revenue helper phase 3 readers will call. A shop-day is covered for a
+// measure only when the capture day is covered, every sale-class check is priced, and every priced
+// check is complete for THAT measure. Anything else is uncovered with its counts — never 0.
+describe("lineRevenue: per-measure coverage and sums over revenue heads", () => {
+  const captured = (raws: unknown[]) => raws.map((raw) => on(raw));
+  const input = (orders: ReturnType<typeof on>[], extra: Partial<Parameters<typeof lineRevenue>[0]> = {}) => ({
+    captureCovered: true,
+    checks: orders.flatMap((o) => o.checks.map((c) => ({ checkGuid: c.check_guid, saleClass: true, linePrices: (c.accounting as { line_prices?: CheckLinePrices }).line_prices ?? null }))),
+    units: orders.flatMap((o) => o.order.selection_units),
+    ...extra,
+  });
+  it("sums net, gross and receipt × quantity over heads only (modifiers never summed)", () => {
+    const i = input(captured([valid("lp-instore"), valid("lp-marketplace")]));
+    expect(lineRevenue(i, "net")).toMatchObject({ covered: true, cents: 2650 + 2798, checks: 2, unpriced: 0, incomplete: 0 });
+    expect(lineRevenue(i, "gross")).toMatchObject({ covered: true, cents: 2750 + 2798 });
+    expect(lineRevenue(i, "receipt_line")).toMatchObject({ covered: true, cents: 1150 * 2 + 250 + 1399 * 2 });
+  });
+  it("an uncovered capture day is uncovered for every measure, never 0", () => {
+    for (const m of ["net", "gross", "receipt_line"] as const) {
+      expect(lineRevenue(input(captured([valid("lp-instore")]), { captureCovered: false }), m)).toMatchObject({ covered: false, cents: null, reason: "capture_uncovered" });
+    }
+  });
+  it("a sale check with no line prices (unpriced snapshot) is uncovered with its count", () => {
+    const off = normalizeToastOrder(valid("lp-instore"), "2026-10-08");
+    const i = input([on(valid("lp-marketplace")), off]);
+    expect(lineRevenue(i, "net")).toMatchObject({ covered: false, cents: null, reason: "unpriced_checks", unpriced: 1, checks: 2 });
+  });
+  it("source_complete gates every measure; each measure has its own completeness", () => {
+    const [mixed] = captured([valid("lp-voids")]); // voided modifier: net ok, gross refused
+    expect(lineRevenue(input([mixed!]), "net")).toMatchObject({ covered: true, cents: 1200 });
+    expect(lineRevenue(input([mixed!]), "gross")).toMatchObject({ covered: false, cents: null, reason: "incomplete_checks", incomplete: 1 });
+    expect(lineRevenue(input([mixed!]), "receipt_line")).toMatchObject({ covered: true, cents: 1200 });
+    const [uncaptured] = captured([valid("lp-uncaptured")]);
+    for (const m of ["net", "gross", "receipt_line"] as const) expect(lineRevenue(input([uncaptured!]), m)).toMatchObject({ covered: false, cents: null });
+  });
+  it("non-sale checks (ezCater-linked, gift card, voided) are outside the population", () => {
+    const orders = captured([valid("lp-instore"), valid("lp-uncaptured")]);
+    const i = input(orders);
+    i.checks = i.checks.map((c) => ({ ...c, saleClass: c.checkGuid === "lp-instore-c1" }));
+    expect(lineRevenue(i, "net")).toMatchObject({ covered: true, cents: 2650, checks: 1 });
+  });
+  it("a day with no sale checks and a covered capture is a true zero", () => {
+    expect(lineRevenue({ captureCovered: true, checks: [], units: [] }, "net")).toMatchObject({ covered: true, cents: 0, checks: 0 });
   });
 });
