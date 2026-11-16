@@ -83,9 +83,10 @@
 --
 -- APP COMPATIBILITY: lib/catering/prep-demand.ts, lib/catering/pipeline.ts and lib/catering/lto.ts call these
 --   functions first and, when the function does not exist yet (PGRST202 / 42883), run their previous path (for
---   the reschedule and the LTO create, the previous path plus the same steps done one call at a time). So the
---   W22 deploy is safe before this file is applied and the file is safe to apply at any time after it; until it
---   is applied B122 (both orders) and B205 remain open (B120 is fixed non-atomically by the fallback).
+--   the LTO create, the previous path plus the same steps done one call at a time). The RESCHEDULE has no
+--   fallback (fix round 2): without this file a lead's date change is refused 503 reschedule_unavailable with
+--   nothing written, because a half-done multi-step move could not be repaired by retrying. APPLY THIS FILE
+--   BEFORE THE W22 DEPLOY; until it is applied B122 (both orders) and B205 remain open and dates cannot move.
 --
 -- DEPENDS ON: 0108 (catering_pipeline), 0110 + 0191 (catering_pipeline_events, the 'out' stage), 0120
 --   (catering_quotes), 0137 + 0140 (catering_prep_demand, released_at), 0141 (lto_events, lto_event_items), 0225

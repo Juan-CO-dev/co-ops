@@ -85,13 +85,37 @@ describe("B120: reschedule moves the quote and the prep", () => {
     expect(rpcs).toHaveLength(0);
   });
 
-  it("before 0329 is applied the same steps run one call at a time", async () => {
+  // Fix round 2 (review r2 P2, BC-007/BC-040): the pre-0329 fallback wrote the lead first, so a quote update that
+  // failed afterwards could never be repaired: the retry saw the lead already on the new day and skipped the
+  // reschedule, leaving the quote and the kitchen's prep on the old day. A reschedule now needs 0329 (applied
+  // before merge); without it the edit is refused and NOTHING is written, so a retry after applying it is clean.
+  it("before 0329 is applied a reschedule is refused 503 reschedule_unavailable and nothing is written", async () => {
     rpcAnswer = { error: { code: "PGRST202", message: "Could not find the function" } };
+    const err = await editLead(actor, "L", { eventDate: "2026-11-24", headcount: 40 }).catch((e) => e);
+    expect(err).toBeInstanceOf(CateringPipelineError);
+    expect(err.status).toBe(503);
+    expect(err.code).toBe("reschedule_unavailable");
+    expect(calls.filter((c) => c.kind !== "select")).toEqual([]);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(vi.mocked(audit).mock.calls.some((c) => c[0].action === "catering.pipeline.edit")).toBe(false);
+  });
+
+  it("a refused reschedule can be retried: the lead keeps its old date, so the retry reschedules for real", async () => {
+    rpcAnswer = { error: { code: "42883", message: "function reschedule_catering_lead does not exist" } };
+    await editLead(actor, "L", { eventDate: "2026-11-24" }).catch(() => undefined);
+    expect(calls.filter((c) => c.kind !== "select")).toEqual([]);
+    // 0329 applied; the same request again. The lead row was never touched, so the date still differs.
+    rpcAnswer = { data: { result: "moved", from_date: "2026-11-20", to_date: "2026-11-24", quote_updated: true, prep_rows_moved: 3, event_id: "E1" } };
     await editLead(actor, "L", { eventDate: "2026-11-24" });
-    const quoteWrites = calls.filter((c) => c.table === "catering_quotes" && c.kind === "update");
-    expect(quoteWrites.length).toBe(2);
-    expect(quoteWrites.every((c) => c.has("is", "superseded_at", null))).toBe(true);
-    expect(calls.some((c) => c.table === "catering_pipeline_events" && c.kind === "insert")).toBe(true);
+    expect(rpcs.at(-1)).toEqual({ name: "reschedule_catering_lead", args: { p_lead_id: "L", p_event_date: "2026-11-24", p_actor_id: "mgr" } });
+    expect(editAudit().metadata).toMatchObject({ event_date_changed: true, quote_date_updated: true, prep_rows_moved: 3 });
+  });
+
+  it("a failing reschedule RPC writes nothing either (the lead patch runs only after it succeeds)", async () => {
+    rpcAnswer = { error: { code: "40001", message: "could not serialize access" } };
+    const err = await editLead(actor, "L", { eventDate: "2026-11-24", headcount: 40 }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(calls.filter((c) => c.kind !== "select")).toEqual([]);
   });
 });
 
@@ -142,25 +166,6 @@ describe("B120: the customer email (NEW, ships closed)", () => {
     const keys = vi.mocked(sendEmail).mock.calls.map((c) => c[0].idempotencyKey);
     expect(keys).toEqual(["order-update:event:E1", "order-update:event:E2", "order-update:event:E3"]);
     expect(new Set(keys).size).toBe(3);
-  });
-
-  it("before 0329, the key is the inserted event row's id", async () => {
-    mode = "live";
-    process.env.CATERING_ORDER_UPDATE_EMAIL_ALLOWLIST = "*";
-    process.env.PORTAL_MAGIC_LINK_ALLOWLIST = "*";
-    rpcAnswer = { error: { code: "PGRST202", message: "Could not find the function" } };
-    const fake = fakeSupabase((call) => {
-      if (call.table === "catering_pipeline" && call.kind === "update") return { count: 1 };
-      if (call.table === "catering_pipeline") return { data: lead };
-      if (call.table === "catering_pipeline_events" && call.kind === "insert") return { data: { id: "EV-legacy" } };
-      if (call.table === "catering_quotes") return { data: { id: "Q" } };
-      if (call.table === "report_settings") return { data: { value: mode } };
-      if (call.table === "catering_customers") return { data: { name: "Dana", email: "dana@example.com" } };
-      return { data: null };
-    }, () => rpcAnswer);
-    vi.mocked(getServiceRoleClient).mockReturnValue(fake.client as unknown as ReturnType<typeof getServiceRoleClient>);
-    await editLead(actor, "L", { eventDate: "2026-11-24" });
-    expect(vi.mocked(sendEmail).mock.calls[0]![0].idempotencyKey).toBe("order-update:event:EV-legacy");
   });
 
   it("no email when the date did not move (unchanged) or the lead has no quote", async () => {

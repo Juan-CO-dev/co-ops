@@ -689,7 +689,7 @@ function rpcMissing(error: { code?: string; message?: string }): boolean {
  * (audit W22/B120). The kitchen plans from the quote's date (reservePrepDemand reads it) and the customer's
  * order page shows it, so moving only the lead left both on the old day. 0329's reschedule_catering_lead does
  * the three under the lead's row lock in one transaction (reserved rows are retired and re-appended on the new
- * day, picks and quantities carried). Until 0329 is applied the same steps run one call at a time.
+ * day, picks and quantities carried). Until 0329 is applied a reschedule is refused (503), nothing written.
  */
 async function rescheduleLead(sb: ReturnType<typeof getServiceRoleClient>, id: string, eventDate: string, actorId: string): Promise<RescheduleResult> {
   const live = await sb.from("catering_quotes").select("id").eq("pipeline_id", id).is("superseded_at", null)
@@ -705,50 +705,11 @@ async function rescheduleLead(sb: ReturnType<typeof getServiceRoleClient>, id: s
     const r = (data ?? {}) as { result?: string; from_date?: string | null; quote_updated?: boolean; prep_rows_moved?: number; event_id?: string | null };
     return { moved: r.result === "moved", fromDate: r.from_date ?? null, quoteUpdated: r.quote_updated === true, prepRowsMoved: r.prep_rows_moved ?? 0, quoteId, eventId: r.event_id ?? null };
   }
-  // 0329 not applied yet: the same steps, one call at a time (not atomic).
-  const before = await sb.from("catering_pipeline").select("event_date, stage").eq("id", id).maybeSingle<{ event_date: string | null; stage: string }>();
-  if (before.error) throw new Error(`rescheduleLead load: ${before.error.message}`);
-  if (!before.data) throw new CateringPipelineError(404, "not_found", "Lead not found");
-  const fromDate = before.data.event_date;
-  const now = new Date().toISOString();
-  if (fromDate !== eventDate) {
-    const u = await sb.from("catering_pipeline").update({ event_date: eventDate, updated_at: now }).eq("id", id);
-    if (u.error) throw new Error(`rescheduleLead lead: ${u.error.message}`);
-  }
-  const q = await sb.from("catering_quotes").update({ event_date: eventDate }, { count: "exact" })
-    .eq("pipeline_id", id).is("superseded_at", null).neq("event_date", eventDate);
-  if (q.error) throw new Error(`rescheduleLead quote update: ${q.error.message}`);
-  const qNull = await sb.from("catering_quotes").update({ event_date: eventDate }, { count: "exact" })
-    .eq("pipeline_id", id).is("superseded_at", null).is("event_date", null);
-  if (qNull.error) throw new Error(`rescheduleLead quote update: ${qNull.error.message}`);
-  const { data: reserved, error: rErr } = await sb.from("catering_prep_demand")
-    .select("id, quote_id, location_id, item_id, menu_item_id, choice_package_item_id, portion, qty")
-    .eq("pipeline_id", id).eq("status", "reserved").neq("need_date", eventDate)
-    .returns<Array<{ id: string; quote_id: string; location_id: string; item_id: string | null; menu_item_id: string | null; choice_package_item_id: string | null; portion: string | null; qty: number | string }>>();
-  if (rErr) throw new Error(`rescheduleLead prep read: ${rErr.message}`);
-  const rows = reserved ?? [];
-  if (rows.length > 0) {
-    const rel = await sb.from("catering_prep_demand").update({ status: "released", released_at: now })
-      .in("id", rows.map((r) => r.id)).eq("status", "reserved");
-    if (rel.error) throw new Error(`rescheduleLead prep release: ${rel.error.message}`);
-    const ins = await sb.from("catering_prep_demand").insert(rows.map((r) => ({
-      pipeline_id: id, quote_id: r.quote_id, location_id: r.location_id, need_date: eventDate, item_id: r.item_id,
-      menu_item_id: r.menu_item_id, choice_package_item_id: r.choice_package_item_id, portion: r.portion, qty: r.qty,
-      status: "reserved", created_by: actorId,
-    })));
-    if (ins.error) throw new Error(`rescheduleLead prep insert: ${ins.error.message}`);
-  }
-  let eventId: string | null = null;
-  if (fromDate !== eventDate) {
-    const ev = await sb.from("catering_pipeline_events").insert({
-      pipeline_id: id, from_stage: before.data.stage, to_stage: before.data.stage,
-      note: `Rescheduled: ${fromDate ?? "no date"} -> ${eventDate}`, actor_id: actorId,
-    }).select("id").maybeSingle<{ id: string }>();
-    if (ev.error) throw new Error(`rescheduleLead event: ${ev.error.message}`);
-    eventId = ev.data?.id ?? null;
-  }
-  const quoteUpdated = (q.count ?? 0) + (qNull.count ?? 0) > 0;
-  return { moved: fromDate !== eventDate || quoteUpdated || rows.length > 0, fromDate, quoteUpdated, prepRowsMoved: rows.length, quoteId, eventId };
+  // 0329 not applied yet: REFUSE, nothing written (fix round 2, review r2 P2). The old one-call-at-a-time fallback
+  // wrote the lead first; when a later quote/prep step failed, the retry saw the lead already on the new day,
+  // skipped the reschedule, and left the quote and the kitchen's prep on the old day for good. 0329 is applied
+  // before this ships; until then a date change is unavailable rather than half-done.
+  throw new CateringPipelineError(503, "reschedule_unavailable", "Rescheduling is not available yet. Try again shortly.");
 }
 
 /** Edit a lead's mutable CRM fields in place (never stage — use moveStage). */
