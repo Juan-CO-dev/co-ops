@@ -2,7 +2,8 @@ import { normalizeInboundAddress } from "@/lib/inbound-router-shared";
 import { inboxLatestText, inboxThreadInitial, type InboxHeaders } from "./inbox-content-shared";
 import type { InboxChannel, InboxDecision, InboxIdentity, InboxReason } from "./inbox-shared";
 
-export const INBOX_RULE_VERSION = "1";
+/** "2" (audit W11/B018): cancel/edit before solicitation; noise only on strong evidence from a sender who is not a known customer. */
+export const INBOX_RULE_VERSION = "2";
 /** Auto-replies, bounces, list and bulk mail, daemons: never answered. One rule for the classifier and the sender. */
 export function inboxAutomatedMessage(headers: InboxHeaders, sender: string | null): boolean {
   return (!!headers["auto-submitted"] && headers["auto-submitted"].toLowerCase() !== "no") ||
@@ -37,13 +38,22 @@ export function classifyCateringInbox(input: InboxClassifyInput): InboxDecision 
     if (latest.uncertainQuote) return result("unclassified", "needs_human", "quoted_history");
     const intake = /\bcatering\b/.test(text) && /\b(need\w*|request\w*|looking for|headcount|event\w*|necesit\w*|busc\w*|solicit\w*|cotiz\w*|personas|fecha|evento\w*|\d{1,4}[/-]\d{1,2}|monday|tuesday|wednesday|thursday|friday|saturday|sunday|lunes|martes|miercoles|jueves|viernes|sabado|domingo|(?:january|february|march|april|may|june|july|august|september|october|november|december) \d{1,2}|\d{1,2} (?:de )?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre))\b/.test(text);
     const links = (text.match(/(?:https?:\/\/|www\.)[^\s]+/g) ?? []).length;
-    const solicitation = /\b(software|platform|restaurants like yours|your restaurant|book a (call|meeting|demo)|schedule a (call|meeting)|free trial|case study|we help|increase .{0,40}(orders|sales|revenue)|su restaurante|plataforma|agendar una llamada|aumentar (sus )?ventas|we offer|our services|demo|partner\w*|seo|unsubscribe|ofrecemos|nuestros servicios|cancelar suscripcion)\b/.test(text) ||
-      (input.identity !== "resolved" && links >= 3);
+    const solicitationPhrases = /\b(software|platform|restaurants like yours|your restaurant|book a (call|meeting|demo)|schedule a (call|meeting)|free trial|case study|we help|increase .{0,40}(orders|sales|revenue)|su restaurante|plataforma|agendar una llamada|aumentar (sus )?ventas|we offer|our services|demo|partner\w*|seo|unsubscribe|ofrecemos|nuestros servicios|cancelar suscripcion)\b/g;
+    const pitchHits = new Set([...text.matchAll(solicitationPhrases)].map(match => match[0].toLowerCase())).size;
+    // Noise needs STRONG evidence (several distinct pitch phrases, or a link farm) from a sender who is not a known customer;
+    // one phrase ("your restaurant", a "Partner" signature) only asks a person (audit W11/B018).
+    const strongPitch = input.identity !== "resolved" && (pitchHits >= 2 || links >= 3);
+    const weakPitch = pitchHits >= 1 || (input.identity !== "resolved" && links >= 3);
     const negative = /\b(?:no longer|ya no|not (?:looking for|requesting|seeking)|do not need|don't need|no (?:necesit\w*|busc\w*|quier\w*))\b/.test(text);
-    if ((solicitation || negative) && intake) return result("unclassified", "needs_human", "conflicting_intent");
-    if (solicitation || negative) return result("noise", "noise", "solicitation");
-    if (/\b(chang\w*|modif\w*|reschedul\w*|postpon\w*|add \d+ more|update (our|my|the) order|cancel\w*|refund\w*|payment|charged|cambi\w*|reprogram\w*|aplaz\w*|agregar|reembolso|pag(o|ar))\b/.test(text))
-      return result("unclassified", "needs_human", "payment_or_edit");
+    const edit = /\b(chang\w*|modif\w*|reschedul\w*|postpon\w*|add \d+ more|update (our|my|the) order|cancel\w*|refund\w*|payment|charged|cambi\w*|reprogram\w*|aplaz\w*|agregar|reembolso|pag(o|ar))\b/.test(text);
+    // A cancel / change / payment about a known customer or an open order always reaches a person, before any pitch rule.
+    if (edit && (input.identity === "resolved" || input.artifact !== "none")) return result("unclassified", "needs_human", "payment_or_edit");
+    if (strongPitch) return intake ? result("unclassified", "needs_human", "conflicting_intent") : result("noise", "noise", "solicitation");
+    if (edit) return result("unclassified", "needs_human", "payment_or_edit");
+    if ((weakPitch || negative) && intake) return result("unclassified", "needs_human", "conflicting_intent");
+    // "We no longer need ..." is a customer talking, never noise.
+    if (negative) return result("unclassified", "needs_human", "conflicting_intent");
+    if (weakPitch) return result("unclassified", "needs_human", "solicitation");
     if (input.artifact === "ambiguous") return result("unclassified", "needs_human", "ambiguous_artifact");
     if (!["resolved", "new_sender"].includes(input.identity) || !sender) return result("unclassified", "needs_human", "identity_unresolved");
     const help = /\b(status|help|missing|late|ayuda|retras\w*|demora\w*|no ha llegado|no lleg\w*|estado del pedido)\b/.test(text);

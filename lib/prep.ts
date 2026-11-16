@@ -1235,11 +1235,19 @@ async function requirePrepInstanceTaskAccess(
   args: { instanceId: string; actor: PrepActor },
   task: "am_prep" | "mid_day_prep",
 ): Promise<void> {
+  // W13/B019: the template rides the SAME read (one query) so a closing, an opening or the
+  // other prep kind can never be written through a prep writer — it is refused exactly like
+  // a missing instance, BEFORE the assignment lookup and before any RPC.
+  type PrepTemplateEmbed = { type: string; prep_subtype: string | null };
   const { data, error } = await service.from("checklist_instances")
-    .select("location_id, date").eq("id", args.instanceId)
-    .maybeSingle<{ location_id: string; date: string }>();
+    .select("location_id, date, template:checklist_templates!inner(type, prep_subtype)").eq("id", args.instanceId)
+    .maybeSingle<{ location_id: string; date: string; template: PrepTemplateEmbed | PrepTemplateEmbed[] | null }>();
   if (error) throw new Error(`prep access: ${error.message}`);
-  if (!data || !(await hasTaskAccess(service, { ...args.actor, locationId: data.location_id, date: data.date, task }))) {
+  const tmpl = data ? (Array.isArray(data.template) ? data.template[0] : data.template) : null;
+  if (!data || tmpl?.type !== "prep" || tmpl.prep_subtype !== task) {
+    throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
+  }
+  if (!(await hasTaskAccess(service, { ...args.actor, locationId: data.location_id, date: data.date, task }))) {
     throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
   }
 }
@@ -1268,8 +1276,64 @@ export async function createMidDayPrepInstance(
 ): Promise<
   | { ok: true; id: string }
   | { ok: false; reason: "cap_reached"; cap: number }
+  | { ok: false; reason: "date_not_today" }
 > {
   if (!(await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: "mid_day_prep" }))) throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
+  // W13/B178: the count and the insert run in ONE transaction under an advisory lock per
+  // (template, shop, day), and SQL pins the date to the ET day (migration 0314). Two
+  // concurrent presses can no longer both see "1" and make a third instance.
+  const { data: created, error: rpcErr } = await service.rpc("create_mid_day_prep_instance_atomic", {
+    p_template_id: args.templateId,
+    p_location_id: args.locationId,
+    p_date: args.date,
+    p_actor_id: args.actor.userId,
+    p_cap: MAX_MID_DAY_PREP_PER_DAY,
+  });
+  let insertedId: string;
+  if (!rpcErr) {
+    const r = created as { ok?: boolean; id?: unknown; reason?: unknown; cap?: unknown } | null;
+    if (r?.ok === false && r.reason === "cap_reached") {
+      return { ok: false, reason: "cap_reached", cap: typeof r.cap === "number" ? r.cap : MAX_MID_DAY_PREP_PER_DAY };
+    }
+    if (r?.ok !== true || typeof r.id !== "string") throw new Error("createMidDayPrepInstance: RPC returned an invalid result");
+    insertedId = r.id;
+  } else if (rpcErr.message === "date_not_today") {
+    return { ok: false, reason: "date_not_today" };
+  } else if (rpcErr.code === "PGRST202" || rpcErr.code === "42883") {
+    // 0314 not applied yet: keep today's count-then-insert so the button works before apply.
+    console.error("[mid-day create 0314_missing]", { code: rpcErr.code });
+    const legacy = await createMidDayPrepInstanceLegacy(service, args);
+    if (!legacy.ok) return legacy;
+    insertedId = legacy.id;
+  } else {
+    throw new Error(`createMidDayPrepInstance: ${rpcErr.message}`);
+  }
+
+  void audit({
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "checklist_instance.create",
+    resourceTable: "checklist_instances",
+    resourceId: insertedId,
+    metadata: {
+      template_id: args.templateId,
+      location_id: args.locationId,
+      date: args.date,
+      template_type: "prep",
+      prep_subtype: "mid_day_prep",
+      trigger: "manual_mid_day",
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+  return { ok: true, id: insertedId };
+}
+
+/** The pre-0314 count-then-insert, used ONLY while create_mid_day_prep_instance_atomic is absent. */
+async function createMidDayPrepInstanceLegacy(
+  service: SupabaseClient,
+  args: { templateId: string; locationId: string; date: string; actor: PrepActor },
+): Promise<{ ok: true; id: string } | { ok: false; reason: "cap_reached"; cap: number }> {
   // Cap enforcement (server-side authority; the tile also hides the New button
   // at cap, but a direct API caller must be blocked too).
   const { count, error: countErr } = await service
@@ -1300,24 +1364,6 @@ export async function createMidDayPrepInstance(
     .maybeSingle<{ id: string }>();
   if (insertErr) throw new Error(`createMidDayPrepInstance: insert: ${insertErr.message}`);
   if (!inserted) throw new Error(`createMidDayPrepInstance: insert returned no row`);
-
-  void audit({
-    actorId: args.actor.userId,
-    actorRole: args.actor.role,
-    action: "checklist_instance.create",
-    resourceTable: "checklist_instances",
-    resourceId: inserted.id,
-    metadata: {
-      template_id: args.templateId,
-      location_id: args.locationId,
-      date: args.date,
-      template_type: "prep",
-      prep_subtype: "mid_day_prep",
-      trigger: "manual_mid_day",
-    },
-    ipAddress: null,
-    userAgent: null,
-  });
   return { ok: true, id: inserted.id };
 }
 
@@ -1509,6 +1555,10 @@ export async function submitMidDayPhase1(
   });
   if (error) {
     if (error.code === "23514") return { ok: false, reason: "not_open" }; // check_violation
+    // W13/B019 (0313): the SQL twin of the template check — not a mid-day prep instance.
+    if (error.code === "P0001" && /wrong_checklist_type/.test(error.message ?? "")) {
+      throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
+    }
     // 0215: the RPC's own two-box gates (a recipe flipped to batch_mode between render and
     // submit, or a stale client) — same named answer as the pre-check above.
     if (error.code === "P0001" && /mid_day_backup_required|mid_day_count_negative/.test(error.message ?? "")) {
@@ -1788,27 +1838,29 @@ export async function finalizeMidDayPhase2(
   // pure rule the page uses to mark a row saved (lib/mid-day-shared.ts).
   // D-66 — skipped bad rows are not in state.templateItems, so they never block finalize.
   const state = await loadMidDayPrepState(service, { instanceId: args.instanceId, tolerateBadRows: true });
-  const skipped = state?.skippedRows ?? [];
-  if (state) {
-    // IDENTITY, not eligibility (Astra r2 P1): keyed on recipe.batch_mode, so an unresolved
-    // batch recipe (isBatch false, batchMode true) still blocks finalize until a GM fixes the
-    // recipe and the row is saved explicitly.
-    const batchModeByItem: Record<string, boolean> = {};
-    for (const [id, ctx] of Object.entries(state.batchContext)) batchModeByItem[id] = ctx.batchMode;
-    const missing = midDayFinalizeBlockers(state.templateItems, state.completions, batchModeByItem);
-    if (missing.length > 0) {
-      void audit({
-        actorId: args.actor.userId,
-        actorRole: args.actor.role,
-        action: "prep.submit",
-        resourceTable: "checklist_instances",
-        resourceId: args.instanceId,
-        metadata: { outcome: "batch_rows_unsaved", phase: "mid_day_phase2_finalize", prep_subtype: "mid_day_prep", missing_template_item_ids: missing },
-        ipAddress: args.ipAddress ?? null,
-        userAgent: args.userAgent ?? null,
-      });
-      return { ok: false, reason: "batch_rows_unsaved", missing };
-    }
+  // W13/B019: a non-mid-day instance has no mid-day state — refuse it (the sibling mid-day
+  // writers already do). Without this the blockers were skipped and the bare status UPDATE
+  // below advanced ANY phase1_complete instance (an opening included) to phase2_complete.
+  if (!state) return { ok: false, reason: "not_found" };
+  const skipped = state.skippedRows ?? [];
+  // IDENTITY, not eligibility (Astra r2 P1): keyed on recipe.batch_mode, so an unresolved
+  // batch recipe (isBatch false, batchMode true) still blocks finalize until a GM fixes the
+  // recipe and the row is saved explicitly.
+  const batchModeByItem: Record<string, boolean> = {};
+  for (const [id, ctx] of Object.entries(state.batchContext)) batchModeByItem[id] = ctx.batchMode;
+  const missing = midDayFinalizeBlockers(state.templateItems, state.completions, batchModeByItem);
+  if (missing.length > 0) {
+    void audit({
+      actorId: args.actor.userId,
+      actorRole: args.actor.role,
+      action: "prep.submit",
+      resourceTable: "checklist_instances",
+      resourceId: args.instanceId,
+      metadata: { outcome: "batch_rows_unsaved", phase: "mid_day_phase2_finalize", prep_subtype: "mid_day_prep", missing_template_item_ids: missing },
+      ipAddress: args.ipAddress ?? null,
+      userAgent: args.userAgent ?? null,
+    });
+    return { ok: false, reason: "batch_rows_unsaved", missing };
   }
   const nowIso = new Date().toISOString();
   const { data, error } = await service
@@ -3272,6 +3324,10 @@ export async function submitAmPrep(
 
   if (rpcErr) {
     if (rpcErr.message === "prep_request_key_reused") throw new PrepError("Request key already used", "prep_request_key_reused");
+    // W13/B019 (0313): the SQL twin of requirePrepInstanceTaskAccess's template check.
+    if (rpcErr.code === "P0001" && /wrong_checklist_type/.test(rpcErr.message ?? "")) {
+      throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
+    }
     if (rpcErr.code === "23505") throwAmPrepUniqueViolation(rpcErr, args.instanceId);
     // Map specific Postgres errcodes to typed PrepError subclasses.
     // foreign_key_violation = case (b) auto-complete failure (no closing
@@ -3649,6 +3705,10 @@ async function submitAmPrepUpdate(
 
     if (rpcErr.message === "prep_request_key_reused") throw new PrepError("Request key already used", "prep_request_key_reused");
     if (rpcErr.code === "23505") throwAmPrepUniqueViolation(rpcErr, args.instanceId);
+    // W13/B019 (0313): the template guard runs before the edit-cap check — not an edit cap.
+    if (rpcErr.code === "P0001" && /wrong_checklist_type/.test(rpcErr.message ?? "")) {
+      throw new PrepRoleViolationError("KH+ or active assignment", args.actor.level);
+    }
     // P0001 = application-defined exception — RPC raises this when the
     // post-lock cap check sees edit_count >= 3 (race past lib pre-check).
     if (rpcErr.code === "P0001") {

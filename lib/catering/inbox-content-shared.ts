@@ -45,12 +45,44 @@ export function inboxHeaders(input: unknown): InboxHeaders {
 export function inboxThreadInitial(subject: string, headers: InboxHeaders): boolean {
   return !headers["in-reply-to"]?.trim() && !headers.references?.trim() && !/^\s*(\[[^\]]{1,40}\]\s*)*(re|fw|fwd|rv|aw|sv|tr|res)(\[\d+\]|\(\d+\))?\s*[:：]/i.test(subject);
 }
+/** HTML-only mail is cut to this many characters BEFORE conversion (the stored text is capped at 256 KB anyway), so one
+ *  oversized message bounds the worker's time (audit W11/B017). */
+export const INBOX_HTML_MAX_CHARS = 1024 * 1024;
+/** Drop every closed <script>/<style>/<blockquote> block, the exact result of
+ *  `.replace(/<(script|style|blockquote)\b[^>]*>[^]*?<\/\1\s*>/gi, " ")`, but in linear time: that regex rescans to the end of
+ *  the input from every unclosed opener, so `"<style>".repeat(n)` took minutes (audit W11/B017). An opener whose tag has no
+ *  close after it is left for the generic tag pass, as before. */
+function stripInboxBlocks(html: string): string {
+  const opener = /<(script|style|blockquote)\b/gi;
+  const noClose = new Set<string>();
+  let out = "", copied = 0, gt = -1;
+  for (let match = opener.exec(html); match; match = opener.exec(html)) {
+    const tag = match[1]!.toLowerCase();
+    if (noClose.has(tag)) continue;
+    const nameEnd = match.index + match[0].length;
+    // The opener ends at the first ">" after its name (the cache is that ">" for every opener before it).
+    if (gt < nameEnd) gt = html.indexOf(">", nameEnd);
+    if (gt < 0) break; // no ">" anywhere after here: no later opener can complete either
+    const close = new RegExp(`</${tag}\\s*>`, "gi");
+    close.lastIndex = gt + 1;
+    const end = close.exec(html);
+    // No close for this tag after here means none after any later opener of it either: try the next position once.
+    if (!end) { noClose.add(tag); opener.lastIndex = match.index + 1; continue; }
+    out += html.slice(copied, match.index) + " ";
+    copied = end.index + end[0].length;
+    opener.lastIndex = copied;
+  }
+  return out + html.slice(copied);
+}
 /** Text only, never an HTML sanitizer or a source suitable for innerHTML. */
 export function inboxHtmlToText(html: string): string {
   const entities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
-  return html.replace(/<!--[^]*?(?:-->|$)/g, " ")
-    .replace(/<(script|style|blockquote)\b[^>]*>[^]*?<\/\1\s*>/gi, " ")
-    .replace(/<\s*(?:br|\/p|\/div|\/li|\/tr)\b[^>]*>/gi, "\n")
+  const blocksOut = stripInboxBlocks(html.replace(/<!--[^]*?(?:-->|$)/g, " "));
+  // The line-break pass can only match before the last ">"; running it on that head alone keeps it linear (a "<br" with no
+  // ">" after it rescanned to the end from every start) and leaves the tail exactly as the old pass did.
+  const lastGt = blocksOut.lastIndexOf(">");
+  const lineBroken = blocksOut.slice(0, lastGt + 1).replace(/<\s*(?:br|\/p|\/div|\/li|\/tr)\b[^>]*>/gi, "\n") + blocksOut.slice(lastGt + 1);
+  return lineBroken
     .replace(/<[a-zA-Z/!][^>]*(?:>|$)/g, " ")
     .replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (whole, code: string) => {
       if (!code.startsWith("#")) return entities[code.toLowerCase()] ?? whole;
@@ -60,8 +92,13 @@ export function inboxHtmlToText(html: string): string {
 }
 export function inboxContent(input: { subject?: string | null; text?: string | null; html?: string | null }) {
   const fromHtml = !input.text?.trim() && !!input.html;
-  return { subject: (input.subject ?? "").slice(0, INBOX_SUBJECT_MAX),
-    ...capInboxBody(fromHtml ? inboxHtmlToText(input.html!) : input.text ?? ""), body_from_html: fromHtml };
+  const subject = (input.subject ?? "").slice(0, INBOX_SUBJECT_MAX);
+  if (!fromHtml) return { subject, ...capInboxBody(input.text ?? ""), body_from_html: false };
+  const html = input.html!;
+  const capped = capInboxBody(inboxHtmlToText(html.length > INBOX_HTML_MAX_CHARS ? html.slice(0, INBOX_HTML_MAX_CHARS) : html));
+  if (html.length <= INBOX_HTML_MAX_CHARS) return { subject, ...capped, body_from_html: true };
+  // The source was cut: record it as truncated with the original size (always larger than the text it produced).
+  return { subject, ...capped, body_original_bytes: Math.max(capped.body_original_bytes, new TextEncoder().encode(html).length), body_truncated: true, body_from_html: true };
 }
 export function inboxOwnAddresses(input: {
   aliases: readonly { address: string; active: boolean }[];

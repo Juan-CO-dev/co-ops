@@ -49,9 +49,14 @@ export async function POST(req: NextRequest) {
   const rawBody = await req.text();
   const form = new URLSearchParams(rawBody);
 
-  // Build the params map Twilio signed: EVERY posted field (flattened; last value wins for a
-  // repeated key, which Twilio doesn't send anyway). X-Twilio-Signature is a HEADER, not a body
-  // field, so it is correctly excluded here.
+  // A repeated key is refused before verification (audit W11/B167): the signature covers a one-value-per-key map,
+  // so forged fields prepended to a captured, signed body would otherwise verify. Twilio never repeats a key
+  // (MMS uses distinct MediaUrl0..N keys).
+  const keys = [...form.keys()];
+  if (new Set(keys).size !== keys.length) return jsonError(400, "duplicate_field");
+
+  // Build the params map Twilio signed: EVERY posted field. X-Twilio-Signature is a HEADER, not a body
+  // field, so it is correctly excluded here. Every field below is read from THIS verified map.
   const params: Record<string, string> = {};
   for (const [k, v] of form.entries()) params[k] = v;
 
@@ -66,17 +71,17 @@ export async function POST(req: NextRequest) {
 
   // Extract the fields we ledger. Twilio inbound SMS/MMS carry From/To/Body/MessageSid + NumMedia
   // (+ MediaUrl0..N-1 for MMS). Every field is treated as optional/defensive.
-  const fromNumber = form.get("From")?.trim() ?? "";
-  const toNumber = form.get("To")?.trim() ?? "";
-  const body = form.get("Body");
-  const messageSid = form.get("MessageSid")?.trim() || null;
+  const fromNumber = params.From?.trim() ?? "";
+  const toNumber = params.To?.trim() ?? "";
+  const body = params.Body;
+  const messageSid = params.MessageSid?.trim() || null;
 
   // NumMedia → MediaUrl0..N-1 (capped). A non-numeric/oversized NumMedia is clamped to [0, MAX_MEDIA].
-  const numMediaRaw = Number(form.get("NumMedia") ?? "0");
+  const numMediaRaw = Number(params.NumMedia ?? "0");
   const numMedia = Number.isFinite(numMediaRaw) ? Math.max(0, Math.min(MAX_MEDIA, Math.trunc(numMediaRaw))) : 0;
   const mediaUrls: string[] = [];
   for (let i = 0; i < numMedia; i++) {
-    const url = form.get(`MediaUrl${i}`)?.trim();
+    const url = params[`MediaUrl${i}`]?.trim();
     if (url) mediaUrls.push(url);
   }
 

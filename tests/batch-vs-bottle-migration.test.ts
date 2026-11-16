@@ -152,6 +152,10 @@ const LATER_REEMITTERS: Readonly<Record<string, string>> = {
   // → tests/recipe-versions-migration.test.ts pins them as line-subsequences of 0258.
   create_recipe_full: "0262_recipe_shop_versions.sql",
   add_recipe_output: "0262_recipe_shop_versions.sql",
+  // 0313 (W13/B019, B073, B074) re-emits both Phase 1 writers FROM 0215 with the checklist-type
+  // guards → tests/checklist-type-guards-migration.test.ts pins them as line-subsequences of 0215.
+  submit_phase1_atomic: "0313_checklist_type_guards.sql",
+  submit_mid_day_phase1_atomic: "0313_checklist_type_guards.sql",
 };
 
 describe("0215 re-emits every RPC from its latest definer — nothing dropped (GO correction 5)", () => {

@@ -13,7 +13,7 @@ function client() {
     select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), upsert: vi.fn().mockReturnThis(),
     maybeSingle: vi.fn().mockResolvedValue({ error: null, data: table === "checklist_templates"
       ? { type: "prep", prep_subtype: "am_prep" }
-      : { id: "instance", template_id: "template", location_id: "shop", date: "2026-10-07", status: "open" } }),
+      : { id: "instance", template_id: "template", location_id: "shop", date: "2026-10-07", status: "open", template: { type: "opening" } } }),
     single: vi.fn().mockResolvedValue({ error: null, data: { saved_at: stamp } }),
   }));
   // save_am_prep_draft answers a timestamp; save_opening_phase1_draft (migration 0315, audit W14 /

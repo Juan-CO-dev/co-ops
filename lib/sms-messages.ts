@@ -85,8 +85,15 @@ export async function ingestInboundSms(
   }
 
   // Vendor guess by the from-number (E.164 last-10 match vs vendor_contacts.phone). Best-effort:
-  // a lookup failure leaves the guess null (never blocks the ledger insert).
-  const vendorGuessId = await guessVendorByFromNumber(sb, input.fromNumber);
+  // a lookup failure leaves the guess null (never blocks the ledger insert; audit W11/B171).
+  let vendorGuessId: string | null = null;
+  let vendorGuessFailed = false;
+  try {
+    vendorGuessId = await guessVendorByFromNumber(sb, input.fromNumber);
+  } catch {
+    vendorGuessFailed = true;
+    console.error("[sms-messages] vendor guess failed (ingest unaffected)");
+  }
 
   // LOCATION: null in V1 of this leg. Unlike inbound EMAIL (which attributes a location by the
   // to-alias), the Twilio number is SHARED across stores — the to_number carries no per-store
@@ -130,8 +137,10 @@ export async function ingestInboundSms(
   // returns — the row is already durable. CODE-MATCH ONLY (no vendor-window fallback): texts
   // are terse, and a single-candidate vendor-window guess on an SMS is too weak a signal to
   // auto-confirm an order (a driver texting "here" would false-link). Deliberate narrowing.
+  // A FAILED vendor lookup skips matching: with a null guess the match drops its vendor-agreement check, and a read
+  // error must not widen "who may confirm a PO". The row is durable; the match can be re-derived.
   let linkedPoId: string | null = null;
-  try {
+  if (!vendorGuessFailed) try {
     linkedPoId = await matchSmsToPo(sb, {
       smsId: inserted.id,
       body: input.body,
@@ -157,6 +166,7 @@ export async function ingestInboundSms(
       from_number: input.fromNumber,
       vendor_guess_id: vendorGuessId,
       linked_po_id: linkedPoId,
+      ...(vendorGuessFailed ? { vendor_guess_failed: true } : {}),
     },
     ipAddress: null,
     userAgent: null,

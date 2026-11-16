@@ -54,6 +54,7 @@ import { clearReauth, reauthFailed, reserveReauth } from "./auth-reauth";
 import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel, type RoleCode } from "./roles";
 import { lockLocationContext } from "./locations";
+import { etCalendarDate } from "./operational-day";
 import { CLOSING_CONFIRM_FLOOR_LEVEL } from "./admin/template-builder-shared";
 import { canCompleteChecklistItem, evaluateLockUpGate } from "./checklist-constants";
 import { isSystemTrackedItem } from "./checklist-write-guard-shared";
@@ -139,6 +140,18 @@ export class ChecklistInstanceClosedError extends ChecklistError {
   constructor(public readonly instanceId: string, public readonly status: ChecklistStatus) {
     super(`Instance ${instanceId} is ${status}; only open instances accept writes.`, "instance_closed");
     this.name = "ChecklistInstanceClosedError";
+  }
+}
+
+/**
+ * W13/B072 — the generic complete / submit / confirm writers are the CLOSING screen's.
+ * Opening and prep instances are finished through their own atomic flows (Phase 1/2,
+ * snapshots, notifications); a hand-made request against them is refused here (409).
+ */
+export class ChecklistWrongTemplateTypeError extends ChecklistError {
+  constructor() {
+    super("This checklist is finished from its own screen.", "wrong_checklist_type");
+    this.name = "ChecklistWrongTemplateTypeError";
   }
 }
 
@@ -671,6 +684,8 @@ async function throwChecklistWriteError(
     case "instance_cardinality":
     case "reason_cardinality":
       throw new ChecklistError("The list changed — review it again", error.message);
+    case "wrong_checklist_type":
+      throw new ChecklistWrongTemplateTypeError();
     case "item_mismatch":
       throw new ChecklistRoleViolationError(3, actor.level, "Item does not belong to this checklist");
     case "invalid_reasons":
@@ -760,6 +775,14 @@ export async function requireChecklistTaskAccess(
     userId: actor.userId, level: actor.level, locationId: instance.location_id,
     date: instance.date, task,
   }))) throw new ChecklistRoleViolationError(4, actor.level, "An active assignment is required for this task.");
+}
+
+/** W13/B072: refuse the generic writers on any template that is not a closing. */
+async function requireClosingTemplate(authed: SupabaseClient, templateId: string): Promise<void> {
+  const { data, error } = await authed.from("checklist_templates")
+    .select("type").eq("id", templateId).maybeSingle<{ type: string }>();
+  if (error) throw new Error(`checklist template type: ${error.message}`);
+  if (data?.type !== "closing") throw new ChecklistWrongTemplateTypeError();
 }
 
 async function auditChecklistOverride(
@@ -867,6 +890,12 @@ export async function getOrCreateInstance(
   // Reading an existing close is open to staff; starting one retains main's employee floor.
   if (actor.level < 3 || !actor.locations.includes(locationId)) {
     throw new ChecklistRoleViolationError(3, actor.level);
+  }
+  // W13/B076: never START an instance for a future day. Its 16 h release clock would run
+  // out before the day arrives (release_overdue_closings) and the day's fast path would
+  // then find an auto-finalized row. Existing rows of any date still read (fast path above).
+  if (date > etCalendarDate(new Date().toISOString())) {
+    throw new ChecklistError("A closing can only be started for today.", "closing_date_not_today");
   }
 
   // Build #3 PR 1 — submission gate evaluation. Loads the template's
@@ -1020,6 +1049,7 @@ export async function completeItem(
     throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
   }
   await requireChecklistTaskAccess(authed, instanceId, actor);
+  await requireClosingTemplate(authed, instance.template_id);
   await rejectIfPrepLocked(authed, instanceId);
 
   const item = await loadTemplateItemOrThrow(authed, templateItemId);
@@ -1139,6 +1169,7 @@ export async function submitBatch(
     throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
   }
   await requireChecklistTaskAccess(authed, instanceId, actor);
+  await requireClosingTemplate(authed, instance.template_id);
   await rejectIfPrepLocked(authed, instanceId);
 
   // Verify every completion exists, belongs to this instance, was authored
@@ -1277,6 +1308,7 @@ export async function confirmInstance(
     throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
   }
   await requireChecklistTaskAccess(authed, instanceId, actor);
+  await requireClosingTemplate(authed, instance.template_id);
   await rejectIfPrepLocked(authed, instanceId);
 
   // Live (non-superseded, non-revoked) completions for gates and SQL snapshot.
