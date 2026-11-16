@@ -295,10 +295,50 @@ describe("W05B r2: every gate still runs on the service-role template/items read
       .rejects.toMatchObject({ code: "single_submission_locked" });
   });
 
-  it("an opening instance still runs the assignment gate (hasTaskAccess, real) — a level-8 passes it", async () => {
+  it("an opening instance still runs the assignment gate (hasTaskAccess, real) — a level-8 passes it, then W13/B072 refuses the generic route (409)", async () => {
     h.db.checklist_templates![0]!.type = "opening";
     const res = await complete(request("completions", { instanceId: "instance", templateItemId: ITEM }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "wrong_checklist_type" });
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  it("the assignment gate runs BEFORE the closing-only guard: an unassigned member below KH on an opening gets 403, not 409", async () => {
+    seed("employee", [{ location_id: "shop-b", active: true }]);
+    h.db.checklist_templates![0]!.type = "opening";
+    const res = await complete(request("completions", { instanceId: "instance", templateItemId: ITEM }));
+    expect(res.status).toBe(403);
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("W05B merge with W13/B072: the closing-only guard reads the BOUND instance's template (service role)", () => {
+  beforeEach(() => seed("moo", [{ location_id: "shop-a", active: true }]));
+
+  for (const [type, prepSubtype] of [["prep", "am_prep"], ["prep", "mid_day_prep"], ["opening", null]] as const) {
+    it(`a level-8 non-member's generic complete on a ${prepSubtype ?? type} instance is 409 wrong_checklist_type (not 403)`, async () => {
+      Object.assign(h.db.checklist_templates![0]!, { type, prep_subtype: prepSubtype });
+      for (const [post, path, body] of [
+        [complete, "completions", { instanceId: "instance", templateItemId: ITEM }],
+        [submit, "submissions", { instanceId: "instance", completionIds: ["completion"] }],
+        [confirm, "confirm", { instanceId: "instance", pin: "1234", incompleteReasons: [] }],
+      ] as const) {
+        const res = await post(request(path, body));
+        expect(res.status).toBe(409);
+        expect(await res.json()).toMatchObject({ code: "wrong_checklist_type" });
+      }
+      expect(h.rpc).not.toHaveBeenCalled();
+    });
+  }
+
+  it("a level-8 non-member's generic complete on a CLOSING instance at a non-member shop is allowed (the guard's template read is service-role)", async () => {
+    // The caller's own RLS hides shop B's template from a level-8 non-member (the fake's first test),
+    // so a guard reading through the user client would see no row and refuse 409. It must not.
+    expect((await client(false).from("checklist_templates").select("type").eq("id", "template").maybeSingle()).data).toBeNull();
+    const res = await complete(request("completions", { instanceId: "instance", templateItemId: ITEM }));
     expect(res.status).toBe(200);
+    expect(h.serviceReads).toContain("checklist_templates");
+    expect(h.rpc).toHaveBeenCalledWith("checklist_write_completion", expect.objectContaining({ p_instance: "instance", p_template_item: ITEM }));
   });
 });
 
