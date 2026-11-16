@@ -82,6 +82,12 @@ export async function runWednesdayDraft(deps: { service: SupabaseClient; now: Da
         out.push({ locationId, outcome: "skipped", weekStart, reason: "demand_unavailable" });
         continue;
       }
+      if (inputs.elsewhereUnavailable) {
+        // B134 r1: another shop's shifts did not load — unknown, never free time; nothing is drafted on them.
+        await log("schedule.draft_skipped", locationId, { week_start: weekStart, code: "other_shop_check_unavailable" });
+        out.push({ locationId, outcome: "skipped", weekStart, reason: "other_shop_check_unavailable" });
+        continue;
+      }
       const gi = generatorInputFor(inputs, weekStart, { today: et.date });
       let built;
       try {

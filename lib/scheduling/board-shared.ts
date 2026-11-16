@@ -12,6 +12,7 @@
  */
 import type { NarrativeLine } from "@/lib/people-narrative";
 import type { DayContext, RuleContext, RulePerson } from "./context-shared";
+import type { DemandResult } from "./demand-shared";
 import { skillOf, type SkillLookup } from "./people-input-shared";
 import { MOD, closingManagerEligible, coversClosingWindow, eligibleForPosition, isFlexSegment, shiftCountsAsMod, salariedWeek, type Shift } from "./rules-shared";
 import { isLineRole, positionIds, positionLimit, type CrewType, type ScheduleStructure } from "./structure-shared";
@@ -174,6 +175,51 @@ function hourlyCostCents(shifts: readonly Shift[], people: Record<string, RulePe
   return Math.round(cents);
 }
 
+/**
+ * B135: the week's forecast sales — the sum of every week date's `dayCents`, and null unless the demand is `ok` for
+ * EVERY date. A partial forecast (one captured weekday, six `no_history`) would divide a whole week of labor by one
+ * day of sales; "—" is the honest answer.
+ */
+export function weekForecastCents(demand: DemandResult, dates: readonly string[]): number | null {
+  if (demand.kind !== "ok") return null;
+  let sum = 0;
+  for (const date of dates) {
+    const d = demand.days.find((x) => x.date === date);
+    if (!d || d.kind !== "ok") return null;
+    sum += d.dayCents;
+  }
+  return sum;
+}
+
+/** B133: weekly overtime is paid at 1.5× (DC law) unless the connected 7shifts company says otherwise. */
+export const DEFAULT_OVERTIME_MULTIPLIER = 1.5;
+
+/**
+ * B133: the weekly overtime PREMIUM of a set of shifts — for each hourly person, the hours past `overtimeH` priced at
+ * wage × (multiplier − 1); the straight-time part is already in `hourlyCostCents`. Weekly overtime depends only on the
+ * week's total, never on shift order. Per SHOP (owner decision W25-1 b: each shop is its own LLC): the shifts given
+ * are this shop's. Null when an hourly person over the line has no wage (unknown is never $0).
+ */
+export function overtimePremiumCents(shifts: readonly Shift[], people: Record<string, Pick<RulePerson, "salaried" | "presenceOnly">>, wages: Record<string, number | null>,
+  overtimeH: number, multiplier: number | null | undefined): number | null {
+  const mult = multiplier ?? DEFAULT_OVERTIME_MULTIPLIER;
+  const weekQ = new Map<string, number>();
+  for (const sh of shifts) {
+    const p = people[sh.userId];
+    if (!p || p.salaried || p.presenceOnly) continue;
+    weekQ.set(sh.userId, (weekQ.get(sh.userId) ?? 0) + (sh.endQ - sh.startQ));
+  }
+  let cents = 0;
+  for (const [u, q] of weekQ) {
+    const overQ = q - overtimeH * 4;
+    if (overQ <= 0) continue;
+    const wage = wages[u];
+    if (wage === null || wage === undefined) return null;
+    cents += (wage * (mult - 1) * overQ) / 4;
+  }
+  return Math.round(cents);
+}
+
 export interface MoneyStripInput {
   dates: string[];
   /** Every shift of the week (inherited days included). */
@@ -184,6 +230,8 @@ export interface MoneyStripInput {
   forecastWeekCents: number | null;
   /** The salaried managers' fixed weekly cost (7shifts salaries, else the estimate); null = not set (R2). */
   salariedWeeklyCents: number | null;
+  /** B133: the weekly overtime multiplier (7shifts); absent / null = `DEFAULT_OVERTIME_MULTIPLIER`. */
+  overtimeMultiplier?: number | null;
 }
 
 export interface MoneyStripHours {
@@ -221,7 +269,8 @@ export interface MoneyStripHours {
    */
   salariedWeeks: Array<{ userId: string; baseHours: number; flexHours: number; flexStationHours: number; flexModHours: number; flexSavedHours: number; targetHours: number; flexLimitHours: number }>;
 }
-export interface MoneyStripMoney { hourlyCostCents: number | null; hourlyPct: number | null; salariedFixedCents: number | null; totalPct: number | null }
+/** `hourlyCostCents` INCLUDES the weekly overtime premium (B133); `overtimePremiumCents` is that premium on its own line. */
+export interface MoneyStripMoney { hourlyCostCents: number | null; overtimePremiumCents: number | null; hourlyPct: number | null; salariedFixedCents: number | null; totalPct: number | null }
 /** `notes`: board lines with no $ (shown to every viewer), e.g. "essential hours past budget: X h" (CC chunk C ruling 3). */
 export interface MoneyStrip { hours: MoneyStripHours; notes: NarrativeLine[]; money?: MoneyStripMoney }
 
@@ -307,7 +356,9 @@ export function moneyStrip(input: MoneyStripInput, opts: { canSeeMoney: boolean 
     notes.push({ key: "schedule.note.essential_past_budget", params: { hours: hours.essentialPastBudgetHours, budgetHours: budgetHours! } });
   }
   if (!opts.canSeeMoney) return { hours, notes };
-  const cost = hourlyCostCents(inWeek, people, input.wageCentsByUser);
+  const straight = hourlyCostCents(inWeek, people, input.wageCentsByUser);
+  const premium = overtimePremiumCents(inWeek, people, input.wageCentsByUser, overtimeH, input.overtimeMultiplier);
+  const cost = straight === null || premium === null ? null : straight + premium;
   const fc = input.forecastWeekCents !== null && input.forecastWeekCents > 0 ? input.forecastWeekCents : null;
   const salaried = input.salariedWeeklyCents;
   return {
@@ -315,6 +366,7 @@ export function moneyStrip(input: MoneyStripInput, opts: { canSeeMoney: boolean 
     notes,
     money: {
       hourlyCostCents: cost,
+      overtimePremiumCents: premium,
       hourlyPct: cost !== null && fc !== null ? round1((100 * cost) / fc) : null,
       salariedFixedCents: salaried,
       totalPct: cost !== null && salaried !== null && fc !== null ? round1((100 * (cost + salaried)) / fc) : null,
@@ -334,6 +386,7 @@ export function laborTone(pct: number | null, targetPct: number): LaborTone {
 }
 
 /** Per shop hour: the hour's hourly labor $ ÷ that hour's forecast $. Null rows' pct when unknown; null altogether without money permission. */
+// B133: per-hour and per-day labor % stay at STRAIGHT time — overtime belongs to the week (the strip), not to an hour.
 export function laborPctByHour(input: BoardDayInput, opts: { canSeeMoney: boolean }): LaborHour[] | null {
   if (!opts.canSeeMoney) return null;
   const { day } = input;

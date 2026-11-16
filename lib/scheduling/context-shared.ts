@@ -52,6 +52,13 @@ export interface RulePerson {
   /** Position ids where the person is "newer" (real evidence) / "strong" (r2 P1-2); unproven is neither. */
   newerPositions: string[];
   strongPositions: string[];
+  /**
+   * B134: per business date, the [fromQ, toQ) quarters this person is already scheduled at ANOTHER shop (that shop's
+   * head schedule, ET wall-clock quarters of the same date). Absent = none (every pre-B134 context and fixture).
+   * The generator never places over them (the availability window is narrowed around them); the validator raises
+   * `other_shop_overlap` (an error) for any shift that does. Overtime stays PER SHOP (owner decision W25-1 b).
+   */
+  elsewhere?: Record<string, Array<[number, number]>>;
 }
 
 export type ShapeNote = "normal" | "zero_demand" | "zero_profile";
@@ -214,7 +221,8 @@ export type AdvisoryCode =
 export interface AdvisoryItem { code: AdvisoryCode; date: string | null; userId: string | null; params: Record<string, string | number | null> }
 
 const sameJson = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
-const memberSettings = ({ availability: _availability, workModes: _workModes, usualShift, ...rest }: RulePerson) => ({
+// B134: another shop's schedule is not a member setting — it shows as `availability_changed` (per date) instead.
+const memberSettings = ({ availability: _availability, workModes: _workModes, usualShift, elsewhere: _elsewhere, ...rest }: RulePerson) => ({
   ...rest,
   ...(usualShift?.source === "manager" ? { usualShift: usualShift.value } : usualShift?.deletedTypeId ? { usualShift: { deletedTypeId: usualShift.deletedTypeId } } : {}),
 });
@@ -241,7 +249,8 @@ export function contextAdvisory(snapshot: RuleContext, live: RuleContext): Advis
     const { availability: na } = now;
     if (!sameJson(memberSettings(was), memberSettings(now))) out.push({ code: "member_changed", date: null, userId: id, params: {} });
     for (const d of snapshot.dates) {
-      if (!sameJson(wa[d] ?? "absent", na[d] ?? "absent") || (was.workModes?.[d] ?? null) !== (now.workModes?.[d] ?? null)) out.push({ code: "availability_changed", date: d, userId: id, params: {} });
+      if (!sameJson(wa[d] ?? "absent", na[d] ?? "absent") || (was.workModes?.[d] ?? null) !== (now.workModes?.[d] ?? null)
+        || !sameJson(was.elsewhere?.[d] ?? [], now.elsewhere?.[d] ?? [])) out.push({ code: "availability_changed", date: d, userId: id, params: {} });
     }
   }
   for (const d of snapshot.dates) {

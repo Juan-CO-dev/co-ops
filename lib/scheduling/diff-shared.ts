@@ -7,6 +7,7 @@
  * disclosure doctrine). Deterministic: days by date, changes in a fixed kind order, then user, then time.
  */
 import type { NarrativeLine } from "@/lib/people-narrative";
+import { overtimePremiumCents } from "./board-shared";
 import type { RulePerson } from "./context-shared";
 import type { DayRecord, DeclaredGap, GapCause, RuleSeverity, Shift } from "./rules-shared";
 
@@ -44,6 +45,12 @@ export interface WeekDiffSummary {
   costDeltaCents?: number | null;
   /** Present only for money viewers: changed hourly shifts without a wage across the week ("partial: N shifts without a wage"). */
   costUnknownShifts?: number;
+  /**
+   * B133: present only for money viewers given `overtimeH` — the change in the WEEK's overtime premium (after − before;
+   * a week-level fact, never spread over days; the per-day `cost` stays at straight time). Null = unknown (an hourly
+   * person over the line has no wage, before or after).
+   */
+  overtimePremiumDeltaCents?: number | null;
   newProblemsDelta: number;
   inheritedProblemsDelta: number;
 }
@@ -54,6 +61,9 @@ export interface DiffOpts {
   people: Record<string, Pick<RulePerson, "salaried" | "presenceOnly">>;
   canSeeMoney: boolean;
   wageCentsByUser?: Record<string, number | null>;
+  /** B133: the week's overtime line (hours) and pay multiplier (null = 1.5×); the premium delta is computed only with `overtimeH`. */
+  overtimeH?: number;
+  overtimeMultiplier?: number | null;
 }
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -194,6 +204,12 @@ export function diffWeeks(before: WeekSnapshot | null, after: WeekSnapshot, o: D
   if (o.canSeeMoney) {
     summary.costUnknownShifts = sum("cost_unknown", (c) => c.unknownShifts);
     summary.costDeltaCents = summary.costUnknownShifts > 0 ? null : sum("cost", (c) => c.deltaCents);
+    if (o.overtimeH !== undefined) {
+      const wages = o.wageCentsByUser ?? {};
+      const pb = overtimePremiumCents(before?.shifts ?? [], o.people, wages, o.overtimeH, o.overtimeMultiplier);
+      const pa = overtimePremiumCents(after.shifts, o.people, wages, o.overtimeH, o.overtimeMultiplier);
+      summary.overtimePremiumDeltaCents = pb === null || pa === null ? null : pa - pb;
+    }
   }
   const params: Record<string, number> = {
     days: days.length, added: summary.added, removed: summary.removed, moved: summary.moved, relabelled: summary.relabelled,

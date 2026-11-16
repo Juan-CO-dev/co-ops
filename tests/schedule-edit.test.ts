@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { applyEdit, scaleSegments, type EditOp } from "@/lib/scheduling/edit-shared";
+import { MOD } from "@/lib/scheduling/rules-shared";
 import { ScheduleError } from "@/lib/scheduling/errors-shared";
 import type { DayRecord, Shift, WeekSchedule } from "@/lib/scheduling/rules-shared";
 import { MON, P, THU, TODAY, U, WED, context, setNeed, shift, structure, week } from "./fixtures/schedule/rules-fixture";
@@ -66,6 +67,30 @@ describe("the edits, on 15-minute snaps", () => {
     expect(r.schedule.shifts[0]!.endQ).toBe(52);
     const dani = applyEdit(week([]), { kind: "addShift", date: THU, userId: U.dani, startQ: 28, endQ: 44, positionId: P.DISH }, context(), OPTS);
     expect(dani.problems.map((p) => p.code)).toEqual(expect.arrayContaining(["manager_on_boh", "role_not_allowed"]));
+  });
+});
+
+describe("a short MOD lead-in has no segment minimum (B136)", () => {
+  const modLead = (): Shift => ({ ...shift(U.maya, THU, 44, 60, P.REG), segments: [{ positionId: MOD, startQ: 44, endQ: 45 }, { positionId: P.REG, startQ: 45, endQ: 60 }] });
+  const run = (op: EditOp) => applyEdit(week([modLead()]), op, context(), OPTS).schedule.shifts[0]!;
+  it("a generated short MOD lead-in does not block a move / end resize / relabel", () => {
+    expect(run({ kind: "move", shift: ref, deltaQ: 1 }).segments.map((g) => [g.positionId, g.startQ, g.endQ])).toEqual([[MOD, 45, 46], [P.REG, 46, 61]]);
+    const end = run({ kind: "end", shift: ref, toQ: 66 });
+    expect(end.endQ).toBe(66);
+    expect(end.segments[0]!.endQ - end.segments[0]!.startQ).toBeGreaterThanOrEqual(1);
+    expect(run({ kind: "setSegmentPosition", shift: ref, index: 1, positionId: P.EXPO }).segments.map((g) => g.positionId)).toEqual([MOD, P.EXPO]);
+  });
+  it("a STATION segment below the minimum is still refused (divider, and relabelling the 1-quarter MOD piece to a station)", () => {
+    expect(code(() => run({ kind: "divider", shift: ref, index: 1, toQ: 46 }))).toBe(null);
+    expect(code(() => run({ kind: "divider", shift: ref, index: 1, toQ: 59 }))).toBe("edit_below_segment_min");
+    const two = (): Shift => ({ ...modLead(), segments: [{ positionId: MOD, startQ: 44, endQ: 45 }, { positionId: P.REG, startQ: 45, endQ: 52 }, { positionId: P.WALKON, startQ: 52, endQ: 60 }] });
+    expect(code(() => applyEdit(week([two()]), { kind: "divider", shift: ref, index: 2, toQ: 59 }, context(), OPTS))).toBe("edit_below_segment_min");
+    expect(code(() => run({ kind: "setSegmentPosition", shift: ref, index: 0, positionId: P.EXPO }))).toBe("edit_below_segment_min");
+  });
+  it("scaleSegments keeps a MOD part at ≥ 1 quarter, never forcing it up to the station minimum", () => {
+    const parts = modLead().segments;
+    expect(scaleSegments(parts, 44, 60, 44, 47, 2).map((g) => [g.startQ, g.endQ])).toEqual([[44, 45], [45, 47]]);
+    expect(code(() => scaleSegments(parts, 44, 60, 44, 46, 2))).toBe("edit_below_segment_min");
   });
 });
 

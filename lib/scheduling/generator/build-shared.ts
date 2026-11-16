@@ -127,6 +127,8 @@ function toRulePerson(p: SchedPerson, crew: boolean): RulePerson {
     coverPositions: [...p.coverPositions], salaried: p.salaried, presenceOnly: p.presenceOnly, softMinH: p.softMinH, softMaxH: p.softMaxH,
     availability: Object.fromEntries(Object.keys(p.availability).sort().map((d) => [d, p.availability[d] ?? null])),
     flexDates: [...p.flexDates].sort(), untouchableDates: [...p.untouchableDates].sort(), newerPositions: [...p.newerPositions].sort(), strongPositions: [...p.strongPositions].sort(),
+    // B134: absent unless the person holds time at another shop this week (keeps every earlier context byte-identical).
+    ...(p.elsewhere ? { elsewhere: Object.fromEntries(Object.keys(p.elsewhere).sort().map((d) => [d, p.elsewhere![d]!.map(([a, z]) => [a, z] as [number, number])])) } : {}),
   };
 }
 

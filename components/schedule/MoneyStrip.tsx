@@ -73,6 +73,10 @@ export function MoneyStrip({ strip, budgetLines, names, positions, canSetEstimat
             <Metric label={t("schedule.board.money.hourly_cost")} value={usd(money.hourlyCostCents)} sub={money.hourlyPct === null ? null : t("schedule.board.money.of_forecast", { pct: money.hourlyPct })} />
             <Metric label={t("schedule.board.money.salaried")} value={usd(money.salariedFixedCents)} sub={t("schedule.board.money.salaried_sub")} />
             <Metric label={t("schedule.board.money.total_pct")} value={pct(money.totalPct)} />
+            {/* B133: the weekly overtime premium on its own line (already inside hourly labor); shown when there is one or it is unknown. */}
+            {money.overtimePremiumCents !== 0 ? (
+              <Metric label={t("schedule.board.money.overtime_premium")} value={usd(money.overtimePremiumCents)} sub={t("schedule.board.money.overtime_premium_sub")} />
+            ) : null}
           </>
         ) : null}
         <Metric label={t("schedule.board.money.ot_risk")} value={String(hrs.otRiskCount)} tone={hrs.otRiskCount > 0 ? "danger" : "plain"} />

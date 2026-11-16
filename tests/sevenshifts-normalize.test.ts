@@ -245,6 +245,17 @@ describe("chunk A review (Astra) — the documented field names", () => {
     expect(normalizeTimePunches([{ ...punch, breaks: [{ in: "2026-10-14T17:00:00Z", out: "2026-10-14T17:30:00Z", deleted: "yes" }] }]).rejected[0]!.reason).toBe("bad_value");
   });
 
+  it("break_minutes counts unpaid breaks only; an absent paid flag is unpaid (B137)", () => {
+    const r = normalizeTimePunches([{ ...punch, breaks: [
+      { in: "2026-10-14T14:00:00Z", out: "2026-10-14T14:10:00Z", paid: true },
+      { in: "2026-10-14T18:00:00Z", out: "2026-10-14T18:30:00Z", paid: false },
+      { in: "2026-10-14T20:00:00Z", out: "2026-10-14T20:05:00Z" },
+    ] }]);
+    expect(r.rejected).toEqual([]);
+    expect(r.rows[0]!.break_minutes).toBe(35);
+    expect(normalizeTimePunches([{ ...punch, breaks: [{ in: "2026-10-14T14:00:00Z", out: "2026-10-14T14:10:00Z", paid: true }, { in: "2026-10-14T18:00:00Z", out: "2026-10-14T18:10:00Z", paid: true }] }]).rows[0]!.break_minutes).toBe(0);
+  });
+
   it("#2 a punch deleted in 7shifts normalizes with deleted: true (the deleted=true pass carries it to the mirror)", () => {
     expect(normalizeTimePunches([{ ...punch, deleted: true }]).rows[0]!.deleted).toBe(true);
   });

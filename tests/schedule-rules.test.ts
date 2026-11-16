@@ -48,7 +48,7 @@ describe("the severity table", () => {
     expect(by("warning")).toEqual(["checklist_past_max", "flex_used", "max_days_per_week", "outside_assumed_availability", "over_budget", "overtime", "pairing_unmet", "salaried_base_over_target", "salaried_over_flex", "soft_range"]);
     expect(by("error")).toEqual([
       "catering_cover_in_catering_window", "closing_manager_not_closing", "closing_manager_role", "closing_manager_setting", "cover_outside_preferences", "leader_setting", "manager_floor_exceeded",
-      "manager_on_boh", "not_member", "person_overlap", "position_over_headcount", "role_not_allowed", "salaried_minimum",
+      "manager_on_boh", "not_member", "other_shop_overlap", "person_overlap", "position_over_headcount", "role_not_allowed", "salaried_minimum",
       "secondary_without_primary", "segment_outside_window", "segments_malformed", "shift_below_minimum", "shift_over_maximum", "uncertified_gap",
       "undeclared_gap", "unknown_person", "untouchable_day", "work_type_not_allowed",
     ]);
