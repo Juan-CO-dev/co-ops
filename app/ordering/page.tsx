@@ -191,7 +191,10 @@ export default async function OrderingPage({
           initialPoId={po ?? null}
         />
 
+        {/* Keyed by the shop: the tabs are soft navigations, and an unkeyed island would carry
+            shop A's unsubmitted counts into shop B's walk (audit W18/B024). */}
         <ParPassWalker
+          key={locationId}
           walker={walker}
           recent={recent}
           locationId={locationId}
