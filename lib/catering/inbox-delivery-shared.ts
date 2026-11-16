@@ -1,4 +1,4 @@
-import type { SendEmailResult } from "@/lib/email";
+import { providerSendOutcome, type ProviderSendOutcome } from "@/lib/email-outcome-shared";
 import type { InboxHeaders } from "./inbox-content-shared";
 import type { InboxReason } from "./inbox-shared";
 
@@ -45,28 +45,12 @@ export function inboxDeliveryConfig(mode: InboxMode | null | undefined, env: Inb
   return { ok: true, replyFrom: env.CATERING_INBOX_FROM!.trim(), replyAddress, teamFrom: env.EMAIL_FROM_TEAM!.trim(), teamAddress };
 }
 
-export type InboxDeliveryOutcome =
-  | { outcome: "sent"; providerId: string }
-  | { outcome: "failed"; code: "provider_rejected" | "send_failed" }
-  | { outcome: "ambiguous"; code: "provider_uncertain" | "idempotency_conflict" };
-/** Resend error names that mean the request was REFUSED before processing (a definite 4xx). Only these may ever lead to
- *  a new idempotency key on a later attempt. Everything else named is unknown-until-proven. */
-export const PROVIDER_DEFINITE_REJECTIONS: ReadonlySet<string> = new Set(["validation_error", "missing_required_field", "invalid_parameter",
-  "invalid_from_address", "invalid_attachment", "invalid_access", "invalid_api_Key", "invalid_api_key", "missing_api_key", "restricted_api_key",
-  "invalid_scope", "invalid_region", "not_found", "method_not_allowed", "rate_limit_exceeded", "daily_quota_exceeded", "security_error",
-  "invalid_idempotency_key"]);
-/** "Still processing / unknown": a timeout, a network error, a 5xx, a 200 with no id, or Resend's
- *  `concurrent_idempotent_requests` (the same key is still being processed). */
-export const PROVIDER_UNCERTAIN: ReadonlySet<string> = new Set(["concurrent_idempotent_requests", "internal_server_error", "application_error"]);
-/** Classify one provider answer. Uncertainty is preserved: it becomes `ambiguous` for a human and is never resent under a
- *  new key. `invalid_idempotent_request` (same key, different payload) is a conflict a person must look at, not a resend. */
-export function inboxDeliveryOutcome(result: SendEmailResult): InboxDeliveryOutcome {
-  if ("id" in result) return { outcome: "sent", providerId: result.id.slice(0, 200) };
-  if (result.code === "invalid_threading") return { outcome: "failed", code: "send_failed" };
-  if (result.code === "invalid_idempotent_request") return { outcome: "ambiguous", code: "idempotency_conflict" };
-  if (result.code && PROVIDER_DEFINITE_REJECTIONS.has(result.code)) return { outcome: "failed", code: "provider_rejected" };
-  return { outcome: "ambiguous", code: "provider_uncertain" };
-}
+// The provider-outcome classifier is shared with the vendor order email (W19/B108); it lives in a neutral leaf and is
+// re-exported here under its catering names so every existing import keeps working.
+export { PROVIDER_DEFINITE_REJECTIONS, PROVIDER_UNCERTAIN } from "@/lib/email-outcome-shared";
+export type InboxDeliveryOutcome = ProviderSendOutcome;
+/** Classify one provider answer (see lib/email-outcome-shared.ts). */
+export const inboxDeliveryOutcome = providerSendOutcome;
 
 const MSG_ID = /^<[!-=?-~]{1,200}@[!-=?-~]{1,250}>$/;
 /** In-Reply-To = the inbound Message-ID; References = its chain plus that id. Malformed evidence is simply omitted. */

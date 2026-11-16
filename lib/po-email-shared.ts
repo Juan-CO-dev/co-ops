@@ -70,3 +70,11 @@ export function isPlausibleEmail(value: string | null | undefined): boolean {
   if (!domain || !domain.includes(".") || domain.startsWith(".") || domain.endsWith(".")) return false;
   return true;
 }
+
+/** W19/B108: the Resend idempotency key for ONE confirmation of a PO. A retry after an unclear send reuses it, so
+ *  Resend returns the first message instead of emailing the vendor a duplicate (within Resend's 24 h window). It
+ *  carries `confirmed_at` because Reopen, edit, Confirm writes a new one: a corrected order is a NEW send, never
+ *  suppressed as a duplicate of the old one. */
+export function poOrderIdempotencyKey(poId: string, confirmedAt: string | null): string {
+  return `po-order/${poId}/${confirmedAt ?? "unconfirmed"}`;
+}

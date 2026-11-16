@@ -272,6 +272,9 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // included in AUDIT_ACTIONS below, never in this non-destructive list.
   "po.draft_created",
   "po.email_sent",
+  // po.email_send_uncertain (W19/B108): the provider's answer to a vendor order email was unclear (it may have gone
+  // out). A system observation recorded for the trail; the PO is back to confirmed and marked unconfirmed.
+  "po.email_send_uncertain",
   "po.placed",
   "po.received",
   "po.reconciled",

@@ -1430,6 +1430,9 @@ export interface PoDetail {
   confirmedAt: string | null;
   placedAt: string | null;
   placedNote: string | null;
+  /** W19/B108: the first time a vendor order email got an UNCLEAR provider answer (it may have gone out). The panel
+   *  shows "email unconfirmed" while this is set and the vendor has not confirmed (ack null). Null before 0325. */
+  emailSendUncertainAt: string | null;
   lines: PoDetailLine[];
   transmissions: PoTransmissionRow[];
   /** V2-D2: "placed · vendor confirmed ✓" — null until a matched confirmation fills the
@@ -1623,6 +1626,14 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   const txs = txRows ?? [];
   const deliveryIds = (delivRows ?? []).map((d) => d.id);
 
+  // W19/B108: the "email unconfirmed" mark, read ON ITS OWN so the panel keeps working before 0325 adds the column
+  // (an undefined column is simply "no mark"; any other error is real).
+  const { data: markRow, error: markErr } = await sb.from("purchase_orders")
+    .select("email_send_uncertain_at").eq("id", poId)
+    .maybeSingle<{ email_send_uncertain_at: string | null }>();
+  if (markErr && markErr.code !== "42703" && markErr.code !== "PGRST204") throw new Error(`loadPoDetail send mark: ${markErr.message}`);
+  const emailSendUncertainAt = markErr ? null : markRow?.email_send_uncertain_at ?? null;
+
   // SKU names + transmission sender names (batched).
   const skuIds = [...new Set(lines.map((l) => l.sku_id))];
   const senderIds = [...new Set(txs.map((t) => t.sent_by).filter((v): v is string => v != null))];
@@ -1679,6 +1690,7 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     confirmedAt: po.confirmed_at,
     placedAt: po.placed_at,
     placedNote: po.placed_note,
+    emailSendUncertainAt,
     lines: lines.map((l) => {
       const sku = skuById.get(l.sku_id);
       return {

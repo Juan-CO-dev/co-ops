@@ -321,6 +321,10 @@ export function PoPanel({
     if (res.ok) {
       await load();
       onChanged();
+    } else if (res.code === "send_uncertain" || res.code === "send_conflict") {
+      // W19/B108: reload so the "email unconfirmed" note shows, then put back the message (load clears it).
+      await load();
+      setErrFromCode(res.code);
     }
   };
 
@@ -393,6 +397,16 @@ export function PoPanel({
             {err && (
               <div role="alert" className="mt-3 rounded-lg border-2 border-co-danger bg-co-danger-surface px-3 py-3 text-sm text-co-text">
                 {err}
+              </div>
+            )}
+
+            {/* W19/B108: an order email got an UNCLEAR answer — it may have reached the vendor. Shown (alert, always
+                visible) until the vendor confirms; a retry from here cannot send a duplicate within 24 hours. */}
+            {detail.emailSendUncertainAt && !detail.ack && (
+              <div role="status" className="mt-3 rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-3 text-sm text-co-warning-text">
+                {t(detail.status === "confirmed" ? "ordering.po.send_unconfirmed.confirmed" : "ordering.po.send_unconfirmed.placed", {
+                  time: formatTime(detail.emailSendUncertainAt, language),
+                })}
               </div>
             )}
 
