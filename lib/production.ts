@@ -14,8 +14,10 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
-import { loadAllSkuPackResolution, loadResolvedRecipeInputs, loadSkuPackResolution } from "@/lib/prep-consumption";
-import { contentOzForScope } from "@/lib/sku-versions-shared";
+import { loadAllSkuPackHistory, loadAllSkuPackResolution, loadResolvedRecipeInputs, loadSkuPackResolution } from "@/lib/prep-consumption";
+import { contentOzForScope, resolvePacksAtPoints, type PackPickWarning, type PackPoint, type ResolvedPack } from "@/lib/sku-versions-shared";
+import { buildPackChain, chainRootLabel } from "@/lib/pack-chain-shared";
+import { receivedLineContribution, rootConversionOf, type FlatPackFacts } from "@/lib/admin/cost-shared";
 import { ownerVisible } from "@/lib/catalog/shop-owned-shared";
 import type { MeasureDimension } from "@/lib/recipe-math";
 import { markSkuNameClashes, type ProductionSkuOption } from "@/lib/production-shared";
@@ -119,22 +121,27 @@ async function skuContentOzAt(skuId: string, locationId: string): Promise<number
   );
 }
 
+/** Today's pack basis for one SKU at a shop (W16 fix round 2): content oz, root label, and the flat facts. */
+interface SkuPackBasis { contentOz: number | null; rootLabel: string | null; flat: FlatPackFacts }
+
 /**
  * content_oz per SKU AT A SHOP for a set of SKUs (W16/B096) — the batched twin of skuContentOzAt, through
- * the same rule (contentOzForScope: the shop's own pack version, else the flat mirror). No id lists in the
- * request line: the flat fields and the pack levels are read paged and filtered here. Every read throws on
- * error (a smaller answer would be a wrong in-stock number).
+ * the same rule (contentOzForScope: the shop's own pack version, else the flat mirror). Also answers today's
+ * root label and the SKU's flat facts (W16 fix round 2: a legacy receipt converts through the pack in force
+ * when it was received, which needs both) and the measure registry it used. No id lists in the request
+ * line: the flat fields and the pack levels are read paged and filtered here. Every read throws on error
+ * (a smaller answer would be a wrong in-stock number).
  */
-async function skuContentOzMapAt(skuIds: ReadonlySet<string>, locationId: string): Promise<Map<string, number | null>> {
-  const out = new Map<string, number | null>();
-  if (skuIds.size === 0) return out;
+async function skuPackBasisAt(skuIds: ReadonlySet<string>, locationId: string): Promise<{ bySku: Map<string, SkuPackBasis>; measures: Map<string, MeasureUnitFactor> }> {
+  const bySku = new Map<string, SkuPackBasis>();
+  if (skuIds.size === 0) return { bySku, measures: new Map() };
   const sb = getServiceRoleClient();
   const [flat, packs, measures] = await Promise.all([
-    selectAllRows<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>(
+    selectAllRows<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null; pack_format: string | null; each_container_label: string | null }>(
       async (from, to) => {
-        const { data, error } = await sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each")
+        const { data, error } = await sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each, pack_format, each_container_label")
           .order("id", { ascending: true }).range(from, to);
-        if (error) throw new Error(`skuContentOzMapAt vendor_items: ${error.message}`);
+        if (error) throw new Error(`skuPackBasisAt vendor_items: ${error.message}`);
         return { data };
       }),
     loadAllSkuPackResolution(locationId),
@@ -142,13 +149,18 @@ async function skuContentOzMapAt(skuIds: ReadonlySet<string>, locationId: string
   ]);
   for (const sku of flat) {
     if (!skuIds.has(sku.id)) continue;
-    out.set(sku.id, contentOzForScope(
-      { unitsPerPack: sku.units_per_pack, eachSize: num(sku.each_size), eachMeasure: sku.each_measure, avgOzPerEach: num(sku.avg_oz_per_each) },
-      packs.get(sku.id),
-      measures,
-    ));
+    const facts: FlatPackFacts = {
+      pack_format: sku.pack_format ?? null, eachContainerLabel: sku.each_container_label ?? null,
+      unitsPerPack: sku.units_per_pack, eachSize: num(sku.each_size), eachMeasure: sku.each_measure, avgOzPerEach: num(sku.avg_oz_per_each),
+    };
+    const pack = packs.get(sku.id);
+    bySku.set(sku.id, {
+      contentOz: contentOzForScope(facts, pack, measures),
+      rootLabel: pack && pack.levels.length > 0 ? chainRootLabel(buildPackChain(pack.levels)) : facts.pack_format,
+      flat: facts,
+    });
   }
-  return out;
+  return { bySku, measures };
 }
 
 export interface RecordProductionInput {
@@ -294,7 +306,7 @@ const DELIVERY_AT_LOCATION_EMBED = "vendor_deliveries!vendor_delivery_items_deli
 const LIVE_PRODUCTION_AT_LOCATION_EMBED = "productions!inner(location_id, superseded_at, revoked_at)";
 
 /**
- * received packs − consumed packs, per SKU (for the form's in-stock hint), scoped
+ * In-stock PACKS per SKU (for the form's in-stock hint) = (oz received − oz consumed) ÷ today's pack, scoped
  * to ONE location: SKUs are global but physical stock is per-location, so receipts
  * and productions are bound to `locationId` (mixing stores gave a wrong hint).
  * Both reads paginate past the 1000-row cap (they silently truncated → the
@@ -304,20 +316,28 @@ const LIVE_PRODUCTION_AT_LOCATION_EMBED = "productions!inner(location_id, supers
  * request-line ceiling at ~210 SKUs, so the production page failed to render. Both ledgers
  * are now scoped to the shop through their header embed (service role; AGENTS.md) and the
  * caller's SKUs are picked in memory: the same rows, a constant request line.
- * Consumed packs = production_inputs.input_oz ÷ this shop's content_oz (W16/B096). qty_entered is
- * "what was typed" and its unit varies by producer (manual form = packs, prep panel = case / each /
- * oz, a derived prep line = null), so it never enters this sum. A SKU with no content basis subtracts
- * nothing and is logged (manual production refuses such a SKU, so only prep lines can reach it).
+ * Consumed = production_inputs.input_oz (W16/B096). qty_entered is "what was typed" and its unit varies
+ * by producer (manual form = packs, prep panel = case / each / oz, a derived prep line = null), so it never
+ * enters this sum.
+ * THE ARITHMETIC RUNS IN OUNCES (W16 fix round 2). A receipt was counted in packs of the size in force when
+ * it arrived; dividing consumption by TODAY's size and subtracting it from those packs let a case edit
+ * invent stock (10 × 384 oz received, all 3,840 oz used, case → 768 oz: "5 left" of zero). A receipt's oz is
+ * the frozen `resolved_oz`; a legacy line without one converts through the root pack in force at this shop
+ * when it was written, else today's root (receivedLineContribution, the W04 rule); a legacy inner-level line
+ * with no oz cannot be known and is left out, logged. The remaining oz is divided by today's pack once.
+ * A SKU with no content basis today cannot be put in packs from oz: it keeps the received pack count and
+ * subtracts no consumption, logged (manual production refuses such a SKU, so only prep lines can reach it).
  */
 export async function loadInStockPacks(skuIds: string[], locationId: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
   const wanted = new Set(skuIds);
-  const [recv, lines] = await Promise.all([
+  type RecvLine = { id: string; vendor_item_id: string; qty_received: number | string; received_level_label: string | null; resolved_oz: number | string | null; created_at: string | null };
+  const [recvAll, lines] = await Promise.all([
     // Receipt lines of deliveries AT this location.
-    selectAllRows<{ vendor_item_id: string; qty_received: number | string }>(
-      (from, to) => sb.from("vendor_delivery_items").select(`id, vendor_item_id, qty_received, ${DELIVERY_AT_LOCATION_EMBED}`)
+    selectAllRows<RecvLine>(
+      (from, to) => sb.from("vendor_delivery_items").select(`id, vendor_item_id, qty_received, received_level_label, resolved_oz, created_at, ${DELIVERY_AT_LOCATION_EMBED}`)
         .eq("vendor_deliveries.location_id", locationId).order("id", { ascending: true }).range(from, to),
     ),
     // Inputs of LIVE productions (not superseded, not revoked) at this location.
@@ -327,20 +347,56 @@ export async function loadInStockPacks(skuIds: string[], locationId: string): Pr
         .order("id", { ascending: true }).range(from, to),
     ),
   ]);
-  for (const id of skuIds) out.set(id, 0);
-  for (const r of recv) {
-    if (!wanted.has(r.vendor_item_id)) continue;
-    out.set(r.vendor_item_id, (out.get(r.vendor_item_id) ?? 0) + (num(r.qty_received) ?? 0));
-  }
+  const recv = recvAll.filter((r) => wanted.has(r.vendor_item_id));
   const live = lines.filter((l) => wanted.has(l.input_sku_id));
-  const content = await skuContentOzMapAt(new Set(live.map((l) => l.input_sku_id)), locationId);
+  // The pack history is read only when a dated legacy line (no frozen oz) needs the pack in force then.
+  const legacyPoints: PackPoint[] = recv.flatMap((r) => num(r.resolved_oz) == null && r.created_at
+    ? [{ key: r.id, skuId: r.vendor_item_id, scope: locationId, asOf: r.created_at }] : []);
+  const [{ bySku: basis, measures }, history] = await Promise.all([
+    skuPackBasisAt(new Set([...recv.map((r) => r.vendor_item_id), ...live.map((l) => l.input_sku_id)]), locationId),
+    legacyPoints.length > 0 ? loadAllSkuPackHistory(locationId) : Promise.resolve(null),
+  ]);
+  const warnings: PackPickWarning[] = [];
+  const packAtLine: Map<string, ResolvedPack> = history ? resolvePacksAtPoints(history.versions, history.levels, legacyPoints, warnings) : new Map();
+  for (const w of warnings) console.warn(`production_stock_receipt_pack_${w.code}`, { skuId: w.skuId, versionId: w.versionId, locationId: w.locationId, fellBackToVersionId: w.fellBackToVersionId });
+  const versioned = new Set((history?.versions ?? []).map((v) => v.sku_id));
+
+  const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v);
+  const contentNow = (id: string): number | null => {
+    const c = basis.get(id)?.contentOz ?? null;
+    return c != null && c > 0 ? c : null;
+  };
+  const receivedOz = new Map<string, number>();
+  const receivedPacks = new Map<string, number>(); // only for a SKU with no content basis today
+  const consumedOz = new Map<string, number>();
   const noBasis = new Set<string>();
+  const unknownReceipt = new Set<string>();
+  for (const r of recv) {
+    const qty = num(r.qty_received) ?? 0;
+    const sku = basis.get(r.vendor_item_id);
+    if (!sku || contentNow(r.vendor_item_id) == null) { add(receivedPacks, r.vendor_item_id, qty); continue; }
+    // The root pack in force at this shop when the line was written (only a dated legacy line needs it).
+    const then = num(r.resolved_oz) == null && r.created_at
+      ? rootConversionOf(sku.flat, packAtLine.get(r.id), measures, versioned.has(r.vendor_item_id))
+      : { rootOz: null, rootLabel: null };
+    const { oz } = receivedLineContribution({
+      qty, levelLabel: r.received_level_label ?? null, resolvedOz: num(r.resolved_oz),
+      linePrice: null, currentRootPrice: null, contentOz: sku.contentOz, rootLabel: sku.rootLabel,
+      receivedRootOz: then.rootOz, receivedRootLabel: then.rootLabel, receivedLevelsPerRoot: null, priceIsPerLevel: false,
+    });
+    if (oz == null) { unknownReceipt.add(r.vendor_item_id); continue; }
+    add(receivedOz, r.vendor_item_id, oz);
+  }
   for (const l of live) {
-    const contentOz = content.get(l.input_sku_id) ?? null;
-    if (contentOz === null || !(contentOz > 0)) { noBasis.add(l.input_sku_id); continue; }
-    out.set(l.input_sku_id, (out.get(l.input_sku_id) ?? 0) - (num(l.input_oz) ?? 0) / contentOz);
+    if (contentNow(l.input_sku_id) == null) { noBasis.add(l.input_sku_id); continue; }
+    add(consumedOz, l.input_sku_id, num(l.input_oz) ?? 0);
+  }
+  for (const id of skuIds) {
+    const c = contentNow(id);
+    out.set(id, c == null ? (receivedPacks.get(id) ?? 0) : ((receivedOz.get(id) ?? 0) - (consumedOz.get(id) ?? 0)) / c);
   }
   for (const id of noBasis) console.warn(`loadInStockPacks: SKU ${id} has no content basis at ${locationId}; its prep consumption is not subtracted`);
+  for (const id of unknownReceipt) console.warn(`loadInStockPacks: SKU ${id} has a receipt line at ${locationId} with no oz and no root-level basis; it is left out`);
   return out;
 }
 

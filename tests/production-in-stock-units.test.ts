@@ -121,3 +121,71 @@ describe("W16 fix round 1: injected read failures propagate", () => {
     expect((await loadInStockPacks(["s-lettuce"], LOC)).get("s-lettuce")).toBeCloseTo(10 - 32 / 384 - 96 / 384 - 1, 9);
   });
 });
+
+/**
+ * W16 fix round 2 (P2): receipts are counted in packs AT THE SIZE THEY WERE RECEIVED, consumption is oz, so
+ * the arithmetic runs in OUNCES and converts to packs once, at today's size. Before: 10 cases received at
+ * 384 oz, all 3,840 oz consumed, then the case edited to 768 oz → 10 − 3840/768 = 5 cases "left" of zero.
+ * A receipt's oz is its frozen resolved_oz; a legacy line without one converts through the pack in force
+ * at the shop when it was written (the W04 rule).
+ */
+describe("W16 fix round 2: a pack-size change never invents or hides stock", () => {
+  const RECEIVED_AT = "2026-10-15T14:00:00.000Z";
+  const EDITED_AT = "2026-11-01T00:00:00.000Z";
+  const flat = (units: number) => ({ pack_format: "case", each_container_label: null, units_per_pack: units, each_size: 1, each_measure: "lb" });
+  function packChange(opts: { unitsNow: number; consumedOz: number; resolvedOz: number | null; history: boolean }) {
+    const t = buildShopVersionsFixture();
+    t.vendor_deliveries = [{ id: "d-loc", location_id: LOC }];
+    // 10 cases received while a case was 24 × 1 lb = 384 oz.
+    t.vendor_delivery_items = [{ id: "vdi-1", delivery_id: "d-loc", vendor_item_id: "s-lettuce", qty_received: 10,
+      received_level_label: null, resolved_oz: opts.resolvedOz, created_at: RECEIVED_AT }];
+    t.productions = [hdr("h-manual", LOC, 40)];
+    t.production_inputs = [ln("pi-1", "h-manual", opts.consumedOz, opts.consumedOz / 384, null)];
+    // The case is edited today (the flat mirror follows the global pack).
+    Object.assign(t.vendor_items!.find((r) => r.id === "s-lettuce")!, { units_per_pack: opts.unitsNow });
+    if (opts.history) t.sku_pack_versions!.push(
+      { id: "pv-let-384", sku_id: "s-lettuce", location_id: null, valid_from: "2026-08-01T00:00:00.000Z", valid_to: EDITED_AT, flat_snapshot: flat(24) },
+      { id: "pv-let-now", sku_id: "s-lettuce", location_id: null, valid_from: EDITED_AT, valid_to: null, flat_snapshot: flat(opts.unitsNow) },
+    );
+    current = createFakeDb(t);
+  }
+  const stock = async () => (await loadInStockPacks(["s-lettuce"], LOC)).get("s-lettuce");
+
+  it("the reviewer's case: 10 × 384 oz received, 3,840 oz consumed, case → 768 oz shows 0, not 5", async () => {
+    packChange({ unitsNow: 48, consumedOz: 3840, resolvedOz: 3840, history: true });
+    expect(await stock()).toBeCloseTo(0, 9);
+  });
+
+  it("half consumed, then the case doubles: 1,920 oz left = 2.5 of today's cases", async () => {
+    packChange({ unitsNow: 48, consumedOz: 1920, resolvedOz: 3840, history: true });
+    expect(await stock()).toBeCloseTo(2.5, 9);
+  });
+
+  it("a legacy receipt with no frozen oz converts at the pack in force when it was received", async () => {
+    packChange({ unitsNow: 48, consumedOz: 3840, resolvedOz: null, history: true });
+    expect(await stock()).toBeCloseTo(0, 9);
+  });
+
+  it("control: no pack change, the answer is the old one (10 − 1920/384 = 5)", async () => {
+    packChange({ unitsNow: 24, consumedOz: 1920, resolvedOz: 3840, history: false });
+    expect(await stock()).toBeCloseTo(5, 9);
+  });
+
+  it("control: a legacy receipt on a SKU never versioned converts at its only pack (= 5)", async () => {
+    packChange({ unitsNow: 24, consumedOz: 1920, resolvedOz: null, history: false });
+    expect(await stock()).toBeCloseTo(5, 9);
+  });
+
+  it("a failed pack-history read throws (a legacy receipt would otherwise convert at today's size)", async () => {
+    packChange({ unitsNow: 48, consumedOz: 3840, resolvedOz: null, history: true });
+    const fake = current as ReturnType<typeof createFakeDb>;
+    current = { client: { from: (t: string) => {
+      if (t !== "sku_pack_versions") return fake.client.from(t);
+      const q: Record<string, unknown> = {};
+      for (const k of ["select", "eq", "is", "in", "order", "range", "returns", "or", "not", "lte"]) q[k] = () => q;
+      q.then = (resolve: (v: unknown) => unknown) => Promise.resolve({ data: null, error: { message: "sku_pack_versions read denied" } }).then(resolve);
+      return q;
+    } } };
+    await expect(stock()).rejects.toThrow(/sku_pack_versions read denied/);
+  });
+});
