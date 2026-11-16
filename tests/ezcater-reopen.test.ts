@@ -18,7 +18,7 @@ const state = vi.hoisted(() => ({
 const reserve = vi.hoisted(() => vi.fn(async () => undefined));
 const prep = vi.hoisted(() => {
   class PrepDemandNeedsRepairError extends Error {}
-  return { PrepDemandNeedsRepairError, ready: vi.fn(async (_sb: unknown, _id: string) => undefined) };
+  return { PrepDemandNeedsRepairError, ready: vi.fn(async (..._args: unknown[]) => undefined) };
 });
 const audit = vi.hoisted(() => vi.fn(async (_input: unknown) => undefined));
 vi.mock("@/lib/audit", () => ({ audit }));
