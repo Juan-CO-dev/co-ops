@@ -75,6 +75,8 @@ function deps(over: Partial<PulseDeps> = {}): PulseDeps {
     lastParPass: vi.fn(async () => ({ at: "2026-10-09T13:00:00Z", byName: "Mgr", lines: [
       { skuName: "Ham", parQty: 4, orderQty: 4, unitLabel: "case" }, { skuName: "Rolls", parQty: 10, orderQty: 2, unitLabel: "bag" }, { skuName: "Napkins", parQty: 5, orderQty: 0, unitLabel: "case" },
     ] })),
+    // Last night's AM prep (the list today's opening consumes; B027): not submitted in this fixture.
+    priorAmPrep: vi.fn(async () => ({ reportId: null, date: "2026-10-08", progress: "not_started" as const })),
     deliveries: vi.fn(async () => []),
     cutoffs: vi.fn(async () => ({ count: 0, vendors: [] })),
     sales: vi.fn(async () => { throw new Error("sales should not be read in this test"); }),
@@ -234,6 +236,50 @@ describe("needs attention", () => {
   });
 });
 
+// W21/B027: catering today is prepped by LAST NIGHT's AM prep (dated yesterday), not tonight's.
+describe("catering_unprepped reads last night's AM prep (B027)", () => {
+  const amPrepDoneTonight = vi.fn(async () => ({
+    rows: [{ key: "am_prep" as const, progress: "done" as const, doneAt: null, doneByName: null }], closingDone: false, midDayDoneCount: 0,
+  }));
+  const unprepped = (r: { data: AttentionData }) => r.data.items.filter((i) => i.kind === "catering_unprepped");
+
+  it("last night's AM prep submitted → no row, even though tonight's is not started; the chip shows last night's", async () => {
+    const d = deps({ priorAmPrep: vi.fn(async () => ({ reportId: "r1", date: "2026-10-08", progress: "done" as const })) });
+    const r = (await loadPulseSection(d, ctx(5), "attention")) as { data: AttentionData };
+    expect(unprepped(r)).toEqual([]);
+    expect(d.priorAmPrep).toHaveBeenCalledWith(expect.objectContaining({ date: "2026-10-09" }));
+    const c = (await loadPulseSection(d, ctx(5), "catering")) as { data: CateringData };
+    expect(c.data.prep.amPrep).toBe("done");
+  });
+  it("tonight's AM prep done does NOT clear the flag when last night's was never submitted; the button opens last night's reports", async () => {
+    const r = (await loadPulseSection(deps({ reports: amPrepDoneTonight }), ctx(5), "attention")) as { data: AttentionData };
+    expect(unprepped(r)).toEqual([expect.objectContaining({
+      key: "catering_unprepped:c1", action: "open",
+      href: `/reports/operations?location=${LOC}&type=am_prep&from=2026-10-08&to=2026-10-08`,
+    })]);
+    const c = (await loadPulseSection(deps({ reports: amPrepDoneTonight }), ctx(5), "catering")) as { data: CateringData };
+    expect(c.data.prep.amPrep).toBe("not_started");
+  });
+  it("last night's AM prep started but not submitted → the button opens that report", async () => {
+    const d = deps({ priorAmPrep: vi.fn(async () => ({ reportId: "r9", date: "2026-10-08", progress: "in_progress" as const })) });
+    const r = (await loadPulseSection(d, ctx(5), "attention")) as { data: AttentionData };
+    expect(unprepped(r).map((i) => i.href)).toEqual([`/reports/am_prep/r9?location=${LOC}`]);
+  });
+  it("a shop with no AM prep list (null) raises no row and keeps the chip on today's status", async () => {
+    const d = deps({ priorAmPrep: vi.fn(async () => null), reports: amPrepDoneTonight });
+    const r = (await loadPulseSection(d, ctx(5), "attention")) as { data: AttentionData };
+    expect(unprepped(r)).toEqual([]);
+    const c = (await loadPulseSection(d, ctx(5), "catering")) as { data: CateringData };
+    expect(c.data.prep.amPrep).toBe("done");
+  });
+  it("a failed read is named in partial, never a silent all-clear", async () => {
+    const d = deps({ priorAmPrep: vi.fn(async () => { throw new Error("down"); }) });
+    const r = (await loadPulseSection(d, ctx(5), "attention")) as { data: AttentionData };
+    expect(unprepped(r)).toEqual([]);
+    expect(r.data.partial).toContain("priorAmPrep");
+  });
+});
+
 describe("Astra #4 — authorization metadata never leaves the server", () => {
   it("no attention row carries subjectUserIds or shopWide, for crew or KH", async () => {
     for (const level of [3, 5]) {
@@ -259,10 +305,10 @@ describe("Astra #7 — failed sources never produce a reassuring state", () => {
     ...over,
   });
   it("every attention source failing → evidence unavailable, score null, no items", async () => {
-    const d = deps({ board: failing(), reports: failing(), fridges: failing(), cateringToday: failing(), notRung: failing(), lastParPass: failing(), unlinkedClockIns: failing(), cutoffs: failing() });
+    const d = deps({ board: failing(), reports: failing(), fridges: failing(), cateringToday: failing(), notRung: failing(), lastParPass: failing(), unlinkedClockIns: failing(), cutoffs: failing(), priorAmPrep: failing() });
     const r = (await loadPulseSection(d, ctx(5), "attention")) as { data: AttentionData };
     expect(r.data).toMatchObject({ items: [], score: null, evidence: "unavailable" });
-    expect([...r.data.partial].sort()).toEqual(["board", "cateringToday", "cutoffs", "fridges", "notRung", "parPass", "reports", "unlinked"]);
+    expect([...r.data.partial].sort()).toEqual(["board", "cateringToday", "cutoffs", "fridges", "notRung", "parPass", "priorAmPrep", "reports", "unlinked"]);
   });
   it("a quiet shop with one source down → partial, score null (no all-clear); rows present → partial but scored; all up → green", async () => {
     const partial = (await loadPulseSection(quietDeps({ unlinkedClockIns: failing() }), ctx(5), "attention")) as { data: AttentionData };

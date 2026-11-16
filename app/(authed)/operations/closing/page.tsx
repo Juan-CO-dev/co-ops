@@ -47,6 +47,7 @@ import {
   loadChecklistChainAttribution,
   type ChecklistChainEntry,
 } from "@/lib/checklists";
+import { worksShopTasks } from "@/lib/checklist-write-guard-shared";
 import { findDayInstance } from "@/lib/checklist-day-instance";
 import {
   COMPLETION_COLUMNS,
@@ -56,7 +57,7 @@ import {
   rowToCompletion,
   rowToInstance,
 } from "@/lib/checklist-rows";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canWorkShopTasks, type LocationActor } from "@/lib/locations";
 import { reconcileClosingReportRefs } from "@/lib/prep";
 import { loadLocationTempItemIds } from "@/lib/reports-hub";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
@@ -177,12 +178,13 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     role: auth.role,
     locations: auth.locations,
   };
-  if (!lockLocationContext(locActor, locationParam)) {
+  // W05B (Juan 2026-11-15): level 8+ (MoO, owner, CGS) work the closing at any shop.
+  if (!canWorkShopTasks(locActor, locationParam)) {
     redirect("/dashboard");
   }
 
   // TODO(future): could be tightened to an authed client constructed from
-  // the request cookie store for defense-in-depth — if lockLocationContext
+  // the request cookie store for defense-in-depth — if canWorkShopTasks
   // above ever breaks, RLS would still gate the queries below. Service-role
   // matches the /dashboard pattern for Build #1 simplicity. See
   // SPEC_AMENDMENTS.md C.24 for the documented decision.
@@ -260,8 +262,9 @@ export default async function ClosingPage({ searchParams }: PageProps) {
       if (!(error instanceof ChecklistActorNotAuthorizedError)) throw error;
     }
   }
+  // Same shop rule as the writers (worksShopTasks): an active member, or level 8+ at any shop.
   const writeUnavailable = auth.level >= 3 &&
-    (!writeActor || !writeActor.locations.includes(locationParam));
+    (!writeActor || !worksShopTasks(writeActor, locationParam));
 
   // Load or create the instance.
   let instanceRow: InstanceRow | null = null;

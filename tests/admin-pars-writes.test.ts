@@ -4,7 +4,7 @@ import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
 import { createFakeDb, type Tables } from "./fixtures/counts-fake-db";
 
-const h = vi.hoisted(() => ({ db: vi.fn(), session: vi.fn(), audit: vi.fn(), suggestions: vi.fn(), applied: vi.fn(), task: vi.fn() }));
+const h = vi.hoisted(() => ({ db: vi.fn(), session: vi.fn(), audit: vi.fn(), suggestions: vi.fn(), applied: vi.fn(), task: vi.fn(), rpc: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: h.db }));
 vi.mock("@/lib/session", () => ({ requireSession: h.session }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
@@ -39,8 +39,11 @@ beforeEach(() => {
     sku_pack_epochs: [{ sku_id: "sku", location_id: SHOP, epoch: 2 }], par_suggestion_actions: [],
     location_sku_settings: [{ id: "overlay", sku_id: "sku", location_id: SHOP, active_override: null,
       weekday_par: 2, weekend_par: 3, auto_weekday_par: 9, auto_weekend_par: 8 }] };
-  db = createFakeDb(tables); h.db.mockReturnValue(db.client); h.session.mockResolvedValue(actor()); h.task.mockResolvedValue(true);
-  h.suggestions.mockResolvedValue(new Map([["sku", { generationId: "fixture-generation", suggestedPar: 6, currentPar: 2 }]]));
+  db = createFakeDb(tables); h.session.mockResolvedValue(actor()); h.task.mockResolvedValue(true);
+  // Pre-0324 by default: the epoch-bound accept function does not exist yet (W18/B106 fix round 1).
+  h.rpc.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function public.apply_par_suggestion_accept" } });
+  h.db.mockReturnValue({ ...db.client, rpc: h.rpc });
+  h.suggestions.mockResolvedValue(new Map([["sku", { generationId: "fixture-generation", suggestedPar: 6, currentPar: 2, packEpoch: 2 }]]));
   h.applied.mockResolvedValue({ applied: true });
 });
 
@@ -99,7 +102,7 @@ describe("Pars suggestion verbs use the walk route and real libraries without st
     const callLib = (ctx: AuthContext, locationId = SHOP) => action === "dismiss"
       ? dismissSuggestion(ctx, { ...verdict(), locationId, currentPar: 2 })
       : action === "revert" ? revertAutoMove(ctx, { ...verdict(), locationId, value: null })
-        : writeParFromSuggestion({ actor: ctx, actorKind: "accept", ...verdict(), locationId, value: 6 });
+        : writeParFromSuggestion({ actor: ctx, actorKind: "accept", ...verdict(), locationId, value: 6, expectedPackEpoch: 2 });
     it.each(["agm", "prep_mgr", "catering_mgr", "social_media_mgr"] as const)(`${action} refuses %s at the route and library`, async (role) => {
       h.session.mockResolvedValue(actor(role)); expect((await POST(request({ ...verdict(), action }, "POST"))).status).toBe(403);
       await expect(callLib(actor(role))).rejects.toMatchObject({ status: 403 }); expect(db.writes).toEqual([]);
@@ -125,6 +128,42 @@ describe("Pars suggestion verbs use the walk route and real libraries without st
   });
 });
 
+
+// Audit W18/B106 fix round 1: Accept is bound to the pack epoch the walk validated, re-checked under the
+// pack writers' lock by 0324 apply_par_suggestion_accept (executable proof: scripts/sql-harness-0324.mjs B7).
+describe("Accept writes only in the pack it was computed in", () => {
+  const accept = () => POST(request({ ...verdict(), action: "accept" }, "POST"));
+  it("with 0324 applied, the accept goes through the epoch-bound function with the validated epoch and the accept patch", async () => {
+    h.rpc.mockResolvedValue({ data: "overlay", error: null });
+    expect((await accept()).status).toBe(200);
+    const dc = verdict().dayClass;
+    expect(h.rpc).toHaveBeenCalledWith("apply_par_suggestion_accept", {
+      p_sku: "sku", p_location: SHOP, p_day_class: dc, p_value: 6, p_expected_epoch: 2,
+      p_patch: { [`${dc}_par`]: 6, [`auto_${dc}_par`]: null, [`auto_${dc}_baseline_par`]: null, [`auto_${dc}_applied_at`]: null, [`pinned_${dc}_at`]: null },
+      p_actor: "fixture-user",
+    });
+    // The function wrote the par; the app wrote only the generation claim, then audited.
+    expect(db.writes.map((w) => w.table)).toEqual(["par_suggestion_actions"]);
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "par.suggestion_accept" }));
+  });
+  it("a pack change committed after the walk validated it refuses suggestion_superseded and moves no par", async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: "P0001", message: "par_suggestion:pack_changed" } });
+    const res = await accept();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "suggestion_superseded" });
+    expect(tables.location_sku_settings![0]![`${verdict().dayClass}_par`]).toBe(verdict().dayClass === "weekday" ? 2 : 3);
+    expect(h.audit).not.toHaveBeenCalledWith(expect.objectContaining({ action: "par.suggestion_accept" }));
+  });
+  it("before 0324 the accept writes as it always has", async () => {
+    expect((await accept()).status).toBe(200);
+    expect(tables.location_sku_settings![0]![`${verdict().dayClass}_par`]).toBe(6);
+  });
+  it("an accept that does not name its pack epoch is refused before any I/O", async () => {
+    await expect(writeParFromSuggestion({ actor: actor(), actorKind: "accept", ...verdict(), value: 6 }))
+      .rejects.toMatchObject({ status: 400, code: "accept_needs_pack_epoch" });
+    expect(h.db).not.toHaveBeenCalled();
+  });
+});
 
 it("allows an owner-shop store-copy SKU through the overlay library", async () => {
   tables.vendor_items![0]!.location_id = SHOP;

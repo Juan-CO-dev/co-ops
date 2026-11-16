@@ -19,7 +19,7 @@ import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
 import { formatTime } from "@/lib/i18n/format";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canWorkShopTasks, type LocationActor } from "@/lib/locations";
 import {
   loadMidDayPrepDashboardState,
   loadMidDayPrepState,
@@ -84,7 +84,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
   if (!instanceId) {
     if (!locationParam) redirect("/dashboard");
     const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-    if (!lockLocationContext(locActor, locationParam)) redirect("/dashboard");
+    if (!canWorkShopTasks(locActor, locationParam)) redirect("/dashboard");
 
     const lang = auth.user.language;
     const today = etCalendarDate(new Date().toISOString());
@@ -125,7 +125,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
   if (!state) redirect("/dashboard"); // not a mid-day instance, or not found
 
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
-  if (!lockLocationContext(locActor, state.instance.locationId)) redirect("/dashboard");
+  if (!canWorkShopTasks(locActor, state.instance.locationId)) redirect("/dashboard");
 
   if (!(await hasTaskAccess(sb, { userId: auth.user.id, level: auth.level, locationId: state.instance.locationId, date: state.instance.date, task: "mid_day_prep" }))) redirect("/dashboard");
 

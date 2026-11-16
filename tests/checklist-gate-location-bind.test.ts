@@ -38,8 +38,19 @@ it("trainees can read an existing closing but cannot create one", async () => {
   await expect(getOrCreateInstance(service, args)).resolves.toMatchObject({ created: false, instance: { id: "existing" } });
 });
 
-// READ >=8 is deliberately broader than R2 membership required to INSERT.
-it.each([9, 10])("non-member level %s reads an existing instance but cannot create", async level => {
+// Audit W05B (Juan 2026-11-15): level 8+ start a shop's checklist without a membership, like they read it.
+// Below 8 a member of another shop still reads (RLS scope) nothing here and cannot create.
+it.each([7, 6, 4])("a non-member level %s cannot create (below 8 the shop membership is required)", async level => {
+  const actor = checklistActor({ level, locations: ["other"] });
+  const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) };
+  const reader = { from: vi.fn(() => query) } as unknown as SupabaseClient;
+  const args = { templateId: "template", locationId: "own", date: "2026-10-19", actor };
+  await expect(getOrCreateInstance(reader, args)).rejects.toMatchObject({ code: "role_level_insufficient" });
+  expect(getServiceRoleClient).not.toHaveBeenCalled();
+});
+
+it.each([8, 9, 10])("a non-member level %s reads an existing instance and passes the shop gate to create", async level => {
   const actor = checklistActor({ level, locations: [] });
   const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
     maybeSingle: vi.fn().mockResolvedValue({ data: { id: "existing" }, error: null }) };
@@ -47,6 +58,18 @@ it.each([9, 10])("non-member level %s reads an existing instance but cannot crea
   const args = { templateId: "template", locationId: "own", date: "2026-10-19", actor };
   await expect(getOrCreateInstance(reader, args)).resolves.toMatchObject({ created: false, instance: { id: "existing" } });
   query.maybeSingle.mockResolvedValue({ data: null as never, error: null });
-  await expect(getOrCreateInstance(reader, args)).rejects.toMatchObject({ code: "role_level_insufficient" });
+  // Past the shop gate the create path reads the template with the service client (not mocked here).
+  await expect(getOrCreateInstance(reader, args)).rejects.not.toMatchObject({ code: "role_level_insufficient" });
+  expect(getServiceRoleClient).toHaveBeenCalled();
+});
+
+it("an inactive level-8+ actor cannot create", async () => {
+  vi.mocked(getServiceRoleClient).mockClear();
+  const actor = checklistActor({ level: 10, locations: ["own"], active: false });
+  const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) };
+  const reader = { from: vi.fn(() => query) } as unknown as SupabaseClient;
+  await expect(getOrCreateInstance(reader, { templateId: "template", locationId: "own", date: "2026-10-19", actor }))
+    .rejects.toMatchObject({ code: "role_level_insufficient" });
   expect(getServiceRoleClient).not.toHaveBeenCalled();
 });
