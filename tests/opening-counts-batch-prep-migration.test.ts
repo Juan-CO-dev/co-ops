@@ -154,11 +154,21 @@ const REEMITS: Reemit[] = [
   }),
 ];
 const definersOf = (r: Reemit) => files.filter((f) => read(f).includes(r.start) || read(f).includes(r.sourceStart));
+/**
+ * Later definers built FROM 0315 (each pins 0315's body as a line-subsequence of its own in its own test):
+ * 0320 (audit W15/B085, the frozen Phase 2 universe) re-emits 0315's submit_phase2_atomic →
+ * tests/checklist-publish-activation-migration.test.ts. 0315 stays the source of record for that body.
+ */
+const LATER_REEMITTERS: Readonly<Record<string, string>> = {
+  submit_phase2_atomic: "0320_checklist_publish_activation.sql",
+};
 
 describe("0315 re-emits every RPC from its latest definer — nothing dropped, nothing smuggled", () => {
   for (const r of REEMITS) {
     it(`${r.name}: ${r.sourceFile} was the latest definer, and its body (± the enumerated mods) is a line-subsequence of 0315's`, () => {
       const defining = definersOf(r);
+      const later = LATER_REEMITTERS[r.name];
+      if (later) expect(defining.pop()).toBe(later);
       expect(defining[defining.length - 1]).toBe(FILE);
       expect(defining[defining.length - 2]).toBe(r.sourceFile);
       const source = applyMods(extract(read(r.sourceFile), r.sourceStart, r.end), r.mods);

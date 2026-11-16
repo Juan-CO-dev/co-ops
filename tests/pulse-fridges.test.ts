@@ -7,12 +7,13 @@ import { describe, expect, it } from "vitest";
 import { loadFridgesToday } from "@/lib/pulse/fridges";
 
 type Call = { table: string; filters: Array<[string, unknown]>; signal: AbortSignal | null; range: [number, number] | null };
-function fakeService(data: { fridges: unknown[]; instances: unknown[]; completions: unknown[] }) {
+function fakeService(data: { fridges: unknown[]; instances: unknown[]; completions: unknown[]; lines?: unknown[]; templates?: unknown[] }) {
   const calls: Call[] = [];
   const from = (table: string) => {
     const call: Call = { table, filters: [], signal: null, range: null };
     calls.push(call);
-    const rows = table === "maintenance_equipment" ? data.fridges : table === "checklist_instances" ? data.instances : data.completions;
+    const rows = table === "maintenance_equipment" ? data.fridges : table === "checklist_instances" ? data.instances
+      : table === "checklist_template_items" ? (data.lines ?? []) : table === "checklist_templates" ? (data.templates ?? []) : data.completions;
     const q: Record<string, unknown> = {
       select: () => q, order: () => q, returns: () => q,
       eq: (c: string, v: unknown) => { call.filters.push([c, v]); return q; },
@@ -45,13 +46,14 @@ describe("loadFridgesToday", () => {
     const { client, calls } = fakeService({ fridges, instances, completions });
     const signal = AbortSignal.timeout(5_000);
     const out = await loadFridgesToday(client, { locationId: LOC, date: "2026-10-09", signal });
-    expect(calls.map((c) => c.table)).toEqual(["maintenance_equipment", "checklist_instances", "checklist_completions"]);
+    // W15/B022: + one read of the fridge-linked lines (none here, so no template read).
+    expect(calls.map((c) => c.table)).toEqual(["maintenance_equipment", "checklist_template_items", "checklist_instances", "checklist_completions"]);
     // B8 #4 r4: every fridge is read (retired ones too) so the one registry decides item ownership; only active ones show.
     expect(calls[0]!.filters).toEqual(expect.arrayContaining([["location_id", LOC], ["kind", "fridge"]]));
     expect(calls[0]!.filters).not.toContainEqual(["active", true]);
-    expect(calls[1]!.filters).toEqual(expect.arrayContaining([["location_id", LOC], ["date", "2026-10-09"]]));
-    expect(calls[2]!.filters).toEqual(expect.arrayContaining([["instance_id", ["i-open", "i-close"]], ["superseded_at", null], ["revoked_at", null]]));
-    expect(calls[2]!.filters.find(([c]) => c === "template_item_id")![1]).toHaveLength(12);
+    expect(calls[2]!.filters).toEqual(expect.arrayContaining([["location_id", LOC], ["date", "2026-10-09"]]));
+    expect(calls[3]!.filters).toEqual(expect.arrayContaining([["instance_id", ["i-open", "i-close"]], ["superseded_at", null], ["revoked_at", null]]));
+    expect(calls[3]!.filters.find(([c]) => c === "template_item_id")![1]).toHaveLength(12);
     for (const c of calls) expect(c.signal).toBe(signal);
     expect(out.map((f) => f.status)).toEqual(["out_of_range", "ok", "no_reading_today", "no_reading_today", "no_reading_today", "no_reading_today"]);
     expect(out[0]).toMatchObject({ id: "f1", name: "Fridge 1", latestF: 44, readings: [38, 44] });
@@ -61,11 +63,22 @@ describe("loadFridgesToday", () => {
   it("no instances today → 2 queries and every fridge is 'no reading today'; no fridges → 1 query", async () => {
     const a = fakeService({ fridges: [fridge(1), fridge(2)], instances: [], completions: [] });
     const out = await loadFridgesToday(a.client, { locationId: LOC, date: "2026-10-09" });
-    expect(a.calls.map((c) => c.table)).toEqual(["maintenance_equipment", "checklist_instances"]);
+    expect(a.calls.map((c) => c.table)).toEqual(["maintenance_equipment", "checklist_template_items", "checklist_instances"]);
     expect(out.map((f) => f.status)).toEqual(["no_reading_today", "no_reading_today"]);
     const b = fakeService({ fridges: [], instances: [], completions: [] });
     expect(await loadFridgesToday(b.client, { locationId: LOC, date: "2026-10-09" })).toEqual([]);
     expect(b.calls).toHaveLength(1);
+  });
+  it("W15/B022: a republished closing temp line (new id, only the old id is the pointer) still counts for its fridge", async () => {
+    const lines = [{ id: "pm1-v2", equipment_id: "f1", template_id: "closing-v2" }, { id: "pm1-x", equipment_id: "f1", template_id: "closing-other-shop" }];
+    const templates = [{ id: "closing-v2", type: "closing", location_id: LOC }, { id: "closing-other-shop", type: "closing", location_id: "other-shop" }];
+    const completions = [{ template_item_id: "pm1-v2", count_value: 55, completed_at: "2026-10-09T23:00:00Z" }];
+    const { client, calls } = fakeService({ fridges: [fridge(1)], instances: [{ id: "i-close" }], completions, lines, templates });
+    const out = await loadFridgesToday(client, { locationId: LOC, date: "2026-10-09" });
+    const asked = calls.find((c) => c.table === "checklist_completions")!.filters.find(([c]) => c === "template_item_id")![1] as string[];
+    expect(asked).toContain("pm1-v2");
+    expect(asked).not.toContain("pm1-x"); // another shop's template never feeds this fridge
+    expect(out[0]).toMatchObject({ status: "out_of_range", latestF: 55, readings: [55] });
   });
   it("completions are PAGED (500 a page) so a busy day can never truncate today's readings", async () => {
     const completions = Array.from({ length: 1203 }, (_, i) => ({ template_item_id: i % 2 ? "am1" : "pm1", count_value: 40, completed_at: `2026-10-09T13:${String(i % 60).padStart(2, "0")}:00Z` }));

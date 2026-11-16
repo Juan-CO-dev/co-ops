@@ -54,16 +54,21 @@ const raw = read(FILE);
 const emitted = extract(raw);
 
 describe("0255 re-emits submit_phase2_atomic from its latest definer", () => {
-  it("0215 was the previous latest definer; 0255 re-emitted it, and 0315 re-emits 0255 (the instance lock only)", () => {
+  it("0215 was the previous latest definer; 0255 re-emitted it, 0315 re-emitted 0255 and 0320 re-emits 0315", () => {
     const defining = files.filter((f) => read(f).includes(START));
-    // 0315 (audit W14) is the latest definer now; tests/opening-counts-batch-prep-migration.test.ts pins
-    // the 0255 body as a line-subsequence of it, so both owner decisions below still hold in what runs.
-    const LATER = "0315_opening_counts_batch_prep.sql";
+    // 0315 (audit W14, the instance lock; applied to sim and prod) re-emitted 0255, and 0320 (audit W15/B085,
+    // the Phase 2 universe) re-emits 0315 — tests/checklist-publish-activation-migration.test.ts pins 0315 as a
+    // line-subsequence of 0320. The 0255 body must survive in both, so both owner decisions below still hold.
+    const W14 = "0315_opening_counts_batch_prep.sql";
+    const LATER = "0320_checklist_publish_activation.sql";
     expect(defining[defining.length - 1]).toBe(LATER);
-    expect(defining[defining.length - 2]).toBe(FILE);
-    expect(defining[defining.length - 3]).toBe(SOURCE);
-    const check = isLineSubsequence(emitted, extract(read(LATER)));
-    expect(check.ok, `0255 line missing from 0315 → ${check.missing}`).toBe(true);
+    expect(defining[defining.length - 2]).toBe(W14);
+    expect(defining[defining.length - 3]).toBe(FILE);
+    expect(defining[defining.length - 4]).toBe(SOURCE);
+    for (const later of [W14, LATER]) {
+      const check = isLineSubsequence(emitted, extract(read(later)));
+      expect(check.ok, `0255 line missing from ${later} → ${check.missing}`).toBe(true);
+    }
   });
 
   it("the 0215 body (± the enumerated mods) is a line-subsequence of the 0255 body", () => {
