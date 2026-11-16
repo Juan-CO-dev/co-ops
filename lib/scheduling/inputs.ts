@@ -288,8 +288,13 @@ async function loadWages(service: SupabaseClient, locationId: string, memberIds:
       if (u && w.wage_type === "hourly") byUserCents[u] = w.wage_cents; // ascending effective date: the latest current wage wins
     }
   }
-  const ls = await firstRow<{ weekly_ot_threshold: number | string | null }>(service.from("sevenshifts_labor_settings").select("weekly_ot_threshold")
-    .order("company_id", { ascending: true }).limit(1));
+  // B217: the labor settings of the CONNECTED company — the one the newest finished sync ran against (its ledger row
+  // names it) — never "whichever company row sorts first": a token switch leaves the old company's row behind.
+  const run = await firstRow<{ company_id: number | string | null }>(service.from("sevenshifts_sync_runs").select("company_id")
+    .not("company_id", "is", null).in("status", ["ok", "partial"]).order("finished_at", { ascending: false }).limit(1));
+  const companyId = run?.company_id ?? null;
+  const ls = companyId === null ? null : await firstRow<{ weekly_ot_threshold: number | string | null }>(service.from("sevenshifts_labor_settings")
+    .select("weekly_ot_threshold").eq("company_id", companyId).limit(1));
   return { wages: { byUserCents, source: "sevenshifts" }, overtimeH: num(ls?.weekly_ot_threshold ?? null) };
 }
 

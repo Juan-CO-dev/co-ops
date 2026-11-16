@@ -64,6 +64,7 @@ function baseTables(): Tables {
       { location_id: A, time_entry_guid: "t2", business_date: "2026-10-12", user_id: null, in_at: "2026-10-12T14:00:00Z", out_at: "2026-10-12T20:00:00Z", hours: 6, deleted: false },
     ],
     audit_log: [{ id: 1, action: "schedule.budget_kept", resource_id: A, metadata: { digest: "abc123" } }],
+    sevenshifts_sync_runs: [], sevenshifts_location_links: [], sevenshifts_user_assignments: [], sevenshifts_roles: [],
   };
 }
 
@@ -196,6 +197,28 @@ describe("loadSchedulingInputs — the one batch loader", () => {
         schedule_shop_settings: [{ location_id: B, enabled: true, estimated_hourly_cents: 1800, estimated_salaried_weekly_cents: 120000, agm_access: "read" }] }, emptyHistory),
         { locationId: B, weekStarts: [WEEK], now: NOW });
       expect(other.wages).toEqual({ byUserCents: { [EMP]: 2600, [EMP2]: 2200 }, source: "sevenshifts" });
+    } finally {
+      if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
+      if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;
+    }
+  });
+  it("overtime threshold comes from the connected company, not the lowest id (B217)", async () => {
+    const t = baseTables();
+    t.sevenshifts_user_links = [{ id: "ul1", sevenshifts_user_id: "701", user_id: EMP, linked_at_location_id: A, active: true }];
+    t.sevenshifts_wages = [{ user_id: "701", wage_id: 1, role_id: null, wage_type: "hourly", wage_cents: 2000, upcoming: false, effective_date: "2026-01-01", active: true }];
+    t.sevenshifts_labor_settings = [{ company_id: 100, weekly_ot_threshold: 48, multipliers: {} }, { company_id: 200, weekly_ot_threshold: 40, multipliers: {} }];
+    const prev = { t: process.env.SEVENSHIFTS_ACCESS_TOKEN, s: process.env.SEVENSHIFTS_SYNC };
+    process.env.SEVENSHIFTS_ACCESS_TOKEN = "test-token-not-real";
+    process.env.SEVENSHIFTS_SYNC = "1";
+    try {
+      expect((await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW })).overtimeH).toBeNull(); // no run: no company
+      t.sevenshifts_sync_runs = [
+        { id: "r1", status: "ok", company_id: 100, finished_at: "2026-11-01T10:00:00Z" },
+        { id: "r2", status: "ok", company_id: 200, finished_at: "2026-11-02T10:00:00Z" },
+        { id: "r3", status: "failed", company_id: 100, finished_at: "2026-11-03T10:00:00Z" },
+        { id: "r4", status: "failed", company_id: null, finished_at: "2026-11-04T10:00:00Z" },
+      ];
+      expect((await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW })).overtimeH).toBe(40);
     } finally {
       if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
       if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;

@@ -61,7 +61,7 @@ function extract(sql: string, start: string, end = "end $$;"): string {
 const EXECUTED = new Set([
   "schedule_shop_settings", "schedule_structures", "schedule_person_settings", "schedule_budget_entries", "schedule_budget_days", "schedule_day_types", "schedule_pins",
   "schedule_weeks", "schedule_revisions", "schedule_revision_shifts", "schedule_revision_days", "schedule_revision_gaps", "schedule_revision_contexts",
-  "toast_time_entries", "sevenshifts_user_links", "sevenshifts_wages", "sevenshifts_labor_settings", "users", "user_locations", "stations", "station_positions",
+  "toast_time_entries", "sevenshifts_user_links", "sevenshifts_wages", "sevenshifts_labor_settings", "sevenshifts_sync_runs", "users", "user_locations", "stations", "station_positions",
   "people_skill_tunables", "people_skill_adjustments", "people_skill_ratings", "people_shop_settings", "station_events",
 ]);
 /** Foundation tables (no DDL here): the columns each new Phase 2 read names, pinned. */
@@ -115,6 +115,7 @@ beforeAll(async () => {
       checklist_templates: [{ id: "t1" }],
       checklist_instances: [{ id: "i1", date: "2026-10-20", template_id: "t1", shift_start_at: null, triggered_at: null }],
       sevenshifts_user_links: [{ sevenshifts_user_id: "77", user_id: "u1", linked_at_location_id: LOC }],
+      sevenshifts_sync_runs: [{ company_id: 1 }],
     });
     await loadSchedulingInputs(svc, { locationId: LOC, weekStarts: [WEEK], now: new Date("2026-10-21T16:00:00Z") });
     // Chunk F: the board's own two reads (position labels; an edited head's origin contexts).
@@ -144,7 +145,7 @@ describe("loadSchedulingInputs against the real schema", () => {
     const tables = new Set(captured.map((c) => c.table));
     for (const t of ["schedule_shop_settings", "schedule_structures", "schedule_person_settings", "schedule_budget_entries", "schedule_budget_days", "schedule_day_types",
       "schedule_pins", "schedule_weeks", "schedule_revisions", "schedule_revision_shifts", "schedule_revision_days", "schedule_revision_gaps", "schedule_revision_contexts",
-      "toast_time_entries", "sevenshifts_user_links", "sevenshifts_wages", "sevenshifts_labor_settings", "catering_pipeline", "catering_quotes", "ezcater_orders", "audit_log",
+      "toast_time_entries", "sevenshifts_user_links", "sevenshifts_wages", "sevenshifts_labor_settings", "sevenshifts_sync_runs", "catering_pipeline", "catering_quotes", "ezcater_orders", "audit_log",
       "checklist_submissions", "user_employment_events"]) expect(tables, t).toContain(t);
   });
 
