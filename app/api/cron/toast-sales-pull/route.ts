@@ -12,6 +12,10 @@ import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 
 export const maxDuration = 300;
 
+/** Room after the work for the route's heartbeat, sibling watch and response (W27 / B223). Every downstream budget
+ *  (capture, labor and its own heartbeat, ezCater) is computed from `deadlineAt`, so this one tail bounds them all. */
+const ROUTE_TAIL_MS = 20_000;
+
 /** Truncate a caught error message so a giant stack never bloats the audit row. */
 function truncateErr(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
@@ -41,7 +45,7 @@ function yesterdayYmd(): string {
 }
 
 export async function GET(req: NextRequest) {
-  const deadlineAt = Date.now() + maxDuration * 1000;
+  const deadlineAt = Date.now() + maxDuration * 1000 - ROUTE_TAIL_MS;
   if (!process.env.CRON_SECRET) return jsonError(503, "cron_disabled");
   if (!secretOk(req)) return jsonError(401, "unauthorized");
   const businessDate = req.nextUrl.searchParams.get("date") ?? yesterdayYmd();
