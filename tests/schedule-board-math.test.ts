@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  closingRoleCells, coverageCells, dayTabs, demandCurve, laborPctByHour, modLane, moneyStrip, type BoardDayInput,
+  closingRoleCells, coverageCells, dayTabs, demandCurve, laborPctByHour, modLane, moneyStrip, overtimePremiumCents, weekForecastCents, type BoardDayInput,
 } from "@/lib/scheduling/board-shared";
 import type { SkillLookup } from "@/lib/scheduling/people-input-shared";
 import { DATES, MON, P, SUN, THU, TODAY, TUE, U, WED, context, setNeed, shift, structure } from "./fixtures/schedule/rules-fixture";
@@ -118,12 +118,30 @@ describe("the money strip", () => {
   it("$: hourly cost and % of forecast, salaried fixed, TOTAL %; blank (null, never 0) with an unknown wage or forecast", () => {
     const { ctx, shifts } = base();
     const strip = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: WAGES, forecastWeekCents: 2_000_000, salariedWeeklyCents: 125_000 }, { canSeeMoney: true });
-    const hourlyCost = 2000 * (8 + 12 + 12 + 12 + 8) + 1800 * 4;
-    expect(strip.money).toEqual({ hourlyCostCents: hourlyCost, hourlyPct: Math.round(1000 * hourlyCost / 2_000_000) / 10, salariedFixedCents: 125_000, totalPct: Math.round(1000 * (hourlyCost + 125_000) / 2_000_000) / 10 });
+    // B133: Maya works 52 h (the strip's one OT risk): her 12 h past 40 carry the 1.5× premium, 12 × $20 × 0.5 = $120.
+    const premium = 12 * 2000 * 0.5;
+    const hourlyCost = 2000 * (8 + 12 + 12 + 12 + 8) + 1800 * 4 + premium;
+    expect(strip.money).toEqual({ hourlyCostCents: hourlyCost, overtimePremiumCents: premium, hourlyPct: Math.round(1000 * hourlyCost / 2_000_000) / 10, salariedFixedCents: 125_000, totalPct: Math.round(1000 * (hourlyCost + 125_000) / 2_000_000) / 10 });
     const noWage = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: { ...WAGES, [U.ben]: null }, forecastWeekCents: 2_000_000, salariedWeeklyCents: null }, { canSeeMoney: true });
-    expect(noWage.money).toEqual({ hourlyCostCents: null, hourlyPct: null, salariedFixedCents: null, totalPct: null });
+    expect(noWage.money).toEqual({ hourlyCostCents: null, overtimePremiumCents: premium, hourlyPct: null, salariedFixedCents: null, totalPct: null });
     const noForecast = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: WAGES, forecastWeekCents: null, salariedWeeklyCents: 125_000 }, { canSeeMoney: true });
     expect(noForecast.money).toMatchObject({ hourlyCostCents: hourlyCost, hourlyPct: null, totalPct: null });
+  });
+
+  it("overtime premium: 45 h at $20 → $950, premium $50 on its own line; 7shifts' multiplier wins; unknown wage over the line → null (B133)", () => {
+    const ctx = context();
+    const shifts = DATES.slice(1, 6).map((d) => shift(U.maya, d, 40, 76, P.REG)); // five 9 h shifts
+    const strip = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: { [U.maya]: 2000 }, forecastWeekCents: 1_000_000, salariedWeeklyCents: null }, { canSeeMoney: true });
+    expect(strip.money).toMatchObject({ hourlyCostCents: 95_000, overtimePremiumCents: 5_000, hourlyPct: 9.5 });
+    const two = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: { [U.maya]: 2000 }, forecastWeekCents: 1_000_000, salariedWeeklyCents: null, overtimeMultiplier: 2 }, { canSeeMoney: true });
+    expect(two.money).toMatchObject({ hourlyCostCents: 100_000, overtimePremiumCents: 10_000 });
+    const unknown = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: { [U.maya]: null }, forecastWeekCents: 1_000_000, salariedWeeklyCents: null }, { canSeeMoney: true });
+    expect(unknown.money).toMatchObject({ hourlyCostCents: null, overtimePremiumCents: null, hourlyPct: null });
+    // Under the line: no premium; salaried people never carry one.
+    expect(overtimePremiumCents(shifts.slice(0, 4), ctx.people, { [U.maya]: 2000 }, 40, 1.5)).toBe(0);
+    expect(overtimePremiumCents(shifts, { [U.maya]: { salaried: true, presenceOnly: false } }, {}, 40, 1.5)).toBe(0);
+    // Only the over-the-line person's wage matters.
+    expect(overtimePremiumCents([...shifts, shift(U.ben, THU, 44, 60, P.REG)], ctx.people, { [U.maya]: 2000, [U.ben]: null }, 40, 1.5)).toBe(5_000);
   });
 
   it("CC chunk C ruling 3: essential closer hours are COUNTED (hours, $, %) and named — 'essential hours past budget: X h' — never refused for budget", () => {
@@ -151,6 +169,20 @@ describe("the money strip", () => {
     const strip = moneyStrip({ dates: DATES, shifts, ctx, wageCentsByUser: WAGES, forecastWeekCents: 2_000_000, salariedWeeklyCents: 125_000 }, { canSeeMoney: false });
     expect("money" in strip).toBe(false);
     expect(JSON.stringify(strip)).not.toMatch(/Cents|Pct/);
+  });
+});
+
+describe("the week's forecast (B135)", () => {
+  const ok = (date: string, dayCents: number) => ({ kind: "ok" as const, date, hourlyCents: new Array<number>(24).fill(0), dayCents, weeks: 1, basis: "trailing_same_weekday" as const, weeksAhead: 0, confidence: "thin" as const, unknownCents: 0, catering: [] });
+  const none = (date: string) => ({ kind: "no_history" as const, date, weeksAhead: 0, catering: [] });
+  it("forecastWeekCents is null unless every week date is ok; the strip's weekly % is then null", () => {
+    const partial = { kind: "ok" as const, days: [ok(DATES[0]!, 500_000), ...DATES.slice(1).map(none)] };
+    expect(weekForecastCents(partial, DATES)).toBeNull();
+    const strip = moneyStrip({ dates: DATES, shifts: [shift(U.ben, THU, 44, 60, P.REG)], ctx: context(), wageCentsByUser: { [U.ben]: 2000 }, forecastWeekCents: weekForecastCents(partial, DATES), salariedWeeklyCents: null }, { canSeeMoney: true });
+    expect(strip.money?.hourlyPct ?? null).toBeNull();
+    expect(weekForecastCents({ kind: "ok", days: DATES.map((d) => ok(d, 100_000)) }, DATES)).toBe(700_000);
+    expect(weekForecastCents({ kind: "ok", days: DATES.slice(1).map((d) => ok(d, 100_000)) }, DATES)).toBeNull(); // a date missing
+    expect(weekForecastCents({ kind: "no_history", days: [] }, DATES)).toBeNull();
   });
 });
 

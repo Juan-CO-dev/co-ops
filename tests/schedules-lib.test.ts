@@ -246,6 +246,27 @@ describe("the horizon: preview, token, apply", () => {
     expect(commits(s.calls).length).toBe(n + 1);
   });
 
+  it("a move / start resize carries the shift's reasons to its new key (B218)", async () => {
+    for (const make of [(q: number) => ({ deltaQ: 1, next: q + 1 }), (q: number) => ({ toQ: q - 1, next: q - 1 })] as const) {
+      const s = shop();
+      const g = await lib.generateWeek(s.deps, { actor: gm, locationId: A, weekStart: WEEK, expectedHead: null });
+      const rows = s.tables.schedule_revision_shifts!.filter((r) => r.revision_id === g.revisionId && r.business_date === "2026-10-27" && r.reasons !== null);
+      const pick = rows.find((r) => !rows.some((o) => o !== r && o.user_id === r.user_id)) ?? rows[0]!;
+      expect(pick).toBeTruthy();
+      const startQ = pick.start_q as number;
+      const m = make(startQ);
+      const op = "deltaQ" in m
+        ? { kind: "move" as const, shift: { date: "2026-10-27", userId: pick.user_id as string, startQ }, deltaQ: m.deltaQ }
+        : { kind: "start" as const, shift: { date: "2026-10-27", userId: pick.user_id as string, startQ }, toQ: m.toQ };
+      const e = await lib.saveEdit(s.deps, { actor: gm, locationId: A, weekStart: WEEK, expectedHead: g.revisionId, op });
+      const mine = s.tables.schedule_revision_shifts!.filter((r) => r.revision_id === e.revisionId && r.business_date === "2026-10-27" && r.user_id === pick.user_id);
+      const moved = mine.find((r) => r.start_q === m.next)!;
+      expect(moved).toBeTruthy();
+      expect(moved.reasons).toEqual(pick.reasons);
+      expect(mine.some((r) => r.start_q === startQ)).toBe(false);
+    }
+  });
+
   it("a mid-range failure reports which weeks landed (a named partial result)", async () => {
     const s = shop({ failCommitOnWeek: "2026-11-02" });
     const p = await lib.previewHorizon(s.deps, { actor: gm, locationId: A, request: { mode: "next_weeks", n: 3 } });
@@ -390,5 +411,93 @@ describe("refusals: every code has its HTTP status", () => {
     expect(() => lib.rpcRefusal({ message: "head_moved" })).toThrow(ScheduleError);
     expect(() => lib.rpcRefusal({ code: "PGRST202", message: "x" })).toThrow(expect.objectContaining({ code: "inputs_unavailable" }));
     expect(() => lib.rpcRefusal({ message: "something else" })).toThrow(/schedule rpc/);
+  });
+});
+
+describe("B134 r1: Approve is the gate across shops (fresh read of the other shops' heads)", () => {
+  const X = STAFF[0]!;
+  const D = "2026-10-27";
+  const twoShops = () => shop({}, (t) => {
+    t.schedule_shop_settings!.push({ location_id: B, enabled: true, estimated_hourly_cents: 1800, estimated_salaried_weekly_cents: 120000, agm_access: "read" });
+    t.user_locations!.push({ user_id: X, location_id: B, active: true, assigned_at: "2026-01-01T12:00:00Z" });
+  });
+  const gmAll = actor(MOO, "moo", 8, []);
+  /** A head at `loc` straight through the commit RPC (a validator-clean day record), with the given shifts. */
+  const put = async (s: ReturnType<typeof twoShops>, loc: string, head: string | null, shifts: Array<{ userId: string; date: string; startQ: number; endQ: number }>) => {
+    const { commitRevisionCall } = await import("@/lib/scheduling/rpc-args-shared");
+    const call = commitRevisionCall({ actorId: MOO, locationId: loc, weekStart: WEEK, expectedHead: head, kind: head ? "regenerated" : "generated", structureVersionId: null,
+      shifts: shifts.map((x) => ({ ...x, segments: [{ positionId: P_REG, fromQ: x.startQ, toQ: x.endQ }], closingManager: false, flex: false, pinned: false })) as never,
+      days: DAYS.map((d) => ({ date: d, originRevisionId: null, structureVersionId: "defaults", inherited: false, problems: [] })),
+      gaps: [], context: { version: 1, locationId: loc, weekStart: WEEK, today: "2026-10-21", dates: DAYS, days: {}, budgetByDate: {}, closingWindowByDate: {}, people: {} },
+      meta: { actorContext: "user", inputsDigest: "d", generatorVersion: "p2.4", problemsSummary: {}, contextDigest: "c" } });
+    const r = await s.client.rpc(call.fn, call.args);
+    return String((r.data as Record<string, unknown>).revision_id);
+  };
+  const approvals = (s: ReturnType<typeof twoShops>) => s.calls.filter((c) => c.fn === "approve_schedule_week");
+
+  it("an overlap with another shop's CURRENT head refuses approve (stored problems are clean); a past-day overlap does not count", async () => {
+    const s = twoShops();
+    const hA = await put(s, A, null, [{ userId: X, date: D, startQ: 44, endQ: 60 }]);
+    await put(s, B, null, [{ userId: X, date: D, startQ: 56, endQ: 72 }]);
+    expect(await code(lib.approveWeek(s.deps, { actor: gmAll, locationId: A, weekStart: WEEK, expectedHead: hA }))).toBe("other_shop_overlap");
+    expect(approvals(s)).toEqual([]);
+    // From the 28th on (today later than the overlap day) the clash is history: approve goes through.
+    const later = { ...s.deps, now: new Date("2026-10-28T16:00:00Z") };
+    expect((await lib.approveWeek(later, { actor: gmAll, locationId: A, weekStart: WEEK, expectedHead: hA })).alreadyApproved).toBe(false);
+  });
+
+  it("two concurrent approves of overlapping heads: BOTH refuse; the commit-then-approve order lets at most one through", async () => {
+    const s = twoShops();
+    const hA = await put(s, A, null, [{ userId: X, date: D, startQ: 44, endQ: 60 }]);
+    const hB = await put(s, B, null, [{ userId: X, date: D, startQ: 50, endQ: 70 }]);
+    const both = await Promise.all([
+      code(lib.approveWeek(s.deps, { actor: gmAll, locationId: A, weekStart: WEEK, expectedHead: hA })),
+      code(lib.approveWeek(s.deps, { actor: gmAll, locationId: B, weekStart: WEEK, expectedHead: hB })),
+    ]);
+    expect(both).toEqual(["other_shop_overlap", "other_shop_overlap"]);
+    expect(approvals(s)).toEqual([]);
+
+    // The racing interleaving: B's head is clean when A's approve reads it, B's overlapping head commits while A's approve
+    // is in flight, then B approves → A was approved against the clean head, B (which sees A's committed head) refuses.
+    const s2 = twoShops();
+    const a2 = await put(s2, A, null, [{ userId: X, date: D, startQ: 44, endQ: 60 }]);
+    const b1 = await put(s2, B, null, [{ userId: X, date: D, startQ: 60, endQ: 76 }]);
+    let bHead = b1;
+    const realRpc = s2.client.rpc.bind(s2.client);
+    (s2.client as unknown as { rpc: typeof realRpc }).rpc = ((fn: string, args: Record<string, unknown>) => {
+      if (fn === "approve_schedule_week" && args.p_location === A && bHead === b1) {
+        // A's approve has read B's heads; B commits an overlapping head before A's approval lands.
+        return put(s2, B, b1, [{ userId: X, date: D, startQ: 50, endQ: 70 }]).then((id) => { bHead = id; return realRpc(fn, args); });
+      }
+      return realRpc(fn, args);
+    }) as typeof realRpc;
+    expect(await code(lib.approveWeek(s2.deps, { actor: gmAll, locationId: A, weekStart: WEEK, expectedHead: a2 }))).toBe("ok");
+    expect(bHead).not.toBe(b1);
+    expect(await code(lib.approveWeek(s2.deps, { actor: gmAll, locationId: B, weekStart: WEEK, expectedHead: bHead }))).toBe("other_shop_overlap");
+    expect(approvals(s2).map((c) => c.args.p_location)).toEqual([A]);
+  });
+
+  it("a failed read of the other shops refuses approve (other_shop_check_unavailable) — never free time", async () => {
+    const s = twoShops();
+    const hA = await put(s, A, null, [{ userId: X, date: D, startQ: 44, endQ: 60 }]);
+    const from = s.client.from.bind(s.client);
+    // loadWeekHeads reads this shop's week first: fail only the cross-shop read (the second schedule_weeks read).
+    let n = 0;
+    (s.client as unknown as { from: typeof from }).from = ((tbl: string) => {
+      if (tbl === "schedule_weeks" && ++n > 1) throw new Error("statement timeout");
+      return from(tbl);
+    }) as typeof from;
+    expect(await code(lib.approveWeek(s.deps, { actor: gmAll, locationId: A, weekStart: WEEK, expectedHead: hA }))).toBe("other_shop_check_unavailable");
+    expect(approvals(s)).toEqual([]);
+  });
+
+  it("other shops unavailable at build time: Generate, the horizon and the Wednesday draft refuse / skip; nothing is committed", async () => {
+    const s = shop();
+    const deps = { ...s.deps, loadInputs: withMut((i) => { i.elsewhere = []; i.elsewhereUnavailable = true; }) };
+    expect(await code(lib.generateWeek(deps, { actor: gm, locationId: A, weekStart: WEEK, expectedHead: null }))).toBe("other_shop_check_unavailable");
+    expect(await code(lib.previewHorizon(deps, { actor: gm, locationId: A, request: { mode: "next_week" } }))).toBe("other_shop_check_unavailable");
+    expect(commits(s.calls)).toEqual([]);
+    expect(SCHEDULE_ERROR_STATUS.other_shop_check_unavailable).toBe(503);
+    expect(SCHEDULE_ERROR_STATUS.other_shop_overlap).toBe(409);
   });
 });

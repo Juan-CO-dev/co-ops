@@ -269,6 +269,8 @@ function QuoteBuilder({
   const [preview, setPreview] = useState<ChargeStack | null>(null);
   const [saving, setSaving] = useState(false);
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
+  // W22/B121: set when a revise saved but its prep-demand resync was skipped (see submit).
+  const [prepNotice, setPrepNotice] = useState<{ newId: string | null } | null>(null);
 
   const pricing = pricingByLocation[locationId];
 
@@ -385,11 +387,33 @@ function QuoteBuilder({
       : await postJson("/api/catering/quotes", body, "POST");
     setSaving(false);
     if (res.ok) {
-      onDone(typeof res.data.id === "string" ? res.data.id : null);
+      const newId = typeof res.data.id === "string" ? res.data.id : null;
+      // W22/B121: the revise saved but the kitchen prep kept the previous package choices — say so
+      // before leaving the builder (the manager re-confirms the order to refresh it).
+      if (editing && res.data.prepDemandResynced === false) {
+        setPrepNotice({ newId });
+        return;
+      }
+      onDone(newId);
     } else {
       setErrorKey(resolveErrorKey(res.code));
     }
   };
+
+  if (prepNotice) {
+    return (
+      <div className="mt-4 flex flex-col gap-3 rounded-xl border-2 border-co-warning bg-co-warning-surface p-4" role="status">
+        <p className="text-sm font-semibold text-co-warning-text">{t("catering.quotes.prep_not_resynced" as TranslationKey)}</p>
+        <button
+          type="button"
+          onClick={() => onDone(prepNotice.newId)}
+          className="inline-flex min-h-[44px] items-center justify-center self-start rounded-lg border-2 border-co-gold-deep bg-co-surface px-4 text-sm font-bold text-co-text"
+        >
+          {t("catering.quotes.prep_not_resynced_ok" as TranslationKey)}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-4 flex flex-col gap-4">

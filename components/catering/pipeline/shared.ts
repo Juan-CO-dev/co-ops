@@ -67,6 +67,7 @@ const KNOWN_ERROR_CODES = new Set([
   "mixed_concerns",
   "stage_changed",
   "illegal_transition", // guarded moveStage 409 (concurrent move) — actionable, not generic
+  "event_date_required_confirmed", // W22/B120: a confirmed order keeps a date (its kitchen prep sits on it)
   "generic",
   "network",
 ]);

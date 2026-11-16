@@ -15,6 +15,7 @@ import { resolveRefs } from "@/lib/catering/prep-demand";
 import { loadRecipeGraph, loadMeasures, loadSkuPackResolution } from "@/lib/prep-consumption";
 import { perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph } from "@/lib/prep-consumption-graph";
 import { contentOzForScope } from "@/lib/sku-versions-shared";
+import { latestReleaseBatch, selectCancellationRows } from "./surplus-shared";
 
 export const PREP_START_LEAD_DAYS = 3;    // ~72h prep-start window (Juan: "2–3 days before")
 export const SURPLUS_READ_MIN = 6;        // catering_mgr+ (mirrors PREP_DEMAND_READ_MIN)
@@ -58,7 +59,9 @@ function daysBetween(releasedAtIso: string, needDate: string): number {
 }
 
 interface ReleasedRow {
+  id: string;
   pipeline_id: string;
+  created_at: string;
   need_date: string;
   released_at: string | null;
   item_id: string | null;
@@ -68,9 +71,29 @@ interface ReleasedRow {
   qty: number | string;
 }
 
+/** One read page (PostgREST caps a response at 1000 rows; a short page is the last). */
+const PAGE = 1000;
+/** Lead ids per `.in()` read (the 414 class: an id list in the request line). */
+const LEAD_CHUNK = 100;
+
+/** Every row a query returns, page by page, in a stable order. */
+async function readAll<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>, label: string): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await page(from, from + PAGE - 1);
+    if (error) throw new Error(`loadCateringSurplus ${label}: ${error.message}`);
+    const rows = data ?? [];
+    out.push(...rows);
+    if (rows.length < PAGE) return out;
+  }
+}
+
 /**
- * Recent catering surplus for a location: released reservations (from cancellations, excluding
- * re-confirm churn) classified by the 72h rule. Grouped by need date.
+ * Recent catering surplus for a location: released reservations that are a real CANCELLATION's last
+ * release batch (selectCancellationRows, lib/catering/surplus-shared.ts — audit W22/B124: superseded
+ * batches from a revise, re-confirm, reschedule or transfer, and released rows of a delivered order, are
+ * not food), classified by the 72h rule. Grouped by need date. Every read is paged and id-chunked (B201:
+ * the old shop-wide reserved scan truncated silently at 1000 rows).
  */
 export async function loadCateringSurplus(
   actor: AuthContext,
@@ -79,29 +102,52 @@ export async function loadCateringSurplus(
   requireLevel(actor, SURPLUS_READ_MIN);
   const sb = getServiceRoleClient();
 
-  const { data: released, error } = await sb
+  const rows = await readAll<ReleasedRow>((from, to) => sb
     .from("catering_prep_demand")
-    .select("pipeline_id, need_date, released_at, item_id, menu_item_id, choice_package_item_id, portion, qty")
+    .select("id, pipeline_id, created_at, need_date, released_at, item_id, menu_item_id, choice_package_item_id, portion, qty")
     .eq("location_id", args.locationId)
     .eq("status", "released")
     .not("released_at", "is", null)
     .gte("need_date", args.from)
     .lte("need_date", args.to)
-    .returns<ReleasedRow[]>();
-  if (error) throw new Error(`loadCateringSurplus released: ${error.message}`);
-  const rows = released ?? [];
+    .order("id", { ascending: true })
+    .range(from, to)
+    .returns<ReleasedRow[]>(), "released");
   if (rows.length === 0) return [];
 
-  // Exclude re-confirm churn: a lead currently reserved again isn't a cancellation.
-  const { data: reserved, error: rErr } = await sb
-    .from("catering_prep_demand")
-    .select("pipeline_id")
-    .eq("location_id", args.locationId)
-    .eq("status", "reserved")
-    .returns<Array<{ pipeline_id: string }>>();
-  if (rErr) throw new Error(`loadCateringSurplus reserved: ${rErr.message}`);
-  const reservedPids = new Set((reserved ?? []).map((r) => r.pipeline_id));
-  const cancelled = rows.filter((r) => r.released_at && !reservedPids.has(r.pipeline_id));
+  // The candidate leads' whole ledger (every shop) and stage, chunked and paged.
+  const leadIds = [...new Set(rows.map((r) => r.pipeline_id))];
+  const live = new Set<string>();
+  const releasedAll: Array<{ pipeline_id: string; created_at: string; released_at: string | null }> = [];
+  const stageByPipeline = new Map<string, string>();
+  for (let i = 0; i < leadIds.length; i += LEAD_CHUNK) {
+    const chunk = leadIds.slice(i, i + LEAD_CHUNK);
+    const [liveRows, relRows, leads] = await Promise.all([
+      readAll<{ pipeline_id: string }>((from, to) => sb
+        .from("catering_prep_demand").select("pipeline_id")
+        .in("pipeline_id", chunk).in("status", ["reserved", "consumed"])
+        .order("id", { ascending: true }).range(from, to)
+        .returns<Array<{ pipeline_id: string }>>(), "live"),
+      readAll<{ pipeline_id: string; created_at: string; released_at: string | null }>((from, to) => sb
+        .from("catering_prep_demand").select("pipeline_id, created_at, released_at")
+        .in("pipeline_id", chunk).eq("status", "released")
+        .order("id", { ascending: true }).range(from, to)
+        .returns<Array<{ pipeline_id: string; created_at: string; released_at: string | null }>>(), "release batches"),
+      readAll<{ id: string; stage: string }>((from, to) => sb
+        .from("catering_pipeline").select("id, stage")
+        .in("id", chunk)
+        .order("id", { ascending: true }).range(from, to)
+        .returns<Array<{ id: string; stage: string }>>(), "leads"),
+    ]);
+    for (const r of liveRows) live.add(r.pipeline_id);
+    releasedAll.push(...relRows);
+    for (const l of leads) stageByPipeline.set(l.id, l.stage);
+  }
+  const cancelled = selectCancellationRows(rows, {
+    liveByPipeline: live,
+    stageByPipeline,
+    latestBatchCreatedAt: latestReleaseBatch(releasedAll),
+  });
   if (cancelled.length === 0) return [];
 
   // Classify + accumulate. prepLines keyed for grain; skuAcc for raw_sku oz per (sku,date,pipeline).

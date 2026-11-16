@@ -33,7 +33,13 @@ export interface PublicFulfillmentNode {
   offersPickup: boolean;
 }
 
+/**
+ * `routed` with `dateUnavailable: true` (audit W22/B123, owner decision W22-2 as modified: never refuse an
+ * order outright) = no in-zone shop can take that date (blackout, full or inside the lead time), so the
+ * nearest one is named, the customer is WARNED, and the order is flagged for the catering manager to accept
+ * or refuse. `no_capacity` is no longer produced by routeDelivery; it stays in the union for old clients.
+ */
 export type DeliveryRouteResult =
-  | { status: "routed"; locationId: string; locationName: string; distanceMeters: number }
+  | { status: "routed"; locationId: string; locationName: string; distanceMeters: number; dateUnavailable?: boolean }
   | { status: "out_of_zone" }
   | { status: "no_capacity" };

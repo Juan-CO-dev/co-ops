@@ -14,6 +14,7 @@ const mutationRoutes: Record<string, string> = {
   "marketing/milestones/[id]/correct/route.ts": "POST",
   "marketing/entries/route.ts": "POST",
   "marketing/entries/[id]/correct/route.ts": "POST",
+  "marketing/entries/[id]/void/route.ts": "POST",
   "marketing/baseline-snapshot/route.ts": "POST",
   "marketing/ad-codes/route.ts": "POST",
   "marketing/ad-codes/[code]/retire/route.ts": "POST",

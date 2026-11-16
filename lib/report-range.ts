@@ -44,6 +44,9 @@ export function parseReportRange(p: Record<string, string | undefined>, today: s
     const sameDay = shiftReportDate(priorStart, Number(to.slice(8)) - 1);
     previous = { from: priorStart, to: sameDay < priorEnd ? sameDay : priorEnd };
   }
+  // An unedited "last month" is a whole calendar month: compare it with the
+  // whole month before it, not a rolling block of the same number of days.
+  else if (range === "last_month") previous = { from: monthStart(from, -1), to: shiftReportDate(from, -1) };
   // Calendar months vary in length. At the cap, the adjacent comparison can
   // touch an extra bucket; clip that first partial bucket to the same budget.
   const previousMinimum = cappedFrom(previous.to, grain);

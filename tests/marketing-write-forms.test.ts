@@ -67,3 +67,26 @@ it("hides protected corrections from MoO and offers only unrecorded milestone ki
   expect(Array.from((screen.getByLabelText("Correct record") as HTMLSelectElement).options).map(option => option.value)).toEqual([""]);
   expect(Array.from((screen.getByLabelText("Kind") as HTMLSelectElement).options).map(option => option.value)).toEqual(["landing_live", "counter_on", "capi_on"]);
 });
+it("removes a recorded spend entry with Tier A and the typed reason (W26-2 b)", async () => {
+  const entry = { id, kind: "meta_spend", location_id: null, platform: null, period_start: "2026-11-01", period_end: "2026-11-07", amount_cents: 500, list_count: null, note: null, corrects_id: null };
+  render(createElement(MarketingWriteForms, { ...props, entries: [entry] }));
+  fireEvent.click(screen.getByText("Manual entry"));
+  expect(screen.queryByText(marketingWriteCopy("en").remove)).toBeNull();
+  fireEvent.change(screen.getByLabelText("Correct record"), { target: { value: id } });
+  fireEvent.click(screen.getByText(marketingWriteCopy("en").remove));
+  expect(mocks.post).not.toHaveBeenCalled();
+  expect(screen.getByRole("status").textContent).toBe(marketingWriteCopy("en").reason_required);
+  fireEvent.change(screen.getByLabelText("Reason for correction"), { target: { value: "Never ran" } });
+  fireEvent.click(screen.getByText(marketingWriteCopy("en").remove));
+  await waitFor(() => expect(mocks.post).toHaveBeenCalledWith(`/api/admin/marketing/entries/${id}/void`, { reason: "Never ran" }));
+  expect(mocks.prompt).toHaveBeenCalledWith("A");
+  await waitFor(() => expect(screen.getByRole("status").textContent).toBe(marketingWriteCopy("en").removed));
+  expect(mocks.refresh).toHaveBeenCalled();
+});
+it("offers no removal for an email list size entry", () => {
+  const entry = { id, kind: "email_list_size", location_id: null, platform: null, period_start: "2026-11-01", period_end: "2026-11-01", amount_cents: null, list_count: 3, note: null, corrects_id: null };
+  render(createElement(MarketingWriteForms, { ...props, entries: [entry] }));
+  fireEvent.click(screen.getByText("Manual entry"));
+  fireEvent.change(screen.getByLabelText("Correct record"), { target: { value: id } });
+  expect(screen.queryByText(marketingWriteCopy("en").remove)).toBeNull();
+});

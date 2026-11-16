@@ -119,6 +119,12 @@ describe("CC gate ruling: flipping the switch is MoO+ only (the same rule as the
     expect(rpc).toHaveBeenCalledTimes(1);
   });
 
+  it("a MoO's flip committed between the GM's read and the RPC: the SQL refusal (0334) maps to 403 pm_v2_moo_only (B219)", async () => {
+    db = createFakeDb(tables()); // the GM's early read sees OFF — the switch "travels unchanged"
+    rpc.mockResolvedValueOnce({ data: null, error: { code: "P0001", message: "pm_v2_moo_only" } }); // … but under the lock it is ON
+    await expect(savePeopleShopSettings(svc(), { actor: gm, locationId: A, pmV2: false, prepPositionId: P_PREP })).rejects.toMatchObject({ status: 403, code: "pm_v2_moo_only" });
+  });
+
   it("the refusal has its en + es message", () => {
     expect(en["people.skills.error.pm_v2_moo_only"]).toBeTruthy();
     expect(es["people.skills.error.pm_v2_moo_only"]).toBeTruthy();

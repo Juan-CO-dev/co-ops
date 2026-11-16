@@ -18,16 +18,14 @@
  * deliveryNodesExist=false the original legacy flow renders unchanged.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { GoodToKnow } from "@/components/portal/GoodToKnow";
 import { GTK } from "@/components/portal/portal-content";
-import { routeDeliveryAction } from "./actions";
-import {
-  CATERING_DELIVERY_WINDOWS,
-  type DeliveryRouteResult,
-} from "@/lib/catering/fulfillment-shared";
+import { checkPickupDateAction, routeDeliveryAction } from "./actions";
+import { currentRoute, routeKey, type KeyedRoute } from "./route-key";
+import { CATERING_DELIVERY_WINDOWS } from "@/lib/catering/fulfillment-shared";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 
@@ -99,8 +97,15 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
 
   // FR-b routing state
   const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
-  const [route, setRoute] = useState<DeliveryRouteResult | null>(null);
+  // A routing result is kept WITH the inputs it was computed for (audit W22/B203): the shop depends
+  // on the date and the guest count too, so a result for other inputs is treated as missing.
+  const [route, setRoute] = useState<KeyedRoute | null>(null);
   const [locating, setLocating] = useState(false);
+  const latestRouteKey = useRef<string | null>(null);
+  // The inputs whose routing request FAILED (fix round 2, review r2 P2): a failed request is not pending, so it
+  // must not block the re-route forever. The customer sees a retryable error and Continue stays off until a
+  // fresh result for the current inputs arrives.
+  const [routeFailedKey, setRouteFailedKey] = useState<string | null>(null);
 
   // ⑤ carry-through: pick up the storefront selection (co_order_preselect) once on mount, then
   // clear it so a back-nav/refresh doesn't re-apply it. Folded into the new-client intake payload.
@@ -121,21 +126,65 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
 
   const set = (patch: Partial<FormState>) => setF((cur) => ({ ...cur, ...patch }));
 
-  // runRoute: call the server action with current coords + form state.
-  const runRoute = async (lat: number, lng: number) => {
+  // runRoute: call the server action with EXPLICIT values (never a stale closure over `f`). A
+  // response for a request that is no longer the latest is dropped. A FAILED latest request clears the
+  // pending key and records the failure (never an unhandled rejection): the page shows "Try again".
+  const runRoute = async (lat: number, lng: number, date: string, guests: string) => {
+    const key = routeKey({ date, guests, geo: { lat, lng } });
+    latestRouteKey.current = key;
+    setRouteFailedKey(null);
     setLocating(true);
     try {
       const res = await routeDeliveryAction({
         lat,
         lng,
-        eventDate: f.date || null,
-        headcount: Number(f.guests) || null,
+        eventDate: date || null,
+        headcount: Number(guests) || null,
       });
-      setRoute(res);
+      if (latestRouteKey.current === key) setRoute({ result: res, key });
+    } catch {
+      if (latestRouteKey.current === key) {
+        latestRouteKey.current = null;
+        setRouteFailedKey(key);
+      }
     } finally {
-      setLocating(false);
+      if (latestRouteKey.current === key || latestRouteKey.current === null) setLocating(false);
     }
   };
+
+  const liveRoute = currentRoute(route, { date: f.date, guests: f.guests, geo });
+  const routeFailed = routeFailedKey !== null && routeFailedKey === routeKey({ date: f.date, guests: f.guests, geo });
+
+  // PICKUP DATE CHECK (audit W22/B123): pickup had no capacity check. The answer is a WARNING, never a block
+  // (owner decision W22-2 as modified) — the order is flagged for the catering manager to accept or refuse.
+  const [pickupCheck, setPickupCheck] = useState<{ key: string; bookable: boolean } | null>(null);
+  const pickupKey = `${f.locationId}|${f.date}|${Number(f.guests) || 0}`;
+  useEffect(() => {
+    if (mode !== "new" || f.fulfillment !== "pickup" || !f.locationId || !f.date) return;
+    let alive = true;
+    const key = pickupKey;
+    const timer = window.setTimeout(() => {
+      checkPickupDateAction({ locationId: f.locationId, eventDate: f.date, headcount: Number(f.guests) || null })
+        .then((r) => { if (alive) setPickupCheck({ key, bookable: r.bookable }); })
+        .catch(() => { /* advisory: no warning on a failed check */ });
+    }, 400);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [mode, f.fulfillment, f.locationId, f.date, f.guests, pickupKey]);
+  const pickupDateWarning = f.fulfillment === "pickup" && pickupCheck?.key === pickupKey && !pickupCheck.bookable;
+  const deliveryDateWarning = f.fulfillment === "delivery" && liveRoute?.status === "routed" && liveRoute.dateUnavailable === true;
+
+  // Re-route when the date or the guest count changes after the pin is placed (debounced), so the
+  // shop the order is sent to always matches the date and headcount it is sent with.
+  useEffect(() => {
+    if (!deliveryNodesExist || f.fulfillment !== "delivery" || !geo) return;
+    const key = routeKey({ date: f.date, guests: f.guests, geo });
+    // A request that failed for these exact inputs waits for the customer's Try again (no silent retry loop).
+    if (route?.key === key || latestRouteKey.current === key || routeFailedKey === key) return;
+    const timer = window.setTimeout(() => { void runRoute(geo.lat, geo.lng, f.date, f.guests); }, 400);
+    return () => window.clearTimeout(timer);
+    // runRoute reads only its arguments and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deliveryNodesExist, f.fulfillment, f.date, f.guests, geo, route]);
 
   // locate: button-triggered Nominatim geocode then route. One request, no per-keystroke.
   const locate = async () => {
@@ -152,16 +201,11 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
         const lat = Number(first.lat);
         const lng = Number(first.lon);
         setGeo({ lat, lng });
-        const res = await routeDeliveryAction({
-          lat,
-          lng,
-          eventDate: f.date || null,
-          headcount: Number(f.guests) || null,
-        });
-        setRoute(res);
+        // The same routing path as every re-route: a failure shows "Try again", never a silent dead end.
+        await runRoute(lat, lng, f.date, f.guests);
       }
     } catch {
-      /* non-fatal: user can drag the pin */
+      /* geocode failed — non-fatal: user can retry Locate or drag the pin */
     } finally {
       setLocating(false);
     }
@@ -169,13 +213,14 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
 
   // Derive the fulfilling locationId for the new-flow delivery path.
   const routedLocationId =
-    deliveryNodesExist && f.fulfillment === "delivery" && route?.status === "routed"
-      ? route.locationId
+    deliveryNodesExist && f.fulfillment === "delivery" && liveRoute?.status === "routed"
+      ? liveRoute.locationId
       : null;
 
-  // canSubmit: for the new delivery flow, block if no routed node yet.
+  // canSubmit: for the new delivery flow, block until a node is routed FOR THE CURRENT inputs
+  // (a re-route in flight blocks too).
   const deliveryBlocked =
-    deliveryNodesExist && f.fulfillment === "delivery" && route?.status !== "routed";
+    deliveryNodesExist && f.fulfillment === "delivery" && (locating || liveRoute?.status !== "routed");
 
   const canSubmit =
     mode === "returning"
@@ -399,21 +444,46 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
                                   lng={geo.lng}
                                   onPinChange={(lat, lng) => {
                                     setGeo({ lat, lng });
-                                    void runRoute(lat, lng);
+                                    void runRoute(lat, lng, f.date, f.guests);
                                   }}
                                 />
                                 <p className="text-xs text-co-text-muted">
                                   {t("order.route.drag_hint" as TranslationKey)}
                                 </p>
-                                {route && (
+                                {!liveRoute && !routeFailed && (locating || route) && (
+                                  <p className="text-sm font-semibold text-co-text-muted">
+                                    {t("order.route.rerouting" as TranslationKey)}
+                                  </p>
+                                )}
+                                {routeFailed && (
+                                  <div className="flex flex-wrap items-center gap-3 rounded-xl border-2 border-co-warning bg-co-warning-surface px-3 py-2" role="alert">
+                                    <p className="flex-1 text-sm font-semibold text-co-warning-text">
+                                      {t("order.route.failed" as TranslationKey)}
+                                    </p>
+                                    <button
+                                      type="button"
+                                      disabled={locating}
+                                      onClick={() => void runRoute(geo.lat, geo.lng, f.date, f.guests)}
+                                      className="flex min-h-[44px] items-center rounded-xl border-2 border-co-border-2 bg-co-surface px-4 text-sm font-bold text-co-text transition hover:bg-co-gold/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      {t("order.route.retry" as TranslationKey)}
+                                    </button>
+                                  </div>
+                                )}
+                                {deliveryDateWarning && (
+                                  <p className="rounded-xl border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-sm font-semibold text-co-warning-text" role="status">
+                                    {t("order.start.date_warning" as TranslationKey)}
+                                  </p>
+                                )}
+                                {liveRoute && (
                                   <p className={`text-sm font-semibold ${
-                                    route.status === "routed"
+                                    liveRoute.status === "routed"
                                       ? "text-co-text"
                                       : "text-co-cta-text"
                                   }`}>
-                                    {route.status === "routed"
-                                      ? t("order.route.in_zone" as TranslationKey, { location: route.locationName })
-                                      : route.status === "out_of_zone"
+                                    {liveRoute.status === "routed"
+                                      ? t("order.route.in_zone" as TranslationKey, { location: liveRoute.locationName })
+                                      : liveRoute.status === "out_of_zone"
                                       ? t("order.route.out_of_zone" as TranslationKey)
                                       : t("order.route.no_capacity" as TranslationKey)}
                                   </p>
@@ -518,6 +588,12 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
                       </Field>
                     )}
 
+                    {pickupDateWarning && (
+                      <p className="rounded-xl border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-sm font-semibold text-co-warning-text" role="status">
+                        {t("order.start.date_warning" as TranslationKey)}
+                      </p>
+                    )}
+
                     {/* Dietary notes */}
                     <Field label="Dietary & allergen notes (optional)">
                       <textarea
@@ -569,7 +645,7 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
                           // FR-b geo + routing fields
                           geoLat: geo?.lat ?? null,
                           geoLng: geo?.lng ?? null,
-                          fulfillmentRouted: route?.status === "routed",
+                          fulfillmentRouted: liveRoute?.status === "routed",
                           // ⑤ storefront carry-through (item + qty; server re-resolves + re-prices)
                           preselect: preselect.length > 0 ? preselect : null,
                         },
