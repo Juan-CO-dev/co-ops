@@ -42,7 +42,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import type { AuditAction } from "@/lib/audit-actions";
 import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
-import { loadMeasures, loadShopPackEpochs, loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadMeasures, loadShopPackEpochsAt, loadSkuPackChains } from "@/lib/prep-consumption";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
 import { loadProductIndex } from "@/lib/products";
 import { WALKER_SKU_COLUMNS, perOrderUnitOz } from "@/lib/ordering";
@@ -363,6 +363,18 @@ export async function loadDemandInputs(
   const priorFrom = addDaysEt(runDateEt, -PRIOR_LOOKBACK_DAYS);
   const budgetFrom = addDaysEt(runDateEt, -DYNAMIC_PARS.BUDGET_WINDOW_DAYS);
 
+  // ⑮ THE PACK EPOCH FIRST — before EVERY pack-dependent read (audit W18/B106, fix rounds 1 + 2).
+  //    A pack change bumps the epoch IN THE SAME TRANSACTION as the chain, the flat mirror and the par
+  //    conversion (0259 sku_pack_epoch_bump: +1, never reset), so an epoch read before all of them can
+  //    only be older than or equal to the data's. An older stamp makes the walk drop the row
+  //    (ledgerEpochStands) and leaves an auto par stale at read time: safe. Read after ANY of them, a
+  //    change committing in between would stamp the NEW epoch on an OLD term, and the walk would offer
+  //    it. The pack-dependent reads are: the universe ① (the GLOBAL pars and the flat pack fields — fix
+  //    round 1 missed it), the overlay ② (the shop's converted pars, the machine lane) and the chains
+  //    ⑩. Epoch first, everything else after. The universe is not known yet, so this reads the shop's
+  //    whole epoch map (no id list; bounded by the catalog) and keeps the routable SKUs below.
+  const shopPackEpochs = await loadShopPackEpochsAt(locationId);
+
   // ① The par'd SKU universe. Same column list the walker reads (one spelling), plus the
   //    three per-SKU data columns this arc added. No `.in()` id list.
   //    The ONE universe (global par OR this shop's human par; audit W18/B025), the walker's own.
@@ -387,13 +399,12 @@ export async function loadDemandInputs(
     locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1),
   });
 
-  // ⑮ THE PACK EPOCH FIRST (audit W18/B106 fix round 1), before the overlay and the pack chains it
-  //    stamps. A pack change bumps the epoch IN THE SAME TRANSACTION as the chain and the par
-  //    conversion (0259 sku_pack_epoch_bump: +1, never reset), so an epoch read before those reads can
-  //    only be older than or equal to the data's. An older stamp makes the walk drop the row
-  //    (ledgerEpochStands) and leaves an auto par stale at read time: safe. Read AFTER, a change
-  //    committing in between would stamp the NEW epoch on OLD-case terms, and the walk would offer it.
-  const packEpochBySku = await loadShopPackEpochs(skuIds, locationId);
+  // ⑮ (read FIRST, above) scoped to this run's SKUs — the map's shape is unchanged (absent = 0).
+  const packEpochBySku = new Map<string, number>();
+  for (const id of skuIds) {
+    const e = shopPackEpochs.get(id);
+    if (e !== undefined) packEpochBySku.set(id, e);
+  }
 
   const [
     overlayBySku, depletionRows, salesEventDates, signalRows,
@@ -466,8 +477,8 @@ export async function loadDemandInputs(
 
   if (actionRows.error) throw new Error(`loadDemandInputs suggestion actions: ${actionRows.error.message}`);
   // CATALOG PHASE 2a (D3): the epoch stamp that retires an auto par computed in any other pack epoch
-  // (one chunked read for the whole shop — the batch law holds).
-  // The same map (⑮, read before the overlay and the chains) stamps every ledger row
+  // (one paged read for the whole shop — the batch law holds).
+  // The same map (⑮, read before the universe, the overlay and the chains) stamps every ledger row
   // (`detail.pack_epoch`, audit W18/B106): the walk drops a row computed in an older pack, whose
   // `per_order_unit_oz` and `current_par` count a case size this shop no longer receives.
   stampEffectivePack(overlayBySku, packEpochBySku);

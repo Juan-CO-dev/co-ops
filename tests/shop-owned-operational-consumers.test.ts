@@ -12,7 +12,7 @@ vi.mock("@/lib/operational-task-access", () => ({ canDoOperationalTask: vi.fn(as
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/prep-consumption", () => ({
   loadMeasures: vi.fn(async () => new Map()), loadSkuPackChains: vi.fn(async () => new Map()),
-  loadShopPackEpochs: vi.fn(async () => new Map()),
+  loadShopPackEpochs: vi.fn(async () => new Map()), loadShopPackEpochsAt: vi.fn(async () => new Map()),
 }));
 vi.mock("@/lib/vendor-rhythm", () => ({
   loadRhythmByVendor: walkerMocks.rhythms,

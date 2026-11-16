@@ -208,6 +208,12 @@ export async function loadParSuggestions(
     loadAllCutoffsByVendor(sb, vendorIds),
     // The shop's live pack epoch per ledger SKU (W18/B106): a row computed in an older pack is
     // dropped below, never offered in the old case size. One chunked read.
+    // ORDER (fix round 2 sweep): reading this AFTER the ledger is safe here, unlike the nightly
+    // loader. Nothing pack-dependent is read live on this path — every term (current par, order-unit
+    // oz, rates) comes from the ledger row, which carries the epoch it was computed in; this epoch
+    // only VALIDATES that stamp. A change committing between the two reads makes them differ and the
+    // row drops; one committing after both is refused by Accept, which re-checks the epoch under the
+    // pack writers' SKU lock (0324 apply_par_suggestion_accept).
     loadShopPackEpochs([...new Set([...latest.values()].map((r) => r.sku_id))], locationId),
   ]);
 
