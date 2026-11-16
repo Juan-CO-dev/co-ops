@@ -78,11 +78,13 @@ describe("closed list of content_hash sites", () => {
     const sites: string[] = [];
     for (const file of files) {
       readFileSync(file, "utf8").split("\n").forEach((line, i) => {
-        if (/\bcontent_hash\s*:/.test(line) && !/^\s*(\/\/|\*)/.test(line)) sites.push(`${file.replaceAll("\\", "/")}:${i + 1}:${/toastContentHash\(/.test(line) ? "ok" : "BAD"}`);
+        // A value assignment, not a type annotation (`content_hash: string`) and not a comment.
+        if (/\bcontent_hash\s*:(?!\s*string\b)/.test(line) && !/^\s*(\/\/|\*)/.test(line)) sites.push(`${file.replaceAll("\\", "/")}:${i + 1}:${/toastContentHash\(/.test(line) ? "ok" : "BAD"}`);
       });
     }
     expect(sites.filter((s) => s.endsWith("BAD"))).toEqual([]);
-    expect(sites.map((s) => s.replace(/:\d+:ok$/, ""))).toEqual(["lib/toast/capture-modified.ts", "lib/toast/capture.ts"]);
+    // The two persisted writers (day capture, modified sweep) plus the read-only canary.
+    expect(sites.map((s) => s.replace(/:\d+:ok$/, "")).sort()).toEqual(["lib/toast/capture-modified.ts", "lib/toast/capture.ts", "lib/toast/capture.ts"]);
   });
   it("no Toast capture module or script hashes JSON except the helper", () => {
     const scope = files.filter((f) => /^(lib[\\/]toast[\\/]|scripts[\\/].*toast)/.test(f));
