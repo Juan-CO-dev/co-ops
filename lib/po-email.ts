@@ -46,7 +46,7 @@ import {
   recordPlacement,
 } from "@/lib/purchase-orders";
 import { emailOrderingAvailable, isPlausibleEmail, poOrderIdempotencyKey, type OrderEmailPreview } from "@/lib/po-email-shared";
-import { providerSendOutcome } from "@/lib/email-outcome-shared";
+import { providerSendOutcome } from "@/lib/provider-send-outcome-shared";
 
 // Re-export the pure gate + preview type so tests + server callers have one import site;
 // the client (PoPanel) imports OrderEmailPreview from the shared leaf directly.
@@ -373,7 +373,7 @@ export async function sendOrderEmail(actor: AuthContext, poId: string): Promise<
   // W19/B108 — AN UNCLEAR ANSWER IS NOT A FAILURE. A lost response, a 5xx or `application_error` can arrive after
   // Resend already sent the email, and the revert puts the PO back to confirmed for a retry. So the send carries a
   // per-confirmation idempotency key (a retry within Resend's 24 h returns the first message: one email, one
-  // transmission row), and the answer is classified by the ONE shared reading (lib/email-outcome-shared.ts):
+  // transmission row), and the answer is classified by the ONE shared reading (lib/provider-send-outcome-shared.ts):
   //   sent -> placed, as before; a definite rejection -> 502 `send_failed` (nothing went out);
   //   uncertain -> 502 `send_uncertain`; same key, different body (recipients changed between taps) -> 409
   //   `send_conflict`. Both unclear outcomes mark the PO "email unconfirmed" (owner decision W19-1 a + note), shown

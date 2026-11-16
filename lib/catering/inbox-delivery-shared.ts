@@ -1,4 +1,4 @@
-import { providerSendOutcome, type ProviderSendOutcome } from "@/lib/email-outcome-shared";
+import { providerSendOutcome, type ProviderSendOutcome } from "@/lib/provider-send-outcome-shared";
 import type { InboxHeaders } from "./inbox-content-shared";
 import type { InboxReason } from "./inbox-shared";
 
@@ -47,9 +47,9 @@ export function inboxDeliveryConfig(mode: InboxMode | null | undefined, env: Inb
 
 // The provider-outcome classifier is shared with the vendor order email (W19/B108); it lives in a neutral leaf and is
 // re-exported here under its catering names so every existing import keeps working.
-export { PROVIDER_DEFINITE_REJECTIONS, PROVIDER_UNCERTAIN } from "@/lib/email-outcome-shared";
+export { PROVIDER_DEFINITE_REJECTIONS, PROVIDER_UNCERTAIN } from "@/lib/provider-send-outcome-shared";
 export type InboxDeliveryOutcome = ProviderSendOutcome;
-/** Classify one provider answer (see lib/email-outcome-shared.ts). */
+/** Classify one provider answer (see lib/provider-send-outcome-shared.ts). */
 export const inboxDeliveryOutcome = providerSendOutcome;
 
 const MSG_ID = /^<[!-=?-~]{1,200}@[!-=?-~]{1,250}>$/;

@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
-import { providerSendOutcome } from "@/lib/email-outcome-shared";
+import { providerSendOutcome } from "@/lib/provider-send-outcome-shared";
 import { poOrderIdempotencyKey } from "@/lib/po-email-shared";
 
 const source = readFileSync("lib/po-email.ts", "utf8");
