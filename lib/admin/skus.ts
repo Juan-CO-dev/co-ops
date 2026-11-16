@@ -1312,12 +1312,34 @@ export async function upsertLocationSkuSettings(
   if (existing) {
     // Update-in-place — a revert-to-all-inherit nulls the three fields, keeping the
     // row (never delete; append-only).
-    const { error, count } = await sb
+    //
+    // COMPARE-AND-SET on the three human columns AS READ (audit W18/B189): the `expected`
+    // check above ran against a read, and a second manager's save can commit between that
+    // read and this write. Keyed on the id alone, the second writer silently won. The raw
+    // PostgREST values are compared (never `toNum`), so a numeric string matches itself.
+    let update = sb
       .from("location_sku_settings")
       .update(payloadFields, { count: "exact" })
       .eq("id", existing.id);
+    update = existing.active_override === null ? update.is("active_override", null) : update.is("active_override", existing.active_override);
+    update = existing.weekday_par === null ? update.is("weekday_par", null) : update.eq("weekday_par", existing.weekday_par);
+    update = existing.weekend_par === null ? update.is("weekend_par", null) : update.eq("weekend_par", existing.weekend_par);
+    const { error, count } = await update;
     if (error) throw new Error(`upsertLocationSkuSettings update failed: ${error.message}`);
-    if (count === 0) throw new AdminSkuError(404, "sku_not_found", "Overlay row vanished");
+    if (count === 0) {
+      // Lost the race, or the row is gone: re-read to tell which.
+      const { data: still, error: reErr } = await sb
+        .from("location_sku_settings")
+        .select("id")
+        .eq("location_id", input.locationId)
+        .eq("sku_id", input.skuId)
+        .maybeSingle<{ id: string }>();
+      if (reErr) throw new Error(`upsertLocationSkuSettings re-read failed: ${reErr.message}`);
+      if (still) {
+        throw new AdminSkuError(409, "overlay_changed", "This overlay changed since it was loaded — reload and re-apply");
+      }
+      throw new AdminSkuError(404, "sku_not_found", "Overlay row vanished");
+    }
   } else {
     // Insert only when there's something to store — a first write that's all-inherit
     // is a no-op (nothing overrides the global; no row needed).
@@ -1325,6 +1347,11 @@ export async function upsertLocationSkuSettings(
     const { error } = await sb
       .from("location_sku_settings")
       .insert({ location_id: input.locationId, sku_id: input.skuId, ...payloadFields });
+    // Two concurrent first writes: the (location_id, sku_id) UNIQUE refuses the loser, which
+    // is the same "changed since you loaded it" answer, never a 500 (audit W18/B189).
+    if (error && (error as { code?: string }).code === "23505") {
+      throw new AdminSkuError(409, "overlay_changed", "This overlay changed since it was loaded — reload and re-apply");
+    }
     if (error) throw new Error(`upsertLocationSkuSettings insert failed: ${error.message}`);
   }
 
