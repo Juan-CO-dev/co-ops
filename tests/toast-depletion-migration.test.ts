@@ -36,8 +36,12 @@ describe("0222 capture depletion publication", () => {
 
 describe("CC review: the shared open-item guid is never superseded by a guid mapping", () => {
   const src = readFileSync("lib/admin/toast-map.ts", "utf8");
-  it.each(["manualMap", "confirmMapping"])("%s refuses before it supersedes any rival", (fn) => {
-    const body = src.slice(src.indexOf(`export async function ${fn}(`));
+  // confirmMapping supersedes in SQL since W27 / B230 (0335: the open_item_guid raise precedes the supersede — pinned
+  // in tests/toast-map-confirm-migration.test.ts); its pre-0335 fallback keeps the TS order.
+  it.each(["manualMap", "confirmMappingLegacy"])("%s refuses before it supersedes any rival", (fn) => {
+    const at = src.indexOf(`async function ${fn}(`);
+    expect(at).toBeGreaterThan(0);
+    const body = src.slice(at);
     const guard = body.indexOf('r.disposition === "open_item"');
     const supersede = body.indexOf(".update({ active: false }");
     expect(guard).toBeGreaterThan(0);
