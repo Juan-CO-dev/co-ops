@@ -40,3 +40,8 @@ it("propagates failed apply/retry persistence so the provider can retry", async 
   await expect(processEzcaterDelivery(body, true)).rejects.toThrow("apply_failed");
   expect(rows).toHaveLength(1);
 });
+it("W23/B125: an unmapped caterer is recorded on the receipt and answered normally (no retry)", async () => {
+  vi.mocked(syncEzcaterOrder).mockResolvedValue({ lead_id: null, result: "unmapped_location", sync_error: "unmapped_location" });
+  expect(await processEzcaterDelivery(body, true)).toEqual({ result: "unmapped_location" });
+  expect(rows[0]).toMatchObject({ processing_result: "unmapped_location", lead_id: null });
+});

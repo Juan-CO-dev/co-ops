@@ -73,7 +73,7 @@ export function portalIdentity(env: LandingHostEnv): URL | null {
 
 /** Finite customer API inventory, traced from app/order. No blanket API bypass. */
 export const PORTAL_API_PATHS = [
-  '/api/portal/magic-link/request', '/api/portal/magic-link/verify',
+  '/api/portal/magic-link/request', '/api/portal/magic-link/verify', '/api/portal/logout',
   '/api/portal/order/draft/lines', '/api/portal/order/draft/preview', '/api/portal/order/draft/submit',
 ] as const;
 export function portalPathDecision(path: string): 'redirect' | 'allow' | 'deny' {

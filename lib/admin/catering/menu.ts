@@ -123,10 +123,15 @@ export async function setCateringFlags(
     if (!gate.ok) throw new AdminCateringMenuError(gate.status, gate.code);
   }
 
+  // W23/B128: the explicit change wins. Switching an item off the catering menu drops catering-only;
+  // otherwise catering-only implies available (the DB CHECK only => available).
+  if (changes.cateringAvailable === false && changes.cateringOnly === true) {
+    throw new AdminCateringMenuError(400, "invalid_flags", "An item can't be catering-only while off the catering menu");
+  }
   let available = changes.cateringAvailable ?? cur.catering_available;
   let only = changes.cateringOnly ?? cur.catering_only;
-  if (only) available = true; // catering-only implies available
-  if (!available) only = false; // dropping availability drops only
+  if (changes.cateringAvailable === false) only = false; // dropping availability drops only
+  else if (only) available = true; // catering-only implies available
 
   const update: Record<string, unknown> = { catering_available: available, catering_only: only, updated_by: actor.user.id, updated_at: new Date().toISOString() };
   if (changes.serves !== undefined) {

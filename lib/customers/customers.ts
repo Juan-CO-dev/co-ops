@@ -32,6 +32,7 @@ import { etCalendarDate } from "@/lib/operational-day";
 import { monthlyVisits, shopSplit, orderHistory, cateringSummary, liveOrders, type DetailOrder } from "./profile-detail-shared";
 import { cateringAccounts, parseCateringParams, sortCateringAccounts, type CateringOrder, type CateringPerson } from "./catering-accounts-shared";
 import { MARKETPLACE_LINK_REASONS, type MarketplaceLinkReason } from "./marketplace-link-shared";
+import { isEzcaterOrderCancelled } from "@/lib/ezcater/lifecycle-shared";
 
 export * from "./access-shared";
 
@@ -706,11 +707,24 @@ export async function linkCateringOrders(actor: CustomerActor, meta: RequestMeta
   const sb = deps.client ?? getServiceRoleClient();
   const catering = await selectAllRows<{ id: string; location_id: string; order_date: string; amount_cents: number | null; catering_customers: unknown }>(
     (from, to) => sb.from("catering_orders").select("id,location_id,order_date,amount_cents,catering_customers!inner(name,email,phone)").order("id").range(from, to));
-  const ez = await selectAllRows<{ id: string; location_id: string; event_date: string | null; total_cents: number | null; ezcater_order_contacts: unknown }>(
-    (from, to) => sb.from("ezcater_orders").select("id,location_id,event_date,total_cents,ezcater_order_contacts(contact)").order("id").range(from, to));
+  const ez = await selectAllRows<{ id: string; location_id: string; event_date: string | null; total_cents: number | null; status: string | null;
+    pending_event_key: string | null; lead_id: string | null; ezcater_order_contacts: unknown }>(
+    (from, to) => sb.from("ezcater_orders").select("id,location_id,event_date,total_cents,status,pending_event_key,lead_id,ezcater_order_contacts(contact)").order("id").range(from, to));
+  // W23/B127: a cancelled ezCater order is not a customer order. Load the lead stages (chunked:
+  // never an unbounded id list in the request line) and skip cancelled orders before linking.
+  const leadIds = [...new Set(ez.map((o) => o.lead_id).filter((x): x is string => !!x))];
+  const stageByLead = new Map<string, string>();
+  for (let i = 0; i < leadIds.length; i += 100) {
+    const chunk = leadIds.slice(i, i + 100);
+    const leads = await selectAllRows<{ id: string; stage: string }>((from, to) =>
+      sb.from("catering_pipeline").select("id,stage").in("id", chunk).order("id").range(from, to));
+    for (const l of leads) stageByLead.set(l.id, l.stage);
+  }
+  const live = ez.filter((o) => !isEzcaterOrderCancelled({ status: o.status, pendingEventKey: o.pending_event_key,
+    leadStage: o.lead_id ? stageByLead.get(o.lead_id) ?? null : null }));
   const rows = [
     ...catering.map((o) => cateringRow("catering", o.id, o.location_id, o.order_date, o.amount_cents, contactOf(one(o.catering_customers)))),
-    ...ez.filter((o) => o.event_date).map((o) => {
+    ...live.filter((o) => o.event_date).map((o) => {
       const c = one(one(o.ezcater_order_contacts)?.contact);
       return cateringRow("ezcater", o.id, o.location_id, o.event_date!, o.total_cents, contactOf(c));
     }),
@@ -723,9 +737,22 @@ export async function linkCateringOrders(actor: CustomerActor, meta: RequestMeta
     linked += r.linked;
     skipped += r.skipped;
   }
+  // Links made before an order was cancelled (or before this fix) are marked voided — never
+  // deleted — and an un-cancelled order's mark is cleared (0330; 0312's voided_at column). Until
+  // both are applied this step reports null and changes nothing.
+  const voidSync = await syncCancelledEzcaterLinks(sb);
   await audit({ actorId: actor.userId, actorRole: actor.role, action: "customer.catering_link", resourceTable: "customer_orders", resourceId: null,
-    metadata: { linked, skipped, candidates: rows.length }, ...meta });
-  return { linked, skipped };
+    metadata: { linked, skipped, candidates: rows.length, cancelled_skipped: ez.length - live.length,
+      voided: voidSync?.voided ?? null, restored: voidSync?.restored ?? null }, ...meta });
+  return { linked, skipped, cancelledSkipped: ez.length - live.length, voided: voidSync?.voided ?? null, restored: voidSync?.restored ?? null };
+}
+
+/** 0330 customer_orders_sync_ezcater_cancelled; null while 0330 (function) or 0312 (voided_at) is missing. */
+async function syncCancelledEzcaterLinks(sb: Client): Promise<{ voided: number; restored: number } | null> {
+  const { data, error } = await sb.rpc("customer_orders_sync_ezcater_cancelled", {});
+  if (error && ["PGRST202", "42883", "42703"].includes(String(error.code))) return null;
+  if (error) rpcError(error);
+  return data as { voided: number; restored: number };
 }
 
 /** PostgREST embeds arrive as an object or a one-element array depending on the FK shape. */

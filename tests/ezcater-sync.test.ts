@@ -126,3 +126,26 @@ it("does not call a genuine 0225 identity mismatch missing schema", async () => 
   vi.mocked(getServiceRoleClient).mockReturnValue({ rpc, from: () => probe } as unknown as ReturnType<typeof getServiceRoleClient>);
   await expect(syncEzcaterOrder(uuid, "caterer")).rejects.toThrow("apply_failed");
 });
+
+// W23/B125: an order for a caterer no active shop carries is parked, not retried forever.
+const unmapped = { data: null, error: { code: "P0001", message: "unmapped_location" } };
+it("an unmapped caterer is recorded as unmapped_location, without the p_error retry call", async () => {
+  rpc.mockImplementation(() => ({ abortSignal: () => Promise.resolve(unmapped) }));
+  expect(await syncEzcaterOrder(uuid, "caterer", { eventKey: "submitted" }))
+    .toEqual({ lead_id: null, result: "unmapped_location", sync_error: "unmapped_location" });
+  expect(rpc).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(audit).mock.calls.some(([a]) => a.action === "ezcater.order_synced"
+    && (a.metadata as { result?: string }).result === "unmapped_location")).toBe(true);
+});
+it("a failed fetch for an unmapped caterer is parked too (no throw)", async () => {
+  vi.mocked(fetchEzcaterOrder).mockRejectedValue(new EzcaterApiError(502, "network_error"));
+  rpc.mockImplementation(() => ({ abortSignal: () => Promise.resolve(unmapped) }));
+  expect(await syncEzcaterOrder(uuid, "caterer", { eventKey: "cancelled" }))
+    .toMatchObject({ lead_id: null, result: "unmapped_location" });
+  expect(rpc).toHaveBeenCalledTimes(1);
+  expect(rpc.mock.calls[0]?.[1]).toMatchObject({ p_error: "network_error" });
+});
+it("any other apply error still throws for a provider retry", async () => {
+  rpc.mockImplementation(() => ({ abortSignal: () => Promise.resolve({ data: null, error: { code: "P0001", message: "invalid_order" } }) }));
+  await expect(syncEzcaterOrder(uuid, "caterer")).rejects.toThrow("apply_failed");
+});

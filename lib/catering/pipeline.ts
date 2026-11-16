@@ -15,6 +15,7 @@
 
 import { randomUUID } from "node:crypto";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { lockLocationContext } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -30,6 +31,7 @@ import { orderChanges } from "@/lib/catering/order-update-email-shared";
 import { PIPELINE_STAGES, type PipelineStage, canTransition, normalizeLeadEmail, normalizeLeadPhone } from "./pipeline-shared";
 import { resolveOrCreateContact } from "./companies";
 import { isLeadSource } from "./intake-shared";
+import { ezcaterReopenTarget } from "@/lib/ezcater/lifecycle-shared";
 // Client-safe stage vocabulary lives in pipeline-shared.ts; re-exported for
 // existing server consumers.
 export { PIPELINE_STAGES, type PipelineStage };
@@ -259,6 +261,11 @@ export interface PipelineBoardLead extends PipelineLead {
 
 /** Ids per `.in()` read — keeps the request line well under the 414 found at ~220 ids. */
 const QUOTE_STATUS_CHUNK = 100;
+function chunked<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
 
 /** The current (latest non-superseded) quote status per lead id. Status only — no contact. */
 async function currentQuoteStatuses(
@@ -322,65 +329,83 @@ export async function searchPipeline(actor: AuthContext, args: { query: string }
   const customerReadable = (primaryLocationId: string | null) =>
     !!reader && canReadCateringContact(reader, primaryLocationId);
 
+  // W23/B208: no read here spends an unbounded id list in the request line (a broad term like
+  // "gmail" put ~250 customer ids into one .or() and the gateway refused it), and none truncates
+  // at the 1,000-row cap: id filters go in chunks of QUOTE_STATUS_CHUNK, row reads page, and every
+  // enrichment read checks its error instead of silently dropping an email or a quote status.
   // 1. Customer ids matching email/phone/name, plus customers of companies whose name matches —
   //    readable customers only.
   const matchedCustomerIds = new Set<string>();
-  const { data: custRows, error: cErr } = await sb
+  const custRows = await selectAllRows<{ id: string; primary_location_id: string | null }>((from, to) => sb
     .from("catering_customers")
     .select("id, primary_location_id")
     .or(`email.ilike.${term},phone.ilike.${term},name.ilike.${term}`)
-    .returns<Array<{ id: string; primary_location_id: string | null }>>();
-  if (cErr) throw new Error(`searchPipeline customers: ${cErr.message}`);
-  for (const c of custRows ?? []) if (customerReadable(c.primary_location_id)) matchedCustomerIds.add(c.id);
+    .order("id", { ascending: true }).range(from, to)
+    .returns<Array<{ id: string; primary_location_id: string | null }>>());
+  for (const c of custRows) if (customerReadable(c.primary_location_id)) matchedCustomerIds.add(c.id);
 
-  const { data: compRows, error: coErr } = await sb
+  const compRows = await selectAllRows<{ id: string }>((from, to) => sb
     .from("catering_companies")
     .select("id")
     .ilike("name", term)
-    .returns<Array<{ id: string }>>();
-  if (coErr) throw new Error(`searchPipeline companies: ${coErr.message}`);
-  const companyIds = (compRows ?? []).map((c) => c.id);
-  if (companyIds.length) {
-    const { data: compCust, error: ccErr } = await sb
+    .order("id", { ascending: true }).range(from, to)
+    .returns<Array<{ id: string }>>());
+  const companyIds = compRows.map((c) => c.id);
+  for (const chunk of chunked(companyIds, QUOTE_STATUS_CHUNK)) {
+    const compCust = await selectAllRows<{ id: string; primary_location_id: string | null }>((from, to) => sb
       .from("catering_customers")
       .select("id, primary_location_id")
-      .in("company_id", companyIds)
-      .returns<Array<{ id: string; primary_location_id: string | null }>>();
-    if (ccErr) throw new Error(`searchPipeline company customers: ${ccErr.message}`);
-    for (const c of compCust ?? []) if (customerReadable(c.primary_location_id)) matchedCustomerIds.add(c.id);
+      .in("company_id", chunk)
+      .order("id", { ascending: true }).range(from, to)
+      .returns<Array<{ id: string; primary_location_id: string | null }>>());
+    for (const c of compCust) if (customerReadable(c.primary_location_id)) matchedCustomerIds.add(c.id);
   }
 
-  // 2. Search leads: own text fields OR matched customer ids, location-scoped.
-  const orParts = [`contact_name.ilike.${term}`, `company.ilike.${term}`, `contact_phone.ilike.${term}`, `event_name.ilike.${term}`];
-  if (matchedCustomerIds.size) orParts.push(`customer_id.in.(${[...matchedCustomerIds].join(",")})`);
-  let q = sb.from("catering_pipeline").select(LEAD_COLS);
+  // 2. Search leads: own text fields OR matched customer ids, location-scoped. The OR is split
+  //    into one text query plus one query per customer-id chunk, each AND-ed with the same scope,
+  //    then merged by id — the same row set as the single OR, without the unbounded list.
   const scope = await readScopeOr(actor);
-  if (scope) q = q.or(scope); // AND-ed with the identity OR-group below (two .or() calls = AND of groups)
-  q = q.or(orParts.join(","));
-  const { data: leadRows, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
-  if (error) throw new Error(`searchPipeline leads: ${error.message}`);
-  const leads = await withLocationNames(sb, (leadRows ?? []).map(mapLead));
+  const textOr = [`contact_name.ilike.${term}`, `company.ilike.${term}`, `contact_phone.ilike.${term}`, `event_name.ilike.${term}`].join(",");
+  const leadQuery = (customerIds: string[] | null) =>
+    selectAllRows<DbLeadRow>((from, to) => {
+      let q = sb.from("catering_pipeline").select(LEAD_COLS);
+      if (scope) q = q.or(scope); // AND-ed with the identity filter below (two filters = AND)
+      q = customerIds ? q.in("customer_id", customerIds) : q.or(textOr);
+      return q.order("created_at", { ascending: false }).order("id", { ascending: true }).range(from, to).returns<DbLeadRow[]>();
+    });
+  const byId = new Map<string, DbLeadRow>();
+  for (const r of await leadQuery(null)) byId.set(r.id, r);
+  for (const chunk of chunked([...matchedCustomerIds], QUOTE_STATUS_CHUNK)) {
+    for (const r of await leadQuery(chunk)) byId.set(r.id, r);
+  }
+  const leadRows = [...byId.values()].sort((a, b) =>
+    a.created_at === b.created_at ? (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) : (a.created_at < b.created_at ? 1 : -1));
+  const leads = await withLocationNames(sb, leadRows.map(mapLead));
   if (leads.length === 0) return [];
 
   // 3. Enrich: email (per customer) + current quote (latest non-superseded per lead).
   const custIds = [...new Set(leads.map((l) => l.customerId).filter((x): x is string => !!x))];
   const emailByCustomer = new Map<string, string | null>();
-  if (custIds.length) {
-    const { data } = await sb.from("catering_customers").select("id, email, primary_location_id").in("id", custIds)
+  for (const chunk of chunked(custIds, QUOTE_STATUS_CHUNK)) {
+    const { data, error: eErr } = await sb.from("catering_customers").select("id, email, primary_location_id").in("id", chunk)
       .returns<Array<{ id: string; email: string | null; primary_location_id: string | null }>>();
+    if (eErr) throw new Error(`searchPipeline emails: ${eErr.message}`);
     // An unreadable customer's email is omitted, never returned (review 3).
     for (const c of data ?? []) emailByCustomer.set(c.id, customerReadable(c.primary_location_id) ? c.email : null);
   }
   const leadIds = leads.map((l) => l.id);
   const quoteByLead = new Map<string, { status: string; total_cents: number }>();
-  const { data: qRows } = await sb
-    .from("catering_quotes")
-    .select("pipeline_id, status, total_cents, created_at")
-    .in("pipeline_id", leadIds)
-    .is("superseded_at", null)
-    .order("created_at", { ascending: false })
-    .returns<Array<{ pipeline_id: string; status: string; total_cents: number; created_at: string }>>();
-  for (const qr of qRows ?? []) if (!quoteByLead.has(qr.pipeline_id)) quoteByLead.set(qr.pipeline_id, { status: qr.status, total_cents: qr.total_cents }); // first seen = latest (desc order)
+  // A lead id sits in exactly one chunk, so "first seen per lead in created_at desc" holds per chunk.
+  for (const chunk of chunked(leadIds, QUOTE_STATUS_CHUNK)) {
+    const qRows = await selectAllRows<{ pipeline_id: string; status: string; total_cents: number; created_at: string }>((from, to) => sb
+      .from("catering_quotes")
+      .select("pipeline_id, status, total_cents, created_at")
+      .in("pipeline_id", chunk)
+      .is("superseded_at", null)
+      .order("created_at", { ascending: false }).order("id", { ascending: true }).range(from, to)
+      .returns<Array<{ pipeline_id: string; status: string; total_cents: number; created_at: string }>>());
+    for (const qr of qRows) if (!quoteByLead.has(qr.pipeline_id)) quoteByLead.set(qr.pipeline_id, { status: qr.status, total_cents: qr.total_cents }); // first seen = latest (desc order)
+  }
 
   return leads.map((l) => {
     const quote = quoteByLead.get(l.id);
@@ -550,6 +575,101 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
 }
 
 /** Move a lead to a new stage: mutate the lead's stage + append a stage event. */
+// ── W23/B126: reopen an un-cancelled ezCater lead ────────────────────────────────
+/**
+ * An ezCater order that was cancelled and then UN-cancelled left its lead in Lost for good: the
+ * webhook flags `uncancelled_needs_human`, and the board refuses every move out of Lost
+ * (`canTransition`, unchanged). This is the narrow human path: only an ezCater lead, only from
+ * Lost, only when ezCater's un-cancel is newer than its last loss notification and the order is
+ * no longer cancelled. Target (owner decision W23-1 a): Confirmed when ezCater says "accepted"
+ * (re-reserving prep), else Inquiry. The 0330 RPC `reopen_ezcater_lead` re-checks all of it
+ * under the provider lock and writes the stage + the pipeline event in one transaction.
+ */
+export async function loadEzcaterReopenTarget(sb: ReturnType<typeof getServiceRoleClient>, leadId: string): Promise<"confirmed" | "inquiry" | null> {
+  const { data: lead, error } = await sb.from("catering_pipeline").select("id, stage, lead_source, external_ref")
+    .eq("id", leadId).maybeSingle<{ id: string; stage: string; lead_source: string | null; external_ref: string | null }>();
+  if (error) throw new Error(`loadEzcaterReopenTarget lead: ${error.message}`);
+  if (!lead || lead.stage !== "lost" || lead.lead_source !== "ezcater" || !lead.external_ref) return null;
+  const [order, events] = await Promise.all([
+    sb.from("ezcater_orders").select("status, pending_event_key").eq("provider_uuid", lead.external_ref)
+      .maybeSingle<{ status: string | null; pending_event_key: string | null }>(),
+    sb.from("ezcater_events").select("event_key, received_at").eq("entity_id", lead.external_ref).eq("signature_valid", true)
+      .in("event_key", ["cancelled", "rejected", "failed", "uncancelled"])
+      .returns<Array<{ event_key: string; received_at: string }>>(),
+  ]);
+  if (order.error) throw new Error(`loadEzcaterReopenTarget order: ${order.error.message}`);
+  if (events.error) throw new Error(`loadEzcaterReopenTarget events: ${events.error.message}`);
+  const latest = (keys: string[]) => (events.data ?? []).filter((e) => keys.includes(e.event_key))
+    .map((e) => e.received_at).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
+  return ezcaterReopenTarget({
+    stage: lead.stage, leadSource: lead.lead_source, orderStatus: order.data?.status ?? null,
+    pendingEventKey: order.data?.pending_event_key ?? null,
+    lastLossAt: latest(["cancelled", "rejected", "failed"]), lastUncancelAt: latest(["uncancelled"]),
+  });
+}
+
+const REOPEN_REFUSALS = new Set(["reopen_forbidden", "reopen_not_ezcater", "reopen_lead_moved", "reopen_not_lost", "reopen_no_uncancel", "reopen_still_cancelled", "reopen_target_changed"]);
+
+export async function reopenEzcaterLead(actor: AuthContext, id: string): Promise<{ fromStage: "lost"; toStage: "confirmed" | "inquiry" }> {
+  const sb = getServiceRoleClient();
+  const { data: lead, error: lErr } = await sb.from("catering_pipeline").select("id, location_id")
+    .eq("id", id).maybeSingle<{ id: string; location_id: string | null }>();
+  if (lErr) throw new Error(`reopenEzcaterLead load: ${lErr.message}`);
+  if (!lead) throw new CateringPipelineError(404, "not_found", "Lead not found");
+  assertCanWriteLead(actor, lead.location_id); // before any write or RPC
+  let result: { from_stage: "lost"; to_stage: "confirmed" | "inquiry" } | null = null;
+  // Review r2 (BC-007/BC-040): the target read here is advisory. SQL decides it again under the
+  // provider lock and refuses `reopen_target_changed` when it differs from the one validated below
+  // (an accepted webhook committed in between would otherwise confirm a quote whose prep readiness
+  // was never checked). One re-read + re-check + retry, then the named 409.
+  for (let attempt = 0; attempt < 2 && !result; attempt++) {
+    const expected = await loadEzcaterReopenTarget(sb, id);
+    // Same B7c r5 rule as moveStage: never confirm a quote prep demand cannot read.
+    if (expected === "confirmed") {
+      try { await assertQuoteReadyForPrep(sb, id); }
+      catch (e) {
+        if (e instanceof PrepDemandNeedsRepairError) throw new CateringPipelineError(409, "quote_needs_repair", "This quote was saved during an app update and can't be used for prep yet");
+        throw e;
+      }
+    }
+    // Review r1 (BC-001/BC-007): the RPC re-checks, under the provider lock, that the lead is still at
+    // the shop authorized above; a transfer committed in between is `reopen_lead_moved`, never a reopen
+    // of another shop's order.
+    const { data, error } = await sb.rpc("reopen_ezcater_lead", {
+      p_lead_id: id, p_actor_id: actor.user.id, p_expected_location_id: lead.location_id, p_expected_target: expected,
+    });
+    if (error && ["PGRST202", "42883"].includes(String(error.code))) {
+      throw new CateringPipelineError(503, "reopen_unavailable", "Reopen isn't available yet");
+    }
+    if (error?.message === "reopen_target_changed" && attempt === 0) continue;
+    if (error && REOPEN_REFUSALS.has(error.message)) throw new CateringPipelineError(409, error.message);
+    if (error || !data) throw new Error(`reopenEzcaterLead: ${error?.message ?? "no result"}`);
+    result = data as { from_stage: "lost"; to_stage: "confirmed" | "inquiry" };
+  }
+  if (!result) throw new CateringPipelineError(409, "reopen_target_changed");
+  // The ledger follows the reopen through W22's paths (merge-fix main 11-16), exactly as moveStage does:
+  // Confirmed reserves through the 0329 locked reserve (it re-checks, under the lead's row lock, that the lead
+  // is still confirmed on its live quote); Inquiry releases through the 0329 settle, which writes only while the
+  // lead's CURRENT stage releases — a reopen never settles rows around that rule.
+  let prepReserve: string | null = null;
+  try {
+    if (result.to_stage === "confirmed") prepReserve = await reservePrepDemand(actor, id);
+    else await releasePrepDemand(actor, id);
+  } catch (e) {
+    void audit({
+      actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.sync_failed",
+      resourceTable: "catering_pipeline", resourceId: id,
+      metadata: { to_stage: result.to_stage, error: e instanceof Error ? e.message : String(e) }, ipAddress: null, userAgent: null,
+    });
+  }
+  void audit({
+    actorId: actor.user.id, actorRole: actor.user.role, action: "catering.pipeline.reopen",
+    resourceTable: "catering_pipeline", resourceId: id,
+    metadata: { from_stage: result.from_stage, to_stage: result.to_stage, reason: "ezcater_uncancelled", ...(prepReserve ? { prep_reserve: prepReserve } : {}) }, ipAddress: null, userAgent: null,
+  });
+  return { fromStage: result.from_stage, toStage: result.to_stage };
+}
+
 export async function moveStage(
   actor: AuthContext,
   args: { id: string; toStage: PipelineStage; note?: string | null },
