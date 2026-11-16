@@ -1,7 +1,7 @@
 import "server-only";
-import { createHash } from "node:crypto";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { captureEnabled } from "./capture";
+import { toastContentHash, toastLinePricesEnabled } from "./content-hash";
 import { toastGet } from "./client";
 import { captureBudget, captureErrorCode } from "./capture-runner";
 import { MODIFIED_BATCH_SIZE, MODIFIED_DB_TIMEOUT_MS, MODIFIED_MAX_PAGES, MODIFIED_MAX_WINDOWS,
@@ -27,6 +27,7 @@ async function database<T>(parent: Budget, work: (signal: AbortSignal) => Promis
 async function sweepShop(shop: Shop, budget: Budget): Promise<ShopResult> {
   const result: ShopResult = { locationId: shop.id, windows: 0, pages: 0, changed: 0, error: null };
   const sb = getServiceRoleClient();
+  const linePrices = toastLinePricesEnabled();
   try {
     for (let n = 0; n < MODIFIED_MAX_WINDOWS; n++) {
       const cursor = await database(budget, (signal) => sb.rpc("toast_modified_begin", { p_location_id: shop.id }).abortSignal(signal));
@@ -41,11 +42,11 @@ async function sweepShop(shop: Shop, budget: Budget): Promise<ShopResult> {
         budget.check();
         if (!Array.isArray(raw) || raw.length > 100) throw new Error("capture_bad_page");
         const orders = raw.flatMap((entry) => {
-          const normalized = normalizeModifiedOrder(entry, window);
+          const normalized = normalizeModifiedOrder(entry, window, { linePrices });
           if (!normalized) return [];
           if (seen.has(normalized.order.order_guid)) throw new Error("capture_modified_duplicate_order");
           seen.add(normalized.order.order_guid);
-          return [{ ...normalized, content_hash: createHash("sha256").update(JSON.stringify(normalized)).digest("hex") }];
+          return [{ ...normalized, content_hash: toastContentHash(normalized) }];
         });
         for (let i = 0; i < orders.length; i += MODIFIED_BATCH_SIZE) {
           const changed = await database(budget, (signal) => sb.rpc("toast_modified_save", {

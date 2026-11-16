@@ -1,11 +1,12 @@
 import "server-only";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { lockLocationContext } from "@/lib/locations";
 import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { toastConfigured, toastGet, toastGetPage } from "./client";
 import { normalizeToastOrder } from "./capture-shared";
+import { toastContentHash, toastLinePricesEnabled } from "./content-hash";
 import { backfillDates, captureBudget, captureErrorCode, runCapturePages } from "./capture-runner";
 import { persistCapturedCatering } from "./capture-catering";
 import { persistCapturedCustomers } from "@/lib/customers/capture";
@@ -144,9 +145,10 @@ async function captureDay(locationId: string, date: string, options: { resume?: 
     },
     async save(page, orders) {
       budget.check();
+      const linePrices = toastLinePricesEnabled();
       const normalized = orders.map((raw) => {
-        const order = normalizeToastOrder(raw, date);
-        return { ...order, content_hash: createHash("sha256").update(JSON.stringify(order)).digest("hex") };
+        const order = normalizeToastOrder(raw, date, { linePrices });
+        return { ...order, content_hash: toastContentHash(order) };
       });
       // Identical replay is idempotent even if the first response was lost after commit.
       const pageArgs = { ...args, p_page: page, p_orders: normalized };
