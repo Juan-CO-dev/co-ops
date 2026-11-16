@@ -128,7 +128,8 @@ export default async function PmReportPage({ searchParams }: PageProps) {
       .eq("active", true)
       .in("id", locIds)
       .order("name", { ascending: true });
-    locationUsers = (candidates ?? []) as { id: string; name: string }[];
+    // W09/B060: the viewer never evaluates themselves, so they are not in the add-picker (nor, below, the roster).
+    locationUsers = ((candidates ?? []) as { id: string; name: string }[]).filter((u) => u.id !== auth.user.id);
   }
 
   // D-28: the starting roster is today's presence at this shop (the shift board's people who were

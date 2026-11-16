@@ -59,6 +59,9 @@ const KNOWN_ERROR_CODES = new Set([
   "not_due",
   "status_changed", // guarded setQuoteStatus 409 (stale read) — actionable, not generic
   "quote_expired", // expired→accepted block — needs a revision, not a retry
+  "delivery_unavailable", // self-serve delivery accept: no active zone at the shop (Juan 2026-11-15)
+  "below_delivery_minimum", // self-serve delivery accept: under the zone's minimum
+  "delivery_fee_changed", // self-serve delivery accept: the zones moved since the order was placed
   "invalid_customer", // a client outside the actor's shops (or gone) — pick another client
   "lead_location_mismatch", // W05/B011: the picked lead is at another shop (or gone) — match the shop or the lead
   "generic",
@@ -74,4 +77,17 @@ export function resolveErrorKey(code: string): TranslationKey {
 /** Step-up codes the send route returns when a fresh password re-confirm is needed. */
 export function isStepUpCode(code: string): boolean {
   return code === "step_up_required" || code === "step_up_stale";
+}
+
+/**
+ * Which decision buttons a quote's detail view offers (audit W01/B004). A customer's self-serve
+ * order lands as 'submitted' (lib/portal/draft.ts submitDraft) and waits on staff, so it must be
+ * decidable exactly like a 'sent' staff quote — setQuoteStatus already accepts submitted → accepted
+ * / declined. "Send" stays draft/sent only (sendQuote refuses any other status).
+ */
+export function quoteDetailActions(q: { status: string; isExpired: boolean }, canWrite: boolean): { sendable: boolean; decidable: boolean } {
+  return {
+    sendable: canWrite && (q.status === "draft" || q.status === "sent") && !q.isExpired,
+    decidable: canWrite && (q.status === "sent" || q.status === "submitted") && !q.isExpired,
+  };
 }

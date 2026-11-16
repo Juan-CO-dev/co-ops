@@ -17,6 +17,8 @@ import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { Gradient, GradientTallyEntry, PmEvalDetail, PmReportDetail } from "@/lib/reports-hub";
+import { PmDayResults } from "@/components/pm-report-v2/PmDayResults";
+import { MyFeedbackV2 } from "@/components/pm-report-v2/MyFeedbackV2";
 
 const GRADIENT_KEY: Record<Gradient, TranslationKey> = {
   great: "pm.attitude.great",
@@ -161,6 +163,14 @@ export function PmReportDetailView({ detail, language, relatedReports = [] }: Pr
             <span className="ml-1 text-co-text-muted"> — {detail.mvpNote}</span>
           )}
         </div>
+      )}
+
+      {/* W09/B062: a v2 day's evaluations live in the manager copies — the day's results for those the J9 gate
+          admits, the viewer's own bands below KH, else the plain no-access line. */}
+      {detail.format === "v2" && (
+        detail.v2Results ? <PmDayResults results={detail.v2Results} />
+          : detail.v2OwnBands ? <MyFeedbackV2 days={[detail.v2OwnBands]} initiallyOpen />
+            : <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm text-co-text">{t("pmv2.results.noAccess")}</p>
       )}
 
       {/* Gradient tally card — reflects only evals visible to this viewer (no new exposure) */}

@@ -7,9 +7,34 @@ export function machineNotesMarkers(source: string, endLabel: string = source): 
   return { begin: `--- ${source} (auto) ---`, end: `--- end ${endLabel} ---` };
 }
 
+/** Customer-supplied text inside the block (a Toast special request, ezCater instructions) can never spell a marker:
+ *  runs of three or more dashes become an em dash (audit W11/B170). No machine block uses "---" itself. */
 export function wrapMachineNotes(source: string, block: string, endLabel?: string): string {
   const m = machineNotesMarkers(source, endLabel);
-  return `${m.begin}\n${block.trim()}\n${m.end}`;
+  return `${m.begin}\n${block.trim().replace(/-{3,}/g, "—")}\n${m.end}`;
+}
+
+/** A whole-line begin marker of ANY machine block ("--- <source> (auto) ---" alone on its line). */
+const ANY_BEGIN_LINE = /\n--- [^\n]* \(auto\) ---(?=\r?\n|$)/g;
+
+/** The marked block: both markers on whole lines (the begin at a line start, the end alone on its line), so a marker
+ *  quoted mid-line inside the block (rows written before wrapMachineNotes neutralised it) never ends it early.
+ *  The block ends at the LAST whole-line end marker before the next machine block begins (audit W11/B170 r1): a legacy
+ *  special request that put the end marker on a line of its own cannot close the block early, since the writer's own
+ *  closing marker always follows the customer's text. `end` is the index where the end marker starts. */
+export function findMachineBlock(cur: string, m: { begin: string; end: string }): { start: number; end: number } | null {
+  let start = cur.indexOf(m.begin);
+  while (start > 0 && cur[start - 1] !== "\n") start = cur.indexOf(m.begin, start + 1);
+  if (start < 0) return null;
+  ANY_BEGIN_LINE.lastIndex = start + m.begin.length;
+  const next = ANY_BEGIN_LINE.exec(cur);
+  const limit = next ? next.index : cur.length;
+  let last = -1;
+  for (let at = cur.indexOf(`\n${m.end}`, start + m.begin.length); at >= 0 && at < limit; at = cur.indexOf(`\n${m.end}`, at + 1)) {
+    const after = at + 1 + m.end.length;
+    if (after === cur.length || cur[after] === "\n" || cur[after] === "\r") last = at;
+  }
+  return last >= 0 ? { start, end: last + 1 } : null;
 }
 
 /** Replace this source's marked block inside existing notes (human text before/after is kept);
@@ -18,11 +43,10 @@ export function mergeMachineNotes(source: string, existing: string | null | unde
   const m = machineNotesMarkers(source, endLabel);
   const wrapped = wrapMachineNotes(source, block, endLabel);
   const cur = existing ?? "";
-  const start = cur.indexOf(m.begin);
-  const end = start >= 0 ? cur.indexOf(m.end, start + m.begin.length) : -1;
-  if (start >= 0 && end > start) {
-    const before = cur.slice(0, start).replace(/\s+$/, "");
-    const after = cur.slice(end + m.end.length).replace(/^\s+/, "");
+  const found = findMachineBlock(cur, m);
+  if (found) {
+    const before = cur.slice(0, found.start).replace(/\s+$/, "");
+    const after = cur.slice(found.end + m.end.length).replace(/^\s+/, "");
     return [before, wrapped, after].filter((s) => s.length > 0).join("\n\n");
   }
   const human = cur.trim();

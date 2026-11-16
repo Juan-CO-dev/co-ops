@@ -957,8 +957,21 @@ export async function setItemSoldDirectly(actor: AuthContext, args: { itemId: st
   }
   if (args.menuPrice !== undefined) upd.menu_price = args.menuPrice;
   const sb = getServiceRoleClient();
-  const { error, count } = await sb.from("items").update(upd, { count: "exact" }).eq("id", args.itemId);
+  // W08/B054: read the item's owner shop, check it, then bind the write to that owner.
+  // A shared item (location_id null) keeps today's GM floor; another shop's own item is 404.
+  const { data: cur, error: curErr } = await sb.from("items").select("id, location_id").eq("id", args.itemId)
+    .maybeSingle<{ id: string; location_id?: string | null }>();
+  if (curErr) throw new Error(`setItemSoldDirectly owner read: ${curErr.message}`);
+  if (!cur) throw new RecipeError(404, "not_found");
+  const owner = cur.location_id ?? null;
+  if (owner !== null) {
+    const gate = ownerWriteCheck({ role: actor.user.role, level: getRoleLevel(actor.user.role), locations: actor.locations }, owner);
+    if (!gate.ok) throw new RecipeError(gate.status, gate.code);
+  }
+  let q = sb.from("items").update(upd, { count: "exact" }).eq("id", args.itemId);
+  q = owner === null ? q.is("location_id", null) : q.eq("location_id", owner);
+  const { error, count } = await q;
   if (error) throw new Error(`setItemSoldDirectly: ${error.message}`);
-  if (count === 0) throw new RecipeError(404, "not_found");
+  if (count === 0) throw new RecipeError(409, "ownership_changed");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "item.set_sold_directly", resourceTable: "items", resourceId: args.itemId, metadata: { sold_directly: args.soldDirectly, sell_portion: args.sellPortion ?? null, sell_portion_unit: args.sellPortionUnit ?? null, ...(args.menuPrice !== undefined ? { menu_price: args.menuPrice } : {}) }, ipAddress: null, userAgent: null });
 }

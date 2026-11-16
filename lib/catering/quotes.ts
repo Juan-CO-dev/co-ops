@@ -21,6 +21,7 @@
  */
 
 import { portalOrigin } from "@/lib/portal/origin-shared";
+import { acceptDeliveryRefusal } from "@/lib/portal/draft-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
@@ -1094,9 +1095,12 @@ export async function setQuoteStatus(actor: AuthContext, id: string, status: Ext
   const sb = getServiceRoleClient();
   const { data: row, error: lErr } = await sb
     .from("catering_quotes")
-    .select("id, location_id, status, superseded_at")
+    .select("id, location_id, status, superseded_at, origin, is_delivery, delivery_zone_id, delivery_fee_cents, subtotal_cents")
     .eq("id", id)
-    .maybeSingle<{ id: string; location_id: string; status: string; superseded_at: string | null }>();
+    .maybeSingle<{
+      id: string; location_id: string; status: string; superseded_at: string | null; origin: string;
+      is_delivery: boolean; delivery_zone_id: string | null; delivery_fee_cents: number; subtotal_cents: number;
+    }>();
   if (lErr) throw new Error(`setQuoteStatus load: ${lErr.message}`);
   if (!row) throw new CateringQuoteError(404, "not_found", "Quote not found");
   assertCanWrite(actor, row.location_id);
@@ -1106,6 +1110,26 @@ export async function setQuoteStatus(actor: AuthContext, id: string, status: Ext
   // (declined → accepted is a legitimate manager reversal).
   if (row.status === "expired" && status === "accepted") {
     throw new CateringQuoteError(409, "quote_expired", "This quote has expired — revise it before accepting");
+  }
+  // A SELF-SERVE delivery order is re-checked on accept with the portal's own rule against the shop's
+  // CURRENT zones (Juan 2026-11-15): the most expensive active zone, its fee, its minimum. An order the
+  // portal would not take today (no zone, under the minimum, a fee that moved) is refused by name;
+  // revising re-prices it with the zone staff choose.
+  if (status === "accepted" && row.origin === "self_serve" && row.is_delivery) {
+    const { data: zoneRows, error: zErr } = await sb
+      .from("catering_delivery_zones")
+      .select("id, fee_cents, min_order_cents")
+      .eq("location_id", row.location_id)
+      .eq("active", true)
+      .returns<Array<{ id: string; fee_cents: number; min_order_cents: number | null }>>();
+    if (zErr) throw new Error(`setQuoteStatus zones: ${zErr.message}`);
+    const refusal = acceptDeliveryRefusal(
+      { origin: row.origin, isDelivery: row.is_delivery, deliveryZoneId: row.delivery_zone_id, deliveryFeeCents: row.delivery_fee_cents, subtotalCents: row.subtotal_cents },
+      (zoneRows ?? []).map((z) => ({ id: z.id, feeCents: z.fee_cents, minOrderCents: z.min_order_cents })),
+    );
+    if (refusal === "delivery_unavailable") throw new CateringQuoteError(409, refusal, "No active delivery zone at this shop — add one or revise the quote before accepting");
+    if (refusal === "below_delivery_minimum") throw new CateringQuoteError(409, refusal, "This delivery order is under its zone's minimum — revise it before accepting");
+    if (refusal === "delivery_fee_changed") throw new CateringQuoteError(409, refusal, "The delivery fee is out of date — revise the quote before accepting");
   }
 
   // Guard on the status the pre-read saw (silent-UPDATE law): count 0 means the status

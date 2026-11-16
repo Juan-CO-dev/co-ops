@@ -373,3 +373,28 @@ describe("recordDelivery's fold, at the source", () => {
     expect(src).toContain("avg_skipped_protected: avgSkippedProtected");
   });
 });
+
+// ── W08/B162 ─────────────────────────────────────────────────────────────────────
+import { photoIdFromRef } from "@/lib/receiving-shared";
+
+describe("W08/B162 photoIdFromRef", () => {
+  const id = "0d9a3c1e-5b6f-4a7d-8e9f-0123456789ab";
+  it("accepts the canonical /api/photos/<uuid> and the empty values", () => {
+    expect(photoIdFromRef(`/api/photos/${id}`)).toEqual({ ok: true, photoId: id });
+    expect(photoIdFromRef(`  /api/photos/${id.toUpperCase()}  `)).toEqual({ ok: true, photoId: id });
+    expect(photoIdFromRef(null)).toEqual({ ok: true, photoId: null });
+    expect(photoIdFromRef(undefined)).toEqual({ ok: true, photoId: null });
+    expect(photoIdFromRef("")).toEqual({ ok: true, photoId: null });
+    expect(photoIdFromRef("   ")).toEqual({ ok: true, photoId: null });
+  });
+  it.each([
+    "https://evil.example/r", "//evil.example/r", `/api/photos/${id}?x=1`, `/api/photos/${id}/`, "/api/photos/not-a-uuid",
+    " javascript:alert(1)", `https://co-ops-ashy.vercel.app/api/photos/${id}`, `/api/photos/../${id}`,
+  ])("refuses %s", (ref) => {
+    expect(photoIdFromRef(ref)).toEqual({ ok: false });
+  });
+  it("refuses a non-string", () => {
+    expect(photoIdFromRef(42)).toEqual({ ok: false });
+    expect(photoIdFromRef({ id })).toEqual({ ok: false });
+  });
+});

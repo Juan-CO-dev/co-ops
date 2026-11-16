@@ -116,6 +116,8 @@ export interface ChecklistActor {
  * (empty batch, completion-not-found, completion-wrong-instance,
  * completion-wrong-author).
  */
+const PHOTO_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export class ChecklistError extends Error {
   constructor(
     message: string,
@@ -184,6 +186,15 @@ export class ChecklistMissingPhotoError extends ChecklistError {
   constructor(public readonly templateItemId: string) {
     super(`Item ${templateItemId} requires a photo.`, "missing_photo");
     this.name = "ChecklistMissingPhotoError";
+  }
+}
+
+/** W08/B163: a photo reference that is not a photo of THIS instance's shop (missing, malformed, or
+ *  another shop's). Distinct from missing_photo so the client can say "take it again". */
+export class ChecklistInvalidPhotoError extends ChecklistError {
+  constructor(public readonly templateItemId: string) {
+    super(`Item ${templateItemId}: the photo is not a photo of this location.`, "invalid_photo");
+    this.name = "ChecklistInvalidPhotoError";
   }
 }
 
@@ -1065,6 +1076,17 @@ export async function completeItem(
   }
 
   const sb = getServiceRoleClient();
+  // W08/B163: any photo sent (photo-required item or not) must be a real photo of THIS instance's
+  // shop — the receiving / pack-change rule. checklist_completions.photo_id has no foreign key, so a
+  // made-up id or the other shop's photo would otherwise mark a photo step done with evidence no
+  // reviewer here can open.
+  if (args.photoId !== undefined && args.photoId !== null) {
+    if (!PHOTO_ID_RE.test(args.photoId)) throw new ChecklistInvalidPhotoError(templateItemId);
+    const { data: photo, error: photoError } = await sb.from("photos").select("id, location_id")
+      .eq("id", args.photoId).maybeSingle<{ id: string; location_id: string | null }>();
+    if (photoError) throw new Error(`completeItem photo: ${photoError.message}`);
+    if (!photo || photo.location_id !== instance.location_id) throw new ChecklistInvalidPhotoError(templateItemId);
+  }
   const { data, error } = await sb.rpc("checklist_write_completion", {
     p_actor: actor.userId, p_instance: instanceId, p_template_item: templateItemId,
     p_count_value: args.countValue ?? null, p_photo_id: args.photoId ?? null, p_notes: args.notes ?? null,
