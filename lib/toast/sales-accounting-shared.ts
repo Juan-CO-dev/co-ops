@@ -10,7 +10,8 @@ type Cents = (v: unknown) => number | null;
 type BusinessDate = (v: unknown) => string | null;
 const plus = (a: number | null, b: number | null): number | null => a === null || b === null ? null : a + b;
 const minus = (a: number | null, b: number | null): number | null => a === null || b === null ? null : a - b;
-const excluded = (s: Row) => s.deferred === true || ["HOUSE_ACCOUNT_PAY_BALANCE", "TOAST_CARD_SELL", "TOAST_CARD_RELOAD"].includes(String(s.selectionType));
+/** Excluded from item sales (gift cards, house-account payments, deferred). Shared with line-prices-shared. */
+export const excluded = (s: Row) => s.deferred === true || ["HOUSE_ACCOUNT_PAY_BALANCE", "TOAST_CARD_SELL", "TOAST_CARD_RELOAD"].includes(String(s.selectionType));
 
 export interface CheckSalesAccounting {
   version: 1;
@@ -21,7 +22,11 @@ export interface CheckSalesAccounting {
   pre_refund_cents: number | null;
 }
 
-export function projectCheckSales(check: Row, cents: Cents): CheckSalesAccounting {
+/** `selectionCents` parses ONLY the four selection price reads (s.price at the root and on
+ * excluded heads, s.preDiscountPrice for excluded discounts and voids). It defaults to `cents`, so
+ * every existing call is unchanged; with TOAST_LINE_PRICES=1 the capture passes the lenient
+ * lineCents (item 1 PR B, plan r3 §3.2). Check, service-charge, discount and refund money stay strict. */
+export function projectCheckSales(check: Row, cents: Cents, selectionCents: Cents = cents): CheckSalesAccounting {
   let services: number | null = 0;
   for (const s of rows(check.appliedServiceCharges)) {
     if (s.gratuity !== true) services = plus(services, cents(s.chargeAmount ?? s.amount));
@@ -40,14 +45,14 @@ export function projectCheckSales(check: Row, cents: Cents): CheckSalesAccountin
       if (s.deleted === true || s.selectionType === "SPECIAL_REQUEST") continue;
       const isExcluded = parentExcluded || excluded(s);
       const isVoid = parentVoided || s.voided === true;
-      if (root && !isVoid) rootNet = plus(rootNet, cents(s.price));
+      if (root && !isVoid) rootNet = plus(rootNet, selectionCents(s.price));
       if (!isVoid) addDiscounts(s);
       // Subtree prices already contain modifiers and quantities: subtract/add only its head.
       if (isExcluded && !parentExcluded && !isVoid) {
-        excludedNet = plus(excludedNet, cents(s.price));
-        excludedDiscount = plus(excludedDiscount, minus(cents(s.preDiscountPrice), cents(s.price)));
+        excludedNet = plus(excludedNet, selectionCents(s.price));
+        excludedDiscount = plus(excludedDiscount, minus(selectionCents(s.preDiscountPrice), selectionCents(s.price)));
       }
-      if (isVoid && !parentVoided && !isExcluded) voids = plus(voids, cents(s.preDiscountPrice));
+      if (isVoid && !parentVoided && !isExcluded) voids = plus(voids, selectionCents(s.preDiscountPrice));
       visit(s.modifiers, isExcluded, isVoid, false);
     }
   };
