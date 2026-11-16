@@ -14,6 +14,7 @@ const between = (s: string, from: string, to: string) => s.slice(s.indexOf(from)
 const loop0261 = between(m0261, "  if p_par_changes is not null and jsonb_typeof(p_par_changes) <> 'array' then", "  end loop;\n");
 const helper = between(sql, "create or replace function public.sku_pack_apply_par_changes(", "\n$$;\n");
 const apply = between(sql, "create or replace function public.apply_sku_pack_back_to_default(", "\n$$;\n");
+const accept = between(sql, "create or replace function public.apply_par_suggestion_accept(", "\n$$;\n");
 
 describe("0324_sku_pack_back_to_default", () => {
   it("header + gate line", () => {
@@ -61,6 +62,20 @@ describe("0324_sku_pack_back_to_default", () => {
     expect(sql).toContain("grant execute on function public.apply_sku_pack_back_to_default(uuid, uuid, uuid, uuid, jsonb, jsonb) to service_role;");
     expect(sql).toContain("raise exception '0324: unexpected execute grant on %', f_loop;");
     expect(sql).toContain("raise exception '0324: PUBLIC holds EXECUTE on a 0324 function';");
+  });
+  it("fix round 1 (W18/B106): the accept takes the SKU lock FIRST, checks the epoch under it, then writes", () => {
+    expect(accept).toContain("security definer\nset search_path = pg_catalog, public");
+    const lock = accept.indexOf("perform 1 from public.vendor_items where id = p_sku for update;");
+    const epoch = accept.indexOf("if coalesce(v_epoch, 0) <> p_expected_epoch then");
+    const write = accept.indexOf("update public.location_sku_settings");
+    expect(lock).toBeGreaterThan(-1);
+    expect(lock).toBeLessThan(epoch);
+    expect(epoch).toBeLessThan(write);
+    expect(accept).toContain("'par_suggestion:pack_changed'");
+    expect(accept).toContain("'par_suggestion:invalid_patch'");
+    expect(sql).toContain("revoke all on function public.apply_par_suggestion_accept(uuid, uuid, text, numeric, bigint, jsonb, uuid) from public, anon, authenticated;");
+    expect(sql).toContain("grant execute on function public.apply_par_suggestion_accept(uuid, uuid, text, numeric, bigint, jsonb, uuid) to service_role;");
+    expect(sql).toContain("raise exception '0324: unexpected execute grant on %', f_accept;");
   });
   it("the PGlite harness passes on the real migrations", () => {
     const out = execFileSync(process.execPath, ["scripts/sql-harness-0324.mjs"], { encoding: "utf8" });

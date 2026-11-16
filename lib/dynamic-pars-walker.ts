@@ -279,7 +279,8 @@ export async function loadParSuggestions(
       coverThroughDate: window.coverThroughDate,
       canAct: walkInstant.canAct,
     });
-    if (suggestion != null) out.set(skuId, suggestion);
+    // The epoch it was validated in rides along: Accept re-checks it under the pack writers' lock.
+    if (suggestion != null) out.set(skuId, { ...suggestion, packEpoch: liveEpoch });
   }
   return out;
 }

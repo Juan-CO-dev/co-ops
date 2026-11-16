@@ -10,7 +10,11 @@
 --   Back to default cannot: apply_sku_pack_change always SAVES a version, and a saved copy of the default
 --   would stop the shop riding future default changes. The apply must RETIRE the shop's version.
 --
--- WHAT (two new functions; nothing existing is re-emitted, no table, column or row changes):
+-- FIX ROUND 1 (same file, still unapplied): bug B106's Accept half. The walker validated a suggestion's pack
+--   epoch, then wrote the par in separate requests: a pack change committing in between (it bumps the epoch and
+--   converts the shop's pars in ONE transaction) still let an old-case number land. Function 3 below closes it.
+--
+-- WHAT (three new functions; nothing existing is re-emitted, no table, column or row changes):
 --   1. sku_pack_apply_par_changes(p_sku, p_location, p_par_changes, p_actor) returns integer — INTERNAL.
 --      Its body is 0261 apply_sku_pack_change's par-conversion loop COPIED VERBATIM (pinned as a
 --      line-subsequence by tests/sku-pack-back-to-default-migration.test.ts): every conversion bound to the
@@ -33,7 +37,24 @@
 --        e. returns { version_id, pars_converted }.
 --      Any refusal rolls back EVERYTHING, the retire included. SECURITY DEFINER, search_path pinned,
 --      EXECUTE for service_role only (revoked from public, anon, authenticated; asserted below).
+--   3. apply_par_suggestion_accept(p_sku, p_location, p_day_class, p_value, p_expected_epoch, p_patch, p_actor)
+--      returns uuid (the overlay row) — THE par write behind the walker's one-tap Accept (audit W18/B106):
+--        a. THE SKU ROW LOCK FIRST — the same `vendor_items … for update` every pack writer (0259 / 0261 /
+--           function 2) takes before it touches a version, so a pack change and an accept serialize;
+--        b. UNDER it, this shop's pack epoch (sku_pack_epochs, absent = 0) must equal the epoch the
+--           suggestion was computed in, or `par_suggestion:pack_changed` (the app answers
+--           409 suggestion_superseded). An accept that wins the lock commits first, and the pack change
+--           then refuses `dependencies_changed` on its own snapshot (the par lane moved);
+--        c. the patch is the app's parWriteColumns("accept") output, allowlisted to the slot's five columns
+--           and bound to p_value (`par_suggestion:invalid_patch`), written onto the shop's overlay row
+--           (inserted if none; a concurrent insert is `par_suggestion:par_changed`, never a bare 23505).
+--      No pin, budget or ledger logic here: the app still claims the generation (par_suggestion_actions)
+--      before calling it and audits after, exactly as before. SECURITY DEFINER, search_path pinned,
+--      EXECUTE for service_role only (asserted below).
 --
+-- APP for 3 (same PR): lib/dynamic-pars.ts writeParFromSuggestion("accept") calls it with the epoch the walk
+--   validated (lib/dynamic-pars-walker.ts). BEFORE this file is applied the accept falls back to the previous
+--   two-request write (the race stays open until the apply); nothing else changes.
 -- APP (same PR): lib/catalog/sku-item.ts computeBackToDefaultPreview / applyPackBackToDefault, the route
 --   /api/admin/catalog/sku/[id]/pack/back-to-default (Tier E, unchanged tier) and the item page. BEFORE this
 --   file is applied the route still works for a Back to default with NO accepted conversion (it falls back
@@ -52,11 +73,13 @@
 --
 -- VERIFY AFTER APPLY:
 --   select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public'
---     and routine_name in ('apply_sku_pack_back_to_default', 'sku_pack_apply_par_changes') order by 1, 2;
---     -- apply_sku_pack_back_to_default: service_role (+ owner); sku_pack_apply_par_changes: owner only
+--     and routine_name in ('apply_sku_pack_back_to_default', 'sku_pack_apply_par_changes', 'apply_par_suggestion_accept') order by 1, 2;
+--     -- apply_sku_pack_back_to_default + apply_par_suggestion_accept: service_role (+ owner); sku_pack_apply_par_changes: owner only
 --
--- ROLLBACK: drop function public.apply_sku_pack_back_to_default(uuid, uuid, uuid, uuid, jsonb, jsonb);
+-- ROLLBACK: drop function public.apply_par_suggestion_accept(uuid, uuid, text, numeric, bigint, jsonb, uuid);
+--           drop function public.apply_sku_pack_back_to_default(uuid, uuid, uuid, uuid, jsonb, jsonb);
 --           drop function public.sku_pack_apply_par_changes(uuid, uuid, jsonb, uuid);
+--   (dropping apply_par_suggestion_accept returns the accept to the two-request write.)
 --   (the app then answers back_to_default_unavailable for conversions and keeps the zero-conversion retire).
 -- PROOF: scripts/sql-harness-0324.mjs (PGlite: the REAL 0259 + 0260 + 0261 + 0324, synthetic rows), pinned
 --   by tests/sku-pack-back-to-default-migration.test.ts. SIM PROOF (not run by the builder):
@@ -70,6 +93,9 @@ begin
      or to_regprocedure('public.sku_pack_change_snapshot(uuid,uuid[])') is null
      or to_regprocedure('public.apply_sku_pack_change(uuid,uuid,jsonb,uuid,uuid,text,uuid,boolean,jsonb,uuid,jsonb)') is null then
     raise exception '0324: 0259 + 0261 (pack versions, the pack-change snapshot and apply) must be applied first';
+  end if;
+  if to_regclass('public.sku_pack_epochs') is null then
+    raise exception '0324: 0259 sku_pack_epochs is missing: refusing';
   end if;
   if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'location_sku_settings' and column_name = 'pinned_weekday_at')
      or not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'location_sku_settings' and column_name = 'auto_weekday_applied_at') then
@@ -276,15 +302,100 @@ begin
 end;
 $$;
 
--- ── 3. ACL: the apply for service_role only; the internal loop for nobody but the owner ───────────────────
+-- ── 3. the walker's Accept, bound to the pack epoch it was computed in (W18/B106) ─────────────────────────
+create or replace function public.apply_par_suggestion_accept(
+  p_sku            uuid,
+  p_location       uuid,
+  p_day_class      text,
+  p_value          numeric,
+  p_expected_epoch bigint,
+  p_patch          jsonb,
+  p_actor          uuid
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_epoch bigint;
+  v_row   public.location_sku_settings%rowtype;
+  v_new   public.location_sku_settings%rowtype;
+  v_n     integer;
+begin
+  if p_sku is null or p_location is null or p_expected_epoch is null or p_value is null or p_value < 0
+     or p_day_class is null or p_day_class not in ('weekday', 'weekend') then
+    raise exception 'par_suggestion:invalid_payload' using errcode = 'P0001';
+  end if;
+
+  -- THE SKU LOCK FIRST — the lock every pack writer takes before it changes a version (and so the epoch).
+  perform 1 from public.vendor_items where id = p_sku for update;
+  if not found then
+    raise exception 'par_suggestion:not_found' using errcode = 'P0001';
+  end if;
+
+  -- UNDER the lock: the pack this shop receives is still the one the suggestion counted in.
+  select epoch into v_epoch from public.sku_pack_epochs where sku_id = p_sku and location_id = p_location;
+  if coalesce(v_epoch, 0) <> p_expected_epoch then
+    raise exception 'par_suggestion:pack_changed' using errcode = 'P0001';
+  end if;
+
+  -- THE PATCH: the slot's own columns only (0261's allowlist), its par exactly the accepted value.
+  if p_patch is null or jsonb_typeof(p_patch) <> 'object'
+     or (p_patch->>(p_day_class || '_par'))::numeric is distinct from p_value
+     or exists (select 1 from jsonb_object_keys(p_patch) as k(key)
+                 where k.key not in (p_day_class || '_par', 'auto_' || p_day_class || '_par', 'auto_' || p_day_class || '_baseline_par',
+                                     'auto_' || p_day_class || '_applied_at', 'pinned_' || p_day_class || '_at')) then
+    raise exception 'par_suggestion:invalid_patch' using errcode = 'P0001';
+  end if;
+
+  select * into v_row from public.location_sku_settings where location_id = p_location and sku_id = p_sku for update;
+  if not found then
+    begin
+      insert into public.location_sku_settings (location_id, sku_id, updated_by) values (p_location, p_sku, p_actor) returning * into v_row;
+    exception when unique_violation then
+      raise exception 'par_suggestion:par_changed' using errcode = 'P0001';
+    end;
+  end if;
+  v_new := jsonb_populate_record(v_row, p_patch);
+  update public.location_sku_settings
+     set weekday_par = v_new.weekday_par, weekend_par = v_new.weekend_par,
+         auto_weekday_par = v_new.auto_weekday_par, auto_weekend_par = v_new.auto_weekend_par,
+         auto_weekday_baseline_par = v_new.auto_weekday_baseline_par, auto_weekend_baseline_par = v_new.auto_weekend_baseline_par,
+         auto_weekday_applied_at = v_new.auto_weekday_applied_at, auto_weekend_applied_at = v_new.auto_weekend_applied_at,
+         pinned_weekday_at = v_new.pinned_weekday_at, pinned_weekend_at = v_new.pinned_weekend_at,
+         updated_by = p_actor, updated_at = now()
+   where id = v_row.id;
+  get diagnostics v_n = row_count;
+  if v_n <> 1 then
+    raise exception 'par_suggestion:par_changed' using errcode = 'P0001';
+  end if;
+  return v_row.id;
+end;
+$$;
+
+-- ── 4. ACL: the applies for service_role only; the internal loop for nobody but the owner ─────────────────
 revoke all on function public.sku_pack_apply_par_changes(uuid, uuid, jsonb, uuid) from public, anon, authenticated, service_role;
 revoke all on function public.apply_sku_pack_back_to_default(uuid, uuid, uuid, uuid, jsonb, jsonb) from public, anon, authenticated;
 grant execute on function public.apply_sku_pack_back_to_default(uuid, uuid, uuid, uuid, jsonb, jsonb) to service_role;
+revoke all on function public.apply_par_suggestion_accept(uuid, uuid, text, numeric, bigint, jsonb, uuid) from public, anon, authenticated;
+grant execute on function public.apply_par_suggestion_accept(uuid, uuid, text, numeric, bigint, jsonb, uuid) to service_role;
 do $$
 declare
-  f_apply regprocedure := 'public.apply_sku_pack_back_to_default(uuid,uuid,uuid,uuid,jsonb,jsonb)'::regprocedure;
-  f_loop  regprocedure := 'public.sku_pack_apply_par_changes(uuid,uuid,jsonb,uuid)'::regprocedure;
+  f_apply  regprocedure := 'public.apply_sku_pack_back_to_default(uuid,uuid,uuid,uuid,jsonb,jsonb)'::regprocedure;
+  f_loop   regprocedure := 'public.sku_pack_apply_par_changes(uuid,uuid,jsonb,uuid)'::regprocedure;
+  f_accept regprocedure := 'public.apply_par_suggestion_accept(uuid,uuid,text,numeric,bigint,jsonb,uuid)'::regprocedure;
 begin
+  if has_function_privilege('anon', f_accept, 'EXECUTE') or has_function_privilege('authenticated', f_accept, 'EXECUTE') then
+    raise exception '0324: unexpected execute grant on %', f_accept;
+  end if;
+  if not has_function_privilege('service_role', f_accept, 'EXECUTE') then
+    raise exception '0324: service_role lost EXECUTE on %', f_accept;
+  end if;
+  if not (select prosecdef from pg_proc where oid = f_accept)
+     or not coalesce((select proconfig from pg_proc where oid = f_accept) @> array['search_path=pg_catalog, public'], false) then
+    raise exception '0324: % must be SECURITY DEFINER with a pinned search_path', f_accept;
+  end if;
   if has_function_privilege('anon', f_apply, 'EXECUTE') or has_function_privilege('authenticated', f_apply, 'EXECUTE') then
     raise exception '0324: unexpected execute grant on %', f_apply;
   end if;
@@ -295,7 +406,7 @@ begin
      or has_function_privilege('service_role', f_loop, 'EXECUTE') then
     raise exception '0324: unexpected execute grant on %', f_loop;
   end if;
-  if exists (select 1 from pg_proc p, lateral aclexplode(p.proacl) a where p.oid in (f_apply, f_loop) and a.grantee = 0) then
+  if exists (select 1 from pg_proc p, lateral aclexplode(p.proacl) a where p.oid in (f_apply, f_loop, f_accept) and a.grantee = 0) then
     raise exception '0324: PUBLIC holds EXECUTE on a 0324 function';
   end if;
   if not (select prosecdef from pg_proc where oid = f_apply)

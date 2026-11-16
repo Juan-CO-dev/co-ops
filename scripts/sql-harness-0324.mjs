@@ -15,6 +15,11 @@
  *       location_required.
  *   B5  "give this shop its own par" from the inherited global par works exactly as on 0261's shop save.
  *   B6  privileges: authenticated cannot execute the apply; service_role cannot call the internal loop.
+ *   B7  (W18/B106 fix round 1) the walker's Accept is bound to the pack epoch it was computed in, checked
+ *       under the SKU lock every pack writer takes: at that epoch it writes the slot (insert or update) and
+ *       clears the machine lane + pin; after a pack change (here a real Back to default) it refuses
+ *       par_suggestion:pack_changed and writes nothing; the patch is allowlisted to the slot and bound to
+ *       the value; only service_role may execute it.
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
@@ -197,14 +202,60 @@ try {
     check(r.pars_converted === 1 && Number(s1.wd) === 6 && Number(g.wd) === 3, "B5: the inherited global par (3) becomes S1's OWN slot (6); the global par stays 3");
   }
 
+  // ── B7 the epoch-bound Accept (W18/B106 fix round 1) ─────────────────────
+  {
+    const acceptRpc = (a) => db.query(
+      "select public.apply_par_suggestion_accept($1::uuid, $2::uuid, $3::text, $4::numeric, $5::bigint, $6::jsonb, $7::uuid) as r",
+      [a.sku, a.location ?? S1, a.slot ?? "weekday", a.value, a.epoch, JSON.stringify(a.patch ?? humanPatch(a.slot ?? "weekday", a.value)), USER],
+    ).then((res) => res.rows[0].r);
+    const overlayOf = async (sku, shop) => one(
+      "select id, weekday_par::text as wd, weekend_par::text as we, auto_weekday_par::text as awd, pinned_weekday_at as pin, updated_by from public.location_sku_settings where sku_id = $1 and location_id = $2",
+      [sku, shop]);
+    const { sku, shop } = await freshSku();
+    await db.exec("reset role;");
+    await db.query("update public.location_sku_settings set auto_weekday_par = 7, pinned_weekday_at = now() where sku_id = $1 and location_id = $2", [sku, S1]);
+    await db.exec("set role service_role;");
+    const e1 = await epochOf(sku, S1);
+    const id = await acceptRpc({ sku, value: 9, epoch: e1 });
+    const o = await overlayOf(sku, S1);
+    check(id === o.id && Number(o.wd) === 9 && o.awd === null && o.pin === null && o.updated_by === USER,
+      "B7: at the live epoch the accept writes the human slot, clears the machine par and the pin, names the actor");
+    check(o.we === null, "B7: …and only that slot");
+
+    // A pack change commits between the walk's validation (epoch e1) and the write: a real Back to default.
+    await back({ sku, version: shop, snapshot: await snapshot(sku) });
+    check(await epochOf(sku, S1) > e1, "B7: the Back to default moved S1's pack epoch");
+    const before = await state(sku);
+    await refuses(() => acceptRpc({ sku, value: 12, epoch: e1 }), "par_suggestion:pack_changed", "B7: an accept computed in the old pack epoch");
+    check(await state(sku) === before, "B7: …and wrote nothing");
+
+    // No overlay row yet (S2 rides the default): the insert path, at S2's own epoch.
+    const e2 = await epochOf(sku, S2);
+    await acceptRpc({ sku, location: S2, slot: "weekend", value: 5, epoch: e2 });
+    const o2 = await overlayOf(sku, S2);
+    check(o2 != null && Number(o2.we) === 5 && o2.wd === null, "B7: no overlay row → one is created with only the accepted slot");
+    await refuses(() => acceptRpc({ sku, location: S2, slot: "weekend", value: 5, epoch: e2 + 1 }), "par_suggestion:pack_changed", "B7: a FUTURE epoch is not a proof either");
+
+    // The patch: allowlisted to the slot, bound to the value.
+    const e1now = await epochOf(sku, S1);
+    await refuses(() => acceptRpc({ sku, value: 4, epoch: e1now, patch: { ...humanPatch("weekday", 4), weekend_par: 1 } }), "par_suggestion:invalid_patch", "B7: a patch that reaches the other slot");
+    await refuses(() => acceptRpc({ sku, value: 4, epoch: e1now, patch: { ...humanPatch("weekday", 4), auto_weekday_pack_epoch: 9 } }), "par_suggestion:invalid_patch", "B7: a patch that stamps a machine epoch");
+    await refuses(() => acceptRpc({ sku, value: 4, epoch: e1now, patch: humanPatch("weekday", 5) }), "par_suggestion:invalid_patch", "B7: a patch whose par is not the accepted value");
+    await refuses(() => acceptRpc({ sku, slot: "monday", value: 4, epoch: e1now }), "par_suggestion:invalid_payload", "B7: an unknown slot");
+    await refuses(() => acceptRpc({ sku: u(999), value: 4, epoch: 0 }), "par_suggestion:not_found", "B7: an unknown SKU");
+    check(Number((await overlayOf(sku, S1)).wd) === 9, "B7: …every refusal left S1's par as it was");
+  }
+
   // ── B6 privileges ────────────────────────────────────────────────────────
   await refuses(() => db.query("select public.sku_pack_apply_par_changes(null, null, null, null)"), "permission denied", "B6: service_role cannot call the internal par loop directly");
   await db.exec("reset role; set role authenticated;");
   await refuses(() => db.query("select public.apply_sku_pack_back_to_default(null, null, null, null, null, null)"), "permission denied", "B6: authenticated cannot execute the Back-to-default apply");
+  await refuses(() => db.query("select public.apply_par_suggestion_accept(null, null, null, null, null, null, null)"), "permission denied", "B7: authenticated cannot execute the epoch-bound accept");
   await db.exec("reset role; set role anon;");
   await refuses(() => db.query("select public.apply_sku_pack_back_to_default(null, null, null, null, null, null)"), "permission denied", "B6: anon cannot execute the Back-to-default apply");
+  await refuses(() => db.query("select public.apply_par_suggestion_accept(null, null, null, null, null, null, null)"), "permission denied", "B7: anon cannot execute the epoch-bound accept");
   await db.exec("reset role;");
 
   if (failures > 0) { console.error(`\n${failures} check(s) FAILED`); process.exitCode = 1; }
-  else console.log("\nPASS 0324: atomic Back to default with par conversion (B1), all-or-nothing refusals (B2), the snapshot re-check under the lock (B3), the version / lane / shop bound (B4), own-par from global (B5), privileges (B6)");
+  else console.log("\nPASS 0324: atomic Back to default with par conversion (B1), all-or-nothing refusals (B2), the snapshot re-check under the lock (B3), the version / lane / shop bound (B4), own-par from global (B5), privileges (B6), the epoch-bound accept (B7)");
 } finally { await db.close(); }

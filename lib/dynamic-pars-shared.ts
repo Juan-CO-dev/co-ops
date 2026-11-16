@@ -1145,6 +1145,12 @@ export interface WalkerParSuggestion {
   /** The level-7 check, resolved SERVER-side so the client renders authority without ever
    *  knowing the role model (plan D1). */
   canAct: boolean;
+  /**
+   * The shop's pack epoch this suggestion was validated in (the walker sets it; audit W18/B106 fix
+   * round 1). Accept writes only while the shop still receives that pack (0324
+   * apply_par_suggestion_accept, checked under the SKU lock every pack writer takes).
+   */
+  packEpoch?: number;
 }
 
 /**
