@@ -158,7 +158,7 @@ Do these in order; the UI labels vary by account, so confirm each screen.
 | `state` / `email_state` / `error_code` | Meaning | Action |
 |---|---|---|
 | created / sent / — | Link delivered (provider id recorded). | None. |
-| created / pending / — | Lead created, email never attempted (claim write failed). | Investigate; follow up by hand. |
+| created / pending / — | Lead created, email never attempted (the apply's response was lost, or the claim write failed). | The 10-minute cron sweep sends it automatically (first attempt, never a resend) once it is 10 minutes old and while it is under 24 h old. Older rows are only counted, as `continuations.stale` in the cron result: follow up by hand. A row the sweep cannot rebuild from its snapshot is counted as `unusable`: follow up by hand. |
 | needs_human / unknown / email_unknown | Timeout / network / 5xx / concurrent idempotent request; the link MAY have landed. | Check Resend by the idempotency key; follow up by hand. |
 | needs_human / failed / email_failed | Provider refused (bad address, quota…). | Follow up by hand from the lead. |
 | needs_human / capped / email_capped | A second email to that address inside 24 h, or the 5 / 15 min cap. | The earlier link stands; follow up by hand if needed. |

@@ -6,7 +6,7 @@ import { resolveCateringManager } from "@/lib/catering/system-intake-assignee";
 import { escapeLike, normalizeEmail, resolveCompanyForEmail } from "@/lib/catering/companies";
 import { metaLeadsTenantConfig } from "@/config/tenant/meta-leads";
 import { fetchMetaLead } from "./graph";
-import { composeMetaNotes, mapMetaLeadFields, META_MAPPING_VERSION } from "./intake-shared";
+import { composeMetaNotes, continuationFromSnapshot, mapMetaLeadFields, META_MAPPING_VERSION } from "./intake-shared";
 import { metaFormConfig, type MetaNotification } from "./notification-shared";
 import { sendMetaContinuation } from "./continuation";
 
@@ -196,8 +196,61 @@ export async function processMetaLead(leadgenId: string, client?: Client): Promi
   }
 }
 
-/** Bounded oldest-first retry sweep. Disabled and terminal receipts are never backfilled. */
-export async function sweepMetaLeads(client?: Client): Promise<{ processed: number }> {
+/** W24/B211: never race the live worker's own send (it runs right after the apply commits). */
+export const CONTINUATION_GRACE_MS = 10 * 60_000;
+/** W24/B211: a stranded email older than this is only COUNTED (`stale`), never sent: by then a
+ *  person may already have followed up by hand (runbook). */
+export const CONTINUATION_MAX_AGE_MS = 24 * 60 * 60_000;
+export interface ContinuationSweep { sent: number; other: number; unusable: number; failed: number; stale: number }
+export interface MetaSweepResult { processed: number; continuations?: ContinuationSweep }
+
+/**
+ * W24/B211: a lead CREATED whose "finish your order" email was never attempted (the apply committed
+ * but its response was lost, or the claim RPC errored) stays created / pending, and nothing else
+ * picks it up. This step sends it. It is safe to repeat: meta_lead_email_claim is a compare-and-set
+ * under the per-address lock that refuses anything but created + pending + a pipeline and applies
+ * the 24 h per-address cap; the Resend idempotency key `meta-lead-email:<leadgen_id>` guards the
+ * send. This is the FIRST attempt for such a row, never a resend (a claimed row has left pending).
+ */
+async function sweepStrandedContinuations(sb: Client, deadline: number): Promise<ContinuationSweep> {
+  const now = Date.now();
+  const graceCutoff = new Date(now - CONTINUATION_GRACE_MS).toISOString();
+  const ageCutoff = new Date(now - CONTINUATION_MAX_AGE_MS).toISOString();
+  const tally: ContinuationSweep = { sent: 0, other: 0, unusable: 0, failed: 0, stale: 0 };
+  const rows = await sb.from("meta_lead_events").select("leadgen_id, pipeline_id, intake_snapshot")
+    .eq("state", "created").eq("email_state", "pending").not("pipeline_id", "is", null)
+    .lte("completed_at", graceCutoff).gte("completed_at", ageCutoff)
+    .order("completed_at").limit(10)
+    .returns<Array<{ leadgen_id: string; pipeline_id: string; intake_snapshot: unknown }>>();
+  if (rows.error) throw new Error("meta_continuation_read_failed");
+  for (const row of rows.data ?? []) {
+    if (Date.now() > deadline) break;
+    const args = continuationFromSnapshot(row.intake_snapshot);
+    if (!args) {
+      tally.unusable++;
+      console.error("[meta-leads] stranded continuation unusable; see runbook (email_state)");
+      continue;
+    }
+    try {
+      const state = await sendMetaContinuation(sb, { leadgenId: row.leadgen_id, pipelineId: row.pipeline_id, ...args });
+      if (state === "sent") tally.sent++; else tally.other++;
+    } catch {
+      tally.failed++;
+      console.error("[meta-leads] stranded continuation ledger write failed; see runbook (email_state)");
+    }
+  }
+  const stale = await sb.from("meta_lead_events").select("leadgen_id", { count: "exact", head: true })
+    .eq("state", "created").eq("email_state", "pending").not("pipeline_id", "is", null)
+    .lt("completed_at", ageCutoff);
+  if (stale.error) throw new Error("meta_continuation_read_failed");
+  tally.stale = stale.count ?? 0;
+  if (tally.stale > 0) console.error("[meta-leads] stale created/pending leads past the auto-send window; see runbook (email_state)");
+  return tally;
+}
+
+/** Bounded oldest-first retry sweep. Disabled and terminal receipts are never backfilled.
+ *  Then (W24/B211) the stranded-continuation step, inside the same deadline. */
+export async function sweepMetaLeads(client?: Client): Promise<MetaSweepResult> {
   if (process.env.META_LEADS_ENABLED !== "1") return { processed: 0 };
   const sb = client ?? getServiceRoleClient();
   const now = new Date().toISOString();
@@ -207,10 +260,16 @@ export async function sweepMetaLeads(client?: Client): Promise<{ processed: numb
   if (rows.error) throw new Error("meta_sweep_read_failed");
   const deadline = Date.now() + 140_000;
   let processed = 0;
-  for (const row of rows.data ?? []) {
-    if (Date.now() > deadline) break;
-    await processMetaLead(row.leadgen_id, sb);
-    processed++;
+  try {
+    for (const row of rows.data ?? []) {
+      if (Date.now() > deadline) break;
+      await processMetaLead(row.leadgen_id, sb);
+      processed++;
+    }
+  } catch (error) {
+    // A receipt that cannot record its own failure still must not starve the stranded emails.
+    await sweepStrandedContinuations(sb, deadline).catch(() => undefined);
+    throw error;
   }
-  return { processed };
+  return { processed, continuations: await sweepStrandedContinuations(sb, deadline) };
 }

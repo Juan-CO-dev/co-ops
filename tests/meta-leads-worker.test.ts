@@ -37,7 +37,7 @@ function database(replies: Reply[] = [claim, created], tables: Record<string, Re
     const record = { table, ops: [] as Op[] }; queries.push(record);
     const reply = (): Reply => { const r = merged[table]; if (Array.isArray(r)) return r.length > 1 ? r.shift()! : (r[0] ?? { data: null }); return r ?? { data: null }; };
     const chain: Record<string, unknown> = {};
-    for (const op of ["select", "eq", "ilike", "in", "not", "order", "limit", "returns", "lte", "or"]) chain[op] = vi.fn((...args: unknown[]) => { record.ops.push([op, args]); return chain; });
+    for (const op of ["select", "eq", "ilike", "in", "not", "order", "limit", "returns", "lte", "gte", "lt", "or"]) chain[op] = vi.fn((...args: unknown[]) => { record.ops.push([op, args]); return chain; });
     chain.maybeSingle = vi.fn(async () => reply());
     chain.then = (resolve: (v: Reply) => unknown, reject?: (e: unknown) => unknown) => Promise.resolve(reply()).then(resolve, reject);
     return chain;
@@ -343,4 +343,84 @@ it("unknown refusal names cannot escape the closed error vocabulary", async () =
   const db = database([claim, { error: { message: "constructor" } }, { data: true }]);
   expect(await processMetaLead("11", db.sb)).toBe("retry");
   expect(db.rpc).toHaveBeenLastCalledWith("meta_lead_fail", expect.objectContaining({ p_error_code: "database", p_retryable: true }));
+});
+
+// W24/B211: a lead CREATED whose email was never attempted (a lost apply response, or a claim RPC
+// error) is swept: the claim (compare-and-set, 24 h per-address cap) is safe to repeat.
+describe("sweep: stranded continuation", () => {
+  const LOCATION = "0d7a3c2e-6f43-4b8e-9c1a-2b3c4d5e6f70";
+  const NOW = Date.parse("2026-11-15T12:00:00.000Z");
+  const snapshot = (email = "guest@example.test", name = "Example Guest") => ({ contact_name: name, email, contact_phone: null, company: null, event_date: "2026-11-20", headcount: 30, fulfillment: "delivery", language: "es", location_id: LOCATION, mapping_version: "meta-leads-v5" });
+  const stranded = (id: string, s: unknown = snapshot()) => ({ leadgen_id: id, pipeline_id: `pipe-${id}`, intake_snapshot: s });
+  /** meta_lead_events queries in order: the retry sweep, the stranded read, the stale count. */
+  function sweepDb(rows: unknown[], stale = 0) {
+    return database([], { meta_lead_events: [{ data: [] }, { data: rows }, { data: null, count: stale } as Reply] });
+  }
+  beforeEach(() => { vi.useFakeTimers({ now: NOW, toFake: ["Date"] }); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("a created/pending lead past the grace gets exactly one continuation rebuilt from its snapshot", async () => {
+    const db = sweepDb([stranded("41")]);
+    const result = await sweepMetaLeads(db.sb);
+    expect(mocks.continuation).toHaveBeenCalledOnce();
+    const [, args] = mocks.continuation.mock.calls[0]!;
+    expect(args).toMatchObject({ leadgenId: "41", pipelineId: "pipe-41", locationId: LOCATION, language: "es" });
+    expect(args.intake.contactEmail).toBe("guest@example.test");
+    expect(args.intake.isDelivery).toBe(true);
+    expect(result).toEqual({ processed: 0, continuations: { sent: 1, other: 0, unusable: 0, failed: 0, stale: 0 } });
+  });
+
+  it("selects only created+pending+pipeline rows inside the grace and max-age window", async () => {
+    const db = sweepDb([], 3);
+    const result = await sweepMetaLeads(db.sb);
+    const [, read, count] = db.ops("meta_lead_events");
+    expect(read).toEqual(expect.arrayContaining([
+      ["eq", ["state", "created"]], ["eq", ["email_state", "pending"]], ["not", ["pipeline_id", "is", null]],
+      ["lte", ["completed_at", new Date(NOW - 10 * 60_000).toISOString()]],
+      ["gte", ["completed_at", new Date(NOW - 24 * 60 * 60_000).toISOString()]],
+      ["limit", [10]],
+    ]));
+    expect(read!.find(op => op[0] === "select")?.[1][0]).toBe("leadgen_id, pipeline_id, intake_snapshot");
+    expect(count).toEqual(expect.arrayContaining([
+      ["eq", ["state", "created"]], ["eq", ["email_state", "pending"]], ["not", ["pipeline_id", "is", null]],
+      ["lt", ["completed_at", new Date(NOW - 24 * 60 * 60_000).toISOString()]],
+    ]));
+    expect(mocks.continuation).not.toHaveBeenCalled();
+    expect(result.continuations?.stale).toBe(3);
+  });
+
+  it("a continuation failure on one row neither stops the sweep nor logs PII", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.continuation.mockRejectedValueOnce(new Error("guest@example.test Example Guest")).mockResolvedValueOnce("capped");
+    const db = sweepDb([stranded("41"), stranded("42", snapshot("other@example.test", "Other Guest"))]);
+    const result = await sweepMetaLeads(db.sb);
+    expect(mocks.continuation).toHaveBeenCalledTimes(2);
+    expect(result.continuations).toEqual({ sent: 0, other: 1, unusable: 0, failed: 1, stale: 0 });
+    const logged = JSON.stringify(errors.mock.calls);
+    for (const pii of ["guest@example.test", "Example Guest", "other@example.test", "Other Guest"]) expect(logged).not.toContain(pii);
+    errors.mockRestore();
+  });
+
+  it("an unusable snapshot sends nothing and is counted", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const db = sweepDb([stranded("41", null), stranded("42", { ...snapshot(), location_id: "nope" })]);
+    const result = await sweepMetaLeads(db.sb);
+    expect(mocks.continuation).not.toHaveBeenCalled();
+    expect(result.continuations).toEqual({ sent: 0, other: 0, unusable: 2, failed: 0, stale: 0 });
+    expect(JSON.stringify(errors.mock.calls)).not.toContain("guest@example.test");
+    errors.mockRestore();
+  });
+
+  it("a failed stranded read is a closed sweep failure", async () => {
+    const db = database([], { meta_lead_events: [{ data: [] }, { data: null, error: { message: "boom" } }] });
+    await expect(sweepMetaLeads(db.sb)).rejects.toThrow("meta_continuation_read_failed");
+  });
+
+  it("META_LEADS_ENABLED off does no continuation work", async () => {
+    vi.stubEnv("META_LEADS_ENABLED", "0");
+    const db = sweepDb([stranded("41")]);
+    expect(await sweepMetaLeads(db.sb)).toEqual({ processed: 0 });
+    expect(db.from).not.toHaveBeenCalled();
+    expect(mocks.continuation).not.toHaveBeenCalled();
+  });
 });

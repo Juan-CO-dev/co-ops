@@ -457,3 +457,30 @@ it("renders both consent languages for another tenant", async () => {
 it("preserves malformed optional raw values without rejecting identity", () => {
   expect(map([...fields(), { name: "headcount", values: [40] }])).toMatchObject({ ok: true, intake: { headcount: null, notes: "Headcount (as typed): 40" } });
 });
+
+// W24/B211: the stranded-continuation sweep rebuilds the email's arguments from the stored snapshot
+// (meta_lead_events.intake_snapshot = the p_intake the worker sent to meta_lead_intake_apply).
+describe("continuationFromSnapshot", () => {
+  const LOCATION = "0d7a3c2e-6f43-4b8e-9c1a-2b3c4d5e6f70";
+  const snapshot = {
+    contact_name: "Example Guest", email: "guest@example.test", secondary_email: null, contact_phone: "+12025550100",
+    company: "Example Co", event_date: "2026-11-20", headcount: 30, notes: "Meeting", fulfillment: "delivery",
+    language: "es", location_id: LOCATION, mapping_version: META_MAPPING_VERSION, consent: { optedIn: false },
+  };
+  it("round-trips the worker's p_intake and refuses a missing email, location or language", async () => {
+    const { continuationFromSnapshot } = await import("@/lib/meta-leads/intake-shared");
+    expect(continuationFromSnapshot(snapshot)).toEqual({
+      locationId: LOCATION, language: "es",
+      intake: { contactName: "Example Guest", contactEmail: "guest@example.test", company: "Example Co", eventDate: "2026-11-20", headcount: 30, isDelivery: true, contactPhone: "+12025550100" },
+    });
+    expect(continuationFromSnapshot({ ...snapshot, fulfillment: "pickup", company: null, event_date: null, headcount: null, contact_phone: null })?.intake)
+      .toEqual({ contactName: "Example Guest", contactEmail: "guest@example.test", company: null, eventDate: null, headcount: null, isDelivery: false, contactPhone: null });
+    for (const key of ["email", "location_id", "language", "contact_name"] as const) {
+      const { [key]: _drop, ...rest } = snapshot; void _drop;
+      expect(continuationFromSnapshot(rest)).toBeNull();
+    }
+    for (const bad of [{ email: "" }, { email: 42 }, { location_id: "not-a-uuid" }, { language: "fr" }, { contact_name: "  " }, { headcount: "30" }, { headcount: -1 }, { company: 7 }])
+      expect(continuationFromSnapshot({ ...snapshot, ...bad })).toBeNull();
+    for (const s of [null, undefined, "x", [], 1]) expect(continuationFromSnapshot(s)).toBeNull();
+  });
+});
