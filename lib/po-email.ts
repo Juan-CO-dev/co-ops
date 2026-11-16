@@ -36,9 +36,8 @@ import type { AuthContext } from "@/lib/session";
 import { TENANT_NAME } from "@/lib/tenant";
 import { sendEmail } from "@/lib/email";
 import { renderEmailLayout, escapeHtml } from "@/lib/email-templates/_layout";
-import { renderPoBodyLines, type PoBodyLine } from "@/lib/po-body";
+import { renderPoBodyLines, vendorT, type PoBodyLine } from "@/lib/po-body";
 import { groupByGuideSection, hasGuideHeader, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
-import { serverT } from "@/lib/i18n/server";
 import {
   PurchaseOrderError,
   PO_MIN,
@@ -189,7 +188,7 @@ async function loadPoEmailContext(actor: AuthContext, poId: string): Promise<PoE
 
 /** V3-A: the vendor reads English; the ONE renderer (lib/po-body) decides the line order and
  *  wording, so the emailed lines equal the copied lines in the PO panel byte for byte. */
-const bodyT = (key: Parameters<typeof serverT>[1], params?: Parameters<typeof serverT>[2]) => serverT("en", key, params);
+const bodyT = vendorT;
 const asBodyLine = (l: SnapshotLine): PoBodyLine =>
   ({ skuName: l.name, orderQty: l.qty, orderUnitLabel: l.unitLabel, itemNumber: l.itemNumber, guidePosition: l.guidePos, guideSection: l.guideSection });
 

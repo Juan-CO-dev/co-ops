@@ -45,7 +45,7 @@ import {
 } from "@/components/ordering/delivery-affordances";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { PoDetail, VendorPoSku } from "@/lib/purchase-orders";
-import { renderPoBodyText } from "@/lib/po-body";
+import { renderPoBodyText, vendorT } from "@/lib/po-body";
 import { buildDraftEditPayload } from "@/lib/po-draft-edits-shared";
 import { groupByGuideSection, hasGuideHeader, NOT_ON_GUIDE } from "@/lib/order-guide-sort";
 import type { OrderEmailPreview } from "@/lib/po-email-shared";
@@ -85,7 +85,7 @@ export function PoPanel({
   actorLevel,
   language,
   shopLabel,
-  dateLabel,
+  vendorDateLabel,
   onClose,
   onChanged,
 }: {
@@ -94,7 +94,8 @@ export function PoPanel({
   actorLevel: number;
   language: "en" | "es";
   shopLabel: string;
-  dateLabel: string;
+  /** The walk date formatted in ENGLISH — it only ever lands in vendor-facing text (W19/B190). */
+  vendorDateLabel: string;
   onClose: () => void;
   /** Called after any successful mutation so the parent refreshes its chip list. */
   onChanged: () => void;
@@ -328,12 +329,13 @@ export function PoPanel({
   const bodyText = useMemo(() => {
     if (!detail) return "";
     return renderPoBodyText({
-      displayCode: detail.displayCode, shopLabel, dateLabel,
+      displayCode: detail.displayCode, shopLabel, dateLabel: vendorDateLabel,
       lines: detail.lines.map((l) => ({ skuName: l.skuName, orderQty: l.orderQty, orderUnitLabel: l.orderUnitLabel, itemNumber: l.itemNumber, guidePosition: l.guidePositionSnapshot, guideSection: l.guideSection })),
-    }, t);
-  }, [detail, shopLabel, dateLabel, t]);
+    }, vendorT);
+  }, [detail, shopLabel, vendorDateLabel]);
 
-  const subject = t("ordering.email.subject", { shop: shopLabel, date: dateLabel });
+  // W19/B190: vendor-facing text (this subject, the body above) is English for every viewer — vendorT, never t.
+  const subject = vendorT("ordering.email.subject", { shop: shopLabel, date: vendorDateLabel });
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-co-bg">
