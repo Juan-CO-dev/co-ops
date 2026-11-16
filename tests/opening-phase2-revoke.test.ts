@@ -62,7 +62,7 @@ function service(answer: RpcAnswer, status = "phase1_complete") {
   const rpc = vi.fn(async (_name: string, _args: Record<string, unknown>) => answer);
   const from = vi.fn((table: string) => {
     tables.push(table);
-    const row = table === "checklist_instances" ? { status, location_id: "shop", date: "2026-11-15" } : table === "checklist_completions" ? liveRow() : null;
+    const row = table === "checklist_instances" ? { status, location_id: "shop", date: "2026-11-15", template: { type: "opening" } } : table === "checklist_completions" ? liveRow() : null;
     const builder: Record<string, unknown> = {
       select: () => builder,
       eq: () => builder,

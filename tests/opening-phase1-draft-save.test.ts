@@ -30,7 +30,13 @@ function service(answer: RpcAnswer) {
     const builder: Record<string, unknown> = {
       select: () => builder,
       eq: () => builder,
-      maybeSingle: async () => ({ data: { location_id: SHOP, date: "2026-11-15" }, error: null }),
+      // The instance carries its opening template so W13/B073's same-read type guard passes.
+      maybeSingle: async () => ({
+        data: table === "checklist_instances"
+          ? { location_id: SHOP, date: "2026-11-15", template: { type: "opening" } }
+          : { location_id: SHOP, date: "2026-11-15" },
+        error: null,
+      }),
       upsert: (row: unknown) => { upserts.push({ table, row }); return builder; },
       single: async () => ({ data: { saved_at: "2026-11-15T11:00:00.000Z" }, error: null }),
     };
