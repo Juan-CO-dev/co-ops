@@ -50,7 +50,6 @@ import {
   recordBatchProductionFromPrep,
   recordProductionFromPrep,
   reverseProductionForPrep,
-  skuConsumptionForItem,
   type ConfirmedInput,
   type DerivedSku,
 } from "@/lib/prep-consumption";
@@ -2515,21 +2514,20 @@ export async function savePhase2Item(
         producedAt,
         madeBy,
         source: "opening_p2",
+        completionId: rpcResult.completionId,
       });
     } else if (tItem?.item_id) {
-      let consumption = confirmedConsumption;
-      if (consumption === null) {
-        const m = await skuConsumptionForItem(tItem.item_id, args.entry.openerPrepped, args.locationId);
-        consumption = [...m].map(([skuId, oz]) => ({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz }));
-      }
+      // W16/B183: null (crew / untouched panel) and a confirmed set both go to the fold, which
+      // reconciles them against the server's recipe.
       await recordProductionFromPrep(args.actor, {
         locationId: args.locationId,
         instanceId: args.instanceId,
         templateItemId: args.entry.templateItemId,
         outputItemId: tItem.item_id,
         outputQty: args.entry.openerPrepped,
-        confirmedConsumption: consumption,
+        confirmedConsumption,
         source: "opening_p2",
+        completionId: rpcResult.completionId,
       });
     }
   } catch (e) {

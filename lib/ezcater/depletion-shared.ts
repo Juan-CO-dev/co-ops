@@ -5,11 +5,17 @@ export interface DepletionLink { toast_snapshot_id: string; toast_order_guid: st
 export const depletionCheckKey = (snapshot: string, order: string, check: string): string =>
   JSON.stringify([snapshot, order, check]);
 
+/** An ezCater ring by its dining-option label ("Ezcater", "EZ Cater", "ez-cater", …). One spelling rule for
+ *  the reconciled path and the raw ingest's catering exclusion (W16/B093). */
+export function isEzcaterDiningOption(label: string | null | undefined): boolean {
+  return (label ?? "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase() === "ezcater";
+}
+
 export function reconciledToastOrders(orders: CapturedToastOrder[], links: DepletionLink[]): CapturedToastOrder[] {
   const excluded = new Set(links.map((link) => depletionCheckKey(link.toast_snapshot_id, link.toast_order_guid, link.check_guid)));
   return orders.map((order) => ({ ...order,
     // Unlinked ezCater rings remain sales even if channel configuration says catering.
-    salesChannel: order.diningOption?.replace(/[^a-zA-Z0-9]/g, "").toLowerCase() === "ezcater" ? null : order.salesChannel,
+    salesChannel: isEzcaterDiningOption(order.diningOption) ? null : order.salesChannel,
     selections: order.selections.filter((selection) => !excluded.has(depletionCheckKey(order.snapshotId, order.orderGuid, selection.check_guid))),
     checks: order.checks.filter((check) => !excluded.has(depletionCheckKey(order.snapshotId, order.orderGuid, check.checkGuid))),
   }));
