@@ -2,7 +2,7 @@ import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { parseReceipt } from "@/lib/receipt-parse";
 import { sweepInboundMessages } from "@/lib/inbound-router";
-import { parseFits } from "@/lib/receipt-parse-budget-shared";
+import { fetchShareDeadline, parseFits } from "@/lib/receipt-parse-budget-shared";
 
 function truncateErr(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
@@ -10,6 +10,19 @@ function truncateErr(e: unknown): string {
 }
 
 const SWEEP_LIMIT = 10;
+
+/** Wait for `work`, but no later than the instant `at`. The work itself is not stopped. */
+async function settledBy<T>(work: Promise<T>, at: number): Promise<{ inTime: true; value: T } | { inTime: false }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const shareEnded = new Promise<{ inTime: false }>(resolve => {
+    timer = setTimeout(() => resolve({ inTime: false }), Math.max(0, at - Date.now()));
+  });
+  try {
+    return await Promise.race([work.then(value => ({ inTime: true as const, value })), shareEnded]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * One sweep: fetch retryable inbound mail, then parse the oldest unparsed inbound receipts.
@@ -21,14 +34,37 @@ const SWEEP_LIMIT = 10;
  * downloads, the write and matching), so a long invoice can use its whole call and the run still
  * ends inside the function's limit. With the longer call a sweep reads fewer rows; the 15-minute
  * cadence works through a backlog oldest-first.
+ *
+ * PARSING HAS A SHARE OF THE RUN THAT FETCHING CANNOT USE (review r3). Fetching goes first, so
+ * mail recovered by this sweep is read in the same run, but it stops at `fetchShareDeadline`: one
+ * whole parse and the handoff to it are always left. Before this, fetching could take half the
+ * run while a parse needed more than the other half, so a stretch of slow fetching read no
+ * receipt at all, sweep after sweep. The share is held two ways: the fetch sweep is given that
+ * instant as its own deadline (it starts no message without a full fetch window before it), and this run stops
+ * WAITING for it at that instant even if a storage write hangs past it. A message still in flight
+ * then keeps its lease and finishes on its own, or a later sweep retries it. When the run has
+ * room for one parse and no more, the parse is kept and fetching waits for the next run. With no
+ * parse key there is nothing to keep time for, and fetching has the whole run.
  */
 export async function runParseReceipts(deadline: number) {
   const inboundEnabled = !!process.env.RESEND_INBOUND_SECRET && !!process.env.RESEND_API_KEY;
-  if (!process.env.ANTHROPIC_API_KEY && !inboundEnabled) return { dormant: true as const };
+  const parseEnabled = !!process.env.ANTHROPIC_API_KEY;
+  if (!parseEnabled && !inboundEnabled) return { dormant: true as const };
   const sb = getServiceRoleClient();
-  const fetchDeadline = Date.now() + (deadline - Date.now()) / 2;
-  const inbound = inboundEnabled ? await sweepInboundMessages(sb, fetchDeadline) : { swept: 0, failed: 0 };
-  if (!process.env.ANTHROPIC_API_KEY) return { dormant: false as const, swept: 0, parsed: 0, failed: 0,
+  const fetchDeadline = parseEnabled ? fetchShareDeadline(deadline) : deadline;
+  let inbound: { swept: number; failed: number; overran?: true } = { swept: 0, failed: 0 };
+  if (inboundEnabled && Date.now() < fetchDeadline) {
+    const fetching = sweepInboundMessages(sb, fetchDeadline);
+    const leg = await settledBy(fetching, fetchDeadline);
+    if (leg.inTime) inbound = leg.value;
+    else {
+      // Its counts are unknown here; the inbound ledger has each message's own outcome.
+      inbound = { swept: 0, failed: 0, overran: true };
+      console.error("[cron parse-receipts] inbound fetch overran its share of the run; parsing goes ahead");
+      void fetching.catch(e => console.error("[cron parse-receipts] inbound fetch failed after its share:", truncateErr(e)));
+    }
+  }
+  if (!parseEnabled) return { dormant: false as const, swept: 0, parsed: 0, failed: 0,
     metadata: { job: "parse-receipts", swept: 0, parsed: 0, failed: 0, inbound } };
   const { data: rows, error } = await sb
     .from("email_receipts")
