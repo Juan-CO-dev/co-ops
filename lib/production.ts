@@ -48,14 +48,18 @@ function actorLoc(actor: AuthContext): LocationActor { return { role: actor.user
  * service-role. NOT via lib/admin/skus.loadMeasureUnits, which gates at AGM+ (≥6);
  * recordProduction runs at employee+ (≥3), so the gated helper would throw for a
  * crew member. Same select shape as loadMeasureUnits.
+ * A failed read THROWS (W16 fix round 1): an empty registry is a valid-looking answer that makes every
+ * measure-denominated pack resolve to no content, so stock would skip consumption and prediction would
+ * answer null — both silently.
  */
 async function loadMeasuresMap(): Promise<Map<string, MeasureUnitFactor>> {
   const sb = getServiceRoleClient();
-  const { data } = await sb
+  const { data, error } = await sb
     .from("measure_units")
     .select("label, dimension, to_base_factor")
     .eq("active", true)
     .returns<Array<{ label: string; dimension: MeasureDimension; to_base_factor: number | string }>>();
+  if (error) throw new Error(`loadMeasuresMap measure_units: ${error.message}`);
   return new Map<string, MeasureUnitFactor>((data ?? []).map((m) => [m.label, { dimension: m.dimension, toBaseFactor: Number(m.to_base_factor) }]));
 }
 
@@ -95,16 +99,18 @@ async function loadRetiredProductIds(
 /**
  * content_oz (oz per pack) for one SKU AT A SHOP (catalog Phase 2a): the shop's own pack version
  * when it has one, else today's flat mirror byte-for-byte (contentOzForScope). Manual production
- * PERSISTS input_oz from this, so the shop's case must be the one counted.
+ * PERSISTS input_oz from this, so the shop's case must be the one counted. A failed read THROWS (W16 fix
+ * round 1); null means only "this SKU has no content basis", never "the read did not happen".
  */
 async function skuContentOzAt(skuId: string, locationId: string): Promise<number | null> {
   const sb = getServiceRoleClient();
-  const [{ data: sku }, packs, measures] = await Promise.all([
+  const [{ data: sku, error: skuErr }, packs, measures] = await Promise.all([
     sb.from("vendor_items").select("units_per_pack, each_size, each_measure, avg_oz_per_each").eq("id", skuId)
       .maybeSingle<{ units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>(),
     loadSkuPackResolution([skuId], locationId),
     loadMeasuresMap(),
   ]);
+  if (skuErr) throw new Error(`skuContentOzAt vendor_items: ${skuErr.message}`);
   if (!sku) return null;
   return contentOzForScope(
     { unitsPerPack: sku.units_per_pack, eachSize: num(sku.each_size), eachMeasure: sku.each_measure, avgOzPerEach: num(sku.avg_oz_per_each) },

@@ -76,3 +76,44 @@ describe("W16/B096: predictOutput", () => {
     await expect(predictOutput(actor, { locationId: LOC, inputSkuId: "s-lettuce", outputItemId: "i-slaw", inputQty: 1 })).rejects.toThrow(/read denied/);
   });
 });
+
+/**
+ * W16 fix round 1 (P2): the conversion reads B096 added (vendor_items, the measure registry, the pack
+ * levels) and the headers / inputs each fail ON THEIR OWN — the fake fails exactly one table, so every
+ * downstream read is reached. A failed read must throw; never a `predicted: null` or an in-stock number
+ * that skipped consumption (a valid-looking answer built on a read that did not happen).
+ */
+function failOnly(table: string) {
+  const fake = createFakeDb(seed());
+  current = { client: { from: (t: string) => {
+    if (t !== table) return fake.client.from(t);
+    const q: Record<string, unknown> = {};
+    for (const k of ["select", "eq", "is", "in", "order", "range", "returns", "limit", "lte", "gte", "lt", "gt", "or", "not"]) q[k] = () => q;
+    const failed = { data: null, error: { message: `${table} read denied` } };
+    q.maybeSingle = () => Promise.resolve(failed);
+    q.single = () => Promise.resolve(failed);
+    q.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => Promise.resolve(failed).then(resolve, reject);
+    return q;
+  } } };
+}
+
+describe("W16 fix round 1: injected read failures propagate", () => {
+  const predict = () => predictOutput(actor, { locationId: LOC, inputSkuId: "s-lettuce", outputItemId: "i-slaw", inputQty: 1 });
+
+  for (const table of ["vendor_items", "measure_units", "sku_pack_levels", "productions", "production_inputs"]) {
+    it(`predictOutput throws when only ${table} fails`, async () => {
+      failOnly(table);
+      await expect(predict()).rejects.toThrow(new RegExp(`${table} read denied`));
+    });
+    it(`loadInStockPacks throws when only ${table} fails`, async () => {
+      failOnly(table);
+      await expect(loadInStockPacks(["s-lettuce"], LOC)).rejects.toThrow(new RegExp(`${table} read denied`));
+    });
+  }
+
+  it("the same reads, all succeeding, still answer (the fake is not failing everything)", async () => {
+    failOnly("no_such_table");
+    expect((await predict()).predicted).not.toBeNull();
+    expect((await loadInStockPacks(["s-lettuce"], LOC)).get("s-lettuce")).toBeCloseTo(10 - 32 / 384 - 96 / 384 - 1, 9);
+  });
+});
