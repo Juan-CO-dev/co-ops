@@ -6,6 +6,7 @@ import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { buildRecipeGraph, type GraphRecipe } from "@/lib/prep-consumption-graph";
 import { deriveSalesConsumptionFrom, deriveCapturedSalesConsumption, type LedgerRow } from "@/lib/catering/toast-sales";
 import type { CapturedToastDay } from "@/lib/toast/captured-day";
+import { normalizeToastOrder } from "@/lib/toast/capture-shared";
 import type { RecipeInputSku, MeasureUnitFactor } from "@/lib/recipe-math";
 
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
@@ -312,5 +313,31 @@ describe("W16/B094: dining-option exclusions match the order's dining option", (
     const result = await deriveCapturedSalesConsumption("shop", "2026-10-07", capturedDay({ salesChannel: "dine_in", diningOption: "Dine In" }, [line("a1", "a")]));
     expect(direct(result, "roll")).toBe(6);
     expect(result.excludedCount).toBe(0);
+  });
+});
+
+// Item 1 PR B (phase 1): TOAST_LINE_PRICES adds price fields to captured selection_units. Depletion
+// and the double-count law must not see them: the same Toast order captured with the switch OFF and ON
+// depletes byte-identically through the real capture adapter.
+describe("item 1 PR B: line prices never reach depletion", () => {
+  it("switch OFF and ON captures of one order deplete identically", async () => {
+    tables.toast_menu_map!.push(mapping("no-cheese", { is_modifier: true, item_id: "prov", disposition: "remove", parent_only: true, portion_qty: 50 }));
+    const raw = { guid: "order", businessDate: 20261007, checks: [{ guid: "check", amount: 31, selections: [
+      { guid: "a1", item: { guid: "a" }, displayName: "A", quantity: 2, price: 20, preDiscountPrice: 20, receiptLinePrice: 10, tax: 2, taxInclusion: "NOT_INCLUDED",
+        modifiers: [{ guid: "n1", item: { guid: "no-cheese" }, displayName: "No cheese", quantity: 2, price: 0 }] },
+      { guid: "b1", item: { guid: "b" }, displayName: "B", quantity: 1, price: 11, preDiscountPrice: 11, receiptLinePrice: 11 },
+    ] }] };
+    const dayFrom = (linePrices: boolean): CapturedToastDay => {
+      const captured = normalizeToastOrder(raw, "2026-10-07", { linePrices });
+      return { coverage: { runId: "run", finishedAt: "2026-10-08T00:00:00Z", orderCount: 1, missingPointerCount: 0, absenceRemovalApplied: false, configDegraded: false },
+        orders: [{ snapshotId: "snapshot", orderGuid: "order", modifiedAt: null, diningOptionGuid: null, diningOption: null, salesChannel: "retail",
+          deleted: false, voided: false, excessFood: false, checks: [{ checkGuid: "check", amountCents: 3100, voided: false, deleted: false }],
+          selections: captured.order.selection_units }] };
+    };
+    const on = dayFrom(true);
+    expect(on.orders[0]!.selections[0]).toHaveProperty("net_cents", 2000);
+    const [offResult, onResult] = [await deriveCapturedSalesConsumption("shop", "2026-10-07", dayFrom(false)), await deriveCapturedSalesConsumption("shop", "2026-10-07", on)];
+    expect(JSON.stringify(onResult)).toBe(JSON.stringify(offResult));
+    expect(direct(onResult, "roll")).toBe(12);
   });
 });
