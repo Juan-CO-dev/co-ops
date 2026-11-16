@@ -47,6 +47,7 @@ import { OpeningDraftAutosaver } from "@/lib/opening-draft-autosave";
 import { createClientRequestId } from "@/lib/client-request-id";
 import { isDuplicateInFlight } from "@/lib/made-the-need-shared";
 import { openingFooterHint } from "@/lib/prep-display-shared";
+import { inPhase2Universe, phase1ItemIds } from "@/lib/opening-phase2-universe-shared";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -326,18 +327,24 @@ export function OpeningClient({
   //   fields. In practice every openingPhase2 item is snapshot-bearing, so
   //   phase1Items is identical to the pre-fix set — this revives the prep beat
   //   without altering Phase 1 behavior.
+  //
+  // W15/B085: once Phase 1 is submitted, Phase 2 lists only the openingPhase2 items that
+  // have a live Phase 1 row on THIS instance — a mirror added mid-shift starts with
+  // tomorrow's opening (owner decision W15-2 a), the same rule as submit_phase2_atomic (0320).
   const { phase1Items, phase2Items } = useMemo(() => {
     const p1: ChecklistTemplateItem[] = [];
     const p2: ChecklistTemplateItem[] = [];
+    const phase1Ids = phase1ItemIds(completions);
+    const phase1Submitted = instance.status !== "open";
     for (const it of templateItems) {
       const meta = it.prepMeta as OpeningPhase2Meta | null;
       const isOpeningPhase2 = meta?.openingPhase2 === true;
       const isSpotCheck = closerSnapshotsMap.has(it.id);
-      if (isOpeningPhase2) p2.push(it);
+      if (isOpeningPhase2 && inPhase2Universe(it.id, phase1Submitted, phase1Ids)) p2.push(it);
       if (isSpotCheck || !isOpeningPhase2) p1.push(it);
     }
     return { phase1Items: p1, phase2Items: p2 };
-  }, [templateItems, closerSnapshotsMap]);
+  }, [templateItems, closerSnapshotsMap, completions, instance.status]);
 
   // Phase 1 form state — hydrated from persisted phase1 completions so a SECOND
   // opener on a verification-locked instance SEES opener A's recorded values

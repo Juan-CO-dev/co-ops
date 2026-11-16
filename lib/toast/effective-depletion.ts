@@ -1,8 +1,9 @@
 import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { selectSalesDepletion } from "@/lib/depletion-shared";
-import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
+import { CARRY_CAP_DAYS, producedItemsForDay, selectSalesDepletion } from "@/lib/depletion-shared";
+import { etCalendarDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
+import { loadProductionCarryDays, productionDaysByLocation } from "@/lib/toast/production-carry";
 
 type Client = ReturnType<typeof getServiceRoleClient>;
 interface Window { locationId?: string; fromDate: string; untilDateExclusive?: string | null; skuIds?: string[]; allowGaps?: boolean }
@@ -60,7 +61,8 @@ export async function loadEffectiveSalesCoverage(sb: Client, window: Window): Pr
   return coverage.filter((row) => completed.has(`${key(row)}:${row.run_id}`));
 }
 
-/** Sales fallback is selected against LIVE production by ET item/day. Production
+/** Sales fallback is selected against LIVE production by ET item/day — W16/B092: a production covers
+ * its item's sales for the item's carry window (shelf life, default 5, cap 14), not only its own day. Production
  * input sums remain with callers and retain their existing timestamp windows. */
 export async function loadEffectiveSalesRows(sb: Client, window: Window): Promise<EffectiveSalesRow[]> {
   return (await loadEffectiveSalesWindow(sb, window)).rows;
@@ -130,7 +132,7 @@ async function loadRawToastSalesWindow(sb: Client, window: Window): Promise<Effe
   const skuFilter = window.skuIds ? new Set(window.skuIds) : null;
   interface Attribution { location_id: string; business_date: string; item_id: string; item_path: string[]; sku_id: string; sales_oz: number | string }
   interface Production { location_id: string; output_item_id: string | null; produced_at: string }
-  const [attributions, productions] = await Promise.all([
+  const [attributions, productions, carryDays] = await Promise.all([
     selectAllRows<Attribution>(async (from, to) => {
       let q = sb.from("toast_depletion_item_attribution").select("location_id,business_date,item_id,item_path,sku_id,sales_oz")
         .gte("business_date", window.fromDate).lt("business_date", end);
@@ -143,27 +145,23 @@ async function loadRawToastSalesWindow(sb: Client, window: Window): Promise<Effe
     selectAllRows<Production>(async (from, to) => {
       let q = sb.from("productions").select("location_id,output_item_id,produced_at")
         .is("superseded_at", null).is("revoked_at", null)
-        .gte("produced_at", operationalDayUtcRange(window.fromDate).startIso)
+        // W16/B092: a batch made before the window still covers its first days.
+        .gte("produced_at", operationalDayUtcRange(etYmdMinusDays(window.fromDate, CARRY_CAP_DAYS)).startIso)
         .lt("produced_at", operationalDayUtcRange(end).startIso);
       if (window.locationId) q = q.eq("location_id", window.locationId);
       const { data, error } = await q.order("id").range(from, to).returns<Production[]>();
       if (error) throw new Error("capture_depletion_production_unavailable");
       return { data };
     }),
+    loadProductionCarryDays(sb),
   ]);
   const coverage = await loadEffectiveSalesCoverage(sb, { ...window, untilDateExclusive: end });
-  const produced = new Map<string, Set<string>>();
   // Several PostgREST reads are not a snapshot. Omit only changed days and disclose
   // their gap; do not mix generations or fail an unrelated shop's board.
   const signature = (r: Coverage) => `${r.run_id}:${r.computed_at}:${r.aggregate_count}:${r.attribution_count}:${r.status}`;
   const beforeByDay = new Map(before.map((row) => [key(row), signature(row)]));
   const validCoverage: Coverage[] = [];
-  for (const row of productions) {
-    const k = `${row.location_id}:${etCalendarDate(row.produced_at)}`;
-    const ids = produced.get(k) ?? new Set<string>();
-    if (row.output_item_id) ids.add(row.output_item_id);
-    produced.set(k, ids);
-  }
+  const productionDays = productionDaysByLocation(productions, etCalendarDate);
   const out: EffectiveSalesRow[] = [];
   for (const day of coverage) {
     if (beforeByDay.get(key(day)) !== signature(day)) continue;
@@ -175,7 +173,8 @@ async function loadRawToastSalesWindow(sb: Client, window: Window): Promise<Effe
     validCoverage.push(day);
     const selected = selectSalesDepletion(direct.map((r) => ({ skuId: r.sku_id, directOz: numeric(r.direct_oz) })),
       attributed.map((r) => ({ itemId: r.item_id, itemPath: r.item_path, skuId: r.sku_id, oz: numeric(r.sales_oz) })),
-      produced.get(key(day)) ?? new Set());
+      producedItemsForDay(productionDays.get(day.location_id) ?? new Map(), day.business_date,
+        (itemId) => carryDays(day.location_id, itemId)));
     const flattened = new Map(direct.map((r) => [r.sku_id, numeric(r.flattened_oz)]));
     for (const [sku_id, direct_oz] of selected) if (!skuFilter || skuFilter.has(sku_id)) out.push({ location_id: day.location_id,
       business_date: day.business_date, sku_id, direct_oz, flattened_oz: flattened.get(sku_id) ?? 0 });

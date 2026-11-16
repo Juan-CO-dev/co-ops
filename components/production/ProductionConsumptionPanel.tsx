@@ -25,6 +25,11 @@ function r2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** Display/record precision for a unit switch (W16/B097): 0.005 case stays 0.005, never 0.01. */
+function r4(n: number): number {
+  return Math.round(n * 10000) / 10000;
+}
+
 function fmtQty(oz: number, unit: DisplayUnit, d: DerivedSku): string {
   const q = ozToUnit(oz, unit, d);
   if (q === null) return `${r2(oz)} oz`;
@@ -76,12 +81,15 @@ export function ProductionConsumptionPanel(props: {
     return unitMap[d.skuId] ?? defaultDisplayUnit(d);
   }
 
-  function buildRows(changedSkuId: string, changedQtyEntered: number | null, changedUnit: DisplayUnit): ConfirmedInput[] {
+  // `exactOz` (W16/B097): a unit SWITCH is a view change — the ounces it saves are the ounces the row
+  // already had, never rebuilt from a rounded display number. Typing still goes unitToOz(typed).
+  function buildRows(changedSkuId: string, changedQtyEntered: number | null, changedUnit: DisplayUnit, exactOz?: number): ConfirmedInput[] {
     return derived.map((d) => {
       if (d.skuId === changedSkuId) {
         const derivedOz = derivedOzForSku(d);
-        const qtyOz =
-          changedQtyEntered !== null && Number.isFinite(changedQtyEntered)
+        const qtyOz = exactOz !== undefined
+          ? exactOz
+          : changedQtyEntered !== null && Number.isFinite(changedQtyEntered)
             ? unitToOz(changedQtyEntered, changedUnit, d)
             : derivedOz;
         return { skuId: d.skuId, qtyOz, qtyEntered: changedQtyEntered, unitEntered: changedUnit, derivedOz };
@@ -111,17 +119,10 @@ export function ProductionConsumptionPanel(props: {
 
   function handleUnitSwitch(d: DerivedSku, next: DisplayUnit) {
     setUnitMap((prev) => ({ ...prev, [d.skuId]: next }));
-    if (value !== null) {
-      const existing = value.find((e) => e.skuId === d.skuId);
-      if (existing) {
-        const qtyEntered = r2(ozToUnit(existing.qtyOz, next, d) ?? existing.qtyOz);
-        onChange(buildRows(d.skuId, qtyEntered, next));
-        return;
-      }
-    }
-    const oz = derivedOzForSku(d);
-    const qtyEntered = r2(ozToUnit(oz, next, d) ?? oz);
-    onChange(buildRows(d.skuId, qtyEntered, next));
+    const existing = value !== null ? value.find((e) => e.skuId === d.skuId) : undefined;
+    const oz = existing?.qtyOz ?? derivedOzForSku(d);
+    const qtyEntered = r4(ozToUnit(oz, next, d) ?? oz);
+    onChange(buildRows(d.skuId, qtyEntered, next, oz));
   }
 
   // Lead with the operator's natural unit (Case/each); keep oz alongside — oz drives

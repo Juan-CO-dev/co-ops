@@ -43,7 +43,8 @@ function fixtures(existing = true) {
   db = createFakeDb({
     locations: [{ id: shop, name: "Shop", code: "SHOP", active: true }],
     checklist_templates: [{ id: "template", location_id: shop, type: "closing" }],
-    checklist_instances: existing ? [{ ...instance }] : [],
+    // allows_multiple_per_day: the real column (default false) the day-instance read filters on (W15/B086).
+    checklist_instances: existing ? [{ ...instance, allows_multiple_per_day: false }] : [],
     checklist_template_items: [], checklist_completions: [],
   });
   h.db = db.client;
@@ -67,13 +68,16 @@ beforeEach(() => {
 describe("closing page read authority without write authority", () => {
   // Audit W05B (Juan 2026-11-15): level 8+ work the closing at any shop, so a non-member MoO / owner / CGS
   // gets the write UI (and starts today's close) where they used to get the read-only view.
+  // Merge-fix (W15/B084): an existing close is served as it is (instance first, no create call) and
+  // still reconciled under the writer path.
   it.each([["moo", 8], ["owner", 9], ["cgs", 10]] as const)("renders the existing close WRITABLE for nonmember %s", async (role, level) => {
     auth(role, level, false);
     const tree = await page();
     expect(tree.type).toBe(ClosingClient);
     expect(tree.props.initialState).toMatchObject({ readOnly: false, instance: { id: instance.id } });
-    expect(h.create).toHaveBeenCalledOnce();
-    expect(h.create.mock.calls[0]![1]).toMatchObject({ locationId: shop, actor: { role, level } });
+    expect(h.create).not.toHaveBeenCalled();
+    expect(h.reconcile).toHaveBeenCalledOnce();
+    expect(h.reconcile.mock.calls[0]![1]).toMatchObject({ locationId: shop, closingInstanceId: instance.id, actor: { role, level } });
   });
 
   it.each([["moo", 8], ["owner", 9], ["cgs", 10]] as const)("starts today's close for nonmember %s (no no-instance dead end)", async (role, level) => {
@@ -138,10 +142,19 @@ describe("closing page read authority without write authority", () => {
   });
 
   it("preserves the member owner's create/reconcile path", async () => {
+    fixtures(false);
     auth("owner", 9, true);
     const tree = await page();
     expect(tree.props.initialState.readOnly).toBe(false);
     expect(h.create).toHaveBeenCalledOnce();
+    expect(h.reconcile).toHaveBeenCalledOnce();
+  });
+
+  it("W15/B084: today's existing close is used as it is (no create call), and still reconciled", async () => {
+    auth("owner", 9, true);
+    const tree = await page();
+    expect(tree.props.initialState).toMatchObject({ readOnly: false, instance: { id: instance.id } });
+    expect(h.create).not.toHaveBeenCalled();
     expect(h.reconcile).toHaveBeenCalledOnce();
   });
 });

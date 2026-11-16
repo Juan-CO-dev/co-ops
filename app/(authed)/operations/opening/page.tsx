@@ -40,6 +40,7 @@ import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveShop } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
+import { findDayInstance } from "@/lib/checklist-day-instance";
 import type { OpeningPhase2Meta } from "@/lib/types";
 
 import type { ManagerOption } from "@/components/opening/OverParModal";
@@ -101,6 +102,17 @@ async function loadPriorClosingState(
   sb: ReturnType<typeof getServiceRoleClient>,
   args: { locationId: string; yesterdayDate: string },
 ): Promise<PriorClosingState> {
+  // W15/B086: yesterday's closing on ANY version first — an apply-now closing publish
+  // retires the version that served yesterday at once, and the effective resolution below
+  // then reported "no prior closing" for a closing that exists.
+  const dayInstance = await findDayInstance<{ id: string; template_id: string; status: string; created_at: string | null }>(sb, {
+    locationId: args.locationId,
+    type: "closing",
+    date: args.yesterdayDate,
+    columns: "id, template_id, status, created_at",
+  });
+  if (dayInstance) return { exists: true, status: dayInstance.status };
+
   // PR-3: resolve the closing template EFFECTIVE ON yesterday (the day the prior
   // closing ran) — date-aware so a version published for tomorrow doesn't retro-
   // resolve yesterday's gate check.

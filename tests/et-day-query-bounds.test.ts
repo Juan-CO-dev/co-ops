@@ -7,7 +7,9 @@ import { etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 const SITES = [
   ["lib/maintenance.ts", ".gte(\"created_at\", operationalDayUtcRange(args.sinceDate).startIso)"],
   ["lib/ezcater/depletion.ts", ".gte(\"occurred_at\", operationalDayUtcRange(etYmdMinusDays(window.fromDate, 1)).startIso)"],
-  ["lib/ezcater/depletion.ts", ".gte(\"produced_at\", operationalDayUtcRange(etYmdMinusDays(window.fromDate, 2)).startIso)"],
+  // W16/B092: the production read starts CARRY_CAP_DAYS early (a batch covers its carry window).
+  ["lib/ezcater/depletion.ts", ".gte(\"produced_at\", operationalDayUtcRange(etYmdMinusDays(window.fromDate, CARRY_CAP_DAYS)).startIso)"],
+  ["lib/toast/effective-depletion.ts", ".gte(\"produced_at\", operationalDayUtcRange(etYmdMinusDays(window.fromDate, CARRY_CAP_DAYS)).startIso)"],
   ["lib/ezcater/depletion.ts", ".lt(\"produced_at\", operationalDayUtcRange(etYmdMinusDays(end, -1)).startIso)"],
   ["lib/ezcater/pass2.ts", ".gte(\"occurred_at\", operationalDayUtcRange(etYmdMinusDays(fromDate, 1)).startIso)"],
   ["lib/ezcater/pass2.ts", ".gte(\"produced_at\", operationalDayUtcRange(etYmdMinusDays(fromDate, 2)).startIso)"],

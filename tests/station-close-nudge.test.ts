@@ -24,7 +24,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => ({
       : table === "checklist_templates" ? { id: "closing-template" } : [];
     const result = { data, error: null };
     const query = { select: () => query, eq: () => query, is: () => query,
-      or: () => query, order: () => query, limit: () => query, returns: async () => ({ data: [], error: null }),
+      or: () => query, order: () => query, limit: () => query, range: () => query, returns: async () => ({ data: [], error: null }),
       maybeSingle: async () => result, then: (resolve: (value: typeof result) => unknown) => Promise.resolve(result).then(resolve) };
     return query;
   },

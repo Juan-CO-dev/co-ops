@@ -145,6 +145,18 @@ export class ChecklistInstanceClosedError extends ChecklistError {
 }
 
 /**
+ * W15/B084 (0320): another version of the same list already has this shop's one instance
+ * for the day (an apply-now publish landed mid-open). The caller re-reads the day's
+ * instance (lib/checklist-day-instance.ts) instead of starting a second list.
+ */
+export class ChecklistLineageTakenError extends ChecklistError {
+  constructor(public readonly templateId: string, public readonly date: string) {
+    super(`Another version of this list already has the ${date} instance.`, "checklist_instance_lineage_taken");
+    this.name = "ChecklistLineageTakenError";
+  }
+}
+
+/**
  * W13/B072 — the generic complete / submit / confirm writers are the CLOSING screen's.
  * Opening and prep instances are finished through their own atomic flows (Phase 1/2,
  * snapshots, notifications); a hand-made request against them is refused here (409).
@@ -1039,6 +1051,9 @@ export async function getOrCreateInstance(
       );
     }
     return { instance: rowToInstance(race), created: false };
+  }
+  if (insertErr && /\bchecklist_instance_lineage_taken\b/.test(insertErr.message ?? "")) {
+    throw new ChecklistLineageTakenError(templateId, date);
   }
   if (insertErr) throw new Error(`getOrCreateInstance insert: ${insertErr.message}`);
   if (!inserted) throw new Error(`getOrCreateInstance insert returned no row`);
