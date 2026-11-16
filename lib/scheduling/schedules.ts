@@ -17,6 +17,8 @@
  *  - edit: `applyEdit` on the head under the CURRENT context of the edited date; the other days are carried as they are.
  *  - approve: refuses `unresolved_gaps` (every unresolved_search gap, inherited or not) and `rules_failing` (a NEW
  *    error) BEFORE the RPC; writes an approval, never a revision. `budget_limited` gaps do not block (a manager's choice).
+ *    B134 r1: it then re-reads the OTHER shops' current heads (fresh) and refuses `other_shop_overlap`; a failed read
+ *    of them is `other_shop_check_unavailable` (Generate, the horizon and the draft refuse on it too).
  *  - replay: ORIGINAL validation against the head's stored context, from the revision tables ONLY (no live read).
  *
  * No email, no SMS, no notification.
@@ -36,9 +38,9 @@ import { ScheduleError, isScheduleErrorCode, type ScheduleErrorCode } from "./er
 import { type GeneratorOutput } from "./generator/build-shared";
 import { generateWeek as generateScheduleWeek } from "./generator/dispatch-shared";
 import { horizonActions, planHorizon, type HorizonRequest } from "./horizon-shared";
-import { loadScheduleShopSettings, loadSchedulingInputs, loadWeekHeads } from "./inputs";
+import { loadOtherShopShifts, loadScheduleShopSettings, loadSchedulingInputs, loadWeekHeads } from "./inputs";
 import { scheduleEngine } from "./structure-shared";
-import { generatorInputFor, historicalCrewDates, sqlStructureVersion, type SchedulingInputs, type StoredWeek } from "./inputs-shared";
+import { generatorInputFor, historicalCrewDates, otherShopOverlaps, sqlStructureVersion, type SchedulingInputs, type StoredWeek } from "./inputs-shared";
 import { approveWeekCall, commitRevisionCall } from "./rpc-args-shared";
 import { approvalRefusal, checkScheduleRules, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
 import type { PeopleActor } from "@/lib/people/access-shared";
@@ -116,6 +118,11 @@ export function problemsSummary(problems: readonly RuleProblem[]): Record<string
 }
 
 /** Build one week from the inputs (pure apart from the generator-invalid audit). */
+/** B134 r1: another shop's shifts that did not load are UNKNOWN, never free time — nothing is planned on them. */
+export function assertOtherShopsKnown(inputs: Pick<SchedulingInputs, "elsewhereUnavailable">): void {
+  if (inputs.elsewhereUnavailable) throw new ScheduleError("other_shop_check_unavailable");
+}
+
 async function build(inputs: SchedulingInputs, weekStart: string, today: string, buildDays: readonly string[] | undefined, actor: PeopleActor | null, confirmEdited = false): Promise<{ out: GeneratorOutput; inputsDigest: string }> {
   const gi = generatorInputFor(inputs, weekStart, { today, buildDays, confirmEdited });
   try {
@@ -183,6 +190,7 @@ export async function generateWeek(deps: ScheduleDeps, args: { actor: PeopleActo
   const w = stored && { ...stored, edited: stored.edited || (scheduleEngine(inputs.structure.structure) === "crew" && historicalCrewDates(stored).some((d) => d >= todayOf(deps))) };
   if ((w?.headRevisionId ?? null) !== args.expectedHead) throw new ScheduleError("head_moved");
   if (w?.edited && !args.confirmEdited) throw new ScheduleError("edited_week_unconfirmed");
+  assertOtherShopsKnown(inputs);
   const today = todayOf(deps);
   const { out, inputsDigest } = await build(inputs, args.weekStart, today, undefined, args.actor, args.confirmEdited);
   const kind = head ? "regenerated" : "generated";
@@ -212,6 +220,7 @@ async function previewOf(deps: ScheduleDeps, actor: PeopleActor, locationId: str
   const inputs = await loader(deps)(deps.service, { locationId, weekStarts: plan.map((w) => w.weekStart), now: nowOf(deps) });
   if (!inputs.shopSettings.enabled) throw new ScheduleError("shop_not_enabled");
   if (inputs.demand.kind === "unavailable") throw new ScheduleError("demand_unavailable", { params: { cause: inputs.demand.cause } });
+  assertOtherShopsKnown(inputs);
   const built: Array<{ plan: (typeof plan)[number]; out: GeneratorOutput; inputsDigest: string; week: StoredWeek | undefined }> = [];
   for (const p of plan) {
     const { out, inputsDigest } = await build(inputs, p.weekStart, today, p.buildDays, actor, true);
@@ -338,6 +347,15 @@ export async function approveWeek(deps: ScheduleDeps, args: { actor: PeopleActor
   if (w.headRevisionId !== args.expectedHead) throw new ScheduleError("head_moved");
   const refusal = approvalRefusal({ locationId: args.locationId, weekStart: args.weekStart, shifts: w.head.shifts, gaps: w.head.gaps, days: w.head.days }, headProblems(w));
   if (refusal) throw new ScheduleError(refusal);
+  // B134 r1 (CC ruling: Approve is the gate): the OTHER shops' CURRENT heads, read fresh now — never the problems stored
+  // when this head was built. A head is committed before its own approve reads, so of two overlapping heads whose
+  // approves race, the later commit's approve always sees the earlier one: at most one of them is ever approved.
+  const today = todayOf(deps);
+  const users = [...new Set(w.head.shifts.filter((sh) => sh.date >= today).map((sh) => sh.userId))].sort();
+  const other = await loadOtherShopShifts(deps.service, args.locationId, users, [args.weekStart]);
+  if (other.status !== "ok") throw new ScheduleError("other_shop_check_unavailable");
+  const clash = otherShopOverlaps(w.head.shifts, other.shifts, today);
+  if (clash.length > 0) throw new ScheduleError("other_shop_overlap", { params: { date: clash[0]!.date, count: clash.length } });
   const data = await rpc(deps.service, approveWeekCall({ actorId: args.actor.userId, locationId: args.locationId, weekStart: args.weekStart, expectedHead: args.expectedHead }));
   const out = { approvalId: (data.approval_id as string | null) ?? null, revisionId: String(data.revision_id), alreadyApproved: data.already_approved === true };
   if (!out.alreadyApproved) await log(args.actor, "schedule.week_approve", args.locationId, { week_start: args.weekStart, revision_id: out.revisionId, approval_id: out.approvalId });

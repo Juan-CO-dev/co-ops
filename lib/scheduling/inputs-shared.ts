@@ -113,6 +113,11 @@ export interface SchedulingInputs {
    * person's availability around them and the validator refuses an overlap (`other_shop_overlap`). Absent = none.
    */
   elsewhere?: ElsewhereShift[];
+  /**
+   * B134 r1: the other shops' shifts could not be read. `elsewhere` is then EMPTY BUT UNKNOWN — never free time: the
+   * board renders, but nothing is generated (`other_shop_check_unavailable`). Absent = the read succeeded.
+   */
+  elsewhereUnavailable?: boolean;
 }
 
 // ─── Small pure readers ──────────────────────────────────────────────────────
@@ -337,3 +342,13 @@ export function datesOfWeeks(weekStarts: readonly string[]): string[] {
 }
 
 export { closingDuration };
+
+/**
+ * B134 r1 (CC ruling: Approve is the gate): the shifts of a head that overlap another shop's CURRENT head shifts of the
+ * same person, on dates from `fromDate` on (a past day is history and cannot be changed). Pure; sorted.
+ */
+export function otherShopOverlaps(shifts: ReadonlyArray<{ userId: string; date: string; startQ: number; endQ: number }>, elsewhere: readonly ElsewhereShift[], fromDate: string): Array<{ userId: string; date: string; startQ: number; endQ: number }> {
+  const out = shifts.filter((sh) => sh.date >= fromDate && elsewhere.some((e) => e.userId === sh.userId && e.date === sh.date && e.startQ < sh.endQ && e.endQ > sh.startQ))
+    .map((sh) => ({ userId: sh.userId, date: sh.date, startQ: sh.startQ, endQ: sh.endQ }));
+  return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0) || a.startQ - b.startQ);
+}

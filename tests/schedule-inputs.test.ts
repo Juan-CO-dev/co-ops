@@ -293,11 +293,17 @@ describe("loadSchedulingInputs — the one batch loader", () => {
     expect(eli.elsewhere).toEqual({ "2026-10-27": [[44, 76]] });
     const w = eli.availability["2026-10-27"]!;
     expect(w.toQ <= 44 || w.fromQ >= 76).toBe(true);
-    // A missing / failing read is "none": this shop's board never fails because of another shop.
+    expect(inputs.elsewhereUnavailable).toBeUndefined();
+    // B134 r1: a missing / failing read is UNAVAILABLE, never "none" (that would be fabricated free time). The board
+    // still loads (elsewhere empty, flagged); Generate / the horizon / the draft / Approve refuse on the flag.
     const broken = { ...t };
     delete (broken as Record<string, unknown>).schedule_revision_shifts;
     const { loadOtherShopShifts } = await import("@/lib/scheduling/inputs");
-    expect(await loadOtherShopShifts(client(broken, emptyHistory), A, [EMP], [WEEK])).toEqual([]);
+    expect(await loadOtherShopShifts(client(broken, emptyHistory), A, [EMP], [WEEK])).toEqual({ status: "unavailable" });
+    expect(await loadOtherShopShifts(client(t, emptyHistory), A, [EMP], [WEEK])).toEqual({ status: "ok", shifts: [{ userId: EMP, date: "2026-10-27", startQ: 44, endQ: 76 }] });
+    const degraded = await loadSchedulingInputs(client(broken, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
+    expect(degraded.elsewhere).toEqual([]);
+    expect(degraded.elsewhereUnavailable).toBe(true);
   });
   it("demand that does not load is `unavailable` with its cause (never a flat curve)", async () => {
     const inputs = await loadSchedulingInputs(client(baseTables(), async () => ({ data: null, error: { code: "PGRST202", message: "missing" } })), { locationId: A, weekStarts: [WEEK], now: NOW });

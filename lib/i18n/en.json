@@ -7545,6 +7545,8 @@
   "schedule.error.position_rank_not_allowed": "That primary or secondary position isn't one this person's work type allows. Change the work type or pick another position.",
   "schedule.error.person_settings_moved": "Someone else changed this person's settings after you opened them. Reload to see the latest, then make your change again.",
   "schedule.error.person_settings_unavailable": "Saving schedule settings isn't available yet (a database update is pending). Nothing was changed. Ask your tech lead.",
+  "schedule.error.other_shop_overlap": "Someone on this week is already scheduled at another shop at the same time. Fix the overlap here or at the other shop, then approve. Nothing was changed.",
+  "schedule.error.other_shop_check_unavailable": "The other shop's schedule didn't load, so we can't check who is already working there. Try again. Nothing was changed.",
   "schedule.rule.person_overlap": "This person has two blocks at the same time.",
   "schedule.rule.other_shop_overlap": "Already scheduled at another shop {fromQ}–{toQ} — a person can't be in two shops at once.",
   "schedule.rule.position_over_headcount": "Too many people on this position for its head count.",

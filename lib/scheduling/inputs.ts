@@ -335,10 +335,12 @@ async function loadWages(service: SupabaseClient, locationId: string, memberIds:
  * B134: this shop's members' shifts at OTHER shops in the same ISO weeks — each other shop's HEAD revision (the
  * current plan there), read only for this shop's member ids (chunked, paged), only the time columns. First come,
  * first served: whichever shop builds first holds the time, the other plans around it. Never fails this shop's
- * board: any read error (a missing table included) is "none".
+ * board, and never fabricates free time (B134 r1): any read error (a missing table included) is `unavailable` — the
+ * board still renders, but Generate, the horizon, the Wednesday draft and Approve refuse `other_shop_check_unavailable`.
  */
-export async function loadOtherShopShifts(service: SupabaseClient, locationId: string, memberIds: readonly string[], weekStarts: readonly string[]): Promise<ElsewhereShift[]> {
-  if (memberIds.length === 0 || weekStarts.length === 0) return [];
+export type OtherShopShifts = { status: "ok"; shifts: ElsewhereShift[] } | { status: "unavailable" };
+export async function loadOtherShopShifts(service: SupabaseClient, locationId: string, memberIds: readonly string[], weekStarts: readonly string[]): Promise<OtherShopShifts> {
+  if (memberIds.length === 0 || weekStarts.length === 0) return { status: "ok", shifts: [] };
   try {
     const weeks = await selectAllRows<{ head_revision_id: string | null }>((f, t) => service.from("schedule_weeks").select("head_revision_id")
       .neq("location_id", locationId).in("week_start", [...weekStarts]).order("id", { ascending: true }).range(f, t));
@@ -353,9 +355,9 @@ export async function loadOtherShopShifts(service: SupabaseClient, locationId: s
         }
       }
     }
-    return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0) || a.startQ - b.startQ);
+    return { status: "ok", shifts: out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0) || a.startQ - b.startQ) };
   } catch {
-    return [];
+    return { status: "unavailable" };
   }
 }
 
@@ -407,13 +409,15 @@ export async function loadSchedulingInputs(service: SupabaseClient, args: LoadSc
     const closing = closingDuration(closingFacts(facts.skills), structure.structure.shopDay.serviceCloseQ);
     const { wages, overtimeH, overtimeMultiplier } = await loadWages(service, locationId, members.map((m) => m.userId));
     const keptBudgetDigests = await loadKeptDigests(service, locationId);
-    const elsewhere = await loadOtherShopShifts(service, locationId, members.map((m) => m.userId), weekStarts);
+    const other = await loadOtherShopShifts(service, locationId, members.map((m) => m.userId), weekStarts);
+    const elsewhere = other.status === "ok" ? other.shifts : [];
+    const elsewhereUnavailable = other.status === "unavailable";
     // Staff separations (0279): on leave / separated members never reach the roster (a missing 0279 = nobody).
     const employment = await loadEmploymentStates(service, members.map((m) => m.userId));
     const employmentExcluded = members.filter((m) => excludedFromScheduling(stateOf(employment, m.userId).status)).map((m) => m.userId);
     return {
       locationId, asOf, shopSettings, structure, structuresById, members, skills, skillBands: { building: tunables.bands.building, strong: tunables.bands.strong },
-      personSettings, budget, dayTypes, pins, weeks, demand, catering, punches, closing, wages, overtimeH, overtimeMultiplier, keptBudgetDigests, employmentExcluded, elsewhere,
+      personSettings, budget, dayTypes, pins, weeks, demand, catering, punches, closing, wages, overtimeH, overtimeMultiplier, keptBudgetDigests, employmentExcluded, elsewhere, ...(elsewhereUnavailable ? { elsewhereUnavailable } : {}),
     };
   } catch (e) {
     if (e instanceof ScheduleError) throw e;
