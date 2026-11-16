@@ -123,3 +123,73 @@ export function legacyHashInput(order: ToastCapturedOrder): ToastCapturedOrder {
   };
 }
 
+// ---- The canonical content_hash input (Toast churn fix, PR 1, plan r2 §1). ----
+// Toast returns the same order with its arrays in different orders. The legacy input hashed them as
+// returned, so one unchanged order produced many hashes, each a new toast_orders snapshot (~342k extra
+// rows of 501k in prod) that detached the ezCater links joined on the latest one. The canonical input
+// is legacyHashInput's exact field set, every object rebuilt with an EXPLICIT key list in the legacy
+// key order, every collection sorted on a COPY by an ordinal-free comparator, duplicates kept, and the
+// synthetic discount / service-charge ordinals reassigned 0..k-1 per check AFTER sorting. An order
+// already in that order serializes byte-identically to legacyHashInput, so it keeps its legacy hash.
+type Sel = CaptureSelection;
+type Check = ToastCapturedOrder["checks"][number];
+type Discount = ToastCapturedOrder["discounts"][number];
+type Charge = ToastCapturedOrder["service_charges"][number];
+type Payment = ToastCapturedOrder["payments"][number];
+type Scalar = string | number | boolean | null;
+
+/** Nulls first, then code-unit order (never locale), numbers numerically, false before true. */
+function cmp(a: Scalar, b: Scalar): number {
+  if (a === b) return 0;
+  if (a === null) return -1;
+  if (b === null) return 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+const chain = (...xs: number[]) => xs.find((x) => x !== 0) ?? 0;
+const sortedCopy = <T>(xs: readonly T[], by: (a: T, b: T) => number): T[] => xs.slice().sort(by);
+
+const selectionOf = (s: Sel): Sel => ({ check_guid: s.check_guid, selection_guid: s.selection_guid, parent_selection_guid: s.parent_selection_guid,
+  item_guid: s.item_guid, name: s.name, quantity: s.quantity, voided: s.voided, deleted: s.deleted });
+const checkOf = (c: Check): Check => ({ check_guid: c.check_guid, amount_cents: c.amount_cents, tax_cents: c.tax_cents, total_cents: c.total_cents,
+  voided: c.voided, deleted: c.deleted, accounting: { version: c.accounting.version, gross_cents: c.accounting.gross_cents,
+    discounts_comps_cents: c.accounting.discounts_comps_cents, voids_cents: c.accounting.voids_cents,
+    service_charges_cents: c.accounting.service_charges_cents, pre_refund_cents: c.accounting.pre_refund_cents } });
+const discountOf = (d: Discount, ordinal: number): Discount => ({ check_guid: d.check_guid, ordinal, selection_guid: d.selection_guid,
+  applied_discount_guid: d.applied_discount_guid, discount_guid: d.discount_guid, name: d.name, amount_cents: d.amount_cents,
+  reason_guid: d.reason_guid, reason_name: d.reason_name, approver_guid: d.approver_guid });
+const chargeOf = (s: Charge, ordinal: number): Charge => ({ check_guid: s.check_guid, ordinal, service_charge_guid: s.service_charge_guid,
+  name: s.name, amount_cents: s.amount_cents, gratuity: s.gratuity, taxable: s.taxable });
+const paymentOf = (p: Payment): Payment => ({ check_guid: p.check_guid, payment_guid: p.payment_guid, payment_status: p.payment_status,
+  refund_status: p.refund_status, type: p.type, amount_cents: p.amount_cents, tip_cents: p.tip_cents, paid_business_date: p.paid_business_date,
+  refund_amount_cents: p.refund_amount_cents, refund_tip_cents: p.refund_tip_cents, refund_business_date: p.refund_business_date,
+  void_business_date: p.void_business_date, server_guid: p.server_guid, sales_refund_cents: p.sales_refund_cents });
+
+/** The full row text WITHOUT the synthetic ordinal: the last tie-break, so ordinals never order anything. */
+const ordinalFree = (x: { ordinal: number }): string => JSON.stringify(x, (key, value) => (key === "ordinal" ? undefined : value));
+/** 0..k-1 per check, in canonical order (the per-check reset of normalizeToastOrder). */
+function renumber<T extends { check_guid: string }, U>(xs: T[], make: (x: T, ordinal: number) => U): U[] {
+  const next = new Map<string, number>();
+  return xs.map((x) => { const n = next.get(x.check_guid) ?? 0; next.set(x.check_guid, n + 1); return make(x, n); });
+}
+
+export function canonicalHashInput(order: ToastCapturedOrder): ToastCapturedOrder {
+  const o = order.order;
+  const units = sortedCopy(o.selection_units.map(selectionOf), (a, b) =>
+    chain(cmp(a.check_guid, b.check_guid), cmp(a.selection_guid, b.selection_guid), cmp(JSON.stringify(a), JSON.stringify(b))));
+  const checks = sortedCopy(order.checks.map(checkOf), (a, b) => chain(cmp(a.check_guid, b.check_guid), cmp(JSON.stringify(a), JSON.stringify(b))));
+  const discounts = renumber(sortedCopy(order.discounts.map((d) => discountOf(d, 0)), (a, b) => chain(cmp(a.check_guid, b.check_guid),
+    cmp(a.selection_guid, b.selection_guid), cmp(a.applied_discount_guid, b.applied_discount_guid), cmp(ordinalFree(a), ordinalFree(b)))), discountOf);
+  const charges = renumber(sortedCopy(order.service_charges.map((s) => chargeOf(s, 0)), (a, b) => chain(cmp(a.check_guid, b.check_guid),
+    cmp(a.service_charge_guid, b.service_charge_guid), cmp(a.name, b.name), cmp(a.amount_cents, b.amount_cents), cmp(a.gratuity, b.gratuity),
+    cmp(a.taxable, b.taxable), cmp(ordinalFree(a), ordinalFree(b)))), chargeOf);
+  const payments = sortedCopy(order.payments.map(paymentOf), (a, b) =>
+    chain(cmp(a.check_guid, b.check_guid), cmp(a.payment_guid, b.payment_guid), cmp(JSON.stringify(a), JSON.stringify(b))));
+  return {
+    order: { order_guid: o.order_guid, business_date: o.business_date, opened_at: o.opened_at, closed_at: o.closed_at, paid_at: o.paid_at,
+      modified_at: o.modified_at, promised_at: o.promised_at, source: o.source, revenue_center_guid: o.revenue_center_guid,
+      dining_option_guid: o.dining_option_guid, server_guid: o.server_guid, deleted: o.deleted, voided: o.voided, excess_food: o.excess_food,
+      third_party_provider_guid: o.third_party_provider_guid, third_party_provider_name: o.third_party_provider_name, selection_units: units },
+    checks, discounts, service_charges: charges, payments,
+  };
+}
+
