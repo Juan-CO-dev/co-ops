@@ -45,7 +45,7 @@ import {
   type ChecklistChainEntry,
 } from "@/lib/checklists";
 import { loadRestorableAmPrepDraft } from "@/lib/am-prep-draft";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { canWorkShopTasks, type LocationActor } from "@/lib/locations";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import { etCalendarDate } from "@/lib/operational-day";
@@ -77,7 +77,7 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
     role: auth.role,
     locations: auth.locations,
   };
-  if (!lockLocationContext(locActor, locationParam)) {
+  if (!canWorkShopTasks(locActor, locationParam)) {
     redirect("/dashboard");
   }
 

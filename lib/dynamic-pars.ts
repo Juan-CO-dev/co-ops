@@ -35,13 +35,14 @@ import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
+import { loadParSkuUniverse } from "@/lib/par-universe";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import type { AuditAction } from "@/lib/audit-actions";
 import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
-import { loadMeasures, loadShopPackEpochs, loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadMeasures, loadShopPackEpochsAt, loadSkuPackChains } from "@/lib/prep-consumption";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
 import { loadProductIndex } from "@/lib/products";
 import { WALKER_SKU_COLUMNS, perOrderUnitOz } from "@/lib/ordering";
@@ -264,6 +265,8 @@ export interface DemandInputs {
   recipeEditedAt: string | null;
   /** No observed day at all at this location — the cold-start seam (not wired in v1). */
   noLocalHistory: boolean;
+  /** skuId → this shop's current pack epoch (absent = 0). Stamped on every ledger row (W18/B106). */
+  packEpochBySku?: ReadonlyMap<string, number>;
 }
 
 /** The per-slot overlay the engine reads: the human lane, the machine lane, the pin. */
@@ -360,13 +363,22 @@ export async function loadDemandInputs(
   const priorFrom = addDaysEt(runDateEt, -PRIOR_LOOKBACK_DAYS);
   const budgetFrom = addDaysEt(runDateEt, -DYNAMIC_PARS.BUDGET_WINDOW_DAYS);
 
+  // ⑮ THE PACK EPOCH FIRST — before EVERY pack-dependent read (audit W18/B106, fix rounds 1 + 2).
+  //    A pack change bumps the epoch IN THE SAME TRANSACTION as the chain, the flat mirror and the par
+  //    conversion (0259 sku_pack_epoch_bump: +1, never reset), so an epoch read before all of them can
+  //    only be older than or equal to the data's. An older stamp makes the walk drop the row
+  //    (ledgerEpochStands) and leaves an auto par stale at read time: safe. Read after ANY of them, a
+  //    change committing in between would stamp the NEW epoch on an OLD term, and the walk would offer
+  //    it. The pack-dependent reads are: the universe ① (the GLOBAL pars and the flat pack fields — fix
+  //    round 1 missed it), the overlay ② (the shop's converted pars, the machine lane) and the chains
+  //    ⑩. Epoch first, everything else after. The universe is not known yet, so this reads the shop's
+  //    whole epoch map (no id list; bounded by the catalog) and keeps the routable SKUs below.
+  const shopPackEpochs = await loadShopPackEpochsAt(locationId);
+
   // ① The par'd SKU universe. Same column list the walker reads (one spelling), plus the
   //    three per-SKU data columns this arc added. No `.in()` id list.
-  const { data: skuRows, error: sErr } = await sb.from("vendor_items")
-    .select(`${WALKER_SKU_COLUMNS}, cushion_class, par_step, sku_class`)
-    .or("weekday_par.not.is.null,weekend_par.not.is.null")
-    .returns<DbSkuRow[]>();
-  if (sErr) throw new Error(`loadDemandInputs skus: ${sErr.message}`);
+  //    The ONE universe (global par OR this shop's human par; audit W18/B025), the walker's own.
+  const skuRows = await loadParSkuUniverse<DbSkuRow>(sb, locationId, `${WALKER_SKU_COLUMNS}, cushion_class, par_step, sku_class`);
 
   // THE LEDGER'S UNIVERSE MUST BE THE WALKER'S UNIVERSE. The activation filter needs the
   // overlay, so it runs after the overlay read below; these three id lists are only used to
@@ -386,6 +398,13 @@ export async function loadDemandInputs(
   const salesCoverage = loadEffectiveSalesCoverage(sb, {
     locationId, fromDate: windowStart, untilDateExclusive: addDaysEt(runDateEt, 1),
   });
+
+  // ⑮ (read FIRST, above) scoped to this run's SKUs — the map's shape is unchanged (absent = 0).
+  const packEpochBySku = new Map<string, number>();
+  for (const id of skuIds) {
+    const e = shopPackEpochs.get(id);
+    if (e !== undefined) packEpochBySku.set(id, e);
+  }
 
   const [
     overlayBySku, depletionRows, salesEventDates, signalRows,
@@ -458,8 +477,11 @@ export async function loadDemandInputs(
 
   if (actionRows.error) throw new Error(`loadDemandInputs suggestion actions: ${actionRows.error.message}`);
   // CATALOG PHASE 2a (D3): the epoch stamp that retires an auto par computed in any other pack epoch
-  // (one chunked read for the whole shop — the batch law holds).
-  stampEffectivePack(overlayBySku, await loadShopPackEpochs(skuIds, locationId));
+  // (one paged read for the whole shop — the batch law holds).
+  // The same map (⑮, read before the universe, the overlay and the chains) stamps every ledger row
+  // (`detail.pack_epoch`, audit W18/B106): the walk drops a row computed in an older pack, whose
+  // `per_order_unit_oz` and `current_par` count a case size this shop no longer receives.
+  stampEffectivePack(overlayBySku, packEpochBySku);
 
   // ⑦ the production lane. Bounded by the window's production ids, so the `.in()` list is
   //    the same shape loadSkuUsageRank already spends.
@@ -648,6 +670,7 @@ export async function loadDemandInputs(
     budgetSpentBySlot,
     recipeEditedAt,
     noLocalHistory: window.every((d) => !d.salesObserved && !d.productionObserved),
+    packEpochBySku,
   };
 }
 
@@ -868,6 +891,10 @@ export async function runParShadowForLocation(
           write_home_sku_id: sku.writeHomeSkuId,
           grain_key: sku.grainKey,
           horizon_basis: "nightly_start_of_order_day",
+          // The pack epoch these order-unit terms were computed in (W18/B106). NOT part of the
+          // generation id: the trust ramp counts distinct generations, and a format change would
+          // mint a new one for every standing suggestion overnight.
+          pack_epoch: inputs.packEpochBySku?.get(sku.skuId) ?? 0,
         },
       });
       const advisoryNullRow = (reason: ParReasonCode): LedgerRow => ({
@@ -1125,7 +1152,16 @@ export interface ParWriteInput {
   baselinePar?: number | null;
   /** "machine" only, REQUIRED (D3): the pack epoch (sku_pack_epochs) the auto value was computed in. */
   packEpoch?: number;
+  /**
+   * "accept" only, REQUIRED (audit W18/B106 fix round 1): the shop's pack epoch the suggestion was
+   * validated in. The write lands only while the shop still receives that pack.
+   */
+  expectedPackEpoch?: number;
 }
+
+/** PostgREST's answer when a function does not exist yet (0324 not applied). */
+const missingRpc = (e: { code?: string; message?: string }) =>
+  e.code === "PGRST202" || e.code === "42883" || /could not find the function/i.test(e.message ?? "");
 
 /**
  * THE ONE PAR-WRITE AUTHORITY (r3 authz).
@@ -1173,6 +1209,11 @@ export async function writeParFromSuggestion(input: ParWriteInput): Promise<void
     // Level 7 is not all-locations (that grant starts at 9), so the role gate alone does
     // NOT say which shop's par this actor may move. Before the arbiter, before any I/O.
     requireLocation(input.actor, input.locationId);
+    // An accept names the pack it was computed in (W18/B106), or it cannot be bound to it.
+    if (input.actorKind === "accept"
+        && (input.expectedPackEpoch === undefined || !Number.isInteger(input.expectedPackEpoch) || input.expectedPackEpoch < 0)) {
+      throw new DynamicParsError(400, "accept_needs_pack_epoch", "An accept names the pack epoch it was computed in");
+    }
   }
   // The MACHINE kind is exempt by design: it carries no actor at all, and the nightly cron
   // iterates every location on purpose. There is no session to bind it to.
@@ -1234,6 +1275,32 @@ export async function writeParFromSuggestion(input: ParWriteInput): Promise<void
     });
   }
 
+  // THE ACCEPT IS BOUND TO ITS PACK (audit W18/B106 fix round 1). The walk validated the suggestion's
+  // pack epoch in another request; a pack change committing since (it bumps the epoch and converts the
+  // shop's pars in one transaction) would otherwise let an old-case number land. 0324's
+  // apply_par_suggestion_accept takes the SKU lock every pack writer takes, re-checks the epoch under
+  // it, and writes this same patch. Before 0324 is applied it does not exist: the write below runs as
+  // it always has (the window stays open until the apply).
+  if (input.actorKind === "accept") {
+    const { error } = await sb.rpc("apply_par_suggestion_accept", {
+      p_sku: input.skuId, p_location: input.locationId, p_day_class: input.dayClass,
+      p_value: input.value, p_expected_epoch: input.expectedPackEpoch, p_patch: patch,
+      p_actor: input.actor!.user.id,
+    });
+    if (error && !missingRpc(error)) {
+      const msg = error.message ?? "";
+      if (/par_suggestion:(pack_changed|par_changed)/.test(msg)) {
+        throw new DynamicParsError(409, "suggestion_superseded", "This suggestion has changed — refresh the walk");
+      }
+      if (/par_suggestion:not_found/.test(msg)) throw new DynamicParsError(404, "not_found", "SKU not found");
+      throw new Error(`writeParFromSuggestion accept: ${msg}`);
+    }
+    if (!error) {
+      await auditSuggestionWrite(input, before);
+      return;
+    }
+  }
+
   if (before.rowId == null) {
     const { error } = await sb.from("location_sku_settings").insert({
       location_id: input.locationId, sku_id: input.skuId, ...patch,
@@ -1247,6 +1314,14 @@ export async function writeParFromSuggestion(input: ParWriteInput): Promise<void
     if (count === 0) throw new DynamicParsError(404, "not_found", "Overlay row vanished");
   }
 
+  await auditSuggestionWrite(input, before);
+}
+
+/** The human par write's audit row (accept / revert); the machine writes none. */
+async function auditSuggestionWrite(
+  input: ParWriteInput,
+  before: { humanPar: number | null; autoPar: number | null },
+): Promise<void> {
   if (input.actorKind !== "machine") {
     await audit({
       actorId: input.actor!.user.id,

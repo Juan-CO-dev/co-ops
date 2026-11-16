@@ -18,7 +18,8 @@ const imports: Record<string, readonly string[]> = {
   "@/lib/catalog/recipe-item": ["computeRecipePreview"],
   "@/lib/admin/recipe-versions": ["RecipeVersionError"],
   "@/lib/recipe-versions-shared": ["RECIPE_SHOP_WRITE_MIN"],
-  "@/lib/catalog/sku-item": ["CatalogItemError", "computePackPreview", "computePricePreview"],
+  // W18/B107: the Restore and Back-to-default previews are reads like computePackPreview (the same snapshot read, no write).
+  "@/lib/catalog/sku-item": ["CatalogItemError", "computePackPreview", "computePricePreview", "computeRestorePreview", "computeBackToDefaultPreview"],
   "@/lib/catalog/sku-item-shared": ["parseLevels", "parseTarget"],
   "@/lib/i18n/server": ["serverT"],
   "@/lib/catalog/swap-vendor": ["previewSkuSwap", "previewBackToNormal", "loadLiveSwapsForItem"],

@@ -40,7 +40,7 @@ import { OpeningRoleViolationError, canAccessOpeningInstance } from "@/lib/openi
  * Assignment phase 1: draft access matches submit access (KH+ or today's active
  * opening assignment). Rechecked on every write so retracting an assignment
  * also stops draft writes from an already-open tab.
- * Location access is bound with `lockLocationContext` against the instance's own
+ * Location access is bound with `canWorkShopTasks` against the instance's own
  * location, exactly as POST /api/opening/submit/phase1 does it.
  *
  * ── STATUS GATE ──────────────────────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ import { OpeningRoleViolationError, canAccessOpeningInstance } from "@/lib/openi
 import { type NextRequest } from "next/server";
 
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { lockLocationContext } from "@/lib/locations";
+import { canWorkShopTasks } from "@/lib/locations";
 import { parseOpeningDraftRev, parseOpeningPhase1Draft } from "@/lib/opening-draft-shared";
 import { OpeningDraftRefusedError, saveOpeningPhase1Draft } from "@/lib/opening";
 import { requireSession } from "@/lib/session";
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (
-    !lockLocationContext(
+    !canWorkShopTasks(
       { role: ctx.role, locations: ctx.locations },
       instance.location_id,
     )

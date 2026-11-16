@@ -116,7 +116,8 @@ function describeRow(s: WalkerSku): string {
   return `${s.name} [${s.memberRole}] par=${s.parToday} rerouted_from=${s.reroutedFromSkuId ?? "—"}`;
 }
 
-/** The walker's par'd-catalogue query, identified by its own `or(...)` predicate. */
+/** The walker's par'd-catalogue query, identified by its own `or(...)` predicate (the GLOBAL-par
+ *  leg of lib/par-universe.ts; the shop-par leg reads location_sku_settings, then vendor_items by id). */
 const PAR_QUERY = "weekday_par.not.is.null";
 
 /** Total oz of a product's members per menu item — the number costing prices. */
