@@ -176,12 +176,14 @@ export async function restoreSkuPackVersion(
   const sb = getServiceRoleClient();
   // The source version must be THIS SKU's, and global or THIS scope's own (chunk-4 review P3a):
   // adopting another shop's version is Phase 3's job. Refused as not_found (no existence leak).
-  const { data: from, error: fromErr } = await sb.from("sku_pack_versions").select("id, sku_id, location_id")
-    .eq("id", input.fromVersionId).maybeSingle<{ id: string; sku_id: string; location_id: string | null }>();
+  const { data: from, error: fromErr } = await sb.from("sku_pack_versions").select("id, sku_id, location_id, flat_snapshot")
+    .eq("id", input.fromVersionId).maybeSingle<{ id: string; sku_id: string; location_id: string | null; flat_snapshot: unknown }>();
   if (fromErr) throw new Error(`restoreSkuPackVersion version: ${fromErr.message}`);
   if (!from || from.sku_id !== input.skuId || (from.location_id !== null && from.location_id !== input.scope)) {
     throw new SkuVersionError(404, "not_found");
   }
+  // The 0259 flat-pack baseline carries no levels: refused by name, never a bare 404 (W18/B188).
+  if (from.flat_snapshot != null) throw new SkuVersionError(409, "baseline_not_restorable");
   const { data: rows, error } = await sb.from("sku_pack_levels")
     .select("id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal")
     .eq("version_id", input.fromVersionId).eq("sku_id", input.skuId)
@@ -289,6 +291,11 @@ export async function retireShopPriceLane(actor: AuthContext, input: { skuId: st
 export interface PackVersionHistoryRow {
   id: string; locationId: string | null; active: boolean; basedOnVersionId: string | null;
   validFrom: string; validTo: string | null; createdBy: string | null; note: string | null; labels: string[];
+  /**
+   * The 0259 pre-chain BASELINE: the legacy flat pack recorded (`flat_snapshot`, no levels) when the
+   * SKU got its first global chain. History, never restorable (audit W18/B188).
+   */
+  baseline: boolean;
 }
 
 /** Every pack version of a SKU visible to a scope (global + that shop), newest first. Read floor 6; D2 allowance. */
@@ -296,10 +303,10 @@ export async function loadSkuPackVersionHistory(actor: AuthContext, skuId: strin
   if (!catalogWriteRoleAllowed(actor.role, actor.level)) throw new SkuVersionError(403, "forbidden");
   if (scope !== null && !catalogShopAllowed(actor, scope)) throw new SkuVersionError(404, "not_found");
   const sb = getServiceRoleClient();
-  const base = sb.from("sku_pack_versions").select("id, location_id, active, based_on_version_id, valid_from, valid_to, created_by, note").eq("sku_id", skuId);
+  const base = sb.from("sku_pack_versions").select("id, location_id, active, based_on_version_id, valid_from, valid_to, created_by, note, flat_snapshot").eq("sku_id", skuId);
   const scoped = scope === null ? base.is("location_id", null) : base.or(`location_id.is.null,location_id.eq.${assertScopeToken(scope)}`);
   const { data: versions, error } = await scoped.order("valid_from", { ascending: false }).order("id", { ascending: false })
-    .returns<Array<{ id: string; location_id: string | null; active: boolean; based_on_version_id: string | null; valid_from: string; valid_to: string | null; created_by: string | null; note: string | null }>>();
+    .returns<Array<{ id: string; location_id: string | null; active: boolean; based_on_version_id: string | null; valid_from: string; valid_to: string | null; created_by: string | null; note: string | null; flat_snapshot: unknown }>>();
   if (error) throw new Error(`loadSkuPackVersionHistory: ${error.message}`);
   const ids = (versions ?? []).map((v) => v.id);
   const labelsBy = new Map<string, string[]>();
@@ -313,5 +320,6 @@ export async function loadSkuPackVersionHistory(actor: AuthContext, skuId: strin
   return (versions ?? []).map((v) => ({
     id: v.id, locationId: v.location_id, active: v.active, basedOnVersionId: v.based_on_version_id,
     validFrom: v.valid_from, validTo: v.valid_to, createdBy: v.created_by, note: v.note, labels: labelsBy.get(v.id) ?? [],
+    baseline: v.flat_snapshot != null,
   }));
 }

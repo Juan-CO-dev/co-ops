@@ -123,7 +123,8 @@ export interface SkuItemView {
     menuItems: Array<{ id: string; name: string; nameEs: string | null; cost: number | null }>;
   };
   missing: DataErrand[];
-  history: Array<{ id: string; scope: "global" | "shop"; active: boolean; effectiveFrom: string; retiredAt: string | null; who: string | null; labels: string[] }>;
+  /** `baseline` = the 0259 flat-pack baseline row: shown as history, never offered Restore (W18/B188). */
+  history: Array<{ id: string; scope: "global" | "shop"; active: boolean; effectiveFrom: string; retiredAt: string | null; who: string | null; labels: string[]; baseline: boolean }>;
   openRequests: Array<{
     id: string; filedBy: string | null; filedAt: string; note: string | null; proposal: PackChangeProposal | null; photoId: string | null;
     /** What later reports of the same case ADDED (chunk-3 review P3a). */
@@ -209,6 +210,6 @@ export const CATALOG_ITEM_ERROR_CODES = [
   "not_live", "not_one_root", "par_changed", "price_changed", "par_forbidden", "par_lane_mismatch", "preview_stale",
   "request_mismatch", "request_not_open", "self_reference", "shared_child", "sku_inactive", "sku_not_found",
   "sku_owned_by_other_shop", "step_up_required", "step_up_stale", "unknown_measure", "version_changed",
-  "version_sku_mismatch",
+  "version_sku_mismatch", "baseline_not_restorable",
 ] as const;
 export type CatalogItemErrorCode = (typeof CATALOG_ITEM_ERROR_CODES)[number];

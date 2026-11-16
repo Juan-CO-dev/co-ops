@@ -548,11 +548,12 @@ function SkuItemBody({ view, job, requestId }: SkuItemProps) {
               count={String(view.history.length)} open={open.history} onToggle={() => toggle("history")}>
               <div className="flex flex-col gap-2 p-3">
                 {view.history.length === 0 ? <p className="text-sm text-co-text">{t("catalog.history.empty")}</p> : view.history.map((h) => {
-                  const canRestore = !h.active && (h.scope === "shop" ? canSaveShop : view.can.editGlobalPack);
+                  // The flat-pack baseline has no levels to restore (W18/B188): history only.
+                  const canRestore = !h.active && !h.baseline && (h.scope === "shop" ? canSaveShop : view.can.editGlobalPack);
                   return (
                     <div key={h.id} className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-co-border py-2 text-sm text-co-text">
                       <div className="min-w-0">
-                        <p className="font-bold">{t(h.scope === "shop" ? "catalog.history.scope_shop" : "catalog.history.scope_global")} · {h.labels.join(" → ")}</p>
+                        <p className="font-bold">{t(h.scope === "shop" ? "catalog.history.scope_shop" : "catalog.history.scope_global")} · {h.baseline ? t("catalog.history.baseline") : h.labels.join(" → ")}</p>
                         <p className="text-xs text-co-text-muted">
                           {day(h.effectiveFrom)}{h.who ? ` · ${h.who}` : ""} · {h.active ? t("catalog.history.live") : t("catalog.history.retired", { date: h.retiredAt ? day(h.retiredAt) : "—" })}
                         </p>
