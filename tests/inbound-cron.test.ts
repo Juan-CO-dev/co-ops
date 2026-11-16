@@ -5,7 +5,9 @@ import { runParseReceipts } from "@/lib/parse-receipts-run";
 const mocks = vi.hoisted(() => ({ sweep: vi.fn(), service: vi.fn() }));
 vi.mock("@/lib/inbound-router", () => ({ sweepInboundMessages: mocks.sweep }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: mocks.service }));
-vi.mock("@/lib/receipt-parse", () => ({ parseReceipt: vi.fn(), PARSE_CALL_TIMEOUT_MS: 150_000 }));
+vi.mock("@/lib/receipt-parse", () => ({ parseReceipt: vi.fn() }));
+/** What the cron route hands the run: its 300 s limit less the 20 s tail. */
+const RUN_MS = 280_000;
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("ANTHROPIC_API_KEY", ""); vi.stubEnv("RESEND_API_KEY", ""); vi.stubEnv("RESEND_INBOUND_SECRET", "");
@@ -13,13 +15,13 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 it("stays dormant without either configured leg", async () => {
-  expect(await runParseReceipts()).toEqual({ dormant: true });
+  expect(await runParseReceipts(Date.now() + RUN_MS)).toEqual({ dormant: true });
   expect(mocks.service).not.toHaveBeenCalled();
 });
 it("recovers inbound content even before the parse key exists", async () => {
   vi.stubEnv("RESEND_API_KEY", randomBytes(16).toString("hex"));
   vi.stubEnv("RESEND_INBOUND_SECRET", randomBytes(16).toString("hex"));
-  expect(await runParseReceipts()).toMatchObject({ dormant: false, parsed: 0, metadata: { inbound: { swept: 1, failed: 0 } } });
+  expect(await runParseReceipts(Date.now() + RUN_MS)).toMatchObject({ dormant: false, parsed: 0, metadata: { inbound: { swept: 1, failed: 0 } } });
   expect(mocks.sweep).toHaveBeenCalledOnce();
 });
 
@@ -51,7 +53,7 @@ it("gives fetch work 140 seconds and counts only parses begun with the full rese
     now += 60_001;
     return { ok: true } as Awaited<ReturnType<typeof parseReceipt>>;
   });
-  const result = await runParseReceipts();
+  const result = await runParseReceipts(started + RUN_MS);
   expect(mocks.sweep).toHaveBeenCalledExactlyOnceWith(client, started + 140_000);
   expect(query.limit).toHaveBeenCalledWith(10);
   expect(parseReceipt).toHaveBeenCalledExactlyOnceWith(client, "first");
@@ -67,7 +69,7 @@ it("a fetch leg that used its whole 140 seconds starts no parse this run (the ne
   vi.spyOn(Date, "now").mockImplementation(() => now);
   receiptQuery(["first"]);
   mocks.sweep.mockImplementation(async () => { now += 140_000; return { swept: 25, failed: 0 }; });
-  const result = await runParseReceipts();
+  const result = await runParseReceipts(now + RUN_MS);
   expect(parseReceipt).not.toHaveBeenCalled();
   expect(result).toMatchObject({ swept: 0, parsed: 0, failed: 0 });
 });
@@ -84,7 +86,7 @@ it.each([[110_000, 1], [110_001, 0]])("parse reserve boundary at %s ms begins %s
     return { swept: 1, failed: 0 };
   });
   vi.mocked(parseReceipt).mockResolvedValue({ ok: false } as Awaited<ReturnType<typeof parseReceipt>>);
-  const result = await runParseReceipts();
+  const result = await runParseReceipts(now + RUN_MS);
   expect(parseReceipt).toHaveBeenCalledTimes(expected);
   expect(result).toMatchObject({ swept: expected, parsed: 0, failed: expected,
     metadata: { swept: expected, parsed: 0, failed: expected } });

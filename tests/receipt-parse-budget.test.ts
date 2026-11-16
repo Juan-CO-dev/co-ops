@@ -13,7 +13,7 @@ vi.mock("@/lib/email-receipts", () => ({ matchReceiptToPo: vi.fn(), applyReceipt
 vi.mock("@/lib/inbound-router", () => ({ sweepInboundMessages: vi.fn() }));
 
 import { PARSE_CALL_TIMEOUT_MS } from "@/lib/receipt-parse";
-import { PARSE_ROW_RESERVE_MS } from "@/lib/parse-receipts-run";
+import { PARSE_ROW_RESERVE_MS, parseFits, routeWorkDeadline } from "@/lib/receipt-parse-budget-shared";
 import { VENDOR_MAIL_FAILURE_CODES } from "@/lib/vendor-mail-shared";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
@@ -26,7 +26,7 @@ describe("long-invoice parse budgets", () => {
     // One full row always fits the 280 s sweep budget.
     expect(PARSE_ROW_RESERVE_MS).toBeLessThan(280_000);
     const run = read("lib/parse-receipts-run.ts");
-    expect(run).toContain("if (Date.now() + PARSE_ROW_RESERVE_MS > deadline) break;");
+    expect(run).toContain("if (!parseFits(Date.now(), deadline)) break;");
     expect(run).not.toContain("Date.now() + 80_000");
   });
   it("the model call uses the shared bound, not a literal", () => {
@@ -39,6 +39,8 @@ describe("long-invoice parse budgets", () => {
     const declared = /export const maxDuration = (\d+);/.exec(route);
     expect(declared).not.toBeNull();
     expect(Number(declared![1]) * 1000).toBeGreaterThan(PARSE_CALL_TIMEOUT_MS);
+    // Review r3: longer than the CALL was not enough; a whole parse must fit with the tail free.
+    expect(parseFits(0, routeWorkDeadline(0, Number(declared![1])))).toBe(true);
     expect(Number(declared![1])).toBeLessThanOrEqual(300);
   });
   it("the new failure reason is in the closed list and worded in both languages", () => {

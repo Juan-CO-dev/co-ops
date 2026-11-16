@@ -1,7 +1,8 @@
 import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { parseReceipt, PARSE_CALL_TIMEOUT_MS } from "@/lib/receipt-parse";
+import { parseReceipt } from "@/lib/receipt-parse";
 import { sweepInboundMessages } from "@/lib/inbound-router";
+import { parseFits } from "@/lib/receipt-parse-budget-shared";
 
 function truncateErr(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
@@ -9,19 +10,24 @@ function truncateErr(e: unknown): string {
 }
 
 const SWEEP_LIMIT = 10;
-/** Time one row may need: the full model call plus downloads, the write and matching (W20/B115).
- *  A row is only started while this much of the run's budget is left, so a long invoice can use
- *  its whole call and the sweep still ends inside the function's limit. With the longer call a
- *  sweep reads fewer rows; the 15-minute cadence works through a backlog oldest-first. */
-export const PARSE_ROW_RESERVE_MS = PARSE_CALL_TIMEOUT_MS + 20_000;
 
-export async function runParseReceipts() {
+/**
+ * One sweep: fetch retryable inbound mail, then parse the oldest unparsed inbound receipts.
+ *
+ * `deadline` is the instant the CALLER's function must be done with this work, and it is the
+ * caller's to give (W20/B115): the 15-minute cron passes its own route limit, the daily catch-up
+ * passes what is left of the route it rides in. This run never assumes a budget of its own. A
+ * row is started only while a whole parse still fits (`parseFits`: the full model call plus
+ * downloads, the write and matching), so a long invoice can use its whole call and the run still
+ * ends inside the function's limit. With the longer call a sweep reads fewer rows; the 15-minute
+ * cadence works through a backlog oldest-first.
+ */
+export async function runParseReceipts(deadline: number) {
   const inboundEnabled = !!process.env.RESEND_INBOUND_SECRET && !!process.env.RESEND_API_KEY;
   if (!process.env.ANTHROPIC_API_KEY && !inboundEnabled) return { dormant: true as const };
-  const started = Date.now();
-  const deadline = started + 280_000; // 20 seconds reserved for heartbeat/watch
   const sb = getServiceRoleClient();
-  const inbound = inboundEnabled ? await sweepInboundMessages(sb, started + 140_000) : { swept: 0, failed: 0 };
+  const fetchDeadline = Date.now() + (deadline - Date.now()) / 2;
+  const inbound = inboundEnabled ? await sweepInboundMessages(sb, fetchDeadline) : { swept: 0, failed: 0 };
   if (!process.env.ANTHROPIC_API_KEY) return { dormant: false as const, swept: 0, parsed: 0, failed: 0,
     metadata: { job: "parse-receipts", swept: 0, parsed: 0, failed: 0, inbound } };
   const { data: rows, error } = await sb
@@ -39,7 +45,7 @@ export async function runParseReceipts() {
   let parsed = 0;
   let failed = 0;
   for (const row of list) {
-    if (Date.now() + PARSE_ROW_RESERVE_MS > deadline) break; // full model call + storage/matching reserve
+    if (!parseFits(Date.now(), deadline)) break; // a whole parse no longer fits: leave it for the next sweep
     swept++;
     try {
       const result = await parseReceipt(sb, row.id);

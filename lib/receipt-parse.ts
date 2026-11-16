@@ -48,6 +48,7 @@ import type { AuthContext } from "@/lib/session";
 import { matchReceiptToPo, applyReceiptPoEffects, attemptAutoLink, EmailReceiptError, RECEIPT_MIN } from "@/lib/email-receipts";
 import { assembleMatchBody } from "@/lib/email-receipts-matching-shared";
 import { resolveReceiptAttribution, type ReceiptAccountMatch, type ReceiptAttributionSource } from "@/lib/receipt-attribution-shared";
+import { PARSE_CALL_TIMEOUT_MS } from "@/lib/receipt-parse-budget-shared";
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
@@ -66,10 +67,9 @@ const ANTHROPIC_VERSION = "2023-06-01";
  * it did before. The wall-clock bound below is what limits a runaway call.
  */
 export const PARSE_MAX_TOKENS = 16_000;
-/** Per-call wall-clock bound. A long invoice's output takes well over the old 60 s; the cron
- *  reserves this plus storage/matching time per row (lib/parse-receipts-run.ts), and the
- *  "Parse now" route allows for it (maxDuration). A hung upstream still fails only its own row. */
-export const PARSE_CALL_TIMEOUT_MS = 150_000;
+/** Per-call wall-clock bound: defined once, with every budget worked out from it, in
+ *  lib/receipt-parse-budget-shared.ts. A hung upstream still fails only its own row. */
+export { PARSE_CALL_TIMEOUT_MS };
 
 /** Total request payload budget (~20MB). Attachments that would push us over are SKIPPED
  *  (recorded as a note in parsed_json), not truncated — a truncated PDF/image is garbage. */
@@ -455,7 +455,7 @@ async function callAnthropic(apiKey: string, model: string, assets: LoadedAsset[
   };
 
   // Per-call bound: a hung upstream must fail THIS row (api_error), never stall the whole
-  // sweep. The cron budgets each row against PARSE_CALL_TIMEOUT_MS (lib/parse-receipts-run.ts).
+  // sweep. Every caller budgets a parse against this bound (lib/receipt-parse-budget-shared.ts).
   const res = await fetch(ANTHROPIC_MESSAGES_URL, {
     method: "POST",
     headers: {
