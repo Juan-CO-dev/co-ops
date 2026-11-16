@@ -199,7 +199,8 @@ async function main() {
       payable: payableOf(q2),
     });
     check("q3 submitted/self_serve + paid deposit → key='pending'", keyOf(q3) === "pending", { key: keyOf(q3) });
-    check("q4 accepted/staff + paid deposit (partial) → key='balance_due' + payable", keyOf(q4) === "balance_due" && payableOf(q4) === true, {
+    // W02/B039: a paid deposit leaves a BALANCE, which the portal cannot take yet — not payable.
+    check("q4 accepted/staff + paid deposit (partial) → key='balance_due' + NOT payable", keyOf(q4) === "balance_due" && payableOf(q4) === false, {
       key: keyOf(q4),
       payable: payableOf(q4),
     });

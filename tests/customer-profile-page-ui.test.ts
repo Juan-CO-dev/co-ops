@@ -92,6 +92,17 @@ it("uses the loader's ET date for recency instead of the render clock's UTC date
   expect(await render()).toContain("0 day(s) ago");
 });
 
+it("labels a voided order in the history instead of hiding it (W12/B176)", async () => {
+  state.expanded = true;
+  const f = fixture();
+  f.history.rows.push({ ...f.history.rows[0]!, date: "2026-09-15", source: "toast", channel: "online", totalCents: 2500, voided: true } as never);
+  state.load.mockResolvedValue(f);
+  const html = await render();
+  expect(html.match(/Voided — not counted/g)).toHaveLength(2); // desktop table + phone card
+  state.language = "es";
+  expect((await render()).match(/Anulado — no cuenta/g)).toHaveLength(2);
+});
+
 it("renders Spanish without unresolved translation keys", async () => {
   state.language = "es"; state.expanded = true;
   const html = await render();

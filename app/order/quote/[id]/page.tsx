@@ -23,6 +23,7 @@ import { redirect } from "next/navigation";
 import { getCustomerFromHeaders } from "@/lib/portal/session";
 import { loadCustomerQuoteDetail, type PortalPayment } from "@/lib/portal/quotes";
 import { paymentPlan } from "@/lib/catering/payment-plan";
+import { payPanelState, quotePayability, quoteSettlement, type PayPanelNotice } from "@/lib/portal/payability-shared";
 import { serverT } from "@/lib/i18n/server";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -47,6 +48,15 @@ const PAID_LINE_KEY: Record<PortalPayment["kind"], TranslationKey> = {
 const PAY_LABEL_KEY: Record<"deposit" | "full", TranslationKey> = {
   deposit: "order.quote.pay_deposit",
   full: "order.quote.pay_full",
+};
+/** Why there is nothing to pay here, when that is the quote's own state. */
+const NOTICE_KEY: Record<PayPanelNotice, TranslationKey> = {
+  draft: "order.quote.notice_draft",
+  expired: "order.quote.notice_expired",
+  // Expired, AND a payment came in after it lapsed: received, with our team for review.
+  expired_paid_late: "order.quote.notice_expired_paid_late",
+  superseded: "order.quote.notice_superseded",
+  declined: "order.quote.notice_declined",
 };
 
 const money = (cents: number) =>
@@ -127,12 +137,37 @@ export default async function QuotePage({
   // `balance` intent the team raises (lib/catering/payment-plan.ts: deposit → team
   // confirms → balance), and this surface has never been able to create one.
   const paid = detail.payments.filter((p) => p.status === "paid");
-  const payOptions = paid.length > 0 ? [] : plan.options;
+  // …AND THE PANEL ONLY OPENS FOR A QUOTE THE SERVER WOULD LET THEM PAY (audit W02/B037,
+  // B038). The pay route refuses a superseded, declined or expired quote; this page used
+  // to draw the buttons anyway and let the tap fail. Both now read the one rule in
+  // lib/portal/payability-shared.ts, so they cannot drift apart again.
+  const panel = payPanelState({
+    payability: quotePayability({
+      status: quote.status,
+      supersededAt: quote.supersededAt,
+      expiresAt: quote.expiresAt,
+    }),
+    // The payments and the deadline, never a bare count (review r3): a payment that settled
+    // after the offer lapsed must not silence the expiry notice the way one made in time does.
+    expiresAt: quote.expiresAt,
+    payments: detail.payments,
+  });
+  // Money received on an offer that had already lapsed: listed below with its amount, but
+  // never as "paid in full" and never under "nothing left to pay": a person is reviewing it.
+  const paidLate = panel.notice === "expired_paid_late";
+  const payOptions = panel.showOptions ? plan.options : [];
   // What the customer still owes AFTER what has cleared. The closed panel must not read as
   // "nothing left to pay" when only the deposit landed (LRA-236): the balance is real money
   // the team raises later, so name it and say when it comes.
-  const paidCents = paid.reduce((sum, p) => sum + p.amountCents, 0);
-  const remainingCents = Math.max(0, quote.totalCents - paidCents);
+  // ONE rule for "what is still owed" (lib/portal/payability-shared.ts `quoteSettlement`), the
+  // same one the order list's badge reads: paid amounts against the CURRENT total.
+  const settlement = quoteSettlement(quote.totalCents, detail.payments);
+  const remainingCents = settlement.outstandingCents;
+  // A payment's kind is what it was raised as. A `full` payment made before the quote was
+  // revised upward no longer covers the total, so its line must not say "Paid in full"
+  // directly above "Balance of … still to come" (audit W02, review r2).
+  const paidLineKey = (kind: PortalPayment["kind"]): TranslationKey =>
+    kind === "full" && (!settlement.settled || paidLate) ? "order.quote.paid_payment" : PAID_LINE_KEY[kind];
 
   return (
     <Shell>
@@ -197,6 +232,13 @@ export default async function QuotePage({
         </p>
       )}
 
+      {/* Nothing to pay because of the quote's own state — say so, instead of a dead button. */}
+      {panel.notice && (
+        <p className="mt-5 rounded-2xl border border-co-border bg-co-surface px-5 py-4 text-sm font-semibold text-co-text-muted">
+          {t(NOTICE_KEY[panel.notice])}
+        </p>
+      )}
+
       {/* What has actually been paid — server-authoritative, from catering_payments. */}
       {paid.length > 0 && (
         <section className="mt-5 rounded-3xl border border-co-border/70 bg-co-surface p-6 shadow-sm">
@@ -206,7 +248,7 @@ export default async function QuotePage({
           <ul className="mt-2 flex flex-col gap-1.5">
             {paid.map((p, i) => (
               <li key={`${p.kind}-${i}`} className="text-sm font-semibold text-co-text">
-                {t(PAID_LINE_KEY[p.kind], { amount: money(p.amountCents) })}
+                {t(paidLineKey(p.kind), { amount: money(p.amountCents) })}
               </li>
             ))}
           </ul>
@@ -244,7 +286,10 @@ export default async function QuotePage({
           </div>
         </section>
       ) : (
-        paid.length > 0 && (
+        paid.length > 0 &&
+        // The late-payment notice above already says what happens next; "nothing left to
+        // pay" / "balance still to come" would both promise an order the team has not accepted.
+        panel.notice !== "expired_paid_late" && (
           <p className="mt-5 text-center text-sm font-semibold text-co-text-muted">
             {remainingCents > 0
               ? t("order.quote.balance_later", { amount: money(remainingCents) })

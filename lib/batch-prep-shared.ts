@@ -60,6 +60,26 @@ export function needForLine(par: number | null, line: number | null): number | n
   return Math.max(0, par - line);
 }
 
+/**
+ * The counted bulk backup BEFORE this session, as the opening page previews it and as
+ * save_phase2_item_atomic re-derives it (0215 ruling A + 0315): the opener's recount BACK UP,
+ * else last night's closing BACK UP from the snapshot — and when both are missing but the LINE
+ * is known, ZERO (audit W14 / B020).
+ *
+ * The AM prep form totals a blank BACK UP as 0 (TOTAL = LINE), Phase 1 lets that section verify
+ * without a recount, and a recount always carries both boxes. So "no BACK UP, LINE known" means
+ * "no bulk backup", never "unknown"; it used to leave the batch row unsaveable and the opening
+ * unfinishable. With no LINE there was no count at all and the backup stays unknown (null).
+ */
+export function sessionBackupBefore(args: {
+  recountBackUp: number | null;
+  snapshotBackUp: number | null;
+  /** This session's LINE (recount, else snapshot). */
+  line: number | null;
+}): number | null {
+  return args.recountBackUp ?? args.snapshotBackUp ?? (args.line !== null ? 0 : null);
+}
+
 /** Ruling B: what can reach the line this session. */
 export function availableForLine(backupBefore: number, tossed: number, cameOutTo: number): number {
   return backupBefore - tossed + cameOutTo;

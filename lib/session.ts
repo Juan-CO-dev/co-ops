@@ -333,9 +333,15 @@ export function isAdminPath(currentPath: string): boolean {
  * /api/admin/* arm exists in isAdminPath. Catering shop transfers also require a fresh
  * password: preserve the unlock on that exact action endpoint only. Navigation and
  * ordinary catering reads still clear it. Both money actions are explicitly authorized.
+ *
+ * …and so is the RESEND of an expired quote (POST /api/catering/quotes/[id]/resend, owner
+ * request 2026-11-15): the same act as Send — a payable offer goes out to a customer — behind
+ * the same fresh password, so its own requireSession keeps the unlock in the same way.
+ * Exactly that one path segment after the quote id; nothing else under a quote is admitted.
  */
 export function isCateringStepUpPath(currentPath: string): boolean {
   return (currentPath.startsWith("/api/catering/quotes/") && currentPath.endsWith("/send")) ||
+    /^\/api\/catering\/quotes\/[^/]+\/resend$/.test(currentPath) ||
     /^\/api\/catering\/pipeline\/[^/]+\/transfer$/.test(currentPath);
 }
 

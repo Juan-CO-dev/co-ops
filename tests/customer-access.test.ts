@@ -5,7 +5,7 @@ vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 import { audit } from "@/lib/audit";
 import { STATS_DTO_KEYS, canSeeRawContact, customerShopScope, toStatsDto } from "@/lib/customers/access-shared";
 import {
-  confirmMerge, eraseCustomer, importConsentCsv, loadConsentOverview, loadProfilePage, lookupByContact, revealContact, runRetention, retentionCutoff,
+  confirmMerge, eraseCustomer, importConsentCsv, loadConsentOverview, loadProfilePage, loadSuggestions, lookupByContact, revealContact, runRetention, retentionCutoff,
 } from "@/lib/customers/customers";
 
 const meta = { ipAddress: "203.0.113.9", userAgent: "vitest" };
@@ -68,6 +68,31 @@ describe("refusals happen before any I/O", () => {
   });
 });
 
+describe("merge suggestions (W12/B177)", () => {
+  const A = "33333333-3333-4333-8333-333333333333", B = "44444444-4444-4444-8444-444444444444";
+  it("suggestions are scoped in SQL before the 50-row limit", async () => {
+    for (const [viewer, expected] of [[gm, [SHOP]], [moo, null]] as const) {
+      const rpc = vi.fn(async () => ({ data: [{ id: ID, customer_a: A, customer_b: B, confidence: "0.90", reasons: ["same_full_name"] }], error: null }));
+      const from = vi.fn((table: string) => {
+        if (table === "customer_merge_suggestions") throw new Error("table read before the limit");
+        if (table === "customers") return chain([{ id: A, full_name: "Ana" }, { id: B, full_name: "Ana D" }]);
+        return chain([{ id: "order" }]);
+      });
+      const out = await loadSuggestions(viewer, { client: { rpc, from } as never });
+      expect(rpc).toHaveBeenCalledWith("customer_merge_suggestions_open", { p_location_ids: expected, p_limit: 50 });
+      expect(out).toEqual([{ id: ID, confidence: 0.9, reasons: ["same_full_name"], a: { id: A, name: "Ana" }, b: { id: B, name: "Ana D" } }]);
+    }
+  });
+  it("before 0312 is applied the old read still answers", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function" } }));
+    const from = vi.fn((table: string) => table === "customer_merge_suggestions"
+      ? chain([{ id: ID, customer_a: A, customer_b: B, confidence: 0.9, reasons: ["same_shop"] }])
+      : table === "customers" ? chain([{ id: A, full_name: "Ana" }, { id: B, full_name: "Bo" }]) : chain([{ id: "order" }]));
+    const out = await loadSuggestions(moo, { client: { rpc, from } as never });
+    expect(out.map((s) => s.id)).toEqual([ID]);
+  });
+});
+
 describe("shop binding and audit", () => {
   it("a GM's list is read with their shops; MoO with every shop", async () => {
     for (const [viewer, expected] of [[gm, [SHOP]], [moo, null]] as const) {
@@ -114,6 +139,13 @@ describe("delete-on-request and retention", () => {
     expect(rpc).toHaveBeenCalledTimes(2);
     expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({ action: "customer.retention_sweep", metadata: { erased: 203, months: 36 } });
   });
+  it("skipped rows count toward the batch so the loop keeps going (W12/B070)", async () => {
+    const rpc = vi.fn().mockResolvedValueOnce({ data: { erased: 150, skipped: 50 }, error: null }).mockResolvedValueOnce({ data: { erased: 3, skipped: 0 }, error: null });
+    const r = await runRetention(owner, meta, { client: { rpc, from: vi.fn() } as never, now: new Date("2026-10-08T00:00:00Z") });
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(r.erased).toBe(153);
+    expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({ action: "customer.retention_sweep", metadata: { erased: 153, skipped: 50 } });
+  });
 });
 
 describe("consent import: idempotent and chunked", () => {
@@ -142,6 +174,25 @@ describe("consent import: idempotent and chunked", () => {
       : { data: { import_id: ID, state: "started" }, error: null });
     await expect(importConsentCsv(owner, { files: [{ name: "a.csv", text: "email\na@example.com\n" }], exportDate: "2026-10-08", allowLargeOptOut: false }, meta, { client: { rpc, from: vi.fn() } as never }))
       .rejects.toMatchObject({ status: 409, code: "consent_import_large_opt_out" });
+  });
+  it("an empty snapshot needs the confirmation and makes no import until given (W12/B175)", async () => {
+    const calls: [string, Record<string, unknown>][] = [];
+    const rpc = vi.fn(async (fn: string, args: Record<string, unknown>) => {
+      calls.push([fn, args]);
+      if (fn === "customer_consent_import_begin") return { data: { import_id: ID, state: "started" }, error: null };
+      if (fn === "customer_consent_import_chunk") return { data: {}, error: null };
+      return { data: { import_id: ID, replay: false, rows_total: 0, new_opt_ins: 0, opt_outs: 1, baseline: false }, error: null };
+    });
+    const client = { rpc, from: vi.fn() } as never;
+    await expect(importConsentCsv(owner, { files: [{ name: "a.csv", text: "email\n" }], exportDate: "2026-10-08", allowLargeOptOut: false }, meta, { client }))
+      .rejects.toMatchObject({ status: 409, code: "consent_import_empty_snapshot" });
+    expect(rpc).not.toHaveBeenCalled();
+    const done = await importConsentCsv(owner, { files: [{ name: "a.csv", text: "email\n" }], exportDate: "2026-10-08", allowLargeOptOut: true }, meta, { client });
+    expect(done).toMatchObject({ optOuts: 1, rowsTotal: 0 });
+    expect(calls.map((c) => c[0])).toEqual(["customer_consent_import_begin", "customer_consent_import_chunk", "customer_consent_import_finish"]);
+    expect(calls[0]![1]).toMatchObject({ p_chunk_count: 1, p_explicit_status: false });
+    expect(calls[1]![1]).toMatchObject({ p_chunk_index: 0, p_rows: [] });
+    expect(calls[2]![1]).toMatchObject({ p_allow_large_opt_out: true });
   });
   it("a bad file is a 400 with the parser's code", async () => {
     await expect(importConsentCsv(owner, { files: [{ name: "a.csv", text: "name\nAna\n" }], exportDate: "2026-10-08", allowLargeOptOut: false }, meta, { client: noClient() as never }))
