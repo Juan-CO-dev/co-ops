@@ -43,7 +43,7 @@ import {
   DEFAULT_SCHEDULE_SHOP_SETTINGS, STRUCTURE_DEFAULTS_ID, closingFacts, datesOfWeeks, memberSinceDate, pickShopWage, toCateringEvents, tsStructureVersion,
   type DayTypeRow, type EzcaterOrderRow, type MemberRow, type ShopWageRow, type ScheduleShopSettings, type SchedulingInputs, type StoredRevision, type StoredWeek,
 } from "./inputs-shared";
-import type { PersonSettingsRow } from "./people-input-shared";
+import type { ElsewhereShift, PersonSettingsRow } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, RuleProblem, Segment, Shift } from "./rules-shared";
 import { SCHEDULE_STRUCTURE_DEFAULTS, structureFromStations, type ScheduleStructure, type SeedPosition, type SeedStation } from "./structure-shared";
 import { Q_MINUTES } from "./time-shared";
@@ -331,6 +331,34 @@ async function loadWages(service: SupabaseClient, locationId: string, memberIds:
   return { wages: { byUserCents, source: "sevenshifts" }, overtimeH: num(ls?.weekly_ot_threshold ?? null), overtimeMultiplier };
 }
 
+/**
+ * B134: this shop's members' shifts at OTHER shops in the same ISO weeks — each other shop's HEAD revision (the
+ * current plan there), read only for this shop's member ids (chunked, paged), only the time columns. First come,
+ * first served: whichever shop builds first holds the time, the other plans around it. Never fails this shop's
+ * board: any read error (a missing table included) is "none".
+ */
+export async function loadOtherShopShifts(service: SupabaseClient, locationId: string, memberIds: readonly string[], weekStarts: readonly string[]): Promise<ElsewhereShift[]> {
+  if (memberIds.length === 0 || weekStarts.length === 0) return [];
+  try {
+    const weeks = await selectAllRows<{ head_revision_id: string | null }>((f, t) => service.from("schedule_weeks").select("head_revision_id")
+      .neq("location_id", locationId).in("week_start", [...weekStarts]).order("id", { ascending: true }).range(f, t));
+    const heads = [...new Set(weeks.map((w) => w.head_revision_id).filter((id): id is string => !!id))].sort();
+    const out: ElsewhereShift[] = [];
+    for (const revs of chunks(heads)) {
+      for (const ids of chunks([...memberIds])) {
+        for (const r of await selectAllRows<{ user_id: string; business_date: string; start_q: number; end_q: number }>((f, t) => service.from("schedule_revision_shifts")
+          .select("user_id, business_date, start_q, end_q").in("revision_id", revs).in("user_id", ids)
+          .order("business_date", { ascending: true }).order("user_id", { ascending: true }).order("start_q", { ascending: true }).range(f, t))) {
+          out.push({ userId: r.user_id, date: r.business_date, startQ: r.start_q, endQ: r.end_q });
+        }
+      }
+    }
+    return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0) || a.startQ - b.startQ);
+  } catch {
+    return [];
+  }
+}
+
 /** The `schedule.budget_kept` digests of the shop (a kept suggestion stays quiet). */
 async function loadKeptDigests(service: SupabaseClient, locationId: string): Promise<string[]> {
   const rows = await selectAllRows<{ metadata: { digest?: unknown } | null }>((f, t) => service.from("audit_log").select("metadata")
@@ -379,12 +407,13 @@ export async function loadSchedulingInputs(service: SupabaseClient, args: LoadSc
     const closing = closingDuration(closingFacts(facts.skills), structure.structure.shopDay.serviceCloseQ);
     const { wages, overtimeH, overtimeMultiplier } = await loadWages(service, locationId, members.map((m) => m.userId));
     const keptBudgetDigests = await loadKeptDigests(service, locationId);
+    const elsewhere = await loadOtherShopShifts(service, locationId, members.map((m) => m.userId), weekStarts);
     // Staff separations (0279): on leave / separated members never reach the roster (a missing 0279 = nobody).
     const employment = await loadEmploymentStates(service, members.map((m) => m.userId));
     const employmentExcluded = members.filter((m) => excludedFromScheduling(stateOf(employment, m.userId).status)).map((m) => m.userId);
     return {
       locationId, asOf, shopSettings, structure, structuresById, members, skills, skillBands: { building: tunables.bands.building, strong: tunables.bands.strong },
-      personSettings, budget, dayTypes, pins, weeks, demand, catering, punches, closing, wages, overtimeH, overtimeMultiplier, keptBudgetDigests, employmentExcluded,
+      personSettings, budget, dayTypes, pins, weeks, demand, catering, punches, closing, wages, overtimeH, overtimeMultiplier, keptBudgetDigests, employmentExcluded, elsewhere,
     };
   } catch (e) {
     if (e instanceof ScheduleError) throw e;

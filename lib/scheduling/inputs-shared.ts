@@ -24,7 +24,7 @@ import type { RuleContext } from "./context-shared";
 import { dayTypeFor, type CateringEvent, type DayForecast, type DayTypeOverride, type DemandResult } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
 import type { BuildDayInput, GeneratorInput, HeadSnapshot, Pin } from "./generator/build-shared";
-import { makeSkillLookup, punchPatterns, toSchedPeople, type PersonSettingsRow, type PunchEntry } from "./people-input-shared";
+import { makeSkillLookup, punchPatterns, toSchedPeople, type ElsewhereShift, type PersonSettingsRow, type PunchEntry } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, Shift } from "./rules-shared";
 import { scheduleEngine, scheduledOut, type ScheduleStructure } from "./structure-shared";
 import { addDays, isoWeekStart, weekDays } from "./time-shared";
@@ -108,6 +108,11 @@ export interface SchedulingInputs {
    * history (past shifts, punches, revisions) is untouched. Absent = nobody (fixtures, and before 0279 is applied).
    */
   employmentExcluded?: string[];
+  /**
+   * B134: this week's shifts of this shop's members at OTHER shops (their head revisions). The roster narrows each
+   * person's availability around them and the validator refuses an overlap (`other_shop_overlap`). Absent = none.
+   */
+  elsewhere?: ElsewhereShift[];
 }
 
 // ─── Small pure readers ──────────────────────────────────────────────────────
@@ -299,12 +304,16 @@ export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, o
     settings: inputs.personSettings, patterns, dates, structure: s, punches: inputs.punches, asOf: inputs.asOf,
     shopDay: { fromQ: s.shopDay.prepStartQ, toQ: s.shopDay.outLatestQ },
     wages: { byUserCents: inputs.wages.byUserCents, estimateHourlyCents: inputs.shopSettings.estimatedHourlyCents }, skills,
+    ...(inputs.elsewhere?.length ? { elsewhere: inputs.elsewhere } : {}),
   });
+  // B134: a pin over time the person already holds at another shop is not placed (that shop planned first).
+  const busy = (p: { userId: string; date: string; startQ: number; endQ: number }) =>
+    (inputs.elsewhere ?? []).some((e) => e.userId === p.userId && e.date === p.date && e.startQ < p.endQ && e.endQ > p.startQ);
   const budget = budgetForDates(inputs.budget.entries, inputs.budget.rows, dates);
   return {
     locationId: inputs.locationId, weekStart, today: opts.today, days, structure: s, structureVersionId: inputs.structure.id, people, skills,
     ...(scheduleEngine(s) === "crew" && inputs.weeks[weekStart]?.head ? { crew: { headContext: inputs.weeks[weekStart]!.head!.context } } : {}),
-    pins: inputs.pins.filter((p) => dates.includes(p.date) && !excluded.has(p.userId)), budgetByDate: budget.byDate, head: headSnapshotFor(inputs.weeks[weekStart]),
+    pins: inputs.pins.filter((p) => dates.includes(p.date) && !excluded.has(p.userId) && !busy(p)), budgetByDate: budget.byDate, head: headSnapshotFor(inputs.weeks[weekStart]),
   };
 }
 

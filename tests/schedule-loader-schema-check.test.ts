@@ -134,6 +134,8 @@ beforeAll(async () => {
     // Astra BC-007: the save path's one-person latest-row read (the merge and the stale check) and the card's row ids.
     await inputsMod.loadLatestPersonSettings(svc, LOC, "6f1d2c3e-0000-4000-8000-0000000000c1");
     await inputsMod.loadPersonSettingsWithIds(svc, LOC);
+    // W25 / B134: the other shops' head shifts of this shop's members (time columns only).
+    await inputsMod.loadOtherShopShifts(svc, LOC, ["6f1d2c3e-0000-4000-8000-0000000000c1"], [WEEK]);
   } finally {
     if (prev.t === undefined) delete process.env.SEVENSHIFTS_ACCESS_TOKEN; else process.env.SEVENSHIFTS_ACCESS_TOKEN = prev.t;
     if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;

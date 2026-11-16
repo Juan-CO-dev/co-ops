@@ -7539,6 +7539,7 @@
   "schedule.error.person_settings_moved": "Someone else changed this person's settings after you opened them. Reload to see the latest, then make your change again.",
   "schedule.error.person_settings_unavailable": "Saving schedule settings isn't available yet (a database update is pending). Nothing was changed. Ask your tech lead.",
   "schedule.rule.person_overlap": "This person has two blocks at the same time.",
+  "schedule.rule.other_shop_overlap": "Already scheduled at another shop {fromQ}–{toQ} — a person can't be in two shops at once.",
   "schedule.rule.position_over_headcount": "Too many people on this position for its head count.",
   "schedule.rule.shift_below_minimum": "Shift is shorter than the minimum ({minimumMinutes} min).",
   "schedule.rule.shift_over_maximum": "This person works {minutes} min this day — over the maximum of {maximumMinutes} min.",

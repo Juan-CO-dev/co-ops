@@ -271,6 +271,34 @@ describe("loadSchedulingInputs — the one batch loader", () => {
       if (prev.s === undefined) delete process.env.SEVENSHIFTS_SYNC; else process.env.SEVENSHIFTS_SYNC = prev.s;
     }
   });
+  it("another shop's head shifts of this shop's members are loaded; the roster narrows around them and an overlapping pin is dropped (B134)", async () => {
+    const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const t = baseTables();
+    t.schedule_weeks = [{ id: "wB", location_id: B, week_start: WEEK, head_revision_id: "revB", approved_revision_id: null },
+      { id: "wB-old", location_id: B, week_start: "2026-10-19", head_revision_id: "revOld", approved_revision_id: null }];
+    t.schedule_revision_shifts = [
+      { revision_id: "revB", location_id: B, user_id: EMP, business_date: "2026-10-27", start_q: 44, end_q: 76, segments: [], closing_manager: false, flex: false, pinned: false, reasons: null },
+      { revision_id: "revB", location_id: B, user_id: "someone-else", business_date: "2026-10-27", start_q: 44, end_q: 76, segments: [], closing_manager: false, flex: false, pinned: false, reasons: null },
+      { revision_id: "revOld", location_id: B, user_id: EMP, business_date: "2026-10-20", start_q: 0, end_q: 96, segments: [], closing_manager: false, flex: false, pinned: false, reasons: null },
+    ];
+    t.schedule_pins = [
+      { id: "pin-over", location_id: A, business_date: "2026-10-27", user_id: EMP, start_q: 60, end_q: 80, positions: [], kind: "added", active: true, retires_id: null },
+      { id: "pin-free", location_id: A, business_date: "2026-10-28", user_id: EMP, start_q: 60, end_q: 80, positions: [], kind: "added", active: true, retires_id: null },
+    ];
+    const inputs = await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
+    expect(inputs.elsewhere).toEqual([{ userId: EMP, date: "2026-10-27", startQ: 44, endQ: 76 }]);
+    const g = generatorInputFor(inputs, WEEK, { today: inputs.asOf });
+    expect(g.pins.map((p) => p.id)).toEqual(["pin-free"]);
+    const eli = g.people.find((p) => p.userId === EMP)!;
+    expect(eli.elsewhere).toEqual({ "2026-10-27": [[44, 76]] });
+    const w = eli.availability["2026-10-27"]!;
+    expect(w.toQ <= 44 || w.fromQ >= 76).toBe(true);
+    // A missing / failing read is "none": this shop's board never fails because of another shop.
+    const broken = { ...t };
+    delete (broken as Record<string, unknown>).schedule_revision_shifts;
+    const { loadOtherShopShifts } = await import("@/lib/scheduling/inputs");
+    expect(await loadOtherShopShifts(client(broken, emptyHistory), A, [EMP], [WEEK])).toEqual([]);
+  });
   it("demand that does not load is `unavailable` with its cause (never a flat curve)", async () => {
     const inputs = await loadSchedulingInputs(client(baseTables(), async () => ({ data: null, error: { code: "PGRST202", message: "missing" } })), { locationId: A, weekStarts: [WEEK], now: NOW });
     expect(inputs.demand).toEqual({ kind: "unavailable", cause: "rpc_missing" });
