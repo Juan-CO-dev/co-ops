@@ -46,7 +46,9 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import type { AuthContext } from "@/lib/session";
 import { matchReceiptToPo, applyReceiptPoEffects, attemptAutoLink, EmailReceiptError, RECEIPT_MIN } from "@/lib/email-receipts";
+import { assembleMatchBody } from "@/lib/email-receipts-matching-shared";
 import { resolveReceiptAttribution, type ReceiptAccountMatch, type ReceiptAttributionSource } from "@/lib/receipt-attribution-shared";
+import { PARSE_CALL_TIMEOUT_MS } from "@/lib/receipt-parse-budget-shared";
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
@@ -55,7 +57,19 @@ const RECEIPT_BUCKET = "receipts";
 const DEFAULT_PARSE_MODEL = "claude-sonnet-5-5";
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
-const PARSE_MAX_TOKENS = 2048;
+/**
+ * Output ceiling for one parse (W20/B115, owner decision W20-4 a: accept the higher cost on long
+ * invoices). It was 2048: a line item costs ~50-60 output tokens, so any invoice past ~35 lines
+ * was cut off mid-JSON and recorded as `unparseable_json` for good (the cron never retries a
+ * failed row, and "Parse now" failed the same way). 16000 covers LINES_CAP (100) lines plus the
+ * header fields, with room for the reasoning the default model does before it answers (which
+ * counts against this ceiling too). It is a CEILING, not a spend: a short document costs what
+ * it did before. The wall-clock bound below is what limits a runaway call.
+ */
+export const PARSE_MAX_TOKENS = 16_000;
+/** Per-call wall-clock bound: defined once, with every budget worked out from it, in
+ *  lib/receipt-parse-budget-shared.ts. A hung upstream still fails only its own row. */
+export { PARSE_CALL_TIMEOUT_MS };
 
 /** Total request payload budget (~20MB). Attachments that would push us over are SKIPPED
  *  (recorded as a note in parsed_json), not truncated — a truncated PDF/image is garbage. */
@@ -164,11 +178,16 @@ export async function parseReceipt(sb: ServiceClient, receiptId: string, onWritt
   const model = process.env.AI_PARSE_MODEL || DEFAULT_PARSE_MODEL;
 
   let rawText: string | null;
+  let stopReason: string | null;
   try {
-    rawText = await callAnthropic(apiKey, model, assets);
+    ({ text: rawText, stopReason } = await callAnthropic(apiKey, model, assets));
   } catch (e) {
     return await writeFailed(sb, r.id, `api_error: ${truncate(e instanceof Error ? e.message : String(e), 200)}`, notes, onWritten);
   }
+  // W20/B115: the model ran out of output room. Whatever it wrote is a cut-off document, never
+  // a usable one, so say so by name instead of trying to read half a JSON object (which used to
+  // surface as `unparseable_json`). One honest failure per human decision: no automatic retry.
+  if (stopReason === "max_tokens") return await writeFailed(sb, r.id, "truncated_output", notes, onWritten);
   if (rawText == null) return await writeFailed(sb, r.id, "empty_response", notes, onWritten);
 
   const extraction = parseAndValidate(rawText);
@@ -242,7 +261,12 @@ export async function parseReceipt(sb: ServiceClient, receiptId: string, onWritt
   // ride the body text so extractPoCodes (inside matchReceiptToPo) can find a code the raw
   // eml/subject didn't carry.
   try {
-    if (attribution) await attemptAutoLink(r.id);
+    // W20/B193: the delivery auto-link runs after EVERY successful parse, not only when this
+    // parse inferred the attribution. A receipt a person claimed before it was parsed
+    // (attributed_by 'manual') used to skip it for good, and a legacy receipt's only attempt
+    // was the pre-parse one, which is a no-op now that only invoices may link (B112).
+    // attemptAutoLink's own gates decide: resolved attribution, vendor + shop, an invoice.
+    await attemptAutoLink(r.id);
     if (!r.linked_po_id) {
       const matchBody = assembleMatchBody(extraction, textFallbackForMatch);
       const match = await matchReceiptToPo(sb, {
@@ -399,10 +423,11 @@ function guessRawContentType(r: ReceiptRow): string {
  * user turn: a leading instruction, then the DELIMITED vendor document (text blocks + PDF
  * document blocks + image blocks), then a trailing "return JSON only" instruction. The system
  * prompt carries the prompt-injection posture: delimited content is DATA, never instructions.
- * Returns the model's raw text (first text block) or null. Throws on transport/HTTP error so
- * the caller records an 'api_error' failed parse.
+ * Returns the model's raw text (first text block, or null) and why it stopped (`stop_reason`:
+ * "max_tokens" means the output was cut off). Throws on transport/HTTP error so the caller
+ * records an 'api_error' failed parse.
  */
-async function callAnthropic(apiKey: string, model: string, assets: LoadedAsset[]): Promise<string | null> {
+async function callAnthropic(apiKey: string, model: string, assets: LoadedAsset[]): Promise<{ text: string | null; stopReason: string | null }> {
   const content: Array<Record<string, unknown>> = [];
   content.push({ type: "text", text: DOCUMENT_LEAD_IN });
 
@@ -429,8 +454,8 @@ async function callAnthropic(apiKey: string, model: string, assets: LoadedAsset[
     messages: [{ role: "user", content }],
   };
 
-  // Per-call bound: 10 sequential vision calls must fit the function's runtime ceiling —
-  // a hung upstream must fail THIS row (api_error), never stall the whole sweep.
+  // Per-call bound: a hung upstream must fail THIS row (api_error), never stall the whole
+  // sweep. Every caller budgets a parse against this bound (lib/receipt-parse-budget-shared.ts).
   const res = await fetch(ANTHROPIC_MESSAGES_URL, {
     method: "POST",
     headers: {
@@ -439,16 +464,17 @@ async function callAnthropic(apiKey: string, model: string, assets: LoadedAsset[
       "anthropic-version": ANTHROPIC_VERSION,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(PARSE_CALL_TIMEOUT_MS),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     throw new Error(`anthropic ${res.status}: ${truncate(detail, 300)}`);
   }
-  const json = (await res.json().catch(() => null)) as { content?: Array<{ type?: string; text?: string }> } | null;
-  if (!json || !Array.isArray(json.content)) return null;
+  const json = (await res.json().catch(() => null)) as { content?: Array<{ type?: string; text?: string }>; stop_reason?: unknown } | null;
+  const stopReason = typeof json?.stop_reason === "string" ? json.stop_reason : null;
+  if (!json || !Array.isArray(json.content)) return { text: null, stopReason };
   const textBlock = json.content.find((b) => b?.type === "text" && typeof b.text === "string");
-  return textBlock?.text ?? null;
+  return { text: textBlock?.text ?? null, stopReason };
 }
 
 /** System prompt: role + strict-JSON contract + the untrusted-data posture. */
@@ -476,7 +502,8 @@ const EXTRACTION_INSTRUCTION =
   "classification of the whole document. accountNumber is the customer/ship-to account printed " +
   "on the invoice, never a bank or payment account; preserve leading zeros. NEVER invent a poCode — include it ONLY if a purchase-" +
   "order code is written literally in the document; transcribe it exactly. Omit unknown fields " +
-  "rather than sending null or a placeholder. Output the JSON object and nothing else.";
+  `rather than sending null or a placeholder. List at most ${LINES_CAP} lines: if the document has ` +
+  `more, give the first ${LINES_CAP} and stop. Output the JSON object and nothing else.`;
 
 /**
  * Extract the first JSON object from the model's text (tolerating ```json fences and any stray
@@ -592,21 +619,6 @@ function cleanSignedCents(v: unknown): number | undefined {
 function cleanFiniteNumber(v: unknown): number | undefined {
   if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
   return v;
-}
-
-/**
- * Assemble the text the PO matcher scans post-parse. The parsed poCode + shipTo + vendorName
- * ride INTO the body string so extractPoCodes (inside matchReceiptToPo) can find a code the
- * raw eml/subject didn't literally contain, and so a shipTo can later inform matching. Include
- * the raw-eml text fallback too so both signals are present. Pure string assembly — no markup.
- */
-function assembleMatchBody(extraction: Extraction, textFallback: string | null): string {
-  const parts: string[] = [];
-  if (extraction.poCode) parts.push(extraction.poCode);
-  if (extraction.shipTo) parts.push(extraction.shipTo);
-  if (extraction.vendorName) parts.push(extraction.vendorName);
-  if (textFallback) parts.push(textFallback);
-  return parts.join(" \n ");
 }
 
 /** utf-8 decode; a decode failure → null (best-effort, never throws). */

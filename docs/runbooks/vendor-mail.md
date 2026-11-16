@@ -77,3 +77,16 @@ commit;
 ```
 
 Verify the appended baseline, its `acknowledged_by` and evidence, and the new message revision. Reload/reopen the pane; the unknown historical result remains visible, but the acknowledged claim no longer disables Forward. A deliberate new send receives a fresh request id. Forward bodies over 128 KB are refused as `forward_body_too_large`; the 40 MB encoded-message cap remains separate. `EMAIL_FROM_TEAM` retains its configured display name on the outgoing email.
+
+## Lock order
+
+Migration 0326 (audit W20/B196; authored 2026-11-15, NOT applied yet) corrects the lock order stated in 0297's header.
+
+- **A person's action** (handle, assign, redrive, forward) locks the inbound message `FOR NO KEY UPDATE`, then its receipt `FOR UPDATE`.
+- **A machine write to a receipt** (the parser, the automatic links) locks the receipt row. The automatic delivery link (`delivery_receipt_auto_link`, 0327) takes the delivery row `FOR NO KEY UPDATE` first, then the receipt, the same order as a manager's unlink. Its event row then takes `FOR KEY SHARE` on the inbound message through the foreign key. That lock never waits on a person's action.
+
+Before 0326 the action locked the message `FOR UPDATE`, which blocks `FOR KEY SHARE`. A parse and an action on the same mail could each hold the row the other needed, and Postgres aborted one of them: the person saw "vendor mail unavailable", or the receipt was recorded as a failed parse.
+
+Rule for new code: a new lock on a parent row uses `FOR NO KEY UPDATE`, and no writer takes the inbound message after it holds the receipt.
+
+The two-session proof is `scripts/sim/receiving-0326-0327-lock-check-management.mjs` (sim only; CC runs it when applying 0326 and 0327). Its `unlink>auto-link` pairing proves that an automatic link queued behind a manager's unlink of the same pair is refused `pair_unlinked`.

@@ -3,6 +3,7 @@ import type { AuthContext } from "./session";
 import { getServiceRoleClient } from "./supabase-server";
 import { readVendorMailRow, VendorMailError, VENDOR_MAIL_UUID } from "./vendor-mail";
 import { audit } from "./audit";
+import { runReceiptAutomation } from "./email-receipts";
 export interface VendorMailMutation { expected_revision: number; request_id: string }
 export function validateVendorMailMutation(input: VendorMailMutation) {
   if (!Number.isSafeInteger(input.expected_revision) || input.expected_revision < 0 || typeof input.request_id !== "string" || !VENDOR_MAIL_UUID.test(input.request_id)) throw new VendorMailError(400, "invalid_payload");
@@ -26,5 +27,16 @@ export async function actOnVendorMail(ctx: AuthContext, id: string, action: "han
   const result = await vendorMailRpc(ctx, id, input, "vendor_mail_act", payload, action);
   if (!result.replayed) await audit({ actorId: ctx.user.id, actorRole: ctx.user.role, action: action === "redrive" ? "inbound.redrive" : action === "handle" ? "vendor_mail.handle" : "vendor_mail.assign",
     resourceTable: "inbound_messages", resourceId: id, metadata: { request_id: input.request_id }, ipAddress: null, userAgent: null });
+  // W20/B193: a person just resolved this mail's shop / vendor. Run the delivery and order
+  // matching the parser skipped while it was unresolved. Best-effort: the assignment stands
+  // whatever happens here, a replay runs nothing, and a mail with no receipt row yet is picked
+  // up by its parse (which runs the same matching).
+  if (action === "assign" && !result.replayed) {
+    try {
+      const { data } = await getServiceRoleClient().from("inbound_messages").select("email_receipt_id").eq("id", id)
+        .maybeSingle<{ email_receipt_id: string | null }>();
+      if (data?.email_receipt_id) await runReceiptAutomation(data.email_receipt_id);
+    } catch { /* advisory matching never fails an assignment that committed */ }
+  }
   return result;
 }
