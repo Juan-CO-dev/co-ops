@@ -87,6 +87,7 @@ import { etDayFromDate } from "@/lib/et-day-shared";
 import { formatTime } from "@/lib/i18n/format";
 import { cutoffMissed } from "@/lib/dashboard-status-shared";
 import { PO_AT_OR_BEYOND_CONFIRMED } from "@/lib/po-status-shared";
+import { loadParSkuUniverse } from "@/lib/par-universe";
 
 /**
  * How far ahead the walk looks for BOOKED CATERING when naming the event advisory.
@@ -684,11 +685,9 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // resolveActive(overlay.activeOverride, s.active) below, so a promotional overlay
   // (active_override = true on a globally-INACTIVE SKU, spec §2.1) surfaces. Filtering
   // on the global flag first would make that override dead. `active` is selected.
-  const { data: skuRows, error: sErr } = await sb.from("vendor_items")
-    .select(WALKER_SKU_COLUMNS)
-    .or("weekday_par.not.is.null,weekend_par.not.is.null")
-    .returns<WalkerSkuRow[]>();
-  if (sErr) throw new Error(`loadWalkerData skus: ${sErr.message}`);
+  // The ONE par'd-SKU universe (global par OR this shop's human par; audit W18/B025), shared
+  // with the nightly engine and the suggestion lane.
+  const skuRows = await loadParSkuUniverse<WalkerSkuRow>(sb, locationId, WALKER_SKU_COLUMNS);
   // P4: every exclusion from here on is COUNTED, not just skipped — a dropped par is
   // deleted demand, and the manager has to be able to see it. Classification is
   // first-cause-wins in walk order (vendorless → vendor-down → deactivated).

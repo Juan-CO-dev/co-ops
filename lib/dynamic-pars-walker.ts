@@ -24,6 +24,7 @@ import "server-only";
 
 import type { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
+import { loadParSkuUniverse } from "@/lib/par-universe";
 import {
   loadRhythmByVendor, loadRhythmSkips, loadAllCutoffsByVendor,
 } from "@/lib/vendor-rhythm";
@@ -72,16 +73,13 @@ export interface ParSkuIndexEntry {
   locationId?: string | null;
 }
 
-/** The par'd-SKU universe, exactly as the walker defines it. NO id list in the request
- *  line: the `.or(...)` par filter is the same predicate `loadWalkerData` uses. */
+/** The par'd-SKU universe, exactly as the walker defines it: the ONE loader `loadWalkerData`
+ *  and the nightly engine read (global par OR this shop's human par; audit W18/B025). */
 async function loadParSkuIndex(sb: ServiceClient, locationId: string): Promise<Map<string, ParSkuIndexEntry>> {
-  const { data, error } = await sb.from("vendor_items")
-    .select("id, name, vendor_id, location_id")
-    .or("weekday_par.not.is.null,weekend_par.not.is.null")
-    .returns<Array<{ id: string; name: string; vendor_id: string | null; location_id: string | null }>>();
-  if (error) throw new Error(`loadParSkuIndex: ${error.message}`);
+  const data = await loadParSkuUniverse<{ id: string; name: string; vendor_id: string | null; location_id: string | null }>(
+    sb, locationId, "id, name, vendor_id, location_id");
   const storeVendorIds = await loadStoreVendorIds();
-  return new Map((data ?? []).filter((r) =>
+  return new Map(data.filter((r) =>
     (r.location_id == null || r.location_id === locationId) &&
     (r.vendor_id == null || !storeVendorIds.has(r.vendor_id)),
   ).map((r) => [r.id, { vendorId: r.vendor_id, name: r.name, locationId: r.location_id }]));

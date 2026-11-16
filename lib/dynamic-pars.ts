@@ -35,6 +35,7 @@ import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
+import { loadParSkuUniverse } from "@/lib/par-universe";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -362,11 +363,8 @@ export async function loadDemandInputs(
 
   // ① The par'd SKU universe. Same column list the walker reads (one spelling), plus the
   //    three per-SKU data columns this arc added. No `.in()` id list.
-  const { data: skuRows, error: sErr } = await sb.from("vendor_items")
-    .select(`${WALKER_SKU_COLUMNS}, cushion_class, par_step, sku_class`)
-    .or("weekday_par.not.is.null,weekend_par.not.is.null")
-    .returns<DbSkuRow[]>();
-  if (sErr) throw new Error(`loadDemandInputs skus: ${sErr.message}`);
+  //    The ONE universe (global par OR this shop's human par; audit W18/B025), the walker's own.
+  const skuRows = await loadParSkuUniverse<DbSkuRow>(sb, locationId, `${WALKER_SKU_COLUMNS}, cushion_class, par_step, sku_class`);
 
   // THE LEDGER'S UNIVERSE MUST BE THE WALKER'S UNIVERSE. The activation filter needs the
   // overlay, so it runs after the overlay read below; these three id lists are only used to
