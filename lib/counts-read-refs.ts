@@ -20,11 +20,11 @@
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { loadAllSkuPackChains, loadMeasures } from "@/lib/prep-consumption";
+import { loadAllSkuPackChains, loadAllSkuPackHistory, loadMeasures } from "@/lib/prep-consumption";
 import { loadProductIndex, loadProductLots, type ProductIndexLoad, type ProductLotLoad } from "@/lib/products";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
-import type { VersionScope } from "@/lib/sku-versions-shared";
+import type { SkuPackHistory, VersionScope } from "@/lib/sku-versions-shared";
 
 export interface RosterSku { id: string; name: string; pack_format: string | null; vendor_id: string | null; product_id: string | null; location_id: string | null }
 export interface VendorRef { id: string; name: string; source_kind: "vendor" | "store"; active: boolean }
@@ -37,6 +37,8 @@ export interface CountsReadRefs {
   measures(): Promise<Map<string, MeasureUnitFactor>>;
   /** Active pack-chain levels for these SKUs — what loadSkuPackChains(ids) returns. */
   packChains(skuIds: readonly string[]): Promise<Map<string, PackChainLevel[]>>;
+  /** Every pack version this shop could have resolved, with levels — loadAllSkuPackHistory(shop). Throws on failure. */
+  packHistory(): Promise<SkuPackHistory>;
   /** loadProductIndex(productIds, locationId), shared: one read per product per render. */
   productIndex(productIds: readonly string[], locationId: string): Promise<ProductIndexLoad>;
   /** loadProductLots(locationId, members), shared per product. */
@@ -83,6 +85,7 @@ export function createCountsReadRefs(shopScope: VersionScope): CountsReadRefs {
   });
   const measures = once(() => loadMeasures());
   const allChains = once(() => loadAllSkuPackChains(shopScope));
+  const packHistory = once(() => loadAllSkuPackHistory(shopScope));
   const packChains = async (skuIds: readonly string[]) => {
     const all = await allChains();
     const out = new Map<string, PackChainLevel[]>();
@@ -149,5 +152,5 @@ export function createCountsReadRefs(shopScope: VersionScope): CountsReadRefs {
     return out;
   };
 
-  return { roster, vendors, measures, packChains, productIndex, productLots };
+  return { roster, vendors, measures, packChains, packHistory, productIndex, productLots };
 }

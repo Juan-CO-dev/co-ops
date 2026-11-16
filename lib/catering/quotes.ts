@@ -31,7 +31,10 @@ import { redactEmailAddresses } from "@/lib/email-redact";
 import { escapeHtml } from "@/lib/email-templates/_layout";
 import type { AuthContext } from "@/lib/session";
 import { loadCateringReader } from "./ezcater-detail";
+import { carryPaymentsToRevision, reconcileFamilyPayments, retireSessionFor, type CarryPaymentsResult } from "./payment-carry";
 import { canReadCateringContact } from "./ezcater-detail-shared";
+import { offerTakenUpInTime, quoteTimeExpired } from "@/lib/portal/payability-shared";
+import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 
 export const QUOTE_READ_MIN = 5; // shift_lead+ may VIEW (a lead viewer sees its quote)
 export const QUOTE_WRITE_MIN = 6; // catering_mgr+ may build/revise/send
@@ -90,6 +93,7 @@ import {
   mapQuoteParties,
   type QuoteParties,
   resolveQuoteLineKind,
+  QUOTE_RESEND_MAX_DAYS,
 } from "./quotes-shared";
 import { isQuoteLineKind, type QuoteLineKind } from "./prep-demand-shared";
 export { computeChargeStack, lineTotalCents, type ChargeRates, type ChargeStack, type QuoteParties };
@@ -948,6 +952,23 @@ export interface ReviseQuoteInput {
  * validated + the new stack computed BEFORE the supersede UPDATE, which removes every
  * AVOIDABLE failure from below it.
  *
+ * ── THE REVISION IS THE SAME ORDER (audit W02/B006) ──────────────────────────────────
+ * Two things about the order are not the manager's to re-enter and were silently dropped:
+ *   · `origin` — it drives the payment plan (self-serve = deposit required). Left to the
+ *     column default, a revised self-serve order became a 'staff' quote.
+ *   · THE PAYMENTS. `catering_payments.quote_id` names one revision row, so every payment
+ *     stayed on the superseded row and the customer who had paid a deposit was shown none
+ *     and asked to pay again. Once the new revision exists (after its items land, and also
+ *     when they fail to — strand B below — because the revision is live either way), the
+ *     family's payments are carried onto it (lib/catering/payment-carry.ts — read its header
+ *     for what happens to each kind of row). That step is BEST-EFFORT by the same reasoning
+ *     as strand B below: the revision is already live, so a failure is audited
+ *     (`payments_carry_failed`), never turned into a failed request the manager retries
+ *     into a 409. BEST-EFFORT IS NOT "PAYABLE ANYWAY" (review r1): the new revision is a
+ *     draft, and every door it must pass to take money — `sendQuote`, an accept, the
+ *     portal's pay gate — re-runs the carry and refuses while a payment is still stranded
+ *     (`assertFamilyPaymentsReconciled` below).
+ *
  * ── THE TWO STRANDS BELOW THE SUPERSEDE (audit v2, seat C5 finding F8 · BC-036) ──────
  * Validating early does NOT make an INSERT infallible, and this docstring used to promise
  * that it did. Three round trips, no transaction, two ways to strand:
@@ -974,9 +995,9 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
   const sb = getServiceRoleClient();
   const { data: current, error: lErr } = await sb
     .from("catering_quotes")
-    .select("id, root_id, version, location_id, pipeline_id, customer_id, superseded_at")
+    .select("id, root_id, version, location_id, pipeline_id, customer_id, origin, superseded_at")
     .eq("id", quoteId)
-    .maybeSingle<{ id: string; root_id: string | null; version: number; location_id: string; pipeline_id: string | null; customer_id: string | null; superseded_at: string | null }>();
+    .maybeSingle<{ id: string; root_id: string | null; version: number; location_id: string; pipeline_id: string | null; customer_id: string | null; origin: string | null; superseded_at: string | null }>();
   if (lErr) throw new Error(`reviseQuote load: ${lErr.message}`);
   if (!current) throw new CateringQuoteError(404, "not_found", "Quote not found");
   assertCanWrite(actor, current.location_id);
@@ -1016,6 +1037,9 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
       customer_id: current.customer_id,
       location_id: current.location_id,
       status: "draft",
+      // The order's origin is carried, never re-defaulted (see the header). Anything that is
+      // not exactly 'self_serve' is 'staff', which is also the column's own CHECK vocabulary.
+      origin: current.origin === "self_serve" ? "self_serve" : "staff",
       event_date: input.eventDate ?? null,
       headcount: input.headcount ?? null,
       ...snapshotColumns(pricing.rates, stack, isDelivery, input.deliveryZoneId ?? null),
@@ -1042,9 +1066,41 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
     throw new Error(`reviseQuote insert: ${iErr.message}`);
   }
 
+  // PAYMENTS FOLLOW THE ORDER (see the header). Best-effort and re-runnable: the revision is
+  // already live, so a failure here is recorded and healed by the next revise. NEVER throws.
+  const carryPayments = async (): Promise<CarryPaymentsResult | null> => {
+    try {
+      const retire = await retireSessionFor(sb, current.location_id);
+      return await carryPaymentsToRevision(
+        sb,
+        { rootId, newQuoteId: inserted.id, depositCents: stack.depositCents, totalCents: stack.totalCents },
+        retire,
+      );
+    } catch (carryErr) {
+      const message = carryErr instanceof Error ? carryErr.message : String(carryErr);
+      console.error(
+        `[catering] reviseQuote could not carry the payments of family ${rootId} onto revision ${inserted.id}: ${message}. LIVE-CHECK: select p.id, p.quote_id, p.status from catering_payments p join catering_quotes q on q.id = p.quote_id where coalesce(q.root_id, q.id) = the family and q.superseded_at is not null.`,
+      );
+      void audit({
+        actorId: actor.user.id,
+        actorRole: actor.user.role,
+        action: "catering.quote.revise",
+        resourceTable: "catering_quotes",
+        resourceId: inserted.id,
+        metadata: { outcome: "payments_carry_failed", from_quote_id: quoteId, root_id: rootId, version: inserted.version, error: message },
+        ipAddress: null,
+        userAgent: null,
+      });
+      return null;
+    }
+  };
+
   try {
     await insertQuoteItems(sb, inserted.id, lines, actor.user.id);
   } catch (itemsErr) {
+    // The empty revision is still the LIVE one, so the family's payments belong on it: a
+    // customer who paid must not also lose sight of the payment because the items failed.
+    const carriedOnFailure = await carryPayments();
     // STRAND B — the new revision is live and EMPTY. Not rolled back (see the header); made
     // queryable instead. `catering.quote.revise` is already in the closed action vocabulary,
     // so the signal rides its metadata rather than inventing a name. Awaited because we
@@ -1063,6 +1119,8 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
         total_cents: stack.totalCents,
         expected_line_count: lines.length,
         error: itemsErr instanceof Error ? itemsErr.message : String(itemsErr),
+        payments_carried: carriedOnFailure !== null,
+        payments: carriedOnFailure,
       },
       ipAddress: null,
       userAgent: null,
@@ -1070,13 +1128,24 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
     throw itemsErr;
   }
 
+  const carried = await carryPayments();
+
   void audit({
     actorId: actor.user.id,
     actorRole: actor.user.role,
     action: "catering.quote.revise",
     resourceTable: "catering_quotes",
     resourceId: inserted.id,
-    metadata: { from_quote_id: quoteId, root_id: rootId, version: inserted.version, total_cents: stack.totalCents },
+    metadata: {
+      from_quote_id: quoteId,
+      root_id: rootId,
+      version: inserted.version,
+      total_cents: stack.totalCents,
+      // Which payment rows now belong to this revision, and the revision each one left —
+      // the record of what a payment was ORIGINALLY raised against.
+      payments_carried: carried !== null,
+      payments: carried,
+    },
     ipAddress: null,
     userAgent: null,
   });
@@ -1090,16 +1159,100 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
   return { id: inserted.id, version: inserted.version, pipelineId: current.pipeline_id };
 }
 
-/** Transition a live quote's status (accept / decline / mark expired). Level-gated + audited. */
+/**
+ * THE DOOR RULE (review r1 of audit W02/B006): a revision whose family still has a payment
+ * on an EARLIER revision may not be sent or accepted. The carry in `reviseQuote` is
+ * best-effort; when it failed, the paid deposit stayed on the superseded row, every reader
+ * keyed on the live quote id saw no payment, and the team could send a revision the
+ * customer would be charged a second deposit on. So the carry is re-run here (idempotent —
+ * it also heals a family orphaned before the carry existed) and, if a payment is STILL
+ * stranded, the action is refused 409 `payments_unreconciled` before anything is written.
+ *
+ * Audited on `catering.quote.revise` — the action that already records which payments
+ * moved onto a revision — with `outcome: "payments_reconciled"` or
+ * `"payments_reconcile_failed"`. A quote that was never revised returns at once, having
+ * read and written nothing.
+ */
+async function assertFamilyPaymentsReconciled(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  actor: AuthContext,
+  quote: { id: string; root_id: string | null; location_id: string; deposit_cents: number; total_cents: number },
+  context: "send" | "accept" | "resend",
+): Promise<void> {
+  const outcome = await reconcileFamilyPayments(sb, {
+    id: quote.id,
+    rootId: quote.root_id ?? null,
+    locationId: quote.location_id,
+    depositCents: quote.deposit_cents,
+    totalCents: quote.total_cents,
+  });
+  if (!outcome.attempted) return;
+  // Awaited: on the refusal we throw on the next line (audit() is fail-open, never throws).
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "catering.quote.revise",
+    resourceTable: "catering_quotes",
+    resourceId: quote.id,
+    metadata: {
+      outcome: outcome.reconciled ? "payments_reconciled" : "payments_reconcile_failed",
+      context,
+      root_id: quote.root_id,
+      stranded: outcome.stranded,
+      payments: outcome.healed,
+      error: outcome.error,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+  if (!outcome.reconciled) {
+    throw new CateringQuoteError(
+      409,
+      "payments_unreconciled",
+      "This order's earlier payments could not be moved onto this revision yet — try again in a moment",
+    );
+  }
+}
+
+/**
+ * Transition a live quote's status (accept / decline / mark expired). Level-gated + audited.
+ *
+ * THE ORDER OF THE ACCEPT GATES (merge of audit W01 and W02; pinned by
+ * tests/catering-quote-accept-gates-order.test.ts). The first one that refuses names the
+ * refusal; nothing is written to the quote before the last one passes.
+ *   1. `not_found` / write access / `not_current` — is this the live revision at all.
+ *   2. `payments_unreconciled` (W02/B006) — the family's payments must be on THIS revision
+ *      before anything reads "what was paid on this quote id". The expiry reading below does.
+ *   3. `quote_expired` (W02/B037) — status `expired`, or the clock, unless a payment made in
+ *      time took the offer up.
+ *   4. `delivery_unavailable` / `below_delivery_minimum` / `delivery_fee_changed` (W01) — a
+ *      self-serve delivery order re-checked against the shop's CURRENT zones. LAST on purpose:
+ *      gates 2 and 3 decide whether this order may be accepted AT ALL, and this one's answer
+ *      ("revise the quote") only helps on an order that otherwise could be. An order that
+ *      passed the clock because it was paid in time is still held here.
+ *   5. `status_changed` — the guarded write (silent-UPDATE law).
+ * Declining or marking expired passes 1 and 5 only: they take no money and re-open nothing.
+ */
 export async function setQuoteStatus(actor: AuthContext, id: string, status: Extract<QuoteStatus, "accepted" | "declined" | "expired">): Promise<void> {
   const sb = getServiceRoleClient();
   const { data: row, error: lErr } = await sb
     .from("catering_quotes")
-    .select("id, location_id, status, superseded_at, origin, is_delivery, delivery_zone_id, delivery_fee_cents, subtotal_cents")
+    .select("id, root_id, location_id, status, superseded_at, expires_at, deposit_cents, total_cents, origin, is_delivery, delivery_zone_id, delivery_fee_cents, subtotal_cents")
     .eq("id", id)
     .maybeSingle<{
-      id: string; location_id: string; status: string; superseded_at: string | null; origin: string;
-      is_delivery: boolean; delivery_zone_id: string | null; delivery_fee_cents: number; subtotal_cents: number;
+      id: string;
+      root_id: string | null;
+      location_id: string;
+      status: string;
+      superseded_at: string | null;
+      expires_at: string | null;
+      deposit_cents: number;
+      total_cents: number;
+      origin: string;
+      is_delivery: boolean;
+      delivery_zone_id: string | null;
+      delivery_fee_cents: number;
+      subtotal_cents: number;
     }>();
   if (lErr) throw new Error(`setQuoteStatus load: ${lErr.message}`);
   if (!row) throw new CateringQuoteError(404, "not_found", "Quote not found");
@@ -1108,8 +1261,47 @@ export async function setQuoteStatus(actor: AuthContext, id: string, status: Ext
   // An expired quote is not acceptable — the customer's price/terms window has closed, so the
   // path back to a sale is a revision, not an accept. Other transitions stay open on purpose
   // (declined → accepted is a legitimate manager reversal).
-  if (row.status === "expired" && status === "accepted") {
-    throw new CateringQuoteError(409, "quote_expired", "This quote has expired — revise it before accepting");
+  // "Expired" is the clock as well as the status (audit W02/B037). Nothing sweeps
+  // `expires_at`, so an open offer past its date still reads `sent` — or `submitted`: a
+  // self-serve order gets the same window from `submitDraft` — and the board hid Accept
+  // only on the first. This reads the ONE shared predicate the portal's pay gate reads
+  // (lib/portal/payability-shared.ts), so the two cannot disagree: `accepted` is not judged
+  // by the clock, so accepting a lapsed order used to re-open payment at its old price.
+  if (status === "accepted") {
+    // `accepted` is payable from the portal, so the family's payments must be on THIS
+    // revision first (the door rule above) — and BEFORE the expiry reading below, which asks
+    // "was anything paid on this quote id?". Declining or expiring a quote takes no money
+    // and is not held.
+    await assertFamilyPaymentsReconciled(sb, actor, row, "accept");
+    let expired = row.status === "expired";
+    if (!expired && quoteTimeExpired(row.status, row.expires_at)) {
+      // An offer the customer PAID toward was taken up in time (the reading the customer's
+      // own order list makes — lib/portal/account.ts rule 6). Confirming it re-opens
+      // nothing: the portal's already-paid gate refuses a second payment on it. A failed
+      // read refuses the accept rather than guessing.
+      //
+      // …"IN TIME" IS A FACT ABOUT THE PAYMENT, NOT ITS EXISTENCE (review r2). A checkout
+      // opened before the date can be completed after it, and a payment can be marked paid
+      // by hand any day; a paid row alone used to re-open the lapsed offer at its old price.
+      // Only a payment whose `paid_at` is not after `expires_at` counts (`offerTakenUpInTime`).
+      // A late one is already flagged for review (`paid_after_expiry`); it leaves this accept
+      // refused, and the way forward is the one the refusal names — revise the quote (the
+      // payment follows the revision) — or a refund.
+      const { data: paidRows, error: pErr } = await sb
+        .from("catering_payments")
+        .select("id, status, paid_at")
+        .eq("quote_id", id)
+        .eq("status", "paid")
+        .returns<Array<{ id: string; status: string; paid_at: string | null }>>();
+      if (pErr) throw new Error(`setQuoteStatus payments: ${pErr.message}`);
+      expired = !offerTakenUpInTime(
+        row.expires_at,
+        (paidRows ?? []).map((p) => ({ status: p.status, paidAt: p.paid_at ?? null })),
+      );
+    }
+    if (expired) {
+      throw new CateringQuoteError(409, "quote_expired", "This quote has expired — revise it before accepting");
+    }
   }
   // A SELF-SERVE delivery order is re-checked on accept with the portal's own rule against the shop's
   // CURRENT zones (Juan 2026-11-15): the most expensive active zone, its fee, its minimum. An order the
@@ -1256,9 +1448,19 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
   const sb = getServiceRoleClient();
   const { data: row, error: lErr } = await sb
     .from("catering_quotes")
-    .select("id, location_id, status, superseded_at, customer_id, total_cents, expires_at")
+    .select("id, root_id, location_id, status, superseded_at, customer_id, total_cents, deposit_cents, expires_at")
     .eq("id", id)
-    .maybeSingle<{ id: string; location_id: string; status: string; superseded_at: string | null; customer_id: string | null; total_cents: number; expires_at: string | null }>();
+    .maybeSingle<{
+      id: string;
+      root_id: string | null;
+      location_id: string;
+      status: string;
+      superseded_at: string | null;
+      customer_id: string | null;
+      total_cents: number;
+      deposit_cents: number;
+      expires_at: string | null;
+    }>();
   if (lErr) throw new Error(`sendQuote load: ${lErr.message}`);
   if (!row) throw new CateringQuoteError(404, "not_found", "Quote not found");
   assertCanWrite(actor, row.location_id);
@@ -1266,28 +1468,12 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
   if (row.status !== "draft" && row.status !== "sent") {
     throw new CateringQuoteError(409, "invalid_status", "Only a draft or sent quote can be sent");
   }
+  // SENDING IS WHAT MAKES A REVISION PAYABLE. Before the status moves and before any email
+  // carries a pay link, the family's payments must be on THIS revision (the door rule).
+  await assertFamilyPaymentsReconciled(sb, actor, row, "send");
 
-  // Review 2 (P1) + option b: the recipient is contact data at the CUSTOMER's shop, not the
-  // quote's. It is authorized BEFORE the status write and the email. A customer the sender
-  // may not read is another shop's customer attached by the email typed at creation (createQuote
-  // admits no other way in): the quote is still DELIVERED to that customer, but the address is
-  // never returned or logged — `recipient` stays null and `recipientHidden` says why. A
-  // customer row that is simply gone keeps today's `no_address` outcome.
-  let cust: { email: string | null; name: string | null } | null = null;
-  let recipientHidden = false;
-  if (row.customer_id) {
-    const [reader, { data: c, error: cErr }] = await Promise.all([
-      loadCateringReader(actor),
-      sb
-        .from("catering_customers")
-        .select("email, name, primary_location_id")
-        .eq("id", row.customer_id)
-        .maybeSingle<{ email: string | null; name: string | null; primary_location_id: string | null }>(),
-    ]);
-    if (cErr) throw new Error(`sendQuote customer read: ${cErr.message}`);
-    recipientHidden = !!c && !(reader && canReadCateringContact(reader, c.primary_location_id));
-    cust = c ? { email: c.email, name: c.name } : null;
-  }
+  // The recipient is authorized BEFORE the status write and the email (`resolveQuoteRecipient`).
+  const to = await resolveQuoteRecipient(sb, actor, row.customer_id, "sendQuote");
 
   const { error: uErr, count } = await sb
     .from("catering_quotes")
@@ -1297,22 +1483,91 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
   if (uErr) throw new Error(`sendQuote update: ${uErr.message}`);
   if (count === 0) throw new CateringQuoteError(404, "not_found", "Quote not found");
 
-  // Best-effort customer email (only delivers to Juan until Resend DNS is verified).
+  const { emailed, emailOutcome, recipient, emailError } = await emailQuoteToCustomer(id, row.total_cents, row.customer_id, to);
+  const { recipientHidden } = to;
+
+  void audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "catering.quote.send",
+    resourceTable: "catering_quotes",
+    resourceId: id,
+    metadata: { emailed, email_outcome: emailOutcome, recipient, recipient_hidden: recipientHidden, email_error: emailError, total_cents: row.total_cents },
+    ipAddress: null,
+    userAgent: null,
+  });
+  return { emailed, emailOutcome, recipient, recipientHidden, emailError };
+}
+
+// ── THE ONE QUOTE EMAIL PATH ────────────────────────────────────────────────────────
+// `sendQuote` and `resendExpiredQuote` deliver the SAME message through the SAME two steps,
+// so there is one place that decides who may be written to and one template. Nothing here
+// is new behaviour: it is `sendQuote`'s own body, lifted out so a second caller cannot grow
+// a second spelling of it. `sendEmail` (lib/email.ts) keeps every delivery switch it has.
+
+interface QuoteRecipient {
+  /** The customer row's contact, or null when the row is gone / the quote has no customer. */
+  cust: { email: string | null; name: string | null } | null;
+  /** The customer belongs to a shop this sender may not read: delivered to, never shown. */
+  recipientHidden: boolean;
+}
+
+/**
+ * Who a quote email goes to, and whether the sender may SEE that address.
+ *
+ * Review 2 (P1) + option b: the recipient is contact data at the CUSTOMER's shop, not the
+ * quote's. It is authorized BEFORE the status write and the email. A customer the sender
+ * may not read is another shop's customer attached by the email typed at creation (createQuote
+ * admits no other way in): the quote is still DELIVERED to that customer, but the address is
+ * never returned or logged — `recipient` stays null and `recipientHidden` says why. A
+ * customer row that is simply gone keeps today's `no_address` outcome.
+ */
+async function resolveQuoteRecipient(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  actor: AuthContext,
+  customerId: string | null,
+  caller: string,
+): Promise<QuoteRecipient> {
+  if (!customerId) return { cust: null, recipientHidden: false };
+  const [reader, { data: c, error: cErr }] = await Promise.all([
+    loadCateringReader(actor),
+    sb
+      .from("catering_customers")
+      .select("email, name, primary_location_id")
+      .eq("id", customerId)
+      .maybeSingle<{ email: string | null; name: string | null; primary_location_id: string | null }>(),
+  ]);
+  if (cErr) throw new Error(`${caller} customer read: ${cErr.message}`);
+  return {
+    cust: c ? { email: c.email, name: c.name } : null,
+    recipientHidden: !!c && !(reader && canReadCateringContact(reader, c.primary_location_id)),
+  };
+}
+
+/** Best-effort customer email (only delivers to Juan until Resend DNS is verified). Never
+ *  throws: `sendEmail` reports a failure as a value, and that outcome is what is returned. */
+async function emailQuoteToCustomer(
+  quoteId: string,
+  totalCents: number,
+  customerId: string | null,
+  to: QuoteRecipient,
+): Promise<Pick<SendQuoteResult, "emailed" | "emailOutcome" | "recipient" | "emailError">> {
+  const { cust, recipientHidden } = to;
   let emailed = false;
   let emailOutcome: "sent" | "no_customer" | "no_address" | "send_failed" = "no_customer";
   let recipient: string | null = null;
   let emailError: string | null = null;
-  if (row.customer_id) {
+  if (customerId) {
     emailOutcome = "no_address";
     if (cust?.email) {
       recipient = recipientHidden ? null : cust.email;
       // Customer-supplied name is interpolated into email HTML → escape it (A-H2 stored-XSS-in-email).
       const safeName = escapeHtml(cust.name ?? "there");
-      const total = (row.total_cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+      const total = (totalCents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
       // Link to the shared customer review+pay surface (sign-in required). Only include it when
       // a portal origin or legacy NEXT_PUBLIC_APP_URL is set — never emit a broken `undefined/...` URL into a sent email.
       const appUrl = portalOrigin();
-      const quoteUrl = appUrl ? `${appUrl}/order/quote/${id}` : null;
+      const quoteUrl = appUrl ? `${appUrl}/order/quote/${quoteId}` : null;
       const htmlLink = quoteUrl
         ? `<p>View &amp; pay your quote: <a href="${quoteUrl}">${quoteUrl}</a> (sign-in required).</p>`
         : "";
@@ -1333,16 +1588,184 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
       }
     }
   }
+  return { emailed, emailOutcome, recipient, emailError };
+}
+
+// ── Resend an EXPIRED quote with a new expiry (owner request, Juan 2026-11-15) ──────
+// "Expired quotes should be able to be resent, not remade."
+
+/** Who may resend an expired quote: EXACTLY who may send one. One name, so the two cannot
+ *  drift; the shop bind (`assertCanWrite`) and the route's Tier B step-up are Send's too. */
+export const QUOTE_RESEND_MIN = QUOTE_WRITE_MIN;
+
+export { QUOTE_RESEND_MAX_DAYS };
+
+export interface ResendQuoteResult extends SendQuoteResult {
+  /** The expiry now in force. */
+  expiresAt: string;
+  /** The expiry it replaced (the one that had passed). */
+  previousExpiresAt: string;
+  /**
+   * Paid payments on this quote that settled AFTER the old expiry (or cannot say when they
+   * were paid). Each was flagged for review when it landed (`paid_after_expiry`,
+   * lib/stripe/webhook.ts) and a new expiry does not un-flag it: the ids ride on this
+   * action's audit row and the caller is told, so the person extending the offer is the
+   * person reminded that money on it still needs a look.
+   */
+  latePaymentIds: string[];
+}
+
+/**
+ * Give an EXPIRED open offer a new expiry and send it to the customer again.
+ *
+ * WHAT IT IS: the SAME quote — same id, same lines, same amounts, same payments. Nothing is
+ * inserted, no revision is created, nothing is superseded, no payment row is written. One
+ * column changes, `expires_at` (and, for a quote the team had sent, `sent_at` / `sent_by`,
+ * exactly as pressing Send on a sent quote already rewrites them). A self-serve `submitted`
+ * order stays `submitted`. Until now the only way back from an expired offer was a revise —
+ * a new row, a new id, the payments carried across — for a quote in which nothing had changed.
+ *
+ * WHAT MAY BE RESENT: a live revision whose status is `sent` or `submitted` AND whose
+ * `expires_at` has passed — the ONE shared clock rule (`quoteTimeExpired`,
+ * lib/portal/payability-shared.ts) that the portal's pay gate and the staff accept read, so
+ * "expired" means here what it means everywhere. Refused by name:
+ *   · not expired yet            → 409 `not_expired` (Send already resends an open quote);
+ *   · accepted / declined / draft / hand-marked `expired` → 409 `invalid_status`
+ *     (accepted is not on the clock; declined and hand-expired are a person's decision, and
+ *     this does not overrule one; a draft has never been offered);
+ *   · a superseded revision      → 409 `not_current`.
+ *
+ * WHO: whoever may Send (`assertCanWrite`: the Send floor, bound to the quote's shop).
+ * STEP-UP IS ENFORCED AT THE ROUTE (Tier B), as for Send — this lib assumes a pre-authorized
+ * actor.
+ *
+ * THE DOOR RULE: a resend makes the quote PAYABLE again, so the family's payments must be on
+ * THIS revision first (`assertFamilyPaymentsReconciled`) — the same door Send and Accept pass.
+ *
+ * THE WRITE IS A COMPARE-AND-SET ON THE ROW AS IT WAS READ: still this status, still the
+ * live revision, still the expiry that was judged expired. A revise that superseded it, a
+ * status change, or another resend that got there first matches nothing: 409
+ * `status_changed`, nothing sent. (Two managers pressing Resend at once: one lands, one is
+ * told to reload — the customer gets one email, the quote one new expiry.)
+ *
+ * AFTERWARDS payability and the staff accept follow the NEW expiry — they read `expires_at`,
+ * and it is the only thing that moved. A payment that landed after the OLD expiry stays
+ * what it was (see `ResendQuoteResult.latePaymentIds`): its row is untouched, its review
+ * flag is history that is never rewritten, and this action's audit row names it.
+ *
+ * `now` is a parameter for tests; production passes nothing.
+ */
+export async function resendExpiredQuote(
+  actor: AuthContext,
+  id: string,
+  input: { expiresAt: string },
+  now: number = Date.now(),
+): Promise<ResendQuoteResult> {
+  const sb = getServiceRoleClient();
+  const { data: row, error: lErr } = await sb
+    .from("catering_quotes")
+    .select("id, root_id, location_id, status, superseded_at, customer_id, total_cents, deposit_cents, expires_at")
+    .eq("id", id)
+    .maybeSingle<{
+      id: string;
+      root_id: string | null;
+      location_id: string;
+      status: string;
+      superseded_at: string | null;
+      customer_id: string | null;
+      total_cents: number;
+      deposit_cents: number;
+      expires_at: string | null;
+    }>();
+  if (lErr) throw new Error(`resendExpiredQuote load: ${lErr.message}`);
+  if (!row) throw new CateringQuoteError(404, "not_found", "Quote not found");
+  assertCanWrite(actor, row.location_id);
+
+  // The new expiry: a real instant, in the future, and not absurdly far out — at most
+  // `QUOTE_RESEND_MAX_DAYS` operational (ET) days from today, the bound the date picker shows.
+  const nextMs = typeof input.expiresAt === "string" ? Date.parse(input.expiresAt) : NaN;
+  const lastAllowedDay = etYmdMinusDays(etCalendarDate(new Date(now).toISOString()), -QUOTE_RESEND_MAX_DAYS);
+  if (!Number.isFinite(nextMs) || nextMs <= now || etCalendarDate(new Date(nextMs).toISOString()) > lastAllowedDay) {
+    throw new CateringQuoteError(400, "invalid_expiry", `The new expiry must be in the future and at most ${QUOTE_RESEND_MAX_DAYS} days out`);
+  }
+  const nextExpiresAt = new Date(nextMs).toISOString();
+
+  if (row.superseded_at != null) throw new CateringQuoteError(409, "not_current", "Quote revision superseded");
+  if (row.status !== "sent" && row.status !== "submitted") {
+    throw new CateringQuoteError(409, "invalid_status", "Only a sent or submitted quote that has expired can be resent");
+  }
+  // `quoteTimeExpired` is false for a quote with no usable `expires_at`: nothing to extend.
+  if (!quoteTimeExpired(row.status, row.expires_at, now) || row.expires_at == null) {
+    throw new CateringQuoteError(409, "not_expired", "This quote has not expired — send it instead");
+  }
+  const previousExpiresAt = row.expires_at;
+
+  // RESENDING IS WHAT MAKES THIS QUOTE PAYABLE AGAIN: the door rule, before anything moves.
+  await assertFamilyPaymentsReconciled(sb, actor, row, "resend");
+
+  // MONEY THAT LANDED AFTER THE OLD EXPIRY (see `ResendQuoteResult.latePaymentIds`). Read
+  // before the write, against the expiry that is about to be replaced. A failed read refuses
+  // the resend rather than extending an offer without knowing what is on it.
+  const { data: paidRows, error: pErr } = await sb
+    .from("catering_payments")
+    .select("id, status, paid_at")
+    .eq("quote_id", id)
+    .eq("status", "paid")
+    .returns<Array<{ id: string; status: string; paid_at: string | null }>>();
+  if (pErr) throw new Error(`resendExpiredQuote payments: ${pErr.message}`);
+  const oldDeadline = Date.parse(previousExpiresAt);
+  const latePaymentIds = (paidRows ?? [])
+    .filter((p) => {
+      const at = p.paid_at ? Date.parse(p.paid_at) : NaN;
+      return !Number.isFinite(at) || at > oldDeadline; // the complement of `offerTakenUpInTime`
+    })
+    .map((p) => p.id);
+
+  const to = await resolveQuoteRecipient(sb, actor, row.customer_id, "resendExpiredQuote");
+
+  // The compare-and-set (see the header). `sent_at` / `sent_by` move only for a quote the
+  // team had sent; a self-serve `submitted` order was never "sent" and keeps both as they are.
+  const patch: Record<string, unknown> = { expires_at: nextExpiresAt };
+  if (row.status === "sent") {
+    patch.sent_at = new Date(now).toISOString();
+    patch.sent_by = actor.user.id;
+  }
+  const { error: uErr, count } = await sb
+    .from("catering_quotes")
+    .update(patch, { count: "exact" })
+    .eq("id", id)
+    .eq("status", row.status)
+    .eq("expires_at", previousExpiresAt)
+    .is("superseded_at", null);
+  if (uErr) throw new Error(`resendExpiredQuote update: ${uErr.message}`);
+  if (count === 0) {
+    throw new CateringQuoteError(409, "status_changed", "Quote changed since it was loaded — reload and retry");
+  }
+
+  const { emailed, emailOutcome, recipient, emailError } = await emailQuoteToCustomer(id, row.total_cents, row.customer_id, to);
+  const { recipientHidden } = to;
 
   void audit({
     actorId: actor.user.id,
     actorRole: actor.user.role,
-    action: "catering.quote.send",
+    action: "catering.quote.resend",
     resourceTable: "catering_quotes",
     resourceId: id,
-    metadata: { emailed, email_outcome: emailOutcome, recipient, recipient_hidden: recipientHidden, email_error: emailError, total_cents: row.total_cents },
+    metadata: {
+      status: row.status,
+      previous_expires_at: previousExpiresAt,
+      expires_at: nextExpiresAt,
+      // Still flagged: these settled after `previous_expires_at` (empty when none did).
+      late_payment_ids: latePaymentIds,
+      emailed,
+      email_outcome: emailOutcome,
+      recipient,
+      recipient_hidden: recipientHidden,
+      email_error: emailError,
+      total_cents: row.total_cents,
+    },
     ipAddress: null,
     userAgent: null,
   });
-  return { emailed, emailOutcome, recipient, recipientHidden, emailError };
+  return { emailed, emailOutcome, recipient, recipientHidden, emailError, expiresAt: nextExpiresAt, previousExpiresAt, latePaymentIds };
 }
