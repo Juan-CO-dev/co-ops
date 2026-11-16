@@ -111,6 +111,21 @@ export function UserActions({
     setInfoMsg(null);
   };
 
+  // Every action opens through here: the editors re-seed from the CURRENT props. A save closes the dialog before
+  // router.refresh() delivers the new props (and refresh never resets useState), so seeding only at mount / close
+  // reopened an editor on the value from before the save — and Confirm posted it back (W27 / B142).
+  const open = (a: NonNullable<ActiveAction>) => {
+    setRole(user.role);
+    setLocs(user.locationIds);
+    setName(user.name);
+    setEmail(user.email ?? "");
+    setPin("");
+    setPassword("");
+    setErrorMsg(null);
+    setInfoMsg(null);
+    setActive(a);
+  };
+
   // ONE lane for every action here (the step-up tier map pins it): the tier's prompt, then the write. `onAnswer`
   // (POST only) keeps the dialog open and hands the answer back instead of closing — "Send confirmation email"
   // uses it to say what actually happened.
@@ -151,40 +166,40 @@ export function UserActions({
 
   return (
     <div className="flex flex-wrap gap-2">
-      <ActionButton label={t("admin.users.action.reset_pin")} onClick={() => setActive({ kind: "reset_pin" })} />
-      <ActionButton label={t("admin.users.action.set_password")} onClick={() => setActive({ kind: "set_password" })} />
-      <ActionButton label={t("admin.users.action.change_role")} onClick={() => setActive({ kind: "change_role" })} />
-      <ActionButton label={t("admin.users.action.change_locations")} onClick={() => setActive({ kind: "change_locations" })} />
-      <ActionButton label={t("admin.users.edit.profile")} onClick={() => setActive({ kind: "edit_profile" })} />
+      <ActionButton label={t("admin.users.action.reset_pin")} onClick={() => open({ kind: "reset_pin" })} />
+      <ActionButton label={t("admin.users.action.set_password")} onClick={() => open({ kind: "set_password" })} />
+      <ActionButton label={t("admin.users.action.change_role")} onClick={() => open({ kind: "change_role" })} />
+      <ActionButton label={t("admin.users.action.change_locations")} onClick={() => open({ kind: "change_locations" })} />
+      <ActionButton label={t("admin.users.edit.profile")} onClick={() => open({ kind: "edit_profile" })} />
       {emailSignInNotice(user) === "unconfirmed" ? (
-        <ActionButton label={t("admin.users.action.confirm_email")} onClick={() => setActive({ kind: "confirm_email" })} />
+        <ActionButton label={t("admin.users.action.confirm_email")} onClick={() => open({ kind: "confirm_email" })} />
       ) : null}
       {user.active ? (
-        <ActionButton label={t("admin.users.action.deactivate")} onClick={() => setActive({ kind: "deactivate" })} />
+        <ActionButton label={t("admin.users.action.deactivate")} onClick={() => open({ kind: "deactivate" })} />
       ) : employed ? (
-        <ActionButton label={t("admin.users.action.activate")} onClick={() => setActive({ kind: "activate" })} />
+        <ActionButton label={t("admin.users.action.activate")} onClick={() => open({ kind: "activate" })} />
       ) : null}
       {/* Astra BC-036: from on leave, End employment offers the separation directly (never another leave). */}
       {can.endEmployment ? (
-        <ActionButton label={t("admin.users.employment.action.end")} onClick={() => setActive({ kind: "employment", mode: "end" })} />
+        <ActionButton label={t("admin.users.employment.action.end")} onClick={() => open({ kind: "employment", mode: "end" })} />
       ) : null}
       {can.backFromLeave ? (
-        <ActionButton label={t("admin.users.employment.action.back")} onClick={() => setActive({ kind: "employment", mode: "back" })} />
+        <ActionButton label={t("admin.users.employment.action.back")} onClick={() => open({ kind: "employment", mode: "back" })} />
       ) : null}
       {can.rehire ? (
-        <ActionButton label={t("admin.users.employment.action.rehire")} onClick={() => setActive({ kind: "employment", mode: "rehire" })} />
+        <ActionButton label={t("admin.users.employment.action.rehire")} onClick={() => open({ kind: "employment", mode: "rehire" })} />
       ) : null}
       {can.correct && view.detail ? (
-        <ActionButton label={t("admin.users.employment.action.correct")} onClick={() => setActive({ kind: "employment", mode: "correct" })} />
+        <ActionButton label={t("admin.users.employment.action.correct")} onClick={() => open({ kind: "employment", mode: "correct" })} />
       ) : null}
 
       {positionShops && (hasPositionRank(user) || positionLocations.length > 0) ? (
-        <ActionButton label={t("admin.users.action.positions")} onClick={() => setActive({ kind: "positions" })} />
+        <ActionButton label={t("admin.users.action.positions")} onClick={() => open({ kind: "positions" })} />
       ) : null}
 
       {user.active && (!user.dormancy.dormant || user.dormancy.reason === "manual") && (
         <ActionButton label={t(user.dormancy.dormant ? "admin.users.action.wake" : "admin.users.action.dormant")}
-          onClick={() => setActive({ kind: user.dormancy.dormant ? "wake" : "dormant" })} />
+          onClick={() => open({ kind: user.dormancy.dormant ? "wake" : "dormant" })} />
       )}
       {active?.kind === "employment" ? (
         <EmploymentDialog userId={user.id} name={user.name} view={view} mode={active.mode} onClose={close} today={today} />
