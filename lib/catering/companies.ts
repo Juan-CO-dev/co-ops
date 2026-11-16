@@ -310,28 +310,83 @@ export async function createCompany(actor: AuthContext, input: CreateCompanyInpu
   if (!input.name || input.name.trim().length === 0) {
     throw new CateringCompanyError(400, "invalid_payload", "name is required");
   }
-  const sb = getServiceRoleClient();
-  const { data: inserted, error } = await sb
-    .from("catering_companies")
-    .insert({ name: input.name.trim(), notes: input.notes ?? null, created_by: actor.user.id })
-    .select("id")
-    .single<{ id: string }>();
-  if (error) throw new Error(`createCompany: ${error.message}`);
-
-  for (const d of input.domains ?? []) {
-    await addDomain(actor, inserted.id, d);
+  // W23/B129: every domain is validated BEFORE anything is written. Before, the company row was
+  // committed first and a refused domain (personal, malformed, already taken) left it behind —
+  // the operator's retry then made a second company with the same name.
+  const domains: string[] = [];
+  for (const raw of input.domains ?? []) {
+    const domain = normalizeCompanyDomain(raw);
+    if (domains.includes(domain)) throw new CateringCompanyError(400, "invalid_payload", "The same domain is listed twice");
+    domains.push(domain);
   }
+  const name = input.name.trim();
+  const sb = getServiceRoleClient();
+  // The company and its domains are ONE transaction (0330 create_catering_company): a domain
+  // another company already holds rolls the company back.
+  const { data, error } = await sb.rpc("create_catering_company", {
+    p_actor_id: actor.user.id, p_name: name, p_notes: input.notes ?? null, p_domains: domains,
+  });
+  let created: { company_id: string; domain_ids: string[] };
+  if (error && MISSING_RPC.includes(String(error.code))) {
+    // Before 0330 is applied: the old two-step write, with the domains pre-checked so a taken one
+    // refuses before the company row exists (a race between the check and the insert can still
+    // leave one behind until the migration lands).
+    created = await createCompanyTwoStep(sb, actor, name, input.notes ?? null, domains);
+  } else if (error) {
+    if (error.message === "domain_taken") throw new CateringCompanyError(409, "domain_taken", "That domain is already registered to a company");
+    if (error.message === "company_forbidden") throw new CateringCompanyError(403, "forbidden", "Insufficient role level");
+    if (error.message === "company_invalid_name") throw new CateringCompanyError(400, "invalid_payload", "name is required");
+    throw new Error(`createCompany: ${error.message}`);
+  } else {
+    created = data as { company_id: string; domain_ids: string[] };
+  }
+
   void audit({
     actorId: actor.user.id,
     actorRole: actor.user.role,
     action: "catering.company.create",
     resourceTable: "catering_companies",
-    resourceId: inserted.id,
-    metadata: { name: input.name.trim(), domains: input.domains ?? [] },
+    resourceId: created.company_id,
+    metadata: { name, domains },
     ipAddress: null,
     userAgent: null,
   });
-  return { id: inserted.id };
+  created.domain_ids.forEach((domainId, i) => {
+    void audit({
+      actorId: actor.user.id, actorRole: actor.user.role, action: "catering.company.add_domain",
+      resourceTable: "catering_company_domains", resourceId: domainId, metadata: { company_id: created.company_id, domain: domains[i] },
+      ipAddress: null, userAgent: null,
+    });
+  });
+  return { id: created.company_id };
+}
+
+/** PostgREST / Postgres codes for "this function or table is not there yet". */
+const MISSING_RPC = ["PGRST202", "42883"];
+
+async function createCompanyTwoStep(sb: ReturnType<typeof getServiceRoleClient>, actor: AuthContext, name: string,
+  notes: string | null, domains: string[]): Promise<{ company_id: string; domain_ids: string[] }> {
+  if (domains.length) {
+    const { data: held, error: hErr } = await sb.from("catering_company_domains").select("domain")
+      .in("domain", domains).eq("active", true).limit(1).returns<Array<{ domain: string }>>();
+    if (hErr) throw new Error(`createCompany domain check: ${hErr.message}`);
+    if ((held ?? []).length > 0) throw new CateringCompanyError(409, "domain_taken", "That domain is already registered to a company");
+  }
+  const { data: inserted, error } = await sb
+    .from("catering_companies")
+    .insert({ name, notes, created_by: actor.user.id })
+    .select("id")
+    .single<{ id: string }>();
+  if (error || !inserted) throw new Error(`createCompany: ${error?.message ?? "no row"}`);
+  const domainIds: string[] = [];
+  for (const domain of domains) {
+    const { data: d, error: dErr } = await sb.from("catering_company_domains")
+      .insert({ company_id: inserted.id, domain, created_by: actor.user.id }).select("id").single<{ id: string }>();
+    if (dErr?.code === "23505") throw new CateringCompanyError(409, "domain_taken", "That domain is already registered to a company");
+    if (dErr || !d) throw new Error(`createCompany domain: ${dErr?.message ?? "no row"}`);
+    domainIds.push(d.id);
+  }
+  return { company_id: inserted.id, domain_ids: domainIds };
 }
 
 export async function editCompany(actor: AuthContext, id: string, patch: { name?: string; notes?: string | null }): Promise<void> {
@@ -353,14 +408,20 @@ export async function editCompany(actor: AuthContext, id: string, patch: { name?
   });
 }
 
-/** Register a corporate auto-attribution domain. Personal domains are rejected. */
-export async function addDomain(actor: AuthContext, companyId: string, domainRaw: string): Promise<{ id: string }> {
-  requireLevel(actor, COMPANY_WRITE_MIN);
+/** Normalize + validate one auto-attribution domain (pure; the one rule addDomain and createCompany share). */
+export function normalizeCompanyDomain(domainRaw: string): string {
   const domain = domainRaw.trim().toLowerCase().replace(/^@/, "");
   if (!domain || !domain.includes(".")) throw new CateringCompanyError(400, "invalid_payload", "Enter a valid domain (e.g. acme.com)");
   if (isPersonalDomain(domain)) {
     throw new CateringCompanyError(400, "personal_domain", "Personal email domains can't auto-attribute — attach those contacts by hand instead");
   }
+  return domain;
+}
+
+/** Register a corporate auto-attribution domain. Personal domains are rejected. */
+export async function addDomain(actor: AuthContext, companyId: string, domainRaw: string): Promise<{ id: string }> {
+  requireLevel(actor, COMPANY_WRITE_MIN);
+  const domain = normalizeCompanyDomain(domainRaw);
   const sb = getServiceRoleClient();
   const { data, error } = await sb
     .from("catering_company_domains")

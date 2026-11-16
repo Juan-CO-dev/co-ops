@@ -60,6 +60,14 @@ export const DESTRUCTIVE_ACTIONS = [
   "ezcater.customization_map.approve",
   "ezcater.customization_map.ignore",
   "catering.pipeline.transfer_location", // Human reassignment of a catering order and its demand.
+  // W23/B126: a person reopens a LOST ezCater lead after ezCater un-cancelled the order (lost →
+  // confirmed/inquiry, re-reserving prep on confirmed). It rewrites the accountability record of an
+  // order the board had closed, the same class as a transfer.
+  "catering.pipeline.reopen",
+  // W23/B129, owner decision W23-4 b — SQL-only (migration 0330): an EMPTY duplicate catering company
+  // (no domain, no contact, a same-name company created after it) is switched off (active = false,
+  // reversible). One row per company, destructive literally true, actor_context migration_apply.
+  "catering.company.deactivate_duplicate",
   // Owner request (Juan 2026-11-15): resend an EXPIRED quote with a new expiry. Adjudicated
   // DESTRUCTIVE, unlike its sibling `catering.quote.send` (non-destructive: a first offer
   // creates a deadline, it does not replace one): a person REWRITES IN PLACE the deadline of
