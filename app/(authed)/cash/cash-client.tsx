@@ -139,6 +139,7 @@ export function CashClient({
       if (body.error === "pin_invalid") return { ok: false, error: { kind: "invalid", message: t("cash.error.pin_invalid") } };
       if (body.error === "closing_finalized") return { ok: false, error: { kind: "invalid", message: t("cash.error.closing_finalized") } };
       if (body.error === "drawer_not_counted") return { ok: false, error: { kind: "invalid", message: t("cash.error.drawer_not_counted") } };
+      if (body.error === "cash_outside_current_week") return { ok: false, error: { kind: "invalid", message: t("cash.error.outside_current_week") } };
       if (body.error === "cash_concurrent_submit") return { ok: false, error: { kind: "invalid", message: t("cash.error.concurrent_submit") } };
       return { ok: false, error: { kind: "network", message: t("cash.error.generic") } };
     } catch {

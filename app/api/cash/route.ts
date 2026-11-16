@@ -89,6 +89,10 @@ export async function POST(req: NextRequest) {
     if (!result.ok && result.reason === "closing_finalized") {
       return jsonError(409, "closing_finalized", { message: "Today's closing is finalized — the cash deposit is locked." });
     }
+    if (!result.ok && result.reason === "outside_current_week") {
+      // W03 follow-up (Juan 2026-11-15): below GM, only this business week (Mon–Sun, ET).
+      return jsonError(403, "cash_outside_current_week", { message: "Key holders can only file cash for this week (Mon–Sun). Ask a manager." });
+    }
     if (!result.ok && result.reason === "concurrent_submit") {
       return jsonError(409, "cash_concurrent_submit", { message: "Someone else just submitted this deposit." });
     }
