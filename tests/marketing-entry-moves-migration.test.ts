@@ -52,6 +52,17 @@ describe('0333 marketing entry moves, spend removal and refund time', () => {
     expect(sql).not.toMatch(/alter table public\.catering_payments/);
     expect(sql).not.toContain("<> 'true'");
   });
+  it('reads audit_log by its REAL columns: occurred_at, never created_at (fix round 3)', () => {
+    // The live audit_log (Foundation Spec DDL; 0044's verified column list) has occurred_at and no created_at.
+    expect(sql).toContain('a.occurred_at');
+    expect(sql).not.toMatch(/\ba\.created_at\b/);
+    expect(sql).not.toMatch(/table_name='audit_log'[^;]*'created_at'/);
+    // The harness builds audit_log from that real DDL, never a hand-written fixture.
+    const harness = readFileSync('scripts/sql-harness-0333.mjs', 'utf8');
+    expect(harness).toContain("readFileSync('docs/CO-OPS_Foundation_Spec_v1.3.md'");
+    expect(harness).toContain('${auditCreate}');
+    expect(harness).not.toMatch(/create table audit_log\(/);
+  });
   it('executes the real migrations and the adversarial SQL proofs offline; the backfilled rows read back right (review r2)', () => {
     const output = execFileSync(process.execPath, ['scripts/sql-harness-0333.mjs'], { encoding: 'utf8', timeout: 120_000 });
     expect(output).toMatch(/0333 SQL harness: \d+ checks passed/);

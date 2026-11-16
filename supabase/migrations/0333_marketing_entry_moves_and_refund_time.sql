@@ -43,7 +43,7 @@
 --   no audit row (a partial refund delivered after the whole-charge refund, `no_paid_row`) — at the Stripe
 --   EVENT's own time (`payload->>'created'`, capped at received_at), bound to the payment by its
 --   payment_intent = provider_ref; then (B) every 'catering.payment.provider_refunded' audit row (A) did not
---   cover, at the audit row's created_at (its metadata carries no event time), marked
+--   cover, at the audit row's occurred_at (its metadata carries no event time), marked
 --   refunded_at_approximate = true and pulled back to no later than any higher-cumulative event of the same
 --   payment. A row with no numeric cumulative figure or no payment we hold is skipped. No other row is written.
 --
@@ -62,7 +62,7 @@
 --
 -- PRE-FLIGHT (MCP, read-only, before apply):
 --   select column_name, data_type from information_schema.columns where table_schema='public'
---    and table_name='audit_log' and column_name in ('action','resource_table','resource_id','metadata','created_at');
+--    and table_name='audit_log' and column_name in ('action','resource_table','resource_id','metadata','occurred_at');
 --   select count(*) from public.catering_payments where status = 'refunded';            -- report it in the PR
 --   select count(*) from public.audit_log where action = 'catering.payment.provider_refunded';  -- backfill source (B)
 --   select count(*), count(*) filter (where payload ? 'created') from public.stripe_events
@@ -229,7 +229,7 @@ grant select, insert on table public.catering_payment_refund_events to service_r
 --      A `location_mismatch` delivery is skipped (the live path appends nothing for it).
 --  (B) the audit trail (`catering.payment.provider_refunded`), only for an event (A) did not yield.
 --      Its metadata carries `stripe_event_id`, `refunded_amount_cents` and `charge_amount_cents` and
---      NO event time — so its time is the audit row's `created_at` (the DELIVERY time) and the row
+--      NO event time — so its time is the audit row's `occurred_at` (the DELIVERY time) and the row
 --      is marked `refunded_at_approximate = true`.
 -- An approximate time never reorders history: amounts are derived in the order of the cumulative
 -- figure (`refundEventAmounts`), and an approximate time is pulled back to no later than the
@@ -264,16 +264,16 @@ with ledger as (
    order by f.event_key, p.id)
   union all
   -- (B)
-  (select distinct on (k.event_key) k.event_key, k.payment_id, k.created_at, true, k.cumulative, k.charge, 1
+  (select distinct on (k.event_key) k.event_key, k.payment_id, k.occurred_at, true, k.cumulative, k.charge, 1
     from (select coalesce(nullif(a.metadata->>'stripe_event_id', ''), 'audit:' || a.id::text) as event_key,
-                 p.id as payment_id, a.created_at, a.id as audit_id,
+                 p.id as payment_id, a.occurred_at, a.id as audit_id,
                  (a.metadata->>'refunded_amount_cents')::bigint as cumulative,
                  case when (a.metadata->>'charge_amount_cents') ~ '^[0-9]+$' then (a.metadata->>'charge_amount_cents')::bigint end as charge
             from public.audit_log a
             join public.catering_payments p on p.id::text = a.resource_id::text
            where a.action = 'catering.payment.provider_refunded' and a.resource_table = 'catering_payments'
              and (a.metadata->>'refunded_amount_cents') ~ '^[0-9]{1,15}$') k
-   order by k.event_key, k.created_at, k.audit_id)
+   order by k.event_key, k.occurred_at, k.audit_id)
 ), chosen as (
   select distinct on (c.event_key) c.* from cand c order by c.event_key, c.source
 )
