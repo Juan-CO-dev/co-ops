@@ -54,10 +54,16 @@ const raw = read(FILE);
 const emitted = extract(raw);
 
 describe("0255 re-emits submit_phase2_atomic from its latest definer", () => {
-  it("0215 was the previous latest definer and 0255 is the latest now", () => {
+  it("0215 was the previous latest definer; 0255 re-emitted it, and 0315 re-emits 0255 (the instance lock only)", () => {
     const defining = files.filter((f) => read(f).includes(START));
-    expect(defining[defining.length - 1]).toBe(FILE);
-    expect(defining[defining.length - 2]).toBe(SOURCE);
+    // 0315 (audit W14) is the latest definer now; tests/opening-counts-batch-prep-migration.test.ts pins
+    // the 0255 body as a line-subsequence of it, so both owner decisions below still hold in what runs.
+    const LATER = "0315_opening_counts_batch_prep.sql";
+    expect(defining[defining.length - 1]).toBe(LATER);
+    expect(defining[defining.length - 2]).toBe(FILE);
+    expect(defining[defining.length - 3]).toBe(SOURCE);
+    const check = isLineSubsequence(emitted, extract(read(LATER)));
+    expect(check.ok, `0255 line missing from 0315 → ${check.missing}`).toBe(true);
   });
 
   it("the 0215 body (± the enumerated mods) is a line-subsequence of the 0255 body", () => {

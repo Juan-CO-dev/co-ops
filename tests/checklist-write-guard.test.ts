@@ -6,7 +6,8 @@ import es from "../lib/i18n/es.json";
 import { describe, expect, it } from "vitest";
 import { getRoleLevel, type RoleCode } from "../lib/roles";
 import { canWriteChecklistCompletion, canSubmitChecklistBatch,
-  canConfirmChecklistInstance, canCreateChecklistInstance } from "../lib/checklist-write-guard-shared";
+  canConfirmChecklistInstance, canCreateChecklistInstance, isSystemTrackedItem } from "../lib/checklist-write-guard-shared";
+import { canCompleteChecklistItem } from "../lib/checklist-constants";
 import { CHECKLIST_PARITY_CASES, PARITY_ROLES, actorForParityCase,
   contextForParityCase } from "./fixtures/checklist-write-parity.mjs";
 
@@ -67,5 +68,53 @@ describe("correction error and route guard contract", () => {
     expect(body.indexOf("assertSameOrigin(req)")).toBeLessThan(body.indexOf("await params"));
     expect(body).toContain("actor: await resolveChecklistWriteActor(ctx)");
     expect(body).not.toContain("actor: { userId:");
+  });
+});
+
+/**
+ * Audit W14 / B182 — an item-tracking tick (a closing line that follows another item) is written
+ * by the system, like a report reference. A generic correction could revoke it, and then nothing
+ * could tick it again: the reconciler never re-ticks over a revoke and a manual tick is refused,
+ * so a hard-gated closing could never be confirmed. Corrections now refuse it everywhere:
+ * the three SQL writers (migration 0315), tagging (lib/checklists.ts), and the row's controls.
+ */
+describe("isSystemTrackedItem — lines the system completes take no generic correction (B182)", () => {
+  it("a report reference and an item-tracking line are system rows; an ordinary line is not", () => {
+    expect(isSystemTrackedItem({ reportReferenceType: "cash_report", refTrackItemCompletion: false, referencesTemplateItemId: null })).toBe(true);
+    expect(isSystemTrackedItem({ reportReferenceType: null, refTrackItemCompletion: true, referencesTemplateItemId: "opening-item" })).toBe(true);
+    expect(isSystemTrackedItem({ reportReferenceType: null, refTrackItemCompletion: false, referencesTemplateItemId: null })).toBe(false);
+  });
+  it("the tracking flag with no referenced item, or a reference with no flag, is an ordinary line (the SQL rule exactly)", () => {
+    expect(isSystemTrackedItem({ reportReferenceType: null, refTrackItemCompletion: true, referencesTemplateItemId: null })).toBe(false);
+    expect(isSystemTrackedItem({ reportReferenceType: null, refTrackItemCompletion: false, referencesTemplateItemId: "opening-item" })).toBe(false);
+    expect(isSystemTrackedItem({ reportReferenceType: null })).toBe(false);
+  });
+  it("is exactly the set of lines nobody may tick by hand", () => {
+    for (const reportReferenceType of [null, "am_prep"]) for (const refTrackItemCompletion of [false, true]) for (const referencesTemplateItemId of [null, "x"]) {
+      const item = { reportReferenceType, refTrackItemCompletion, referencesTemplateItemId };
+      expect(isSystemTrackedItem(item), JSON.stringify(item))
+        .toBe(!canCompleteChecklistItem({ templateType: "closing", actorLevel: 10, itemMinRoleLevel: 0, ...item }));
+    }
+  });
+  it("tagging refuses a system row with the existing code, before any window or authority check", () => {
+    const src = readFileSync("lib/checklists.ts", "utf8");
+    const fn = src.slice(src.indexOf("export async function tagActualCompleter("), src.indexOf("// Authorization: KH+ OR self.", src.indexOf("export async function tagActualCompleter(")));
+    const refusal = fn.indexOf('if (isSystemTrackedItem({ reportReferenceType: item.report_reference_type, refTrackItemCompletion: item.ref_track_item_completion, referencesTemplateItemId: item.references_template_item_id }))');
+    expect(refusal).toBeGreaterThan(-1);
+    expect(fn.slice(refusal, refusal + 420)).toContain('"reference_row_not_correctable"');
+    expect(refusal).toBeLessThan(fn.indexOf("elapsedSinceCompleted("));
+    expect(fn).not.toContain("if (item.report_reference_type) throw");
+  });
+  it("the closing row offers no Undo, tag or mark-not-done on a line nobody may tick by hand", () => {
+    const row = readFileSync("components/ChecklistItem.tsx", "utf8");
+    // roleGated is true for a system row (canCompleteChecklistItem gets the ref-track fields) …
+    expect(row).toContain("const roleGated = !canCompleteChecklistItem({ templateType, actorLevel, itemMinRoleLevel: templateItem.minRoleLevel, reportReferenceType: templateItem.reportReferenceType, refTrackItemCompletion: templateItem.refTrackItemCompletion, referencesTemplateItemId: templateItem.referencesTemplateItemId });");
+    expect(row).toContain("const interactable = !roleGated && !instanceLocked && !readOnly && !inFlight;");
+    // … and every correction affordance requires an interactable row.
+    for (const flag of ["showUndo", "showTagAffordance", "showMarkNotDone"]) {
+      const at = row.indexOf(`const ${flag} =`);
+      expect(at, flag).toBeGreaterThan(-1);
+      expect(row.slice(at, row.indexOf(";", at)), flag).toContain("interactable &&");
+    }
   });
 });
