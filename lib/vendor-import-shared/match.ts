@@ -1,8 +1,22 @@
-import type { CatalogSku, Decision, ExportRow, Observation, PlanOp } from "./model";
+import { SKIP_BY_DEFAULT_FLAGS, type CatalogSku, type Decision, type ExportRow, type Observation, type PlanOp } from "./model";
 import { packComparison, priceAtRoot, priceComparison, shopPackMatches } from "./reconcile";
 
 export type BeforeState = Record<string, Record<string, unknown>>;
 export const observationKey = (observation: Pick<Observation, "source_row" | "kind">): string => `${observation.source_row}:${observation.kind}`;
+
+/** The decisions a person starts from: the first change per SKU and kind is selected, everything else skipped.
+ *  A row carrying a skip-by-default flag (an invoice line that did not ship) is shown but never pre-selected,
+ *  and does not claim its SKU, so a later shipped line for the same SKU is still selected. */
+export function defaultDecisions(observations: readonly Observation[]): Record<string, Decision> {
+  const seen = new Set<string>();
+  return Object.fromEntries(observations.map(o => {
+    const target = `${o.match.sku_id}:${o.kind}`;
+    const held = (o.row.flags ?? []).some(flag => SKIP_BY_DEFAULT_FLAGS.includes(flag));
+    const accepts = !held && ["price", "item_number", "pack"].includes(o.kind) && !seen.has(target);
+    if (!held) seen.add(target);
+    return [observationKey(o), accepts ? "accept" : "skip"];
+  }));
+}
 const norm = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 const evidenceDate = (row: ExportRow) => row.receipt_doc ? row.last_purchase_date : row.exported_at;
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
@@ -47,7 +61,9 @@ export function matchObservations(rows: readonly ExportRow[], catalog: readonly 
     }
     const noPrice = row.price_cents == null && row.price_per_lb_cents == null;
     const comparison = packComparison(row, sku.root);
-    if (row.price_per_lb_cents != null && sku.root?.dimension !== "weight") add("needs_person", "per_lb_on_count_root");
+    // A pricing unit the adapter does not price is held by name before any price is read.
+    if (!noPrice && row.price_unit_unsupported) add("needs_person", "price_unit_unsupported");
+    else if (row.price_per_lb_cents != null && sku.root?.dimension !== "weight") add("needs_person", "per_lb_on_count_root");
     else if (comparison.dimensionMismatch) add("needs_person", "pack_dimension_mismatch");
     else if (!noPrice) {
       const price = priceComparison(row, sku.root, sku.price_basis, sku.latestPrice);

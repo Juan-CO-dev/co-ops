@@ -81,6 +81,12 @@ describe("vendor import route gates", () => {
     expect(await res.json()).toEqual(view);
     expect(stageVendorImport).toHaveBeenCalledWith(expect.anything(), vendor, { name: "export.csv", text: "supplier export" }, shop);
   });
+  it("passes a ZIP-signed upload (xlsx) as bytes, sniffed by content not by name", async () => {
+    asActor("gm");
+    const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]);
+    expect((await stagePOST(upload(new File([zip], "renamed.csv"), shop), { params })).status).toBe(200);
+    expect(stageVendorImport).toHaveBeenCalledWith(expect.anything(), vendor, { name: "renamed.csv", bytes: zip }, shop);
+  });
   it.each(["agm", "social_media_mgr"] as const)("refuses %s shop stage and apply", async role => {
     asActor(role);
     expect((await stagePOST(upload(undefined, shop), { params })).status).toBe(403);

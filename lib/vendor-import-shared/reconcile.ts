@@ -19,6 +19,8 @@ export function vendorContents(row: ExportRow): Contents | null {
 
 /** Resolve explicit denominations; unlike seed repair, never guess a basis from price proximity. */
 export function reconcileBasis(row: ExportRow): Basis | null {
+  // A unit the adapter declared it cannot price is never read back from the UOM (BD/BNDL would read as per-bundle).
+  if (row.price_unit_unsupported) return null;
   const declared: Record<string, Basis> = { "per case": "per_case", "per each": "per_each", "per lb": "per_lb", "per dozen": "per_dozen", "per bundle": "per_bundle" };
   if (row.price_basis) return declared[row.price_basis] ?? null;
   if (row.price_per_lb_cents != null) return "per_lb";

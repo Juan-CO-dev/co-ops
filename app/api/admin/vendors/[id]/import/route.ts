@@ -4,6 +4,7 @@ import { vendorImportScopeAllowed } from "@/lib/vendor-import-shared/levels";
 import { getRoleLevel } from "@/lib/roles";
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
+import { isZip } from "@/lib/vendor-import-xlsx";
 import { MAX_IMPORT_BYTES, stageVendorImport, VendorImportError, VENDOR_IMPORT_STAGE_MIN } from "@/lib/vendor-import";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -23,7 +24,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (location !== null && typeof location !== "string") return jsonError(400, "invalid_payload");
   if (!vendorImportScopeAllowed({ role: ctx.user.role, locations: ctx.locations }, location || null, "stage")) return jsonError(403, "forbidden");
   try {
-    return jsonOk({ ...await stageVendorImport(ctx, id, { name: file.name, text: await file.text() }, location || null) });
+    // Content sniff, never the name: a ZIP (an .xlsx workbook) goes to the library as bytes; anything
+    // else is text, decoded exactly as File.text() does.
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const upload = isZip(bytes) ? { name: file.name, bytes } : { name: file.name, text: new TextDecoder().decode(bytes) };
+    return jsonOk({ ...await stageVendorImport(ctx, id, upload, location || null) });
   } catch (e) {
     if (e instanceof VendorImportError) return jsonError(e.status, e.code);
     throw e;
