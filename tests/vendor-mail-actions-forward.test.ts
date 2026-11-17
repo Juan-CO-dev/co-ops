@@ -125,9 +125,11 @@ it.each(["catering@company.test", "shop@receiving.test", "x@sub.receiving.test"]
   await expect(forwardVendorMail(ctx,id,{...request,recipient})).rejects.toMatchObject({code:"forward_loop"});
   expect(mocks.send).not.toHaveBeenCalled();
 });
-it("allows other company addresses and preserves the team display name", async () => {
+it("allows other company addresses and sends from the team address the claim froze", async () => {
   await forwardVendorMail(ctx,id,{...request,recipient:"gm@company.test"});
-  expect(mocks.send.mock.calls[0]![0].from).toBe("Compliments Only <team@outbound.test>");
+  // VML-r4: the claim can hold only the bare address (0326), so that address is the From of every send of this request.
+  expect(mocks.rpc.mock.calls[0]![1].p_payload.sender).toBe("team@outbound.test");
+  expect(mocks.send.mock.calls[0]![0].from).toBe("team@outbound.test");
 });
 it.each(["", "@bad", "receiving.test/path"])("fails closed on missing/invalid receiving domain %s", async domain => {
   vi.stubEnv("INBOUND_RECEIVING_DOMAIN",domain);
@@ -179,4 +181,48 @@ it("resumed claim keeps the 24h retry window", async () => {
   eventQueue = [null, { created_at: new Date(Date.now() - 25 * 3600_000).toISOString() }];
   await expect(forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test" })).rejects.toMatchObject({ code: "forward_unknown" });
   expect(mocks.send).not.toHaveBeenCalled();
+});
+
+// Fix round 4 (VML-r4 P2): a resumed claim sends with EVERYTHING frozen in it — never re-read configuration.
+it("resumed claim sends from its frozen sender even after EMAIL_FROM_TEAM changes", async () => {
+  replay = true; existingClaim = frozenClaim({ sender: "team@old.test" });
+  vi.stubEnv("EMAIL_FROM_TEAM", "Compliments Only <team@new.test>");
+  eventQueue = [null, { created_at: new Date(Date.now() - 3600_000).toISOString() }];
+  await forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test" });
+  expect(mocks.send).toHaveBeenCalledTimes(1);
+  expect(mocks.send.mock.calls[0]![0].from).toBe("team@old.test");
+});
+it("resumed claim does not need EMAIL_FROM_TEAM at all", async () => {
+  replay = true; existingClaim = frozenClaim({ sender: "team@old.test" });
+  vi.stubEnv("EMAIL_FROM_TEAM", "");
+  eventQueue = [null, { created_at: new Date(Date.now() - 3600_000).toISOString() }];
+  await forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test" });
+  expect(mocks.send.mock.calls[0]![0].from).toBe("team@old.test");
+});
+it("first send and resume send the identical payload", async () => {
+  await forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test", note: "FYI" });
+  const first = mocks.send.mock.calls[0]![0];
+  const claimed = mocks.rpc.mock.calls[0]![1].p_payload;
+  vi.clearAllMocks(); mocks.send.mockResolvedValue({ id: "provider-1" });
+  mocks.read.mockResolvedValue(row); mocks.download.mockResolvedValue({ data: new Blob(["original bytes"]), error: null });
+  replay = true; existingClaim = { data: claimed };
+  vi.stubEnv("EMAIL_FROM_TEAM", "Other Name <team@new.test>");
+  // The archive's asset list was rewritten since the claim: its content types must not leak into the resend.
+  mocks.read.mockResolvedValue({ ...row, receipt: { ...row.receipt, attachment_paths: [{ path: "invoice", filename: "invoice.pdf", contentType: "application/octet-stream" }] } });
+  eventQueue = [null, { created_at: new Date(Date.now() - 3600_000).toISOString() }];
+  await forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test", note: "FYI" });
+  expect(mocks.send.mock.calls[0]![0]).toEqual(first);
+});
+it("resumed claim refuses when the message's subject no longer matches the frozen body", async () => {
+  replay = true; existingClaim = frozenClaim();
+  mocks.read.mockResolvedValue({ ...row, subject: "Changed" });
+  eventQueue = [null, { created_at: new Date(Date.now() - 3600_000).toISOString() }];
+  await expect(forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test" })).rejects.toMatchObject({ code: "request_conflict" });
+  expect(mocks.send).not.toHaveBeenCalled();
+});
+it("resumed claim sends to its frozen recipient", async () => {
+  replay = true; existingClaim = frozenClaim();
+  eventQueue = [null, { created_at: new Date(Date.now() - 3600_000).toISOString() }];
+  await forwardVendorMail(ctx, id, { ...request, recipient: " Person@External.test " });
+  expect(mocks.send.mock.calls[0]![0].to).toBe("person@external.test");
 });
