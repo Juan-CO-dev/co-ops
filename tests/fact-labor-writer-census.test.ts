@@ -39,6 +39,11 @@ const CENSUS: Record<string, Record<string, number>> = {
   "supabase/migrations/0338_fact_layer_labor.sql": { "insert fact_wage_observations": 2, "delete labor_quarter": 1, "delete labor_day_coverage": 1,
     "delete labor_week_salaried": 1, "insert labor_quarter": 1, "insert labor_day_coverage": 1, "insert labor_week_salaried": 1,
     "insert labor_week_coverage": 1, "insert labor_burden_settings": 1 },
+  // 0339 (overtime per shop): THE week writer re-emitted (same statements), and the one-time ot_scope backfill
+  // of labor_week_coverage (a derived table; the label of the scope each existing week was built with).
+  "supabase/migrations/0339_fact_labor_ot_per_shop.sql": { "delete labor_quarter": 1, "delete labor_day_coverage": 1,
+    "delete labor_week_salaried": 1, "insert labor_quarter": 1, "insert labor_day_coverage": 1, "insert labor_week_salaried": 1,
+    "insert labor_week_coverage": 1, "update labor_week_coverage": 1 },
   // The ledger row (append-only, one per finished run) and the Toast labor pull (upsert by entry guid).
   "lib/sevenshifts/sync.ts": { "insert sevenshifts_sync_runs": 1 },
   "lib/toast/labor.ts": { "insert toast_time_entries": 1 },

@@ -1,5 +1,5 @@
 /** Item 2 PR 2c: THE labor week builder, pure (no I/O, no clock, no env). Labor plan r6 (§3 P1 #2) on
- * r3's P1 #3 / #4 / #5. Input = one company payroll week (Sunday 00:00 ET, BOTH shops) as read by
+ * r3's P1 #3 / #4 / #5. Input = one payroll week (Sunday 00:00 ET calendar midnight, both shops built together) as read by
  * lib/facts/labor-facts.ts; output = the rows 0338's fact_replace_labor_week writes.
  *
  *  - Punch -> minutes. A 7shifts punch maps to a shop through its LIVE location link; its break minutes
@@ -13,12 +13,15 @@
  *    7shifts and Toast are never summed.
  *  - The person: the CO-OPS user through a manual link (7shifts per shop, 0301; Toast per shop, 0233),
  *    else the account itself (`ss:<id>` / `toast:<guid>`): never matched by name.
- *  - Overtime is assigned per MINUTE, in instant order, company-wide, over hourly minutes only, BEFORE
- *    grouping, so a boundary inside a quarter lands on the right role. Salaried minutes are presence.
+ *  - Overtime is assigned per MINUTE, in instant order, over hourly minutes only, BEFORE grouping, so a
+ *    boundary inside a quarter lands on the right role. The 40 h counter runs per (person, SHOP) by default
+ *    (LABOR_OT_SCOPE `per_shop`, Juan 2026-11-17: each shop is its own LLC), per person with `company`.
+ *    A minute belongs to the week of its ET CALENDAR date (the week turns over at Saturday -> Sunday
+ *    midnight ET), so each week's counter starts at 0. Salaried minutes are presence.
  *  - Rows: one per (shop, quarter, person, source, role), each with exactly one rate pick.
  * Money is never computed here. */
 import { factQuarter } from "./order-facts-shared";
-import { LABOR_OPEN_PUNCH_SPAN_HOURS, LABOR_OT_MULTIPLIER, LABOR_OT_THRESHOLD_MINUTES } from "./labor-config-shared";
+import { LABOR_OPEN_PUNCH_SPAN_HOURS, LABOR_OT_MULTIPLIER, LABOR_OT_SCOPE, LABOR_OT_THRESHOLD_MINUTES, type LaborOtScope } from "./labor-config-shared";
 import { pickWage, toWageVersion, type PayClass, type RateBasis, type WageVersion } from "./labor-wages-shared";
 
 export interface FrameDay { location_id: string; business_date: string; linked: boolean; evidence_run_id: string | null; settled: boolean }
@@ -58,6 +61,12 @@ export type OtState = "assessed" | "lower_bound" | "week_open";
 export interface LaborWeekRow {
   week_start: string; built_through: string | null; ot_threshold_minutes: number; ot_multiplier: number; ot_state: OtState;
   ot_identity_partial: number; ot_settings_disagree: boolean;
+  /** the overtime scope this week was built with (0339 refuses any other than fact_labor_ot_scope()) */
+  ot_scope: LaborOtScope;
+}
+export interface BuildLaborWeekOptions {
+  /** defaults to LABOR_OT_SCOPE; another value is for tests and a future multi-shop employer only */
+  otScope?: LaborOtScope;
 }
 export interface LaborSalariedRow { location_id: string; salaried_cents: number | null; salaried_people: number }
 export interface LaborWeekPayload { quarters: LaborQuarterRow[]; days: LaborDayRow[]; week: LaborWeekRow; salaried: LaborSalariedRow[] }
@@ -78,7 +87,8 @@ function minutesOf(inIso: string, outIso: string, breakMinutes: number): number[
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-export function buildLaborWeek(src: LaborWeekSource): LaborWeekPayload {
+export function buildLaborWeek(src: LaborWeekSource, opts: BuildLaborWeekOptions = {}): LaborWeekPayload {
+  const otScope = opts.otScope ?? LABOR_OT_SCOPE;
   const builtFrom = src.weekStart > src.floorDay ? src.weekStart : src.floorDay;
   const inRange = (d: string) => src.builtThrough !== null && d >= builtFrom && d <= src.builtThrough;
   const frame = new Map(src.days.filter((d) => inRange(d.business_date)).map((d) => [`${d.location_id}|${d.business_date}`, d]));
@@ -172,17 +182,21 @@ export function buildLaborWeek(src: LaborWeekSource): LaborWeekPayload {
     return v;
   };
 
-  // Overtime per minute, in instant order, company-wide, hourly minutes only.
+  // Overtime per minute, in instant order, hourly minutes only; one 40 h counter per (person, shop) on a
+  // per_shop week, per person on a company week. Every minute here is in this week (the frame), so each
+  // week's counters start at 0.
   const used = minutes.filter((m) => chosen.get(`${m.loc}|${m.date}`) === m.source)
     .sort((a, b) => a.t - b.t || cmp(a.person, b.person) || cmp(a.loc, b.loc) || cmp(a.role, b.role) || cmp(a.source, b.source));
+  const otKey = otScope === "per_shop" ? (m: Minute) => `${m.person}|${m.loc}` : (m: Minute) => m.person;
   const worked = new Map<string, number>();
   const rows = new Map<string, LaborQuarterRow>();
   for (const m of used) {
     const pick = pickFor(m);
     let ot = 0;
     if (pick.payClass === "hourly") {
-      const n = worked.get(m.person) ?? 0;
-      worked.set(m.person, n + 1);
+      const k = otKey(m);
+      const n = worked.get(k) ?? 0;
+      worked.set(k, n + 1);
       if (n >= LABOR_OT_THRESHOLD_MINUTES) ot = 1;
     }
     const q = quarterOf(m.t);
@@ -213,6 +227,7 @@ export function buildLaborWeek(src: LaborWeekSource): LaborWeekPayload {
     week_start: src.weekStart, built_through: src.builtThrough, ot_threshold_minutes: LABOR_OT_THRESHOLD_MINUTES, ot_multiplier: LABOR_OT_MULTIPLIER,
     ot_state, ot_identity_partial: unlinked.size,
     ot_settings_disagree: src.laborSettings.some((s) => [s.daily_ot_threshold, s.premium_ot_threshold, s.consecutive_days_threshold].some((v) => v !== null && Number(v) > 0)),
+    ot_scope: otScope,
   };
 
   // Salaried weekly cost from 7shifts wages, per linked shop, as of the week start. One account linked

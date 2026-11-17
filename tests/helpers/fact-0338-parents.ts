@@ -9,6 +9,8 @@ import { M0337, freshParents as orderParents } from "./fact-0337-parents";
 
 const read = (n: string) => readFileSync(`supabase/migrations/${n}`, "utf8");
 export const M0338 = read("0338_fact_layer_labor.sql");
+/** 0339 (Juan 2026-11-17): overtime per employer (shop), applied on top of 0338 = the production shape. */
+export const M0339 = read("0339_fact_labor_ot_per_shop.sql");
 function grab(file: string, re: RegExp, what: string): string {
   const m = read(file).match(re);
   if (!m) throw new Error(`harness: ${what} not found in ${file}`);

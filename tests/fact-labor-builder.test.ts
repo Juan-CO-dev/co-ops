@@ -1,6 +1,6 @@
 // Item 2 PR 2c (labor plan r6 §3 P1 #2, r3 P1 #3/#4/#5): the PURE labor week builder. One row per
 // (shop, quarter, person, source, role); overtime assigned per minute in instant order BEFORE grouping,
-// company-wide across both shops; coverage first; minutes, never money.
+// per shop (LABOR_OT_SCOPE, Juan 2026-11-17); coverage first; minutes, never money.
 import { describe, expect, it } from "vitest";
 import { buildLaborWeek, type LaborWeekSource, type FrameDay } from "@/lib/facts/labor-week-shared";
 import type { WageVersion } from "@/lib/facts/labor-wages-shared";
@@ -62,16 +62,18 @@ describe("quarter x role rows (P1 #2)", () => {
   });
 });
 
-describe("company-wide overtime (P1 #4)", () => {
-  it("one person with an account at each shop is one person: 30 h at A then 15 h at B = 5 h overtime at B", () => {
-    const out = buildLaborWeek(src({
+describe("per-employer overtime (P1 #4, scope per Juan 2026-11-17: each shop is its own LLC)", () => {
+  it("one person with an account at each shop is one person; 30 h at A then 15 h at B = no overtime per shop (5 h at B company-wide)", () => {
+    const s = src({
       userLinks: [{ sevenshifts_user_id: "7", user_id: ALICE, linked_at_location_id: A }, { sevenshifts_user_id: "8", user_id: ALICE, linked_at_location_id: B }],
       punches: [punch("7", "501", null, "2026-10-05", "06:00", "21:00"), punch("7", "501", null, "2026-10-06", "06:00", "21:00"),
         punch("8", "502", null, "2026-10-08", "06:00", "21:00")],
       wages: [wage("7", 2000), wage("8", 2200)],
-    }));
+    });
+    const out = buildLaborWeek(s);
     expect(totals(out.quarters.filter((q) => q.location_id === A))).toEqual({ m: 1800, ot: 0 });
-    expect(totals(out.quarters.filter((q) => q.location_id === B))).toEqual({ m: 900, ot: 300 });
+    expect(totals(out.quarters.filter((q) => q.location_id === B))).toEqual({ m: 900, ot: 0 });
+    expect(totals(buildLaborWeek(s, { otScope: "company" }).quarters.filter((q) => q.location_id === B))).toEqual({ m: 900, ot: 300 });
     expect(new Set(out.quarters.map((q) => q.person_key))).toEqual(new Set([`u:${ALICE}`]));
     expect(out.quarters.filter((q) => q.location_id === B).every((q) => q.rate_cents === 2200 && q.user_id === ALICE)).toBe(true);
     expect(out.week).toMatchObject({ ot_state: "assessed", ot_identity_partial: 0 });
