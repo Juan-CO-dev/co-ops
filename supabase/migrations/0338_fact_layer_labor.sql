@@ -1,5 +1,6 @@
 -- Migration 0338_fact_layer_labor
 -- AUTHORED 2026-11-17 (item 2 PR 2c, CO Claude). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO SIM 2026-11-17 (schema_migrations version 20261117104451), APPLIED TO PROD 2026-11-17 (schema_migrations version 20261117153617), name 'fact_layer_labor'. The line above is the authoring-time gate note, kept as history.
 -- Plan: CHIEF item-02-LABOR-PLAN-r6.md (Astra r4/r5 findings cleared) + Astra r6's one P1, fixed here:
 --   a stale UPCOMING 7shifts wage row must never override a corrected CURRENT wage after an incomplete
 --   promotion. Supersession between the two lanes of one wage is decided BEFORE any date/role selection

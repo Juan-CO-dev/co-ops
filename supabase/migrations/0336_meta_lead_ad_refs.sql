@@ -1,4 +1,5 @@
 -- 0336 Meta lead ad refs (item 1, PR A). AUTHORED 2026-11-16, NOT applied.
+-- APPLIED TO SIM 2026-11-16 (schema_migrations version 20261116190409), APPLIED TO PROD 2026-11-16 (schema_migrations version 20261116191027), name 'meta_lead_ad_refs'. The line above is the authoring-time gate note, kept as history.
 -- Apply order: SIM first (CC runs the acceptance list in the PR body / plan r2 §7), then PROD on
 -- Juan's word, BEFORE the app that calls the 7-argument meta_lead_record merges (the app's call is
 -- coupled to this signature). Stamp this header with the schema_migrations versions in the same or

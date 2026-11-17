@@ -1,6 +1,6 @@
 # Fact layer, LABOR side (item 2 PR 2c): apply, turn on, set the burden, read
 
-Migration `0338_fact_layer_labor` is FILE ONLY. CC applies it to sim, then to prod on Juan's word, **after 0337**. The app ships **OFF**: the labor pass of the hourly `fact-build` cron runs only when `FACT_LAYER=1` **and** `FACT_LAYER_LABOR=1`. With `FACT_LAYER_LABOR` unset the route reports `labor: { skipped: true, reason: "fact_layer_labor_off" }` and calls no labor RPC.
+Migration `0338_fact_layer_labor` was APPLIED to sim and to prod on 2026-11-17 (prod `20261117153617`, after 0337). `FACT_LAYER=1` and `FACT_LAYER_LABOR=1` are both ON in prod since 2026-11-17. It shipped OFF; the gate is: the labor pass of the hourly `fact-build` cron runs only when `FACT_LAYER=1` **and** `FACT_LAYER_LABOR=1`. With `FACT_LAYER_LABOR` unset the route reports `labor: { skipped: true, reason: "fact_layer_labor_off" }` and calls no labor RPC.
 
 Nothing reads these facts yet. Managers see no change until a reader ships (the board's two-view display is a follow-up).
 
