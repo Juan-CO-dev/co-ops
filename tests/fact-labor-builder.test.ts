@@ -257,3 +257,48 @@ describe("salaried weekly cost from wages (estimate_first reads it only when the
       { location_id: A, salaried_cents: null, salaried_people: 0 }, { location_id: B, salaried_cents: null, salaried_people: 0 }]);
   });
 });
+
+// Fix r3 (ITEM2LABOR-r3 P2): a day inside its 36 h settle window has no ledger evidence by definition, so
+// its hours are UNKNOWN whatever a sync inside the window did. RULE: a zero is definitive only once the day is
+// COVERED (a finished time_punches run with a null error_code, started >= 36 h after the day ended).
+// The builder's days feed a fact_labor_cost row the way 0338 counts them, then the real pricer.
+import { laborPercents, laborTargetsFor, laborWeekViews, type LaborCostRow } from "@/lib/facts/labor-cost-shared";
+describe("fix r3: an empty pending day is unknown hours, never a green 0%", () => {
+  const YESTERDAY = "2026-10-10";
+  const costRow = (out: ReturnType<typeof buildLaborWeek>, loc: string, from: string, to: string): LaborCostRow => {
+    const ds = out.days.filter((d) => d.location_id === loc && d.business_date >= from && d.business_date <= to);
+    const qs = out.quarters.filter((q) => q.location_id === loc && q.business_date >= from && q.business_date <= to);
+    const n = (s: string) => ds.filter((d) => d.state === s).length;
+    return { week_start: WEEK, location_id: loc, hourly_straight_cents: qs.reduce((s, q) => s + q.minutes * (q.rate_cents ?? 0) / 60, 0), ot_premium_cents: 0,
+      salaried_cents: 0, salary_basis: "estimate", burden_pct: 12, burden_basis: "estimated", estimated_rate_minutes: 0,
+      hourly_minutes: qs.reduce((s, q) => s + q.minutes, 0), ot_minutes: 0, salaried_minutes: 0, ot_state: out.week.ot_state, range_days: 1,
+      days_covered: n("covered"), days_pending: n("pending_settle"), days_fallback: n("fallback_unverified"), days_incomplete: n("incomplete"),
+      days_missing: 1 - ds.length, open_punches: ds.reduce((s, d) => s + d.open_punches, 0) };
+  };
+  const frameWith = (o: Partial<FrameDay>) => [...days(A).map((d) => d.business_date === YESTERDAY ? { ...d, ...o } : d), ...days(B)];
+  it("yesterday-only read after a FAILED sync (pending, no evidence, no punches): hours unknown, no % and no tone", () => {
+    const out = buildLaborWeek(src({ days: frameWith({ evidence_run_id: null, settled: false }) }));
+    expect(out.days.find((d) => d.location_id === A && d.business_date === YESTERDAY)).toMatchObject({ state: "pending_settle", ss_minutes: 0 });
+    const [w] = laborWeekViews([costRow(out, A, YESTERDAY, YESTERDAY)]);
+    expect(w).toMatchObject({ hoursKnown: false, pureHourlyCents: 0 });
+    expect(laborPercents(w!, 500_000, laborTargetsFor(null))).toEqual({ pureHourlyPct: null, pureHourlyTone: "none", fullyLoadedPct: null, fullyLoadedTone: "none" });
+  });
+  it("the same day after a SUCCESSFUL sync inside the settle window, zero punches: still pending, still unknown (a run inside the window is not evidence)", () => {
+    // The frame cannot tell the two apart by design: evidence needs a run started >= 36 h after the day ended.
+    const out = buildLaborWeek(src({ days: frameWith({ evidence_run_id: null, settled: false }) }));
+    expect(laborWeekViews([costRow(out, A, YESTERDAY, YESTERDAY)])[0]!.hoursKnown).toBe(false);
+  });
+  it("a pending day WITH punches is still provisional: hours unknown until the day is covered", () => {
+    const out = buildLaborWeek(src({ days: frameWith({ evidence_run_id: null, settled: false }),
+      punches: [punch("7", "501", null, YESTERDAY, "10:00", "11:00")], wages: [wage("7", 2000)] }));
+    const [w] = laborWeekViews([costRow(out, A, YESTERDAY, YESTERDAY)]);
+    expect(w).toMatchObject({ hoursKnown: false, pureHourlyCents: 2000 });
+    expect(laborPercents(w!, 500_000, laborTargetsFor(null)).pureHourlyPct).toBeNull();
+  });
+  it("once COVERED (settled ledger evidence) with zero punches, the zero is definitive", () => {
+    const out = buildLaborWeek(src());
+    const [w] = laborWeekViews([costRow(out, A, YESTERDAY, YESTERDAY)]);
+    expect(w).toMatchObject({ hoursKnown: true, coverageComplete: true, pureHourlyCents: 0 });
+    expect(laborPercents(w!, 500_000, laborTargetsFor(null))).toMatchObject({ pureHourlyPct: 0, pureHourlyTone: "good" });
+  });
+});

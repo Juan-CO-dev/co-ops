@@ -44,17 +44,15 @@ describe("fix r1 P1: unknown hours suppress the percentages", () => {
     expect(w).toMatchObject({ coverageComplete: false, hoursKnown: false, openPunches: 1, otState: "lower_bound" });
     expect(laborPercents(w!, 1_000_000, laborTargetsFor(null))).toEqual({ pureHourlyPct: null, pureHourlyTone: "none", fullyLoadedPct: null, fullyLoadedTone: "none" });
   });
-  it("a missing or incomplete day or an unbuilt week is unknown hours too; a pending or Toast-fallback day is labelled, its hours still known", () => {
-    for (const o of [{ days_missing: 1 }, { days_incomplete: 1 }, { ot_state: "unbuilt" as const }]) {
+  it("a missing, incomplete or PENDING day or an unbuilt week is unknown hours too (fix r3); a Toast-fallback day is labelled, its hours still known", () => {
+    for (const o of [{ days_missing: 1 }, { days_incomplete: 1 }, { days_pending: 1 }, { ot_state: "unbuilt" as const }]) {
       const [w] = laborWeekViews([row(o)]);
       expect(w!.hoursKnown).toBe(false);
-      expect(laborPercents(w!, 1_000_000, laborTargetsFor(null)).pureHourlyPct).toBeNull();
+      expect(laborPercents(w!, 1_000_000, laborTargetsFor(null))).toEqual({ pureHourlyPct: null, pureHourlyTone: "none", fullyLoadedPct: null, fullyLoadedTone: "none" });
     }
-    for (const o of [{ days_pending: 1 }, { days_fallback: 1 }]) {
-      const [w] = laborWeekViews([row(o)]);
-      expect(w).toMatchObject({ hoursKnown: true, coverageComplete: false });
-      expect(laborPercents(w!, 1_000_000, laborTargetsFor(null)).pureHourlyPct).toBe(10.5);
-    }
+    const [w] = laborWeekViews([row({ days_fallback: 1 })]);
+    expect(w).toMatchObject({ hoursKnown: true, coverageComplete: false });
+    expect(laborPercents(w!, 1_000_000, laborTargetsFor(null)).pureHourlyPct).toBe(10.5);
   });
   it("an open punch at ONE shop makes the summed week unknown; a week_open row is never upgraded to lower_bound", () => {
     expect(laborWeekViews([row(), row({ location_id: B, open_punches: 2 })])[0]).toMatchObject({ hoursKnown: false, openPunches: 2 });
