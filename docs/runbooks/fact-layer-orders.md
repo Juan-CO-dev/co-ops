@@ -1,6 +1,6 @@
 # Fact layer, ORDER side (item 2 PRs 2a + 2b): apply, turn on, backfill, measure
 
-Migration `0337_fact_layer_orders` was APPLIED to sim and to prod on 2026-11-17 (prod `20261117080753`). `FACT_LAYER=1` is ON in prod since 2026-11-17. It shipped OFF, and with the flag unset: with `FACT_LAYER` unset, the hourly `fact-build` cron returns `{ skipped: true, reason: "fact_layer_off" }` before claiming a lease, reading or writing anything.
+Migration `0337_fact_layer_orders` was APPLIED to sim and to prod on 2026-11-17 (prod `20261117080753`). `FACT_LAYER=1` is ON in prod since 2026-11-17. It shipped OFF: with `FACT_LAYER` unset, the hourly `fact-build` cron returns `{ skipped: true, reason: "fact_layer_off" }` before claiming a lease, reading or writing anything.
 
 ## 1. Apply order
 
