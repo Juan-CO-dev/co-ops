@@ -21,11 +21,12 @@ export async function GET(req: NextRequest) {
   try {
     if (!await claimCronRoute("sevenshifts-sync")) return jsonOk({ skipped: true, reason: "cron_route_busy" });
     const deadlineMs = Math.max(1_000, maxDuration * 1000 - 10_000 - (Date.now() - startedAt));
-    // The run writes its own ledger row and its own heartbeat (cron.success | cron.failure, job sevenshifts-sync).
+    // The run writes its own ledger row and its own heartbeat (cron.success | cron.failure, job sevenshifts-sync);
+    // a run with only warnings is cron.success with outcome ok_with_warnings (lib/sevenshifts/health-shared.ts).
     const outcome = await runSevenShiftsSync({ trigger: "cron", deadlineMs });
     if (!outcome.ran) return jsonOk({ skipped: true, reason: outcome.reason });
     return jsonOk({ runId: outcome.runId, status: outcome.status, requests: outcome.requests, results: outcome.results,
-      persistenceErrors: outcome.persistenceErrors });
+      persistenceErrors: outcome.persistenceErrors, warnings: outcome.warnings });
   } catch {
     // Counts and fixed codes only: never a provider message, URL or token.
     await audit({
