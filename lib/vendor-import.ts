@@ -45,6 +45,10 @@ interface ImportReport {
   /** US Foods invoice at a shop only: the file's account, and the shop it is on file for (null = not on file yet,
    *  the reviewer confirms it is the chosen shop's). */
   account?: { number: string; location_id: string | null };
+  /** US Foods invoice at a shop only (review r2): EVERY account the file holds -> the shop it was on file for at
+   *  staging (null = not on file). The lines kept were chosen by these mappings, so a batch whose binding no longer
+   *  matches the current mappings is stale: it is never reused and never applied. */
+  account_binding?: Record<string, string | null>;
   /** The uploaded file's own SHA-256, present only when the batch identity (`source_sha256`) also covers
    *  evidence read from the file name (Baldor SmartShop's export range). */
   file_sha256?: string;
@@ -210,6 +214,27 @@ function readSource(file: VendorImportFile): ImportSource {
   return { text, format: "text", sha: createHash("sha256").update(text, "utf8").digest("hex") };
 }
 
+/** The account -> shop binding a shop invoice import filtered by: every account, sorted, mapped or null. */
+function accountBinding(accounts: Iterable<string>, accountShops: Map<string, string>): Record<string, string | null> {
+  return Object.fromEntries([...new Set(accounts)].filter(Boolean).sort().map(a => [a, accountShops.get(a) ?? null]));
+}
+function sameBinding(a: Record<string, string | null> | undefined, b: Record<string, string | null>): boolean {
+  return a !== undefined && JSON.stringify(a) === JSON.stringify(b);
+}
+/** Is this staged batch still the one the CURRENT account mappings would stage? Only a US Foods invoice at a shop
+ *  is filtered by account; a batch of that kind with no recorded binding is treated as stale (fail closed). */
+async function bindingStands(batch: Pick<BatchRow, "adapter" | "location_id" | "report">, vendorId: string): Promise<boolean> {
+  if (batch.location_id === null || batch.adapter !== "usfoods-invoice-csv") return true;
+  const stored = batch.report?.account_binding;
+  if (!stored) return false;
+  return sameBinding(stored, accountBinding(Object.keys(stored), await loadAccountShops(vendorId)));
+}
+async function retireStagedBatch(vendorId: string, batchId: string): Promise<void> {
+  const { error } = await getServiceRoleClient().from("vendor_import_batches").update({ status: "superseded" })
+    .eq("id", batchId).eq("vendor_id", vendorId).eq("status", "staged");
+  check(error);
+}
+
 /** Active per-shop vendor accounts (0294): account number -> shop. */
 async function loadAccountShops(vendorId: string): Promise<Map<string, string>> {
   const rows = await selectAllRows<{ account_number: string; location_id: string }>((from, to) => getServiceRoleClient()
@@ -248,9 +273,11 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
   // ANOTHER shop, so a file holding both shops' invoices stages each shop's own lines. An account not on file
   // stays (the person chose the shop) and is shown in the review to confirm. Every other format keeps its rules.
   let accountShops: Map<string, string> | null = null;
+  let binding: Record<string, string | null> | undefined;
   if (shopId !== null && adapter.id === "usfoods-invoice-csv") {
     accountShops = await loadAccountShops(vendorId);
     const map = accountShops;
+    binding = accountBinding(rows.map(r => r.account_id), map);
     const kept = rows.filter(r => !r.account_id || (map.get(r.account_id) ?? shopId) === shopId);
     if (kept.length === 0) throw new VendorImportError(400, "account_shop_mismatch");
     rows = kept;
@@ -263,11 +290,14 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
   const sha = nameEvidence === undefined ? source.sha
     : createHash("sha256").update(`${source.sha}\n${adapter.id}\n${nameEvidence}`, "utf8").digest("hex");
   const sb = getServiceRoleClient();
-  const existingQuery = sb.from("vendor_import_batches").select("id")
+  const existingQuery = sb.from("vendor_import_batches").select("id,adapter,location_id,report")
     .eq("vendor_id", vendorId).eq("source_sha256", sha).eq("adapter_version", ADAPTER_VERSION).eq("status", "staged");
-  const { data: existing, error: findError } = await (shopId ? existingQuery.eq("location_id", shopId) : existingQuery.is("location_id", null)).maybeSingle<{ id: string }>();
+  const { data: existing, error: findError } = await (shopId ? existingQuery.eq("location_id", shopId) : existingQuery.is("location_id", null)).maybeSingle<Pick<BatchRow, "id" | "adapter" | "location_id" | "report">>();
   check(findError);
-  if (existing) return loadImportBatch(actor, vendorId, existing.id);
+  // Review r2: the same file is the same batch only while the account mappings that chose its lines still hold.
+  // A batch staged under other mappings is retired, and the file stages again from the CURRENT mappings.
+  if (existing && (binding === undefined || sameBinding(existing.report?.account_binding, binding))) return loadImportBatch(actor, vendorId, existing.id);
+  if (existing) await retireStagedBatch(vendorId, existing.id);
   const { catalog, packs, measures } = await loadCatalog(vendorId, shopId);
   // [ASSUMPTION] The v1 root-only proposal cannot distinguish a changed case
   // count from a changed descendant size. Never turn 12 x 32oz into 24 x 16oz.
@@ -294,7 +324,8 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
   }
   const report: ImportReport = { counts: {}, reasons: {}, needs_person: [], before_state: before, ignored_rows: parsed.length - rows.length + skipped,
     ...(sha !== source.sha ? { file_sha256: source.sha } : {}),
-    ...(accountShops && accounts[0] ? { account: { number: accounts[0], location_id: accountShops.get(accounts[0]) ?? null } } : {}) };
+    ...(accountShops && accounts[0] ? { account: { number: accounts[0], location_id: accountShops.get(accounts[0]) ?? null } } : {}),
+    ...(binding ? { account_binding: binding } : {}) };
   for (const o of observations) {
     report.counts[o.kind] = (report.counts[o.kind] ?? 0) + 1;
     report.reasons[o.reason] = (report.reasons[o.reason] ?? 0) + 1;
@@ -359,6 +390,12 @@ export async function applyVendorImport(actor: AuthContext, vendorId: string, ba
     const { error: supersedeError } = await getServiceRoleClient().from("vendor_import_batches").update({ status: "superseded" })
       .eq("id", batchId).eq("vendor_id", vendorId).eq("status", "staged").eq("adapter_version", view.batch.adapter_version);
     check(supersedeError);
+    throw new VendorImportError(409, "stale_before_state");
+  }
+  if (view.batch.status === "staged" && !(await bindingStands(view.batch, vendorId))) {
+    // Review r2: an account mapping changed since staging, so the lines this batch kept may be another shop's.
+    // Retire it so the file restages under the current mappings (the panel says "re-stage the file").
+    await retireStagedBatch(vendorId, batchId);
     throw new VendorImportError(409, "stale_before_state");
   }
   const keys = new Set(view.observations.map(observationKey));

@@ -74,7 +74,7 @@ beforeEach(() => {
     state.staged = args.p_batch; state.observations = args.p_observations;
     const id = (state.tables.vendor_import_batches ?? []).length === 0 ? batch : `44444444-4444-4444-8444-44444444444${(state.tables.vendor_import_batches ?? []).length}`;
     state.tables.vendor_import_batches = [...(state.tables.vendor_import_batches ?? []), { ...args.p_batch, id, status: "staged" }];
-    state.tables.vendor_import_observations = args.p_observations.map(o => ({ ...o, batch_id: batch, payload: o.row, ...(o.match as object), match_rule: (o.match as { rule: string }).rule }));
+    state.tables.vendor_import_observations = args.p_observations.map(o => ({ ...o, batch_id: id, payload: o.row, ...(o.match as object), match_rule: (o.match as { rule: string }).rule }));
     return { data: { batch_id: id, created: true }, error: null };
   });
 });
