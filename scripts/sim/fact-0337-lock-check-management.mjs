@@ -12,7 +12,7 @@
  * No retries: an interrupted request may have committed; the printed fixture id lets CC retire it.
  */
 import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { literal as q, managementQuery, projectRef } from '../supabase-management-query.mjs';
 import { proveRace, transactionSQL } from './checklist-0276-lock-check-management.mjs';
@@ -34,9 +34,12 @@ export function entry(guid, date, { modified = `${date}T17:00:00Z`, payment = fa
   const payments = payment ? [{ check_guid: `${guid}-c`, payment_guid: `${guid}-p-${modified}`, type: 'CASH', payment_status: 'CAPTURED',
     refund_status: 'NONE', amount_cents: 1100, tip_cents: 0, paid_business_date: date, refund_amount_cents: null, refund_tip_cents: null,
     refund_business_date: null, void_business_date: null, server_guid: null, sales_refund_cents: 0 }] : [];
-  const body = { order, checks, discounts: [], service_charges: [], payments };
-  return { content_hash: createHash('sha256').update(JSON.stringify(body)).digest('hex'), ...body };
+  return { order, checks, discounts: [], service_charges: [], payments };
 }
+/** Synthetic fixtures are not captured Toast content, so they never touch toastContentHash: each
+ * fixture snapshot gets a SQL-side digest of its own body (distinct content, distinct snapshot). */
+export const entriesSQL = entries => `(select jsonb_agg(e || jsonb_build_object('content_hash',
+  encode(sha256(convert_to(e::text, 'UTF8')), 'hex'))) from jsonb_array_elements(${q(JSON.stringify(entries))}::jsonb) e)`;
 export function fixtureSQL(f) {
   return `begin;
     insert into public.locations(id,name,code,type,active) values(${q(f.shop)},${q(f.tag)},${q(f.tag)},'permanent',true);
@@ -46,10 +49,10 @@ export function fixtureSQL(f) {
 export function fullCaptureSQL(f, date, entries) {
   const run = randomUUID();
   return `insert into public.toast_capture_runs(id,location_id,business_date,started_at) values(${q(run)},${q(f.shop)},${q(date)},clock_timestamp());
-    select public.toast_capture_page(${q(run)},${q(f.shop)},${q(date)},1,${q(JSON.stringify(entries))}::jsonb);
+    select public.toast_capture_page(${q(run)},${q(f.shop)},${q(date)},1,${entriesSQL(entries)});
     select public.toast_capture_finish(${q(run)},${q(f.shop)},${q(date)},1)`;
 }
-export const modifiedSaveSQL = (f, entries) => `select public.toast_modified_save(${q(f.shop)},${q(JSON.stringify(entries))}::jsonb) as changed`;
+export const modifiedSaveSQL = (f, entries) => `select public.toast_modified_save(${q(f.shop)},${entriesSQL(entries)}) as changed`;
 /** A minimal valid payload built from the source itself (unpriced checks, no lines/refunds): enough for a lock proof. */
 export function replaceSQL(f, date) {
   const L = q(f.shop), D = q(date);
