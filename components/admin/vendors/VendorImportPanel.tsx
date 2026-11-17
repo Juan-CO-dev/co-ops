@@ -116,7 +116,7 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply: canApplyShop, c
   }
   function errorText(code: string) {
     if (code === "plan_changed" || code === "stale_before_state") return t("admin.vendor_import.error.plan_changed");
-    const own = ["auth", "too_large", "unknown_adapter", "adapter_vendor_mismatch", "multiple_accounts", "invalid_plan"];
+    const own = ["auth", "too_large", "unknown_adapter", "adapter_vendor_mismatch", "multiple_accounts", "account_shop_mismatch", "no_price_rows", "invalid_plan"];
     return own.includes(code) ? t(`admin.vendor_import.error.${code}` as TranslationKey) : t(resolveErrorKey(code));
   }
   function current(o: Observation) {
@@ -138,7 +138,8 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply: canApplyShop, c
           const proposal = o.kind === "price" && pairedPack && decisions[observationKey(pairedPack)] === "accept" && before.price_with_pack
             ? record(before.price_with_pack) : o.proposed;
           return <tr key={key} className="grid min-w-0 grid-cols-1 border-t border-co-border align-top md:table-row">
-            <th scope="row" className="min-w-0 break-words p-2 text-left font-normal">{o.row.item_no}<br />{o.row.description}</th>
+            <th scope="row" className="min-w-0 break-words p-2 text-left font-normal">{o.row.item_no}<br />{o.row.description}
+              {(o.row.flags ?? []).map(flag => <span key={flag} className="mt-1 block w-fit rounded-full bg-co-warning-surface px-2 py-1 text-xs text-co-warning-text">{t(`admin.vendor_import.flag.${flag}` as TranslationKey)}</span>)}</th>
             <td className="min-w-0 break-words p-2"><span className={`inline-flex rounded-full px-2 py-1 text-xs ${warning ? "bg-co-warning-surface text-co-warning-text" : "bg-co-success-surface text-co-confirm-text"}`}>{t(`admin.vendor_import.match.${o.match.rule}`)}</span></td>
             <td className="min-w-0 break-words p-2"><span className="block text-xs font-bold md:hidden">{t("admin.vendor_import.current")}</span>{current(o)}</td>
             <td className="min-w-0 break-words p-2"><span className="block text-xs font-bold md:hidden">{t("admin.vendor_import.proposed")}</span>{proposal ? [proposal.unit_price !== undefined ? money(proposal.unit_price) : null, typeof proposal.item_number === "string" ? proposal.item_number : null, proposal.root ? packLabel(proposal.root) : null].filter(Boolean).join(" · ") : unavailable}</td>
@@ -161,6 +162,9 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply: canApplyShop, c
     <p className="text-sm">{vendorName}</p>
     <p className="mt-1 break-words text-sm">{scopeText}</p>
     {view ? <><p className="mt-2 break-words text-sm">{t("admin.vendor_import.summary", { adapter: view.batch.adapter, date: view.batch.exported_at ? formatDateLabel(view.batch.exported_at, language) : unavailable, n: view.batch.row_count })}</p>
+      {view.batch.report.account && <p className={`mt-2 break-words text-sm ${view.batch.report.account.location_id === null ? "rounded-lg bg-co-warning-surface p-2 text-co-warning-text" : ""}`}>{view.batch.report.account.location_id === null
+        ? t("admin.vendor_import.account_confirm", { account: view.batch.report.account.number, shop: shopName })
+        : t("admin.vendor_import.account_on_file", { account: view.batch.report.account.number, shop: shops.find(shop => shop.id === view.batch.report.account?.location_id)?.name ?? unavailable })}</p>}
       <div className="mt-2 flex flex-wrap gap-2"><span className={`rounded-full px-2 py-1 text-xs ${view.batch.status === "applied" ? "bg-co-success-surface text-co-confirm-text" : "bg-co-warning-surface text-co-warning-text"}`}>{t(`admin.vendor_import.status.${view.batch.status}`)}</span>
         {kinds.map(kind => <span key={kind} className={kind === "needs_person" && view.batch.report.counts[kind] ? "rounded-full bg-co-warning-surface px-2 py-1 text-xs text-co-warning-text" : "px-2 py-1 text-xs"}>{kindLabel(kind, view.batch.report.counts[kind] ?? 0)}</span>)}</div></> : <p className="mt-2 text-sm">{t("admin.vendor_import.empty")}</p>}
     <div aria-live="polite">
@@ -186,7 +190,7 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply: canApplyShop, c
           </select>
         </label>}
         <label htmlFor={`${contentId}-file`} className="block text-xs font-bold tracking-[0.12em]">{t("admin.vendor_import.upload")}</label>
-        <input key={view?.batch.id ?? "empty"} id={`${contentId}-file`} type="file" accept=".csv,.json,text/csv,application/json" className={`${control} w-full min-w-0 py-2`} disabled={!!busy} aria-label={t("admin.vendor_import.upload")} aria-describedby={`${contentId}-help`} onChange={e => patch({ file: e.target.files?.[0] ?? null })} />
+        <input key={view?.batch.id ?? "empty"} id={`${contentId}-file`} type="file" accept=".csv,.json,.xlsx,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className={`${control} w-full min-w-0 py-2`} disabled={!!busy} aria-label={t("admin.vendor_import.upload")} aria-describedby={`${contentId}-help`} onChange={e => patch({ file: e.target.files?.[0] ?? null })} />
         <p id={`${contentId}-help`} className="mt-1 text-sm">{t("admin.vendor_import.help")}</p>
         <button type="button" className={`${control} mt-2 bg-co-gold font-bold tracking-[0.1em]`} disabled={!!busy || !state.file} onClick={stage}>{changed ? t("admin.vendor_import.restage") : t("admin.vendor_import.stage")}</button></div>}
       {view && <>

@@ -20,6 +20,9 @@ export interface ExportRow {
   pack_catch_weight?: true;
   pack_unparsed?: true;
   price_basis?: "per case" | "per lb" | "per each" | "per dozen" | "per bundle" | null;
+  /** The source named a pricing unit the adapter does not price (US Foods invoice: not CS/CA/LB/EA/DZ).
+   *  The price is never read from the UOM: the matcher holds the row (`price_unit_unsupported`). */
+  price_unit_unsupported?: true;
   receipt_doc?: string;
   receipt_line?: number;
   net_wt_lb?: number;
@@ -27,6 +30,8 @@ export interface ExportRow {
   billed_price_cents?: number;
   billed_price_basis?: string;
   notes?: string[];
+  /** Review flags shown beside the row. A flag in SKIP_BY_DEFAULT_FLAGS keeps the row's changes unselected. */
+  flags?: RowFlag[];
   customer_product_no?: string;
   storage?: string;
   product_class?: string;
@@ -40,11 +45,26 @@ export interface ExportRow {
   exported_at: string;
 }
 
+/** not_shipped: a US Foods invoice line with QtyShip 0 (the price is still the invoice line's).
+ *  price_per_listed_size: a Baldor SmartShop size in pounds; whether Current Price is per listed size is unconfirmed. */
+export const ROW_FLAGS = ["not_shipped", "price_per_listed_size"] as const;
+export type RowFlag = typeof ROW_FLAGS[number];
+export const SKIP_BY_DEFAULT_FLAGS: readonly RowFlag[] = ["not_shipped"];
+
 export interface Adapter {
   id: string;
   vendor: string;
+  /** What the upload was. "xlsx" adapters read the first sheet serialized by rowsToCsv and are never
+   *  offered a text upload (and vice versa), so a CSV can never pass for a spreadsheet export. Default "text". */
+  format?: "text" | "xlsx";
   detects(text: string): boolean;
   parse(text: string, sourceFile: string): ExportRow[];
+  /** What the FILE NAME contributes to the parsed evidence (Baldor: the export range that dates every row), in a
+   *  canonical form. Staging folds it into the batch identity so the same bytes under another name are a new batch.
+   *  Absent = the parse does not depend on the name. Throws for a name the parse would refuse. */
+  nameEvidence?(sourceFile: string): string;
+  /** Source rows the adapter deliberately did not turn into observations (e.g. credit memos). */
+  ignoredRows?(text: string): number;
 }
 
 export type Basis = "per_case" | "per_each" | "per_lb" | "per_dozen" | "per_bundle";
@@ -76,6 +96,7 @@ export const REASONS = [
   "pack_dimension_mismatch",
   "price_date_missing",
   "price_basis_unresolved",
+  "price_unit_unsupported",
   "price_depends_on_pack",
   "price_same",
   "same_date_price_conflict",
