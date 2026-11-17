@@ -95,15 +95,23 @@ Anything else: stop and report to CC.
 
 W = [D + 1 h, D + 49 h). Run all three queries from `scripts/toast-hash-acceptance.sql` with `:w_from` / `:w_to`. After that, run them again **every day for 7 days** over the trailing 48 h.
 
-- **`@query churn` (Metric A): must return zero rows.**
+**Same `modified_at` is not churn by itself (amended 2026-11-17).** On prod the first acceptance run returned 86 `CHURN` rows, and every one was a real edit: `toast_payments.payment_status` went from `AUTHORIZED` to `CAPTURED` at the nightly card batch capture, and Toast left the order's `modified_at` unchanged. CC's ruling:
+- `payment_status` **stays hashed**. A captured payment is a real change.
+- Two snapshots of one order with the same `modified_at` are **churn only when their stored content is equal**, ignoring storage identity (`toast_orders.id`, `content_hash`, every child's `snapshot_id`), array order (selection units and each child table's rows) and the synthetic discount / service-charge ordinals. Duplicates are kept: two identical discounts are not one. This is the cleanup plan's equivalence. Both queries compute it with the same `content` CTE (pinned text for text).
+- Otherwise the pair is **`EDIT_SAME_MODIFIED`**: reported, never a failure. Every other stored column counts as content, so a column added later counts too until someone decides otherwise.
+
+- **`@query churn` (Metric A): must return zero rows of kind `CHURN` or `CHURN_NULL_MODIFIED`.**
   - Memberships in W are partitioned by (shop, order, `modified_at`) across **every** version seen in W, not only the first.
-  - One version must name exactly one snapshot.
-  - This catches churn after the first canonical version. Example: A → B1 → B2 → B1 with B1 and B2 sharing a `modified_at` and both already stored is a `CHURN` row, even though nothing was inserted in W.
-  - `modified_at` null is its own partition and its own kind (`CHURN_NULL_MODIFIED`). It is never merged into a dated version.
+  - A partition with more than one snapshot is `CHURN` when two of its snapshots have equal stored content (`contents` < `snapshots`). When every snapshot differs in content it is `EDIT_SAME_MODIFIED`.
+  - This catches churn after the first canonical version. Example: A → B1 → B2 → B1 with B1 and B2 sharing a `modified_at` and their content, both already stored, is a `CHURN` row, even though nothing was inserted in W.
+  - `modified_at` null is its own partition and its own kinds (`CHURN_NULL_MODIFIED`, `EDIT_NULL_MODIFIED`). It is never merged into a dated version.
+  - Report the `EDIT_SAME_MODIFIED` / `EDIT_NULL_MODIFIED` count with the result. They do not fail the check.
 - **`@query inserts` (Metric B):**
-  - Classes each snapshot first seen in W as `transition`, `churn`, `edit` or `new_order`. **`churn` must be 0.**
+  - Classes each snapshot first seen in W as `transition`, `churn`, `edit_same_modified`, `edit` or `new_order`. **`churn` must be 0.**
+  - `churn` and `transition` both need an earlier snapshot with the same `modified_at` **and equal stored content** (first seen inside W, or before W). With the same `modified_at` but different content the snapshot is `edit_same_modified`, never a transition.
   - `transition` is the one allowed step per (order, version). It appears only while old days are still being recaptured for the first time.
-  - **Expected B0 (f) delta** per (shop, business day) = `transition + edit + new_order`, measured since the B0 reading. Use this instead of "B0 (f) unchanged".
+  - **Expected B0 (f) delta** per (shop, business day) = `transition + edit_same_modified + edit + new_order`, measured since the B0 reading. Use this instead of "B0 (f) unchanged".
+  - The query is **scoped**: `first_seen` is computed only for the snapshots with a membership in W and the other snapshots of the same orders. The whole-table form timed out on prod behind the Management API's ~120 s gateway. The results are identical: a snapshot's first membership doesn't depend on which other snapshots are grouped, and CC checked the two forms against each other on prod (2026-11-17). The test checks it again on the fixtures, across several windows.
 - **`@query coverage`:** the window counts only if it is not empty.
   - Both shops are present.
   - Both today and yesterday were captured.
@@ -123,7 +131,7 @@ W = [D + 1 h, D + 49 h). Run all three queries from `scripts/toast-hash-acceptan
    - the link is back for each evidence type: a selection-name code, a Toast-note code (pass 2), a daily-batch ring, and a non-ezCater dining-option ring linked by code;
    - the comparison is restored for covered dates;
    - the deferred list is right.
-5. Recapture three more times. Assert that nothing new is inserted and that `churn` returns zero rows.
+5. Recapture three more times. Assert that nothing new is inserted and that `churn` returns no `CHURN` row.
 6. Run one case with an aborted intraday deadline: the next tick or the recovery restores the link.
 
 PGlite already proves the SQL halves offline:
