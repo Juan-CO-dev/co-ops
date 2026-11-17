@@ -19,10 +19,12 @@ const ACC = { version: 1, gross_cents: 1000, discounts_comps_cents: 0, voids_cen
   line_prices: { v: 1, selections_present: true, heads: 1, uncaptured_heads: 0, mixed_heads: 0, net_cents: 1000,
     source_complete: true, net_complete: true, gross_complete: true, receipt_line_complete: true } };
 
-interface EntryOpts { modified?: string; checks?: number; refund?: boolean; undatedRefund?: boolean; amount?: number; refundDate?: string }
+interface EntryOpts { modified?: string; checks?: number; refund?: boolean; undatedRefund?: boolean; amount?: number; refundDate?: string;
+  /** 0247 candidate C: an accounted check's payment with NO refund evidence and an unknown (NULL) sales refund. */
+  unknownRefund?: "null_status" | "none_status"; unaccounted?: boolean }
 function entry(guid: string, date: string, o: EntryOpts = {}) {
   const checks = Array.from({ length: o.checks ?? 1 }, (_, i) => ({ check_guid: `${guid}-c${i}`, amount_cents: o.amount ?? 1000,
-    tax_cents: 100, total_cents: 1100, voided: false, deleted: false, accounting: ACC }));
+    tax_cents: 100, total_cents: 1100, voided: false, deleted: false, accounting: o.unaccounted ? null : ACC }));
   const order = { order_guid: guid, business_date: date, opened_at: `${date}T16:00:00Z`, closed_at: null, paid_at: null,
     modified_at: o.modified ?? `${date}T17:00:00Z`, promised_at: null, source: "In Store", revenue_center_guid: null,
     dining_option_guid: "dine", server_guid: "srv", deleted: false, voided: false, excess_food: false,
@@ -33,7 +35,11 @@ function entry(guid: string, date: string, o: EntryOpts = {}) {
   const payments = (o.refund || o.undatedRefund) && checks[0] ? [{ check_guid: checks[0].check_guid, payment_guid: `${guid}-p`, type: "CREDIT",
     payment_status: "CAPTURED", refund_status: "PARTIAL", amount_cents: 1100, tip_cents: 0, paid_business_date: date,
     refund_amount_cents: 300, refund_tip_cents: 0, refund_business_date: o.undatedRefund ? null : (o.refundDate ?? date), void_business_date: null, server_guid: null,
-    sales_refund_cents: o.undatedRefund ? null : 300 }] : [];
+    sales_refund_cents: o.undatedRefund ? null : 300 }]
+    : o.unknownRefund && checks[0] ? [{ check_guid: checks[0].check_guid, payment_guid: `${guid}-p`, type: "CREDIT",
+      payment_status: "CAPTURED", refund_status: o.unknownRefund === "none_status" ? "NONE" : null, amount_cents: 1100, tip_cents: 0,
+      paid_business_date: date, refund_amount_cents: null, refund_tip_cents: null, refund_business_date: null, void_business_date: null,
+      server_guid: null, sales_refund_cents: null }] : [];
   const body = { order, checks, discounts: [], service_charges: [], payments };
   return { content_hash: hash(body), ...body };
 }
@@ -282,6 +288,48 @@ describe("days older than the floor (review r1 #1: a late refund is never stale 
   it("an old day with no coverage and no refund touching the window stays out of the diff", async () => {
     await fullCapture("2025-11-22", [entry("old3", "2025-11-22", { refund: true })]);
     expect(await stale()).not.toContain("2025-11-22");
+  });
+});
+
+describe("days older than the floor: 0247 candidate C (review r2: accounted-check uncertainty)", () => {
+  const dailyParity = async () => {
+    const report = (await q<{ r: DailyMoney }>("select sales_report_daily($1,$2,$3) r", [LOC, D1, D5]))[0]!.r;
+    const checks = await q<FactCheckClassRow>("select business_date::text business_date, order_guid, check_guid, sale_class, amount_cents::int, tax_cents::int, gross_cents::int, discounts_comps_cents::int, voids_cents::int, service_charges_cents::int, pre_refund_cents::int from fact_sales_check_classes($1,$2,$3)", [LOC, D1, D5]);
+    const refunds = await q<FactRefundReadRow>("select order_business_date::text order_business_date, refund_business_date::text refund_business_date, refund_cents::int, refund_tip_cents::int, sales_refund_cents::int from fact_sales_refund_rows($1,$2,$3)", [LOC, D1, D5]);
+    return { report, facts: factDaily(checks, refunds, D1, D5) };
+  };
+  const missing = (rows: DailyMoney["refunds"]) => rows.map((r) => `${r.business_date}:${r.sales_refund_missing}`).sort();
+  it.each([["null_status", "2025-11-23"], ["none_status", "2025-11-24"]] as const)(
+    "an accounted check's payment with an unknown sales refund (%s) is discovered, built, and matches the real report's missing counts", async (kind, OLD) => {
+      // Never built, older than the floor, captured once: no dated refund and no refund evidence.
+      await fullCapture(OLD, [entry(`c-${kind}`, OLD, { unknownRefund: kind })]);
+      const before = await dailyParity();
+      // 0247 already counts it as a missing sales refund on every window day; until built, the facts do not.
+      expect(compareDaily(before.report, before.facts)).not.toEqual([]);
+      expect(await stale()).toContain(OLD);
+      await build(OLD);
+      expect(await stale()).not.toContain(OLD);
+      expect(await q("select order_business_date::text o, refund_business_date r, sales_refund_cents s, check_accounting_present a from fact_refund where order_guid=$1", [`c-${kind}`]))
+        .toEqual([{ o: OLD, r: null, s: null, a: true }]);
+      const after = await dailyParity();
+      expect(compareDaily(after.report, after.facts)).toEqual([]);
+      expect(missing(after.facts.refunds)).toEqual(missing(after.report.refunds));
+    });
+  it("the same payment on an UNACCOUNTED (legacy) check is not uncertainty in 0247, so it stays out of the diff", async () => {
+    const OLD = "2025-11-25";
+    await fullCapture(OLD, [entry("c-legacy", OLD, { unknownRefund: "null_status", unaccounted: true })]);
+    expect(await stale()).not.toContain(OLD);
+    const p = await dailyParity();
+    expect(compareDaily(p.report, p.facts)).toEqual([]);
+  });
+  it("candidate C on a superseded snapshot does not make its day stale (bound to the current pointer)", async () => {
+    const OLD = "2025-11-26";
+    await fullCapture(OLD, [entry("c-moved", OLD, { unknownRefund: "null_status" })]);
+    // A newer snapshot of the same order carries no payment: the pointer moves off the candidate.
+    await fullCapture(OLD, [entry("c-moved", OLD, { modified: `${OLD}T23:00:00Z` })]);
+    expect(await q("select count(*)::int n from toast_order_latest_pointers p join toast_payments pm on pm.snapshot_id = p.snapshot_id where p.order_guid='c-moved'"))
+      .toEqual([{ n: 0 }]);
+    expect(await stale()).not.toContain(OLD);
   });
 });
 
