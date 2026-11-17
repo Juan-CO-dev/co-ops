@@ -947,10 +947,9 @@ export async function runParShadowForLocation(
         { id: locationId },
         { ozPerDay: rate.ozPerDay, observedDays: rate.observedDays },
       );
-      const peakFloorOz = observedPeakCoverageOz(
-        base.series.map((d) => d.oz),
-        window.coveredDays.length,
-      );
+      // Like-for-like (Juan 2026-11-17): only history runs with the horizon's own
+      // weekday/weekend mix may floor it.
+      const peakFloorOz = observedPeakCoverageOz(base.series, window.coveredDays);
       const coverage = computeCoverage({
         coveredDays: window.coveredDays,
         baseOzPerDay: {

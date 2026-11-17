@@ -39,36 +39,101 @@ function input(over: Partial<CoverageInput> = {}): CoverageInput {
   };
 }
 
+/** Consecutive ET calendar days from `start` (default 2026-08-03, a Monday), one oz value each. */
+function days(oz: ReadonlyArray<number>, start = "2026-08-03"): Array<{ dateEt: string; oz: number }> {
+  const t0 = Date.parse(`${start}T00:00:00Z`);
+  return oz.map((v, i) => ({ dateEt: new Date(t0 + i * 86_400_000).toISOString().slice(0, 10), oz: v }));
+}
+
+// Horizons by day-class COMPOSITION (2026-08-25 = Tue; Fri/Sat/Sun are the weekend).
+const WEEKDAY_1 = [TUE];
+const WEEKDAY_2 = [TUE, WED];
+const WEEKDAY_3 = [TUE, WED, THU];
+const MIXED_1_1 = [THU, FRI];
+const WEEKEND_3 = [FRI, SAT, "2026-08-30"];
+
 describe("observedPeakCoverageOz — the empirical service level (Task 2.3)", () => {
-  it("returns the p90 of the consecutive runs once there are enough runs to rank", () => {
-    const daily = Array.from({ length: 20 }, (_, i) => i + 1); // 1 … 20
-    // 19 consecutive 2-day sums: 3, 5, 7 … 39. p90 index = ceil(0.9 × 19) − 1 = 17 ⇒ 37.
-    expect(observedPeakCoverageOz(daily, 2)).toBe(37);
+  it("returns the p90 of the comparable runs once there are enough runs to rank", () => {
+    // 20 days from Mon 08-03, values 1 … 20. A 1-weekday horizon compares single WEEKDAYS only:
+    // Mon–Thu of three weeks = 1-4, 8-11, 15-18 (12 runs). p90 index = ceil(0.9 × 12) − 1 = 10 ⇒ 17.
+    const daily = days(Array.from({ length: 20 }, (_, i) => i + 1));
+    expect(observedPeakCoverageOz(daily, WEEKDAY_1)).toBe(17);
   });
 
   it("returns the MAX run when there are too few runs to rank (a p90 in a costume)", () => {
-    expect(observedPeakCoverageOz([1, 2, 3, 10], 3)).toBe(15); // runs 6 and 15
+    // Mon–Thu 1, 2, 3, 10 and a 3-weekday horizon: runs Mon–Wed 6 and Tue–Thu 15.
+    expect(observedPeakCoverageOz(days([1, 2, 3, 10]), WEEKDAY_3)).toBe(15);
     expect(DYNAMIC_PARS.PEAK_MIN_RUNS_FOR_QUANTILE).toBe(5);
   });
 
   it("makes NO floor claim when there is less data than one horizon", () => {
-    expect(observedPeakCoverageOz([5, 5], 3)).toBeNull();
-    expect(observedPeakCoverageOz([], 1)).toBeNull();
-    expect(observedPeakCoverageOz([5, 5, 5], 0)).toBeNull();
-    expect(observedPeakCoverageOz([5, 5, 5], -2)).toBeNull();
+    expect(observedPeakCoverageOz(days([5, 5]), WEEKDAY_3)).toBeNull();
+    expect(observedPeakCoverageOz([], WEEKDAY_1)).toBeNull();
+    expect(observedPeakCoverageOz(days([5, 5, 5]), [])).toBeNull();
   });
 
   it("caps one catering-shaped outlier out of the answer once ranking is possible", () => {
-    // Six 1-day runs, one of them a 500 outlier. p90 index = ceil(5.4) − 1 = 5 ⇒ the outlier
-    // is the p90 here (n is small), but the MEAN would be far below it either way.
-    expect(observedPeakCoverageOz([10, 10, 10, 10, 10, 500], 1)).toBe(500);
-    // Add enough ordinary runs and the outlier stops governing.
-    const many = [...Array.from({ length: 19 }, () => 10), 500];
-    expect(observedPeakCoverageOz(many, 1)).toBe(10);
+    // Four weekday runs, one of them a 500 outlier: too few to rank, so the outlier is the max.
+    expect(observedPeakCoverageOz(days([10, 10, 10, 500]), WEEKDAY_1)).toBe(500);
+    // Four weeks, every day 10 except one Thursday at 500: 16 single-weekday runs.
+    // p90 index = ceil(14.4) − 1 = 14 ⇒ 10. Enough ordinary runs and the outlier stops governing.
+    const many = days(Array.from({ length: 28 }, (_, i) => (i === 3 ? 500 : 10)));
+    expect(observedPeakCoverageOz(many, WEEKDAY_1)).toBe(10);
   });
 
   it("handles a horizon equal to the whole series (exactly one run)", () => {
-    expect(observedPeakCoverageOz([2, 3, 4], 3)).toBe(9);
+    expect(observedPeakCoverageOz(days([2, 3, 4]), WEEKDAY_3)).toBe(9);
+  });
+
+  it("a run is CONSECUTIVE CALENDAR DAYS: it never bridges a gap day the base excluded (the data was missing, not the demand)", () => {
+    // Mon 30, Tue 30, [Wed: full gap, excluded from the series], Thu 30, Fri 30.
+    const withGap = [...days([30, 30]), ...days([30, 30], "2026-08-06")];
+    // The real weekday pair is Mon–Tue 60; "Tue + Thu" is not a window anybody survived.
+    expect(observedPeakCoverageOz(withGap, WEEKDAY_2)).toBe(60);
+    // A 3-day horizon fits no gap-free stretch here → no floor claim (honest null), never 90 across the hole.
+    expect(observedPeakCoverageOz(withGap, WEEKDAY_3)).toBeNull();
+    // Mon 1, Tue 5, [gap], Thu 100, Fri 1 → only real pairs count; never Tue+Thu = 105.
+    const bridge = [...days([1, 5]), ...days([100, 1], "2026-08-06")];
+    expect(observedPeakCoverageOz(bridge, WEEKDAY_2)).toBe(6); // Mon–Tue, the one weekday pair
+    expect(observedPeakCoverageOz(bridge, MIXED_1_1)).toBe(101); // Thu–Fri, the one mixed pair
+  });
+});
+
+describe("observedPeakCoverageOz — LIKE-FOR-LIKE days (Juan, 2026-11-17)", () => {
+  /** Two weeks from Mon 08-03: Mon–Thu 10 oz, Fri 50, Sat 200, Sun 30. Weekend-heavy. */
+  const weekendHeavy = days(
+    Array.from({ length: 14 }, (_, i) => [10, 10, 10, 10, 50, 200, 30][i % 7]!),
+  );
+
+  it("weekend-heavy history no longer raises a weekday-only window's floor", () => {
+    // Any-run p90 would have floored a Tue–Wed par on Fri–Sat (250) or Sat–Sun (230).
+    // Comparable runs are weekday pairs only: Mon–Tue, Tue–Wed, Wed–Thu, all 20 oz.
+    expect(observedPeakCoverageOz(weekendHeavy, WEEKDAY_2)).toBe(20);
+    expect(observedPeakCoverageOz(weekendHeavy, WEEKDAY_1)).toBe(10);
+  });
+
+  it("a mixed window compares only runs with the same weekday/weekend mix", () => {
+    // 1 weekday + 1 weekend: Thu–Fri (60) and Sun–Mon (40), twice. Never Fri–Sat 250 or
+    // Sat–Sun 230 (two weekend days), never Mon–Tue 20 (two weekdays).
+    expect(observedPeakCoverageOz(weekendHeavy, MIXED_1_1)).toBe(60);
+  });
+
+  it("a weekend window compares only weekend runs, so a weekday-diluted run cannot under-floor it", () => {
+    // Fri–Sat–Sun = 280 both weeks. Sat–Sun–Mon (240) and Thu–Fri–Sat (260) are other mixes.
+    expect(observedPeakCoverageOz(weekendHeavy, WEEKEND_3)).toBe(280);
+  });
+
+  it("no comparable run → NO floor claim, even when runs of the right LENGTH exist", () => {
+    // Mon 08-03 … Sat 08-08: six consecutive days, four 3-day runs, none of them Fri–Sat–Sun.
+    const noWeekendRun = days([10, 10, 10, 10, 50, 200]);
+    expect(observedPeakCoverageOz(noWeekendRun, WEEKEND_3)).toBeNull();
+    // …and a weekday horizon over the same days still has its comparable runs.
+    expect(observedPeakCoverageOz(noWeekendRun, WEEKDAY_3)).toBe(30);
+  });
+
+  it("the composition is the day-class COUNT, so a horizon is matched however its days are ordered", () => {
+    // Sun–Mon (weekend then weekday) and Thu–Fri (weekday then weekend) are the same 1 + 1 mix.
+    expect(observedPeakCoverageOz(weekendHeavy, ["2026-08-30", "2026-08-31"])).toBe(60);
   });
 });
 

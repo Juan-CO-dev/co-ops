@@ -33,6 +33,7 @@
  * in the rest of the module around them; those four are unchanged.
  */
 import { etDayFromDate } from "@/lib/et-day-shared";
+import { addDaysEt } from "@/lib/vendor-rhythm-shared";
 
 export type DayClass = "weekday" | "weekend";
 
@@ -93,7 +94,8 @@ export const DYNAMIC_PARS = {
   /** The peak-coverage floor: a percentage on a mean is not a service level (the Prosciutto
    *  proof — mean+20% suggested a par the worst observed weekend cleared by 2%). Until the
    *  statistical socket is filled, a suggestion may never fall below the observed peak run
-   *  over the horizon length. Quantile, with max() when there are too few runs to rank. */
+   *  over a horizon of the same length AND the same weekday/weekend mix (like-for-like, Juan
+   *  2026-11-17). Quantile, with max() when there are too few runs to rank. */
   PEAK_QUANTILE: 0.9,
   PEAK_MIN_RUNS_FOR_QUANTILE: 5,
 
@@ -308,29 +310,65 @@ export function computeBaseRate(input: BaseRateInput): BaseRateResult {
 // The peak-coverage floor (Task 2.3)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** How many of these ET dates fall in the weekend day-class (the shipped Fri/Sat/Sun boundary). */
+function weekendDayCount(datesEt: ReadonlyArray<string>): number {
+  let n = 0;
+  for (const d of datesEt) if (dayClassForDate(d) === "weekend") n += 1;
+  return n;
+}
+
 /**
- * The observed PEAK coverage over a horizon of `runLength` days, in oz.
+ * The observed PEAK coverage over the covered horizon, in oz, from COMPARABLE history only.
  *
  * WHY: a percentage on a mean is not a service level. The council's Prosciutto walk showed
  * mean + 20% producing a par the WORST observed weekend cleared by 2% — i.e. a cushion that
  * covers the average and fails the day it was bought for. Until the statistical socket
  * (z x sigma x sqrt(lead)) has variance-worthy history to fill it, the floor is empirical:
- * whatever the shop has actually had to survive over a window this long.
+ * whatever the shop has actually had to survive over a window like this one.
  *
  * p90 rather than max once there are enough runs to rank, so one catering-shaped outlier
  * cannot permanently inflate a par; max below that, because with 4 runs a "p90" is a max
  * wearing a costume.
+ *
+ * A RUN IS `coveredDays.length` CONSECUTIVE CALENDAR DAYS (#579). The base's series holds
+ * OBSERVED days only (a full-gap day — the shop's data missing, not its demand — is excluded
+ * there), so two neighbours in the series can be days apart. A run that bridges such a hole
+ * is not a window anybody survived, so it is never formed.
+ *
+ * LIKE-FOR-LIKE DAYS (Juan, 2026-11-17: weekday stretches compare with weekday stretches,
+ * weekend with weekend — "keeps pars effective"). A run counts only when it has the SAME
+ * day-class COMPOSITION as the covered horizon: the same number of weekend days (and so of
+ * weekday days). A Tue–Wed horizon is floored by weekday pairs, never by a Fri–Sat run; a
+ * Fri–Sat–Sun horizon by Fri–Sat–Sun runs, never by a weekday-diluted Sat–Sun–Mon. Order
+ * inside the run does not matter — the floor is a demand SUM — so Thu–Fri and Sun–Mon are the
+ * same 1 + 1 mix. The day-class is derived HERE from the dates, through the one shipped
+ * boundary, so a caller cannot hand in a second opinion about where the weekend starts.
+ *
+ * No comparable gap-free run → no floor claim (null), never a floor borrowed from a run of
+ * another mix. Expect fewer runs per horizon than before (a 21-day window holds three
+ * Fri–Sat–Sun stretches), so the max rule governs more often; that is the honest answer for
+ * the history there is.
  */
 export function observedPeakCoverageOz(
-  dailyOz: ReadonlyArray<number>,
-  runLength: number,
+  daily: ReadonlyArray<{ dateEt: string; oz: number }>,
+  coveredDays: ReadonlyArray<string>,
 ): number | null {
-  if (runLength <= 0 || dailyOz.length < runLength) return null;
+  const runLength = coveredDays.length;
+  if (runLength <= 0 || daily.length < runLength) return null;
+  const wantWeekend = weekendDayCount(coveredDays);
   const runs: number[] = [];
-  for (let i = 0; i + runLength <= dailyOz.length; i += 1) {
+  // streak = how many days end at i with every day the calendar successor of the one before.
+  let streak = 0;
+  for (let i = 0; i < daily.length; i += 1) {
+    streak = i > 0 && addDaysEt(daily[i - 1]!.dateEt, 1) === daily[i]!.dateEt ? streak + 1 : 1;
+    if (streak < runLength) continue;
     let sum = 0;
-    for (let j = 0; j < runLength; j += 1) sum += dailyOz[i + j] ?? 0;
-    runs.push(sum);
+    let weekend = 0;
+    for (let j = i - runLength + 1; j <= i; j += 1) {
+      sum += daily[j]!.oz;
+      if (dayClassForDate(daily[j]!.dateEt) === "weekend") weekend += 1;
+    }
+    if (weekend === wantWeekend) runs.push(sum);
   }
   if (runs.length === 0) return null;
   runs.sort((a, b) => a - b);
@@ -524,7 +562,8 @@ export interface CoverageInput {
   cushionPct: number;
   /** oz of ONE order unit (lib/ordering.ts perOrderUnitOz). null/0 => no honest unit target. */
   perOrderUnitOz: number | null;
-  /** From observedPeakCoverageOz over the horizon length. null => no floor claim. */
+  /** From observedPeakCoverageOz over the covered horizon (same length, same day-class mix).
+   *  null => no floor claim. */
   peakFloorOz: number | null;
 }
 
