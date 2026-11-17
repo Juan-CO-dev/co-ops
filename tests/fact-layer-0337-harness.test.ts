@@ -19,7 +19,7 @@ const ACC = { version: 1, gross_cents: 1000, discounts_comps_cents: 0, voids_cen
   line_prices: { v: 1, selections_present: true, heads: 1, uncaptured_heads: 0, mixed_heads: 0, net_cents: 1000,
     source_complete: true, net_complete: true, gross_complete: true, receipt_line_complete: true } };
 
-interface EntryOpts { modified?: string; checks?: number; refund?: boolean; undatedRefund?: boolean; amount?: number }
+interface EntryOpts { modified?: string; checks?: number; refund?: boolean; undatedRefund?: boolean; amount?: number; refundDate?: string }
 function entry(guid: string, date: string, o: EntryOpts = {}) {
   const checks = Array.from({ length: o.checks ?? 1 }, (_, i) => ({ check_guid: `${guid}-c${i}`, amount_cents: o.amount ?? 1000,
     tax_cents: 100, total_cents: 1100, voided: false, deleted: false, accounting: ACC }));
@@ -32,7 +32,7 @@ function entry(guid: string, date: string, o: EntryOpts = {}) {
       receipt_line_cents: 1000, tax_cents: 100, tax_inclusion: "NOT_INCLUDED", selection_type: "NONE", deferred: false })) };
   const payments = (o.refund || o.undatedRefund) && checks[0] ? [{ check_guid: checks[0].check_guid, payment_guid: `${guid}-p`, type: "CREDIT",
     payment_status: "CAPTURED", refund_status: "PARTIAL", amount_cents: 1100, tip_cents: 0, paid_business_date: date,
-    refund_amount_cents: 300, refund_tip_cents: 0, refund_business_date: o.undatedRefund ? null : date, void_business_date: null, server_guid: null,
+    refund_amount_cents: 300, refund_tip_cents: 0, refund_business_date: o.undatedRefund ? null : (o.refundDate ?? date), void_business_date: null, server_guid: null,
     sales_refund_cents: o.undatedRefund ? null : 300 }] : [];
   const body = { order, checks, discounts: [], service_charges: [], payments };
   return { content_hash: hash(body), ...body };
@@ -78,8 +78,8 @@ async function build(date: string) {
   const fp = await fingerprint(date);
   return (await replace(date, buildOrderDay(await source(date)) as never, fp))[0]!.r;
 }
-async function stale() {
-  return (await q<{ day_business_date: string }>("select to_char(day_business_date,'YYYY-MM-DD') day_business_date from fact_order_days_stale('2026-01-01', 1000, $1)", [FACT_BUILDER_VERSION]))
+async function stale(floor = "2026-01-01") {
+  return (await q<{ day_business_date: string }>("select to_char(day_business_date,'YYYY-MM-DD') day_business_date from fact_order_days_stale($2, 1000, $1)", [FACT_BUILDER_VERSION, floor]))
     .map((r) => r.day_business_date).sort();
 }
 const coverage = async (date: string) => (await q("select * from fact_day_coverage where location_id=$1 and business_date=$2", [LOC, date]))[0];
@@ -245,6 +245,43 @@ describe("read-time classification (double-count law)", () => {
   });
   it("the read helpers keep 0232's 31-day guard", async () => {
     await refuses(q("select * from fact_sales_check_classes($1,'2026-01-01','2026-03-01')", [LOC]), "sales_report_window_too_wide");
+  });
+});
+
+describe("days older than the floor (review r1 #1: a late refund is never stale forever)", () => {
+  const OLD = "2025-11-20";
+  it("a refund dated inside the window on an order older than the floor makes that order's day stale, and the rebuild carries it", async () => {
+    await fullCapture(OLD, [entry("old1", OLD)]);
+    expect(await stale()).not.toContain(OLD);
+    // Modified capture records a refund dated D2 against an order of a day older than the floor.
+    expect((await modifiedSave([entry("old1", OLD, { refund: true, refundDate: D2, modified: `${D2}T15:00:00Z` })]))[0]).toEqual({ n: 1 });
+    expect(await stale()).toContain(OLD);
+    await build(OLD);
+    expect(await stale()).not.toContain(OLD);
+    expect(await q("select order_business_date::text o, refund_business_date::text r, sales_refund_cents::int s from fact_refund where order_guid='old1'"))
+      .toEqual([{ o: OLD, r: D2, s: 300 }]);
+    expect(await q("select order_business_date::text o, refund_business_date::text r from fact_sales_refund_rows($1,$2,$3)", [LOC, D2, D2]))
+      .toContainEqual({ o: OLD, r: D2 });
+  });
+  it("an undated refund on an order older than the floor (uncertainty on every window day) also makes its day stale", async () => {
+    const OLD2 = "2025-11-21";
+    await fullCapture(OLD2, [entry("old2", OLD2)]);
+    await modifiedSave([entry("old2", OLD2, { undatedRefund: true, modified: `${D2}T15:30:00Z` })]);
+    expect(await stale()).toContain(OLD2);
+    await build(OLD2);
+    expect(await stale()).not.toContain(OLD2);
+  });
+  it("a day already built keeps its invalidation after the floor passes it", async () => {
+    expect(await stale("2026-10-10")).toEqual([]);
+    await modifiedSave([entry("stay", D4, { refund: true, refundDate: D4, modified: `${D4}T21:00:00Z` })]);
+    // The floor has moved past D4 and the refund is dated D4 (outside the window): the stored coverage row keeps D4 maintained.
+    expect(await stale("2026-10-10")).toEqual([D4]);
+    await build(D4);
+    expect(await stale("2026-10-10")).toEqual([]);
+  });
+  it("an old day with no coverage and no refund touching the window stays out of the diff", async () => {
+    await fullCapture("2025-11-22", [entry("old3", "2025-11-22", { refund: true })]);
+    expect(await stale()).not.toContain("2025-11-22");
   });
 });
 

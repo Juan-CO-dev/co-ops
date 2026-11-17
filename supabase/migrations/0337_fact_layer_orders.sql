@@ -179,8 +179,16 @@ begin
   return md5(concat_ws('|', 'v:' || p_builder_version, 'p:' || coalesce(v_pointers, 'none'), 'r:' || coalesce(v_run, 'none'), 'a:inline'));
 end $$;
 
--- The diff: every day with a pointer, a completed run or a stored coverage row in [floor, ET today),
--- whose stored fingerprint differs or is missing. Evaluated against current state on every pass.
+-- The diff: every candidate day before ET today whose stored fingerprint differs or is missing.
+-- Evaluated against current state on every pass. Candidates (review r1 #1, BC-061/BC-031: an older
+-- order's late refund must never leave its day stale forever):
+--   a pointer or a completed run in [floor, today);
+--   EVERY stored coverage row, whatever its age: a day once built stays maintained after the floor
+--     passes it (a modified capture that re-snapshots it is rebuilt);
+--   an order day OLDER than the floor whose CURRENT snapshot carries a refund that reaches the
+--     maintained window: dated on or after the floor (toast_payments_refund_date, 0221), or undated
+--     refund evidence (0247's predicate and partial index), which the refund reader counts on every
+--     window day. The rebuild writes its fact_refund rows, so fact_sales_refund_rows sees it.
 create function public.fact_order_days_stale(p_floor date, p_limit integer, p_builder_version text)
 returns table(day_location_id uuid, day_business_date date, day_fingerprint text, stored_fingerprint text)
 language plpgsql stable security definer set search_path = pg_catalog, public as $$
@@ -194,7 +202,19 @@ begin
     union
     select r.location_id, r.business_date from public.toast_capture_runs r where r.status = 'completed' and r.business_date >= p_floor and r.business_date < v_today
     union
-    select c.location_id, c.business_date from public.fact_day_coverage c where c.fact = 'orders' and c.business_date >= p_floor and c.business_date < v_today
+    select c.location_id, c.business_date from public.fact_day_coverage c where c.fact = 'orders' and c.business_date < v_today
+    union
+    select p.location_id, p.business_date from public.toast_payments pm
+      join public.toast_orders o on o.id = pm.snapshot_id
+      join public.toast_order_latest_pointers p on p.location_id = o.location_id and p.order_guid = o.order_guid and p.snapshot_id = pm.snapshot_id
+     where pm.refund_business_date >= p_floor and p.business_date < p_floor
+    union
+    select p.location_id, p.business_date from public.toast_payments pm
+      join public.toast_orders o on o.id = pm.snapshot_id
+      join public.toast_order_latest_pointers p on p.location_id = o.location_id and p.order_guid = o.order_guid and p.snapshot_id = pm.snapshot_id
+     where pm.refund_business_date is null and pm.sales_refund_cents is distinct from 0
+       and (pm.refund_amount_cents is not null or pm.refund_status in ('PARTIAL', 'FULL'))
+       and p.business_date < p_floor
   ), fp as (
     select days.l, days.d, public.fact_order_day_fingerprint(days.l, days.d, p_builder_version) f from days
   )
