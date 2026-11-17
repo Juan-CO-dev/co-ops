@@ -84,10 +84,13 @@ export interface ResourceResult {
   failed_users?: number;
   /**
    * Present only when rows were skipped: `{ reason: count }` over the closed `REJECT_REASONS`
-   * vocabulary (lib/sevenshifts/normalize-shared.ts), built by `rejectionHistogram` ONLY — never an
-   * index, a field name, a value or a payload. It tells the next reader WHICH rule fired.
+   * vocabulary (lib/sevenshifts/normalize-shared.ts), plus — when a DATE was refused — `date_shapes`:
+   * `{ date field: [shape] }`, the spelling of the refused values with every digit `9` and every
+   * letter `a` (≤ 3 distinct per field, ≤ 40 chars). Built by `rejectionReasons` ONLY — never an
+   * index, a value or a payload, and no field name outside `DATE_FIELDS`. It tells the next reader
+   * WHICH rule fired and, for a date, HOW the value was spelled.
    */
-  reasons?: normalizers.RejectionHistogram;
+  reasons?: normalizers.RejectionReasons;
 }
 export type SyncStatus = "ok" | "partial" | "failed";
 export type PersistenceErrorCode = "state_write_failed" | "ledger_write_failed";
@@ -236,7 +239,7 @@ export async function runSevenShiftsSync(
           if (resource === "users") for (const r of rows) fetchedUsers.add(String(r.id));
           const error_code = pageError ?? (out.rejected.length > 0 ? "rejected_rows" : null);
           const result: ResourceResult = { rows: rows.length, skipped: out.rejected.length, pages, error_code };
-          if (out.rejected.length > 0) result.reasons = normalizers.rejectionHistogram(out.rejected);
+          if (out.rejected.length > 0) result.reasons = normalizers.rejectionReasons(out);
           return result;
         } catch (e) {
           return { rows: 0, skipped: 0, pages: 0, error_code: codeOf(e) };
@@ -263,7 +266,7 @@ export async function runSevenShiftsSync(
             rows = out.rows as unknown as Row[];
             complete = got.kind === "snapshot" && out.rejected.length === 0;
             result.skipped += out.rejected.length;
-            if (out.rejected.length > 0) result.reasons = normalizers.addHistograms(result.reasons ?? {}, normalizers.rejectionHistogram(out.rejected));
+            if (out.rejected.length > 0) result.reasons = normalizers.addReasons(result.reasons ?? {}, normalizers.rejectionReasons(out));
           } catch (e) {
             // The request or its shape failed: this user is NOT reconciled at all, so nothing of theirs retires.
             result.failed_users! += 1;
@@ -359,7 +362,7 @@ export async function runSevenShiftsSync(
         job: trigger === "cron" ? "sevenshifts-sync" : "sevenshifts-sync-manual",
         status: runStatus, outcome: health.outcome, requests: counter.requests, persistence_errors: persistenceErrors,
         errors: health.errors, warnings: health.warnings,
-        // Counts and closed-vocabulary reasons only: never an index, a field, a value or a payload.
+        // Counts, closed-vocabulary reasons and the SHAPE of a refused date: never an index, a value or a payload.
         rejected_rows: health.rejectedRows, rejected_reasons: health.rejectedReasons,
       },
       ipAddress: null, userAgent: null,

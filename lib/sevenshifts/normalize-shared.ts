@@ -40,6 +40,15 @@
  * THE REJECTION VOCABULARY IS CLOSED (`REJECT_REASONS`). `rejectionHistogram` folds a run's rejections
  * into `{ reason: count }` so the ledger can say WHICH rule fired, with no index, field, value or
  * payload: it counts only reasons in the vocabulary and nothing else can enter it.
+ *
+ * ONE ADDITION (2026-11-17): THE SHAPE OF A REJECTED DATE. Prod refused every availability row
+ * `bad_date` and nobody could say how `week` / `week_to` were spelled. A date reader that refuses a
+ * value now also reports `valueShape(value)` under the field's name (`DATE_FIELDS`, closed): digits →
+ * `9`, letters → `a` (only a `T` between digits and a closing `Z` survive), separators kept, anything
+ * else `?`, a non-string a fixed token; at most `DATE_SHAPE_MAX_CHARS` characters and
+ * `DATE_SHAPE_LIMIT` distinct shapes per field per run. A shape says HOW a date is spelled, never
+ * WHICH date it is; the raw value still never leaves this module. It rides in the ledger's `reasons`
+ * as `date_shapes` (`rejectionReasons`), and `cleanDateShapes` is the gate any copy of it passes.
  */
 import type { AssignmentsSnapshot, WagesSnapshot } from "@/lib/sevenshifts/paginate-shared";
 
@@ -57,6 +66,80 @@ export interface Rejected {
 export interface Normalized<R> {
   rows: R[];
   rejected: Rejected[];
+  /** Present only when a date was refused: the SHAPES of the refused values, per field. Never a value. */
+  dateShapes?: DateShapes;
+}
+
+// ─── The shape of a rejected date (PII-free; see the header) ───
+
+/** The date fields the readers below parse; the only keys `date_shapes` can carry. */
+export const DATE_FIELDS = ["week", "week_to", "from_date", "to_date", "hire_date", "effective_date"] as const;
+export type DateField = (typeof DATE_FIELDS)[number];
+export const DATE_SHAPE_LIMIT = 3;
+export const DATE_SHAPE_MAX_CHARS = 40;
+/** field → up to `DATE_SHAPE_LIMIT` distinct shapes, first seen first. */
+export type DateShapes = Partial<Record<DateField, string[]>>;
+/** What the ledger's `reasons` holds: the histogram, plus the shapes when a date was refused. */
+export type RejectionReasons = RejectionHistogram & { date_shapes?: DateShapes };
+
+const SHAPE_TOKENS = ["<empty>", "<number>", "<boolean>", "<object>", "<array>"] as const;
+const SHAPE_OK = /^[9aTZ?\-:/., +]{1,40}$/;
+const isDigit = (c: string | undefined) => c !== undefined && c >= "0" && c <= "9";
+
+/**
+ * HOW a value is spelled, never WHAT it says. Every digit is `9`; every ASCII letter is `a`, except a
+ * `T` between two digits and a final `Z` after a digit (the ISO markers); `- : / . ,` space and `+`
+ * are kept; anything else is `?`. A non-string is its type's token. At most 40 characters.
+ */
+export function valueShape(v: unknown): string {
+  if (typeof v !== "string") {
+    if (typeof v === "number" || typeof v === "bigint") return "<number>";
+    if (typeof v === "boolean") return "<boolean>";
+    return Array.isArray(v) ? "<array>" : "<object>";
+  }
+  if (v === "") return "<empty>";
+  let out = "";
+  for (let i = 0; i < v.length && i < DATE_SHAPE_MAX_CHARS; i++) {
+    const c = v[i]!;
+    if (isDigit(c)) out += "9";
+    else if (c === "T" && isDigit(v[i - 1]) && isDigit(v[i + 1])) out += "T";
+    else if (c === "Z" && isDigit(v[i - 1]) && i === v.length - 1) out += "Z";
+    else if ((c >= "a" && c <= "z") || (c >= "A" && c <= "Z")) out += "a";
+    else if ("-:/., +".includes(c)) out += c;
+    else out += "?";
+  }
+  return out;
+}
+
+function isShape(x: unknown): x is string {
+  return typeof x === "string" && ((SHAPE_TOKENS as readonly string[]).includes(x) || SHAPE_OK.test(x));
+}
+
+/**
+ * THE GATE: whatever is handed in, only `{ known date field: [well-formed shapes] }` comes out
+ * (distinct, capped). A raw date, a name or an unknown key cannot pass.
+ */
+export function cleanDateShapes(x: unknown): DateShapes {
+  const out: DateShapes = {};
+  if (!x || typeof x !== "object") return out;
+  for (const field of DATE_FIELDS) {
+    const list = (x as Record<string, unknown>)[field];
+    if (!Array.isArray(list)) continue;
+    const kept: string[] = [];
+    for (const shape of list) {
+      if (kept.length >= DATE_SHAPE_LIMIT) break;
+      if (isShape(shape) && !kept.includes(shape)) kept.push(shape);
+    }
+    if (kept.length > 0) out[field] = kept;
+  }
+  return out;
+}
+
+/** Two shape sets merged under the same cap, `a` first. */
+export function addDateShapes(a: DateShapes | undefined, b: DateShapes | undefined): DateShapes {
+  const merged: Record<string, string[]> = {};
+  for (const field of DATE_FIELDS) merged[field] = [...(a?.[field] ?? []), ...(b?.[field] ?? [])];
+  return cleanDateShapes(merged);
 }
 
 // ─── Row types (one per mirror table; the column sets are pinned in mirror-spec-shared) ───
@@ -114,7 +197,17 @@ export interface WageRow {
 // ─── Field readers: each throws a RejectReason, caught per row ───
 
 class Reject extends Error {
-  constructor(readonly reason: RejectReason) { super(reason); }
+  /** `shape`: set only by the date readers — the field and the SHAPE of the value it refused. */
+  constructor(readonly reason: RejectReason, readonly shape?: { field: DateField; shape: string }) { super(reason); }
+}
+/** Runs a date parser on `o[k]`; a `bad_date` refusal is re-raised carrying the field and the value's shape. */
+function dateField(o: Obj, k: DateField, parse: (v: unknown) => string): string {
+  try {
+    return parse(o[k]);
+  } catch (e) {
+    if (e instanceof Reject && e.reason === "bad_date") throw new Reject("bad_date", { field: k, shape: valueShape(o[k]) });
+    throw e;
+  }
 }
 type Obj = Record<string, unknown>;
 const ID = /^\d{1,18}$/;
@@ -200,12 +293,8 @@ function strictDateOf(v: unknown): string {
   if (typeof v !== "string" || !STRICT_DATE.test(v) || Number.isNaN(Date.parse(`${v}T00:00:00Z`))) throw new Reject("bad_date");
   return v;
 }
-function reqDate(o: Obj, k: string): string {
-  if (absent(o[k])) throw new Reject("missing_field");
-  return strictDateOf(o[k]);
-}
-function optDate(o: Obj, k: string): string | null {
-  return absent(o[k]) || o[k] === "" ? null : strictDateOf(o[k]);
+function optDate(o: Obj, k: DateField): string | null {
+  return absent(o[k]) || o[k] === "" ? null : dateField(o, k, strictDateOf);
 }
 /** A clock of a date field is a real wall clock: 00–23 h, 00–59 min, 00–59 s (fraction free). */
 function clockOk(clock: string): boolean {
@@ -240,12 +329,12 @@ function wallDateOf(v: unknown): string {
   if (zone !== undefined && clock !== undefined && !/^00:00(:00(\.0+)?)?$/.test(clock)) throw new Reject("bad_date");
   return d!;
 }
-function reqWallDate(o: Obj, k: string): string {
+function reqWallDate(o: Obj, k: DateField): string {
   if (absent(o[k])) throw new Reject("missing_field");
-  return wallDateOf(o[k]);
+  return dateField(o, k, wallDateOf);
 }
-function optWallDate(o: Obj, k: string): string | null {
-  return absent(o[k]) || o[k] === "" ? null : wallDateOf(o[k]);
+function optWallDate(o: Obj, k: DateField): string | null {
+  return absent(o[k]) || o[k] === "" ? null : dateField(o, k, wallDateOf);
 }
 /** A wall time re-emitted `HH:MM:SS`; the time part of a zoneless datetime counts; a zoned one is `bad_time`. */
 function timeOf(v: unknown): string {
@@ -334,6 +423,7 @@ function reqInt(o: Obj, k: string): number {
 function each<R>(input: readonly unknown[], map: (o: Obj) => R, part?: string): Normalized<R> {
   const rows: R[] = [];
   const rejected: Rejected[] = [];
+  let shapes: DateShapes = {};
   input.forEach((raw, index) => {
     try {
       if (!isObj(raw)) throw new Reject("not_object");
@@ -341,9 +431,34 @@ function each<R>(input: readonly unknown[], map: (o: Obj) => R, part?: string): 
     } catch (e) {
       if (!(e instanceof Reject)) throw e;
       rejected.push(part === undefined ? { index, reason: e.reason } : { index, reason: e.reason, part });
+      if (e.shape) shapes = addDateShapes(shapes, { [e.shape.field]: [e.shape.shape] });
     }
   });
-  return { rows, rejected };
+  return withShapes({ rows, rejected }, shapes);
+}
+/** `dateShapes` is set only when there is one to report. */
+function withShapes<R>(out: Normalized<R>, ...sets: Array<DateShapes | undefined>): Normalized<R> {
+  const shapes = sets.reduce<DateShapes>((acc, s) => addDateShapes(acc, s), {});
+  return Object.keys(shapes).length > 0 ? { ...out, dateShapes: shapes } : out;
+}
+
+/**
+ * What the ledger stores for a resource with rejected rows: the histogram, plus `date_shapes` when a
+ * date was refused. Still no index, no value and no payload; the only field names are `DATE_FIELDS`.
+ */
+export function rejectionReasons(out: Pick<Normalized<unknown>, "rejected" | "dateShapes">): RejectionReasons {
+  const reasons: RejectionReasons = rejectionHistogram(out.rejected);
+  const shapes = cleanDateShapes(out.dateShapes);
+  if (Object.keys(shapes).length > 0) reasons.date_shapes = shapes;
+  return reasons;
+}
+
+/** Two `reasons` added: counts add, shapes merge under the cap (the per-user snapshot kinds). */
+export function addReasons(a: RejectionReasons, b: RejectionReasons): RejectionReasons {
+  const out: RejectionReasons = addHistograms(addHistograms({}, a), b);
+  const shapes = addDateShapes(cleanDateShapes(a.date_shapes), cleanDateShapes(b.date_shapes));
+  if (Object.keys(shapes).length > 0) out.date_shapes = shapes;
+  return out;
 }
 
 /**
@@ -588,7 +703,7 @@ export function normalizeAssignments(userId: string, snap: AssignmentsSnapshot):
   }
   for (const l of locations.rows) if (!locsCovered.has(l.id)) add(l.id, null, null, null);
 
-  return { rows: [...edges.values()], rejected: [...roles.rejected, ...departments.rejected, ...locations.rejected] };
+  return withShapes({ rows: [...edges.values()], rejected: [...roles.rejected, ...departments.rejected, ...locations.rejected] }, roles.dateShapes, departments.dateShapes, locations.dateShapes);
 }
 
 /** The wages singleton → rows keyed (user, wage, upcoming). An unknown type or a bad amount is rejected. */
@@ -606,5 +721,5 @@ export function normalizeWages(userId: string, snap: WagesSnapshot): Normalized<
   };
   const current = each(snap.current_wages, read(false), "current_wages");
   const upcoming = each(snap.upcoming_wages, read(true), "upcoming_wages");
-  return { rows: [...current.rows, ...upcoming.rows], rejected: [...current.rejected, ...upcoming.rejected] };
+  return withShapes({ rows: [...current.rows, ...upcoming.rows], rejected: [...current.rejected, ...upcoming.rejected] }, current.dateShapes, upcoming.dateShapes);
 }

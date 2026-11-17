@@ -23,9 +23,10 @@
  * resource's `error_code: "rejected_rows"`, its `skipped` count and its `reasons` histogram, the run's
  * ledger status stays `partial`, the resource's watermark holds and its `last_error_code` is written. The
  * heartbeat itself carries the per-resource rejected-row count and reasons (reason → count over the
- * closed vocabulary; never an index, a field, a value or a payload).
+ * closed vocabulary; never an index, a value or a payload) and, when a DATE was refused, `date_shapes`:
+ * the spelling of the refused values per date field, digits masked (`cleanDateShapes` is the gate).
  */
-import { REJECT_REASONS, type RejectionHistogram } from "@/lib/sevenshifts/normalize-shared";
+import { cleanDateShapes, REJECT_REASONS, type RejectionReasons } from "@/lib/sevenshifts/normalize-shared";
 
 export const NON_CRITICAL_RESOURCES = ["availabilities", "time_off"] as const;
 
@@ -37,7 +38,7 @@ export interface HealthInput {
   rows: number;
   skipped: number;
   error_code: string | null;
-  reasons?: RejectionHistogram;
+  reasons?: RejectionReasons;
 }
 
 export interface SyncHealth {
@@ -51,7 +52,7 @@ export interface SyncHealth {
   /** Rows the normalizer refused, per resource (failed and warning alike); only resources with any. */
   rejectedRows: Record<string, number>;
   /** Which rule refused them, per resource. */
-  rejectedReasons: Record<string, RejectionHistogram>;
+  rejectedReasons: Record<string, RejectionReasons>;
 }
 
 export function classifyResource(resource: string, result: HealthInput): ResourceHealth {
@@ -62,13 +63,15 @@ export function classifyResource(resource: string, result: HealthInput): Resourc
 }
 
 /** Reason → positive integer over the closed vocabulary; anything else in the blob is left behind. */
-function cleanReasons(reasons: unknown): RejectionHistogram {
-  const out: RejectionHistogram = {};
+function cleanReasons(reasons: unknown): RejectionReasons {
+  const out: RejectionReasons = {};
   if (!reasons || typeof reasons !== "object") return out;
   for (const reason of REJECT_REASONS) {
     const n = (reasons as Record<string, unknown>)[reason];
     if (typeof n === "number" && Number.isInteger(n) && n > 0) out[reason] = n;
   }
+  const shapes = cleanDateShapes((reasons as Record<string, unknown>).date_shapes);
+  if (Object.keys(shapes).length > 0) out.date_shapes = shapes;
   return out;
 }
 
@@ -80,7 +83,7 @@ export function summarizeHealth(
   const errors: string[] = run.whoamiError ? [`whoami:${run.whoamiError}`] : [];
   const warnings: string[] = [];
   const rejectedRows: Record<string, number> = {};
-  const rejectedReasons: Record<string, RejectionHistogram> = {};
+  const rejectedReasons: Record<string, RejectionReasons> = {};
   for (const resource of order) {
     const result = results[resource];
     if (!result) continue;
