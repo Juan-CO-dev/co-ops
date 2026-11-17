@@ -11,7 +11,7 @@ import { FACT_PASS_BUDGET_MS } from "@/lib/facts/config-shared";
 
 vi.mock("@/lib/cron-route-lease", () => ({ claimCronRoute: vi.fn(async () => true) }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
-vi.mock("@/lib/facts/order-facts", () => ({ runFactBuildPass: vi.fn(async () => ({ stale: 2, built: 2, raced: 0, failed: 0, leftForNextPass: 0 })) }));
+vi.mock("@/lib/facts/order-facts", () => ({ runFactBuildPass: vi.fn(async () => ({ stale: 2, built: 2, raced: 0, failed: 0, timedOut: 0, leftForNextPass: 0, failures: [] })) }));
 
 const req = (auth = "Bearer vercel-test") => new NextRequest("https://example.test/api/cron/fact-build", { headers: { authorization: auth } });
 beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("CRON_SECRET", "vercel-test"); });
@@ -42,6 +42,25 @@ describe("fact-build cron", () => {
     expect(arg.deadlineAt).toBeGreaterThanOrEqual(before + FACT_PASS_BUDGET_MS - 1);
     expect(arg.deadlineAt).toBeLessThanOrEqual(Date.now() + FACT_PASS_BUDGET_MS);
     expect(await res.json()).toMatchObject({ built: 2 });
+  });
+  it("a clean pass writes the cron.success heartbeat (job fact-build) with its counts", async () => {
+    vi.stubEnv("FACT_LAYER", "1");
+    const res = await GET(req());
+    expect(await res.json()).toMatchObject({ healthy: true, built: 2 });
+    expect(vi.mocked(audit).mock.calls).toHaveLength(1);
+    expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({ action: "cron.success", resourceTable: "cron",
+      metadata: { job: "fact-build", stale: 2, built: 2, failed: 0, timed_out: 0, left_for_next_pass: 0, failures: [] } });
+  });
+  it("a pass with failed days writes cron.failure naming them by fixed code (review r1 #2)", async () => {
+    vi.stubEnv("FACT_LAYER", "1");
+    vi.mocked(runFactBuildPass).mockResolvedValueOnce({ stale: 3, built: 1, raced: 0, failed: 2, timedOut: 1, leftForNextPass: 0,
+      failures: [{ locationId: "loc", businessDate: "2026-10-01", error: "fact_replace_failed" }, { locationId: "loc", businessDate: "2026-10-02", error: "fact_day_timeout" }] });
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ healthy: false, failed: 2 });
+    expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({ action: "cron.failure", resourceTable: "cron",
+      metadata: { job: "fact-build", error: "fact_days_failed", failed: 2, timed_out: 1,
+        failures: [{ location_id: "loc", business_date: "2026-10-01", error: "fact_replace_failed" }, { location_id: "loc", business_date: "2026-10-02", error: "fact_day_timeout" }] } });
   });
   it("a held lease is a quiet skip", async () => {
     vi.stubEnv("FACT_LAYER", "1");

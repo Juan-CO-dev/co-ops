@@ -17,17 +17,17 @@ Rollback: unset `FACT_LAYER`. The tables are derived and nothing reads them yet,
 - Set `FACT_LAYER=1` (Vercel, server env).
 - Optionally set `FACT_CAPTURE_FLOOR=YYYY-MM-DD`. When unset, the floor is the ET today minus 35 days.
 - Each pass runs hourly at :40. It:
-  1. runs the diff;
+  1. runs the diff (days in [floor, today), every day already built whatever its age, and older order days whose current snapshot carries a refund dated on or after the floor or undated refund evidence);
   2. builds one day per transaction;
-  3. stops starting new days at entry + 240 s.
+  3. starts a day only while a whole day budget (45 s) is left before entry + 240 s, and aborts any read or replace still running at that budget or at entry + 240 s.
 
-  The lease is 330 s and `maxDuration` is 300 s. A raced day (`fact_stale` / `fact_payload_mismatch`) is not a failure; the next pass finds it again. A failure writes one `cron.failure` row (`job: fact-build`). Nothing emails.
+  The lease is 330 s and `maxDuration` is 300 s. A raced day (`fact_stale` / `fact_payload_mismatch`) is not a failure; the next pass finds it again. Every pass that ran writes one heartbeat row (`job: fact-build`): `cron.success`, or `cron.failure` (`error: fact_days_failed`) when any day failed or timed out, with the counts and up to 20 failed days by fixed code (`fact_day_timeout`, `fact_source_read_failed`, `fact_source_snapshot_missing`, `fact_replace_failed`). A pass that fails as a whole writes `cron.failure` (`error: fact_build_failed`). Nothing emails.
 
 ## 3. Backfill
 
 No enqueue is needed: lowering the floor is the backfill.
 
-1. Dry run: `npx tsx --env-file=.env.local scripts/fact-backfill-report.ts --floor=2025-10-01`. It prints the stale-day count by shop and month (read-only).
+1. Dry run: `npx tsx --env-file=.env.local scripts/fact-backfill-report.ts --floor=2025-10-01`. It prints the stale-day count by shop and month (read-only), paged to completion (`complete: true`). It never prints a partial count: a failed read is `fact_stale_read_failed` and 5,000 or more stale days is `fact_stale_list_capped` (use a later floor); both exit 2.
 2. Set `FACT_CAPTURE_FLOOR` to that floor. Each pass drains up to 500 days within its budget.
 3. Re-run the report with `--expect=0` until it exits 0.
 4. Parity: `npx tsx --env-file=.env.local scripts/fact-parity-probe.ts --from=<floor> --to=<yesterday>`.
