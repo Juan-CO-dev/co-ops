@@ -8957,6 +8957,7 @@
   "vendorMail.body.from_html": "Texto convertido del HTML original.",
   "vendorMail.body.truncated": "Vista recortada; descarga el original para ver el mensaje completo.",
   "vendorMail.asset_missing": "Original no disponible",
+  "vendorMail.asset_original": "Correo original, con sus enlaces (se descarga como archivo)",
   "vendorMail.asset_expiry": "Los enlaces caducan en 60 segundos. Vuelve a abrir el adjunto para obtener otro enlace.",
   "vendorMail.parsed": "Campos extraídos",
   "vendorMail.extracted": "Extraídos automáticamente; compáralos con la factura original.",

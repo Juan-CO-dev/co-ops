@@ -8957,6 +8957,7 @@
   "vendorMail.body.from_html": "Plain text converted from the original HTML.",
   "vendorMail.body.truncated": "Shortened preview; download the original for the complete message.",
   "vendorMail.asset_missing": "Original unavailable",
+  "vendorMail.asset_original": "Original email, with its links (downloads as a file)",
   "vendorMail.asset_expiry": "Download links expire in 60 seconds. Reopen the attachment for a fresh link.",
   "vendorMail.parsed": "Extracted fields",
   "vendorMail.extracted": "Automatically extracted; verify against the original invoice.",
