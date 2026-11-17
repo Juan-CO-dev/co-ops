@@ -29,12 +29,12 @@ No row = **12% default, always labelled `estimated`** (placeholder until Juan / 
 select save_labor_burden('<actor user id>', null, 11.5, '2026-07-19', 'payroll', 'payroll register 2026');
 ```
 
-`location_id` null = company; a shop row beats it. `valid_from` 2026-07-19 re-prices all history at once (burden is read time, never rebuilt). Refusals: `labor_burden_forbidden`, `labor_burden_invalid` (outside 0–50). Rows are never edited: a correction is a newer row.
+`location_id` null = company; a shop row beats it. `valid_from` 2026-07-19 re-prices all history at once (burden is read time, never rebuilt). Refusals: `labor_burden_forbidden`, `labor_burden_invalid` (outside 0–50). Rows are never edited: a correction is a newer row. Every save writes ONE destructive `labor_burden.save` audit row itself, in the same transaction (actor, role, scope, the value in force for that scope before and the new value; the note never enters the audit row) — there is no unaudited way to change the burden.
 
 ## 4. Reading (for the reader PR)
 
-- `fact_labor_cost(shop | null, from, to, 'first_known' | 'dc_minimum')` → per (week, shop) components only. Price with `laborWeekViews` + `laborPercents` + `laborTargetsFor` (`lib/facts/labor-cost-shared.ts`); normalise rows with `toLaborCostRow`. Never add the views in SQL.
-- `fact_labor_splh(shop, from, to ≤ 31 days, 'placed' | 'promised')` → per quarter labor minutes (all / hourly) and sale cents, labor summed per quarter first.
+- `fact_labor_cost(shop | null, from, to, 'first_known' | 'dc_minimum')` → per (week, shop) components only, with `open_punches` (unclosed punches: their hours are unknown, so `laborPercents` returns no % and no tone until they close, and overtime reads as a lower bound). Price with `laborWeekViews` + `laborPercents` + `laborTargetsFor` (`lib/facts/labor-cost-shared.ts`); normalise rows with `toLaborCostRow`. Never add the views in SQL.
+- `fact_labor_splh(shop, from, to ≤ 31 days, 'placed' | 'promised')` → per quarter labor minutes (all / hourly) and sale cents, labor summed per quarter first. Checks are selected by the CHOSEN clock's date (not the Toast business date). `sales_state` = `covered` only when the order facts of the day, the day before and every business date that landed a check there are covered; otherwise `sales_cents` / `sale_checks` are NULL (unknown, never 0). Labor minutes are NULL on a day the labor week has not built.
 - Access: `laborFactAccess(role)` — GM shop money, MoO / Owner / CGS per person, AGM hours only, everyone else nothing.
 
 ## 5. Known limits (stated, not hidden)

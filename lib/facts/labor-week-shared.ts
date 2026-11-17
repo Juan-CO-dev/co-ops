@@ -4,7 +4,8 @@
  *
  *  - Punch -> minutes. A 7shifts punch maps to a shop through its LIVE location link; its break minutes
  *    are unpaid and come out of the middle of the punch (0268 keeps only the total, not where it fell).
- *    Instants round to the minute. An open punch adds no minutes and is counted on its day.
+ *    Instants round to the minute. An open punch adds no minutes and is counted on its day, for its own
+ *    source only (fix r1 P1): its hours are UNKNOWN, so a week holding one is never `assessed`.
  *  - The FRAME (fact_labor_week_days) is the only list of shop-days: each day is
  *    covered (7shifts ledger evidence) | pending_settle (inside the settle window) | fallback_unverified
  *    (Toast, when 7shifts is not covered and Toast has minutes) | incomplete. ONE source per shop-day, so
@@ -99,7 +100,7 @@ export function buildLaborWeek(src: LaborWeekSource): LaborWeekPayload {
   };
 
   const minutes: Minute[] = [];
-  const open = new Map<string, number>();
+  const open = { "7shifts": new Map<string, number>(), toast: new Map<string, number>() };
   const bump = (m: Map<string, number>, k: string, by = 1) => m.set(k, (m.get(k) ?? 0) + by);
   for (const p of src.punches) {
     if (p.deleted || p.location_id === null) continue;
@@ -107,7 +108,7 @@ export function buildLaborWeek(src: LaborWeekSource): LaborWeekPayload {
     if (!loc) continue;
     if (p.clocked_out === null) {
       const d = quarterOf(Date.parse(p.clocked_in)).et_date!;
-      if (frame.has(`${loc}|${d}`)) bump(open, `${loc}|${d}`);
+      if (frame.has(`${loc}|${d}`)) bump(open["7shifts"], `${loc}|${d}`);
       continue;
     }
     const ssUser = String(p.user_id);
@@ -123,7 +124,7 @@ export function buildLaborWeek(src: LaborWeekSource): LaborWeekPayload {
     if (e.deleted) continue;
     if (e.out_at === null) {
       const d = quarterOf(Date.parse(e.in_at)).et_date!;
-      if (frame.has(`${e.location_id}|${d}`)) bump(open, `${e.location_id}|${d}`);
+      if (frame.has(`${e.location_id}|${d}`)) bump(open.toast, `${e.location_id}|${d}`);
       continue;
     }
     const user = toastPerson.get(`${e.location_id}|${e.employee_guid}`) ?? e.user_id;
@@ -157,7 +158,9 @@ export function buildLaborWeek(src: LaborWeekSource): LaborWeekPayload {
     chosen.set(k, source);
     days.push({ location_id: f.location_id, business_date: f.business_date, week_start: src.weekStart, state, source,
       evidence_run_id: state === "covered" ? f.evidence_run_id : null, ss_minutes: s?.ss ?? 0, ss_people: s?.ssP.size ?? 0,
-      toast_minutes: s?.to ?? 0, toast_people: s?.toP.size ?? 0, open_punches: open.get(k) ?? 0 });
+      toast_minutes: s?.to ?? 0, toast_people: s?.toP.size ?? 0,
+      // The open punches of the day's ONE source (no source: both, its hours are unknown either way).
+      open_punches: source === null ? (open["7shifts"].get(k) ?? 0) + (open.toast.get(k) ?? 0) : open[source].get(k) ?? 0 });
   }
 
   // The rate pick per (account, role, day), cached.
@@ -205,7 +208,7 @@ export function buildLaborWeek(src: LaborWeekSource): LaborWeekPayload {
   const weekEnd = addDays(src.weekStart, 6);
   const unlinked = new Set(used.filter((m) => !m.person.startsWith("u:")).map((m) => m.person));
   const ot_state: OtState = src.builtThrough === null || src.builtThrough < weekEnd ? "week_open"
-    : src.weekStart < src.floorDay || days.some((d) => d.state !== "covered") ? "lower_bound" : "assessed";
+    : src.weekStart < src.floorDay || days.some((d) => d.state !== "covered" || d.open_punches > 0) ? "lower_bound" : "assessed";
   const week: LaborWeekRow = {
     week_start: src.weekStart, built_through: src.builtThrough, ot_threshold_minutes: LABOR_OT_THRESHOLD_MINUTES, ot_multiplier: LABOR_OT_MULTIPLIER,
     ot_state, ot_identity_partial: unlinked.size,

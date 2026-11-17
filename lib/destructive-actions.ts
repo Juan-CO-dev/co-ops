@@ -54,6 +54,7 @@ export const DESTRUCTIVE_ACTIONS = [
   "marketing.manual_entry_correct",
   "marketing.manual_entry_void", // W26-2 b: a person removes a recorded spend entry (append-only voided correction, 0333).
   "marketing.baseline_snapshot",
+  "labor_burden.save", // 0338 (SQL-only): a person sets the payroll burden %, which re-prices labor history at read time.
   "landing_ad_code.create",
   "landing_ad_code.retire",
   "ezcater.review.dismiss",

@@ -145,6 +145,24 @@ describe("coverage first (P1 #3)", () => {
     expect(out.quarters).toEqual([]);
     expect(out.days.find((d) => d.location_id === A && d.business_date === "2026-10-05")).toMatchObject({ open_punches: 1, ss_minutes: 0 });
   });
+  it("fix r1 P1: an open punch on a settled, evidenced week leaves overtime a LOWER BOUND (its hours are unknown), never assessed", () => {
+    const out = buildLaborWeek(src({ punches: [punch("7", "501", null, "2026-10-05", "10:00", null), punch("7", "501", null, "2026-10-06", "10:00", "11:00")],
+      wages: [wage("7", 2000)] }));
+    expect(out.days.every((d) => d.state === "covered")).toBe(true);
+    expect(out.week.ot_state).toBe("lower_bound");
+    expect(buildLaborWeek(src({ punches: [punch("7", "501", null, "2026-10-06", "10:00", "11:00")], wages: [wage("7", 2000)] })).week.ot_state).toBe("assessed");
+  });
+  it("fix r1 P1: a day counts the open punches of ITS source only (a Toast open entry on a 7shifts-covered day leaves its hours known)", () => {
+    const out = buildLaborWeek(src({
+      toastEntries: [{ location_id: A, time_entry_guid: "t1", employee_guid: "e1", user_id: null, in_at: et("2026-10-05", "10:00"), out_at: null, deleted: false }],
+    }));
+    expect(out.days.find((d) => d.location_id === A && d.business_date === "2026-10-05")).toMatchObject({ source: "7shifts", open_punches: 0 });
+    expect(out.week.ot_state).toBe("assessed");
+    const fb = buildLaborWeek(src({ days: [...days(A, { linked: false, evidence_run_id: null }), ...days(B)],
+      toastEntries: [{ location_id: A, time_entry_guid: "t1", employee_guid: "e1", user_id: null, in_at: et("2026-10-05", "10:00"), out_at: null, deleted: false },
+        { location_id: A, time_entry_guid: "t2", employee_guid: "e2", user_id: null, in_at: et("2026-10-05", "11:00"), out_at: et("2026-10-05", "12:00"), deleted: false }] }));
+    expect(fb.days.find((d) => d.location_id === A && d.business_date === "2026-10-05")).toMatchObject({ source: "toast", open_punches: 1 });
+  });
   it("a break is unpaid: its minutes come out of the middle of the punch", () => {
     const out = buildLaborWeek(src({ punches: [punch("7", "501", null, "2026-10-05", "10:00", "11:00", 30)], wages: [wage("7", 2000)] }));
     expect(out.quarters.map((q) => [q.wall_quarter, q.minutes])).toEqual([[40, 15], [43, 15]]);

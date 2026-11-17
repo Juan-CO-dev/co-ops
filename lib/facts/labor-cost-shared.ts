@@ -5,7 +5,8 @@
  *   fully_loaded = pure_hourly + salaried fixed cost + burden (taxes/benefits)  (target <= 28%)
  *   burden       = burden % x (pure_hourly + salaried), per shop, its own % (12% default = `estimated`)
  * Null rules: an unknown salary makes fully_loaded (and its burden) null and leaves pure_hourly valid;
- * unknown sales make every % null. Never one blended stored number. */
+ * unknown sales make every % null; unknown HOURS (an open punch, a missing / incomplete day, an unbuilt
+ * week: fix r1 P1) make every % null and its tone 'none'. Never one blended stored number. */
 import type { RoleCode } from "@/lib/roles";
 import { laborTone, type LaborTone } from "@/lib/scheduling/board-shared";
 import { LABOR_TARGET_HOURLY_PCT, LABOR_TARGET_LOADED_PCT } from "./labor-config-shared";
@@ -21,6 +22,8 @@ export interface LaborCostRow {
   ot_state: "assessed" | "lower_bound" | "week_open" | "unbuilt";
   range_days: number;
   days_covered: number; days_pending: number; days_fallback: number; days_incomplete: number; days_missing: number;
+  /** unclosed punches on the range's days (their worked hours are unknown) */
+  open_punches: number;
 }
 export interface LaborWeekView {
   weekStart: string;
@@ -28,6 +31,8 @@ export interface LaborWeekView {
   salariedCents: number | null; burdenCents: number | null; fullyLoadedCents: number | null;
   salaryUnknown: boolean; burdenEstimated: boolean; rateEstimated: boolean;
   otState: LaborCostRow["ot_state"]; coverageComplete: boolean;
+  /** false = some worked hours are unknown (open punch, missing / incomplete day, unbuilt week): no % is definitive */
+  hoursKnown: boolean; openPunches: number;
 }
 
 /** A fact_labor_cost row as returned by PostgREST or pg: bigint / numeric may arrive as strings, dates
@@ -42,6 +47,7 @@ export function toLaborCostRow(r: Record<string, unknown>): LaborCostRow {
     estimated_rate_minutes: n(r.estimated_rate_minutes), hourly_minutes: n(r.hourly_minutes), ot_minutes: n(r.ot_minutes), salaried_minutes: n(r.salaried_minutes),
     ot_state: r.ot_state as LaborCostRow["ot_state"], range_days: n(r.range_days), days_covered: n(r.days_covered), days_pending: n(r.days_pending),
     days_fallback: n(r.days_fallback), days_incomplete: n(r.days_incomplete), days_missing: n(r.days_missing),
+    open_punches: n(r.open_punches),
   };
 }
 
@@ -59,12 +65,17 @@ export function laborWeekViews(rows: readonly LaborCostRow[]): LaborWeekView[] {
     const burden = salaryUnknown ? null : rs.reduce((s, r) =>
       s + Math.round((Number(r.burden_pct) / 100) * (Number(r.hourly_straight_cents) + Number(r.ot_premium_cents) + Number(r.salaried_cents))), 0);
     const pure = straight + premium;
+    const openPunches = rs.reduce((s, r) => s + Number(r.open_punches), 0);
+    const hoursKnown = rs.every((r) => r.ot_state !== "unbuilt" && Number(r.days_missing) + Number(r.days_incomplete) + Number(r.open_punches) === 0);
+    // An open punch's hours are unknown, so its week's overtime can only be a lower bound (never upgrades week_open).
+    const otRows = rs.map((r) => (r.ot_state === "assessed" && Number(r.open_punches) > 0 ? "lower_bound" as const : r.ot_state));
     return {
       weekStart, hourlyStraightCents: straight, otPremiumCents: premium, pureHourlyCents: pure,
       salariedCents: salaried, burdenCents: burden, fullyLoadedCents: salaried === null || burden === null ? null : pure + salaried + burden,
       salaryUnknown, burdenEstimated: rs.some((r) => r.burden_basis === "estimated"), rateEstimated: rs.some((r) => Number(r.estimated_rate_minutes) > 0),
-      otState: rs.map((r) => r.ot_state).sort((a, b) => OT_RANK[b] - OT_RANK[a])[0]!,
-      coverageComplete: rs.every((r) => r.days_pending + r.days_fallback + r.days_incomplete + r.days_missing === 0),
+      otState: otRows.sort((a, b) => OT_RANK[b] - OT_RANK[a])[0]!,
+      coverageComplete: rs.every((r) => r.days_pending + r.days_fallback + r.days_incomplete + r.days_missing + r.open_punches === 0),
+      hoursKnown, openPunches,
     };
   });
 }
@@ -89,7 +100,7 @@ export function rangeTargets(weeks: readonly LaborTargets[]): { loaded: number |
 const round1 = (n: number) => Math.round(n * 10) / 10;
 export interface LaborPercents { pureHourlyPct: number | null; pureHourlyTone: LaborTone; fullyLoadedPct: number | null; fullyLoadedTone: LaborTone }
 export function laborPercents(v: LaborWeekView, netSalesCents: number | null, t: LaborTargets): LaborPercents {
-  const pct = (c: number | null) => (c === null || netSalesCents === null || netSalesCents <= 0 ? null : round1((100 * c) / netSalesCents));
+  const pct = (c: number | null) => (!v.hoursKnown || c === null || netSalesCents === null || netSalesCents <= 0 ? null : round1((100 * c) / netSalesCents));
   const h = pct(v.pureHourlyCents), f = pct(v.fullyLoadedCents);
   return { pureHourlyPct: h, pureHourlyTone: laborTone(h, t.hourly.pct), fullyLoadedPct: f, fullyLoadedTone: laborTone(f, t.loaded.pct) };
 }

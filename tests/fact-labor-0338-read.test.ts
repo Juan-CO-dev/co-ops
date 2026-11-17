@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { buildLaborWeek, laborWeekSourceFromJson } from "@/lib/facts/labor-week-shared";
 import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
-import { laborWeekViews, toLaborCostRow, type LaborCostRow } from "@/lib/facts/labor-cost-shared";
+import { laborPercents, laborTargetsFor, laborWeekViews, toLaborCostRow, type LaborCostRow } from "@/lib/facts/labor-cost-shared";
 import { M0338, freshLaborParents } from "./helpers/fact-0338-parents";
 
 let db: PGlite;
@@ -112,21 +112,117 @@ describe("C. the burden setting", () => {
   });
 });
 
+describe("fix r1 P1: an open punch reaches the pricer (builder -> writer -> fact_labor_cost -> views)", () => {
+  it("a settled, evidenced week with an unclosed punch is a lower bound with unknown hours: never a green 0%", async () => {
+    const W2 = "2026-10-11";
+    await q("insert into sevenshifts_time_punches(id, user_id, location_id, clocked_in, clocked_out, break_minutes) values($1, 7, 501, $2, null, 0)",
+      [++pid, etIso("2026-10-12", "06:00")]);
+    await build(W2);
+    expect((await q<{ ot_state: string }>("select ot_state from labor_week_coverage where week_start = $1", [W2]))[0]!.ot_state).toBe("lower_bound");
+    const rows = await cost(null, W2, "2026-10-17");
+    expect(rows.find((r) => r.location_id === A)).toMatchObject({ open_punches: 1, days_covered: 7, ot_state: "lower_bound" });
+    const [v] = laborWeekViews(rows.map((r) => toLaborCostRow(r as unknown as Record<string, unknown>)));
+    expect(v).toMatchObject({ coverageComplete: false, hoursKnown: false, openPunches: 1, otState: "lower_bound", pureHourlyCents: 0 });
+    expect(laborPercents(v!, 1_000_000, laborTargetsFor(null))).toEqual({ pureHourlyPct: null, pureHourlyTone: "none", fullyLoadedPct: null, fullyLoadedTone: "none" });
+  });
+});
+
+describe("fix r1 P2: save_labor_burden writes its own destructive audit row, before and after", () => {
+  it("one labor_burden.save row per save: actor, role, scope, the value in force before and the new value; a refusal writes none", async () => {
+    const count = async () => (await q<{ n: number }>("select count(*)::int n from audit_log where action = 'labor_burden.save'"))[0]!.n;
+    const before = await count();
+    const id = (await q<{ id: string }>("select save_labor_burden($1, $2, 9.5, '2026-07-19', 'payroll', 'secret payroll note') id", [MGR, A]))[0]!.id;
+    const rows = await q<Record<string, unknown>>("select * from audit_log where action = 'labor_burden.save' and resource_id = $1", [id]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ actor_id: MGR, actor_role: "moo", resource_table: "labor_burden_settings", destructive: true,
+      before_state: { burden_pct: 10, source: "payroll", scope: "company" },
+      after_state: { burden_pct: 9.5, source: "payroll", valid_from: "2026-07-19", location_id: A } });
+    expect(rows[0]!.metadata).toMatchObject({ scope: "shop", location_id: A, valid_from: "2026-07-19", has_note: true });
+    expect(JSON.stringify(rows[0])).not.toContain("secret payroll note");
+    await refuses(q("select save_labor_burden($1, null, 10, '2026-07-19', 'payroll', null)", [GM]), "labor_burden_forbidden");
+    await refuses(q("select save_labor_burden($1, null, 99, '2026-07-19', 'payroll', null)", [MGR]), "labor_burden_invalid");
+    expect(await count()).toBe(before + 1);
+  });
+  it("a first save against the default records the 12% estimated default as the before state", async () => {
+    const C = "00000000-0000-4000-8000-0000000000cc";
+    await q("insert into locations(id) values($1)", [C]);
+    // C has no shop row and no company row is in force on 2026-07-01 (all are valid from 07-19): the default.
+    const id = (await q<{ id: string }>("select save_labor_burden($1, $2, 14, '2026-07-01', 'estimated', null) id", [MGR, C]))[0]!.id;
+    const [r] = await q<Record<string, unknown>>("select before_state, metadata from audit_log where resource_id = $1", [id]);
+    expect(r).toMatchObject({ before_state: { burden_pct: 12, source: "estimated", scope: "default" }, metadata: { has_note: false, scope: "shop" } });
+  });
+});
+
+const coverOrders = (loc: string, date: string, state = "covered") => q(`insert into fact_day_coverage(location_id, business_date, fact, source_fingerprint, builder_version, state,
+  run_id, run_orders, pointer_count, missing_pointer_count, order_count, check_count, line_count, refund_count, checks_inline_priced, checks_source_complete,
+  checks_net_complete, checks_gross_complete, checks_receipt_line_complete) values($1, $2, 'orders', $3, 'orders-v1', $4, $5, $6, 0, $7, 0,0,0,0,0,0,0,0,0)`,
+  [loc, date, "0".repeat(32), state, state === "uncovered" ? null : randomUUID(), state === "uncovered" ? null : 0, state === "uncovered" ? null : 0]);
+/** One check (EDT fixtures: ET = UTC-4). */
+async function check(order: string, business: string, opened: string, promised: string, cents: number) {
+  const snap = randomUUID();
+  await q("insert into fact_order_snapshot(location_id, business_date, order_guid, snapshot_id, run_member, check_count) values($1,$2,$3,$4,true,1)", [A, business, order, snap]);
+  const qOf = (iso: string) => {
+    const et = new Date(new Date(iso).getTime() - 4 * 3600_000);
+    return { qs: iso, wq: et.getUTCHours() * 4 + Math.floor(et.getUTCMinutes() / 15), date: et.toISOString().slice(0, 10) };
+  };
+  const o = qOf(opened), p = qOf(promised);
+  await q(`insert into fact_order_check(location_id, business_date, order_guid, check_guid, snapshot_id, opened_at, opened_quarter_start_at, opened_wall_quarter, opened_fold, opened_et_date,
+    promised_quarter_start_at, promised_wall_quarter, promised_fold, promised_et_date, order_voided, order_deleted, check_voided, check_deleted, excess_food, amount_cents, line_price_state)
+    values($1,$2,$3,$4,$5,$6,$6,$7,0,$8,$9,$10,0,$11,false,false,false,false,false,$12,'unpriced')`,
+    [A, business, order, `${order}-c`, snap, o.qs, o.wq, o.date, p.qs, p.wq, p.date, cents]);
+}
+type Splh = { business_date: string; wall_quarter: number; labor_minutes: number | null; sales_cents: number | null; sale_checks: number | null; day_state: string | null; sales_state: string };
+const splh = (from: string, to: string, clock: string, loc = A) => q<Splh>(`select to_char(business_date,'YYYY-MM-DD') business_date, wall_quarter::int, labor_minutes::int, sales_cents::int,
+  sale_checks::int, day_state, sales_state from fact_labor_splh($1,$2,$3,$4)`, [loc, from, to, clock]);
+const sum = (rs: Splh[]) => rs.reduce((s, r) => s + (r.sales_cents ?? 0), 0);
+
 describe("C. SPLH inputs (labor summed per quarter before the sales join)", () => {
   it("a quarter with two people carries its sales once; placed and promised clocks both work", async () => {
-    const snap = randomUUID();
-    await q("insert into fact_order_snapshot(location_id, business_date, order_guid, snapshot_id, run_member, check_count) values($1,'2026-10-05','o1',$2,true,1)", [A, snap]);
-    await q(`insert into fact_order_check(location_id, business_date, order_guid, check_guid, snapshot_id, opened_at, opened_quarter_start_at, opened_wall_quarter, opened_fold, opened_et_date,
-      promised_quarter_start_at, promised_wall_quarter, promised_fold, promised_et_date, order_voided, order_deleted, check_voided, check_deleted, excess_food, amount_cents, line_price_state)
-      values($1,'2026-10-05','o1','c1',$2,$3,$3,40,0,'2026-10-05',$4,44,0,'2026-10-05',false,false,false,false,false,5000,'unpriced')`,
-      [A, snap, etIso("2026-10-05", "10:00"), etIso("2026-10-05", "11:00")]);
-    const placed = await q<{ labor_minutes: number; hourly_minutes: number; sales_cents: number; day_state: string }>(
-      "select labor_minutes::int, hourly_minutes::int, sales_cents::int, day_state from fact_labor_splh($1,'2026-10-05','2026-10-05','placed') where wall_quarter = 40", [A]);
+    await coverOrders(A, "2026-10-04"); await coverOrders(A, "2026-10-05");
+    await check("o1", "2026-10-05", etIso("2026-10-05", "10:00"), etIso("2026-10-05", "11:00"), 5000);
+    const placed = (await splh("2026-10-05", "2026-10-05", "placed")).filter((r) => r.wall_quarter === 40);
     // 10:00-10:15: Alice + user 9 + user 10 = 45 labor minutes, ONE $50 sale.
-    expect(placed).toEqual([{ labor_minutes: 45, hourly_minutes: 45, sales_cents: 5000, day_state: "covered" }]);
-    const promised = await q<{ sales_cents: number }>("select sales_cents::int from fact_labor_splh($1,'2026-10-05','2026-10-05','promised') where wall_quarter = 44", [A]);
-    expect(promised).toEqual([{ sales_cents: 5000 }]);
+    expect(placed).toEqual([{ business_date: "2026-10-05", wall_quarter: 40, labor_minutes: 45, sales_cents: 5000, sale_checks: 1, day_state: "covered", sales_state: "covered" }]);
+    expect((await splh("2026-10-05", "2026-10-05", "promised")).filter((r) => r.wall_quarter === 44).map((r) => r.sales_cents)).toEqual([5000]);
     await refuses(q("select * from fact_labor_splh($1,'2026-10-05','2026-10-05','delivered')", [A]), "fact_invalid_request");
     await refuses(q("select * from fact_labor_splh($1,'2026-08-01','2026-10-05','placed')", [A]), "sales_report_window_too_wide");
+  });
+  it("fix r1 P2: an order is selected by the CHOSEN clock's date, never its Toast business date; the output stays inside the window", async () => {
+    await coverOrders(A, "2026-10-06");
+    // Business date Monday 10-05, promised Tuesday 10-06 11:00 (catering ordered the day before).
+    await check("o2", "2026-10-05", etIso("2026-10-05", "15:00"), etIso("2026-10-06", "11:00"), 7000);
+    expect((await splh("2026-10-06", "2026-10-06", "promised")).filter((r) => r.wall_quarter === 44).map((r) => r.sales_cents)).toEqual([7000]);
+    const mon = await splh("2026-10-05", "2026-10-05", "promised");
+    expect(mon.every((r) => r.business_date === "2026-10-05")).toBe(true);
+    expect(sum(mon)).toBe(5000);
+    // Placed: a late check opened after midnight (ET 10-06 00:30) on business date 10-05 is Tuesday's quarter 2.
+    await check("o3", "2026-10-05", etIso("2026-10-06", "00:30"), etIso("2026-10-06", "00:30"), 900);
+    expect((await splh("2026-10-06", "2026-10-06", "placed")).filter((r) => r.wall_quarter === 2).map((r) => r.sales_cents)).toEqual([900]);
+    const monPlaced = await splh("2026-10-05", "2026-10-05", "placed");
+    expect(monPlaced.every((r) => r.business_date === "2026-10-05")).toBe(true);
+    expect(sum(monPlaced)).toBe(5000 + 7000);
+  });
+  it("fix r1 P2: order facts unbuilt or uncovered = sales unknown (null, not_covered), never measured zero; labor unbuilt = labor null", async () => {
+    // B 10-08: labor built (covered, Alice 06:00-21:00), B's order facts never built.
+    const wed = await splh("2026-10-08", "2026-10-08", "placed", B);
+    expect(wed.length).toBeGreaterThan(0);
+    expect(wed.every((r) => r.sales_cents === null && r.sale_checks === null && r.sales_state === "not_covered" && r.labor_minutes !== null)).toBe(true);
+    // 10-08 at A: labor built (no minutes at A), order facts uncovered -> still unknown.
+    await coverOrders(A, "2026-10-07"); await coverOrders(A, "2026-10-08", "uncovered");
+    await check("o4", "2026-10-08", etIso("2026-10-08", "12:00"), etIso("2026-10-08", "12:00"), 1200);
+    expect(await splh("2026-10-08", "2026-10-08", "placed")).toEqual([
+      { business_date: "2026-10-08", wall_quarter: 48, labor_minutes: 0, sales_cents: null, sale_checks: null, day_state: "covered", sales_state: "not_covered" }]);
+    // 2026-09-28: no labor week built, order facts covered -> labor null, sales measured.
+    await coverOrders(A, "2026-09-27"); await coverOrders(A, "2026-09-28");
+    await check("o5", "2026-09-28", etIso("2026-09-28", "12:00"), etIso("2026-09-28", "12:00"), 3000);
+    expect(await splh("2026-09-28", "2026-09-28", "placed")).toEqual([
+      { business_date: "2026-09-28", wall_quarter: 48, labor_minutes: null, sales_cents: 3000, sale_checks: 1, day_state: null, sales_state: "covered" }]);
+  });
+  it("fix r1 P2: on the placed clock a day is covered only when the day before is too (a late check of that business date lands here)", async () => {
+    await coverOrders(A, "2026-10-10"); // 10-09 never built
+    await check("o6", "2026-10-10", etIso("2026-10-10", "12:00"), etIso("2026-10-10", "12:00"), 400);
+    const sat = await splh("2026-10-10", "2026-10-10", "placed");
+    expect(sat.length).toBeGreaterThan(0);
+    expect(sat.every((r) => r.sales_state === "not_covered" && r.sales_cents === null)).toBe(true);
   });
 });

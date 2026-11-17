@@ -40,6 +40,7 @@ do $$ begin
   if to_regclass('public.toast_time_entries') is null or to_regclass('public.toast_employee_links') is null then
     raise exception '0338: missing 0224 / 0233 Toast labor tables'; end if;
   if to_regclass('public.schedule_shop_settings') is null then raise exception '0338: missing 0274 schedule_shop_settings'; end if;
+  if to_regclass('public.audit_log') is null then raise exception '0338: missing audit_log (save_labor_burden writes its own audit row)'; end if;
   if to_regclass('public.fact_wage_observations') is not null or to_regclass('public.labor_quarter') is not null then
     raise exception '0338: already applied'; end if;
 end $$;
@@ -428,7 +429,10 @@ end $$;
 -- ── C. READ TIME: burden, cost components, SPLH (nothing here is stored; nothing rebuilds) ──────────
 -- The burden % (employer payroll taxes + benefits), dated, company (location NULL) or per shop; a shop row
 -- beats the company row; the newest valid_from <= week start wins. Append-only by grant; its ONE writer is
--- save_labor_burden (Owner / CGS / MoO). Not in any fingerprint: a backdated payroll row re-prices history.
+-- save_labor_burden (Owner / CGS / MoO). Not in any fingerprint: a backdated payroll row re-prices history,
+-- so the writer records it itself (fix r1 P2): ONE destructive labor_burden.save audit row in the same
+-- transaction, naming the actor, the scope and the value in force for that scope at valid_from before and
+-- after. The note never enters the audit row (has_note only).
 create table public.labor_burden_settings (
   id          uuid         primary key default gen_random_uuid(),
   location_id uuid         references public.locations(id),
@@ -443,16 +447,35 @@ create index labor_burden_settings_lookup on public.labor_burden_settings (locat
 
 create function public.save_labor_burden(p_actor uuid, p_location_id uuid, p_burden_pct numeric, p_valid_from date, p_source text, p_note text)
 returns uuid language plpgsql security definer set search_path = pg_catalog, public as $$
-declare v_id uuid;
+declare v_id uuid; v_role text; v_before jsonb; v_pct numeric(5,2);
 begin
-  if p_actor is null or not exists (select 1 from public.users u where u.id = p_actor and u.active and u.role in ('owner', 'cgs', 'moo')) then
-    raise exception 'labor_burden_forbidden'; end if;
+  if p_actor is not null then
+    select u.role into v_role from public.users u where u.id = p_actor and u.active and u.role in ('owner', 'cgs', 'moo') for share;
+  end if;
+  if v_role is null then raise exception 'labor_burden_forbidden'; end if;
   if p_burden_pct is null or p_burden_pct < 0 or p_burden_pct > 50 or p_valid_from is null or p_source not in ('estimated', 'payroll')
     or char_length(coalesce(p_note, '')) > 500
     or (p_location_id is not null and not exists (select 1 from public.locations l where l.id = p_location_id)) then
     raise exception 'labor_burden_invalid'; end if;
+  -- Saves of one scope queue, so each audit row's "before" is the value the previous save left.
+  perform pg_advisory_xact_lock(hashtextextended('labor_burden:' || coalesce(p_location_id::text, 'company'), 0));
+  -- Before = what this scope read at valid_from: a shop row, else the company row, else the 12% default.
+  select coalesce((select jsonb_build_object('burden_pct', s.burden_pct, 'source', s.source, 'valid_from', s.valid_from,
+            'scope', case when s.location_id is null then 'company' else 'shop' end, 'row_id', s.id)
+          from public.labor_burden_settings s
+         where (s.location_id = p_location_id or s.location_id is null) and s.valid_from <= p_valid_from
+         order by (s.location_id is null), s.valid_from desc, s.created_at desc limit 1),
+         jsonb_build_object('burden_pct', 12.00, 'source', 'estimated', 'scope', 'default'))
+    into v_before;
+  v_pct := round(p_burden_pct, 2);
   insert into public.labor_burden_settings (location_id, burden_pct, valid_from, source, note, created_by)
-  values (p_location_id, round(p_burden_pct, 2), p_valid_from, p_source, nullif(p_note, ''), p_actor) returning id into v_id;
+  values (p_location_id, v_pct, p_valid_from, p_source, nullif(p_note, ''), p_actor) returning id into v_id;
+  insert into public.audit_log (actor_id, actor_role, action, resource_table, resource_id, before_state, after_state, metadata, destructive)
+  values (p_actor, v_role, 'labor_burden.save', 'labor_burden_settings', v_id, v_before,
+    jsonb_build_object('burden_pct', v_pct, 'source', p_source, 'valid_from', p_valid_from, 'location_id', p_location_id),
+    jsonb_build_object('scope', case when p_location_id is null then 'company' else 'shop' end, 'location_id', p_location_id,
+      'valid_from', p_valid_from, 'has_note', coalesce(p_note, '') <> ''),
+    true);
   return v_id;
 end $$;
 
@@ -476,12 +499,14 @@ $$;
 --     overtime minutes fell.
 --   salaried = the shop's estimated weekly salary (0274, estimate_first), else the wage-derived weekly
 --     cost (labor_week_salaried), else unknown; prorated by the range's days in the week / 7.
--- Coverage first: a week never built reads ot_state 'unbuilt'; day counts say what is missing.
+-- Coverage first: a week never built reads ot_state 'unbuilt'; day counts say what is missing; open_punches
+-- counts the unclosed punches on the range's days (fix r1 P1): their hours are unknown, so the pricer
+-- (lib/facts/labor-cost-shared.ts) withholds every % until they close.
 create function public.fact_labor_cost(p_location_id uuid, p_from date, p_to date, p_wage_fallback text)
 returns table(week_start date, location_id uuid, hourly_straight_cents bigint, ot_premium_cents bigint, salaried_cents bigint,
   salary_basis text, burden_pct numeric, burden_basis text, estimated_rate_minutes bigint, hourly_minutes bigint, ot_minutes bigint,
   salaried_minutes bigint, ot_state text, range_days integer, days_covered integer, days_pending integer, days_fallback integer,
-  days_incomplete integer, days_missing integer)
+  days_incomplete integer, days_missing integer, open_punches integer)
 language plpgsql stable security definer set search_path = pg_catalog, public as $$
 declare v_floor date;
 begin
@@ -533,7 +558,8 @@ begin
     (select count(*)::integer from public.labor_day_coverage c where c.location_id = g.loc and c.business_date between greatest(g.w, p_from) and least(g.w + 6, p_to) and c.state = 'pending_settle'),
     (select count(*)::integer from public.labor_day_coverage c where c.location_id = g.loc and c.business_date between greatest(g.w, p_from) and least(g.w + 6, p_to) and c.state = 'fallback_unverified'),
     (select count(*)::integer from public.labor_day_coverage c where c.location_id = g.loc and c.business_date between greatest(g.w, p_from) and least(g.w + 6, p_to) and c.state = 'incomplete'),
-    g.rd - (select count(*)::integer from public.labor_day_coverage c where c.location_id = g.loc and c.business_date between greatest(g.w, p_from) and least(g.w + 6, p_to))
+    g.rd - (select count(*)::integer from public.labor_day_coverage c where c.location_id = g.loc and c.business_date between greatest(g.w, p_from) and least(g.w + 6, p_to)),
+    (select coalesce(sum(c.open_punches), 0)::integer from public.labor_day_coverage c where c.location_id = g.loc and c.business_date between greatest(g.w, p_from) and least(g.w + 6, p_to))
   from grid g
   left join agg a on a.ws = g.w and a.loc = g.loc
   left join public.schedule_shop_settings s on s.location_id = g.loc
@@ -547,10 +573,21 @@ end $$;
 -- minutes SUMMED PER QUARTER FIRST (a quarter with two roles or people never doubles its sales), joined
 -- to the quarter's 'sale' checks through THE classifier (fact_sales_check_classes) on the chosen clock:
 -- 'placed' (opened) or 'promised'. labor_minutes = every observed minute (hourly + salaried presence:
--- splh); hourly_minutes = hourly only (splh_hourly). The day's coverage rides along: unknown is never 0.
+-- splh); hourly_minutes = hourly only (splh_hourly).
+-- Fix r1 P2: checks are SELECTED by the chosen clock's ET date (never their Toast business date, which a
+-- late close or a next-day promise leaves on another day), classified one business date at a time by the
+-- canonical classifier, and every row stays inside [from, to] on that clock.
+-- Coverage rides along on BOTH sides, unknown is never 0 (fix r1 P2): labor_minutes / hourly_minutes are
+-- NULL on a day with no labor_day_coverage row (labor unbuilt), day_state says what a built day is;
+-- sales_state is 'covered' only when every business date that can land a check on that clock day has
+-- order facts covered (0337 fact_day_coverage covered | covered_zero): the day itself, the day before (a
+-- check after midnight belongs to the previous business date) and every business date that actually
+-- landed a check there. Otherwise 'not_covered' and sales_cents / sale_checks are NULL. Stated limit: a
+-- promised check whose business date has NO order-fact row at all and is older than the day before is
+-- invisible here (the order fact layer builds every day from its floor, so that is a day not built yet).
 create function public.fact_labor_splh(p_location_id uuid, p_from date, p_to date, p_clock text)
 returns table(quarter_start_at timestamptz, business_date date, wall_quarter smallint, fold smallint, labor_minutes bigint,
-  hourly_minutes bigint, sales_cents bigint, sale_checks bigint, day_state text, open_punches integer)
+  hourly_minutes bigint, sales_cents bigint, sale_checks bigint, day_state text, open_punches integer, sales_state text)
 language plpgsql stable security definer set search_path = pg_catalog, public as $$
 begin
   perform public.sales_report_assert_window(p_location_id, p_from, p_to);
@@ -560,23 +597,54 @@ begin
     select q.quarter_start_at qs, min(q.business_date) bd, min(q.wall_quarter) wq, min(q.fold) fd,
       sum(q.minutes)::bigint lm, coalesce(sum(q.minutes) filter (where q.pay_class = 'hourly'), 0)::bigint hm
       from public.labor_quarter q where q.location_id = p_location_id and q.business_date between p_from and p_to group by q.quarter_start_at
-  ), sales as (
-    select case when p_clock = 'placed' then f.opened_quarter_start_at else f.promised_quarter_start_at end qs,
+  ), cand as (
+    -- Every check whose chosen-clock date is in the window. Placed: business date = that date or the day
+    -- before. Promised: placed on or before its promise, so its business date is at most the day after.
+    select f.business_date fbd, f.order_guid og, f.check_guid cg,
+      case when p_clock = 'placed' then f.opened_quarter_start_at else f.promised_quarter_start_at end qs,
       case when p_clock = 'placed' then f.opened_et_date else f.promised_et_date end bd,
       case when p_clock = 'placed' then f.opened_wall_quarter else f.promised_wall_quarter end wq,
-      case when p_clock = 'placed' then f.opened_fold else f.promised_fold end fd,
-      sum(c.amount_cents)::bigint sc, count(*)::bigint n
-    from public.fact_sales_check_classes(p_location_id, p_from, p_to) c
-    join public.fact_order_check f on f.location_id = p_location_id and f.business_date = c.business_date
-     and f.order_guid = c.order_guid and f.check_guid = c.check_guid
-    where c.sale_class = 'sale' group by 1, 2, 3, 4
+      case when p_clock = 'placed' then f.opened_fold else f.promised_fold end fd
+    from public.fact_order_check f
+    where f.location_id = p_location_id
+      and (case when p_clock = 'placed' then f.opened_et_date else f.promised_et_date end) between p_from and p_to
+      and f.business_date <= p_to + 1
+      and (p_clock = 'promised' or f.business_date >= p_from - 1)
+  ), cls as (
+    -- The canonical classifier, one business date at a time (its window guard holds for each call).
+    select c.business_date, c.order_guid, c.check_guid, c.sale_class, c.amount_cents
+      from (select distinct cand.fbd from cand) b
+      cross join lateral public.fact_sales_check_classes(p_location_id, b.fbd, b.fbd) c
+  ), sales as (
+    select cand.qs, cand.bd, cand.wq, cand.fd, sum(cls.amount_cents)::bigint sc, count(*)::bigint n
+      from cand join cls on cls.business_date = cand.fbd and cls.order_guid = cand.og and cls.check_guid = cand.cg
+     where cls.sale_class = 'sale' and cand.qs is not null
+     group by 1, 2, 3, 4
+  ), need as (
+    -- The business dates each clock day depends on.
+    select g::date d, g::date nb from generate_series(p_from, p_to, interval '1 day') g
+    union select g::date, g::date - 1 from generate_series(p_from, p_to, interval '1 day') g
+    union select cand.bd, cand.fbd from cand
+  ), cov as (
+    select need.d, bool_and(coalesce(c.state in ('covered', 'covered_zero'), false)) ok
+      from need left join public.fact_day_coverage c on c.location_id = p_location_id and c.business_date = need.nb and c.fact = 'orders'
+     group by need.d
   ), j as (
     select coalesce(lab.qs, sales.qs) qs, coalesce(lab.bd, sales.bd) bd, coalesce(lab.wq, sales.wq) wq, coalesce(lab.fd, sales.fd) fd,
-      coalesce(lab.lm, 0) lm, coalesce(lab.hm, 0) hm, coalesce(sales.sc, 0) sc, coalesce(sales.n, 0) n
+      lab.lm, lab.hm, sales.sc, sales.n
     from lab full join sales on sales.qs = lab.qs where coalesce(lab.qs, sales.qs) is not null
   )
-  select j.qs, j.bd, j.wq::smallint, j.fd::smallint, j.lm, j.hm, j.sc, j.n, d.state, d.open_punches
-    from j left join public.labor_day_coverage d on d.location_id = p_location_id and d.business_date = j.bd
+  select j.qs, j.bd, j.wq::smallint, j.fd::smallint,
+    case when d.location_id is not null then coalesce(j.lm, 0) end,
+    case when d.location_id is not null then coalesce(j.hm, 0) end,
+    case when cov.ok then coalesce(j.sc, 0) end,
+    case when cov.ok then coalesce(j.n, 0) end,
+    d.state, d.open_punches,
+    case when cov.ok then 'covered' else 'not_covered' end
+    from j
+    left join public.labor_day_coverage d on d.location_id = p_location_id and d.business_date = j.bd
+    left join cov on cov.d = j.bd
+   where j.bd between p_from and p_to
    order by j.qs;
 end $$;
 
