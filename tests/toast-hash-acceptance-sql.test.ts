@@ -211,10 +211,16 @@ describe("same-modified_at: churn only when the stored content is equal (prod 20
     .filter((r) => r.location_id === shop2 && r.order_guid === guid).map((r) => [r.kind, Number(r.snapshots), Number(r.contents)]);
   const insertsOf = async () => (await insertRows(query("inserts", W))).filter((r) => r[0] === shop2).map((r) => r.slice(2));
 
+  it("both queries judge 'equal content' with the same CTE, text for text", () => {
+    const contentOf = (name: string) => cut(cut(acceptance, `-- @query ${name}\n`, ";\n"), "content as (", ") as content");
+    expect(contentOf("churn")).toBe(contentOf("inserts"));
+    expect(contentOf("churn")).toContain("- 'ordinal'");
+  });
+
   it("a payment_status-only change (AUTHORIZED -> CAPTURED) with the same modified_at is EDIT_SAME_MODIFIED, never CHURN", async () => {
     await db.query("insert into public.locations(id) values($1)", [shop2]);
-    const p1 = await snapshot("P", t, "p1", { units: [unitA], checks: [check], payments: [pay("AUTHORIZED")] }, shop2);
-    const p2 = await snapshot("P", t, "p2", { units: [unitA], checks: [check], payments: [pay("CAPTURED")] }, shop2);
+    const p1 = await snapshot("P", t, "f1", { units: [unitA], checks: [check], payments: [pay("AUTHORIZED")] }, shop2);
+    const p2 = await snapshot("P", t, "f2", { units: [unitA], checks: [check], payments: [pay("CAPTURED")] }, shop2);
     await capture("2026-11-20T14:05:00Z", { P: p1 }, shop2);
     await capture("2026-11-21T06:00:00Z", { P: p2 }, shop2);   // the nightly card batch capture; Toast's modified_at unchanged
     expect(await churnOf("P")).toEqual([["EDIT_SAME_MODIFIED", 2, 2]]);
@@ -223,8 +229,8 @@ describe("same-modified_at: churn only when the stored content is equal (prod 20
   });
 
   it("the same capture against a snapshot first seen BEFORE W is edit_same_modified, never a transition", async () => {
-    const q1 = await snapshot("Q", t, "q1", { checks: [check], payments: [pay("AUTHORIZED")] }, shop2);
-    const q2 = await snapshot("Q", t, "q2", { checks: [check], payments: [pay("CAPTURED")] }, shop2);
+    const q1 = await snapshot("Q", t, "f3", { checks: [check], payments: [pay("AUTHORIZED")] }, shop2);
+    const q2 = await snapshot("Q", t, "f4", { checks: [check], payments: [pay("CAPTURED")] }, shop2);
     await capture("2026-11-19T20:00:00Z", { Q: q1 }, shop2);
     await capture("2026-11-21T06:00:00Z", { Q: q2 }, shop2);
     expect(await churnOf("Q")).toEqual([]);   // one snapshot for that version inside W
@@ -232,10 +238,10 @@ describe("same-modified_at: churn only when the stored content is equal (prod 20
   });
 
   it("a reordered-only pair (selection order, discount and service-charge ordinals, jsonb key order) is CHURN", async () => {
-    const r1 = await snapshot("R", t, "r1", { units: [unitA, unitB], checks: [check], payments: [pay("CAPTURED")],
+    const r1 = await snapshot("R", t, "f5", { units: [unitA, unitB], checks: [check], payments: [pay("CAPTURED")],
       discounts: [{ check_guid: "c1", ordinal: 0, ...d1 }, { check_guid: "c1", ordinal: 1, ...d2 }],
       charges: [{ check_guid: "c1", ordinal: 0, name: "Delivery", amount_cents: 300 }, { check_guid: "c1", ordinal: 1, name: "Bag", amount_cents: 10 }] }, shop2);
-    const r2 = await snapshot("R", t, "r2", { units: [unitB, unitA], checks: [{ ...check, accounting: { gross_cents: 1000, version: "1" } }], payments: [pay("CAPTURED")],
+    const r2 = await snapshot("R", t, "f6", { units: [unitB, unitA], checks: [{ ...check, accounting: { gross_cents: 1000, version: "1" } }], payments: [pay("CAPTURED")],
       discounts: [{ check_guid: "c1", ordinal: 0, ...d2 }, { check_guid: "c1", ordinal: 1, ...d1 }],
       charges: [{ check_guid: "c1", ordinal: 0, name: "Bag", amount_cents: 10 }, { check_guid: "c1", ordinal: 1, name: "Delivery", amount_cents: 300 }] }, shop2);
     await capture("2026-11-20T15:00:00Z", { R: r1 }, shop2);
@@ -254,7 +260,7 @@ describe("same-modified_at: churn only when the stored content is equal (prod 20
 
   it("scoped @query inserts == the whole-table form on every fixture and window, including snapshots outside W", async () => {
     // Outside W on both sides: a snapshot seen only before W, and one first seen after it.
-    const o1 = await snapshot("O", t, "o1", {}, shop2), o2 = await snapshot("O", "2026-11-20T10:00:00Z", "o2", {}, shop2);
+    const o1 = await snapshot("O", t, "f9", {}, shop2), o2 = await snapshot("O", "2026-11-20T10:00:00Z", "fa", {}, shop2);
     await capture("2026-11-18T12:00:00Z", { O: o1 }, shop2);
     await capture("2026-11-23T12:00:00Z", { O: o2 }, shop2);
     const windows = [W, { w_from: "2026-11-30T00:00:00Z", w_to: "2026-12-01T00:00:00Z" }, { w_from: "2026-11-18T00:00:00Z", w_to: "2026-11-20T00:00:00Z" },
