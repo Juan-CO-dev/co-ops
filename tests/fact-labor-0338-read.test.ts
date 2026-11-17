@@ -120,9 +120,10 @@ describe("fix r1 P1: an open punch reaches the pricer (builder -> writer -> fact
     await build(W2);
     expect((await q<{ ot_state: string }>("select ot_state from labor_week_coverage where week_start = $1", [W2]))[0]!.ot_state).toBe("lower_bound");
     const rows = await cost(null, W2, "2026-10-17");
-    expect(rows.find((r) => r.location_id === A)).toMatchObject({ open_punches: 1, days_covered: 7, ot_state: "lower_bound" });
+    // Fix r2 P1: the Monday 06:00 open punch could run into Tuesday, so it marks both days: a range sums open punch-DAYS.
+    expect(rows.find((r) => r.location_id === A)).toMatchObject({ open_punches: 2, days_covered: 7, ot_state: "lower_bound" });
     const [v] = laborWeekViews(rows.map((r) => toLaborCostRow(r as unknown as Record<string, unknown>)));
-    expect(v).toMatchObject({ coverageComplete: false, hoursKnown: false, openPunches: 1, otState: "lower_bound", pureHourlyCents: 0 });
+    expect(v).toMatchObject({ coverageComplete: false, hoursKnown: false, openPunches: 2, otState: "lower_bound", pureHourlyCents: 0 });
     expect(laborPercents(v!, 1_000_000, laborTargetsFor(null))).toEqual({ pureHourlyPct: null, pureHourlyTone: "none", fullyLoadedPct: null, fullyLoadedTone: "none" });
   });
 });
@@ -217,6 +218,29 @@ describe("C. SPLH inputs (labor summed per quarter before the sales join)", () =
     await check("o5", "2026-09-28", etIso("2026-09-28", "12:00"), etIso("2026-09-28", "12:00"), 3000);
     expect(await splh("2026-09-28", "2026-09-28", "placed")).toEqual([
       { business_date: "2026-09-28", wall_quarter: 48, labor_minutes: null, sales_cents: 3000, sale_checks: 1, day_state: null, sales_state: "covered" }]);
+  });
+  it("fix r2 P2: on the promised clock, a captured business date in the lookback whose order facts are not built makes the day's sales unknown", async () => {
+    const run = async (date: string) => q("insert into toast_capture_runs(location_id, business_date, started_at, finished_at, status) values($1,$2,$3,$3,'completed')",
+      [A, date, etIso(date, "23:59")]);
+    await coverOrders(A, "2026-10-13"); await coverOrders(A, "2026-10-14");
+    await check("o7", "2026-10-14", etIso("2026-10-14", "09:00"), etIso("2026-10-14", "12:00"), 800);
+    const wed = () => splh("2026-10-14", "2026-10-14", "promised");
+    expect((await wed()).map((r) => [r.sales_state, r.sales_cents])).toEqual([["covered", 800]]);
+    // A capture run 15 days back is outside the bounded lookback (FACT_LABOR_PROMISED_LOOKBACK_DAYS = 14).
+    await run("2026-09-29");
+    expect((await wed()).map((r) => r.sales_state)).toEqual(["covered"]);
+    // Monday 10-12 was captured but its order-fact build failed (no fact_day_coverage row, no fact_order_check rows):
+    // a check placed Monday and promised Wednesday may be missing, so Wednesday's promised sales are unknown.
+    await run("2026-10-12");
+    expect((await wed()).map((r) => [r.sales_state, r.sales_cents])).toEqual([["not_covered", null]]);
+    // The placed clock does not depend on Monday.
+    expect((await splh("2026-10-14", "2026-10-14", "placed")).every((r) => r.sales_state === "covered")).toBe(true);
+    // Monday built (even covered_zero): Wednesday is covered again.
+    await coverOrders(A, "2026-10-12", "covered_zero");
+    expect((await wed()).map((r) => r.sales_state)).toEqual(["covered"]);
+    // The day after is in the window too (the candidates' own bound: business date at most the promise + 1): captured, unbuilt = unknown.
+    await run("2026-10-15");
+    expect((await wed()).map((r) => r.sales_state)).toEqual(["not_covered"]);
   });
   it("fix r1 P2: on the placed clock a day is covered only when the day before is too (a late check of that business date lands here)", async () => {
     await coverOrders(A, "2026-10-10"); // 10-09 never built

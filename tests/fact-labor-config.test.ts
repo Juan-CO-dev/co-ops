@@ -1,7 +1,7 @@
 // Item 2 PR 2c: the build-time constants live twice (TS builder, 0338's fact_labor_constants) and must agree.
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { LABOR_FLOOR_WEEK, LABOR_HISTORY_FLOOR_DAY, LABOR_OT_MULTIPLIER, LABOR_OT_THRESHOLD_MINUTES, LABOR_SETTLE_HOURS,
+import { LABOR_FLOOR_WEEK, LABOR_HISTORY_FLOOR_DAY, LABOR_OT_MULTIPLIER, LABOR_OT_THRESHOLD_MINUTES, LABOR_SETTLE_HOURS, LABOR_OPEN_PUNCH_SPAN_HOURS, LABOR_PROMISED_LOOKBACK_DAYS,
   LABOR_BURDEN_DEFAULT_PCT, LABOR_ESTIMATE_DEFAULT_CENTS, factLaborEnabled, laborWageFallback } from "@/lib/facts/labor-config-shared";
 import { BACKFILL_DAYS } from "@/lib/sevenshifts/sync";
 
@@ -9,8 +9,14 @@ const sql = readFileSync("supabase/migrations/0338_fact_layer_labor.sql", "utf8"
 
 it("fact_labor_constants carries the TS numbers exactly", () => {
   const body = sql.match(/create function public\.fact_labor_constants\(\)[\s\S]*?\$\$;/)![0];
-  expect(body).toContain(`select date '${LABOR_HISTORY_FLOOR_DAY}', date '${LABOR_FLOOR_WEEK}', interval '${LABOR_SETTLE_HOURS} hours', ${LABOR_OT_THRESHOLD_MINUTES}, ${LABOR_OT_MULTIPLIER}::numeric, ${BACKFILL_DAYS}`);
+  expect(body).toContain(`select date '${LABOR_HISTORY_FLOOR_DAY}', date '${LABOR_FLOOR_WEEK}', interval '${LABOR_SETTLE_HOURS} hours', ${LABOR_OT_THRESHOLD_MINUTES}, ${LABOR_OT_MULTIPLIER}::numeric, ${BACKFILL_DAYS}, interval '${LABOR_OPEN_PUNCH_SPAN_HOURS} hours'`);
   expect(new Date(`${LABOR_FLOOR_WEEK}T12:00:00Z`).getUTCDay()).toBe(0);
+});
+it("fix r2 P2: the promised-clock lookback in SPLH is the TS number (both bounds of the captured window and the per-day join)", () => {
+  const body = sql.match(/create function public\.fact_labor_splh\([\s\S]*?end \$\$;/)![0];
+  const n = LABOR_PROMISED_LOOKBACK_DAYS;
+  expect(body.split(`between p_from - ${n} and p_to + 1`).length - 1).toBe(2);
+  expect(body).toContain(`captured.bd between g::date - ${n} and g::date + 1`);
 });
 it("the read-time defaults in SQL match TS (burden 12, estimate 1840)", () => {
   expect(sql).toContain(`coalesce(b.burden_pct, ${LABOR_BURDEN_DEFAULT_PCT}.00)`);

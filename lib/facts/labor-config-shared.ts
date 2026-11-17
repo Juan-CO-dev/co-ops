@@ -14,6 +14,19 @@ export const LABOR_OT_THRESHOLD_MINUTES = 2400;
 export const LABOR_OT_MULTIPLIER = 1.5;
 /** A 7shifts day is covered only by a ledger run that started this long after the day ended. */
 export const LABOR_SETTLE_HOURS = 36;
+/** Fix r2 P1: an OPEN punch (no clock-out) could run this long from its clock-in, so every shop-day the
+ * span [clock-in, clock-in + 24 h) touches counts it as an open punch (hours unknown, no definitive %),
+ * across the payroll-week boundary too: a Saturday 23:00 open punch is read by the next week's source and
+ * marks its Sunday. 24 h is past any real shift (the schedule's hard daily maximum is 10.5 h; a closing
+ * auto-releases at 16 h), so a later clock-out landing past it is a forgotten punch; its own clock-in day
+ * stays unknown until it is closed either way. The span is fixed from clock-in, so a week's set never moves
+ * with the clock. 0338's fact_labor_constants().open_span carries the same number. */
+export const LABOR_OPEN_PUNCH_SPAN_HOURS = 24;
+/** Fix r2 P2, read time: on the PROMISED clock, a day's sales are covered only when every business date
+ * in [day - 14, day + 1] that the source captured (a Toast capture run or an order pointer) has covered
+ * order facts. A check promised more than 14 days after its business date is the stated limit (counted
+ * only once that date is built). 0338's fact_labor_splh carries the same number. */
+export const LABOR_PROMISED_LOOKBACK_DAYS = 14;
 /** Read time: no burden row = this %, always labelled `estimated` (plan open item 1: Juan/Pete give the real one). */
 export const LABOR_BURDEN_DEFAULT_PCT = 12;
 export const LABOR_TARGET_LOADED_PCT = 28;

@@ -4,8 +4,9 @@
  *
  *  - Punch -> minutes. A 7shifts punch maps to a shop through its LIVE location link; its break minutes
  *    are unpaid and come out of the middle of the punch (0268 keeps only the total, not where it fell).
- *    Instants round to the minute. An open punch adds no minutes and is counted on its day, for its own
- *    source only (fix r1 P1): its hours are UNKNOWN, so a week holding one is never `assessed`.
+ *    Instants round to the minute. An open punch adds no minutes and is counted, for its own source only
+ *    (fix r1 P1), on EVERY day its possible span touches (fix r2 P1: LABOR_OPEN_PUNCH_SPAN_HOURS from
+ *    clock-in, across the week boundary too): its hours are UNKNOWN, so a week holding one is never `assessed`.
  *  - The FRAME (fact_labor_week_days) is the only list of shop-days: each day is
  *    covered (7shifts ledger evidence) | pending_settle (inside the settle window) | fallback_unverified
  *    (Toast, when 7shifts is not covered and Toast has minutes) | incomplete. ONE source per shop-day, so
@@ -17,7 +18,7 @@
  *  - Rows: one per (shop, quarter, person, source, role), each with exactly one rate pick.
  * Money is never computed here. */
 import { factQuarter } from "./order-facts-shared";
-import { LABOR_OT_MULTIPLIER, LABOR_OT_THRESHOLD_MINUTES } from "./labor-config-shared";
+import { LABOR_OPEN_PUNCH_SPAN_HOURS, LABOR_OT_MULTIPLIER, LABOR_OT_THRESHOLD_MINUTES } from "./labor-config-shared";
 import { pickWage, toWageVersion, type PayClass, type RateBasis, type WageVersion } from "./labor-wages-shared";
 
 export interface FrameDay { location_id: string; business_date: string; linked: boolean; evidence_run_id: string | null; settled: boolean }
@@ -102,15 +103,18 @@ export function buildLaborWeek(src: LaborWeekSource): LaborWeekPayload {
   const minutes: Minute[] = [];
   const open = { "7shifts": new Map<string, number>(), toast: new Map<string, number>() };
   const bump = (m: Map<string, number>, k: string, by = 1) => m.set(k, (m.get(k) ?? 0) + by);
+  // Fix r2 P1: an open punch counts on EVERY frame day its possible span touches (LABOR_OPEN_PUNCH_SPAN_HOURS
+  // from clock-in), not only its clock-in day: a Monday 23:00 open punch leaves Tuesday unknown too.
+  const markOpen = (m: Map<string, number>, loc: string, inIso: string) => {
+    const t0 = Date.parse(inIso);
+    const last = quarterOf(t0 + LABOR_OPEN_PUNCH_SPAN_HOURS * 60 * MINUTE - MINUTE).et_date!;
+    for (let d = quarterOf(t0).et_date!; d <= last; d = addDays(d, 1)) if (frame.has(`${loc}|${d}`)) bump(m, `${loc}|${d}`);
+  };
   for (const p of src.punches) {
     if (p.deleted || p.location_id === null) continue;
     const loc = shopOf7.get(String(p.location_id));
     if (!loc) continue;
-    if (p.clocked_out === null) {
-      const d = quarterOf(Date.parse(p.clocked_in)).et_date!;
-      if (frame.has(`${loc}|${d}`)) bump(open["7shifts"], `${loc}|${d}`);
-      continue;
-    }
+    if (p.clocked_out === null) { markOpen(open["7shifts"], loc, p.clocked_in); continue; }
     const ssUser = String(p.user_id);
     const linked = personOf7.get(ssUser);
     const person = linked ? `u:${linked}` : `ss:${ssUser}`;
@@ -122,11 +126,7 @@ export function buildLaborWeek(src: LaborWeekSource): LaborWeekPayload {
   }
   for (const e of src.toastEntries) {
     if (e.deleted) continue;
-    if (e.out_at === null) {
-      const d = quarterOf(Date.parse(e.in_at)).et_date!;
-      if (frame.has(`${e.location_id}|${d}`)) bump(open.toast, `${e.location_id}|${d}`);
-      continue;
-    }
+    if (e.out_at === null) { markOpen(open.toast, e.location_id, e.in_at); continue; }
     const user = toastPerson.get(`${e.location_id}|${e.employee_guid}`) ?? e.user_id;
     const person = user ? `u:${user}` : `toast:${e.employee_guid}`;
     const ssUser = user ? accountAt.get(`${user}|${e.location_id}`) ?? null : null;

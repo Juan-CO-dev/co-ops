@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { buildLaborWeek, laborWeekSourceFromJson } from "@/lib/facts/labor-week-shared";
 import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
+import { laborWeekViews, toLaborCostRow } from "@/lib/facts/labor-cost-shared";
 import { M0338, freshLaborParents } from "./helpers/fact-0338-parents";
 
 let db: PGlite;
@@ -182,6 +183,33 @@ describe("B. labor build side (0338)", () => {
     expect(weeks).toContain("2026-07-19");
     expect(weeks.every((w) => w >= "2026-07-19")).toBe(true);
     await refuses(q("select fact_labor_week_source('2026-10-05', $1)", [LABOR_BUILDER_VERSION]), "fact_invalid_request");
+  });
+
+  it("fix r2 P1: an overnight open punch makes the next day (and the next payroll week's Sunday) not definitive, end to end", async () => {
+    await addRun("2026-10-30T12:00:00Z", null); // evidence for every day through 10-28: the days are 'covered'
+    const mon = await addPunch(7, 501, "2026-10-19", "23:00", null); // Monday 23:00, never clocked out
+    const sat = await addPunch(7, 501, "2026-10-24", "23:00", null); // Saturday 23:00, never clocked out
+    const { source } = await weekSource("2026-10-25");
+    expect(source.punches.map((p) => p.id)).toContain(String(sat)); // the NEXT week's source reads the Saturday punch
+    expect(source.punches.map((p) => p.id)).not.toContain(String(mon));
+    await buildWeek("2026-10-18"); await buildWeek("2026-10-25");
+    const day = async (d: string) => (await q<{ state: string; open_punches: number; ss_minutes: number }>(
+      "select state, open_punches, ss_minutes from labor_day_coverage where location_id=$1 and business_date=$2", [LOC_A, d]))[0];
+    expect(await day("2026-10-20")).toEqual({ state: "covered", open_punches: 1, ss_minutes: 0 });
+    expect(await day("2026-10-25")).toEqual({ state: "covered", open_punches: 1, ss_minutes: 0 });
+    expect((await day("2026-10-21"))!.open_punches).toBe(0);
+    // A Tuesday-only (and a Sunday-only) cost read: hours unknown, so no definitive %.
+    for (const d of ["2026-10-20", "2026-10-25"]) {
+      const rows = await q("select * from fact_labor_cost($1, $2, $2, 'first_known')", [LOC_A, d]);
+      const [v] = laborWeekViews(rows.map((r) => toLaborCostRow(r)));
+      expect(v).toMatchObject({ hoursKnown: false, openPunches: 1 });
+    }
+    // Closing the Saturday punch moves both weeks' fingerprints; the Sunday clears on rebuild.
+    await q("update sevenshifts_time_punches set clocked_out=$2 where id=$1", [sat, etIso("2026-10-24", "23:30")]);
+    const st = await staleWeeks();
+    expect(st).toContain("2026-10-18"); expect(st).toContain("2026-10-25");
+    await buildWeek("2026-10-25");
+    expect((await day("2026-10-25"))!.open_punches).toBe(0);
   });
 
   it("the derived tables and the writer carry the service-role ceiling", async () => {

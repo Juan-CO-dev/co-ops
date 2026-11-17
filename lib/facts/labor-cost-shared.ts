@@ -22,7 +22,7 @@ export interface LaborCostRow {
   ot_state: "assessed" | "lower_bound" | "week_open" | "unbuilt";
   range_days: number;
   days_covered: number; days_pending: number; days_fallback: number; days_incomplete: number; days_missing: number;
-  /** unclosed punches on the range's days (their worked hours are unknown) */
+  /** unclosed punches on the range's days, counted once per day they could span (fix r2 P1: open punch-DAYS; their worked hours are unknown) */
   open_punches: number;
 }
 export interface LaborWeekView {

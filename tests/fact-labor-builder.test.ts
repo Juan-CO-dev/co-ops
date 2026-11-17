@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { buildLaborWeek, type LaborWeekSource, type FrameDay } from "@/lib/facts/labor-week-shared";
 import type { WageVersion } from "@/lib/facts/labor-wages-shared";
+import { LABOR_OPEN_PUNCH_SPAN_HOURS } from "@/lib/facts/labor-config-shared";
 
 const A = "00000000-0000-4000-8000-00000000000a", B = "00000000-0000-4000-8000-00000000000b";
 const ALICE = "00000000-0000-4000-8000-0000000000a1";
@@ -162,6 +163,31 @@ describe("coverage first (P1 #3)", () => {
       toastEntries: [{ location_id: A, time_entry_guid: "t1", employee_guid: "e1", user_id: null, in_at: et("2026-10-05", "10:00"), out_at: null, deleted: false },
         { location_id: A, time_entry_guid: "t2", employee_guid: "e2", user_id: null, in_at: et("2026-10-05", "11:00"), out_at: et("2026-10-05", "12:00"), deleted: false }] }));
     expect(fb.days.find((d) => d.location_id === A && d.business_date === "2026-10-05")).toMatchObject({ source: "toast", open_punches: 1 });
+  });
+  it("fix r2 P1: an overnight open punch marks EVERY day it could span (clock-in + LABOR_OPEN_PUNCH_SPAN_HOURS), never only its clock-in day", () => {
+    const at = (out: ReturnType<typeof buildLaborWeek>, d: string) => out.days.find((x) => x.location_id === A && x.business_date === d)!;
+    // Monday 23:00, never clocked out: Tuesday is not definitive (state stays the evidence's, its hours are unknown).
+    const ss = buildLaborWeek(src({ punches: [punch("7", "501", null, "2026-10-05", "23:00", null)], wages: [wage("7", 2000)] }));
+    expect([at(ss, "2026-10-05").open_punches, at(ss, "2026-10-06").open_punches, at(ss, "2026-10-07").open_punches]).toEqual([1, 1, 0]);
+    expect(at(ss, "2026-10-06")).toMatchObject({ state: "covered", ss_minutes: 0, open_punches: 1 });
+    // The span is fixed from clock-in: 23:00 + 24 h ends Tuesday 23:00, so Wednesday is untouched; a 00:30 punch spans 2 days too.
+    const early = buildLaborWeek(src({ punches: [punch("7", "501", null, "2026-10-05", "00:30", null)] }));
+    expect([at(early, "2026-10-05").open_punches, at(early, "2026-10-06").open_punches]).toEqual([1, 1]);
+    // Toast fallback days: the same span, its own source.
+    const fb = buildLaborWeek(src({ days: [...days(A, { linked: false, evidence_run_id: null }), ...days(B)],
+      toastEntries: [{ location_id: A, time_entry_guid: "t1", employee_guid: "e1", user_id: null, in_at: et("2026-10-05", "23:00"), out_at: null, deleted: false },
+        { location_id: A, time_entry_guid: "t2", employee_guid: "e2", user_id: null, in_at: et("2026-10-06", "11:00"), out_at: et("2026-10-06", "12:00"), deleted: false }] }));
+    expect(at(fb, "2026-10-06")).toMatchObject({ source: "toast", open_punches: 1 });
+  });
+  it("fix r2 P1: across the payroll-week boundary, a Saturday 23:00 open punch marks the NEXT week's Sunday", () => {
+    const next = Array.from({ length: 7 }, (_, i) => ({ location_id: A, business_date: `2026-10-${String(11 + i)}`, linked: true,
+      evidence_run_id: "11111111-1111-4111-8111-111111111111", settled: true }));
+    const out = buildLaborWeek(src({ weekStart: "2026-10-11", builtThrough: "2026-10-17", days: next,
+      punches: [punch("7", "501", null, "2026-10-10", "23:00", null)], wages: [wage("7", 2000)] }));
+    expect(out.days.find((d) => d.business_date === "2026-10-11")).toMatchObject({ state: "covered", open_punches: 1 });
+    expect(out.days.find((d) => d.business_date === "2026-10-12")!.open_punches).toBe(0);
+    expect(out.week.ot_state).toBe("lower_bound");
+    expect(LABOR_OPEN_PUNCH_SPAN_HOURS).toBe(24);
   });
   it("a break is unpaid: its minutes come out of the middle of the punch", () => {
     const out = buildLaborWeek(src({ punches: [punch("7", "501", null, "2026-10-05", "10:00", "11:00", 30)], wages: [wage("7", 2000)] }));

@@ -131,10 +131,15 @@ $$;
 -- ── B. THE DERIVED LABOR FACTS (rebuilt per company week; never appended to) ────────────────────
 -- Build-time constants. lib/facts/labor-config-shared.ts carries the same numbers (pinned equal by
 -- tests/fact-labor-config.test.ts); changing one bumps LABOR_BUILDER_VERSION, which rebuilds every week.
+-- open_span (fix r2 P1, LABOR_OPEN_PUNCH_SPAN_HOURS): an OPEN punch (no clock-out) could run this long from its
+-- clock-in, so every week the span [clock-in, clock-in + open_span) reaches reads it (frame, source,
+-- fingerprint: one predicate), and the builder counts it on every day of that span. Fixed from clock-in, so
+-- a week's set never moves with the clock; 24 h is past any real shift (10.5 h schedule maximum).
 create function public.fact_labor_constants()
-returns table(floor_day date, floor_week date, settle interval, ot_threshold_minutes integer, ot_multiplier numeric, read_window_days integer)
+returns table(floor_day date, floor_week date, settle interval, ot_threshold_minutes integer, ot_multiplier numeric, read_window_days integer,
+  open_span interval)
 language sql immutable set search_path = pg_catalog, public as $$
-  select date '2026-07-23', date '2026-07-19', interval '36 hours', 2400, 1.5::numeric, 90
+  select date '2026-07-23', date '2026-07-19', interval '36 hours', 2400, 1.5::numeric, 90, interval '24 hours'
 $$;
 
 create table public.labor_quarter (
@@ -222,14 +227,14 @@ language sql stable security definer set search_path = pg_catalog, public as $$
   with k as (select * from public.fact_labor_constants()),
   b as (
     select (p_week_start::timestamp at time zone 'America/New_York') s, ((p_week_start + 7)::timestamp at time zone 'America/New_York') e,
-      greatest(p_week_start, k.floor_day) d0, least(p_week_start + 6, (clock_timestamp() at time zone 'America/New_York')::date - 1) d1, k.settle, k.read_window_days
+      greatest(p_week_start, k.floor_day) d0, least(p_week_start + 6, (clock_timestamp() at time zone 'America/New_York')::date - 1) d1, k.settle, k.read_window_days, k.open_span
     from k
   ), shops as (
     select x.loc, bool_or(x.linked) linked from (
       select l.location_id loc, true linked from public.sevenshifts_location_links l where l.active
       union all
       select t.location_id, false from public.toast_time_entries t, b
-       where not t.deleted and t.in_at < b.e and (t.out_at > b.s or (t.out_at is null and t.in_at >= b.s))
+       where not t.deleted and t.in_at < b.e and (t.out_at > b.s or (t.out_at is null and t.in_at + b.open_span > b.s))
     ) x group by x.loc
   ), d as (
     select shops.loc, shops.linked, g::date bd, ((g::date + 1)::timestamp at time zone 'America/New_York') day_end , b.settle, b.read_window_days
@@ -260,10 +265,10 @@ begin
   with punches as (
     select p.id, p.user_id, p.location_id, p.role_id, p.clocked_in, p.clocked_out, p.break_minutes, p.deleted
       from public.sevenshifts_time_punches p
-     where p.clocked_in < v_e and (p.clocked_out > v_s or (p.clocked_out is null and p.clocked_in >= v_s))
+     where p.clocked_in < v_e and (p.clocked_out > v_s or (p.clocked_out is null and p.clocked_in + k.open_span > v_s))
   ), toast as (
     select t.location_id, t.time_entry_guid, t.employee_guid, t.user_id, t.in_at, t.out_at, t.deleted
-      from public.toast_time_entries t where t.in_at < v_e and (t.out_at > v_s or (t.out_at is null and t.in_at >= v_s))
+      from public.toast_time_entries t where t.in_at < v_e and (t.out_at > v_s or (t.out_at is null and t.in_at + k.open_span > v_s))
   ), wage_users as (
     select distinct p.user_id u from punches p
     union select l.sevenshifts_user_id from public.sevenshifts_user_links l where l.active
@@ -302,19 +307,19 @@ returns text language plpgsql stable security definer set search_path = pg_catal
 declare
   v_s timestamptz := p_week_start::timestamp at time zone 'America/New_York';
   v_e timestamptz := (p_week_start + 7)::timestamp at time zone 'America/New_York';
-  v_floor date; v_through date; v_punch text; v_toast text; v_links text; v_wages text; v_settings text; v_days text;
+  v_floor date; v_span interval; v_through date; v_punch text; v_toast text; v_links text; v_wages text; v_settings text; v_days text;
 begin
   if p_week_start is null or p_builder_version is null or extract(dow from p_week_start) <> 0 then raise exception 'fact_invalid_request'; end if;
-  select floor_day into v_floor from public.fact_labor_constants();
+  select floor_day, open_span into v_floor, v_span from public.fact_labor_constants();
   v_through := least(p_week_start + 6, (clock_timestamp() at time zone 'America/New_York')::date - 1);
   if v_through < greatest(p_week_start, v_floor) then v_through := null; end if;
   select md5(string_agg(concat_ws(':', p.id, p.user_id, coalesce(p.location_id::text, '-'), coalesce(p.role_id::text, '-'),
            extract(epoch from p.clocked_in), coalesce(extract(epoch from p.clocked_out)::text, '-'), coalesce(p.break_minutes::text, '-'), p.deleted), ',' order by p.id))
     into v_punch from public.sevenshifts_time_punches p
-   where p.clocked_in < v_e and (p.clocked_out > v_s or (p.clocked_out is null and p.clocked_in >= v_s));
+   where p.clocked_in < v_e and (p.clocked_out > v_s or (p.clocked_out is null and p.clocked_in + v_span > v_s));
   select md5(string_agg(concat_ws(':', t.location_id, t.time_entry_guid, t.employee_guid, coalesce(t.user_id::text, '-'),
            extract(epoch from t.in_at), coalesce(extract(epoch from t.out_at)::text, '-'), t.deleted), ',' order by t.location_id, t.time_entry_guid))
-    into v_toast from public.toast_time_entries t where t.in_at < v_e and (t.out_at > v_s or (t.out_at is null and t.in_at >= v_s));
+    into v_toast from public.toast_time_entries t where t.in_at < v_e and (t.out_at > v_s or (t.out_at is null and t.in_at + v_span > v_s));
   select md5(concat_ws('|',
     (select string_agg(l.id::text || ':' || l.active, ',' order by l.id) from public.sevenshifts_location_links l),
     (select string_agg(l.id::text || ':' || l.active, ',' order by l.id) from public.sevenshifts_user_links l),
@@ -322,7 +327,7 @@ begin
   select md5(string_agg(o.user_id || ':' || o.s, ',' order by o.user_id)) into v_wages from (
     select w.user_id, max(w.seq) s from public.fact_wage_observations w
      where w.user_id in (select p.user_id from public.sevenshifts_time_punches p
-                          where p.clocked_in < v_e and (p.clocked_out > v_s or (p.clocked_out is null and p.clocked_in >= v_s))
+                          where p.clocked_in < v_e and (p.clocked_out > v_s or (p.clocked_out is null and p.clocked_in + v_span > v_s))
                          union select l.sevenshifts_user_id from public.sevenshifts_user_links l where l.active)
      group by w.user_id) o;
   select md5(string_agg(concat_ws(':', s.company_id, coalesce(s.daily_ot_threshold::text, '-'), coalesce(s.premium_ot_threshold::text, '-'),
@@ -581,10 +586,15 @@ end $$;
 -- NULL on a day with no labor_day_coverage row (labor unbuilt), day_state says what a built day is;
 -- sales_state is 'covered' only when every business date that can land a check on that clock day has
 -- order facts covered (0337 fact_day_coverage covered | covered_zero): the day itself, the day before (a
--- check after midnight belongs to the previous business date) and every business date that actually
--- landed a check there. Otherwise 'not_covered' and sales_cents / sale_checks are NULL. Stated limit: a
--- promised check whose business date has NO order-fact row at all and is older than the day before is
--- invisible here (the order fact layer builds every day from its floor, so that is a day not built yet).
+-- check after midnight belongs to the previous business date), every business date that actually landed a
+-- check there, and (fix r2 P2, promised clock only) every CAPTURED business date in the bounded lookback
+-- [day - 14, day + 1] (LABOR_PROMISED_LOOKBACK_DAYS). "Captured" is read from the SOURCE, never from built
+-- facts: a toast_capture_runs row (any status) or a toast_order_latest_pointers row for that shop and date,
+-- i.e. a day the order fact layer has to build (fact_order_days_stale's own day set). So a Monday whose
+-- order-fact build failed makes Wednesday's promised sales unknown even though no fact row of Monday exists.
+-- Otherwise 'not_covered' and sales_cents / sale_checks are NULL. Stated limit: a check promised MORE than
+-- 14 days after its business date counts only once that business date's facts are built (then `cand` finds
+-- it); before that it is invisible here (catering lead time beyond two weeks).
 create function public.fact_labor_splh(p_location_id uuid, p_from date, p_to date, p_clock text)
 returns table(quarter_start_at timestamptz, business_date date, wall_quarter smallint, fold smallint, labor_minutes bigint,
   hourly_minutes bigint, sales_cents bigint, sale_checks bigint, day_state text, open_punches integer, sales_state text)
@@ -620,11 +630,21 @@ begin
       from cand join cls on cls.business_date = cand.fbd and cls.order_guid = cand.og and cls.check_guid = cand.cg
      where cls.sale_class = 'sale' and cand.qs is not null
      group by 1, 2, 3, 4
+  ), captured as (
+    -- Fix r2 P2: the business dates the SOURCE says exist (independent of any fact build), promised clock only.
+    select r.business_date bd from public.toast_capture_runs r
+     where p_clock = 'promised' and r.location_id = p_location_id and r.business_date between p_from - 14 and p_to + 1
+    union
+    select lp.business_date from public.toast_order_latest_pointers lp
+     where p_clock = 'promised' and lp.location_id = p_location_id and lp.business_date between p_from - 14 and p_to + 1
   ), need as (
     -- The business dates each clock day depends on.
     select g::date d, g::date nb from generate_series(p_from, p_to, interval '1 day') g
     union select g::date, g::date - 1 from generate_series(p_from, p_to, interval '1 day') g
     union select cand.bd, cand.fbd from cand
+    -- Promised: every captured business date in [day - 14, day + 1] (LABOR_PROMISED_LOOKBACK_DAYS).
+    union select g::date, captured.bd from generate_series(p_from, p_to, interval '1 day') g
+      join captured on captured.bd between g::date - 14 and g::date + 1
   ), cov as (
     select need.d, bool_and(coalesce(c.state in ('covered', 'covered_zero'), false)) ok
       from need left join public.fact_day_coverage c on c.location_id = p_location_id and c.business_date = need.nb and c.fact = 'orders'
