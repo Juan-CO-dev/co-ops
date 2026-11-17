@@ -392,6 +392,9 @@ export const RESERVED_ACTIONS = [
   // and sets destructive=true literally. There is no TypeScript call site and there may
   // never be one: no app code path deletes catering rows.
   "catering.test_data_purge",
+  // SQL-only: 0338 save_labor_burden INSERTs its own audit row (destructive literally true, before/after
+  // values) in the same transaction as the burden row. No TypeScript call site: the writer is the RPC.
+  "labor_burden.save",
   // SQL-only: migration 0330 (audit W23 B129, owner decision W23-4 b) switches off empty duplicate
   // catering companies and INSERTs one audit row per company itself. No TypeScript call site.
   "catering.company.deactivate_duplicate",

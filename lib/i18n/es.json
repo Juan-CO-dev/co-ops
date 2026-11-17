@@ -9062,5 +9062,21 @@
   "vendorMail.line.qty": "Cantidad",
   "vendorMail.line.unit": "Unidad",
   "vendorMail.line.unitPriceCents": "Precio unitario",
-  "vendorMail.line.extendedCents": "Total de la línea"
+  "vendorMail.line.extendedCents": "Total de la línea",
+  "labor.facts.view.fully_loaded": "Mano de obra total (con cargas)",
+  "labor.facts.view.pure_hourly": "Mano de obra por hora (con horas extra)",
+  "labor.facts.target.loaded": "Meta: {pct}% o menos",
+  "labor.facts.target.hourly": "Meta: {pct}%",
+  "labor.facts.target.default": "meta predeterminada",
+  "labor.facts.target_varies": "La meta cambió durante estas fechas",
+  "labor.facts.estimated": "estimado",
+  "labor.facts.burden_estimated": "Los impuestos y beneficios son un estimado ({pct}%)",
+  "labor.facts.rate_estimated": "Algunas horas usan el salario estimado de la tienda",
+  "labor.facts.straight_time": "Tiempo normal (antes de horas extra)",
+  "labor.facts.salary_unknown": "No hay salarios guardados, así que no se puede mostrar la mano de obra total",
+  "labor.facts.ot_lower_bound": "Las horas extra pueden ser más: faltan algunos días",
+  "labor.facts.week_open": "Esta semana todavía no termina",
+  "labor.facts.coverage.fallback": "De Toast (sin comparar con 7shifts)",
+  "labor.facts.coverage.pending": "Esperando a que 7shifts se actualice",
+  "labor.facts.coverage.incomplete": "Faltan horas de este día"
 }
