@@ -50,40 +50,61 @@ export async function forwardVendorMail(ctx: AuthContext, id: string, input: Ven
   const recipientDomain = recipient.split("@")[1]!;
   if (receiving.includes(recipient) || recipientDomain === receivingDomain || recipientDomain.endsWith(`.${receivingDomain}`)) throw new VendorMailError(400, "forward_loop");
   // Completed operations replay from the immutable snapshot even if originals are no longer available.
+  // An UNFINISHED claim resumes from the same snapshot: its frozen body and attachment manifest, never a
+  // rebuilt body — the body converter may have changed since the claim (VML-r3), and a rebuilt body would be
+  // a different payload for the same request (409 request_conflict, the claim stranded for good).
   const savedClaim = await sb.from("vendor_mail_events").select("data").eq("inbound_message_id", id).eq("event_type", "forward_claim").eq("request_id", input.request_id).maybeSingle();
   if (savedClaim.error) throw new VendorMailError(503, "vendor_mail_unavailable");
+  let claim: Awaited<ReturnType<typeof vendorMailRpc>>;
+  let body: string;
+  const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
   if (savedClaim.data) {
     const snapshot = savedClaim.data.data as Record<string, unknown>;
     if (snapshot.recipient !== recipient || snapshot.note !== (input.note ?? "")) throw new VendorMailError(409, "request_conflict");
-    await vendorMailRpc(ctx, id, input, "vendor_mail_forward_claim", snapshot);
+    claim = await vendorMailRpc(ctx, id, input, "vendor_mail_forward_claim", snapshot);
     const completed = await sb.from("vendor_mail_events").select("revision,data").eq("inbound_message_id", id).eq("event_type", "forward_result").eq("data->>claim_request_id", input.request_id.toLowerCase()).maybeSingle();
     if (completed.error) throw new VendorMailError(503, "vendor_mail_unavailable");
     if (completed.data) return { revision: completed.data.revision, outcome: completed.data.data.outcome, replayed: true };
+    // The frozen body must still be the body the claim hashed; each attachment must still be the bytes it hashed.
+    if (typeof snapshot.body !== "string" || typeof snapshot.body_sha256 !== "string" || hash(snapshot.body) !== snapshot.body_sha256 || !Array.isArray(snapshot.attachments)) throw new VendorMailError(409, "forward_originals_missing");
+    body = snapshot.body;
+    const types = new Map(vendorMailAssetEntries(row).map(a => [a.path, a.contentType] as const));
+    let bytes = Buffer.byteLength(body) * 8 + 8192;
+    for (const entry of snapshot.attachments as Array<Record<string, unknown>>) {
+      if (typeof entry?.path !== "string" || typeof entry.filename !== "string" || typeof entry.sha256 !== "string") throw new VendorMailError(409, "forward_originals_missing");
+      const { data, error } = await sb.storage.from("receipts").download(entry.path);
+      if (error || !data) throw new VendorMailError(409, "forward_originals_missing");
+      bytes += Math.ceil(data.size / 3) * 4 + 2048;
+      if (bytes > VENDOR_MAIL_FORWARD_LIMIT) throw new VendorMailError(413, "forward_too_large");
+      const content = Buffer.from(await data.arrayBuffer());
+      if (hash(content) !== entry.sha256) throw new VendorMailError(409, "forward_originals_missing");
+      attachments.push({ filename: entry.filename, content, contentType: types.get(entry.path) ?? "application/octet-stream" });
+    }
+  } else {
+    const detail = await getVendorMailMessage(ctx, id);
+    if (row.archive_state !== "complete" || detail.body_state !== "available" || detail.body_truncated) throw new VendorMailError(409, "forward_originals_missing");
+    const note = input.note ?? "";
+    body = `${note}${note ? "\n\n" : ""}From: ${row.from_address ?? ""}\nSubject: ${row.subject ?? ""}\n\n${detail.body_text}`;
+    if (Buffer.byteLength(body) > 131072) throw new VendorMailError(413, "forward_body_too_large");
+    const manifest: Array<{ path: string; filename: string; sha256: string }> = [];
+    let bytes = Buffer.byteLength(body) * 8 + 8192;
+    for (const asset of vendorMailAssetEntries(row).filter(a => !a.kind || a.kind === "attachment")) {
+      if (!/\.(?:pdf|csv|txt|png|jpe?g|gif|webp|docx?|xlsx?|rtf|zip)$/i.test(asset.filename)) throw new VendorMailError(409, "forward_attachment_unsupported");
+      if (!asset.path || asset.omitted) throw new VendorMailError(409, "forward_originals_missing");
+      const { data, error } = await sb.storage.from("receipts").download(asset.path);
+      if (error || !data) throw new VendorMailError(409, "forward_originals_missing");
+      bytes += Math.ceil(data.size / 3) * 4 + 2048;
+      if (bytes > VENDOR_MAIL_FORWARD_LIMIT) throw new VendorMailError(413, "forward_too_large");
+      const content = Buffer.from(await data.arrayBuffer());
+      attachments.push({ filename: asset.filename, content, contentType: asset.contentType });
+      manifest.push({ path: asset.path, filename: asset.filename, sha256: hash(content) });
+    }
+    if (attachments.length > 25) throw new VendorMailError(413, "forward_too_large");
+    claim = await vendorMailRpc(ctx, id, input, "vendor_mail_forward_claim", { recipient, sender, note, body, body_sha256: hash(body), attachments: manifest });
+    const prior = await sb.from("vendor_mail_events").select("data").eq("inbound_message_id", id).eq("event_type", "forward_result").eq("data->>claim_request_id", input.request_id.toLowerCase()).maybeSingle();
+    if (prior.error) throw new VendorMailError(503, "vendor_mail_unavailable");
+    if (prior.data) return { revision: row.revision, outcome: prior.data.data.outcome, replayed: true };
   }
-  const detail = await getVendorMailMessage(ctx, id);
-  if (row.archive_state !== "complete" || detail.body_state !== "available" || detail.body_truncated) throw new VendorMailError(409, "forward_originals_missing");
-  const note = input.note ?? "";
-  const body = `${note}${note ? "\n\n" : ""}From: ${row.from_address ?? ""}\nSubject: ${row.subject ?? ""}\n\n${detail.body_text}`;
-  if (Buffer.byteLength(body) > 131072) throw new VendorMailError(413, "forward_body_too_large");
-  const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
-  const manifest: Array<{ path: string; filename: string; sha256: string }> = [];
-  let bytes = Buffer.byteLength(body) * 8 + 8192;
-  for (const asset of vendorMailAssetEntries(row).filter(a => !a.kind || a.kind === "attachment")) {
-    if (!/\.(?:pdf|csv|txt|png|jpe?g|gif|webp|docx?|xlsx?|rtf|zip)$/i.test(asset.filename)) throw new VendorMailError(409, "forward_attachment_unsupported");
-    if (!asset.path || asset.omitted) throw new VendorMailError(409, "forward_originals_missing");
-    const { data, error } = await sb.storage.from("receipts").download(asset.path);
-    if (error || !data) throw new VendorMailError(409, "forward_originals_missing");
-    bytes += Math.ceil(data.size / 3) * 4 + 2048;
-    if (bytes > VENDOR_MAIL_FORWARD_LIMIT) throw new VendorMailError(413, "forward_too_large");
-    const content = Buffer.from(await data.arrayBuffer());
-    attachments.push({ filename: asset.filename, content, contentType: asset.contentType });
-    manifest.push({ path: asset.path, filename: asset.filename, sha256: hash(content) });
-  }
-  if (attachments.length > 25) throw new VendorMailError(413, "forward_too_large");
-  const claim = await vendorMailRpc(ctx, id, input, "vendor_mail_forward_claim", { recipient, sender, note, body, body_sha256: hash(body), attachments: manifest });
-  const prior = await sb.from("vendor_mail_events").select("data").eq("inbound_message_id", id).eq("event_type", "forward_result").eq("data->>claim_request_id", input.request_id.toLowerCase()).maybeSingle();
-  if (prior.error) throw new VendorMailError(503, "vendor_mail_unavailable");
-  if (prior.data) return { revision: row.revision, outcome: prior.data.data.outcome, replayed: true };
   if (claim.replayed) {
     const event = await sb.from("vendor_mail_events").select("created_at").eq("request_id", input.request_id).maybeSingle();
     if (event.error || !event.data) throw new VendorMailError(503, "vendor_mail_unavailable");
