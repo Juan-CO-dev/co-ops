@@ -6,7 +6,11 @@
  *   burden       = burden % x (pure_hourly + salaried), per shop, its own % (12% default = `estimated`)
  * Null rules: an unknown salary makes fully_loaded (and its burden) null and leaves pure_hourly valid;
  * unknown sales make every % null; unknown HOURS (an open punch, a missing / incomplete day, an unbuilt
- * week: fix r1 P1) make every % null and its tone 'none'. Never one blended stored number. */
+ * week: fix r1 P1; a PENDING day: fix r3) make every % null and its tone 'none'. Never one blended stored number.
+ * Fix r3 rule: a day inside its settle window has no ledger evidence by definition (evidence = a finished
+ * time_punches run started >= the settle time after the day ended), and a sync that failed or ran inside the
+ * window is indistinguishable from one that captured everything, so its hours (zero or not) are provisional:
+ * shown as numbers, never a % or a tone. A zero is definitive only once the day is COVERED. */
 import type { RoleCode } from "@/lib/roles";
 import { laborTone, type LaborTone } from "@/lib/scheduling/board-shared";
 import { LABOR_TARGET_HOURLY_PCT, LABOR_TARGET_LOADED_PCT } from "./labor-config-shared";
@@ -31,7 +35,7 @@ export interface LaborWeekView {
   salariedCents: number | null; burdenCents: number | null; fullyLoadedCents: number | null;
   salaryUnknown: boolean; burdenEstimated: boolean; rateEstimated: boolean;
   otState: LaborCostRow["ot_state"]; coverageComplete: boolean;
-  /** false = some worked hours are unknown (open punch, missing / incomplete day, unbuilt week): no % is definitive */
+  /** false = some worked hours are unknown (open punch, missing / incomplete / pending day, unbuilt week): no % is definitive */
   hoursKnown: boolean; openPunches: number;
 }
 
@@ -66,7 +70,7 @@ export function laborWeekViews(rows: readonly LaborCostRow[]): LaborWeekView[] {
       s + Math.round((Number(r.burden_pct) / 100) * (Number(r.hourly_straight_cents) + Number(r.ot_premium_cents) + Number(r.salaried_cents))), 0);
     const pure = straight + premium;
     const openPunches = rs.reduce((s, r) => s + Number(r.open_punches), 0);
-    const hoursKnown = rs.every((r) => r.ot_state !== "unbuilt" && Number(r.days_missing) + Number(r.days_incomplete) + Number(r.open_punches) === 0);
+    const hoursKnown = rs.every((r) => r.ot_state !== "unbuilt" && Number(r.days_missing) + Number(r.days_incomplete) + Number(r.days_pending) + Number(r.open_punches) === 0);
     // An open punch's hours are unknown, so its week's overtime can only be a lower bound (never upgrades week_open).
     const otRows = rs.map((r) => (r.ot_state === "assessed" && Number(r.open_punches) > 0 ? "lower_bound" as const : r.ot_state));
     return {

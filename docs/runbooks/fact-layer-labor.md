@@ -19,7 +19,7 @@ Rollback: unset `FACT_LAYER_LABOR`. The derived tables can stay. **The observati
 - One week per transaction, newest first, inside the order pass's deadline (entry + 240 s); a week starts only with a whole 60 s budget left. `fact_stale` / `fact_payload_mismatch` = raced, not a failure.
 - Heartbeat: the same `fact-build` row, with a `labor` object (counts, up to 20 failed weeks by fixed code: `fact_week_timeout`, `fact_source_read_failed`, `fact_replace_failed`). Any labor failure makes the row `cron.failure`. Nothing emails.
 
-Day states: `covered` (a finished ledger run whose `time_punches` result has a null `error_code`, started 36 h after the day ended, day inside its 90-day read window) · `pending_settle` · `fallback_unverified` (Toast, when 7shifts is not covered and Toast has hours) · `incomplete`. One source per shop-day; 7shifts and Toast are never added together.
+Day states: `covered` (a finished ledger run whose `time_punches` result has a null `error_code`, started 36 h after the day ended, day inside its 90-day read window) · `pending_settle` · `fallback_unverified` (Toast, when 7shifts is not covered and Toast has hours) · `incomplete`. One source per shop-day; 7shifts and Toast are never added together. A `pending_settle` day's hours are provisional (fix r3): a range touching one reads `hoursKnown: false` (no % and no tone), whatever a sync inside the window did; a zero is definitive only once the day is `covered`.
 
 ## 3. The burden %
 
