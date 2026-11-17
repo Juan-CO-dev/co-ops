@@ -12,7 +12,7 @@ const dynamic = [
   ...["price", "item_number", "pack", "needs_person", "noop"].map(k => `kind.${k}`),
   ...["item_number", "name_exact", "ambiguous", "unmatched"].map(k => `match.${k}`),
   ...["staged", "applied", "superseded"].map(k => `status.${k}`),
-  ...["auth", "too_large", "unknown_adapter", "adapter_vendor_mismatch", "multiple_accounts", "invalid_plan"].map(k => `error.${k}`),
+  ...["auth", "too_large", "unknown_adapter", "adapter_vendor_mismatch", "multiple_accounts", "account_shop_mismatch", "no_price_rows", "invalid_plan"].map(k => `error.${k}`),
 ].map(k => prefix + k);
 const literal = [...component.matchAll(/t\("(admin\.vendor_import\.[^"]+)"/g)].map(m => m[1]!);
 
