@@ -5445,6 +5445,7 @@
   "admin.vendor_import.reason.pack_dimension_mismatch": "Pack dimensions differ",
   "admin.vendor_import.reason.price_date_missing": "Price evidence has no valid date",
   "admin.vendor_import.reason.price_basis_unresolved": "Price basis cannot be resolved",
+  "admin.vendor_import.reason.price_unit_unsupported": "Pricing unit not supported — check the price by hand",
   "admin.vendor_import.reason.price_depends_on_pack": "Price depends on the pack decision",
   "admin.vendor_import.reason.price_same": "Price is unchanged",
   "admin.vendor_import.reason.same_date_price_conflict": "Different prices share the same date",

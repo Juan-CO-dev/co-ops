@@ -5445,6 +5445,7 @@
   "admin.vendor_import.reason.pack_dimension_mismatch": "Las dimensiones del empaque difieren",
   "admin.vendor_import.reason.price_date_missing": "La evidencia del precio no tiene una fecha válida",
   "admin.vendor_import.reason.price_basis_unresolved": "No se puede determinar la base del precio",
+  "admin.vendor_import.reason.price_unit_unsupported": "Unidad de precio no admitida — revisa el precio a mano",
   "admin.vendor_import.reason.price_depends_on_pack": "El precio depende de la decisión del empaque",
   "admin.vendor_import.reason.price_same": "El precio no cambia",
   "admin.vendor_import.reason.same_date_price_conflict": "Hay precios distintos con la misma fecha",

@@ -49,6 +49,8 @@ export const baldorSmartshop: Adapter = {
     try { const first = parseCsv(text)[0]; return !!first && first.line === 1 && first.cells.join("\u0000") === SMARTSHOP_COLUMNS.join("\u0000"); }
     catch { return false; }
   },
+  // The range dates every row (end) and is quoted in each note (start): both are evidence. " (1)" is not.
+  nameEvidence(sourceFile) { const { from, to } = exportRange(sourceFile); return `${from}_${to}`; },
   parse(text, sourceFile) {
     const range = exportRange(sourceFile);
     const rows = parseCsv(text);

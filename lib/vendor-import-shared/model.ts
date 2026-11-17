@@ -20,6 +20,9 @@ export interface ExportRow {
   pack_catch_weight?: true;
   pack_unparsed?: true;
   price_basis?: "per case" | "per lb" | "per each" | "per dozen" | "per bundle" | null;
+  /** The source named a pricing unit the adapter does not price (US Foods invoice: not CS/CA/LB/EA/DZ).
+   *  The price is never read from the UOM: the matcher holds the row (`price_unit_unsupported`). */
+  price_unit_unsupported?: true;
   receipt_doc?: string;
   receipt_line?: number;
   net_wt_lb?: number;
@@ -56,6 +59,10 @@ export interface Adapter {
   format?: "text" | "xlsx";
   detects(text: string): boolean;
   parse(text: string, sourceFile: string): ExportRow[];
+  /** What the FILE NAME contributes to the parsed evidence (Baldor: the export range that dates every row), in a
+   *  canonical form. Staging folds it into the batch identity so the same bytes under another name are a new batch.
+   *  Absent = the parse does not depend on the name. Throws for a name the parse would refuse. */
+  nameEvidence?(sourceFile: string): string;
   /** Source rows the adapter deliberately did not turn into observations (e.g. credit memos). */
   ignoredRows?(text: string): number;
 }
@@ -89,6 +96,7 @@ export const REASONS = [
   "pack_dimension_mismatch",
   "price_date_missing",
   "price_basis_unresolved",
+  "price_unit_unsupported",
   "price_depends_on_pack",
   "price_same",
   "same_date_price_conflict",

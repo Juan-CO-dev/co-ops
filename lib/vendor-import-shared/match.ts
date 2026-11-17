@@ -61,7 +61,9 @@ export function matchObservations(rows: readonly ExportRow[], catalog: readonly 
     }
     const noPrice = row.price_cents == null && row.price_per_lb_cents == null;
     const comparison = packComparison(row, sku.root);
-    if (row.price_per_lb_cents != null && sku.root?.dimension !== "weight") add("needs_person", "per_lb_on_count_root");
+    // A pricing unit the adapter does not price is held by name before any price is read.
+    if (!noPrice && row.price_unit_unsupported) add("needs_person", "price_unit_unsupported");
+    else if (row.price_per_lb_cents != null && sku.root?.dimension !== "weight") add("needs_person", "per_lb_on_count_root");
     else if (comparison.dimensionMismatch) add("needs_person", "pack_dimension_mismatch");
     else if (!noPrice) {
       const price = priceComparison(row, sku.root, sku.price_basis, sku.latestPrice);

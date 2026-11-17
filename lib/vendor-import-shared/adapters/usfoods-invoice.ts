@@ -12,7 +12,10 @@ const C = {
   pack: at("PackingSize"), weight: at("Weight"), qtyShip: at("QtyShip"), unit: at("PricingUnit"), price: at("UnitPrice"),
 };
 /** The pricing unit names what UnitPrice is per. LB = catch weight: the case varies, the pound is the price. */
-const BASIS: Record<string, ExportRow["price_basis"]> = { CS: "per case", CA: "per case", LB: "per lb", EA: "per each", DZ: "per dozen" };
+const BASIS: Record<string, NonNullable<ExportRow["price_basis"]>> = { CS: "per case", CA: "per case", LB: "per lb", EA: "per each", DZ: "per dozen" };
+/** The only PricingUnit values this adapter prices. Any other (BD, BNDL, BG, blank, …) is marked
+ *  `price_unit_unsupported` and the matcher holds the line for a person; its UOM is never read as a basis. */
+export const USFOODS_INVOICE_PRICING_UNITS: readonly string[] = Object.keys(BASIS);
 const signedNumber = /^-?\d+(?:\.\d+)?$/;
 
 function records(text: string) {
@@ -55,7 +58,7 @@ export const usfoodsInvoice: Adapter = {
           list_name: `US Foods invoice ${c[C.doc]}`, category: "", item_no: c[C.item]!, description: c[C.description]!, brand: c[C.brand]!,
           ...parsePack(c[C.pack]!),
           ...(perLb ? { pack_catch_weight: true as const, ...(signedNumber.test(c[C.weight]!) && weight > 0 ? { net_wt_lb: weight } : {}) } : {}),
-          uom: unit, price_basis: basis, ...parsePrice(`${c[C.price]}${perLb ? "/lb" : ""}`),
+          uom: unit, price_basis: basis, ...(basis ? {} : { price_unit_unsupported: true as const }), ...parsePrice(`${c[C.price]}${perLb ? "/lb" : ""}`),
           last_purchase_qty: qty, last_purchase_uom: unit, last_purchase_date: date, exported_at: date,
           // Ordered but not shipped: the line still states a price, but it is shown flagged and left unselected.
           ...(qty === 0 ? { flags: ["not_shipped" as const] } : {}),

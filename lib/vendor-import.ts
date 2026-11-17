@@ -45,6 +45,9 @@ interface ImportReport {
   /** US Foods invoice at a shop only: the file's account, and the shop it is on file for (null = not on file yet,
    *  the reviewer confirms it is the chosen shop's). */
   account?: { number: string; location_id: string | null };
+  /** The uploaded file's own SHA-256, present only when the batch identity (`source_sha256`) also covers
+   *  evidence read from the file name (Baldor SmartShop's export range). */
+  file_sha256?: string;
 }
 interface BatchRow {
   id: string; vendor_id: string; location_id: string | null; account_id: string | null;
@@ -200,7 +203,7 @@ function readSource(file: VendorImportFile): ImportSource {
     let rows: string[][];
     try { rows = readXlsxFirstSheet(file.bytes); }
     catch { throw new VendorImportError(400, "invalid_payload"); }
-    // The batch identity is the uploaded file itself, not our serialization of it.
+    // The file hash is of the uploaded bytes, not our serialization of them (staging may add name evidence).
     return { text: rowsToCsv(rows), format: "xlsx", sha: createHash("sha256").update(file.bytes).digest("hex") };
   }
   const text = "bytes" in file ? new TextDecoder().decode(file.bytes) : file.text;
@@ -226,8 +229,11 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
   const sourceName = file.name.split(/[\\/]/).pop() ?? "";
   let parsed: ReturnType<typeof adapter.parse>;
   let skipped = 0;
-  try { parsed = adapter.parse(source.text, sourceName); skipped = adapter.ignoredRows?.(source.text) ?? 0; }
-  catch { throw new VendorImportError(400, "invalid_payload"); }
+  let nameEvidence: string | undefined;
+  try {
+    parsed = adapter.parse(source.text, sourceName); skipped = adapter.ignoredRows?.(source.text) ?? 0;
+    nameEvidence = adapter.nameEvidence?.(sourceName);
+  } catch { throw new VendorImportError(400, "invalid_payload"); }
   // A file of only credit memos (or other non-price lines) is a real file with nothing to price.
   if (parsed.length === 0 && skipped > 0) throw new VendorImportError(400, "no_price_rows");
   // A receipt file can contain several vendors; preserve row citations and stage
@@ -252,7 +258,10 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
   const accounts = [...new Set(rows.map(r => r.account_id).filter(Boolean))];
   // Two accounts no mapping separates: the file cannot say which lines are this shop's.
   if (accounts.length > 1) throw new VendorImportError(400, "multiple_accounts");
-  const sha = source.sha;
+  // The batch identity covers every input the parse read (review r1): the file, and what its NAME dates it by.
+  // Same bytes under a corrected range are a new batch, never a reuse of the stale one; the file's own hash is kept.
+  const sha = nameEvidence === undefined ? source.sha
+    : createHash("sha256").update(`${source.sha}\n${adapter.id}\n${nameEvidence}`, "utf8").digest("hex");
   const sb = getServiceRoleClient();
   const existingQuery = sb.from("vendor_import_batches").select("id")
     .eq("vendor_id", vendorId).eq("source_sha256", sha).eq("adapter_version", ADAPTER_VERSION).eq("status", "staged");
@@ -284,6 +293,7 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
       source_sha256: sha, adapter_version: ADAPTER_VERSION, row: observation.row };
   }
   const report: ImportReport = { counts: {}, reasons: {}, needs_person: [], before_state: before, ignored_rows: parsed.length - rows.length + skipped,
+    ...(sha !== source.sha ? { file_sha256: source.sha } : {}),
     ...(accountShops && accounts[0] ? { account: { number: accounts[0], location_id: accountShops.get(accounts[0]) ?? null } } : {}) };
   for (const o of observations) {
     report.counts[o.kind] = (report.counts[o.kind] ?? 0) + 1;
