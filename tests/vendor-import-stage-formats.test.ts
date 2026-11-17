@@ -124,3 +124,61 @@ describe("staging a US Foods invoice CSV", () => {
     expect(await code(stageVendorImport(actor, vendor, { name: "InvoiceDetails.csv", text: credits }, shop))).toBe("no_price_rows");
   });
 });
+
+describe("account -> shop rules belong to the US Foods invoice only (CC decisions 2 + 3)", () => {
+  const pfgFile = (account: string) => ["Performance Foodservice", "Test List", `(TEST SHOP - ${account})`,
+    "Category Name,Custom Product Description,Product Description,Brand,StateOfOrigin,Domestic,Custom Product Number,Product Number,Pack Size,UOM,Price,Last Purchase (qty & date)",
+    "Produce,,TEST ITEM,TESTBRAND,,,,1000001,6/5 LB,CS,$10.00,", "Generated: 11/16/2026 08:00 AM", ""].join("\n");
+
+  it("PFG keeps its exact earlier behaviour: an account mapped to another shop is neither dropped nor refused, and the report gains nothing", async () => {
+    vendorNamed("PFG");
+    state.tables.vendor_location_accounts = [{ vendor_id: vendor, location_id: other, account_number: "90000002", active: true }];
+    const view = await stageVendorImport(actor, vendor, { name: "pfg.csv", text: pfgFile("90000002") }, shop);
+    expect(state.staged).toMatchObject({ adapter: "pfg-customerfirst-v1", account_id: "90000002", row_count: 1, location_id: shop });
+    expect(view.batch.report.ignored_rows).toBe(0);
+    expect(view.batch.report).not.toHaveProperty("account");
+  });
+
+  it("the MOXe list keeps taking the vendor's configured account, unfiltered, with no account note", async () => {
+    state.tables.vendors = [{ id: vendor, name: "US Foods", active: true, source_kind: "vendor", account_number: "90000002" }];
+    state.tables.vendor_location_accounts = [{ vendor_id: vendor, location_id: other, account_number: "90000002", active: true }];
+    const list = "Product Number,Product Description,Product Brand,Product Package Size,Customer Product Number,USF Class Description,Storage Description\n1000001,TEST ITEM,TESTBRAND,6/5 LB,,PRODUCE,COOLER\n";
+    const view = await stageVendorImport(actor, vendor, { name: "recently-purchased-2026-11-16.csv", text: list }, shop);
+    expect(state.staged).toMatchObject({ adapter: "usfoods-moxe-list", account_id: "90000002", row_count: 1 });
+    expect(view.batch.report).not.toHaveProperty("account");
+  });
+
+  it("with no mapping at all, a single-account invoice file stages at the chosen shop and the report shows the account to confirm", async () => {
+    const text = invoice(invoiceLine("1", "71628390", "1000001", "10.0000"), invoiceLine("2", "71628390", "1000002", "11.0000"));
+    const view = await stageVendorImport(actor, vendor, { name: "InvoiceDetails.csv", text }, shop);
+    expect(state.staged).toMatchObject({ adapter: "usfoods-invoice-csv", account_id: "71628390", row_count: 2, location_id: shop });
+    expect(view.batch.report.account).toEqual({ number: "71628390", location_id: null });
+  });
+
+  it("names the mapped shop when the account is on file for the chosen shop", async () => {
+    state.tables.vendor_location_accounts = [{ vendor_id: vendor, location_id: shop, account_number: "71628390", active: true }];
+    const view = await stageVendorImport(actor, vendor, { name: "InvoiceDetails.csv", text: invoice(invoiceLine("1", "71628390", "1000001", "10.0000")) }, shop);
+    expect(view.batch.report.account).toEqual({ number: "71628390", location_id: shop });
+  });
+
+  it("refuses two accounts only when no mapping decides between them", async () => {
+    const text = invoice(invoiceLine("1", "90000001", "1000001", "10.0000"), invoiceLine("2", "90000002", "1000002", "11.0000"));
+    // One mapped to THIS shop, the other unknown: still two accounts nobody has placed.
+    state.tables.vendor_location_accounts = [{ vendor_id: vendor, location_id: shop, account_number: "90000001", active: true }];
+    expect(await code(stageVendorImport(actor, vendor, { name: "InvoiceDetails.csv", text }, shop))).toBe("multiple_accounts");
+    // The other account mapped to the other shop: the mapping decides.
+    state.tables.vendor_location_accounts = [{ vendor_id: vendor, location_id: other, account_number: "90000002", active: true }];
+    await stageVendorImport(actor, vendor, { name: "InvoiceDetails.csv", text }, shop);
+    expect(state.staged).toMatchObject({ account_id: "90000001", row_count: 1 });
+  });
+
+  it("stores the not-shipped flag on the staged row and leaves its price unselected", async () => {
+    state.tables.vendor_items = [{ id: "55555555-5555-4555-8555-555555555555", vendor_id: vendor, name: "TEST ITEM", item_number: "1000001", active: true, price_basis: "per_case", location_id: null }];
+    const shipped = invoiceLine("1", "71628390", "1000001", "10.0000").split(",");
+    shipped[columns.indexOf("QtyShip")] = "0";
+    const view = await stageVendorImport(actor, vendor, { name: "InvoiceDetails.csv", text: invoice(shipped.join(",")) }, shop);
+    const row = state.observations.find(o => (o.row as { item_no: string }).item_no === "1000001")!;
+    expect((row.row as { flags?: string[] }).flags).toEqual(["not_shipped"]);
+    for (const o of view.observations) expect(view.decisions[`${o.source_row}:${o.kind}`]).toBe("skip");
+  });
+});

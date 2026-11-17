@@ -104,3 +104,13 @@ describe("US Foods MOXe invoice CSV (CSV Full)", () => {
     expect(() => usfoodsInvoice.parse(file({ item: "1", desc: "A", pack: "6/5 LB", price: "1.23456" }), name)).toThrow();
   });
 });
+
+describe("US Foods invoice lines that did not ship (CC decision 4)", () => {
+  it("keeps a QtyShip 0 line as price evidence but flags it not shipped; shipped lines carry no flag", () => {
+    const rows = usfoodsInvoice.parse(file({ item: "1000001", desc: "SHIPPED", pack: "6/5 LB", price: "10.0000" },
+      { item: "1000002", desc: "NOT SHIPPED", pack: "6/5 LB", price: "11.0000", qtyShip: "0" }), name);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.flags ?? []).toEqual([]);
+    expect(rows[1]).toMatchObject({ item_no: "1000002", last_purchase_qty: 0, price_cents: 1100, flags: ["not_shipped"] });
+  });
+});

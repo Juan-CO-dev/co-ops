@@ -119,3 +119,11 @@ describe("rowsToCsv", () => {
     expect(rowsToCsv([["a,b", 'q"t', "x\ny"]])).toBe('"a,b","q""t","x\ny"\n');
   });
 });
+
+describe("Baldor LB-sized rows (CC decision 1: a question for Juan)", () => {
+  it("flags every size in pounds 'price per listed size - check', and nothing else", () => {
+    const rows = baldorSmartshop.parse(text([[...SMARTSHOP_HEADER], ["a", "A", "3 LB", 1, 18], ["b", "B", "3 X 2 LB", 1, 33.75],
+      ["c", "C", "LB", 1, 115.6], ["d", "D", "24 X 16.9 OZ", 1, 20], ["e", "E", "6 X #10", 1, 30]]), fileName);
+    expect(rows.map(r => r.flags ?? [])).toEqual([["price_per_listed_size"], ["price_per_listed_size"], ["price_per_listed_size"], [], []]);
+  });
+});

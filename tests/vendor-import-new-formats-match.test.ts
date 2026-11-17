@@ -36,3 +36,29 @@ describe("new formats through the existing matcher", () => {
     expect(matchObservations(rows, [sku()], "v")[0]).toMatchObject({ kind: "needs_person", reason: "price_basis_unresolved" });
   });
 });
+
+describe("flagged rows are shown but never pre-selected (CC decision 4)", () => {
+  it("a not-shipped invoice line's price is proposed for review but defaults to skip", async () => {
+    const { defaultDecisions, observationKey } = await import("@/lib/vendor-import-shared/match");
+    const [row] = invoice("6/5 LB", "CS", "91.2700");
+    const shipped = matchObservations([row!], [sku()], "v");
+    expect(defaultDecisions(shipped)[observationKey(shipped[0]!)]).toBe("accept");
+    const unshipped = matchObservations([{ ...row!, last_purchase_qty: 0, flags: ["not_shipped"] }], [sku()], "v");
+    expect(unshipped[0]).toMatchObject({ kind: "price", reason: "price_changed" });
+    expect(defaultDecisions(unshipped)[observationKey(unshipped[0]!)]).toBe("skip");
+  });
+  it("a skipped not-shipped line does not stop a later shipped line for the same SKU from being pre-selected", async () => {
+    const { defaultDecisions, observationKey } = await import("@/lib/vendor-import-shared/match");
+    const [row] = invoice("6/5 LB", "CS", "91.2700");
+    const obs = [{ ...matchObservations([{ ...row!, flags: ["not_shipped"] }], [sku()], "v")[0]!, source_row: 1 },
+      { ...matchObservations([row!], [sku()], "v")[0]!, source_row: 2 }];
+    const d = defaultDecisions(obs);
+    expect([d[observationKey(obs[0]!)], d[observationKey(obs[1]!)]]).toEqual(["skip", "accept"]);
+  });
+  it("the Baldor listed-size flag is a note to check, not a skip", async () => {
+    const { defaultDecisions, observationKey } = await import("@/lib/vendor-import-shared/match");
+    const [row] = invoice("6/5 LB", "CS", "91.2700");
+    const obs = matchObservations([{ ...row!, flags: ["price_per_listed_size"] }], [sku()], "v");
+    expect(defaultDecisions(obs)[observationKey(obs[0]!)]).toBe("accept");
+  });
+});
