@@ -57,7 +57,7 @@ describe("summarizeHealth", () => {
       .toMatchObject({ outcome: "failed", healthy: false, errors: ["persistence:state_write_failed"] });
   });
   it("a reasons blob is copied only as reason → positive integer over the closed vocabulary", () => {
-    const h = summarizeHealth(["availabilities"], { availabilities: { rows: 4, skipped: 1, pages: 1, error_code: "rejected_rows", reasons: { bad_date: 1, PLANTED: 9, bad_time: "x" } as never } },
+    const h = summarizeHealth(["availabilities"], { availabilities: { rows: 4, skipped: 1, error_code: "rejected_rows", reasons: { bad_date: 1, PLANTED: 9, bad_time: "x" } as never } },
       { whoamiError: null, persistenceErrors: [] });
     expect(h.rejectedReasons).toEqual({ availabilities: { bad_date: 1 } });
   });

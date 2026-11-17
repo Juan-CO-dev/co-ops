@@ -31,6 +31,14 @@
  * `persistenceErrors` (`state_write_failed` / `ledger_write_failed`) and in the heartbeat, which is then
  * `cron.failure`. The run itself stays fail-open.
  *
+ * THE HEARTBEAT IS HONEST BOTH WAYS (2026-11-17, lib/sevenshifts/health-shared.ts). A few rejected rows of
+ * a NON-CRITICAL resource (availabilities, time off) are a WARNING: the heartbeat is `cron.success` with
+ * `outcome: "ok_with_warnings"`, the warning, and the rejected-row count and reasons per resource. Any
+ * other failure — and a rejected row on a critical resource, or a non-critical one that lost most of its
+ * rows — is still `cron.failure`. Only the heartbeat's action changes: the ledger row (status `partial`,
+ * the resource's `rejected_rows` code, `skipped`, `reasons`), the held watermark and `last_error_code`
+ * are written exactly as before.
+ *
  * WRITES go through MIRROR_WRITE_SPEC only: upserts on the spec's conflict key (nothing is ever
  * deleted; 7shifts' `deleted` flag is a column), and the per-user reconciler for assignments and
  * wages, called with `p_complete = request ok && shape ok && zero rejected rows` (r2 #2).
@@ -45,6 +53,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { createSevenShiftsClient, SevenShiftsApiError, type SevenShiftsFetch } from "@/lib/sevenshifts/client";
 import { sevenShiftsStatus, sevenShiftsToken } from "@/lib/sevenshifts/config";
 import type { SevenShiftsResource, SyncWindow } from "@/lib/sevenshifts/endpoints-shared";
+import { summarizeHealth } from "@/lib/sevenshifts/health-shared";
 import { MIRROR_WRITE_SPEC, type MirroredResource } from "@/lib/sevenshifts/mirror-spec-shared";
 import * as normalizers from "@/lib/sevenshifts/normalize-shared";
 import type { AssignmentsSnapshot, WagesSnapshot } from "@/lib/sevenshifts/paginate-shared";
@@ -88,6 +97,8 @@ export type SyncOutcome =
     ran: true; runId: string | null; status: SyncStatus; requests: number; results: Record<string, ResourceResult>;
     /** Writes of the run's own record that did NOT land (chunk B review #4). Empty = all persisted. */
     persistenceErrors: PersistenceErrorCode[];
+    /** `resource:code` for each resource that only WARNED (health-shared); its evidence is in `results`. */
+    warnings: string[];
   };
 
 export interface SyncDeps {
@@ -109,7 +120,8 @@ type Row = Record<string, unknown>;
 function codeOf(e: unknown): ResourceErrorCode {
   if (e instanceof SevenShiftsApiError) return e.code;
   if (e instanceof Error && e.message === "deadline") return "deadline";
-  if (e instanceof Error && (e.message === "bad_id" || e.message === "bad_window")) return e.message;
+  // A refused mirror write is named: it used to fall through to the bare `failed`.
+  if (e instanceof Error && (e.message === "bad_id" || e.message === "bad_window" || e.message === "write_failed")) return e.message;
   return "failed";
 }
 
@@ -337,22 +349,24 @@ export async function runSevenShiftsSync(
     }));
     if (!ledgerLanded) persistenceErrors.push("ledger_write_failed");
   }
+  // The heartbeat: a warning is not a failure, and a failure is never a warning (health-shared).
+  const health = summarizeHealth(SYNC_ORDER, results, { whoamiError: results.whoami?.error_code ?? null, persistenceErrors });
   try {
     await withDeadline((deps.audit ?? auditImpl)({
-      actorId: null, actorRole: null, action: runStatus === "ok" && persistenceErrors.length === 0 ? "cron.success" : "cron.failure",
+      actorId: null, actorRole: null, action: health.healthy ? "cron.success" : "cron.failure",
       resourceTable: "cron", resourceId: null,
       metadata: {
         job: trigger === "cron" ? "sevenshifts-sync" : "sevenshifts-sync-manual",
-        status: runStatus, requests: counter.requests, persistence_errors: persistenceErrors,
-        errors: [...(results.whoami?.error_code ? [`whoami:${results.whoami.error_code}`] : []),
-          ...failedResources.map((r) => `${r}:${results[r]!.error_code}`),
-          ...persistenceErrors.map((c) => `persistence:${c}`)],
+        status: runStatus, outcome: health.outcome, requests: counter.requests, persistence_errors: persistenceErrors,
+        errors: health.errors, warnings: health.warnings,
+        // Counts and closed-vocabulary reasons only: never an index, a field, a value or a payload.
+        rejected_rows: health.rejectedRows, rejected_reasons: health.rejectedReasons,
       },
       ipAddress: null, userAgent: null,
     }), finish);
   } catch { /* the heartbeat is fail-open and bounded */ }
 
-  return { ran: true, runId: runMinted ? runId : null, status: runStatus, requests: counter.requests, results, persistenceErrors };
+  return { ran: true, runId: runMinted ? runId : null, status: runStatus, requests: counter.requests, results, persistenceErrors, warnings: health.warnings };
 }
 
 /**
