@@ -51,7 +51,82 @@ export function vendorMailSafeUrl(raw: string): string | null {
     return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
   } catch { return null; }
 }
-const HREF = /(?:^|[\s"'/])href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i;
+const isTagSpace = (ch: string | undefined) => ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f";
+const NEWLINE_TAGS = new Set(["br", "/p", "/div", "/li", "/tr", "/blockquote"]);
+/**
+ * Reads one tag's attributes from `start` (just after its name) the way the HTML tokenizer does: a quote opens a
+ * value ONLY right after `=`, so `href=` or `>` inside another attribute's quoted value is that value's text, never
+ * an attribute or the tag's end. Returns the index after the tag and the FIRST attribute named exactly `href`
+ * ("" when valueless; a later duplicate is ignored, as in a browser). Every step moves forward: linear.
+ */
+function scanTagAttributes(html: string, start: number): { end: number; href: string | null } {
+  const n = html.length;
+  let href: string | null = null;
+  let i = start;
+  while (i < n) {
+    const ch = html[i];
+    if (ch === ">") return { end: i + 1, href };
+    if (isTagSpace(ch) || ch === "/") { i++; continue; }
+    const nameStart = i++; // a name may begin with "="
+    while (i < n && !isTagSpace(html[i]) && html[i] !== "/" && html[i] !== ">" && html[i] !== "=") i++;
+    const name = html.slice(nameStart, i).toLowerCase();
+    let j = i;
+    while (j < n && isTagSpace(html[j])) j++;
+    let value = "";
+    if (html[j] === "=") {
+      j++;
+      while (j < n && isTagSpace(html[j])) j++;
+      const quote = html[j];
+      if (quote === '"' || quote === "'") {
+        const close = html.indexOf(quote, j + 1);
+        value = html.slice(j + 1, close < 0 ? n : close);
+        j = close < 0 ? n : close + 1;
+      } else {
+        let k = j;
+        while (k < n && !isTagSpace(html[k]) && html[k] !== ">") k++;
+        value = html.slice(j, k);
+        j = k;
+      }
+    }
+    if (name === "href" && href === null) href = value;
+    i = j;
+  }
+  return { end: n, href };
+}
+/** Replaces every tag with its plain-text stand-in (anchor markers, line breaks, a space) in one forward pass. */
+function replaceTags(html: string, urls: string[]): string {
+  const parts: string[] = [];
+  let last = 0;
+  for (let i = html.indexOf("<"); i >= 0 && i < html.length; i = html.indexOf("<", i)) {
+    const next = html[i + 1] ?? "";
+    let nameStart = i + 1;
+    if (isTagSpace(next)) { // `< br>` / `< /p>` kept as line breaks, as before; any other `< x` is text
+      while (nameStart < html.length && isTagSpace(html[nameStart])) nameStart++;
+    } else if (!/[a-zA-Z/!]/.test(next)) { i++; continue; }
+    if (html[nameStart] === "!") { // doctype / bogus comment: ends at the first ">"
+      const close = html.indexOf(">", nameStart);
+      parts.push(html.slice(last, i), " ");
+      last = i = close < 0 ? html.length : close + 1;
+      continue;
+    }
+    const closing = html[nameStart] === "/";
+    let k = closing ? nameStart + 1 : nameStart;
+    while (k < html.length && !isTagSpace(html[k]) && html[k] !== "/" && html[k] !== ">") k++;
+    const name = (closing ? "/" : "") + html.slice(closing ? nameStart + 1 : nameStart, k).toLowerCase();
+    if (nameStart !== i + 1 && !NEWLINE_TAGS.has(name)) { i++; continue; }
+    const { end, href } = scanTagAttributes(html, k);
+    let replacement = " ";
+    if (name === "a") {
+      const url = href === null ? null : vendorMailSafeUrl(decodeEntities(href));
+      if (url) { urls.push(url); replacement = ` \u0000S${urls.length - 1}\u0000`; }
+    } else if (name === "/a") replacement = "\u0000E\u0000 ";
+    else if (NEWLINE_TAGS.has(name)) replacement = "\n";
+    parts.push(html.slice(last, i), replacement);
+    last = i = end;
+  }
+  parts.push(html.slice(last));
+  return parts.join("");
+}
 /**
  * Anchors keep their target: `text <https://…>` (the URL alone when the text is empty or the URL itself).
  * Only http(s) targets are shown; any other scheme keeps its text and drops the target. Click-tracking
@@ -60,19 +135,10 @@ const HREF = /(?:^|[\s"'/])href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i;
 export function vendorMailHtmlToText(html: string): string {
   const urls: string[] = [];
   // Markers are NUL-delimited, so the input's own NULs go first; every pattern below is linear.
-  const text = decodeEntities(html.replace(/\u0000/g, "")
+  // Tags are tokenized quote-aware (`scanTagAttributes`): the link target is the real `href` attribute only.
+  const text = decodeEntities(replaceTags(html.replace(/\u0000/g, "")
     .replace(/<!--[^]*?(?:-->|$)/g, " ")
-    .replace(/<(script|style)\b[^>]*>[^]*?<\/\1\s*>/gi, " ")
-    .replace(/<a\b([^>]*)(?:>|$)/gi, (_whole, attrs: string) => {
-      const match = HREF.exec(attrs);
-      const url = match ? vendorMailSafeUrl(decodeEntities(match[1] ?? match[2] ?? match[3] ?? "")) : null;
-      if (!url) return " ";
-      urls.push(url);
-      return ` \u0000S${urls.length - 1}\u0000`;
-    })
-    .replace(/<\/a\s*>/gi, "\u0000E\u0000 ")
-    .replace(/<\s*(?:br|\/p|\/div|\/li|\/tr|\/blockquote)\b[^>]*>/gi, "\n")
-    .replace(/<[a-zA-Z/!][^>]*(?:>|$)/g, " "))
+    .replace(/<(script|style)\b[^>]*>[^]*?<\/\1\s*>/gi, " "), urls))
     .replace(/\u0000S(\d+)\u0000([^\u0000]*)\u0000E\u0000/g, (_whole, index: string, inner: string) => {
       const url = urls[Number(index)] ?? "";
       const label = inner.trim();

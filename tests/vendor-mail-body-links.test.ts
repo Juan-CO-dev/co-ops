@@ -37,6 +37,44 @@ describe("vendor mail HTML keeps its links as visible text", () => {
       expect(performance.now() - start, chunk).toBeLessThan(1500);
     }
   });
+  it("takes the destination from the real href attribute only, respecting quotes (review r2)", () => {
+    const cases: [string, string][] = [
+      // The reviewer's reproduction: an `href=` inside another attribute's quoted value is not an attribute.
+      [`<a title="Example href='https://other.example/'"\n   href="https://vendor.example/invoice/42">Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      [`<a title='x" href="https://other.example/"' href=https://vendor.example/invoice/42>Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      // A `>` inside a quoted value does not end the tag.
+      [`<a title="a > b href=https://other.example/" href="https://vendor.example/invoice/42">Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      [`<a title='1 > 0' href='https://vendor.example/invoice/42'>Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      // Only the attribute NAMED href: data-href, xhref, href-like names never count.
+      [`<a data-href="https://other.example/" href="https://vendor.example/invoice/42">Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      [`<a data-href="https://other.example/">Invoice</a>`, "Invoice"],
+      [`<a xhref=https://other.example/ hrefx="https://other.example/">Invoice</a>`, "Invoice"],
+      // The first href wins, as in a browser.
+      [`<a href="https://vendor.example/invoice/42" href="https://other.example/">Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      // Spacing and case variants of the real attribute.
+      [`<a\thref = "https://vendor.example/invoice/42" >Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      [`<a/HREF='https://vendor.example/invoice/42'>Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      // A valueless attribute is not followed by a value somewhere else.
+      [`<a download title=x href=https://vendor.example/invoice/42>Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      [`<a href title="https://other.example/">Invoice</a>`, "Invoice"],
+    ];
+    for (const [html, expected] of cases) {
+      const text = vendorMailHtmlToText(html);
+      expect(text, html).toBe(expected);
+      const links = vendorMailTextSegments(text).filter(segment => segment.href).map(segment => segment.href);
+      expect(links, html).toEqual(expected.includes("<") ? ["https://vendor.example/invoice/42"] : []);
+    }
+  });
+  it("a quoted '>' inside any other tag does not leak markup into the text", () => {
+    expect(vendorMailHtmlToText(`<p title="a > b">Hello</p><img alt='1 > 0' src=x>World`)).toBe("Hello\n World");
+  });
+  it("stays linear on hostile attribute quoting", () => {
+    for (const chunk of [`<a title="`, `<a x='`, `<a title="x" `, `<a href=`, `<p title="a > b">`, `<a href="https://x.example/" title='>'>x</a>`]) {
+      const start = performance.now();
+      vendorMailHtmlToText(chunk.repeat(40_000));
+      expect(performance.now() - start, chunk).toBeLessThan(1500);
+    }
+  });
   it("keeps the pre-existing conversion for markup without links", () => {
     expect(vendorMailHtmlToText("<script>bad()</script><p>Hello &amp; hi</p><b>World</b>")).toBe("Hello & hi\n World");
   });
