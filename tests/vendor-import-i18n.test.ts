@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
-import { REASONS } from "@/lib/vendor-import-shared/model";
+import { REASONS, ROW_FLAGS } from "@/lib/vendor-import-shared/model";
 
 const component = readFileSync("components/admin/vendors/VendorImportPanel.tsx", "utf8");
 const prefix = "admin.vendor_import.";
 const dynamic = [
   ...REASONS.map(r => `reason.${r}`),
+  ...ROW_FLAGS.map(f => `flag.${f}`),
   ...["price", "item_number", "pack", "needs_person", "noop"].map(k => `kind.${k}`),
   ...["item_number", "name_exact", "ambiguous", "unmatched"].map(k => `match.${k}`),
   ...["staged", "applied", "superseded"].map(k => `status.${k}`),

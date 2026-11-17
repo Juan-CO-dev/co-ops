@@ -65,3 +65,45 @@ describe("vendor import scope and disclosure", () => {
     expect(source).toContain("min-h-[44px] items-center");
   });
 });
+
+describe("account to confirm and row flags (CC decisions 1, 3, 4)", () => {
+  const row = { vendor: "usfoods", source_file: "InvoiceDetails.csv", source_line: 2, account_id: "71628390", list_name: "US Foods invoice 1", category: "",
+    item_no: "1000002", description: "NOT SHIPPED ITEM", brand: "", pack: "6/5 LB", pack_qty: 6, pack_size: 5, pack_unit: "LB", uom: "CS",
+    price_cents: 1100, price_per_lb_cents: null, last_purchase_qty: 0, last_purchase_uom: "CS", last_purchase_date: "2026-11-16", exported_at: "2026-11-16" };
+  const flagged = (flags: string[], account?: { number: string; location_id: string | null }): ImportBatchView => ({ ...view,
+    batch: { ...view.batch, account_id: account?.number ?? null, adapter: "usfoods-invoice-csv", report: { ...view.batch.report, ...(account ? { account } : {}) } },
+    observations: [{ source_row: 2, row: { ...row, flags } as never, kind: "noop", reason: "price_same", match: { rule: "item_number", sku_id: "s", candidates: [] }, proposed: null }],
+    decisions: { "2:noop": "skip" } });
+
+  it.each(["en", "es"] as const)("shows an account not on file as one to confirm for the chosen shop in %s", language => {
+    h.view = flagged([], { number: "71628390", location_id: null });
+    const html = render(language);
+    expect(html).toContain("71628390");
+    expect(html).toContain(language === "en" ? "not on file" : "no está registrada");
+    expect(html).toContain("North");
+  });
+  it("names an account on file for the shop without asking to confirm it", () => {
+    h.view = flagged([], { number: "71628390", location_id: shop });
+    const html = render();
+    expect(html).toContain("71628390");
+    expect(html).not.toContain("not on file");
+  });
+  it("shows nothing about accounts for a batch without an account note", () => {
+    h.view = view;
+    expect(render()).not.toContain("Account");
+  });
+  it.each(["en", "es"] as const)("labels the not-shipped and listed-size flags beside the row in %s", language => {
+    h.view = flagged(["not_shipped", "price_per_listed_size"]); h.expanded = true;
+    const html = render(language);
+    if (language === "en") {
+      expect(html).toContain("Not shipped (price from invoice line)");
+      expect(html).toContain("Price per listed size — check");
+    } else {
+      expect(html).toContain("No enviado (precio de la línea de la factura)");
+      expect(html).toContain("Precio por el tamaño indicado — revísalo");
+    }
+  });
+  it("help text names the screen where account numbers are added", () => {
+    expect(render()).toContain("Account numbers by shop");
+  });
+});
