@@ -272,12 +272,16 @@ describe("list resources: rejections and pagination never move the watermark", (
     });
     expect(await run(w)).toMatchObject({ status: "partial" });
     const results = ledger(w)[0]!.results as Record<string, Row>;
-    expect(results.time_off).toEqual({ rows: 1, skipped: 3, pages: 1, error_code: "rejected_rows", reasons: { bad_date: 2, bad_time: 1 } });
+    // A rejected DATE also leaves its SHAPE (digits -> 9, letters -> a), per field; never the value (2026-11-17).
+    expect(results.time_off).toEqual({
+      rows: 1, skipped: 3, pages: 1, error_code: "rejected_rows",
+      reasons: { bad_date: 2, bad_time: 1, date_shapes: { from_date: ["9999-99-99T99:99:99Z"], to_date: ["aaaaaaa-aaaa"] } },
+    });
     expect(results.availabilities).toEqual({ rows: 0, skipped: 1, pages: 2, error_code: "rejected_rows", reasons: { bad_instant: 1 } });
     // A resource with no rejection carries no histogram at all.
     expect(results.shifts).toMatchObject({ rows: 1, skipped: 0, error_code: null });
     expect(results.shifts).not.toHaveProperty("reasons");
-    expect(JSON.stringify(results)).not.toMatch(/PLANTED|4002|4003|4004|index|from_date|partial_from|2026-10-20/);
+    expect(JSON.stringify(results)).not.toMatch(/PLANTED|4002|4003|4004|index|partial_from|2026-10-20/);
     expect(state(w, "time_off")).toMatchObject({ last_error_code: "rejected_rows" });
     expect(state(w, "time_off")!.modified_watermark).toBeUndefined();
   });
@@ -658,6 +662,17 @@ describe("the heartbeat is honest: a few rejected rows of a non-critical resourc
     await run(w);
     expect(w.audits[0]!.action).toBe("cron.success");
     expect(meta(w)).toMatchObject({ outcome: "ok_with_warnings", warnings: ["time_off:rejected_rows"], rejected_rows: { time_off: 1 }, errors: [] });
+  });
+
+  it("the prod case (2026-11-17): every availability `week` refused -> cron.failure, and the ledger AND the heartbeat carry the shape of the refused value, never the value", async () => {
+    const zoned = (id: number, day: string) => ({ ...PAYLOAD.availabilities, id, week: `2026-11-${day}T05:00:00Z` });
+    const w = world({ routes: healthyRoutes(availability([zoned(3001, "16"), zoned(3002, "23"), zoned(3003, "30")])) });
+    await run(w);
+    const reasons = { bad_date: 3, date_shapes: { week: ["9999-99-99T99:99:99Z"] } };
+    expect((ledger(w)[0]!.results as Record<string, Row>).availabilities).toEqual({ rows: 0, skipped: 3, pages: 2, error_code: "rejected_rows", reasons });
+    expect(w.audits[0]!.action).toBe("cron.failure");
+    expect(meta(w)).toMatchObject({ outcome: "failed", errors: ["availabilities:rejected_rows"], rejected_rows: { availabilities: 3 }, rejected_reasons: { availabilities: reasons } });
+    expect(JSON.stringify([ledger(w)[0]!.results, w.audits[0]])).not.toMatch(/2026-11-(16|23|30)|05:00/);
   });
 
   it("EVERY availability row rejected (the 2026-11-11 first sync) is a real failure: cron.failure", async () => {
