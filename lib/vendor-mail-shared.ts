@@ -38,9 +38,13 @@ function decodeEntities(text: string): string {
     return point > 0 && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff) ? String.fromCodePoint(point) : " ";
   });
 }
-/** An http(s) URL in canonical form (`<`, `>`, spaces and quotes percent-encoded), else null. Never any other scheme. */
+/**
+ * An http(s) URL in canonical form (`<`, `>`, spaces and quotes percent-encoded), else null. Never any other scheme.
+ * Surrounding whitespace and controls are dropped and inner controls removed; an inner SPACE is kept, so the
+ * parser percent-encodes it (`Order Confirmation.pdf` → `Order%20Confirmation.pdf`), never joins the words.
+ */
 export function vendorMailSafeUrl(raw: string): string | null {
-  const candidate = raw.replace(/[\u0000- \u007f]/g, "");
+  const candidate = raw.replace(/^[\u0000- \u007f]+|[\u0000- \u007f]+$/g, "").replace(/[\u0000-\u001f\u007f]/g, "");
   if (!/^https?:\/\//i.test(candidate)) return null;
   try {
     const url = new URL(candidate);
@@ -72,31 +76,44 @@ export function vendorMailHtmlToText(html: string): string {
     .replace(/\u0000S(\d+)\u0000([^\u0000]*)\u0000E\u0000/g, (_whole, index: string, inner: string) => {
       const url = urls[Number(index)] ?? "";
       const label = inner.trim();
-      return !label ? `<${url}>` : label === url || label === url.replace(/\/$/, "") ? inner.replace(label, url) : `${inner.replace(/\s+$/, "")} <${url}>`;
+      // Always the bracketed form: the body view links `<…>` whole, so the target is never trimmed as prose.
+      return !label ? `<${url}>` : label === url || label === url.replace(/\/$/, "") ? inner.replace(label, `<${url}>`) : `${inner.replace(/\s+$/, "")} <${url}>`;
     })
     .replace(/\u0000S(\d+)\u0000([^\u0000]*)/g, (_whole, index: string, inner: string) => `${inner.replace(/\s+$/, "")} <${urls[Number(index)] ?? ""}>`)
     .replace(/\u0000E\u0000/g, "");
   return text.replace(/[ \t]+/g, " ").trim();
 }
 export type VendorMailTextSegment = { text: string; href?: string };
-/** Splits plain text into text and http(s) link segments; the caller renders text as text, never as HTML. */
+const PROSE_TRAILING = new Set([".", ",", ";", ":", "!", "?", "'", '"', "]", "}"]);
+/** Length of a prose URL once trailing punctuation and unbalanced `)` are trimmed — one count, one backward pass. */
+function proseUrlLength(raw: string): number {
+  let open = 0, close = 0;
+  for (const ch of raw) { if (ch === "(") open++; else if (ch === ")") close++; }
+  let end = raw.length;
+  while (end > 0) {
+    const ch = raw[end - 1]!;
+    if (PROSE_TRAILING.has(ch)) end--;
+    else if (ch === ")" && close > open) { end--; close--; }
+    else break;
+  }
+  return end;
+}
+/**
+ * Splits plain text into text and http(s) link segments; the caller renders text as text, never as HTML.
+ * `<https://…>` (how an HTML anchor's target is kept) is an explicit target, linked whole with no punctuation
+ * trimming; a bare URL in prose is trimmed. A link segment's text IS its href — what is shown is where it goes.
+ */
 export function vendorMailTextSegments(text: string): VendorMailTextSegment[] {
   const segments: VendorMailTextSegment[] = [];
   let last = 0;
-  for (const match of text.matchAll(/https?:\/\/[^\s<>"'`]+/gi)) {
-    let raw = match[0];
-    for (;;) {
-      const trimmed = raw.replace(/[.,;:!?'"\]}]+$/, "");
-      const unbalanced = trimmed.endsWith(")") && (trimmed.match(/\)/g)?.length ?? 0) > (trimmed.match(/\(/g)?.length ?? 0);
-      const next = unbalanced ? trimmed.slice(0, -1) : trimmed;
-      if (next === raw) break;
-      raw = next;
-    }
+  for (const match of text.matchAll(/<(https?:\/\/[^\s<>]+)>|https?:\/\/[^\s<>"'`]+/gi)) {
+    const explicit = match[1];
+    const raw = explicit ?? match[0].slice(0, proseUrlLength(match[0]));
     const href = vendorMailSafeUrl(raw);
     if (!href) continue;
-    const start = match.index ?? 0;
+    const start = (match.index ?? 0) + (explicit === undefined ? 0 : 1);
     if (start > last) segments.push({ text: text.slice(last, start) });
-    segments.push({ text: raw, href });
+    segments.push({ text: href, href });
     last = start + raw.length;
   }
   if (last < text.length) segments.push({ text: text.slice(last) });

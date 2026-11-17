@@ -1,7 +1,7 @@
 import { jsx } from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { vendorMailHtmlToText, vendorMailTextSegments } from "@/lib/vendor-mail-shared";
+import { vendorMailHtmlToText, vendorMailSafeUrl, vendorMailTextSegments } from "@/lib/vendor-mail-shared";
 import { VendorMailBody } from "@/app/(authed)/operations/vendor-mail/VendorMailPane";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
@@ -14,7 +14,7 @@ describe("vendor mail HTML keeps its links as visible text", () => {
     expect(text).toContain("Welcome to Baldor.");
   });
   it("an anchor whose text IS the URL, or has no text, shows the URL once", () => {
-    expect(vendorMailHtmlToText('<a href="https://x.example/a">https://x.example/a</a>')).toBe("https://x.example/a");
+    expect(vendorMailHtmlToText('<a href="https://x.example/a">https://x.example/a</a>')).toBe("<https://x.example/a>");
     expect(vendorMailHtmlToText("<a href='https://x.example/b'><img src=x></a>")).toBe("<https://x.example/b>");
     expect(vendorMailHtmlToText("<A HREF=https://x.example/c>Go</A>")).toBe("Go <https://x.example/c>");
   });
@@ -63,6 +63,49 @@ describe("vendor mail body links are clickable only for http(s)", () => {
     expect(vendorMailTextSegments("(https://w.example/wiki/A_(b))")).toEqual([
       { text: "(" }, { text: "https://w.example/wiki/A_(b)", href: "https://w.example/wiki/A_(b)" }, { text: ")" },
     ]);
+  });
+  it("stays linear on hostile link text (40,000 closing parentheses)", () => {
+    for (const body of [`https://vendor.example/${")".repeat(40_000)}`, `<https://vendor.example/${")".repeat(40_000)}`,
+      "<https://x.example/a".repeat(20_000), `https://v.example/${".)".repeat(20_000)}`]) {
+      const start = performance.now();
+      vendorMailTextSegments(body);
+      expect(performance.now() - start, body.slice(0, 30)).toBeLessThan(500);
+    }
+    expect(vendorMailTextSegments(`https://v.example/a${")".repeat(5)}`)).toEqual([
+      { text: "https://v.example/a", href: "https://v.example/a" }, { text: ")))))" },
+    ]);
+  });
+  it("an HTML anchor's target is linked exactly as it is shown, '!' and apostrophes included", () => {
+    for (const [href, expected] of [
+      ["https://vendor.example/reset?token=abc!", "https://vendor.example/reset?token=abc!"],
+      ["https://vendor.example/people/O'Brien/invoice.pdf", "https://vendor.example/people/O'Brien/invoice.pdf"],
+      ["https://vendor.example/x?a=1).", "https://vendor.example/x?a=1)."],
+    ] as const) {
+      for (const label of ["Reset", href]) {
+        const text = vendorMailHtmlToText(`<p>Hi.</p><a href="${href.replace(/'/g, "&#39;")}">${label}</a>`);
+        const links = vendorMailTextSegments(text).filter(segment => segment.href);
+        expect(links, `${href} / ${label}`).toEqual([{ text: expected, href: expected }]);
+        const html = renderToStaticMarkup(jsx(VendorMailBody, { text }));
+        const rendered = /<a href="([^"]*)"[^>]*>([^<]*)<\/a>/.exec(html);
+        expect(rendered?.[1]?.replace(/&#x27;/g, "'").replace(/&amp;/g, "&"), href).toBe(expected);
+        expect(rendered?.[2]?.replace(/&#x27;/g, "'").replace(/&amp;/g, "&"), href).toBe(expected);
+      }
+    }
+  });
+  it("spaces in a target are percent-encoded, never removed; surrounding whitespace and controls are dropped", () => {
+    const text = vendorMailHtmlToText('<a href="https://vendor.example/files/Order Confirmation.pdf">Invoice</a>');
+    expect(text).toBe("Invoice <https://vendor.example/files/Order%20Confirmation.pdf>");
+    expect(vendorMailTextSegments(text).filter(segment => segment.href)).toEqual([
+      { text: "https://vendor.example/files/Order%20Confirmation.pdf", href: "https://vendor.example/files/Order%20Confirmation.pdf" },
+    ]);
+    expect(vendorMailSafeUrl("  https://v.example/a b?q=c d \n")).toBe("https://v.example/a%20b?q=c%20d");
+    expect(vendorMailSafeUrl("ht\ttps://v.example/a\u0001b")).toBe("https://v.example/ab");
+    expect(vendorMailSafeUrl("https://v ex.example/")).toBeNull();
+  });
+  it("a link's visible text is exactly its target", () => {
+    for (const segment of vendorMailTextSegments("go https://A.example and <http://b.example/p q> or <https://c.example/x?y=1!>")) {
+      if (segment.href) expect(segment.text).toBe(segment.href);
+    }
   });
   it("never links javascript:, data: or other schemes", () => {
     const segments = vendorMailTextSegments("javascript:alert(1) data:text/html,x mailto:a@b.example ftp://x.example");
