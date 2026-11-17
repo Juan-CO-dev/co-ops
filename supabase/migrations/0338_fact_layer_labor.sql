@@ -425,9 +425,164 @@ begin
   return jsonb_build_object('week_start', p_week_start, 'quarters', v_quarters, 'days', v_days, 'ot_state', p_week ->> 'ot_state');
 end $$;
 
+-- ── C. READ TIME: burden, cost components, SPLH (nothing here is stored; nothing rebuilds) ──────────
+-- The burden % (employer payroll taxes + benefits), dated, company (location NULL) or per shop; a shop row
+-- beats the company row; the newest valid_from <= week start wins. Append-only by grant; its ONE writer is
+-- save_labor_burden (Owner / CGS / MoO). Not in any fingerprint: a backdated payroll row re-prices history.
+create table public.labor_burden_settings (
+  id          uuid         primary key default gen_random_uuid(),
+  location_id uuid         references public.locations(id),
+  burden_pct  numeric(5,2) not null check (burden_pct >= 0 and burden_pct <= 50),
+  valid_from  date         not null,
+  source      text         not null check (source in ('estimated', 'payroll')),
+  note        text         check (char_length(note) <= 500),
+  created_by  uuid         not null references public.users(id),
+  created_at  timestamptz  not null default clock_timestamp()
+);
+create index labor_burden_settings_lookup on public.labor_burden_settings (location_id, valid_from desc, created_at desc);
+
+create function public.save_labor_burden(p_actor uuid, p_location_id uuid, p_burden_pct numeric, p_valid_from date, p_source text, p_note text)
+returns uuid language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_id uuid;
+begin
+  if p_actor is null or not exists (select 1 from public.users u where u.id = p_actor and u.active and u.role in ('owner', 'cgs', 'moo')) then
+    raise exception 'labor_burden_forbidden'; end if;
+  if p_burden_pct is null or p_burden_pct < 0 or p_burden_pct > 50 or p_valid_from is null or p_source not in ('estimated', 'payroll')
+    or char_length(coalesce(p_note, '')) > 500
+    or (p_location_id is not null and not exists (select 1 from public.locations l where l.id = p_location_id)) then
+    raise exception 'labor_burden_invalid'; end if;
+  insert into public.labor_burden_settings (location_id, burden_pct, valid_from, source, note, created_by)
+  values (p_location_id, round(p_burden_pct, 2), p_valid_from, p_source, nullif(p_note, ''), p_actor) returning id into v_id;
+  return v_id;
+end $$;
+
+-- The burden in force for a shop's week: shop row, else company row, else the 12% default, `estimated`.
+create function public.fact_labor_burden_for(p_location_id uuid, p_week_start date)
+returns table(burden_pct numeric, burden_basis text)
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select coalesce(b.burden_pct, 12.00), coalesce(b.source, 'estimated') from (select 1) one
+  left join lateral (select s.burden_pct, s.source from public.labor_burden_settings s
+     where (s.location_id = p_location_id or s.location_id is null) and s.valid_from <= p_week_start
+     order by (s.location_id is null), s.valid_from desc, s.created_at desc limit 1) b on true
+$$;
+
+-- COST COMPONENTS per (payroll week, shop) for the days in [from, to] (at most 366 days, from >= the
+-- history floor). One shop, or p_location_id NULL = every shop with labor in those weeks.
+--   rate per hourly row: known / undated = its rate; before_first_known = the carried-back first wage
+--     (Q5 'first_known') or the shop estimate ('dc_minimum'); none = the shop estimate (0274; 1840).
+--   hourly straight = sum(minutes x rate) / 60.
+--   overtime premium = 0.5 x the person-week's BLENDED rate (sum(minutes x rate) / sum(minutes), every
+--     hourly row of that person in that week, both shops) x overtime minutes / 60, on the shop and day the
+--     overtime minutes fell.
+--   salaried = the shop's estimated weekly salary (0274, estimate_first), else the wage-derived weekly
+--     cost (labor_week_salaried), else unknown; prorated by the range's days in the week / 7.
+-- Coverage first: a week never built reads ot_state 'unbuilt'; day counts say what is missing.
+create function public.fact_labor_cost(p_location_id uuid, p_from date, p_to date, p_wage_fallback text)
+returns table(week_start date, location_id uuid, hourly_straight_cents bigint, ot_premium_cents bigint, salaried_cents bigint,
+  salary_basis text, burden_pct numeric, burden_basis text, estimated_rate_minutes bigint, hourly_minutes bigint, ot_minutes bigint,
+  salaried_minutes bigint, ot_state text, range_days integer, days_covered integer, days_pending integer, days_fallback integer,
+  days_incomplete integer, days_missing integer)
+language plpgsql stable security definer set search_path = pg_catalog, public as $$
+declare v_floor date;
+begin
+  select floor_day into v_floor from public.fact_labor_constants();
+  if p_from is null or p_to is null or p_to < p_from or p_to - p_from > 366 or p_from < v_floor
+    or p_wage_fallback is null or p_wage_fallback not in ('first_known', 'dc_minimum') then
+    raise exception 'fact_invalid_request'; end if;
+  return query
+  with weeks as (
+    select g::date w from generate_series(p_from - extract(dow from p_from)::integer, p_to, interval '7 days') g
+  ), shops as (
+    select l.id loc from public.locations l
+     where l.id = p_location_id
+        or (p_location_id is null and exists (select 1 from public.labor_day_coverage c where c.location_id = l.id and c.week_start in (select weeks.w from weeks)))
+  ), priced as (
+    select q.week_start ws, q.location_id loc, q.person_key pk, q.business_date bd, q.minutes m, q.ot_minutes ot, q.pay_class pc,
+      case when q.pay_class = 'salaried' then null
+           when q.rate_basis in ('known', 'undated') then q.rate_cents
+           when q.rate_basis = 'before_first_known' and p_wage_fallback = 'first_known' then q.carry_back_rate_cents
+           else coalesce(s.estimated_hourly_cents, 1840) end rate,
+      q.pay_class = 'hourly' and (q.rate_basis = 'none' or (q.rate_basis = 'before_first_known' and p_wage_fallback = 'dc_minimum')) est
+    from public.labor_quarter q left join public.schedule_shop_settings s on s.location_id = q.location_id
+    where q.week_start in (select weeks.w from weeks)
+  ), blended as (
+    select priced.pk, priced.ws, sum(priced.m * priced.rate)::numeric / nullif(sum(priced.m), 0) r
+      from priced where priced.pc = 'hourly' group by priced.pk, priced.ws
+  ), agg as (
+    select p.ws, p.loc,
+      round(coalesce(sum(p.m * p.rate) filter (where p.pc = 'hourly'), 0) / 60.0)::bigint straight,
+      round(coalesce(sum(0.5 * b.r * p.ot) filter (where p.pc = 'hourly'), 0) / 60.0)::bigint prem,
+      coalesce(sum(p.m) filter (where p.est), 0)::bigint est_m,
+      coalesce(sum(p.m) filter (where p.pc = 'hourly'), 0)::bigint hm,
+      coalesce(sum(p.ot), 0)::bigint otm,
+      coalesce(sum(p.m) filter (where p.pc = 'salaried'), 0)::bigint sm
+    from priced p left join blended b on b.pk = p.pk and b.ws = p.ws
+    where p.bd between p_from and p_to and p.loc in (select shops.loc from shops)
+    group by p.ws, p.loc
+  ), grid as (
+    select weeks.w, shops.loc, (least(weeks.w + 6, p_to) - greatest(weeks.w, p_from) + 1) rd from weeks, shops
+  )
+  select g.w, g.loc, coalesce(a.straight, 0), coalesce(a.prem, 0),
+    case when s.estimated_salaried_weekly_cents is not null then round(s.estimated_salaried_weekly_cents * g.rd / 7.0)::bigint
+         when ws.salaried_cents is not null then round(ws.salaried_cents * g.rd / 7.0)::bigint end,
+    case when s.estimated_salaried_weekly_cents is not null then 'estimate' when ws.salaried_cents is not null then 'wages' else 'unknown' end,
+    bf.burden_pct, bf.burden_basis,
+    coalesce(a.est_m, 0), coalesce(a.hm, 0), coalesce(a.otm, 0), coalesce(a.sm, 0),
+    coalesce(wc.ot_state, 'unbuilt'), g.rd,
+    (select count(*)::integer from public.labor_day_coverage c where c.location_id = g.loc and c.business_date between greatest(g.w, p_from) and least(g.w + 6, p_to) and c.state = 'covered'),
+    (select count(*)::integer from public.labor_day_coverage c where c.location_id = g.loc and c.business_date between greatest(g.w, p_from) and least(g.w + 6, p_to) and c.state = 'pending_settle'),
+    (select count(*)::integer from public.labor_day_coverage c where c.location_id = g.loc and c.business_date between greatest(g.w, p_from) and least(g.w + 6, p_to) and c.state = 'fallback_unverified'),
+    (select count(*)::integer from public.labor_day_coverage c where c.location_id = g.loc and c.business_date between greatest(g.w, p_from) and least(g.w + 6, p_to) and c.state = 'incomplete'),
+    g.rd - (select count(*)::integer from public.labor_day_coverage c where c.location_id = g.loc and c.business_date between greatest(g.w, p_from) and least(g.w + 6, p_to))
+  from grid g
+  left join agg a on a.ws = g.w and a.loc = g.loc
+  left join public.schedule_shop_settings s on s.location_id = g.loc
+  left join public.labor_week_salaried ws on ws.week_start = g.w and ws.location_id = g.loc
+  left join public.labor_week_coverage wc on wc.week_start = g.w
+  cross join lateral public.fact_labor_burden_for(g.loc, g.w) bf
+  order by g.w, g.loc;
+end $$;
+
+-- SALES PER LABOR HOUR inputs per (shop, quarter) over at most 31 days (the 0232 window guard): labor
+-- minutes SUMMED PER QUARTER FIRST (a quarter with two roles or people never doubles its sales), joined
+-- to the quarter's 'sale' checks through THE classifier (fact_sales_check_classes) on the chosen clock:
+-- 'placed' (opened) or 'promised'. labor_minutes = every observed minute (hourly + salaried presence:
+-- splh); hourly_minutes = hourly only (splh_hourly). The day's coverage rides along: unknown is never 0.
+create function public.fact_labor_splh(p_location_id uuid, p_from date, p_to date, p_clock text)
+returns table(quarter_start_at timestamptz, business_date date, wall_quarter smallint, fold smallint, labor_minutes bigint,
+  hourly_minutes bigint, sales_cents bigint, sale_checks bigint, day_state text, open_punches integer)
+language plpgsql stable security definer set search_path = pg_catalog, public as $$
+begin
+  perform public.sales_report_assert_window(p_location_id, p_from, p_to);
+  if p_clock is null or p_clock not in ('placed', 'promised') then raise exception 'fact_invalid_request'; end if;
+  return query
+  with lab as (
+    select q.quarter_start_at qs, min(q.business_date) bd, min(q.wall_quarter) wq, min(q.fold) fd,
+      sum(q.minutes)::bigint lm, coalesce(sum(q.minutes) filter (where q.pay_class = 'hourly'), 0)::bigint hm
+      from public.labor_quarter q where q.location_id = p_location_id and q.business_date between p_from and p_to group by q.quarter_start_at
+  ), sales as (
+    select case when p_clock = 'placed' then f.opened_quarter_start_at else f.promised_quarter_start_at end qs,
+      case when p_clock = 'placed' then f.opened_et_date else f.promised_et_date end bd,
+      case when p_clock = 'placed' then f.opened_wall_quarter else f.promised_wall_quarter end wq,
+      case when p_clock = 'placed' then f.opened_fold else f.promised_fold end fd,
+      sum(c.amount_cents)::bigint sc, count(*)::bigint n
+    from public.fact_sales_check_classes(p_location_id, p_from, p_to) c
+    join public.fact_order_check f on f.location_id = p_location_id and f.business_date = c.business_date
+     and f.order_guid = c.order_guid and f.check_guid = c.check_guid
+    where c.sale_class = 'sale' group by 1, 2, 3, 4
+  ), j as (
+    select coalesce(lab.qs, sales.qs) qs, coalesce(lab.bd, sales.bd) bd, coalesce(lab.wq, sales.wq) wq, coalesce(lab.fd, sales.fd) fd,
+      coalesce(lab.lm, 0) lm, coalesce(lab.hm, 0) hm, coalesce(sales.sc, 0) sc, coalesce(sales.n, 0) n
+    from lab full join sales on sales.qs = lab.qs where coalesce(lab.qs, sales.qs) is not null
+  )
+  select j.qs, j.bd, j.wq::smallint, j.fd::smallint, j.lm, j.hm, j.sc, j.n, d.state, d.open_punches
+    from j left join public.labor_day_coverage d on d.location_id = p_location_id and d.business_date = j.bd
+   order by j.qs;
+end $$;
+
 -- ── CEILINGS: deny-all RLS, explicit DELETE denial, service_role SELECT only; RPCs service_role only ──
 do $$ declare t text; f regprocedure; begin
-  foreach t in array array['fact_wage_observations','labor_quarter','labor_day_coverage','labor_week_coverage','labor_week_salaried'] loop
+  foreach t in array array['fact_wage_observations','labor_quarter','labor_day_coverage','labor_week_coverage','labor_week_salaried','labor_burden_settings'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('create policy %I on public.%I for delete using (false)', t || '_no_user_delete', t);
     execute format('revoke all on public.%I from public, anon, authenticated, service_role', t);
@@ -442,14 +597,18 @@ do $$ declare t text; f regprocedure; begin
     'public.fact_labor_week_source(date,text)'::regprocedure,
     'public.fact_labor_week_fingerprint(date,text)'::regprocedure,
     'public.fact_labor_weeks_stale(integer,text)'::regprocedure,
-    'public.fact_replace_labor_week(date,text,text,jsonb,jsonb,jsonb,jsonb)'::regprocedure] loop
+    'public.fact_replace_labor_week(date,text,text,jsonb,jsonb,jsonb,jsonb)'::regprocedure,
+    'public.save_labor_burden(uuid,uuid,numeric,date,text,text)'::regprocedure,
+    'public.fact_labor_burden_for(uuid,date)'::regprocedure,
+    'public.fact_labor_cost(uuid,date,date,text)'::regprocedure,
+    'public.fact_labor_splh(uuid,date,date,text)'::regprocedure] loop
     execute format('revoke all on function %s from public, anon, authenticated, service_role', f);
     execute format('grant execute on function %s to service_role', f);
   end loop;
 end $$;
 
 do $$ declare t text; f regprocedure; p text; begin
-  foreach t in array array['fact_wage_observations','labor_quarter','labor_day_coverage','labor_week_coverage','labor_week_salaried'] loop
+  foreach t in array array['fact_wage_observations','labor_quarter','labor_day_coverage','labor_week_coverage','labor_week_salaried','labor_burden_settings'] loop
     if not has_table_privilege('service_role', 'public.' || t, 'SELECT') then raise exception '0338: % lacks service_role SELECT', t; end if;
     foreach p in array array['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'] loop
       if has_table_privilege('service_role', 'public.' || t, p) then raise exception '0338: service_role holds % on %', p, t; end if;
@@ -470,7 +629,11 @@ do $$ declare t text; f regprocedure; p text; begin
     'public.fact_labor_week_source(date,text)'::regprocedure,
     'public.fact_labor_week_fingerprint(date,text)'::regprocedure,
     'public.fact_labor_weeks_stale(integer,text)'::regprocedure,
-    'public.fact_replace_labor_week(date,text,text,jsonb,jsonb,jsonb,jsonb)'::regprocedure] loop
+    'public.fact_replace_labor_week(date,text,text,jsonb,jsonb,jsonb,jsonb)'::regprocedure,
+    'public.save_labor_burden(uuid,uuid,numeric,date,text,text)'::regprocedure,
+    'public.fact_labor_burden_for(uuid,date)'::regprocedure,
+    'public.fact_labor_cost(uuid,date,date,text)'::regprocedure,
+    'public.fact_labor_splh(uuid,date,date,text)'::regprocedure] loop
     if not has_function_privilege('service_role', f, 'EXECUTE') or has_function_privilege('anon', f, 'EXECUTE')
       or has_function_privilege('authenticated', f, 'EXECUTE')
       or exists(select 1 from pg_proc pr, lateral aclexplode(pr.proacl) a where pr.oid = f and a.grantee = 0) then
