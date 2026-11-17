@@ -611,3 +611,112 @@ describe("B137 r1: punches stored before the paid-break fix are repaired only by
     expect(breakOf(reset)).toBe(30);
   });
 });
+
+describe("the heartbeat is honest: a few rejected rows of a non-critical resource are a WARNING, a real failure still alerts (2026-11-17)", () => {
+  const good = (id: number) => ({ ...PAYLOAD.availabilities, id });
+  const bad = (id: number) => ({ ...PAYLOAD.availabilities, id, modified: "PLANTED-WHEN" });
+  const availability = (rows: unknown[]) => ({
+    "/v2/company/1234/availabilities": ((u) => (u.searchParams.get("repeating") === "true" ? list([]) : list(rows))) as Handler,
+  });
+  const meta = (w: ReturnType<typeof world>) => w.audits[0]!.metadata as Record<string, unknown>;
+  /** Make one table's insert or upsert RESOLVE with an error, as Supabase does. */
+  const refuse = (w: ReturnType<typeof world>, table: string, op: "insert" | "upsert") => {
+    const db = w.deps.db as unknown as { from: (t: string) => Record<string, unknown> };
+    const from = db.from;
+    db.from = (t: string) => {
+      const q = from(t);
+      if (t === table) q[op] = () => ({ then: (ok: (v: unknown) => unknown) => ok({ data: null, error: { message: "PLANTED-DB-MESSAGE" } }) });
+      return q;
+    };
+  };
+
+  it("3 availability rows land and 1 is rejected → cron.success with warnings; the ledger, the state and the counts keep every piece of evidence", async () => {
+    const w = world({ routes: healthyRoutes(availability([good(3001), good(3002), good(3003), bad(3004)])) });
+    const out = await run(w);
+    // The ledger keeps the truth: the run is partial and the resource carries its code, count and reasons.
+    expect(out).toMatchObject({ ran: true, status: "partial", warnings: ["availabilities:rejected_rows"] });
+    expect(ledger(w)[0]).toMatchObject({ status: "partial" });
+    expect((ledger(w)[0]!.results as Record<string, Row>).availabilities)
+      .toEqual({ rows: 3, skipped: 1, pages: 2, error_code: "rejected_rows", reasons: { bad_instant: 1 } });
+    expect(w.tables.sevenshifts_availabilities!.map((r) => String(r.id)).sort()).toEqual(["3001", "3002", "3003"]);
+    // The watermark law is unchanged: a resource with a rejected row did not fully succeed.
+    expect(state(w, "availabilities")).toMatchObject({ last_error_code: "rejected_rows" });
+    expect(state(w, "availabilities")!.modified_watermark).toBeUndefined();
+    // The heartbeat: not a failure, and not indistinguishable from a clean run either.
+    expect(w.audits).toHaveLength(1);
+    expect(w.audits[0]!.action).toBe("cron.success");
+    expect(meta(w)).toMatchObject({
+      job: "sevenshifts-sync", status: "partial", outcome: "ok_with_warnings", errors: [],
+      warnings: ["availabilities:rejected_rows"], rejected_rows: { availabilities: 1 },
+      rejected_reasons: { availabilities: { bad_instant: 1 } },
+    });
+    expect(JSON.stringify(w.audits[0])).not.toMatch(/PLANTED|3004/);
+  });
+
+  it("time off is non-critical too", async () => {
+    const w = world({ routes: healthyRoutes({ "/v2/time_off": () => list([PAYLOAD.time_off, { ...PAYLOAD.time_off, id: 4002 }, { ...PAYLOAD.time_off, id: 4003, to_date: "PLANTED-DATE" }]) }) });
+    await run(w);
+    expect(w.audits[0]!.action).toBe("cron.success");
+    expect(meta(w)).toMatchObject({ outcome: "ok_with_warnings", warnings: ["time_off:rejected_rows"], rejected_rows: { time_off: 1 }, errors: [] });
+  });
+
+  it("EVERY availability row rejected (the 2026-11-11 first sync) is a real failure: cron.failure", async () => {
+    const w = world({ routes: healthyRoutes(availability([bad(3001), bad(3002)])) });
+    await run(w);
+    expect(w.audits[0]!.action).toBe("cron.failure");
+    expect(meta(w)).toMatchObject({ outcome: "failed", errors: ["availabilities:rejected_rows"], warnings: [], rejected_rows: { availabilities: 2 } });
+  });
+
+  it("more rows rejected than landed is a real failure (not 'a few rows')", async () => {
+    const w = world({ routes: healthyRoutes(availability([good(3001), bad(3002), bad(3003)])) });
+    await run(w);
+    expect(w.audits[0]!.action).toBe("cron.failure");
+    expect(meta(w)).toMatchObject({ outcome: "failed", errors: ["availabilities:rejected_rows"], rejected_rows: { availabilities: 2 } });
+  });
+
+  it("a rejected row on a CRITICAL resource (shifts) still alerts, however few", async () => {
+    const shifts = [9001, 9002, 9003, 9004].map((id) => ({ ...PAYLOAD.shifts, id }));
+    const w = world({ routes: healthyRoutes({ "/v2/company/1234/shifts": () => list([...shifts, { ...PAYLOAD.shifts, id: 9005, start: "soon" }]) }) });
+    await run(w);
+    expect(w.audits[0]!.action).toBe("cron.failure");
+    expect(meta(w)).toMatchObject({ outcome: "failed", errors: ["shifts:rejected_rows"], warnings: [], rejected_rows: { shifts: 1 } });
+  });
+
+  it("a warning never hides a real failure beside it, nor a persistence failure", async () => {
+    const w = world({ routes: healthyRoutes({ ...availability([good(3001), good(3002), bad(3003)]), "/v2/time_off": () => ({ status: 403 }) }) });
+    await run(w);
+    expect(w.audits[0]!.action).toBe("cron.failure");
+    expect(meta(w)).toMatchObject({ outcome: "failed", errors: ["time_off:plan_forbidden"], warnings: ["availabilities:rejected_rows"] });
+
+    const w2 = world({ routes: healthyRoutes(availability([good(3001), good(3002), bad(3003)])) });
+    refuse(w2, "sevenshifts_sync_runs", "insert");
+    await run(w2);
+    expect(w2.audits[0]!.action).toBe("cron.failure");
+    expect(w2.audits[0]!.metadata).toMatchObject({ outcome: "failed", warnings: ["availabilities:rejected_rows"], errors: ["persistence:ledger_write_failed"] });
+  });
+
+  it("a pagination failure on a non-critical resource is never a warning, even with rows landed", async () => {
+    const w = world({ routes: healthyRoutes({ "/v2/time_off": (u) => (u.searchParams.get("cursor") === "p2" ? { body: { data: [], meta: { cursor: {} } } } : list([PAYLOAD.time_off], "p2")) }) });
+    await run(w);
+    expect(w.audits[0]!.action).toBe("cron.failure");
+    expect(meta(w)).toMatchObject({ errors: ["time_off:bad_pagination"], warnings: [] });
+  });
+
+  it("a clean run says so: outcome ok, no warnings, no rejected rows", async () => {
+    const w = world();
+    expect(await run(w)).toMatchObject({ status: "ok", warnings: [] });
+    expect(w.audits[0]!.action).toBe("cron.success");
+    expect(meta(w)).toMatchObject({ outcome: "ok", warnings: [], errors: [], rejected_rows: {}, rejected_reasons: {} });
+  });
+
+  it("a refused mirror write is NAMED (write_failed), and no heartbeat error ever carries a null code", async () => {
+    const w = world();
+    refuse(w, "sevenshifts_time_punches", "upsert");
+    await run(w);
+    expect((ledger(w)[0]!.results as Record<string, Row>).time_punches).toMatchObject({ error_code: "write_failed" });
+    expect(w.audits[0]!.action).toBe("cron.failure");
+    expect(meta(w).errors).toEqual(["time_punches:write_failed"]);
+    for (const e of meta(w).errors as string[]) expect(e).toMatch(/^[a-z_]+:[a-z_]+$/);
+    expect(JSON.stringify(w.audits[0])).not.toContain("PLANTED");
+  });
+});
