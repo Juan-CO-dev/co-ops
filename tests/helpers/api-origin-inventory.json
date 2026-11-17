@@ -43,6 +43,7 @@
   "app/api/checklist/submissions/route.ts": "POST",
   "app/api/cron/catering-inbox-delivery/route.ts": "GET",
   "app/api/cron/digest-tick/route.ts": "GET",
+  "app/api/cron/fact-build/route.ts": "GET",
   "app/api/cron/job-watch/route.ts": "GET",
   "app/api/cron/meta-leads/route.ts": "GET",
   "app/api/cron/parse-receipts/route.ts": "GET",
