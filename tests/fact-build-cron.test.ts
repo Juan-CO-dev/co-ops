@@ -5,6 +5,7 @@ import { NextRequest } from "next/server";
 import { GET, maxDuration } from "@/app/api/cron/fact-build/route";
 import { claimCronRoute } from "@/lib/cron-route-lease";
 import { runFactBuildPass } from "@/lib/facts/order-facts";
+import { runLaborBuildPass } from "@/lib/facts/labor-facts";
 import { audit } from "@/lib/audit";
 import { JOBS_REGISTRY } from "@/lib/jobs-registry";
 import { FACT_PASS_BUDGET_MS } from "@/lib/facts/config-shared";
@@ -12,6 +13,7 @@ import { FACT_PASS_BUDGET_MS } from "@/lib/facts/config-shared";
 vi.mock("@/lib/cron-route-lease", () => ({ claimCronRoute: vi.fn(async () => true) }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/facts/order-facts", () => ({ runFactBuildPass: vi.fn(async () => ({ stale: 2, built: 2, raced: 0, failed: 0, timedOut: 0, leftForNextPass: 0, failures: [] })) }));
+vi.mock("@/lib/facts/labor-facts", () => ({ runLaborBuildPass: vi.fn(async () => ({ stale: 1, built: 1, raced: 0, failed: 0, timedOut: 0, leftForNextPass: 0, failures: [] })) }));
 
 const req = (auth = "Bearer vercel-test") => new NextRequest("https://example.test/api/cron/fact-build", { headers: { authorization: auth } });
 beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("CRON_SECRET", "vercel-test"); });
@@ -61,6 +63,44 @@ describe("fact-build cron", () => {
     expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({ action: "cron.failure", resourceTable: "cron",
       metadata: { job: "fact-build", error: "fact_days_failed", failed: 2, timed_out: 1,
         failures: [{ location_id: "loc", business_date: "2026-10-01", error: "fact_replace_failed" }, { location_id: "loc", business_date: "2026-10-02", error: "fact_day_timeout" }] } });
+  });
+  it("the LABOR pass is OFF unless FACT_LAYER_LABOR=1 as well (0338 must be applied first)", async () => {
+    vi.stubEnv("FACT_LAYER", "1");
+    for (const v of [undefined, "0", "true"]) {
+      vi.unstubAllEnvs(); vi.stubEnv("CRON_SECRET", "vercel-test"); vi.stubEnv("FACT_LAYER", "1");
+      if (v !== undefined) vi.stubEnv("FACT_LAYER_LABOR", v);
+      const body = await (await GET(req())).json();
+      expect(body.labor).toEqual({ skipped: true, reason: "fact_layer_labor_off" });
+    }
+    expect(runLaborBuildPass).not.toHaveBeenCalled();
+    vi.stubEnv("FACT_LAYER", "0"); vi.stubEnv("FACT_LAYER_LABOR", "1");
+    await GET(req());
+    expect(runLaborBuildPass).not.toHaveBeenCalled();
+  });
+  it("ON: the labor pass runs after the order pass inside the SAME deadline; one heartbeat names both", async () => {
+    vi.stubEnv("FACT_LAYER", "1"); vi.stubEnv("FACT_LAYER_LABOR", "1");
+    const res = await GET(req());
+    expect(await res.json()).toMatchObject({ healthy: true, built: 2, labor: { built: 1 } });
+    const order = vi.mocked(runFactBuildPass).mock.calls[0]![0], labor = vi.mocked(runLaborBuildPass).mock.calls[0]![0];
+    expect(labor.deadlineAt).toBe(order.deadlineAt);
+    expect(vi.mocked(runFactBuildPass).mock.invocationCallOrder[0]!).toBeLessThan(vi.mocked(runLaborBuildPass).mock.invocationCallOrder[0]!);
+    expect(vi.mocked(audit).mock.calls).toHaveLength(1);
+    expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({ action: "cron.success", metadata: { job: "fact-build", built: 2, labor: { stale: 1, built: 1, failed: 0 } } });
+  });
+  it("a failed labor week makes the heartbeat cron.failure, named by fixed code", async () => {
+    vi.stubEnv("FACT_LAYER", "1"); vi.stubEnv("FACT_LAYER_LABOR", "1");
+    vi.mocked(runLaborBuildPass).mockResolvedValueOnce({ stale: 1, built: 0, raced: 0, failed: 1, timedOut: 0, leftForNextPass: 0,
+      failures: [{ weekStart: "2026-10-04", error: "fact_replace_failed" }] });
+    expect(await (await GET(req())).json()).toMatchObject({ healthy: false });
+    expect(vi.mocked(audit).mock.calls[0]![0]).toMatchObject({ action: "cron.failure",
+      metadata: { error: "fact_days_failed", labor: { failed: 1, failures: [{ week_start: "2026-10-04", error: "fact_replace_failed" }] } } });
+  });
+  it("a labor pass that throws is a fixed-code failure; the order pass result is still reported", async () => {
+    vi.stubEnv("FACT_LAYER", "1"); vi.stubEnv("FACT_LAYER_LABOR", "1");
+    vi.mocked(runLaborBuildPass).mockRejectedValueOnce(new Error("secret"));
+    const body = await (await GET(req())).json();
+    expect(body).toMatchObject({ healthy: false, built: 2, labor: { error: "fact_labor_failed" } });
+    expect(JSON.stringify(body)).not.toContain("secret");
   });
   it("a held lease is a quiet skip", async () => {
     vi.stubEnv("FACT_LAYER", "1");
