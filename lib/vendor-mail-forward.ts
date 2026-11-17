@@ -16,14 +16,22 @@ const DEFINITE_REJECTIONS = new Set([
 ]);
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const email = /^[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+$/;
-const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+// The attachment's content type is a pure function of its FROZEN filename (the allowed extensions below), so the
+// first send and a resumed send carry the same type whatever the archive's asset list says today (VML-r4).
+const CONTENT_TYPES: Record<string, string> = {
+  pdf: "application/pdf", csv: "text/csv", txt: "text/plain", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+  gif: "image/gif", webp: "image/webp", doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", rtf: "application/rtf", zip: "application/zip",
+};
+const contentTypeFor = (filename: string) => CONTENT_TYPES[filename.split(".").pop()!.toLowerCase()] ?? "application/octet-stream";
+const isTeamSender = (value: unknown): value is string => typeof value === "string" && email.test(value) && value.length <= 254 && value.split("@")[0]?.toLowerCase() === "team";
+const forwardHeader = (note: string, fromAddress: string | null, subject: string | null) => `${note}${note ? "\n\n" : ""}From: ${fromAddress ?? ""}\nSubject: ${subject ?? ""}\n\n`;
+const escape =(value: string) => value.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 export interface VendorMailForwardInput extends VendorMailMutation { recipient?: string; staff_id?: string; note?: string }
 export async function forwardVendorMail(ctx: AuthContext, id: string, input: VendorMailForwardInput) {
   if (!ctx.user.active || !vendorMailRoleAllowed(ctx.user.role)) throw new VendorMailError(403, "forbidden");
   if (process.env.VENDOR_MAIL_FORWARD_ENABLED !== "1") throw new VendorMailError(409, "forward_off");
-  const configuredSender = process.env.EMAIL_FROM_TEAM?.trim();
-  const sender = configuredSender?.match(/^[^<>\r\n]+<([^<>]+)>$/)?.[1] ?? configuredSender;
-  if (!sender || !email.test(sender) || sender.length > 254 || sender.split("@")[0]?.toLowerCase() !== "team") throw new VendorMailError(503, "forward_sender_missing");
   const receivingDomain = process.env.INBOUND_RECEIVING_DOMAIN?.trim().toLowerCase();
   if (!receivingDomain || !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(receivingDomain)) throw new VendorMailError(503, "forward_domain_missing");
   validateVendorMailMutation(input);
@@ -50,46 +58,84 @@ export async function forwardVendorMail(ctx: AuthContext, id: string, input: Ven
   const recipientDomain = recipient.split("@")[1]!;
   if (receiving.includes(recipient) || recipientDomain === receivingDomain || recipientDomain.endsWith(`.${receivingDomain}`)) throw new VendorMailError(400, "forward_loop");
   // Completed operations replay from the immutable snapshot even if originals are no longer available.
+  // An UNFINISHED claim resumes from the same snapshot: its frozen body and attachment manifest, never a
+  // rebuilt body — the body converter may have changed since the claim (VML-r3), and a rebuilt body would be
+  // a different payload for the same request (409 request_conflict, the claim stranded for good).
   const savedClaim = await sb.from("vendor_mail_events").select("data").eq("inbound_message_id", id).eq("event_type", "forward_claim").eq("request_id", input.request_id).maybeSingle();
   if (savedClaim.error) throw new VendorMailError(503, "vendor_mail_unavailable");
+  // Every value the provider sees comes from the claim (VML-r4): from, to, subject, text/html, attachments.
+  // Nothing on a resume reads EMAIL_FROM_TEAM, the archive's asset list or a rebuilt body.
+  let claim: Awaited<ReturnType<typeof vendorMailRpc>>;
+  let body: string;
+  let from: string;
+  let to: string;
+  const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
   if (savedClaim.data) {
     const snapshot = savedClaim.data.data as Record<string, unknown>;
     if (snapshot.recipient !== recipient || snapshot.note !== (input.note ?? "")) throw new VendorMailError(409, "request_conflict");
-    await vendorMailRpc(ctx, id, input, "vendor_mail_forward_claim", snapshot);
+    claim = await vendorMailRpc(ctx, id, input, "vendor_mail_forward_claim", snapshot);
     const completed = await sb.from("vendor_mail_events").select("revision,data").eq("inbound_message_id", id).eq("event_type", "forward_result").eq("data->>claim_request_id", input.request_id.toLowerCase()).maybeSingle();
     if (completed.error) throw new VendorMailError(503, "vendor_mail_unavailable");
     if (completed.data) return { revision: completed.data.revision, outcome: completed.data.data.outcome, replayed: true };
+    // The frozen body must still be the body the claim hashed; each attachment must still be the bytes it hashed.
+    if (typeof snapshot.body !== "string" || typeof snapshot.body_sha256 !== "string" || hash(snapshot.body) !== snapshot.body_sha256 || !Array.isArray(snapshot.attachments)) throw new VendorMailError(409, "forward_originals_missing");
+    if (!isTeamSender(snapshot.sender) || typeof snapshot.recipient !== "string" || typeof snapshot.note !== "string") throw new VendorMailError(409, "forward_originals_missing");
+    body = snapshot.body;
+    from = snapshot.sender;
+    to = snapshot.recipient;
+    // The subject is the message's own (reference_code is immutable by 0297's trigger); it must be the subject
+    // frozen into the body's header, or this is not the forward the claim recorded.
+    if (!body.startsWith(forwardHeader(snapshot.note, row.from_address, row.subject))) throw new VendorMailError(409, "request_conflict");
+    let bytes = Buffer.byteLength(body) * 8 + 8192;
+    for (const entry of snapshot.attachments as Array<Record<string, unknown>>) {
+      if (typeof entry?.path !== "string" || typeof entry.filename !== "string" || typeof entry.sha256 !== "string") throw new VendorMailError(409, "forward_originals_missing");
+      const { data, error } = await sb.storage.from("receipts").download(entry.path);
+      if (error || !data) throw new VendorMailError(409, "forward_originals_missing");
+      bytes += Math.ceil(data.size / 3) * 4 + 2048;
+      if (bytes > VENDOR_MAIL_FORWARD_LIMIT) throw new VendorMailError(413, "forward_too_large");
+      const content = Buffer.from(await data.arrayBuffer());
+      if (hash(content) !== entry.sha256) throw new VendorMailError(409, "forward_originals_missing");
+      attachments.push({ filename: entry.filename, content, contentType: contentTypeFor(entry.filename) });
+    }
+  } else {
+    // A NEW claim reads the configured team sender once; the claim freezes its address, and every send of this
+    // request (this one and any resume) is from exactly that address. The claim's payload holds a bare address
+    // only (0326's key/format check), so a display name in EMAIL_FROM_TEAM is not sent: it could not be frozen.
+    const configuredSender = process.env.EMAIL_FROM_TEAM?.trim();
+    const sender = configuredSender?.match(/^[^<>\r\n]+<([^<>]+)>$/)?.[1]?.trim() ?? configuredSender;
+    if (!isTeamSender(sender)) throw new VendorMailError(503, "forward_sender_missing");
+    from = sender;
+    to = recipient;
+    const detail = await getVendorMailMessage(ctx, id);
+    if (row.archive_state !== "complete" || detail.body_state !== "available" || detail.body_truncated) throw new VendorMailError(409, "forward_originals_missing");
+    const note = input.note ?? "";
+    body = `${forwardHeader(note, row.from_address, row.subject)}${detail.body_text}`;
+    if (Buffer.byteLength(body) > 131072) throw new VendorMailError(413, "forward_body_too_large");
+    const manifest: Array<{ path: string; filename: string; sha256: string }> = [];
+    let bytes = Buffer.byteLength(body) * 8 + 8192;
+    for (const asset of vendorMailAssetEntries(row).filter(a => !a.kind || a.kind === "attachment")) {
+      if (!/\.(?:pdf|csv|txt|png|jpe?g|gif|webp|docx?|xlsx?|rtf|zip)$/i.test(asset.filename)) throw new VendorMailError(409, "forward_attachment_unsupported");
+      if (!asset.path || asset.omitted) throw new VendorMailError(409, "forward_originals_missing");
+      const { data, error } = await sb.storage.from("receipts").download(asset.path);
+      if (error || !data) throw new VendorMailError(409, "forward_originals_missing");
+      bytes += Math.ceil(data.size / 3) * 4 + 2048;
+      if (bytes > VENDOR_MAIL_FORWARD_LIMIT) throw new VendorMailError(413, "forward_too_large");
+      const content = Buffer.from(await data.arrayBuffer());
+      attachments.push({ filename: asset.filename, content, contentType: contentTypeFor(asset.filename) });
+      manifest.push({ path: asset.path, filename: asset.filename, sha256: hash(content) });
+    }
+    if (attachments.length > 25) throw new VendorMailError(413, "forward_too_large");
+    claim = await vendorMailRpc(ctx, id, input, "vendor_mail_forward_claim", { recipient, sender, note, body, body_sha256: hash(body), attachments: manifest });
+    const prior = await sb.from("vendor_mail_events").select("data").eq("inbound_message_id", id).eq("event_type", "forward_result").eq("data->>claim_request_id", input.request_id.toLowerCase()).maybeSingle();
+    if (prior.error) throw new VendorMailError(503, "vendor_mail_unavailable");
+    if (prior.data) return { revision: row.revision, outcome: prior.data.data.outcome, replayed: true };
   }
-  const detail = await getVendorMailMessage(ctx, id);
-  if (row.archive_state !== "complete" || detail.body_state !== "available" || detail.body_truncated) throw new VendorMailError(409, "forward_originals_missing");
-  const note = input.note ?? "";
-  const body = `${note}${note ? "\n\n" : ""}From: ${row.from_address ?? ""}\nSubject: ${row.subject ?? ""}\n\n${detail.body_text}`;
-  if (Buffer.byteLength(body) > 131072) throw new VendorMailError(413, "forward_body_too_large");
-  const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
-  const manifest: Array<{ path: string; filename: string; sha256: string }> = [];
-  let bytes = Buffer.byteLength(body) * 8 + 8192;
-  for (const asset of vendorMailAssetEntries(row).filter(a => !a.kind || a.kind === "attachment")) {
-    if (!/\.(?:pdf|csv|txt|png|jpe?g|gif|webp|docx?|xlsx?|rtf|zip)$/i.test(asset.filename)) throw new VendorMailError(409, "forward_attachment_unsupported");
-    if (!asset.path || asset.omitted) throw new VendorMailError(409, "forward_originals_missing");
-    const { data, error } = await sb.storage.from("receipts").download(asset.path);
-    if (error || !data) throw new VendorMailError(409, "forward_originals_missing");
-    bytes += Math.ceil(data.size / 3) * 4 + 2048;
-    if (bytes > VENDOR_MAIL_FORWARD_LIMIT) throw new VendorMailError(413, "forward_too_large");
-    const content = Buffer.from(await data.arrayBuffer());
-    attachments.push({ filename: asset.filename, content, contentType: asset.contentType });
-    manifest.push({ path: asset.path, filename: asset.filename, sha256: hash(content) });
-  }
-  if (attachments.length > 25) throw new VendorMailError(413, "forward_too_large");
-  const claim = await vendorMailRpc(ctx, id, input, "vendor_mail_forward_claim", { recipient, sender, note, body, body_sha256: hash(body), attachments: manifest });
-  const prior = await sb.from("vendor_mail_events").select("data").eq("inbound_message_id", id).eq("event_type", "forward_result").eq("data->>claim_request_id", input.request_id.toLowerCase()).maybeSingle();
-  if (prior.error) throw new VendorMailError(503, "vendor_mail_unavailable");
-  if (prior.data) return { revision: row.revision, outcome: prior.data.data.outcome, replayed: true };
   if (claim.replayed) {
     const event = await sb.from("vendor_mail_events").select("created_at").eq("request_id", input.request_id).maybeSingle();
     if (event.error || !event.data) throw new VendorMailError(503, "vendor_mail_unavailable");
     if (Date.now() - Date.parse(event.data.created_at) >= 24 * 3600_000) throw new VendorMailError(409, "forward_unknown");
   }
-  const sent: SendEmailResult = await sendEmail({ from: configuredSender!, to: recipient, subject: `Fwd: ${row.subject ?? row.reference_code}`, text: body, html: `<pre>${escape(body)}</pre>`, attachments, idempotencyKey: `vendor-mail/${input.request_id.toLowerCase()}` }).catch(() => ({ error: "unknown" }));
+  const sent: SendEmailResult = await sendEmail({ from, to, subject: `Fwd: ${row.subject ?? row.reference_code}`, text: body, html: `<pre>${escape(body)}</pre>`, attachments, idempotencyKey: `vendor-mail/${input.request_id.toLowerCase()}` }).catch(() => ({ error: "unknown" }));
   const mismatch = "error" in sent && sent.code === "invalid_idempotent_request";
   const outcome = "id" in sent ? "accepted" : sent.code && DEFINITE_REJECTIONS.has(sent.code) ? "failed" : "unknown";
   const current = await readVendorMailRow(ctx, id);

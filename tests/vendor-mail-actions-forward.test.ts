@@ -1,4 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import type { AuthContext } from "@/lib/session";
 vi.mock("server-only", () => ({}));
 const mocks = vi.hoisted(() => ({ send: vi.fn(), rpc: vi.fn(), read: vi.fn(), detail: vi.fn(), download: vi.fn(), audit: vi.fn(), from: vi.fn() }));
@@ -124,9 +125,11 @@ it.each(["catering@company.test", "shop@receiving.test", "x@sub.receiving.test"]
   await expect(forwardVendorMail(ctx,id,{...request,recipient})).rejects.toMatchObject({code:"forward_loop"});
   expect(mocks.send).not.toHaveBeenCalled();
 });
-it("allows other company addresses and preserves the team display name", async () => {
+it("allows other company addresses and sends from the team address the claim froze", async () => {
   await forwardVendorMail(ctx,id,{...request,recipient:"gm@company.test"});
-  expect(mocks.send.mock.calls[0]![0].from).toBe("Compliments Only <team@outbound.test>");
+  // VML-r4: the claim can hold only the bare address (0326), so that address is the From of every send of this request.
+  expect(mocks.rpc.mock.calls[0]![1].p_payload.sender).toBe("team@outbound.test");
+  expect(mocks.send.mock.calls[0]![0].from).toBe("team@outbound.test");
 });
 it.each(["", "@bad", "receiving.test/path"])("fails closed on missing/invalid receiving domain %s", async domain => {
   vi.stubEnv("INBOUND_RECEIVING_DOMAIN",domain);
@@ -137,4 +140,89 @@ it("body over 128 KB has its own refusal before claim/send", async () => {
   mocks.detail.mockResolvedValue({body_state:"available",body_text:"a".repeat(131073),body_truncated:false});
   await expect(forwardVendorMail(ctx,id,{...request,recipient:"gm@company.test"})).rejects.toMatchObject({code:"forward_body_too_large"});
   expect(mocks.send).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled();
+});
+
+// Fix round 3 (VML-r3 P2): a claim committed before a body-converter change, with no result yet, still completes.
+const frozenBody = "From: vendor@example.test\nSubject: Invoice\n\nInvoice";
+const sha = (value: string) => createHash("sha256").update(value).digest("hex");
+const frozenClaim = (over: Record<string, unknown> = {}) => ({ data: { recipient: "person@external.test", sender: "team@outbound.test", note: "", body: frozenBody, body_sha256: sha(frozenBody), attachments: [{ path: "invoice", filename: "invoice.pdf", sha256: sha("original bytes") }], ...over } });
+it("unfinished pre-change claim resumes from its frozen body after the converter changes", async () => {
+  replay = true; existingClaim = frozenClaim();
+  // The converter now renders the same HTML differently (link targets kept): a rebuilt body would not match the claim.
+  mocks.detail.mockResolvedValue({ body_state: "available", body_text: "Invoice <https://vendor.example/invoice/42>", body_truncated: false });
+  eventQueue = [null, { created_at: new Date(Date.now() - 3600_000).toISOString() }];
+  const result = await forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test" });
+  expect(mocks.rpc.mock.calls.filter(c => c[0] === "vendor_mail_forward_claim")).toHaveLength(1);
+  expect(mocks.rpc.mock.calls[0]![1].p_payload).toEqual(frozenClaim().data);
+  expect(mocks.detail).not.toHaveBeenCalled();
+  expect(mocks.send).toHaveBeenCalledTimes(1);
+  const sent = mocks.send.mock.calls[0]![0];
+  expect(sent.text).toBe(frozenBody);
+  expect(sent.idempotencyKey).toBe(`vendor-mail/${request.request_id}`);
+  expect(sent.attachments[0]).toMatchObject({ filename: "invoice.pdf", contentType: "application/pdf" });
+  expect(sent.attachments[0].content.equals(Buffer.from("original bytes"))).toBe(true);
+  expect(result).toMatchObject({ outcome: "accepted" });
+});
+it("resumed claim refuses when the frozen body fails its hash", async () => {
+  replay = true; existingClaim = frozenClaim({ body: "tampered" });
+  eventQueue = [null, { created_at: new Date().toISOString() }];
+  await expect(forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test" })).rejects.toMatchObject({ code: "forward_originals_missing" });
+  expect(mocks.send).not.toHaveBeenCalled();
+});
+it("resumed claim refuses when an attachment no longer matches its manifest hash", async () => {
+  replay = true; existingClaim = frozenClaim();
+  mocks.download.mockResolvedValue({ data: new Blob(["changed bytes"]), error: null });
+  eventQueue = [null, { created_at: new Date().toISOString() }];
+  await expect(forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test" })).rejects.toMatchObject({ code: "forward_originals_missing" });
+  expect(mocks.send).not.toHaveBeenCalled();
+});
+it("resumed claim keeps the 24h retry window", async () => {
+  replay = true; existingClaim = frozenClaim();
+  eventQueue = [null, { created_at: new Date(Date.now() - 25 * 3600_000).toISOString() }];
+  await expect(forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test" })).rejects.toMatchObject({ code: "forward_unknown" });
+  expect(mocks.send).not.toHaveBeenCalled();
+});
+
+// Fix round 4 (VML-r4 P2): a resumed claim sends with EVERYTHING frozen in it — never re-read configuration.
+it("resumed claim sends from its frozen sender even after EMAIL_FROM_TEAM changes", async () => {
+  replay = true; existingClaim = frozenClaim({ sender: "team@old.test" });
+  vi.stubEnv("EMAIL_FROM_TEAM", "Compliments Only <team@new.test>");
+  eventQueue = [null, { created_at: new Date(Date.now() - 3600_000).toISOString() }];
+  await forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test" });
+  expect(mocks.send).toHaveBeenCalledTimes(1);
+  expect(mocks.send.mock.calls[0]![0].from).toBe("team@old.test");
+});
+it("resumed claim does not need EMAIL_FROM_TEAM at all", async () => {
+  replay = true; existingClaim = frozenClaim({ sender: "team@old.test" });
+  vi.stubEnv("EMAIL_FROM_TEAM", "");
+  eventQueue = [null, { created_at: new Date(Date.now() - 3600_000).toISOString() }];
+  await forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test" });
+  expect(mocks.send.mock.calls[0]![0].from).toBe("team@old.test");
+});
+it("first send and resume send the identical payload", async () => {
+  await forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test", note: "FYI" });
+  const first = mocks.send.mock.calls[0]![0];
+  const claimed = mocks.rpc.mock.calls[0]![1].p_payload;
+  vi.clearAllMocks(); mocks.send.mockResolvedValue({ id: "provider-1" });
+  mocks.read.mockResolvedValue(row); mocks.download.mockResolvedValue({ data: new Blob(["original bytes"]), error: null });
+  replay = true; existingClaim = { data: claimed };
+  vi.stubEnv("EMAIL_FROM_TEAM", "Other Name <team@new.test>");
+  // The archive's asset list was rewritten since the claim: its content types must not leak into the resend.
+  mocks.read.mockResolvedValue({ ...row, receipt: { ...row.receipt, attachment_paths: [{ path: "invoice", filename: "invoice.pdf", contentType: "application/octet-stream" }] } });
+  eventQueue = [null, { created_at: new Date(Date.now() - 3600_000).toISOString() }];
+  await forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test", note: "FYI" });
+  expect(mocks.send.mock.calls[0]![0]).toEqual(first);
+});
+it("resumed claim refuses when the message's subject no longer matches the frozen body", async () => {
+  replay = true; existingClaim = frozenClaim();
+  mocks.read.mockResolvedValue({ ...row, subject: "Changed" });
+  eventQueue = [null, { created_at: new Date(Date.now() - 3600_000).toISOString() }];
+  await expect(forwardVendorMail(ctx, id, { ...request, recipient: "person@external.test" })).rejects.toMatchObject({ code: "request_conflict" });
+  expect(mocks.send).not.toHaveBeenCalled();
+});
+it("resumed claim sends to its frozen recipient", async () => {
+  replay = true; existingClaim = frozenClaim();
+  eventQueue = [null, { created_at: new Date(Date.now() - 3600_000).toISOString() }];
+  await forwardVendorMail(ctx, id, { ...request, recipient: " Person@External.test " });
+  expect(mocks.send.mock.calls[0]![0].to).toBe("person@external.test");
 });

@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { getVendorMailMessage, listVendorMail } from "@/lib/vendor-mail";
 import type { vendorMailOptions } from "@/lib/vendor-mail-options";
-import { VENDOR_MAIL_STATUSES, vendorMailForwardAcknowledged, vendorMailHasUnknownForward } from "@/lib/vendor-mail-shared";
+import { VENDOR_MAIL_STATUSES, vendorMailForwardAcknowledged, vendorMailHasUnknownForward, vendorMailTextSegments } from "@/lib/vendor-mail-shared";
 import { useTranslation } from "@/lib/i18n/provider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { formatDateLabel, formatTime, formatCents, formatQuantity } from "@/lib/i18n/format";
@@ -17,6 +17,12 @@ type Filters = { location: string; vendor: string; status: string; from: string;
 /** A confirmed refusal has no committed mutation. Uncertain failures retain the original key. */
 export function releaseRefusedVendorMailRequest<T>(requests: Map<string, T>, identity: string, _action: string, code: unknown): void {
   if (code === "stale_revision") requests.delete(identity);
+}
+/** The body is plain text; only http(s) URLs become links, opened in a new tab with no opener or referrer. */
+export function VendorMailBody({ text }: { text: string }) {
+  return <pre className="whitespace-pre-wrap break-words font-sans">{vendorMailTextSegments(text).map((segment, index) => segment.href
+    ? <a key={index} href={segment.href} target="_blank" rel="noopener noreferrer nofollow" className="break-all text-co-gold-text underline">{segment.text}</a>
+    : segment.text)}</pre>;
 }
 const control = "flex min-h-[44px] items-center rounded border border-co-border bg-co-surface px-3 py-2 max-w-full";
 const field = "flex min-w-0 flex-col gap-1 text-sm";
@@ -157,8 +163,8 @@ export function VendorMailPane({ initial, options, filters, forwardEnabled, leve
         {error && <p role="alert" className="text-red-700">{error}</p>}{notice && <p role="status">{notice}</p>}
         <p className="break-all">{detail.from_address} · {date(detail.received_at)}</p>
         <p>{t("vendorMail.disclosure")}</p>
-        <CollapsibleSection idBase="vm-body" title={t("vendorMail.body")} count={t("vendorMail.count", { count: detail.body_state === "available" ? 1 : 0 })} defaultOpen>{detail.body_state === "available" ? <pre className="whitespace-pre-wrap break-words font-sans">{detail.body_text}</pre> : <p>{label(`body.${detail.body_state}`)}</p>}{detail.body_from_html && <p>{t("vendorMail.body.from_html")}</p>}{detail.body_truncated && <p>{t("vendorMail.body.truncated")}</p>}</CollapsibleSection>
-        <CollapsibleSection idBase="vm-assets" title={t("vendorMail.attachments")} count={t("vendorMail.count", { count: detail.assets.length })}><ul>{detail.assets.map(asset => <li key={asset.id} className="flex flex-wrap items-center gap-2 break-all"><button type="button" className={control} disabled={!asset.available} onClick={() => void attachment(asset.id)}>{asset.filename}</button>{!asset.available && <span>{t("vendorMail.asset_missing")}</span>}</li>)}</ul><p>{t("vendorMail.asset_expiry")}</p></CollapsibleSection>
+        <CollapsibleSection idBase="vm-body" title={t("vendorMail.body")} count={t("vendorMail.count", { count: detail.body_state === "available" ? 1 : 0 })} defaultOpen>{detail.body_state === "available" ? <VendorMailBody text={detail.body_text} /> : <p>{label(`body.${detail.body_state}`)}</p>}{detail.body_from_html && <p>{t("vendorMail.body.from_html")}</p>}{detail.body_truncated && <p>{t("vendorMail.body.truncated")}</p>}</CollapsibleSection>
+        <CollapsibleSection idBase="vm-assets" title={t("vendorMail.attachments")} count={t("vendorMail.count", { count: detail.assets.length })}><ul>{detail.assets.map(asset => <li key={asset.id} className="flex flex-wrap items-center gap-2 break-all"><button type="button" className={control} disabled={!asset.available} onClick={() => void attachment(asset.id)}>{asset.filename}</button>{asset.kind === "body" && <span>{t("vendorMail.asset_original")}</span>}{!asset.available && <span>{t("vendorMail.asset_missing")}</span>}</li>)}</ul><p>{t("vendorMail.asset_expiry")}</p></CollapsibleSection>
         <CollapsibleSection idBase="vm-parsed" title={t("vendorMail.parsed")} count={t("vendorMail.count", { count: parsedKeys.length })}><p>{t("vendorMail.extracted")}</p><dl>{parsedKeys.map(key => <div key={key}><dt className="font-bold">{label(`parsed.${key}`)}</dt><dd className="break-words">{typeof parsed[key] === "string" || typeof parsed[key] === "number" ? key === "totalCents" && typeof parsed[key] === "number" ? formatCents(parsed[key], language) : String(parsed[key]) : t("vendorMail.unknown")}</dd></div>)}</dl></CollapsibleSection>
         <CollapsibleSection idBase="vm-lines" title={t("vendorMail.lines")} count={t("vendorMail.count", { count: parsedLines.length })}>
           <ol className="space-y-3">{parsedLines.map((line, index) => <li key={index} className="break-words border-b border-co-border pb-2"><dl>{["description", "qty", "unit", "unitPriceCents", "extendedCents"].map(key => line[key] !== undefined && <div key={key}><dt className="font-semibold">{label(`line.${key}`)}</dt><dd>{typeof line[key] === "number" ? key.endsWith("Cents") ? formatCents(line[key], language) : formatQuantity(line[key], language) : typeof line[key] === "string" ? line[key] : t("vendorMail.unknown")}</dd></div>)}</dl></li>)}</ol>

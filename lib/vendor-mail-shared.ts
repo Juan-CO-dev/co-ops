@@ -30,17 +30,160 @@ export function vendorMailOrder(a: { stale: boolean; received_at: string; id: st
   return Number(b.stale) - Number(a.stale) || (a.stale ? a.received_at.localeCompare(b.received_at) : b.received_at.localeCompare(a.received_at)) || a.id.localeCompare(b.id);
 }
 /** A plain-text presentation only; never use this result as HTML. Preserve quoted mail. */
+const HTML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+function decodeEntities(text: string): string {
+  return text.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (whole, code: string) => {
+    if (!code.startsWith("#")) return HTML_ENTITIES[code.toLowerCase()] ?? whole;
+    const point = code[1]?.toLowerCase() === "x" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+    return point > 0 && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff) ? String.fromCodePoint(point) : " ";
+  });
+}
+/**
+ * An http(s) URL in canonical form (`<`, `>`, spaces and quotes percent-encoded), else null. Never any other scheme.
+ * Surrounding whitespace and controls are dropped and inner controls removed; an inner SPACE is kept, so the
+ * parser percent-encodes it (`Order Confirmation.pdf` → `Order%20Confirmation.pdf`), never joins the words.
+ */
+export function vendorMailSafeUrl(raw: string): string | null {
+  const candidate = raw.replace(/^[\u0000- \u007f]+|[\u0000- \u007f]+$/g, "").replace(/[\u0000-\u001f\u007f]/g, "");
+  if (!/^https?:\/\//i.test(candidate)) return null;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch { return null; }
+}
+const isTagSpace = (ch: string | undefined) => ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f";
+const NEWLINE_TAGS = new Set(["br", "/p", "/div", "/li", "/tr", "/blockquote"]);
+/**
+ * Reads one tag's attributes from `start` (just after its name) the way the HTML tokenizer does: a quote opens a
+ * value ONLY right after `=`, so `href=` or `>` inside another attribute's quoted value is that value's text, never
+ * an attribute or the tag's end. Returns the index after the tag and the FIRST attribute named exactly `href`
+ * ("" when valueless; a later duplicate is ignored, as in a browser). Every step moves forward: linear.
+ */
+function scanTagAttributes(html: string, start: number): { end: number; href: string | null } {
+  const n = html.length;
+  let href: string | null = null;
+  let i = start;
+  while (i < n) {
+    const ch = html[i];
+    if (ch === ">") return { end: i + 1, href };
+    if (isTagSpace(ch) || ch === "/") { i++; continue; }
+    const nameStart = i++; // a name may begin with "="
+    while (i < n && !isTagSpace(html[i]) && html[i] !== "/" && html[i] !== ">" && html[i] !== "=") i++;
+    const name = html.slice(nameStart, i).toLowerCase();
+    let j = i;
+    while (j < n && isTagSpace(html[j])) j++;
+    let value = "";
+    if (html[j] === "=") {
+      j++;
+      while (j < n && isTagSpace(html[j])) j++;
+      const quote = html[j];
+      if (quote === '"' || quote === "'") {
+        const close = html.indexOf(quote, j + 1);
+        value = html.slice(j + 1, close < 0 ? n : close);
+        j = close < 0 ? n : close + 1;
+      } else {
+        let k = j;
+        while (k < n && !isTagSpace(html[k]) && html[k] !== ">") k++;
+        value = html.slice(j, k);
+        j = k;
+      }
+    }
+    if (name === "href" && href === null) href = value;
+    i = j;
+  }
+  return { end: n, href };
+}
+/** Replaces every tag with its plain-text stand-in (anchor markers, line breaks, a space) in one forward pass. */
+function replaceTags(html: string, urls: string[]): string {
+  const parts: string[] = [];
+  let last = 0;
+  for (let i = html.indexOf("<"); i >= 0 && i < html.length; i = html.indexOf("<", i)) {
+    const next = html[i + 1] ?? "";
+    let nameStart = i + 1;
+    if (isTagSpace(next)) { // `< br>` / `< /p>` kept as line breaks, as before; any other `< x` is text
+      while (nameStart < html.length && isTagSpace(html[nameStart])) nameStart++;
+    } else if (!/[a-zA-Z/!]/.test(next)) { i++; continue; }
+    if (html[nameStart] === "!") { // doctype / bogus comment: ends at the first ">"
+      const close = html.indexOf(">", nameStart);
+      parts.push(html.slice(last, i), " ");
+      last = i = close < 0 ? html.length : close + 1;
+      continue;
+    }
+    const closing = html[nameStart] === "/";
+    let k = closing ? nameStart + 1 : nameStart;
+    while (k < html.length && !isTagSpace(html[k]) && html[k] !== "/" && html[k] !== ">") k++;
+    const name = (closing ? "/" : "") + html.slice(closing ? nameStart + 1 : nameStart, k).toLowerCase();
+    if (nameStart !== i + 1 && !NEWLINE_TAGS.has(name)) { i++; continue; }
+    const { end, href } = scanTagAttributes(html, k);
+    let replacement = " ";
+    if (name === "a") {
+      const url = href === null ? null : vendorMailSafeUrl(decodeEntities(href));
+      if (url) { urls.push(url); replacement = ` \u0000S${urls.length - 1}\u0000`; }
+    } else if (name === "/a") replacement = "\u0000E\u0000 ";
+    else if (NEWLINE_TAGS.has(name)) replacement = "\n";
+    parts.push(html.slice(last, i), replacement);
+    last = i = end;
+  }
+  parts.push(html.slice(last));
+  return parts.join("");
+}
+/**
+ * Anchors keep their target: `text <https://…>` (the URL alone when the text is empty or the URL itself).
+ * Only http(s) targets are shown; any other scheme keeps its text and drops the target. Click-tracking
+ * redirects are shown as they are — unwrapping them is not reliably safe.
+ */
 export function vendorMailHtmlToText(html: string): string {
-  const entities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
-  return html.replace(/<!--[^]*?(?:-->|$)/g, " ")
-    .replace(/<(script|style)\b[^>]*>[^]*?<\/\1\s*>/gi, " ")
-    .replace(/<\s*(?:br|\/p|\/div|\/li|\/tr|\/blockquote)\b[^>]*>/gi, "\n")
-    .replace(/<[a-zA-Z/!][^>]*(?:>|$)/g, " ")
-    .replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (whole, code: string) => {
-      if (!code.startsWith("#")) return entities[code.toLowerCase()] ?? whole;
-      const point = code[1]?.toLowerCase() === "x" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
-      return point > 0 && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff) ? String.fromCodePoint(point) : " ";
-    }).replace(/[ \t]+/g, " ").trim();
+  const urls: string[] = [];
+  // Markers are NUL-delimited, so the input's own NULs go first; every pattern below is linear.
+  // Tags are tokenized quote-aware (`scanTagAttributes`): the link target is the real `href` attribute only.
+  const text = decodeEntities(replaceTags(html.replace(/\u0000/g, "")
+    .replace(/<!--[^]*?(?:-->|$)/g, " ")
+    .replace(/<(script|style)\b[^>]*>[^]*?<\/\1\s*>/gi, " "), urls))
+    .replace(/\u0000S(\d+)\u0000([^\u0000]*)\u0000E\u0000/g, (_whole, index: string, inner: string) => {
+      const url = urls[Number(index)] ?? "";
+      const label = inner.trim();
+      // Always the bracketed form: the body view links `<…>` whole, so the target is never trimmed as prose.
+      return !label ? `<${url}>` : label === url || label === url.replace(/\/$/, "") ? inner.replace(label, `<${url}>`) : `${inner.replace(/\s+$/, "")} <${url}>`;
+    })
+    .replace(/\u0000S(\d+)\u0000([^\u0000]*)/g, (_whole, index: string, inner: string) => `${inner.replace(/\s+$/, "")} <${urls[Number(index)] ?? ""}>`)
+    .replace(/\u0000E\u0000/g, "");
+  return text.replace(/[ \t]+/g, " ").trim();
+}
+export type VendorMailTextSegment = { text: string; href?: string };
+const PROSE_TRAILING = new Set([".", ",", ";", ":", "!", "?", "'", '"', "]", "}"]);
+/** Length of a prose URL once trailing punctuation and unbalanced `)` are trimmed — one count, one backward pass. */
+function proseUrlLength(raw: string): number {
+  let open = 0, close = 0;
+  for (const ch of raw) { if (ch === "(") open++; else if (ch === ")") close++; }
+  let end = raw.length;
+  while (end > 0) {
+    const ch = raw[end - 1]!;
+    if (PROSE_TRAILING.has(ch)) end--;
+    else if (ch === ")" && close > open) { end--; close--; }
+    else break;
+  }
+  return end;
+}
+/**
+ * Splits plain text into text and http(s) link segments; the caller renders text as text, never as HTML.
+ * `<https://…>` (how an HTML anchor's target is kept) is an explicit target, linked whole with no punctuation
+ * trimming; a bare URL in prose is trimmed. A link segment's text IS its href — what is shown is where it goes.
+ */
+export function vendorMailTextSegments(text: string): VendorMailTextSegment[] {
+  const segments: VendorMailTextSegment[] = [];
+  let last = 0;
+  for (const match of text.matchAll(/<(https?:\/\/[^\s<>]+)>|https?:\/\/[^\s<>"'`]+/gi)) {
+    const explicit = match[1];
+    const raw = explicit ?? match[0].slice(0, proseUrlLength(match[0]));
+    const href = vendorMailSafeUrl(raw);
+    if (!href) continue;
+    const start = (match.index ?? 0) + (explicit === undefined ? 0 : 1);
+    if (start > last) segments.push({ text: text.slice(last, start) });
+    segments.push({ text: href, href });
+    last = start + raw.length;
+  }
+  if (last < text.length) segments.push({ text: text.slice(last) });
+  return segments;
 }
 
 /** Recovery baselines are appended only by the level-8+ runbook SQL procedure. */

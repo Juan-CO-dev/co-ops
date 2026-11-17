@@ -1,0 +1,164 @@
+import { jsx } from "react/jsx-runtime";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import { vendorMailHtmlToText, vendorMailSafeUrl, vendorMailTextSegments } from "@/lib/vendor-mail-shared";
+import { VendorMailBody } from "@/app/(authed)/operations/vendor-mail/VendorMailPane";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+
+const invite = '<p>Welcome to Baldor.</p><p><a class="btn" href="https://portal.baldor.example/set-password?token=abc&amp;user=42">Create your password</a></p>';
+
+describe("vendor mail HTML keeps its links as visible text", () => {
+  it("an anchor becomes its text followed by the URL", () => {
+    const text = vendorMailHtmlToText(invite);
+    expect(text).toContain("Create your password <https://portal.baldor.example/set-password?token=abc&user=42>");
+    expect(text).toContain("Welcome to Baldor.");
+  });
+  it("an anchor whose text IS the URL, or has no text, shows the URL once", () => {
+    expect(vendorMailHtmlToText('<a href="https://x.example/a">https://x.example/a</a>')).toBe("<https://x.example/a>");
+    expect(vendorMailHtmlToText("<a href='https://x.example/b'><img src=x></a>")).toBe("<https://x.example/b>");
+    expect(vendorMailHtmlToText("<A HREF=https://x.example/c>Go</A>")).toBe("Go <https://x.example/c>");
+  });
+  it("javascript:, data: and other schemes keep the text and never show the target", () => {
+    for (const href of ["javascript:alert(1)", "JaVaScRiPt:alert(1)", "java&#x09;script:alert(1)", "data:text/html,&lt;b&gt;x", "vbscript:x", "/relative", "file:///etc/passwd"]) {
+      const text = vendorMailHtmlToText(`<a href="${href}">Click</a> done`);
+      expect(text, href).toBe("Click done");
+    }
+  });
+  it("an unclosed anchor still shows its URL, and markup in the href cannot inject a tag", () => {
+    expect(vendorMailHtmlToText('<a href="https://x.example/u">Open')).toBe("Open <https://x.example/u>");
+    const text = vendorMailHtmlToText('<a href="https://x.example/?q=&lt;script&gt;">Go</a>');
+    expect(text).not.toContain("<script>");
+    expect(text).toContain("Go <https://x.example/?q=%3Cscript%3E>");
+  });
+  it("stays linear on hostile input", () => {
+    for (const chunk of ["<a ", "<a href=https://x.example/>", "</a>", "<a href='https://x.example'>x"]) {
+      const start = performance.now();
+      vendorMailHtmlToText(chunk.repeat(40_000));
+      expect(performance.now() - start, chunk).toBeLessThan(1500);
+    }
+  });
+  it("takes the destination from the real href attribute only, respecting quotes (review r2)", () => {
+    const cases: [string, string][] = [
+      // The reviewer's reproduction: an `href=` inside another attribute's quoted value is not an attribute.
+      [`<a title="Example href='https://other.example/'"\n   href="https://vendor.example/invoice/42">Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      [`<a title='x" href="https://other.example/"' href=https://vendor.example/invoice/42>Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      // A `>` inside a quoted value does not end the tag.
+      [`<a title="a > b href=https://other.example/" href="https://vendor.example/invoice/42">Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      [`<a title='1 > 0' href='https://vendor.example/invoice/42'>Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      // Only the attribute NAMED href: data-href, xhref, href-like names never count.
+      [`<a data-href="https://other.example/" href="https://vendor.example/invoice/42">Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      [`<a data-href="https://other.example/">Invoice</a>`, "Invoice"],
+      [`<a xhref=https://other.example/ hrefx="https://other.example/">Invoice</a>`, "Invoice"],
+      // The first href wins, as in a browser.
+      [`<a href="https://vendor.example/invoice/42" href="https://other.example/">Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      // Spacing and case variants of the real attribute.
+      [`<a\thref = "https://vendor.example/invoice/42" >Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      [`<a/HREF='https://vendor.example/invoice/42'>Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      // A valueless attribute is not followed by a value somewhere else.
+      [`<a download title=x href=https://vendor.example/invoice/42>Invoice</a>`, "Invoice <https://vendor.example/invoice/42>"],
+      [`<a href title="https://other.example/">Invoice</a>`, "Invoice"],
+    ];
+    for (const [html, expected] of cases) {
+      const text = vendorMailHtmlToText(html);
+      expect(text, html).toBe(expected);
+      const links = vendorMailTextSegments(text).filter(segment => segment.href).map(segment => segment.href);
+      expect(links, html).toEqual(expected.includes("<") ? ["https://vendor.example/invoice/42"] : []);
+    }
+  });
+  it("a quoted '>' inside any other tag does not leak markup into the text", () => {
+    expect(vendorMailHtmlToText(`<p title="a > b">Hello</p><img alt='1 > 0' src=x>World`)).toBe("Hello\n World");
+  });
+  it("stays linear on hostile attribute quoting", () => {
+    for (const chunk of [`<a title="`, `<a x='`, `<a title="x" `, `<a href=`, `<p title="a > b">`, `<a href="https://x.example/" title='>'>x</a>`]) {
+      const start = performance.now();
+      vendorMailHtmlToText(chunk.repeat(40_000));
+      expect(performance.now() - start, chunk).toBeLessThan(1500);
+    }
+  });
+  it("keeps the pre-existing conversion for markup without links", () => {
+    expect(vendorMailHtmlToText("<script>bad()</script><p>Hello &amp; hi</p><b>World</b>")).toBe("Hello & hi\n World");
+  });
+});
+
+it("the stored original email is labelled in Attachments and still goes through the signed download", async () => {
+  const { readFileSync } = await import("node:fs");
+  const en = (await import("@/lib/i18n/en.json")).default as Record<string, string>;
+  const es = (await import("@/lib/i18n/es.json")).default as Record<string, string>;
+  expect(en["vendorMail.asset_original"]).toBeTruthy();
+  expect(es["vendorMail.asset_original"]).toBeTruthy();
+  const source = readFileSync("app/(authed)/operations/vendor-mail/VendorMailPane.tsx", "utf8");
+  expect(source).toContain('asset.kind === "body" && <span>{t("vendorMail.asset_original")}</span>');
+  const assets = readFileSync("lib/vendor-mail-assets.ts", "utf8");
+  expect(assets).toContain("{ download: asset.filename }");
+});
+
+describe("vendor mail body links are clickable only for http(s)", () => {
+  it("splits text into text and http(s) link segments, trimming trailing punctuation", () => {
+    expect(vendorMailTextSegments("See https://a.example/x?y=1. Or <http://b.example/p>, ok")).toEqual([
+      { text: "See " }, { text: "https://a.example/x?y=1", href: "https://a.example/x?y=1" },
+      { text: ". Or <" }, { text: "http://b.example/p", href: "http://b.example/p" }, { text: ">, ok" },
+    ]);
+    expect(vendorMailTextSegments("(https://w.example/wiki/A_(b))")).toEqual([
+      { text: "(" }, { text: "https://w.example/wiki/A_(b)", href: "https://w.example/wiki/A_(b)" }, { text: ")" },
+    ]);
+  });
+  it("stays linear on hostile link text (40,000 closing parentheses)", () => {
+    for (const body of [`https://vendor.example/${")".repeat(40_000)}`, `<https://vendor.example/${")".repeat(40_000)}`,
+      "<https://x.example/a".repeat(20_000), `https://v.example/${".)".repeat(20_000)}`]) {
+      const start = performance.now();
+      vendorMailTextSegments(body);
+      expect(performance.now() - start, body.slice(0, 30)).toBeLessThan(500);
+    }
+    expect(vendorMailTextSegments(`https://v.example/a${")".repeat(5)}`)).toEqual([
+      { text: "https://v.example/a", href: "https://v.example/a" }, { text: ")))))" },
+    ]);
+  });
+  it("an HTML anchor's target is linked exactly as it is shown, '!' and apostrophes included", () => {
+    for (const [href, expected] of [
+      ["https://vendor.example/reset?token=abc!", "https://vendor.example/reset?token=abc!"],
+      ["https://vendor.example/people/O'Brien/invoice.pdf", "https://vendor.example/people/O'Brien/invoice.pdf"],
+      ["https://vendor.example/x?a=1).", "https://vendor.example/x?a=1)."],
+    ] as const) {
+      for (const label of ["Reset", href]) {
+        const text = vendorMailHtmlToText(`<p>Hi.</p><a href="${href.replace(/'/g, "&#39;")}">${label}</a>`);
+        const links = vendorMailTextSegments(text).filter(segment => segment.href);
+        expect(links, `${href} / ${label}`).toEqual([{ text: expected, href: expected }]);
+        const html = renderToStaticMarkup(jsx(VendorMailBody, { text }));
+        const rendered = /<a href="([^"]*)"[^>]*>([^<]*)<\/a>/.exec(html);
+        expect(rendered?.[1]?.replace(/&#x27;/g, "'").replace(/&amp;/g, "&"), href).toBe(expected);
+        expect(rendered?.[2]?.replace(/&#x27;/g, "'").replace(/&amp;/g, "&"), href).toBe(expected);
+      }
+    }
+  });
+  it("spaces in a target are percent-encoded, never removed; surrounding whitespace and controls are dropped", () => {
+    const text = vendorMailHtmlToText('<a href="https://vendor.example/files/Order Confirmation.pdf">Invoice</a>');
+    expect(text).toBe("Invoice <https://vendor.example/files/Order%20Confirmation.pdf>");
+    expect(vendorMailTextSegments(text).filter(segment => segment.href)).toEqual([
+      { text: "https://vendor.example/files/Order%20Confirmation.pdf", href: "https://vendor.example/files/Order%20Confirmation.pdf" },
+    ]);
+    expect(vendorMailSafeUrl("  https://v.example/a b?q=c d \n")).toBe("https://v.example/a%20b?q=c%20d");
+    expect(vendorMailSafeUrl("ht\ttps://v.example/a\u0001b")).toBe("https://v.example/ab");
+    expect(vendorMailSafeUrl("https://v ex.example/")).toBeNull();
+  });
+  it("a link's visible text is exactly its target", () => {
+    for (const segment of vendorMailTextSegments("go https://A.example and <http://b.example/p q> or <https://c.example/x?y=1!>")) {
+      if (segment.href) expect(segment.text).toBe(segment.href);
+    }
+  });
+  it("never links javascript:, data: or other schemes", () => {
+    const segments = vendorMailTextSegments("javascript:alert(1) data:text/html,x mailto:a@b.example ftp://x.example");
+    expect(segments.every(segment => !("href" in segment))).toBe(true);
+  });
+  it("renders anchors that open safely in a new tab, wrap long URLs, and never raw HTML", () => {
+    const long = `https://track.example/${"x".repeat(400)}`;
+    const html = renderToStaticMarkup(jsx(VendorMailBody, { text: `Create your password <${long}>\n<script>bad()</script> javascript:alert(1)` }));
+    expect(html).toContain(`href="${long}"`);
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer nofollow"');
+    expect(html).toMatch(/<a [^>]*class="[^"]*break-all/);
+    expect(html).toMatch(/<pre [^>]*class="[^"]*whitespace-pre-wrap[^"]*break-words/);
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain('href="javascript');
+    expect((html.match(/<a /g) ?? []).length).toBe(1);
+  });
+});
