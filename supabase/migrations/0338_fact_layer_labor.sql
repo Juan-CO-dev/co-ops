@@ -127,9 +127,307 @@ language sql stable security definer set search_path = pg_catalog, public as $$
     from ranked r where r.rn = 1 order by r.user_id, r.wage_id
 $$;
 
--- ── CEILINGS ────────────────────────────────────────────────────────────────────────────────────
+-- ── B. THE DERIVED LABOR FACTS (rebuilt per company week; never appended to) ────────────────────
+-- Build-time constants. lib/facts/labor-config-shared.ts carries the same numbers (pinned equal by
+-- tests/fact-labor-config.test.ts); changing one bumps LABOR_BUILDER_VERSION, which rebuilds every week.
+create function public.fact_labor_constants()
+returns table(floor_day date, floor_week date, settle interval, ot_threshold_minutes integer, ot_multiplier numeric, read_window_days integer)
+language sql immutable set search_path = pg_catalog, public as $$
+  select date '2026-07-23', date '2026-07-19', interval '36 hours', 2400, 1.5::numeric, 90
+$$;
+
+create table public.labor_quarter (
+  location_id           uuid        not null references public.locations(id),
+  quarter_start_at      timestamptz not null,
+  person_key            text        not null check (person_key ~ '^(u:[0-9a-f-]{36}|ss:[1-9][0-9]{0,17}|toast:.{1,64})$'),
+  source                text        not null check (source in ('7shifts', 'toast')),
+  -- the 7shifts role_id (0268: role_id > 0), 0 = no role (Toast jobs have no role mapping: always 0)
+  role_key              bigint      not null check (role_key >= 0),
+  wall_quarter          smallint    not null check (wall_quarter between 0 and 95),
+  fold                  smallint    not null check (fold in (0, 1)),
+  business_date         date        not null,
+  week_start            date        not null,
+  user_id               uuid,
+  minutes               smallint    not null check (minutes between 1 and 15),
+  ot_minutes            smallint    not null check (ot_minutes between 0 and minutes),
+  pay_class             text        not null check (pay_class in ('hourly', 'salaried')),
+  rate_cents            integer     check (rate_cents >= 0),
+  rate_basis            text        not null check (rate_basis in ('known', 'undated', 'before_first_known', 'none')),
+  carry_back_rate_cents integer     check (carry_back_rate_cents >= 0),
+  primary key (location_id, quarter_start_at, person_key, source, role_key),
+  check ((user_id is not null) = (person_key like 'u:%') and (user_id is null or person_key = 'u:' || user_id::text)),
+  -- Salaried minutes are presence: never priced here, never overtime.
+  check (pay_class = 'hourly' or (ot_minutes = 0 and rate_cents is null and carry_back_rate_cents is null)),
+  -- One price per row: a known rate, a carry-back for Q5, or nothing (priced at the shop estimate at read).
+  check (pay_class = 'salaried' or ((rate_cents is not null) = (rate_basis in ('known', 'undated'))
+    and (carry_back_rate_cents is not null) = (rate_basis = 'before_first_known')))
+);
+create index labor_quarter_week on public.labor_quarter (week_start);
+create index labor_quarter_location_date on public.labor_quarter (location_id, business_date);
+create table public.labor_day_coverage (
+  location_id     uuid    not null references public.locations(id),
+  business_date   date    not null,
+  week_start      date    not null,
+  state           text    not null check (state in ('covered', 'pending_settle', 'fallback_unverified', 'incomplete')),
+  source          text    check (source in ('7shifts', 'toast')),
+  evidence_run_id uuid,
+  ss_minutes      integer not null check (ss_minutes >= 0),
+  ss_people       integer not null check (ss_people >= 0),
+  toast_minutes   integer not null check (toast_minutes >= 0),
+  toast_people    integer not null check (toast_people >= 0),
+  open_punches    integer not null check (open_punches >= 0),
+  primary key (location_id, business_date),
+  -- Coverage precedes numbers: covered only with ledger evidence; Toast is never 'covered'.
+  check ((state = 'covered') = (evidence_run_id is not null)),
+  check (state not in ('covered', 'pending_settle') or source = '7shifts'),
+  check (state <> 'fallback_unverified' or source = 'toast')
+);
+create index labor_day_coverage_week on public.labor_day_coverage (week_start);
+create table public.labor_week_coverage (
+  week_start            date        primary key,
+  source_fingerprint    text        not null check (source_fingerprint ~ '^[0-9a-f]{32}$'),
+  builder_version       text        not null check (builder_version ~ '^labor-v[0-9]+$'),
+  built_through         date        not null,
+  ot_threshold_minutes  integer     not null check (ot_threshold_minutes > 0),
+  ot_multiplier         numeric     not null check (ot_multiplier >= 1),
+  ot_state              text        not null check (ot_state in ('assessed', 'lower_bound', 'week_open')),
+  ot_identity_partial   integer     not null check (ot_identity_partial >= 0),
+  ot_settings_disagree  boolean     not null,
+  quarter_count         integer     not null check (quarter_count >= 0),
+  day_count             integer     not null check (day_count >= 0),
+  built_at              timestamptz not null default clock_timestamp(),
+  check (extract(dow from week_start) = 0)
+);
+-- The wage-derived salaried weekly cost per linked shop (read only when the shop's salaried estimate is
+-- blank: estimate_first). Null = no salaried wage found, never 0.
+create table public.labor_week_salaried (
+  week_start      date    not null,
+  location_id     uuid    not null references public.locations(id),
+  salaried_cents  bigint  check (salaried_cents >= 0),
+  salaried_people integer not null check (salaried_people >= 0),
+  primary key (week_start, location_id),
+  check ((salaried_people = 0) = (salaried_cents is null))
+);
+
+-- THE FRAME: every shop-day of a week that is built. Shops = a live 7shifts location link, or Toast
+-- time entries in the week. Days = [max(week, floor day), min(week + 6, yesterday ET)]. Evidence for a
+-- linked shop-day = the EARLIEST finished ledger run whose time_punches result has a JSON-null
+-- error_code, that started at least the settle time after the day ended, with the day inside its read
+-- window. The run-level status is never read (it describes the whole run), nor sevenshifts_sync_state
+-- (written before the ledger row). The ledger is append-only, so a day's evidence never changes once found.
+create function public.fact_labor_week_days(p_week_start date)
+returns table(location_id uuid, business_date date, linked boolean, evidence_run_id uuid, settled boolean)
+language sql stable security definer set search_path = pg_catalog, public as $$
+  with k as (select * from public.fact_labor_constants()),
+  b as (
+    select (p_week_start::timestamp at time zone 'America/New_York') s, ((p_week_start + 7)::timestamp at time zone 'America/New_York') e,
+      greatest(p_week_start, k.floor_day) d0, least(p_week_start + 6, (clock_timestamp() at time zone 'America/New_York')::date - 1) d1, k.settle, k.read_window_days
+    from k
+  ), shops as (
+    select x.loc, bool_or(x.linked) linked from (
+      select l.location_id loc, true linked from public.sevenshifts_location_links l where l.active
+      union all
+      select t.location_id, false from public.toast_time_entries t, b
+       where not t.deleted and t.in_at < b.e and (t.out_at > b.s or (t.out_at is null and t.in_at >= b.s))
+    ) x group by x.loc
+  ), d as (
+    select shops.loc, shops.linked, g::date bd, ((g::date + 1)::timestamp at time zone 'America/New_York') day_end , b.settle, b.read_window_days
+      from shops, b, generate_series(b.d0, b.d1, interval '1 day') g
+  )
+  select d.loc, d.bd, d.linked,
+    case when d.linked then (select r.id from public.sevenshifts_sync_runs r
+      where r.results -> 'time_punches' ? 'error_code' and jsonb_typeof(r.results -> 'time_punches' -> 'error_code') = 'null'
+        and r.started_at >= d.day_end + d.settle
+        and d.bd >= (r.started_at at time zone 'America/New_York')::date - d.read_window_days
+      order by r.started_at, r.id limit 1) end,
+    clock_timestamp() >= d.day_end + d.settle
+  from d order by d.loc, d.bd
+$$;
+
+-- THE SOURCE of one week, read in ONE statement (one snapshot): what the builder builds from. Every
+-- predicate is the fingerprint's. Ids travel as JSON numbers; the lib turns them into digit strings.
+create function public.fact_labor_week_source(p_week_start date, p_builder_version text)
+returns jsonb language plpgsql stable security definer set search_path = pg_catalog, public as $$
+declare
+  v_s timestamptz := p_week_start::timestamp at time zone 'America/New_York';
+  v_e timestamptz := (p_week_start + 7)::timestamp at time zone 'America/New_York';
+  k record;
+begin
+  if p_week_start is null or p_builder_version is null or extract(dow from p_week_start) <> 0 then raise exception 'fact_invalid_request'; end if;
+  select * into k from public.fact_labor_constants();
+  return (
+  with punches as (
+    select p.id, p.user_id, p.location_id, p.role_id, p.clocked_in, p.clocked_out, p.break_minutes, p.deleted
+      from public.sevenshifts_time_punches p
+     where p.clocked_in < v_e and (p.clocked_out > v_s or (p.clocked_out is null and p.clocked_in >= v_s))
+  ), toast as (
+    select t.location_id, t.time_entry_guid, t.employee_guid, t.user_id, t.in_at, t.out_at, t.deleted
+      from public.toast_time_entries t where t.in_at < v_e and (t.out_at > v_s or (t.out_at is null and t.in_at >= v_s))
+  ), wage_users as (
+    select distinct p.user_id u from punches p
+    union select l.sevenshifts_user_id from public.sevenshifts_user_links l where l.active
+  )
+  select jsonb_build_object(
+    'week_start', p_week_start,
+    'built_through', case when least(p_week_start + 6, (clock_timestamp() at time zone 'America/New_York')::date - 1) >= greatest(p_week_start, k.floor_day)
+                          then least(p_week_start + 6, (clock_timestamp() at time zone 'America/New_York')::date - 1) end,
+    'floor_day', k.floor_day,
+    'days', coalesce((select jsonb_agg(to_jsonb(f) order by f.location_id, f.business_date) from public.fact_labor_week_days(p_week_start) f), '[]'::jsonb),
+    'location_links', coalesce((select jsonb_agg(jsonb_build_object('location_id', l.location_id, 'sevenshifts_location_id', l.sevenshifts_location_id) order by l.location_id)
+                       from public.sevenshifts_location_links l where l.active), '[]'::jsonb),
+    'user_links', coalesce((select jsonb_agg(jsonb_build_object('sevenshifts_user_id', l.sevenshifts_user_id, 'user_id', l.user_id, 'linked_at_location_id', l.linked_at_location_id) order by l.id)
+                   from public.sevenshifts_user_links l where l.active), '[]'::jsonb),
+    'toast_links', coalesce((select jsonb_agg(jsonb_build_object('location_id', l.location_id, 'employee_guid', l.employee_guid, 'user_id', l.user_id) order by l.id)
+                    from public.toast_employee_links l where l.active), '[]'::jsonb),
+    'punches', coalesce((select jsonb_agg(to_jsonb(p) order by p.id) from punches p), '[]'::jsonb),
+    'toast_entries', coalesce((select jsonb_agg(to_jsonb(t) order by t.location_id, t.time_entry_guid) from toast t), '[]'::jsonb),
+    'wages', coalesce((select jsonb_agg(to_jsonb(w) order by w.user_id, w.wage_id)
+               from public.fact_wage_current_versions(array(select wu.u from wage_users wu)) w), '[]'::jsonb),
+    'labor_settings', coalesce((select jsonb_agg(jsonb_build_object('daily_ot_threshold', s.daily_ot_threshold, 'premium_ot_threshold', s.premium_ot_threshold,
+                       'consecutive_days_threshold', s.consecutive_days_threshold) order by s.company_id) from public.sevenshifts_labor_settings s), '[]'::jsonb),
+    'fingerprint', public.fact_labor_week_fingerprint(p_week_start, p_builder_version))
+  );
+end $$;
+
+-- THE fingerprint of one company week (both shops): punches and Toast entries intersecting it (a moved
+-- punch leaves the old week's set and joins the new one, so both rebuild), every link row, each involved
+-- 7shifts account's newest wage observation, the 7shifts overtime settings the advisory reads, the
+-- frame (shops, days, evidence, settle phase: a day leaving its settle window rebuilds), the day the
+-- week is built through, and the builder version. Instants hash as epoch seconds (never session text).
+-- fact_labor_week_source returns it in the SAME statement as the source rows, so the builder's input and
+-- the fingerprint it sends are one snapshot; the replace RPC recomputes it under the week lock.
+create function public.fact_labor_week_fingerprint(p_week_start date, p_builder_version text)
+returns text language plpgsql stable security definer set search_path = pg_catalog, public as $$
+declare
+  v_s timestamptz := p_week_start::timestamp at time zone 'America/New_York';
+  v_e timestamptz := (p_week_start + 7)::timestamp at time zone 'America/New_York';
+  v_floor date; v_through date; v_punch text; v_toast text; v_links text; v_wages text; v_settings text; v_days text;
+begin
+  if p_week_start is null or p_builder_version is null or extract(dow from p_week_start) <> 0 then raise exception 'fact_invalid_request'; end if;
+  select floor_day into v_floor from public.fact_labor_constants();
+  v_through := least(p_week_start + 6, (clock_timestamp() at time zone 'America/New_York')::date - 1);
+  if v_through < greatest(p_week_start, v_floor) then v_through := null; end if;
+  select md5(string_agg(concat_ws(':', p.id, p.user_id, coalesce(p.location_id::text, '-'), coalesce(p.role_id::text, '-'),
+           extract(epoch from p.clocked_in), coalesce(extract(epoch from p.clocked_out)::text, '-'), coalesce(p.break_minutes::text, '-'), p.deleted), ',' order by p.id))
+    into v_punch from public.sevenshifts_time_punches p
+   where p.clocked_in < v_e and (p.clocked_out > v_s or (p.clocked_out is null and p.clocked_in >= v_s));
+  select md5(string_agg(concat_ws(':', t.location_id, t.time_entry_guid, t.employee_guid, coalesce(t.user_id::text, '-'),
+           extract(epoch from t.in_at), coalesce(extract(epoch from t.out_at)::text, '-'), t.deleted), ',' order by t.location_id, t.time_entry_guid))
+    into v_toast from public.toast_time_entries t where t.in_at < v_e and (t.out_at > v_s or (t.out_at is null and t.in_at >= v_s));
+  select md5(concat_ws('|',
+    (select string_agg(l.id::text || ':' || l.active, ',' order by l.id) from public.sevenshifts_location_links l),
+    (select string_agg(l.id::text || ':' || l.active, ',' order by l.id) from public.sevenshifts_user_links l),
+    (select string_agg(l.id::text || ':' || l.active, ',' order by l.id) from public.toast_employee_links l))) into v_links;
+  select md5(string_agg(o.user_id || ':' || o.s, ',' order by o.user_id)) into v_wages from (
+    select w.user_id, max(w.seq) s from public.fact_wage_observations w
+     where w.user_id in (select p.user_id from public.sevenshifts_time_punches p
+                          where p.clocked_in < v_e and (p.clocked_out > v_s or (p.clocked_out is null and p.clocked_in >= v_s))
+                         union select l.sevenshifts_user_id from public.sevenshifts_user_links l where l.active)
+     group by w.user_id) o;
+  select md5(string_agg(concat_ws(':', s.company_id, coalesce(s.daily_ot_threshold::text, '-'), coalesce(s.premium_ot_threshold::text, '-'),
+           coalesce(s.consecutive_days_threshold::text, '-')), ',' order by s.company_id)) into v_settings from public.sevenshifts_labor_settings s;
+  select md5(string_agg(concat_ws(':', f.location_id, f.business_date, f.linked, coalesce(f.evidence_run_id::text, '-'), f.settled), ',' order by f.location_id, f.business_date))
+    into v_days from public.fact_labor_week_days(p_week_start) f;
+  return md5(concat_ws('|', 'v:' || p_builder_version, 'w:' || p_week_start, 't:' || coalesce(v_through::text, 'none'),
+    'p:' || coalesce(v_punch, 'none'), 'x:' || coalesce(v_toast, 'none'), 'l:' || coalesce(v_links, 'none'), 'g:' || coalesce(v_wages, 'none'),
+    's:' || coalesce(v_settings, 'none'), 'd:' || coalesce(v_days, 'none')));
+end $$;
+
+-- The diff: every company week from the floor week through the week holding yesterday (ET) whose stored
+-- fingerprint differs or is missing. Evaluated against current state on every pass; newest first.
+create function public.fact_labor_weeks_stale(p_limit integer, p_builder_version text)
+returns table(week_start date, week_fingerprint text, stored_fingerprint text)
+language plpgsql stable security definer set search_path = pg_catalog, public as $$
+declare v_yesterday date := (clock_timestamp() at time zone 'America/New_York')::date - 1; v_floor_week date;
+begin
+  if p_limit is null or p_limit < 1 or p_limit > 1000 or p_builder_version is null then raise exception 'fact_invalid_request'; end if;
+  select floor_week into v_floor_week from public.fact_labor_constants();
+  return query
+  with weeks as (
+    select g::date w from generate_series(v_floor_week, v_yesterday - extract(dow from v_yesterday)::integer, interval '7 days') g
+  ), fp as (
+    select weeks.w, public.fact_labor_week_fingerprint(weeks.w, p_builder_version) f from weeks
+  )
+  select fp.w, fp.f, c.source_fingerprint from fp left join public.labor_week_coverage c on c.week_start = fp.w
+   where c.source_fingerprint is distinct from fp.f order by fp.w desc limit p_limit;
+end $$;
+
+-- The ONE writer. Advisory week lock -> this week's fact rows -> this week's coverage rows. Recomputes the
+-- fingerprint under the lock (a capture or sync that committed meanwhile = fact_stale), refuses an open
+-- day, and proves the payload against the frame: the days ARE the frame, a covered day names the frame's
+-- evidence, every quarter sits on a frame day under that day's one source. A repeat call is a no-op rebuild.
+create function public.fact_replace_labor_week(p_week_start date, p_builder_version text, p_fingerprint text,
+  p_quarters jsonb, p_days jsonb, p_week jsonb, p_salaried jsonb)
+returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
+declare
+  v_today date := (clock_timestamp() at time zone 'America/New_York')::date;
+  v_floor date; v_floor_week date; v_through date; v_from date;
+  v_quarters integer; v_days integer;
+begin
+  if p_week_start is null or p_builder_version is null or p_fingerprint is null
+    or jsonb_typeof(p_quarters) is distinct from 'array' or jsonb_typeof(p_days) is distinct from 'array'
+    or jsonb_typeof(p_week) is distinct from 'object' or jsonb_typeof(p_salaried) is distinct from 'array' then
+    raise exception 'fact_invalid_payload'; end if;
+  select floor_day, floor_week into v_floor, v_floor_week from public.fact_labor_constants();
+  if extract(dow from p_week_start) <> 0 or p_week_start < v_floor_week then raise exception 'fact_invalid_request'; end if;
+  perform pg_advisory_xact_lock(hashtextextended('fact:labor:' || p_week_start::text, 0));
+  v_from := greatest(p_week_start, v_floor);
+  v_through := least(p_week_start + 6, v_today - 1);
+  if v_through < v_from then raise exception 'fact_open_day'; end if;
+  if exists (select 1 from jsonb_to_recordset(p_quarters) q(business_date date) where q.business_date >= v_today)
+    or exists (select 1 from jsonb_to_recordset(p_days) d(business_date date) where d.business_date >= v_today) then
+    raise exception 'fact_open_day'; end if;
+  if public.fact_labor_week_fingerprint(p_week_start, p_builder_version) is distinct from p_fingerprint then
+    raise exception 'fact_stale'; end if;
+
+  -- The days ARE the frame (both ways), and the state follows the evidence.
+  if (select count(*) from jsonb_array_elements(p_days)) <> (select count(*) from public.fact_labor_week_days(p_week_start))
+    or exists (select d.location_id, d.business_date from jsonb_to_recordset(p_days) d(location_id uuid, business_date date)
+               except select f.location_id, f.business_date from public.fact_labor_week_days(p_week_start) f)
+    or exists (select 1 from jsonb_to_recordset(p_days) d(location_id uuid, business_date date, state text, evidence_run_id uuid, week_start date)
+               join public.fact_labor_week_days(p_week_start) f on f.location_id = d.location_id and f.business_date = d.business_date
+               where d.week_start is distinct from p_week_start
+                  or (d.state = 'covered') is distinct from (f.linked and f.evidence_run_id is not null)
+                  or (d.state = 'covered' and d.evidence_run_id is distinct from f.evidence_run_id)
+                  or (d.state = 'pending_settle') is distinct from (f.linked and f.evidence_run_id is null and not f.settled))
+    -- Every quarter sits on a frame day, in this week, under that day's one source.
+    or exists (select 1 from jsonb_to_recordset(p_quarters) q(location_id uuid, business_date date, source text, week_start date)
+               left join jsonb_to_recordset(p_days) d(location_id uuid, business_date date, source text)
+                 on d.location_id = q.location_id and d.business_date = q.business_date
+               where q.week_start is distinct from p_week_start or d.source is distinct from q.source)
+    or (p_week ->> 'week_start')::date is distinct from p_week_start or (p_week ->> 'built_through')::date is distinct from v_through
+    -- The salaried rows are exactly the linked shops.
+    or (select count(*) from jsonb_array_elements(p_salaried))
+         <> (select count(distinct f.location_id) from public.fact_labor_week_days(p_week_start) f where f.linked)
+    or exists (select s.location_id from jsonb_to_recordset(p_salaried) s(location_id uuid)
+               except select f.location_id from public.fact_labor_week_days(p_week_start) f where f.linked) then
+    raise exception 'fact_payload_mismatch'; end if;
+
+  delete from public.labor_quarter where week_start = p_week_start;
+  delete from public.labor_day_coverage where week_start = p_week_start;
+  delete from public.labor_week_salaried where week_start = p_week_start;
+  insert into public.labor_quarter select * from jsonb_populate_recordset(null::public.labor_quarter, p_quarters);
+  insert into public.labor_day_coverage select * from jsonb_populate_recordset(null::public.labor_day_coverage, p_days);
+  insert into public.labor_week_salaried
+    select * from jsonb_populate_recordset(null::public.labor_week_salaried,
+      (select coalesce(jsonb_agg(e || jsonb_build_object('week_start', p_week_start)), '[]'::jsonb) from jsonb_array_elements(p_salaried) e));
+  select count(*) into v_quarters from public.labor_quarter where week_start = p_week_start;
+  select count(*) into v_days from public.labor_day_coverage where week_start = p_week_start;
+  insert into public.labor_week_coverage as c (week_start, source_fingerprint, builder_version, built_through, ot_threshold_minutes, ot_multiplier,
+    ot_state, ot_identity_partial, ot_settings_disagree, quarter_count, day_count, built_at)
+  select p_week_start, p_fingerprint, p_builder_version, v_through, k.ot_threshold_minutes, k.ot_multiplier,
+    p_week ->> 'ot_state', (p_week ->> 'ot_identity_partial')::integer, (p_week ->> 'ot_settings_disagree')::boolean, v_quarters, v_days, clock_timestamp()
+  from public.fact_labor_constants() k
+  on conflict (week_start) do update set source_fingerprint = excluded.source_fingerprint, builder_version = excluded.builder_version,
+    built_through = excluded.built_through, ot_threshold_minutes = excluded.ot_threshold_minutes, ot_multiplier = excluded.ot_multiplier,
+    ot_state = excluded.ot_state, ot_identity_partial = excluded.ot_identity_partial, ot_settings_disagree = excluded.ot_settings_disagree,
+    quarter_count = excluded.quarter_count, day_count = excluded.day_count, built_at = excluded.built_at;
+  return jsonb_build_object('week_start', p_week_start, 'quarters', v_quarters, 'days', v_days, 'ot_state', p_week ->> 'ot_state');
+end $$;
+
+-- ── CEILINGS: deny-all RLS, explicit DELETE denial, service_role SELECT only; RPCs service_role only ──
 do $$ declare t text; f regprocedure; begin
-  foreach t in array array['fact_wage_observations'] loop
+  foreach t in array array['fact_wage_observations','labor_quarter','labor_day_coverage','labor_week_coverage','labor_week_salaried'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('create policy %I on public.%I for delete using (false)', t || '_no_user_delete', t);
     execute format('revoke all on public.%I from public, anon, authenticated, service_role', t);
@@ -137,10 +435,46 @@ do $$ declare t text; f regprocedure; begin
   end loop;
   revoke all on sequence public.fact_wage_observations_seq_seq from public, anon, authenticated, service_role;
   revoke all on function public.fact_wage_observe() from public, anon, authenticated, service_role;
+  revoke all on function public.fact_labor_constants() from public, anon, authenticated, service_role;
   foreach f in array array[
-    'public.fact_wage_current_versions(bigint[])'::regprocedure] loop
+    'public.fact_wage_current_versions(bigint[])'::regprocedure,
+    'public.fact_labor_week_days(date)'::regprocedure,
+    'public.fact_labor_week_source(date,text)'::regprocedure,
+    'public.fact_labor_week_fingerprint(date,text)'::regprocedure,
+    'public.fact_labor_weeks_stale(integer,text)'::regprocedure,
+    'public.fact_replace_labor_week(date,text,text,jsonb,jsonb,jsonb,jsonb)'::regprocedure] loop
     execute format('revoke all on function %s from public, anon, authenticated, service_role', f);
     execute format('grant execute on function %s to service_role', f);
+  end loop;
+end $$;
+
+do $$ declare t text; f regprocedure; p text; begin
+  foreach t in array array['fact_wage_observations','labor_quarter','labor_day_coverage','labor_week_coverage','labor_week_salaried'] loop
+    if not has_table_privilege('service_role', 'public.' || t, 'SELECT') then raise exception '0338: % lacks service_role SELECT', t; end if;
+    foreach p in array array['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'] loop
+      if has_table_privilege('service_role', 'public.' || t, p) then raise exception '0338: service_role holds % on %', p, t; end if;
+    end loop;
+    foreach p in array array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] loop
+      if has_table_privilege('anon', 'public.' || t, p) or has_table_privilege('authenticated', 'public.' || t, p) then
+        raise exception '0338: PostgREST role holds % on %', p, t; end if;
+    end loop;
+  end loop;
+  foreach f in array array[
+    'public.fact_wage_observe()'::regprocedure, 'public.fact_labor_constants()'::regprocedure] loop
+    if has_function_privilege('service_role', f, 'EXECUTE') or has_function_privilege('anon', f, 'EXECUTE')
+      or has_function_privilege('authenticated', f, 'EXECUTE') then raise exception '0338: internal function escape %', f; end if;
+  end loop;
+  foreach f in array array[
+    'public.fact_wage_current_versions(bigint[])'::regprocedure,
+    'public.fact_labor_week_days(date)'::regprocedure,
+    'public.fact_labor_week_source(date,text)'::regprocedure,
+    'public.fact_labor_week_fingerprint(date,text)'::regprocedure,
+    'public.fact_labor_weeks_stale(integer,text)'::regprocedure,
+    'public.fact_replace_labor_week(date,text,text,jsonb,jsonb,jsonb,jsonb)'::regprocedure] loop
+    if not has_function_privilege('service_role', f, 'EXECUTE') or has_function_privilege('anon', f, 'EXECUTE')
+      or has_function_privilege('authenticated', f, 'EXECUTE')
+      or exists(select 1 from pg_proc pr, lateral aclexplode(pr.proacl) a where pr.oid = f and a.grantee = 0) then
+      raise exception '0338: RPC escape %', f; end if;
   end loop;
 end $$;
 

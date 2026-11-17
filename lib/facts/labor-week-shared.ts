@@ -17,7 +17,7 @@
  * Money is never computed here. */
 import { factQuarter } from "./order-facts-shared";
 import { LABOR_OT_MULTIPLIER, LABOR_OT_THRESHOLD_MINUTES } from "./labor-config-shared";
-import { pickWage, type PayClass, type RateBasis, type WageVersion } from "./labor-wages-shared";
+import { pickWage, toWageVersion, type PayClass, type RateBasis, type WageVersion } from "./labor-wages-shared";
 
 export interface FrameDay { location_id: string; business_date: string; linked: boolean; evidence_run_id: string | null; settled: boolean }
 export interface SourcePunch {
@@ -231,6 +231,32 @@ export function buildLaborWeek(src: LaborWeekSource): LaborWeekPayload {
   });
 
   return { quarters, days, week, salaried };
+}
+
+/** 0338 fact_labor_week_source's JSON as a LaborWeekSource (ids as digit strings, instants as ISO), with
+ * the fingerprint read in the same statement. */
+export function laborWeekSourceFromJson(j: Record<string, unknown>): { source: LaborWeekSource; fingerprint: string } {
+  const arr = (k: string) => (Array.isArray(j[k]) ? (j[k] as Record<string, unknown>[]) : []);
+  const id = (v: unknown) => (v === null || v === undefined ? null : String(v));
+  const iso = (v: unknown) => (v === null || v === undefined ? null : new Date(String(v)).toISOString());
+  const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  if (typeof j.fingerprint !== "string" || typeof j.week_start !== "string" || typeof j.floor_day !== "string") throw new Error("fact_source_read_failed");
+  const source: LaborWeekSource = {
+    weekStart: j.week_start, builtThrough: (j.built_through as string | null) ?? null, floorDay: j.floor_day,
+    days: arr("days").map((d) => ({ location_id: String(d.location_id), business_date: String(d.business_date), linked: d.linked === true,
+      evidence_run_id: id(d.evidence_run_id), settled: d.settled === true })),
+    locationLinks: arr("location_links").map((l) => ({ location_id: String(l.location_id), sevenshifts_location_id: String(l.sevenshifts_location_id) })),
+    userLinks: arr("user_links").map((l) => ({ sevenshifts_user_id: String(l.sevenshifts_user_id), user_id: String(l.user_id), linked_at_location_id: String(l.linked_at_location_id) })),
+    toastLinks: arr("toast_links").map((l) => ({ location_id: String(l.location_id), employee_guid: String(l.employee_guid), user_id: String(l.user_id) })),
+    punches: arr("punches").map((p) => ({ id: String(p.id), user_id: String(p.user_id), location_id: id(p.location_id), role_id: id(p.role_id),
+      clocked_in: iso(p.clocked_in)!, clocked_out: iso(p.clocked_out), break_minutes: num(p.break_minutes), deleted: p.deleted === true })),
+    toastEntries: arr("toast_entries").map((t) => ({ location_id: String(t.location_id), time_entry_guid: String(t.time_entry_guid),
+      employee_guid: String(t.employee_guid), user_id: id(t.user_id), in_at: iso(t.in_at)!, out_at: iso(t.out_at), deleted: t.deleted === true })),
+    wages: arr("wages").map(toWageVersion),
+    laborSettings: arr("labor_settings").map((s) => ({ daily_ot_threshold: num(s.daily_ot_threshold), premium_ot_threshold: num(s.premium_ot_threshold),
+      consecutive_days_threshold: num(s.consecutive_days_threshold) })),
+  };
+  return { source, fingerprint: j.fingerprint };
 }
 
 function addDays(ymd: string, n: number): string {
