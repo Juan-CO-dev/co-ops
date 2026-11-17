@@ -333,7 +333,7 @@ export function simulateNight(input: NightInput): NightResult {
   );
   const peakFloorOz = input.counterfactualNoPeakFloor === true
     ? null
-    : observedPeakCoverageOz(base.series, input.coveredDays.length);
+    : observedPeakCoverageOz(base.series, input.coveredDays);
   const coverage = computeCoverage({
     coveredDays: input.coveredDays,
     baseOzPerDay,
@@ -588,27 +588,31 @@ export const HAM_WEEK_EXPECTED = {
     lastAppliedNight: 14,
   },
   /**
-   * AS SHIPPED — and it carries a finding worth stating in the fixture rather than
-   * discovering in a year: THE PEAK-COVERAGE FLOOR IS THIS ARC'S FAST RESPONDER.
+   * AS SHIPPED, with the LIKE-FOR-LIKE floor (Juan, 2026-11-17).
    *
-   * The floor asks "what is the worst run this shop has actually had over a horizon this
-   * long", and two days after a step that answer is already the NEW level, while the
-   * 21-day mean is still three weeks from it. So on the composed engine the floor breaks
-   * the band on night 7 — before velocity's own band break would have mattered and nine
-   * nights before the base gets there. That is the floor doing exactly its job (a
-   * percentage on a mean is not a service level), not a defect; it is pinned here so a
-   * later reader does not mistake it for one, and so the ~3-week base latency is measured
-   * against the right baseline.
+   * The floor asks "what is the worst run this shop has actually had over a horizon like
+   * this one" — same length AND the same weekday/weekend mix. Two days after the step the
+   * worst weekday PAIR is already the new level (2 x 56 = 112 oz), so the floor is the
+   * binding term on night 2 and lifts the target above the base's own (9.33 vs 8.53) while
+   * the 21-day mean is still three weeks from the step. It leads the base; it does not
+   * overshoot it.
+   *
+   * CHANGED 2026-11-17, and why. Before like-for-like this track crossed the band on night 7
+   * and finished at 14, because the floor of this WEEKDAY horizon was a stepped Fri–Sat or
+   * Sat–Sun run (2 x 84 = 168 oz = 14 units): weekend demand setting a weekday par. 14 is not
+   * the ham week's weekday answer — the absorbed weekday need is 56 x 2 x 1.20 / 12 = 11.2
+   * → 11, which is exactly where the track now ends. The band is now broken by velocity on
+   * night 3 (the same night as velocity alone), and with velocity off the rendered track is
+   * the base's own: the floor raises the target, the one-step deadband absorbs it.
    */
   asShipped: {
-    bandCrossNight: 7,
-    bandCrossSuggestion: 12,
-    finalSuggestion: 14,
-    /** And a second fact that falls out of the same arithmetic: while the floor is the
-     *  binding term, velocity changes the target but NOT the rendered suggestion — the
-     *  one-step deadband absorbs its early nudge, because the floor has already moved the
-     *  number velocity was trying to move. Two safety terms, no double-count. */
-    velocityChangesNoRenderedSuggestion: true,
+    floorBindsNight: 2,
+    floorBindsTarget: 9.333333,
+    /** The highest floor the track ever reaches: the stepped weekday pair, never 168. */
+    maxFloorOz: 112,
+    bandCrossNight: 3,
+    bandCrossSuggestion: 11,
+    finalSuggestion: 11,
   },
 } as const;
 
@@ -627,8 +631,8 @@ export const HAM_WEEK_EXPECTED = {
 export function mozzUnitBombNight(): NightInput {
   const runDateEt = "2026-08-25";
   // The pack chain says one order unit is 2 oz (an EACH) when the shop actually orders
-  // 24-each CASES. ~120 oz of coverage therefore comes back as ~60 ORDER UNITS against a
-  // standing par of 4 — fifteen times the par, from a SKU whose demand never changed.
+  // 24-each CASES. ~115 oz of coverage therefore comes back as ~58 ORDER UNITS against a
+  // standing par of 4 — fourteen times the par, from a SKU whose demand never changed.
   const series = new Map(
     windowEndingOn(runDateEt).map((d) => [d.dateEt, d.dayClass === "weekend" ? 60 : 48]),
   );
@@ -650,9 +654,12 @@ export function mozzUnitBombNight(): NightInput {
 
 export const MOZZ_EXPECTED = {
   reasonCode: "par_unit_suspect" as ParReasonCode,
-  /** 15x the standing par. The quarantine runs BEFORE the band, so this never even
-   *  reaches the arithmetic that would have rendered it as a demand move. */
-  targetUnits: 60,
+  /** ~14x the standing par: 48 oz x 2 weekdays x 1.20 = 115.2 oz / 2 oz. The quarantine runs
+   *  BEFORE the band, so this never even reaches the arithmetic that would have rendered it
+   *  as a demand move. (Was 60 before 2026-11-17: this Wed–Thu horizon was floored by a
+   *  Sat–Sun run, 2 x 60 = 120 oz. Like-for-like, the weekday pairs give 96 and the
+   *  cushioned mean governs.) */
+  targetUnits: 57.6,
   suggestedPar: null,
   tier: "none" as const,
   outcome: "advisory_null" as const,
@@ -681,6 +688,13 @@ export const MOZZ_EXPECTED = {
  *
  * Without the floor the arithmetic says "no change"; with it, the par must rise. That is
  * the whole point of the floor and it is why the assertion runs BOTH ways.
+ *
+ * LIKE-FOR-LIKE (Juan, 2026-11-17). The covered horizon is Fri–Sat–Sun, so only Fri–Sat–Sun
+ * runs may floor it: 37, 135 and 49. Three runs is below PEAK_MIN_RUNS_FOR_QUANTILE, so the
+ * floor is the heaviest weekend this window actually holds, 135 oz. Before the change it was
+ * 98 — a Sat–Sun–Mon run, a weekend diluted by a weekday, the mirror image of the bug Juan
+ * named (weekday days diluting a weekend floor instead of weekend days inflating a weekday
+ * one). The heavy week still ages out: once it leaves the 21-day window it stops governing.
  */
 const PROSCIUTTO_RUN_DATE = "2026-08-25";
 const PROSCIUTTO_WEEKDAY_OZ = 7;
@@ -730,20 +744,24 @@ export const PROSCIUTTO_EXPECTED = {
   seriesTotalOz: 305,
   weekendObservedDays: 9,
   weekdayObservedDays: 12,
-  /** p90 of the nineteen 3-day runs. Not the max (135) — one catering-shaped weekend must
-   *  not permanently inflate a par — and not the mean either. */
-  peakFloorOz: 98,
+  /** The max of the three comparable Fri–Sat–Sun runs (37, 135, 49): too few to rank. Was 98
+   *  (the p90 of all nineteen 3-day runs, of every mix) before 2026-11-17. */
+  peakFloorOz: 135,
+  comparableRuns: 3,
   /** mean weekend rate 221/9 = 24.5556 × 3 days × 1.20 = 88.40 oz. */
   cushionedMeanOz: 88.400002,
   flooredByPeak: true,
-  suggestedPar: 7,
+  /** 135 / 14 = 9.64 → 10. Was 7. */
+  suggestedPar: 10,
   /** The counterfactual: mean + cushion alone rounds back to the standing par, so the
    *  engine would have said NOTHING on the very SKU the floor exists for. */
   unflooredSuggestedPar: null,
   unflooredTier: "none" as const,
-  /** Night two, once the direction is confirmed, is the earliest a within-band move can
-   *  reach the auto tier — and in shadow that is `would_apply`, never `applied`. */
-  secondNightOutcome: "would_apply" as const,
+  /** 6 → 10 is beyond the band (max(1 step, 25% of 6) = 1.5), so it is a SUGGESTION at the
+   *  full target on every night — never an auto-move, never `applied`. (Before 2026-11-17 a
+   *  within-band 6 → 7 reached `would_apply` on night two.) */
+  suppressedBy: "band" as const,
+  secondNightOutcome: "suppressed" as const,
 } as const;
 
 // ═════════════════════════════════════════════════════════════════════════════
