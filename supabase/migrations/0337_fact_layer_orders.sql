@@ -187,8 +187,9 @@ end $$;
 --     passes it (a modified capture that re-snapshots it is rebuilt);
 --   an order day OLDER than the floor whose CURRENT snapshot carries a refund that reaches the
 --     maintained window: dated on or after the floor (toast_payments_refund_date, 0221), or undated
---     refund evidence (0247's predicate and partial index), which the refund reader counts on every
---     window day. The rebuild writes its fact_refund rows, so fact_sales_refund_rows sees it.
+--     refund evidence (0247's predicate and partial index), or 0247's candidate C (an accounted
+--     check's payment whose sales refund is unknown, review r2), which the refund reader counts on
+--     every window day. The rebuild writes its fact_refund rows, so fact_sales_refund_rows sees it.
 create function public.fact_order_days_stale(p_floor date, p_limit integer, p_builder_version text)
 returns table(day_location_id uuid, day_business_date date, day_fingerprint text, stored_fingerprint text)
 language plpgsql stable security definer set search_path = pg_catalog, public as $$
@@ -215,6 +216,22 @@ begin
      where pm.refund_business_date is null and pm.sales_refund_cents is distinct from 0
        and (pm.refund_amount_cents is not null or pm.refund_status in ('PARTIAL', 'FULL'))
        and p.business_date < p_floor
+    union
+    -- 0247's candidate C (review r2, BC-031/BC-061): an ACCOUNTED check's payment with no date, an
+    -- unknown (NULL) sales refund and no refund evidence (NULL or 'NONE' status kept by IS NOT TRUE)
+    -- is a missing sales refund on every window day. Same shape as 0247: accounted checks first
+    -- (toast_order_checks_accounted), payments probed by their PK prefix, then the CURRENT pointer.
+    select p.location_id, p.business_date from public.toast_order_checks c
+      cross join lateral (
+        select pm.snapshot_id from public.toast_payments pm
+         where pm.snapshot_id = c.snapshot_id and pm.check_guid = c.check_guid
+           and pm.refund_business_date is null and pm.sales_refund_cents is null
+           and (pm.refund_amount_cents is not null or pm.refund_status in ('PARTIAL', 'FULL')) is not true
+        offset 0
+      ) pm
+      join public.toast_orders o on o.id = pm.snapshot_id
+      join public.toast_order_latest_pointers p on p.location_id = o.location_id and p.order_guid = o.order_guid and p.snapshot_id = pm.snapshot_id
+     where c.accounting is not null and p.business_date < p_floor
   ), fp as (
     select days.l, days.d, public.fact_order_day_fingerprint(days.l, days.d, p_builder_version) f from days
   )
