@@ -119,6 +119,26 @@ describe("availability — every real-world shape lands", () => {
     expect(row.repeating).toBe(true);
   });
 
+  it("the DOCUMENTED item lands: every field typed as developers.7shifts.com/reference/listavailabilities declares it (re-read 2026-11-17)", () => {
+    // The OAS: id / user_id / company_id / status / each day integer; repeat boolean; `{day}_from` / `{day}_to`
+    // `format: time`; `{day}_comments` nullable string; `{day}_reason` string; week / week_to / created /
+    // modified NULLABLE strings with no format. The docs carry no response example, so the spellings of the
+    // unformatted strings stay as pinned above; this row is the declared types and nothing else.
+    const documented = (over: Record<string, unknown>) => ({
+      id: 6100, user_id: 501, company_id: 1234, week: "2026-11-16", week_to: null, repeat: true, status: 1,
+      status_action_user_id: null, status_action_message: null,
+      ...Object.fromEntries(["mon", "tue", "wed", "thu", "fri", "sat", "sun"].flatMap((d) => [
+        [d, 2], [`${d}_from`, "09:00:00"], [`${d}_to`, "17:00:00"], [`${d}_comments`, null], [`${d}_reason`, "0"],
+      ])),
+      created: null, modified: null, old_approved_data: null, ...over,
+    });
+    const out = normalizeAvailabilities([documented({}), documented({ id: 6101, week: null })]);
+    expect(out.rejected).toEqual([]);
+    expect(out.rows[0]).toMatchObject({ id: "6100", user_id: "501", week: "2026-11-16", week_to: null, repeating: true, status: 1, source_modified_at: null });
+    expect(out.rows[0]!.days.mon).toEqual({ code: 2, from: "09:00:00", to: "17:00:00" });
+    expect(out.rows[1]).toMatchObject({ id: "6101", week: null });
+  });
+
   it("a fractional day code, a zoned week and `24:30` are refused", () => {
     expect(normalizeAvailabilities([{ ...AVAILABILITY_SHAPES.oneOffWeek, mon: 1.5 }]).rejected[0]!.reason).toBe("bad_value");
     expect(normalizeAvailabilities([{ ...AVAILABILITY_SHAPES.oneOffWeek, week: "2026-11-16T05:00:00Z" }]).rejected[0]!.reason).toBe("bad_date");
