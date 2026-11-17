@@ -14,7 +14,7 @@ import { detectAdapter } from "@/lib/vendor-import-shared/adapters";
 import { isZip, readXlsxFirstSheet } from "@/lib/vendor-import-xlsx";
 import { rowsToCsv } from "@/lib/vendor-import-shared/parsers";
 import type { CatalogSku, Decision, Observation, PlanOp } from "@/lib/vendor-import-shared/model";
-import { matchObservations, observationKey, planDigest, planFromDecisions, snapshotBeforeState } from "@/lib/vendor-import-shared/match";
+import { defaultDecisions, matchObservations, observationKey, planDigest, planFromDecisions, snapshotBeforeState } from "@/lib/vendor-import-shared/match";
 
 export class VendorImportError extends Error {
   constructor(public status: number, public code: string, message?: string) { super(message ?? code); }
@@ -42,6 +42,9 @@ interface ImportReport {
   needs_person: Array<{ key: string; reason: string; href: string }>;
   before_state: BeforeState;
   ignored_rows: number;
+  /** US Foods invoice at a shop only: the file's account, and the shop it is on file for (null = not on file yet,
+   *  the reviewer confirms it is the chosen shop's). */
+  account?: { number: string; location_id: string | null };
 }
 interface BatchRow {
   id: string; vendor_id: string; location_id: string | null; account_id: string | null;
@@ -181,15 +184,6 @@ async function loadCatalog(vendorId: string, shopId: string | null): Promise<{ c
   }) };
 }
 
-function defaultDecisions(observations: Observation[]): Record<string, Decision> {
-  const seen = new Set<string>();
-  return Object.fromEntries(observations.map(o => {
-    const target = `${o.match.sku_id}:${o.kind}`;
-    const accepts = ["price", "item_number", "pack"].includes(o.kind) && !seen.has(target);
-    seen.add(target);
-    return [observationKey(o), accepts ? "accept" : "skip"];
-  }));
-}
 function makeOps(observations: Observation[], decisions: Record<string, Decision>, before: BeforeState): PlanOp[] {
   try { return planFromDecisions(observations, decisions, before); }
   catch (e) { throw new VendorImportError(400, e instanceof Error ? e.message : "invalid_payload"); }
@@ -244,15 +238,19 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
   // is not runtime evidence: use configured vendor metadata, or honestly unknown. (The invoice CSV
   // carries CustomerNumber on every line and keeps it.)
   if (adapter.id === "usfoods-moxe-list") for (const row of rows) row.account_id = vendor.account_number ?? "";
-  // A shop import never takes lines from an account mapped (0294) to ANOTHER shop: a file holding both
-  // shops' invoices stages each shop's own lines. Unmapped accounts stay (the person chose the shop).
-  if (shopId !== null && rows.some(r => r.account_id)) {
-    const accountShops = await loadAccountShops(vendorId);
-    const kept = rows.filter(r => !r.account_id || (accountShops.get(r.account_id) ?? shopId) === shopId);
+  // US Foods invoice only (CC decision 2): a shop import never takes lines from an account mapped (0294) to
+  // ANOTHER shop, so a file holding both shops' invoices stages each shop's own lines. An account not on file
+  // stays (the person chose the shop) and is shown in the review to confirm. Every other format keeps its rules.
+  let accountShops: Map<string, string> | null = null;
+  if (shopId !== null && adapter.id === "usfoods-invoice-csv") {
+    accountShops = await loadAccountShops(vendorId);
+    const map = accountShops;
+    const kept = rows.filter(r => !r.account_id || (map.get(r.account_id) ?? shopId) === shopId);
     if (kept.length === 0) throw new VendorImportError(400, "account_shop_mismatch");
     rows = kept;
   }
   const accounts = [...new Set(rows.map(r => r.account_id).filter(Boolean))];
+  // Two accounts no mapping separates: the file cannot say which lines are this shop's.
   if (accounts.length > 1) throw new VendorImportError(400, "multiple_accounts");
   const sha = source.sha;
   const sb = getServiceRoleClient();
@@ -285,7 +283,8 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
     snapshot.evidence = { vendor_id: vendorId, account_id: accounts[0] ?? null, location_id: shopId,
       source_sha256: sha, adapter_version: ADAPTER_VERSION, row: observation.row };
   }
-  const report: ImportReport = { counts: {}, reasons: {}, needs_person: [], before_state: before, ignored_rows: parsed.length - rows.length + skipped };
+  const report: ImportReport = { counts: {}, reasons: {}, needs_person: [], before_state: before, ignored_rows: parsed.length - rows.length + skipped,
+    ...(accountShops && accounts[0] ? { account: { number: accounts[0], location_id: accountShops.get(accounts[0]) ?? null } } : {}) };
   for (const o of observations) {
     report.counts[o.kind] = (report.counts[o.kind] ?? 0) + 1;
     report.reasons[o.reason] = (report.reasons[o.reason] ?? 0) + 1;

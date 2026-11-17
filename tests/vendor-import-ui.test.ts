@@ -72,8 +72,8 @@ describe("account to confirm and row flags (CC decisions 1, 3, 4)", () => {
     price_cents: 1100, price_per_lb_cents: null, last_purchase_qty: 0, last_purchase_uom: "CS", last_purchase_date: "2026-11-16", exported_at: "2026-11-16" };
   const flagged = (flags: string[], account?: { number: string; location_id: string | null }): ImportBatchView => ({ ...view,
     batch: { ...view.batch, account_id: account?.number ?? null, adapter: "usfoods-invoice-csv", report: { ...view.batch.report, ...(account ? { account } : {}) } },
-    observations: [{ source_row: 2, row: { ...row, flags } as never, kind: "noop", reason: "price_same", match: { rule: "item_number", sku_id: "s", candidates: [] }, proposed: null }],
-    decisions: { "2:noop": "skip" } });
+    observations: [{ source_row: 2, row: { ...row, flags } as never, kind: "needs_person", reason: "no_match", match: { rule: "unmatched", sku_id: null, candidates: [] }, proposed: null }],
+    decisions: {} });
 
   it.each(["en", "es"] as const)("shows an account not on file as one to confirm for the chosen shop in %s", language => {
     h.view = flagged([], { number: "71628390", location_id: null });
@@ -104,6 +104,7 @@ describe("account to confirm and row flags (CC decisions 1, 3, 4)", () => {
     }
   });
   it("help text names the screen where account numbers are added", () => {
+    h.expanded = true;
     expect(render()).toContain("Account numbers by shop");
   });
 });

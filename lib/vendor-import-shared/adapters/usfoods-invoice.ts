@@ -57,6 +57,8 @@ export const usfoodsInvoice: Adapter = {
           ...(perLb ? { pack_catch_weight: true as const, ...(signedNumber.test(c[C.weight]!) && weight > 0 ? { net_wt_lb: weight } : {}) } : {}),
           uom: unit, price_basis: basis, ...parsePrice(`${c[C.price]}${perLb ? "/lb" : ""}`),
           last_purchase_qty: qty, last_purchase_uom: unit, last_purchase_date: date, exported_at: date,
+          // Ordered but not shipped: the line still states a price, but it is shown flagged and left unselected.
+          ...(qty === 0 ? { flags: ["not_shipped" as const] } : {}),
         }];
       } catch (error) { throw new Error(`${sourceFile}:${line}: ${String(error)}`); }
     });

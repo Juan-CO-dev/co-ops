@@ -64,13 +64,16 @@ export const baldorSmartshop: Adapter = {
         const byWeight = /^(?:LB|OZ)$/i.test(c[2] ?? "");
         const notes = [`Quantity is the total bought ${range.from} to ${range.to}, not one order.`];
         if (byWeight) notes.push("Sold by weight: the price is SmartShop's estimate for a case of varying weight.");
+        const pack = smartshopPack(c[2] ?? "");
+        // Open question for the owner: is Current Price always one listed size for a size in pounds? Shown flagged.
+        const inPounds = /^LB$/i.test(c[2] ?? "") || pack.pack_unit === "LB";
         return {
           vendor: "baldor", source_file: sourceFile, source_line: line, account_id: "", list_name: SMARTSHOP_LIST, category: "",
-          item_no: c[0], description: c[1], brand: "", ...smartshopPack(c[2] ?? ""), ...(byWeight ? { pack_catch_weight: true as const } : {}),
+          item_no: c[0], description: c[1], brand: "", ...pack, ...(byWeight ? { pack_catch_weight: true as const } : {}),
           // SmartShop sells by the listed size; a basis that does not fit the catalog root holds the row for a person.
           uom: "CS", price_basis: "per case", ...money(c[4] ?? ""),
           last_purchase_qty: quantity ? Number(quantity) : null, last_purchase_uom: quantity ? "CS" : null, last_purchase_date: null,
-          exported_at: range.to, notes,
+          exported_at: range.to, notes, ...(inPounds ? { flags: ["price_per_listed_size" as const] } : {}),
         };
       } catch (error) { throw new Error(`${sourceFile}:${line}: ${String(error)}`); }
     });

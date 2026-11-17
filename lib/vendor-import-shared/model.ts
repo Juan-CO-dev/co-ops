@@ -27,6 +27,8 @@ export interface ExportRow {
   billed_price_cents?: number;
   billed_price_basis?: string;
   notes?: string[];
+  /** Review flags shown beside the row. A flag in SKIP_BY_DEFAULT_FLAGS keeps the row's changes unselected. */
+  flags?: RowFlag[];
   customer_product_no?: string;
   storage?: string;
   product_class?: string;
@@ -39,6 +41,12 @@ export interface ExportRow {
   /** Date precision only: the source supplies no clock or timezone. */
   exported_at: string;
 }
+
+/** not_shipped: a US Foods invoice line with QtyShip 0 (the price is still the invoice line's).
+ *  price_per_listed_size: a Baldor SmartShop size in pounds; whether Current Price is per listed size is unconfirmed. */
+export const ROW_FLAGS = ["not_shipped", "price_per_listed_size"] as const;
+export type RowFlag = typeof ROW_FLAGS[number];
+export const SKIP_BY_DEFAULT_FLAGS: readonly RowFlag[] = ["not_shipped"];
 
 export interface Adapter {
   id: string;
