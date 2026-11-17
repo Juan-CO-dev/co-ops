@@ -8,7 +8,7 @@
 import { pathToFileURL } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { FACT_BUILDER_VERSION } from "../lib/facts/order-facts-shared";
-import { compareDaily, factDaily, type DailyMoney, type FactCheckClassRow, type FactRefundReadRow } from "../lib/facts/parity-shared";
+import { compareDaily, factDaily, readAllStaleDays, STALE_LIST_CAP, type DailyMoney, type FactCheckClassRow, type FactRefundReadRow } from "../lib/facts/parity-shared";
 import { etYmdMinusDays } from "../lib/operational-day";
 
 export function windows(from: string, to: string): [string, string][] {
@@ -39,9 +39,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL, secret = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !secret) { console.error("NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set. Nothing was read."); return 2; }
   const sb = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } });
-  const stale = await sb.rpc("fact_order_days_stale", { p_floor: from, p_limit: 5000, p_builder_version: FACT_BUILDER_VERSION });
-  if (stale.error || !Array.isArray(stale.data)) { console.error("fact_order_days_stale failed (is 0337 applied?)"); return 2; }
-  const pending = (stale.data as { day_business_date: string }[]).filter((d) => d.day_business_date <= to);
+  // Paged to completion (review r1 #4): a truncated stale list could pass this gate with days still stale.
+  let stale: { day_location_id: string; day_business_date: string }[];
+  try {
+    stale = await readAllStaleDays((a, b) => sb.rpc("fact_order_days_stale", { p_floor: from, p_limit: STALE_LIST_CAP, p_builder_version: FACT_BUILDER_VERSION }).range(a, b));
+  } catch (e) {
+    console.error(e instanceof Error && e.message === "fact_stale_list_capped" ? "fact_stale_list_capped: too many stale days to prove the range built; build first."
+      : "fact_stale_read_failed: fact_order_days_stale failed (is 0337 applied?)");
+    return 2;
+  }
+  const pending = stale.filter((d) => d.day_business_date <= to);
   if (pending.length) { console.error(`${pending.length} day(s) in range still stale: run the build (or wait a pass) first.`); return 3; }
   const shops = await sb.from("locations").select("id, name").eq("active", true).order("name");
   if (shops.error) { console.error("locations read failed"); return 2; }

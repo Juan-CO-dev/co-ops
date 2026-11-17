@@ -80,6 +80,32 @@ export function compareDaily(report: Partial<DailyMoney>, facts: DailyMoney): st
   return diffs;
 }
 
+/** 0337 fact_order_days_stale refuses a p_limit above this; at this many rows the list cannot be
+ * proven complete. */
+export const STALE_LIST_CAP = 5000;
+const STALE_PAGE = 1000;
+export interface StaleDayRow { day_location_id: string; day_business_date: string; day_fingerprint?: string }
+
+/** The stale-day list, read TO COMPLETION or refused by name (review r1 #4, BC-006). PostgREST caps
+ * every response at its max-rows whatever p_limit asks for, so `page(from, to)` must be the RPC with
+ * `.range(from, to)` (p_limit = STALE_LIST_CAP). The read advances by the rows actually received and
+ * ends only on an EMPTY page, so a server max-rows below the page size cannot truncate it. A failed
+ * page is `fact_stale_read_failed` (never the pages read so far); reaching the function's own cap is
+ * `fact_stale_list_capped` (raise the floor and read again). Never a partial list. */
+export async function readAllStaleDays<T extends StaleDayRow>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (;;) {
+    const { data, error } = await page(out.length, out.length + STALE_PAGE - 1);
+    if (error || !Array.isArray(data)) throw new Error("fact_stale_read_failed");
+    if (data.length === 0) break;
+    out.push(...data);
+    if (out.length >= STALE_LIST_CAP) throw new Error("fact_stale_list_capped");
+  }
+  return out;
+}
+
 export function summarizeStale(rows: { day_location_id: string; day_business_date: string }[]) {
   const byShopMonth: Record<string, number> = {};
   for (const r of rows) {
