@@ -37,6 +37,28 @@ describe("new formats through the existing matcher", () => {
   });
 });
 
+describe("US Foods invoice pricing units (fix round 1, review P2-1)", () => {
+  it("names exactly the pricing units it reads", async () => {
+    const { USFOODS_INVOICE_PRICING_UNITS } = await import("@/lib/vendor-import-shared/adapters/usfoods-invoice");
+    expect([...USFOODS_INVOICE_PRICING_UNITS].sort()).toEqual(["CA", "CS", "DZ", "EA", "LB"]);
+  });
+  // BD / BNDL are the units reconcileBasis() would otherwise read as per-bundle; the rest have no basis at all.
+  for (const unit of ["BD", "BNDL", "BG", "PK", "GA", "BX", "CT", ""]) {
+    it(`an invoice line priced per ${unit || "(blank)"} is held for a person by name, never a price proposal`, async () => {
+      const { defaultDecisions } = await import("@/lib/vendor-import-shared/match");
+      const rows = invoice("6/5 LB", unit, "90.0000");
+      expect(rows[0]).toMatchObject({ price_basis: null, price_unit_unsupported: true });
+      const obs = matchObservations(rows, [sku()], "v");
+      expect(obs.filter(o => o.kind === "price")).toEqual([]);
+      expect(obs).toContainEqual(expect.objectContaining({ kind: "needs_person", reason: "price_unit_unsupported", proposed: null }));
+      expect(Object.values(defaultDecisions(obs))).not.toContain("accept");
+    });
+  }
+  it("a supported unit never carries the hold", () => {
+    for (const unit of ["CS", "CA", "EA", "DZ"]) expect(invoice("6/5 LB", unit, "90.0000")[0]).not.toHaveProperty("price_unit_unsupported");
+  });
+});
+
 describe("flagged rows are shown but never pre-selected (CC decision 4)", () => {
   it("a not-shipped invoice line's price is proposed for review but defaults to skip", async () => {
     const { defaultDecisions, observationKey } = await import("@/lib/vendor-import-shared/match");

@@ -74,9 +74,47 @@ describe("staging a Baldor SmartShop xlsx", () => {
     const bytes = smartshop();
     await stageVendorImport(actor, vendor, { name: xlsxName, bytes }, shop);
     expect(state.rpc).toHaveBeenCalledTimes(1);
+    // The batch identity is the bytes AND the range the file name dates them by (fix round 1); the bytes' own hash is kept.
+    const fileSha = createHash("sha256").update(bytes).digest("hex");
     expect(state.staged).toMatchObject({ adapter: "baldor-smartshop-xlsx", source_name: xlsxName, exported_at: "2026-11-15", row_count: 1,
-      source_sha256: createHash("sha256").update(bytes).digest("hex"), location_id: shop });
+      source_sha256: createHash("sha256").update(`${fileSha}\nbaldor-smartshop-xlsx\n2026-01-01_2026-11-15`, "utf8").digest("hex"), location_id: shop });
+    expect((state.staged!.report as { file_sha256?: string }).file_sha256).toBe(fileSha);
     expect(state.observations[0]).toMatchObject({ kind: "needs_person", reason: "no_match" });
+  });
+
+  it("the same bytes under a corrected range end are a NEW batch dated by the new name, never the stale one (fix round 1, P2-2)", async () => {
+    vendorNamed("Baldor Specialty Foods");
+    const bytes = smartshop();
+    const fileSha = createHash("sha256").update(bytes).digest("hex");
+    await stageVendorImport(actor, vendor, { name: xlsxName, bytes }, shop);
+    const first = state.staged!;
+    const corrected = "smartshop_export_2026-01-01_2026-11-16.xlsx";
+    const view = await stageVendorImport(actor, vendor, { name: corrected, bytes }, shop);
+    expect(state.rpc).toHaveBeenCalledTimes(2);
+    expect(state.staged).toMatchObject({ source_name: corrected, exported_at: "2026-11-16" });
+    expect(state.staged!.source_sha256).not.toBe(first.source_sha256);
+    expect(view.batch.exported_at).toBe("2026-11-16");
+    // The uploaded file's own hash is kept on both batches.
+    expect((first.report as { file_sha256?: string }).file_sha256).toBe(fileSha);
+    expect((state.staged!.report as { file_sha256?: string }).file_sha256).toBe(fileSha);
+    expect((state.observations[0] as { row: { exported_at: string } }).row.exported_at).toBe("2026-11-16");
+  });
+
+  it("a range START change is a new batch too; a browser's ' (1)' copy of the same range reuses it", async () => {
+    vendorNamed("Baldor Specialty Foods");
+    const bytes = smartshop();
+    await stageVendorImport(actor, vendor, { name: xlsxName, bytes }, shop);
+    await stageVendorImport(actor, vendor, { name: "smartshop_export_2026-01-01_2026-11-15 (1).xlsx", bytes }, shop);
+    expect(state.rpc).toHaveBeenCalledTimes(1);
+    await stageVendorImport(actor, vendor, { name: "smartshop_export_2026-02-01_2026-11-15.xlsx", bytes }, shop);
+    expect(state.rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it("a text export's identity is still its own hash", async () => {
+    const text = invoice(invoiceLine("1", "90000001", "1000001", "10.0000"));
+    await stageVendorImport(actor, vendor, { name: "InvoiceDetails.csv", text }, shop);
+    expect(state.staged).toMatchObject({ source_sha256: createHash("sha256").update(text, "utf8").digest("hex") });
+    expect(state.staged!.report).not.toHaveProperty("file_sha256");
   });
 
   it("refuses an xlsx for a vendor of another family, a broken workbook and an oversized upload", async () => {
