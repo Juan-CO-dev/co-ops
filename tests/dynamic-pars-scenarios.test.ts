@@ -150,21 +150,29 @@ describe("SCENARIO 1 — the ham week: demand steps +40%", () => {
     expect(night(velocityOnly, 21).velocityApplied).toBe(false);
   });
 
-  it("AS SHIPPED the peak floor is the fast responder, and that is the design working", () => {
+  it("AS SHIPPED the like-for-like floor leads the base, and never lets the weekend set a weekday par", () => {
     const e = HAM_WEEK_EXPECTED.asShipped;
+    // Two days after the step the worst weekday PAIR this shop has actually had is already
+    // the new level, while the 21-day mean is three weeks from it: the floor binds first.
+    expect(firstNight(shipped, (r) => r.flooredByPeak)).toBe(e.floorBindsNight);
+    expect(night(shipped, e.floorBindsNight).targetUnits!).toBeCloseTo(e.floorBindsTarget, 5);
+    expect(night(shipped, e.floorBindsNight).targetUnits!).toBeGreaterThan(
+      night(baseOnly, e.floorBindsNight).targetUnits!,
+    );
+    // The floor of this WEEKDAY horizon is built from weekday pairs only: it tops out at the
+    // stepped weekday pair (112), never a stepped weekend pair (168 oz = 14 units).
+    expect(Math.max(...shipped.map((r) => r.peakFloorOz ?? 0))).toBe(e.maxFloorOz);
+    // Velocity breaks the band, on the night it fires; the floor no longer does.
     expect(firstNight(shipped, (r) => r.suppressedBy === "band")).toBe(e.bandCrossNight);
+    expect(e.bandCrossNight).toBe(HAM_WEEK_EXPECTED.velocityOnly.bandCrossNight);
     expect(night(shipped, e.bandCrossNight).suggestedPar).toBe(e.bandCrossSuggestion);
+    // …and the track ends on the absorbed weekday answer, 56 x 2 x 1.20 / 12 = 11.2 → 11.
     expect(night(shipped, 21).suggestedPar).toBe(e.finalSuggestion);
-    // Two days after the step the worst run this shop has ACTUALLY had is already the new
-    // level, while the 21-day mean is three weeks from it. A percentage on a mean is not a
-    // service level — so the floor moves first, and the base's latency is measured against
-    // the composed engine, not against an arithmetic that does not ship.
-    expect(e.bandCrossNight).toBeLessThan(HAM_WEEK_EXPECTED.baseOnly.bandCrossNight);
-    // …and with the floor binding, velocity moves the TARGET but not the rendered number:
-    // the deadband absorbs it, because the floor already moved the par it was reaching for.
-    expect(e.velocityChangesNoRenderedSuggestion).toBe(true);
-    expect(shipped.map((r) => r.suggestedPar)).toEqual(
-      shippedNoVelocity.map((r) => r.suggestedPar),
+    expect(e.finalSuggestion).toBe(HAM_WEEK_EXPECTED.baseOnly.finalSuggestion);
+    // With velocity off, the floor moves the TARGET but not the rendered number: the
+    // one-step deadband absorbs it, so the rendered track is the base's own.
+    expect(shippedNoVelocity.map((r) => r.suggestedPar)).toEqual(
+      baseOnly.map((r) => r.suggestedPar),
     );
   });
 });
@@ -240,16 +248,24 @@ describe("SCENARIO 3 — the prosciutto floor: mean + 20% under the worst observ
     expect(unfloored.tier).toBe(PROSCIUTTO_EXPECTED.unflooredTier);
   });
 
-  it("p90, not max — one catering-shaped weekend cannot permanently inflate a par", () => {
-    // The heaviest observed 3-day run is 135 oz (44+46+45). The floor takes 98.
-    expect(floored.peakFloorOz).toBeLessThan(135);
+  it("like-for-like: a Fri–Sat–Sun horizon is floored by Fri–Sat–Sun runs only", () => {
+    // Three such runs in a 21-day window (37, 135, 49) — below the ranking threshold, so the
+    // floor is the heaviest weekend actually survived. The old 98 was Sat–Sun–Mon (45+46+7):
+    // a weekend diluted by a weekday, which under-floored the weekend par.
+    expect(PROSCIUTTO_EXPECTED.comparableRuns).toBeLessThan(
+      DYNAMIC_PARS.PEAK_MIN_RUNS_FOR_QUANTILE,
+    );
+    expect(floored.peakFloorOz).toBe(44 + 46 + 45);
+    expect(floored.peakFloorOz).not.toBe(98);
     expect(DYNAMIC_PARS.PEAK_QUANTILE).toBe(0.9);
   });
 
-  it("reaches the auto tier only on the SECOND night, and only as would_apply", () => {
-    expect(floored.suppressedBy).toBe("hysteresis"); // direction unconfirmed on night one
+  it("beyond the band it is a suggestion at the full target, every night — never applied", () => {
+    expect(floored.suppressedBy).toBe(PROSCIUTTO_EXPECTED.suppressedBy);
+    expect(floored.tier).toBe("suggestion");
     const n2 = simulateNight(prosciuttoNight(priorFrom(floored)));
-    expect(n2.tier).toBe("auto");
+    expect(n2.suppressedBy).toBe(PROSCIUTTO_EXPECTED.suppressedBy);
+    expect(n2.suggestedPar).toBe(PROSCIUTTO_EXPECTED.suggestedPar);
     expect(n2.outcome).toBe(PROSCIUTTO_EXPECTED.secondNightOutcome);
     expect(n2.outcome).not.toBe("applied"); // v1 is shadow. Nothing applies itself.
   });
