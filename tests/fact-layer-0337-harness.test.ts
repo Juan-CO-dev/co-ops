@@ -9,6 +9,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { buildOrderDay, FACT_BUILDER_VERSION, type OrderDaySource } from "@/lib/facts/order-facts-shared";
+import { compareDaily, factDaily, type DailyMoney, type FactCheckClassRow, type FactRefundReadRow } from "@/lib/facts/parity-shared";
 
 const read = (n: string) => readFileSync(`supabase/migrations/${n}`, "utf8");
 const M0337 = read("0337_fact_layer_orders.sql");
@@ -27,7 +28,9 @@ const PARENTS = [
    alter default privileges in schema public grant all on tables to public, anon, authenticated, service_role;
    alter default privileges in schema public grant all on functions to public, anon, authenticated, service_role;
    create table public.locations(id uuid primary key);
-   create table public.ezcater_current_toast_links(location_id uuid, business_date date, toast_snapshot_id uuid, check_guid text);`,
+   create table public.ezcater_current_toast_links(location_id uuid, business_date date, toast_snapshot_id uuid, check_guid text);
+   create table public.ezcater_orders(id uuid, event_date date, lead_id uuid, location_id uuid, snapshot_id uuid, status text, subtotal_cents bigint);
+   create table public.catering_pipeline(id uuid, location_id uuid, stage text);`,
   ...["toast_capture_runs", "toast_orders", "toast_order_checks", "toast_check_discounts", "toast_check_service_charges",
     "toast_payments", "toast_capture_pages", "toast_capture_run_orders", "toast_order_latest_pointers", "sales_channel_map"]
     .map((t) => tbl("0221_toast_order_capture.sql", t)),
@@ -40,6 +43,9 @@ const PARENTS = [
   fn("0237_toast_modified_capture.sql", "toast_modified_save"),
   fn("0232_reports_sales_reads.sql", "sales_report_class"),
   fn("0232_reports_sales_reads.sql", "sales_report_assert_window"),
+  fn("0232_reports_sales_reads.sql", "sales_report_discount_counts"),
+  fn("0232_reports_sales_reads.sql", "sales_report_facts"),
+  fn("0247_sales_refund_candidates.sql", "sales_report_daily"),
   grab("0243_cron_route_leases.sql", /create table public\.cron_route_leases[\s\S]*?\);/i, "leases"),
   grab("0300_meta_leads.sql", /alter table public\.cron_route_leases drop constraint[\s\S]*?;/i, "0300 union"),
   fn("0300_meta_leads.sql", "claim_cron_route"),
@@ -52,7 +58,7 @@ const ACC = { version: 1, gross_cents: 1000, discounts_comps_cents: 0, voids_cen
   line_prices: { v: 1, selections_present: true, heads: 1, uncaptured_heads: 0, mixed_heads: 0, net_cents: 1000,
     source_complete: true, net_complete: true, gross_complete: true, receipt_line_complete: true } };
 
-interface EntryOpts { modified?: string; checks?: number; refund?: boolean; amount?: number }
+interface EntryOpts { modified?: string; checks?: number; refund?: boolean; undatedRefund?: boolean; amount?: number }
 function entry(guid: string, date: string, o: EntryOpts = {}) {
   const checks = Array.from({ length: o.checks ?? 1 }, (_, i) => ({ check_guid: `${guid}-c${i}`, amount_cents: o.amount ?? 1000,
     tax_cents: 100, total_cents: 1100, voided: false, deleted: false, accounting: ACC }));
@@ -63,10 +69,10 @@ function entry(guid: string, date: string, o: EntryOpts = {}) {
     selection_units: checks.map((c) => ({ check_guid: c.check_guid, selection_guid: `${c.check_guid}-s`, parent_selection_guid: null,
       item_guid: "item", name: "Sub", quantity: 1, voided: false, deleted: false, price_v: 1, net_cents: 1000, gross_cents: 1000,
       receipt_line_cents: 1000, tax_cents: 100, tax_inclusion: "NOT_INCLUDED", selection_type: "NONE", deferred: false })) };
-  const payments = o.refund && checks[0] ? [{ check_guid: checks[0].check_guid, payment_guid: `${guid}-p`, type: "CREDIT",
+  const payments = (o.refund || o.undatedRefund) && checks[0] ? [{ check_guid: checks[0].check_guid, payment_guid: `${guid}-p`, type: "CREDIT",
     payment_status: "CAPTURED", refund_status: "PARTIAL", amount_cents: 1100, tip_cents: 0, paid_business_date: date,
-    refund_amount_cents: 300, refund_tip_cents: 0, refund_business_date: date, void_business_date: null, server_guid: null,
-    sales_refund_cents: 300 }] : [];
+    refund_amount_cents: 300, refund_tip_cents: 0, refund_business_date: o.undatedRefund ? null : date, void_business_date: null, server_guid: null,
+    sales_refund_cents: o.undatedRefund ? null : 300 }] : [];
   const body = { order, checks, discounts: [], service_charges: [], payments };
   return { content_hash: hash(body), ...body };
 }
@@ -264,6 +270,18 @@ describe("read-time classification (double-count law)", () => {
     expect(await q("select count(*)::int n from fact_refund where order_business_date=$1", [D1])).toEqual([{ n: 2 }]);
     expect(await q("select refund_business_date::text d, sales_refund_cents::int s from fact_sales_refund_rows($1,$2,$3)", [LOC, D1, D1]))
       .toEqual([{ d: D1, s: 300 }]);
+  });
+  it("PARITY: the facts reproduce the REAL sales_report_daily (0247) classes and refunds over the window", async () => {
+    // An undated refund (sales refund unknown) on a sale BEFORE the window: uncertainty on every window day.
+    await fullCapture("2026-09-28", [entry("pre", "2026-09-28", { undatedRefund: true })]);
+    await build("2026-09-28");
+    expect(await stale()).toEqual([]);
+    const report = (await q<{ r: DailyMoney }>("select sales_report_daily($1,$2,$3) r", [LOC, D1, D5]))[0]!.r;
+    const checks = await q<FactCheckClassRow>("select business_date::text business_date, order_guid, check_guid, sale_class, amount_cents::int, tax_cents::int, gross_cents::int, discounts_comps_cents::int, voids_cents::int, service_charges_cents::int, pre_refund_cents::int from fact_sales_check_classes($1,$2,$3)", [LOC, D1, D5]);
+    const refunds = await q<FactRefundReadRow>("select order_business_date::text order_business_date, refund_business_date::text refund_business_date, refund_cents::int, refund_tip_cents::int, sales_refund_cents::int from fact_sales_refund_rows($1,$2,$3)", [LOC, D1, D5]);
+    expect(report.classes.length).toBeGreaterThan(0);
+    expect(report.refunds.filter((r) => r.sales_refund_missing === 1 && r.count === 0)).toHaveLength(5);
+    expect(compareDaily(report, factDaily(checks, refunds, D1, D5))).toEqual([]);
   });
   it("the read helpers keep 0232's 31-day guard", async () => {
     await refuses(q("select * from fact_sales_check_classes($1,'2026-01-01','2026-03-01')", [LOC]), "sales_report_window_too_wide");
