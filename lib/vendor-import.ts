@@ -11,6 +11,8 @@ import { resolvePackLevels, resolveCurrentPrices, type ScopedPriceRow } from "@/
 import { buildPackChain, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";
 import { skuItemHref } from "@/lib/catalog/sku-item-shared";
 import { detectAdapter } from "@/lib/vendor-import-shared/adapters";
+import { isZip, readXlsxFirstSheet } from "@/lib/vendor-import-xlsx";
+import { rowsToCsv } from "@/lib/vendor-import-shared/parsers";
 import type { CatalogSku, Decision, Observation, PlanOp } from "@/lib/vendor-import-shared/model";
 import { matchObservations, observationKey, planDigest, planFromDecisions, snapshotBeforeState } from "@/lib/vendor-import-shared/match";
 
@@ -87,6 +89,7 @@ function family(vendor: Vendor): string {
   // Adapter identities describe supplier formats, never tenant/location vocabulary.
   if (name === "pfg" || name.startsWith("performancefoodservice")) return "pfg";
   if (name === "usfoods") return "usfoods";
+  if (name.startsWith("baldor")) return "baldor";
   return name;
 }
 async function loadVendor(vendorId: string, includeInactive = false): Promise<Vendor> {
@@ -192,28 +195,66 @@ function makeOps(observations: Observation[], decisions: Record<string, Decision
   catch (e) { throw new VendorImportError(400, e instanceof Error ? e.message : "invalid_payload"); }
 }
 
-export async function stageVendorImport(actor: AuthContext, vendorId: string, file: { name: string; text: string }, shopId: string | null = null): Promise<ImportBatchView> {
+/** A text export, or the raw bytes of a binary upload. Bytes are sniffed: a ZIP is read as an xlsx workbook,
+ *  anything else is decoded as UTF-8 text exactly as `File.text()` would (so a text file hashes as before). */
+export type VendorImportFile = { name: string; text: string } | { name: string; bytes: Uint8Array };
+interface ImportSource { text: string; format: "text" | "xlsx"; sha: string }
+function readSource(file: VendorImportFile): ImportSource {
+  const size = "bytes" in file ? file.bytes.byteLength : Buffer.byteLength(file.text, "utf8");
+  if (size > MAX_IMPORT_BYTES) throw new VendorImportError(413, "too_large");
+  if ("bytes" in file && isZip(file.bytes)) {
+    let rows: string[][];
+    try { rows = readXlsxFirstSheet(file.bytes); }
+    catch { throw new VendorImportError(400, "invalid_payload"); }
+    // The batch identity is the uploaded file itself, not our serialization of it.
+    return { text: rowsToCsv(rows), format: "xlsx", sha: createHash("sha256").update(file.bytes).digest("hex") };
+  }
+  const text = "bytes" in file ? new TextDecoder().decode(file.bytes) : file.text;
+  return { text, format: "text", sha: createHash("sha256").update(text, "utf8").digest("hex") };
+}
+
+/** Active per-shop vendor accounts (0294): account number -> shop. */
+async function loadAccountShops(vendorId: string): Promise<Map<string, string>> {
+  const rows = await selectAllRows<{ account_number: string; location_id: string }>((from, to) => getServiceRoleClient()
+    .from("vendor_location_accounts").select("account_number,location_id").eq("vendor_id", vendorId).eq("active", true)
+    .order("account_number").range(from, to));
+  return new Map(rows.map(r => [r.account_number, r.location_id]));
+}
+
+export async function stageVendorImport(actor: AuthContext, vendorId: string, file: VendorImportFile, shopId: string | null = null): Promise<ImportBatchView> {
   requireScope(actor, shopId);
   await requireActiveShop(shopId);
-  if (Buffer.byteLength(file.text, "utf8") > MAX_IMPORT_BYTES) throw new VendorImportError(413, "too_large");
+  const source = readSource(file);
   const vendor = await loadVendor(vendorId);
-  const adapter = detectAdapter(file.text);
+  const adapter = detectAdapter(source.text, undefined, source.format);
   if (!adapter) throw new VendorImportError(400, "unknown_adapter");
   if (adapter.vendor !== "receipts" && adapter.vendor !== family(vendor)) throw new VendorImportError(400, "adapter_vendor_mismatch");
   const sourceName = file.name.split(/[\\/]/).pop() ?? "";
   let parsed: ReturnType<typeof adapter.parse>;
-  try { parsed = adapter.parse(file.text, sourceName); }
+  let skipped = 0;
+  try { parsed = adapter.parse(source.text, sourceName); skipped = adapter.ignoredRows?.(source.text) ?? 0; }
   catch { throw new VendorImportError(400, "invalid_payload"); }
+  // A file of only credit memos (or other non-price lines) is a real file with nothing to price.
+  if (parsed.length === 0 && skipped > 0) throw new VendorImportError(400, "no_price_rows");
   // A receipt file can contain several vendors; preserve row citations and stage
   // only THIS vendor's unit, reporting how many unrelated observations were excluded.
-  const rows = parsed.filter(row => adapter.vendor !== "receipts" || norm(row.vendor) === norm(vendor.name));
+  let rows = parsed.filter(row => adapter.vendor !== "receipts" || norm(row.vendor) === norm(vendor.name));
   if (rows.length === 0) throw new VendorImportError(400, "adapter_vendor_mismatch");
-  // [ASSUMPTION] MOXe has no account column. The offline adapter's fixture account
-  // is not runtime evidence: use configured vendor metadata, or honestly unknown.
-  if (adapter.vendor === "usfoods") for (const row of rows) row.account_id = vendor.account_number ?? "";
+  // [ASSUMPTION] The MOXe LIST export has no account column. The offline adapter's fixture account
+  // is not runtime evidence: use configured vendor metadata, or honestly unknown. (The invoice CSV
+  // carries CustomerNumber on every line and keeps it.)
+  if (adapter.id === "usfoods-moxe-list") for (const row of rows) row.account_id = vendor.account_number ?? "";
+  // A shop import never takes lines from an account mapped (0294) to ANOTHER shop: a file holding both
+  // shops' invoices stages each shop's own lines. Unmapped accounts stay (the person chose the shop).
+  if (shopId !== null && rows.some(r => r.account_id)) {
+    const accountShops = await loadAccountShops(vendorId);
+    const kept = rows.filter(r => !r.account_id || (accountShops.get(r.account_id) ?? shopId) === shopId);
+    if (kept.length === 0) throw new VendorImportError(400, "account_shop_mismatch");
+    rows = kept;
+  }
   const accounts = [...new Set(rows.map(r => r.account_id).filter(Boolean))];
   if (accounts.length > 1) throw new VendorImportError(400, "multiple_accounts");
-  const sha = createHash("sha256").update(file.text, "utf8").digest("hex");
+  const sha = source.sha;
   const sb = getServiceRoleClient();
   const existingQuery = sb.from("vendor_import_batches").select("id")
     .eq("vendor_id", vendorId).eq("source_sha256", sha).eq("adapter_version", ADAPTER_VERSION).eq("status", "staged");
@@ -244,7 +285,7 @@ export async function stageVendorImport(actor: AuthContext, vendorId: string, fi
     snapshot.evidence = { vendor_id: vendorId, account_id: accounts[0] ?? null, location_id: shopId,
       source_sha256: sha, adapter_version: ADAPTER_VERSION, row: observation.row };
   }
-  const report: ImportReport = { counts: {}, reasons: {}, needs_person: [], before_state: before, ignored_rows: parsed.length - rows.length };
+  const report: ImportReport = { counts: {}, reasons: {}, needs_person: [], before_state: before, ignored_rows: parsed.length - rows.length + skipped };
   for (const o of observations) {
     report.counts[o.kind] = (report.counts[o.kind] ?? 0) + 1;
     report.reasons[o.reason] = (report.reasons[o.reason] ?? 0) + 1;

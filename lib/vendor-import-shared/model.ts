@@ -43,8 +43,13 @@ export interface ExportRow {
 export interface Adapter {
   id: string;
   vendor: string;
+  /** What the upload was. "xlsx" adapters read the first sheet serialized by rowsToCsv and are never
+   *  offered a text upload (and vice versa), so a CSV can never pass for a spreadsheet export. Default "text". */
+  format?: "text" | "xlsx";
   detects(text: string): boolean;
   parse(text: string, sourceFile: string): ExportRow[];
+  /** Source rows the adapter deliberately did not turn into observations (e.g. credit memos). */
+  ignoredRows?(text: string): number;
 }
 
 export type Basis = "per_case" | "per_each" | "per_lb" | "per_dozen" | "per_bundle";

@@ -116,7 +116,7 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply: canApplyShop, c
   }
   function errorText(code: string) {
     if (code === "plan_changed" || code === "stale_before_state") return t("admin.vendor_import.error.plan_changed");
-    const own = ["auth", "too_large", "unknown_adapter", "adapter_vendor_mismatch", "multiple_accounts", "invalid_plan"];
+    const own = ["auth", "too_large", "unknown_adapter", "adapter_vendor_mismatch", "multiple_accounts", "account_shop_mismatch", "no_price_rows", "invalid_plan"];
     return own.includes(code) ? t(`admin.vendor_import.error.${code}` as TranslationKey) : t(resolveErrorKey(code));
   }
   function current(o: Observation) {
@@ -186,7 +186,7 @@ function ImportPanel({ vendorId, vendorName, canStage, canApply: canApplyShop, c
           </select>
         </label>}
         <label htmlFor={`${contentId}-file`} className="block text-xs font-bold tracking-[0.12em]">{t("admin.vendor_import.upload")}</label>
-        <input key={view?.batch.id ?? "empty"} id={`${contentId}-file`} type="file" accept=".csv,.json,text/csv,application/json" className={`${control} w-full min-w-0 py-2`} disabled={!!busy} aria-label={t("admin.vendor_import.upload")} aria-describedby={`${contentId}-help`} onChange={e => patch({ file: e.target.files?.[0] ?? null })} />
+        <input key={view?.batch.id ?? "empty"} id={`${contentId}-file`} type="file" accept=".csv,.json,.xlsx,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className={`${control} w-full min-w-0 py-2`} disabled={!!busy} aria-label={t("admin.vendor_import.upload")} aria-describedby={`${contentId}-help`} onChange={e => patch({ file: e.target.files?.[0] ?? null })} />
         <p id={`${contentId}-help`} className="mt-1 text-sm">{t("admin.vendor_import.help")}</p>
         <button type="button" className={`${control} mt-2 bg-co-gold font-bold tracking-[0.1em]`} disabled={!!busy || !state.file} onClick={stage}>{changed ? t("admin.vendor_import.restage") : t("admin.vendor_import.stage")}</button></div>}
       {view && <>

@@ -73,3 +73,8 @@ export function parseCsv(text: string): { cells: string[]; line: number }[] {
   if (field || cells.length || closed) records.push({ cells: [...cells, field], line: start });
   return records;
 }
+
+/** Serializes spreadsheet rows (row N = physical line N) so an xlsx adapter can reuse parseCsv. Every cell is quoted. */
+export function rowsToCsv(rows: readonly (readonly string[])[]): string {
+  return rows.map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(",")).join("\n") + "\n";
+}

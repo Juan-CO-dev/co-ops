@@ -81,6 +81,12 @@ describe("Baldor SmartShop purchase-history adapter", () => {
     expect(rows[0]!.notes).toEqual(["Quantity is the total bought 2026-01-01 to 2026-11-15, not one order."]);
   });
 
+  it("marks a bare-unit size (sold by weight) as catch weight with no fixed pack, so the case estimate never prices on its own", () => {
+    const [row] = baldorSmartshop.parse(text([[...SMARTSHOP_HEADER], ["w1", "Test Chicken", "LB", 7, 115.6]]), fileName);
+    expect(row).toMatchObject({ pack: "LB", pack_unparsed: true, pack_catch_weight: true, price_cents: 11560, price_basis: "per case" });
+    expect(row!.notes).toContain("Sold by weight: the price is SmartShop's estimate for a case of varying weight.");
+  });
+
   it("accepts a browser-renamed copy and refuses a file with no export range", () => {
     expect(baldorSmartshop.parse(text(), "smartshop_export_2026-01-01_2026-11-15 (1).xlsx")[0]!.exported_at).toBe("2026-11-15");
     expect(() => baldorSmartshop.parse(text(), "purchases.xlsx")).toThrow(/export range/);
