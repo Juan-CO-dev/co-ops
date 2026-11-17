@@ -333,7 +333,7 @@ export function simulateNight(input: NightInput): NightResult {
   );
   const peakFloorOz = input.counterfactualNoPeakFloor === true
     ? null
-    : observedPeakCoverageOz(base.series.map((d) => d.oz), input.coveredDays.length);
+    : observedPeakCoverageOz(base.series, input.coveredDays.length);
   const coverage = computeCoverage({
     coveredDays: input.coveredDays,
     baseOzPerDay,

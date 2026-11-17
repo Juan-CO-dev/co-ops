@@ -39,36 +39,54 @@ function input(over: Partial<CoverageInput> = {}): CoverageInput {
   };
 }
 
+/** Consecutive ET calendar days from `start` (default 2026-08-03, a Monday), one oz value each. */
+function days(oz: ReadonlyArray<number>, start = "2026-08-03"): Array<{ dateEt: string; oz: number }> {
+  const t0 = Date.parse(`${start}T00:00:00Z`);
+  return oz.map((v, i) => ({ dateEt: new Date(t0 + i * 86_400_000).toISOString().slice(0, 10), oz: v }));
+}
+
 describe("observedPeakCoverageOz — the empirical service level (Task 2.3)", () => {
   it("returns the p90 of the consecutive runs once there are enough runs to rank", () => {
-    const daily = Array.from({ length: 20 }, (_, i) => i + 1); // 1 … 20
+    const daily = days(Array.from({ length: 20 }, (_, i) => i + 1)); // 1 … 20
     // 19 consecutive 2-day sums: 3, 5, 7 … 39. p90 index = ceil(0.9 × 19) − 1 = 17 ⇒ 37.
     expect(observedPeakCoverageOz(daily, 2)).toBe(37);
   });
 
   it("returns the MAX run when there are too few runs to rank (a p90 in a costume)", () => {
-    expect(observedPeakCoverageOz([1, 2, 3, 10], 3)).toBe(15); // runs 6 and 15
+    expect(observedPeakCoverageOz(days([1, 2, 3, 10]), 3)).toBe(15); // runs 6 and 15
     expect(DYNAMIC_PARS.PEAK_MIN_RUNS_FOR_QUANTILE).toBe(5);
   });
 
   it("makes NO floor claim when there is less data than one horizon", () => {
-    expect(observedPeakCoverageOz([5, 5], 3)).toBeNull();
+    expect(observedPeakCoverageOz(days([5, 5]), 3)).toBeNull();
     expect(observedPeakCoverageOz([], 1)).toBeNull();
-    expect(observedPeakCoverageOz([5, 5, 5], 0)).toBeNull();
-    expect(observedPeakCoverageOz([5, 5, 5], -2)).toBeNull();
+    expect(observedPeakCoverageOz(days([5, 5, 5]), 0)).toBeNull();
+    expect(observedPeakCoverageOz(days([5, 5, 5]), -2)).toBeNull();
   });
 
   it("caps one catering-shaped outlier out of the answer once ranking is possible", () => {
     // Six 1-day runs, one of them a 500 outlier. p90 index = ceil(5.4) − 1 = 5 ⇒ the outlier
     // is the p90 here (n is small), but the MEAN would be far below it either way.
-    expect(observedPeakCoverageOz([10, 10, 10, 10, 10, 500], 1)).toBe(500);
+    expect(observedPeakCoverageOz(days([10, 10, 10, 10, 10, 500]), 1)).toBe(500);
     // Add enough ordinary runs and the outlier stops governing.
-    const many = [...Array.from({ length: 19 }, () => 10), 500];
+    const many = days([...Array.from({ length: 19 }, () => 10), 500]);
     expect(observedPeakCoverageOz(many, 1)).toBe(10);
   });
 
   it("handles a horizon equal to the whole series (exactly one run)", () => {
-    expect(observedPeakCoverageOz([2, 3, 4], 3)).toBe(9);
+    expect(observedPeakCoverageOz(days([2, 3, 4]), 3)).toBe(9);
+  });
+
+  it("a run is CONSECUTIVE CALENDAR DAYS: it never bridges a gap day the base excluded (the data was missing, not the demand)", () => {
+    // Mon 30, Tue 30, [Wed: full gap, excluded from the series], Thu 30, Fri 30.
+    const withGap = [...days([30, 30]), ...days([30, 30], "2026-08-06")];
+    // Real 2-day windows: Mon–Tue 60 and Thu–Fri 60; "Tue + Thu" is not a window anybody survived.
+    expect(observedPeakCoverageOz(withGap, 2)).toBe(60);
+    // A 3-day horizon fits no gap-free stretch here → no floor claim (honest null), never 90 across the hole.
+    expect(observedPeakCoverageOz(withGap, 3)).toBeNull();
+    // Mon 1, Tue 5, [gap], Thu 100, Fri 1 → only real pairs count: max(6, 101); never Tue+Thu = 105.
+    const bridge = [...days([1, 5]), ...days([100, 1], "2026-08-06")];
+    expect(observedPeakCoverageOz(bridge, 2)).toBe(101);
   });
 });
 
