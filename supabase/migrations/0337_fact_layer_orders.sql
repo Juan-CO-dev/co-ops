@@ -1,5 +1,6 @@
 -- Migration 0337_fact_layer_orders
 -- AUTHORED 2026-11-17 (item 2 PR 2a, CO Claude). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO SIM 2026-11-17 (schema_migrations version 20261117073439; sim's fact_order_days_stale body was later replaced with the 3a88e855 version), APPLIED TO PROD 2026-11-17 (schema_migrations version 20261117080753), name 'fact_layer_orders'. The line above is the authoring-time gate note, kept as history.
 -- Plan: C:\co\audit\item2-plan-r3-orders.md (Astra r3: no P1) with Astra r3's two P2s folded in
 -- (C:\co\audit\item2-astra-r3.md):
 --   P2 #1  a zero-check order is valid: the replace RPC proves completeness against an explicit ORDER
