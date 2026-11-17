@@ -9061,5 +9061,21 @@
   "vendorMail.line.qty": "Quantity",
   "vendorMail.line.unit": "Unit",
   "vendorMail.line.unitPriceCents": "Unit price",
-  "vendorMail.line.extendedCents": "Line total"
+  "vendorMail.line.extendedCents": "Line total",
+  "labor.facts.view.fully_loaded": "Fully loaded labor",
+  "labor.facts.view.pure_hourly": "Hourly labor (with overtime)",
+  "labor.facts.target.loaded": "Target: {pct}% or less",
+  "labor.facts.target.hourly": "Target: {pct}%",
+  "labor.facts.target.default": "default target",
+  "labor.facts.target_varies": "The target changed during these dates",
+  "labor.facts.estimated": "estimated",
+  "labor.facts.burden_estimated": "Taxes and benefits are an estimate ({pct}%)",
+  "labor.facts.rate_estimated": "Some hours use the shop's estimated wage",
+  "labor.facts.straight_time": "Straight time (before overtime)",
+  "labor.facts.salary_unknown": "Salaries aren't set, so fully loaded labor can't be shown",
+  "labor.facts.ot_lower_bound": "Overtime may be higher: some days are missing",
+  "labor.facts.week_open": "This week isn't over yet",
+  "labor.facts.coverage.fallback": "From Toast (not checked against 7shifts)",
+  "labor.facts.coverage.pending": "Waiting for 7shifts to settle",
+  "labor.facts.coverage.incomplete": "Hours missing for this day"
 }

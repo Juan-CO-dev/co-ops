@@ -64,6 +64,6 @@ If the plan shows a sequential scan of `toast_order_latest_pointers` dominating,
 
 ## 5. What the facts are not (yet)
 
-- **Labor (2c)** is deferred pending Juan's answers.
+- **Labor (2c)** is migration 0338: `docs/runbooks/fact-layer-labor.md`.
 - **Rollups (2e)** come with their consumers.
 - **Line prices** come only from the snapshots' inline fields until item-1 phase 2. Phase 2 re-emits the fingerprint and bumps `FACT_BUILDER_VERSION`, which rebuilds every day.

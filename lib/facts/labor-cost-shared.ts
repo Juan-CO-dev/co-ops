@@ -115,3 +115,12 @@ export function laborFactAccess(role: RoleCode): LaborFactAccess {
   if (role === "agm") return "hours_only";
   return "none";
 }
+
+/** Every label a labor reader shows (en + es, pinned by tests/fact-labor-i18n.test.ts). No reader ships in
+ * 2c; these exist so the first one is born translated. */
+export const LABOR_FACT_I18N_KEYS = [
+  "labor.facts.view.fully_loaded", "labor.facts.view.pure_hourly", "labor.facts.target.loaded", "labor.facts.target.hourly",
+  "labor.facts.target.default", "labor.facts.target_varies", "labor.facts.estimated", "labor.facts.burden_estimated",
+  "labor.facts.rate_estimated", "labor.facts.straight_time", "labor.facts.salary_unknown", "labor.facts.ot_lower_bound",
+  "labor.facts.week_open", "labor.facts.coverage.fallback", "labor.facts.coverage.pending", "labor.facts.coverage.incomplete",
+] as const;
