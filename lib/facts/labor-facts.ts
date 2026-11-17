@@ -1,5 +1,5 @@
 import "server-only";
-/** Item 2 PR 2c: the server side of the LABOR fact layer. Reads one company week through 0338's
+/** Item 2 PR 2c: the server side of the LABOR fact layer. Reads one payroll week through 0338's
  * fact_labor_week_source (the source AND its fingerprint in one statement), builds with the pure
  * builder, writes ONLY through fact_replace_labor_week, which recomputes the fingerprint under the week
  * lock: a 7shifts sync, a Toast pull, a link or a wage that commits in between is refused fact_stale

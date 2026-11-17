@@ -26,3 +26,10 @@ it("switches: only the exact value '1' turns the labor pass on; Q5 defaults to f
   expect([undefined, "", "0", "true", "1"].map(factLaborEnabled)).toEqual([false, false, false, false, true]);
   expect([undefined, "x", "dc_minimum"].map(laborWageFallback)).toEqual(["first_known", "first_known", "dc_minimum"]);
 });
+it("Juan 2026-11-17: the overtime scope is per_shop in TS and in 0339's fact_labor_ot_scope (pinned equal)", async () => {
+  const { LABOR_OT_SCOPE } = await import("@/lib/facts/labor-config-shared");
+  const m0339 = readFileSync("supabase/migrations/0339_fact_labor_ot_per_shop.sql", "utf8");
+  const body = m0339.match(/create function public\.fact_labor_ot_scope\(\)[\s\S]*?\$\$;/)![0];
+  expect(LABOR_OT_SCOPE).toBe("per_shop");
+  expect(body).toContain(`select '${LABOR_OT_SCOPE}'::text`);
+});

@@ -7,7 +7,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { buildLaborWeek, laborWeekSourceFromJson } from "@/lib/facts/labor-week-shared";
 import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
 import { laborWeekViews, toLaborCostRow } from "@/lib/facts/labor-cost-shared";
-import { M0338, freshLaborParents } from "./helpers/fact-0338-parents";
+import { M0338, M0339, freshLaborParents } from "./helpers/fact-0338-parents";
 
 let db: PGlite;
 const q = async <T = Record<string, unknown>>(sql: string, params: unknown[] = []) => (await db.query<T>(sql, params)).rows;
@@ -66,6 +66,7 @@ const minutesAt = async (week: string) => (await q<{ m: number; ot: number }>(
 beforeAll(async () => {
   db = await freshLaborParents();
   await db.exec(M0338);
+  await db.exec(M0339); // the production shape: overtime per shop (Juan 2026-11-17)
   await q("insert into locations(id) values($1),($2)", [LOC_A, LOC_B]);
   await q("insert into users(id, role) values($1,'moo'),($2,'employee')", [MGR, ALICE]);
   await q("insert into sevenshifts_location_links(location_id, sevenshifts_location_id, linked_by) values($1, 501, $3), ($2, 502, $3)", [LOC_A, LOC_B, MGR]);
@@ -121,7 +122,7 @@ describe("B. labor build side (0338)", () => {
     expect(await ev("2026-07-26", "2026-07-28")).toBe(run);
   }, 120_000);
 
-  it("punches + wages through THE reconciler: per-minute company overtime across shops; the diff drains; a repeat build is identical", async () => {
+  it("punches + wages through THE reconciler: per-shop overtime (30 h at A + 15 h at B = none); the diff drains; a repeat build is identical", async () => {
     await sync(7, [{ wage_id: "70", upcoming: false, effective_date: "2026-01-01", wage_cents: 2000 }]);
     await q("insert into sevenshifts_user_links(sevenshifts_user_id, user_id, linked_at_location_id, linked_by) values(7, $1, $2, $3), (8, $1, $4, $3)", [ALICE, LOC_A, MGR, LOC_B]);
     await sync(8, [{ wage_id: "80", upcoming: false, effective_date: "2026-01-01", wage_cents: 2200 }]);
@@ -131,9 +132,9 @@ describe("B. labor build side (0338)", () => {
     expect(await staleWeeks()).toContain(WEEK);
     const { result } = await buildWeek(WEEK);
     expect(result).toMatchObject({ week_start: WEEK, days: 14 });
-    expect(await minutesAt(WEEK)).toEqual({ m: 2700, ot: 300 });
+    expect(await minutesAt(WEEK)).toEqual({ m: 2700, ot: 0 });
     expect(await q("select sum(ot_minutes)::int ot, max(rate_cents) r from labor_quarter where week_start=$1 and location_id=$2", [WEEK, LOC_B]))
-      .toEqual([{ ot: 300, r: 2200 }]);
+      .toEqual([{ ot: 0, r: 2200 }]);
     expect(await staleWeeks()).not.toContain(WEEK);
     const before = await q("select * from labor_quarter where week_start=$1 order by location_id, quarter_start_at", [WEEK]);
     await buildWeek(WEEK);

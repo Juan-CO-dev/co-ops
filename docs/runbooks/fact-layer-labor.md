@@ -11,11 +11,28 @@ Nothing reads these facts yet. Managers see no change until a reader ships (the 
 2. **Prod** (Juan's word): apply `0338`, then stamp the file header (`-- APPLIED TO PROD …`).
 3. **Deploy**, then set `FACT_LAYER_LABOR=1` (server env). `FACT_LAYER=1` must already be on.
 
-Rollback: unset `FACT_LAYER_LABOR`. The derived tables can stay. **The observation triggers keep recording** (that is the point: the history cannot be rebuilt later); they only insert into an append-only table no builder locks. Dropping them is a separate migration.
+### 1b. Overtime per employer (0339, Juan 2026-11-17)
+
+Juan, 2026-11-17: "the two shops are SEPARATE companies (separate LLCs), and the payroll week turns over at MIDNIGHT Saturday->Sunday." Overtime is counted **per shop**: minutes past 40 h in a Sunday-Saturday week, per (person, shop). A person working at both shops gets overtime only from hours past 40 within one shop (30 h at A + 20 h at B = no overtime; 45 h at A = 5 h at A). The week boundary was already calendar midnight ET (0338's frame and the builder's per-minute ET calendar date) and is unchanged; the tests now pin it (Saturday 23:59 vs Sunday 00:00, a close across midnight, both DST weeks).
+
+`0339_fact_labor_ot_per_shop` is FILE ONLY. Order:
+
+1. **Sim**: apply `0339`. Its pre-flight refuses by name when 0338 is missing, when the live `fact_replace_labor_week` / `fact_labor_cost` bodies are not 0338's (a later definer), and when 0339 is already applied. It adds `fact_labor_ot_scope()` (`per_shop`), `labor_week_coverage.ot_scope` (existing `labor-v1` weeks = `company`, anything later = `per_shop`, no default afterwards), and re-emits the writer (refuses a payload whose `ot_scope` is not the one in force) and `fact_labor_cost` (the premium's blended rate is per person, week AND shop on a `per_shop` week; company-wide on a `company` week).
+2. **Prod** (Juan's word): apply `0339`, stamp its header.
+3. **Deploy** the app commit with `LABOR_BUILDER_VERSION = "labor-v2"` right after. Between the apply and the deploy the old app's payload names no scope, so every labor write is refused `fact_payload_mismatch`, which the pass counts as raced (`stale`), not a failure: nothing is written, the old weeks stay as they were. (Deploying FIRST is also safe for the minutes: the new builder writes per-shop overtime against 0338, which ignores the scope key; only the premium blends both shops until 0339 is applied, which then labels those weeks `per_shop`.)
+4. The version bump changes every week's fingerprint, so the next passes rebuild every week since 2026-07-19, newest first, inside each pass's deadline (about 18 weeks; a few hourly passes). Watch the `fact-build` heartbeat's `labor` counts. Until a week is rebuilt it reads as it was built (company-wide), and `labor_week_coverage.ot_scope` says so:
+
+```sql
+select ot_scope, builder_version, count(*) from labor_week_coverage group by 1, 2;  -- done when only per_shop / labor-v2 remain
+```
+
+Changing the scope (a future employer whose shops are one company) is a new migration redefining `fact_labor_ot_scope()` plus `LABOR_OT_SCOPE` and a `LABOR_BUILDER_VERSION` bump in the same PR; never a runtime switch.
+
+Rollback: unset `FACT_LAYER_LABOR`. After 0339, an app rolled back to `labor-v1` writes nothing (its payloads are refused as raced) and every week stays as it was last built; going back to company-wide overtime is a new migration, never an app rollback. The derived tables can stay. **The observation triggers keep recording** (that is the point: the history cannot be rebuilt later); they only insert into an append-only table no builder locks. Dropping them is a separate migration.
 
 ## 2. What a pass does
 
-- The diff (`fact_labor_weeks_stale`) lists every payroll week (Sunday 00:00 ET, both shops) from **2026-07-19** through the week holding yesterday whose fingerprint differs. It changes when a punch or Toast entry in the week changes (a moved punch makes both weeks stale), a link changes, an involved person's wage observation changes, the 7shifts overtime settings change, a shop-day gains ledger evidence or leaves its 36 h settle window, or another day of the week closes.
+- The diff (`fact_labor_weeks_stale`) lists every payroll week (Sunday 00:00 ET calendar midnight; both shops built together, overtime counted per shop) from **2026-07-19** through the week holding yesterday whose fingerprint differs. It changes when a punch or Toast entry in the week changes (a moved punch makes both weeks stale), a link changes, an involved person's wage observation changes, the 7shifts overtime settings change, a shop-day gains ledger evidence or leaves its 36 h settle window, or another day of the week closes.
 - One week per transaction, newest first, inside the order pass's deadline (entry + 240 s); a week starts only with a whole 60 s budget left. `fact_stale` / `fact_payload_mismatch` = raced, not a failure.
 - Heartbeat: the same `fact-build` row, with a `labor` object (counts, up to 20 failed weeks by fixed code: `fact_week_timeout`, `fact_source_read_failed`, `fact_replace_failed`). Any labor failure makes the row `cron.failure`. Nothing emails.
 
@@ -44,4 +61,4 @@ select save_labor_burden('<actor user id>', null, 11.5, '2026-07-19', 'payroll',
 - The salaried estimate (0274) is current-only, not dated: changing it re-prices every past week.
 - A punch edited more than 90 days after its day is never re-read by 7shifts.
 - A 7shifts wage deleted by mistake looks like a retired current wage and still prices.
-- Company-wide overtime across the two LLCs and the midnight (not business-day) week boundary are Juan's rules, pending payroll / legal confirmation.
+- Overtime per shop (each shop its own LLC) and the calendar-midnight (not business-day) week boundary are Juan's rules (2026-11-17, replacing the 2026-11-16 company-wide answer), pending payroll / legal confirmation. Only the weekly 40 h is modelled; 7shifts daily / premium thresholds stay an advisory (`ot_settings_disagree`).

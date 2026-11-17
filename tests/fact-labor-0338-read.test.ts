@@ -7,7 +7,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { buildLaborWeek, laborWeekSourceFromJson } from "@/lib/facts/labor-week-shared";
 import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
 import { laborPercents, laborTargetsFor, laborWeekViews, toLaborCostRow, type LaborCostRow } from "@/lib/facts/labor-cost-shared";
-import { M0338, freshLaborParents } from "./helpers/fact-0338-parents";
+import { M0338, M0339, freshLaborParents } from "./helpers/fact-0338-parents";
 
 let db: PGlite;
 const q = async <T = Record<string, unknown>>(sql: string, params: unknown[] = []) => (await db.query<T>(sql, params)).rows;
@@ -42,6 +42,7 @@ const cost = async (loc: string | null, from = WEEK, to = "2026-10-10", fallback
 beforeAll(async () => {
   db = await freshLaborParents();
   await db.exec(M0338);
+  await db.exec(M0339); // the production shape: overtime per shop (Juan 2026-11-17)
   await q("insert into locations(id) values($1),($2)", [A, B]);
   await q("insert into users(id, role) values($1,'moo'),($2,'employee'),($3,'gm')", [MGR, ALICE, GM]);
   await q("insert into sevenshifts_location_links(location_id, sevenshifts_location_id, linked_by) values($1, 501, $3), ($2, 502, $3)", [A, B, MGR]);
@@ -65,8 +66,9 @@ describe("C. cost components (0338 fact_labor_cost)", () => {
     // A: 1800 min x $20 + 60 x $18.40 (no wage) + 60 x $25 (first known, carried back)
     expect(a).toMatchObject({ hourly_straight_cents: 60000 + 1840 + 2500, ot_premium_cents: 0, estimated_rate_minutes: 60, hourly_minutes: 1920,
       ot_state: "assessed", days_covered: 7, days_missing: 0, burden_pct: "12.00", burden_basis: "estimated", salary_basis: "unknown", salaried_cents: null });
-    // B: 900 x $22; premium 0.5 x blended (1800x2000 + 900x2200)/2700 x 300 min / 60
-    expect(b).toMatchObject({ hourly_straight_cents: 33000, ot_premium_cents: Math.round((0.5 * (1800 * 2000 + 900 * 2200) / 2700 * 300) / 60), ot_minutes: 300 });
+    // B: 900 x $22; Alice's 15 h at B are under 40 h AT B (each shop is its own employer, 0339): no overtime.
+    // The per-shop blended premium is proved in tests/fact-labor-0339-migration.test.ts.
+    expect(b).toMatchObject({ hourly_straight_cents: 33000, ot_premium_cents: 0, ot_minutes: 0 });
   });
   it("Q5 = dc_minimum prices the before-first-known minutes at the shop estimate instead; a shop estimate edit re-prices with no rebuild", async () => {
     expect((await cost(A, WEEK, "2026-10-10", "dc_minimum"))[0]).toMatchObject({ hourly_straight_cents: 60000 + 1840 + 1840, estimated_rate_minutes: 120 });
