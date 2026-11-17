@@ -218,8 +218,11 @@ function readSource(file: VendorImportFile): ImportSource {
 function accountBinding(accounts: Iterable<string>, accountShops: Map<string, string>): Record<string, string | null> {
   return Object.fromEntries([...new Set(accounts)].filter(Boolean).sort().map(a => [a, accountShops.get(a) ?? null]));
 }
-function sameBinding(a: Record<string, string | null> | undefined, b: Record<string, string | null>): boolean {
-  return a !== undefined && JSON.stringify(a) === JSON.stringify(b);
+/** Canonical (key-order independent): a JSONB round trip reorders keys, so never compare serialized text. */
+export function sameBinding(a: Record<string, string | null> | undefined, b: Record<string, string | null>): boolean {
+  if (a === undefined) return false;
+  const ak = Object.keys(a), bk = Object.keys(b);
+  return ak.length === bk.length && ak.every(k => Object.prototype.hasOwnProperty.call(b, k) && a[k] === b[k]);
 }
 /** Is this staged batch still the one the CURRENT account mappings would stage? Only a US Foods invoice at a shop
  *  is filtered by account; a batch of that kind with no recorded binding is treated as stale (fail closed). */
@@ -392,6 +395,11 @@ export async function applyVendorImport(actor: AuthContext, vendorId: string, ba
     check(supersedeError);
     throw new VendorImportError(409, "stale_before_state");
   }
+  // RESIDUAL WINDOW (review r3, accepted for this PR): the binding is validated here, but the account mapping can
+  // still be corrected by another manager between this check and apply_vendor_import_shop, which checks catalog
+  // before-state only. Acceptable now: mappings are admin-only and rarely edited, every apply is a human-reviewed
+  // batch, and prod has 0 mappings today. Follow-up: move the binding check inside apply_vendor_import_shop's
+  // transaction (serialized with the mapping writers) in a later migration.
   if (view.batch.status === "staged" && !(await bindingStands(view.batch, vendorId))) {
     // Review r2: an account mapping changed since staging, so the lines this batch kept may be another shop's.
     // Retire it so the file restages under the current mappings (the panel says "re-stage the file").
