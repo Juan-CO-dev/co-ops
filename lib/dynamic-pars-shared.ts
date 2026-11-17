@@ -33,6 +33,7 @@
  * in the rest of the module around them; those four are unchanged.
  */
 import { etDayFromDate } from "@/lib/et-day-shared";
+import { addDaysEt } from "@/lib/vendor-rhythm-shared";
 
 export type DayClass = "weekday" | "weekend";
 
@@ -320,16 +321,26 @@ export function computeBaseRate(input: BaseRateInput): BaseRateResult {
  * p90 rather than max once there are enough runs to rank, so one catering-shaped outlier
  * cannot permanently inflate a par; max below that, because with 4 runs a "p90" is a max
  * wearing a costume.
+ *
+ * A RUN IS `runLength` CONSECUTIVE CALENDAR DAYS. The base's series holds OBSERVED days only
+ * (a full-gap day — the shop's data missing, not its demand — is excluded there), so two
+ * neighbours in the series can be days apart. A run that bridges such a hole is not a window
+ * anybody survived, so it is never formed: only stretches of back-to-back dates make runs, and
+ * a horizon no gap-free stretch is long enough for makes no floor claim (null).
  */
 export function observedPeakCoverageOz(
-  dailyOz: ReadonlyArray<number>,
+  daily: ReadonlyArray<{ dateEt: string; oz: number }>,
   runLength: number,
 ): number | null {
-  if (runLength <= 0 || dailyOz.length < runLength) return null;
+  if (runLength <= 0 || daily.length < runLength) return null;
   const runs: number[] = [];
-  for (let i = 0; i + runLength <= dailyOz.length; i += 1) {
+  // streak = how many days end at i with every day the calendar successor of the one before.
+  let streak = 0;
+  for (let i = 0; i < daily.length; i += 1) {
+    streak = i > 0 && addDaysEt(daily[i - 1]!.dateEt, 1) === daily[i]!.dateEt ? streak + 1 : 1;
+    if (streak < runLength) continue;
     let sum = 0;
-    for (let j = 0; j < runLength; j += 1) sum += dailyOz[i + j] ?? 0;
+    for (let j = i - runLength + 1; j <= i; j += 1) sum += daily[j]!.oz;
     runs.push(sum);
   }
   if (runs.length === 0) return null;

@@ -948,7 +948,7 @@ export async function runParShadowForLocation(
         { ozPerDay: rate.ozPerDay, observedDays: rate.observedDays },
       );
       const peakFloorOz = observedPeakCoverageOz(
-        base.series.map((d) => d.oz),
+        base.series,
         window.coveredDays.length,
       );
       const coverage = computeCoverage({
