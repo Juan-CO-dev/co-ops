@@ -2,12 +2,12 @@
 // name. PostgREST caps a response at its max-rows (1,000 by default) whatever p_limit says, so a count
 // read in one request silently truncates; a partial count is never printed as complete.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readAllStaleDays, STALE_LIST_CAP } from "@/lib/facts/parity-shared";
+import { readAllStaleDays, STALE_LIST_CAP, type StaleDayRow } from "@/lib/facts/parity-shared";
 
 const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ day_location_id: i % 2 ? "loc-b" : "loc-a",
   day_business_date: `2026-${String(1 + (i % 12)).padStart(2, "0")}-01`, day_fingerprint: "f".repeat(32) }));
 /** A PostgREST stand-in for an RPC read with .range(): serves at most maxRows per response. */
-function server(all: unknown[], maxRows = 1000) {
+function server(all: StaleDayRow[], maxRows = 1000) {
   const calls: [number, number][] = [];
   const page = async (from: number, to: number) => { calls.push([from, to]); return { data: all.slice(from, Math.min(to + 1, from + maxRows)), error: null }; };
   return { page, calls };
