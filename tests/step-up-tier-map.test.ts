@@ -132,6 +132,8 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/toast-employees/route.ts": ["B"],
   // Scheduling Phase 1: the 7shifts shop and person links (Tier B, the toast-employees precedent); Sync now takes none.
   "app/api/admin/sevenshifts/route.ts": ["B"],
+  // Item 2 (0340): the payroll shop re-allocates salaried labor cost (a backdated row re-prices history): Tier B.
+  "app/api/admin/labor/payroll-shop/route.ts": ["B"],
   // Scheduling Phase 1 (Task 16): the people settings (skill tunables MoO+, shop settings) take the Tier E edit
   // window; adjust / rate (/api/people/skills) take none (J8). Its one client is the PM v2 switch card (chunk G ruling 2).
   "app/api/people/settings/route.ts": ["E"],
@@ -325,6 +327,7 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/assignments/StationsAdmin.tsx": ["B"],
   "components/admin/toast-employees/ToastEmployeeLinks.tsx": ["B"],
   "components/admin/sevenshifts/SevenShiftsScreen.tsx": ["B"],
+  "components/admin/sevenshifts/PayrollShopCard.tsx": ["B"],
   "components/admin/customers/CancelImportButton.tsx": ["B"],
   "components/admin/customers/ConsentTools.tsx": ["A", "B"],
   "components/admin/customers/CustomerContactPanel.tsx": ["A", "B"],

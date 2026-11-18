@@ -8,6 +8,9 @@ import { serverT } from "@/lib/i18n/server";
 import { canViewSevenShiftsStatus, peopleActorFromAuth } from "@/lib/people/access-shared";
 import { loadLinkScreen } from "@/lib/sevenshifts/links";
 import { SevenShiftsScreen } from "@/components/admin/sevenshifts/SevenShiftsScreen";
+import { PayrollShopCard } from "@/components/admin/sevenshifts/PayrollShopCard";
+import { canManagePayrollShops } from "@/lib/facts/labor-payroll-shared";
+import { loadPayrollShopCard } from "@/lib/facts/labor-payroll";
 
 /**
  * Scheduling Phase 1, Task 10: the 7shifts connection, the shop links (MoO+), the person links (GM own shop,
@@ -27,6 +30,8 @@ export default async function SevenShiftsPage({ searchParams }: { searchParams: 
   const sp = await searchParams;
   const selected = (await resolveShop(locations, shopParamFor("/admin/sevenshifts", searchParamValues(sp)))) ?? undefined; // B2: ?loc= → remembered → first
   const screen = selected ? await loadLinkScreen(sb, { actor, locationId: selected.id }) : null;
+  // Item 2: the payroll shop card (owner / CGS / MoO only; every shop's accounts, not the selected shop's).
+  const payroll = canManagePayrollShops(auth.role) ? await loadPayrollShopCard(sb, { userId: auth.user.id, role: auth.role }) : null;
   return <div className="space-y-4">
     <h1 className="text-2xl font-bold text-co-text">{serverT(language, "sevenshifts.title")}</h1>
     <p className="text-co-text-muted">{serverT(language, "sevenshifts.intro")}</p>
@@ -34,5 +39,6 @@ export default async function SevenShiftsPage({ searchParams }: { searchParams: 
       <Link key={location.id} href={`/admin/sevenshifts?loc=${location.id}`} aria-current={location.id === selected?.id ? "page" : undefined}
         className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border px-3 font-bold text-co-text aria-[current=page]:border-co-text">{location.name}</Link>)}</nav>}
     {screen && <SevenShiftsScreen key={screen.locationId} screen={screen} />}
+    {payroll && <PayrollShopCard data={payroll.state === "ready" ? payroll : null} />}
   </div>;
 }

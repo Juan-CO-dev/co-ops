@@ -1,6 +1,6 @@
 /** Item 2 PR 2c: THE labor week builder, pure (no I/O, no clock, no env). Labor plan r6 (§3 P1 #2) on
  * r3's P1 #3 / #4 / #5. Input = one payroll week (Sunday 00:00 ET calendar midnight, both shops built together) as read by
- * lib/facts/labor-facts.ts; output = the rows 0338's fact_replace_labor_week writes.
+ * lib/facts/labor-facts.ts; output = the rows 0338's fact_replace_labor_week writes (0340: salaried rows by payroll shop).
  *
  *  - Punch -> minutes. A 7shifts punch maps to a shop through its LIVE location link; its break minutes
  *    are unpaid and come out of the middle of the punch (0268 keeps only the total, not where it fell).
@@ -23,6 +23,7 @@
 import { factQuarter } from "./order-facts-shared";
 import { LABOR_OPEN_PUNCH_SPAN_HOURS, LABOR_OT_MULTIPLIER, LABOR_OT_SCOPE, LABOR_OT_THRESHOLD_MINUTES, type LaborOtScope } from "./labor-config-shared";
 import { pickWage, toWageVersion, type PayClass, type RateBasis, type WageVersion } from "./labor-wages-shared";
+import { allocateSalaried, type LaborSalariedRow, type PayrollShopRow } from "./labor-payroll-shared";
 
 export interface FrameDay { location_id: string; business_date: string; linked: boolean; evidence_run_id: string | null; settled: boolean }
 export interface SourcePunch {
@@ -45,6 +46,8 @@ export interface LaborWeekSource {
   toastEntries: SourceToastEntry[];
   wages: WageVersion[];
   laborSettings: { daily_ot_threshold: number | null; premium_ot_threshold: number | null; consecutive_days_threshold: number | null }[];
+  /** 0340: every payroll-shop row (the builder picks the one in force at the week start) */
+  payrollShops: PayrollShopRow[];
 }
 export type DayState = "covered" | "pending_settle" | "fallback_unverified" | "incomplete";
 export type LaborSource = "7shifts" | "toast";
@@ -68,7 +71,7 @@ export interface BuildLaborWeekOptions {
   /** defaults to LABOR_OT_SCOPE; another value is for tests and a future multi-shop employer only */
   otScope?: LaborOtScope;
 }
-export interface LaborSalariedRow { location_id: string; salaried_cents: number | null; salaried_people: number }
+export type { LaborSalariedRow };
 export interface LaborWeekPayload { quarters: LaborQuarterRow[]; days: LaborDayRow[]; week: LaborWeekRow; salaried: LaborSalariedRow[] }
 
 const MINUTE = 60_000;
@@ -230,23 +233,10 @@ export function buildLaborWeek(src: LaborWeekSource, opts: BuildLaborWeekOptions
     ot_scope: otScope,
   };
 
-  // Salaried weekly cost from 7shifts wages, per linked shop, as of the week start. One account linked
-  // at both shops (the owner / ops case) is split equally; two accounts are two LLC payrolls.
-  const linkedShops = [...new Set(src.days.filter((d) => d.linked).map((d) => d.location_id))].sort(cmp);
-  const shopsOfAccount = new Map<string, number>();
-  for (const l of src.userLinks) if (linkedShops.includes(l.linked_at_location_id)) bump(shopsOfAccount, String(l.sevenshifts_user_id));
-  const salaried = linkedShops.map((loc) => {
-    let cents = 0; let people = 0;
-    for (const l of src.userLinks.filter((x) => x.linked_at_location_id === loc)) {
-      const pick = pickWage(wagesBy.get(String(l.sevenshifts_user_id)) ?? [], "0", src.weekStart);
-      const w = pick.rate ?? pick.carryBack;
-      if (!w || pick.payClass !== "salaried") continue;
-      const weekly = w.wage_type === "weekly_salary" ? w.wage_cents : Math.round(w.wage_cents / 52);
-      cents += Math.round(weekly / (shopsOfAccount.get(String(l.sevenshifts_user_id)) ?? 1));
-      people++;
-    }
-    return { location_id: loc, salaried_cents: people > 0 ? cents : null, salaried_people: people };
-  });
+  // Salaried weekly cost: 100% to the account's PAYROLL shop in force at the week start (0340), never
+  // through links; a gap nulls the affected totals (lib/facts/labor-payroll-shared.ts, the one rule).
+  const storedShops = [...new Set(src.days.filter((d) => d.linked).map((d) => d.location_id))];
+  const salaried = allocateSalaried({ weekStart: src.weekStart, storedShops, payrollShops: src.payrollShops, wages: src.wages }).rows;
 
   return { quarters, days, week, salaried };
 }
@@ -273,6 +263,9 @@ export function laborWeekSourceFromJson(j: Record<string, unknown>): { source: L
     wages: arr("wages").map(toWageVersion),
     laborSettings: arr("labor_settings").map((s) => ({ daily_ot_threshold: num(s.daily_ot_threshold), premium_ot_threshold: num(s.premium_ot_threshold),
       consecutive_days_threshold: num(s.consecutive_days_threshold) })),
+    payrollShops: arr("payroll_shops").map((r) => ({ seq: Number(r.seq), sevenshifts_user_id: String(r.sevenshifts_user_id),
+      location_id: id(r.location_id), disposition: r.disposition === "excluded" ? "excluded" as const : "shop" as const,
+      valid_from: String(r.valid_from).slice(0, 10) })),
   };
   return { source, fingerprint: j.fingerprint };
 }

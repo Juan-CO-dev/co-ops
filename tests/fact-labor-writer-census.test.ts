@@ -11,7 +11,7 @@ import { MIRROR_WRITE_SPEC } from "@/lib/sevenshifts/mirror-spec-shared";
 
 const SOURCES = ["sevenshifts_time_punches", "sevenshifts_wages", "sevenshifts_sync_runs", "sevenshifts_user_links", "sevenshifts_location_links",
   "toast_employee_links", "toast_time_entries", "sevenshifts_labor_settings", "fact_wage_observations", "labor_burden_settings",
-  "labor_quarter", "labor_day_coverage", "labor_week_coverage", "labor_week_salaried"];
+  "labor_quarter", "labor_day_coverage", "labor_week_coverage", "labor_week_salaried", "labor_payroll_shops"];
 const SQL = new RegExp(`\\b(insert\\s+into|update|delete\\s+from|truncate(?:\\s+table)?)\\s+(?:only\\s+)?(?:public\\.)?(${SOURCES.join("|")})\\b`, "gi");
 const JS = new RegExp(`\\.from\\(\\s*["'\`](${SOURCES.join("|")})["'\`]\\s*\\)\\s*\\.(insert|update|upsert|delete)\\(`, "g");
 
@@ -44,6 +44,11 @@ const CENSUS: Record<string, Record<string, number>> = {
   "supabase/migrations/0339_fact_labor_ot_per_shop.sql": { "delete labor_quarter": 1, "delete labor_day_coverage": 1,
     "delete labor_week_salaried": 1, "insert labor_quarter": 1, "insert labor_day_coverage": 1, "insert labor_week_salaried": 1,
     "insert labor_week_coverage": 1, "update labor_week_coverage": 1 },
+  // 0340 (salaried cost to the payroll shop): THE week writer re-emitted (same statements) and the ONE payroll-shop
+  // writer (append-only; every row is hashed by the re-emitted fingerprint, so a save restales every week).
+  "supabase/migrations/0340_labor_payroll_shop.sql": { "delete labor_quarter": 1, "delete labor_day_coverage": 1,
+    "delete labor_week_salaried": 1, "insert labor_quarter": 1, "insert labor_day_coverage": 1, "insert labor_week_salaried": 1,
+    "insert labor_week_coverage": 1, "insert labor_payroll_shops": 1 },
   // The ledger row (append-only, one per finished run) and the Toast labor pull (upsert by entry guid).
   "lib/sevenshifts/sync.ts": { "insert sevenshifts_sync_runs": 1 },
   "lib/toast/labor.ts": { "insert toast_time_entries": 1 },

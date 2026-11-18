@@ -1,5 +1,6 @@
 -- Migration 0339_fact_labor_ot_per_shop
 -- AUTHORED 2026-11-17 (CO Claude, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO PROD 2026-11-17 (schema_migrations version 20261117235204, name 'fact_labor_ot_per_shop'), after sim (sim version not recorded in this file). The line above is the authoring-time gate note, kept as history.
 -- Apply AFTER 0338 (applied to prod 2026-11-17, schema_migrations version 20261117153617), then deploy the
 -- app commit that bumps LABOR_BUILDER_VERSION to labor-v2 (see docs/runbooks/fact-layer-labor.md section 1b).
 --

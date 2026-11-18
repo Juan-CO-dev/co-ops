@@ -117,6 +117,7 @@ const mutationRoutes: Record<string, string> = {
   "recipes/yield-nudge/route.ts": "POST",
   "report-recipients/route.ts": "POST",
   "report-recipients/settings/route.ts": "POST",
+  "labor/payroll-shop/route.ts": "POST",
   "sevenshifts/route.ts": "POST",
   "skus/[id]/location-settings/route.ts": "PUT",
   "skus/[id]/pack-chain/route.ts": "GET POST",

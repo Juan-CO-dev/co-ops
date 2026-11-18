@@ -5,8 +5,9 @@
  * pins them equal. Read-time settings (Q5 fallback, burden, targets) never enter a build. */
 import { DC_MINIMUM_WAGE_CENTS } from "@/lib/scheduling/inputs-shared";
 
-/** labor-v1 = 0338 (overtime company-wide); labor-v2 = 0339 (overtime per shop, LABOR_OT_SCOPE). */
-export const LABOR_BUILDER_VERSION = "labor-v2";
+/** labor-v1 = 0338 (overtime company-wide); labor-v2 = 0339 (overtime per shop, LABOR_OT_SCOPE);
+ * labor-v3 = 0340 (salaried cost to the PAYROLL shop, with gap counts; links never split a salary). */
+export const LABOR_BUILDER_VERSION = "labor-v3";
 /** Juan 2026-11-16 (Q7): history starts 2026-07-23; its payroll week starts Sunday 2026-07-19. */
 export const LABOR_HISTORY_FLOOR_DAY = "2026-07-23";
 export const LABOR_FLOOR_WEEK = "2026-07-19";
