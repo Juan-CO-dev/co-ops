@@ -111,10 +111,36 @@ A run that started and then stopped has `status` `source_revoked` / `source_unve
 | `bad_payload` | The answer was not the documented shape. Nothing was stored from it | Compare a live answer with the fixtures in `tests/demand-signals-collect.test.ts`. A shape change means a new adapter version, a new definition and a new mark |
 | `rows_over_cap` | The run would have passed 224 weather rows. That shop was refused whole | More than two shops with a point: raise the cap in the collector AND in 0343 together, by a reviewed change |
 | `bad_shop_point` | The shop's coordinates are not a real point | Fix its catering fulfilment node |
+| `no_coordinates` | The shop has no ACTIVE catering fulfilment node. No request was made for it | Give it one: "Shop points" below |
+| `multiple_points` | The shop has more than one active node and none is marked primary (the table has no such flag), so none is picked | Leave one active (0138's UNIQUE (location_id) makes this unreachable today) |
+| `bad_coordinates` | The shop's active node has a non-numeric lat / lng | Fix its catering fulfilment node |
 | `deadline` | The pass ran out of its 45 seconds | Check api.weather.gov latency |
 | `write_failed`, `weather_rows_invalid`, `events_invalid` | 0343's writer refused the rows | Read the row shape against 0343 |
 
-A shop with no catering fulfilment node is not collected and is not listed.
+Every active shop is in the run result: collected, or listed with one of the three point codes above (both feeds carry the code, so each such shop counts 2 in `failed` and the heartbeat is `cron.failure` until it has a point).
+
+## Shop points (CC, before turning the collection on)
+
+A shop's point is its ACTIVE `catering_fulfillment_nodes` row (one per shop; `lib/demand-signals/shop-points-shared.ts`). On 2026-11-18 prod had **0 rows**, so the collector would collect nothing. The seed adds one per shop that has none:
+
+```
+npx tsx --env-file=.env.local scripts/seed-shop-points.ts            # dry run: prints insert / exists / REFUSED per shop
+npx tsx --env-file=.env.local scripts/seed-shop-points.ts --apply    # sim first, then prod
+```
+
+- Data: `docs/seed/shop-points-dc-2026-11-18.json`, geocoded with the U.S. Census Bureau geocoder (`onelineaddress`, benchmark `Public_AR_Current`), one match each:
+
+  | Shop | Address | lat | lon | Matched as |
+  |---|---|---|---|---|
+  | Capitol Hill | 526 8th St SE, Washington, DC 20003 | 38.882490405378 | -76.994901886996 | 526 8TH ST SE, WASHINGTON, DC, 20003 (address-range interpolation, TIGER edge 76230676) |
+  | P Street | 2029 P St NW, Washington, DC 20036 | 38.909697992057 | -77.046018059515 | 2029 P ST NW, WASHINGTON, DC, 20036 (address-range interpolation, TIGER edge 76225279) |
+
+  Interpolated along the street segment, so tens of metres at most: far below the NWS forecast grid (2.5 km).
+- A shop is matched by NAME against active locations (the `names` list in the file, case-insensitive, exactly one). `location_not_found` / `location_ambiguous` on the dry run: correct the names in the file, never the code.
+- The row is inserted with `offers_delivery = false`, `offers_pickup = false`, `active = true` and a placeholder `delivery_radius_meters` (1609, NOT NULL > 0). **The customer order funnel does not change:** `/order/start` shows "we deliver" only for a node offering delivery and lists only nodes offering pickup, and `routeDelivery` considers only nodes offering delivery. The admin page `/admin/catering/fulfillment` will show the shop as configured with delivery and pickup off; turning catering delivery on there edits the same row (and sets the real radius).
+- A shop that already has a node is never touched (`exists`, printed with its coordinates). One audit row `catering.fulfillment.node_upsert` per insert (`actor_context: seed_shop_points`).
+- Check: `select l.name, n.lat, n.lng, n.active, n.offers_delivery, n.offers_pickup from catering_fulfillment_nodes n join locations l on l.id = n.location_id;`
+- Known coupling, stated: the weather point and catering's delivery centre are one row. If a shop's delivery centre is ever moved away from the shop, or its node deactivated to stop catering, the collector follows. A separate shop-point source (e.g. coordinates on `locations`) would need a migration; propose it only if that ever happens.
 
 ## Known limits
 
