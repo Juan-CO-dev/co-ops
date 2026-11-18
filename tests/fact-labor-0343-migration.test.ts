@@ -43,6 +43,7 @@ const IDENTITY: Array<[string | null, string, string, string]> = [
   [A, "2026-10-07", "2026-10-20", "first_known"], [null, "2026-10-05", "2026-10-11", "dc_minimum"], [A, "2099-01-05", "2099-01-10", "first_known"],
 ];
 const before: Row[][] = [];
+const NEW_COLUMNS = ["days_planned", "salary_projected", "ot_planned"];
 
 beforeAll(async () => {
   f = await laborPlanDb();
@@ -76,7 +77,7 @@ describe("an empty plan is 0340", () => {
     for (const [i, [loc, from, to, fb]] of IDENTITY.entries()) {
       for (const plan of [null, {}]) {
         const rows = await planned(loc, from, to, plan, fb);
-        expect(rows.map(({ days_planned: _d, salary_projected: _s, ot_planned: _o, ...rest }) => rest)).toEqual(before[i]);
+        expect(rows.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => !NEW_COLUMNS.includes(k))))).toEqual(before[i]);
         expect(rows.every((r) => r.days_planned === 0 && r.salary_projected === false && r.ot_planned === false)).toBe(true);
       }
     }
