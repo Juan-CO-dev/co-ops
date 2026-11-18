@@ -280,7 +280,7 @@ describe("recompose: every cut sums to the Sales report's own day (parity with s
     expect(day!.toastChecksCents + day!.ezcaterCents).toBe(day!.totalCents);
   });
   it("a day whose facts do not add up to the Sales report is 'rebuilding', never shown", () => {
-    expect(recomposeDay(day!, cuts.slice(1))).toMatchObject({ ok: false, reason: "facts_differ" });
+    expect(recomposeDay(day!, cuts.slice(1))).toMatchObject({ ok: false, reason: "rebuilding" });
     const [gap] = daySalesFrom([], "2026-10-05", "2026-10-05");
     expect(recomposeDay(gap!, [])).toMatchObject({ ok: false, reason: "sales_not_covered" });
   });
