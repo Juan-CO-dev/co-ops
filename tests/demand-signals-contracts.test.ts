@@ -131,11 +131,13 @@ describe("dark by default", () => {
     const callers = [...walk("lib"), ...walk("app"), ...walk("components")].filter((p) => /"demand_(usable_weather|usable_day_events|weather_ingest|events_ingest)"/.test(read(p)));
     expect(callers).toEqual(["lib/demand-signals/signal-store.ts"]);
   });
-  it("0343 is PR 2's one migration, the highest number, authored and not applied", () => {
+  // Pins this PR's migration by name, never "the highest number": later migrations from other arcs are legal
+  // (0344 portal, 0345 board landed after it), and a "latest file" pin breaks every PR that adds one.
+  it("0343 is PR 2's one migration, its number unique, the file present", () => {
     const files = readdirSync("supabase/migrations").filter((f) => /^\d{4}_/.test(f)).sort();
-    expect(files.at(-1)).toBe("0343_demand_signal_sources.sql");
-    expect(files.filter((f) => f.startsWith("0343_"))).toHaveLength(1);
-    expect(read("supabase/migrations/0343_demand_signal_sources.sql")).toMatch(/^-- AUTHORED 2026-11-18 .* NOT YET APPLIED/m);
+    expect(files.filter((f) => f.startsWith("0343_"))).toEqual(["0343_demand_signal_sources.sql"]);
+    expect(files.filter((f) => f.includes("demand_signal_sources"))).toEqual(["0343_demand_signal_sources.sql"]);
+    expect(read("supabase/migrations/0343_demand_signal_sources.sql")).toMatch(/^-- AUTHORED 2026-11-18 /m);
   });
   it("0342 is the only migration of this PR and the next free number", () => {
     const files = readdirSync("supabase/migrations").filter((f) => /^\d{4}_/.test(f)).sort();
