@@ -355,6 +355,10 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "cron.deferred",
   "cron.failure",
   "cron.success",
+  // SQL-only (0343, item 4 PR 2): a source DEFINITION is registered (unverified; grants nothing), and a GM+
+  // records a new manual demand event. Both rows are written by the definer function itself.
+  "demand_source.register",
+  "demand_event.record",
   "ezcater.set_location_uuid",
   "maintenance.note",
   "photo.upload",
@@ -398,6 +402,10 @@ export const RESERVED_ACTIONS = [
   // SQL-only: 0340 save_labor_payroll_shop INSERTs its own audit row (destructive literally true; before /
   // after the payroll shop in force at valid_from; has_note only) in the same transaction as the row.
   "labor_payroll_shop.save",
+  // SQL-only: 0343 demand_source_mark and demand_event_save INSERT their own audit rows (destructive literally
+  // true) in the same transaction as the status event / the correction. The note never enters the row.
+  "demand_source.mark",
+  "demand_event.correct",
   // SQL-only: migration 0330 (audit W23 B129, owner decision W23-4 b) switches off empty duplicate
   // catering companies and INSERTs one audit row per company itself. No TypeScript call site.
   "catering.company.deactivate_duplicate",

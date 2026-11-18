@@ -11,6 +11,7 @@
     { "path": "/api/cron/sevenshifts-sync", "schedule": "20 * * * *" },
     { "path": "/api/cron/schedule-draft", "schedule": "15 10,11 * * 3" },
     { "path": "/api/cron/catering-inbox-delivery", "schedule": "5-55/10 * * * *" },
-    { "path": "/api/cron/fact-build", "schedule": "40 * * * *" }
+    { "path": "/api/cron/fact-build", "schedule": "40 * * * *" },
+    { "path": "/api/cron/demand-signals", "schedule": "50 3,9,15,21 * * *" }
   ]
 }

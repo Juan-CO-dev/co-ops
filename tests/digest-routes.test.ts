@@ -69,7 +69,7 @@ describe("hourly Vercel schedule", () => {
 
   it("covers 03:00 ET in winter, summer and on both DST change days", () => {
     const config = JSON.parse(readFileSync("vercel.json", "utf8")) as { crons: Array<{ path: string; schedule: string }> };
-    expect(config.crons).toHaveLength(12); // + /api/cron/fact-build (item 2 order fact layer, hourly at :40; inert unless FACT_LAYER=1) + /api/cron/meta-leads (Meta lead retry backstop, */10) + /api/cron/schedule-draft (Scheduling Phase 2, Task 19; R3 approved by CC) + /api/cron/sevenshifts-sync (Scheduling Phase 1, hourly at :20) + /api/cron/catering-inbox-delivery (catering inbox phase 1b, every 10 min at :05; inert unless live)
+    expect(config.crons).toHaveLength(13); // + /api/cron/demand-signals (item 4 PR 2, four times a day at :50; inert unless DEMAND_SIGNALS=1 AND its source is verified) + /api/cron/fact-build (item 2 order fact layer, hourly at :40; inert unless FACT_LAYER=1) + /api/cron/meta-leads (Meta lead retry backstop, */10) + /api/cron/schedule-draft (Scheduling Phase 2, Task 19; R3 approved by CC) + /api/cron/sevenshifts-sync (Scheduling Phase 1, hourly at :20) + /api/cron/catering-inbox-delivery (catering inbox phase 1b, every 10 min at :05; inert unless live)
     expect(config.crons.filter((c) => c.path === "/api/cron/catering-inbox-delivery")).toEqual([{ path: "/api/cron/catering-inbox-delivery", schedule: "5-55/10 * * * *" }]);
     expect(config.crons.filter((c) => c.path === "/api/cron/fact-build")).toEqual([{ path: "/api/cron/fact-build", schedule: "40 * * * *" }]);
     expect(config.crons.filter((c) => c.path === "/api/cron/digest-tick")).toEqual([{ path: "/api/cron/digest-tick", schedule: "0 * * * *" }]);
