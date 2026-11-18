@@ -45,6 +45,20 @@ export function rollupPerDate<T>(
   valueOf: (r: T) => number,
   productBySku: ReadonlyMap<string, string>,
 ): Map<string, Map<string, number>> {
+  return rollupLanesByProduct(sumPerDate(source, dateOf, skuOf, valueOf), productBySku);
+}
+
+/**
+ * The first half of `rollupPerDate`: `value` summed per (date, sku), BEFORE any product rollup. This is the
+ * usage as the ledgers recorded it, by SKU id, and it depends on no catalog state (membership, primary,
+ * active flag). The demand-signals target is frozen from it (lib/demand-signals/replay.ts, review r3).
+ */
+export function sumPerDate<T>(
+  source: ReadonlyArray<T>,
+  dateOf: (r: T) => string,
+  skuOf: (r: T) => string,
+  valueOf: (r: T) => number,
+): Map<string, Map<string, number>> {
   const raw = new Map<string, Map<string, number>>();
   for (const r of source) {
     const date = dateOf(r);
@@ -56,6 +70,14 @@ export function rollupPerDate<T>(
     perSku.set(sku, (perSku.get(sku) ?? 0) + v);
     raw.set(date, perSku);
   }
+  return raw;
+}
+
+/** The second half: the ONE shipped product rollup applied to each date of a (date, sku) sum. */
+export function rollupLanesByProduct(
+  raw: ReadonlyMap<string, ReadonlyMap<string, number>>,
+  productBySku: ReadonlyMap<string, string>,
+): Map<string, Map<string, number>> {
   const out = new Map<string, Map<string, number>>();
   for (const [date, perSku] of raw) out.set(date, rollupUsageByProduct(perSku, productBySku));
   return out;

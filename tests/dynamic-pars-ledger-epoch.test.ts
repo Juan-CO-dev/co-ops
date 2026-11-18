@@ -68,7 +68,11 @@ it("ledgerEpochStands: a numeric stamp must equal the live epoch; no stamp means
 
 it("the nightly engine stamps the pack epoch on every ledger row, outside the generation id", () => {
   const src = readFileSync("lib/dynamic-pars.ts", "utf8");
-  expect(src).toContain("pack_epoch: inputs.packEpochBySku?.get(sku.skuId) ?? 0,");
+  // Item 4 PR 1: the nightly loop lives in the pure engine module now; the stamp moved with it, unchanged.
+  const engine = readFileSync("lib/dynamic-pars-engine-shared.ts", "utf8");
+  expect(engine).toContain("pack_epoch: inputs.packEpochBySku?.get(sku.skuId) ?? 0,");
+  expect(src).toContain("const ledger = computeParLedger(inputs, mode);");
+  expect(engine).not.toMatch(/generationIdFor\([^)]*pack_epoch/);
   // Epoch FIRST (fix round 2): the shop's whole epoch map is read before the par'd-SKU universe.
   expect(src).toContain("const shopPackEpochs = await loadShopPackEpochsAt(locationId);");
   expect(src.indexOf("await loadShopPackEpochsAt(locationId)")).toBeLessThan(src.indexOf("await loadParSkuUniverse<DbSkuRow>("));

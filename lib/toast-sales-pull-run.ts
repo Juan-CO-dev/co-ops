@@ -10,6 +10,8 @@ import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { runParShadowForLocation } from "@/lib/dynamic-pars";
 import { captureBudget, captureErrorCode } from "@/lib/toast/capture-runner";
 import { runToastLaborPull } from "@/lib/toast/labor";
+import type { DemandInputs } from "@/lib/dynamic-pars-engine-shared";
+import { demandLedgerEnabled } from "@/lib/demand-signals/config-shared";
 
 /** Nightly capture, materialization and pars; heartbeat contract is unchanged. */
 export async function runToastSalesPull(opts: { businessDate: string; deadlineAt?: number; signal?: AbortSignal }) {
@@ -34,6 +36,11 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
   let elapsedCompleted = 0, elapsedFailed = 0;
   let elapsedError: string | null = null;
   const todayEt = etCalendarDate(new Date().toISOString());
+  // Item 4 PR 1: OFF unless DEMAND_LEDGER=1. When off, nothing below differs from before: the par run is
+  // called with its two arguments and the ledger module is never imported.
+  const demandLedgerOn = demandLedgerEnabled(process.env.DEMAND_LEDGER);
+  const demandParInputs = new Map<string, DemandInputs>();
+  let demandShopIds: string[] = [];
   // Cancellation discovered here becomes lost before generic completion. An API failure
   // never excludes ezCater from that existing loop or consumes the sales-pull budget.
   try { await refreshKnownEzcaterOrders(todayEt, Math.min(Date.now() + 20_000, deadlineAt - 10_000), opts.signal); }
@@ -49,6 +56,7 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
       .not("toast_restaurant_guid", "is", null);
     if (locations.error) throw new Error("capture_location_unavailable");
     const ids = (locations.data ?? []).map((r: { id: string }) => r.id);
+    demandShopIds = ids;
     capture = await runOrderCapture(ids, businessDate, "cron", dates, Math.max(0, deadlineAt - Date.now()), opts.signal, captureProgress);
     // PASS 3 pars must see this capture's links, including late code/batch matches.
     if (ezcaterEnabled) await reconcile();
@@ -70,7 +78,9 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
       if (!completed.has(`${locationId}:${businessDate}`)) continue;
       if (ezcaterEnabled && (ezcaterShadow.failed || ezcaterShadow.deferred)) { parRunFailures++; continue; }
       try {
-        parRows[`${locationId}:${businessDate}`] = (await runParShadowForLocation(locationId, businessDate)).rows;
+        parRows[`${locationId}:${businessDate}`] = (demandLedgerOn
+          ? await runParShadowForLocation(locationId, businessDate, (inputs) => { demandParInputs.set(locationId, inputs); })
+          : await runParShadowForLocation(locationId, businessDate)).rows;
       } catch { parRunFailures++; }
     }
     for (const locationId of ids) {
@@ -108,6 +118,18 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
     pars_pending_activation: false,
     elapsed_completed: elapsedCompleted, elapsed_failed: elapsedFailed, elapsed_error: elapsedError,
   };
+  // The demand forecast ledger (item 4 PR 1, 0342): fail-soft, its own heartbeat (demand-ledger), never part of
+  // this run's health. It starts only with a minute to spare and leaves the labor pull its time.
+  if (demandLedgerOn) {
+    try {
+      const left = deadlineAt - Date.now() - 60_000;
+      if (left > 10_000) {
+        const { runDemandLedgerNight, DEMAND_LEDGER_BUDGET_MS } = await import("@/lib/demand-signals/ledger");
+        await runDemandLedgerNight({ sb: getServiceRoleClient(), locationIds: demandShopIds, todayEt, parInputsByShop: demandParInputs,
+          deadlineAt: Date.now() + Math.min(DEMAND_LEDGER_BUDGET_MS, left) });
+      }
+    } catch { console.error("[demand ledger] pass threw"); }
+  }
   // Labor (0224) LAST, inside what is left of the deadline (at most 45 s), fail-soft: its own
   // heartbeat (toast-labor-pull) reports it, and it never changes this run's health. Off until
   // TOAST_LABOR_PULL=1 (after 0224 is applied).

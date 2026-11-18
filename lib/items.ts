@@ -96,6 +96,15 @@ export function resolvePrepLabelWriteTarget(line: ChecklistTemplateItem): "line"
   return "item";
 }
 
+/**
+ * THE PREP PAR RULE, in one place: the shop's MANUAL override for the day when there is one, else the
+ * item's default par. `resolveLineDefinition` calls it; the demand-signal replay (lib/demand-signals)
+ * calls it too, so the prep baseline it scores is the number the checklist shows.
+ */
+export function resolveItemPar(item: Pick<ItemDefn, "defaultPar">, override: ItemOverride | null): number | null {
+  return override && override.parMode === "manual" ? override.parValue : item.defaultPar;
+}
+
 export function resolveLineDefinition(
   line: ChecklistTemplateItem,
   item: ItemDefn | null,
@@ -128,7 +137,7 @@ export function resolveLineDefinition(
       parUnit: line.prepMeta?.parUnit ?? null,
     };
   }
-  const par = override && override.parMode === "manual" ? override.parValue : liveItem.defaultPar;
+  const par = resolveItemPar(liveItem, override);
   // Unit is an ITEM-GLOBAL attribute now (Units Registry slice): it always comes
   // from the item, never the per-location override. ItemOverride still carries a
   // parUnit field (harmless/vestigial) — item_par_levels.par_unit is no longer

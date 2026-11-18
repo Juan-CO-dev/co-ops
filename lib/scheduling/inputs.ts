@@ -166,7 +166,7 @@ async function loadBudget(service: SupabaseClient, locationId: string, from: str
   return { entries, rows: days.map((d) => ({ entryId: d.entry_id, date: d.business_date, hours: Number(d.hours) })) };
 }
 
-async function loadDayTypes(service: SupabaseClient, locationId: string, from: string, to: string): Promise<DayTypeRow[]> {
+export async function loadDayTypes(service: SupabaseClient, locationId: string, from: string, to: string): Promise<DayTypeRow[]> {
   return (await selectAllRows<{ id: string; business_date: string; day_type: DayTypeOverride; created_at: string }>((f, t) => service.from("schedule_day_types")
     .select("id, business_date, day_type, created_at").eq("location_id", locationId).gte("business_date", from).lte("business_date", to)
     .order("created_at", { ascending: true }).order("id", { ascending: true }).range(f, t)))

@@ -39,6 +39,9 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          # next build (with its typecheck) outgrew the default ~4 GB V8 heap on the 16 GB runner (2026-11-18, #592).
+          NODE_OPTIONS: --max-old-space-size=7168
 
       - name: Verify training deployment trace
         run: node scripts/check-training-trace.mjs
