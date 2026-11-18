@@ -5,7 +5,9 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { PipelineToastOrder } from "@/lib/catering/not-in-toast";
-import { toastReadyAt } from "@/lib/catering/not-in-toast-shared";
+import { notRungLabel, notRungSource, toastReadyAt } from "@/lib/catering/not-in-toast-shared";
+import type { HouseSuggestions } from "@/lib/catering/catering-toast-shared";
+import type { TranslationKey } from "@/lib/i18n/types";
 
 export function NotInToastChip() {
   const { t } = useTranslation();
@@ -34,9 +36,10 @@ export function NotInToast({ rows, locations }: {
     <ul className="divide-y divide-co-border">
       {visible.map((row) => {
         const ready = toastReadyAt(row);
-        return <li key={row.order_id} className="py-3 text-sm">
+        const house = row.source === "house";
+        return <li key={`${row.source ?? "ezcater"}:${row.order_id}`} className="py-3 text-sm">
           <div className="flex flex-wrap items-center gap-2 font-semibold text-co-text">
-            <span>{row.order_number ?? t("digest.catering.cross_check.no_code")}</span>
+            <span>{(() => { const l = notRungLabel(notRungSource(row), row.order_number); return t(l.key as TranslationKey, l.params); })()}</span>
             <span>{shop(row.location_id)}</span>
             {row.overdue && <span className="text-co-cta-text">{t("catering.toast_pending.overdue")}</span>}
           </div>
@@ -46,9 +49,31 @@ export function NotInToast({ rows, locations }: {
             row.headcount === null ? t("digest.catering.size_unknown") : t("catering.pipeline.headcount_short", { n: row.headcount }),
             row.total_cents === null ? t("catering.toast_pending.amount_unknown") : formatCents(row.total_cents, language),
           ].join(" · ")}</p>
+          {house && <HouseSuggestionLine suggestion={row.suggestion} />}
         </li>;
       })}
     </ul>
     {visible.length === 0 && <p className="text-sm text-co-text-muted">{t("catering.toast_pending.no_results")}</p>}
   </CollapsibleSection>;
+}
+
+/** Read-only (item 21 PR 2): what the planner would offer. It never clears the row; linking ships in PR 3. */
+function HouseSuggestionLine({ suggestion }: { suggestion: HouseSuggestions | null | undefined }) {
+  const { t, language } = useTranslation();
+  if (suggestion === undefined) return null;
+  if (suggestion === null) return <p className="mt-1 text-xs text-co-text-muted">{t("catering.toast_pending.suggestion_unavailable")}</p>;
+  const { best, count, conflicts } = suggestion;
+  return <div className="mt-1 text-xs text-co-text-muted">
+    {best ? <p>
+      {t("catering.toast_pending.suggested", {
+        amount: best.checkTotalCents === null ? t("catering.toast_pending.amount_unknown") : formatCents(best.checkTotalCents, language),
+        date: formatDateLabel(best.businessDate, language),
+        evidence: t(`catering.toast_pending.evidence.${best.evidence}` as TranslationKey),
+      })}
+      {best.amountMismatch && best.amountDiffCents !== null
+        ? <span className="text-co-warning-text"> · {t("catering.toast_pending.amount_differs", { amount: formatCents(Math.abs(best.amountDiffCents), language) })}</span> : null}
+      {count > 1 ? ` · ${t("catering.toast_pending.suggested_more", { n: count - 1 })}` : ""}
+    </p> : <p>{t("catering.toast_pending.no_suggestion")}</p>}
+    {conflicts > 0 && <p className="text-co-warning-text">{t("catering.toast_pending.conflicts", { n: conflicts })}</p>}
+  </div>;
 }
