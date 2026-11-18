@@ -20,11 +20,11 @@
  * one `catering.fulfillment.node_upsert` audit row (actor_context `seed_shop_points`).
  *
  * A SCRIPT-LOCAL client from the environment (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY): it never
- * imports lib/supabase-server. Exit 0 = dry run printed, or applied; 1 = a shop was refused; 2 = could not run.
+ * imports lib/supabase-server. Exit 0 = dry run printed, or applied; 1 = a shop was refused or a node lacks its audit row (a rerun repairs it); 2 = could not run.
  */
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { isDestructive } from "../lib/destructive-actions";
 
 export const SEED_FILE = "docs/seed/shop-points-dc-2026-11-18.json";
@@ -33,7 +33,7 @@ const ACTION = "catering.fulfillment.node_upsert" as const;
 export interface SeedShop { names: string[]; address: string; lat: number; lon: number; match: { matchedAddress: string; matches: number; method: string } }
 export interface Seed { geocodedOn: string; geocoder: string; placeholderRadiusMeters: number; shops: SeedShop[] }
 export interface LocationRow { id: string; name: string; active: boolean }
-export interface NodeRow { location_id: string; lat: number; lng: number; active: boolean }
+export interface NodeRow { id?: string; location_id: string; lat: number; lng: number; active: boolean }
 export type PlanRow =
   | { action: "insert"; shop: SeedShop; locationId: string; locationName: string }
   | { action: "exists"; shop: SeedShop; locationId: string; locationName: string; node: NodeRow }
@@ -71,6 +71,16 @@ export function nodeInsert(p: Extract<PlanRow, { action: "insert" }>, radiusMete
   return { location_id: p.locationId, lat: p.shop.lat, lng: p.shop.lon, delivery_radius_meters: radiusMeters, offers_delivery: false, offers_pickup: false, active: true };
 }
 
+/** One audit row for a seeded node; returns the error message, or null. `repair` marks a row written on a rerun. */
+async function writeAudit(sb: SupabaseClient, nodeId: string, locationId: string, seed: Seed, repair: boolean): Promise<string | null> {
+  const r = await sb.from("audit_log").insert({
+    actor_id: null, actor_role: null, action: ACTION, resource_table: "catering_fulfillment_nodes", resource_id: nodeId, destructive: isDestructive(ACTION),
+    metadata: { actor_context: "seed_shop_points", seed_file: SEED_FILE, location_id: locationId, created: true, radius_meters: seed.placeholderRadiusMeters,
+      offers_delivery: false, offers_pickup: false, geocoder: "census_public_ar_current", geocoded_on: seed.geocodedOn, ...(repair ? { audit_repaired_on_rerun: true } : {}) },
+  });
+  return r.error ? r.error.message : null;
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   const args = parseSeedArgs(argv);
   if ("error" in args) { console.error(args.error); return 2; }
@@ -85,27 +95,35 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const sb = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } });
   const locs = await sb.from("locations").select("id, name, active");
   if (locs.error) { console.error(`locations: ${locs.error.message}`); return 2; }
-  const nodes = await sb.from("catering_fulfillment_nodes").select("location_id, lat, lng, active");
+  const nodes = await sb.from("catering_fulfillment_nodes").select("id, location_id, lat, lng, active");
   if (nodes.error) { console.error(`catering_fulfillment_nodes: ${nodes.error.message}`); return 2; }
   const plan = planShopPoints(seed, (locs.data ?? []) as LocationRow[], (nodes.data ?? []) as NodeRow[]);
   let refused = 0;
+  let unaudited = 0;
   for (const p of plan) {
     if (p.action === "refuse") { refused += 1; console.error(`REFUSED  ${p.shop.address}: ${p.reason} (names ${p.shop.names.join(" / ")})`); continue; }
     if (p.action === "exists") {
       console.log(`exists   ${p.locationName} (${p.locationId}): node at ${p.node.lat}, ${p.node.lng} active=${p.node.active}; not touched (seed point ${p.shop.lat}, ${p.shop.lon})`);
+      // REPAIR: a node at exactly the seed point with no seed audit row is one a previous run wrote before its audit failed.
+      if (args.apply && p.node.id && p.node.lat === p.shop.lat && p.node.lng === p.shop.lon) {
+        const have = await sb.from("audit_log").select("id").eq("action", ACTION).eq("resource_table", "catering_fulfillment_nodes").eq("resource_id", p.node.id).limit(1);
+        if (have.error) { unaudited += 1; console.error(`AUDIT CHECK FAILED ${p.locationName} (node ${p.node.id}): ${have.error.message}`); continue; }
+        if ((have.data ?? []).length === 0) {
+          const err = await writeAudit(sb, p.node.id, p.locationId, seed, true);
+          if (err) { unaudited += 1; console.error(`AUDIT REPAIR FAILED ${p.locationName} (node ${p.node.id}): ${err}`); }
+          else console.log(`repaired audit row for ${p.locationName} (node ${p.node.id})`);
+        }
+      }
       continue;
     }
     if (!args.apply) { console.log(`insert   ${p.locationName} (${p.locationId}): ${p.shop.lat}, ${p.shop.lon}  [${p.shop.match.matchedAddress}]`); continue; }
     const ins = await sb.from("catering_fulfillment_nodes").insert(nodeInsert(p, seed.placeholderRadiusMeters)).select("id").single<{ id: string }>();
     if (ins.error) { refused += 1; console.error(`FAILED   ${p.locationName}: ${ins.error.message}`); continue; }
-    const audit = await sb.from("audit_log").insert({
-      actor_id: null, actor_role: null, action: ACTION, resource_table: "catering_fulfillment_nodes", resource_id: ins.data.id, destructive: isDestructive(ACTION),
-      metadata: { actor_context: "seed_shop_points", seed_file: SEED_FILE, location_id: p.locationId, created: true, radius_meters: seed.placeholderRadiusMeters,
-        offers_delivery: false, offers_pickup: false, geocoder: "census_public_ar_current", geocoded_on: seed.geocodedOn },
-    });
-    if (audit.error) console.error(`audit row failed for ${p.locationName} (the node IS written; record an audit.gap_recovery): ${audit.error.message}`);
     console.log(`inserted ${p.locationName} (${p.locationId}): node ${ins.data.id} at ${p.shop.lat}, ${p.shop.lon}`);
+    const err = await writeAudit(sb, ins.data.id, p.locationId, seed, false);
+    if (err) { unaudited += 1; console.error(`AUDIT ROW FAILED for ${p.locationName}: node ${ins.data.id} IS written but has no audit row (${err}). Rerun --apply to repair it, or record an audit.gap_recovery.`); }
   }
+  if (unaudited) { console.error(`PARTIAL: ${unaudited} node(s) without their audit row. NOT complete.`); return 1; }
   console.log(args.apply ? "Applied." : "Dry run: nothing was written. Add --apply (CC: sim first, then prod).");
   return refused ? 1 : 0;
 }

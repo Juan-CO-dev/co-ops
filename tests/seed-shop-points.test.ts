@@ -55,3 +55,42 @@ describe("planShopPoints", () => {
     expect(parseSeedArgs(["--force"])).toEqual({ error: "unknown argument --force" });
   });
 });
+
+describe("main: audit failure is never 'Applied.'", () => {
+  it("a node insert followed by a failed audit insert exits 1, names the node, and a rerun repairs the audit", async () => {
+    const { vi } = await import("vitest");
+    vi.resetModules();
+    const NODE = "00000000-0000-4000-8000-0000000000n1";
+    const audits: unknown[] = [];
+    let failAudit = true;
+    let nodes: Record<string, unknown>[] = [];
+    const client = {
+      from(t: string) {
+        if (t === "locations") return { select: async () => ({ data: [{ id: CAP, name: "Capitol Hill", active: true }, { id: PST, name: "P Street", active: true }], error: null }) };
+        if (t === "catering_fulfillment_nodes") return {
+          select: async () => ({ data: nodes, error: null }),
+          insert: (row: Record<string, unknown>) => ({ select: () => ({ single: async () => { nodes = [...nodes, { id: `${NODE}-${nodes.length}`, location_id: row.location_id, lat: row.lat, lng: row.lng, active: true }]; return { data: { id: `${NODE}-${nodes.length - 1}` }, error: null }; } }) }),
+        };
+        return {
+          insert: async (row: unknown) => failAudit ? { error: { message: "boom" } } : (audits.push(row), { error: null }),
+          select: () => { let id = ""; const q: any = { eq: (c: string, v: string) => { if (c === "resource_id") id = v; return q; }, limit: async () => ({ data: (audits as any[]).some((a) => a.resource_id === id) ? [{ id: 1 }] : [], error: null }) }; return q; },
+        };
+      },
+    };
+    vi.doMock("@supabase/supabase-js", () => ({ createClient: () => client }));
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "http://x"; process.env.SUPABASE_SERVICE_ROLE_KEY = "k";
+    const logs: string[] = [], errs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((m) => { logs.push(String(m)); });
+    vi.spyOn(console, "error").mockImplementation((m) => { errs.push(String(m)); });
+    const mod = await import("../scripts/seed-shop-points");
+    expect(await mod.main(["--apply"])).toBe(1);
+    expect(logs.join("\n")).not.toContain("Applied.");
+    expect(errs.join("\n")).toContain(`${NODE}-0`);
+    expect(nodes).toHaveLength(2);
+    failAudit = false; logs.length = 0; errs.length = 0;
+    expect(await mod.main(["--apply"])).toBe(0);
+    expect(audits).toHaveLength(2);
+    expect(logs.join("\n")).toContain("Applied.");
+    vi.restoreAllMocks(); vi.doUnmock("@supabase/supabase-js");
+  });
+});
