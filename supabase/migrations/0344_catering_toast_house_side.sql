@@ -1,5 +1,6 @@
 -- Migration 0344_catering_toast_house_side
 -- AUTHORED 2026-11-18 (item 21 PR 1, CO Claude). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118185441, name 'catering_toast_house_side'), after sim. The line above is the authoring-time gate note, kept as history.
 -- NUMBER: 0342 is the highest on main; 0343 may be claimed by the board PR in flight, so this file takes 0344 to be safe.
 -- Plan: CHIEF 03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md ("Migration A"),
 -- with Juan's 8 answers (2026-11-18) and Astra r3's P2s that touch this file folded in (r3 #3 and #4, see below).

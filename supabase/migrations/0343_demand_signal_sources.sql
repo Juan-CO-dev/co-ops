@@ -1,5 +1,6 @@
 -- Migration 0343_demand_signal_sources
 -- AUTHORED 2026-11-18 (item 4 PR 2, CO Claude). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118181429, name 'demand_signal_sources'), after sim. The line above is the authoring-time gate note, kept as history.
 -- Plan: CHIEF 03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-04-DEMAND-SIGNALS-PLAN-r2.md, sections 6 and 7,
 -- with Astra r2 P2 #3 (revoking a source stops USE of its stored signals, not only collection) and Juan's
 -- answers of 2026-11-18 (free sources only; manual events by GM+ AND automatic discovery; MoO+ approves).

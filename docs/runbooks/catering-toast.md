@@ -7,7 +7,7 @@ Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CAT
 | PR | What | Live behaviour |
 |---|---|---|
 | 0 | `tests/catering-pipeline-value-census.test.ts`, `tests/catering-toast-classifier-untouched.test.ts` | None |
-| 1 | 0344 + `scripts/sql-harness-0344.mjs` + the ring-code capture fixture | None (file only) |
+| 1 | 0344 + `scripts/sql-harness-0344.mjs` + the ring-code capture fixture | None (0344 applied to prod 2026-11-18, 20261118185441) |
 | 2 | House leads on the not-rung list with suggestions; the pipeline label on Sales → Catering | Only for a shop whose `catering_toast_settings.enabled` is true. No row = off. |
 
 Nothing in PRs 0–2 writes a link, changes a sales number or changes pipeline value. A linked Toast check stays a `sale`.

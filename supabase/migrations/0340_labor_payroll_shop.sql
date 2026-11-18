@@ -1,5 +1,6 @@
 -- Migration 0340_labor_payroll_shop
 -- AUTHORED 2026-11-17 (CO Claude, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118064617, name 'labor_payroll_shop'), after sim. The line above is the authoring-time gate note, kept as history.
 -- Apply AFTER 0339 (applied to prod 2026-11-17, schema_migrations version 20261117235204), then deploy the app
 -- commit that bumps LABOR_BUILDER_VERSION to labor-v3, then seed (docs/runbooks/fact-layer-labor.md section 1c).
 -- Plan: CHIEF item-02-SALARY-PAYROLL-SHOP-PLAN-r2.md, with Astra r2's P1 + two P2s fixed in the same build.
