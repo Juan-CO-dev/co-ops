@@ -127,6 +127,24 @@ describe("sweep: drawers and overview show partial hours as partial", () => {
   });
 });
 
+describe("sweep: unbuilt labor is unknown, not zero, on Hours and People", () => {
+  it("Hours: a quarter of an unbuilt day with no minutes is a dash with the reason, never 'No labor'", async () => {
+    const dto = await load();
+    const day = dto.days[0]!;
+    const q: BusinessReportDto = { ...dto, days: dto.days.map((d, i) => (i === 0 ? { ...d, labor: unbuilt(d.labor) } : d)),
+      quarters: dto.quarters!.map((x) => (x.date === day.date ? { ...x, laborMinutes: null } : x)) };
+    const out = html(createElement(BusinessHours, { dto: q, language: "en" }));
+    const section = out.split("<section").find((s) => s.includes(">Labor for these days is not counted yet.<")) ?? "";
+    expect(section).not.toContain("No labor");
+    expect(section).toContain('aria-label="Labor for these days is not counted yet."');
+  });
+  it("People: the per-person hours say 'so far' while a week is not final; the export coverage row names the labor state", async () => {
+    const dto = unbuiltTotal(await load());
+    expect(html(createElement(BusinessPeople, { dto, language: "en" }))).toContain("Hours per person are so far only.");
+    expect(businessPeopleRows(dto, SHOP)[0]).toMatchObject({ row_type: "coverage", labor_state: "unbuilt" });
+  });
+});
+
 describe("P2-2: exports say which days a breakdown covers", () => {
   const withRebuilding = async () => {
     const dto = await load();

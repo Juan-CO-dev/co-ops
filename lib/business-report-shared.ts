@@ -397,8 +397,8 @@ export function channelTotals(cuts: readonly CutRow[]): { included: CutTotal[]; 
       const t = inc.get(k) ?? inc.set(k, { key: c.channel, provider: c.provider, cents: 0, checks: 0, amountMissing: 0 }).get(k)!;
       t.cents += c.amount_cents; t.checks += c.checks; t.amountMissing! += c.amount_missing;
     } else if (c.sale_class === "gift_card" || c.sale_class === "ezcater_linked") {
-      const t = exc.get(c.sale_class) ?? exc.set(c.sale_class, { key: c.sale_class, cents: 0, checks: 0 }).get(c.sale_class)!;
-      t.cents += c.amount_cents; t.checks += c.checks;
+      const t = exc.get(c.sale_class) ?? exc.set(c.sale_class, { key: c.sale_class, cents: 0, checks: 0, amountMissing: 0 }).get(c.sale_class)!;
+      t.cents += c.amount_cents; t.checks += c.checks; t.amountMissing! += c.amount_missing;
     }
   }
   const order = (a: CutTotal, b: CutTotal) => b.cents - a.cents || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
@@ -507,6 +507,25 @@ export function compareChange(cur: { value: number | null; complete: boolean }, 
   return { kind: "pct", value: Math.round(((cur.value - prev.value) / prev.value) * 100) };
 }
 
+/** Fix round 1 (review ITEM9B-r1 P2): hours are FINAL only when every payroll week behind them is built and
+ * ready and every week's hours are known. An `unbuilt` / `rebuilding` span still carries the minutes it HAS
+ * (shown "so far"), which is exactly why "minutes is a number" never means "complete". The denominator states
+ * are about sales, not hours. Never compare hours that are not final. */
+export function laborHoursComplete(state: LaborState): boolean {
+  return state !== "unbuilt" && state !== "rebuilding" && state !== "before_history" && state !== "hours_unknown";
+}
+/** Fix round 1: which days a channel / server / large-check breakdown covers (only days whose cuts recomposed). */
+export interface BreakdownCoverage { state: "complete" | "partial" | "none"; included: number; expected: number; excluded: number }
+export function breakdownCoverage(days: readonly { cuts: CutsState }[]): BreakdownCoverage {
+  const included = days.filter((d) => d.cuts === "ok").length;
+  const expected = days.length;
+  return { state: included === expected ? "complete" : included === 0 ? "none" : "partial", included, expected, excluded: expected - included };
+}
+/** Fix round 1: checks / orders of unknown amount behind a day's sales total (Toast + ezCater). */
+export function salesAmountMissing(s: { toastAmountMissing: number; ezcaterMissing: number }): number {
+  return s.toastAmountMissing + s.ezcaterMissing;
+}
+
 /** The sentence beside a '—' (a labor % that is not shown). Null when there is a figure. */
 export function laborReasonKey(state: LaborState): (typeof BUSINESS_REPORT_I18N_KEYS)[number] | null {
   return state === "ok" ? null : `reports.business.labor.state.${state}`;
@@ -552,4 +571,8 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.people.cost_withheld", "reports.business.people.salaried_cost", "reports.business.people.cost_note", "reports.business.people.servers",
   "reports.business.people.server_note", "reports.business.compare.periods", "reports.business.compare.this", "reports.business.compare.previous",
   "reports.business.compare.pct", "reports.business.compare.points", "reports.business.compare.not_comparable", "reports.business.compare.rule",
+  // Fix round 1: unknowns are qualified, never plain numbers.
+  "reports.business.amount_at_least", "reports.business.amount_unknown", "reports.business.hours_so_far", "reports.business.sales_covered_only",
+  "reports.business.sales.not_captured", "reports.business.export.breakdown_partial", "reports.business.export.breakdown_none",
+  "reports.business.large_checks_partial", "reports.business.people.hours_partial", "reports.business.export.hours_partial",
 ] as const;

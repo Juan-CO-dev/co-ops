@@ -12,8 +12,11 @@ import type { ReactNode } from "react";
 import { formatCents, formatDateLabel, formatQuantity, formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { BusinessDayDto, BusinessQuarterDto, BusinessReportDto } from "@/lib/business-report";
-import { compareChange, laborReasonKey, loadedReasonKey, type CompareChange, type LaborFigures } from "@/lib/business-report-shared";
-import { Card, Dash, LaborPct, Line, Money, bizCard, dateRange, hoursText, pctText, tFor } from "./BusinessParts";
+import {
+  breakdownCoverage, compareChange, laborHoursComplete, laborReasonKey, loadedReasonKey, salesAmountMissing,
+  type CompareChange, type LaborFigures,
+} from "@/lib/business-report-shared";
+import { Amount, Card, Dash, LaborPct, Line, Money, SalesValue, bizCard, dateRange, hoursText, laborHoursText, pctText, salesText, tFor } from "./BusinessParts";
 
 type Props = { dto: BusinessReportDto; language: Language };
 
@@ -25,7 +28,8 @@ function LaborLines({ labor, language }: { labor: LaborFigures; language: Langua
   return <div className="flex flex-col gap-1">
     <Line language={language} label={t("reports.business.detail.net_sales")} value={labor.denominator.cents === null ? null : <Money cents={labor.denominator.cents} language={language} />}
       reason={labor.denominator.state === "ok" ? null : `reports.business.labor.state.${labor.denominator.state}`} />
-    <Line language={language} label={t("reports.business.detail.hours")} value={hoursText(labor.minutes, language)} reason={pureReason} />
+    <Line language={language} label={t("reports.business.detail.hours")} value={laborHoursText(labor, language)} reason={pureReason} />
+    {labor.minutes !== null && !laborHoursComplete(labor.state) && pureReason ? <p className="text-xs text-co-warning-text">{t(pureReason)}</p> : null}
     <Line language={language} label={t("reports.business.detail.pure_hourly_cost")} value={labor.pureHourlyCents === null ? null : <Money cents={labor.pureHourlyCents} language={language} />} reason={pureReason} />
     <Line language={language} label={t("reports.business.detail.ot_premium")} value={labor.otPremiumCents === null ? null : <Money cents={labor.otPremiumCents} language={language} />} reason={pureReason} />
     <Line language={language} label={t("reports.business.detail.ot_hours")} value={hoursText(labor.otMinutes, language)} reason={pureReason} />
@@ -39,11 +43,11 @@ function LaborLines({ labor, language }: { labor: LaborFigures; language: Langua
 }
 
 /** The collapsed line of a day / week: its figures in words, so the closed list still reads. */
-function summaryLine(salesCents: number | null, labor: LaborFigures, language: Language): string {
+function summaryLine(sales: string | null, labor: LaborFigures, language: Language): string {
   const t = tFor(language);
   const dash = "—";
   return [
-    salesCents === null ? dash : t("reports.business.row.sales", { amount: formatCents(salesCents, language) }),
+    sales === null ? dash : t("reports.business.row.sales", { amount: sales }),
     t("reports.business.row.labor_pct", { pct: pctText(labor.pct, language) ?? dash }),
     t("reports.business.row.loaded_pct", { pct: pctText(labor.loadedPct, language) ?? dash }),
   ].join(" · ");
@@ -65,14 +69,17 @@ export function BusinessOverview({ dto, language }: Props) {
   const t = tFor(language);
   const { total } = dto;
   const covered = dto.days.filter((d) => d.sales.coverage === "complete").length;
+  const totalMissing = dto.days.reduce((s, d) => s + salesAmountMissing(d.sales), 0);
+  const breakdown = breakdownCoverage(dto.days);
   return <section className={bizCard} aria-label={t("reports.business.tab.overview")}>
     <p className="mb-3 text-sm text-co-text-muted">{dateRange(dto.range.from, dto.range.to, language)} · {t("reports.business.caption")}</p>
     {covered < dto.days.length ? <p className="mb-3 text-xs font-bold text-co-warning-text">{t("reports.business.coverage.days", { covered, expected: dto.days.length })}</p> : null}
     <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 lg:grid-cols-3">
-      <Card label={t("reports.business.card.sales")} sub={t("reports.business.card.sales_hint")}><Money cents={total.sales.coverage === "missing" ? null : total.sales.totalCents} language={language} /></Card>
+      <Card label={t("reports.business.card.sales")} sub={t("reports.business.card.sales_hint")}><SalesValue sales={total.sales} missing={totalMissing} language={language} /></Card>
       <Card label={t("reports.business.card.net")} sub={total.labor.denominator.state === "ok" ? t("reports.business.card.net_hint") : t(`reports.business.labor.state.${total.labor.denominator.state}`)}>
         <Money cents={total.labor.denominator.cents} language={language} /></Card>
-      <Card label={t("reports.business.card.hours")}>{hoursText(total.labor.minutes, language) ?? <Dash reason={laborReasonKey(total.labor.state)} language={language} />}</Card>
+      <Card label={t("reports.business.card.hours")} sub={total.labor.minutes !== null && !laborHoursComplete(total.labor.state) && laborReasonKey(total.labor.state) ? t(laborReasonKey(total.labor.state)!) : null}>
+        {laborHoursText(total.labor, language) ?? <Dash reason={laborReasonKey(total.labor.state)} language={language} />}</Card>
       <Card label={t("reports.business.card.pure_hourly")}><LaborPct figures={total.labor} view="pure" target={total.target} language={language} /></Card>
       <Card label={t("reports.business.card.fully_loaded")} sub={total.labor.fullyLoadedCents !== null && total.labor.burdenEstimated ? t("reports.business.burden_estimated") : null}>
         <LaborPct figures={total.labor} view="loaded" target={total.loadedTarget} language={language} /></Card>
@@ -81,13 +88,15 @@ export function BusinessOverview({ dto, language }: Props) {
     <p className="mt-3 text-xs text-co-text-muted">{t("reports.business.labor.denominator")}</p>
     <p className="text-xs text-co-text-muted">{t("reports.business.loaded.basis")}</p>
     {dto.largeChecks.checks > 0 ? <p className="mt-1 text-xs font-bold text-co-warning-text">{t("reports.business.large_checks", { count: dto.largeChecks.checks, amount: formatCents(dto.largeChecks.cents, language) })}</p> : null}
+    {breakdown.state !== "complete" && dto.days.length > 0 ? <p className="mt-1 text-xs text-co-text-muted">{t("reports.business.large_checks_partial", { covered: breakdown.included, expected: breakdown.expected })}</p> : null}
 
     <div className="mt-4 flex flex-col gap-2">
       <CollapsibleSection idBase={`biz-weeks-${dto.locationId}`} title={t("reports.business.weeks")} count={t("reports.business.count_weeks", { n: dto.weeks.length })} defaultOpen>
         <div className="flex flex-col gap-2">
           {dto.weeks.map((w) => {
             const days = dto.days.filter((d) => d.date >= w.from && d.date <= w.to);
-            const sales = days.every((d) => d.sales.coverage === "missing") ? null : days.reduce((s, d) => s + d.sales.totalCents, 0);
+            const coverage = days.length > 0 && days.every((d) => d.sales.coverage === "complete") ? "complete" : days.every((d) => d.sales.coverage === "missing") ? "missing" : "partial";
+            const sales = salesText({ coverage, totalCents: days.reduce((s, d) => s + d.sales.totalCents, 0) }, days.reduce((s, d) => s + salesAmountMissing(d.sales), 0), language);
             return <CollapsibleSection key={w.weekStart} idBase={`biz-week-${dto.locationId}-${w.weekStart}`}
               title={t("reports.business.week_of", { range: dateRange(w.from, w.to, language) })} count={summaryLine(sales, w.labor, language)}>
               <div className="flex flex-col gap-2 p-1">
@@ -101,12 +110,12 @@ export function BusinessOverview({ dto, language }: Props) {
       <CollapsibleSection idBase={`biz-days-${dto.locationId}`} title={t("reports.business.days")} count={t("reports.business.count_days", { n: dto.days.length })}>
         <div className="flex flex-col gap-2">
           {[...dto.days].reverse().map((d) => <CollapsibleSection key={d.date} idBase={`biz-day-${dto.locationId}-${d.date}`}
-            title={formatDateLabel(d.date, language)} count={summaryLine(d.sales.coverage === "missing" ? null : d.sales.totalCents, d.labor, language)} badge={<DayBadges day={d} language={language} />}>
+            title={formatDateLabel(d.date, language)} count={summaryLine(salesText(d.sales, salesAmountMissing(d.sales), language), d.labor, language)} badge={<DayBadges day={d} language={language} />}>
             <div className="flex flex-col gap-2 p-1">
-              <Line language={language} label={t("reports.business.detail.sales")} value={d.sales.coverage === "missing" ? null : <Money cents={d.sales.totalCents} language={language} />} reason="reports.business.labor.state.sales_not_covered" />
+              <Line language={language} label={t("reports.business.detail.sales")} value={salesText(d.sales, salesAmountMissing(d.sales), language)} reason="reports.business.sales.not_captured" />
               <Line language={language} label={t("reports.business.detail.checks")} value={d.sales.coverage === "missing" ? null : String(d.sales.checks)} reason="reports.business.labor.state.sales_not_covered" />
               <Line language={language} label={t("reports.business.detail.toast_net")} value={d.sales.toastNetCents === null ? null : <Money cents={d.sales.toastNetCents} language={language} />} reason="reports.business.labor.state.net_unknown" />
-              <Line language={language} label={t("reports.business.detail.ezcater")} value={<Money cents={d.sales.ezcaterCents} language={language} />} />
+              <Line language={language} label={t("reports.business.detail.ezcater")} value={d.sales.coverage === "missing" ? null : <Amount cents={d.sales.ezcaterCents} missing={d.sales.ezcaterMissing} language={language} />} reason="reports.business.sales.not_captured" />
               <div className="flex flex-wrap gap-4"><LaborPct figures={d.labor} view="pure" target={dto.weeks.find((w) => d.date >= w.from && d.date <= w.to)?.target ?? total.target} language={language} />
                 <LaborPct figures={d.labor} view="loaded" target={dto.weeks.find((w) => d.date >= w.from && d.date <= w.to)?.loadedTarget ?? total.loadedTarget} language={language} /></div>
               <LaborLines labor={d.labor} language={language} />
@@ -122,13 +131,15 @@ export function BusinessOverview({ dto, language }: Props) {
 
 // ── Hours (15-minute grid, rushes) ──────────────────────────────────────────────────────────────
 
-function QuarterLine({ q, money, language }: { q: BusinessQuarterDto; money: boolean; language: Language }) {
+/** `laborUnknownReason` (fix round 1 sweep): the day's labor is not counted (unbuilt week, before history), so a
+ * quarter with no minutes is UNKNOWN, not "No labor" — a dash with that reason. */
+function QuarterLine({ q, money, laborUnknownReason, language }: { q: BusinessQuarterDto; money: boolean; laborUnknownReason: TranslationKey | null; language: Language }) {
   const t = tFor(language);
   return <li className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
     <span className="min-w-[4.5rem] font-bold text-co-text">{formatTime(q.quarterStartAt, language)}</span>
     <span>{q.checks === null ? <Dash reason="reports.business.cuts.rebuilding" language={language} /> : t("reports.business.hours.checks", { n: q.checks })}</span>
-    <span>{q.toastCents === null ? <Dash reason="reports.business.cuts.rebuilding" language={language} /> : <Money cents={q.toastCents} language={language} />}</span>
-    <span className="text-co-text-muted">{hoursText(q.laborMinutes, language) ?? t("reports.business.hours.no_labor")}</span>
+    <span>{q.toastCents === null ? <Dash reason="reports.business.cuts.rebuilding" language={language} /> : <Amount cents={q.toastCents} missing={q.amountMissing} language={language} />}</span>
+    <span className="text-co-text-muted">{hoursText(q.laborMinutes, language) ?? (laborUnknownReason ? <Dash reason={laborUnknownReason} language={language} /> : t("reports.business.hours.no_labor"))}</span>
     {money ? <span className="text-co-text-muted">{q.straightCents === null || q.straightCents === undefined ? <Dash reason="reports.business.labor.state.rebuilding" language={language} /> : <Money cents={q.straightCents} language={language} />}
       {" · "}{pctText(q.pct ?? null, language) ?? <Dash reason="reports.business.hours.no_pct" language={language} />}</span> : null}
   </li>;
@@ -156,9 +167,11 @@ export function BusinessHours({ dto, language }: Props) {
               {t("reports.business.rush.window", { start: formatTime(w.startAt, language), end: formatTime(w.endAt, language), checks: w.checks,
                 usual: formatQuantity(w.baselineChecks, language) })}{" · "}<Money cents={w.cents} language={language} /></p>) : null}
             {d.cuts !== "ok" ? <p className="text-xs text-co-warning-text">{t("reports.business.cuts.rebuilding")}</p> : null}
+            {d.labor.state === "unbuilt" || d.labor.state === "before_history" ? <p className="text-xs text-co-warning-text">{t(laborReasonKey(d.labor.state)!)}</p> : null}
             {qs.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.hours.no_activity")}</p>
-              : <ul aria-label={t("reports.business.hours.list_aria")}>{qs.map((q) => <QuarterLine key={q.quarterStartAt} q={q} money={money} language={language} />)}</ul>}
-            {un ? <p className="text-xs text-co-text-muted">{t("reports.business.quarter.unassigned")}: {t("reports.business.hours.checks", { n: un.checks })} · <Money cents={un.toastCents} language={language} /></p> : null}
+              : <ul aria-label={t("reports.business.hours.list_aria")}>{qs.map((q) => <QuarterLine key={q.quarterStartAt} q={q} money={money} language={language}
+                laborUnknownReason={d.labor.state === "unbuilt" || d.labor.state === "before_history" ? laborReasonKey(d.labor.state) : null} />)}</ul>}
+            {un ? <p className="text-xs text-co-text-muted">{t("reports.business.quarter.unassigned")}: {t("reports.business.hours.checks", { n: un.checks })} · <Amount cents={un.toastCents} missing={un.amountMissing} language={language} /></p> : null}
           </div>
         </CollapsibleSection>;
       })}
@@ -172,20 +185,21 @@ export function BusinessChannels({ dto, language }: Props) {
   const t = tFor(language);
   const rebuilding = dto.days.filter((d) => d.cuts !== "ok").length;
   const ezOrders = dto.days.reduce((s, d) => s + d.sales.ezcaterOrders, 0);
-  const row = (key: string, label: string, sub: string | null, checks: number, cents: number) => <li key={key} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
+  const ezMissing = dto.days.reduce((s, d) => s + d.sales.ezcaterMissing, 0);
+  const row = (key: string, label: string, sub: string | null, checks: number, cents: number | null, missing: number | undefined) => <li key={key} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
     <span className="min-w-0 break-words"><span className="font-semibold text-co-text">{label}</span>{sub ? <span className="text-co-text-muted"> · {sub}</span> : null}</span>
-    <span className="text-right"><Money cents={cents} language={language} /> <span className="text-co-text-muted">· {t("reports.business.hours.checks", { n: checks })}</span></span>
+    <span className="text-right">{cents === null ? <Dash reason="reports.business.sales.not_captured" language={language} /> : <Amount cents={cents} missing={missing} language={language} />} <span className="text-co-text-muted">· {t("reports.business.hours.checks", { n: checks })}</span></span>
   </li>;
   return <section className={bizCard} aria-label={t("reports.business.tab.channels")}>
     {rebuilding > 0 ? <p className="mb-3 text-xs font-bold text-co-warning-text">{t("reports.business.channels.rebuilding_days", { n: rebuilding })}</p> : null}
     <h3 className="mb-1 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.channels.title")}</h3>
     {dto.channels.included.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.channels.none")}</p>
-      : <ul>{dto.channels.included.map((c) => row(`${c.key}|${c.provider ?? ""}`, channelLabel(language, c.key), c.provider ? providerLabel(language, c.provider) : null, c.checks, c.cents))}</ul>}
+      : <ul>{dto.channels.included.map((c) => row(`${c.key}|${c.provider ?? ""}`, channelLabel(language, c.key), c.provider ? providerLabel(language, c.provider) : null, c.checks, c.cents, c.amountMissing))}</ul>}
     <h3 className="mb-1 mt-4 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.channels.ezcater")}</h3>
-    <ul>{row("ezcater", t("reports.business.channels.ezcater_label"), null, ezOrders, dto.total.sales.ezcaterCents)}</ul>
+    <ul>{row("ezcater", t("reports.business.channels.ezcater_label"), null, ezOrders, dto.total.sales.coverage === "missing" ? null : dto.total.sales.ezcaterCents, ezMissing)}</ul>
     <h3 className="mb-1 mt-4 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.channels.excluded")}</h3>
     {dto.channels.excluded.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.channels.excluded_none")}</p>
-      : <ul>{dto.channels.excluded.map((c) => row(c.key, t(c.key === "gift_card" ? "reports.business.channels.excluded.gift_card" : "reports.business.channels.excluded.ezcater_linked"), null, c.checks, c.cents))}</ul>}
+      : <ul>{dto.channels.excluded.map((c) => row(c.key, t(c.key === "gift_card" ? "reports.business.channels.excluded.gift_card" : "reports.business.channels.excluded.ezcater_linked"), null, c.checks, c.cents, c.amountMissing))}</ul>}
   </section>;
 }
 
@@ -197,6 +211,8 @@ export function BusinessPeople({ dto, language }: Props) {
   return <section className={bizCard} aria-label={t("reports.business.tab.people")}>
     <CollapsibleSection idBase={`biz-people-${dto.locationId}`} title={t("reports.business.people.title")} count={t("reports.business.people.count", { n: dto.people.length })} defaultOpen>
       {!dto.access.personCost ? <p className="mb-2 text-xs text-co-text-muted">{t("reports.business.people.cost_note")}</p> : null}
+      {!laborHoursComplete(dto.total.labor.state) && laborReasonKey(dto.total.labor.state) ? <p className="mb-2 text-xs font-bold text-co-warning-text">
+        {t("reports.business.people.hours_partial")} {t(laborReasonKey(dto.total.labor.state)!)}</p> : null}
       {dto.people.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.people.none")}</p> : <ul>
         {dto.people.map((p) => <li key={`${p.personKey}|${p.source}|${p.payClass}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
           <span className="min-w-0 break-words"><span className="font-semibold text-co-text">{p.label ?? t("reports.business.people.unnamed")}</span>
@@ -217,7 +233,7 @@ export function BusinessPeople({ dto, language }: Props) {
         {rebuilding > 0 ? <p className="mb-2 text-xs font-bold text-co-warning-text">{t("reports.business.channels.rebuilding_days", { n: rebuilding })}</p> : null}
         <ul>{dto.servers.map((s) => <li key={s.key || "none"} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
           <span className="min-w-0 break-words font-semibold text-co-text">{serverLabel(language, s.key, s.label)}</span>
-          <span className="text-right"><Money cents={s.cents} language={language} /> <span className="text-co-text-muted">· {t("reports.business.hours.checks", { n: s.checks })}</span></span>
+          <span className="text-right"><Amount cents={s.cents} missing={s.amountMissing} language={language} /> <span className="text-co-text-muted">· {t("reports.business.hours.checks", { n: s.checks })}</span></span>
         </li>)}</ul>
       </CollapsibleSection>
     </div>
@@ -236,14 +252,22 @@ function ChangeText({ change, language }: { change: CompareChange; language: Lan
 export function BusinessCompare({ dto, previous, language }: Props & { previous: BusinessReportDto | null }) {
   const t = tFor(language);
   const cur = dto.total, prev = previous?.total ?? null;
-  const done = (x: BusinessReportDto["total"] | null) => x !== null && x.sales.coverage === "complete";
+  // Fix round 1: a sales total compares only when its coverage is complete AND no check has an unknown amount;
+  // hours only when every payroll week behind them is final (laborHoursComplete). Anything else: not comparable.
+  const missingOf = (d: BusinessReportDto) => d.days.reduce((s, x) => s + salesAmountMissing(x.sales), 0);
+  const curMissing = missingOf(dto), prevMissing = previous ? missingOf(previous) : 0;
+  const done = (x: BusinessReportDto["total"] | null, missing: number) => x !== null && x.sales.coverage === "complete" && missing === 0;
+  const hoursDone = (x: BusinessReportDto["total"] | null) => x !== null && x.labor.minutes !== null && laborHoursComplete(x.labor.state);
+  const hoursCell = (x: BusinessReportDto["total"] | null) => (x === null ? <Dash language={language} />
+    : laborHoursText(x.labor, language) ?? <Dash reason={laborReasonKey(x.labor.state)} language={language} />);
   const rows: Array<{ key: string; label: string; a: ReactNode; b: ReactNode; change: CompareChange }> = [
-    { key: "sales", label: t("reports.business.card.sales"), a: <Money cents={cur.sales.totalCents} language={language} />, b: prev ? <Money cents={prev.sales.totalCents} language={language} /> : <Dash language={language} />,
-      change: compareChange({ value: cur.sales.totalCents, complete: done(cur) }, { value: prev?.sales.totalCents ?? null, complete: done(prev) }, "money") },
+    { key: "sales", label: t("reports.business.card.sales"), a: <SalesValue sales={cur.sales} missing={curMissing} language={language} />,
+      b: prev ? <SalesValue sales={prev.sales} missing={prevMissing} language={language} /> : <Dash language={language} />,
+      change: compareChange({ value: cur.sales.totalCents, complete: done(cur, curMissing) }, { value: prev?.sales.totalCents ?? null, complete: done(prev, prevMissing) }, "money") },
     { key: "net", label: t("reports.business.card.net"), a: <Money cents={cur.labor.denominator.cents} language={language} />, b: <Money cents={prev?.labor.denominator.cents ?? null} language={language} />,
       change: compareChange({ value: cur.labor.denominator.cents, complete: true }, { value: prev?.labor.denominator.cents ?? null, complete: true }, "money") },
-    { key: "hours", label: t("reports.business.card.hours"), a: hoursText(cur.labor.minutes, language) ?? <Dash language={language} />, b: hoursText(prev?.labor.minutes, language) ?? <Dash language={language} />,
-      change: compareChange({ value: cur.labor.minutes, complete: cur.labor.state !== "hours_unknown" }, { value: prev?.labor.minutes ?? null, complete: !!prev && prev.labor.state !== "hours_unknown" }, "money") },
+    { key: "hours", label: t("reports.business.card.hours"), a: hoursCell(cur), b: hoursCell(prev),
+      change: compareChange({ value: cur.labor.minutes, complete: hoursDone(cur) }, { value: prev?.labor.minutes ?? null, complete: hoursDone(prev) }, "money") },
     { key: "pure", label: t("reports.business.card.pure_hourly"), a: pctText(cur.labor.pct, language) ?? <Dash reason={laborReasonKey(cur.labor.state)} language={language} />,
       b: pctText(prev?.labor.pct ?? null, language) ?? <Dash reason={prev ? laborReasonKey(prev.labor.state) : null} language={language} />,
       change: compareChange({ value: cur.labor.pct, complete: true }, { value: prev?.labor.pct ?? null, complete: true }, "points") },

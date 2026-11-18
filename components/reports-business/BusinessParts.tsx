@@ -11,7 +11,7 @@ import { formatCents, formatDateLabel, formatQuantity } from "@/lib/i18n/format"
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import {
-  BUSINESS_RANGES, BUSINESS_REPORT_TABS, laborReasonKey, loadedReasonKey,
+  BUSINESS_RANGES, BUSINESS_REPORT_TABS, laborHoursComplete, laborReasonKey, loadedReasonKey,
   type BusinessRange, type BusinessReportTab, type LaborFigures,
 } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
@@ -30,6 +30,34 @@ export function Dash({ reason, language }: { reason?: TranslationKey | null; lan
 }
 export function Money({ cents, language }: { cents: number | null | undefined; language: Language }) {
   return cents === null || cents === undefined ? <Dash language={language} /> : <>{formatCents(cents, language)}</>;
+}
+/** Fix round 1: an amount that holds checks of unknown amount is a FLOOR, never a plain total: "at least $20.00
+ * + 1 unknown"; when every check is unknown (no known cents) it is "amount unknown (2 checks)", never $0.00. */
+export function amountText(cents: number, missing: number | null | undefined, language: Language): string {
+  const n = missing ?? 0;
+  if (n <= 0) return formatCents(cents, language);
+  if (cents === 0) return serverT(language, "reports.business.amount_unknown", { n });
+  return serverT(language, "reports.business.amount_at_least", { amount: formatCents(cents, language), n });
+}
+export function Amount({ cents, missing, language }: { cents: number; missing: number | null | undefined; language: Language }) {
+  return <>{amountText(cents, missing, language)}</>;
+}
+/** Fix round 1: a sales total by its coverage. Missing = a dash with its reason (never $0.00); partial = the
+ * covered days' sum, labelled as such; unknown amounts make it a floor. */
+export function salesText(sales: { coverage: string; totalCents: number }, missing: number, language: Language): string | null {
+  if (sales.coverage === "missing") return null;
+  const amount = amountText(sales.totalCents, missing, language);
+  return sales.coverage === "complete" ? amount : serverT(language, "reports.business.sales_covered_only", { amount });
+}
+export function SalesValue({ sales, missing, language }: { sales: { coverage: string; totalCents: number }; missing: number; language: Language }) {
+  return <>{salesText(sales, missing, language) ?? <Dash reason="reports.business.sales.not_captured" language={language} />}</>;
+}
+/** Fix round 1: labor hours by completeness. Final hours plainly; a span with an unbuilt / rebuilding week shows
+ * the minutes it has as "so far"; none at all = null (the caller's dash with the reason). */
+export function laborHoursText(labor: { minutes: number | null; state: LaborFigures["state"] }, language: Language): string | null {
+  const h = hoursText(labor.minutes, language);
+  if (h === null) return null;
+  return laborHoursComplete(labor.state) ? h : serverT(language, "reports.business.hours_so_far", { h });
 }
 export function hoursText(minutes: number | null | undefined, language: Language): string | null {
   return minutes === null || minutes === undefined ? null : serverT(language, "reports.business.hours_value", { h: formatQuantity(minutes / 60, language) });

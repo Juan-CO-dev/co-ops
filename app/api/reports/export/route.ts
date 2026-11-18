@@ -38,13 +38,16 @@ export async function GET(req: NextRequest) {
       ? serverT(language, "reports.export.pricing_scope_shop", { shop: table.pricingScope.name })
       : serverT(language, "reports.export.pricing_scope_global")
     : null;
+  // Item 9b fix round 1: a file that leaves days out says so on top (CSV preamble, PDF header).
+  const noticeLines = (table.notices ?? []).map((n) => serverT(language, n.key, n.values));
+  const topLines = [...(pricingLine ? [pricingLine] : []), ...noticeLines];
   const filename = exportFilename(table.fileFamily ?? family, table.shop?.code ?? "all", table.from, table.to, format);
   let body: string | Buffer;
   try {
     body = format === "csv"
-      ? toCsv(table.columns, table.rows, pricingLine ? [pricingLine] : [])
+      ? toCsv(table.columns, table.rows, topLines)
       : await renderReportPdf(
-        { title: serverT(language, EXPORT_TITLE_KEY[family]), lines: [...pdfHeaderLines(language, { shop: shopLabel, from: table.from, to: table.to, at: new Date(), by: ctx.user.name }), ...(pricingLine ? [pricingLine] : [])] },
+        { title: serverT(language, EXPORT_TITLE_KEY[family]), lines: [...pdfHeaderLines(language, { shop: shopLabel, from: table.from, to: table.to, at: new Date(), by: ctx.user.name }), ...topLines] },
         [{ heading: null, columns: table.columns.map((c) => c.key === "check_amount_pre_tax"
           ? { ...c, label: serverT(language, "reports.export.column.check_amount_pre_tax") } : c),
         rows: table.rows, emptyText: serverT(language, "reports.export.empty") }],

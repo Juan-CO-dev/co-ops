@@ -166,7 +166,8 @@ export interface BusinessQuarterDto {
   basis: "toast_only_straight_time"; tone: "none";
 }
 /** A day's `sale` Toast checks with no opened quarter; quarters + this = the day's Toast check sales. */
-export interface BusinessUnassignedDto { date: string; toastCents: number; checks: number }
+/** `amountMissing` (fix round 1) = of those checks, how many have an unknown amount (> 0 = the cents are a floor). */
+export interface BusinessUnassignedDto { date: string; toastCents: number; checks: number; amountMissing: number }
 export interface BusinessPersonDto {
   personKey: string; label: string | null; source: string; payClass: string;
   minutes: number; otMinutes: number | null;
@@ -219,7 +220,7 @@ const SHOP_MONEY_PATHS: readonly string[] = [
   ...keys("total.sales", ["totalCents", "toastChecksCents", "toastNetCents", "ezcaterCents", "refundCents", "coverage"]),
   ...keys("total.labor", LABOR_KEYS), "total.target", "total.loadedTarget",
   "quarters", ...keys("quarters[]", ["date", "quarterStartAt", "wallQuarter", "fold", "toastCents", "checks", "amountMissing", "laborMinutes", "basis", "tone"]),
-  "quartersUnassigned", ...keys("quartersUnassigned[]", ["date", "toastCents", "checks"]),
+  "quartersUnassigned", ...keys("quartersUnassigned[]", ["date", "toastCents", "checks", "amountMissing"]),
   "quartersReason",
   ...keys("channels.included[]", CUT_KEYS), ...keys("channels.excluded[]", CUT_KEYS), ...keys("servers[]", CUT_KEYS),
   ...keys("people[]", PERSON_KEYS),
@@ -328,7 +329,8 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
   /** `sale` checks the facts could not place in a quarter (no opened time): shown, never dropped. */
   const unassigned = (date: string) => (cutsByDate.get(date) ?? [])
     .filter((c) => c.sale_class === "sale" && (!c.quarter_start_at || c.wall_quarter === null || c.fold === null))
-    .reduce((t, c) => ({ toastCents: t.toastCents + c.amount_cents, checks: t.checks + c.checks }), { toastCents: 0, checks: 0 });
+    .reduce((t, c) => ({ toastCents: t.toastCents + c.amount_cents, checks: t.checks + c.checks, amountMissing: t.amountMissing + c.amount_missing }),
+      { toastCents: 0, checks: 0, amountMissing: 0 });
 
   const dayDtos: BusinessDayDto[] = sales.map((s) => {
     const dayCuts = cutsByDate.get(s.date) ?? [];

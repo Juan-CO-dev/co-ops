@@ -296,7 +296,7 @@ describe("recompose: every cut sums to the Sales report's own day (parity with s
     expect(rc).toMatchObject({ ok: true, cutCents: 3_000, toastChecksCents: 3_000 });
     const ch = channelTotals(cuts);
     expect(ch.included.reduce((s, r) => s + r.cents, 0)).toBe(day!.toastChecksCents);
-    expect(ch.excluded).toEqual([{ key: "gift_card", cents: 2_500, checks: 1 }]);
+    expect(ch.excluded).toEqual([{ key: "gift_card", cents: 2_500, checks: 1, amountMissing: 0 }]);
     const sv = serverTotals(cuts);
     expect(sv.reduce((s, r) => s + r.cents, 0)).toBe(3_000);
     expect(sv.find((r) => r.key === "")).toMatchObject({ unassigned: true, cents: 1_200 });

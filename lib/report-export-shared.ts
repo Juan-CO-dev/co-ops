@@ -32,7 +32,7 @@ import type { MenuCostRow } from "@/lib/menu-costing-shared";
 import type { BreakdownRow, SalesBucket, SalesCheckRow, SalesExportView, SalesEzcaterRow, SalesTotals } from "@/lib/sales-reports-shared";
 import { SALES_EXPORT_MAX_ROWS, rowAverageCents, salesHasData } from "@/lib/sales-reports-shared";
 import type { BusinessReportDto } from "@/lib/business-report";
-import { BUSINESS_REPORT_TABS, type BusinessReportTab, type DaySales, type LaborFigures } from "@/lib/business-report-shared";
+import { BUSINESS_REPORT_TABS, breakdownCoverage, laborHoursComplete, salesAmountMissing, type BusinessReportTab, type DaySales, type LaborFigures } from "@/lib/business-report-shared";
 
 // ── Cells ───────────────────────────────────────────────────────────────────────────────────
 
@@ -193,7 +193,7 @@ export function isBusinessExportTab(v: unknown): v is BusinessExportTab {
 const BUSINESS_EXPORT_COLUMNS_OVERVIEW: readonly ExportColumn[] = [
   col("row_type"), col("period"), ...PERIOD, ...SHOP, col("status"), col("coverage_status"), col("checks", "int"),
   col("toast_check_totals", "money"), col("toast_item_sales_net", "money"), col("ezcater_sales", "money"), col("ezcater_orders", "int"),
-  col("refunds_captured_so_far", "money"), col("sales_before_refunds", "money"), col("net_sales_for_labor", "money"), col("net_sales_state"),
+  col("refunds_captured_so_far", "money"), col("sales_before_refunds", "money"), col("amount_missing", "int"), col("net_sales_for_labor", "money"), col("net_sales_state"),
   col("labor_hours", "number"), col("pure_hourly_cost", "money"), col("overtime_premium", "money"), col("overtime_hours", "number"),
   col("pure_hourly_pct", "number"), col("pure_hourly_target_pct", "number"), col("labor_state"),
   col("salaried_cost", "money"), col("burden_cost", "money"), col("burden_estimated", "bool"), col("fully_loaded_cost", "money"),
@@ -207,9 +207,10 @@ export const BUSINESS_EXPORT_COLUMNS: Record<BusinessExportTab, readonly ExportC
     col("toast_sales", "money"), col("amount_missing", "int"), col("labor_hours", "number"), col("straight_time_cost", "money"),
     col("straight_time_pct", "number"), col("basis"), col("currency", "currency"),
   ],
-  channels: [col("row_type"), ...PERIOD, ...SHOP, col("channel"), col("provider"), col("checks", "int"), col("sales", "money"), col("amount_missing", "int"), col("currency", "currency")],
+  channels: [col("row_type"), ...PERIOD, ...SHOP, col("status"), col("days_included", "int"), col("days_in_period", "int"), col("channel"), col("provider"),
+    col("checks", "int"), col("sales", "money"), col("amount_missing", "int"), col("currency", "currency")],
   people: [
-    col("row_type"), ...PERIOD, ...SHOP, col("name"), col("server_ref"), col("source"), col("pay_class"), col("hours", "number"),
+    col("row_type"), ...PERIOD, ...SHOP, col("status"), col("days_included", "int"), col("days_in_period", "int"), col("labor_state"), col("name"), col("server_ref"), col("source"), col("pay_class"), col("hours", "number"),
     col("overtime_hours", "number"), col("weeks_withheld", "int"), col("straight_time_cost", "money"), col("checks", "int"), col("sales", "money"),
     col("amount_missing", "int"), col("currency", "currency"),
   ],
@@ -476,7 +477,8 @@ export function sumBusinessDays(days: readonly DaySales[]): Omit<DaySales, "date
     totalCents: sum("totalCents"), giftCardCents: sum("giftCardCents"), ezcaterLinkedCents: sum("ezcaterLinkedCents"),
   };
 }
-type SalesCells = Pick<DaySales, "coverage" | "checks" | "toastChecksCents" | "toastNetCents" | "ezcaterCents" | "ezcaterOrders" | "refundCents" | "totalCents">;
+type SalesCells = Pick<DaySales, "coverage" | "checks" | "toastChecksCents" | "toastNetCents" | "ezcaterCents" | "ezcaterOrders" | "refundCents" | "totalCents"
+  | "toastAmountMissing" | "ezcaterMissing">;
 function businessSalesCells(s: SalesCells | null): ExportRow {
   if (!s) return {};
   // No capture at all: empty metrics, never zeros (the Sales rule).
@@ -484,6 +486,8 @@ function businessSalesCells(s: SalesCells | null): ExportRow {
   return {
     coverage_status: s.coverage, checks: v(s.checks), toast_check_totals: v(s.toastChecksCents), toast_item_sales_net: v(s.toastNetCents),
     ezcater_sales: v(s.ezcaterCents), ezcater_orders: v(s.ezcaterOrders), refunds_captured_so_far: v(s.refundCents), sales_before_refunds: v(s.totalCents),
+    // Fix round 1: checks / orders of unknown amount behind these sums (> 0 = the money is a floor, never the total).
+    amount_missing: v(salesAmountMissing(s)),
   };
 }
 function businessLaborCells(l: LaborFigures, target: number | "target_varies", loadedTarget: number | "target_varies"): ExportRow {
@@ -501,11 +505,15 @@ function businessTotalRow(dto: BusinessReportDto, period: string, shop: ShopRef)
     coverage: t.sales.coverage as DaySales["coverage"], checks: dto.days.reduce((s, d) => s + d.sales.checks, 0),
     toastChecksCents: t.sales.toastChecksCents, toastNetCents: t.sales.toastNetCents, ezcaterCents: t.sales.ezcaterCents,
     ezcaterOrders: dto.days.reduce((s, d) => s + d.sales.ezcaterOrders, 0), refundCents: t.sales.refundCents, totalCents: t.sales.totalCents,
+    toastAmountMissing: dto.days.reduce((s, d) => s + d.sales.toastAmountMissing, 0), ezcaterMissing: dto.days.reduce((s, d) => s + d.sales.ezcaterMissing, 0),
   };
+  // Fix round 1: the range's large checks come from the days whose cuts recomposed only; the row says so.
+  const breakdown = breakdownCoverage(dto.days);
   return {
     row_type: "total", period, ...periodCells(dto.range), ...shopCells(shop), status: dto.range.empty ? "no_finished_days" : null,
     ...businessSalesCells(sales), ...(dto.range.empty ? {} : businessLaborCells(t.labor, t.target, t.loadedTarget)),
     large_checks: dto.range.empty ? null : dto.largeChecks.checks, large_checks_amount: dto.range.empty ? null : dto.largeChecks.cents,
+    breakdown_state: dto.range.empty ? null : breakdown.state === "complete" ? "ok" : breakdown.state,
   };
 }
 
@@ -549,19 +557,41 @@ export function businessHoursRows(dto: BusinessReportDto, shop: ShopRef): Export
       labor_hours: hoursOf(q.laborMinutes), straight_time_cost: q.straightCents ?? null, straight_time_pct: q.pct ?? null, basis: q.basis,
     })),
     ...(dto.quartersUnassigned ?? []).map((u): ExportRow => ({
-      row_type: "unassigned", business_date: u.date, ...shopCells(shop), checks: u.checks, toast_sales: u.toastCents, basis: "no_opened_time",
+      row_type: "unassigned", business_date: u.date, ...shopCells(shop), checks: u.checks, toast_sales: u.toastCents, amount_missing: u.amountMissing, basis: "no_opened_time",
     })),
   ];
+}
+
+/** Fix round 1 (review ITEM9B-r1 P2): the channel and server lists hold only the days whose cuts recomposed, so
+ * the file opens with the days it covers: `status` complete | partial | none, `days_included` of `days_in_period`.
+ * A partial file is never presented as the whole period (the route also puts the sentence on top of the file). */
+export function businessCoverageRow(dto: BusinessReportDto, shop: ShopRef): ExportRow {
+  const c = breakdownCoverage(dto.days);
+  return { row_type: "coverage", ...periodCells(dto.range), ...shopCells(shop), status: dto.range.empty ? "no_finished_days" : c.state,
+    days_included: c.included, days_in_period: c.expected, labor_state: dto.range.empty ? null : dto.total.labor.state };
+}
+/** The sentence a partial business file carries on top (CSV preamble, PDF header), or none when it is whole. */
+export function businessCoverageNotice(dto: BusinessReportDto): { key: "reports.business.export.breakdown_partial" | "reports.business.export.breakdown_none"; values: Record<string, number> } | null {
+  const c = breakdownCoverage(dto.days);
+  if (dto.range.empty || c.state === "complete") return null;
+  return { key: c.state === "none" ? "reports.business.export.breakdown_none" : "reports.business.export.breakdown_partial",
+    values: { covered: c.included, expected: c.expected, excluded: c.excluded } };
+}
+/** Fix round 1 sweep: labor hours that are not final (a week unbuilt / rebuilding / unknown) say so on top of the file. */
+export function businessHoursNotice(dto: BusinessReportDto): { key: "reports.business.export.hours_partial"; values: Record<string, string> } | null {
+  if (dto.range.empty || laborHoursComplete(dto.total.labor.state)) return null;
+  return { key: "reports.business.export.hours_partial", values: {} };
 }
 
 /** Channels: counted Toast channels, ezCater as its own source, and the named exclusions (never counted). */
 export function businessChannelRows(dto: BusinessReportDto, shop: ShopRef): ExportRow[] {
   const base = { ...periodCells(dto.range), ...shopCells(shop) };
   return [
+    businessCoverageRow(dto, shop),
     ...dto.channels.included.map((c): ExportRow => ({ row_type: "channel", ...base, channel: c.key, provider: c.provider ?? null, checks: c.checks, sales: c.cents, amount_missing: c.amountMissing ?? 0 })),
     ...(dto.range.empty ? [] : [{ row_type: "ezcater", ...base, channel: "ezcater", provider: null, checks: dto.days.reduce((s, d) => s + d.sales.ezcaterOrders, 0),
       sales: dto.total.sales.ezcaterCents, amount_missing: dto.days.reduce((s, d) => s + d.sales.ezcaterMissing, 0) } as ExportRow]),
-    ...dto.channels.excluded.map((c): ExportRow => ({ row_type: "excluded", ...base, channel: c.key, provider: null, checks: c.checks, sales: c.cents })),
+    ...dto.channels.excluded.map((c): ExportRow => ({ row_type: "excluded", ...base, channel: c.key, provider: null, checks: c.checks, sales: c.cents, amount_missing: c.amountMissing ?? 0 })),
   ];
 }
 
@@ -569,6 +599,7 @@ export function businessChannelRows(dto: BusinessReportDto, shop: ShopRef): Expo
 export function businessPeopleRows(dto: BusinessReportDto, shop: ShopRef): ExportRow[] {
   const base = { ...periodCells(dto.range), ...shopCells(shop) };
   return [
+    businessCoverageRow(dto, shop),
     ...dto.people.map((p): ExportRow => ({
       row_type: "person", ...base, name: p.label, source: p.source, pay_class: p.payClass, hours: hoursOf(p.minutes),
       overtime_hours: hoursOf(p.otMinutes), weeks_withheld: p.weeksSuppressed, straight_time_cost: p.straightCostCents ?? null,

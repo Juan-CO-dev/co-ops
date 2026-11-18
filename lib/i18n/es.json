@@ -9260,5 +9260,15 @@
   "reports.business.compare.pct": "{n}%",
   "reports.business.compare.points": "{n} pts",
   "reports.business.compare.not_comparable": "No comparable",
+  "reports.business.people.hours_partial": "Las horas por persona son solo hasta ahora.",
+  "reports.business.export.hours_partial": "Las horas de este archivo no son finales (una semana de nómina todavía no está contada, se está recontando o tiene marcas abiertas). Las horas mostradas son hasta ahora; mira labor_state.",
+  "reports.business.amount_at_least": "al menos {amount} + {n} sin monto",
+  "reports.business.amount_unknown": "monto desconocido ({n} cuentas)",
+  "reports.business.hours_so_far": "{h} hasta ahora",
+  "reports.business.sales_covered_only": "{amount} (solo días cubiertos)",
+  "reports.business.sales.not_captured": "No se capturaron ventas en este periodo.",
+  "reports.business.large_checks_partial": "Las cuentas grandes se cuentan en {covered} de {expected} días; los demás todavía se están reconstruyendo o no tienen ventas capturadas.",
+  "reports.business.export.breakdown_partial": "Los canales y meseros cubren {covered} de {expected} días de este periodo. Se dejan fuera {excluded} día(s) (todavía reconstruyéndose o sin ventas capturadas), así que estos totales no son el periodo completo.",
+  "reports.business.export.breakdown_none": "Ningún día de este periodo está listo todavía para canales y meseros ({expected} días fuera). Estas listas están vacías, no en cero.",
   "reports.business.compare.rule": "Un cambio solo se muestra cuando los dos periodos están completos. El % de mano de obra cambia en puntos."
 }

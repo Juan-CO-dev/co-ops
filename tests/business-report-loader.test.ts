@@ -236,7 +236,7 @@ describe("quarter sales include ordinary Toast catering; unassigned is shown", (
   it("quarters plus the unassigned bucket recompose to the day's Toast check sales", async () => {
     const f = fakeClient({ rpcRows: { sales_report_daily: daily, business_report_check_cuts: cuts, business_report_labor_quarters: labor } });
     const dto = await loadBusinessReport(moo, { locationId: A, range: one }, { client: f.client, env: ON });
-    expect(dto.quartersUnassigned).toEqual([{ date: D, toastCents: 2_500, checks: 1 }]);
+    expect(dto.quartersUnassigned).toEqual([{ date: D, toastCents: 2_500, checks: 1, amountMissing: 0 }]);
     const sum = dto.quarters!.filter((x) => x.date === D).reduce((s, x) => s + (x.toastCents ?? 0), 0) + dto.quartersUnassigned![0]!.toastCents;
     expect(sum).toBe(dto.days[0]!.sales.toastChecksCents);
   });

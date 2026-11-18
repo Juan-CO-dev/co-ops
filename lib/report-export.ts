@@ -44,6 +44,8 @@ import {
   assertBusinessRowCap,
   businessChannelRows,
   businessCompareRows,
+  businessCoverageNotice,
+  businessHoursNotice,
   businessHoursRows,
   businessOverviewRows,
   businessPeopleRows,
@@ -88,6 +90,9 @@ export interface ExportTable {
   pricingScope?: { kind: "global" } | { kind: "shop"; name: string };
   /** File-name family when one family has several tables (sales views: `sales-items`). */
   fileFamily?: string;
+  /** Item 9b fix round 1: sentences the file must carry on top (CSV preamble, PDF header) — the business
+   * family's "these lists cover N of M days" when a breakdown leaves days out. Absent = none (byte-identical). */
+  notices?: Array<{ key: TranslationKey; values: Record<string, string | number> }>;
 }
 
 type Params = Record<string, string | undefined>;
@@ -155,7 +160,7 @@ async function salesExportTable(auth: AuthContext, params: Params, shop: ShopRef
  * Past the Sales row cap: 413, never a cut file. Like every other family, a DOWNLOAD is not gated by the
  * digest delivery mode (that switch only stops sending); the family has its own switch, checked first.
  */
-async function businessExportTable(auth: AuthContext, params: Params, shop: ShopRef, today: string): Promise<Pick<ExportTable, "columns" | "rows" | "from" | "to" | "fileFamily">> {
+async function businessExportTable(auth: AuthContext, params: Params, shop: ShopRef, today: string): Promise<Pick<ExportTable, "columns" | "rows" | "from" | "to" | "fileFamily" | "notices">> {
   const tab = isBusinessExportTab(params.tab) ? params.tab : "overview";
   const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations, role: auth.role };
   const range = resolveBusinessRange(params, today);
@@ -174,7 +179,11 @@ async function businessExportTable(auth: AuthContext, params: Params, shop: Shop
         break;
       }
     }
-    return { columns: BUSINESS_EXPORT_COLUMNS[tab], rows: [...assertBusinessRowCap(rows)], from: range.from, to: range.to, fileFamily: tab === "overview" ? "business" : `business-${tab}` };
+    // Fix round 1: every tab that reads the cuts (all but Compare, whose total row carries breakdown_state) says
+    // on top of the file which days it covers when it leaves any out; never a partial total as the whole period.
+    const notices = [tab === "compare" ? null : businessCoverageNotice(dto), businessHoursNotice(dto)].filter((n) => n !== null);
+    return { columns: BUSINESS_EXPORT_COLUMNS[tab], rows: [...assertBusinessRowCap(rows)], from: range.from, to: range.to,
+      fileFamily: tab === "overview" ? "business" : `business-${tab}`, ...(notices.length ? { notices } : {}) };
   } catch (error) {
     if (error instanceof BusinessReportError) throw new ExportError(error.status, error.code);
     throw error;

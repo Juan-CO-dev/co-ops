@@ -9260,5 +9260,15 @@
   "reports.business.compare.pct": "{n}%",
   "reports.business.compare.points": "{n} pts",
   "reports.business.compare.not_comparable": "Not comparable",
+  "reports.business.people.hours_partial": "Hours per person are so far only.",
+  "reports.business.export.hours_partial": "Labor hours in this file are not final (a payroll week is not counted yet, is being recounted, or has open punches). Hours shown are so far; see labor_state.",
+  "reports.business.amount_at_least": "at least {amount} + {n} unknown",
+  "reports.business.amount_unknown": "amount unknown ({n} checks)",
+  "reports.business.hours_so_far": "{h} so far",
+  "reports.business.sales_covered_only": "{amount} (covered days only)",
+  "reports.business.sales.not_captured": "No sales were captured for this period.",
+  "reports.business.large_checks_partial": "Large checks are counted on {covered} of {expected} days; the rest are still rebuilding or have no sales captured.",
+  "reports.business.export.breakdown_partial": "Channels and servers cover {covered} of {expected} days in this period. {excluded} day(s) are left out (still rebuilding or sales not captured), so these totals are not the full period.",
+  "reports.business.export.breakdown_none": "No day in this period is ready for channels and servers yet ({expected} days left out). These lists are empty, not zero.",
   "reports.business.compare.rule": "A change shows only when both periods are complete. Labor % changes in points."
 }
