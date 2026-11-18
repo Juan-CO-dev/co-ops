@@ -34,7 +34,8 @@ After the next nightly (`/api/cron/toast-sales-pull`, 09:00 UTC):
 |---|---|---|
 | `par_inputs_not_last_night` / `no_par_inputs` | The par run did not run for yesterday at that shop (capture incomplete, or a catch-up for an older date) | Nothing: a forecast is never recorded for a decision it was not made on. That decision date has no pars row. |
 | `labor_failed`, `pars_failed`, `prep_failed`, `models_failed` | A read or a writer failed | Check the nightly's log for that shop; the other steps still ran. |
-| `deadline` | The nightly had under a minute left | Look at why the nightly ran long. |
+| `deadline` (as `skipped`) | The step was never started: the ledger's time was already up | Look at why the nightly, or an earlier step of this pass, ran long. |
+| `deadline` (as `error`, or as a target's value) | The step was started and cut at the deadline: a read or a writer did not answer in time. The request was aborted. A write that was cut may still have landed; the writers are idempotent, so nothing is doubled. | Check database load at that time. The labor pull after it was not delayed. |
 | target `failed` | The freeze writer refused | Usually `target_freeze_too_early`: the server date and the database's ET date disagree. |
 
 A missed night cannot be made up later. That is by design: the ledger refuses a decision date that is not today.

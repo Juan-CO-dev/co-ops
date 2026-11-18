@@ -9,12 +9,16 @@ import "server-only";
  * nightly run that just used them; nothing is loaded twice.
  * WRITES ONLY through 0342's writers (lib/demand-signals/ledger-pass.ts) and one audit heartbeat
  * (cron.success / cron.failure, job `demand-ledger`). Not in JOBS_REGISTRY: nothing emails. No outside call.
+ * ONE DEADLINE FOR THE WHOLE NIGHT (review r1 #3): the shops work until `deadlineAt - DEMAND_LEDGER_HEARTBEAT_MS`,
+ * every request they make carries the pass's abort signal (`withAbort`), and the heartbeat is given what is left.
+ * `runDemandLedgerNight` has returned by `deadlineAt`, whatever the database does.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
 import type { DemandInputs } from "@/lib/dynamic-pars-engine-shared";
 import type { ItemParRow } from "@/lib/items";
 import type { HeatCell } from "@/lib/pulse/baseline-shared";
+import { withAbort } from "@/lib/pulse/abort";
 import { mergeBreakdown, type BreakdownRaw } from "@/lib/sales-reports-shared";
 import { loadDayTypes, loadLiveStructure, loadSchedulingDemand } from "@/lib/scheduling/inputs";
 import { overrideFor } from "@/lib/scheduling/inputs-shared";
@@ -26,6 +30,8 @@ import { LABOR_LEADS, type LaborInputs, type PrepInputs } from "./replay";
 
 /** The whole step (every shop, one after the other) gets at most this long inside the nightly. */
 export const DEMAND_LEDGER_BUDGET_MS = 40_000;
+/** The tail of that budget kept for the heartbeat: the shops stop this long before the deadline. */
+export const DEMAND_LEDGER_HEARTBEAT_MS = 3_000;
 
 /** The labor inputs for a build day: the scheduler's own demand read, its live structure, and the override in force per date. */
 export async function loadLaborInputs(sb: SupabaseClient, locationId: string, asOf: string): Promise<LaborInputs> {
@@ -70,28 +76,32 @@ export async function loadPrepInputs(sb: SupabaseClient, locationId: string): Pr
   };
 }
 
+/** The real reads and writes. Every one goes through a client that carries the pass's abort signal into its request. */
 export function ledgerDeps(sb: SupabaseClient, locationId: string, todayEt: string): LedgerDeps {
   return {
-    rpc: async (name, args) => {
-      const { data, error } = await sb.rpc(name, args);
+    rpc: async (name, args, signal) => {
+      const { data, error } = await withAbort(sb, signal).rpc(name, args);
       return { data, error: error ? { code: error.code, message: error.message } : null };
     },
-    loadLabor: () => loadLaborInputs(sb, locationId, todayEt),
-    loadLaborDay: (date) => loadLaborDay(sb, locationId, date),
-    loadPrep: () => loadPrepInputs(sb, locationId),
+    loadLabor: (signal) => loadLaborInputs(withAbort(sb, signal), locationId, todayEt),
+    loadLaborDay: (date, signal) => loadLaborDay(withAbort(sb, signal), locationId, date),
+    loadPrep: (signal) => loadPrepInputs(withAbort(sb, signal), locationId),
     now: () => Date.now(),
   };
 }
 
-/** The whole night: each shop in turn, inside one deadline, then one heartbeat. Never throws. */
+/** The whole night: each shop in turn, then one heartbeat, ALL inside `deadlineAt`. Never throws. */
 export async function runDemandLedgerNight(args: {
   sb: SupabaseClient; locationIds: ReadonlyArray<string>; todayEt: string; parInputsByShop: ReadonlyMap<string, DemandInputs>; deadlineAt: number;
+  /** The tail kept for the heartbeat. Default DEMAND_LEDGER_HEARTBEAT_MS; a test shortens it. */
+  heartbeatMs?: number;
 }): Promise<Record<string, ShopLedgerResult | { status: "failed" }>> {
   const results: Record<string, ShopLedgerResult | { status: "failed" }> = {};
+  const shopsDeadlineAt = args.deadlineAt - (args.heartbeatMs ?? DEMAND_LEDGER_HEARTBEAT_MS);
   for (const locationId of args.locationIds) {
     try {
       results[locationId] = await runDemandLedgerForShop(
-        { locationId, todayEt: args.todayEt, parInputs: args.parInputsByShop.get(locationId) ?? null, deadlineAt: args.deadlineAt },
+        { locationId, todayEt: args.todayEt, parInputs: args.parInputsByShop.get(locationId) ?? null, deadlineAt: shopsDeadlineAt },
         ledgerDeps(args.sb, locationId, args.todayEt));
     } catch { results[locationId] = { status: "failed" }; }
     // Before 0342 nothing is installed for any shop: stop, and stay silent (no heartbeat for a pass that did not exist).
@@ -99,11 +109,16 @@ export async function runDemandLedgerNight(args: {
   }
   const statuses = Object.values(results).map((r) => r.status);
   if (statuses.length === 0) return results;
+  // The heartbeat is fail-open AND bounded: `audit` takes no signal, so it is raced against what is left of the deadline.
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await audit({
-      actorId: null, actorRole: null, action: statuses.every((s) => s === "ok") ? "cron.success" : "cron.failure", resourceTable: "cron", resourceId: null,
-      metadata: { job: "demand-ledger", decision_date: args.todayEt, shops: results }, ipAddress: null, userAgent: null,
-    });
-  } catch { /* the heartbeat is fail-open */ }
+    await Promise.race([
+      audit({
+        actorId: null, actorRole: null, action: statuses.every((s) => s === "ok") ? "cron.success" : "cron.failure", resourceTable: "cron", resourceId: null,
+        metadata: { job: "demand-ledger", decision_date: args.todayEt, shops: results }, ipAddress: null, userAgent: null,
+      }),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, Math.max(0, args.deadlineAt - Date.now())); }),
+    ]);
+  } catch { /* fail-open */ } finally { if (timer) clearTimeout(timer); }
   return results;
 }

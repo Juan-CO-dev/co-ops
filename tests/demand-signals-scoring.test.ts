@@ -123,6 +123,34 @@ describe("the pass rule", () => {
     expect(q(score({ candErr: 120, episodesEvery: 7 }), score(good)).failures).toContain("sign_mismatch");
     expect(q(score(good), score({ candErr: 80, episodesEvery: 7, weeks: 3 })).failures).toContain("bootstrap_lower_not_above_zero");
   });
+  it("a shop the baseline had PERFECT (WAPE 0) cannot be made worse: no undefined-gain bypass (review r1 #2)", () => {
+    // Ten weeks. Shop A improves from 10% to 1% WAPE; shop B goes from 0% to 1%.
+    const two = (lead = 3): PairedRow[] => {
+      const out: PairedRow[] = [];
+      for (let d = 0; d < 70; d += 1) {
+        const validDate = addDaysEt("2026-08-03", d), sign = d % 2 === 0 ? 1 : -1, actual = 1000;
+        const episodeId = d % 7 === 0 ? `e:${validDate}` : null;
+        out.push({ shopId: SHOP_A, target: "labor_day_cents", leadDays: lead, validDate, unitKey: "", baseline: actual + 100 * sign, candidate: actual + 10 * sign, actual, episodeId });
+        out.push({ shopId: SHOP_B, target: "labor_day_cents", leadDays: lead, validDate, unitKey: "", baseline: actual, candidate: actual + 10 * sign, actual, episodeId });
+      }
+      return out;
+    };
+    const result = scoreScope(two(), scope());
+    expect(result.byShop[SHOP_B]!.baseline.wape).toBe(0);
+    expect(result.byShop[SHOP_B]!.relGain).toBeNull();
+    const out = q(result, result);
+    expect(out.failures).toEqual(["shop_worse"]);
+    expect(out.pass).toBe(false);
+    expect(out.authorized).toBeNull();
+    // A perfect shop the candidate leaves perfect is not a failure.
+    const kept = scoreScope(two().map((r) => (r.shopId === SHOP_B ? { ...r, candidate: r.actual } : r)), scope());
+    expect(q(kept, kept).pass).toBe(true);
+    // A shop with no demand at all (sum A = 0, WAPE undefined) is judged on its absolute error, the WAPE's numerator.
+    const idle = (cand: number) => scoreScope(two().map((r) => (r.shopId === SHOP_B ? { ...r, actual: 0, baseline: 0, candidate: cand } : r)), scope());
+    expect(idle(0).byShop[SHOP_B]!.candidate.wape).toBeNull();
+    expect(q(idle(0), idle(0)).failures).not.toContain("shop_worse");
+    expect(q(idle(5), idle(5)).failures).toContain("shop_worse");
+  });
   it("bias is compared in ABSOLUTE value: a more negative bias is worse, not smaller", () => {
     const worse = score({ ...good, baseBias: 20, candBias: -100 });
     expect(worse.candidate.bias!).toBeLessThan(worse.baseline.bias!);

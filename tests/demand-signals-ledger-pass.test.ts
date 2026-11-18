@@ -1,10 +1,13 @@
 // Item 4 PR 1: the nightly ledger pass for one shop, with every read and write injected. No database.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { addDaysEt } from "@/lib/vendor-rhythm-shared";
 import { runDemandLedgerForShop, DEMAND_WRITERS, type LedgerDeps } from "@/lib/demand-signals/ledger-pass";
 import { NOT_COVERED_FINGERPRINT } from "@/lib/demand-signals/ledger-shared";
 import { replayVerdict, type Blob, type LaborInputs, type PrepInputs } from "@/lib/demand-signals/replay";
 import { buildParInputs, FIX_LOC } from "./helpers/par-engine-fixture";
+
+const auditMock = vi.hoisted(() => vi.fn(async (_input: unknown): Promise<void> => {}));
+vi.mock("@/lib/audit", () => ({ audit: (input: unknown) => auditMock(input) }));
 
 const TODAY = "2026-10-16";
 const parInputs = () => buildParInputs({ runDate: addDaysEt(TODAY, -1) });
@@ -109,5 +112,125 @@ describe("the ledger pass", () => {
     const h = harness({ now: () => (t += 100) });
     const res = await run(h, { deadlineAt: 250 });
     expect(res).toMatchObject({ status: "partial", labor: { skipped: "deadline" }, prep: { skipped: "deadline" }, targets: { labor_sales_day: "skipped" } });
+  });
+});
+
+// Review r1 #3: the deadline used to gate only whether a step STARTED. A request that never answered held the pass
+// (and the labor pull behind it in the nightly) for as long as it liked.
+describe("the ledger pass is cut off at its deadline", () => {
+  const never = <T>(): Promise<T> => new Promise<T>(() => {});
+  const real = { now: () => Date.now() };
+  const timed = async <T>(work: Promise<T>): Promise<{ value: T; ms: number }> => { const t0 = Date.now(); const value = await work; return { value, ms: Date.now() - t0 }; };
+  const BUDGET = 80, SLACK = 1_000;
+
+  it("every read and every write is handed the pass's abort signal", async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const h = harness();
+    const deps: LedgerDeps = {
+      rpc: (name, args, signal) => { signals.push(signal); return h.deps.rpc(name, args, signal); },
+      loadLabor: (signal) => { signals.push(signal); return h.deps.loadLabor(signal); },
+      loadLaborDay: (date, signal) => { signals.push(signal); return h.deps.loadLaborDay(date, signal); },
+      loadPrep: (signal) => { signals.push(signal); return h.deps.loadPrep(signal); },
+      now: h.deps.now,
+    };
+    await run({ ...h, deps });
+    expect(signals.length).toBeGreaterThan(10);
+    expect(signals.every((s) => s instanceof AbortSignal)).toBe(true);
+    expect(new Set(signals).size).toBe(1);
+  });
+  it.each(["demand_blobs_put", "demand_model_register", "demand_forecast_record", "demand_target_freeze"] as const)(
+    "a %s that never answers ends the pass at the deadline", async (stuck) => {
+      let seen: AbortSignal | undefined, n = 0;
+      const h = harness();
+      const deps: LedgerDeps = { ...h.deps, ...real,
+        // the first blob write is the readiness probe: let it through so a surface's own batch is the one that hangs
+        rpc: (name, args, signal) => { if (name === stuck && (name !== "demand_blobs_put" || (n += 1) > 1)) { seen = signal; return never(); } return h.deps.rpc(name, args, signal); } };
+      const { value, ms } = await timed(run({ ...h, deps }, { deadlineAt: Date.now() + BUDGET }));
+      expect(ms).toBeLessThan(BUDGET + SLACK);
+      expect(seen?.aborted).toBe(true);
+      expect(value.status).toBe("partial");
+      expect(JSON.stringify(value)).toContain("deadline");
+    });
+  it("a readiness probe that never answers ends the pass at the deadline", async () => {
+    const h = harness();
+    const { value, ms } = await timed(run({ ...h, deps: { ...h.deps, ...real, rpc: () => never() } }, { deadlineAt: Date.now() + BUDGET }));
+    expect(ms).toBeLessThan(BUDGET + SLACK);
+    expect(value).toMatchObject({ status: "partial", pars: { error: "deadline" }, labor: { error: "deadline" }, prep: { error: "deadline" } });
+  });
+  it.each(["loadLabor", "loadPrep", "loadLaborDay"] as const)("a %s read that never answers ends the pass at the deadline", async (stuck) => {
+    let seen: AbortSignal | undefined;
+    const h = harness();
+    const hang = (...a: unknown[]) => { seen = a[a.length - 1] as AbortSignal; return never<never>(); };
+    const { value, ms } = await timed(run({ ...h, deps: { ...h.deps, ...real, [stuck]: hang } }, { deadlineAt: Date.now() + BUDGET }));
+    expect(ms).toBeLessThan(BUDGET + SLACK);
+    expect(seen?.aborted).toBe(true);
+    expect(value.status).toBe("partial");
+    // nothing is started after the cut: no writer is called once the signal has fired
+    const after = h.calls.length;
+    await new Promise((r) => setTimeout(r, 30));
+    expect(h.calls.length).toBe(after);
+  });
+  it("a step cut by the deadline is named, and the steps after it are skipped, not started", async () => {
+    const h = harness();
+    const deps: LedgerDeps = { ...h.deps, ...real, loadLabor: () => never() };
+    const { value } = await timed(run({ ...h, deps }, { deadlineAt: Date.now() + BUDGET }));
+    expect(value).toMatchObject({ status: "partial", pars: { recorded: 7 }, labor: { error: "deadline" }, prep: { skipped: "deadline" },
+      targets: { par_product_day_oz: "skipped", labor_sales_day: "skipped" } });
+    expect(h.loads).toEqual([]);
+  });
+  it("a pass that finishes in time leaves no timer behind", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      await run({ ...h, deps: { ...h.deps, ...real } }, { deadlineAt: Date.now() + 40_000 });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+// The night: every shop and the heartbeat inside ONE deadline, on the real client wiring.
+describe("the ledger night never runs past its deadline", () => {
+  const BUDGET = 120, SLACK = 1_000;
+  /** A PostgREST-shaped builder that answers only when its abort signal fires (as fetch does). */
+  const stuckClient = (seen: AbortSignal[]) => {
+    const builder = (): Record<string, unknown> => {
+      let signal: AbortSignal | undefined;
+      const b: Record<string, unknown> = new Proxy({}, { get: (_t, prop) => {
+        if (prop === "abortSignal") return (s: AbortSignal) => { signal = s; seen.push(s); return b; };
+        if (prop === "then") return (ok: (v: unknown) => unknown) => new Promise((resolve) => {
+          const done = () => resolve({ data: null, error: { code: "20", message: "AbortError" } });
+          if (signal?.aborted) done(); else signal?.addEventListener("abort", done, { once: true });
+        }).then(ok);
+        return () => b;
+      } });
+      return b;
+    };
+    return { rpc: () => builder(), from: () => builder() };
+  };
+  it("a database that never answers costs the nightly the ledger's budget and no more, heartbeat included", async () => {
+    const seen: AbortSignal[] = [];
+    auditMock.mockImplementation(() => new Promise<void>(() => {}));
+    const { runDemandLedgerNight } = await import("@/lib/demand-signals/ledger");
+    const t0 = Date.now();
+    const out = await runDemandLedgerNight({ sb: stuckClient(seen) as never, locationIds: [FIX_LOC, "shop-2"], todayEt: TODAY,
+      parInputsByShop: new Map([[FIX_LOC, parInputs()]]), deadlineAt: t0 + BUDGET, heartbeatMs: 40 });
+    expect(Date.now() - t0).toBeLessThan(BUDGET + SLACK);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((s) => s.aborted)).toBe(true);
+    expect(out[FIX_LOC]).toMatchObject({ status: "partial" });
+    expect(out["shop-2"]).toMatchObject({ status: "partial", pars: { skipped: "deadline" } });
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    // with the default tail, a deadline shorter than the tail starts nothing at all and still returns on time
+    seen.length = 0;
+    const t1 = Date.now();
+    const late = await runDemandLedgerNight({ sb: stuckClient(seen) as never, locationIds: [FIX_LOC], todayEt: TODAY, parInputsByShop: new Map(), deadlineAt: t1 + BUDGET });
+    expect(Date.now() - t1).toBeLessThan(BUDGET + SLACK);
+    expect(seen).toEqual([]);
+    expect(late[FIX_LOC]).toMatchObject({ status: "partial", pars: { skipped: "deadline" } });
+  });
+  it("the shops stop early enough to leave the heartbeat its share of the same deadline", async () => {
+    const { DEMAND_LEDGER_BUDGET_MS, DEMAND_LEDGER_HEARTBEAT_MS } = await import("@/lib/demand-signals/ledger");
+    expect(DEMAND_LEDGER_HEARTBEAT_MS).toBeGreaterThan(0);
+    expect(DEMAND_LEDGER_HEARTBEAT_MS).toBeLessThan(DEMAND_LEDGER_BUDGET_MS / 4);
   });
 });

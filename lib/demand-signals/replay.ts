@@ -275,25 +275,53 @@ export function parCoverageOz(unit: ParCoverageUnit, signalsFor: (validDate: str
   return unit.peakFloorOz != null && unit.peakFloorOz > withCushion ? unit.peakFloorOz : withCushion;
 }
 
-export interface ParTarget { v: 1; target: "par_product_day_oz"; locationId: string; validDate: string; oz: Record<string, number> }
+/**
+ * One realized day of par demand.
+ *   skuOz  THE RECORD: every SKU the day's lanes name, with its ounces (direct + production, never flattened).
+ *          It is read from the lanes alone, so it does not depend on which SKUs carry a par on the night the
+ *          target is frozen. The lanes are already rolled to product grain: each member of a product carries the
+ *          product's total, so any member a forecast names answers for its product.
+ *   oz     the same ounces by product (grain key), for the products the freeze night's par'd SKUs name. A
+ *          convenience for totals; NEVER the source of a scored actual (review r1 #1).
+ */
+export interface ParTarget { v: 1; target: "par_product_day_oz"; locationId: string; validDate: string; oz: Record<string, number>; skuOz: Record<string, number> }
 
 /**
- * The realized ounces of one day, per product, as the engine's own loader reads them (direct + production,
- * never flattened). null = the date is outside these inputs' window. A day neither oracle saw is
- * `not_covered`: excluded and counted, never zero. On a covered day a product that is absent did not move:
- * that is a true zero, and the scorer reads it as one.
+ * The realized ounces of one day, as the engine's own loader reads them (direct + production, never flattened).
+ * null = the date is outside these inputs' window. A day neither oracle saw is `not_covered`: excluded and
+ * counted, never zero. On a covered day a SKU the lanes do not name did not move: that is a true zero.
+ *
+ * A target is frozen at D+4 from a LATER night than the forecasts it judges. A SKU deactivated in between has
+ * left that night's par'd universe (`inputs.skus`) but not its lanes, so the record is taken from the lanes.
  */
 export function parTargetFromInputs(inputs: DemandInputs, validDate: string): { coverage: "covered" | "not_covered"; payload: ParTarget | null } | null {
   const day = inputs.window.find((d) => d.dateEt === validDate);
   if (!day) return null;
   if (!day.salesObserved && !day.productionObserved) return { coverage: "not_covered", payload: null };
+  const direct = inputs.directOzByDate.get(validDate), production = inputs.productionOzByDate.get(validDate);
+  const used = (skuId: string): number => round6((direct?.get(skuId) ?? 0) + (production?.get(skuId) ?? 0));
+  const skuOz: Record<string, number> = {};
+  for (const skuId of [...new Set([...(direct?.keys() ?? []), ...(production?.keys() ?? [])])].sort()) {
+    const v = used(skuId);
+    if (v > 0) skuOz[skuId] = v;
+  }
   const oz: Record<string, number> = {};
   for (const s of inputs.skus) {
     if (oz[s.grainKey] !== undefined) continue;
-    const v = round6((inputs.directOzByDate.get(validDate)?.get(s.skuId) ?? 0) + (inputs.productionOzByDate.get(validDate)?.get(s.skuId) ?? 0));
+    const v = used(s.skuId);
     if (v > 0) oz[s.grainKey] = v;
   }
-  return { coverage: "covered", payload: { v: 1, target: "par_product_day_oz", locationId: inputs.locationId, validDate, oz } };
+  return { coverage: "covered", payload: { v: 1, target: "par_product_day_oz", locationId: inputs.locationId, validDate, oz, skuOz } };
+}
+
+/**
+ * What a product used on a frozen day, for a forecast that names it: THE one reader of a scored par actual.
+ * The identity is the FORECAST night's (the SKU that spoke for the product then), never the freeze night's
+ * universe. A covered day on which that SKU is not in the record is a true zero. The product-keyed fallback
+ * answers only for a SKU that has since left its product while the product kept moving.
+ */
+export function parActualOz(t: ParTarget, unit: { grainKey: string; skuId: string }): number {
+  return t.skuOz[unit.skuId] ?? t.oz[unit.grainKey] ?? 0;
 }
 
 /** Both arms of the product-day ounce score, for every lead whose target is frozen. */
@@ -308,7 +336,7 @@ export function parScoreRows(shopId: string, f: ParForecast, targets: TargetLook
     const episodeId = composeSignals(signals, 1) !== 1 ? candidate.episodeFor(validDate) : null;
     for (const unitKey of Object.keys(base)) {
       out.push({ shopId, target: "par_product_day_oz", leadDays, validDate, unitKey, baseline: base[unitKey]!, candidate: cand[unitKey] ?? null,
-        actual: t === "not_covered" ? null : t.oz[unitKey] ?? 0, episodeId });
+        actual: t === "not_covered" ? null : parActualOz(t, { grainKey: unitKey, skuId: f.terms[unitKey]!.skuId }), episodeId });
     }
   }
   return out;

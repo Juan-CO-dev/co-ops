@@ -19,7 +19,7 @@ import { HOLIDAY_MODEL, TREND_MODEL, holidayOn, holidaySignal, trendSignal, type
 import type { EvidenceClass } from "./evidence-shared";
 import { candidateModel, TARGET_FREEZE_LAG_DAYS } from "./ledger-shared";
 import {
-  NO_SIGNAL, forecastLabor, forecastPars, forecastPrep, laborScoreRows, leadDaysOf, parCoverageOz, parDailyForecast, parScoreRows, prepScoreRows,
+  NO_SIGNAL, forecastLabor, forecastPars, forecastPrep, laborScoreRows, leadDaysOf, parActualOz, parCoverageOz, parDailyForecast, parScoreRows, prepScoreRows,
   type CandidateSpec, type ClassCall, type LaborInputs, type LaborTarget, type ParForecast, type ParTarget, type PrepInputs, type PrepTarget,
   type ReplaySurface, type TargetLookup,
 } from "./replay";
@@ -216,7 +216,7 @@ export function runBacktest(shops: ReadonlyArray<ShopHistory>, range: { from: st
           for (const d of unit.coveredDays) {
             const t = s.parTargets(d);
             if (t === undefined || t === "not_covered") { actual = null; break; }
-            actual += t.oz[unit.grainKey] ?? 0;
+            actual += parActualOz(t, unit);
           }
           if (actual === null) { line.skippedUnits += 1; continue; }
           const signals = arm === "baseline" ? undefined : signalByCandidate.get(arm);

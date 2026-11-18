@@ -252,6 +252,19 @@ export interface Qualification { pass: boolean; failures: QualificationFailure[]
 const sameScope = (a: ScoreScope, b: ScoreScope): boolean => a.target === b.target && a.leadDays === b.leadDays;
 const EPS = 1e-12;
 
+/**
+ * "No shop more than 1% worse", decided WITHOUT the relative gain (review r1 #2): a shop the baseline had perfect
+ * (WAPE 0) has no relative gain, and an undefined gain used to walk past this gate. Both arms of a shop are scored
+ * over the same rows, so they share sum A and
+ *     candidate WAPE > baseline WAPE x 1.01   is exactly   candidate sum|F-A| > baseline sum|F-A| x 1.01.
+ * The right-hand form is defined for every shop: a zero baseline allows no added error at all, and a shop with
+ * no demand in the window (sum A = 0, WAPE undefined) is judged on its absolute error.
+ */
+function shopWorse(s: ShopScore): boolean {
+  const allowed = s.baseline.sumAbsErr * (1 + PASS_RULE.shopMaxRelLoss);
+  return s.candidate.sumAbsErr > allowed + EPS * Math.max(1, allowed);
+}
+
 /** THE PASS RULE for one scope. Every failed gate is named; a pass names what it authorizes. */
 export function qualify(input: QualificationInput): Qualification {
   if (!sameScope(input.dev.scope, input.scope) || (input.holdout !== null && !sameScope(input.holdout.scope, input.scope))) throw new Error("mixed_scope");
@@ -267,7 +280,7 @@ export function qualify(input: QualificationInput): Qualification {
       if (!(input.dev.relGain !== null && input.dev.relGain > 0 && h.relGain > 0)) failures.push("sign_mismatch");
     }
     if (!(h.bootstrapLower !== null && h.bootstrapLower > 0)) failures.push("bootstrap_lower_not_above_zero");
-    if (Object.values(h.byShop).some((s) => s.relGain !== null && s.relGain < -PASS_RULE.shopMaxRelLoss - EPS)) failures.push("shop_worse");
+    if (Object.values(h.byShop).some(shopWorse)) failures.push("shop_worse");
     if (h.episodes < PASS_RULE.minEpisodes) failures.push("episodes_below_min");
   }
   const pass = failures.length === 0;

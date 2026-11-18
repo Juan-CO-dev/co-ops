@@ -147,7 +147,7 @@ describe("pars: the forecast, and the candidate arm that differs only by the sig
       if (t === null) return undefined;
       if (t.coverage !== "covered") return "not_covered" as const;
       // one covered day on which nothing moved: every forecast product is a TRUE ZERO that day
-      return validDate === addDaysEt(f.decisionDate, 2) ? { ...t.payload!, oz: {} } : t.payload!;
+      return validDate === addDaysEt(f.decisionDate, 2) ? { ...t.payload!, oz: {}, skuOz: {} } : t.payload!;
     };
     const rows = parScoreRows("shop", f, targets, NO_SIGNAL);
     expect(new Set(rows.map((r) => r.leadDays))).toEqual(new Set(PAR_LEADS));
@@ -161,6 +161,36 @@ describe("pars: the forecast, and the candidate arm that differs only by the sig
     const moved = parScoreRows("shop", f, targets, cand);
     expect(moved.every((r) => r.episodeId !== null)).toBe(true);
     expect(moved.some((r) => r.candidate !== null && r.baseline !== null && r.candidate > r.baseline)).toBe(true);
+  });
+  it("a SKU deactivated between the forecast and D+4 keeps its usage in the target (review r1 #1)", () => {
+    // The freeze reads a LATER night. Its par'd universe has lost a SKU the forecast spoke for; the lanes still hold what it used.
+    const later = buildParInputs({ runDate: addDaysEt(inputs.runDateEt, 7), seed: 5 });
+    const lookup = (night: typeof later) => (validDate: string) => {
+      const t = parTargetFromInputs(night, validDate);
+      return t === null ? undefined : t.coverage === "covered" ? t.payload! : "not_covered" as const;
+    };
+    const full = parScoreRows("shop", f, lookup(later), NO_SIGNAL);
+    let moved = 0;
+    for (const grainKey of Object.keys(f.terms)) {
+      const gone = f.terms[grainKey]!.skuId;
+      const deactivated = { ...later, skus: later.skus.filter((s) => s.grainKey !== grainKey) };
+      expect(deactivated.skus.some((s) => s.skuId === gone)).toBe(false);
+      const want = full.filter((r) => r.unitKey === grainKey);
+      const got = parScoreRows("shop", f, lookup(deactivated), NO_SIGNAL).filter((r) => r.unitKey === grainKey);
+      expect(got.map((r) => r.actual)).toEqual(want.map((r) => r.actual));
+      for (const r of got) {
+        if (r.actual === null) continue;
+        const used = (later.directOzByDate.get(r.validDate)?.get(gone) ?? 0) + (later.productionOzByDate.get(r.validDate)?.get(gone) ?? 0);
+        expect(r.actual).toBeCloseTo(used, 6);
+        if (used > 0) moved += 1;
+      }
+    }
+    expect(moved).toBeGreaterThan(20);
+    // The frozen payload itself does not depend on tonight's par'd universe for what a SKU used.
+    const day = addDaysEt(f.decisionDate, 1);
+    const none = parTargetFromInputs({ ...later, skus: [] }, day)!;
+    expect(none.payload!.skuOz).toEqual(parTargetFromInputs(later, day)!.payload!.skuOz);
+    expect(Object.keys(none.payload!.skuOz).length).toBeGreaterThan(10);
   });
 });
 
