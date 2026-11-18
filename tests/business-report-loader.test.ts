@@ -31,7 +31,11 @@ type FakeOpts = {
   /** Fix round 3: a rebuild COMMITS the moment the first fact_labor_cost read is answered; coverage reads
    *  answer a macrotask later and see these rows from then on (the cost reads already saw the old generation). */
   weeksAfterRebuild?: Array<{ week_start: string; ot_scope: string; builder_version: string; built_at?: string; source_fingerprint?: string }>;
+  /** Board two views PR 1: what fact_labor_week_fingerprint answers for a week (default: the stored row's own
+   *  fingerprint = nothing moved). "error" = the RPC fails; null = it answers nothing. */
+  currentFingerprint?: (week: string) => string | null | "error" | undefined;
 };
+const FP = "f".repeat(32);
 function fakeClient(o: FakeOpts = {}) {
   const calls: Call[] = [];
   const tables: string[] = [];
@@ -64,11 +68,21 @@ function fakeClient(o: FakeOpts = {}) {
       return b;
     },
   };
+  const coverageRows = () => ((rebuilt && o.weeksAfterRebuild ? o.weeksAfterRebuild : null) ?? o.weeks
+    ?? [{ week_start: "2026-09-27", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }, { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }])
+    .map((r) => ({ source_fingerprint: FP, ...r }));
   function produce(fn: string, args: Record<string, unknown>): { data: unknown; error: unknown } {
     {
       const from = String(args.p_from), to = String(args.p_to);
       let data: unknown = null;
       if (o.rpcRows?.[fn]) return { data: o.rpcRows[fn]!(args), error: null };
+      if (fn === "fact_labor_week_fingerprint") {
+        const week = String(args.p_week_start);
+        const said = o.currentFingerprint?.(week);
+        if (said === "error") return { data: null, error: { code: "57014", message: "x" } };
+        if (said !== undefined) return { data: said, error: null };
+        return { data: coverageRows().find((r) => r.week_start === week)?.source_fingerprint ?? FP, error: null };
+      }
       if (fn === "sales_report_daily") {
         const raws = dates(from, to).map(day);
         data = { classes: raws.flatMap((r) => r.classes), tips: [], discounts: [], refunds: [], captured_days: dates(from, to), ezcater: raws.flatMap((r) => r.ezcater) };
@@ -97,8 +111,7 @@ function fakeClient(o: FakeOpts = {}) {
   Object.assign(client, {
     from: (table: string) => {
       tables.push(table);
-      const coverage = () => (rebuilt && o.weeksAfterRebuild ? o.weeksAfterRebuild : null);
-      const rowsNow = () => table === "labor_week_coverage" ? (coverage() ?? o.weeks ?? [{ week_start: "2026-09-27", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }, { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }])
+      const rowsNow = () => table === "labor_week_coverage" ? coverageRows()
         : table === "fact_day_coverage" ? (o.facts ?? dates("2026-08-01", "2026-10-07")).map((d) => ({ business_date: d, state: "covered" }))
         : table === "schedule_structures" ? [] : [];
       const q: Record<string, unknown> = {};
@@ -222,6 +235,30 @@ describe("the report a GM and a MoO get", () => {
     const dto = await loadBusinessReport(moo, { locationId: A, range }, { client: f.client, env: ON });
     expect(dto.days.find((d) => d.date === "2026-10-03")!.labor).toMatchObject({ state: "rebuilding", pct: null });
   });
+  it("board PR 1 (Astra r3 P1-2): a week whose SOURCE moved with no rebuild (a payroll-shop save) is 'rebuilding': its money is withheld here too", async () => {
+    const f = fakeClient({ currentFingerprint: (w) => (w === "2026-09-27" ? "9".repeat(32) : undefined) });
+    const dto = await loadBusinessReport(moo, { locationId: A, range }, { client: f.client, env: ON });
+    expect(dto.days.find((d) => d.date === "2026-10-03")!.labor).toMatchObject({ state: "rebuilding", pct: null, pureHourlyCents: null, minutes: 30 });
+    expect(dto.days.find((d) => d.date === "2026-10-04")!.labor.state).toBe("ok");
+    expect(dto.total.labor).toMatchObject({ pct: null, state: "rebuilding" });
+    expect(dto.people[0]).toMatchObject({ weeksSuppressed: 1, straightCostCents: null });
+  });
+  it("board PR 1: the fingerprint is read once per STORED payroll week, with the current builder, after the labor reads; nothing moved = ready", async () => {
+    const f = fakeClient();
+    const dto = await loadBusinessReport(moo, { locationId: A, range }, { client: f.client, env: ON });
+    const fp = f.calls.filter((c) => c.fn === "fact_labor_week_fingerprint");
+    expect(fp.map((c) => c.args)).toEqual([{ p_week_start: "2026-09-27", p_builder_version: LABOR_BUILDER_VERSION }, { p_week_start: "2026-10-04", p_builder_version: LABOR_BUILDER_VERSION }]);
+    expect(f.calls.findIndex((c) => c.fn === "fact_labor_week_fingerprint")).toBeGreaterThan(f.calls.map((c) => c.fn).lastIndexOf("fact_labor_cost"));
+    expect(dto.days.every((d) => d.labor.state === "ok")).toBe(true);
+  });
+  it("board PR 1: a fingerprint read that errors or answers nothing fails CLOSED ('rebuilding'), never a 503 and never ready", async () => {
+    for (const said of ["error", null] as const) {
+      const f = fakeClient({ currentFingerprint: () => said });
+      const dto = await loadBusinessReport(moo, { locationId: A, range }, { client: f.client, env: ON });
+      expect(dto.days.every((d) => d.labor.state === "rebuilding" && d.labor.pct === null)).toBe(true);
+      expect(dto.days[0]!.sales.totalCents).toBeGreaterThan(0);
+    }
+  });
   it("a rebuilding week's labor-only quarter (no sales) is still listed with its minutes", async () => {
     const f = fakeClient({
       weeks: [{ week_start: "2026-09-27", ot_scope: "company", builder_version: "labor-v1" }, { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }],
@@ -246,7 +283,7 @@ describe("the report a GM and a MoO get", () => {
     const dto = await loadBusinessReport(moo, { locationId: A, range: wide }, { client: f.client, env: ON });
     const windows = f.calls.filter((c) => c.fn === "sales_report_daily");
     expect(windows).toHaveLength(3);
-    for (const w of f.calls.filter((c) => c.fn !== "fact_labor_cost")) {
+    for (const w of f.calls.filter((c) => c.fn !== "fact_labor_cost" && c.fn !== "fact_labor_week_fingerprint")) {
       expect(Date.parse(String(w.args.p_to)) - Date.parse(String(w.args.p_from))).toBeLessThanOrEqual(30 * 86_400_000);
     }
     expect(dto.quarters).toBeNull();

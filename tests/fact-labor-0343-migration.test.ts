@@ -76,8 +76,8 @@ describe("an empty plan is 0340", () => {
     for (const [i, [loc, from, to, fb]] of IDENTITY.entries()) {
       for (const plan of [null, {}]) {
         const rows = await planned(loc, from, to, plan, fb);
-        expect(rows.map(({ days_planned: _d, salary_projected: _s, ...rest }) => rest)).toEqual(before[i]);
-        expect(rows.every((r) => r.days_planned === 0 && r.salary_projected === false)).toBe(true);
+        expect(rows.map(({ days_planned: _d, salary_projected: _s, ot_planned: _o, ...rest }) => rest)).toEqual(before[i]);
+        expect(rows.every((r) => r.days_planned === 0 && r.salary_projected === false && r.ot_planned === false)).toBe(true);
       }
     }
   });
@@ -121,6 +121,22 @@ describe("planned rows replace, never union (Astra r3 P1-1)", () => {
       ot: [{ person_key: u(ALICE), business_date: "2026-10-08", ot_minutes: 120 }, { person_key: u(ALICE), business_date: "2026-10-09", ot_minutes: 480 }] };
     expect(num((await planned(A, "2026-10-08", "2026-10-08", more))[0]!, "ot_minutes", "ot_premium_cents")).toEqual({ ot_minutes: 120, ot_premium_cents: 2000 });
     expect(num((await planned(A, W, "2026-10-10", more))[0]!, "ot_minutes", "ot_premium_cents")).toEqual({ ot_minutes: 600, ot_premium_cents: 10000 });
+  });
+  it("the days BEFORE a week's first masked date keep their STORED overtime and are not flagged; from that date on the row is ot_planned", async () => {
+    // Thursday is replaced by a 14 h plan: Mon-Wed 30 h stored, Thu 14 h planned (4 h over), Fri 8 h retained (all over).
+    const plan = { mask: ["2026-10-08"], rows: [hourly(ALICE, "2026-10-08", 840)],
+      ot: [{ person_key: u(ALICE), business_date: "2026-10-08", ot_minutes: 240 }, { person_key: u(ALICE), business_date: "2026-10-09", ot_minutes: 480 }] };
+    const early = (await planned(A, "2026-10-05", "2026-10-07", plan))[0]!;
+    expect(early).toMatchObject({ ot_planned: false, days_planned: 0, days_covered: 3 });
+    expect(early).toEqual({ ...(await planned(A, "2026-10-05", "2026-10-07", null))[0]!, ot_planned: false });
+    expect((await planned(A, "2026-10-08", "2026-10-08", plan))[0]).toMatchObject({ ot_planned: true, days_planned: 1 });
+    const fri = (await planned(A, "2026-10-09", "2026-10-09", plan))[0]!;
+    expect(fri).toMatchObject({ ot_planned: true, days_planned: 0, days_covered: 1 });
+    expect(Number(fri.ot_minutes)).toBe(480);
+    // `only` = the days before the mask, asked over the whole week: still the stored overtime, not flagged.
+    expect((await planned(A, W, "2026-10-10", { ...plan, only: ["2026-10-05", "2026-10-06"] }))[0]).toMatchObject({ ot_planned: false });
+    // An overtime entry dated before the week's first masked date is refused (nothing planned reaches back).
+    await refuses(planned(A, W, "2026-10-10", { ...plan, ot: [{ person_key: u(ALICE), business_date: "2026-10-07", ot_minutes: 10 }] }), "fact_invalid_request");
   });
   it("the premium uses the week's BLENDED rate over the selected population (an unsettled Sunday at another rate)", async () => {
     // Sunday 8 h at $30 from the plan + the 48 recorded hours at $20: 56 h, 16 h of overtime at (8x30 + 48x20) / 56.

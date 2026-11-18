@@ -192,6 +192,24 @@ export function sumNetSales(days: readonly DaySales[]): Denominator {
   return cents > 0 ? { cents, state: "ok" } : { cents: null, state: "zero_sales" };
 }
 
+/**
+ * Board two views PR 1 (CC's ruling on Astra r4 P2): the denominator of a PROJECTED day. Actual days keep
+ * `laborNetSales` / `sumNetSales` above (covered Sales net + ezCater). A day that has not happened has no net
+ * sales, so its labor % divides by the SCHEDULING FORECAST of that day (`DayForecast.dayCents`: the trailing
+ * same-weekday average of Toast check sales, the number the heads budget is cut from; booked catering is named
+ * beside it and never summed in). It is its own type with `basis: "forecast"`: it is never a `Denominator`,
+ * never marked covered, and never added to actual net sales. A day with no forecast = no % (never a partial sum).
+ */
+export type ProjectedDenominatorState = "ok" | "forecast_missing" | "zero_sales";
+export interface ProjectedDenominator { cents: number | null; state: ProjectedDenominatorState; basis: "forecast" }
+export function projectedNetSales(forecastCents: readonly (number | null | undefined)[]): ProjectedDenominator {
+  if (forecastCents.length === 0 || forecastCents.some((c) => c === null || c === undefined || !Number.isFinite(c))) {
+    return { cents: null, state: "forecast_missing", basis: "forecast" };
+  }
+  const cents = forecastCents.reduce<number>((s, c) => s + (c as number), 0);
+  return cents > 0 ? { cents, state: "ok", basis: "forecast" } : { cents: null, state: "zero_sales", basis: "forecast" };
+}
+
 // ── P2: the overtime gate ───────────────────────────────────────────────────────────────────────
 
 export type LaborWeekState = "ready" | "rebuilding" | "unbuilt";
@@ -227,6 +245,27 @@ export function stableWeekCoverage(before: readonly LaborWeekGenerationRow[], af
     out.set(w, x && y && generationKey(x) === generationKey(y)
       ? { ot_scope: y.ot_scope, builder_version: y.builder_version }
       : { ot_scope: "moved_during_read", builder_version: "moved_during_read" });
+  }
+  return out;
+}
+/**
+ * Board two views PR 1 (CC's ruling on Astra r3 P1-2): THE read gate of a stored labor week, shared by the
+ * business report and the schedule board. `laborWeekState` checks the scope and the builder; `stableWeekCoverage`
+ * checks that the generation did not move while its rows were read; NEITHER says the stored rows still describe
+ * the CURRENT source (a payroll-shop save, a late punch or a link change that the hourly builder has not picked
+ * up yet). So `current` is `fact_labor_week_fingerprint(week, LABOR_BUILDER_VERSION)`, read after the second
+ * coverage read, and a week is ready only when all three hold. A fingerprint that errored, did not answer, or
+ * differs from the stored one is `rebuilding` (sentinel `stale_source`): fail closed. The fingerprint carries
+ * the built-through day, so the current week reads rebuilding from ET midnight until the next builder pass.
+ */
+export function currentWeekCoverage(before: readonly LaborWeekGenerationRow[], after: readonly LaborWeekGenerationRow[],
+  current: ReadonlyMap<string, string | null | undefined>): Map<string, LaborWeekCoverageRow> {
+  const out = stableWeekCoverage(before, after);
+  const stored = new Map(after.map((r) => [String(r.week_start).slice(0, 10), r.source_fingerprint ?? null]));
+  for (const [w, row] of out) {
+    if (row.ot_scope === "moved_during_read") continue;
+    const now = current.get(w) ?? null;
+    if (now === null || stored.get(w) !== now) out.set(w, { ot_scope: "stale_source", builder_version: "stale_source" });
   }
   return out;
 }

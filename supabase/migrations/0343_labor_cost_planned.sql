@@ -19,9 +19,11 @@
 --             fallback / incomplete / missing / open punches) and are counted in the new days_planned.
 --   rows      planned minutes: {person_key, business_date (in the mask), minutes, pay_class, rate_cents,
 --             rate_basis, carry_back_rate_cents}: labor_quarter's own rate fields, priced by the same CASE.
---   ot        overtime minutes per (person_key, business_date) for EVERY day of a payroll week that has a masked
---             date, retained fact days included. For those weeks at this shop the stored ot_minutes are ignored
---             and this list is used (the 40 h counter is chronological: replacing Wednesday moves Thursday).
+--   ot        overtime minutes per (person_key, business_date) for every day FROM THE FIRST MASKED DATE of a
+--             payroll week to its end, retained fact days included. From that date on, this shop's stored
+--             ot_minutes are ignored and this list is used (the 40 h counter is chronological: replacing
+--             Wednesday moves Thursday); the days BEFORE the week's first masked date keep their stored overtime
+--             (nothing planned can reach back), so they stay the facts, byte for byte.
 --             The caller counts it with the builder's own counter (lib/facts/labor-week-shared.ts createOtCounter).
 --   salaried  {week_start, salaried_cents, salaried_people, unplaced_people, missing_wage_people} for this shop,
 --             used ONLY for a week with no stored labor_week_salaried row (precedence: the shop's estimate, the
@@ -29,12 +31,13 @@
 --             coalesced into the same columns, so the share rounding and the three gap counts are 0340's.
 --   only      the dates of [p_from, p_to] to price (a non-contiguous set: the board's "actual so far" and
 --             "projected rest" are never blended). Absent = every date of the range. A week with none returns no row.
--- New OUT columns (planned function only): days_planned, salary_projected.
+-- New OUT columns (planned function only): days_planned, salary_projected, and ot_planned = the row's days reach
+-- the week's first masked date, so its overtime is (in part) the plan's count.
 -- ot_state is still the STORED week's (a future week reads 'unbuilt'): what a projection may show is decided by
 -- the shared pricer's projected readiness, never here.
 -- Refused fact_invalid_request: a plan with p_location_id null, or while fact_labor_ot_scope() is not per_shop; a
 -- malformed plan; a row outside the mask; a mask date outside the request's payroll weeks; an overtime entry
--- above that person-day's hourly minutes, for a week with no masked date, or twice; a salaried row that is not a
+-- above that person-day's hourly minutes, before its week's first masked date, or twice; a salaried row that is not a
 -- Sunday of the request, twice, or whose cents contradict its gap counts; `only` empty or outside the range.
 --
 -- NOT IN THIS FILE (plan r4 "Migration" step 2): the burden "follow the company" row. It changes
@@ -65,12 +68,12 @@ returns table(week_start date, location_id uuid, hourly_straight_cents bigint, o
   salaried_minutes bigint, ot_state text, range_days integer, days_covered integer, days_pending integer, days_fallback integer,
   days_incomplete integer, days_missing integer, open_punches integer,
   salaried_people integer, salary_unplaced_people integer, salary_missing_wage_people integer,
-  days_planned integer, salary_projected boolean)
+  days_planned integer, salary_projected boolean, ot_planned boolean)
 language plpgsql stable security definer set search_path = pg_catalog, public as $$
 declare
   v_floor date;
   v_plan jsonb := coalesce(p_plan, '{}'::jsonb);
-  v_mask date[] := '{}'::date[]; v_plan_weeks date[] := '{}'::date[]; v_only date[];
+  v_mask date[] := '{}'::date[]; v_plan_weeks date[] := '{}'::date[]; v_first date[] := '{}'::date[]; v_only date[];
   v_rows jsonb := '[]'::jsonb; v_ot jsonb := '[]'::jsonb; v_sal jsonb := '[]'::jsonb;
   v_w0 date; v_w1 date;
 begin
@@ -89,7 +92,9 @@ begin
       or exists (select 1 from jsonb_each(v_plan) e where e.key not in ('mask', 'rows', 'ot', 'salaried', 'only') or jsonb_typeof(e.value) <> 'array') then
       raise exception 'fact_invalid_request'; end if;
     v_mask := array(select distinct (e #>> '{}')::date d from jsonb_array_elements(coalesce(v_plan -> 'mask', '[]'::jsonb)) e order by d);
+    -- The payroll weeks that hold a masked date, and (same index) each one's FIRST masked date.
     v_plan_weeks := array(select distinct m - extract(dow from m)::integer w from unnest(v_mask) m order by w);
+    v_first := array(select min(m) from unnest(v_mask) m group by m - extract(dow from m)::integer order by m - extract(dow from m)::integer);
     v_rows := coalesce(v_plan -> 'rows', '[]'::jsonb);
     v_ot := coalesce(v_plan -> 'ot', '[]'::jsonb);
     v_sal := coalesce(v_plan -> 'salaried', '[]'::jsonb);
@@ -115,11 +120,12 @@ begin
          or (r.pay_class = 'hourly' and ((r.rate_cents is not null) <> (r.rate_basis in ('known', 'undated'))
               or (r.carry_back_rate_cents is not null) <> (r.rate_basis = 'before_first_known')))) then
       raise exception 'fact_invalid_request'; end if;
-    -- Overtime: only for a payroll week with a masked date, once per person-day, never above that day's hourly
-    -- minutes in the SELECTED population (the plan on a masked date, the facts on a retained one).
+    -- Overtime: only from its payroll week's first masked date on, once per person-day, never above that day's
+    -- hourly minutes in the SELECTED population (the plan on a masked date, the facts on a retained one).
     if exists (select 1 from jsonb_to_recordset(v_ot) o(person_key text, business_date date, ot_minutes integer)
       where o.person_key is null or o.business_date is null or o.ot_minutes is null or o.ot_minutes < 0
          or (o.business_date - extract(dow from o.business_date)::integer) <> all(v_plan_weeks)
+         or o.business_date < v_first[array_position(v_plan_weeks, o.business_date - extract(dow from o.business_date)::integer)]
          or o.ot_minutes > case when o.business_date = any(v_mask)
               then coalesce((select sum(r.minutes) from jsonb_to_recordset(v_rows) r(person_key text, business_date date, minutes integer, pay_class text)
                               where r.person_key = o.person_key and r.business_date = o.business_date and r.pay_class = 'hourly'), 0)
@@ -147,9 +153,10 @@ begin
      where l.id = p_location_id
         or (p_location_id is null and exists (select 1 from public.labor_day_coverage c where c.location_id = l.id and c.week_start in (select weeks.w from weeks)))
   ), priced as (
-    -- The facts, minus this shop's masked dates; in a week with a masked date this shop's stored overtime is ignored.
+    -- The facts, minus this shop's masked dates; from a week's first masked date on, this shop's stored overtime
+    -- is ignored (no plan week: the array lookup is NULL and the stored overtime stands).
     select q.week_start ws, q.location_id loc, q.person_key pk, q.business_date bd, q.minutes::integer m,
-      case when q.location_id = p_location_id and q.week_start = any(v_plan_weeks) then 0 else q.ot_minutes::integer end ot, q.pay_class pc,
+      case when q.location_id = p_location_id and q.business_date >= v_first[array_position(v_plan_weeks, q.week_start)] then 0 else q.ot_minutes::integer end ot, q.pay_class pc,
       case when q.pay_class = 'salaried' then null
            when q.rate_basis in ('known', 'undated') then q.rate_cents
            when q.rate_basis = 'before_first_known' and p_wage_fallback = 'first_known' then q.carry_back_rate_cents
@@ -196,7 +203,10 @@ begin
   ), grid as (
     select weeks.w, shops.loc,
       case when v_only is null then (least(weeks.w + 6, p_to) - greatest(weeks.w, p_from) + 1)
-           else (select count(*)::integer from unnest(v_only) o where o between greatest(weeks.w, p_from) and least(weeks.w + 6, p_to)) end rd
+           else (select count(*)::integer from unnest(v_only) o where o between greatest(weeks.w, p_from) and least(weeks.w + 6, p_to)) end rd,
+      -- the last day this row prices (a masked date after it cannot reach its overtime)
+      case when v_only is null then least(weeks.w + 6, p_to)
+           else (select max(o) from unnest(v_only) o where o between greatest(weeks.w, p_from) and least(weeks.w + 6, p_to)) end last_day
     from weeks, shops
   )
   select g.w, g.loc, coalesce(a.straight, 0), coalesce(a.prem, 0),
@@ -209,7 +219,8 @@ begin
     coalesce(wc.ot_state, 'unbuilt'), g.rd,
     dc.covered, dc.pending, dc.fallback, dc.incomplete, g.rd - dp.n - dc.n, dc.open_n,
     coalesce(ws.salaried_people, 0), coalesce(ws.unplaced_people, 0), coalesce(ws.missing_wage_people, 0),
-    dp.n, (s.estimated_salaried_weekly_cents is null and ws0.week_start is null and ps.week_start is not null)
+    dp.n, (s.estimated_salaried_weekly_cents is null and ws0.week_start is null and ps.week_start is not null),
+    coalesce(v_first[array_position(v_plan_weeks, g.w)] <= g.last_day, false)
   from grid g
   left join agg a on a.ws = g.w and a.loc = g.loc
   left join public.schedule_shop_settings s on s.location_id = g.loc
