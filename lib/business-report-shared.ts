@@ -266,10 +266,12 @@ export function laborRangeFigures(days: readonly DaySales[], rows: readonly Labo
   return figures(views(rows), states, rows.length ? rowMinutes(rows) : null, denominator, target.hourly);
 }
 
-/** A 15-minute (or hour) cell: Toast-hour sales only, straight time, never toned (plan: tones at day/week). */
-export interface QuarterInput { toastCents: number; checks: number; laborMinutes: number | null; straightCents: number | null; salesOk: boolean; laborOk: boolean }
+/** A 15-minute (or hour) cell: Toast-hour sales only, straight time, never toned (plan: tones at day/week).
+ * Any check of unknown amount in the cell makes its sales unknown: no % (fix round 2), never a % over a partial sum. */
+export interface QuarterInput { toastCents: number; checks: number; amountMissing?: number; laborMinutes: number | null; straightCents: number | null; salesOk: boolean; laborOk: boolean }
 export function quarterFigures(q: QuarterInput): { pct: number | null; basis: "toast_only_straight_time"; tone: "none" } {
-  const pct = q.salesOk && q.laborOk && q.straightCents !== null && q.toastCents > 0 ? round1((100 * q.straightCents) / q.toastCents) : null;
+  const pct = q.salesOk && q.laborOk && (q.amountMissing ?? 0) === 0 && q.straightCents !== null && q.toastCents > 0
+    ? round1((100 * q.straightCents) / q.toastCents) : null;
   return { pct, basis: "toast_only_straight_time", tone: "none" };
 }
 
@@ -366,7 +368,8 @@ export const RUSH_MIN_CHECKS = 3;
 /** The baseline must be real: at least this many median checks AND median sales > 0. */
 export const RUSH_MIN_BASELINE_CHECKS = 1;
 
-export interface QuarterPoint { quarterStartAt: string; wallQuarter: number; fold: number; checks: number; cents: number }
+/** `amountMissing` = checks of unknown amount in the quarter (absent = 0): such a quarter's sales are unknown. */
+export interface QuarterPoint { quarterStartAt: string; wallQuarter: number; fold: number; checks: number; cents: number; amountMissing?: number }
 export interface RushWindow { startAt: string; endAt: string; quarters: number; checks: number; cents: number; baselineChecks: number; baselineCents: number }
 export interface RushResult { state: "ok" | "not_enough_history"; windows: RushWindow[] }
 
@@ -386,7 +389,10 @@ export function detectRushes(day: { date: string; quarters: readonly QuarterPoin
   const key = (q: { wallQuarter: number; fold: number }) => `${q.wallQuarter}|${q.fold}`;
   const hot: Array<QuarterPoint & { bChecks: number; bCents: number }> = [];
   for (const q of day.quarters) {
+    // Fix round 2: a quarter whose sales are unknown (today, or at the same quarter on any baseline day) is never compared.
+    if ((q.amountMissing ?? 0) > 0) continue;
     const at = hist.map((h) => h.quarters.find((x) => key(x) === key(q)));
+    if (at.some((x) => (x?.amountMissing ?? 0) > 0)) continue;
     const bChecks = median(at.map((x) => x?.checks ?? 0));
     const bCents = median(at.map((x) => x?.cents ?? 0));
     const qualifies = bChecks >= RUSH_MIN_BASELINE_CHECKS && bCents > 0

@@ -158,7 +158,8 @@ export interface BusinessDayDto {
 export interface BusinessWeekDto { weekStart: string; from: string; to: string; target: number; labor: LaborFigures }
 export interface BusinessQuarterDto {
   date: string; quarterStartAt: string; wallQuarter: number; fold: number;
-  toastCents: number | null; checks: number | null; laborMinutes: number | null; straightCents: number | null;
+  /** `amountMissing` = checks of unknown amount in this quarter (> 0 = its sales are partial, so no %). */
+  toastCents: number | null; checks: number | null; amountMissing: number | null; laborMinutes: number | null; straightCents: number | null;
   pct: number | null; basis: "toast_only_straight_time"; tone: "none";
 }
 /** A day's `sale` Toast checks with no opened quarter; quarters + this = the day's Toast check sales. */
@@ -212,7 +213,7 @@ const SHOP_MONEY_PATHS: readonly string[] = [
   "weeks[].weekStart", "weeks[].from", "weeks[].to", "weeks[].target", ...keys("weeks[].labor", LABOR_KEYS),
   ...keys("total.sales", ["totalCents", "toastChecksCents", "toastNetCents", "ezcaterCents", "refundCents", "coverage"]),
   ...keys("total.labor", LABOR_KEYS), "total.target",
-  "quarters", ...keys("quarters[]", ["date", "quarterStartAt", "wallQuarter", "fold", "toastCents", "checks", "laborMinutes", "straightCents", "pct", "basis", "tone"]),
+  "quarters", ...keys("quarters[]", ["date", "quarterStartAt", "wallQuarter", "fold", "toastCents", "checks", "amountMissing", "laborMinutes", "straightCents", "pct", "basis", "tone"]),
   "quartersUnassigned", ...keys("quartersUnassigned[]", ["date", "toastCents", "checks"]),
   "quartersReason",
   ...keys("channels.included[]", CUT_KEYS), ...keys("channels.excluded[]", CUT_KEYS), ...keys("servers[]", CUT_KEYS),
@@ -306,8 +307,9 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
     const by = new Map<string, QuarterPoint>();
     for (const c of cutsByDate.get(date) ?? []) {
       if (c.sale_class !== "sale" || (rushOnly && c.channel === "catering") || !c.quarter_start_at || c.wall_quarter === null || c.fold === null) continue;
-      const p = by.get(c.quarter_start_at) ?? by.set(c.quarter_start_at, { quarterStartAt: c.quarter_start_at, wallQuarter: c.wall_quarter, fold: c.fold, checks: 0, cents: 0 }).get(c.quarter_start_at)!;
-      p.checks += c.checks; p.cents += c.amount_cents;
+      const p = by.get(c.quarter_start_at) ?? by.set(c.quarter_start_at, { quarterStartAt: c.quarter_start_at, wallQuarter: c.wall_quarter, fold: c.fold, checks: 0, cents: 0, amountMissing: 0 }).get(c.quarter_start_at)!;
+      // Fix round 2: the unknown-amount count rides with the quarter (its sales are partial, never a % or a rush).
+      p.checks += c.checks; p.cents += c.amount_cents; p.amountMissing! += c.amount_missing;
     }
     return [...by.values()];
   };
@@ -351,28 +353,32 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
     const cells = new Map<string, BusinessQuarterDto>();
     const cell = (date: string, at: string, wq: number, fd: number) => {
       const k = `${date}|${at}`;
-      return cells.get(k) ?? cells.set(k, { date, quarterStartAt: at, wallQuarter: wq, fold: fd, toastCents: null, checks: null, laborMinutes: null,
+      return cells.get(k) ?? cells.set(k, { date, quarterStartAt: at, wallQuarter: wq, fold: fd, toastCents: null, checks: null, amountMissing: null, laborMinutes: null,
         straightCents: null, pct: null, basis: "toast_only_straight_time", tone: "none" }).get(k)!;
     };
     for (const d of dayDtos) {
       if (d.cuts !== "ok") continue;
       for (const p of points(d.date, false)) {
         const c = cell(d.date, p.quarterStartAt, p.wallQuarter, p.fold);
-        c.toastCents = p.cents; c.checks = p.checks;
+        c.toastCents = p.cents; c.checks = p.checks; c.amountMissing = p.amountMissing ?? 0;
       }
     }
+    // Fix round 2: MINUTES always (a rebuilding week keeps its quarter hours, like its days and people);
+    // straight-time MONEY only where the day's money is shown (`pureHourlyCents` non-null = a ready week).
     for (const q of quarterChunks.flat()) {
       const date = ymd(q.business_date);
       const day = dayBy.get(date);
-      if (!day || day.labor.pureHourlyCents === null) continue;
+      if (!day) continue;
       const c = cell(date, isoOf(q.quarter_start_at), n(q.wall_quarter), n(q.fold));
-      c.laborMinutes = n(q.minutes); c.straightCents = n(q.straight_cents);
+      c.laborMinutes = n(q.minutes);
+      if (day.labor.pureHourlyCents !== null) c.straightCents = n(q.straight_cents);
     }
     quarters = [...cells.values()].sort((a, b) => Date.parse(a.quarterStartAt) - Date.parse(b.quarterStartAt)).map((c) => {
       const day = dayBy.get(c.date)!;
-      const f = quarterFigures({ toastCents: c.toastCents ?? 0, checks: c.checks ?? 0, laborMinutes: c.laborMinutes, straightCents: c.straightCents,
-        salesOk: day.cuts === "ok", laborOk: day.labor.pureHourlyCents !== null && day.labor.state !== "hours_unknown" });
-      return { ...c, toastCents: day.cuts === "ok" ? c.toastCents ?? 0 : null, checks: day.cuts === "ok" ? c.checks ?? 0 : null, ...f };
+      const salesOk = day.cuts === "ok";
+      const f = quarterFigures({ toastCents: c.toastCents ?? 0, checks: c.checks ?? 0, amountMissing: c.amountMissing ?? 0, laborMinutes: c.laborMinutes, straightCents: c.straightCents,
+        salesOk, laborOk: day.labor.pureHourlyCents !== null && day.labor.state !== "hours_unknown" });
+      return { ...c, toastCents: salesOk ? c.toastCents ?? 0 : null, checks: salesOk ? c.checks ?? 0 : null, amountMissing: salesOk ? c.amountMissing ?? 0 : null, ...f };
     });
   }
 
