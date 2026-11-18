@@ -30,7 +30,7 @@ async function as<T>(role: string, run: () => Promise<T>): Promise<T> {
 const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
 const def = (over: Record<string, unknown> = {}) => JSON.stringify({
   adapter: { key: "nws", version: 1 }, category: "weather", cost: "free", gate: "allow_with_conditions",
-  name: "Test weather", sourceId: "nws", termsStatus: "verified", termsUrl: "https://example.test/terms", ...over });
+  name: "Test weather", sourceId: "nws", termsQuote: "This data is open data, free to use for any purpose.", termsStatus: "verified", termsUrl: "https://example.test/terms", ...over });
 const register = (text: string) => one<{ result: string; seq: number; definition_hash: string }>("select demand_source_register($1)", [text]);
 const mark = (actor: string | null, source: string, hash: string, status: string, note = "read the terms page") =>
   one<{ event_seq: number; status: string }>("select demand_source_mark($1,$2,$3,$4,$5)", [actor, source, hash, status, note]);
@@ -125,11 +125,40 @@ describe("0343: the register", () => {
   it("refuses a paid source, an ingestible gate over unread terms, and a 'verified' terms claim with no page", async () => {
     await fails(register(def({ sourceId: "paid_one", cost: "paid" })), "demand_sources_cost_check");
     await fails(register(def({ sourceId: "unread", termsStatus: "unverified", gate: "allow" })), "demand_sources_check");
-    await fails(register(def({ sourceId: "no_page", termsUrl: undefined })), "demand_sources_check");
+    await fails(register(def({ sourceId: "no_page", termsUrl: undefined })), "source_terms_evidence_missing");
     await fails(register("not json"), "source_definition_invalid");
     await fails(register(JSON.stringify(["nws"])), "source_definition_invalid");
     expect((await register(def({ sourceId: "espn_site", gate: "refuse", termsStatus: "unverified", termsUrl: undefined, adapter: undefined, category: "sports" }))).result).toBe("registered");
     expect((await register(def({ sourceId: "opm_status", gate: "named_only", adapter: undefined, category: "government_status" }))).result).toBe("registered");
+  });
+});
+
+describe("0343: terms evidence is the page AND the quote, in SQL (review r1 P2 #3)", () => {
+  const forge = () => q(`insert into demand_sources (source_id, definition_hash, definition, name, category, cost, gate, terms_status, terms_url)
+    values ('forged', $1, '{}', 'Forged', 'weather', 'free', 'allow', 'verified', 'https://example.test/terms')`, [sha("forged")]);
+  it("registration as service_role refuses a 'verified' terms claim with no quote, a blank or short quote, or no page", async () => {
+    const before = await count("demand_sources");
+    await as("service_role", async () => {
+      for (const over of [{ termsQuote: undefined }, { termsQuote: null }, { termsQuote: "   " }, { termsQuote: "too short" }, { termsQuote: 7 }, { termsUrl: undefined }, { termsUrl: null }]) {
+        await fails(register(def({ sourceId: "no_evidence", ...over })), "source_terms_evidence_missing");
+      }
+    });
+    expect(await count("demand_sources")).toBe(before);
+    expect(await count("audit_log", "action = 'demand_source.register' and metadata->>'source_id' = 'no_evidence'")).toBe(0);
+    // Terms nobody has read need no evidence (and can never be ingestible).
+    expect((await register(def({ sourceId: "unread_feed", gate: "pending_terms", termsStatus: "unverified", termsQuote: null, termsUrl: undefined, adapter: undefined }))).result).toBe("registered");
+    expect(await q("select terms_quote from demand_sources where source_id = 'nws'")).toEqual([{ terms_quote: "This data is open data, free to use for any purpose." }]);
+  });
+  it("the table itself refuses such a row, whoever writes it", async () => {
+    await fails(forge(), "demand_sources_terms_evidence");
+  });
+  it("verification re-checks the evidence on the row it marks: a row without it can never be marked verified", async () => {
+    try {
+      await db.exec("begin; alter table public.demand_sources drop constraint demand_sources_terms_evidence;");
+      await forge();
+      await fails(mark(MOO, "forged", sha("forged"), "verified"), "source_terms_evidence_missing");
+    } finally { await db.exec("rollback"); }
+    expect(await count("demand_sources", "source_id = 'forged'")).toBe(0);
   });
 });
 
@@ -220,6 +249,62 @@ describe("0343: a verified source is stored as vintages", () => {
     const got = await q<{ title: string; origin: string }>("select title, origin from demand_usable_day_events($1, $2::date, $2::date, now() + interval '1 minute')", [SHOP_A, today]);
     expect(got).toEqual([{ title: "Winter Storm Warning", origin: "feed" }]);
     await fails(q("select demand_events_ingest('nws',$1,$2,now(),$3::jsonb)", [H1, SHOP_A, JSON.stringify(Array.from({ length: 51 }, (_, i) => ({ external_key: `k${i}`, category: "weather_alert", valid_from: today, valid_to: today, title: "Alert" })))]), "rows_over_cap");
+  });
+});
+
+describe("0343: A CANCELLED ALERT STOPS BEING USABLE (review r1 P2 #1)", () => {
+  const tomorrow = () => one<string>("select (demand_today_et() + 1)::text");
+  const snapshot = (events: unknown[], shop = SHOP_A) => one<{ seen: number; written: number; withdrawn: number }>("select demand_events_ingest('nws',$1,$2,now(),$3::jsonb)", [H1, shop, JSON.stringify(events)]);
+  const read = (day: string, asOf = "now() + interval '1 minute'") => q<{ title: string }>(
+    `select title from demand_usable_day_events($1, $2::date, $2::date, ${asOf}) where origin = 'feed' order by title`, [SHOP_A, day]);
+  const live: Record<string, unknown> = { external_key: "urn:alert:1", category: "weather_alert", title: "Winter Storm Warning", severity: "severe" };
+  let watch: Record<string, unknown>;
+  it("collect, then the alert leaves the feed before its end: the reader stops returning it; the earlier view still has it", async () => {
+    const day = await tomorrow();
+    Object.assign(live, { valid_from: today, valid_to: today });
+    watch = { external_key: "urn:alert:watch", category: "weather_alert", valid_from: day, valid_to: day, title: "Flood Watch", severity: "moderate",
+      issued_at: new Date().toISOString(), ends_at: new Date(Date.now() + 40 * 3_600_000).toISOString() };
+    expect(await snapshot([live, watch])).toMatchObject({ seen: 2, written: 1, withdrawn: 0 });
+    expect(await read(day)).toEqual([{ title: "Flood Watch" }]);
+    const beforeCancel = await one<string>("select clock_timestamp()::text");
+    const stored = await count("demand_day_events", "origin = 'feed'");
+    // The next successful collection no longer lists the watch (cancelled, or replaced by an update).
+    expect(await as("service_role", () => snapshot([live]))).toMatchObject({ seen: 1, written: 0, withdrawn: 1 });
+    expect(await read(day)).toEqual([]);
+    expect(await read(today)).toEqual([{ title: "Winter Storm Warning" }]);
+    // History: as of the instant before the cancellation the watch is still what we knew. Nothing was deleted.
+    expect(await read(day, `'${beforeCancel}'::timestamptz`)).toEqual([{ title: "Flood Watch" }]);
+    expect(await count("demand_day_events", "origin = 'feed'")).toBe(stored + 1);
+    expect(await q("select withdrawn, title from demand_day_events where external_key = 'urn:alert:watch' order by seq")).toEqual([
+      { withdrawn: false, title: "Flood Watch" }, { withdrawn: true, title: "Flood Watch" }]);
+    expect(await q("select outcome, rows_seen, rows_written, rows_withdrawn from demand_signal_runs where feed = 'day_events' order by finished_at desc limit 1"))
+      .toEqual([{ outcome: "written", rows_seen: 1, rows_written: 0, rows_withdrawn: 1 }]);
+  });
+  it("a withdrawal is written once; the alert coming back is a new vintage and is usable again", async () => {
+    const day = await tomorrow();
+    expect(await snapshot([live])).toMatchObject({ written: 0, withdrawn: 0 });
+    expect(await count("demand_day_events", "external_key = 'urn:alert:watch' and withdrawn")).toBe(1);
+    expect(await snapshot([live, watch])).toMatchObject({ written: 1, withdrawn: 0 });
+    expect(await read(day)).toEqual([{ title: "Flood Watch" }]);
+    expect(await snapshot([live])).toMatchObject({ withdrawn: 1 });
+    expect(await read(day)).toEqual([]);
+  });
+  it("an alert that ran its course (its end has passed) is history, not a cancellation: leaving the feed withdraws nothing", async () => {
+    const over = { external_key: "urn:alert:over", category: "weather_alert", valid_from: today, valid_to: today, title: "Dense Fog Advisory", severity: "minor",
+      ends_at: new Date(Date.now() - 3_600_000).toISOString() };
+    expect(await snapshot([live, over])).toMatchObject({ written: 1 });
+    expect(await snapshot([live])).toMatchObject({ written: 0, withdrawn: 0 });
+    expect(await read(today)).toEqual([{ title: "Dense Fog Advisory" }, { title: "Winter Storm Warning" }]);
+  });
+  it("only a COMPLETE successful snapshot of THAT shop withdraws: a refused or failed fetch leaves every alert as it was", async () => {
+    await fails(snapshot([{ external_key: "bad" }]), "events_invalid");
+    await one("select demand_signal_run_fail('nws',$1,'day_events',now(),'http_error')", [SHOP_A]);
+    expect(await snapshot([], SHOP_B)).toMatchObject({ seen: 0, written: 0, withdrawn: 0 });
+    expect(await read(today)).toEqual([{ title: "Dense Fog Advisory" }, { title: "Winter Storm Warning" }]);
+  });
+  it("a manual entry can never be a withdrawal", async () => {
+    await fails(q(`insert into demand_day_events (origin, location_id, category, valid_from, valid_to, title, expected_impact, content_hash, created_by, withdrawn)
+      values ('manual', $1, 'other', $2::date, $2::date, 'Forged', 'unknown', $3, $4, true)`, [SHOP_A, today, sha("x"), MOO]), "demand_day_events_feed_withdrawal");
   });
 });
 
@@ -321,5 +406,24 @@ describe("0343: manual events by GM+ (the page is PR 5)", () => {
     await mark(MOO, "nws", h, "revoked", "testing revocation again");
     const seen = await q("select 1 from demand_usable_day_events($1, $2::date, $2::date, now() + interval '1 minute') where origin = 'manual'", [SHOP_B, today]);
     expect(seen.length).toBe(2);
+  });
+});
+
+describe("0343: the event read is totally ordered, so it can be paged (review r1 P2 #2)", () => {
+  it("returns manual and feed rows by (valid_from, id), the same on every call and across pages", async () => {
+    const h = await one<string>("select definition_hash from demand_source_states() where source_id = 'nws'");
+    await mark(MOO, "nws", h, "verified", "back on for the ordering proof");
+    for (let i = 0; i < 12; i++) await event(MOO, { cat: "other", title: `Paging ${i}`, from: today, impact: "unknown" });
+    const call = "demand_usable_day_events($1, $2::date, ($2::date + 30), now() + interval '1 minute')";
+    const all = await q<{ id: string; origin: string }>(`select id, origin from ${call}`, [SHOP_A, today]);
+    expect(all.length).toBeGreaterThanOrEqual(14);
+    expect(new Set(all.map((r) => r.origin))).toEqual(new Set(["manual", "feed"]));
+    expect(new Set(all.map((r) => r.id)).size).toBe(all.length);
+    const sorted = await q<{ id: string }>(`select id from ${call} order by valid_from, id`, [SHOP_A, today]);
+    expect(all.map((r) => r.id)).toEqual(sorted.map((r) => r.id));
+    const pages = [...await q<{ id: string }>(`select id from ${call} limit 5 offset 0`, [SHOP_A, today]), ...await q<{ id: string }>(`select id from ${call} limit 500 offset 5`, [SHOP_A, today])];
+    expect(pages.map((r) => r.id)).toEqual(all.map((r) => r.id));
+    const fn = M0343.slice(M0343.indexOf("create function public.demand_usable_day_events("));
+    expect(fn.slice(0, fn.indexOf("end $$;"))).toMatch(/order by u\.valid_from, u\.id;\s*$/);
   });
 });

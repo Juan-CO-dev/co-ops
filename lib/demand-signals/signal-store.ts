@@ -9,6 +9,12 @@
  * `signalUsable` refuses. A later consumer (the term builder, the page, a chip) calls these two and never reads
  * a signal table itself: tests/demand-signals-contracts.test.ts pins that no module does.
  * A register that cannot be read answers CLOSED (nothing usable, nothing collected).
+ *
+ * EVERY SET IS READ TO COMPLETION OR REFUSED BY NAME (review r1 P2 #2). PostgREST cuts an unranged read of a
+ * set-returning function at max-rows (1,000) with no error, so the two readers go through `callAll`: pages of
+ * SIGNAL_READ_PAGE by `range` with an exact count, over 0343's total order (events: valid_from, id; weather:
+ * source_id, valid_hour). A missing or moving count, an empty page before the count, more rows than counted or
+ * more than SIGNAL_READ_MAX_PAGES pages is 503 `signal_reads_incomplete`. Never a partial list.
  */
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -39,6 +45,7 @@ const REFUSALS: Record<string, number> = {
   source_unknown: 404,
   source_definition_moved: 409, source_not_ingestible: 409, source_status_unchanged: 409, demand_event_moved: 409,
   source_unverified: 409, source_revoked: 409,
+  source_terms_evidence_missing: 409,
   rows_over_cap: 422, weather_rows_invalid: 422, events_invalid: 422,
 };
 type RpcError = { code?: string; message?: string };
@@ -58,6 +65,31 @@ async function call<T>(sb: SupabaseClient, name: Rpc, args: Record<string, unkno
   const { data, error } = await client.rpc(name, args);
   if (error) throw toError(error);
   return data as T;
+}
+
+/** One page of a set read, and the most pages one read may take (20,000 rows). */
+export const SIGNAL_READ_PAGE = 1_000;
+export const SIGNAL_READ_MAX_PAGES = 20;
+type Page = { data: unknown; error: RpcError | null; count: number | null };
+type PagedRpc = { rpc: (name: string, args: Record<string, unknown>, options: { count: "exact" }) => { range: (from: number, to: number) => PromiseLike<Page> } };
+
+/** A set-returning function of 0343, read to completion over its total order, or refused `signal_reads_incomplete`. */
+async function callAll(sb: SupabaseClient, name: Extract<Rpc, "demand_usable_weather" | "demand_usable_day_events">, args: Record<string, unknown>, signal?: AbortSignal): Promise<Array<Record<string, unknown>>> {
+  const client = (signal ? withAbort(sb, signal) : sb) as unknown as PagedRpc;
+  const incomplete = () => new DemandSignalError(503, "signal_reads_incomplete");
+  const out: Array<Record<string, unknown>> = [];
+  let expected: number | null = null;
+  for (let page = 0; ; page++) {
+    if (page >= SIGNAL_READ_MAX_PAGES) throw incomplete();
+    const { data, error, count } = await client.rpc(name, args, { count: "exact" }).range(out.length, out.length + SIGNAL_READ_PAGE - 1);
+    if (error) throw toError(error);
+    const got = data ?? [];
+    if (!Array.isArray(got) || typeof count !== "number" || (expected !== null && count !== expected)) throw incomplete();
+    expected = count;
+    out.push(...(got as Array<Record<string, unknown>>));
+    if (out.length === expected) return out;
+    if (got.length === 0 || out.length > expected) throw incomplete();
+  }
 }
 
 // ── the register ────────────────────────────────────────────────────────────────────────────────
@@ -111,9 +143,9 @@ const num = (v: unknown): number | null => (v === null || v === undefined ? null
 /** The latest forecast vintage per hour as of `asOfIso`, from sources verified NOW. Each row carries its source ids. */
 export async function loadUsableWeather(sb: SupabaseClient, args: { locationId: string; fromIso: string; toIso: string; asOfIso: string; use: ReadUse }, signal?: AbortSignal): Promise<UsableWeatherHour[]> {
   const states = await readSourceStates(sb, signal);
-  const rows = await call<Array<Record<string, unknown>> | null>(sb, "demand_usable_weather",
+  const rows = await callAll(sb, "demand_usable_weather",
     { p_location_id: args.locationId, p_from: args.fromIso, p_to: args.toIso, p_as_of: args.asOfIso }, signal);
-  const mapped = (rows ?? []).map((r) => ({
+  const mapped = rows.map((r) => ({
     sourceId: String(r.source_id), sourceIds: [String(r.source_id)], validHour: String(r.valid_hour), issuedAt: String(r.issued_at), availableAt: String(r.available_at),
     vintageId: Number(r.vintage_id), temperatureF: Number(r.temperature_f), precipProbabilityPct: num(r.precip_probability_pct), windSpeedMph: num(r.wind_speed_mph),
     relativeHumidityPct: num(r.relative_humidity_pct), isDaytime: r.is_daytime === true, condition: String(r.condition) }));
@@ -124,13 +156,17 @@ export interface UsableDayEvent {
   id: string; origin: "manual" | "feed"; sourceId: string | null; sourceIds: string[]; locationId: string | null; category: string;
   validFrom: string; validTo: string; startLocal: string | null; endLocal: string | null; title: string; expectedImpact: string; severity: string | null;
 }
-/** Day events for a shop (its own and the all-shop ones): manual heads, and feed events from sources verified NOW. */
+/**
+ * Day events for a shop (its own and the all-shop ones): manual heads, and feed events from sources verified NOW
+ * that were not withdrawn (a cancelled alert is not returned from the collection that saw it gone). Every row of
+ * the window, in 0343's order (valid_from, id), or `signal_reads_incomplete`.
+ */
 export async function loadUsableDayEvents(sb: SupabaseClient, args: { locationId: string; from: string; to: string; asOfIso: string; use: ReadUse }, signal?: AbortSignal): Promise<UsableDayEvent[]> {
   const states = await readSourceStates(sb, signal);
-  const rows = await call<Array<Record<string, unknown>> | null>(sb, "demand_usable_day_events",
+  const rows = await callAll(sb, "demand_usable_day_events",
     { p_location_id: args.locationId, p_from: args.from, p_to: args.to, p_as_of: args.asOfIso }, signal);
   const text = (v: unknown) => (v === null || v === undefined ? null : String(v));
-  const mapped = (rows ?? []).map((r) => ({
+  const mapped = rows.map((r) => ({
     id: String(r.id), origin: r.origin === "feed" ? "feed" as const : "manual" as const, sourceId: text(r.source_id), sourceIds: r.source_id ? [String(r.source_id)] : [],
     locationId: text(r.location_id), category: String(r.category), validFrom: String(r.valid_from), validTo: String(r.valid_to), startLocal: text(r.start_local),
     endLocal: text(r.end_local), title: String(r.title), expectedImpact: String(r.expected_impact), severity: text(r.severity) }));

@@ -113,7 +113,13 @@ describe("dark by default", () => {
     const M0343 = read("supabase/migrations/0343_demand_signal_sources.sql");
     for (const name of DEMAND_SIGNAL_RPCS) expect(M0343, name).toContain(`create function public.${name}(`);
     expect(store).toContain("client.rpc(name, args)");
-    expect(store.match(/\.rpc\(/g)!.length).toBe(1);
+    // Fix round 1: the second spelling is the PAGED read of the two set-returning readers (count: exact + range).
+    expect(store).toContain('client.rpc(name, args, { count: "exact" }).range(out.length, out.length + SIGNAL_READ_PAGE - 1)');
+    expect(store).toMatch(/async function callAll\(sb: SupabaseClient, name: Extract<Rpc, "demand_usable_weather" \| "demand_usable_day_events">/);
+    expect(store.match(/\.rpc\(/g)!.length).toBe(2);
+    // No reader of a set calls the unpaged spelling: every stored-signal read goes through callAll.
+    expect(store).not.toMatch(/call<[^>]*>\(sb, "demand_usable_/);
+    expect(store.match(/await callAll\(sb, "demand_usable_(weather|day_events)"/g)!.length).toBe(2);
     const ledger = read("lib/demand-signals/ledger.ts");
     expect([...ledger.matchAll(/\.from\("(\w+)"\)/g)].map((m) => m[1]).sort()).toEqual(["item_par_levels", "items"]);
     expect([...ledger.matchAll(/\.rpc\(("?\w+"?)/g)].map((m) => m[1]).sort()).toEqual(['"pulse_sales_baseline"', "name"]);

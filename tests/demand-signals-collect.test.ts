@@ -93,13 +93,30 @@ describe("normalizers", () => {
       alert({ id: "urn:noends", ends: null, severity: "Whatever", onset: null })]));
     if (!n.ok) throw new Error("expected ok");
     expect(n.rows).toEqual([
-      { external_key: "urn:noends", category: "weather_alert", valid_from: "2026-11-18", valid_to: "2026-11-18", title: "High Wind Warning", expected_impact: "unknown", severity: "unknown", issued_at: "2026-11-18T14:06:00.000Z" },
-      { external_key: "urn:oid:2.49.0.1.840.0.b4d8.003.1", category: "weather_alert", valid_from: "2026-11-18", valid_to: "2026-11-19", title: "High Wind Warning", expected_impact: "unknown", severity: "severe", issued_at: "2026-11-18T14:06:00.000Z" },
+      { external_key: "urn:noends", category: "weather_alert", valid_from: "2026-11-18", valid_to: "2026-11-18", title: "High Wind Warning", expected_impact: "unknown", severity: "unknown", issued_at: "2026-11-18T14:06:00.000Z", ends_at: "2026-11-19T02:00:00.000Z" },
+      { external_key: "urn:oid:2.49.0.1.840.0.b4d8.003.1", category: "weather_alert", valid_from: "2026-11-18", valid_to: "2026-11-19", title: "High Wind Warning", expected_impact: "unknown", severity: "severe", issued_at: "2026-11-18T14:06:00.000Z", ends_at: "2026-11-20T02:00:00.000Z" },
     ]);
     expect(JSON.stringify(n.rows)).not.toMatch(/LONG TEXT|Secure outdoor|headline/i);
     expect(normalizeAlerts(alertsDoc([]))).toEqual({ ok: true, rows: [] });
     expect(normalizeAlerts({ title: "no features" })).toEqual({ ok: false, code: "bad_payload" });
     expect(normalizeAlerts(alertsDoc([alert({ event: 7 })]))).toEqual({ ok: false, code: "bad_payload" });
+  });
+  it("alerts: a Cancel message takes the alerts it names out of the snapshot, wherever it sits in the feed (review r1 P2 #1)", () => {
+    const cancel = (ids: unknown) => alert({ id: "urn:cancel", messageType: "Cancel", references: ids });
+    const ref = (identifier: string) => ({ "@id": `https://api.weather.gov/alerts/${identifier}`, identifier, sender: "w-nws.webmaster@noaa.gov", sent: "2026-11-18T09:06:00-05:00" });
+    const kept = (features: unknown[]) => { const n = normalizeAlerts(alertsDoc(features)); if (!n.ok) throw new Error("expected ok"); return n.rows.map((r) => r.external_key); };
+    const watch = alert({ id: "urn:watch" }), other = alert({ id: "urn:other" });
+    expect(kept([watch, other])).toEqual(["urn:other", "urn:watch"]);
+    expect(kept([watch, other, cancel([ref("urn:watch")])])).toEqual(["urn:other"]);
+    expect(kept([cancel([ref("urn:watch"), ref("urn:other")]), watch, other])).toEqual([]);
+    // A test or exercise cancellation cancels nothing; a cancellation with no usable reference cancels nothing.
+    expect(kept([watch, alert({ id: "urn:drill", status: "Exercise", messageType: "Cancel", references: [ref("urn:watch")] })])).toEqual(["urn:watch"]);
+    expect(kept([watch, cancel(undefined), cancel("urn:watch"), cancel([{ identifier: 7 }, null])])).toEqual(["urn:watch"]);
+  });
+  it("alerts: each row carries the instant the alert ends (ends, else expires), so the store can tell a cancellation from an alert that ran its course", () => {
+    const n = normalizeAlerts(alertsDoc([alert({ id: "urn:a" }), alert({ id: "urn:b", ends: null }), alert({ id: "urn:c", ends: "2026-11-18T10:00:00-05:00" })]));
+    if (!n.ok) throw new Error("expected ok");
+    expect(n.rows.map((r) => [r.external_key, r.ends_at])).toEqual([["urn:a", "2026-11-20T02:00:00.000Z"], ["urn:b", "2026-11-19T02:00:00.000Z"], ["urn:c", "2026-11-18T16:00:00.000Z"]]);
   });
 });
 

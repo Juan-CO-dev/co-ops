@@ -66,6 +66,7 @@ What it refuses, by name:
 | `step_up_required` | No fresh password |
 | `source_definition_moved` | The definition changed since you read it. Read the new one |
 | `source_not_ingestible` | The source's gate is "terms unread", "by hand only" or "refuse". It cannot be verified as it stands |
+| `source_terms_evidence_missing` | The definition says its terms were read but does not carry the terms page and a quote from it. Fix the definition, register it again, then mark |
 | `source_status_unchanged` | It already has that status |
 | `demand_signals_unavailable` | 0343 is not applied |
 
@@ -83,7 +84,9 @@ Every mark writes one `demand_source_events` row and one audit row (`demand_sour
 
 - One audit row `cron.success`, `metadata.job = 'demand-signals'`, `status: "ran"`, `failed: 0`, and per shop `weather {seen, written}` and `alerts {seen, written}`.
 - First run: up to 112 weather rows a shop. Later runs write only the hours whose forecast changed; an unchanged fetch writes a run row and no weather row.
-- Freshness: `select source_id, feed, outcome, error_code, rows_seen, rows_written, finished_at from demand_signal_runs order by finished_at desc limit 10;`
+- Freshness: `select source_id, feed, outcome, error_code, rows_seen, rows_written, rows_withdrawn, finished_at from demand_signal_runs order by finished_at desc limit 10;`
+- Cancelled alerts: each alerts run is the complete list in force for the shop. An alert that is no longer listed before its end gets a withdrawal row (`withdrawn = true`, counted in `rows_withdrawn`) and is not shown or used from then on; nothing is deleted. `select external_key, title, withdrawn, available_at from demand_day_events where origin = 'feed' order by seq desc limit 20;`
+- A read of stored signals that cannot be completed answers `signal_reads_incomplete` (503). Ask again; it never returns part of a list.
 - Volume (measure on sim for a week before prod): `select count(*), pg_size_pretty(pg_total_relation_size('demand_weather_hourly')) from demand_weather_hourly;`
 
 ## When it does not run

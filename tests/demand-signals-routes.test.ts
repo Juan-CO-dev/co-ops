@@ -61,6 +61,18 @@ function seed(role: string) {
   });
 }
 beforeEach(() => seed("moo"));
+/** The fake's client with PostgREST's ranged, counted answer for a set read (the store pages every set). */
+const pagedClient = () => ({ ...h.db.client, rpc: (name: string, args: Record<string, unknown>) => {
+  let range: [number, number] | null = null;
+  const settle = async () => {
+    const r = await (h.db.client as unknown as { rpc: (n: string, a: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }> }).rpc(name, args);
+    const all = Array.isArray(r.data) ? r.data : null;
+    return all && range ? { data: all.slice(range[0], range[1] + 1), error: r.error, count: all.length } : { ...r, count: null };
+  };
+  const builder = { range: (a: number, z: number) => { range = [a, z]; return builder; },
+    then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => settle().then(resolve, reject) };
+  return builder;
+} }) as never;
 
 describe("POST /api/admin/demand-signals/sources/mark", () => {
   it("is a step-up surface (the Tier B unlock survives its own requireSession)", () => {
@@ -101,7 +113,7 @@ describe("POST /api/admin/demand-signals/sources/mark", () => {
       expect(h.calls).toEqual([]);
     });
   it.each([
-    ["source_definition_moved", 409], ["source_not_ingestible", 409], ["source_status_unchanged", 409], ["source_unknown", 404],
+    ["source_definition_moved", 409], ["source_not_ingestible", 409], ["source_terms_evidence_missing", 409], ["source_status_unchanged", 409], ["source_unknown", 404],
     ["demand_source_forbidden", 403], ["demand_source_invalid", 400],
   ])("the writer's refusal %s is answered by name (%i)", async (name, status) => {
     await unlockStepUp("session-1");
@@ -146,14 +158,14 @@ describe("the store: the register is asked at every use", () => {
       vintage_id: 9, temperature_f: 57, precip_probability_pct: 0, wind_speed_mph: 2, relative_humidity_pct: 40, is_daytime: true, condition: "Sunny" };
     const args = { locationId: LOC, fromIso: "2026-11-18T00:00:00Z", toIso: "2026-11-19T00:00:00Z", asOfIso: "2026-11-18T16:00:00Z", use: "render" as const };
     h.weather = [row, { ...row, source_id: "ncei_observed", vintage_id: 10 }];
-    const got = await loadUsableWeather(h.db.client as never, args);
+    const got = await loadUsableWeather(pagedClient(), args);
     expect(got.map((r) => r.sourceId)).toEqual(["nws"]);                   // ncei is not in the register: unverified
     expect(got[0]).toMatchObject({ validHour: row.valid_hour, temperatureF: 57, vintageId: 9, sourceIds: ["nws"] });
     expect(h.calls.map((c) => c[0])).toEqual(["demand_source_states", "demand_usable_weather"]);
     expect(h.calls[1]![1]).toEqual({ p_location_id: LOC, p_from: args.fromIso, p_to: args.toIso, p_as_of: args.asOfIso });
     // Revoked after the rows were stored: even if a reader handed them back, they are not used.
     h.states = [state({ status: "revoked" })];
-    expect(await loadUsableWeather(h.db.client as never, args)).toEqual([]);
+    expect(await loadUsableWeather(pagedClient(), args)).toEqual([]);
   });
   it("manual events: refused early by role and shop, else sent to 0343's writer with the actor", async () => {
     const input = parseDemandEvent({ locationId: LOC, category: "sports_game", validFrom: "2026-11-20", title: "Home game", impact: "up" })!;

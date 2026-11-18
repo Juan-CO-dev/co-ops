@@ -10,7 +10,10 @@
  * WHAT IS KEPT (an explicit allow-list; anything else the API returns is dropped before any write):
  *   hourly  the valid hour, temperature (F), chance of precipitation, wind speed (mph), relative humidity,
  *           day / night, the short condition text. Only service hours (ET) inside the horizon.
- *   alerts  the alert id, its event name, severity, and the ET dates it covers. No description text.
+ *   alerts  the alert id, its event name, severity, the ET dates it covers and the instant it ends. No
+ *           description text. The rows are the COMPLETE set of alerts in force for the point: 0343's
+ *           demand_events_ingest reads them as a snapshot, so an alert that was cancelled (or replaced by an
+ *           update, which has a new id) is absent and is WITHDRAWN there, and stops being usable.
  * A payload that does not have the documented shape is `bad_payload` as a whole: never a partial read.
  * Payload shapes were read from the live API on 2026-11-18 (the fixtures in tests/demand-signals-nws.test.ts).
  */
@@ -156,19 +159,38 @@ export interface AlertEventRow {
   expected_impact: "unknown";
   severity: "minor" | "moderate" | "severe" | "extreme" | "unknown";
   issued_at: string;
+  /** The instant the alert ends (`ends`, else `expires`). 0343 uses it to tell a cancellation from an alert that ran its course. */
+  ends_at: string;
 }
 const SEVERITIES = ["minor", "moderate", "severe", "extreme", "unknown"] as const;
 const dayNumber = (ymd: string) => Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1, Number(ymd.slice(8, 10))) / 86_400_000;
 
+/** The alert ids an `Actual` Cancel message names (`references[].identifier`). Anything else names nothing. */
+function cancelledIds(features: ReadonlyArray<unknown>): Set<string> {
+  const ids = new Set<string>();
+  for (const raw of features) {
+    const p = obj(obj(raw)?.properties);
+    if (!p || p.status !== "Actual" || p.messageType !== "Cancel" || !Array.isArray(p.references)) continue;
+    for (const ref of p.references) {
+      const identifier = obj(ref)?.identifier;
+      if (typeof identifier === "string") ids.add(identifier);
+    }
+  }
+  return ids;
+}
+
 /**
- * Active alerts as day events for 0343's demand_events_ingest. Only `Actual` alerts that are not cancellations;
- * the dates are the ET days from onset (else effective) to ends (else expires). No description is kept.
+ * Active alerts as day events for 0343's demand_events_ingest: THE SNAPSHOT of what is in force. Only `Actual`
+ * alerts that are not cancellations and that no cancellation in the same answer names; the dates are the ET
+ * days from onset (else effective) to ends (else expires). No description is kept. A cancelled alert is
+ * therefore ABSENT from the rows, which is what makes 0343 withdraw its stored copy.
  */
 export function normalizeAlerts(json: unknown): Normalized<AlertEventRow> {
   const features = obj(json)?.features;
   if (!Array.isArray(features) || features.length > 500) return BAD;
   const rows: AlertEventRow[] = [];
   const seen = new Set<string>();
+  const cancelled = cancelledIds(features);
   for (const raw of features) {
     const p = obj(obj(raw)?.properties);
     if (!p) return BAD;
@@ -176,7 +198,7 @@ export function normalizeAlerts(json: unknown): Normalized<AlertEventRow> {
     const sent = instant(p.sent), start = instant(p.onset) ?? instant(p.effective), end = instant(p.ends) ?? instant(p.expires);
     if (typeof id !== "string" || id.length < 1 || id.length > 200 || typeof event !== "string" || event.trim().length < 2 || event.length > 120) return BAD;
     if (sent === null || start === null || end === null || typeof p.status !== "string" || typeof p.messageType !== "string") return BAD;
-    if (p.status !== "Actual" || p.messageType === "Cancel" || seen.has(id)) continue;
+    if (p.status !== "Actual" || p.messageType === "Cancel" || cancelled.has(id) || seen.has(id)) continue;
     seen.add(id);
     const from = etCalendarDate(new Date(start).toISOString());
     let to = etCalendarDate(new Date(Math.max(start, end)).toISOString());
@@ -184,7 +206,7 @@ export function normalizeAlerts(json: unknown): Normalized<AlertEventRow> {
     const severity = typeof p.severity === "string" ? p.severity.toLowerCase() : "unknown";
     rows.push({ external_key: id, category: "weather_alert", valid_from: from, valid_to: to, title: event.trim(), expected_impact: "unknown",
       severity: (SEVERITIES as ReadonlyArray<string>).includes(severity) ? (severity as AlertEventRow["severity"]) : "unknown",
-      issued_at: new Date(sent).toISOString() });
+      issued_at: new Date(sent).toISOString(), ends_at: new Date(Math.max(start, end)).toISOString() });
   }
   if (rows.length > ALERTS_PER_SHOP_CAP) return BAD;
   rows.sort((a, b) => (a.external_key < b.external_key ? -1 : 1));

@@ -21,7 +21,12 @@
 --                          available_at (when WE held it); the decision time is the reader's p_as_of.
 --   demand_day_events      day-grain events: feed vintages (alerts, discovered events) AND manual entries by
 --                          GM+ (origin 'manual', a correction chain). location NULL = every shop, made unique
---                          through the generated scope_key.
+--                          through the generated scope_key. A feed event that LEAVES its feed before its end
+--                          (cancelled, or replaced) gets a WITHDRAWAL vintage (withdrawn = true): the reader
+--                          stops returning it from then on, and an earlier as-of still sees it.
+-- TERMS EVIDENCE: a definition whose terms are 'verified' names the page AND quotes the sentence (terms_url,
+-- terms_quote of 10+ characters). Refused by name (source_terms_evidence_missing) at registration, by the
+-- table's own check, and again on the row a person marks verified.
 -- THE GATE IS IN SQL AS WELL AS IN CODE. Every writer of a sourced row (demand_weather_ingest,
 -- demand_events_ingest) and every reader of one (demand_usable_weather, demand_usable_day_events) asks the
 -- register for the CURRENT status inside its own statement / transaction, under the source's advisory key
@@ -78,10 +83,13 @@ create table public.demand_sources (
  gate text not null check (gate in ('allow','allow_with_conditions','pending_terms','named_only','refuse')),
  terms_status text not null check (terms_status in ('verified','unverified')),
  terms_url text check (terms_url ~ '^https://'),
+ terms_quote text,
  adapter text check (adapter ~ '^[a-z0-9_]{2,40}@[0-9]{1,4}$'),
  registered_at timestamptz not null default clock_timestamp(),
- -- A source whose terms nobody has read can never be ingestible, and a 'verified' terms claim names its page.
- check (terms_status = 'unverified' or terms_url is not null),
+ -- A source whose terms nobody has read can never be ingestible, and a 'verified' terms claim carries its
+ -- evidence: the page AND the sentence quoted from it (definitionProblem, sources-shared.ts: the same rule).
+ constraint demand_sources_terms_evidence check (terms_status = 'unverified'
+   or (terms_url is not null and terms_quote is not null and length(btrim(terms_quote)) >= 10)),
  check (gate in ('pending_terms','named_only','refuse') or terms_status = 'verified')
 );
 create index demand_sources_current on public.demand_sources (source_id, seq desc);
@@ -164,11 +172,14 @@ begin
   if d->'adapter' is not null and jsonb_typeof(d->'adapter') = 'object' then
     v_adapter := (d->'adapter'->>'key') || '@' || (d->'adapter'->>'version');
   end if;
+  -- Terms recorded as read carry their evidence: the page AND the quoted sentence. Refused by name.
+  if d->>'termsStatus' = 'verified' and (d->>'termsUrl' is null or length(btrim(coalesce(d->>'termsQuote', ''))) < 10) then
+    raise exception 'source_terms_evidence_missing'; end if;
   perform pg_advisory_xact_lock(public.demand_source_key(v_id));
   select * into v_cur from public.demand_sources s where s.source_id = v_id order by s.seq desc limit 1;
   if found and v_cur.definition_hash = v_hash then return jsonb_build_object('result', 'exists', 'seq', v_cur.seq, 'definition_hash', v_hash); end if;
-  insert into public.demand_sources (source_id, definition_hash, definition, name, category, cost, gate, terms_status, terms_url, adapter)
-  values (v_id, v_hash, p_definition, d->>'name', d->>'category', d->>'cost', d->>'gate', d->>'termsStatus', d->>'termsUrl', v_adapter)
+  insert into public.demand_sources (source_id, definition_hash, definition, name, category, cost, gate, terms_status, terms_url, terms_quote, adapter)
+  values (v_id, v_hash, p_definition, d->>'name', d->>'category', d->>'cost', d->>'gate', d->>'termsStatus', d->>'termsUrl', d->>'termsQuote', v_adapter)
   returning seq into v_seq;
   insert into public.audit_log (actor_id, actor_role, action, resource_table, resource_id, metadata, destructive)
   values (null, null, 'demand_source.register', 'demand_sources', null,
@@ -179,6 +190,7 @@ end $$;
 
 -- Mark a source verified or revoked. Refusals by name: demand_source_forbidden, demand_source_invalid,
 -- source_unknown, source_definition_moved (not the definition the person read), source_not_ingestible,
+-- source_terms_evidence_missing (verifying a row whose terms are not recorded as read with page and quote),
 -- source_status_unchanged.
 create function public.demand_source_mark(p_actor uuid, p_source_id text, p_definition_hash text, p_status text, p_note text)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
@@ -195,6 +207,8 @@ begin
   if not found then raise exception 'source_unknown'; end if;
   if v_cur.definition_hash is distinct from p_definition_hash then raise exception 'source_definition_moved'; end if;
   if p_status = 'verified' and v_cur.gate not in ('allow', 'allow_with_conditions') then raise exception 'source_not_ingestible'; end if;
+  if p_status = 'verified' and (v_cur.terms_status is distinct from 'verified' or v_cur.terms_url is null
+      or length(btrim(coalesce(v_cur.terms_quote, ''))) < 10) then raise exception 'source_terms_evidence_missing'; end if;
   select coalesce((select e.status from public.demand_source_events e where e.source_seq = v_cur.seq order by e.seq desc limit 1), 'unverified') into v_before;
   if v_before = p_status then raise exception 'source_status_unchanged'; end if;
   insert into public.demand_source_events (source_seq, source_id, status, actor_id, actor_role, note)
@@ -218,10 +232,13 @@ create table public.demand_signal_runs (
  error_code text check (error_code ~ '^[a-z_]{1,40}$'),
  rows_seen integer not null check (rows_seen >= 0),
  rows_written integer not null check (rows_written >= 0 and rows_written <= rows_seen),
+ -- day_events only: stored events this run found GONE from the feed before their end (a withdrawal vintage each).
+ rows_withdrawn integer not null default 0 check (rows_withdrawn >= 0),
  started_at timestamptz not null,
  finished_at timestamptz not null default clock_timestamp(),
  check ((outcome = 'failed') = (error_code is not null)),
- check ((outcome = 'written') = (rows_written > 0))
+ check ((outcome = 'written') = (rows_written + rows_withdrawn > 0)),
+ check (rows_withdrawn = 0 or feed = 'day_events')
 );
 create index demand_signal_runs_recent on public.demand_signal_runs (source_id, feed, finished_at desc);
 
@@ -266,6 +283,10 @@ create table public.demand_day_events (
  note text check (length(note) <= 500),
  content_hash text not null check (content_hash ~ '^[0-9a-f]{64}$'),
  issued_at timestamptz,
+ -- Feed rows: the instant the event ends at its source (null = the end of valid_to, ET).
+ ends_at timestamptz,
+ -- Feed rows: this vintage records that the event LEFT its feed before its end (cancelled or replaced).
+ withdrawn boolean not null default false,
  available_at timestamptz not null default clock_timestamp(),
  created_by uuid references public.users(id),
  supersedes_id uuid references public.demand_day_events(id),
@@ -273,7 +294,8 @@ create table public.demand_day_events (
  check (valid_to >= valid_from and valid_to - valid_from <= 60),
  check ((origin = 'manual') = (created_by is not null)),
  check ((origin = 'feed') = (source_id is not null and source_seq is not null and run_id is not null and external_key is not null)),
- check (origin = 'manual' or (supersedes_id is null and not retracted and note is null))
+ check (origin = 'manual' or (supersedes_id is null and not retracted and note is null)),
+ constraint demand_day_events_feed_withdrawal check (origin = 'feed' or (not withdrawn and ends_at is null))
 );
 -- One correction per manual row: the unique index IS the arbiter of two people correcting the same entry.
 create unique index demand_day_events_one_correction on public.demand_day_events (supersedes_id) where supersedes_id is not null;
@@ -337,10 +359,17 @@ begin
 end $$;
 
 -- Store feed events (alerts, discovered events): events = [{external_key, category, valid_from, valid_to,
--- start_local, end_local, title, expected_impact, severity, issued_at}]. THE GATE FIRST; unchanged = no row.
+-- start_local, end_local, title, expected_impact, severity, issued_at, ends_at}]. THE GATE FIRST; unchanged = no row.
+-- p_events IS THE COMPLETE CURRENT SET of this source for this scope (one shop, or all): a SNAPSHOT. So a stored
+-- event that is not in it has LEFT the feed. If its end has not passed (ends_at, else the end of valid_to in ET)
+-- it was cancelled or replaced: a WITHDRAWAL vintage is appended (the head's own fields, withdrawn = true) and the
+-- reader stops returning it. If its end has passed it ran its course: nothing is written and it stays history.
+-- Only a call that reaches this point withdraws: a failed fetch or a refused payload never calls it. An event
+-- that comes back after a withdrawal is a new vintage (its content differs from the withdrawal's).
 create function public.demand_events_ingest(p_source_id text, p_definition_hash text, p_location_id uuid, p_started_at timestamptz, p_events jsonb)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public as $$
 declare v_seq bigint; v_run uuid := gen_random_uuid(); v_seen integer; v_fresh integer; v_scope text := coalesce(p_location_id::text, 'all');
+  v_now timestamptz := clock_timestamp(); v_gone uuid[]; v_withdrawn integer;
 begin
   v_seq := public.demand_source_gate(p_source_id, p_definition_hash);
   if p_definition_hash is null then raise exception 'source_unverified'; end if;
@@ -349,30 +378,47 @@ begin
   if v_seen > 50 then raise exception 'rows_over_cap'; end if;
   create temporary table if not exists demand_events_incoming (
     external_key text, category text, valid_from date, valid_to date, start_local time, end_local time, title text,
-    expected_impact text, severity text, issued_at timestamptz, content_hash text) on commit drop;
+    expected_impact text, severity text, issued_at timestamptz, ends_at timestamptz, content_hash text) on commit drop;
   truncate demand_events_incoming;
   insert into demand_events_incoming
-  select e.external_key, e.category, e.valid_from, e.valid_to, e.start_local, e.end_local, btrim(e.title), coalesce(e.expected_impact, 'unknown'), e.severity, e.issued_at,
+  select e.external_key, e.category, e.valid_from, e.valid_to, e.start_local, e.end_local, btrim(e.title), coalesce(e.expected_impact, 'unknown'), e.severity, e.issued_at, e.ends_at,
     encode(sha256(convert_to(concat_ws('|', e.category, e.valid_from::text, e.valid_to::text, coalesce(e.start_local::text, ''), coalesce(e.end_local::text, ''),
-      btrim(e.title), coalesce(e.expected_impact, 'unknown'), coalesce(e.severity, '')), 'UTF8')), 'hex')
+      btrim(e.title), coalesce(e.expected_impact, 'unknown'), coalesce(e.severity, ''), coalesce(floor(extract(epoch from e.ends_at))::bigint::text, '')), 'UTF8')), 'hex')
   from jsonb_to_recordset(p_events) as e(external_key text, category text, valid_from date, valid_to date, start_local time, end_local time,
-    title text, expected_impact text, severity text, issued_at timestamptz);
+    title text, expected_impact text, severity text, issued_at timestamptz, ends_at timestamptz);
   if exists (select 1 from demand_events_incoming i where i.external_key is null or i.category is null or i.valid_from is null or i.valid_to is null or i.title is null)
     or (select count(distinct i.external_key) from demand_events_incoming i) <> v_seen then raise exception 'events_invalid'; end if;
+  -- What left the feed before its end: the current head of each stored event of this source and scope that the
+  -- snapshot does not list. Decided on the whole snapshot, before the unchanged rows are set aside.
+  select array_agg(h.id) into v_gone
+  from (select distinct on (d.external_key) d.id, d.external_key, d.withdrawn, d.valid_to, d.ends_at
+        from public.demand_day_events d
+        where d.origin = 'feed' and d.source_id = p_source_id and d.scope_key = v_scope
+        order by d.external_key, d.available_at desc, d.id desc) h
+  where not h.withdrawn
+    and coalesce(h.ends_at, ((h.valid_to + 1)::timestamp at time zone 'America/New_York')) > v_now
+    and not exists (select 1 from demand_events_incoming i where i.external_key = h.external_key);
+  v_withdrawn := coalesce(cardinality(v_gone), 0);
   delete from demand_events_incoming i where i.content_hash = (
     select d.content_hash from public.demand_day_events d
     where d.origin = 'feed' and d.source_id = p_source_id and d.scope_key = v_scope and d.external_key = i.external_key
     order by d.available_at desc, d.id desc limit 1);
   select count(*) into v_fresh from demand_events_incoming;
-  insert into public.demand_signal_runs (id, source_id, source_seq, location_id, feed, outcome, rows_seen, rows_written, started_at)
-  values (v_run, p_source_id, v_seq, p_location_id, 'day_events', case when v_fresh > 0 then 'written' else 'unchanged' end, v_seen, v_fresh,
-    coalesce(p_started_at, clock_timestamp()));
+  insert into public.demand_signal_runs (id, source_id, source_seq, location_id, feed, outcome, rows_seen, rows_written, rows_withdrawn, started_at)
+  values (v_run, p_source_id, v_seq, p_location_id, 'day_events', case when v_fresh + v_withdrawn > 0 then 'written' else 'unchanged' end, v_seen, v_fresh,
+    v_withdrawn, coalesce(p_started_at, v_now));
   insert into public.demand_day_events (origin, source_id, source_seq, run_id, location_id, category, valid_from, valid_to, start_local, end_local,
-    title, expected_impact, severity, external_key, content_hash, issued_at)
+    title, expected_impact, severity, external_key, content_hash, issued_at, ends_at)
   select 'feed', p_source_id, v_seq, v_run, p_location_id, i.category, i.valid_from, i.valid_to, i.start_local, i.end_local, i.title,
-    i.expected_impact, i.severity, i.external_key, i.content_hash, i.issued_at
+    i.expected_impact, i.severity, i.external_key, i.content_hash, i.issued_at, i.ends_at
   from demand_events_incoming i order by i.external_key;
-  return jsonb_build_object('run_id', v_run, 'seen', v_seen, 'written', v_fresh);
+  -- The withdrawals: appended, never an update or a removal of the vintage they withdraw.
+  insert into public.demand_day_events (origin, source_id, source_seq, run_id, location_id, category, valid_from, valid_to, start_local, end_local,
+    title, expected_impact, severity, external_key, content_hash, issued_at, ends_at, withdrawn)
+  select 'feed', p_source_id, v_seq, v_run, d.location_id, d.category, d.valid_from, d.valid_to, d.start_local, d.end_local, d.title,
+    d.expected_impact, d.severity, d.external_key, encode(sha256(convert_to(d.content_hash || '|withdrawn', 'UTF8')), 'hex'), d.issued_at, d.ends_at, true
+  from public.demand_day_events d where d.id = any(coalesce(v_gone, '{}'::uuid[])) order by d.external_key;
+  return jsonb_build_object('run_id', v_run, 'seen', v_seen, 'written', v_fresh, 'withdrawn', v_withdrawn);
 end $$;
 
 -- ── 3. manual events (GM+). The page is PR 5; this is its one writer. ───────────────────────────────
@@ -433,6 +479,7 @@ end $$;
 -- ── 4. the gated readers (compute, render) ──────────────────────────────────────────────────────
 -- The latest vintage per valid hour as of p_as_of (available_at, then issued_at, then id), ONLY from sources
 -- whose status is 'verified' NOW. A revoked or unverified source's rows stay stored and are not returned.
+-- TOTALLY ORDERED by (source_id, valid_hour), unique after the DISTINCT ON, so the store can page it.
 create function public.demand_usable_weather(p_location_id uuid, p_from timestamptz, p_to timestamptz, p_as_of timestamptz)
 returns table (source_id text, valid_hour timestamptz, issued_at timestamptz, available_at timestamptz, vintage_id bigint,
   temperature_f numeric, precip_probability_pct smallint, wind_speed_mph numeric, relative_humidity_pct smallint, is_daytime boolean, condition text)
@@ -450,7 +497,10 @@ begin
 end $$;
 
 -- Day events for a shop (its own and the all-shop ones) as of p_as_of: manual heads that are not retracted
--- (no source: always usable on this axis) and the latest feed vintage per event from sources verified NOW.
+-- (no source: always usable on this axis) and the latest feed vintage per event from sources verified NOW,
+-- unless that vintage is a WITHDRAWAL (the event was cancelled or replaced: not usable from then on; an as-of
+-- before the withdrawal still returns it). TOTALLY ORDERED by (valid_from, id), id being unique, so a caller
+-- can page the set: the store reads it in pages with an exact count and refuses a set that moved.
 create function public.demand_usable_day_events(p_location_id uuid, p_from date, p_to date, p_as_of timestamptz)
 returns table (id uuid, origin text, source_id text, location_id uuid, category text, valid_from date, valid_to date, start_local time,
   end_local time, title text, expected_impact text, severity text, issued_at timestamptz, available_at timestamptz)
@@ -459,6 +509,7 @@ begin
   if p_location_id is null or p_from is null or p_to is null or p_as_of is null or p_to < p_from or p_to - p_from > 62 then
     raise exception 'signal_window_invalid'; end if;
   return query
+  select u.* from (
   select m.id, m.origin, m.source_id, m.location_id, m.category, m.valid_from, m.valid_to, m.start_local, m.end_local, m.title,
     m.expected_impact, m.severity, m.issued_at, m.available_at
   from public.demand_day_events m
@@ -472,7 +523,8 @@ begin
         from public.demand_day_events d
         where d.origin = 'feed' and d.available_at <= p_as_of and d.scope_key in (p_location_id::text, 'all')
         order by d.source_id, d.scope_key, d.external_key, d.available_at desc, d.id desc) f
-  where f.valid_from <= p_to and f.valid_to >= p_from and public.demand_source_status(f.source_id) = 'verified';
+  where f.valid_from <= p_to and f.valid_to >= p_from and not f.withdrawn and public.demand_source_status(f.source_id) = 'verified'
+  ) u order by u.valid_from, u.id;
 end $$;
 
 -- ── 5. the cron lease: 0337's body with 'demand-signals' added; no job is dropped ───────────────────
