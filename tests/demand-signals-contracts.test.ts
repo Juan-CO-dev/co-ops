@@ -38,6 +38,7 @@ const CENSUS: Record<string, { contract: "none" | "revocation" | "ai"; why: stri
   "lib/demand-signals/collect.ts": { contract: "revocation", why: "collect: collectDecision before anything, again before each shop; the writer asks again in SQL" },
   "lib/demand-signals/nws-client.ts": { contract: "none", why: "the GET itself; it knows no register and is reached only through collect.ts after the gate" },
   "lib/demand-signals/nws-shared.ts": { contract: "none", why: "pure normalizers and the adapter's own definition; no request, no read" },
+  "lib/demand-signals/shop-points-shared.ts": { contract: "none", why: "pure: which shops have one active point (a catering node) and which are listed by reason; no source, no signal" },
   "lib/demand-signals/signal-store.ts": { contract: "revocation", why: "compute / render: keepUsable over the register NOW; collect: collectDecision; every write is a gated 0343 function" },
   "lib/demand-signals/sources-shared.ts": { contract: "revocation", why: "the register helpers every use point calls; each one ends in signalUsable" },
   "lib/demand-signals/backtest.ts": { contract: "none", why: "zero-feed candidates only (trend, calendar); no source" },

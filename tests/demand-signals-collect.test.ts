@@ -191,7 +191,7 @@ describe("the collection pass", () => {
   function harness(states: () => SourceState[] | Promise<SourceState[]>, over: Partial<CollectDeps> = {}): Mocked {
     const base: CollectDeps = {
       loadSourceStates: async () => states(),
-      loadShopPoints: async () => [{ locationId: SHOP_B, lat: 38.9097, lon: -77.0433 }, { locationId: SHOP_A, lat: 38.8899, lon: -77.0091 }],
+      loadShopPoints: async () => ({ points: [{ locationId: SHOP_B, lat: 38.9097, lon: -77.0433 }, { locationId: SHOP_A, lat: 38.8899, lon: -77.0091 }], unplaced: [] }),
       getJson: async (url) => url.includes("/points/") ? { ok: true, json: pointDoc } : url.includes("/alerts/") ? { ok: true, json: alertsDoc([alert()]) } : { ok: true, json: hourlyDoc() },
       ingestWeather: async (a): Promise<IngestResult> => ({ ok: true, seen: a.rows.length, written: a.rows.length }),
       ingestEvents: async (a): Promise<IngestResult> => ({ ok: true, seen: a.events.length, written: a.events.length }),
@@ -265,7 +265,7 @@ describe("the collection pass", () => {
   });
   it("a shop that would take the run past 224 rows is refused whole, never cut", async () => {
     const d = harness(() => [verified()]);
-    d.loadShopPoints.mockResolvedValueOnce([SHOP_A, SHOP_B, "00000000-0000-4000-8000-00000000000c"].map((locationId) => ({ locationId, lat: 38.9, lon: -77 })));
+    d.loadShopPoints.mockResolvedValueOnce({ points: [SHOP_A, SHOP_B, "00000000-0000-4000-8000-00000000000c"].map((locationId) => ({ locationId, lat: 38.9, lon: -77 })), unplaced: [] });
     const res = await run(d);
     expect(d.ingestWeather).toHaveBeenCalledTimes(2);
     expect(res.shops[2]!.weather).toEqual({ error: "rows_over_cap" });
