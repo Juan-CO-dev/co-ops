@@ -22,7 +22,7 @@ function runDocumented(command: string, { dropCondition = false } = {}) {
     .filter((a) => !a.startsWith("--env-file") && !(dropCondition && a === "--conditions=react-server"))
     .map((a) => (a === "R1" ? "2026-10-01" : a === "R2" || a === "C" ? "2026-10-02" : a === "N" || a === "M" ? "0" : a))
     .filter((a) => a !== "--execute"); // offline: never the write mode
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/SUPABASE|TOAST|EZCATER|STRIPE|NODE_OPTIONS|VITEST/.test(k)));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/SUPABASE|TOAST|EZCATER|STRIPE|NODE_OPTIONS|VITEST/.test(k))) as NodeJS.ProcessEnv;
   const out = spawnSync(process.execPath, [TSX_CLI, ...args], { cwd: ROOT, env, encoding: "utf8", timeout: 90_000 });
   return { status: out.status, stderr: out.stderr.trim() };
 }
