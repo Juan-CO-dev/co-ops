@@ -5,7 +5,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { PipelineToastOrder } from "@/lib/catering/not-in-toast";
-import { toastReadyAt } from "@/lib/catering/not-in-toast-shared";
+import { notRungLabel, notRungSource, toastReadyAt } from "@/lib/catering/not-in-toast-shared";
 import type { HouseSuggestions } from "@/lib/catering/catering-toast-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 
@@ -39,8 +39,7 @@ export function NotInToast({ rows, locations }: {
         const house = row.source === "house";
         return <li key={`${row.source ?? "ezcater"}:${row.order_id}`} className="py-3 text-sm">
           <div className="flex flex-wrap items-center gap-2 font-semibold text-co-text">
-            {house && <span className="rounded-md border border-co-border-2 px-2 py-0.5 text-xs font-medium text-co-text-muted">{t("catering.toast_pending.house")}</span>}
-            <span>{row.order_number ?? t(house ? "catering.toast_pending.no_ring_code" : "digest.catering.cross_check.no_code")}</span>
+            <span>{(() => { const l = notRungLabel(notRungSource(row), row.order_number); return t(l.key as TranslationKey, l.params); })()}</span>
             <span>{shop(row.location_id)}</span>
             {row.overdue && <span className="text-co-cta-text">{t("catering.toast_pending.overdue")}</span>}
           </div>
