@@ -722,6 +722,8 @@ type LedgerRow = ParLedgerRow;
 export async function runParShadowForLocation(
   locationId: string,
   runDateEt: string,
+  /** Item 4 PR 1: hands the inputs this run just used to the demand ledger (DEMAND_LEDGER=1 only). Never changes the run. */
+  observe?: (inputs: DemandInputs) => void,
 ): Promise<ParRunResult> {
   const sb = getServiceRoleClient();
 
@@ -733,6 +735,7 @@ export async function runParShadowForLocation(
   const inputs = await loadDemandInputs(sb, locationId, runDateEt);
   // THE ENGINE IS ONE PURE FUNCTION (item 4 PR 1): the same code the replay harness runs.
   const ledger = computeParLedger(inputs, mode);
+  if (observe) { try { observe(inputs); } catch { /* an observer can never fail the nightly run */ } }
 
   await writeLedger(sb, locationId, runDateEt, ledger);
   const counts = tallyRun(toTallyRows(ledger));

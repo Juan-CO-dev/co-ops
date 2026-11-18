@@ -15,9 +15,7 @@ import {
 } from "./replay";
 import { PASS_RULE } from "./scoring-shared";
 
-export function demandLedgerEnabled(value: string | undefined): boolean {
-  return value === "1";
-}
+export { demandLedgerEnabled } from "./config-shared";
 
 /** Targets freeze at D+4, after the T-3 recapture has closed. 0341 refuses anything earlier. */
 export const TARGET_FREEZE_LAG_DAYS = 4;
