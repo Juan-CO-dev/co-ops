@@ -10,11 +10,11 @@
  *      the previous board week's shift times (its Sunday starts the main payroll week);
  *   4. fact_labor_week_source of each payroll week that holds a planned day (wages, links, payroll shops: the
  *      builder's own global universe; only this shop's rows leave the pure planner);
- *   5. fact_labor_cost_planned (0343) per board day and per strip line, and the Sales report's days for the
+ *   5. fact_labor_cost_planned (0345) per board day and per strip line, and the Sales report's days for the
  *      settled dates (the actual denominator);
  *   6. labor_week_coverage + the fingerprints once more (AFTER): a week that was `ready` and no longer is means
  *      the rows above came from two generations, so the whole view answers `rebuilding`.
- * It never throws into the board: 0343 not applied = `not_installed`, any other failed read = `unavailable`.
+ * It never throws into the board: 0345 not applied = `not_installed`, any other failed read = `unavailable`.
  * No write, no email, no notification. No wage rate and nothing per person is returned.
  */
 import "server-only";
@@ -35,7 +35,7 @@ import {
 } from "./labor-projection-shared";
 import { addDays } from "./time-shared";
 
-/** A labor read failed; `notInstalled` = the function or table does not exist yet (0343 / the fact layer). */
+/** A labor read failed; `notInstalled` = the function or table does not exist yet (0345 / the fact layer). */
 export class LaborViewsReadError extends Error {
   constructor(public notInstalled: boolean) {
     super(notInstalled ? "labor_views_not_installed" : "labor_views_read_failed");

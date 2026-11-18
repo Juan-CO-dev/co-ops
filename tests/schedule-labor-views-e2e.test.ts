@@ -1,6 +1,6 @@
 // Board two labor views PR 1, END TO END (CC's rulings on Astra r4 P1 + P2):
 //   the REAL board loader (the in-memory schedule store) -> the REAL projection -> the loader's REAL reads against
-//   the REAL schema (PGlite: parents + 0338 + 0339 + 0340 + 0343) -> the facts' own two-view pricer -> the
+//   the REAL schema (PGlite: parents + 0338 + 0339 + 0340 + 0345) -> the facts' own two-view pricer -> the
 //   SERIALIZED board (JSON).
 //  - a genuinely UNBUILT future week with a 48-hour schedule gets projected minutes, the 8 overtime hours, both
 //    percentages over PROJECTED net sales (the scheduling forecast) and the salary allocated by 0340's rule;
@@ -21,7 +21,7 @@ import type { BoardLaborViews, BoardLaborViewsReady, PlanShift } from "@/lib/sch
 import type { DemandResult } from "@/lib/scheduling/demand-shared";
 import { weekDays } from "@/lib/scheduling/time-shared";
 import { AGM, GM, MOO, P_REG, STAFF, scheduleStore, shopTables } from "./fixtures/schedule/lib-store";
-import { M0343 } from "./helpers/fact-0338-parents";
+import { M0345 } from "./helpers/fact-0338-parents";
 import { A, ALICE, FUTURE_W, GMU, MGR, laborPlanDb, type LaborPlanDb } from "./helpers/labor-plan-fixture";
 import { pgliteClient, type PgliteClientOpts } from "./helpers/pglite-postgrest";
 import { BOARD_LABOR_VIEW_PATHS } from "./fixtures/schedule/labor-views-paths";
@@ -34,7 +34,7 @@ const NEW_HIRE = STAFF[5]!; // on the schedule store's roster, with no 7shifts a
 let f: LaborPlanDb;
 beforeAll(async () => {
   f = await laborPlanDb();
-  await f.db.exec(M0343);
+  await f.db.exec(M0345);
 }, 240_000);
 
 const shift = (userId: string, date: string, hours: number, startQ = 24): PlanShift => ({ userId, date, startQ, endQ: startQ + hours * 4 });
@@ -263,7 +263,7 @@ describe("a MIXED week: settled days are the facts, today and later are the sche
     expect(views).toEqual({ state: "rebuilding" });
   });
 
-  it("0343 not applied (the planned pricer is an unknown function): 'not_installed', and the board itself still loads", async () => {
+  it("0345 not applied (the planned pricer is an unknown function): 'not_installed', and the board itself still loads", async () => {
     const { json } = await board({ now: NOW, week: WEEK, shifts, rpc: { fact_labor_cost_planned: () => ({ data: null, error: { code: "PGRST202", message: "x" } }) } });
     expect(json.laborViews).toEqual({ state: "not_installed" });
   });

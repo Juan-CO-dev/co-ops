@@ -1,5 +1,5 @@
 // Board two labor views PR 1: the PROJECTION's pure rules (lib/scheduling/labor-projection-shared.ts).
-// Which days are a schedule instead of facts (the replacement mask), the plan 0343 is sent (rows with the
+// Which days are a schedule instead of facts (the replacement mask), the plan 0345 is sent (rows with the
 // facts' own rate pick, the overtime counted by the builder's own counter over ONE selected population, this
 // shop's salary row from the one allocation rule), and what each payroll week's plan is complete enough to say.
 import { describe, expect, it } from "vitest";
@@ -190,7 +190,7 @@ describe("salary (Astra r3 P2-3): the one allocation rule, this shop's row only"
 
 describe("what a request is sent, and what the pricer is told", () => {
   const { built } = plan({ today: "2026-10-01", shifts: [...BOARD.map((d) => shift(ANA, d, 8)), shift(NEW, "2026-10-06", 2)], prevShifts: [shift(ANA, W, 8)] });
-  it("a day call carries only its own payroll week's part of the plan (0343 refuses a mask date outside the request's weeks)", () => {
+  it("a day call carries only its own payroll week's part of the plan (0345 refuses a mask date outside the request's weeks)", () => {
     const tue = planForRange(built.plan, "2026-10-06", "2026-10-06") as { mask: string[]; rows: unknown[]; salaried: Array<{ week_start: string }> };
     expect(tue.mask).toEqual([W, ...BOARD.slice(0, 6)]);
     expect(tue.salaried.map((s) => s.week_start)).toEqual([W]);

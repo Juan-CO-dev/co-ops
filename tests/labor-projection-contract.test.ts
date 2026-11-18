@@ -31,7 +31,7 @@ describe("projected readiness (Astra r4 P1)", () => {
     expect(v).toMatchObject({ projected: false, projection: null, hoursKnown: false, otState: "unbuilt" });
     expect(laborPercents(v!, 1_000_000, targets)).toEqual({ pureHourlyPct: null, pureHourlyTone: "none", fullyLoadedPct: null, fullyLoadedTone: "none" });
   });
-  it("a row from before 0343 (no days_planned) reads exactly as before", () => {
+  it("a row from before 0345 (no days_planned) reads exactly as before", () => {
     const old = Object.fromEntries(Object.entries(row({ ot_state: "assessed", days_covered: 7 })).filter(([k]) => k !== "days_planned" && k !== "salary_projected"));
     const r = toLaborCostRow(old);
     expect(r).toMatchObject({ days_planned: 0, salary_projected: false });

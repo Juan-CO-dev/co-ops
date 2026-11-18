@@ -1,5 +1,5 @@
-// Board two views PR 1: ONE built labor database for the 0343 proofs and the board projection's end-to-end
-// test. PGlite, the REAL parents + 0338 + 0339 + 0340 (0343 is applied by the caller, so the empty-plan
+// Board two views PR 1: ONE built labor database for the 0345 proofs and the board projection's end-to-end
+// test. PGlite, the REAL parents + 0338 + 0339 + 0340 (0345 is applied by the caller, so the empty-plan
 // identity can be read before and after). Synthetic rows only.
 //
 // Payroll week W = Sun 2026-10-04 .. Sat 2026-10-10 (board week Mon 2026-10-05 .. Sun 2026-10-11), every day

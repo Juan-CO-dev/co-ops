@@ -32,12 +32,12 @@ export interface LaborCostRow {
   /** 0340, returned whatever the basis (an estimate included): salaried accounts placed at this shop, the
    * week's unplaced accounts (the same number on every shop), accounts assigned here with no salary in 7shifts */
   salaried_people: number; salary_unplaced_people: number; salary_missing_wage_people: number;
-  /** 0343 (fact_labor_cost_planned only): the range's days whose population is the PLAN (a schedule), not the facts.
+  /** 0345 (fact_labor_cost_planned only): the range's days whose population is the PLAN (a schedule), not the facts.
    * Absent / 0 = a row of facts only (every public fact_labor_cost row). */
   days_planned?: number;
-  /** 0343: the salary came from the plan's allocation (no stored row for the week, no estimate) */
+  /** 0345: the salary came from the plan's allocation (no stored row for the week, no estimate) */
   salary_projected?: boolean;
-  /** 0343: the row's days reach its payroll week's first planned date, so its overtime is (in part) the plan's
+  /** 0345: the row's days reach its payroll week's first planned date, so its overtime is (in part) the plan's
    * count, even on a row of retained fact days only (replacing Wednesday moves Thursday's overtime) */
   ot_planned?: boolean;
 }
@@ -91,7 +91,7 @@ export interface LaborWeekView {
   salaryIncomplete: boolean;
   /** 0340: payroll-shop gaps behind the week (the unplaced once, missing wages per shop), shown even beside an estimate */
   salaryGaps: number;
-  /** 0343: the view holds planned days (a schedule priced by the facts' own body), and how many */
+  /** 0345: the view holds planned days (a schedule priced by the facts' own body), and how many */
   projected: boolean; daysPlanned: number;
   /** null on a view that leans on no plan; else what the plan is complete enough to say (every shop's, the worst
    * wins). Non-null with `projected` false = retained fact days whose OVERTIME is the plan's count. */
@@ -116,7 +116,7 @@ export function toLaborCostRow(r: Record<string, unknown>): LaborCostRow {
     // A database before 0340 returns no gap columns: read as 0 (its basis is never `incomplete`).
     salaried_people: n(r.salaried_people ?? 0), salary_unplaced_people: n(r.salary_unplaced_people ?? 0),
     salary_missing_wage_people: n(r.salary_missing_wage_people ?? 0),
-    // The public fact_labor_cost (and a database before 0343) returns neither: a row of facts only.
+    // The public fact_labor_cost (and a database before 0345) returns neither: a row of facts only.
     days_planned: n(r.days_planned ?? 0), salary_projected: r.salary_projected === true, ot_planned: r.ot_planned === true,
   };
 }
@@ -134,7 +134,7 @@ function rowHoursKnown(r: LaborCostRow): boolean {
 }
 
 /** Rows of one or more shops, summed per week (each shop's burden on its own pay). `projectionFor` states the
- * plan's inputs for a row holding planned days (0343); it is never asked about a row of facts only. */
+ * plan's inputs for a row holding planned days (0345); it is never asked about a row of facts only. */
 export function laborWeekViews(rows: readonly LaborCostRow[], projectionFor?: (row: LaborCostRow) => LaborProjectionInputs | undefined): LaborWeekView[] {
   const byWeek = new Map<string, LaborCostRow[]>();
   for (const r of rows) (byWeek.get(r.week_start) ?? byWeek.set(r.week_start, []).get(r.week_start)!).push(r);

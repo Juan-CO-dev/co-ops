@@ -1,4 +1,4 @@
--- Migration 0343_labor_cost_planned
+-- Migration 0345_labor_cost_planned
 -- AUTHORED 2026-11-18 (board two labor views PR 1, CO Claude, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
 -- Apply AFTER 0340 (labor_payroll_shops; labor-v3 deployed). Nothing reads the new function until SCHEDULE_LABOR_VIEWS=1.
 -- Plan: CHIEF item-02-BOARD-TWO-VIEWS-PLAN-r4.md, with Astra r4's P1 + P2 per CC's rulings (the projected readiness
@@ -9,7 +9,7 @@
 -- through ONE SQL body and ONE TS pricer. So fact_labor_cost's body (0340) moves into
 --   fact_labor_cost_planned(p_location_id, p_from, p_to, p_wage_fallback, p_plan jsonb)
 -- and the public fact_labor_cost(uuid, date, date, text) keeps its signature and its 23 columns and calls it with
--- no plan. With no plan the answer is 0340's, row for row (tests/fact-labor-0343-migration.test.ts reads it
+-- no plan. With no plan the answer is 0340's, row for row (tests/fact-labor-0345-migration.test.ts reads it
 -- before and after this file on a built week).
 --
 -- THE PLAN (this shop only; every key optional, every value an array):
@@ -51,13 +51,13 @@ begin;
 
 do $$ declare v_live text; begin
   if to_regclass('public.labor_payroll_shops') is null or to_regprocedure('public.fact_labor_ot_scope()') is null then
-    raise exception '0343: apply 0340 first'; end if;
-  if to_regprocedure('public.fact_labor_cost_planned(uuid,date,date,text,jsonb)') is not null then raise exception '0343: already applied'; end if;
+    raise exception '0345: apply 0340 first'; end if;
+  if to_regprocedure('public.fact_labor_cost_planned(uuid,date,date,text,jsonb)') is not null then raise exception '0345: already applied'; end if;
   -- The live body this file moves must be its 0340 definition (a later definer would be silently overwritten).
   select md5(regexp_replace(p.prosrc, '[^\x21-\x7E]+', '', 'g')) into v_live from pg_proc p
    where p.oid = to_regprocedure('public.fact_labor_cost(uuid,date,date,text)');
   if v_live is distinct from '1e1a7837cecca4af0da43395e5e79c49' then
-    raise exception '0343: the live body of public.fact_labor_cost(uuid,date,date,text) (md5 %) is not its 0340 definition -- a later definer exists; re-emit from it. Refusing.', v_live;
+    raise exception '0345: the live body of public.fact_labor_cost(uuid,date,date,text) (md5 %) is not its 0340 definition -- a later definer exists; re-emit from it. Refusing.', v_live;
   end if;
 end $$;
 
@@ -278,7 +278,7 @@ do $$ declare f regprocedure; begin
     if not has_function_privilege('service_role', f, 'EXECUTE') or has_function_privilege('anon', f, 'EXECUTE')
       or has_function_privilege('authenticated', f, 'EXECUTE')
       or exists(select 1 from pg_proc pr, lateral aclexplode(pr.proacl) a where pr.oid = f and a.grantee = 0) then
-      raise exception '0343: RPC escape %', f; end if;
+      raise exception '0345: RPC escape %', f; end if;
   end loop;
 end $$;
 

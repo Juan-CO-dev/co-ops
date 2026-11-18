@@ -1,5 +1,5 @@
-// 0343 (board two views PR 1): the PLANNED labor pricer. Offline (PGlite): the REAL parents + 0338 + 0339 + 0340
-// + the REAL 0343, a week built by the real builder and writer.
+// 0345 (board two views PR 1): the PLANNED labor pricer. Offline (PGlite): the REAL parents + 0338 + 0339 + 0340
+// + the REAL 0345, a week built by the real builder and writer.
 //  - an empty plan is 0340, row for row (read before and after the apply), and the public function keeps its 23 columns;
 //  - Astra r3 P1-1: planned rows REPLACE a masked day's facts (never a union); a masked day with no rows is a
 //    planned zero-hour day; the plan's overtime list replaces the stored overtime of the whole payroll week;
@@ -12,7 +12,7 @@
 import { createHash } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
-import { M0338, M0339, M0340, M0343, freshLaborParents } from "./helpers/fact-0338-parents";
+import { M0338, M0339, M0340, M0345, freshLaborParents } from "./helpers/fact-0338-parents";
 import { A, ALICE, B, BOB, FUTURE_W, MGR, W, laborPlanDb, type LaborPlanDb } from "./helpers/labor-plan-fixture";
 
 const md5 = (s: string) => createHash("md5").update(s.replace(/[^\x21-\x7E]+/g, ""), "utf8").digest("hex");
@@ -48,19 +48,19 @@ const NEW_COLUMNS = ["days_planned", "salary_projected", "ot_planned"];
 beforeAll(async () => {
   f = await laborPlanDb();
   for (const [loc, from, to, fb] of IDENTITY) before.push(await q("select * from fact_labor_cost($1, $2, $3, $4)", [loc, from, to, fb]));
-  await f.db.exec(M0343);
+  await f.db.exec(M0345);
 }, 240_000);
 
-describe("0343 static shape", () => {
+describe("0345 static shape", () => {
   it("one transaction; the pre-flight accepts exactly 0340's fact_labor_cost body", () => {
-    expect(M0343).toMatch(/^begin;$/m);
-    expect(M0343.trimEnd().endsWith("commit;")).toBe(true);
-    expect(M0343).toContain(`'${md5(bodyOf(M0340, "fact_labor_cost"))}'`);
+    expect(M0345).toMatch(/^begin;$/m);
+    expect(M0345.trimEnd().endsWith("commit;")).toBe(true);
+    expect(M0345).toContain(`'${md5(bodyOf(M0340, "fact_labor_cost"))}'`);
   });
   it("adds no table and touches no fact row: it only creates the planned pricer and re-points the public one at it", () => {
-    expect(M0343).not.toMatch(/create table|alter table|insert into|delete from|update public\./i);
-    expect(M0343).toContain("create function public.fact_labor_cost_planned(");
-    expect(M0343).toContain("create or replace function public.fact_labor_cost(");
+    expect(M0345).not.toMatch(/create table|alter table|insert into|delete from|update public\./i);
+    expect(M0345).toContain("create function public.fact_labor_cost_planned(");
+    expect(M0345).toContain("create or replace function public.fact_labor_cost(");
   });
 });
 
@@ -251,19 +251,19 @@ describe("ceilings and the pre-flight", () => {
     }
   });
   it("a second apply refuses", async () => {
-    await refuses(f.db.exec(M0343), "0343: already applied");
+    await refuses(f.db.exec(M0345), "0345: already applied");
   });
   it("refuses without 0340, and refuses a drifted fact_labor_cost body by name", async () => {
     const d: PGlite = await freshLaborParents();
     const run = async (sql: string) => { try { await d.exec(sql); return null; } catch (e) { if (d.isInTransaction()) await d.exec("rollback"); return String(e); } };
     await d.exec(M0338); await d.exec(M0339);
-    expect(await run(M0343)).toContain("0343: apply 0340 first");
+    expect(await run(M0345)).toContain("0345: apply 0340 first");
     await d.exec(M0340);
     const live = bodyOf(M0340, "fact_labor_cost");
     const at = M0340.indexOf("create function public.fact_labor_cost(");
     const head = M0340.slice(at, M0340.indexOf("$$", at));
     await d.exec(`${head.replace("create function", "create or replace function")}$$${live.replace("'fact_invalid_request'", "'fact_invalid_requesx'")}$$;`);
-    expect(await run(M0343)).toContain("0343: the live body of public.fact_labor_cost(uuid,date,date,text)");
+    expect(await run(M0345)).toContain("0345: the live body of public.fact_labor_cost(uuid,date,date,text)");
     expect((await d.query<{ r: unknown }>("select to_regprocedure('public.fact_labor_cost_planned(uuid,date,date,text,jsonb)') r")).rows[0]!.r).toBeNull();
     await d.close();
   }, 240_000);

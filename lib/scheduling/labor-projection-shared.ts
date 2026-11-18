@@ -4,7 +4,7 @@
  *
  * The board does not price labor. It states a PLAN (which days are a schedule instead of facts, the scheduled
  * minutes with each person's rate fields, the overtime counted by the facts' own counter, this shop's salary row)
- * and hands it to 0343's fact_labor_cost_planned; the answer goes through the facts' own two-view pricer
+ * and hands it to 0345's fact_labor_cost_planned; the answer goes through the facts' own two-view pricer
  * (lib/facts/labor-cost-shared.ts). A projected day and the same day once settled are one SQL body and one pricer.
  *
  * DAY KINDS (a board week is Mon-Sun; a payroll week is Sun-Sat, so a board week touches two):
@@ -38,7 +38,7 @@ import type { LaborTone } from "./board-shared";
 import { Q_MINUTES, addDays } from "./time-shared";
 
 export interface ScheduleLaborViewsEnv { SCHEDULE_LABOR_VIEWS?: string; FACT_LAYER?: string; FACT_LAYER_LABOR?: string }
-/** Dark unless SCHEDULE_LABOR_VIEWS, FACT_LAYER and FACT_LAYER_LABOR are all exactly "1" (apply 0343 first). */
+/** Dark unless SCHEDULE_LABOR_VIEWS, FACT_LAYER and FACT_LAYER_LABOR are all exactly "1" (apply 0345 first). */
 export function scheduleLaborViewsEnabled(env: ScheduleLaborViewsEnv): boolean {
   return env.SCHEDULE_LABOR_VIEWS === "1" && env.FACT_LAYER === "1" && env.FACT_LAYER_LABOR === "1";
 }
@@ -54,7 +54,7 @@ export interface FactQuarter { business_date: string; quarter_start_at: string; 
 export interface PlanRow { person_key: string; business_date: string; minutes: number; pay_class: PayClass; rate_cents: number | null; rate_basis: RateBasis; carry_back_rate_cents: number | null }
 export interface PlanOt { person_key: string; business_date: string; ot_minutes: number }
 export interface PlanSalaried { week_start: string; salaried_cents: number | null; salaried_people: number; unplaced_people: number; missing_wage_people: number }
-/** 0343's p_plan (every key an array). */
+/** 0345's p_plan (every key an array). */
 export interface LaborPlan { mask: string[]; rows: PlanRow[]; ot: PlanOt[]; salaried: PlanSalaried[] }
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -134,7 +134,7 @@ export interface BuiltPlan {
   scheduledMinutesByDate: Record<string, number>;
 }
 
-/** The scheduled minutes of the masked dates as 0343 plan rows: one per (person, date), each with ONE rate pick by
+/** The scheduled minutes of the masked dates as 0345 plan rows: one per (person, date), each with ONE rate pick by
  * the facts' own rule (pickWage over the account linked at THIS shop; no account or no wage = `none`). A schedule
  * has no 7shifts role, so the pick is the no-role pick (role "0"), as for a Toast punch. */
 function planRows(input: BuildPlanInput, masked: ReadonlySet<string>): { rows: PlanRow[]; unknown: Record<string, string[]>; minutes: Record<string, number> } {
@@ -225,7 +225,7 @@ export function buildLaborPlan(input: BuildPlanInput): BuiltPlan {
     for (const [k, v] of countOvertime(events, input.locationId)) {
       const at = k.lastIndexOf("|");
       const date = k.slice(at + 1);
-      // The days before the week's first planned date keep their stored overtime (0343): never listed.
+      // The days before the week's first planned date keep their stored overtime (0345): never listed.
       if (date >= first) ot.push({ person_key: k.slice(0, at), business_date: date, ot_minutes: v });
     }
     // Salary (Astra r3 P2-3): only for a week with no stored row; the one allocation rule over the week's global
@@ -244,7 +244,7 @@ export function buildLaborPlan(input: BuildPlanInput): BuiltPlan {
   return { plan: { mask: [...c.mask], rows, ot, salaried }, weeks, wageUnknownByDate: unknown, scheduledMinutesByDate: minutes };
 }
 
-/** The plan as ONE request may send it: 0343 refuses a mask date outside the request's payroll weeks, so a day
+/** The plan as ONE request may send it: 0345 refuses a mask date outside the request's payroll weeks, so a day
  * call carries only its own week's part. `only` = the dates of the range to price. Null = no plan at all. */
 export function planForRange(plan: LaborPlan, from: string, to: string, only?: readonly string[]): Record<string, unknown> | null {
   const w0 = payrollWeekStart(from), w1 = addDays(payrollWeekStart(to), 6);
@@ -299,7 +299,7 @@ export interface BoardLaborViewsReady {
   /** Three lines, never blended: actual so far, the projected rest, and a count of days not settled. */
   strip: { actual: BoardLaborStripPart | null; projected: BoardLaborStripPart | null; notSettledDays: number; noScheduleDays: number };
 }
-/** `not_installed` = 0343 is not applied; `rebuilding` = a labor week moved while it was read; `unavailable` = a read failed. */
+/** `not_installed` = 0345 is not applied; `rebuilding` = a labor week moved while it was read; `unavailable` = a read failed. */
 export type BoardLaborViews = BoardLaborViewsReady | { state: "not_installed" | "rebuilding" | "unavailable" };
 
 const EMPTY: BoardLaborFigure = {
