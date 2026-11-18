@@ -30,6 +30,85 @@ Changing the scope (a future employer whose shops are one company) is a new migr
 
 Rollback: unset `FACT_LAYER_LABOR`. After 0339, an app rolled back to `labor-v1` writes nothing (its payloads are refused as raced) and every week stays as it was last built; going back to company-wide overtime is a new migration, never an app rollback. The derived tables can stay. **The observation triggers keep recording** (that is the point: the history cannot be rebuilt later); they only insert into an append-only table no builder locks. Dropping them is a separate migration.
 
+### 1c. Salaried cost to the payroll shop (0340, Juan 2026-11-17)
+
+Juan, 2026-11-17: the shops are separate LLC payrolls. **P Street** pays the owner, the director of operations (MoO) and P Street's GM-and-down salaries. **Capitol Hill** pays the catering manager and Capitol Hill's GM-and-down salaries. The CGS is not salaried. 0338/0339 split a salary by the person's 7shifts LINKS (an account linked at both shops was halved); 0340 replaces that with an explicit, dated, audited **payroll shop per 7shifts account** (`labor_payroll_shops`, one writer `save_labor_payroll_shop`, owner / CGS / MoO). Links never enter the allocation. No fallback, no split: an account with a salary and no payroll shop, an assignee with no salary, or an assignment to a shop that is no longer linked makes the week's salaried total **incomplete** (NULL, with the counts), never a partial total. The rule is `allocateSalaried` (`lib/facts/labor-payroll-shared.ts`).
+
+`0340_labor_payroll_shop` is FILE ONLY. Order:
+
+1. **Sim**: apply `0340`. Pre-flight refuses by name without 0339, when a re-emitted body (`fact_labor_week_source`, `fact_labor_week_fingerprint` from 0338; `fact_replace_labor_week`, `fact_labor_cost` from 0339) is not its source (a later definer), when `labor_week_salaried_check` is missing, and when 0340 is already applied.
+2. **Prod** (Juan's word): apply `0340`, stamp its header.
+3. **Deploy** the app commit with `LABOR_BUILDER_VERSION = "labor-v3"` right after. Between the apply and the deploy the old app's salaried payload carries no gap counts, so every labor write is refused `fact_payload_mismatch` (counted as raced, nothing written). Existing weeks keep their 0339 rows until rebuilt.
+4. **Seed** (below), on sim first, then prod.
+5. Let the passes run (every week since 2026-07-19 is rebuilt: the version bump and every save restale every week).
+6. **Gate**, after the LAST save and a pass:
+
+```sql
+select count(*) from fact_labor_weeks_stale(1000, 'labor-v3');   -- must be 0 (the fingerprint holds the version AND every payroll-shop row)
+```
+
+then `npx tsx --env-file=.env.local scripts/check-labor-payroll-allocation.ts` (read-only): exit 0 = every built week's stored salaried rows equal a fresh allocation, and no gap anywhere (census or stored). Exit 3 = weeks still stale (wait a pass); 1 = a stored row differs (report it); 4 = gaps remain, each printed by 7shifts account id. `--allow-gaps` only with Juan's OK for named accounts (for example a manager whose salary is not in 7shifts yet).
+
+**The seed procedure (CC, by MCP SQL; no names in code).** Every decision is by the linked CO-OPS person's ROLE and SHOP, per Juan's 2026-11-17 facts. `<P_STREET>` / `<CAPITOL_HILL>` are the two `locations.id` values with a live 7shifts location link (S0). `<ACTOR>` = Juan's CO-OPS user id (the CGS is an allowed actor; the audit row names him).
+
+S0. The payroll destinations (the only shops a salary can go to):
+```sql
+select l.location_id, loc.name from sevenshifts_location_links l join locations loc on loc.id = l.location_id where l.active;
+```
+
+S1. THE CENSUS (Astra r2 P1): every 7shifts account in the mirror with no wage, a non-hourly wage, or a link to a level-6+ person. Nothing here depends on punches or links existing, so an account with no wage, no punch and no link is listed (`NO WAGE`).
+```sql
+with w as (select v.user_id, string_agg(distinct v.wage_type, ',' order by v.wage_type) kinds
+             from fact_wage_current_versions(array(select id from sevenshifts_users)) v group by v.user_id),
+     l as (select ul.sevenshifts_user_id, string_agg(u.role || ' ' || u.name || ' @ ' || loc.name, '; ' order by u.name) who
+             from sevenshifts_user_links ul join users u on u.id = ul.user_id join locations loc on loc.id = ul.linked_at_location_id
+            where ul.active group by 1)
+select s.id account, s.employee_id, s.first_name, s.last_name, s.active, coalesce(w.kinds, 'NO WAGE') wage_kinds, coalesce(l.who, '-') linked
+  from sevenshifts_users s left join w on w.user_id = s.id left join l on l.sevenshifts_user_id = s.id
+ where w.kinds is null or w.kinds <> 'hourly'
+    or l.who ~ '^(owner|moo|gm|agm|catering_mgr|prep_mgr|social_media_mgr|cgs) ' or l.who ~ '; (owner|moo|gm|agm|catering_mgr|prep_mgr|social_media_mgr|cgs) '
+ order by s.id;
+```
+
+S2. The roster side: level-6+ people (not the CGS) with NO linked 7shifts account. Each one is a gap until their account is linked at their shop on `/admin/sevenshifts` (then it appears in S1), or Juan confirms they have no 7shifts account (the stated limit).
+```sql
+select u.id, u.name, u.role from users u
+ where u.active and u.role in ('owner','moo','gm','agm','catering_mgr','prep_mgr','social_media_mgr')
+   and not exists (select 1 from sevenshifts_user_links l where l.user_id = u.id and l.active)
+ order by u.role, u.name;
+```
+
+S3. The estimate per shop (an estimate still wins the cost read; the gaps show beside it):
+```sql
+select location_id, estimated_salaried_weekly_cents is not null has_estimate from schedule_shop_settings;
+```
+
+S4. Decide EVERY S1 row (one save per account; two accounts of one person are two saves):
+
+| The linked person (S1 `linked`) | Save |
+|---|---|
+| `owner`, `moo` | `shop` = `<P_STREET>` |
+| `catering_mgr` | `shop` = `<CAPITOL_HILL>` |
+| `gm`, and any other level-6 manager with a salary (`agm`, `prep_mgr`, `social_media_mgr`) | `shop` = the shop they manage (their link's / membership's shop) |
+| `cgs` | `excluded`, note "CGS is not salaried (Juan 2026-11-17)" |
+| a level-6 manager whose wage is `hourly` | `excluded`, note "hourly (wage in 7shifts)" |
+| `NO WAGE` and a salaried manager per Juan | `shop` as above: the week then reads "no salary" (incomplete) until the salary is entered in 7shifts or the shop estimate is set |
+| `NO WAGE` and not salaried (former staff, a duplicate or test account, hourly staff with no wage entered) | `excluded`, with a note saying which |
+| anything not covered above | ask Juan before saving |
+
+```sql
+-- one per account; first save of an account: p_expected_seq NULL (later saves: the account's newest seq)
+select save_labor_payroll_shop('<ACTOR>'::uuid, <account>, '<P_STREET>'::uuid, 'shop', date '2026-07-19',
+  'Seed: <role> on the P Street payroll (Juan 2026-11-17)', null);
+select save_labor_payroll_shop('<ACTOR>'::uuid, <account>, null, 'excluded', date '2026-07-19',
+  'Seed: CGS is not salaried (Juan 2026-11-17)', null);
+```
+A note is required for every seed row (it starts before the current week). A later transfer is a new row with a later Sunday; a correction is a new row on the same Sunday (the newest seq wins). Nothing is updated or deleted.
+
+S5. Re-run S1 and S2: every S1 account has a row, and S2 is empty (or each remaining name is confirmed by Juan). The card ("Payroll shop (salaries)" on `/admin/sevenshifts`, owner / CGS / MoO) shows the same census: its gap badge must read 0.
+
+Rollback: unset `FACT_LAYER_LABOR`. An app rolled back past labor-v3 writes nothing (its payloads are refused as raced); going back to the link split is a new migration, never an app rollback. `labor_payroll_shops` is append-only and stays.
+
 ## 2. What a pass does
 
 - The diff (`fact_labor_weeks_stale`) lists every payroll week (Sunday 00:00 ET calendar midnight; both shops built together, overtime counted per shop) from **2026-07-19** through the week holding yesterday whose fingerprint differs. It changes when a punch or Toast entry in the week changes (a moved punch makes both weeks stale), a link changes, an involved person's wage observation changes, the 7shifts overtime settings change, a shop-day gains ledger evidence or leaves its 36 h settle window, or another day of the week closes.
@@ -61,4 +140,6 @@ select save_labor_burden('<actor user id>', null, 11.5, '2026-07-19', 'payroll',
 - The salaried estimate (0274) is current-only, not dated: changing it re-prices every past week.
 - A punch edited more than 90 days after its day is never re-read by 7shifts.
 - A 7shifts wage deleted by mistake looks like a retired current wage and still prices.
+- A salaried person with NO 7shifts account at all is invisible to every 7shifts-based check (0340). The census names payroll-roster managers (level 6+, not the CGS) with no linked account, and the card lists every salaried account with its payroll shop; a salaried person outside the roster with no account is caught only by the 0274 estimate and by eyeballing that list.
+- A payroll-shop save restales EVERY built week (the fingerprint hashes the whole table): saves are rare, and the next passes rebuild.
 - Overtime per shop (each shop its own LLC) and the calendar-midnight (not business-day) week boundary are Juan's rules (2026-11-17, replacing the 2026-11-16 company-wide answer), pending payroll / legal confirmation. Only the weekly 40 h is modelled; 7shifts daily / premium thresholds stay an advisory (`ot_settings_disagree`).

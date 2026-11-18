@@ -18,7 +18,8 @@ import { LABOR_TARGET_HOURLY_PCT, LABOR_TARGET_LOADED_PCT } from "./labor-config
 export interface LaborCostRow {
   week_start: string; location_id: string;
   hourly_straight_cents: number; ot_premium_cents: number;
-  salaried_cents: number | null; salary_basis: "estimate" | "wages" | "unknown";
+  /** 0340: `incomplete` = no estimate and the week's wage-derived salary has a payroll-shop gap (cents NULL) */
+  salaried_cents: number | null; salary_basis: "estimate" | "wages" | "incomplete" | "unknown";
   burden_pct: number; burden_basis: "estimated" | "payroll";
   /** hourly minutes priced at the shop estimate (no wage, or Q5 = dc_minimum) */
   estimated_rate_minutes: number;
@@ -28,6 +29,9 @@ export interface LaborCostRow {
   days_covered: number; days_pending: number; days_fallback: number; days_incomplete: number; days_missing: number;
   /** unclosed punches on the range's days, counted once per day they could span (fix r2 P1: open punch-DAYS; their worked hours are unknown) */
   open_punches: number;
+  /** 0340, returned whatever the basis (an estimate included): salaried accounts placed at this shop, the
+   * week's unplaced accounts (the same number on every shop), accounts assigned here with no salary in 7shifts */
+  salaried_people: number; salary_unplaced_people: number; salary_missing_wage_people: number;
 }
 export interface LaborWeekView {
   weekStart: string;
@@ -37,6 +41,10 @@ export interface LaborWeekView {
   otState: LaborCostRow["ot_state"]; coverageComplete: boolean;
   /** false = some worked hours are unknown (open punch, missing / incomplete / pending day, unbuilt week): no % is definitive */
   hoursKnown: boolean; openPunches: number;
+  /** 0340: some shop's wage-derived salary is incomplete (a payroll-shop gap, no estimate) */
+  salaryIncomplete: boolean;
+  /** 0340: payroll-shop gaps behind the week (the unplaced once, missing wages per shop), shown even beside an estimate */
+  salaryGaps: number;
 }
 
 /** A fact_labor_cost row as returned by PostgREST or pg: bigint / numeric may arrive as strings, dates
@@ -52,6 +60,9 @@ export function toLaborCostRow(r: Record<string, unknown>): LaborCostRow {
     ot_state: r.ot_state as LaborCostRow["ot_state"], range_days: n(r.range_days), days_covered: n(r.days_covered), days_pending: n(r.days_pending),
     days_fallback: n(r.days_fallback), days_incomplete: n(r.days_incomplete), days_missing: n(r.days_missing),
     open_punches: n(r.open_punches),
+    // A database before 0340 returns no gap columns: read as 0 (its basis is never `incomplete`).
+    salaried_people: n(r.salaried_people ?? 0), salary_unplaced_people: n(r.salary_unplaced_people ?? 0),
+    salary_missing_wage_people: n(r.salary_missing_wage_people ?? 0),
   };
 }
 
@@ -80,6 +91,8 @@ export function laborWeekViews(rows: readonly LaborCostRow[]): LaborWeekView[] {
       otState: otRows.sort((a, b) => OT_RANK[b] - OT_RANK[a])[0]!,
       coverageComplete: rs.every((r) => r.days_pending + r.days_fallback + r.days_incomplete + r.days_missing + r.open_punches === 0),
       hoursKnown, openPunches,
+      salaryIncomplete: rs.some((r) => r.salary_basis === "incomplete"),
+      salaryGaps: Math.max(0, ...rs.map((r) => Number(r.salary_unplaced_people))) + rs.reduce((s, r) => s + Number(r.salary_missing_wage_people), 0),
     };
   });
 }
@@ -138,4 +151,5 @@ export const LABOR_FACT_I18N_KEYS = [
   "labor.facts.target.default", "labor.facts.target_varies", "labor.facts.estimated", "labor.facts.burden_estimated",
   "labor.facts.rate_estimated", "labor.facts.straight_time", "labor.facts.salary_unknown", "labor.facts.ot_lower_bound",
   "labor.facts.week_open", "labor.facts.coverage.fallback", "labor.facts.coverage.pending", "labor.facts.coverage.incomplete",
+  "labor.facts.salary_incomplete", "labor.facts.salary_gaps",
 ] as const;

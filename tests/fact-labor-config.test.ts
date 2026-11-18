@@ -33,3 +33,9 @@ it("Juan 2026-11-17: the overtime scope is per_shop in TS and in 0339's fact_lab
   expect(LABOR_OT_SCOPE).toBe("per_shop");
   expect(body).toContain(`select '${LABOR_OT_SCOPE}'::text`);
 });
+it("0340: the builder version is labor-v3, and the payroll-shop floor in SQL is the labor floor week", async () => {
+  const { LABOR_BUILDER_VERSION } = await import("@/lib/facts/labor-config-shared");
+  const m0340 = readFileSync("supabase/migrations/0340_labor_payroll_shop.sql", "utf8");
+  expect(LABOR_BUILDER_VERSION).toBe("labor-v3");
+  expect(m0340).toContain(`valid_from >= date '${LABOR_FLOOR_WEEK}'`);
+});
