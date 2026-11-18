@@ -1,124 +1,112 @@
 /**
- * Item 9b: the business report's five tabs for ONE shop, rendered from the DTO of lib/business-report.ts (the
- * export, lib/report-export-shared.ts business*Rows, projects the same DTO). Summary rows with drawers
+ * Item 9b: the business report's five tabs for ONE shop, rendered from the VIEW of lib/business-view-shared.ts
+ * (the export, lib/report-export-shared.ts business*Rows, projects the same view). Summary rows with drawers
  * (CollapsibleSection, D1-D10), phone-first at 375 px: no tables, lines that wrap.
  *
- * What a viewer gets is decided by the loader, never here: a GM's DTO carries no cost per person and no
+ * What a viewer gets is decided by the loader, never here: a GM's view carries no cost per person and no
  * labor dollars per 15 minutes (PERSON_COST_MIN / QUARTER_COST_MIN), so this page cannot show them.
  *
- * Fix round 3 (review ITEM9B-r3): every labor and sales figure — cards, collapsed summary rows, drawers, the
- * 15-minute lines, People, Compare — is a `Figure` from lib/business-figure-shared.ts rendered by `FigureView` /
- * `figureText` (BusinessParts). This file never formats a labor number or picks its reason by hand
- * (pinned by tests/business-report-9b-r3.test.ts).
+ * Fix round 4 (review ITEM9B-r4): THIS FILE NEVER SEES A NUMBER OF THE REPORT. It receives `BusinessReportView`,
+ * in which every money, percent, hours and count value is an opaque `Figure`; the only thing it can do with one
+ * is hand it to `FigureView` / `FigureLine` / `figureText` (BusinessParts), which write the value with its state,
+ * reason and qualifications. It does not import the DTO, a raw amount or a number formatter
+ * (tests/business-report-figure-census.test.ts fails by name if it does).
  */
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { channelLabel, providerLabel, serverLabel } from "@/components/reports-hub/SalesParts";
 import type { ReactNode } from "react";
-import { formatCents, formatDateLabel, formatQuantity, formatTime } from "@/lib/i18n/format";
+import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import type { BusinessDayDto, BusinessQuarterDto, BusinessReportDto } from "@/lib/business-report";
-import { breakdownCoverage, compareChange, salesAmountMissing, type CompareChange, type LaborFigures } from "@/lib/business-report-shared";
-import {
-  figureComparable, hoursFigure, loadedCentsFigure, loadedPctFigure, minutesFigure, netFigure, otHoursFigure, pureCentsFigure, purePctFigure,
-  quarterCentsFigure, quarterHoursFigure, quarterPctFigure, salesFigure, type Figure,
-} from "@/lib/business-figure-shared";
-import { Amount, Card, Dash, FigureLine, FigureView, LaborPct, Line, Money, bizCard, dateRange, figureText, figureValueText, tFor } from "./BusinessParts";
+import { figureChange, figureKindOf, type Figure } from "@/lib/business-figure-shared";
+import type { BusinessReportView, CutView, DayView, LaborView, QuarterView, SalesView } from "@/lib/business-view-shared";
+import { Card, ChangeText, Dash, FigureLine, FigureView, LaborShare, bizCard, dateRange, figureReasonText, figureText, figureValueText, tFor } from "./BusinessParts";
 
-type Props = { dto: BusinessReportDto; language: Language };
+type Props = { view: BusinessReportView; language: Language };
 
 /** The labor lines of a day / week / range drawer: pure hourly, then fully loaded, each through the descriptor. */
-function LaborLines({ labor, language }: { labor: LaborFigures; language: Language }) {
+function LaborLines({ labor, language }: { labor: LaborView; language: Language }) {
   const t = tFor(language);
   return <div className="flex flex-col gap-1">
-    <FigureLine language={language} label={t("reports.business.detail.net_sales")} f={netFigure(labor)} />
-    <FigureLine language={language} label={t("reports.business.detail.hours")} f={hoursFigure(labor)} />
-    <FigureLine language={language} label={t("reports.business.detail.pure_hourly_cost")} f={pureCentsFigure(labor, "pureHourlyCents")} />
-    <FigureLine language={language} label={t("reports.business.detail.ot_premium")} f={pureCentsFigure(labor, "otPremiumCents")} />
-    <FigureLine language={language} label={t("reports.business.detail.ot_hours")} f={otHoursFigure(labor)} />
-    <FigureLine language={language} label={t("reports.business.detail.salaried")} f={loadedCentsFigure(labor, "salariedCents")} />
-    <FigureLine language={language} label={t("reports.business.detail.burden")} f={loadedCentsFigure(labor, "burdenCents")} />
-    <FigureLine language={language} label={t("reports.business.detail.fully_loaded")} f={loadedCentsFigure(labor, "fullyLoadedCents")} />
+    <FigureLine language={language} label={t("reports.business.detail.net_sales")} f={labor.net} />
+    <FigureLine language={language} label={t("reports.business.detail.hours")} f={labor.hours} />
+    <FigureLine language={language} label={t("reports.business.detail.pure_hourly_cost")} f={labor.pureCost} />
+    <FigureLine language={language} label={t("reports.business.detail.ot_premium")} f={labor.otPremium} />
+    <FigureLine language={language} label={t("reports.business.detail.ot_hours")} f={labor.otHours} />
+    <FigureLine language={language} label={t("reports.business.detail.salaried")} f={labor.salaried} />
+    <FigureLine language={language} label={t("reports.business.detail.burden")} f={labor.burden} />
+    <FigureLine language={language} label={t("reports.business.detail.fully_loaded")} f={labor.loadedCost} />
   </div>;
 }
 
 /** The collapsed line of a day / week: every figure with its state, reason and (short) qualifications, so the
  * closed list says everything the open drawer says about whether a number is whole. */
-function summaryLine(sales: Figure, labor: LaborFigures, language: Language): string {
+function summaryLine(sales: SalesView, labor: LaborView, language: Language): string {
   const t = tFor(language);
   const short = { short: true };
   return [
-    t("reports.business.row.sales", { amount: figureText(sales, language, short) }),
-    t("reports.business.row.hours", { h: figureText(hoursFigure(labor), language, short) }),
-    t("reports.business.row.labor_pct", { pct: figureText(purePctFigure(labor), language, short) }),
-    t("reports.business.row.loaded_pct", { pct: figureText(loadedPctFigure(labor), language, short) }),
+    t("reports.business.row.sales", { amount: figureText(sales.total, language, short) }),
+    t("reports.business.row.hours", { h: figureText(labor.hours, language, short) }),
+    t("reports.business.row.labor_pct", { pct: figureText(labor.purePct, language, short) }),
+    t("reports.business.row.loaded_pct", { pct: figureText(labor.loadedPct, language, short) }),
   ].join(" · ");
 }
 
-function DayBadges({ day, language }: { day: BusinessDayDto; language: Language }) {
+function DayBadges({ day, language }: { day: DayView; language: Language }) {
   const t = tFor(language);
+  const badge = "rounded-full px-2 py-0.5 text-xs font-bold";
   return <>
-    {day.sales.coverage !== "complete" ? <span className="rounded-full bg-co-warning-surface px-2 py-0.5 text-xs font-bold text-co-warning-text">{t(`reports.business.coverage.${day.sales.coverage}` as TranslationKey)}</span> : null}
-    {day.cuts === "rebuilding" ? <span className="rounded-full bg-co-warning-surface px-2 py-0.5 text-xs font-bold text-co-warning-text">{t("reports.business.badge.rebuilding")}</span> : null}
-    {day.rush?.state === "ok" && day.rush.windows.length > 0 ? <span className="rounded-full bg-co-gold/20 px-2 py-0.5 text-xs font-bold text-co-text">{t("reports.business.rush.count", { n: day.rush.windows.length })}</span> : null}
-    {day.largeChecks.checks > 0 ? <span className="rounded-full bg-co-gold/20 px-2 py-0.5 text-xs font-bold text-co-text">{t("reports.business.badge.large", { n: day.largeChecks.checks })}</span> : null}
+    {day.sales.coverage !== "complete" ? <span className={`${badge} bg-co-warning-surface text-co-warning-text`}>{t(`reports.business.coverage.${day.sales.coverage}` as TranslationKey)}</span> : null}
+    {day.cuts === "rebuilding" ? <span className={`${badge} bg-co-warning-surface text-co-warning-text`}>{t("reports.business.badge.rebuilding")}</span> : null}
+    {day.rush?.any ? <span className={`${badge} bg-co-gold/20 text-co-text`}>{t("reports.business.rush.count", { n: figureText(day.rush.count, language) })}</span> : null}
+    {day.largeChecks.any ? <span className={`${badge} bg-co-gold/20 text-co-text`}>{t("reports.business.badge.large", { n: figureText(day.largeChecks.checks, language) })}</span> : null}
   </>;
 }
 
-const daySales = (d: BusinessDayDto) => salesFigure(d.sales, salesAmountMissing(d.sales));
-
 // ── Overview ────────────────────────────────────────────────────────────────────────────────────
 
-export function BusinessOverview({ dto, language }: Props) {
+export function BusinessOverview({ view, language }: Props) {
   const t = tFor(language);
-  const { total } = dto;
-  const covered = dto.days.filter((d) => d.sales.coverage === "complete").length;
-  const totalMissing = dto.days.reduce((s, d) => s + salesAmountMissing(d.sales), 0);
-  const breakdown = breakdownCoverage(dto.days);
+  const { total, salesDays, breakdown } = view;
   return <section className={bizCard} aria-label={t("reports.business.tab.overview")}>
-    <p className="mb-3 text-sm text-co-text-muted">{dateRange(dto.range.from, dto.range.to, language)} · {t("reports.business.caption")}</p>
-    {covered < dto.days.length ? <p className="mb-3 text-xs font-bold text-co-warning-text">{t("reports.business.coverage.days", { covered, expected: dto.days.length })}</p> : null}
+    <p className="mb-3 text-sm text-co-text-muted">{dateRange(view.range.from, view.range.to, language)} · {t("reports.business.caption")}</p>
+    {salesDays.covered < salesDays.expected ? <p className="mb-3 text-xs font-bold text-co-warning-text">{t("reports.business.coverage.days", salesDays)}</p> : null}
     <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 lg:grid-cols-3">
-      <Card label={t("reports.business.card.sales")} sub={t("reports.business.card.sales_hint")}><FigureView f={salesFigure(total.sales, totalMissing)} language={language} /></Card>
-      <Card label={t("reports.business.card.net")} sub={total.labor.denominator.state === "ok" ? t("reports.business.card.net_hint") : null}>
-        <FigureView f={netFigure(total.labor)} language={language} /></Card>
-      <Card label={t("reports.business.card.hours")}><FigureView f={hoursFigure(total.labor)} language={language} /></Card>
-      <Card label={t("reports.business.card.pure_hourly")}><LaborPct figures={total.labor} view="pure" target={total.target} language={language} /></Card>
-      <Card label={t("reports.business.card.fully_loaded")}><LaborPct figures={total.labor} view="loaded" target={total.loadedTarget} language={language} /></Card>
-      <Card label={t("reports.business.card.refunds")} sub={t("reports.business.card.refunds_hint")}><Money cents={total.sales.coverage === "missing" ? null : total.sales.refundCents} reason="reports.business.sales.not_captured" language={language} /></Card>
+      <Card label={t("reports.business.card.sales")} sub={t("reports.business.card.sales_hint")}><FigureView f={total.sales.total} language={language} /></Card>
+      <Card label={t("reports.business.card.net")} sub={total.labor.netState === "ok" ? t("reports.business.card.net_hint") : null}>
+        <FigureView f={total.labor.net} language={language} /></Card>
+      <Card label={t("reports.business.card.hours")}><FigureView f={total.labor.hours} language={language} /></Card>
+      <Card label={t("reports.business.card.pure_hourly")}><LaborShare labor={total.labor} view="pure" target={total.target} language={language} /></Card>
+      <Card label={t("reports.business.card.fully_loaded")}><LaborShare labor={total.labor} view="loaded" target={total.loadedTarget} language={language} /></Card>
+      <Card label={t("reports.business.card.refunds")} sub={t("reports.business.card.refunds_hint")}><FigureView f={total.sales.refunds} language={language} /></Card>
     </div>
     <p className="mt-3 text-xs text-co-text-muted">{t("reports.business.labor.denominator")}</p>
     <p className="text-xs text-co-text-muted">{t("reports.business.loaded.basis")}</p>
-    {dto.largeChecks.checks > 0 ? <p className="mt-1 text-xs font-bold text-co-warning-text">{t("reports.business.large_checks", { count: dto.largeChecks.checks, amount: formatCents(dto.largeChecks.cents, language) })}</p> : null}
-    {breakdown.state !== "complete" && dto.days.length > 0 ? <p className="mt-1 text-xs text-co-text-muted">{t("reports.business.large_checks_partial", { covered: breakdown.included, expected: breakdown.expected })}</p> : null}
+    {total.largeChecks.any ? <p className="mt-1 text-xs font-bold text-co-warning-text">{t("reports.business.large_checks", { count: figureText(total.largeChecks.checks, language), amount: figureText(total.largeChecks.amount, language) })}</p> : null}
+    {breakdown.state !== "complete" && breakdown.expected > 0 ? <p className="mt-1 text-xs text-co-text-muted">{t("reports.business.large_checks_partial", { covered: breakdown.included, expected: breakdown.expected })}</p> : null}
 
     <div className="mt-4 flex flex-col gap-2">
-      <CollapsibleSection idBase={`biz-weeks-${dto.locationId}`} title={t("reports.business.weeks")} count={t("reports.business.count_weeks", { n: dto.weeks.length })} defaultOpen>
+      <CollapsibleSection idBase={`biz-weeks-${view.locationId}`} title={t("reports.business.weeks")} count={t("reports.business.count_weeks", { n: view.weeks.length })} defaultOpen>
         <div className="flex flex-col gap-2">
-          {dto.weeks.map((w) => {
-            const days = dto.days.filter((d) => d.date >= w.from && d.date <= w.to);
-            const coverage = days.length > 0 && days.every((d) => d.sales.coverage === "complete") ? "complete" : days.every((d) => d.sales.coverage === "missing") ? "missing" : "partial";
-            const sales = salesFigure({ coverage, totalCents: days.reduce((s, d) => s + d.sales.totalCents, 0) }, days.reduce((s, d) => s + salesAmountMissing(d.sales), 0));
-            return <CollapsibleSection key={w.weekStart} idBase={`biz-week-${dto.locationId}-${w.weekStart}`}
-              title={t("reports.business.week_of", { range: dateRange(w.from, w.to, language) })} count={summaryLine(sales, w.labor, language)}>
-              <div className="flex flex-col gap-2 p-1">
-                <div className="flex flex-wrap gap-4"><LaborPct figures={w.labor} view="pure" target={w.target} language={language} /><LaborPct figures={w.labor} view="loaded" target={w.loadedTarget} language={language} /></div>
-                <LaborLines labor={w.labor} language={language} />
-              </div>
-            </CollapsibleSection>;
-          })}
+          {view.weeks.map((w) => <CollapsibleSection key={w.weekStart} idBase={`biz-week-${view.locationId}-${w.weekStart}`}
+            title={t("reports.business.week_of", { range: dateRange(w.from, w.to, language) })} count={summaryLine(w.sales, w.labor, language)}>
+            <div className="flex flex-col gap-2 p-1">
+              <div className="flex flex-wrap gap-4"><LaborShare labor={w.labor} view="pure" target={w.target} language={language} /><LaborShare labor={w.labor} view="loaded" target={w.loadedTarget} language={language} /></div>
+              <LaborLines labor={w.labor} language={language} />
+            </div>
+          </CollapsibleSection>)}
         </div>
       </CollapsibleSection>
-      <CollapsibleSection idBase={`biz-days-${dto.locationId}`} title={t("reports.business.days")} count={t("reports.business.count_days", { n: dto.days.length })}>
+      <CollapsibleSection idBase={`biz-days-${view.locationId}`} title={t("reports.business.days")} count={t("reports.business.count_days", { n: view.days.length })}>
         <div className="flex flex-col gap-2">
-          {[...dto.days].reverse().map((d) => <CollapsibleSection key={d.date} idBase={`biz-day-${dto.locationId}-${d.date}`}
-            title={formatDateLabel(d.date, language)} count={summaryLine(daySales(d), d.labor, language)} badge={<DayBadges day={d} language={language} />}>
+          {[...view.days].reverse().map((d) => <CollapsibleSection key={d.date} idBase={`biz-day-${view.locationId}-${d.date}`}
+            title={formatDateLabel(d.date, language)} count={summaryLine(d.sales, d.labor, language)} badge={<DayBadges day={d} language={language} />}>
             <div className="flex flex-col gap-2 p-1">
-              <FigureLine language={language} label={t("reports.business.detail.sales")} f={daySales(d)} />
-              <Line language={language} label={t("reports.business.detail.checks")} value={d.sales.coverage === "missing" ? null : String(d.sales.checks)} reason="reports.business.labor.state.sales_not_covered" />
-              <Line language={language} label={t("reports.business.detail.toast_net")} value={d.sales.toastNetCents === null ? null : <Money cents={d.sales.toastNetCents} language={language} />} reason="reports.business.labor.state.net_unknown" />
-              <Line language={language} label={t("reports.business.detail.ezcater")} value={d.sales.coverage === "missing" ? null : <Amount cents={d.sales.ezcaterCents} missing={d.sales.ezcaterMissing} language={language} />} reason="reports.business.sales.not_captured" />
-              <div className="flex flex-wrap gap-4"><LaborPct figures={d.labor} view="pure" target={dto.weeks.find((w) => d.date >= w.from && d.date <= w.to)?.target ?? total.target} language={language} />
-                <LaborPct figures={d.labor} view="loaded" target={dto.weeks.find((w) => d.date >= w.from && d.date <= w.to)?.loadedTarget ?? total.loadedTarget} language={language} /></div>
+              <FigureLine language={language} label={t("reports.business.detail.sales")} f={d.sales.total} />
+              <FigureLine language={language} label={t("reports.business.detail.checks")} f={d.sales.checks} />
+              <FigureLine language={language} label={t("reports.business.detail.toast_net")} f={d.sales.toastNet} />
+              <FigureLine language={language} label={t("reports.business.detail.ezcater")} f={d.sales.ezcater} />
+              <div className="flex flex-wrap gap-4"><LaborShare labor={d.labor} view="pure" target={d.target} language={language} />
+                <LaborShare labor={d.labor} view="loaded" target={d.loadedTarget} language={language} /></div>
               <LaborLines labor={d.labor} language={language} />
               {d.cuts === "rebuilding" ? <p className="text-xs text-co-warning-text">{t("reports.business.cuts.rebuilding")}</p> : null}
             </div>
@@ -134,47 +122,45 @@ export function BusinessOverview({ dto, language }: Props) {
 
 /** One 15 minutes. Its labor is judged against the DAY's labor state (fix round 3): no minutes is "No labor"
  * only when the day's hours are final; otherwise a dash with the day's reason, and minutes are "so far". */
-function QuarterLine({ q, day, money, language }: { q: BusinessQuarterDto; day: BusinessDayDto; money: boolean; language: Language }) {
-  const t = tFor(language);
+function QuarterLine({ q, language }: { q: QuarterView; language: Language }) {
   return <li className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
     <span className="min-w-[4.5rem] font-bold text-co-text">{formatTime(q.quarterStartAt, language)}</span>
-    <span>{q.checks === null ? <Dash reason="reports.business.cuts.rebuilding" language={language} /> : t("reports.business.hours.checks", { n: q.checks })}</span>
-    <span>{q.toastCents === null ? <Dash reason="reports.business.cuts.rebuilding" language={language} /> : <Amount cents={q.toastCents} missing={q.amountMissing} language={language} />}</span>
-    <span className="text-co-text-muted"><FigureView f={quarterHoursFigure(q.laborMinutes, day.labor.state)} language={language} compact /></span>
-    {money ? <span className="inline-flex gap-1 text-co-text-muted"><FigureView f={quarterCentsFigure(q.straightCents, q.laborMinutes, day.labor)} language={language} compact />
-      {" · "}<FigureView f={quarterPctFigure(q.pct, day.labor.state)} language={language} compact /></span> : null}
+    <span><FigureView f={q.checks} language={language} compact /></span>
+    <span><FigureView f={q.sales} language={language} compact /></span>
+    <span className="text-co-text-muted"><FigureView f={q.hours} language={language} compact /></span>
+    {q.cost && q.pct ? <span className="inline-flex gap-1 text-co-text-muted"><FigureView f={q.cost} language={language} compact />
+      {" · "}<FigureView f={q.pct} language={language} compact /></span> : null}
   </li>;
 }
 
-export function BusinessHours({ dto, language }: Props) {
+export function BusinessHours({ view, language }: Props) {
   const t = tFor(language);
-  const r = dto.rushRule;
-  const money = dto.access.quarterCost;
+  const r = view.rushRule;
+  const money = view.access.quarterCost;
   return <section className={bizCard} aria-label={t("reports.business.tab.hours")}>
     <p className="mb-1 text-xs text-co-text-muted">{t("reports.business.quarter.basis")}</p>
     <p className="mb-1 text-xs text-co-text-muted">{t("reports.business.rush.rule", { quarters: r.minRunQuarters, multiplier: r.multiplier, checks: r.minChecks })}</p>
     <p className="mb-3 text-xs text-co-text-muted">{t(money ? "reports.business.hours.money_note" : "reports.business.hours.gm_note")}</p>
-    {dto.quarters === null ? <p className="text-sm text-co-text-muted">{t("reports.business.hours.too_wide")}</p> : <div className="flex flex-col gap-2">
-      {[...dto.days].reverse().map((d) => {
-        const qs = dto.quarters!.filter((q) => q.date === d.date && ((q.checks ?? 0) > 0 || (q.laborMinutes ?? 0) > 0));
-        const un = dto.quartersUnassigned?.find((u) => u.date === d.date);
+    {view.quarters === null ? <p className="text-sm text-co-text-muted">{t("reports.business.hours.too_wide")}</p> : <div className="flex flex-col gap-2">
+      {[...view.days].reverse().map((d) => {
         const rush = d.rush;
-        const hours = hoursFigure(d.labor);
+        const hours = d.labor.hours;
+        const final = figureKindOf(hours) === "known";
         const rushText = rush === null ? t("reports.business.badge.rebuilding") : rush.state === "not_enough_history" ? t("reports.business.rush.not_enough_history")
-          : rush.windows.length ? t("reports.business.rush.count", { n: rush.windows.length }) : t("reports.business.rush.none");
+          : rush.any ? t("reports.business.rush.count", { n: figureText(rush.count, language) }) : t("reports.business.rush.none");
         // The closed row says whether the day's labor is final (the reason travels with the figure).
-        const count = hours.kind === "known" ? rushText : `${rushText} · ${t("reports.business.row.hours", { h: figureText(hours, language, { short: true }) })}`;
-        return <CollapsibleSection key={d.date} idBase={`biz-hours-${dto.locationId}-${d.date}`} title={formatDateLabel(d.date, language)}
+        const count = final ? rushText : `${rushText} · ${t("reports.business.row.hours", { h: figureText(hours, language, { short: true }) })}`;
+        return <CollapsibleSection key={d.date} idBase={`biz-hours-${view.locationId}-${d.date}`} title={formatDateLabel(d.date, language)}
           count={count} badge={<DayBadges day={d} language={language} />}>
           <div className="flex flex-col gap-2 p-1">
             {rush?.state === "ok" ? rush.windows.map((w) => <p key={w.startAt} className="rounded-lg bg-co-gold/20 p-2 text-sm font-semibold text-co-text">
-              {t("reports.business.rush.window", { start: formatTime(w.startAt, language), end: formatTime(w.endAt, language), checks: w.checks,
-                usual: formatQuantity(w.baselineChecks, language) })}{" · "}<Money cents={w.cents} language={language} /></p>) : null}
+              {t("reports.business.rush.window", { start: formatTime(w.startAt, language), end: formatTime(w.endAt, language), checks: figureText(w.checks, language),
+                usual: figureText(w.usual, language) })}{" · "}{figureText(w.sales, language)}</p>) : null}
             {d.cuts !== "ok" ? <p className="text-xs text-co-warning-text">{t("reports.business.cuts.rebuilding")}</p> : null}
-            {hours.kind !== "known" ? <p className="text-xs text-co-warning-text">{t("reports.business.detail.hours")}: {figureText(hours, language)}</p> : null}
-            {qs.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.hours.no_activity")}</p>
-              : <ul aria-label={t("reports.business.hours.list_aria")}>{qs.map((q) => <QuarterLine key={q.quarterStartAt} q={q} day={d} money={money} language={language} />)}</ul>}
-            {un ? <p className="text-xs text-co-text-muted">{t("reports.business.quarter.unassigned")}: {t("reports.business.hours.checks", { n: un.checks })} · <Amount cents={un.toastCents} missing={un.amountMissing} language={language} /></p> : null}
+            {!final ? <p className="text-xs text-co-warning-text">{t("reports.business.detail.hours")}: {figureText(hours, language)}</p> : null}
+            {d.quarters.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.hours.no_activity")}</p>
+              : <ul aria-label={t("reports.business.hours.list_aria")}>{d.quarters.map((q) => <QuarterLine key={q.quarterStartAt} q={q} language={language} />)}</ul>}
+            {d.unassigned ? <p className="text-xs text-co-text-muted">{t("reports.business.quarter.unassigned")}: {figureText(d.unassigned.checks, language)} · {figureText(d.unassigned.sales, language)}</p> : null}
           </div>
         </CollapsibleSection>;
       })}
@@ -184,65 +170,65 @@ export function BusinessHours({ dto, language }: Props) {
 
 // ── Channels ────────────────────────────────────────────────────────────────────────────────────
 
-export function BusinessChannels({ dto, language }: Props) {
-  const t = tFor(language);
-  const rebuilding = dto.days.filter((d) => d.cuts !== "ok").length;
-  const ezOrders = dto.days.reduce((s, d) => s + d.sales.ezcaterOrders, 0);
-  const ezMissing = dto.days.reduce((s, d) => s + d.sales.ezcaterMissing, 0);
-  const row = (key: string, label: string, sub: string | null, checks: number, cents: number | null, missing: number | undefined) => <li key={key} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
+/** One line of a breakdown list: the amount through the formatter, then its count (which rides on the amount: an
+ * unknown amount already shows the dash and the reason for the whole line). */
+function CutLine({ label, sub, sales, checks, language }: { label: string; sub?: string | null; sales: Figure; checks: Figure; language: Language }) {
+  const n = figureValueText(checks, language);
+  return <li className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
     <span className="min-w-0 break-words"><span className="font-semibold text-co-text">{label}</span>{sub ? <span className="text-co-text-muted"> · {sub}</span> : null}</span>
-    <span className="text-right">{cents === null ? <Dash reason="reports.business.sales.not_captured" language={language} /> : <Amount cents={cents} missing={missing} language={language} />} <span className="text-co-text-muted">· {t("reports.business.hours.checks", { n: checks })}</span></span>
+    <span className="inline-flex flex-wrap items-baseline justify-end gap-x-1 text-right"><FigureView f={sales} language={language} compact />{n !== null ? <span className="text-co-text-muted">· {n}</span> : null}</span>
   </li>;
+}
+
+export function BusinessChannels({ view, language }: Props) {
+  const t = tFor(language);
+  const notice = view.breakdownNotice;
+  const line = (c: CutView, label: string, sub: string | null) => <CutLine key={`${c.key}|${c.provider ?? ""}`} label={label} sub={sub} sales={c.sales} checks={c.checks} language={language} />;
   return <section className={bizCard} aria-label={t("reports.business.tab.channels")}>
-    {rebuilding > 0 ? <p className="mb-3 text-xs font-bold text-co-warning-text">{t("reports.business.channels.rebuilding_days", { n: rebuilding })}</p> : null}
+    {notice ? <p className="mb-3 text-xs font-bold text-co-warning-text">{t(notice.key, notice.values)}</p> : null}
     <h3 className="mb-1 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.channels.title")}</h3>
-    {dto.channels.included.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.channels.none")}</p>
-      : <ul>{dto.channels.included.map((c) => row(`${c.key}|${c.provider ?? ""}`, channelLabel(language, c.key), c.provider ? providerLabel(language, c.provider) : null, c.checks, c.cents, c.amountMissing))}</ul>}
+    {view.channels.included.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.channels.none")}</p>
+      : <ul>{view.channels.included.map((c) => line(c, channelLabel(language, c.key), c.provider ? providerLabel(language, c.provider) : null))}</ul>}
     <h3 className="mb-1 mt-4 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.channels.ezcater")}</h3>
-    <ul>{row("ezcater", t("reports.business.channels.ezcater_label"), null, ezOrders, dto.total.sales.coverage === "missing" ? null : dto.total.sales.ezcaterCents, ezMissing)}</ul>
+    <ul><CutLine label={t("reports.business.channels.ezcater_label")} sales={view.channels.ezcater.sales} checks={view.channels.ezcater.orders} language={language} /></ul>
     <h3 className="mb-1 mt-4 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.channels.excluded")}</h3>
-    {dto.channels.excluded.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.channels.excluded_none")}</p>
-      : <ul>{dto.channels.excluded.map((c) => row(c.key, t(c.key === "gift_card" ? "reports.business.channels.excluded.gift_card" : "reports.business.channels.excluded.ezcater_linked"), null, c.checks, c.cents, c.amountMissing))}</ul>}
+    {view.channels.excluded.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.channels.excluded_none")}</p>
+      : <ul>{view.channels.excluded.map((c) => line(c, t(c.key === "gift_card" ? "reports.business.channels.excluded.gift_card" : "reports.business.channels.excluded.ezcater_linked"), null))}</ul>}
   </section>;
 }
 
 // ── People ──────────────────────────────────────────────────────────────────────────────────────
 
-export function BusinessPeople({ dto, language }: Props) {
+export function BusinessPeople({ view, language }: Props) {
   const t = tFor(language);
-  const rebuilding = dto.days.filter((d) => d.cuts !== "ok").length;
-  const span = hoursFigure(dto.total.labor);
-  const state = dto.total.labor.state;
+  const notice = view.breakdownNotice;
+  const span = view.total.labor.hours;
+  const spanReason = figureReasonText(span, language);
   return <section className={bizCard} aria-label={t("reports.business.tab.people")}>
-    <CollapsibleSection idBase={`biz-people-${dto.locationId}`} title={t("reports.business.people.title")} count={t("reports.business.people.count", { n: dto.people.length })} defaultOpen>
-      {!dto.access.personCost ? <p className="mb-2 text-xs text-co-text-muted">{t("reports.business.people.cost_note")}</p> : null}
-      {span.kind !== "known" && span.reason ? <p className="mb-2 text-xs font-bold text-co-warning-text">
-        {t("reports.business.people.hours_partial")} {t(span.reason)}</p> : null}
-      {dto.people.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.people.none")}</p> : <ul>
-        {dto.people.map((p) => {
-          const ot = minutesFigure(p.otMinutes, state);
-          return <li key={`${p.personKey}|${p.source}|${p.payClass}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
-            <span className="min-w-0 break-words"><span className="font-semibold text-co-text">{p.label ?? t("reports.business.people.unnamed")}</span>
-              <span className="text-co-text-muted"> · {t(p.payClass === "hourly" ? "reports.business.people.pay.hourly" : "reports.business.people.pay.salaried")}</span></span>
-            <span className="flex flex-col items-end text-right">
-              <FigureView f={minutesFigure(p.minutes, state)} language={language} compact />
-              {p.otMinutes === null ? <span className="text-xs text-co-warning-text">{t("reports.business.people.withheld", { n: p.weeksSuppressed })}</span>
-                : p.otMinutes > 0 ? <span className="text-xs text-co-text-muted">{t("reports.business.people.ot", { h: figureValueText(ot, language) ?? "" })}</span> : null}
-              {dto.access.personCost && "straightCostCents" in p ? <span className="text-xs text-co-text-muted">{p.straightCostCents === null || p.straightCostCents === undefined
-                ? (p.payClass === "hourly" ? t("reports.business.people.cost_withheld") : t("reports.business.people.salaried_cost")) : <>{t("reports.business.people.cost")} <Money cents={p.straightCostCents} language={language} /></>}</span> : null}
-            </span>
-          </li>;
-        })}
+    <CollapsibleSection idBase={`biz-people-${view.locationId}`} title={t("reports.business.people.title")} count={t("reports.business.people.count", { n: view.people.length })} defaultOpen>
+      {!view.access.personCost ? <p className="mb-2 text-xs text-co-text-muted">{t("reports.business.people.cost_note")}</p> : null}
+      {figureKindOf(span) !== "known" && spanReason ? <p className="mb-2 text-xs font-bold text-co-warning-text">
+        {t("reports.business.people.hours_partial")} {spanReason}</p> : null}
+      {view.people.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.people.none")}</p> : <ul>
+        {view.people.map((p) => <li key={p.key} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
+          <span className="min-w-0 break-words"><span className="font-semibold text-co-text">{p.label ?? t("reports.business.people.unnamed")}</span>
+            <span className="text-co-text-muted"> · {t(p.payClass === "hourly" ? "reports.business.people.pay.hourly" : "reports.business.people.pay.salaried")}</span></span>
+          <span className="flex flex-col items-end text-right">
+            <FigureView f={p.hours} language={language} compact />
+            {p.overtime === null ? <span className="text-xs text-co-warning-text">{t("reports.business.people.withheld", { n: p.weeksWithheld })}</span>
+              : p.overtimeAny ? <span className="text-xs text-co-text-muted">{t("reports.business.people.ot", { h: figureValueText(p.overtime, language) ?? "" })}</span> : null}
+            {/* Fix round 4 (ITEM9B-r4 P2): the cost is a figure like the hours above it: "so far" with its reason, a wage estimate named. */}
+            {p.cost ? <span className="inline-flex flex-wrap items-baseline justify-end gap-x-1 text-xs text-co-text-muted">
+              {figureKindOf(p.cost) === "unknown" ? null : <span>{t("reports.business.people.cost")}</span>}<FigureView f={p.cost} language={language} compact reason="always" /></span> : null}
+          </span>
+        </li>)}
       </ul>}
     </CollapsibleSection>
     <div className="mt-3">
-      <CollapsibleSection idBase={`biz-servers-${dto.locationId}`} title={t("reports.business.people.servers")} count={t("reports.business.people.count", { n: dto.servers.length })}>
+      <CollapsibleSection idBase={`biz-servers-${view.locationId}`} title={t("reports.business.people.servers")} count={t("reports.business.people.count", { n: view.servers.length })}>
         <p className="mb-2 text-xs text-co-text-muted">{t("reports.business.people.server_note")}</p>
-        {rebuilding > 0 ? <p className="mb-2 text-xs font-bold text-co-warning-text">{t("reports.business.channels.rebuilding_days", { n: rebuilding })}</p> : null}
-        <ul>{dto.servers.map((s) => <li key={s.key || "none"} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
-          <span className="min-w-0 break-words font-semibold text-co-text">{serverLabel(language, s.key, s.label)}</span>
-          <span className="text-right"><Amount cents={s.cents} missing={s.amountMissing} language={language} /> <span className="text-co-text-muted">· {t("reports.business.hours.checks", { n: s.checks })}</span></span>
-        </li>)}</ul>
+        {notice ? <p className="mb-2 text-xs font-bold text-co-warning-text">{t(notice.key, notice.values)}</p> : null}
+        <ul>{view.servers.map((s) => <CutLine key={s.key || "none"} label={serverLabel(language, s.key, s.label)} sales={s.sales} checks={s.checks} language={language} />)}</ul>
       </CollapsibleSection>
     </div>
   </section>;
@@ -250,42 +236,33 @@ export function BusinessPeople({ dto, language }: Props) {
 
 // ── Compare ─────────────────────────────────────────────────────────────────────────────────────
 
-function ChangeText({ change, language }: { change: CompareChange; language: Language }) {
+type Total = BusinessReportView["total"];
+export function BusinessCompare({ view, previous, language }: Props & { previous: BusinessReportView | null }) {
   const t = tFor(language);
-  if (change.kind === "not_comparable") return <span className="text-co-text-muted">{t("reports.business.compare.not_comparable")}</span>;
-  const sign = change.value > 0 ? "+" : "";
-  return <span className="font-semibold">{change.kind === "pct" ? t("reports.business.compare.pct", { n: `${sign}${change.value}` }) : t("reports.business.compare.points", { n: `${sign}${formatQuantity(change.value, language)}` })}</span>;
-}
-
-type Total = BusinessReportDto["total"];
-export function BusinessCompare({ dto, previous, language }: Props & { previous: BusinessReportDto | null }) {
-  const t = tFor(language);
-  const cur = dto.total, prev = previous?.total ?? null;
-  // A figure compares only when BOTH periods are shown and whole (figureComparable: known or estimated — never
+  const cur = view.total, prev = previous?.total ?? null;
+  // A figure compares only when BOTH periods are shown and whole (figureChange: known or estimated, never
   // "so far", a sales floor, covered-days-only or a payroll gap). Every cell is the descriptor of its period.
-  const missingOf = (d: BusinessReportDto) => d.days.reduce((s, x) => s + salesAmountMissing(x.sales), 0);
-  const rows: Array<{ key: string; label: string; fig: (x: Total, d: BusinessReportDto) => Figure; kind: "money" | "points" }> = [
-    { key: "sales", label: t("reports.business.card.sales"), fig: (x, d) => salesFigure(x.sales, missingOf(d)), kind: "money" },
-    { key: "net", label: t("reports.business.card.net"), fig: (x) => netFigure(x.labor), kind: "money" },
-    { key: "hours", label: t("reports.business.card.hours"), fig: (x) => hoursFigure(x.labor), kind: "money" },
-    { key: "pure", label: t("reports.business.card.pure_hourly"), fig: (x) => purePctFigure(x.labor), kind: "points" },
-    { key: "loaded", label: t("reports.business.card.fully_loaded"), fig: (x) => loadedPctFigure(x.labor), kind: "points" },
+  const rows: Array<{ key: string; label: string; fig: (x: Total) => Figure }> = [
+    { key: "sales", label: t("reports.business.card.sales"), fig: (x) => x.sales.total },
+    { key: "net", label: t("reports.business.card.net"), fig: (x) => x.labor.net },
+    { key: "hours", label: t("reports.business.card.hours"), fig: (x) => x.labor.hours },
+    { key: "pure", label: t("reports.business.card.pure_hourly"), fig: (x) => x.labor.purePct },
+    { key: "loaded", label: t("reports.business.card.fully_loaded"), fig: (x) => x.labor.loadedPct },
   ];
   const none = <Dash reason="reports.business.compare.no_previous" language={language} />;
   const cell = (f: Figure | null): ReactNode => (f === null ? none : <FigureView f={f} language={language} />);
   return <section className={bizCard} aria-label={t("reports.business.tab.compare")}>
-    <p className="mb-3 text-sm text-co-text-muted">{t("reports.business.compare.periods", { current: dateRange(dto.range.from, dto.range.to, language),
+    <p className="mb-3 text-sm text-co-text-muted">{t("reports.business.compare.periods", { current: dateRange(view.range.from, view.range.to, language),
       previous: previous ? dateRange(previous.range.from, previous.range.to, language) : t("reports.business.compare.no_previous") })}</p>
     <ul className="flex flex-col gap-2">
       {rows.map((r) => {
-        const a = r.fig(cur, dto), b = prev && previous ? r.fig(prev, previous) : null;
-        const change = compareChange({ value: a.value, complete: figureComparable(a) }, { value: b?.value ?? null, complete: b !== null && figureComparable(b) }, r.kind);
+        const a = r.fig(cur), b = prev ? r.fig(prev) : null;
         return <li key={r.key} className="rounded-lg border border-co-border bg-co-surface-inset p-3 text-sm">
           <div className="mb-1 text-xs font-bold tracking-wide text-co-text-muted">{r.label}</div>
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <span><span className="text-co-text-muted">{t("reports.business.compare.this")}: </span><span className="font-semibold">{cell(a)}</span></span>
             <span><span className="text-co-text-muted">{t("reports.business.compare.previous")}: </span><span className="font-semibold">{cell(b)}</span></span>
-            <ChangeText change={change} language={language} />
+            <ChangeText change={figureChange(a, b)} language={language} />
           </div>
         </li>;
       })}

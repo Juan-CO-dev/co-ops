@@ -9277,5 +9277,12 @@
   "reports.business.export.breakdown_partial": "Channels and servers cover {covered} of {expected} days in this period. {excluded} day(s) are left out (still rebuilding or sales not captured), so these totals are not the full period.",
   "reports.business.export.breakdown_none": "No day in this period is ready for channels and servers yet ({expected} days left out). These lists are empty, not zero.",
   "reports.business.compare.rule": "A change shows only when both periods are complete. Labor % changes in points.",
-  "reports.business.compare.no_previous": "No earlier period to compare."
+  "reports.business.compare.no_previous": "No earlier period to compare.",
+  "reports.business.wage_estimated": "Some hours are priced at an estimated wage (no wage on file yet).",
+  "reports.business.qual.wage_estimated": "wage estimated",
+  "reports.business.figure.breakdown_partial": "Only the days whose breakdown is ready.",
+  "reports.business.figure.breakdown_none": "No day's breakdown is ready yet.",
+  "reports.business.breakdown_days_only": "{amount} (ready days only)",
+  "reports.business.hours_unverified": "Some hours come from Toast punches (7shifts not confirmed for those days).",
+  "reports.business.qual.hours_unverified": "Toast hours, not confirmed"
 }

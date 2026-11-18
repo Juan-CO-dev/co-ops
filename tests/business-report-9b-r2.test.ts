@@ -17,8 +17,9 @@ vi.mock("@/components/ui/CollapsibleSection", async () => {
 
 import { loadBusinessReport, type BusinessReportDto } from "@/lib/business-report";
 import { loadedQualifiers, resolveBusinessRange, type LaborFigures } from "@/lib/business-report-shared";
-import { BUSINESS_EXPORT_COLUMNS, businessCompareRows, businessOverviewRows } from "@/lib/report-export-shared";
-import { BusinessCompare, BusinessOverview } from "@/components/reports-business/BusinessReport";
+import { BUSINESS_EXPORT_COLUMNS } from "@/lib/report-export-shared";
+// Fix round 4: the page and the export take the VIEW; these adapters build it from a DTO as the page does.
+import { BusinessCompare, BusinessOverview, businessCompareRows, businessOverviewRows } from "./helpers/business-report-views";
 import { Dash } from "@/components/reports-business/BusinessParts";
 import { A, fakeClient } from "./helpers/business-report-fake";
 

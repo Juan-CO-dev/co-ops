@@ -1,21 +1,20 @@
 /**
  * Item 9b: small server pieces of the business report page. Every number arrives in the DTO from
- * lib/business-report.ts; every string is translated here (en + es). THE RULE OF THIS PAGE: an unknown is a
- * dash WITH its reason, never 0 (a labor % that is not shown names why: rebuilding, hours not final,
- * salaries not set up, ...).
+ * lib/business-report.ts as the VIEW of lib/business-view-shared.ts; every string is translated here (en + es).
+ * THE RULE OF THIS PAGE: an unknown is a dash WITH its reason, never 0, and no number is written here by hand:
+ * every one is a `Figure` rendered by the formatter below.
  */
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ReportRangeForm } from "@/components/reports-hub/ReportRangeForm";
-import { formatCents, formatDateLabel, formatQuantity } from "@/lib/i18n/format";
+import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import {
-  BUSINESS_RANGES, BUSINESS_REPORT_TABS,
-  type BusinessRange, type BusinessReportTab, type LaborFigures,
-} from "@/lib/business-report-shared";
+import { BUSINESS_RANGES, BUSINESS_REPORT_TABS, type BusinessRange, type BusinessReportTab, type CompareChange } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
-import { loadedPctFigure, purePctFigure, type Figure } from "@/lib/business-figure-shared";
+import { figureDisplay, figureReasonOf, figureText as figureWords, figureValueText as figureValueWords, type Figure } from "@/lib/business-figure-shared";
+import { changeWords, figureFormatFor } from "@/lib/business-figure-format";
+import type { LaborView } from "@/lib/business-view-shared";
 
 export const bizCard = "min-w-0 max-w-full break-words rounded-xl border border-co-border bg-co-surface p-4";
 const pill = "inline-flex min-h-[44px] items-center rounded-full border-2 px-3 py-1.5 text-sm font-semibold transition";
@@ -33,27 +32,6 @@ export function Dash({ reason, language }: { reason?: TranslationKey | null; lan
     <span className="text-xs font-normal text-co-text-muted">{serverT(language, reason ?? "reports.sales.amount_unavailable")}</span>
   </span>;
 }
-export function Money({ cents, reason, language }: { cents: number | null | undefined; reason?: TranslationKey | null; language: Language }) {
-  return cents === null || cents === undefined ? <Dash reason={reason} language={language} /> : <>{formatCents(cents, language)}</>;
-}
-/** Fix round 1: an amount that holds checks of unknown amount is a FLOOR, never a plain total: "at least $20.00
- * + 1 unknown"; when every check is unknown (no known cents) it is "amount unknown (2 checks)", never $0.00. */
-export function amountText(cents: number, missing: number | null | undefined, language: Language): string {
-  const n = missing ?? 0;
-  if (n <= 0) return formatCents(cents, language);
-  if (cents === 0) return serverT(language, "reports.business.amount_unknown", { n });
-  return serverT(language, "reports.business.amount_at_least", { amount: formatCents(cents, language), n });
-}
-export function Amount({ cents, missing, language }: { cents: number; missing: number | null | undefined; language: Language }) {
-  return <>{amountText(cents, missing, language)}</>;
-}
-/** Internal to the figure formatter below; the page renders figures, never these directly. */
-export function hoursText(minutes: number | null | undefined, language: Language): string | null {
-  return minutes === null || minutes === undefined ? null : serverT(language, "reports.business.hours_value", { h: formatQuantity(minutes / 60, language) });
-}
-export function pctText(pct: number | null, language: Language): string | null {
-  return pct === null ? null : serverT(language, "reports.business.pct_value", { pct: formatQuantity(pct, language) });
-}
 export function dateRange(from: string, to: string, language: Language): string {
   return from === to ? formatDateLabel(from, language) : serverT(language, "reports.export.header.range", { from: formatDateLabel(from, language), to: formatDateLabel(to, language) });
 }
@@ -61,42 +39,44 @@ export function dateRange(from: string, to: string, language: Language): string 
 const TONE: Record<LaborTone, string> = {
   none: "text-co-text", good: "text-co-confirm-text", watch: "text-co-warning-text", high: "text-co-cta-text",
 };
-// ── THE figure formatter (fix round 3, review ITEM9B-r3) ────────────────────────────────────────
-// Every labor / sales figure of the page and every collapsed row is rendered by these two from a `Figure`
-// (lib/business-figure-shared.ts): the value as its STATE allows ("so far", "at least", covered days only), and
-// the reason / qualifications beside it. Nothing on the page formats a labor number any other way.
+// ── THE figure formatter (fix rounds 3 + 4, reviews ITEM9B-r3 / r4) ─────────────────────────────
+// Every money, percent, hours and count value of the page is a `Figure` (lib/business-figure-shared.ts, opaque)
+// and is rendered by the functions below and by nothing else. This file never holds a number and names no number
+// formatter: lib/business-figure-format.ts hands the language's formatters to the figure module, which decides what
+// may be said ("so far", "at least", covered days only, a dash) and returns WORDS
+// (tests/business-report-figure-census.test.ts).
 
-/** The value of a figure as words, or null when it is unknown. */
+/** This period against the one before (lib/business-figure-shared.ts `figureChange` decided it): a whole %, or
+ * a labor % in points; anything not whole on both sides is "Not comparable". */
+export function ChangeText({ change, language }: { change: CompareChange; language: Language }) {
+  const words = changeWords(change, language);
+  return words === null ? <span className="text-co-text-muted">{serverT(language, "reports.business.compare.not_comparable")}</span>
+    : <span className="font-semibold">{words}</span>;
+}
+
+/** The value of a figure as words (qualified as its state demands), or null when it is unknown. */
 export function figureValueText(f: Figure, language: Language): string | null {
-  if (f.value === null) return null;
-  let s: string;
-  if (f.unit === "pct") s = pctText(f.value, language)!;
-  else if (f.unit === "minutes") s = f.value === 0 && f.zero ? serverT(language, f.zero) : hoursText(f.value, language)!;
-  else s = f.missing !== undefined ? amountText(f.value, f.missing, language) : formatCents(f.value, language);
-  if (f.coveredOnly) s = serverT(language, "reports.business.sales_covered_only", { amount: s });
-  if (f.soFar) s = serverT(language, "reports.business.hours_so_far", { h: s });
-  return s;
+  return figureValueWords(f, figureFormatFor(language));
 }
-/** One line of text (a collapsed row's summary): the value or "—", then "(reason; qualifications)". `short`
- * uses the compact qualifier words so a phone row stays one or two lines. */
+/** The sentence that says why a figure is unknown or not whole, or null when it is plain. */
+export function figureReasonText(f: Figure, language: Language): string | null {
+  const key = figureReasonOf(f);
+  return key === null ? null : serverT(language, key);
+}
+/** One line of text (a collapsed row's summary): the value or "—", then "(reason; qualifications)". */
 export function figureText(f: Figure, language: Language, opts: { short?: boolean } = {}): string {
-  const v = figureValueText(f, language) ?? "—";
-  const parts = [
-    ...(f.reason && (f.value === null || f.kind === "incomplete") && !(f.missing && !f.coveredOnly && f.value !== null) ? [serverT(language, f.reason)] : []),
-    ...f.notes.map((n) => serverT(language, opts.short ? n.short : n.key, n.values)),
-  ];
-  return parts.length ? `${v} (${parts.join("; ")})` : v;
+  return figureWords(f, figureFormatFor(language), opts);
 }
-/** A figure on the page: the value (or a dash) and, as visible captions, why it is not plain. `compact` (the
- * 15-minute lines) shows the reason only when there is no value; "so far" still qualifies a provisional one, and
- * the day line above names the reason once. */
-export function FigureView({ f, language, compact = false, className = "" }: { f: Figure; language: Language; compact?: boolean; className?: string }) {
-  const v = figureValueText(f, language);
-  const showReason = f.reason !== null && (v === null || (!compact && f.kind === "incomplete" && !(f.missing && !f.coveredOnly)));
+/** A figure on the page: the value (or a dash) and, as visible captions, why it is not plain. `compact` (a list
+ * row) shows the reason only when there is no value (or always, with `reason="always"`) and puts the short
+ * qualifier words on the same line; "so far" / "at least" / "covered days only" are part of the value itself. */
+export function FigureView({ f, language, compact = false, reason, className = "" }: { f: Figure; language: Language; compact?: boolean; reason?: "always"; className?: string }) {
+  const d = figureDisplay(f, figureFormatFor(language), { compact, reason });
+  const inline = compact && d.words !== null && d.notes.length > 0 ? ` (${d.notes.map((n) => n.text).join("; ")})` : "";
   return <span className="inline-flex flex-col">
-    {v === null ? <span aria-hidden="true" className={className}>—</span> : <span className={className}>{v}</span>}
-    {showReason ? <span className={`text-xs font-normal ${v === null ? "text-co-text-muted" : "text-co-warning-text"}`}>{serverT(language, f.reason!)}</span> : null}
-    {f.notes.map((n) => <span key={n.key} className={`text-xs font-normal ${n.kind === "gap" ? "text-co-warning-text" : "text-co-text-muted"}`}>{serverT(language, n.key, n.values)}</span>)}
+    {d.words === null ? <span aria-hidden="true" className={className}>—</span> : <span className={className}>{d.words}{inline}</span>}
+    {d.reason !== null ? <span className={`text-xs font-normal ${d.words === null ? "text-co-text-muted" : "text-co-warning-text"}`}>{d.reason}</span> : null}
+    {inline ? null : d.notes.map((n) => <span key={n.id} className={`text-xs font-normal ${n.gap ? "text-co-warning-text" : "text-co-text-muted"}`}>{n.text}</span>)}
   </span>;
 }
 /** One label / figure line inside a drawer. */
@@ -108,16 +88,14 @@ export function FigureLine({ label, f, language }: { label: string; f: Figure; l
 }
 
 /** A labor % (pure hourly or fully loaded) with its target, through the one formatter. */
-export function LaborPct({ figures, view, target, language }: {
-  figures: LaborFigures; view: "pure" | "loaded"; target: number | "target_varies"; language: Language;
+export function LaborShare({ labor, view, target, language }: {
+  labor: LaborView; view: "pure" | "loaded"; target: number | "target_varies"; language: Language;
 }) {
   const t = tFor(language);
-  const f = view === "pure" ? purePctFigure(figures) : loadedPctFigure(figures);
-  const tone = f.value === null ? "none" : view === "pure" ? figures.tone : figures.loadedTone;
   const targetLine = target === "target_varies" ? t("reports.business.target_varies")
     : t(view === "pure" ? "reports.business.target" : "reports.business.target_le", { pct: target });
   return <span className="inline-flex flex-col">
-    <span className="font-bold"><FigureView f={f} language={language} className={TONE[tone]} /></span>
+    <span className="font-bold"><FigureView f={view === "pure" ? labor.purePct : labor.loadedPct} language={language} className={TONE[view === "pure" ? labor.pureTone : labor.loadedTone]} /></span>
     <span className="text-xs text-co-text-muted">{targetLine}</span>
   </span>;
 }
@@ -127,14 +105,6 @@ export function Card({ label, children, sub }: { label: string; children: ReactN
     <div className="text-[11px] font-bold tracking-[0.12em] text-co-text-dim">{label}</div>
     <div className="text-lg text-co-text">{children}</div>
     {sub ? <div className="text-xs text-co-text-muted">{sub}</div> : null}
-  </div>;
-}
-
-/** One label / value line inside a drawer; a missing value is a dash with its reason. */
-export function Line({ label, value, reason, language }: { label: string; value: ReactNode | null; reason?: TranslationKey | null; language: Language }) {
-  return <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
-    <span className="text-co-text-muted">{label}</span>
-    <span className="min-w-0 break-words text-right font-semibold text-co-text">{value ?? <Dash reason={reason} language={language} />}</span>
   </div>;
 }
 

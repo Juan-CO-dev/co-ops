@@ -17,7 +17,8 @@ import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
 import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
 import { BusinessRangeControls, BusinessTabs, BusinessUnavailable, bizCard, tFor } from "@/components/reports-business/BusinessParts";
 import { BusinessChannels, BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople } from "@/components/reports-business/BusinessReport";
-import { BusinessReportError, loadBusinessReport, resolveBusinessRange, type BusinessReportDto } from "@/lib/business-report";
+import { BusinessReportError, loadBusinessReport, resolveBusinessRange } from "@/lib/business-report";
+import { businessView } from "@/lib/business-view-shared";
 import { businessReportEnabled, businessReportRefusal, businessTab } from "@/lib/business-report-shared";
 import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
@@ -62,14 +63,15 @@ export default async function BusinessReportPage({ searchParams }: { searchParam
     try {
       if (range.empty) body = <p className={`${bizCard} text-sm text-co-text-muted`}>{t("reports.business.no_finished_days")}</p>;
       else {
-        const dto = await loadBusinessReport(viewer, { locationId: shopId, range });
-        if (tab === "hours") body = <BusinessHours dto={dto} language={language} />;
-        else if (tab === "channels") body = <BusinessChannels dto={dto} language={language} />;
-        else if (tab === "people") body = <BusinessPeople dto={dto} language={language} />;
+        // The tabs get the VIEW (lib/business-view-shared.ts: every figure sealed with its state), never the DTO.
+        const view = businessView(await loadBusinessReport(viewer, { locationId: shopId, range }));
+        if (tab === "hours") body = <BusinessHours view={view} language={language} />;
+        else if (tab === "channels") body = <BusinessChannels view={view} language={language} />;
+        else if (tab === "people") body = <BusinessPeople view={view} language={language} />;
         else if (tab === "compare") {
-          const previous: BusinessReportDto = await loadBusinessReport(viewer, { locationId: shopId, range: resolveBusinessRange({ range: "custom", ...range.previous }, today) });
-          body = <BusinessCompare dto={dto} previous={previous} language={language} />;
-        } else body = <BusinessOverview dto={dto} language={language} />;
+          const previous = businessView(await loadBusinessReport(viewer, { locationId: shopId, range: resolveBusinessRange({ range: "custom", ...range.previous }, today) }));
+          body = <BusinessCompare view={view} previous={previous} language={language} />;
+        } else body = <BusinessOverview view={view} language={language} />;
       }
     } catch (error) {
       if (error instanceof BusinessReportError) body = <BusinessUnavailable code={error.code} language={language} />;

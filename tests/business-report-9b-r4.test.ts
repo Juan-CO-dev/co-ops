@@ -10,6 +10,12 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/session", () => ({ requireSession: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
+// Drawers OPEN (what a tap shows) with the collapsed summary beside them, as in tests/business-report-9b-r3.test.ts.
+vi.mock("@/components/ui/CollapsibleSection", async () => {
+  const { createElement: h } = await import("react");
+  return { CollapsibleSection: ({ title, count, badge, children }: { title: unknown; count?: unknown; badge?: unknown; children: unknown }) =>
+    h("section", null, h("span", null, title as never), h("span", null, count as never), badge as never, children as never) };
+});
 
 import { loadBusinessReport, type BusinessReportDto } from "@/lib/business-report";
 import { resolveBusinessRange } from "@/lib/business-report-shared";
@@ -38,15 +44,15 @@ const costRow = (args: Record<string, unknown>, estimated: number) => {
 const load = (estimated: number | null = null) => loadBusinessReport(moo, { locationId: A, range },
   { client: fakeClient(estimated === null ? {} : { rpcRows: { fact_labor_cost: (a) => costRow(a, estimated) } }).client, env: ON });
 
-const RATE = EN["reports.business.rate_estimated"] ?? "<<reports.business.rate_estimated is not translated>>";
-const RATE_SHORT = EN["reports.business.qual.rate_estimated"] ?? "<<reports.business.qual.rate_estimated is not translated>>";
+const RATE = EN["reports.business.wage_estimated"] ?? "<<reports.business.wage_estimated is not translated>>";
+const RATE_SHORT = EN["reports.business.qual.wage_estimated"] ?? "<<reports.business.qual.wage_estimated is not translated>>";
 
 describe("P2-1: an estimated wage qualifies every figure built on it", () => {
   it("the fixture is whole apart from the wage: hours final, sales complete, salary and burden real", async () => {
     const l = (await load(30)).total.labor;
     expect([l.state, l.loadedState, l.burdenEstimated, l.salaryEstimated, l.salaryGaps]).toEqual(["ok", "ok", false, false, 0]);
-    expect((l as unknown as { rateEstimated?: boolean }).rateEstimated).toBe(true);
-    expect(((await load(0)).total.labor as unknown as { rateEstimated?: boolean }).rateEstimated).toBe(false);
+    expect((l as unknown as { wageEstimated?: boolean }).wageEstimated).toBe(true);
+    expect(((await load(0)).total.labor as unknown as { wageEstimated?: boolean }).wageEstimated).toBe(false);
   });
   it("Overview: the cards, every week and day drawer", async () => {
     const dto = await load(30);
@@ -68,24 +74,24 @@ describe("P2-1: an estimated wage qualifies every figure built on it", () => {
     expect(count(hours, RATE_SHORT)).toBeGreaterThanOrEqual(2 * dto.days.length);
     expect(text(createElement(BusinessPeople, { dto, language: "en" }))).toContain(RATE_SHORT);
   });
-  it("the export: a rate_estimated column, and every figure built on the wage is named as estimated", async () => {
+  it("the export: a wage_estimated column, and every figure built on the wage is named as estimated", async () => {
     for (const tab of ["overview", "compare"] as const) {
-      expect(BUSINESS_EXPORT_COLUMNS[tab].map((c) => c.key)).toEqual(expect.arrayContaining(["rate_estimated", "figure_notes"]));
+      expect(BUSINESS_EXPORT_COLUMNS[tab].map((c) => c.key)).toEqual(expect.arrayContaining(["wage_estimated", "figure_notes"]));
     }
     for (const tab of ["hours", "channels", "people"] as const) expect(BUSINESS_EXPORT_COLUMNS[tab].map((c) => c.key)).toContain("figure_notes");
     const dto = await load(30);
     const rows = [...businessOverviewRows(dto, SHOP), ...businessCompareRows(dto, dto, SHOP).filter((r) => r.period !== "last_year")];
     for (const r of rows) {
-      expect(r.rate_estimated, String(r.row_type)).toBe(true);
+      expect(r.wage_estimated, String(r.row_type)).toBe(true);
       for (const c of ["pure_hourly_cost", "pure_hourly_pct", "fully_loaded_cost", "fully_loaded_pct"]) {
-        expect(String(r.figure_notes), c).toContain(`${c}=estimated(rate_estimated)`);
+        expect(String(r.figure_notes), c).toContain(`${c}=estimated(wage_estimated)`);
       }
     }
-    for (const r of businessOverviewRows(await load(0), SHOP)) { expect(r.rate_estimated).toBe(false); expect(r.figure_notes ?? null).toBeNull(); }
+    for (const r of businessOverviewRows(await load(0), SHOP)) { expect(r.wage_estimated).toBe(false); expect(r.figure_notes ?? null).toBeNull(); }
     const q = businessHoursRows(dto, SHOP).find((r) => r.row_type === "quarter" && r.straight_time_cost !== null && r.straight_time_cost !== undefined)!;
-    expect(String(q.figure_notes)).toContain("straight_time_cost=estimated(rate_estimated)");
+    expect(String(q.figure_notes)).toContain("straight_time_cost=estimated(wage_estimated)");
     const person = businessPeopleRows(dto, SHOP).find((r) => r.row_type === "person")!;
-    expect(String(person.figure_notes)).toContain("straight_time_cost=estimated(rate_estimated)");
+    expect(String(person.figure_notes)).toContain("straight_time_cost=estimated(wage_estimated)");
   });
 });
 

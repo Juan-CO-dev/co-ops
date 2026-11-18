@@ -22,9 +22,12 @@ vi.mock("@/components/ui/CollapsibleSection", async () => {
 
 import { loadBusinessReport } from "@/lib/business-report";
 import { laborHoursComplete, resolveBusinessRange } from "@/lib/business-report-shared";
-import { figureKindOf, hoursFigure, loadedPctFigure, pureCentsFigure, purePctFigure, quarterHoursFigure } from "@/lib/business-figure-shared";
-import { businessCompareRows, businessHoursRows, businessOverviewRows } from "@/lib/report-export-shared";
-import { BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople } from "@/components/reports-business/BusinessReport";
+import { figureCells, figureKindOf, figureReasonOf, hoursFigure, loadedPctFigure, pureCentsFigure, purePctFigure, quarterHoursFigure } from "@/lib/business-figure-shared";
+// Fix round 4: a Figure is opaque (its state through figureKindOf / figureReasonOf, its number only through
+// figureCells), and the page and the export take the VIEW; these adapters build it from a DTO as the page does.
+import {
+  BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople, businessCompareRows, businessHoursRows, businessOverviewRows,
+} from "./helpers/business-report-views";
 import { A, fakeClient } from "./helpers/business-report-fake";
 import { EN, LOADED_VARIANTS, PURE_STATES, laborIn, loadedIn, reasonOf, visibleText, withLabor } from "./helpers/business-report-states";
 
@@ -43,25 +46,25 @@ describe("the descriptor: one state per figure", () => {
     for (const s of PURE_STATES) {
       const l = laborIn(base, s);
       const pct = purePctFigure(l);
-      expect(pct.kind, s).toBe(s === "ok" ? "known" : "unknown");
-      if (s !== "ok") expect(pct.reason, s).toBe(`reports.business.labor.state.${s}`);
+      expect(figureKindOf(pct), s).toBe(s === "ok" ? "known" : "unknown");
+      if (s !== "ok") expect(figureReasonOf(pct), s).toBe(`reports.business.labor.state.${s}`);
       const h = hoursFigure(l);
-      expect(h.kind, s).toBe(l.minutes === null ? "unknown" : laborHoursComplete(s) ? "known" : "incomplete");
-      if (!laborHoursComplete(s)) expect(h.reason, s).toBe(`reports.business.labor.state.${s}`);
+      expect(figureKindOf(h), s).toBe(l.minutes === null ? "unknown" : laborHoursComplete(s) ? "known" : "incomplete");
+      if (!laborHoursComplete(s)) expect(figureReasonOf(h), s).toBe(`reports.business.labor.state.${s}`);
       const money = pureCentsFigure(l, "pureHourlyCents");
-      if (money.value !== null && !laborHoursComplete(s)) expect(money.kind, s).toBe("incomplete");
+      if (figureCells({ money }).money !== null && !laborHoursComplete(s)) expect(figureKindOf(money), s).toBe("incomplete");
     }
   });
   it("a quarter with no minutes is 'No labor' only when the day's hours are final", async () => {
     for (const s of PURE_STATES) {
       const q = quarterHoursFigure(null, s);
-      if (laborHoursComplete(s)) { expect(q.kind, s).toBe("known"); expect(q.value, s).toBe(0); }
-      else { expect(q.kind, s).toBe("unknown"); expect(q.reason, s).toBe(`reports.business.labor.state.${s}`); }
+      if (laborHoursComplete(s)) { expect(figureKindOf(q), s).toBe("known"); expect(figureCells({ q }).q, s).toBe(0); }
+      else { expect(figureKindOf(q), s).toBe("unknown"); expect(figureReasonOf(q), s).toBe(`reports.business.labor.state.${s}`); }
     }
   });
   it("fully loaded: estimates make it 'estimated', payroll gaps 'incomplete', a missing salary 'unknown'", async () => {
     const base = (await load()).total.labor;
-    const kinds = Object.fromEntries(LOADED_VARIANTS.map((v) => [v, loadedPctFigure(loadedIn(base, v)).kind]));
+    const kinds = Object.fromEntries(LOADED_VARIANTS.map((v) => [v, figureKindOf(loadedPctFigure(loadedIn(base, v)))]));
     expect(kinds).toEqual({ known: "known", estimated: "incomplete", salary_incomplete: "unknown", salary_unknown: "unknown" });
     expect(figureKindOf(loadedPctFigure({ ...loadedIn(base, "estimated"), salaryGaps: 0 }))).toBe("estimated");
   });

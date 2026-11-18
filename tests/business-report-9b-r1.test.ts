@@ -29,8 +29,11 @@ import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadBusinessReport, type BusinessReportDto } from "@/lib/business-report";
 import { breakdownCoverage, laborHoursComplete, resolveBusinessRange, type LaborFigures } from "@/lib/business-report-shared";
-import { businessChannelRows, businessHoursRows, businessOverviewRows, businessPeopleRows } from "@/lib/report-export-shared";
-import { BusinessChannels, BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople } from "@/components/reports-business/BusinessReport";
+// Fix round 4: the page and the export take the VIEW; these adapters build it from a DTO as the page does.
+import {
+  BusinessChannels, BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople,
+  businessChannelRows, businessHoursRows, businessOverviewRows, businessPeopleRows,
+} from "./helpers/business-report-views";
 import { A, fakeClient } from "./helpers/business-report-fake";
 
 const ON = { BUSINESS_REPORT: "1", FACT_LAYER: "1", FACT_LAYER_LABOR: "1" };

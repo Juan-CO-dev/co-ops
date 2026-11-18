@@ -12,7 +12,8 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 
 import { loadBusinessReport } from "@/lib/business-report";
 import { laborHoursComplete, resolveBusinessRange } from "@/lib/business-report-shared";
-import { BusinessHours, BusinessOverview } from "@/components/reports-business/BusinessReport";
+// Fix round 4: the page takes the VIEW; these adapters build it from a DTO as the page does.
+import { BusinessHours, BusinessOverview } from "./helpers/business-report-views";
 import { A, fakeClient } from "./helpers/business-report-fake";
 import { EN, LOADED_VARIANTS, PURE_STATES, laborIn, loadedIn, reasonOf, visibleText, withLabor } from "./helpers/business-report-states";
 

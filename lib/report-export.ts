@@ -34,6 +34,7 @@ import type { RoleCode } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { BusinessReportError, loadBusinessReport, resolveBusinessRange } from "@/lib/business-report";
 import { businessReportEnabled, businessReportRefusal } from "@/lib/business-report-shared";
+import { businessView } from "@/lib/business-view-shared";
 import {
   SALES_EXPORT_MAX_ROWS, SALES_READ_MIN, SalesReportError, VIEW_DIMENSION, isSalesExportView, loadSalesBreakdown,
   loadSalesCheckPage, loadSalesEzcaterOrders, loadSalesSummary, parseSalesCheckFilters, resolveSalesRange,
@@ -165,7 +166,8 @@ async function businessExportTable(auth: AuthContext, params: Params, shop: Shop
   const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations, role: auth.role };
   const range = resolveBusinessRange(params, today);
   try {
-    const dto = await loadBusinessReport(viewer, { locationId: shop.id, range });
+    // The file is built from the page's VIEW (every figure sealed with its state), never from the DTO.
+    const dto = businessView(await loadBusinessReport(viewer, { locationId: shop.id, range }));
     let rows: ExportRow[];
     switch (tab) {
       case "overview": rows = businessOverviewRows(dto, shop); break;
@@ -174,7 +176,7 @@ async function businessExportTable(auth: AuthContext, params: Params, shop: Shop
       case "people": rows = businessPeopleRows(dto, shop); break;
       case "compare": {
         const previous = range.empty ? null
-          : await loadBusinessReport(viewer, { locationId: shop.id, range: resolveBusinessRange({ range: "custom", ...range.previous }, today) });
+          : businessView(await loadBusinessReport(viewer, { locationId: shop.id, range: resolveBusinessRange({ range: "custom", ...range.previous }, today) }));
         rows = businessCompareRows(dto, previous, shop);
         break;
       }

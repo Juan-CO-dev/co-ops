@@ -167,6 +167,18 @@ export function combineShopDays(shops: readonly (readonly DaySales[])[]): DaySal
   });
 }
 
+/** Days summed as raw cents (a week row): complete only when every day is; Toast net only when every day's is known. */
+export function sumBusinessDays(days: readonly DaySales[]): Omit<DaySales, "date"> {
+  const sum = (k: keyof DaySales) => days.reduce((s, d) => s + (d[k] as number), 0);
+  return {
+    coverage: days.length > 0 && days.every((d) => d.coverage === "complete") ? "complete" : days.some((d) => d.coverage !== "missing") ? "partial" : "missing",
+    checks: sum("checks"), toastChecksCents: sum("toastChecksCents"), toastAmountMissing: sum("toastAmountMissing"),
+    toastNetCents: days.length > 0 && days.every((d) => d.toastNetCents !== null) ? days.reduce((s, d) => s + d.toastNetCents!, 0) : null,
+    ezcaterCents: sum("ezcaterCents"), ezcaterOrders: sum("ezcaterOrders"), ezcaterMissing: sum("ezcaterMissing"), refundCents: sum("refundCents"),
+    totalCents: sum("totalCents"), giftCardCents: sum("giftCardCents"), ezcaterLinkedCents: sum("ezcaterLinkedCents"),
+  };
+}
+
 // ── P1: the labor denominator ───────────────────────────────────────────────────────────────────
 
 export type DenominatorState = "ok" | "sales_not_covered" | "net_unknown" | "ezcater_missing" | "zero_sales";
@@ -267,15 +279,22 @@ export interface LaborFigures {
   salaryEstimated: boolean;
   /** 0340 payroll-shop gaps behind the figures (unplaced + missing wage), shown beside any figure. */
   salaryGaps: number;
+  /** Fix round 4 (ITEM9B-r4): some hourly minutes are priced at the shop's ESTIMATED wage (no wage on file, or the
+   * Q5 fallback): the shared pricer's `rateEstimated`. Every figure built on hourly money carries it. */
+  wageEstimated: boolean;
+  /** Fix round 4 (own sweep): some days' hours come from the Toast FALLBACK (`fallback_unverified`: 7shifts was not
+   * covered for the day, Toast punches stand in). The pricer shows them (`hoursKnown`), so every figure built on
+   * hours says so. */
+  hoursUnverified: boolean;
 }
 const round1 = (x: number) => Math.round(x * 10) / 10;
 
-type ViewWithOt = ReturnType<typeof laborWeekViews>[number] & { otMinutes: number; salaryEstimated: boolean };
+type ViewWithOt = ReturnType<typeof laborWeekViews>[number] & { otMinutes: number; salaryEstimated: boolean; fallbackDays: number };
 type Target = number | "target_varies";
 const NO_LOADED = { salariedCents: null, burdenCents: null, fullyLoadedCents: null, loadedPct: null, loadedTone: "none" as LaborTone };
 function withheld(state: LaborState, minutes: number | null, denominator: Denominator): LaborFigures {
   return { state, minutes, pureHourlyCents: null, otPremiumCents: null, otMinutes: null, denominator, pct: null, tone: "none",
-    loadedState: state, ...NO_LOADED, burdenEstimated: false, salaryEstimated: false, salaryGaps: 0 };
+    loadedState: state, ...NO_LOADED, burdenEstimated: false, salaryEstimated: false, salaryGaps: 0, wageEstimated: false, hoursUnverified: false };
 }
 function figures(views: readonly ViewWithOt[], weekStates: readonly LaborWeekState[], minutes: number | null,
   denominator: Denominator, target: { hourly: Target; loaded: Target }): LaborFigures {
@@ -291,7 +310,8 @@ function figures(views: readonly ViewWithOt[], weekStates: readonly LaborWeekSta
   const pct = pctOf(pure);
   const flags = {
     burdenEstimated: views.some((v) => v.burdenEstimated), salaryEstimated: views.some((v) => v.salaryEstimated),
-    salaryGaps: views.reduce((s, v) => s + v.salaryGaps, 0),
+    salaryGaps: views.reduce((s, v) => s + v.salaryGaps, 0), wageEstimated: views.some((v) => v.rateEstimated),
+    hoursUnverified: views.some((v) => v.fallbackDays > 0),
   };
   const base = { state, minutes, pureHourlyCents: pure, otPremiumCents: prem, otMinutes, denominator, pct, tone: toneOf(pct, target.hourly), ...flags };
   // Any week with an unknown salary leaves the whole span's fully loaded unknown (never a partial sum).
@@ -305,7 +325,8 @@ function figures(views: readonly ViewWithOt[], weekStates: readonly LaborWeekSta
   return { ...base, loadedState: state, salariedCents: salaried, burdenCents: burden, fullyLoadedCents: loaded, loadedPct, loadedTone: toneOf(loadedPct, target.loaded) };
 }
 function views(rows: readonly LaborCostRow[]): ViewWithOt[] {
-  return rows.map((r) => ({ ...laborWeekViews([r])[0]!, otMinutes: Number(r.ot_minutes), salaryEstimated: r.salary_basis === "estimate" }));
+  return rows.map((r) => ({ ...laborWeekViews([r])[0]!, otMinutes: Number(r.ot_minutes), salaryEstimated: r.salary_basis === "estimate",
+    fallbackDays: Number(r.days_fallback ?? 0) }));
 }
 const rowMinutes = (rows: readonly LaborCostRow[]) => rows.reduce((s, r) => s + Number(r.hourly_minutes) + Number(r.salaried_minutes), 0);
 
@@ -593,4 +614,8 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   // Fix round 3: the figure descriptor (lib/business-figure-shared.ts) — short qualifiers for collapsed rows.
   "reports.business.row.hours", "reports.business.qual.burden_estimated", "reports.business.qual.salary_estimated",
   "reports.business.qual.salary_gaps", "reports.business.figure.not_available", "reports.business.figure.amount_missing",
+  // Fix round 4: the estimated wage, a breakdown that covers only its ready days, counts, the per-person lines.
+  "reports.business.wage_estimated", "reports.business.qual.wage_estimated", "reports.business.figure.breakdown_partial",
+  "reports.business.figure.breakdown_none", "reports.business.breakdown_days_only",
+  "reports.business.hours_unverified", "reports.business.qual.hours_unverified",
 ] as const;
