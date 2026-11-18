@@ -55,7 +55,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   console.log(`census as of ${census.weekStart}: ${census.rows.length} account(s) listed, ${census.hourlyHidden} hourly account(s) with nothing to decide`);
   for (const r of census.rows) {
     const line = `  account ${r.account} (7shifts ID ${r.employeeId ?? "-"}, ${r.active ? "active" : "inactive"}): ${r.chip}${r.locationId ? ` @ ${shopName(r.locationId)}` : ""}`
-      + `${r.linkedUsers.length ? ` linked: ${r.linkedUsers.map((u) => `${u.name} (${u.role})`).join(", ")}` : ""}`;
+      + `${r.linkedUsers.length ? ` linked: ${r.linkedUsers.map((u) => `${u.name} (${u.role})`).join(", ")}` : ""}`
+      + `${r.gapWeeks.length ? ` gap weeks: ${r.gapWeeks.length} (${r.gapWeeks[0]} .. ${r.gapWeeks[r.gapWeeks.length - 1]})` : ""}`;
     if (r.gap) { gaps++; console.log(`GAP${line}`); } else console.log(`ok ${line}`);
   }
   for (const u of census.rosterNoAccount) { gaps++; console.log(`GAP  payroll-roster ${u.role} ${u.name} (${u.id}) has no linked 7shifts account`); }

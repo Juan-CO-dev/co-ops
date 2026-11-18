@@ -13,8 +13,15 @@
  *  - payrollCensus: the onboarding / card view of EVERY 7shifts account in the mirror (Astra r2 P1): an
  *    account with no wage at all and no assignment is a "needs a decision" gap, never silently missing; so is
  *    an hourly account linked to a payroll-roster manager; and a roster manager with no 7shifts account is
- *    named. It carries no wage amount (has-salary flags only). */
+ *    named. It carries no wage amount (has-salary flags only).
+ *    SALARY r1 P2: the census also replays every payroll week from the history floor through this one with the
+ *    SAME per-week rule as the allocation (classifyAccountWeek), so an account salaried in October but hourly
+ *    today, with nothing in force then, stays a gap (chip history_gap, its gapWeeks named) instead of hiding
+ *    as "hourly" while those weeks read incomplete. An account with any payroll row is always listed (a
+ *    future-only row is "scheduled"), so its history and correction controls are reachable. The history
+ *    replay judges destinations against TODAY's linked shops (the census reads no location-link history). */
 import type { RoleCode } from "@/lib/roles";
+import { LABOR_FLOOR_WEEK } from "./labor-config-shared";
 import { pickWage, type WageVersion } from "./labor-wages-shared";
 
 export type PayrollDisposition = "shop" | "excluded";
@@ -62,6 +69,31 @@ function wagesByAccount(wages: readonly WageVersion[]): Map<string, WageVersion[
   return by;
 }
 
+/** THE per-week rule for one account (the allocation's and the census's history): null = nothing to count. */
+export function classifyAccountWeek(rows: readonly PayrollShopRow[], account: string, versions: readonly WageVersion[], weekStart: string,
+  storedSet: ReadonlySet<string>): SalariedAccount | null {
+  const a = payrollRowInForce(rows, account, weekStart);
+  const weekly = weeklySalaryOf(versions, weekStart);
+  // Astra r2 P2 #3: an unavailable destination is classified BEFORE the wage.
+  if (a?.disposition === "shop" && !storedSet.has(a.location_id ?? "")) return { account, state: "unplaced_destination", location_id: a.location_id, weekly_cents: weekly };
+  if (weekly !== null) {
+    if (a?.disposition === "shop") return { account, state: "placed", location_id: a.location_id, weekly_cents: weekly };
+    if (a?.disposition === "excluded") return { account, state: "excluded", location_id: null, weekly_cents: weekly };
+    return { account, state: "unplaced_no_shop", location_id: null, weekly_cents: weekly };
+  }
+  if (a?.disposition === "shop") return { account, state: "missing_wage", location_id: a.location_id, weekly_cents: null };
+  return null; // no salary + none / excluded: ignored
+}
+const GAP_STATES: ReadonlySet<SalariedAccountState> = new Set(["unplaced_no_shop", "unplaced_destination", "missing_wage"]);
+
+/** Every payroll week (Sunday) from the history floor through `through`, oldest first. */
+export function payrollWeeksThrough(through: string, from: string = LABOR_FLOOR_WEEK): string[] {
+  const out: string[] = [];
+  const d = new Date(`${from}T12:00:00Z`);
+  for (let w = d.toISOString().slice(0, 10); w <= through; d.setUTCDate(d.getUTCDate() + 7), w = d.toISOString().slice(0, 10)) out.push(w);
+  return out;
+}
+
 export function allocateSalaried(input: {
   weekStart: string; storedShops: readonly string[]; payrollShops: readonly PayrollShopRow[]; wages: readonly WageVersion[];
 }): { rows: LaborSalariedRow[]; accounts: SalariedAccount[] } {
@@ -71,20 +103,8 @@ export function allocateSalaried(input: {
   const universe = [...new Set([...by.keys(), ...input.payrollShops.map((r) => String(r.sevenshifts_user_id))])].sort(cmp);
   const accounts: SalariedAccount[] = [];
   for (const account of universe) {
-    const a = payrollRowInForce(input.payrollShops, account, input.weekStart);
-    const weekly = weeklySalaryOf(by.get(account) ?? [], input.weekStart);
-    // Astra r2 P2 #3: an unavailable destination is classified BEFORE the wage.
-    if (a?.disposition === "shop" && !storedSet.has(a.location_id ?? "")) {
-      accounts.push({ account, state: "unplaced_destination", location_id: a.location_id, weekly_cents: weekly }); continue;
-    }
-    if (weekly !== null) {
-      if (a?.disposition === "shop") accounts.push({ account, state: "placed", location_id: a.location_id, weekly_cents: weekly });
-      else if (a?.disposition === "excluded") accounts.push({ account, state: "excluded", location_id: null, weekly_cents: weekly });
-      else accounts.push({ account, state: "unplaced_no_shop", location_id: null, weekly_cents: weekly });
-    } else if (a?.disposition === "shop") {
-      accounts.push({ account, state: "missing_wage", location_id: a.location_id, weekly_cents: null });
-    }
-    // no salary + none / excluded: ignored
+    const c = classifyAccountWeek(input.payrollShops, account, by.get(account) ?? [], input.weekStart, storedSet);
+    if (c) accounts.push(c);
   }
   const unplaced = accounts.filter((x) => x.state === "unplaced_no_shop" || x.state === "unplaced_destination").length;
   const rows = stored.map((loc): LaborSalariedRow => {
@@ -102,8 +122,8 @@ export function allocateSalaried(input: {
  * 2026-11-17), so is not on it; anyone outside the roster who IS salaried shows up by their wage. */
 export const PAYROLL_ROSTER_ROLES: readonly RoleCode[] = ["owner", "moo", "gm", "agm", "catering_mgr", "prep_mgr", "social_media_mgr"];
 
-export type PayrollChip = "shop" | "excluded" | "needs_shop" | "needs_decision" | "no_salary" | "destination_unavailable";
-export const PAYROLL_GAP_CHIPS: readonly PayrollChip[] = ["needs_shop", "needs_decision", "no_salary", "destination_unavailable"];
+export type PayrollChip = "shop" | "excluded" | "needs_shop" | "needs_decision" | "no_salary" | "destination_unavailable" | "history_gap" | "scheduled";
+export const PAYROLL_GAP_CHIPS: readonly PayrollChip[] = ["needs_shop", "needs_decision", "no_salary", "destination_unavailable", "history_gap"];
 export interface CensusAccount {
   id: string; first_name: string | null; last_name: string | null; preferred_first_name: string | null; employee_id: string | null; active: boolean;
 }
@@ -129,7 +149,11 @@ export interface CensusRow {
   account: string; name: string; employeeId: string | null; active: boolean;
   linkedUsers: { id: string; name: string; role: string }[];
   hasWage: boolean; hasSalary: boolean;
-  chip: PayrollChip; gap: boolean; locationId: string | null;
+  chip: PayrollChip;
+  /** the current chip is a gap, OR any payroll week since the floor leaves this account unplaced / missing a wage */
+  gap: boolean; locationId: string | null;
+  /** the payroll weeks (history floor .. this week) the allocation counts as a gap for this account, oldest first */
+  gapWeeks: string[];
   /** the account's newest row (p_expected_seq of the next save), null = none yet */
   newestSeq: number | null;
   history: CensusHistoryEntry[];
@@ -177,13 +201,17 @@ export function payrollCensus(input: CensusInput): PayrollCensus {
     else if (hasSalary) chip = "needs_shop";
     else if (!hasWage || rosterLinked) chip = "needs_decision";
     else chip = null;
+    const gapWeeks = payrollWeeksThrough(input.weekStart)
+      .filter((w) => { const c = classifyAccountWeek(own, id, versions, w, stored); return c !== null && GAP_STATES.has(c.state); });
+    if (chip === null && gapWeeks.length > 0) chip = "history_gap";
+    else if (chip === null && own.length > 0) chip = "scheduled";
     if (chip === null) { hourlyHidden++; continue; }
     const name = a ? [a.preferred_first_name ?? a.first_name, a.last_name].filter((x) => x && x.trim()).join(" ") : "";
     const history = [...own].sort((x, y) => y.seq - x.seq).map((r): CensusHistoryEntry => ({
       seq: r.seq, validFrom: r.valid_from, disposition: r.disposition, locationId: r.location_id,
       createdAt: r.created_at ?? null, createdBy: r.created_by ?? null, hasNote: r.has_note === true }));
     rows.push({ account: id, name, employeeId: a?.employee_id ?? null, active: a?.active ?? false, linkedUsers, hasWage, hasSalary,
-      chip, gap: PAYROLL_GAP_CHIPS.includes(chip), locationId: inForce?.disposition === "shop" ? inForce.location_id : null,
+      chip, gap: PAYROLL_GAP_CHIPS.includes(chip) || gapWeeks.length > 0, gapWeeks, locationId: inForce?.disposition === "shop" ? inForce.location_id : null,
       newestSeq: history[0]?.seq ?? null, history });
   }
   rows.sort((x, y) => Number(y.gap) - Number(x.gap) || cmp(x.name, y.name) || cmp(x.account, y.account));
@@ -234,7 +262,8 @@ export const PAYROLL_SHOP_I18N_KEYS = [
   "labor.payroll.title", "labor.payroll.intro", "labor.payroll.count", "labor.payroll.gaps", "labor.payroll.alert", "labor.payroll.week",
   "labor.payroll.unavailable",
   "labor.payroll.chip.shop", "labor.payroll.chip.excluded", "labor.payroll.chip.needs_shop", "labor.payroll.chip.needs_decision",
-  "labor.payroll.chip.no_salary", "labor.payroll.chip.destination_unavailable",
+  "labor.payroll.chip.no_salary", "labor.payroll.chip.destination_unavailable", "labor.payroll.chip.history_gap", "labor.payroll.chip.scheduled",
+  "labor.payroll.gap_weeks",
   "labor.payroll.employee_id", "labor.payroll.inactive", "labor.payroll.linked", "labor.payroll.not_linked",
   "labor.payroll.field.shop", "labor.payroll.field.starts", "labor.payroll.field.note",
   "labor.payroll.option.choose", "labor.payroll.option.excluded", "labor.payroll.note_help", "labor.payroll.backdate_confirm",

@@ -108,6 +108,11 @@ describe("dates, corrections, two accounts", () => {
 const census = (o: Partial<CensusInput> = {}) => payrollCensus({
   weekStart: WEEK, storedShops: [A, B], accounts: [], wages: [], links: [], users: [], payrollShops: [], ...o,
 });
+const weeksBetween = (from: string, through: string) => {
+  const out: string[] = [];
+  for (let d = new Date(`${from}T12:00:00Z`); d.toISOString().slice(0, 10) <= through; d.setUTCDate(d.getUTCDate() + 7)) out.push(d.toISOString().slice(0, 10));
+  return out;
+};
 const acct = (id: string, active = true) => ({ id, first_name: `F${id}`, last_name: `L${id}`, preferred_first_name: null, employee_id: `E${id}`, active });
 
 describe("payrollCensus (Astra r2 P1): every 7shifts account is classified; nothing is silently missing", () => {
@@ -160,6 +165,42 @@ describe("payrollCensus (Astra r2 P1): every 7shifts account is classified; noth
     const out = census({ accounts: [acct("9"), acct("77")], wages: [wage("9", 123456)], payrollShops: [row("9", { location_id: A })] });
     expect(out.rows.map((r) => r.account)).toEqual(["77", "9"]);
     expect(JSON.stringify(out)).not.toContain("123456");
+  });
+  it("SALARY r1 P2: salaried in October, hourly today, no assignment: still a gap, naming the weeks the allocation leaves unplaced", () => {
+    const wages = [wage("9", 200000, { effective_date: "2026-10-01" }), wage("9", 2000, { wage_type: "hourly", effective_date: "2026-11-01" })];
+    const out = census({ accounts: [acct("9")], wages, weekStart: "2026-11-15" });
+    expect(out.rows).toEqual([expect.objectContaining({ account: "9", chip: "history_gap", gap: true, hasSalary: false, newestSeq: null })]);
+    // the October salary is the first known wage, so it is carried back to the history floor (Q5), as the allocation does
+    expect(out.rows[0]!.gapWeeks).toEqual(weeksBetween("2026-07-19", "2026-10-25"));
+    expect(out.hourlyHidden).toBe(0);
+    expect(out.gapCount).toBe(1);
+    // the census names exactly the weeks the allocation itself marks unplaced
+    for (const w of weeksBetween("2026-07-19", "2026-11-15")) {
+      const unplaced = allocateSalaried({ weekStart: w, storedShops: [A, B], payrollShops: [], wages }).rows[0]!.unplaced_people > 0;
+      expect(out.rows[0]!.gapWeeks.includes(w), w).toBe(unplaced);
+    }
+  });
+  it("a backdated assignment closes the history gap (the row then reads as a decided account)", () => {
+    const wages = [wage("9", 200000, { effective_date: "2026-10-01" }), wage("9", 2000, { wage_type: "hourly", effective_date: "2026-11-01" })];
+    const out = census({ accounts: [acct("9")], wages, weekStart: "2026-11-15", payrollShops: [row("9", { location_id: A, valid_from: "2026-07-19" })] });
+    // hourly today with a shop in force: the current "no salary" chip stands; history from October is placed
+    expect(out.rows[0]).toMatchObject({ gapWeeks: expect.not.arrayContaining(["2026-10-04"]) });
+    const excl = census({ accounts: [acct("9")], wages, weekStart: "2026-11-15",
+      payrollShops: [row("9", { disposition: "excluded", location_id: null, valid_from: "2026-07-19" })] });
+    expect(excl.rows[0]).toMatchObject({ chip: "excluded", gap: false, gapWeeks: [] });
+  });
+  it("currently decided but salaried earlier with nothing in force then: the row is a gap with those weeks", () => {
+    const out = census({ accounts: [acct("9")], wages: [wage("9", 1, { effective_date: "2026-10-01" })], weekStart: "2026-10-18",
+      payrollShops: [row("9", { location_id: A, valid_from: "2026-10-11" })] });
+    expect(out.rows[0]).toMatchObject({ chip: "shop", gap: true, gapWeeks: weeksBetween("2026-07-19", "2026-10-04") });
+    expect(out.gapCount).toBe(1);
+  });
+  it("an hourly account with only a FUTURE assignment is listed (its history and correction controls), not a gap", () => {
+    const out = census({ accounts: [acct("5")], wages: [wage("5", 2000, { wage_type: "hourly" })],
+      payrollShops: [row("5", { location_id: A, valid_from: "2026-11-01" })] });
+    expect(out.rows).toEqual([expect.objectContaining({ account: "5", chip: "scheduled", gap: false, gapWeeks: [] })]);
+    expect(out.rows[0]!.history).toHaveLength(1);
+    expect(out.hourlyHidden).toBe(0);
   });
   it("history newest first with the newest seq, for the optimistic save", () => {
     const r1 = row("9", { location_id: A }), r2 = row("9", { location_id: B, valid_from: "2026-10-11" });

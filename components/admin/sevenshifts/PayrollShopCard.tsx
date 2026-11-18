@@ -6,7 +6,8 @@
  * account (gap rows first), each a full-row 44px toggle that opens its drawer (history + the form). useState only.
  *
  * Every 7shifts account in the mirror is classified (Astra r2 P1): an account with no wage at all and no decision
- * is "Needs a decision", never missing. No wage figure is ever shown (has-salary flags only). A save asks for the
+ * is "Needs a decision", never missing. An account whose PAST weeks (since the history floor) leave a salary unplaced
+ * is a gap too, with those weeks named and the form opening at the first of them (SALARY r1 P2). No wage figure is ever shown (has-salary flags only). A save asks for the
  * password (Tier B, always prompted) and goes to POST /api/admin/labor/payroll-shop; a backdated start shows
  * "This changes labor cost from <date> on" before the password is asked for.
  */
@@ -63,7 +64,8 @@ function PayrollRow({ row, data }: { row: CensusRow; data: PayrollShopCardData }
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [shop, setShop] = useState("");
-  const [starts, setStarts] = useState(data.census.weekStart);
+  // a history gap opens the form at its first unplaced week (still a backdate: the note and the warning apply)
+  const [starts, setStarts] = useState(row.gapWeeks[0] ?? data.census.weekStart);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [refreshing, startTransition] = useTransition();
@@ -111,6 +113,8 @@ function PayrollRow({ row, data }: { row: CensusRow; data: PayrollShopCardData }
     {open && <div id={panelId} className="space-y-3 border-t-2 border-co-border p-3">
       <p className="text-sm text-co-text-muted">{row.linkedUsers.length > 0
         ? t("labor.payroll.linked", { names: row.linkedUsers.map((u) => u.name).join(", ") }) : t("labor.payroll.not_linked")}</p>
+      {row.gapWeeks.length > 0 && <p className="rounded-lg bg-co-warning-surface p-2 text-sm font-bold text-co-warning-text">
+        {t("labor.payroll.gap_weeks", { n: row.gapWeeks.length, from: date(row.gapWeeks[0]!), to: date(row.gapWeeks[row.gapWeeks.length - 1]!) })}</p>}
       <div>
         <h4 className="text-xs font-bold tracking-wide text-co-text-muted">{t("labor.payroll.history")}</h4>
         {row.history.length === 0 ? <p className="text-sm text-co-text-dim">{t("labor.payroll.history_empty")}</p>
