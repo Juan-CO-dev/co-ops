@@ -32,19 +32,85 @@ export interface LaborCostRow {
   /** 0340, returned whatever the basis (an estimate included): salaried accounts placed at this shop, the
    * week's unplaced accounts (the same number on every shop), accounts assigned here with no salary in 7shifts */
   salaried_people: number; salary_unplaced_people: number; salary_missing_wage_people: number;
+  /** 0345 (fact_labor_cost_planned only): the range's days whose population is the PLAN (a schedule), not the facts.
+   * Absent / 0 = a row of facts only (every public fact_labor_cost row). */
+  days_planned?: number;
+  /** 0345: the salary came from the plan's allocation (no stored row for the week, no estimate) */
+  salary_projected?: boolean;
+  /** 0345: the row's days reach its payroll week's first planned date, so its overtime is (in part) the plan's
+   * count, even on a row of retained fact days only (replacing Wednesday moves Thursday's overtime) */
+  ot_planned?: boolean;
 }
+
+/** PROJECTED READINESS (board two views PR 1, CC's ruling on Astra r4 P1): what a row holding planned days may
+ * show is decided by whether the PLAN's inputs are complete, separately from the actual-generation gate (a
+ * future week has no stored generation and never will until it is worked). The loader states the facts; this
+ * module judges them. A retained ACTUAL day inside the same row keeps the actual rules. */
+export interface LaborProjectionInputs {
+  /** every planned day of this payroll week at this shop has its schedule loaded (the adjacent board week's
+   * head included when the week's Sunday is not settled): the 40 h counter saw the whole week */
+  weekScheduleComplete: boolean;
+  /** the week's RETAINED fact days passed the actual gate (currentWeekCoverage `ready`); true when none is retained */
+  retainedFactsReady: boolean;
+  /** the shared counter reproduced the stored overtime of the week's stored rows; true when none is retained */
+  otRecountMatches: boolean;
+  /** scheduled hourly people in the range with no wage at all (the first-known-wage fallback already applied) */
+  wageUnknownPeople: number;
+  /** Fix r1 (P2-1): the week's STORED labor_week_salaried row, if this shop has one, belongs to the week's CURRENT
+   * generation (currentWeekCoverage `ready`). True when nothing is stored (the plan's fresh allocation is used).
+   * False = the source moved since that row was built (a payroll-shop reassignment, a salary change): the row SQL
+   * returns is the OLD allocation, and it must never price a projection. */
+  storedSalaryCurrent: boolean;
+}
+export type ProjectionGap = "schedule_incomplete" | "actuals_rebuilding" | "ot_not_assessed" | "wage_unknown" | "salary_rebuilding";
+export interface LaborProjection {
+  /** the projected overtime (minutes and premium) is the whole payroll week's count */
+  overtimeKnown: boolean;
+  /** every projected hourly minute has a wage: the projected $ are real */
+  moneyKnown: boolean;
+  /** the salary SQL returned may be shown: it is the shop's estimate, the plan's fresh allocation, or a stored row
+   * of the current generation. False withholds the salary, its burden and fully loaded (`salary_rebuilding`);
+   * pure hourly does not depend on the allocation and keeps its number. */
+  salaryCurrent: boolean;
+  gaps: ProjectionGap[];
+}
+/** No stated inputs = nothing known (fail closed). A missing input withholds the figure that needs it, by name.
+ * `salaryBasis` = the row's own: the shop's ESTIMATE is a setting, not a stored generation, so it is always current. */
+export function laborProjectionReadiness(inputs: LaborProjectionInputs | undefined, salaryBasis?: LaborCostRow["salary_basis"]): LaborProjection {
+  const estimate = salaryBasis === "estimate";
+  if (!inputs) return { overtimeKnown: false, moneyKnown: false, salaryCurrent: estimate, gaps: estimate ? ["schedule_incomplete"] : ["schedule_incomplete", "salary_rebuilding"] };
+  const gaps: ProjectionGap[] = [];
+  if (!inputs.weekScheduleComplete) gaps.push("schedule_incomplete");
+  if (!inputs.retainedFactsReady) gaps.push("actuals_rebuilding");
+  if (!inputs.otRecountMatches) gaps.push("ot_not_assessed");
+  const overtimeKnown = gaps.length === 0;
+  const moneyKnown = !(inputs.wageUnknownPeople > 0);
+  if (!moneyKnown) gaps.push("wage_unknown");
+  const salaryCurrent = estimate || inputs.storedSalaryCurrent === true;
+  if (!salaryCurrent) gaps.push("salary_rebuilding");
+  return { overtimeKnown, moneyKnown, salaryCurrent, gaps };
+}
+
 export interface LaborWeekView {
   weekStart: string;
   hourlyStraightCents: number; otPremiumCents: number; pureHourlyCents: number;
   salariedCents: number | null; burdenCents: number | null; fullyLoadedCents: number | null;
   salaryUnknown: boolean; burdenEstimated: boolean; rateEstimated: boolean;
-  otState: LaborCostRow["ot_state"]; coverageComplete: boolean;
+  /** `projected` / `not_assessed` only on a view holding planned days (never a stored state) */
+  otState: LaborCostRow["ot_state"] | "projected" | "not_assessed"; coverageComplete: boolean;
   /** false = some worked hours are unknown (open punch, missing / incomplete / pending day, unbuilt week): no % is definitive */
   hoursKnown: boolean; openPunches: number;
   /** 0340: some shop's wage-derived salary is incomplete (a payroll-shop gap, no estimate) */
   salaryIncomplete: boolean;
   /** 0340: payroll-shop gaps behind the week (the unplaced once, missing wages per shop), shown even beside an estimate */
   salaryGaps: number;
+  /** 0345: the view holds planned days (a schedule priced by the facts' own body), and how many */
+  projected: boolean; daysPlanned: number;
+  /** null on a view that leans on no plan; else what the plan is complete enough to say (every shop's, the worst
+   * wins). Non-null with `projected` false = retained fact days whose OVERTIME is the plan's count. */
+  projection: LaborProjection | null;
+  /** the salary of some shop came from the plan's allocation, not a stored week */
+  salaryProjected: boolean;
 }
 
 /** A fact_labor_cost row as returned by PostgREST or pg: bigint / numeric may arrive as strings, dates
@@ -63,27 +129,50 @@ export function toLaborCostRow(r: Record<string, unknown>): LaborCostRow {
     // A database before 0340 returns no gap columns: read as 0 (its basis is never `incomplete`).
     salaried_people: n(r.salaried_people ?? 0), salary_unplaced_people: n(r.salary_unplaced_people ?? 0),
     salary_missing_wage_people: n(r.salary_missing_wage_people ?? 0),
+    // The public fact_labor_cost (and a database before 0345) returns neither: a row of facts only.
+    days_planned: n(r.days_planned ?? 0), salary_projected: r.salary_projected === true, ot_planned: r.ot_planned === true,
   };
 }
 
-const OT_RANK: Record<LaborCostRow["ot_state"], number> = { assessed: 0, lower_bound: 1, week_open: 2, unbuilt: 3 };
+const OT_RANK: Record<LaborWeekView["otState"], number> = { assessed: 0, projected: 1, lower_bound: 2, week_open: 3, unbuilt: 4, not_assessed: 5 };
+const planned = (r: LaborCostRow) => Number(r.days_planned ?? 0);
+/** The row leans on a plan: it holds planned days, or its overtime is the plan's count. */
+const leansOnPlan = (r: LaborCostRow) => planned(r) > 0 || r.ot_planned === true;
+const badDays = (r: LaborCostRow) => Number(r.days_missing) + Number(r.days_incomplete) + Number(r.days_pending) + Number(r.open_punches);
+/** A row's hours: facts only = the actual rule, unchanged. With planned days, the planned part is the plan's
+ * own minutes, and the RETAINED actual days (if any) still need a built week and no unknown day. */
+function rowHoursKnown(r: LaborCostRow): boolean {
+  if (planned(r) === 0) return r.ot_state !== "unbuilt" && badDays(r) === 0;
+  return badDays(r) === 0 && (Number(r.range_days) - planned(r) <= 0 || r.ot_state !== "unbuilt");
+}
 
-/** Rows of one or more shops, summed per week (each shop's burden on its own pay). */
-export function laborWeekViews(rows: readonly LaborCostRow[]): LaborWeekView[] {
+/** Rows of one or more shops, summed per week (each shop's burden on its own pay). `projectionFor` states the
+ * plan's inputs for a row holding planned days (0345); it is never asked about a row of facts only. */
+export function laborWeekViews(rows: readonly LaborCostRow[], projectionFor?: (row: LaborCostRow) => LaborProjectionInputs | undefined): LaborWeekView[] {
   const byWeek = new Map<string, LaborCostRow[]>();
   for (const r of rows) (byWeek.get(r.week_start) ?? byWeek.set(r.week_start, []).get(r.week_start)!).push(r);
   return [...byWeek.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([weekStart, rs]) => {
     const straight = rs.reduce((s, r) => s + Number(r.hourly_straight_cents), 0);
     const premium = rs.reduce((s, r) => s + Number(r.ot_premium_cents), 0);
-    const salaryUnknown = rs.some((r) => r.salaried_cents === null);
+    const readiness = rs.filter(leansOnPlan).map((r) => laborProjectionReadiness(projectionFor?.(r), r.salary_basis));
+    // Fix r1 (P2-1): a stored salary of a stale generation is unknown, like a missing one (never the old number).
+    const salaryUnknown = rs.some((r) => r.salaried_cents === null) || readiness.some((x) => !x.salaryCurrent);
     const salaried = salaryUnknown ? null : rs.reduce((s, r) => s + Number(r.salaried_cents), 0);
     const burden = salaryUnknown ? null : rs.reduce((s, r) =>
       s + Math.round((Number(r.burden_pct) / 100) * (Number(r.hourly_straight_cents) + Number(r.ot_premium_cents) + Number(r.salaried_cents))), 0);
     const pure = straight + premium;
     const openPunches = rs.reduce((s, r) => s + Number(r.open_punches), 0);
-    const hoursKnown = rs.every((r) => r.ot_state !== "unbuilt" && Number(r.days_missing) + Number(r.days_incomplete) + Number(r.days_pending) + Number(r.open_punches) === 0);
+    const hoursKnown = rs.every(rowHoursKnown);
+    const projection: LaborProjection | null = readiness.length === 0 ? null : {
+      overtimeKnown: readiness.every((x) => x.overtimeKnown), moneyKnown: readiness.every((x) => x.moneyKnown),
+      salaryCurrent: readiness.every((x) => x.salaryCurrent),
+      gaps: [...new Set(readiness.flatMap((x) => x.gaps))],
+    };
     // An open punch's hours are unknown, so its week's overtime can only be a lower bound (never upgrades week_open).
-    const otRows = rs.map((r) => (r.ot_state === "assessed" && Number(r.open_punches) > 0 ? "lower_bound" as const : r.ot_state));
+    // A row holding planned days has no stored overtime: it is the plan's count, or not assessed.
+    const otRows = rs.map((r): LaborWeekView["otState"] => (leansOnPlan(r)
+      ? (laborProjectionReadiness(projectionFor?.(r)).overtimeKnown ? "projected" : "not_assessed")
+      : r.ot_state === "assessed" && Number(r.open_punches) > 0 ? "lower_bound" : r.ot_state));
     return {
       weekStart, hourlyStraightCents: straight, otPremiumCents: premium, pureHourlyCents: pure,
       salariedCents: salaried, burdenCents: burden, fullyLoadedCents: salaried === null || burden === null ? null : pure + salaried + burden,
@@ -93,8 +182,35 @@ export function laborWeekViews(rows: readonly LaborCostRow[]): LaborWeekView[] {
       hoursKnown, openPunches,
       salaryIncomplete: rs.some((r) => r.salary_basis === "incomplete"),
       salaryGaps: Math.max(0, ...rs.map((r) => Number(r.salary_unplaced_people))) + rs.reduce((s, r) => s + Number(r.salary_missing_wage_people), 0),
+      projected: rs.some((r) => planned(r) > 0), daysPlanned: rs.reduce((s, r) => s + planned(r), 0), projection,
+      salaryProjected: rs.some((r) => r.salary_projected === true),
     };
   });
+}
+
+/** Several payroll weeks as ONE view (a board week Mon-Sun spans two; a range spans many): raw cents summed
+ * first, an unknown salary in any week makes the loaded total unknown, hours are known only when every week's
+ * are, the overtime state is the worst, and the plan's readiness is every week's. Never an average. */
+export function sumLaborViews(views: readonly LaborWeekView[]): LaborWeekView | null {
+  if (views.length === 0) return null;
+  if (views.length === 1) return views[0]!;
+  const sum = (f: (v: LaborWeekView) => number) => views.reduce((s, v) => s + f(v), 0);
+  const nullable = (f: (v: LaborWeekView) => number | null) => (views.some((v) => f(v) === null) ? null : views.reduce((s, v) => s + (f(v) as number), 0));
+  const leaning = views.filter((v) => v.projection !== null).map((v) => v.projection!);
+  return {
+    weekStart: views[0]!.weekStart, hourlyStraightCents: sum((v) => v.hourlyStraightCents), otPremiumCents: sum((v) => v.otPremiumCents),
+    pureHourlyCents: sum((v) => v.pureHourlyCents), salariedCents: nullable((v) => v.salariedCents), burdenCents: nullable((v) => v.burdenCents),
+    fullyLoadedCents: nullable((v) => v.fullyLoadedCents), salaryUnknown: views.some((v) => v.salaryUnknown),
+    burdenEstimated: views.some((v) => v.burdenEstimated), rateEstimated: views.some((v) => v.rateEstimated),
+    otState: [...views].sort((a, b) => OT_RANK[b.otState] - OT_RANK[a.otState])[0]!.otState,
+    coverageComplete: views.every((v) => v.coverageComplete), hoursKnown: views.every((v) => v.hoursKnown), openPunches: sum((v) => v.openPunches),
+    salaryIncomplete: views.some((v) => v.salaryIncomplete), salaryGaps: sum((v) => v.salaryGaps),
+    projected: views.some((v) => v.projected), daysPlanned: sum((v) => v.daysPlanned),
+    projection: leaning.length === 0 ? null : { overtimeKnown: leaning.every((x) => x.overtimeKnown), moneyKnown: leaning.every((x) => x.moneyKnown),
+      salaryCurrent: leaning.every((x) => x.salaryCurrent),
+      gaps: [...new Set(leaning.flatMap((x) => x.gaps))] },
+    salaryProjected: views.some((v) => v.salaryProjected),
+  };
 }
 
 export interface LaborTarget { pct: number; source: "structure" | "default" }
@@ -117,7 +233,9 @@ export function rangeTargets(weeks: readonly LaborTargets[]): { loaded: number |
 const round1 = (n: number) => Math.round(n * 10) / 10;
 export interface LaborPercents { pureHourlyPct: number | null; pureHourlyTone: LaborTone; fullyLoadedPct: number | null; fullyLoadedTone: LaborTone }
 export function laborPercents(v: LaborWeekView, netSalesCents: number | null, t: LaborTargets): LaborPercents {
-  const pct = (c: number | null) => (!v.hoursKnown || c === null || netSalesCents === null || netSalesCents <= 0 ? null : round1((100 * c) / netSalesCents));
+  // A projection shows a % only when its overtime is the whole week's count and every projected minute has a wage.
+  const known = v.hoursKnown && (v.projection === null || (v.projection.overtimeKnown && v.projection.moneyKnown));
+  const pct = (c: number | null) => (!known || c === null || netSalesCents === null || netSalesCents <= 0 ? null : round1((100 * c) / netSalesCents));
   const h = pct(v.pureHourlyCents), f = pct(v.fullyLoadedCents);
   return { pureHourlyPct: h, pureHourlyTone: laborTone(h, t.hourly.pct), fullyLoadedPct: f, fullyLoadedTone: laborTone(f, t.loaded.pct) };
 }

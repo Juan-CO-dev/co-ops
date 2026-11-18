@@ -1,5 +1,5 @@
 /** Pure, contact-free Toast ring reminders shared by morning and nightly digests. */
-import { toastReadyAt, type NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
+import { notRungLabel, notRungSource, toastReadyAt, type NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
 import { serverT } from "@/lib/i18n/server";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
@@ -16,7 +16,7 @@ export function toastRingLines(orders: readonly NotInToastOrder[], locationId: s
     .map((order) => {
       const ready = toastReadyAt(order);
       return {
-        label: order.order_number ?? t("digest.catering.to_ring.code_unknown"),
+        label: (() => { const l = notRungLabel(notRungSource(order), order.order_number); return t(l.key as TranslationKey, l.params); })(),
         text: [
           ready ? t("digest.catering.to_ring.ready", { time: formatTime(ready, language) }) : t("digest.catering.to_ring.ready_unknown"),
           order.headcount === null ? t("digest.catering.to_ring.guests_unknown") : t("digest.catering.to_ring.guests", { count: order.headcount }),

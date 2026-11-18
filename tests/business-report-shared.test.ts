@@ -31,7 +31,8 @@ function dailyRaw(date: string, o: { toast?: number; checks?: number; gross?: nu
 function costRow(week: string, o: Partial<LaborCostRow> = {}): LaborCostRow {
   return { week_start: week, location_id: LOC, hourly_straight_cents: 18_000, ot_premium_cents: 0, salaried_cents: null, salary_basis: "unknown",
     burden_pct: 12, burden_basis: "estimated", estimated_rate_minutes: 0, hourly_minutes: 600, ot_minutes: 0, salaried_minutes: 0,
-    ot_state: "assessed", range_days: 1, days_covered: 1, days_pending: 0, days_fallback: 0, days_incomplete: 0, days_missing: 0, open_punches: 0, ...o };
+    ot_state: "assessed", range_days: 1, days_covered: 1, days_pending: 0, days_fallback: 0, days_incomplete: 0, days_missing: 0, open_punches: 0,
+    salaried_people: 0, salary_unplaced_people: 0, salary_missing_wage_people: 0, ...o };
 }
 const READY = { ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION };
 const cut = (o: Partial<CutRow>): CutRow => ({ business_date: "2026-10-05", quarter_start_at: "2026-10-05T16:00:00.000Z", wall_quarter: 48, fold: 0,

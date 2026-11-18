@@ -109,6 +109,21 @@ S5. Re-run S1 and S2: every S1 account has a row, and S2 is empty (or each remai
 
 Rollback: unset `FACT_LAYER_LABOR`. An app rolled back past labor-v3 writes nothing (its payloads are refused as raced); going back to the link split is a new migration, never an app rollback. `labor_payroll_shops` is append-only and stays.
 
+### 1d. The planned pricer for the schedule board (0345, board two labor views PR 1)
+
+`0345_labor_cost_planned` is FILE ONLY. It adds no table and writes no row: `fact_labor_cost`'s body (0340) moves into `fact_labor_cost_planned(…, p_plan jsonb)` and the public `fact_labor_cost(uuid, date, date, text)` keeps its signature and 23 columns and calls it with no plan. With no plan every answer is 0340's, row for row (`tests/fact-labor-0345-migration.test.ts` reads a built week before and after). The business report and every other reader are unchanged by the apply.
+
+Order:
+
+1. **Sim**: apply `0345`. Pre-flight refuses by name without 0340, when the live `fact_labor_cost` body is not 0340's (a later definer), and when 0345 is already applied.
+2. **Prod** (Juan's word): apply `0345`, stamp its header. Nothing calls the new function yet.
+3. **Deploy** the app. The business report now also asks `fact_labor_week_fingerprint` once per stored payroll week (no new SQL): a week whose source moved since it was built reads `rebuilding` until the next hourly pass.
+4. `SCHEDULE_LABOR_VIEWS=1` (server env; needs `FACT_LAYER=1` and `FACT_LAYER_LABOR=1`) only on Juan's word, after the board UI (PR 3). Before the flip: `select count(*) from fact_labor_weeks_stale(1000, 'labor-v3');` is 0 and `scripts/check-labor-payroll-allocation.ts` is clean (section 1c's gate).
+
+With the switch on, a GM / MoO+ board payload carries `laborViews` (an AGM's never does). 0345 not applied = `{ state: "not_installed" }`; the board itself still loads.
+
+Rollback: unset `SCHEDULE_LABOR_VIEWS`. The functions can stay (the public one answers as 0340 did).
+
 ## 2. What a pass does
 
 - The diff (`fact_labor_weeks_stale`) lists every payroll week (Sunday 00:00 ET calendar midnight; both shops built together, overtime counted per shop) from **2026-07-19** through the week holding yesterday whose fingerprint differs. It changes when a punch or Toast entry in the week changes (a moved punch makes both weeks stale), a link changes, an involved person's wage observation changes, the 7shifts overtime settings change, a shop-day gains ledger evidence or leaves its 36 h settle window, or another day of the week closes.

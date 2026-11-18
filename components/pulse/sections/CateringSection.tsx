@@ -6,6 +6,7 @@ import { leadSourceLabelKey } from "@/lib/catering/intake-shared";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { notRungLabel } from "@/lib/catering/not-in-toast-shared";
 import { stageChip, timeWindowLabel } from "@/lib/midshift-shared";
 import type { CateringData } from "@/lib/pulse/types";
 import { subHeading, tapLink } from "@/components/pulse/shared";
@@ -52,7 +53,7 @@ export function CateringSection({ data, mode }: { data: CateringData; mode: "car
           <ul className="flex flex-col divide-y divide-co-border/50">
             {data.notRung.map((o) => (
               <li key={o.orderId} className="flex min-h-[44px] flex-wrap items-center justify-between gap-2 py-1 text-sm">
-                <span className="min-w-0"><span className="font-semibold text-co-text">{t("pulse.catering.order", { order: o.orderNumber ?? "—" })}</span>{o.readyAt ? <span className="text-co-text-muted"> · {formatTime(o.readyAt, language)}</span> : null}{o.headcount != null ? <span className="text-co-text-muted"> · {t("midshift.catering.covers_other", { count: o.headcount })}</span> : null}{o.totalCents != null ? <span className="text-co-text-muted"> · {formatCents(o.totalCents, language)}</span> : null}</span>
+                <span className="min-w-0"><span className="font-semibold text-co-text">{(() => { const l = notRungLabel(o.source, o.orderNumber); return t(l.key as TranslationKey, l.params); })()}</span>{o.readyAt ? <span className="text-co-text-muted"> · {formatTime(o.readyAt, language)}</span> : null}{o.headcount != null ? <span className="text-co-text-muted"> · {t("midshift.catering.covers_other", { count: o.headcount })}</span> : null}{o.totalCents != null ? <span className="text-co-text-muted"> · {formatCents(o.totalCents, language)}</span> : null}</span>
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${o.timing === "overdue" || o.timing === "due" ? "bg-co-danger-surface text-co-cta-text" : "bg-co-surface-2 text-co-text-dim"}`}>{t(`pulse.catering.timing.${o.timing}` as TranslationKey)}</span>
               </li>
             ))}

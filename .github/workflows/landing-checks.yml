@@ -35,6 +35,10 @@ jobs:
       image: mcr.microsoft.com/playwright:v1.63.0-noble
       options: --ipc=host
     timeout-minutes: 55
+    env:
+      # tsc and the e2e webServer's `next build` both outgrew the default V8 heap (OOMs on #595, #596,
+      # 2026-11-18); same ceiling build.yml uses (#592). It is a ceiling, not a reservation.
+      NODE_OPTIONS: --max-old-space-size=7168
     steps:
       - uses: actions/checkout@v6
       # The container runs as root over a runner-owned checkout; git refuses it without this

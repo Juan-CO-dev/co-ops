@@ -10,6 +10,12 @@
  * advisory only when demand loaded. Wages stay SERVER-side: `boardView` uses them for money viewers, and for anyone else
  * only inside the labor-target card's head maths, whose $ lines and fields are then absent (J1); no wage, rate or
  * per-person $ ever reaches the serialized view. No write, no email, no notification.
+ *
+ * TWO LABOR VIEWS (PR 1, dark): with SCHEDULE_LABOR_VIEWS=1 (and FACT_LAYER=1, FACT_LAYER_LABOR=1) a MONEY viewer's
+ * board also carries `laborViews`: each day and the week priced by the labor facts' own SQL body and pricer (settled
+ * days = the facts over the Sales report's net; today and later = the schedule over the forecast; never blended).
+ * The board's existing strip and labor card are untouched until PR 3. Off, or for anyone else, the key is ABSENT and
+ * no labor read is made.
  */
 import { canApproveSchedule, canEditStructure, canManageShopSwitch, canSeeScheduleMoney, scheduleActRefusal } from "./access-shared";
 import type { PeopleActor } from "@/lib/people/access-shared";
@@ -27,7 +33,11 @@ import { effectiveScheduleRole } from "./works-as-shared";
 import { makeSkillLookup } from "./people-input-shared";
 import { adviseFromInputs, gate, type ScheduleDeps } from "./schedules";
 import { budgetSuggestion } from "./settings";
-import { isoWeekStart, weekDays } from "./time-shared";
+import { addDays, isoWeekStart, weekDays } from "./time-shared";
+import { laborWageFallback } from "@/lib/facts/labor-config-shared";
+import { laborTargetsFor } from "@/lib/facts/labor-cost-shared";
+import { loadBoardLaborViews, loadHeadShiftTimes, supabaseLaborReads, type LaborProjectionReads } from "./labor-projection";
+import { scheduleLaborViewsEnabled, type BoardLaborViews, type ScheduleLaborViewsEnv } from "./labor-projection-shared";
 
 /** The shop's position labels (en + es). */
 export async function loadPositionLabelRows(service: ScheduleDeps["service"], locationId: string): Promise<Array<{ id: string; name: string; name_es: string | null }>> {
@@ -45,7 +55,14 @@ export async function loadOriginContexts(service: ScheduleDeps["service"], locat
   return out;
 }
 
-export type BoardLoad = { state: "off"; canTurnOn: boolean; locationId: string } | { state: "not_installed" } | ({ state: "ready" } & BoardView);
+export type BoardLoad = { state: "off"; canTurnOn: boolean; locationId: string } | { state: "not_installed" }
+  | ({ state: "ready" } & BoardView & { laborViews?: BoardLaborViews });
+
+/** The board loader's own injections (tests): the env the labor-views switch is read from, and the labor reads. */
+export interface BoardDeps extends ScheduleDeps {
+  env?: ScheduleLaborViewsEnv & { LABOR_WAGE_FALLBACK?: string };
+  laborReads?: LaborProjectionReads;
+}
 
 const notInstalled = (e: unknown) => e instanceof ScheduleError && e.code === "inputs_unavailable";
 
@@ -55,7 +72,7 @@ function weeksAheadOf(today: string, weekStart: string): number {
   return Math.max(0, Math.round(ms / (7 * 86400000)));
 }
 
-export async function loadBoard(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; weekStart: string }): Promise<BoardLoad> {
+export async function loadBoard(deps: BoardDeps, args: { actor: PeopleActor; locationId: string; weekStart: string }): Promise<BoardLoad> {
   const { actor, locationId, weekStart } = args;
   await gate(deps.service, actor, locationId, "view");
   let settings;
@@ -137,5 +154,20 @@ export async function loadBoard(deps: ScheduleDeps, args: { actor: PeopleActor; 
       shifts: head.shifts, days: head.days, gaps: head.gaps, reasons: head.reasons, dayContexts, people, closingWindowByDate: head.context.closingWindowByDate,
     } : null,
   };
-  return { state: "ready", ...boardView(source) };
+  const view = boardView(source);
+  // The two labor views (PR 1, dark): money viewers only; the switch is checked before any labor read.
+  const env = deps.env ?? (process.env as NonNullable<BoardDeps["env"]>);
+  if (!money || !scheduleLaborViewsEnabled(env)) return { state: "ready", ...view };
+  const forecastCentsByDate: Record<string, number | null> = {};
+  for (const date of dates) {
+    const d = inputs.demand.kind === "ok" ? inputs.demand.days.find((x) => x.date === date) : undefined;
+    forecastCentsByDate[date] = d && d.kind === "ok" ? d.dayCents : null;
+  }
+  const laborViews = await loadBoardLaborViews({
+    reads: deps.laborReads ?? supabaseLaborReads(deps.service), locationId, today, boardDates: dates,
+    shifts: head ? head.shifts.map((sh) => ({ userId: sh.userId, date: sh.date, startQ: sh.startQ, endQ: sh.endQ })) : null,
+    loadPrevShifts: () => loadHeadShiftTimes(deps.service, locationId, addDays(weekStart, -7)),
+    forecastCentsByDate, targets: laborTargetsFor({ labor: structure.labor }), wageFallback: laborWageFallback(env.LABOR_WAGE_FALLBACK),
+  });
+  return { state: "ready", ...view, laborViews };
 }

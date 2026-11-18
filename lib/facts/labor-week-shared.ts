@@ -90,6 +90,24 @@ function minutesOf(inIso: string, outIso: string, breakMinutes: number): number[
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
+/** WHO one 40 h counter belongs to: (person, shop) on a per_shop week, the person on a company week. */
+export function otCounterKey(scope: LaborOtScope, person: string, loc: string): string {
+  return scope === "per_shop" ? `${person}|${loc}` : person;
+}
+/** THE overtime counter of one payroll week (board two views PR 1: one rule for the builder and the board's
+ * projection). Feed it HOURLY minutes in instant order; it answers how many of the minutes just added fall past
+ * the threshold for that key. The builder adds one minute at a time; the projection adds a quarter's block, and
+ * a block crossing the line is split exactly, so both grains count the same total. A new week = a new counter. */
+export function createOtCounter(thresholdMinutes: number = LABOR_OT_THRESHOLD_MINUTES): (key: string, minutes?: number) => number {
+  const worked = new Map<string, number>();
+  return (key, minutes = 1) => {
+    if (!(minutes > 0)) return 0;
+    const before = worked.get(key) ?? 0;
+    worked.set(key, before + minutes);
+    return Math.max(0, Math.min(minutes, before + minutes - thresholdMinutes));
+  };
+}
+
 export function buildLaborWeek(src: LaborWeekSource, opts: BuildLaborWeekOptions = {}): LaborWeekPayload {
   const otScope = opts.otScope ?? LABOR_OT_SCOPE;
   const builtFrom = src.weekStart > src.floorDay ? src.weekStart : src.floorDay;
@@ -190,18 +208,11 @@ export function buildLaborWeek(src: LaborWeekSource, opts: BuildLaborWeekOptions
   // week's counters start at 0.
   const used = minutes.filter((m) => chosen.get(`${m.loc}|${m.date}`) === m.source)
     .sort((a, b) => a.t - b.t || cmp(a.person, b.person) || cmp(a.loc, b.loc) || cmp(a.role, b.role) || cmp(a.source, b.source));
-  const otKey = otScope === "per_shop" ? (m: Minute) => `${m.person}|${m.loc}` : (m: Minute) => m.person;
-  const worked = new Map<string, number>();
+  const countOt = createOtCounter();
   const rows = new Map<string, LaborQuarterRow>();
   for (const m of used) {
     const pick = pickFor(m);
-    let ot = 0;
-    if (pick.payClass === "hourly") {
-      const k = otKey(m);
-      const n = worked.get(k) ?? 0;
-      worked.set(k, n + 1);
-      if (n >= LABOR_OT_THRESHOLD_MINUTES) ot = 1;
-    }
+    const ot = pick.payClass === "hourly" ? countOt(otCounterKey(otScope, m.person, m.loc)) : 0;
     const q = quarterOf(m.t);
     const key = `${m.loc}|${q.quarter_start_at}|${m.person}|${m.source}|${m.role}`;
     const rate_cents = pick.payClass === "hourly" && pick.rate ? pick.rate.wage_cents : null;
