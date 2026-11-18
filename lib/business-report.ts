@@ -389,7 +389,7 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
     quarters = [...cells.values()].sort((a, b) => Date.parse(a.quarterStartAt) - Date.parse(b.quarterStartAt)).map((c) => {
       const day = dayBy.get(c.date)!;
       const salesOk = day.cuts === "ok";
-      const f = quarterFigures({ toastCents: c.toastCents ?? 0, checks: c.checks ?? 0, amountMissing: c.amountMissing ?? 0, laborMinutes: c.laborMinutes, straightCents: c.straightCents,
+      const f = quarterFigures({ toastCents: c.toastCents ?? 0, checks: c.checks ?? 0, amountMissing: c.amountMissing ?? 0, laborMinutes: c.laborMinutes, straightCents: c.straightCents ?? null,
         salesOk, laborOk: day.labor.pureHourlyCents !== null && day.labor.state !== "hours_unknown" });
       const out: BusinessQuarterDto = { ...c, toastCents: salesOk ? c.toastCents ?? 0 : null, checks: salesOk ? c.checks ?? 0 : null, amountMissing: salesOk ? c.amountMissing ?? 0 : null, ...f };
       // Item 9b: below QUARTER_COST_MIN the quarter's dollars and % are not serialized at all.

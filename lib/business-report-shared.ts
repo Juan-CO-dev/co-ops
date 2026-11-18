@@ -41,7 +41,7 @@ export const LARGE_CHECK_CENTS = 500_000;
 
 export interface BusinessReportEnv { BUSINESS_REPORT?: string; FACT_LAYER?: string; FACT_LAYER_LABOR?: string }
 /** Dark unless all three are exactly "1" (plan finding 3: BUSINESS_REPORT, FACT_LAYER, FACT_LAYER_LABOR). */
-export function businessReportEnabled(env: BusinessReportEnv): boolean {
+export function businessReportEnabled(env: BusinessReportEnv | Readonly<Record<string, string | undefined>>): boolean {
   return env.BUSINESS_REPORT === "1" && env.FACT_LAYER === "1" && env.FACT_LAYER_LABOR === "1";
 }
 
