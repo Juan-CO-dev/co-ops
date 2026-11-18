@@ -6,11 +6,11 @@ import { addDaysEt } from "@/lib/vendor-rhythm-shared";
 
 export const FIX_LOC = "00000000-0000-4000-8000-0000000000a1";
 export const FIX_RUN_DATE = "2026-10-15";
-const V1 = "00000000-0000-4000-8000-00000000v001".replace("v", "b");
-const V2 = "00000000-0000-4000-8000-00000000v002".replace("v", "b");
-const V3 = "00000000-0000-4000-8000-00000000v003".replace("v", "b");
+const V1 = "00000000-0000-4000-8000-00000000b001";
+const V2 = "00000000-0000-4000-8000-00000000b002";
+const V3 = "00000000-0000-4000-8000-00000000b003";
 export const sku = (n: number) => `00000000-0000-4000-8000-0000000005${String(n).padStart(2, "0")}`;
-const P1 = "00000000-0000-4000-8000-0000000009p1".replace("p", "c");
+const P1 = "00000000-0000-4000-8000-0000000009c1";
 
 /** mulberry32: a fixed, portable stream so the fixture is the same on every machine. */
 export function prng(seed: number): () => number {
