@@ -487,6 +487,34 @@ export function detectRushes(day: { date: string; quarters: readonly QuarterPoin
   return { state: "ok", windows };
 }
 
+// ── The page (item 9b) ──────────────────────────────────────────────────────────────────────────
+
+/** The page's tabs; the export's `tab=` uses the same list (lib/report-export-shared.ts). */
+export const BUSINESS_REPORT_TABS = ["overview", "hours", "channels", "people", "compare"] as const;
+export type BusinessReportTab = (typeof BUSINESS_REPORT_TABS)[number];
+export function businessTab(v: string | undefined): BusinessReportTab {
+  return (BUSINESS_REPORT_TABS as readonly string[]).includes(v ?? "") ? v as BusinessReportTab : "overview";
+}
+
+export type CompareChange = { kind: "pct"; value: number } | { kind: "points"; value: number } | { kind: "not_comparable" };
+/** This period vs the one before. Money: a whole % only when BOTH periods are complete and the earlier is above
+ * zero. A labor %: the difference in POINTS (never a % of a %). Anything unknown is not comparable, never 0. */
+export function compareChange(cur: { value: number | null; complete: boolean }, prev: { value: number | null; complete: boolean },
+  kind: "money" | "points"): CompareChange {
+  if (cur.value === null || prev.value === null || !cur.complete || !prev.complete) return { kind: "not_comparable" };
+  if (kind === "points") return { kind: "points", value: round1(cur.value - prev.value) };
+  if (prev.value <= 0) return { kind: "not_comparable" };
+  return { kind: "pct", value: Math.round(((cur.value - prev.value) / prev.value) * 100) };
+}
+
+/** The sentence beside a '—' (a labor % that is not shown). Null when there is a figure. */
+export function laborReasonKey(state: LaborState): (typeof BUSINESS_REPORT_I18N_KEYS)[number] | null {
+  return state === "ok" ? null : `reports.business.labor.state.${state}`;
+}
+export function loadedReasonKey(state: LoadedState): (typeof BUSINESS_REPORT_I18N_KEYS)[number] | null {
+  return state === "ok" ? null : `reports.business.labor.state.${state}`;
+}
+
 /** Every label a business-report reader shows (en + es tú, pinned by tests/business-report-i18n.test.ts). No page
  * ships in 9a; these exist so 9b is born translated. Every refusal code and every labor state has its line. */
 export const BUSINESS_REPORT_I18N_KEYS = [
@@ -498,4 +526,30 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.labor.state.ezcater_missing", "reports.business.labor.state.zero_sales",
   "reports.business.labor.denominator", "reports.business.quarter.basis", "reports.business.cuts.rebuilding", "reports.business.large_checks",
   "reports.business.rush.not_enough_history", "reports.business.rush.rule", "reports.business.last_year.no_data_yet",
+  // Item 9b: the page.
+  "reports.business.title", "reports.business.hub_hint", "reports.business.hub_open", "reports.business.tabs_aria",
+  "reports.business.tab.overview", "reports.business.tab.hours", "reports.business.tab.channels", "reports.business.tab.people",
+  "reports.business.tab.compare", "reports.business.caption", "reports.business.cap", "reports.business.range_shortened",
+  "reports.business.no_finished_days", "reports.business.coverage.days", "reports.business.coverage.partial", "reports.business.coverage.missing",
+  "reports.business.card.sales", "reports.business.card.sales_hint", "reports.business.card.net", "reports.business.card.net_hint",
+  "reports.business.card.hours", "reports.business.card.pure_hourly", "reports.business.card.fully_loaded", "reports.business.card.refunds",
+  "reports.business.card.refunds_hint", "reports.business.target", "reports.business.target_le", "reports.business.target_varies",
+  "reports.business.pct_value", "reports.business.hours_value", "reports.business.loaded.basis", "reports.business.burden_estimated",
+  "reports.business.salary_estimated", "reports.business.salary_gaps", "reports.business.labor.state.salary_incomplete", "reports.business.labor.state.salary_unknown",
+  "reports.business.weeks", "reports.business.week_of", "reports.business.days", "reports.business.count_days",
+  "reports.business.count_weeks", "reports.business.row.sales", "reports.business.row.labor_pct", "reports.business.row.loaded_pct",
+  "reports.business.badge.rebuilding", "reports.business.badge.large", "reports.business.detail.sales", "reports.business.detail.checks",
+  "reports.business.detail.toast_net", "reports.business.detail.ezcater", "reports.business.detail.net_sales", "reports.business.detail.hours",
+  "reports.business.detail.pure_hourly_cost", "reports.business.detail.ot_premium", "reports.business.detail.ot_hours", "reports.business.detail.salaried",
+  "reports.business.detail.burden", "reports.business.detail.fully_loaded", "reports.business.last_year.label", "reports.business.hours.checks",
+  "reports.business.hours.no_labor", "reports.business.hours.no_pct", "reports.business.hours.gm_note", "reports.business.hours.money_note",
+  "reports.business.hours.too_wide", "reports.business.hours.no_activity", "reports.business.hours.list_aria", "reports.business.rush.count",
+  "reports.business.rush.none", "reports.business.rush.window", "reports.business.channels.title", "reports.business.channels.none",
+  "reports.business.channels.ezcater", "reports.business.channels.ezcater_label", "reports.business.channels.excluded", "reports.business.channels.excluded_none",
+  "reports.business.channels.excluded.gift_card", "reports.business.channels.excluded.ezcater_linked", "reports.business.channels.rebuilding_days", "reports.business.people.title",
+  "reports.business.people.count", "reports.business.people.none", "reports.business.people.unnamed", "reports.business.people.pay.hourly",
+  "reports.business.people.pay.salaried", "reports.business.people.ot", "reports.business.people.withheld", "reports.business.people.cost",
+  "reports.business.people.cost_withheld", "reports.business.people.salaried_cost", "reports.business.people.cost_note", "reports.business.people.servers",
+  "reports.business.people.server_note", "reports.business.compare.periods", "reports.business.compare.this", "reports.business.compare.previous",
+  "reports.business.compare.pct", "reports.business.compare.points", "reports.business.compare.not_comparable", "reports.business.compare.rule",
 ] as const;

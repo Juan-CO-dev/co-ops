@@ -32,7 +32,7 @@ import type { MenuCostRow } from "@/lib/menu-costing-shared";
 import type { BreakdownRow, SalesBucket, SalesCheckRow, SalesExportView, SalesEzcaterRow, SalesTotals } from "@/lib/sales-reports-shared";
 import { SALES_EXPORT_MAX_ROWS, rowAverageCents, salesHasData } from "@/lib/sales-reports-shared";
 import type { BusinessReportDto } from "@/lib/business-report";
-import type { DaySales, LaborFigures } from "@/lib/business-report-shared";
+import { BUSINESS_REPORT_TABS, type BusinessReportTab, type DaySales, type LaborFigures } from "@/lib/business-report-shared";
 
 // ── Cells ───────────────────────────────────────────────────────────────────────────────────
 
@@ -184,8 +184,9 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
  * / `status` column, never a 0. Labor DOLLARS per person and per 15 minutes are filled only where the DTO
  * carries them (PERSON_COST_MIN / QUARTER_COST_MIN, MoO+); a GM's file has those cells empty.
  */
-export const BUSINESS_EXPORT_TABS = ["overview", "hours", "channels", "people", "compare"] as const;
-export type BusinessExportTab = (typeof BUSINESS_EXPORT_TABS)[number];
+/** The page's own tab list (one table per tab). */
+export const BUSINESS_EXPORT_TABS = BUSINESS_REPORT_TABS;
+export type BusinessExportTab = BusinessReportTab;
 export function isBusinessExportTab(v: unknown): v is BusinessExportTab {
   return typeof v === "string" && (BUSINESS_EXPORT_TABS as readonly string[]).includes(v);
 }
