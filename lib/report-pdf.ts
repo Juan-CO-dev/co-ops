@@ -60,8 +60,8 @@ const LINE = 9;
 const ROW_GAP = 3;
 const CELL_PAD = 1.5;
 const FOOTER_SPACE = 14;
-/** Columns repeated in every part of a wide table (the identifying ones come first in every registry). */
-const KEY_COLUMNS = 3;
+/** The share of the page width the repeated identity columns may take before they are narrowed (they wrap). */
+const IDENTITY_SHARE = 0.4;
 const HEADER_FONT = "Helvetica-Bold";
 const BODY_FONT = "Helvetica";
 const MIN_COL = 34;
@@ -104,19 +104,20 @@ function naturalWidths(doc: Doc, table: PdfTable): number[] {
 
 /**
  * WIDE TABLES SPLIT ACROSS PAGES (Astra P2), never squeezed into illegibility: the columns are
- * packed into parts that each fit the page width; every part repeats the identifying columns
- * (the first ones, e.g. business_date + shop) so a part on its own still says which row it is.
+ * packed into parts that each fit the page width; every part repeats the row's IDENTITY columns
+ * first (review r10: declared per table in the registry, `ExportColumn.identity` — never "the first
+ * three", which repeated the period and lost whose row it was), so a part on its own still says
+ * which row it is. The identity is never dropped: the renderer narrows it first (cells wrap).
  */
-export function splitColumns(widths: number[], available: number, keyCount: number): number[][] {
+export function splitColumns(widths: number[], available: number, identity: readonly number[]): number[][] {
   const all = widths.map((_, i) => i);
   if (widths.reduce((a, b) => a + b, 0) <= available) return [all];
-  let keys = all.slice(0, keyCount);
-  if (keys.reduce((a, i) => a + widths[i]!, 0) > available * 0.4) keys = [];
+  const keys = all.filter((i) => identity.includes(i));
   const keyWidth = keys.reduce((a, i) => a + widths[i]!, 0);
   const parts: number[][] = [];
   let current: number[] = [];
   let used = keyWidth;
-  for (const i of all.slice(keys.length)) {
+  for (const i of all.filter((j) => !identity.includes(j))) {
     if (current.length > 0 && used + widths[i]! > available) { parts.push([...keys, ...current]); current = []; used = keyWidth; }
     current.push(i);
     used += widths[i]!;
@@ -191,7 +192,13 @@ export async function renderReportPdf(header: PdfHeader, tables: readonly PdfTab
   const headerBottom = y;
   for (const [index, table] of tables.entries()) {
     const natural = naturalWidths(doc, table);
-    const parts = splitColumns(natural, width, KEY_COLUMNS);
+    const identity = table.columns.flatMap((c, i) => (c.identity === true ? [i] : []));
+    if (natural.reduce((a, b) => a + b, 0) > width) {
+      // A split repeats the identity in every part; past its share of the page it is narrowed (it wraps), never dropped.
+      const idWidth = identity.reduce((a, i) => a + natural[i]!, 0);
+      if (idWidth > width * IDENTITY_SHARE) for (const i of identity) natural[i] = (natural[i]! / idWidth) * width * IDENTITY_SHARE;
+    }
+    const parts = splitColumns(natural, width, identity);
     for (const [p, part] of parts.entries()) {
       const cols = part.map((i) => table.columns[i]!);
       const nat = part.map((i) => natural[i]!);

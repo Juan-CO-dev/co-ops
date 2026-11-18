@@ -32,8 +32,8 @@ function rowFor(columns: readonly ExportColumn[], r: number): ExportRow {
   const row: ExportRow = {};
   columns.forEach((c, i) => {
     switch (c.kind) {
-      case "date": row[c.key] = `2026-0${r + 1}-1${i % 10}`; break;
-      case "datetime": row[c.key] = `2026-0${r + 1}-1${i % 10}T1${r}:00:00.000Z`; break;
+      case "date": row[c.key] = `2026-0${r + 1}-${10 + (i % 18)}`; break;
+      case "datetime": row[c.key] = `2026-0${r + 1}-${10 + (i % 18)}T1${r}:${String(i).padStart(2, "0")}:00.000Z`; break;
       case "money": row[c.key] = 7_000_000 + r * 100_000 + i * 101; break;
       case "int": case "number": row[c.key] = 800_000 + r * 10_000 + i; break;
       case "bool": row[c.key] = r === 0; break;
@@ -69,9 +69,14 @@ describe("the PDF repeats each row's identity in every column part", () => {
     });
     const text = squash(pdfText(pdf));
     const keys = identityKeys(columns);
-    const idText = (row: ExportRow) => squash(keys.map((k) => formatCell(columns.find((c) => c.key === k)!.kind, row[k])).join(""));
     const segments = text.split(/@@PART\d+of\d+@@/).slice(1);
-    const parts = segments.length === 0 ? [text] : segments;
+    const split = segments.length > 0;
+    const parts = split ? segments : [text];
+    // Split: every part opens each row with its identity cells. Unsplit: the row is drawn in registry
+    // order, so the anchor is every cell up to the last identity column.
+    const lastId = Math.max(...keys.map((k) => columns.findIndex((c) => c.key === k)));
+    const anchorCols = split ? keys.map((k) => columns.find((c) => c.key === k)!) : columns.slice(0, lastId + 1);
+    const idText = (row: ExportRow) => squash(anchorCols.map((c) => formatCell(c.kind, row[c.key])).join(""));
     for (const part of parts) {
       const at = rows.map((row) => part.indexOf(idText(row)));
       // Both rows are named in this part, in order …

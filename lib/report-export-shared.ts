@@ -39,7 +39,12 @@ import type { BusinessReportView, CutView, LaborView, SalesView } from "@/lib/bu
 
 /** text · date (YYYY-MM-DD) · datetime (ISO UTC) · money (integer cents → "12.34") · int · number · bool · currency ("USD"). */
 export type ColumnKind = "text" | "date" | "datetime" | "money" | "int" | "number" | "bool" | "currency";
-export interface ExportColumn { key: string; kind: ColumnKind; label?: string }
+/**
+ * `identity` (review r10): this column names the ROW. A PDF that splits a wide table across pages
+ * repeats every identity column in every part, so a part on its own still says whose row it is.
+ * Declared per table, never inferred from position; the on-screen registries also LEAD with them.
+ */
+export interface ExportColumn { key: string; kind: ColumnKind; label?: string; identity?: boolean }
 export type ExportValue = string | number | boolean | null | undefined;
 export type ExportRow = Record<string, ExportValue>;
 
@@ -49,6 +54,13 @@ export const CSV_BOM = "﻿";
 export const NOT_YET_AVAILABLE = "not_yet_available";
 
 const col = (key: string, kind: ColumnKind = "text"): ExportColumn => ({ key, kind });
+/** An identity column (see ExportColumn.identity). */
+const idc = (key: string, kind: ColumnKind = "text"): ExportColumn => ({ key, kind, identity: true });
+
+/** The keys of a table's identity columns, in registry order. */
+export function identityKeys(columns: readonly ExportColumn[]): string[] {
+  return columns.filter((c) => c.identity === true).map((c) => c.key);
+}
 
 /** Integer cents → "12.34" / "-0.05". Integer math only: a float never decides a cent. */
 export function centsToDollars(cents: number): string {
@@ -130,7 +142,7 @@ export function isExportFormat(v: unknown): v is ExportFormat {
 }
 
 /** Every per-shop row starts with these (spec: "per shop per day"). */
-const SHOP = [col("location_code"), col("location_name")];
+const SHOP = [idc("location_code"), idc("location_name")];
 
 /**
  * SALES (piece 4, Phase 2b). One column set per Sales view, because each view is its own table
@@ -139,10 +151,10 @@ const SHOP = [col("location_code"), col("location_name")];
  * EXCLUSIONS, never sales; ezCater orders are their own source; server = the order's server, by
  * Toast first name. No customer, card or comment field exists in any of them.
  */
-const PERIOD = [col("period_start", "date"), col("period_end", "date")];
+const PERIOD = [idc("period_start", "date"), idc("period_end", "date")];
 export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn[]> = {
   summary: [
-    col("row_type"), ...PERIOD, ...SHOP, col("coverage_status"), col("covered_days", "int"), col("expected_days", "int"),
+    idc("row_type"), ...PERIOD, ...SHOP, col("coverage_status"), col("covered_days", "int"), col("expected_days", "int"),
     col("toast_check_totals", "money"), col("checks", "int"), col("average_check", "money"), col("discounts", "money"),
     col("discount_count", "int"), col("sales_tax", "money"), col("tips", "money"), col("refunds_captured_so_far", "money"),
     col("refunds_captured_count", "int"), col("ezcater_sales", "money"), col("ezcater_orders", "int"), col("sales_before_refunds", "money"),
@@ -153,28 +165,28 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
     col("toast_service_charges", "money"), col("toast_sales_refunds", "money"), col("toast_item_sales_net", "money"),
     col("accounting_missing", "int"), col("sales_refund_missing", "int"), col("toast_net_basis"),
   ],
-  items: [...PERIOD, ...SHOP, col("item_guid"), col("item"), col("units", "number"), col("checks", "int")],
-  modifiers: [...PERIOD, ...SHOP, col("item_guid"), col("modifier"), col("units", "number"), col("checks", "int")],
+  items: [...PERIOD, ...SHOP, idc("item_guid"), idc("item"), col("units", "number"), col("checks", "int")],
+  modifiers: [...PERIOD, ...SHOP, idc("item_guid"), idc("modifier"), col("units", "number"), col("checks", "int")],
   channels: [
-    ...PERIOD, ...SHOP, col("channel"), col("provider"), col("source"), col("counted", "bool"), col("class"),
+    ...PERIOD, ...SHOP, idc("channel"), idc("provider"), idc("source"), idc("counted", "bool"), idc("class"),
     col("checks_or_orders", "int"), col("sales", "money"), col("amount_missing", "int"), col("currency", "currency"),
   ],
-  heatmap: [...PERIOD, ...SHOP, col("weekday", "int"), col("hour_et", "int"), col("checks", "int"), col("sales", "money"), col("currency", "currency")],
+  heatmap: [...PERIOD, ...SHOP, idc("weekday", "int"), idc("hour_et", "int"), col("checks", "int"), col("sales", "money"), col("currency", "currency")],
   discounts: [
-    ...PERIOD, ...SHOP, col("discount_name"), col("applications", "int"), col("checks", "int"), col("amount", "money"),
+    ...PERIOD, ...SHOP, idc("discount_name"), col("applications", "int"), col("checks", "int"), col("amount", "money"),
     col("amount_missing", "int"), col("currency", "currency"),
   ],
   servers: [
-    ...PERIOD, ...SHOP, col("server_first_name"), col("server_ref"), col("checks", "int"), col("sales", "money"),
+    ...PERIOD, ...SHOP, idc("server_first_name"), idc("server_ref"), col("checks", "int"), col("sales", "money"),
     col("amount_missing", "int"), col("average_check", "money"), col("currency", "currency"),
   ],
   checks: [
-    col("business_date", "date"), ...SHOP, col("check_guid"), col("opened_at", "datetime"), col("channel"), col("provider"),
+    idc("business_date", "date"), ...SHOP, idc("check_guid"), col("opened_at", "datetime"), col("channel"), col("provider"),
     col("dining_option"), col("server_first_name"), col("server_ref"), col("units", "number"), col("discounts", "money"),
     col("check_amount_pre_tax", "money"), col("sales_tax", "money"), col("currency", "currency"),
   ],
   catering: [
-    col("event_date", "date"), ...SHOP, col("ezcater_order_number"), col("headcount", "int"), col("subtotal", "money"),
+    idc("event_date", "date"), ...SHOP, idc("ezcater_order_number"), col("headcount", "int"), col("subtotal", "money"),
     col("toast_status"), col("currency", "currency"),
   ],
 };
@@ -193,7 +205,7 @@ export function isBusinessExportTab(v: unknown): v is BusinessExportTab {
   return typeof v === "string" && (BUSINESS_EXPORT_TABS as readonly string[]).includes(v);
 }
 const BUSINESS_EXPORT_COLUMNS_OVERVIEW: readonly ExportColumn[] = [
-  col("row_type"), col("period"), ...PERIOD, ...SHOP, col("status"), col("coverage_status"), col("checks", "int"),
+  idc("row_type"), idc("period"), ...PERIOD, ...SHOP, col("status"), col("coverage_status"), col("checks", "int"),
   col("toast_check_totals", "money"), col("toast_item_sales_net", "money"), col("ezcater_sales", "money"), col("ezcater_orders", "int"),
   col("refunds_captured_so_far", "money"), col("sales_before_refunds", "money"), col("amount_missing", "int"), col("net_sales_for_labor", "money"), col("net_sales_state"),
   col("labor_hours", "number"), col("pure_hourly_cost", "money"), col("overtime_premium", "money"), col("overtime_hours", "number"),
@@ -205,14 +217,14 @@ const BUSINESS_EXPORT_COLUMNS_OVERVIEW: readonly ExportColumn[] = [
 export const BUSINESS_EXPORT_COLUMNS: Record<BusinessExportTab, readonly ExportColumn[]> = {
   overview: BUSINESS_EXPORT_COLUMNS_OVERVIEW,
   hours: [
-    col("row_type"), col("business_date", "date"), col("quarter_start", "datetime"), col("time_et"), ...SHOP, col("status"), col("checks", "int"),
+    idc("row_type"), idc("business_date", "date"), idc("quarter_start", "datetime"), idc("time_et"), ...SHOP, col("status"), col("checks", "int"),
     col("toast_sales", "money"), col("amount_missing", "int"), col("labor_hours", "number"), col("labor_state"), col("straight_time_cost", "money"),
     col("straight_time_pct", "number"), col("basis"), col(FIGURE_NOTES_COLUMN), col("currency", "currency"),
   ],
-  channels: [col("row_type"), ...PERIOD, ...SHOP, col("status"), col("days_included", "int"), col("days_in_period", "int"), col("channel"), col("provider"),
+  channels: [idc("row_type"), ...PERIOD, ...SHOP, idc("channel"), idc("provider"), col("status"), col("days_included", "int"), col("days_in_period", "int"),
     col("checks", "int"), col("sales", "money"), col("amount_missing", "int"), col(FIGURE_NOTES_COLUMN), col("currency", "currency")],
   people: [
-    col("row_type"), ...PERIOD, ...SHOP, col("status"), col("days_included", "int"), col("days_in_period", "int"), col("labor_state"), col("name"), col("server_ref"), col("source"), col("pay_class"), col("hours", "number"),
+    idc("row_type"), ...PERIOD, ...SHOP, idc("name"), idc("server_ref"), idc("source"), col("status"), col("days_included", "int"), col("days_in_period", "int"), col("labor_state"), col("pay_class"), col("hours", "number"),
     col("overtime_hours", "number"), col("weeks_withheld", "int"), col("straight_time_cost", "money"), col("checks", "int"), col("sales", "money"),
     col("amount_missing", "int"), col(FIGURE_NOTES_COLUMN), col("currency", "currency"),
   ],
@@ -225,45 +237,45 @@ export const BUSINESS_EXPORT_COLUMNS: Record<BusinessExportTab, readonly ExportC
  */
 export const EXPORT_COLUMNS: Record<ExportFamily, readonly ExportColumn[]> = {
   operations: [
-    col("business_date", "date"), ...SHOP, col("report_type"), col("report_id"), col("status"), col("submitted_by"),
+    idc("business_date", "date"), ...SHOP, idc("report_type"), idc("report_id"), col("status"), col("submitted_by"),
     col("under_par", "int"), col("over_par", "int"), col("skipped", "int"), col("not_started", "int"), col("temp_flags", "int"),
     col("cash_over_short", "money"), col("currency", "currency"),
   ],
   cash: [
-    col("business_date", "date"), ...SHOP, col("report_id"), col("projected", "money"), col("drawer_total", "money"),
+    idc("business_date", "date"), ...SHOP, idc("report_id"), col("projected", "money"), col("drawer_total", "money"),
     col("float", "money"), col("deposit", "money"), col("over_short", "money"), col("cash_tips", "money"),
     col("count_method"), col("on_shift"), col("signed_by"), col("signed_at", "datetime"), col("over_short_note"),
     col("payment_type"), col("currency", "currency"),
   ],
   written: [
-    col("submitted_at", "datetime"), ...SHOP, col("report_id"), col("category"), col("title"), col("body"),
+    idc("submitted_at", "datetime"), ...SHOP, idc("report_id"), col("category"), col("title"), col("body"),
     col("submitted_by"), col("submitted_by_role"), col("edit_count", "int"), col("last_edited_at", "datetime"),
   ],
   trends_ops: [
-    col("bucket_start", "date"), ...SHOP, col("granularity"), col("has_data", "bool"), col("under_par", "int"),
+    idc("bucket_start", "date"), ...SHOP, idc("granularity"), col("has_data", "bool"), col("under_par", "int"),
     col("over_par", "int"), col("temp_flags", "int"), col("completion_pct", "number"), col("cash_over_short", "money"),
     col("currency", "currency"),
   ],
   team: [
-    col("period_from", "date"), col("period_to", "date"), ...SHOP, col("name"), col("role"), col("score", "int"),
+    idc("period_from", "date"), idc("period_to", "date"), ...SHOP, idc("name"), col("role"), col("score", "int"),
     col("previous_score", "int"), col("health"), col("tasks", "int"), col("finalizations", "int"),
     col("people_mgmt", "int"), col("oversight", "int"), col("notes", "int"),
   ],
   catering: [
-    col("event_date", "date"), ...SHOP, col("lead_id"), col("event_name"), col("time_window"), col("headcount", "int"),
+    idc("event_date", "date"), ...SHOP, idc("lead_id"), idc("event_name"), col("time_window"), col("headcount", "int"),
     col("lead_source"), col("stage"), col("money_status"), col("value", "money"), col("currency", "currency"),
   ],
   receiving: [
-    col("delivery_date", "date"), ...SHOP, col("delivery_id"), col("vendor_or_store"), col("invoice_number"),
+    idc("delivery_date", "date"), ...SHOP, idc("delivery_id"), col("vendor_or_store"), col("invoice_number"),
     col("line_count", "int"), col("received_by"), col("match_state"), col("delivery_status"),
     col("has_receipt_photo", "bool"), col("po_code"),
   ],
   counts: [
-    ...SHOP, col("sku_id"), col("sku"), col("dimension"), col("anchor_at", "datetime"), col("anchor_age_days", "int"),
+    ...SHOP, idc("sku_id"), idc("sku"), idc("dimension"), col("anchor_at", "datetime"), col("anchor_age_days", "int"),
     col("anchor_qty", "number"), col("on_hand_qty", "number"), col("unit"), col("anchor_stale", "bool"),
   ],
   costing: [
-    col("menu_item_id"), col("menu_item"), col("section"), col("menu_price", "money"), col("food_cost", "money"),
+    idc("menu_item_id"), idc("menu_item"), col("section"), col("menu_price", "money"), col("food_cost", "money"),
     col("food_cost_pct", "number"), col("margin", "money"), col("cost_status"), col("currency", "currency"),
   ],
   /** The default Sales file is the summary; `view=` picks another SALES_EXPORT_COLUMNS table. */
