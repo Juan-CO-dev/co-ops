@@ -27,7 +27,8 @@ const f = forecastPars(forecastNight, DECISION);
 const identity = parIdentityOf(forecastNight);
 const base = buildParInputs({ runDate: addDaysEt(forecastNight.runDateEt, 7), seed: 5 }); // a later night whose window holds every lead
 const DATES = PAR_LEADS.map((l) => addDaysEt(DECISION, l));
-const COVERED = DATES.filter((d) => { const w = base.window.find((x) => x.dateEt === d)!; return w.salesObserved || w.productionObserved; });
+// Covered = the SALES capture is complete for the day (review r4 #1); a recorded production does not cover it.
+const COVERED = DATES.filter((d) => base.window.find((x) => x.dateEt === d)!.salesObserved);
 
 interface Use { date: string; sku: string; direct: number; production: number }
 interface Cat { product: Map<string, string | null>; active: Map<string, boolean>; primary: Map<string, string> }

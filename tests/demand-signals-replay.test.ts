@@ -193,6 +193,36 @@ describe("pars: the forecast, and the candidate arm that differs only by the sig
     expect(bare).toEqual(parTargetFromInputs(later, day));
     expect(Object.keys(bare.payload!.direct).length).toBeGreaterThan(10);
   });
+  it("coverage is per source: missing sales capture is not covered, whatever production staff recorded (review r4 #1)", () => {
+    const later = buildParInputs({ runDate: addDaysEt(inputs.runDateEt, 7), seed: 5 });
+    const day = addDaysEt(f.decisionDate, 1);
+    const full = later.window.find((d) => d.dateEt === day)!;
+    expect(full.salesObserved).toBe(true);
+    const withDay = (salesObserved: boolean, productionObserved: boolean, lanes: { direct: boolean; production: boolean }) => ({
+      ...later,
+      window: later.window.map((d) => (d.dateEt === day ? { ...d, salesObserved, productionObserved } : d)),
+      rawDirectOzByDate: new Map([...later.rawDirectOzByDate].filter(([d]) => lanes.direct || d !== day)),
+      rawProductionOzByDate: lanes.production ? new Map([...later.rawProductionOzByDate, [day, new Map([[f.terms[Object.keys(f.terms)[0]!]!.skuId, 12]])]]) : new Map([...later.rawProductionOzByDate].filter(([d]) => d !== day)),
+    });
+    // Toast capture missing for the day, staff recorded a production: the sales lane is UNKNOWN, not zero.
+    const missingSales = withDay(false, true, { direct: false, production: true });
+    expect(parTargetFromInputs(missingSales, day)).toEqual({ coverage: "not_covered", payload: null });
+    const lookup = (night: typeof later) => (validDate: string) => {
+      const t = parTargetFromInputs(night, validDate);
+      return t === null ? undefined : t.coverage === "covered" ? t.payload! : "not_covered" as const;
+    };
+    const rows = parScoreRows("shop", f, parIdentityOf(inputs), lookup(missingSales), NO_SIGNAL).filter((r) => r.validDate === day);
+    expect(rows.length).toBeGreaterThan(10);
+    // every product, the sales-only ones included, is excluded: none scores 0 actual ounces
+    expect(rows.every((r) => r.actual === null)).toBe(true);
+    // Sales captured, no production recorded: covered. No production row is a true zero of the production lane.
+    const salesOnly = parTargetFromInputs(withDay(true, false, { direct: true, production: false }), day)!;
+    expect(salesOnly.coverage).toBe("covered");
+    expect(salesOnly.payload!.production).toEqual({});
+    expect(Object.keys(salesOnly.payload!.direct).length).toBeGreaterThan(10);
+    // Sales captured and nothing sold: a covered true zero.
+    expect(parTargetFromInputs(withDay(true, false, { direct: false, production: false }), day)).toMatchObject({ coverage: "covered", payload: { direct: {}, production: {} } });
+  });
   // Reassignment, detachment, deactivation and their combinations (reviews r2, r3): tests/demand-signals-par-identity.test.ts.
 });
 

@@ -23,7 +23,16 @@ export const SIGNAL_BOUNDS = Object.freeze({
 });
 
 const clamp = (v: number, [lo, hi]: readonly [number, number]): number => Math.max(lo, Math.min(hi, v));
+/** A MULTIPLIER we can apply: finite and strictly positive. A multiplier of 0 is not a signal. */
 const usable = (v: number): boolean => Number.isFinite(v) && v > 0;
+/**
+ * A TRAINING OBSERVATION (actual / forecast): finite and nonnegative. 0 is a real observation (a fully captured
+ * day with no sales against a positive forecast); only a missing one (NaN, infinite, negative) is dropped.
+ * Never use `usable` on an observation (review r4 #2).
+ */
+const observed = (v: number): boolean => Number.isFinite(v) && v >= 0;
+/** A FITTED value (a mean or a ratio of observations) as a multiplier: 0 is the floor of the band, never silence. */
+const clampFitted = (v: number): number => (observed(v) ? clamp(v, SIGNAL_BOUNDS.perSignal) : 1);
 
 export function clampSignal(multiplier: number): number {
   return usable(multiplier) ? clamp(multiplier, SIGNAL_BOUNDS.perSignal) : 1;
@@ -103,14 +112,17 @@ const SILENT: SignalValue = { multiplier: 1, active: false, eventKey: null };
  * targets were already frozen at the decision (walk-forward: the caller never passes a later one). One bucket
  * for every holiday, shrunk toward 1 by `shrinkK` pseudo-observations, then clamped. With nothing to learn
  * from it is silent: an unfitted multiplier is not a signal.
+ * A ratio of 0 is kept: a captured holiday with no sales is the quietest observation there is, not a missing
+ * one. The caller passes a ratio only for a COVERED holiday, so "missing" never arrives as 0.
  */
 export function holidaySignal(validDate: string, priorRatios: ReadonlyArray<number>, model: typeof HOLIDAY_MODEL = HOLIDAY_MODEL): SignalValue {
   const holiday = holidayOn(validDate);
   if (holiday === null) return SILENT;
-  const ratios = priorRatios.filter(usable);
+  const ratios = priorRatios.filter(observed);
   if (ratios.length === 0) return { multiplier: 1, active: false, eventKey: holiday.key };
   const shrunk = (ratios.reduce((a, b) => a + b, 0) + model.shrinkK) / (ratios.length + model.shrinkK);
-  const multiplier = clampSignal(shrunk);
+  // The fitted mean is an observation too: a mean of 0 is the floor of the band, not silence.
+  const multiplier = clampFitted(shrunk);
   return { multiplier, active: multiplier !== 1, eventKey: holiday.key };
 }
 
@@ -132,6 +144,7 @@ export function trendSignal(series: ReadonlyArray<{ date: string; value: number 
   if (!(prior > 0)) return SILENT;
   const raw = Math.round((1 + model.shrink * (recent / prior - 1)) * 1e6) / 1e6;
   if (Math.abs(raw - 1) < model.deadband) return SILENT;
-  const multiplier = clampSignal(raw);
+  // A recent week of covered zeros is a real fall (every day is present, or we returned above), never "no signal".
+  const multiplier = clampFitted(raw);
   return { multiplier, active: true, eventKey: multiplier > 1 ? "trend_up" : "trend_down" };
 }

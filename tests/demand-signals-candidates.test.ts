@@ -56,6 +56,23 @@ describe("the holiday candidate", () => {
     expect(holidaySignal("2026-11-26", [0.9, 0.9]).multiplier).toBeCloseTo((1.8 + k) / (2 + k), 12);
     expect(holidaySignal("2026-11-26", [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2])).toEqual({ multiplier: 0.85, active: true, eventKey: "thanksgiving" });
   });
+  it("keeps a genuine zero-demand holiday: a ratio of 0 is an observation, only a missing one is dropped (review r4 #2)", () => {
+    const k = HOLIDAY_MODEL.shrinkK;
+    // one fully captured holiday with no sales: (0 + 3) / (1 + 3) = 0.75, clamped to 0.85
+    expect(holidaySignal("2026-11-26", [0])).toEqual({ multiplier: 0.85, active: true, eventKey: "thanksgiving" });
+    expect(holidaySignal("2026-11-26", [0, 0, 0])).toEqual({ multiplier: 0.85, active: true, eventKey: "thanksgiving" });
+    // mixed: the zero counts in the numerator AND the denominator
+    expect(holidaySignal("2026-11-26", [0, 1.05, 1.05]).multiplier).toBeCloseTo((2.1 + k) / (3 + k), 12);
+    expect(holidaySignal("2026-11-26", [0, 1.05, 1.05]).multiplier).not.toBeCloseTo((2.1 + k) / (2 + k), 6);
+    // truly missing / impossible observations are still dropped
+    expect(holidaySignal("2026-11-26", [Number.NaN, Number.POSITIVE_INFINITY, -0.4])).toEqual({ multiplier: 1, active: false, eventKey: "thanksgiving" });
+    expect(holidaySignal("2026-11-26", [Number.NaN, 0.9, 0.9]).multiplier).toBeCloseTo((1.8 + k) / (2 + k), 12);
+    // with no shrinkage a zero-only history is still the floor, never silence
+    expect(holidaySignal("2026-11-26", [0, 0], { ...HOLIDAY_MODEL, shrinkK: 0 as 3 })).toEqual({ multiplier: 0.85, active: true, eventKey: "thanksgiving" });
+    // a MULTIPLIER of 0 is still not a signal
+    expect(clampSignal(0)).toBe(1);
+    expect(composeSignals([0], 1)).toBe(1);
+  });
 });
 
 describe("the trend candidate", () => {
@@ -65,6 +82,9 @@ describe("the trend candidate", () => {
     expect(trendSignal(series(110, 100), "2026-10-15")).toEqual({ multiplier: 1.05, active: true, eventKey: "trend_up" });
     expect(trendSignal(series(90, 100), "2026-10-15")).toEqual({ multiplier: 0.95, active: true, eventKey: "trend_down" });
     expect(trendSignal(series(200, 100), "2026-10-15").multiplier).toBe(1.15);
+    // a fully covered recent week of zeros is a real fall, at any shrink (review r4 self-review)
+    expect(trendSignal(series(0, 100), "2026-10-15")).toEqual({ multiplier: 0.85, active: true, eventKey: "trend_down" });
+    expect(trendSignal(series(0, 100), "2026-10-15", { ...TREND_MODEL, shrink: 1 as 0.5 })).toEqual({ multiplier: 0.85, active: true, eventKey: "trend_down" });
     expect(TREND_MODEL).toMatchObject({ recentDays: 7, priorDays: 7, shrink: 0.5 });
   });
   it("is silent inside the deadband, with a missing day, or with nothing to compare against", () => {

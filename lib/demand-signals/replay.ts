@@ -309,9 +309,16 @@ export interface ParTarget {
 }
 
 /**
- * The realized ounces of one day. null = the date is outside these inputs' window. A day neither oracle saw is
- * `not_covered`: excluded and counted, never zero. On a covered day a SKU the record does not name did not move:
- * that is a true zero.
+ * The realized ounces of one day. null = the date is outside these inputs' window.
+ *
+ * COVERAGE IS PER SOURCE (review r4 #1). This target is SALES-derived: its direct lane is the Toast capture, and
+ * `salesObserved` is that capture's own completed-day coverage (`loadEffectiveSalesCoverage`). So the day is
+ * covered only when `salesObserved`. A production staff recorded says nothing about the register: with the
+ * capture missing the sales lane is UNKNOWN, and the day is `not_covered` (excluded and counted, never zero),
+ * whatever `productionObserved` says. The engine's own base rate keeps its permissive either-oracle rule; that
+ * rule decides which days enter a trailing average, not whether a day's realized demand is complete.
+ * The production lane has no coverage oracle of its own: on a day the capture is complete, no production row is
+ * no production (a true zero), and a SKU the record does not name did not move (a true zero).
  *
  * It reads the window's coverage and the two RAW lanes. It does not read `inputs.skus`, `inputs.productBySku` or
  * the rolled lanes (the parameter type does not offer them): a target is frozen at D+4 from a LATER night than
@@ -320,7 +327,7 @@ export interface ParTarget {
 export function parTargetFromInputs(inputs: Pick<DemandInputs, "locationId" | "window" | "rawDirectOzByDate" | "rawProductionOzByDate">, validDate: string): { coverage: "covered" | "not_covered"; payload: ParTarget | null } | null {
   const day = inputs.window.find((d) => d.dateEt === validDate);
   if (!day) return null;
-  if (!day.salesObserved && !day.productionObserved) return { coverage: "not_covered", payload: null };
+  if (!day.salesObserved) return { coverage: "not_covered", payload: null };
   const record = (m: ReadonlyMap<string, ReadonlyMap<string, number>>): Record<string, number> => {
     const out: Record<string, number> = {};
     const row = m.get(validDate);
