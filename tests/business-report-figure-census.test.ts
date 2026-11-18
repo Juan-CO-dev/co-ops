@@ -144,8 +144,8 @@ const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
   "@/lib/business-figure-format": ["figureFormatFor", "changeWords"],
   "@/lib/business-view-shared": ["businessView", "BusinessReportView", "CutView", "DayView", "LaborView", "QuarterView", "SalesView", "WeekView", "PersonView", "RushWindowView"],
   "@/lib/business-report-shared": ["BUSINESS_RANGES", "BUSINESS_REPORT_TABS", "BusinessRange", "BusinessReportTab", "CompareChange", "businessReportEnabled", "businessReportRefusal", "businessTab",
-    // Fix round 5: the range's URL query (date strings, never a figure): every link re-resolves to the same range.
-    "businessRangeQuery"],
+    // Fix round 6: the ONE parse of the raw range query (date strings, never a figure): form, links, exports.
+    "parseBusinessRangeRequest", "BusinessRangeRequest", "BusinessRangeEmptyReason"],
   // Only the page loads; it hands the DTO straight to businessView.
   "@/lib/business-report": ["BusinessReportError", "loadBusinessReport", "resolveBusinessRange"],
 };

@@ -563,11 +563,12 @@ export function businessHoursNotice(view: BusinessReportView): { key: "reports.b
   return { key: "reports.business.export.hours_partial", values: {} };
 }
 
-/** Fix round 5 (review ITEM9B-r5 P2): a range with no closed day (today only, future only, from after to) is ONE
- * notice row, `no_finished_days`, over the REQUESTED period — never the normalized dates, never a neighbour's rows. */
-export function businessEmptyRangeRows(tab: BusinessExportTab, requested: Period, shop: ShopRef): ExportRow[] {
+/** Fix rounds 5 + 6 (reviews ITEM9B-r5 / r6 P2): a request with no closed day (today only, future only) or a start
+ * after its end is ONE notice row, status = the reason, over the ASKED period — never normalized dates, never a
+ * neighbour's rows. (A request missing a date never reaches here: the export refuses it.) */
+export function businessEmptyRangeRows(tab: BusinessExportTab, requested: Period, shop: ShopRef, reason: "no_finished_days" | "from_after_to"): ExportRow[] {
   return [{ row_type: "notice", ...(tab === "compare" ? { period: "current" } : {}), ...(tab === "hours" ? {} : periodCells(requested)),
-    ...shopCells(shop), status: "no_finished_days" }];
+    ...shopCells(shop), status: reason }];
 }
 
 /** Channels: counted Toast channels, ezCater as its own source, and the named exclusions (never counted).

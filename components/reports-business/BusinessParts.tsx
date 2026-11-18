@@ -10,7 +10,7 @@ import { ReportRangeForm } from "@/components/reports-hub/ReportRangeForm";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import { BUSINESS_RANGES, BUSINESS_REPORT_TABS, type BusinessRange, type BusinessReportTab, type CompareChange } from "@/lib/business-report-shared";
+import { BUSINESS_RANGES, BUSINESS_REPORT_TABS, type BusinessRangeEmptyReason, type BusinessRangeRequest, type BusinessReportTab, type CompareChange } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
 import { figureDisplay, figureReasonOf, figureText as figureWords, figureValueText as figureValueWords, type Figure } from "@/lib/business-figure-shared";
 import { changeWords, figureFormatFor } from "@/lib/business-figure-format";
@@ -122,24 +122,33 @@ const RANGE_LABEL: Record<(typeof BUSINESS_RANGES)[number], TranslationKey> = {
   last90: "reports.sales.range.last90", custom: "reports.hub.custom",
 };
 /** Finished days only (today stays on Pulse); no "compare" box: Compare is its own tab. */
-/** `query` = businessRangeQuery(range, params): the form shows what was ASKED (an empty range keeps its dates). */
-export function BusinessRangeControls({ range, query, locationId, tab, language }: { range: BusinessRange; query: { from?: string; to?: string }; locationId: string; tab: BusinessReportTab; language: Language }) {
+/** Fix round 6 (ITEM9B-r6 P2): the boxes show `request.form` (parseBusinessRangeRequest) and nothing else: what was
+ * ASKED, blank where nothing (or nothing valid) was asked — never a default or normalized date, so Apply re-asks
+ * exactly the same request. */
+export function BusinessRangeControls({ request, locationId, tab, language }: { request: BusinessRangeRequest; locationId: string; tab: BusinessReportTab; language: Language }) {
   const t = tFor(language);
   return <ReportRangeForm action="/reports/business">
     <input type="hidden" name="location" value={locationId} />
     <input type="hidden" name="tab" value={tab} />
     <label className="grid gap-1 text-xs font-bold">{t("reports.hub.range")}
-      <select name="range" defaultValue={range.range} className={control}>
+      <select name="range" defaultValue={request.query.range} className={control}>
         {BUSINESS_RANGES.map((v) => <option key={v} value={v}>{t(RANGE_LABEL[v])}</option>)}
       </select>
     </label>
-    <label className="grid gap-1 text-xs font-bold">{t("reports.hub.from")}<input className={control} type="date" aria-label={t("reports.hub.from")} name="from" defaultValue={query.from ?? range.from} /></label>
-    <label className="grid gap-1 text-xs font-bold">{t("reports.hub.to")}<input className={control} type="date" aria-label={t("reports.hub.to")} name="to" defaultValue={query.to ?? range.to} /></label>
+    <label className="grid gap-1 text-xs font-bold">{t("reports.hub.from")}<input className={control} type="date" aria-label={t("reports.hub.from")} name="from" defaultValue={request.form.from} /></label>
+    <label className="grid gap-1 text-xs font-bold">{t("reports.hub.to")}<input className={control} type="date" aria-label={t("reports.hub.to")} name="to" defaultValue={request.form.to} /></label>
     <button className={control} type="submit">{t("reports.hub.apply")}</button>
     <p className="w-full text-xs text-co-text-muted">{t("reports.business.cap")}</p>
-    {range.shortened ? <p className="w-full text-xs text-co-text-muted">{t("reports.business.range_shortened")}</p> : null}
+    {request.kind === "range" && request.range.shortened ? <p className="w-full text-xs text-co-text-muted">{t("reports.business.range_shortened")}</p> : null}
   </ReportRangeForm>;
 }
+
+/** The sentence an empty request shows instead of numbers (one per reason, en + es). */
+export const BUSINESS_EMPTY_KEY: Record<BusinessRangeEmptyReason, TranslationKey> = {
+  dates_missing: "reports.business.empty.dates_missing",
+  from_after_to: "reports.business.empty.from_after_to",
+  no_finished_days: "reports.business.no_finished_days",
+};
 
 /** Why a section has no numbers (switch off, a refused scope, 0341 missing, a read that failed). */
 export function BusinessUnavailable({ code, language }: { code: string; language: Language }) {

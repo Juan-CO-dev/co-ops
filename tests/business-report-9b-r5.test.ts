@@ -18,7 +18,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 import { GET } from "@/app/api/reports/export/route";
 import { BusinessRangeControls } from "@/components/reports-business/BusinessParts";
 import { BUSINESS_EXPORT_TABS } from "@/lib/report-export-shared";
-import { businessRangeQuery, resolveBusinessRange, type BusinessRange } from "@/lib/business-report-shared";
+import { parseBusinessRangeRequest, type BusinessRangeRequest } from "@/lib/business-report-shared";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import { requireSession } from "@/lib/session";
@@ -29,8 +29,9 @@ const TODAY = "2026-10-08";
 const ROOT = path.resolve(__dirname, "..");
 const src = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
-const same = (a: BusinessRange, b: BusinessRange) => expect(b).toEqual(a);
+const same = (a: BusinessRangeRequest, b: BusinessRangeRequest) => expect(b).toEqual(a);
 
+// Fix round 6: the query is `parseBusinessRangeRequest(...).query` (the one parse; tests/business-report-9b-r6.test.ts).
 describe("the query a link carries re-resolves to the SAME range", () => {
   const cases: Array<Record<string, string | undefined>> = [
     { range: "custom", from: TODAY, to: TODAY },                 // today only
@@ -46,27 +47,25 @@ describe("the query a link carries re-resolves to the SAME range", () => {
   ];
   for (const p of cases) {
     it(JSON.stringify(p), () => {
-      const r = resolveBusinessRange(p, TODAY);
-      const q = businessRangeQuery(r, p);
-      same(r, resolveBusinessRange(q, TODAY));
+      const r = parseBusinessRangeRequest(p, TODAY);
+      same(r, parseBusinessRangeRequest(r.query, TODAY));
       // And again: a link built from a link's own range is the same link.
-      expect(businessRangeQuery(resolveBusinessRange(q, TODAY), q)).toEqual(q);
+      expect(parseBusinessRangeRequest(r.query, TODAY).query).toEqual(r.query);
     });
   }
   it("today only and future only stay EMPTY, with the requested bounds, never yesterday", () => {
-    const today = resolveBusinessRange({ range: "custom", from: TODAY, to: TODAY }, TODAY);
-    expect(today.empty).toBe(true);
-    expect(businessRangeQuery(today, { range: "custom", from: TODAY, to: TODAY })).toEqual({ range: "custom", from: TODAY, to: TODAY });
-    const future = resolveBusinessRange({ range: "custom", from: "2026-10-20", to: "2026-10-25" }, TODAY);
-    expect(businessRangeQuery(future, { from: "2026-10-20", to: "2026-10-25" })).toEqual({ range: "custom", from: "2026-10-20", to: "2026-10-25" });
+    const today = parseBusinessRangeRequest({ range: "custom", from: TODAY, to: TODAY }, TODAY);
+    expect(today.kind).toBe("empty");
+    expect(today.query).toEqual({ range: "custom", from: TODAY, to: TODAY });
+    const future = parseBusinessRangeRequest({ from: "2026-10-20", to: "2026-10-25" }, TODAY);
+    expect(future.query).toEqual({ range: "custom", from: "2026-10-20", to: "2026-10-25" });
   });
 });
 
 describe("the range controls show what was asked", () => {
   it("an empty custom range keeps its requested dates in the form (submitting it again stays empty)", () => {
     const p = { range: "custom", from: TODAY, to: TODAY };
-    const range = resolveBusinessRange(p, TODAY);
-    const html = renderToStaticMarkup(createElement(BusinessRangeControls, { range, query: businessRangeQuery(range, p), locationId: A, tab: "hours", language: "en" }));
+    const html = renderToStaticMarkup(createElement(BusinessRangeControls, { request: parseBusinessRangeRequest(p, TODAY), locationId: A, tab: "hours", language: "en" }));
     expect(html).toContain(`name="from" value="${TODAY}"`);
     expect(html).toContain(`name="to" value="${TODAY}"`);
     expect(html).not.toContain("2026-10-07");
@@ -76,12 +75,12 @@ describe("the range controls show what was asked", () => {
 describe("the page builds every link from that query", () => {
   const page = src("app/(authed)/reports/business/page.tsx");
   it("no link is rebuilt from the normalized dates", () => {
-    expect(page).toContain("businessRangeQuery(range, params)");
+    expect(page).toContain("parseBusinessRangeRequest(params, today)");
     expect(page).not.toMatch(/from: range\.from/);
     expect(page).not.toMatch(/to: range\.to/);
-    // The range controls get the same query; the export links and the tabs ride on `context`, built from it.
-    expect(page).toMatch(/<BusinessRangeControls[^>]*query=\{rangeQuery\}/);
-    expect(page).toMatch(/const context: Params = \{ \.\.\.rangeQuery/);
+    // The range controls get the same request; the export links and the tabs ride on `context`, built from its query.
+    expect(page).toMatch(/<BusinessRangeControls request=\{request\}/);
+    expect(page).toMatch(/const context: Params = \{ \.\.\.request\.query/);
   });
   it("the export re-resolves the range the same way and never loads a neighbour for an empty one", () => {
     const lib = src("lib/report-export.ts");

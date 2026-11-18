@@ -15,11 +15,11 @@ import { ExportLinks } from "@/components/reports-export/ExportLinks";
 import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
 import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
 import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
-import { BusinessRangeControls, BusinessTabs, BusinessUnavailable, bizCard, tFor } from "@/components/reports-business/BusinessParts";
+import { BUSINESS_EMPTY_KEY, BusinessRangeControls, BusinessTabs, BusinessUnavailable, bizCard, tFor } from "@/components/reports-business/BusinessParts";
 import { BusinessChannels, BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople } from "@/components/reports-business/BusinessReport";
 import { BusinessReportError, loadBusinessReport, resolveBusinessRange } from "@/lib/business-report";
 import { businessView } from "@/lib/business-view-shared";
-import { businessRangeQuery, businessReportEnabled, businessReportRefusal, businessTab } from "@/lib/business-report-shared";
+import { businessReportEnabled, businessReportRefusal, businessTab, parseBusinessRangeRequest } from "@/lib/business-report-shared";
 import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { reportNavigationHref } from "@/lib/report-navigation";
@@ -44,27 +44,28 @@ export default async function BusinessReportPage({ searchParams }: { searchParam
   const language = auth.user.language;
   const t = tFor(language);
   const today = operationalNow(new Date()).date;
-  const range = resolveBusinessRange(params, today);
+  // Fix round 6 (ITEM9B-r6 P2): ONE parse of the raw query. The form shows `request.form`, every link (controls,
+  // tabs, nav, shop tabs, both exports) carries `request.query`, which re-parses to THIS request — an empty one
+  // stays empty, a missing date stays missing — never a date rebuilt from a normalized or default range.
+  const request = parseBusinessRangeRequest(params, today);
   const tab = businessTab(params.tab);
-  // Fix round 5 (ITEM9B-r5 P2): every link (controls, tabs, nav, shop tabs, both exports) carries the query that
-  // re-resolves to THIS range — an empty one stays empty — never one rebuilt from the normalized dates.
-  const rangeQuery = businessRangeQuery(range, params);
-  const context: Params = { ...rangeQuery, tab, hubLocation: params.hubLocation, location: locationId };
+  const context: Params = { ...request.query, tab, hubLocation: params.hubLocation, location: locationId };
   const href = (extra: Params = {}) => reportNavigationHref("/reports/business", { ...context, ...extra });
 
   const header = <>
     <ReportPageNav viewerLevel={auth.level} path="/reports/business" params={context} language={language} />
     <ReportShopTabs path="/reports/business" params={context} locationId={locationId} language={language} viewer={auth} />
     <h1 className="mb-3 text-lg font-bold text-co-text">{t("reports.business.title")}</h1>
-    <BusinessRangeControls range={range} query={rangeQuery} locationId={locationId} tab={tab} language={language} />
+    <BusinessRangeControls request={request} locationId={locationId} tab={tab} language={language} />
     <BusinessTabs tab={tab} language={language} hrefFor={(v) => href({ tab: v })} />
   </>;
 
   const panel = async (shopId: string): Promise<ReactNode> => {
     let body: ReactNode;
     try {
-      if (range.empty) body = <p className={`${bizCard} text-sm text-co-text-muted`}>{t("reports.business.no_finished_days")}</p>;
+      if (request.kind === "empty") body = <p className={`${bizCard} text-sm text-co-text-muted`} role="status">{t(BUSINESS_EMPTY_KEY[request.reason])}</p>;
       else {
+        const range = request.range;
         // The tabs get the VIEW (lib/business-view-shared.ts: every figure sealed with its state), never the DTO.
         const view = businessView(await loadBusinessReport(viewer, { locationId: shopId, range }));
         if (tab === "hours") body = <BusinessHours view={view} language={language} />;
@@ -79,8 +80,10 @@ export default async function BusinessReportPage({ searchParams }: { searchParam
       if (error instanceof BusinessReportError) body = <BusinessUnavailable code={error.code} language={language} />;
       else throw error;
     }
+    // A request with no dates has nothing to export (the export refuses it 400 `range_dates_missing`): no links.
     return <div className="mb-6">
-      <ExportLinks className="mb-3" family="business" language={language} query={{ ...context, location: shopId }} />
+      {request.kind === "empty" && request.reason === "dates_missing" ? null
+        : <ExportLinks className="mb-3" family="business" language={language} query={{ ...context, location: shopId }} />}
       {body}
     </div>;
   };

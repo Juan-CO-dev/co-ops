@@ -33,7 +33,7 @@ import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { BusinessReportError, loadBusinessReport, resolveBusinessRange } from "@/lib/business-report";
-import { businessReportEnabled, businessReportRefusal, businessRequestedPeriod } from "@/lib/business-report-shared";
+import { businessReportEnabled, businessReportRefusal, parseBusinessRangeRequest } from "@/lib/business-report-shared";
 import { businessView } from "@/lib/business-view-shared";
 import {
   SALES_EXPORT_MAX_ROWS, SALES_READ_MIN, SalesReportError, VIEW_DIMENSION, isSalesExportView, loadSalesBreakdown,
@@ -165,15 +165,18 @@ async function salesExportTable(auth: AuthContext, params: Params, shop: ShopRef
 async function businessExportTable(auth: AuthContext, params: Params, shop: ShopRef, today: string): Promise<Pick<ExportTable, "columns" | "rows" | "from" | "to" | "fileFamily" | "notices">> {
   const tab = isBusinessExportTab(params.tab) ? params.tab : "overview";
   const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations, role: auth.role };
-  const range = resolveBusinessRange(params, today);
+  // Fix round 6 (review ITEM9B-r6 P2): the page's ONE parse. A request missing a date is refused (no default date
+  // is ever assumed); one with no closed day is an explicit file over the ASKED period, and nothing is loaded.
+  const request = parseBusinessRangeRequest(params, today);
   const fileFamily = tab === "overview" ? "business" : `business-${tab}`;
-  // Fix round 5 (review ITEM9B-r5 P2): a range with no closed day is an explicit "no closed days in this range"
-  // file over the REQUESTED period. Nothing is loaded: its normalized dates name yesterday, a populated neighbour.
-  if (range.empty) {
-    const period = businessRequestedPeriod(range, params);
-    return { columns: BUSINESS_EXPORT_COLUMNS[tab], rows: businessEmptyRangeRows(tab, period, shop), from: period.from, to: period.to,
-      fileFamily, notices: [{ key: "reports.business.export.no_finished_days", values: {} }] };
+  if (request.kind === "empty") {
+    const reason = request.reason;
+    if (reason === "dates_missing" || request.period === null) throw new ExportError(400, "range_dates_missing");
+    const period = request.period;
+    return { columns: BUSINESS_EXPORT_COLUMNS[tab], rows: businessEmptyRangeRows(tab, period, shop, reason), from: period.from, to: period.to,
+      fileFamily, notices: [{ key: reason === "from_after_to" ? "reports.business.export.from_after_to" : "reports.business.export.no_finished_days", values: {} }] };
   }
+  const range = request.range;
   try {
     // The file is built from the page's VIEW (every figure sealed with its state), never from the DTO.
     const dto = businessView(await loadBusinessReport(viewer, { locationId: shop.id, range }));

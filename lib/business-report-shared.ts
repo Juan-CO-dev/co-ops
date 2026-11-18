@@ -79,50 +79,67 @@ export function inclusiveDays(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
 }
 
-/** Finished business days only (today stays on Pulse). Default: the seven days ending yesterday. */
-export function resolveBusinessRange(p: Record<string, string | undefined>, today: string): BusinessRange {
-  const yesterday = shiftReportDate(today, -1);
-  const range = (BUSINESS_RANGES as readonly string[]).includes(p.range ?? "") ? p.range as BusinessRange["range"]
-    : p.from || p.to ? "custom" : "last7";
-  let from = shiftReportDate(yesterday, -6);
-  let to = yesterday;
-  if (range === "yesterday") from = yesterday;
-  else if (range === "last30") from = shiftReportDate(yesterday, -29);
-  else if (range === "last90") from = shiftReportDate(yesterday, -89);
-  else if (range === "custom") {
-    if (validReportDate(p.to)) to = p.to;
-    if (validReportDate(p.from)) from = p.from;
-  }
+/** Why a request has no range to read. `dates_missing`: a custom range lacks a valid start or end date (absent or
+ * malformed — the person picks both, nothing is assumed); `from_after_to`; `no_finished_days`: every asked day is
+ * today or later (today stays on Pulse). */
+export const BUSINESS_RANGE_EMPTY_REASONS = ["dates_missing", "from_after_to", "no_finished_days"] as const;
+export type BusinessRangeEmptyReason = (typeof BUSINESS_RANGE_EMPTY_REASONS)[number];
+/** The query every link and export carries: it re-parses to the SAME request. */
+export type BusinessRangeQuery = { range: BusinessRange["range"]; from?: string; to?: string };
+/** What the form's date boxes show: what was ASKED ("" = blank), or the preset's own dates. */
+export interface BusinessRangeForm { from: string; to: string }
+export type BusinessRangeRequest =
+  | { kind: "empty"; reason: BusinessRangeEmptyReason; query: BusinessRangeQuery; form: BusinessRangeForm;
+      /** The asked period — both dates valid — for `from_after_to` / `no_finished_days`; null for `dates_missing`. */
+      period: { from: string; to: string } | null }
+  | { kind: "range"; range: BusinessRange; query: BusinessRangeQuery; form: BusinessRangeForm };
+
+function concreteRange(range: BusinessRange["range"], from: string, to: string, yesterday: string): BusinessRange {
   if (to > yesterday) to = yesterday;
   let shortened = false;
   const floor = shiftReportDate(to, -(BUSINESS_REPORT_MAX_DAYS - 1));
   if (from < floor) { from = floor; shortened = range === "custom"; }
-  const empty = from > to;
-  if (empty) from = to;
-  const days = empty ? 0 : inclusiveDays(from, to);
-  const previous = { from: shiftReportDate(from, -Math.max(days, 1)), to: shiftReportDate(from, -1) };
+  const days = inclusiveDays(from, to);
+  const previous = { from: shiftReportDate(from, -days), to: shiftReportDate(from, -1) };
   const ly = { from: minusYear(from), to: minusYear(to) };
   const lastYear = ly.from >= BUSINESS_HISTORY_FLOOR ? ly : null;
-  return { range, from, to, days, shortened, empty, previous, lastYear, lastYearReason: lastYear ? null : "no_data_yet" };
+  return { range, from, to, days, shortened, empty: false, previous, lastYear, lastYearReason: lastYear ? null : "no_data_yet" };
 }
 
 /**
- * Fix round 5 (review ITEM9B-r5 P2): the query every link, form and export carries for a resolved range — the
- * ONE place a range becomes URL params again. It re-resolves (same `today`) to the SAME range — empty, clipped
- * and shortened included — because a custom range carries the REQUESTED bounds (the valid ones), never the
- * normalized ones: an empty range's dates are normalized to yesterday only so nothing reads past the last closed
- * day, and a link built from them asked for a populated day. Never rebuild `{ from: range.from, to: range.to }`.
+ * Fix round 6 (review ITEM9B-r6 P2): THE ONE place the raw query (range, from, to) becomes a range. The page's
+ * resolver, the form's date boxes, every link (`query`) and both exports read only this; nothing else turns a
+ * query into dates. It NEVER substitutes a date the person did not give: a custom request with a missing or
+ * malformed bound is `dates_missing` (blank box, nothing read) — never "the seven days ending yesterday", and an
+ * empty request's dates are never normalized onto a neighbouring populated day. `query` re-parses (same `today`)
+ * to the same request; `form` submitted as-is re-parses to the same request too.
+ * Finished business days only. No params: the seven days ending yesterday (a PRESET, not a substituted date).
  */
-export function businessRangeQuery(range: BusinessRange, requested: Record<string, string | undefined>): { range: BusinessRange["range"]; from?: string; to?: string } {
-  if (range.range !== "custom") return { range: range.range };
-  return { range: "custom", ...(validReportDate(requested.from) ? { from: requested.from } : {}), ...(validReportDate(requested.to) ? { to: requested.to } : {}) };
+export function parseBusinessRangeRequest(p: Record<string, string | undefined>, today: string): BusinessRangeRequest {
+  const yesterday = shiftReportDate(today, -1);
+  const kind = (BUSINESS_RANGES as readonly string[]).includes(p.range ?? "") ? p.range as BusinessRange["range"]
+    : p.from || p.to ? "custom" : "last7";
+  if (kind !== "custom") {
+    const from = kind === "yesterday" ? yesterday : shiftReportDate(yesterday, kind === "last30" ? -29 : kind === "last90" ? -89 : -6);
+    const range = concreteRange(kind, from, yesterday, yesterday);
+    return { kind: "range", range, query: { range: kind }, form: { from: range.from, to: range.to } };
+  }
+  const from = validReportDate(p.from) ? p.from : null;
+  const to = validReportDate(p.to) ? p.to : null;
+  const query: BusinessRangeQuery = { range: "custom", ...(from ? { from } : {}), ...(to ? { to } : {}) };
+  const form = { from: from ?? "", to: to ?? "" };
+  if (from === null || to === null) return { kind: "empty", reason: "dates_missing", query, form, period: null };
+  if (from > to) return { kind: "empty", reason: "from_after_to", query, form, period: { from, to } };
+  if (from > yesterday) return { kind: "empty", reason: "no_finished_days", query, form, period: { from, to } };
+  return { kind: "range", range: concreteRange("custom", from, to, yesterday), query, form };
 }
 
-/** The period an EMPTY range's file and caption name: what was asked (an empty range always has a valid `from`). */
-export function businessRequestedPeriod(range: BusinessRange, requested: Record<string, string | undefined>): { from: string; to: string } {
-  const q = businessRangeQuery(range, requested);
-  const from = q.from ?? range.from;
-  return { from, to: q.to ?? from };
+/** A range that must exist (Compare's previous period, tests): the same parse; an empty request is a programmer
+ * error here — a surface that can receive one calls `parseBusinessRangeRequest` and handles `empty`. */
+export function resolveBusinessRange(p: Record<string, string | undefined>, today: string): BusinessRange {
+  const r = parseBusinessRangeRequest(p, today);
+  if (r.kind === "empty") throw new Error(`resolveBusinessRange: empty request (${r.reason}); use parseBusinessRangeRequest`);
+  return r.range;
 }
 
 /** Days [from, to], oldest first. */
@@ -639,4 +656,6 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.hours_unverified", "reports.business.qual.hours_unverified",
   // Fix round 5: the file of a range with no closed day says so.
   "reports.business.export.no_finished_days",
+  // Fix round 6: every reason a request has no range, on the page and in the file.
+  "reports.business.empty.dates_missing", "reports.business.empty.from_after_to", "reports.business.export.from_after_to",
 ] as const;
