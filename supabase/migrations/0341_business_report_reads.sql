@@ -28,6 +28,9 @@
 --     The app shows minutes to a GM and cost only where lib/facts/labor-cost-shared.ts PERSON_COST_MIN allows
 --     (MoO+ by default), and withholds overtime / cost of any week not rebuilt per shop (0339 ot_scope).
 --     No wage RATE leaves: only sums of minutes x rate. No contact field.
+--
+-- Every read's ORDER BY covers its whole GROUP BY (a TOTAL order): the app pages each one by `range` with an
+-- exact count (fix round 1), and paging is only sound over a deterministic order.
 begin;
 
 do $$ begin
@@ -86,7 +89,7 @@ begin
   left join public.toast_employee_links el on el.location_id = p_location_id and el.employee_guid = f.sg and el.active
   left join public.users u on u.id = el.user_id
   group by f.bd, f.qs, f.wq, f.fd, f.ed, f.ch, f.pv, f.sg, f.sc
-  order by f.bd, f.qs nulls last, f.ch, f.pv nulls first, f.sg nulls first, f.sc;
+  order by f.bd, f.qs nulls last, f.wq nulls last, f.fd nulls last, f.ed nulls last, f.ch, f.pv nulls first, f.sg nulls first, f.sc;
 end $$;
 
 -- The rate a labor_quarter row is priced at: fact_labor_cost's rule (0339 `priced` CTE), verbatim.
@@ -114,7 +117,7 @@ begin
     coalesce(sum(p.m) filter (where p.est), 0)::bigint
   from priced p
   group by p.bd, p.qs
-  order by p.qs;
+  order by p.qs, p.bd;
 end $$;
 
 create function public.business_report_labor_people(p_location_id uuid, p_from date, p_to date, p_wage_fallback text)
@@ -148,7 +151,7 @@ begin
   left join public.users u on u.id = p.uid
   left join names n on p.pk = 'toast:' || n.employee_guid
   group by p.ws, p.pk, p.uid, p.rk, p.src, p.pc
-  order by p.ws, p.pk, p.rk, p.src, p.pc;
+  order by p.ws, p.pk, p.uid nulls first, p.rk, p.src, p.pc;
 end $$;
 
 -- CEILINGS: service_role EXECUTE only (the staff JWT is a PostgREST bearer, 0189); proved below.

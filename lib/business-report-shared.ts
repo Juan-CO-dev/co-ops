@@ -420,7 +420,8 @@ export function detectRushes(day: { date: string; quarters: readonly QuarterPoin
  * ships in 9a; these exist so 9b is born translated. Every refusal code and every labor state has its line. */
 export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.error.business_report_unavailable", "reports.business.error.role_insufficient", "reports.business.error.location_forbidden",
-  "reports.business.error.business_reads_not_installed", "reports.business.error.business_reads_timeout",
+  "reports.business.error.business_reads_not_installed", "reports.business.error.business_reads_timeout", "reports.business.error.business_reads_incomplete",
+  "reports.business.quarter.unassigned",
   "reports.business.labor.state.rebuilding", "reports.business.labor.state.unbuilt", "reports.business.labor.state.before_history",
   "reports.business.labor.state.hours_unknown", "reports.business.labor.state.sales_not_covered", "reports.business.labor.state.net_unknown",
   "reports.business.labor.state.ezcater_missing", "reports.business.labor.state.zero_sales",

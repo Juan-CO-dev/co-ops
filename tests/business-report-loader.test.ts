@@ -209,6 +209,8 @@ describe("the report a GM and a MoO get", () => {
 // never cut at PostgREST's 1,000-row cap.
 describe("table-returning reads page to completion (never the 1,000-row cap)", () => {
   const month = resolveBusinessRange({ range: "last30" }, TODAY);
+  const weeks = ["2026-09-06", "2026-09-13", "2026-09-20", "2026-09-27", "2026-10-04"]
+    .map((w) => ({ week_start: w, ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }));
   const dates = (from: string, to: string) => {
     const out: string[] = [];
     for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`); t += 86_400_000) out.push(new Date(t).toISOString().slice(0, 10));
@@ -232,7 +234,7 @@ describe("table-returning reads page to completion (never the 1,000-row cap)", (
     minutes: args.p_from === month.from ? 1 : 0, ot_minutes: 0, straight_cents: 0 }));
 
   it("1,200 labor quarters, 1,260 cut rows and 1,300 people in one window all arrive", async () => {
-    const f = fakeClient({ rpcRows: { business_report_labor_quarters: quarters, business_report_check_cuts: cuts, business_report_labor_people: people } });
+    const f = fakeClient({ weeks, rpcRows: { business_report_labor_quarters: quarters, business_report_check_cuts: cuts, business_report_labor_people: people } });
     const dto = await loadBusinessReport(moo, { locationId: A, range: month }, { client: f.client, env: ON });
     expect(dto.days.every((d) => d.cuts === "ok")).toBe(true);
     const laborQuarters = dto.quarters!.filter((q) => q.laborMinutes !== null);
@@ -242,12 +244,12 @@ describe("table-returning reads page to completion (never the 1,000-row cap)", (
     expect(f.calls.filter((c) => c.fn === "business_report_labor_quarters").length).toBeGreaterThan(1);
   });
   it("a server whose max-rows is below the page still delivers everything (exact count decides the end)", async () => {
-    const f = fakeClient({ maxRows: 300, rpcRows: { business_report_labor_quarters: quarters } });
+    const f = fakeClient({ weeks, maxRows: 300, rpcRows: { business_report_labor_quarters: quarters } });
     const dto = await loadBusinessReport(moo, { locationId: A, range: month }, { client: f.client, env: ON });
     expect(dto.quarters!.filter((q) => q.laborMinutes !== null)).toHaveLength(30 * 40);
   });
   it("a read that cannot be completed is refused by name, never a partial report", async () => {
-    const f = fakeClient({ countBias: 5, rpcRows: { business_report_labor_quarters: quarters } });
+    const f = fakeClient({ weeks, countBias: 5, rpcRows: { business_report_labor_quarters: quarters } });
     await expect(loadBusinessReport(moo, { locationId: A, range: month }, { client: f.client, env: ON }))
       .rejects.toMatchObject({ status: 503, code: "business_reads_incomplete" });
   });

@@ -9091,6 +9091,8 @@
   "reports.business.error.location_forbidden": "Solo puedes ver el reporte del negocio de tu propia tienda.",
   "reports.business.error.business_reads_not_installed": "El reporte del negocio todavía no está instalado.",
   "reports.business.error.business_reads_timeout": "No se pudo cargar el reporte del negocio. Inténtalo de nuevo en un minuto.",
+  "reports.business.error.business_reads_incomplete": "El reporte del negocio no pudo leer todos sus datos. Inténtalo de nuevo en un minuto.",
+  "reports.business.quarter.unassigned": "Sin cuarto de hora asignado",
   "reports.business.labor.state.rebuilding": "Se están recontando las horas con horas extra por tienda. Vuelve a revisar pronto.",
   "reports.business.labor.state.unbuilt": "Las horas de estos días todavía no están contadas.",
   "reports.business.labor.state.before_history": "No hay historial de horas antes del 23 de julio de 2026.",

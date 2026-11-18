@@ -55,6 +55,7 @@ export function assertBusinessScope(viewer: BusinessViewer, locationId: string |
   if (!canReadScopedReport(viewer, locationId)) throw new BusinessReportError(403, "location_forbidden");
 }
 
+/** A JSON-returning read (sales_report_daily): one object, no row cap applies. */
 async function call<T>(sb: Client, fn: string, args: Record<string, unknown>): Promise<T> {
   let result;
   try {
@@ -63,22 +64,68 @@ async function call<T>(sb: Client, fn: string, args: Record<string, unknown>): P
     console.error("business_reads_timeout");
     throw new BusinessReportError(503, "business_reads_timeout");
   }
-  if (result.error) {
-    // 0341 not applied yet: say so, never an empty report. Never log messages, args or payloads.
-    if (result.error.code === "PGRST202" || result.error.code === "42883") throw new BusinessReportError(503, "business_reads_not_installed");
-    console.error("business_reads_timeout");
-    throw new BusinessReportError(503, "business_reads_timeout");
-  }
+  if (result.error) rpcError(result.error);
   return result.data as T;
 }
-async function rows<T>(query: PromiseLike<{ data: unknown; error: { code?: string } | null }>): Promise<T[]> {
-  const { data, error } = await query;
-  if (error) {
-    if (error.code === "42P01" || error.code === "42703" || error.code === "PGRST205") throw new BusinessReportError(503, "business_reads_not_installed");
-    console.error("business_reads_timeout");
-    throw new BusinessReportError(503, "business_reads_timeout");
+type Page = { data: unknown; error: { code?: string } | null; count?: number | null };
+
+/** Rows per request: PostgREST's default max-rows. A server configured lower is still read to completion,
+ * because the END is decided by the exact count, never by a short page. */
+export const BUSINESS_READ_PAGE = 1_000;
+/** A read needing more pages than this is refused by name (a bounded window never should). */
+export const BUSINESS_READ_MAX_PAGES = 50;
+
+/**
+ * Reads EVERY row of a table-returning read (fix round 1, P1): pages of BUSINESS_READ_PAGE by `range`, each
+ * asking the exact count, until the rows collected equal it. A page that comes back empty (or a count that is
+ * missing or moves) before the count is reached is 503 `business_reads_incomplete`: never a silently
+ * truncated report. Ordering is the read's own total ORDER BY (0341) / an explicit order on table reads.
+ */
+async function readAll<T>(page: (from: number, to: number) => PromiseLike<Page>, onError: (e: { code?: string }) => never): Promise<T[]> {
+  const out: T[] = [];
+  let expected: number | null = null;
+  for (let i = 0; ; i++) {
+    if (i >= BUSINESS_READ_MAX_PAGES) throw new BusinessReportError(503, "business_reads_incomplete");
+    let r: Page;
+    try {
+      r = await page(out.length, out.length + BUSINESS_READ_PAGE - 1);
+    } catch {
+      console.error("business_reads_timeout");
+      throw new BusinessReportError(503, "business_reads_timeout");
+    }
+    if (r.error) onError(r.error);
+    const got = (r.data ?? []) as T[];
+    if (!Array.isArray(got) || typeof r.count !== "number" || (expected !== null && r.count !== expected)) {
+      console.error("business_reads_incomplete");
+      throw new BusinessReportError(503, "business_reads_incomplete");
+    }
+    expected = r.count;
+    out.push(...got);
+    if (out.length === expected) return out;
+    if (got.length === 0 || out.length > expected) {
+      console.error("business_reads_incomplete");
+      throw new BusinessReportError(503, "business_reads_incomplete");
+    }
   }
-  return (data ?? []) as T[];
+}
+const rpcError = (e: { code?: string }): never => {
+  // 0341 not applied yet: say so, never an empty report. Never log messages, args or payloads.
+  if (e.code === "PGRST202" || e.code === "42883") throw new BusinessReportError(503, "business_reads_not_installed");
+  console.error("business_reads_timeout");
+  throw new BusinessReportError(503, "business_reads_timeout");
+};
+const tableError = (e: { code?: string }): never => {
+  if (e.code === "42P01" || e.code === "42703" || e.code === "PGRST205") throw new BusinessReportError(503, "business_reads_not_installed");
+  console.error("business_reads_timeout");
+  throw new BusinessReportError(503, "business_reads_timeout");
+};
+/** Every row of a table-returning RPC (0341's three reads). */
+function rpcAll<T>(sb: Client, fn: string, args: Record<string, unknown>): Promise<T[]> {
+  return readAll<T>((a, z) => sb.rpc(fn, args, { count: "exact" }).range(a, z) as unknown as PromiseLike<Page>, rpcError);
+}
+/** Every row of a table read; `build` returns the filtered, totally ordered select (count: exact). */
+function rows<T>(build: () => { range: (a: number, z: number) => PromiseLike<Page> }): Promise<T[]> {
+  return readAll<T>((a, z) => build().range(a, z), tableError);
 }
 
 /** Order-preserving map with at most `limit` calls in flight. */
@@ -114,6 +161,8 @@ export interface BusinessQuarterDto {
   toastCents: number | null; checks: number | null; laborMinutes: number | null; straightCents: number | null;
   pct: number | null; basis: "toast_only_straight_time"; tone: "none";
 }
+/** A day's `sale` Toast checks with no opened quarter; quarters + this = the day's Toast check sales. */
+export interface BusinessUnassignedDto { date: string; toastCents: number; checks: number }
 export interface BusinessPersonDto {
   personKey: string; label: string | null; source: string; payClass: string;
   minutes: number; otMinutes: number | null;
@@ -134,6 +183,8 @@ export interface BusinessReportDto {
     target: number | "target_varies";
   };
   quarters: BusinessQuarterDto[] | null;
+  /** Per day whose cuts are shown (<= 31-day ranges); null when quarters are. Days with nothing unassigned are omitted. */
+  quartersUnassigned: BusinessUnassignedDto[] | null;
   quartersReason: "range_too_wide" | null;
   channels: { included: CutTotal[]; excluded: CutTotal[] };
   servers: CutTotal[];
@@ -162,6 +213,7 @@ const SHOP_MONEY_PATHS: readonly string[] = [
   ...keys("total.sales", ["totalCents", "toastChecksCents", "toastNetCents", "ezcaterCents", "refundCents", "coverage"]),
   ...keys("total.labor", LABOR_KEYS), "total.target",
   "quarters", ...keys("quarters[]", ["date", "quarterStartAt", "wallQuarter", "fold", "toastCents", "checks", "laborMinutes", "straightCents", "pct", "basis", "tone"]),
+  "quartersUnassigned", ...keys("quartersUnassigned[]", ["date", "toastCents", "checks"]),
   "quartersReason",
   ...keys("channels.included[]", CUT_KEYS), ...keys("channels.excluded[]", CUT_KEYS), ...keys("servers[]", CUT_KEYS),
   ...keys("people[]", PERSON_KEYS),
@@ -212,26 +264,27 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
     : await Promise.all([
       mapBounded(salesWindows(range.from, range.to), SALES_WINDOW_CONCURRENCY, (w) => call<DailyRaw>(sb, "sales_report_daily", win(w))),
       mapBounded(salesWindows(histFrom, range.to), SALES_WINDOW_CONCURRENCY,
-        async (w) => (await call<Record<string, unknown>[]>(sb, "business_report_check_cuts", win(w)) ?? []).map(toCutRow)),
+        async (w) => (await rpcAll<Record<string, unknown>>(sb, "business_report_check_cuts", win(w))).map(toCutRow)),
       mapBounded(laborWindows, SALES_WINDOW_CONCURRENCY,
-        (w) => call<QuarterRaw[]>(sb, "business_report_labor_quarters", { ...win(w), p_wage_fallback: wf })),
+        (w) => rpcAll<QuarterRaw>(sb, "business_report_labor_quarters", { ...win(w), p_wage_fallback: wf })),
       mapBounded(laborWindows, SALES_WINDOW_CONCURRENCY,
-        (w) => call<PersonRaw[]>(sb, "business_report_labor_people", { ...win(w), p_wage_fallback: wf })),
-      rows<{ business_date: string; state: string }>(sb.from("fact_day_coverage").select("business_date,state")
-        .eq("location_id", locationId).eq("fact", "orders").gte("business_date", histFrom).lte("business_date", range.to).range(0, 999)),
-      rows<{ week_start: string } & LaborWeekCoverageRow>(sb.from("labor_week_coverage").select("week_start,ot_scope,builder_version")
-        .gte("week_start", payrollWeekStart(range.from)).lte("week_start", range.to).range(0, 999)),
-      rows<StructureRow>(sb.from("schedule_structures").select("structure,created_at").eq("location_id", locationId)
-        .order("created_at", { ascending: true }).range(0, 999)),
+        (w) => rpcAll<PersonRaw>(sb, "business_report_labor_people", { ...win(w), p_wage_fallback: wf })),
+      rows<{ business_date: string; state: string }>(() => sb.from("fact_day_coverage").select("business_date,state", { count: "exact" })
+        .eq("location_id", locationId).eq("fact", "orders").gte("business_date", histFrom).lte("business_date", range.to)
+        .order("business_date", { ascending: true })),
+      rows<{ week_start: string } & LaborWeekCoverageRow>(() => sb.from("labor_week_coverage").select("week_start,ot_scope,builder_version", { count: "exact" })
+        .gte("week_start", payrollWeekStart(range.from)).lte("week_start", range.to).order("week_start", { ascending: true })),
+      rows<StructureRow>(() => sb.from("schedule_structures").select("structure,created_at", { count: "exact" }).eq("location_id", locationId)
+        .order("created_at", { ascending: true }).order("id", { ascending: true })),
       mapBounded(laborDays, SALES_WINDOW_CONCURRENCY, async (d) => {
-        const r = await call<Record<string, unknown>[]>(sb, "fact_labor_cost", { p_location_id: locationId, p_from: d, p_to: d, p_wage_fallback: wf });
+        const r = await rpcAll<Record<string, unknown>>(sb, "fact_labor_cost", { p_location_id: locationId, p_from: d, p_to: d, p_wage_fallback: wf });
         return r?.[0] ? toLaborCostRow(r[0]) : null;
       }),
       mapBounded(weekStarts, SALES_WINDOW_CONCURRENCY, async (ws) => {
         const from = [ws, range.from, LABOR_HISTORY_FLOOR_DAY].sort().at(-1)!;
         const to = [shiftReportDate(ws, 6), range.to].sort()[0]!;
         if (from > to) return null;
-        const r = await call<Record<string, unknown>[]>(sb, "fact_labor_cost", { p_location_id: locationId, p_from: from, p_to: to, p_wage_fallback: wf });
+        const r = await rpcAll<Record<string, unknown>>(sb, "fact_labor_cost", { p_location_id: locationId, p_from: from, p_to: to, p_wage_fallback: wf });
         // The request names one payroll week, so its one row IS that week.
         return r?.[0] ? { ...toLaborCostRow(r[0]), week_start: ws } : null;
       }),
@@ -246,28 +299,35 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
   const covered = new Set(factCoverage.filter((c) => c.state === "covered" || c.state === "covered_zero").map((c) => ymd(c.business_date)));
   const costByDay = new Map(laborDays.map((d, i) => [d, dayCosts[i] ?? null]));
 
-  // Rush points: sale checks with a placed quarter, catering channel left out (named events, never a rush).
-  const points = (date: string): QuarterPoint[] => {
+  // Quarter SALES (fix round 1, P2): every `sale` Toast check with an opened quarter, the catering channel
+  // INCLUDED: an unlinked Toast catering ring is Toast check sales like any other, and the quarter labor % divides
+  // by all of them. Only the RUSH detector leaves catering out (named events, never a rush): `rushOnly`.
+  const points = (date: string, rushOnly: boolean): QuarterPoint[] => {
     const by = new Map<string, QuarterPoint>();
     for (const c of cutsByDate.get(date) ?? []) {
-      if (c.sale_class !== "sale" || c.channel === "catering" || !c.quarter_start_at || c.wall_quarter === null || c.fold === null) continue;
+      if (c.sale_class !== "sale" || (rushOnly && c.channel === "catering") || !c.quarter_start_at || c.wall_quarter === null || c.fold === null) continue;
       const p = by.get(c.quarter_start_at) ?? by.set(c.quarter_start_at, { quarterStartAt: c.quarter_start_at, wallQuarter: c.wall_quarter, fold: c.fold, checks: 0, cents: 0 }).get(c.quarter_start_at)!;
       p.checks += c.checks; p.cents += c.amount_cents;
     }
     return [...by.values()];
   };
+  const rushPoints = (date: string) => points(date, true);
+  /** `sale` checks the facts could not place in a quarter (no opened time): shown, never dropped. */
+  const unassigned = (date: string) => (cutsByDate.get(date) ?? [])
+    .filter((c) => c.sale_class === "sale" && (!c.quarter_start_at || c.wall_quarter === null || c.fold === null))
+    .reduce((t, c) => ({ toastCents: t.toastCents + c.amount_cents, checks: t.checks + c.checks }), { toastCents: 0, checks: 0 });
 
   const dayDtos: BusinessDayDto[] = sales.map((s) => {
     const dayCuts = cutsByDate.get(s.date) ?? [];
     const rc = recomposeDay(s, dayCuts);
     const target = weekTargets.get(payrollWeekStart(s.date))?.hourly.pct;
     const history = Array.from({ length: RUSH_HISTORY_WEEKS }, (_, i) => shiftReportDate(s.date, -7 * (i + 1)))
-      .filter((d) => covered.has(d)).map((d) => ({ date: d, quarters: points(d) }));
+      .filter((d) => covered.has(d)).map((d) => ({ date: d, quarters: rushPoints(d) }));
     return {
       date: s.date, sales: s, cuts: rc.reason,
       labor: laborDayFigures(s, costByDay.get(s.date) ?? null, weekMap.get(payrollWeekStart(s.date)), target),
       largeChecks: rc.ok ? largeCheckTotals(dayCuts) : { checks: 0, cents: 0 },
-      rush: rc.ok ? detectRushes({ date: s.date, quarters: points(s.date) }, history) : null,
+      rush: rc.ok ? detectRushes({ date: s.date, quarters: rushPoints(s.date) }, history) : null,
     };
   });
   const okCuts = dayDtos.filter((d) => d.cuts === "ok").flatMap((d) => cutsByDate.get(d.date) ?? []);
@@ -284,7 +344,9 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
 
   // Quarters (<= 31 days): Toast-hour sales on days whose cuts recompose, labor minutes and straight time.
   let quarters: BusinessQuarterDto[] | null = null;
+  let quartersUnassigned: BusinessUnassignedDto[] | null = null;
   if (range.days <= BUSINESS_QUARTER_MAX_DAYS) {
+    quartersUnassigned = dayDtos.filter((d) => d.cuts === "ok").map((d) => ({ date: d.date, ...unassigned(d.date) })).filter((u) => u.checks > 0 || u.toastCents !== 0);
     const dayBy = new Map(dayDtos.map((d) => [d.date, d]));
     const cells = new Map<string, BusinessQuarterDto>();
     const cell = (date: string, at: string, wq: number, fd: number) => {
@@ -294,7 +356,7 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
     };
     for (const d of dayDtos) {
       if (d.cuts !== "ok") continue;
-      for (const p of points(d.date)) {
+      for (const p of points(d.date, false)) {
         const c = cell(d.date, p.quarterStartAt, p.wallQuarter, p.fold);
         c.toastCents = p.cents; c.checks = p.checks;
       }
@@ -343,7 +405,7 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
       labor: laborRangeFigures(sales, weekRows, weekMap, { hourly: rangeTarget }),
       target: rangeTarget,
     },
-    quarters, quartersReason: quarters === null ? "range_too_wide" : null,
+    quarters, quartersUnassigned, quartersReason: quarters === null ? "range_too_wide" : null,
     channels: channelTotals(okCuts), servers: serverTotals(okCuts), people: peopleDtos,
     largeChecks: largeCheckTotals(okCuts),
     rushRule: { multiplier: RUSH_MULTIPLIER, historyWeeks: RUSH_HISTORY_WEEKS, minHistory: RUSH_MIN_HISTORY, minChecks: RUSH_MIN_CHECKS,

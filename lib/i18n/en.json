@@ -9091,6 +9091,8 @@
   "reports.business.error.location_forbidden": "You can only see the business report for your own shop.",
   "reports.business.error.business_reads_not_installed": "The business report is not installed yet.",
   "reports.business.error.business_reads_timeout": "The business report could not load. Try again in a minute.",
+  "reports.business.error.business_reads_incomplete": "The business report could not read all of its data. Try again in a minute.",
+  "reports.business.quarter.unassigned": "Not placed in a quarter",
   "reports.business.labor.state.rebuilding": "Labor is being recounted with overtime per shop. Check back soon.",
   "reports.business.labor.state.unbuilt": "Labor for these days is not counted yet.",
   "reports.business.labor.state.before_history": "No labor history before July 23, 2026.",
