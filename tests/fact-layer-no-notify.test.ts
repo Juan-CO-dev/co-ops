@@ -3,7 +3,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
-const files = [...readdirSync("lib/facts").map((n) => `lib/facts/${n}`), "app/api/cron/fact-build/route.ts"];
+// Item 9 PR 9a: the business report reads the facts and sends nothing either.
+const files = [...readdirSync("lib/facts").map((n) => `lib/facts/${n}`), "app/api/cron/fact-build/route.ts",
+  "lib/business-report-shared.ts", "lib/business-report.ts"];
 const SENDER = /(notif|email|mail|sms|twilio|resend|push|digest|nodemailer|web-push|whatsapp)/i;
 
 it("no fact module imports a sender", () => {
