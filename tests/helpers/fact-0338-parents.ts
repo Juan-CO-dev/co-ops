@@ -13,6 +13,8 @@ export const M0338 = read("0338_fact_layer_labor.sql");
 export const M0339 = read("0339_fact_labor_ot_per_shop.sql");
 /** 0340: salaried cost to the payroll shop (labor_payroll_shops), applied on top of 0339. */
 export const M0340 = read("0340_labor_payroll_shop.sql");
+/** 0343: the planned labor pricer (the board's projection runs the facts' own body), applied on top of 0340. */
+export const M0343 = read("0343_labor_cost_planned.sql");
 function grab(file: string, re: RegExp, what: string): string {
   const m = read(file).match(re);
   if (!m) throw new Error(`harness: ${what} not found in ${file}`);
