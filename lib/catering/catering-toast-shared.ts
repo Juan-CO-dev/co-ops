@@ -14,6 +14,7 @@
  * Zero I/O. Client-safe.
  */
 import type { NotInToastOrder } from "./not-in-toast-shared";
+import type { CateringValues } from "@/lib/sales-reports-shared";
 
 /** One row of `catering_reconciliation_status` (0344). No contact, note or payload column exists in it. */
 export interface HouseStatusRow {
@@ -129,4 +130,12 @@ export function mergePipelineReconciliation(raws: readonly PipelineReconciliatio
     out.unvalued += Number(raw.total_unvalued);
   }
   return out;
+}
+
+/** The label belongs to the total it is printed under: same money (completed + confirmed/out), same event count, same
+ * unvalued count as the block-3 read the page DISPLAYED. Anything else is a different snapshot (review r1 P2 #2). */
+export function pipelineLabelMatchesDisplayed(label: PipelineReconciliation, displayed: CateringValues): boolean {
+  return label.totalCents === displayed.completedCents + displayed.confirmedCents
+    && label.totalEvents === displayed.completedEvents + displayed.confirmedEvents
+    && label.unvalued === displayed.completedUnvalued + displayed.confirmedUnvalued;
 }

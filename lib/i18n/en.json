@@ -523,6 +523,7 @@
   "reports.sales.catering.pipeline_toast.ezcater_sourced": "{amount} ezCater",
   "reports.sales.catering.pipeline_toast.no_ring_expected": "{amount} no Toast ring expected",
   "reports.sales.catering.pipeline_toast.not_rung": "{amount} not rung in Toast yet",
+  "reports.sales.catering.pipeline_toast.changed": "The Toast breakdown is hidden: the pipeline changed while this page loaded. Reload to see it.",
   "reports.sales.catering.pipeline_toast.unavailable": "The Toast breakdown could not be loaded.",
   "reports.sales.catering.orders": "ezCater orders in this range",
   "reports.sales.catering.event_date": "Event date",

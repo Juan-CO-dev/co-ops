@@ -68,7 +68,8 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
     try {
       const data = await loadSalesCatering(viewer, { locationId: shopId, range, cursor: params[cursorKey] });
       // Optional label: a failed read says so under the block; the block itself is untouched.
-      const pipelineToast: PipelineReconciliation | null | "unavailable" = await loadSalesPipelineToastLabel(viewer, { locationId: shopId, range })
+      // Checked against block 3's OWN numbers (data.pipeline): a different snapshot is "changed", hidden with that reason.
+      const pipelineToast: PipelineReconciliation | null | "changed" | "unavailable" = await loadSalesPipelineToastLabel(viewer, { locationId: shopId, range, displayed: data.pipeline })
         .catch(() => "unavailable" as const);
       const cursors = Object.fromEntries(Object.entries(params).filter(([k]) => k.startsWith("cursor_")));
       const nextHref = data.orders.nextCursor ? reportNavigationHref("/reports/sales/catering", { ...context, ...cursors, [cursorKey]: data.orders.nextCursor }) : null;
@@ -103,6 +104,7 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
               {data.pipeline.confirmedUnvalued ? ` · ${t("reports.sales.catering.unvalued", { n: data.pipeline.confirmedUnvalued })}` : ""}</li>
           </ul>
           {pipelineToast === "unavailable" ? <p className="mt-1 text-xs text-co-text-muted">{t("reports.sales.catering.pipeline_toast.unavailable")}</p>
+            : pipelineToast === "changed" ? <p className="mt-1 text-xs text-co-text-muted">{t("reports.sales.catering.pipeline_toast.changed")}</p>
             : pipelineToast && pipelineToast.totalCents > 0 ? <p className="mt-1 text-sm">{t("reports.sales.catering.pipeline_toast.lead")}{" "}
               {PIPELINE_PARTS.filter((part) => pipelineToast.parts[part] > 0).map((part) =>
                 t(`reports.sales.catering.pipeline_toast.${part}` as TranslationKey, { amount: formatCents(pipelineToast.parts[part], language) })).join(" · ")}

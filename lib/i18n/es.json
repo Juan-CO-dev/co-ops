@@ -523,6 +523,7 @@
   "reports.sales.catering.pipeline_toast.ezcater_sourced": "{amount} de ezCater",
   "reports.sales.catering.pipeline_toast.no_ring_expected": "{amount} sin registro en Toast esperado",
   "reports.sales.catering.pipeline_toast.not_rung": "{amount} aún no registrado en Toast",
+  "reports.sales.catering.pipeline_toast.changed": "El desglose de Toast está oculto: el pipeline cambió mientras cargaba esta página. Recarga para verlo.",
   "reports.sales.catering.pipeline_toast.unavailable": "No se pudo cargar el desglose de Toast.",
   "reports.sales.catering.orders": "Pedidos de ezCater en este rango",
   "reports.sales.catering.event_date": "Fecha del evento",

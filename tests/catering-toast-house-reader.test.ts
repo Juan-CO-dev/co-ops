@@ -20,6 +20,8 @@ let tables: Record<string, Row[] | { code: string; message: string }>;
 let reads: string[];
 let rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
 let planRows: Row[] | { code: string; message: string };
+let pages: Array<{ from: number; to: number; orders: string[]; count?: string }>;
+let countOverride: ((page: number) => number | null) | null;
 
 function client() {
   return {
@@ -43,9 +45,19 @@ function client() {
       };
       return q;
     },
-    rpc(fn: string, args: Record<string, unknown>) {
+    rpc(fn: string, args: Record<string, unknown>, opts?: { count?: string }) {
       rpcs.push({ fn, args });
-      return Promise.resolve(Array.isArray(planRows) ? { data: planRows, error: null } : { data: null, error: planRows });
+      const orders: string[] = [];
+      const b = {
+        order(k: string) { orders.push(k); return b; },
+        range(from: number, to: number) {
+          pages.push({ from, to, orders: [...orders], count: opts?.count });
+          if (!Array.isArray(planRows)) return Promise.resolve({ data: null, error: planRows, count: null });
+          const count = countOverride ? countOverride(pages.length) : planRows.length;
+          return Promise.resolve({ data: planRows.slice(from, to + 1), error: null, count });
+        },
+      };
+      return b;
     },
   } as unknown as ReturnType<typeof getServiceRoleClient>;
 }
@@ -60,7 +72,7 @@ const actor = { user: { id: "actor", role: "gm" }, locations: ["shop"] } as unkn
 
 beforeEach(() => {
   vi.clearAllMocks();
-  reads = []; rpcs = []; planRows = [];
+  reads = []; rpcs = []; planRows = []; pages = []; countOverride = null;
   tables = { ezcater_reconciliation_status: [ez], catering_toast_settings: [settings()], catering_reconciliation_status: [house()] };
   vi.mocked(loadCateringReader).mockResolvedValue({ role: "gm", active: true, locations: ["shop"] });
   vi.mocked(getServiceRoleClient).mockReturnValue(client());
@@ -127,6 +139,31 @@ describe("loadNotInToast: suggestions on house rows for the pipeline", () => {
     const h = (await loadNotInToast(actor, now)).find((r) => r.order_id === "h1");
     expect(h).toBeDefined();
     expect(h?.suggestion).toBeNull();
+  });
+  it("reads the planner to completion past 1,000 rows, in a total order (review r1 P2 #1)", async () => {
+    const plan = (lead: string, i: number, over: Row = {}): Row => ({ lead_id: lead, location_id: "shop", order_guid: `o${String(i).padStart(5, "0")}`,
+      check_guid: "c", toast_snapshot_id: "s", business_date: "2026-11-20", evidence: "amount_date", check_total_cents: 50000 + i,
+      lead_value_cents: 50000, amount_diff_cents: i, amount_mismatch: false, dual_code: false, owner: null, owner_lead_id: null, blocked: false, ...over });
+    tables.catering_reconciliation_status = [house({ lead_id: "a" }), house({ lead_id: "z" })];
+    // 1,500 candidate pairs for the early lead, then the late lead's: one best (ring code), one owned by ezCater.
+    planRows = [...Array.from({ length: 1500 }, (_, i) => plan("a", i + 10)),
+      plan("z", 1, { evidence: "ring_code", order_guid: "late" }), plan("z", 2, { owner: "ezcater", order_guid: "late2" })];
+    const rows = await loadNotInToast(actor, now);
+    expect(rows.find((r) => r.order_id === "z")?.suggestion).toMatchObject({ count: 1, conflicts: 1, best: { orderGuid: "late", evidence: "ring_code" } });
+    expect(rows.find((r) => r.order_id === "a")?.suggestion).toMatchObject({ count: 1500 });
+    expect(pages.map((p) => [p.from, p.to])).toEqual([[0, 999], [1000, 1999]]);
+    for (const p of pages) { expect(p.orders).toEqual(["lead_id", "order_guid", "check_guid"]); expect(p.count).toBe("exact"); }
+  });
+  it("a planner read whose count moves or is missing is refused, never a partial answer (the row stays listed)", async () => {
+    tables.catering_reconciliation_status = [house({ lead_id: "z" })];
+    planRows = Array.from({ length: 1200 }, (_, i) => ({ lead_id: "z", location_id: "shop", order_guid: `o${i}`, check_guid: "c", toast_snapshot_id: "s",
+      business_date: "2026-11-20", evidence: "amount_date", check_total_cents: 1, lead_value_cents: 1, amount_diff_cents: 0, amount_mismatch: false,
+      dual_code: false, owner: null, owner_lead_id: null, blocked: false }));
+    countOverride = (page) => page === 1 ? 1200 : 1300;
+    expect((await loadNotInToast(actor, now)).find((r) => r.order_id === "z")?.suggestion).toBeNull();
+    pages = [];
+    countOverride = () => null;
+    expect((await loadNotInToast(actor, now)).find((r) => r.order_id === "z")?.suggestion).toBeNull();
   });
   it("no house rows = no planner call", async () => {
     tables.catering_reconciliation_status = [];

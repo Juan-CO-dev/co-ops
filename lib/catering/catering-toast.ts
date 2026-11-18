@@ -9,11 +9,11 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import type { NotInToastOrder } from "./not-in-toast-shared";
 import { assertSalesScope } from "@/lib/sales-reports";
-import { salesWindows, type SalesRange } from "@/lib/sales-reports-shared";
+import { salesWindows, type CateringValues, type SalesRange } from "@/lib/sales-reports-shared";
 import type { ReportScopeViewer } from "@/lib/report-scope";
 import {
   CATERING_TOAST_SETTINGS_COLUMNS, HOUSE_STATUS_COLUMNS, houseNotInToastOrder, houseRowListed, mergePipelineReconciliation,
-  plannerWindows, suggestionsFor,
+  pipelineLabelMatchesDisplayed, plannerWindows, suggestionsFor,
   type CateringToastPlanRow, type CateringToastShopSettings, type HouseStatusRow, type HouseSuggestions,
   type PipelineReconciliation, type PipelineReconciliationRaw,
 } from "./catering-toast-shared";
@@ -60,6 +60,34 @@ export async function readHouseNotInToast(sb: Sb, locationIds: readonly string[]
   return out;
 }
 
+export const PLAN_PAGE_SIZE = 1000;
+export const PLAN_MAX_PAGES = 50;
+/** `plan_catering_toast` is set-returning: PostgREST cuts it at max-rows silently, and a 62-day window bounds dates,
+ * not candidate pairs. So it is read to COMPLETION or refused by name (review r1 P2 #1): pages of 1,000 by `range`
+ * over the function's TOTAL order (one row per (lead, order, check), the key its DISTINCT ON and ORDER BY use), with an
+ * exact count; a missing or moving count, a short page before the count, or more than PLAN_MAX_PAGES pages throws
+ * `catering_toast_plan_incomplete`. Never a truncated list that reads as "no matching Toast check". */
+async function readPlanToCompletion(sb: Sb, args: Record<string, unknown>): Promise<CateringToastPlanRow[]> {
+  const out: CateringToastPlanRow[] = [];
+  let expected: number | null = null;
+  for (let page = 0; ; page += 1) {
+    if (page >= PLAN_MAX_PAGES) throw new Error("catering_toast_plan_incomplete");
+    const from = page * PLAN_PAGE_SIZE;
+    const res = await sb.rpc("plan_catering_toast", args, { count: "exact" })
+      .order("lead_id").order("order_guid").order("check_guid").range(from, from + PLAN_PAGE_SIZE - 1);
+    if (res.error) raise(res.error);
+    const count = typeof res.count === "number" ? res.count : null;
+    if (count === null || (expected !== null && count !== expected)) throw new Error("catering_toast_plan_incomplete");
+    expected = count;
+    const rows = (res.data ?? []) as CateringToastPlanRow[];
+    out.push(...rows);
+    if (out.length >= expected) break;
+    if (rows.length < PLAN_PAGE_SIZE) throw new Error("catering_toast_plan_incomplete");
+  }
+  if (out.length !== expected) throw new Error("catering_toast_plan_incomplete");
+  return out;
+}
+
 /** Suggestions for listed house rows: one bounded planner call per shop and <= 62-day window. Ring codes typed as
  * SPECIAL_REQUEST notes are not looked up here (no Toast API call on a page render); the PR 4 reconcile pass carries
  * them (runbook contract 3). A failed read answers null for the affected rows: the row stays listed. */
@@ -70,9 +98,13 @@ export async function loadHouseSuggestions(sb: Sb, rows: readonly NotInToastOrde
   for (const [locationId, shopRows] of byShop) {
     for (const window of plannerWindows(shopRows.map((r) => r.event_date))) {
       const inWindow = shopRows.filter((r) => r.event_date >= window.from && r.event_date <= window.to);
-      const { data, error } = await sb.rpc("plan_catering_toast",
-        { p_location_id: locationId, p_from: window.from, p_to: window.to, p_note_codes: [] });
-      for (const row of inWindow) out.set(row.lead_id!, error ? null : suggestionsFor(row.lead_id!, (data ?? []) as CateringToastPlanRow[]));
+      let plan: CateringToastPlanRow[] | null;
+      try {
+        plan = await readPlanToCompletion(sb, { p_location_id: locationId, p_from: window.from, p_to: window.to, p_note_codes: [] });
+      } catch {
+        plan = null;
+      }
+      for (const row of inWindow) out.set(row.lead_id!, plan ? suggestionsFor(row.lead_id!, plan) : null);
     }
   }
   return out;
@@ -97,10 +129,16 @@ export async function loadPipelineReconciliation(sb: Sb, locationId: string, win
 }
 
 /** Sales → Catering, block 3: "of this, $X is also rung in Toast". The Sales read gate first (before any I/O), then
- * the same windows as the block it labels, so the label partitions exactly the total shown above it. */
-export async function loadSalesPipelineToastLabel(viewer: ReportScopeViewer, args: { locationId: string; range: SalesRange },
-  deps: { client?: Sb } = {}): Promise<PipelineReconciliation | null> {
+ * the same windows as the block it labels. The label is a SECOND read, so it is checked against the numbers block 3
+ * DISPLAYED (`displayed`, loadSalesCatering's own pipeline): any difference in money, events or unvalued count (an
+ * estimate changed or an order confirmed between the reads) is "changed" and the page withholds the breakdown with
+ * that reason (review r1 P2 #2), never "Of this: $800" under a $500 total. */
+export async function loadSalesPipelineToastLabel(viewer: ReportScopeViewer,
+  args: { locationId: string; range: SalesRange; displayed: CateringValues },
+  deps: { client?: Sb } = {}): Promise<PipelineReconciliation | null | "changed"> {
   assertSalesScope(viewer, args.locationId);
   if (args.range.empty) return null;
-  return loadPipelineReconciliation(deps.client ?? getServiceRoleClient(), args.locationId, salesWindows(args.range.from, args.range.to));
+  const label = await loadPipelineReconciliation(deps.client ?? getServiceRoleClient(), args.locationId, salesWindows(args.range.from, args.range.to));
+  if (!label) return null;
+  return pipelineLabelMatchesDisplayed(label, args.displayed) ? label : "changed";
 }
