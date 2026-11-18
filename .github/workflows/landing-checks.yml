@@ -35,6 +35,10 @@ jobs:
       image: mcr.microsoft.com/playwright:v1.63.0-noble
       options: --ipc=host
     timeout-minutes: 55
+    env:
+      # tsc and the e2e webServer's `next build` both outgrew the default V8 heap (OOMs on #595, #596,
+      # 2026-11-18); same ceiling build.yml uses (#592). It is a ceiling, not a reservation.
+      NODE_OPTIONS: --max-old-space-size=7168
     steps:
       - uses: actions/checkout@v6
       # The container runs as root over a runner-owned checkout; git refuses it without this
@@ -52,9 +56,6 @@ jobs:
       - run: node --experimental-strip-types scripts/landing/order-click-sql-check.ts
       # webServer builds without landing env and starts both enabled and disabled hosts.
       - run: npm run test:e2e
-        env:
-          # The e2e webServer's `next build` outgrew the default ~4 GB V8 heap (OOM 2026-11-18, #595); same as build.yml (#592).
-          NODE_OPTIONS: --max-old-space-size=7168
       - run: npx playwright test lineup.spec.ts tracking.spec.ts --repeat-each=2
         env:
           LANDING_E2E_USE_BUILD: "1"
