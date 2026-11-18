@@ -144,6 +144,15 @@ export function laborFactAccess(role: RoleCode): LaborFactAccess {
   return "none";
 }
 
+const ACCESS_RANK: Record<LaborFactAccess, number> = { none: 0, hours_only: 1, shop_money: 2, person_money: 3 };
+/** Item 9 (Juan's default, plan r2 finding 4): the ONE switch for cost BY PERSON on every labor reader (the
+ * business report, its export, the board). `person_money` = MoO / Owner / CGS; set it to `shop_money` and a GM
+ * sees it too, everywhere at once. Never a second rule beside this one. */
+export const PERSON_COST_MIN: LaborFactAccess = "person_money";
+export function canSeePersonCost(role: RoleCode): boolean {
+  return ACCESS_RANK[laborFactAccess(role)] >= ACCESS_RANK[PERSON_COST_MIN];
+}
+
 /** Every label a labor reader shows (en + es, pinned by tests/fact-labor-i18n.test.ts). No reader ships in
  * 2c; these exist so the first one is born translated. */
 export const LABOR_FACT_I18N_KEYS = [
