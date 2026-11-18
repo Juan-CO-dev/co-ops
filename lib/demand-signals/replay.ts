@@ -31,7 +31,7 @@
  * ounces) is NOT re-run by a replay; what it produced as of the decision is what is kept.
  * A part is named by the sha256 of its canonical text, so an unchanged day is stored once across nights and
  * a changed one (an order corrected later) is a NEW part that the earlier manifest does not name.
- * RETENTION: parts and manifests are never deleted by this PR (0341 has no delete path). The plan's
+ * RETENTION: parts and manifests are never deleted by this PR (0342 has no delete path). The plan's
  * 25-month retention needs its own reviewed sweep, which must keep every part a ledger row still names.
  *
  * ── REPLAY VERDICTS ─────────────────────────────────────────────────────────────────────────

@@ -84,10 +84,10 @@ describe("dark by default", () => {
     expect([...ledger.matchAll(/\.from\("(\w+)"\)/g)].map((m) => m[1]).sort()).toEqual(["item_par_levels", "items"]);
     expect([...ledger.matchAll(/\.rpc\(("?\w+"?)/g)].map((m) => m[1]).sort()).toEqual(['"pulse_sales_baseline"', "name"]);
   });
-  it("0341 is the only migration of this PR and the next free number", () => {
+  it("0342 is the only migration of this PR and the next free number", () => {
     const files = readdirSync("supabase/migrations").filter((f) => /^\d{4}_/.test(f)).sort();
-    expect(files.filter((f) => f.includes("demand_signals"))).toEqual(["0341_demand_signals_replay.sql"]);
-    expect(read("supabase/migrations/0341_demand_signals_replay.sql")).toMatch(/^-- AUTHORED 2026-11-17 .* NOT YET APPLIED/m);
+    expect(files.filter((f) => f.includes("demand_signals"))).toEqual(["0342_demand_signals_replay.sql"]);
+    expect(read("supabase/migrations/0342_demand_signals_replay.sql")).toMatch(/^-- AUTHORED 2026-11-17 .* NOT YET APPLIED/m);
   });
 });
 

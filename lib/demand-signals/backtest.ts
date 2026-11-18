@@ -7,7 +7,7 @@
  * pointers, pars and settings are read as they are now. So every candidate is run through the pass rule with
  * `evidenceClass: "E1"` and no holdout, and every one of them fails by name (`evidence_not_e2`,
  * `holdout_missing`). The numbers may be shown; they can turn nothing on. E2 evidence only accrues from the
- * forecast ledger (0341), from the night it is switched on.
+ * forecast ledger (0342), from the night it is switched on.
  *
  * WALK-FORWARD: a candidate at a decision reads only what was known before it.
  *   trend     the daily totals of the days strictly before the decision date;

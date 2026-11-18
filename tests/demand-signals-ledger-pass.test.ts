@@ -38,7 +38,7 @@ const run = (h: ReturnType<typeof harness>, o: { par?: ReturnType<typeof parInpu
   runDemandLedgerForShop({ locationId: FIX_LOC, todayEt: TODAY, parInputs: o.par === undefined ? parInputs() : o.par, deadlineAt: o.deadlineAt ?? 1e9 }, h.deps);
 
 describe("the ledger pass", () => {
-  it("before 0341 it finds no writer, reads nothing and says so", async () => {
+  it("before 0342 it finds no writer, reads nothing and says so", async () => {
     const h = harness({ rpcError: () => ({ code: "PGRST202", message: "Could not find the function" }) });
     expect(await run(h)).toEqual({ status: "not_installed" });
     expect(h.calls.length).toBe(1);
@@ -68,7 +68,7 @@ describe("the ledger pass", () => {
         decisionDate: TODAY, engine: c.args.p_engine as string }, (hash) => h.blobs.get(hash))).toBe("reproduced");
     }
   });
-  it("writes only through the five 0341 writers, in bounded requests", async () => {
+  it("writes only through the five 0342 writers, in bounded requests", async () => {
     const h = harness();
     await run(h);
     expect(new Set(h.calls.map((c) => c.name))).toEqual(new Set(["demand_blobs_put", "demand_model_register", "demand_forecast_record", "demand_target_freeze"]));

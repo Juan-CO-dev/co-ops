@@ -1,4 +1,4 @@
-// Item 4 PR 1: the 0341 offline proof (PGlite, single session, synthetic fixtures only; no network, no sim,
+// Item 4 PR 1: the 0342 offline proof (PGlite, single session, synthetic fixtures only; no network, no sim,
 // no prod). The REAL migration file is applied and driven by the REAL TS replay harness.
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import { baselineModel, candidateModel, parForecastRecord, targetFreezeArgs, NOT
 import { blobOf, forecastPars, parTargetFromInputs, replayVerdict, snapshotParInputs, type Blob } from "@/lib/demand-signals/replay";
 import { buildParInputs, FIX_LOC } from "./helpers/par-engine-fixture";
 
-const M0341 = readFileSync("supabase/migrations/0341_demand_signals_replay.sql", "utf8");
+const M0342 = readFileSync("supabase/migrations/0342_demand_signals_replay.sql", "utf8");
 const PARENTS = `create role anon; create role authenticated; create role service_role bypassrls;
   grant usage on schema public to anon, authenticated, service_role;
   alter default privileges in schema public grant all on tables to public, anon, authenticated, service_role;
@@ -35,13 +35,13 @@ const fromDb = async () => {
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(PARENTS);
-  await db.exec(M0341);
+  await db.exec(M0342);
   today = String(await one("select demand_today_et()::text"));
 }, 120_000);
 
-describe("0341: shape and ceilings", () => {
+describe("0342: shape and ceilings", () => {
   it("refuses a second apply by name", async () => {
-    await fails(db.exec(M0341), "0341: already applied");
+    await fails(db.exec(M0342), "0342: already applied");
     await db.exec("rollback");
   });
   it("service_role reads and cannot write a table directly; PostgREST roles reach nothing", async () => {
@@ -60,7 +60,7 @@ describe("0341: shape and ceilings", () => {
     }
   });
   it("touches no existing object: the file creates and never alters, drops or re-emits", () => {
-    const body = M0341.replace(/^--.*$/gm, "");
+    const body = M0342.replace(/^--.*$/gm, "");
     expect(body).not.toMatch(/\bdrop\s+(table|function|policy|constraint|index|trigger)|\btruncate\s+(table\s+)?public\.|\bdelete\s+from\b/i);
     expect(body).not.toMatch(/create or replace/i);
     expect([...body.matchAll(/alter table public\.(\w+)/gi)].map((m) => m[1])).toEqual([]);
@@ -68,7 +68,7 @@ describe("0341: shape and ceilings", () => {
   });
 });
 
-describe("0341: blobs are named by their content", () => {
+describe("0342: blobs are named by their content", () => {
   it("the database recomputes the hash and stores an unchanged blob once", async () => {
     const b = blobOf("par_day", { v: 1, note: "día con acento ñ" });
     expect(await as("service_role", () => put([b]))).toEqual({ stored: 1, existed: 0 });
@@ -79,7 +79,7 @@ describe("0341: blobs are named by their content", () => {
   });
 });
 
-describe("0341: the forecast ledger is the E2 clock", () => {
+describe("0342: the forecast ledger is the E2 clock", () => {
   const inputs = buildParInputs();
   const model = baselineModel("pars");
   const args = (decision: string, manifest: string, record: ReturnType<typeof parForecastRecord>) =>
@@ -131,7 +131,7 @@ describe("0341: the forecast ledger is the E2 clock", () => {
   });
 });
 
-describe("0341: targets freeze at D+4", () => {
+describe("0342: targets freeze at D+4", () => {
   const FREEZE = "select demand_target_freeze($1,$2,$3,$4,$5,$6)";
   const later = buildParInputs({ runDate: "2026-10-15" });
   const read = parTargetFromInputs(later, "2026-10-14")!;
@@ -164,7 +164,7 @@ describe("0341: targets freeze at D+4", () => {
   });
 });
 
-describe("0341: the holdout is read once per model hash, target and lead", () => {
+describe("0342: the holdout is read once per model hash, target and lead", () => {
   const CLAIM = "select demand_holdout_claim($1,$2,$3,$4,$5,$6)";
   const trend = candidateModel("labor", "trend");
   const hindsight = { ...candidateModel("labor", "calendar_holiday"), blob: blobOf("model", { kind: "candidate", signal: "observed_weather" }) };

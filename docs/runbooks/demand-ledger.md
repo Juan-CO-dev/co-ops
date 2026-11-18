@@ -2,23 +2,23 @@
 
 What this is: a nightly record of what each baseline forecast said, the inputs it said it from, and (four days later) what really happened. It is the only way to get point-in-time (E2) evidence for a demand signal. It changes no par, no prep number and no schedule.
 
-Law: `AGENTS.md`, section "Demand signals, PR 1". Migration: `supabase/migrations/0341_demand_signals_replay.sql` (file only until CC applies it).
+Law: `AGENTS.md`, section "Demand signals, PR 1". Migration: `supabase/migrations/0342_demand_signals_replay.sql` (file only until CC applies it).
 
 ## State as shipped
 
-- 0341 is authored, not applied.
+- 0342 is authored, not applied.
 - `DEMAND_LEDGER` is unset. The nightly does not import or call the ledger pass.
 - No outside feed, no cron lease, no email.
 
 ## Turning it on (CC, with Juan's word for prod)
 
-1. Apply 0341 to **sim**, then run `npx vitest run tests/demand-signals-0341-harness.test.ts --maxWorkers=1` locally (the offline proof of the same file).
+1. Apply 0342 to **sim**, then run `npx vitest run tests/demand-signals-0342-harness.test.ts --maxWorkers=1` locally (the offline proof of the same file).
 2. On sim, check the six tables exist and service_role holds SELECT only:
    `select table_name, privilege_type from information_schema.role_table_grants where table_name like 'demand_%' and grantee = 'service_role';`
-3. Apply 0341 to **prod** on Juan's word. Stamp the file header in the same PR or the next (`-- APPLIED TO PROD <date> ...`), keeping the authoring gate line.
+3. Apply 0342 to **prod** on Juan's word. Stamp the file header in the same PR or the next (`-- APPLIED TO PROD <date> ...`), keeping the authoring gate line.
 4. Set `DEMAND_LEDGER=1` in Vercel (server env) and redeploy. Nothing else is needed.
 
-Order matters only one way: 0341 before the switch. With the switch on and 0341 missing, the pass finds no writer, reads nothing and writes no heartbeat.
+Order matters only one way: 0342 before the switch. With the switch on and 0342 missing, the pass finds no writer, reads nothing and writes no heartbeat.
 
 ## What a healthy night looks like
 
@@ -60,7 +60,7 @@ npx tsx --conditions=react-server --env-file=.env.local scripts/demand-replay-re
 
 - `--from` / `--to` are decision dates, at most 120 days.
 - Start with `--surfaces=labor`: one read per build day. `pars` loads the full engine inputs for every night and takes minutes.
-- It works before 0341 is applied (it reads no demand table).
+- It works before 0342 is applied (it reads no demand table).
 
 ## Replaying a recorded night
 

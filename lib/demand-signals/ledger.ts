@@ -2,12 +2,12 @@ import "server-only";
 /**
  * Demand signals (item 4 PR 1): the nightly ledger pass's REAL reads, and its heartbeat.
  *
- * OFF unless DEMAND_LEDGER=1 (the nightly never imports this file otherwise). Apply 0341 first: before it the
+ * OFF unless DEMAND_LEDGER=1 (the nightly never imports this file otherwise). Apply 0342 first: before it the
  * pass answers `not_installed`, reads nothing more and writes no heartbeat.
  * READS ONLY what the three baselines already read: `pulse_sales_baseline` (the scheduler's demand), the live
  * schedule structure and day-type overrides, `items` and `item_par_levels`. The par inputs are handed in by the
  * nightly run that just used them; nothing is loaded twice.
- * WRITES ONLY through 0341's writers (lib/demand-signals/ledger-pass.ts) and one audit heartbeat
+ * WRITES ONLY through 0342's writers (lib/demand-signals/ledger-pass.ts) and one audit heartbeat
  * (cron.success / cron.failure, job `demand-ledger`). Not in JOBS_REGISTRY: nothing emails. No outside call.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -94,7 +94,7 @@ export async function runDemandLedgerNight(args: {
         { locationId, todayEt: args.todayEt, parInputs: args.parInputsByShop.get(locationId) ?? null, deadlineAt: args.deadlineAt },
         ledgerDeps(args.sb, locationId, args.todayEt));
     } catch { results[locationId] = { status: "failed" }; }
-    // Before 0341 nothing is installed for any shop: stop, and stay silent (no heartbeat for a pass that did not exist).
+    // Before 0342 nothing is installed for any shop: stop, and stay silent (no heartbeat for a pass that did not exist).
     if (results[locationId]!.status === "not_installed") return results;
   }
   const statuses = Object.values(results).map((r) => r.status);

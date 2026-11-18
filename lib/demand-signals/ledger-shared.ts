@@ -1,9 +1,9 @@
 /**
- * Demand signals (item 4 PR 1): what the forecast ledger and the target freeze are GIVEN (0341's writer
+ * Demand signals (item 4 PR 1): what the forecast ledger and the target freeze are GIVEN (0342's writer
  * arguments), built from the replay harness's own forecasts. No I/O; a caller passes env values in.
  *
  * DEMAND_LEDGER=1 turns the nightly pass on. Unset (or anything else) = nothing is read and nothing is written.
- * Apply 0341 first: before it the pass finds no writer and stays silent.
+ * Apply 0342 first: before it the pass finds no writer and stays silent.
  */
 import { CUSHION_BY_CLASS, CUSHION_DEFAULT, DYNAMIC_PARS } from "@/lib/dynamic-pars-shared";
 import { addDaysEt } from "@/lib/vendor-rhythm-shared";
@@ -17,7 +17,7 @@ import { PASS_RULE } from "./scoring-shared";
 
 export { demandLedgerEnabled } from "./config-shared";
 
-/** Targets freeze at D+4, after the T-3 recapture has closed. 0341 refuses anything earlier. */
+/** Targets freeze at D+4, after the T-3 recapture has closed. 0342 refuses anything earlier. */
 export const TARGET_FREEZE_LAG_DAYS = 4;
 export function targetFreezable(validDate: string, todayEt: string): boolean {
   return todayEt >= addDaysEt(validDate, TARGET_FREEZE_LAG_DAYS);

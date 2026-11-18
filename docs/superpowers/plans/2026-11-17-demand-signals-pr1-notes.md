@@ -15,13 +15,13 @@ Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-04-DEMAND-SIG
 
 A forecast ledger row is E2 evidence when all three hold:
 
-1. It was recorded on its decision date. 0341's `demand_forecast_record` accepts only the database's ET date, and the first write wins.
+1. It was recorded on its decision date. 0342's `demand_forecast_record` accepts only the database's ET date, and the first write wins.
 2. Its manifest resolves: every part is in `demand_input_blobs` and hashes to its name, and re-running the engine over those parts gives the recorded forecast (`replayVerdict` = `reproduced`), or the row was recorded by an older engine version and its inputs are intact (`engine_changed`).
 3. Its target was frozen at D+4 or later (`demand_target_freezes`).
 
 What is stored for a pars night: the SKU catalog as the engine saw it (resolved ounces per order unit, has-chain, cushion class, par step, global pars), the shop overlay (human lane, machine lane, pins, activation), rhythms, cutoffs and skips, pack epochs, the guard state (hysteresis priors, spent budgets, recipe-edit date, signals start, lane starts), and one part per window day (three ounce lanes per SKU, the two observation flags, the catering-suspect flag).
 
-**The claim is narrowed on purpose.** `createDatedGraphs` has no decision-time parameter, so the orders → ounces derivation cannot be re-run as of a past decision. PR 1 does not try. It stores what that derivation PRODUCED as of the decision (the ounce lanes and the ounces per order unit), which is everything the engine reads. A later recipe, pack or item-basis change makes new parts; the earlier manifest still names the earlier ones. Tests: `tests/demand-signals-replay.test.ts` ("ORDER CORRECTED AFTER THE DECISION", "CONFIG CHANGED AFTER THE DECISION") and the same against the real SQL in `tests/demand-signals-0341-harness.test.ts`.
+**The claim is narrowed on purpose.** `createDatedGraphs` has no decision-time parameter, so the orders → ounces derivation cannot be re-run as of a past decision. PR 1 does not try. It stores what that derivation PRODUCED as of the decision (the ounce lanes and the ounces per order unit), which is everything the engine reads. A later recipe, pack or item-basis change makes new parts; the earlier manifest still names the earlier ones. Tests: `tests/demand-signals-replay.test.ts` ("ORDER CORRECTED AFTER THE DECISION", "CONFIG CHANGED AFTER THE DECISION") and the same against the real SQL in `tests/demand-signals-0342-harness.test.ts`.
 
 Retention: nothing is deleted by PR 1. The 25-month sweep is its own reviewed change and must keep every blob a row still names.
 

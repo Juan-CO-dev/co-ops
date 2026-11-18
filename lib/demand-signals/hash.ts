@@ -1,6 +1,6 @@
 /**
  * Demand signals (item 4 PR 1): the content hash. Node-only (node:crypto), no I/O. The database
- * recomputes the same sha256 over the same text in `demand_blob_put` (0341), so a blob can never be
+ * recomputes the same sha256 over the same text in `demand_blob_put` (0342), so a blob can never be
  * stored under a name its content does not have.
  */
 import { createHash } from "node:crypto";

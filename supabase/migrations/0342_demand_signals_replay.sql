@@ -1,4 +1,4 @@
--- Migration 0341_demand_signals_replay
+-- Migration 0342_demand_signals_replay
 -- AUTHORED 2026-11-17 (item 4 PR 1, CO Claude). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
 -- Plan: CHIEF 03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-04-DEMAND-SIGNALS-PLAN-r2.md (Astra r2: no P1),
 -- with Astra r2's P2 #1 and P2 #2 folded in:
@@ -32,14 +32,14 @@
 -- blob a ledger row, a freeze or a model still names.
 -- NOT HERE (later PRs): source register and signal tables (PR 2), state machine and persisted terms (PR 4),
 -- the page (PR 5), chips (PR 6), AI (PR 7). No cron lease is added: the pass rides the nightly.
--- Proof: tests/demand-signals-0341-harness.test.ts (PGlite, the real file, driven by the real TS replay).
+-- Proof: tests/demand-signals-0342-harness.test.ts (PGlite, the real file, driven by the real TS replay).
 begin;
 
 do $$ begin
-  if to_regclass('public.locations') is null then raise exception '0341: missing locations'; end if;
+  if to_regclass('public.locations') is null then raise exception '0342: missing locations'; end if;
   if to_regclass('public.demand_input_blobs') is not null or to_regclass('public.demand_forecast_ledger') is not null
     or to_regprocedure('public.demand_today_et()') is not null then
-    raise exception '0341: already applied'; end if;
+    raise exception '0342: already applied'; end if;
 end $$;
 
 -- The one clock of this layer: the ET calendar date, read from the database.
@@ -247,19 +247,19 @@ end $$;
 
 do $$ declare t text; f regprocedure; p text; begin
   foreach t in array array['demand_input_blobs','demand_models','demand_forecast_ledger','demand_target_freezes','demand_target_revisions','demand_holdout_reads'] loop
-    if not has_table_privilege('service_role', 'public.' || t, 'SELECT') then raise exception '0341: % lacks service_role SELECT', t; end if;
+    if not has_table_privilege('service_role', 'public.' || t, 'SELECT') then raise exception '0342: % lacks service_role SELECT', t; end if;
     foreach p in array array['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'] loop
-      if has_table_privilege('service_role', 'public.' || t, p) then raise exception '0341: service_role holds % on %', p, t; end if;
+      if has_table_privilege('service_role', 'public.' || t, p) then raise exception '0342: service_role holds % on %', p, t; end if;
     end loop;
     foreach p in array array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] loop
       if has_table_privilege('anon', 'public.' || t, p) or has_table_privilege('authenticated', 'public.' || t, p) then
-        raise exception '0341: PostgREST role holds % on %', p, t; end if;
+        raise exception '0342: PostgREST role holds % on %', p, t; end if;
     end loop;
   end loop;
   if exists (select 1 from information_schema.role_table_grants where table_schema = 'public'
      and table_name in ('demand_input_blobs','demand_models','demand_forecast_ledger','demand_target_freezes','demand_target_revisions','demand_holdout_reads')
      and (grantee in ('PUBLIC','anon','authenticated') or (grantee = 'service_role' and privilege_type <> 'SELECT'))) then
-    raise exception '0341: unexpected demand table grant'; end if;
+    raise exception '0342: unexpected demand table grant'; end if;
   foreach f in array array[
     'public.demand_today_et()'::regprocedure,
     'public.demand_blobs_put(jsonb)'::regprocedure,
@@ -270,7 +270,7 @@ do $$ declare t text; f regprocedure; p text; begin
     if not has_function_privilege('service_role', f, 'EXECUTE') or has_function_privilege('anon', f, 'EXECUTE')
       or has_function_privilege('authenticated', f, 'EXECUTE')
       or exists (select 1 from pg_proc pr, lateral aclexplode(pr.proacl) a where pr.oid = f and a.grantee = 0) then
-      raise exception '0341: RPC escape %', f; end if;
+      raise exception '0342: RPC escape %', f; end if;
   end loop;
 end $$;
 

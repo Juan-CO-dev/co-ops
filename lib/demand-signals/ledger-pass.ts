@@ -3,7 +3,7 @@
  * so this file has no database in it and is tested whole (tests/demand-signals-ledger-pass.test.ts). The real
  * reads and the heartbeat are in ledger.ts.
  *
- * What one pass does, for the decision made THIS morning (the database's ET date; 0341 refuses any other):
+ * What one pass does, for the decision made THIS morning (the database's ET date; 0342 refuses any other):
  *   1. registers the three baseline engines as models (idempotent);
  *   2. pars   stores last night's engine inputs whole and records the forecast for today and the six days after;
  *   3. labor  stores the baseline, the day-type rules and the overrides, and records today and eleven days after;
@@ -12,7 +12,7 @@
  * It records the BASELINES only. A candidate's forecast is recorded from the PR that registers that candidate.
  *
  * Fail-soft and bounded: a step that fails is named by a fixed code and the others still run; a step starts
- * only while the deadline has not passed; writes go only through 0341's writers. Before 0341 the first call
+ * only while the deadline has not passed; writes go only through 0342's writers. Before 0342 the first call
  * finds no function and the pass returns `not_installed` having read nothing.
  *
  * PREP TARGETS ARE NOT FROZEN YET (stated, not hidden): there is no reviewed reading of how much of a prep item
@@ -76,7 +76,7 @@ export async function runDemandLedgerForShop(
   };
   const inTime = (): boolean => deps.now() < args.deadlineAt;
 
-  // ① The models. This is also the readiness probe: before 0341 there is no such function.
+  // ① The models. This is also the readiness probe: before 0342 there is no such function.
   const models = (["pars", "labor", "prep"] as const).map((s) => baselineModel(s));
   const late: SurfaceStep = { skipped: "deadline" };
   if (!inTime()) return { status: "partial", pars: late, labor: late, prep: late, targets: { par_product_day_oz: "skipped", labor_sales_day: "skipped" } };

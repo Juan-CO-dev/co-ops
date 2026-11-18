@@ -118,7 +118,7 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
     pars_pending_activation: false,
     elapsed_completed: elapsedCompleted, elapsed_failed: elapsedFailed, elapsed_error: elapsedError,
   };
-  // The demand forecast ledger (item 4 PR 1, 0341): fail-soft, its own heartbeat (demand-ledger), never part of
+  // The demand forecast ledger (item 4 PR 1, 0342): fail-soft, its own heartbeat (demand-ledger), never part of
   // this run's health. It starts only with a minute to spare and leaves the labor pull its time.
   if (demandLedgerOn) {
     try {
