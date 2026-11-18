@@ -69,6 +69,16 @@ export interface DemandInputs {
   directOzByDate: Map<string, Map<string, number>>;
   productionOzByDate: Map<string, Map<string, number>>;
   flattenedOzByDate: Map<string, Map<string, number>>;
+  /**
+   * THE RECORD BEHIND THE LANES (demand signals, review r3). Not read by the engine.
+   * `productBySku` is the membership the three lanes above were rolled by: every member SKU of every product
+   * the night knows, par'd or not, active or not. The two raw lanes are the direct and production ounces by
+   * SKU id BEFORE that rollup (`sumPerDate`): `rollupLanesByProduct(raw, productBySku)` IS the rolled lane.
+   * A night's product identity is this map and nothing else; a D+4 target is frozen from the raw lanes.
+   */
+  productBySku: ReadonlyMap<string, string>;
+  rawDirectOzByDate: Map<string, Map<string, number>>;
+  rawProductionOzByDate: Map<string, Map<string, number>>;
   /** grainKey → the first ET date any of this SKU's three lanes was alive here
    *  (`deriveLaneStart`). Null = none of them ever was. */
   laneStartByGrain: Map<string, string | null>;

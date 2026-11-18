@@ -58,7 +58,7 @@ import {
 } from "@/lib/dynamic-pars-shared";
 import {
   derivePriorAndBudget, normalizePerOrderUnitOz,
-  rollupPerDate, slotKey, tallyRun,
+  rollupLanesByProduct, rollupPerDate, slotKey, sumPerDate, tallyRun,
   type ParRunCounts,
 } from "@/lib/dynamic-pars-run-shared";
 import {
@@ -483,15 +483,18 @@ export async function loadDemandInputs(
   // names the single slot a GRADUATED write would ever target (R3-B), so the two rows can
   // never become two auto-writes for one identity.
   const productBySku = productIndex.productBySku;
-  const directOzByDate = rollupPerDate(depletionRows, (r) => r.business_date, (r) => r.sku_id, (r) => num(r.direct_oz) ?? 0, productBySku);
-  const flattenedOzByDate = rollupPerDate(depletionRows, (r) => r.business_date, (r) => r.sku_id, (r) => num(r.flattened_oz) ?? 0, productBySku);
-  const productionOzByDate = rollupPerDate(
+  // The raw (date, sku) sums are kept beside the rolled lanes: they are the record a demand-signals target is
+  // frozen from, and `productBySku` is the identity the night rolled them by (review r3). The engine reads neither.
+  const rawDirectOzByDate = sumPerDate(depletionRows, (r) => r.business_date, (r) => r.sku_id, (r) => num(r.direct_oz) ?? 0);
+  const rawProductionOzByDate = sumPerDate(
     productionInputs,
     (r) => prodDateById.get(r.production_id) ?? "",
     (r) => r.input_sku_id,
     (r) => num(r.input_oz) ?? 0,
-    productBySku,
   );
+  const directOzByDate = rollupLanesByProduct(rawDirectOzByDate, productBySku);
+  const flattenedOzByDate = rollupPerDate(depletionRows, (r) => r.business_date, (r) => r.sku_id, (r) => num(r.flattened_oz) ?? 0, productBySku);
+  const productionOzByDate = rollupLanesByProduct(rawProductionOzByDate, productBySku);
 
   // ── The SKU views, over the WALKER'S universe ─────────────────────────────────
   // resolveActive(overlay.activeOverride, sku.active) is the SAME rule loadWalkerData
@@ -589,6 +592,9 @@ export async function loadDemandInputs(
     directOzByDate,
     productionOzByDate,
     flattenedOzByDate,
+    productBySku,
+    rawDirectOzByDate,
+    rawProductionOzByDate,
     laneStartByGrain,
     suspectDays,
     signalsStartAt,

@@ -18,11 +18,14 @@
  * engine reads at its boundary is stored, as content-addressed parts under a manifest:
  *   pars    par_catalog  the SKUs with their resolved pack (ounces per order unit, has-chain), cushion
  *                        class, par step and global pars; the per-shop overlay (human lane, machine lane,
- *                        pins, activation); the vendor rhythms, cutoffs and skips; the pack epochs
+ *                        pins, activation); the vendor rhythms, cutoffs and skips; the pack epochs; and
+ *                        THE NIGHT'S PRODUCT IDENTITY: the SKU -> product map its lanes were rolled by
+ *                        (every member, par'd or not, active or not)
  *           par_guard    the guard state: the hysteresis priors, the spent budgets, the recipe-edit
  *                        date, the signals start, the lane starts, the cold-start flag
  *           par_day x21  one part per window day: the three ounce lanes per SKU, the two observation
- *                        oracles, the catering-suspect flag
+ *                        oracles, the catering-suspect flag, and the two RAW lanes (direct, production:
+ *                        the ounces by SKU id before the product rollup)
  *   labor   labor_inputs the 28-day baseline as the RPC returned it, the day-type thresholds and weekend
  *                        days, the structure version id, the manager's day-type overrides
  *   prep    prep_inputs  every item's default par, unit and active flag, and its shop par rows
@@ -44,7 +47,7 @@
  */
 import { computeParLedger, type DemandInputs, type DemandSku, type ParLedgerRow, type ParOverlayRow } from "@/lib/dynamic-pars-engine-shared";
 import { dayClassForDate, type DayClass } from "@/lib/dynamic-pars-shared";
-import type { LedgerPrior } from "@/lib/dynamic-pars-run-shared";
+import { rollupLanesByProduct, type LedgerPrior } from "@/lib/dynamic-pars-run-shared";
 import { operationalDayOfWeek, pickOverride, resolveItemPar, type ItemParRow } from "@/lib/items";
 import { baselineHourly, type HeatCell } from "@/lib/pulse/baseline-shared";
 import { dayTypeFor, forecastDay, type DayForecast, type DayTypeOverride, type SalesBaselineResult } from "@/lib/scheduling/demand-shared";
@@ -105,6 +108,8 @@ interface ParCatalogPart {
   v: 1; locationId: string; skus: DemandSku[]; overlay: Record<string, ParOverlayRow>;
   rhythm: Record<string, RhythmRow[]>; skips: Record<string, RhythmSkip[]>; cutoffs: Record<string, CutoffRow[]>;
   packEpoch: Record<string, number> | null;
+  /** The membership the night's lanes were rolled by: the night's product identity. */
+  productBySku: Record<string, string>;
 }
 interface ParGuardPart {
   v: 1; locationId: string; runDateEt: string; prior: Record<string, LedgerPrior>; budgetSpent: string[];
@@ -113,6 +118,8 @@ interface ParGuardPart {
 interface ParDayPart {
   v: 1; locationId: string; dateEt: string; dayClass: DayClass; salesObserved: boolean; productionObserved: boolean; suspect: boolean;
   direct: Record<string, number>; production: Record<string, number>; flattened: Record<string, number>;
+  /** By SKU id, before the product rollup. */
+  rawDirect: Record<string, number>; rawProduction: Record<string, number>;
 }
 interface ParManifest { v: 1; surface: "pars"; locationId: string; runDateEt: string; catalog: string; guard: string; days: Array<{ dateEt: string; hash: string }> }
 
@@ -128,6 +135,7 @@ export function snapshotParInputs(inputs: DemandInputs): { manifest: Blob; parts
     v: 1, locationId: inputs.locationId, skus: inputs.skus, overlay: mapToObject(inputs.overlayBySku, same),
     rhythm: mapToObject(inputs.rhythmByVendor, same), skips: mapToObject(inputs.skipsByVendor, same), cutoffs: mapToObject(inputs.cutoffsByVendor, same),
     packEpoch: inputs.packEpochBySku ? mapToObject(inputs.packEpochBySku as ReadonlyMap<string, number>, same) : null,
+    productBySku: mapToObject(inputs.productBySku, same),
   } satisfies ParCatalogPart);
   const guard = blobOf("par_guard", {
     v: 1, locationId: inputs.locationId, runDateEt: inputs.runDateEt, prior: mapToObject(inputs.priorBySlot, same),
@@ -138,6 +146,7 @@ export function snapshotParInputs(inputs: DemandInputs): { manifest: Blob; parts
     v: 1, locationId: inputs.locationId, dateEt: d.dateEt, dayClass: d.dayClass, salesObserved: d.salesObserved, productionObserved: d.productionObserved,
     suspect: inputs.suspectDays.has(d.dateEt), direct: lane(inputs.directOzByDate, d.dateEt), production: lane(inputs.productionOzByDate, d.dateEt),
     flattened: lane(inputs.flattenedOzByDate, d.dateEt),
+    rawDirect: lane(inputs.rawDirectOzByDate, d.dateEt), rawProduction: lane(inputs.rawProductionOzByDate, d.dateEt),
   } satisfies ParDayPart));
   const manifest = blobOf("manifest", {
     v: 1, surface: "pars", locationId: inputs.locationId, runDateEt: inputs.runDateEt, catalog: catalog.hash, guard: guard.hash,
@@ -153,17 +162,20 @@ export function restoreParInputs(manifestHash: string, get: BlobSource): DemandI
   if (m.surface !== "pars") throw new Error("snapshot_wrong_surface");
   const c = read<ParCatalogPart>(m.catalog, get), g = read<ParGuardPart>(m.guard, get);
   const direct = new Map<string, Map<string, number>>(), production = new Map<string, Map<string, number>>(), flattened = new Map<string, Map<string, number>>();
+  const rawDirect = new Map<string, Map<string, number>>(), rawProduction = new Map<string, Map<string, number>>();
   const suspectDays = new Set<string>();
   const window = m.days.map(({ hash }) => {
     const d = read<ParDayPart>(hash, get);
     const put = (into: Map<string, Map<string, number>>, row: Record<string, number>) => { if (Object.keys(row).length > 0) into.set(d.dateEt, objectToMap(row, same)); };
     put(direct, d.direct); put(production, d.production); put(flattened, d.flattened);
+    put(rawDirect, d.rawDirect); put(rawProduction, d.rawProduction);
     if (d.suspect) suspectDays.add(d.dateEt);
     return { dateEt: d.dateEt, dayClass: d.dayClass, salesObserved: d.salesObserved, productionObserved: d.productionObserved };
   });
   return {
     locationId: m.locationId, runDateEt: m.runDateEt, window, skus: c.skus, overlayBySku: objectToMap(c.overlay, same),
-    directOzByDate: direct, productionOzByDate: production, flattenedOzByDate: flattened, laneStartByGrain: objectToMap(g.laneStart, same),
+    directOzByDate: direct, productionOzByDate: production, flattenedOzByDate: flattened,
+    productBySku: objectToMap(c.productBySku, same), rawDirectOzByDate: rawDirect, rawProductionOzByDate: rawProduction, laneStartByGrain: objectToMap(g.laneStart, same),
     suspectDays, signalsStartAt: g.signalsStartAt, rhythmByVendor: objectToMap(c.rhythm, same), skipsByVendor: objectToMap(c.skips, same),
     cutoffsByVendor: objectToMap(c.cutoffs, same), priorBySlot: objectToMap(g.prior, same), budgetSpentBySlot: new Set(g.budgetSpent),
     recipeEditedAt: g.recipeEditedAt, noLocalHistory: g.noLocalHistory,
@@ -276,102 +288,98 @@ export function parCoverageOz(unit: ParCoverageUnit, signalsFor: (validDate: str
 }
 
 /**
- * One realized day of par demand.
- *   skuOz     THE RECORD: every SKU the day's lanes name, with its ounces (direct + production, never flattened).
- *             It is read from the lanes alone, so it does not depend on which SKUs carry a par on the night the
- *             target is frozen. The lanes are rolled to product grain BY THE FREEZE NIGHT'S MEMBERSHIP: each SKU
- *             carries the total of the product it belongs to THAT night, which is not always the product a
- *             forecast named it for (review r2).
- *   skuGrain  the freeze night's SKU -> product (grain key), for every SKU that night's par'd universe holds. It
- *             is carried ONLY so the reader can refuse a SKU whose product changed; it never decides which
- *             product a forecast meant (that is the forecast night's, `parMembersOf`).
- *   oz        the same ounces by product (grain key), for the products the freeze night's par'd SKUs name. A
- *             convenience for totals; a scored actual reads it only through `parActualOz` (review r1 #1).
+ * THE STRUCTURAL RULE OF A PAR TARGET (review r3). Two inputs, two owners, and nothing else:
+ *   USAGE     what each SKU used on the day, by SKU id, before any product rollup (`ParTarget`). It is read from
+ *             the ledgers' own record and carries NO catalog state: no product, no primary, no active flag, no
+ *             par'd universe. So the night it is frozen from cannot change what it says.
+ *   IDENTITY  which SKUs are a product: the FORECAST night's SKU -> product map (`parIdentityOf`), the same map
+ *             that night's lanes were rolled by. For a recorded forecast it comes from the stored manifest:
+ *             `parIdentityOf(restoreParInputs(manifestHash, get))`.
+ * A scored actual is the forecast night's own computation over the realized usage: the usage rolled by the
+ * forecast night's map through the ONE shipped rollup, read at the SKU the forecast named (`parActualOz`).
+ * Whatever happened to the catalog between the forecast and D+4 (a member reassigned, detached, deactivated,
+ * reactivated, a primary changed, in any order) is not an input, so it cannot move the number. There is no
+ * case list to extend.
+ *
+ * One realized day of par demand: the direct and the production ounces by SKU id (never flattened), as recorded.
  */
 export interface ParTarget {
   v: 1; target: "par_product_day_oz"; locationId: string; validDate: string;
-  oz: Record<string, number>; skuOz: Record<string, number>; skuGrain: Record<string, string>;
+  direct: Record<string, number>; production: Record<string, number>;
 }
 
 /**
- * The realized ounces of one day, as the engine's own loader reads them (direct + production, never flattened).
- * null = the date is outside these inputs' window. A day neither oracle saw is `not_covered`: excluded and
- * counted, never zero. On a covered day a SKU the lanes do not name did not move: that is a true zero.
+ * The realized ounces of one day. null = the date is outside these inputs' window. A day neither oracle saw is
+ * `not_covered`: excluded and counted, never zero. On a covered day a SKU the record does not name did not move:
+ * that is a true zero.
  *
- * A target is frozen at D+4 from a LATER night than the forecasts it judges. A SKU deactivated in between has
- * left that night's par'd universe (`inputs.skus`) but not its lanes, so the record is taken from the lanes.
+ * It reads the window's coverage and the two RAW lanes. It does not read `inputs.skus`, `inputs.productBySku` or
+ * the rolled lanes (the parameter type does not offer them): a target is frozen at D+4 from a LATER night than
+ * the forecasts it judges, and that night's catalog is not the forecast's.
  */
-export function parTargetFromInputs(inputs: DemandInputs, validDate: string): { coverage: "covered" | "not_covered"; payload: ParTarget | null } | null {
+export function parTargetFromInputs(inputs: Pick<DemandInputs, "locationId" | "window" | "rawDirectOzByDate" | "rawProductionOzByDate">, validDate: string): { coverage: "covered" | "not_covered"; payload: ParTarget | null } | null {
   const day = inputs.window.find((d) => d.dateEt === validDate);
   if (!day) return null;
   if (!day.salesObserved && !day.productionObserved) return { coverage: "not_covered", payload: null };
-  const direct = inputs.directOzByDate.get(validDate), production = inputs.productionOzByDate.get(validDate);
-  const used = (skuId: string): number => round6((direct?.get(skuId) ?? 0) + (production?.get(skuId) ?? 0));
-  const skuOz: Record<string, number> = {};
-  for (const skuId of [...new Set([...(direct?.keys() ?? []), ...(production?.keys() ?? [])])].sort()) {
-    const v = used(skuId);
-    if (v > 0) skuOz[skuId] = v;
-  }
-  const oz: Record<string, number> = {};
-  const skuGrain: Record<string, string> = {};
-  for (const s of inputs.skus) {
-    skuGrain[s.skuId] = s.grainKey;
-    if (oz[s.grainKey] !== undefined) continue;
-    const v = used(s.skuId);
-    if (v > 0) oz[s.grainKey] = v;
-  }
-  return { coverage: "covered", payload: { v: 1, target: "par_product_day_oz", locationId: inputs.locationId, validDate, oz, skuOz, skuGrain } };
+  const record = (m: ReadonlyMap<string, ReadonlyMap<string, number>>): Record<string, number> => {
+    const out: Record<string, number> = {};
+    const row = m.get(validDate);
+    for (const skuId of [...(row?.keys() ?? [])].sort()) {
+      const v = round6(row!.get(skuId)!);
+      if (v !== 0) out[skuId] = v;
+    }
+    return out;
+  };
+  return { coverage: "covered", payload: { v: 1, target: "par_product_day_oz", locationId: inputs.locationId, validDate,
+    direct: record(inputs.rawDirectOzByDate), production: record(inputs.rawProductionOzByDate) } };
+}
+
+/** Everything the record says was used that day, over every SKU id (direct + production). A catalog-free total. */
+export function parTargetTotalOz(t: ParTarget): number {
+  let n = 0;
+  for (const v of Object.values(t.direct)) n += v;
+  for (const v of Object.values(t.production)) n += v;
+  return round6(n);
 }
 
 /**
- * THE FORECAST NIGHT'S product membership: grain key -> its member SKU ids (sorted). Which SKUs ARE a product is
- * decided on the night the forecast was made, from that night's inputs. For a recorded forecast those are the
- * stored ones: `parMembersOf(restoreParInputs(manifestHash, get))`. Never the freeze night's (review r2).
+ * THE FORECAST NIGHT'S product identity: the SKU -> product map that night's lanes were rolled by. Take it from
+ * the night the forecast was made (for a recorded forecast, the stored manifest). Never from a later night.
  */
-export type ParMembers = Record<string, string[]>;
-export function parMembersOf(forecastNight: DemandInputs): ParMembers {
-  const out: ParMembers = {};
-  for (const s of forecastNight.skus) (out[s.grainKey] ??= []).push(s.skuId);
-  for (const k of Object.keys(out)) out[k]!.sort();
-  return out;
+export interface ParIdentity { productBySku: ReadonlyMap<string, string> }
+export function parIdentityOf(forecastNight: Pick<DemandInputs, "productBySku">): ParIdentity {
+  return { productBySku: new Map(forecastNight.productBySku) };
 }
 
-const grainsOfTarget = new WeakMap<ParTarget, Set<string>>();
-function targetHasGrain(t: ParTarget, grainKey: string): boolean {
-  let set = grainsOfTarget.get(t);
-  if (!set) { set = new Set(Object.values(t.skuGrain)); grainsOfTarget.set(t, set); }
-  return set.has(grainKey);
+type RolledDay = { direct: Map<string, number>; production: Map<string, number> };
+const rolledByIdentity = new WeakMap<ParTarget, WeakMap<ParIdentity, RolledDay>>();
+function rolled(t: ParTarget, identity: ParIdentity): RolledDay {
+  let byId = rolledByIdentity.get(t);
+  if (!byId) { byId = new WeakMap(); rolledByIdentity.set(t, byId); }
+  let hit = byId.get(identity);
+  if (!hit) {
+    // The loader's own arithmetic (lib/dynamic-pars.ts): each raw lane through the one rollup, then summed at the SKU.
+    const roll = (row: Record<string, number>): Map<string, number> =>
+      rollupLanesByProduct(new Map([[t.validDate, objectToMap(row, same)]]), identity.productBySku).get(t.validDate)!;
+    hit = { direct: roll(t.direct), production: roll(t.production) };
+    byId.set(identity, hit);
+  }
+  return hit;
 }
 
 /**
- * What a product used on a frozen day, for a forecast that names it: THE one reader of a scored par actual.
- * The identity is the FORECAST night's: the product (grain key), the SKU that spoke for it, and its members that
- * night (`parMembersOf`). The target's lanes are rolled by the FREEZE night's membership, so a SKU that has since
- * been attached to another product carries THAT product's total: it is never read (review r2). In order:
- *   1. the named SKU, while the freeze night still has it in this product (nothing recorded = a true zero);
- *   2. the named SKU when it has left the par'd universe (review r1 #1: deactivated, its lane still holds its use);
- *   3. another forecast-night member the freeze night still has in this product;
- *   4. the product's own record, when the freeze night has any SKU in it (a member attached since);
- *   5. another forecast-night member that left the par'd universe and whose lane is recorded;
- *   6. null when the named SKU now belongs to another product and nothing above answered: the product's use is
- *      UNKNOWN (excluded and counted, like an uncovered day), never another product's and never zero. Else 0.
+ * What a forecast's product used on a frozen day: THE one reader of a scored par actual. `skuId` is the SKU the
+ * forecast named; `identity` is the FORECAST night's (`parIdentityOf`). The answer is that night's rolled lane,
+ * recomputed over the realized usage: every SKU the forecast night had in the product, and no other. A SKU the
+ * record does not name did not move (a true zero). It reads nothing of the night the target was frozen from.
  */
-export function parActualOz(t: ParTarget, unit: { grainKey: string; skuId: string }, members: ReadonlyArray<string>): number | null {
-  const grainNow = (skuId: string): string | undefined => t.skuGrain[skuId];
-  const named = grainNow(unit.skuId);
-  if (named === unit.grainKey) return t.skuOz[unit.skuId] ?? 0;
-  if (named === undefined && t.skuOz[unit.skuId] !== undefined) return t.skuOz[unit.skuId]!;
-  const others = members.filter((m) => m !== unit.skuId);
-  const still = others.find((m) => grainNow(m) === unit.grainKey);
-  if (still !== undefined) return t.skuOz[still] ?? 0;
-  if (targetHasGrain(t, unit.grainKey)) return t.oz[unit.grainKey] ?? 0;
-  const gone = others.find((m) => grainNow(m) === undefined && t.skuOz[m] !== undefined);
-  if (gone !== undefined) return t.skuOz[gone]!;
-  return named === undefined ? 0 : null;
+export function parActualOz(t: ParTarget, unit: { skuId: string }, identity: ParIdentity): number {
+  const r = rolled(t, identity);
+  return round6((r.direct.get(unit.skuId) ?? 0) + (r.production.get(unit.skuId) ?? 0));
 }
 
-/** Both arms of the product-day ounce score, for every lead whose target is frozen. `members` = `parMembersOf` of the FORECAST night. */
-export function parScoreRows(shopId: string, f: ParForecast, members: ParMembers, targets: TargetLookup<ParTarget>, candidate: CandidateSpec): PairedRow[] {
+/** Both arms of the product-day ounce score, for every lead whose target is frozen. `identity` = `parIdentityOf` of the FORECAST night. */
+export function parScoreRows(shopId: string, f: ParForecast, identity: ParIdentity, targets: TargetLookup<ParTarget>, candidate: CandidateSpec): PairedRow[] {
   const out: PairedRow[] = [];
   for (const leadDays of PAR_LEADS) {
     const validDate = addDaysEt(f.decisionDate, leadDays);
@@ -382,7 +390,7 @@ export function parScoreRows(shopId: string, f: ParForecast, members: ParMembers
     const episodeId = composeSignals(signals, 1) !== 1 ? candidate.episodeFor(validDate) : null;
     for (const unitKey of Object.keys(base)) {
       out.push({ shopId, target: "par_product_day_oz", leadDays, validDate, unitKey, baseline: base[unitKey]!, candidate: cand[unitKey] ?? null,
-        actual: t === "not_covered" ? null : parActualOz(t, { grainKey: unitKey, skuId: f.terms[unitKey]!.skuId }, members[unitKey] ?? []), episodeId });
+        actual: t === "not_covered" ? null : parActualOz(t, { skuId: f.terms[unitKey]!.skuId }, identity), episodeId });
     }
   }
   return out;

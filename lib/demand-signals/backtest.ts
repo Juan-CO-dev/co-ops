@@ -19,8 +19,8 @@ import { HOLIDAY_MODEL, TREND_MODEL, holidayOn, holidaySignal, trendSignal, type
 import type { EvidenceClass } from "./evidence-shared";
 import { candidateModel, TARGET_FREEZE_LAG_DAYS } from "./ledger-shared";
 import {
-  NO_SIGNAL, forecastLabor, forecastPars, forecastPrep, laborScoreRows, leadDaysOf, parActualOz, parCoverageOz, parDailyForecast, parMembersOf, parScoreRows, prepScoreRows,
-  type CandidateSpec, type ClassCall, type LaborInputs, type LaborTarget, type ParForecast, type ParMembers, type ParTarget, type PrepInputs, type PrepTarget,
+  NO_SIGNAL, forecastLabor, forecastPars, forecastPrep, laborScoreRows, leadDaysOf, parActualOz, parCoverageOz, parDailyForecast, parIdentityOf, parScoreRows, parTargetTotalOz, prepScoreRows,
+  type CandidateSpec, type ClassCall, type LaborInputs, type LaborTarget, type ParForecast, type ParIdentity, type ParTarget, type PrepInputs, type PrepTarget,
   type ReplaySurface, type TargetLookup,
 } from "./replay";
 import {
@@ -162,20 +162,20 @@ export function runBacktest(shops: ReadonlyArray<ShopHistory>, range: { from: st
 
   // ── Pars ──
   const silentPars: Record<string, number> = {};
-  const parForecasts: Array<{ shopId: string; f: ParForecast; members: ParMembers }> = [];
+  const parForecasts: Array<{ shopId: string; f: ParForecast; identity: ParIdentity }> = [];
   const pars: SurfaceRun = {
     surface: "pars",
-    actualTotal: (shopId, date) => total(byShop.get(shopId)!.parTargets, date, (t) => sum(Object.values(t.oz))),
+    actualTotal: (shopId, date) => total(byShop.get(shopId)!.parTargets, date, parTargetTotalOz),
     decisions: shops.flatMap((s) => s.parNights.map((inputs): Decision => {
       const decisionDate = addDaysEt(inputs.runDateEt, 1);
       const f = forecastPars(inputs, decisionDate);
-      const members = parMembersOf(inputs); // the FORECAST night's product membership, never the freeze night's
-      parForecasts.push({ shopId: s.shopId, f, members });
+      const identity = parIdentityOf(inputs); // the FORECAST night's product identity, never a later night's
+      parForecasts.push({ shopId: s.shopId, f, identity });
       for (const [reason, n] of Object.entries(f.silent)) silentPars[reason] = (silentPars[reason] ?? 0) + n;
       return {
         shopId: s.shopId, decisionDate, validDates: [...new Set([...Array.from({ length: 7 }, (_, i) => addDaysEt(decisionDate, i)), ...f.coverage.flatMap((u) => u.coveredDays)])].sort(),
         baselineTotal0: sum(Object.values(parDailyForecast(f, decisionDate, []))),
-        rows: (candidate) => parScoreRows(s.shopId, f, members, s.parTargets, candidate),
+        rows: (candidate) => parScoreRows(s.shopId, f, identity, s.parTargets, candidate),
       };
     })),
   };
@@ -210,16 +210,14 @@ export function runBacktest(shops: ReadonlyArray<ShopHistory>, range: { from: st
   for (const s of shops) {
     for (const arm of ["baseline", ...CANDIDATE_KEYS] as const) {
       const line: CoverageLine = { shopId: s.shopId, arm, units: 0, skippedUnits: 0, actualOz: 0, shortfallOz: 0, overCoverOz: 0 };
-      for (const { shopId, f, members } of parForecasts) {
+      for (const { shopId, f, identity } of parForecasts) {
         if (shopId !== s.shopId) continue;
         for (const unit of f.coverage) {
           let actual: number | null = 0;
           for (const d of unit.coveredDays) {
             const t = s.parTargets(d);
             if (t === undefined || t === "not_covered") { actual = null; break; }
-            const used = parActualOz(t, unit, members[unit.grainKey] ?? []);
-            if (used === null) { actual = null; break; } // the product's identity changed: unknown, never another product's
-            actual += used;
+            actual += parActualOz(t, unit, identity);
           }
           if (actual === null) { line.skippedUnits += 1; continue; }
           const signals = arm === "baseline" ? undefined : signalByCandidate.get(arm);

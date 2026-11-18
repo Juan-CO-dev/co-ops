@@ -110,6 +110,15 @@ export function buildParInputs(o: FixtureOptions = {}): DemandInputs {
     }
     if (!laneStartByGrain.has(s.grainKey) || laneStartByGrain.get(s.grainKey) == null) laneStartByGrain.set(s.grainKey, start);
   }
+  // The record behind the lanes (review r3). The rolled lanes above are pinned by the engine golden and give the
+  // two P1 twins separate noise, so they are not a rollup of anything. The raw record books P1's use on its
+  // primary (sku 15, the SKU that speaks for it): rolled by `productBySku`, sku 15 reads exactly its lane above.
+  const productBySku = new Map<string, string>();
+  for (const s of skus) if (s.productId != null) productBySku.set(s.skuId, s.productId);
+  const rawOf = (m: Map<string, Map<string, number>>) => new Map([...m].map(([d, row]) => {
+    const next = new Map(row); next.delete(sku(16));
+    return [d, next] as const;
+  }));
   const overlay = (p: Partial<ParOverlayRow>): ParOverlayRow => ({ weekdayPar: null, weekendPar: null, activeOverride: null, pinnedWeekdayAt: null, pinnedWeekendAt: null, ...p });
   const overlayBySku = new Map<string, ParOverlayRow>([
     [sku(1), overlay({ weekdayPar: 7 })],
@@ -120,6 +129,7 @@ export function buildParInputs(o: FixtureOptions = {}): DemandInputs {
   return {
     locationId: FIX_LOC, runDateEt, window, skus, overlayBySku,
     directOzByDate: direct, productionOzByDate: production, flattenedOzByDate: flattened, laneStartByGrain,
+    productBySku, rawDirectOzByDate: rawOf(direct), rawProductionOzByDate: rawOf(production),
     suspectDays: new Set([addDaysEt(runDateEt, -9)]), signalsStartAt: addDaysEt(runDateEt, -20),
     rhythmByVendor: new Map([[V1, [rhythm(V1, 1, 1), rhythm(V1, 4, 1)]], [V2, [rhythm(V2, 2, 2), rhythm(V2, 5, 3)]]]),
     skipsByVendor: new Map([[V1, [{ vendorId: V1, skipFrom: addDaysEt(runDateEt, 4), skipThrough: addDaysEt(runDateEt, 4) }]]]),

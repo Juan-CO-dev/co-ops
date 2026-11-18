@@ -147,7 +147,7 @@ describe("0342: targets freeze at D+4", () => {
   });
   it("a later, different reading is a revision beside the frozen row; the frozen row stands", async () => {
     const a = targetFreezeArgs("par_product_day_oz", "x", read);
-    const revised = targetFreezeArgs("par_product_day_oz", "x", { coverage: "covered", payload: { ...read.payload!, oz: { ...read.payload!.oz, extra: 5 } } });
+    const revised = targetFreezeArgs("par_product_day_oz", "x", { coverage: "covered", payload: { ...read.payload!, direct: { ...read.payload!.direct, extra: 5 } } });
     await put([revised.blob!]);
     expect(await call(addDaysEt(today, -4), revised)).toBe("revised");
     expect(await call(addDaysEt(today, -4), revised)).toBe("revised");

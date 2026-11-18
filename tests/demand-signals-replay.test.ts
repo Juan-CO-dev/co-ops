@@ -11,9 +11,9 @@ import { addDaysEt } from "@/lib/vendor-rhythm-shared";
 import { addressOf } from "@/lib/demand-signals/hash";
 import {
   LABOR_LEADS, NO_SIGNAL, PAR_LEADS, forecastLabor, forecastPars, forecastPrep, laborScoreRows, laborTargetFromDay, parCoverageOz,
-  parActualOz, parDailyForecast, parMembersOf, parScoreRows, parTargetFromInputs, prepScoreRows, realizedDayType, replayVerdict, restoreParInputs, snapshotLaborInputs,
+  parDailyForecast, parIdentityOf, parScoreRows, parTargetFromInputs, prepScoreRows, realizedDayType, replayVerdict, restoreParInputs, snapshotLaborInputs,
   snapshotParInputs, snapshotPrepInputs, restoreLaborInputs, restorePrepInputs, evidenceOfReplay,
-  type Blob, type CandidateSpec, type LaborInputs, type ParTarget, type PrepInputs,
+  type Blob, type CandidateSpec, type LaborInputs, type PrepInputs,
 } from "@/lib/demand-signals/replay";
 import { buildParInputs, FIX_LOC, FIX_RUN_DATE, sku } from "./helpers/par-engine-fixture";
 
@@ -147,9 +147,9 @@ describe("pars: the forecast, and the candidate arm that differs only by the sig
       if (t === null) return undefined;
       if (t.coverage !== "covered") return "not_covered" as const;
       // one covered day on which nothing moved: every forecast product is a TRUE ZERO that day
-      return validDate === addDaysEt(f.decisionDate, 2) ? { ...t.payload!, oz: {}, skuOz: {} } : t.payload!;
+      return validDate === addDaysEt(f.decisionDate, 2) ? { ...t.payload!, direct: {}, production: {} } : t.payload!;
     };
-    const rows = parScoreRows("shop", f, parMembersOf(inputs), targets, NO_SIGNAL);
+    const rows = parScoreRows("shop", f, parIdentityOf(inputs), targets, NO_SIGNAL);
     expect(new Set(rows.map((r) => r.leadDays))).toEqual(new Set(PAR_LEADS));
     expect(rows.every((r) => r.baseline === r.candidate && r.episodeId === null && r.target === "par_product_day_oz")).toBe(true);
     const gapDate = later.window.find((d) => !d.salesObserved && !d.productionObserved && d.dateEt >= f.decisionDate)?.dateEt;
@@ -158,87 +158,42 @@ describe("pars: the forecast, and the candidate arm that differs only by the sig
     expect(rows.some((r) => r.actual === 0)).toBe(true);
     expect(parTargetFromInputs(later, addDaysEt(later.runDateEt, 1))).toBeNull(); // outside the window: not frozen, not zero
     const cand: CandidateSpec = { signalsFor: () => [1.1], episodeFor: (d) => `trend_up:${d}` };
-    const moved = parScoreRows("shop", f, parMembersOf(inputs), targets, cand);
+    const moved = parScoreRows("shop", f, parIdentityOf(inputs), targets, cand);
     expect(moved.every((r) => r.episodeId !== null)).toBe(true);
     expect(moved.some((r) => r.candidate !== null && r.baseline !== null && r.candidate > r.baseline)).toBe(true);
   });
   it("a SKU deactivated between the forecast and D+4 keeps its usage in the target (review r1 #1)", () => {
-    // The freeze reads a LATER night. Its par'd universe has lost a SKU the forecast spoke for; the lanes still hold what it used.
+    // The freeze reads a LATER night. Its par'd universe has lost a SKU the forecast spoke for; the record still holds what it used.
     const later = buildParInputs({ runDate: addDaysEt(inputs.runDateEt, 7), seed: 5 });
+    const identity = parIdentityOf(inputs); // the FORECAST night's
     const lookup = (night: typeof later) => (validDate: string) => {
       const t = parTargetFromInputs(night, validDate);
       return t === null ? undefined : t.coverage === "covered" ? t.payload! : "not_covered" as const;
     };
-    const full = parScoreRows("shop", f, parMembersOf(inputs), lookup(later), NO_SIGNAL);
+    const full = parScoreRows("shop", f, identity, lookup(later), NO_SIGNAL);
     let moved = 0;
     for (const grainKey of Object.keys(f.terms)) {
       const gone = f.terms[grainKey]!.skuId;
       const deactivated = { ...later, skus: later.skus.filter((s) => s.grainKey !== grainKey) };
       expect(deactivated.skus.some((s) => s.skuId === gone)).toBe(false);
       const want = full.filter((r) => r.unitKey === grainKey);
-      const got = parScoreRows("shop", f, parMembersOf(inputs), lookup(deactivated), NO_SIGNAL).filter((r) => r.unitKey === grainKey);
+      const got = parScoreRows("shop", f, identity, lookup(deactivated), NO_SIGNAL).filter((r) => r.unitKey === grainKey);
       expect(got.map((r) => r.actual)).toEqual(want.map((r) => r.actual));
       for (const r of got) {
         if (r.actual === null) continue;
-        const used = (later.directOzByDate.get(r.validDate)?.get(gone) ?? 0) + (later.productionOzByDate.get(r.validDate)?.get(gone) ?? 0);
+        const used = (later.rawDirectOzByDate.get(r.validDate)?.get(gone) ?? 0) + (later.rawProductionOzByDate.get(r.validDate)?.get(gone) ?? 0);
         expect(r.actual).toBeCloseTo(used, 6);
         if (used > 0) moved += 1;
       }
     }
     expect(moved).toBeGreaterThan(20);
-    // The frozen payload itself does not depend on tonight's par'd universe for what a SKU used.
+    // The frozen payload needs nothing of tonight's catalog: the coverage and the raw record are all it is given.
     const day = addDaysEt(f.decisionDate, 1);
-    const none = parTargetFromInputs({ ...later, skus: [] }, day)!;
-    expect(none.payload!.skuOz).toEqual(parTargetFromInputs(later, day)!.payload!.skuOz);
-    expect(Object.keys(none.payload!.skuOz).length).toBeGreaterThan(10);
+    const bare = parTargetFromInputs({ locationId: later.locationId, window: later.window, rawDirectOzByDate: later.rawDirectOzByDate, rawProductionOzByDate: later.rawProductionOzByDate }, day)!;
+    expect(bare).toEqual(parTargetFromInputs(later, day));
+    expect(Object.keys(bare.payload!.direct).length).toBeGreaterThan(10);
   });
-  it("a SKU REASSIGNED to another product between the forecast and D+4 never scores its old product against the new one's usage (review r2)", () => {
-    // Forecast night: product P = { A (the primary, the SKU that speaks), B }. Before D+4: P's primary is reassigned,
-    // A is detached and attached to Q. The freeze night's lanes are rolled by ITS membership, so A now carries Q's total.
-    const P = Object.keys(f.terms).find((g) => inputs.skus.filter((s) => s.grainKey === g).length > 1)!;
-    const A = f.terms[P]!.skuId, B = inputs.skus.find((s) => s.grainKey === P && s.skuId !== A)!.skuId;
-    const Q = "00000000-0000-4000-8000-0000000009c2";
-    const base = buildParInputs({ runDate: addDaysEt(inputs.runDateEt, 7), seed: 5 });
-    const relane = (night: typeof base, aOz: number | null): typeof base => ({
-      ...night,
-      directOzByDate: new Map([...night.directOzByDate].map(([d, row]) => {
-        const next = new Map(row); next.set(B, 80);
-        if (aOz === null) next.delete(A); else next.set(A, aOz);
-        return [d, next] as const;
-      })),
-      productionOzByDate: new Map(),
-    });
-    const reassigned = relane({ ...base, skus: base.skus.map((s) => (s.skuId === A ? { ...s, productId: Q, grainKey: Q, writeHomeSkuId: A } : s.skuId === B ? { ...s, writeHomeSkuId: B } : s)) }, 200);
-    const lookup = (night: typeof base) => (validDate: string) => {
-      const t = parTargetFromInputs(night, validDate);
-      return t === null ? undefined : t.coverage === "covered" ? t.payload! : "not_covered" as const;
-    };
-    const members = parMembersOf(inputs);
-    expect(members[P]).toEqual([A, B].sort());
-    const scored = parScoreRows("shop", f, members, lookup(reassigned), NO_SIGNAL).filter((r) => r.unitKey === P && r.actual !== null);
-    expect(scored.length).toBeGreaterThan(3);
-    expect(scored.map((r) => r.actual)).toEqual(scored.map(() => 80)); // P used 80 oz. Never Q's 200.
-    // The coverage simulation reads through the same one reader.
-    const unit = f.coverage.find((u) => u.grainKey === P)!;
-    const day = scored[0]!.validDate;
-    expect(parActualOz(lookup(reassigned)(day) as ParTarget, unit, members[P]!)).toBe(80);
-    // A now speaks for Q alone (a singleton forecast of A that was attached to Q is the mirror case): P's other
-    // member also left the par'd universe, P is in nobody's record under a still-P identity → B's lane answers.
-    const bUnpard = { ...reassigned, skus: reassigned.skus.filter((s) => s.skuId !== B) };
-    expect(parActualOz(lookup(bUnpard)(day) as ParTarget, unit, members[P]!)).toBe(80);
-    // Every forecast-night member now belongs to another product: P's usage is UNKNOWN. Never Q's, never zero.
-    const allMoved = relane({ ...base, skus: base.skus.map((s) => (s.grainKey === P ? { ...s, productId: Q, grainKey: Q } : s)) }, 200);
-    expect(parActualOz(lookup(allMoved)(day) as ParTarget, unit, members[P]!)).toBeNull();
-    const rows = parScoreRows("shop", f, members, lookup(allMoved), NO_SIGNAL).filter((r) => r.unitKey === P);
-    expect(rows.length).toBeGreaterThan(3);
-    expect(rows.every((r) => r.actual === null)).toBe(true);
-    // The mirror: a forecast for a singleton whose SKU was since attached to Q is unknown too.
-    const single = Object.keys(f.terms).find((g) => f.terms[g]!.skuId === g)!;
-    const attached = { ...base, skus: base.skus.map((s) => (s.skuId === single ? { ...s, productId: Q, grainKey: Q } : s)) };
-    expect(parActualOz(lookup(attached)(day) as ParTarget, { grainKey: single, skuId: single }, members[single]!)).toBeNull();
-    // Unchanged membership is unchanged scoring.
-    expect(parActualOz(lookup(base)(day) as ParTarget, { grainKey: single, skuId: single }, members[single]!)).toBe((lookup(base)(day) as ParTarget).skuOz[single] ?? 0);
-  });
+  // Reassignment, detachment, deactivation and their combinations (reviews r2, r3): tests/demand-signals-par-identity.test.ts.
 });
 
 describe("labor: forecastDay + dayTypeFor, replayed", () => {
