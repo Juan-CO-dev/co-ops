@@ -468,7 +468,7 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   "app/(authed)/reports/page.tsx": /shopParamFor\("\/reports", searchParamValues\(raw\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
   "app/(authed)/reports/sales/page.tsx": /shopParamFor\("\/reports\/sales", searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
   "app/(authed)/reports/business/page.tsx": /shopParamFor\("\/reports\/business", searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
-  "app/(authed)/reports/sales/catering/page.tsx": /shopParamFor\("\/reports\/sales\/catering",searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
+  "app/(authed)/reports/sales/catering/page.tsx": /shopParamFor\("\/reports\/sales\/catering", searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
   "app/(authed)/reports/sales/checks/page.tsx": /shopParamFor\("\/reports\/sales\/checks", searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
   "app/(authed)/reports/written/page.tsx": /await resolveShopId\(auth\.locations\)/,
   "app/(authed)/my-feedback/page.tsx": /selectedParam = shopParamFor\("\/my-feedback", [\s\S]*await resolveShop\(locations, selectedParam\)/,

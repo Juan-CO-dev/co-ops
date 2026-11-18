@@ -24,7 +24,7 @@
 import { shiftReportDate, validReportDate } from "@/lib/report-range";
 import { summarizeSales, type CoverageStatus, type DailyRaw } from "@/lib/sales-reports-shared";
 import { laborWeekViews, canSeePersonCost as laborCanSeePersonCost, type LaborCostRow } from "@/lib/facts/labor-cost-shared";
-import { LABOR_BUILDER_VERSION, LABOR_HISTORY_FLOOR_DAY, LABOR_TARGET_HOURLY_PCT } from "@/lib/facts/labor-config-shared";
+import { LABOR_BUILDER_VERSION, LABOR_HISTORY_FLOOR_DAY, LABOR_TARGET_HOURLY_PCT, LABOR_TARGET_LOADED_PCT } from "@/lib/facts/labor-config-shared";
 import { laborTone, type LaborTone } from "@/lib/scheduling/board-shared";
 import type { RoleCode } from "@/lib/roles";
 
@@ -238,6 +238,10 @@ export function payrollWeekStart(date: string): string {
 // ── Labor figures ───────────────────────────────────────────────────────────────────────────────
 
 export type LaborState = "ok" | "rebuilding" | "unbuilt" | "before_history" | "hours_unknown" | DenominatorState;
+/** Item 9b: why a FULLY LOADED figure is missing. `salary_incomplete` = 0340's payroll-shop gap (salaries not set
+ * up yet); `salary_unknown` = no salary known at all (no shop estimate, no 7shifts salaries). Otherwise the pure
+ * hourly state (a blocked week, unknown hours, an unknown denominator) withholds it too. */
+export type LoadedState = LaborState | "salary_incomplete" | "salary_unknown";
 export interface LaborFigures {
   state: LaborState;
   /** Worked minutes (hourly + salaried presence): independent of the overtime scope, always shown when built. */
@@ -249,50 +253,82 @@ export interface LaborFigures {
   denominator: Denominator;
   pct: number | null;
   tone: LaborTone;
+  /** Item 9b, FULLY LOADED (Juan 2026-11-16/18): pure hourly + salaried + burden, over the same net sales
+   * (target <= 28%). Priced by THE shared pricer (laborWeekViews); null with `loadedState` saying why. */
+  loadedState: LoadedState;
+  salariedCents: number | null;
+  burdenCents: number | null;
+  fullyLoadedCents: number | null;
+  loadedPct: number | null;
+  loadedTone: LaborTone;
+  /** The 12% default burden (no payroll figure yet): always labelled "estimated". */
+  burdenEstimated: boolean;
+  /** A salary came from the shop's estimate, not 7shifts wages. */
+  salaryEstimated: boolean;
+  /** 0340 payroll-shop gaps behind the figures (unplaced + missing wage), shown beside any figure. */
+  salaryGaps: number;
 }
 const round1 = (x: number) => Math.round(x * 10) / 10;
 
-type ViewWithOt = ReturnType<typeof laborWeekViews>[number] & { otMinutes: number };
+type ViewWithOt = ReturnType<typeof laborWeekViews>[number] & { otMinutes: number; salaryEstimated: boolean };
+type Target = number | "target_varies";
+const NO_LOADED = { salariedCents: null, burdenCents: null, fullyLoadedCents: null, loadedPct: null, loadedTone: "none" as LaborTone };
+function withheld(state: LaborState, minutes: number | null, denominator: Denominator): LaborFigures {
+  return { state, minutes, pureHourlyCents: null, otPremiumCents: null, otMinutes: null, denominator, pct: null, tone: "none",
+    loadedState: state, ...NO_LOADED, burdenEstimated: false, salaryEstimated: false, salaryGaps: 0 };
+}
 function figures(views: readonly ViewWithOt[], weekStates: readonly LaborWeekState[], minutes: number | null,
-  denominator: Denominator, target: number | "target_varies"): LaborFigures {
+  denominator: Denominator, target: { hourly: Target; loaded: Target }): LaborFigures {
   const blocked = weekStates.find((s) => s !== "ready");
-  if (blocked) return { state: blocked, minutes, pureHourlyCents: null, otPremiumCents: null, otMinutes: null, denominator, pct: null, tone: "none" };
+  if (blocked) return withheld(blocked, minutes, denominator);
   const pure = views.reduce((s, v) => s + v.pureHourlyCents, 0);
   const prem = views.reduce((s, v) => s + v.otPremiumCents, 0);
   const otMinutes = views.reduce((s, v) => s + v.otMinutes, 0);
   const known = views.length > 0 && views.every((v) => v.hoursKnown);
   const state: LaborState = !known ? "hours_unknown" : denominator.state;
-  const pct = state === "ok" && denominator.cents !== null && denominator.cents > 0 ? round1((100 * pure) / denominator.cents) : null;
-  return { state, minutes, pureHourlyCents: pure, otPremiumCents: prem, otMinutes, denominator, pct,
-    tone: pct === null || target === "target_varies" ? "none" : laborTone(pct, target) };
+  const pctOf = (c: number) => (state === "ok" && denominator.cents !== null && denominator.cents > 0 ? round1((100 * c) / denominator.cents) : null);
+  const toneOf = (p: number | null, t: Target) => (p === null || t === "target_varies" ? "none" as const : laborTone(p, t));
+  const pct = pctOf(pure);
+  const flags = {
+    burdenEstimated: views.some((v) => v.burdenEstimated), salaryEstimated: views.some((v) => v.salaryEstimated),
+    salaryGaps: views.reduce((s, v) => s + v.salaryGaps, 0),
+  };
+  const base = { state, minutes, pureHourlyCents: pure, otPremiumCents: prem, otMinutes, denominator, pct, tone: toneOf(pct, target.hourly), ...flags };
+  // Any week with an unknown salary leaves the whole span's fully loaded unknown (never a partial sum).
+  if (views.length === 0 || views.some((v) => v.fullyLoadedCents === null)) {
+    return { ...base, loadedState: views.some((v) => v.salaryIncomplete) ? "salary_incomplete" : "salary_unknown", ...NO_LOADED };
+  }
+  const salaried = views.reduce((s, v) => s + v.salariedCents!, 0);
+  const burden = views.reduce((s, v) => s + v.burdenCents!, 0);
+  const loaded = views.reduce((s, v) => s + v.fullyLoadedCents!, 0);
+  const loadedPct = pctOf(loaded);
+  return { ...base, loadedState: state, salariedCents: salaried, burdenCents: burden, fullyLoadedCents: loaded, loadedPct, loadedTone: toneOf(loadedPct, target.loaded) };
 }
 function views(rows: readonly LaborCostRow[]): ViewWithOt[] {
-  return rows.map((r) => ({ ...laborWeekViews([r])[0]!, otMinutes: Number(r.ot_minutes) }));
+  return rows.map((r) => ({ ...laborWeekViews([r])[0]!, otMinutes: Number(r.ot_minutes), salaryEstimated: r.salary_basis === "estimate" }));
 }
 const rowMinutes = (rows: readonly LaborCostRow[]) => rows.reduce((s, r) => s + Number(r.hourly_minutes) + Number(r.salaried_minutes), 0);
 
 /** One day: its fact_labor_cost(day, day) row against its own net sales. */
 export function laborDayFigures(day: DaySales, row: LaborCostRow | null, week: LaborWeekCoverageRow | undefined,
-  target: number | "target_varies" = LABOR_TARGET_HOURLY_PCT): LaborFigures {
+  target: Target = LABOR_TARGET_HOURLY_PCT, loadedTarget: Target = LABOR_TARGET_LOADED_PCT): LaborFigures {
   const denominator = laborNetSales(day);
-  if (day.date < BUSINESS_HISTORY_FLOOR) return { state: "before_history", minutes: null, pureHourlyCents: null, otPremiumCents: null, otMinutes: null, denominator, pct: null, tone: "none" };
-  if (!row) return { state: "unbuilt", minutes: null, pureHourlyCents: null, otPremiumCents: null, otMinutes: null, denominator, pct: null, tone: "none" };
+  if (day.date < BUSINESS_HISTORY_FLOOR) return withheld("before_history", null, denominator);
+  if (!row) return withheld("unbuilt", null, denominator);
   const state = row.ot_state === "unbuilt" ? "unbuilt" as const : laborWeekState(week);
-  return figures(views([row]), [state], rowMinutes([row]), denominator, target);
+  return figures(views([row]), [state], rowMinutes([row]), denominator, { hourly: target, loaded: loadedTarget });
 }
 /** A week or a whole range: the weeks' fact_labor_cost rows (raw cents summed first) over the days' net. */
 export function laborRangeFigures(days: readonly DaySales[], rows: readonly LaborCostRow[], weeks: ReadonlyMap<string, LaborWeekCoverageRow>,
-  target: { hourly: number | "target_varies" }): LaborFigures {
+  target: { hourly: Target; loaded?: Target }): LaborFigures {
   const denominator = sumNetSales(days);
-  if (days.length === 0 || days[0]!.date < BUSINESS_HISTORY_FLOOR) {
-    return { state: "before_history", minutes: null, pureHourlyCents: null, otPremiumCents: null, otMinutes: null, denominator, pct: null, tone: "none" };
-  }
+  if (days.length === 0 || days[0]!.date < BUSINESS_HISTORY_FLOOR) return withheld("before_history", null, denominator);
   const weekStarts = [...new Set(days.map((d) => payrollWeekStart(d.date)))];
   const states = weekStarts.map((w) => {
     const r = rows.find((x) => x.week_start === w);
     return !r || r.ot_state === "unbuilt" ? "unbuilt" as const : laborWeekState(weeks.get(w));
   });
-  return figures(views(rows), states, rows.length ? rowMinutes(rows) : null, denominator, target.hourly);
+  return figures(views(rows), states, rows.length ? rowMinutes(rows) : null, denominator, { hourly: target.hourly, loaded: target.loaded ?? LABOR_TARGET_LOADED_PCT });
 }
 
 /** A 15-minute (or hour) cell: Toast-hour sales only, straight time, never toned (plan: tones at day/week).

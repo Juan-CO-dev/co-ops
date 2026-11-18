@@ -58,7 +58,7 @@ describe("the report a GM and a MoO get", () => {
   it("GM own shop: hours per person and sales per server, NO person cost; day % uses Toast net + ezCater", async () => {
     const f = fakeClient();
     const dto = await loadBusinessReport(gm, { locationId: A, range }, { client: f.client, env: ON });
-    expect(dto.access).toEqual({ personCost: false });
+    expect(dto.access).toEqual({ personCost: false, quarterCost: false });
     expect(dto.people[0]).toEqual({ personKey: "u:11111111-1111-4111-8111-111111111111", label: "Ana", source: "7shifts", payClass: "hourly", minutes: 600, otMinutes: 0, weeksSuppressed: 0 });
     expect(JSON.stringify(dto)).not.toMatch(/straight_cents|costCents|rate/);
     // Each day: $30 Toast + $20 ezCater = $50 net; labor $9 => 18%.
@@ -68,7 +68,7 @@ describe("the report a GM and a MoO get", () => {
   it("MoO: the same plus straight-time cost per person (one named constant decides)", async () => {
     const f = fakeClient();
     const dto = await loadBusinessReport(moo, { locationId: A, range }, { client: f.client, env: ON });
-    expect(dto.access).toEqual({ personCost: true });
+    expect(dto.access).toEqual({ personCost: true, quarterCost: true });
     expect(dto.people[0]).toMatchObject({ straightCostCents: 18_000 });
   });
   it("serialized payload paths are an allowlist per role (an unknown path fails)", async () => {

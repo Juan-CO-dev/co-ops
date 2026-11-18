@@ -152,6 +152,12 @@ export const PERSON_COST_MIN: LaborFactAccess = "person_money";
 export function canSeePersonCost(role: RoleCode): boolean {
   return ACCESS_RANK[laborFactAccess(role)] >= ACCESS_RANK[PERSON_COST_MIN];
 }
+/** Item 9b (Juan 2026-11-18: "GMs see hours only for 15-min"): the ONE switch for labor DOLLARS (and %) per
+ * 15-minute quarter on every labor reader. `person_money` = MoO / Owner / CGS; a GM sees that quarter's minutes. */
+export const QUARTER_COST_MIN: LaborFactAccess = "person_money";
+export function canSeeQuarterLaborCost(role: RoleCode): boolean {
+  return ACCESS_RANK[laborFactAccess(role)] >= ACCESS_RANK[QUARTER_COST_MIN];
+}
 
 /** Every label a labor reader shows (en + es, pinned by tests/fact-labor-i18n.test.ts). No reader ships in
  * 2c; these exist so the first one is born translated. */

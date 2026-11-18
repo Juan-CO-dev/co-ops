@@ -21,7 +21,7 @@ import { shiftReportDate } from "@/lib/report-range";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { operationalDayUtcRange } from "@/lib/operational-day";
 import { SALES_READ_MIN, SALES_WINDOW_CONCURRENCY, salesWindows, summarizeSales, type DailyRaw } from "@/lib/sales-reports-shared";
-import { laborTargetsFor, rangeTargets, toLaborCostRow, type LaborCostRow, type LaborTargets } from "@/lib/facts/labor-cost-shared";
+import { canSeeQuarterLaborCost, laborTargetsFor, rangeTargets, toLaborCostRow, type LaborCostRow, type LaborTargets } from "@/lib/facts/labor-cost-shared";
 import { LABOR_HISTORY_FLOOR_DAY, laborWageFallback, type WageFallback } from "@/lib/facts/labor-config-shared";
 import type { RoleCode } from "@/lib/roles";
 import {
@@ -155,12 +155,15 @@ export interface BusinessDayDto {
   /** Null when the day's cuts are not shown. */
   rush: RushResult | null;
 }
-export interface BusinessWeekDto { weekStart: string; from: string; to: string; target: number; labor: LaborFigures }
+export interface BusinessWeekDto { weekStart: string; from: string; to: string; target: number; loadedTarget: number; labor: LaborFigures }
 export interface BusinessQuarterDto {
   date: string; quarterStartAt: string; wallQuarter: number; fold: number;
   /** `amountMissing` = checks of unknown amount in this quarter (> 0 = its sales are partial, so no %). */
-  toastCents: number | null; checks: number | null; amountMissing: number | null; laborMinutes: number | null; straightCents: number | null;
-  pct: number | null; basis: "toast_only_straight_time"; tone: "none";
+  toastCents: number | null; checks: number | null; amountMissing: number | null; laborMinutes: number | null;
+  /** Item 9b: the quarter's labor DOLLARS and % exist only where QUARTER_COST_MIN allows (MoO+); a GM's quarter
+   * has neither key (a % times the shown sales would be the dollars). */
+  straightCents?: number | null; pct?: number | null;
+  basis: "toast_only_straight_time"; tone: "none";
 }
 /** A day's `sale` Toast checks with no opened quarter; quarters + this = the day's Toast check sales. */
 export interface BusinessUnassignedDto { date: string; toastCents: number; checks: number }
@@ -175,13 +178,14 @@ export interface BusinessPersonDto {
 export interface BusinessReportDto {
   locationId: string;
   range: BusinessRange;
-  access: { personCost: boolean };
+  access: { personCost: boolean; quarterCost: boolean };
   days: BusinessDayDto[];
   weeks: BusinessWeekDto[];
   total: {
     sales: { totalCents: number; toastChecksCents: number; toastNetCents: number | null; ezcaterCents: number; refundCents: number; coverage: string };
     labor: LaborFigures;
     target: number | "target_varies";
+    loadedTarget: number | "target_varies";
   };
   quarters: BusinessQuarterDto[] | null;
   /** Per day whose cuts are shown (<= 31-day ranges); null when quarters are. Days with nothing unassigned are omitted. */
@@ -199,7 +203,8 @@ export interface BusinessReportDto {
 const keys = (prefix: string, ks: readonly string[]) => ks.map((k) => `${prefix}.${k}`);
 const SALES_KEYS = ["date", "coverage", "checks", "toastChecksCents", "toastAmountMissing", "toastNetCents", "ezcaterCents", "ezcaterOrders",
   "ezcaterMissing", "refundCents", "totalCents", "giftCardCents", "ezcaterLinkedCents"] as const;
-const LABOR_KEYS = ["state", "minutes", "pureHourlyCents", "otPremiumCents", "otMinutes", "denominator", "denominator.cents", "denominator.state", "pct", "tone"] as const;
+const LABOR_KEYS = ["state", "minutes", "pureHourlyCents", "otPremiumCents", "otMinutes", "denominator", "denominator.cents", "denominator.state", "pct", "tone",
+  "loadedState", "salariedCents", "burdenCents", "fullyLoadedCents", "loadedPct", "loadedTone", "burdenEstimated", "salaryEstimated", "salaryGaps"] as const;
 const RUSH_KEYS = ["state", "windows[].startAt", "windows[].endAt", "windows[].quarters", "windows[].checks", "windows[].cents",
   "windows[].baselineChecks", "windows[].baselineCents"] as const;
 const CUT_KEYS = ["key", "label", "provider", "cents", "checks", "amountMissing", "unassigned"] as const;
@@ -207,13 +212,13 @@ const PERSON_KEYS = ["personKey", "label", "source", "payClass", "minutes", "otM
 const SHOP_MONEY_PATHS: readonly string[] = [
   "locationId",
   ...keys("range", ["range", "from", "to", "days", "shortened", "empty", "previous.from", "previous.to", "lastYear", "lastYear.from", "lastYear.to", "lastYearReason"]),
-  "access.personCost",
+  "access.personCost", "access.quarterCost",
   "days[].date", ...keys("days[].sales", SALES_KEYS), "days[].cuts", ...keys("days[].labor", LABOR_KEYS),
   "days[].largeChecks.checks", "days[].largeChecks.cents", "days[].rush", ...keys("days[].rush", RUSH_KEYS),
-  "weeks[].weekStart", "weeks[].from", "weeks[].to", "weeks[].target", ...keys("weeks[].labor", LABOR_KEYS),
+  "weeks[].weekStart", "weeks[].from", "weeks[].to", "weeks[].target", "weeks[].loadedTarget", ...keys("weeks[].labor", LABOR_KEYS),
   ...keys("total.sales", ["totalCents", "toastChecksCents", "toastNetCents", "ezcaterCents", "refundCents", "coverage"]),
-  ...keys("total.labor", LABOR_KEYS), "total.target",
-  "quarters", ...keys("quarters[]", ["date", "quarterStartAt", "wallQuarter", "fold", "toastCents", "checks", "amountMissing", "laborMinutes", "straightCents", "pct", "basis", "tone"]),
+  ...keys("total.labor", LABOR_KEYS), "total.target", "total.loadedTarget",
+  "quarters", ...keys("quarters[]", ["date", "quarterStartAt", "wallQuarter", "fold", "toastCents", "checks", "amountMissing", "laborMinutes", "basis", "tone"]),
   "quartersUnassigned", ...keys("quartersUnassigned[]", ["date", "toastCents", "checks"]),
   "quartersReason",
   ...keys("channels.included[]", CUT_KEYS), ...keys("channels.excluded[]", CUT_KEYS), ...keys("servers[]", CUT_KEYS),
@@ -223,7 +228,7 @@ const SHOP_MONEY_PATHS: readonly string[] = [
 ];
 export const BUSINESS_REPORT_DTO_PATHS = {
   shop_money: SHOP_MONEY_PATHS,
-  person_money: [...SHOP_MONEY_PATHS, "people[].straightCostCents"],
+  person_money: [...SHOP_MONEY_PATHS, "people[].straightCostCents", "quarters[].straightCents", "quarters[].pct"],
 } as const;
 
 // ── Loader ──────────────────────────────────────────────────────────────────────────────────────
@@ -250,6 +255,7 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
   const sb = deps.client ?? getServiceRoleClient();
   const { range, locationId } = args;
   const personCost = canSeePersonCost(viewer.role);
+  const quarterCost = canSeeQuarterLaborCost(viewer.role);
   const wf = deps.wageFallback ?? laborWageFallback(env.LABOR_WAGE_FALLBACK);
   const win = (w: { from: string; to: string }) => ({ p_location_id: locationId, p_from: w.from, p_to: w.to });
 
@@ -327,12 +333,12 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
   const dayDtos: BusinessDayDto[] = sales.map((s) => {
     const dayCuts = cutsByDate.get(s.date) ?? [];
     const rc = recomposeDay(s, dayCuts);
-    const target = weekTargets.get(payrollWeekStart(s.date))?.hourly.pct;
+    const wt = weekTargets.get(payrollWeekStart(s.date));
     const history = Array.from({ length: RUSH_HISTORY_WEEKS }, (_, i) => shiftReportDate(s.date, -7 * (i + 1)))
       .filter((d) => covered.has(d)).map((d) => ({ date: d, quarters: rushPoints(d) }));
     return {
       date: s.date, sales: s, cuts: rc.reason,
-      labor: laborDayFigures(s, costByDay.get(s.date) ?? null, weekMap.get(payrollWeekStart(s.date)), target),
+      labor: laborDayFigures(s, costByDay.get(s.date) ?? null, weekMap.get(payrollWeekStart(s.date)), wt?.hourly.pct, wt?.loaded.pct),
       largeChecks: rc.ok ? largeCheckTotals(dayCuts) : { checks: 0, cents: 0 },
       rush: rc.ok ? detectRushes({ date: s.date, quarters: rushPoints(s.date) }, history) : null,
     };
@@ -343,10 +349,12 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
   const weeks: BusinessWeekDto[] = weekStarts.map((ws) => {
     const inWeek = sales.filter((s) => payrollWeekStart(s.date) === ws);
     const target = weekTargets.get(ws)!.hourly.pct;
-    return { weekStart: ws, from: inWeek[0]!.date, to: inWeek[inWeek.length - 1]!.date, target,
-      labor: laborRangeFigures(inWeek, weekRows.filter((r) => r.week_start === ws), weekMap, { hourly: target }) };
+    const loadedTarget = weekTargets.get(ws)!.loaded.pct;
+    return { weekStart: ws, from: inWeek[0]!.date, to: inWeek[inWeek.length - 1]!.date, target, loadedTarget,
+      labor: laborRangeFigures(inWeek, weekRows.filter((r) => r.week_start === ws), weekMap, { hourly: target, loaded: loadedTarget }) };
   });
-  const rangeTarget = rangeTargets([...weekTargets.values()]).hourly;
+  const rangeTargetPair = rangeTargets([...weekTargets.values()]);
+  const rangeTarget = rangeTargetPair.hourly;
   const totals = summarizeSales(dailyRaws, range.from, range.to, "day").totals;
 
   // Quarters (<= 31 days): Toast-hour sales on days whose cuts recompose, labor minutes and straight time.
@@ -383,7 +391,10 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
       const salesOk = day.cuts === "ok";
       const f = quarterFigures({ toastCents: c.toastCents ?? 0, checks: c.checks ?? 0, amountMissing: c.amountMissing ?? 0, laborMinutes: c.laborMinutes, straightCents: c.straightCents,
         salesOk, laborOk: day.labor.pureHourlyCents !== null && day.labor.state !== "hours_unknown" });
-      return { ...c, toastCents: salesOk ? c.toastCents ?? 0 : null, checks: salesOk ? c.checks ?? 0 : null, amountMissing: salesOk ? c.amountMissing ?? 0 : null, ...f };
+      const out: BusinessQuarterDto = { ...c, toastCents: salesOk ? c.toastCents ?? 0 : null, checks: salesOk ? c.checks ?? 0 : null, amountMissing: salesOk ? c.amountMissing ?? 0 : null, ...f };
+      // Item 9b: below QUARTER_COST_MIN the quarter's dollars and % are not serialized at all.
+      if (!quarterCost) { delete out.straightCents; delete out.pct; }
+      return out;
     });
   }
 
@@ -408,13 +419,14 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
   });
 
   return {
-    locationId, range, access: { personCost },
+    locationId, range, access: { personCost, quarterCost },
     days: dayDtos, weeks,
     total: {
       sales: { totalCents: totals.totalCents, toastChecksCents: totals.toastChecksCents, toastNetCents: totals.toastNetCents,
         ezcaterCents: totals.ezcaterCents, refundCents: totals.refundCents, coverage: totals.coverage },
-      labor: laborRangeFigures(sales, weekRows, weekMap, { hourly: rangeTarget }),
+      labor: laborRangeFigures(sales, weekRows, weekMap, { hourly: rangeTarget, loaded: rangeTargetPair.loaded }),
       target: rangeTarget,
+      loadedTarget: rangeTargetPair.loaded,
     },
     quarters, quartersUnassigned, quartersReason: quarters === null ? "range_too_wide" : null,
     channels: channelTotals(okCuts), servers: serverTotals(okCuts), people: peopleDtos,
