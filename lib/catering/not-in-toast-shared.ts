@@ -1,4 +1,6 @@
-/** Read-only ezCater logistics; never contains customer contacts or provider payloads. */
+/** Read-only ezCater logistics — and, since item 21 PR 2, house (non-ezCater) catering leads of a shop whose
+ * cross-check is enabled (`source: "house"`; order_id = the lead id, order_number = its ring code). Never contains
+ * customer contacts or provider payloads. */
 import { addDays, etClock, etWallTime } from "@/lib/report-digests-shared";
 
 export interface NotInToastOrder {
@@ -11,6 +13,8 @@ export interface NotInToastOrder {
   event_timestamp: string | null;
   headcount: number | null;
   total_cents: number | null;
+  /** Absent = ezCater (the original rows). */
+  source?: "ezcater" | "house";
 }
 
 /** Handoff/ready time wins over delivery-by. Invalid/missing times never mean midnight. */

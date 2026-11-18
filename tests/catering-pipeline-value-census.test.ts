@@ -26,11 +26,13 @@ const SOURCE = /sales_report_catering_values|catering_insights_v2|completed_valu
 
 /** Every module that touches a pipeline-value source, and what it does with it. */
 const CENSUS: Record<string, string> = {
+  "app/(authed)/reports/sales/catering/page.tsx": "label: item 21's \"of this, $X is also rung in Toast\" line under block 3 (the unchanged total, partitioned)",
   "app/(authed)/catering/insights/page.tsx": "display: the 0194 insights page (comment + render), never beside Toast sales",
   "app/api/catering/pipeline/[id]/route.ts": "writer: a manager edits the lead's estimate",
   "app/api/catering/pipeline/route.ts": "writer: a manager creates a lead with an estimate",
   "components/catering/pipeline/PipelineClient.tsx": "display: the lead card's estimate",
   "lib/catering/booked-events.ts": "valuation: booked events (0195 rule), shown as catering value",
+  "lib/catering/catering-toast.ts": "label: reads catering_pipeline_reconciliation, the partition of the unchanged total",
   "lib/catering/insights.ts": "valuation: catering_insights_v2, its own page",
   "lib/catering/pipeline.ts": "writer/reader: the lead row itself",
   "lib/catering/toast-catering-scan.ts": "writer: a Toast-origin lead's estimate = its Toast order total",

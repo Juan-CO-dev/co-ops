@@ -7,7 +7,8 @@
  *      Toast "Ezcater" rings no ezCater order explains (still counted as Toast sales, named here);
  *   2. Toast catering-channel sales (house catering, DeliverThat courier, CO app catering);
  *   3. the 0195 pipeline split by event date: completed (earned) vs confirmed/out (to earn), which is
- *      quote/estimate value, not POS sales.
+ *      quote/estimate value, not POS sales. Item 21 PR 2: for a shop whose Toast cross-check is enabled, one line
+ *      says how much of that UNCHANGED total is also rung in Toast (0344 catering_pipeline_reconciliation).
  * No customer name, contact or note is read: the order list is number, date, headcount, money.
  */
 import Link from "next/link";
@@ -19,7 +20,7 @@ import { ReportRangeControls } from "@/components/reports-hub/ReportRangeControl
 import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
 import { Money, RangeCaption, SalesUnavailable, providerLabel, salesCard, salesLink, tFor } from "@/components/reports-hub/SalesParts";
 import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
-import { formatDateLabel } from "@/lib/i18n/format";
+import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
@@ -27,6 +28,8 @@ import { reportNavigationHref } from "@/lib/report-navigation";
 import { canReadScopedReport } from "@/lib/report-scope";
 import { SALES_EMPTY_KEY, SALES_GRAINS, SALES_RANGES, SALES_RANGE_LABELS, SALES_READ_MIN, SalesReportError, loadSalesLatestCapture, loadSalesCatering, resolveSalesRange, salesRangeParams } from "@/lib/sales-reports";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { loadSalesPipelineToastLabel } from "@/lib/catering/catering-toast";
+import { PIPELINE_PARTS, type PipelineReconciliation } from "@/lib/catering/catering-toast-shared";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveReportShopId } from "@/lib/shop-context";
 
@@ -64,6 +67,9 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
     let body: ReactNode;
     try {
       const data = await loadSalesCatering(viewer, { locationId: shopId, range, cursor: params[cursorKey] });
+      // Optional label: a failed read says so under the block; the block itself is untouched.
+      const pipelineToast: PipelineReconciliation | null | "unavailable" = await loadSalesPipelineToastLabel(viewer, { locationId: shopId, range })
+        .catch(() => "unavailable" as const);
       const cursors = Object.fromEntries(Object.entries(params).filter(([k]) => k.startsWith("cursor_")));
       const nextHref = data.orders.nextCursor ? reportNavigationHref("/reports/sales/catering", { ...context, ...cursors, [cursorKey]: data.orders.nextCursor }) : null;
       const toastTotal = data.toastCatering.reduce((s, r) => s + r.cents, 0);
@@ -96,6 +102,11 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
             <li>{t("reports.sales.catering.confirmed", { n: data.pipeline.confirmedEvents })}: <Money cents={data.pipeline.confirmedCents} language={language} />
               {data.pipeline.confirmedUnvalued ? ` · ${t("reports.sales.catering.unvalued", { n: data.pipeline.confirmedUnvalued })}` : ""}</li>
           </ul>
+          {pipelineToast === "unavailable" ? <p className="mt-1 text-xs text-co-text-muted">{t("reports.sales.catering.pipeline_toast.unavailable")}</p>
+            : pipelineToast && pipelineToast.totalCents > 0 ? <p className="mt-1 text-sm">{t("reports.sales.catering.pipeline_toast.lead")}{" "}
+              {PIPELINE_PARTS.filter((part) => pipelineToast.parts[part] > 0).map((part) =>
+                t(`reports.sales.catering.pipeline_toast.${part}` as TranslationKey, { amount: formatCents(pipelineToast.parts[part], language) })).join(" · ")}
+            </p> : null}
           <p className="mt-1 text-xs text-co-text-muted">{t("reports.sales.catering.pipeline_basis")}</p>
         </section>
 
