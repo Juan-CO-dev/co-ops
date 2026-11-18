@@ -21,8 +21,10 @@ const moo = { userId: "u-moo", level: 8, role: "moo" as const, locations: [] as 
 const range = resolveBusinessRange({ range: "custom", from: "2026-10-01", to: "2026-10-07" }, "2026-10-08");
 const load = async () => loadBusinessReport(moo, { locationId: A, range }, { client: fakeClient().client, env: ON });
 const text = (el: Parameters<typeof renderToStaticMarkup>[0]) => visibleText(renderToStaticMarkup(el));
+/** "No labor" as the quarter word (not the "No labor history ..." reason, which starts the same). */
+const NO_LABOR = new RegExp(`${EN["reports.business.hours.no_labor"]!}(?! history)`);
 /** The visible text of each closed week row (Overview: the weeks list is open, each week is closed). */
-const weekRows = (t: string) => t.split("Week of").slice(1);
+const weekRows = (t: string) => t.split(/Week (?=[A-Z][a-z]{2}, )/).slice(1);
 
 describe("closed drawers really hide their children (the r1/r2 mock opened every one)", () => {
   it("a closed day row shows no drawer line", async () => {
@@ -65,7 +67,7 @@ describe("collapsed rows, every labor state", () => {
     it(`state ${s}: each closed Hours day row says the labor is not final when it is not`, async () => {
       const dto = withLabor(await load(), (l) => laborIn(l, s));
       const t = text(createElement(BusinessHours, { dto, language: "en" }));
-      expect(t).not.toContain(EN["reports.business.hours.no_labor"]!);
+      expect(t).not.toMatch(NO_LABOR);
       if (!laborHoursComplete(s)) expect(t.split(reasonOf(s)).length - 1, s).toBe(dto.days.length);
     });
   }

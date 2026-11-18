@@ -590,4 +590,7 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.large_checks_partial", "reports.business.people.hours_partial", "reports.business.export.hours_partial",
   // Fix round 2: a dash with no earlier period names that.
   "reports.business.compare.no_previous",
+  // Fix round 3: the figure descriptor (lib/business-figure-shared.ts) — short qualifiers for collapsed rows.
+  "reports.business.row.hours", "reports.business.qual.burden_estimated", "reports.business.qual.salary_estimated",
+  "reports.business.qual.salary_gaps", "reports.business.figure.not_available", "reports.business.figure.amount_missing",
 ] as const;

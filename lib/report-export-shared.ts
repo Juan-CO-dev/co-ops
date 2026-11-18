@@ -32,6 +32,7 @@ import type { MenuCostRow } from "@/lib/menu-costing-shared";
 import type { BreakdownRow, SalesBucket, SalesCheckRow, SalesExportView, SalesEzcaterRow, SalesTotals } from "@/lib/sales-reports-shared";
 import { SALES_EXPORT_MAX_ROWS, rowAverageCents, salesHasData } from "@/lib/sales-reports-shared";
 import type { BusinessReportDto } from "@/lib/business-report";
+import { hoursFigure, loadedCentsFigure, loadedPctFigure, otHoursFigure, pureCentsFigure, purePctFigure, quarterHoursFigure, type Figure } from "@/lib/business-figure-shared";
 import { BUSINESS_REPORT_TABS, breakdownCoverage, laborHoursComplete, salesAmountMissing, type BusinessReportTab, type DaySales, type LaborFigures } from "@/lib/business-report-shared";
 
 // ── Cells ───────────────────────────────────────────────────────────────────────────────────
@@ -204,7 +205,7 @@ export const BUSINESS_EXPORT_COLUMNS: Record<BusinessExportTab, readonly ExportC
   overview: BUSINESS_EXPORT_COLUMNS_OVERVIEW,
   hours: [
     col("row_type"), col("business_date", "date"), col("quarter_start", "datetime"), col("time_et"), ...SHOP, col("status"), col("checks", "int"),
-    col("toast_sales", "money"), col("amount_missing", "int"), col("labor_hours", "number"), col("straight_time_cost", "money"),
+    col("toast_sales", "money"), col("amount_missing", "int"), col("labor_hours", "number"), col("labor_state"), col("straight_time_cost", "money"),
     col("straight_time_pct", "number"), col("basis"), col("currency", "currency"),
   ],
   channels: [col("row_type"), ...PERIOD, ...SHOP, col("status"), col("days_included", "int"), col("days_in_period", "int"), col("channel"), col("provider"),
@@ -490,15 +491,21 @@ function businessSalesCells(s: SalesCells | null): ExportRow {
     amount_missing: v(salesAmountMissing(s)),
   };
 }
+/** Fix round 3 (ITEM9B-r3): the file's labor cells are the page's descriptors (lib/business-figure-shared.ts): the
+ * same value (empty when unknown), the same state columns, the same qualifications. */
+const noteOn = (f: Figure, key: string): boolean | null => (f.value === null ? null : f.notes.some((n) => n.key === key));
 function businessLaborCells(l: LaborFigures, target: number | "target_varies", loadedTarget: number | "target_varies"): ExportRow {
+  const loaded = loadedCentsFigure(l, "fullyLoadedCents");
   return {
-    net_sales_for_labor: l.denominator.cents, net_sales_state: l.denominator.state, labor_hours: hoursOf(l.minutes),
-    pure_hourly_cost: l.pureHourlyCents, overtime_premium: l.otPremiumCents, overtime_hours: hoursOf(l.otMinutes), pure_hourly_pct: l.pct,
-    pure_hourly_target_pct: target, labor_state: l.state, salaried_cost: l.salariedCents, burden_cost: l.burdenCents,
-    burden_estimated: l.fullyLoadedCents === null ? null : l.burdenEstimated,
+    net_sales_for_labor: l.denominator.cents, net_sales_state: l.denominator.state, labor_hours: hoursOf(hoursFigure(l).value),
+    pure_hourly_cost: pureCentsFigure(l, "pureHourlyCents").value, overtime_premium: pureCentsFigure(l, "otPremiumCents").value,
+    overtime_hours: hoursOf(otHoursFigure(l).value), pure_hourly_pct: purePctFigure(l).value,
+    pure_hourly_target_pct: target, labor_state: l.state, salaried_cost: loadedCentsFigure(l, "salariedCents").value,
+    burden_cost: loadedCentsFigure(l, "burdenCents").value,
+    burden_estimated: noteOn(loaded, "reports.business.burden_estimated"),
     // Fix round 2 (ITEM9B-r2 P2): the salary's provenance travels with the figure; gaps are named whether it shows or not.
-    salary_estimated: l.fullyLoadedCents === null ? null : l.salaryEstimated, salary_gaps: l.salaryGaps, fully_loaded_cost: l.fullyLoadedCents, fully_loaded_pct: l.loadedPct,
-    fully_loaded_target_pct: loadedTarget, fully_loaded_state: l.loadedState,
+    salary_estimated: noteOn(loaded, "reports.business.salary_estimated"), salary_gaps: l.salaryGaps, fully_loaded_cost: loaded.value,
+    fully_loaded_pct: loadedPctFigure(l).value, fully_loaded_target_pct: loadedTarget, fully_loaded_state: l.loadedState,
   };
 }
 function businessTotalRow(dto: BusinessReportDto, period: string, shop: ShopRef): ExportRow {
@@ -552,11 +559,15 @@ export function businessCompareRows(dto: BusinessReportDto, previous: BusinessRe
 /** Hours: every 15-minute quarter (<= 31 days), then each day's checks with no opened quarter. */
 export function businessHoursRows(dto: BusinessReportDto, shop: ShopRef): ExportRow[] {
   if (dto.quarters === null) return [{ row_type: "notice", ...shopCells(shop), status: dto.quartersReason ?? "range_too_wide" }];
+  // Fix round 3: a quarter's hours are judged against its DAY's labor state (the page's quarterHoursFigure): no
+  // minutes on a day whose hours are not final is EMPTY (unknown), never 0; `labor_state` names why.
+  const dayState = new Map(dto.days.map((d) => [d.date, d.labor.state]));
   return [
     ...dto.quarters.map((q): ExportRow => ({
       row_type: "quarter", business_date: q.date, quarter_start: q.quarterStartAt, time_et: quarterWallTime(q.wallQuarter), ...shopCells(shop),
       status: q.toastCents === null ? "breakdown_not_ready" : null, checks: q.checks, toast_sales: q.toastCents, amount_missing: q.amountMissing,
-      labor_hours: hoursOf(q.laborMinutes), straight_time_cost: q.straightCents ?? null, straight_time_pct: q.pct ?? null, basis: q.basis,
+      labor_hours: hoursOf(quarterHoursFigure(q.laborMinutes, dayState.get(q.date) ?? "unbuilt").value), labor_state: dayState.get(q.date) ?? "unbuilt",
+      straight_time_cost: q.straightCents ?? null, straight_time_pct: q.pct ?? null, basis: q.basis,
     })),
     ...(dto.quartersUnassigned ?? []).map((u): ExportRow => ({
       row_type: "unassigned", business_date: u.date, ...shopCells(shop), checks: u.checks, toast_sales: u.toastCents, amount_missing: u.amountMissing, basis: "no_opened_time",

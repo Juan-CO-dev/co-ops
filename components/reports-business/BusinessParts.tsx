@@ -11,10 +11,11 @@ import { formatCents, formatDateLabel, formatQuantity } from "@/lib/i18n/format"
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import {
-  BUSINESS_RANGES, BUSINESS_REPORT_TABS, laborHoursComplete, laborReasonKey, loadedQualifiers, loadedReasonKey,
+  BUSINESS_RANGES, BUSINESS_REPORT_TABS,
   type BusinessRange, type BusinessReportTab, type LaborFigures,
 } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
+import { loadedPctFigure, purePctFigure, type Figure } from "@/lib/business-figure-shared";
 
 export const bizCard = "min-w-0 max-w-full break-words rounded-xl border border-co-border bg-co-surface p-4";
 const pill = "inline-flex min-h-[44px] items-center rounded-full border-2 px-3 py-1.5 text-sm font-semibold transition";
@@ -32,19 +33,8 @@ export function Dash({ reason, language }: { reason?: TranslationKey | null; lan
     <span className="text-xs font-normal text-co-text-muted">{serverT(language, reason ?? "reports.sales.amount_unavailable")}</span>
   </span>;
 }
-/** "— (reason)" for a one-line text (a collapsed row's summary), so a dash in a string says why too. */
-export function dashText(reason: TranslationKey | null | undefined, language: Language): string {
-  return `— (${serverT(language, reason ?? "reports.sales.amount_unavailable")})`;
-}
 export function Money({ cents, reason, language }: { cents: number | null | undefined; reason?: TranslationKey | null; language: Language }) {
   return cents === null || cents === undefined ? <Dash reason={reason} language={language} /> : <>{formatCents(cents, language)}</>;
-}
-/** Fix round 2 (ITEM9B-r2 P2): the qualifications of a fully loaded figure, wherever it is shown. */
-export function LoadedQualifiers({ labor, language }: { labor: LaborFigures; language: Language }) {
-  const qs = loadedQualifiers(labor);
-  if (qs.length === 0) return null;
-  return <span className="flex flex-col">{qs.map((q) => <span key={q.key}
-    className={`text-xs font-normal ${q.key === "reports.business.salary_estimated" ? "text-co-text-muted" : "text-co-warning-text"}`}>{serverT(language, q.key, q.values)}</span>)}</span>;
 }
 /** Fix round 1: an amount that holds checks of unknown amount is a FLOOR, never a plain total: "at least $20.00
  * + 1 unknown"; when every check is unknown (no known cents) it is "amount unknown (2 checks)", never $0.00. */
@@ -57,23 +47,7 @@ export function amountText(cents: number, missing: number | null | undefined, la
 export function Amount({ cents, missing, language }: { cents: number; missing: number | null | undefined; language: Language }) {
   return <>{amountText(cents, missing, language)}</>;
 }
-/** Fix round 1: a sales total by its coverage. Missing = a dash with its reason (never $0.00); partial = the
- * covered days' sum, labelled as such; unknown amounts make it a floor. */
-export function salesText(sales: { coverage: string; totalCents: number }, missing: number, language: Language): string | null {
-  if (sales.coverage === "missing") return null;
-  const amount = amountText(sales.totalCents, missing, language);
-  return sales.coverage === "complete" ? amount : serverT(language, "reports.business.sales_covered_only", { amount });
-}
-export function SalesValue({ sales, missing, language }: { sales: { coverage: string; totalCents: number }; missing: number; language: Language }) {
-  return <>{salesText(sales, missing, language) ?? <Dash reason="reports.business.sales.not_captured" language={language} />}</>;
-}
-/** Fix round 1: labor hours by completeness. Final hours plainly; a span with an unbuilt / rebuilding week shows
- * the minutes it has as "so far"; none at all = null (the caller's dash with the reason). */
-export function laborHoursText(labor: { minutes: number | null; state: LaborFigures["state"] }, language: Language): string | null {
-  const h = hoursText(labor.minutes, language);
-  if (h === null) return null;
-  return laborHoursComplete(labor.state) ? h : serverT(language, "reports.business.hours_so_far", { h });
-}
+/** Internal to the figure formatter below; the page renders figures, never these directly. */
 export function hoursText(minutes: number | null | undefined, language: Language): string | null {
   return minutes === null || minutes === undefined ? null : serverT(language, "reports.business.hours_value", { h: formatQuantity(minutes / 60, language) });
 }
@@ -87,18 +61,63 @@ export function dateRange(from: string, to: string, language: Language): string 
 const TONE: Record<LaborTone, string> = {
   none: "text-co-text", good: "text-co-confirm-text", watch: "text-co-warning-text", high: "text-co-cta-text",
 };
-/** A labor % (pure hourly or fully loaded) with its target, or a dash and the plain reason. */
+// ── THE figure formatter (fix round 3, review ITEM9B-r3) ────────────────────────────────────────
+// Every labor / sales figure of the page and every collapsed row is rendered by these two from a `Figure`
+// (lib/business-figure-shared.ts): the value as its STATE allows ("so far", "at least", covered days only), and
+// the reason / qualifications beside it. Nothing on the page formats a labor number any other way.
+
+/** The value of a figure as words, or null when it is unknown. */
+export function figureValueText(f: Figure, language: Language): string | null {
+  if (f.value === null) return null;
+  let s: string;
+  if (f.unit === "pct") s = pctText(f.value, language)!;
+  else if (f.unit === "minutes") s = f.value === 0 && f.zero ? serverT(language, f.zero) : hoursText(f.value, language)!;
+  else s = f.missing !== undefined ? amountText(f.value, f.missing, language) : formatCents(f.value, language);
+  if (f.coveredOnly) s = serverT(language, "reports.business.sales_covered_only", { amount: s });
+  if (f.soFar) s = serverT(language, "reports.business.hours_so_far", { h: s });
+  return s;
+}
+/** One line of text (a collapsed row's summary): the value or "—", then "(reason; qualifications)". `short`
+ * uses the compact qualifier words so a phone row stays one or two lines. */
+export function figureText(f: Figure, language: Language, opts: { short?: boolean } = {}): string {
+  const v = figureValueText(f, language) ?? "—";
+  const parts = [
+    ...(f.reason && (f.value === null || f.kind === "incomplete") && !(f.missing && !f.coveredOnly && f.value !== null) ? [serverT(language, f.reason)] : []),
+    ...f.notes.map((n) => serverT(language, opts.short ? n.short : n.key, n.values)),
+  ];
+  return parts.length ? `${v} (${parts.join("; ")})` : v;
+}
+/** A figure on the page: the value (or a dash) and, as visible captions, why it is not plain. `compact` (the
+ * 15-minute lines) shows the reason only when there is no value; "so far" still qualifies a provisional one, and
+ * the day line above names the reason once. */
+export function FigureView({ f, language, compact = false, className = "" }: { f: Figure; language: Language; compact?: boolean; className?: string }) {
+  const v = figureValueText(f, language);
+  const showReason = f.reason !== null && (v === null || (!compact && f.kind === "incomplete" && !(f.missing && !f.coveredOnly)));
+  return <span className="inline-flex flex-col">
+    {v === null ? <span aria-hidden="true" className={className}>—</span> : <span className={className}>{v}</span>}
+    {showReason ? <span className={`text-xs font-normal ${v === null ? "text-co-text-muted" : "text-co-warning-text"}`}>{serverT(language, f.reason!)}</span> : null}
+    {f.notes.map((n) => <span key={n.key} className={`text-xs font-normal ${n.kind === "gap" ? "text-co-warning-text" : "text-co-text-muted"}`}>{serverT(language, n.key, n.values)}</span>)}
+  </span>;
+}
+/** One label / figure line inside a drawer. */
+export function FigureLine({ label, f, language }: { label: string; f: Figure; language: Language }) {
+  return <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
+    <span className="text-co-text-muted">{label}</span>
+    <span className="min-w-0 break-words text-right font-semibold text-co-text"><FigureView f={f} language={language} /></span>
+  </div>;
+}
+
+/** A labor % (pure hourly or fully loaded) with its target, through the one formatter. */
 export function LaborPct({ figures, view, target, language }: {
   figures: LaborFigures; view: "pure" | "loaded"; target: number | "target_varies"; language: Language;
 }) {
   const t = tFor(language);
-  const pct = view === "pure" ? figures.pct : figures.loadedPct;
-  const tone = view === "pure" ? figures.tone : figures.loadedTone;
-  const reason = view === "pure" ? laborReasonKey(figures.state) : loadedReasonKey(figures.loadedState);
+  const f = view === "pure" ? purePctFigure(figures) : loadedPctFigure(figures);
+  const tone = f.value === null ? "none" : view === "pure" ? figures.tone : figures.loadedTone;
   const targetLine = target === "target_varies" ? t("reports.business.target_varies")
     : t(view === "pure" ? "reports.business.target" : "reports.business.target_le", { pct: target });
   return <span className="inline-flex flex-col">
-    <span className={`font-bold ${TONE[tone]}`}>{pct === null ? <Dash reason={reason} language={language} /> : pctText(pct, language)}</span>
+    <span className="font-bold"><FigureView f={f} language={language} className={TONE[tone]} /></span>
     <span className="text-xs text-co-text-muted">{targetLine}</span>
   </span>;
 }

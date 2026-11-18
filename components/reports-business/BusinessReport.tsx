@@ -5,6 +5,11 @@
  *
  * What a viewer gets is decided by the loader, never here: a GM's DTO carries no cost per person and no
  * labor dollars per 15 minutes (PERSON_COST_MIN / QUARTER_COST_MIN), so this page cannot show them.
+ *
+ * Fix round 3 (review ITEM9B-r3): every labor and sales figure — cards, collapsed summary rows, drawers, the
+ * 15-minute lines, People, Compare — is a `Figure` from lib/business-figure-shared.ts rendered by `FigureView` /
+ * `figureText` (BusinessParts). This file never formats a labor number or picks its reason by hand
+ * (pinned by tests/business-report-9b-r3.test.ts).
  */
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { channelLabel, providerLabel, serverLabel } from "@/components/reports-hub/SalesParts";
@@ -12,47 +17,40 @@ import type { ReactNode } from "react";
 import { formatCents, formatDateLabel, formatQuantity, formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { BusinessDayDto, BusinessQuarterDto, BusinessReportDto } from "@/lib/business-report";
+import { breakdownCoverage, compareChange, salesAmountMissing, type CompareChange, type LaborFigures } from "@/lib/business-report-shared";
 import {
-  breakdownCoverage, compareChange, laborHoursComplete, laborReasonKey, loadedReasonKey, salesAmountMissing,
-  type CompareChange, type LaborFigures,
-} from "@/lib/business-report-shared";
-import { Amount, Card, Dash, LaborPct, LoadedQualifiers, Line, Money, dashText, SalesValue, bizCard, dateRange, hoursText, laborHoursText, pctText, salesText, tFor } from "./BusinessParts";
+  figureComparable, hoursFigure, loadedCentsFigure, loadedPctFigure, minutesFigure, netFigure, otHoursFigure, pureCentsFigure, purePctFigure,
+  quarterCentsFigure, quarterHoursFigure, quarterPctFigure, salesFigure, type Figure,
+} from "@/lib/business-figure-shared";
+import { Amount, Card, Dash, FigureLine, FigureView, LaborPct, Line, Money, bizCard, dateRange, figureText, figureValueText, tFor } from "./BusinessParts";
 
 type Props = { dto: BusinessReportDto; language: Language };
 
-/** The labor lines of a day / week / range drawer: pure hourly, then fully loaded, each with its reason. */
+/** The labor lines of a day / week / range drawer: pure hourly, then fully loaded, each through the descriptor. */
 function LaborLines({ labor, language }: { labor: LaborFigures; language: Language }) {
   const t = tFor(language);
-  const pureReason = laborReasonKey(labor.state);
-  const loadedReason = loadedReasonKey(labor.loadedState);
   return <div className="flex flex-col gap-1">
-    <Line language={language} label={t("reports.business.detail.net_sales")} value={labor.denominator.cents === null ? null : <Money cents={labor.denominator.cents} language={language} />}
-      reason={labor.denominator.state === "ok" ? null : `reports.business.labor.state.${labor.denominator.state}`} />
-    <Line language={language} label={t("reports.business.detail.hours")} value={laborHoursText(labor, language)} reason={pureReason} />
-    {labor.minutes !== null && !laborHoursComplete(labor.state) && pureReason ? <p className="text-xs text-co-warning-text">{t(pureReason)}</p> : null}
-    <Line language={language} label={t("reports.business.detail.pure_hourly_cost")} value={labor.pureHourlyCents === null ? null : <Money cents={labor.pureHourlyCents} language={language} />} reason={pureReason} />
-    <Line language={language} label={t("reports.business.detail.ot_premium")} value={labor.otPremiumCents === null ? null : <Money cents={labor.otPremiumCents} language={language} />} reason={pureReason} />
-    <Line language={language} label={t("reports.business.detail.ot_hours")} value={hoursText(labor.otMinutes, language)} reason={pureReason} />
-    <Line language={language} label={t("reports.business.detail.salaried")} value={labor.salariedCents === null ? null : <Money cents={labor.salariedCents} language={language} />} reason={loadedReason} />
-    <Line language={language} label={t("reports.business.detail.burden")} value={labor.burdenCents === null ? null : <Money cents={labor.burdenCents} language={language} />} reason={loadedReason} />
-    <Line language={language} label={t("reports.business.detail.fully_loaded")} value={labor.fullyLoadedCents === null ? null : <Money cents={labor.fullyLoadedCents} language={language} />} reason={loadedReason} />
-    <LoadedQualifiers labor={labor} language={language} />
+    <FigureLine language={language} label={t("reports.business.detail.net_sales")} f={netFigure(labor)} />
+    <FigureLine language={language} label={t("reports.business.detail.hours")} f={hoursFigure(labor)} />
+    <FigureLine language={language} label={t("reports.business.detail.pure_hourly_cost")} f={pureCentsFigure(labor, "pureHourlyCents")} />
+    <FigureLine language={language} label={t("reports.business.detail.ot_premium")} f={pureCentsFigure(labor, "otPremiumCents")} />
+    <FigureLine language={language} label={t("reports.business.detail.ot_hours")} f={otHoursFigure(labor)} />
+    <FigureLine language={language} label={t("reports.business.detail.salaried")} f={loadedCentsFigure(labor, "salariedCents")} />
+    <FigureLine language={language} label={t("reports.business.detail.burden")} f={loadedCentsFigure(labor, "burdenCents")} />
+    <FigureLine language={language} label={t("reports.business.detail.fully_loaded")} f={loadedCentsFigure(labor, "fullyLoadedCents")} />
   </div>;
 }
 
-/** Why net sales for labor are not shown. */
-function netReason(labor: LaborFigures): TranslationKey | null {
-  return labor.denominator.state === "ok" ? null : `reports.business.labor.state.${labor.denominator.state}` as TranslationKey;
-}
-
-/** The collapsed line of a day / week: its figures in words, so the closed list still reads. */
-function summaryLine(sales: string | null, labor: LaborFigures, language: Language): string {
+/** The collapsed line of a day / week: every figure with its state, reason and (short) qualifications, so the
+ * closed list says everything the open drawer says about whether a number is whole. */
+function summaryLine(sales: Figure, labor: LaborFigures, language: Language): string {
   const t = tFor(language);
-  // Fix round 2 (ITEM9B-r2 P3): a dash in the collapsed line names its reason too.
+  const short = { short: true };
   return [
-    sales === null ? dashText("reports.business.sales.not_captured", language) : t("reports.business.row.sales", { amount: sales }),
-    t("reports.business.row.labor_pct", { pct: pctText(labor.pct, language) ?? dashText(laborReasonKey(labor.state), language) }),
-    t("reports.business.row.loaded_pct", { pct: pctText(labor.loadedPct, language) ?? dashText(loadedReasonKey(labor.loadedState), language) }),
+    t("reports.business.row.sales", { amount: figureText(sales, language, short) }),
+    t("reports.business.row.hours", { h: figureText(hoursFigure(labor), language, short) }),
+    t("reports.business.row.labor_pct", { pct: figureText(purePctFigure(labor), language, short) }),
+    t("reports.business.row.loaded_pct", { pct: figureText(loadedPctFigure(labor), language, short) }),
   ].join(" · ");
 }
 
@@ -66,6 +64,8 @@ function DayBadges({ day, language }: { day: BusinessDayDto; language: Language 
   </>;
 }
 
+const daySales = (d: BusinessDayDto) => salesFigure(d.sales, salesAmountMissing(d.sales));
+
 // ── Overview ────────────────────────────────────────────────────────────────────────────────────
 
 export function BusinessOverview({ dto, language }: Props) {
@@ -78,15 +78,12 @@ export function BusinessOverview({ dto, language }: Props) {
     <p className="mb-3 text-sm text-co-text-muted">{dateRange(dto.range.from, dto.range.to, language)} · {t("reports.business.caption")}</p>
     {covered < dto.days.length ? <p className="mb-3 text-xs font-bold text-co-warning-text">{t("reports.business.coverage.days", { covered, expected: dto.days.length })}</p> : null}
     <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 lg:grid-cols-3">
-      <Card label={t("reports.business.card.sales")} sub={t("reports.business.card.sales_hint")}><SalesValue sales={total.sales} missing={totalMissing} language={language} /></Card>
-      <Card label={t("reports.business.card.net")} sub={total.labor.denominator.state === "ok" ? t("reports.business.card.net_hint")
-        : total.labor.denominator.cents === null ? null : t(`reports.business.labor.state.${total.labor.denominator.state}`)}>
-        <Money cents={total.labor.denominator.cents} reason={netReason(total.labor)} language={language} /></Card>
-      <Card label={t("reports.business.card.hours")} sub={total.labor.minutes !== null && !laborHoursComplete(total.labor.state) && laborReasonKey(total.labor.state) ? t(laborReasonKey(total.labor.state)!) : null}>
-        {laborHoursText(total.labor, language) ?? <Dash reason={laborReasonKey(total.labor.state)} language={language} />}</Card>
+      <Card label={t("reports.business.card.sales")} sub={t("reports.business.card.sales_hint")}><FigureView f={salesFigure(total.sales, totalMissing)} language={language} /></Card>
+      <Card label={t("reports.business.card.net")} sub={total.labor.denominator.state === "ok" ? t("reports.business.card.net_hint") : null}>
+        <FigureView f={netFigure(total.labor)} language={language} /></Card>
+      <Card label={t("reports.business.card.hours")}><FigureView f={hoursFigure(total.labor)} language={language} /></Card>
       <Card label={t("reports.business.card.pure_hourly")}><LaborPct figures={total.labor} view="pure" target={total.target} language={language} /></Card>
-      <Card label={t("reports.business.card.fully_loaded")} sub={<LoadedQualifiers labor={total.labor} language={language} />}>
-        <LaborPct figures={total.labor} view="loaded" target={total.loadedTarget} language={language} /></Card>
+      <Card label={t("reports.business.card.fully_loaded")}><LaborPct figures={total.labor} view="loaded" target={total.loadedTarget} language={language} /></Card>
       <Card label={t("reports.business.card.refunds")} sub={t("reports.business.card.refunds_hint")}><Money cents={total.sales.coverage === "missing" ? null : total.sales.refundCents} reason="reports.business.sales.not_captured" language={language} /></Card>
     </div>
     <p className="mt-3 text-xs text-co-text-muted">{t("reports.business.labor.denominator")}</p>
@@ -100,7 +97,7 @@ export function BusinessOverview({ dto, language }: Props) {
           {dto.weeks.map((w) => {
             const days = dto.days.filter((d) => d.date >= w.from && d.date <= w.to);
             const coverage = days.length > 0 && days.every((d) => d.sales.coverage === "complete") ? "complete" : days.every((d) => d.sales.coverage === "missing") ? "missing" : "partial";
-            const sales = salesText({ coverage, totalCents: days.reduce((s, d) => s + d.sales.totalCents, 0) }, days.reduce((s, d) => s + salesAmountMissing(d.sales), 0), language);
+            const sales = salesFigure({ coverage, totalCents: days.reduce((s, d) => s + d.sales.totalCents, 0) }, days.reduce((s, d) => s + salesAmountMissing(d.sales), 0));
             return <CollapsibleSection key={w.weekStart} idBase={`biz-week-${dto.locationId}-${w.weekStart}`}
               title={t("reports.business.week_of", { range: dateRange(w.from, w.to, language) })} count={summaryLine(sales, w.labor, language)}>
               <div className="flex flex-col gap-2 p-1">
@@ -114,9 +111,9 @@ export function BusinessOverview({ dto, language }: Props) {
       <CollapsibleSection idBase={`biz-days-${dto.locationId}`} title={t("reports.business.days")} count={t("reports.business.count_days", { n: dto.days.length })}>
         <div className="flex flex-col gap-2">
           {[...dto.days].reverse().map((d) => <CollapsibleSection key={d.date} idBase={`biz-day-${dto.locationId}-${d.date}`}
-            title={formatDateLabel(d.date, language)} count={summaryLine(salesText(d.sales, salesAmountMissing(d.sales), language), d.labor, language)} badge={<DayBadges day={d} language={language} />}>
+            title={formatDateLabel(d.date, language)} count={summaryLine(daySales(d), d.labor, language)} badge={<DayBadges day={d} language={language} />}>
             <div className="flex flex-col gap-2 p-1">
-              <Line language={language} label={t("reports.business.detail.sales")} value={salesText(d.sales, salesAmountMissing(d.sales), language)} reason="reports.business.sales.not_captured" />
+              <FigureLine language={language} label={t("reports.business.detail.sales")} f={daySales(d)} />
               <Line language={language} label={t("reports.business.detail.checks")} value={d.sales.coverage === "missing" ? null : String(d.sales.checks)} reason="reports.business.labor.state.sales_not_covered" />
               <Line language={language} label={t("reports.business.detail.toast_net")} value={d.sales.toastNetCents === null ? null : <Money cents={d.sales.toastNetCents} language={language} />} reason="reports.business.labor.state.net_unknown" />
               <Line language={language} label={t("reports.business.detail.ezcater")} value={d.sales.coverage === "missing" ? null : <Amount cents={d.sales.ezcaterCents} missing={d.sales.ezcaterMissing} language={language} />} reason="reports.business.sales.not_captured" />
@@ -135,17 +132,17 @@ export function BusinessOverview({ dto, language }: Props) {
 
 // ── Hours (15-minute grid, rushes) ──────────────────────────────────────────────────────────────
 
-/** `laborUnknownReason` (fix round 1 sweep): the day's labor is not counted (unbuilt week, before history), so a
- * quarter with no minutes is UNKNOWN, not "No labor" — a dash with that reason. */
-function QuarterLine({ q, money, laborUnknownReason, language }: { q: BusinessQuarterDto; money: boolean; laborUnknownReason: TranslationKey | null; language: Language }) {
+/** One 15 minutes. Its labor is judged against the DAY's labor state (fix round 3): no minutes is "No labor"
+ * only when the day's hours are final; otherwise a dash with the day's reason, and minutes are "so far". */
+function QuarterLine({ q, day, money, language }: { q: BusinessQuarterDto; day: BusinessDayDto; money: boolean; language: Language }) {
   const t = tFor(language);
   return <li className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
     <span className="min-w-[4.5rem] font-bold text-co-text">{formatTime(q.quarterStartAt, language)}</span>
     <span>{q.checks === null ? <Dash reason="reports.business.cuts.rebuilding" language={language} /> : t("reports.business.hours.checks", { n: q.checks })}</span>
     <span>{q.toastCents === null ? <Dash reason="reports.business.cuts.rebuilding" language={language} /> : <Amount cents={q.toastCents} missing={q.amountMissing} language={language} />}</span>
-    <span className="text-co-text-muted">{hoursText(q.laborMinutes, language) ?? (laborUnknownReason ? <Dash reason={laborUnknownReason} language={language} /> : t("reports.business.hours.no_labor"))}</span>
-    {money ? <span className="text-co-text-muted">{q.straightCents === null || q.straightCents === undefined ? <Dash reason="reports.business.labor.state.rebuilding" language={language} /> : <Money cents={q.straightCents} language={language} />}
-      {" · "}{pctText(q.pct ?? null, language) ?? <Dash reason="reports.business.hours.no_pct" language={language} />}</span> : null}
+    <span className="text-co-text-muted"><FigureView f={quarterHoursFigure(q.laborMinutes, day.labor.state)} language={language} compact /></span>
+    {money ? <span className="inline-flex gap-1 text-co-text-muted"><FigureView f={quarterCentsFigure(q.straightCents, q.laborMinutes, day.labor)} language={language} compact />
+      {" · "}<FigureView f={quarterPctFigure(q.pct, day.labor.state)} language={language} compact /></span> : null}
   </li>;
 }
 
@@ -162,19 +159,21 @@ export function BusinessHours({ dto, language }: Props) {
         const qs = dto.quarters!.filter((q) => q.date === d.date && ((q.checks ?? 0) > 0 || (q.laborMinutes ?? 0) > 0));
         const un = dto.quartersUnassigned?.find((u) => u.date === d.date);
         const rush = d.rush;
+        const hours = hoursFigure(d.labor);
+        const rushText = rush === null ? t("reports.business.badge.rebuilding") : rush.state === "not_enough_history" ? t("reports.business.rush.not_enough_history")
+          : rush.windows.length ? t("reports.business.rush.count", { n: rush.windows.length }) : t("reports.business.rush.none");
+        // The closed row says whether the day's labor is final (the reason travels with the figure).
+        const count = hours.kind === "known" ? rushText : `${rushText} · ${t("reports.business.row.hours", { h: figureText(hours, language, { short: true }) })}`;
         return <CollapsibleSection key={d.date} idBase={`biz-hours-${dto.locationId}-${d.date}`} title={formatDateLabel(d.date, language)}
-          count={rush === null ? t("reports.business.badge.rebuilding") : rush.state === "not_enough_history" ? t("reports.business.rush.not_enough_history")
-            : rush.windows.length ? t("reports.business.rush.count", { n: rush.windows.length }) : t("reports.business.rush.none")}
-          badge={<DayBadges day={d} language={language} />}>
+          count={count} badge={<DayBadges day={d} language={language} />}>
           <div className="flex flex-col gap-2 p-1">
             {rush?.state === "ok" ? rush.windows.map((w) => <p key={w.startAt} className="rounded-lg bg-co-gold/20 p-2 text-sm font-semibold text-co-text">
               {t("reports.business.rush.window", { start: formatTime(w.startAt, language), end: formatTime(w.endAt, language), checks: w.checks,
                 usual: formatQuantity(w.baselineChecks, language) })}{" · "}<Money cents={w.cents} language={language} /></p>) : null}
             {d.cuts !== "ok" ? <p className="text-xs text-co-warning-text">{t("reports.business.cuts.rebuilding")}</p> : null}
-            {d.labor.state === "unbuilt" || d.labor.state === "before_history" ? <p className="text-xs text-co-warning-text">{t(laborReasonKey(d.labor.state)!)}</p> : null}
+            {hours.kind !== "known" ? <p className="text-xs text-co-warning-text">{t("reports.business.detail.hours")}: {figureText(hours, language)}</p> : null}
             {qs.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.hours.no_activity")}</p>
-              : <ul aria-label={t("reports.business.hours.list_aria")}>{qs.map((q) => <QuarterLine key={q.quarterStartAt} q={q} money={money} language={language}
-                laborUnknownReason={d.labor.state === "unbuilt" || d.labor.state === "before_history" ? laborReasonKey(d.labor.state) : null} />)}</ul>}
+              : <ul aria-label={t("reports.business.hours.list_aria")}>{qs.map((q) => <QuarterLine key={q.quarterStartAt} q={q} day={d} money={money} language={language} />)}</ul>}
             {un ? <p className="text-xs text-co-text-muted">{t("reports.business.quarter.unassigned")}: {t("reports.business.hours.checks", { n: un.checks })} · <Amount cents={un.toastCents} missing={un.amountMissing} language={language} /></p> : null}
           </div>
         </CollapsibleSection>;
@@ -212,23 +211,28 @@ export function BusinessChannels({ dto, language }: Props) {
 export function BusinessPeople({ dto, language }: Props) {
   const t = tFor(language);
   const rebuilding = dto.days.filter((d) => d.cuts !== "ok").length;
+  const span = hoursFigure(dto.total.labor);
+  const state = dto.total.labor.state;
   return <section className={bizCard} aria-label={t("reports.business.tab.people")}>
     <CollapsibleSection idBase={`biz-people-${dto.locationId}`} title={t("reports.business.people.title")} count={t("reports.business.people.count", { n: dto.people.length })} defaultOpen>
       {!dto.access.personCost ? <p className="mb-2 text-xs text-co-text-muted">{t("reports.business.people.cost_note")}</p> : null}
-      {!laborHoursComplete(dto.total.labor.state) && laborReasonKey(dto.total.labor.state) ? <p className="mb-2 text-xs font-bold text-co-warning-text">
-        {t("reports.business.people.hours_partial")} {t(laborReasonKey(dto.total.labor.state)!)}</p> : null}
+      {span.kind !== "known" && span.reason ? <p className="mb-2 text-xs font-bold text-co-warning-text">
+        {t("reports.business.people.hours_partial")} {t(span.reason)}</p> : null}
       {dto.people.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.people.none")}</p> : <ul>
-        {dto.people.map((p) => <li key={`${p.personKey}|${p.source}|${p.payClass}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
-          <span className="min-w-0 break-words"><span className="font-semibold text-co-text">{p.label ?? t("reports.business.people.unnamed")}</span>
-            <span className="text-co-text-muted"> · {t(p.payClass === "hourly" ? "reports.business.people.pay.hourly" : "reports.business.people.pay.salaried")}</span></span>
-          <span className="flex flex-col items-end text-right">
-            <span>{hoursText(p.minutes, language)}</span>
-            {p.otMinutes === null ? <span className="text-xs text-co-warning-text">{t("reports.business.people.withheld", { n: p.weeksSuppressed })}</span>
-              : p.otMinutes > 0 ? <span className="text-xs text-co-text-muted">{t("reports.business.people.ot", { h: hoursText(p.otMinutes, language) ?? "" })}</span> : null}
-            {dto.access.personCost && "straightCostCents" in p ? <span className="text-xs text-co-text-muted">{p.straightCostCents === null || p.straightCostCents === undefined
-              ? (p.payClass === "hourly" ? t("reports.business.people.cost_withheld") : t("reports.business.people.salaried_cost")) : <>{t("reports.business.people.cost")} <Money cents={p.straightCostCents} language={language} /></>}</span> : null}
-          </span>
-        </li>)}
+        {dto.people.map((p) => {
+          const ot = minutesFigure(p.otMinutes, state);
+          return <li key={`${p.personKey}|${p.source}|${p.payClass}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
+            <span className="min-w-0 break-words"><span className="font-semibold text-co-text">{p.label ?? t("reports.business.people.unnamed")}</span>
+              <span className="text-co-text-muted"> · {t(p.payClass === "hourly" ? "reports.business.people.pay.hourly" : "reports.business.people.pay.salaried")}</span></span>
+            <span className="flex flex-col items-end text-right">
+              <FigureView f={minutesFigure(p.minutes, state)} language={language} compact />
+              {p.otMinutes === null ? <span className="text-xs text-co-warning-text">{t("reports.business.people.withheld", { n: p.weeksSuppressed })}</span>
+                : p.otMinutes > 0 ? <span className="text-xs text-co-text-muted">{t("reports.business.people.ot", { h: figureValueText(ot, language) ?? "" })}</span> : null}
+              {dto.access.personCost && "straightCostCents" in p ? <span className="text-xs text-co-text-muted">{p.straightCostCents === null || p.straightCostCents === undefined
+                ? (p.payClass === "hourly" ? t("reports.business.people.cost_withheld") : t("reports.business.people.salaried_cost")) : <>{t("reports.business.people.cost")} <Money cents={p.straightCostCents} language={language} /></>}</span> : null}
+            </span>
+          </li>;
+        })}
       </ul>}
     </CollapsibleSection>
     <div className="mt-3">
@@ -253,50 +257,38 @@ function ChangeText({ change, language }: { change: CompareChange; language: Lan
   return <span className="font-semibold">{change.kind === "pct" ? t("reports.business.compare.pct", { n: `${sign}${change.value}` }) : t("reports.business.compare.points", { n: `${sign}${formatQuantity(change.value, language)}` })}</span>;
 }
 
+type Total = BusinessReportDto["total"];
 export function BusinessCompare({ dto, previous, language }: Props & { previous: BusinessReportDto | null }) {
   const t = tFor(language);
   const cur = dto.total, prev = previous?.total ?? null;
-  // Fix round 1: a sales total compares only when its coverage is complete AND no check has an unknown amount;
-  // hours only when every payroll week behind them is final (laborHoursComplete). Anything else: not comparable.
+  // A figure compares only when BOTH periods are shown and whole (figureComparable: known or estimated — never
+  // "so far", a sales floor, covered-days-only or a payroll gap). Every cell is the descriptor of its period.
   const missingOf = (d: BusinessReportDto) => d.days.reduce((s, x) => s + salesAmountMissing(x.sales), 0);
-  const curMissing = missingOf(dto), prevMissing = previous ? missingOf(previous) : 0;
-  const done = (x: BusinessReportDto["total"] | null, missing: number) => x !== null && x.sales.coverage === "complete" && missing === 0;
-  const hoursDone = (x: BusinessReportDto["total"] | null) => x !== null && x.labor.minutes !== null && laborHoursComplete(x.labor.state);
-  const none = <Dash reason="reports.business.compare.no_previous" language={language} />;
-  // Fix round 2 (ITEM9B-r2 P2): a fully loaded % keeps its burden / salary / gap labels beside EACH period.
-  const loadedCell = (x: BusinessReportDto["total"] | null) => (x === null ? none : <span className="inline-flex flex-col">
-    <span>{pctText(x.labor.loadedPct, language) ?? <Dash reason={loadedReasonKey(x.labor.loadedState)} language={language} />}</span>
-    <LoadedQualifiers labor={x.labor} language={language} /></span>);
-  const hoursCell = (x: BusinessReportDto["total"] | null) => (x === null ? none
-    : laborHoursText(x.labor, language) ?? <Dash reason={laborReasonKey(x.labor.state)} language={language} />);
-  const rows: Array<{ key: string; label: string; a: ReactNode; b: ReactNode; change: CompareChange }> = [
-    { key: "sales", label: t("reports.business.card.sales"), a: <SalesValue sales={cur.sales} missing={curMissing} language={language} />,
-      b: prev ? <SalesValue sales={prev.sales} missing={prevMissing} language={language} /> : none,
-      change: compareChange({ value: cur.sales.totalCents, complete: done(cur, curMissing) }, { value: prev?.sales.totalCents ?? null, complete: done(prev, prevMissing) }, "money") },
-    { key: "net", label: t("reports.business.card.net"), a: <Money cents={cur.labor.denominator.cents} reason={netReason(cur.labor)} language={language} />,
-      b: prev ? <Money cents={prev.labor.denominator.cents} reason={netReason(prev.labor)} language={language} /> : none,
-      change: compareChange({ value: cur.labor.denominator.cents, complete: true }, { value: prev?.labor.denominator.cents ?? null, complete: true }, "money") },
-    { key: "hours", label: t("reports.business.card.hours"), a: hoursCell(cur), b: hoursCell(prev),
-      change: compareChange({ value: cur.labor.minutes, complete: hoursDone(cur) }, { value: prev?.labor.minutes ?? null, complete: hoursDone(prev) }, "money") },
-    { key: "pure", label: t("reports.business.card.pure_hourly"), a: pctText(cur.labor.pct, language) ?? <Dash reason={laborReasonKey(cur.labor.state)} language={language} />,
-      b: prev ? pctText(prev.labor.pct, language) ?? <Dash reason={laborReasonKey(prev.labor.state)} language={language} /> : none,
-      change: compareChange({ value: cur.labor.pct, complete: true }, { value: prev?.labor.pct ?? null, complete: true }, "points") },
-    { key: "loaded", label: t("reports.business.card.fully_loaded"), a: loadedCell(cur),
-      b: loadedCell(prev),
-      change: compareChange({ value: cur.labor.loadedPct, complete: true }, { value: prev?.labor.loadedPct ?? null, complete: true }, "points") },
+  const rows: Array<{ key: string; label: string; fig: (x: Total, d: BusinessReportDto) => Figure; kind: "money" | "points" }> = [
+    { key: "sales", label: t("reports.business.card.sales"), fig: (x, d) => salesFigure(x.sales, missingOf(d)), kind: "money" },
+    { key: "net", label: t("reports.business.card.net"), fig: (x) => netFigure(x.labor), kind: "money" },
+    { key: "hours", label: t("reports.business.card.hours"), fig: (x) => hoursFigure(x.labor), kind: "money" },
+    { key: "pure", label: t("reports.business.card.pure_hourly"), fig: (x) => purePctFigure(x.labor), kind: "points" },
+    { key: "loaded", label: t("reports.business.card.fully_loaded"), fig: (x) => loadedPctFigure(x.labor), kind: "points" },
   ];
+  const none = <Dash reason="reports.business.compare.no_previous" language={language} />;
+  const cell = (f: Figure | null): ReactNode => (f === null ? none : <FigureView f={f} language={language} />);
   return <section className={bizCard} aria-label={t("reports.business.tab.compare")}>
     <p className="mb-3 text-sm text-co-text-muted">{t("reports.business.compare.periods", { current: dateRange(dto.range.from, dto.range.to, language),
       previous: previous ? dateRange(previous.range.from, previous.range.to, language) : t("reports.business.compare.no_previous") })}</p>
     <ul className="flex flex-col gap-2">
-      {rows.map((r) => <li key={r.key} className="rounded-lg border border-co-border bg-co-surface-inset p-3 text-sm">
-        <div className="mb-1 text-xs font-bold tracking-wide text-co-text-muted">{r.label}</div>
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <span><span className="text-co-text-muted">{t("reports.business.compare.this")}: </span><span className="font-semibold">{r.a}</span></span>
-          <span><span className="text-co-text-muted">{t("reports.business.compare.previous")}: </span><span className="font-semibold">{r.b}</span></span>
-          <ChangeText change={r.change} language={language} />
-        </div>
-      </li>)}
+      {rows.map((r) => {
+        const a = r.fig(cur, dto), b = prev && previous ? r.fig(prev, previous) : null;
+        const change = compareChange({ value: a.value, complete: figureComparable(a) }, { value: b?.value ?? null, complete: b !== null && figureComparable(b) }, r.kind);
+        return <li key={r.key} className="rounded-lg border border-co-border bg-co-surface-inset p-3 text-sm">
+          <div className="mb-1 text-xs font-bold tracking-wide text-co-text-muted">{r.label}</div>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <span><span className="text-co-text-muted">{t("reports.business.compare.this")}: </span><span className="font-semibold">{cell(a)}</span></span>
+            <span><span className="text-co-text-muted">{t("reports.business.compare.previous")}: </span><span className="font-semibold">{cell(b)}</span></span>
+            <ChangeText change={change} language={language} />
+          </div>
+        </li>;
+      })}
       <li className="rounded-lg border border-co-border bg-co-surface-inset p-3 text-sm">
         <div className="mb-1 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.last_year.label")}</div>
         <p className="text-co-text-muted">{t("reports.business.last_year.no_data_yet")}</p>

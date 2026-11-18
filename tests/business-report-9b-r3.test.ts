@@ -34,7 +34,8 @@ const SHOP = { id: A, code: "MEP", name: "Capitol Hill" };
 const range = resolveBusinessRange({ range: "custom", from: "2026-10-01", to: "2026-10-07" }, "2026-10-08");
 const load = async () => loadBusinessReport(moo, { locationId: A, range }, { client: fakeClient().client, env: ON });
 const text = (el: Parameters<typeof renderToStaticMarkup>[0]) => visibleText(renderToStaticMarkup(el));
-const NO_LABOR = EN["reports.business.hours.no_labor"]!;
+/** "No labor" as the quarter word (not the "No labor history ..." reason, which starts the same). */
+const NO_LABOR = new RegExp(`${EN["reports.business.hours.no_labor"]!}(?! history)`);
 
 describe("the descriptor: one state per figure", () => {
   it("every pure state maps to known / incomplete / unknown, never 'known' when the state is not ok", async () => {
@@ -72,11 +73,11 @@ describe("P2-1: Hours tab, every labor state", () => {
       const dto = withLabor(await load(), (l) => laborIn(l, s));
       const t = text(createElement(BusinessHours, { dto, language: "en" }));
       if (laborHoursComplete(s)) {
-        expect(t).toContain(NO_LABOR);
+        expect(t).toMatch(NO_LABOR);
         expect(t).not.toContain("so far");
         return;
       }
-      expect(t).not.toContain(NO_LABOR);
+      expect(t).not.toMatch(NO_LABOR);
       // One reason per day at least (the day line) and beside every sales-only quarter.
       expect(t.split(reasonOf(s)).length - 1, s).toBeGreaterThanOrEqual(dto.days.length * 2);
       // Every labor-carrying quarter (0.75 h) is qualified as provisional.
@@ -96,7 +97,8 @@ describe("every surface, every labor state: nothing plain when the state is not 
       expect(overview.split(reason).length - 1, s).toBeGreaterThanOrEqual(dto.days.length + dto.weeks.length);
       expect(overview, s).not.toMatch(/Hourly \d/);
       expect(overview, s).not.toMatch(/Fully loaded \d/);
-      if (!laborHoursComplete(s)) expect(overview, s).toContain("so far");
+      // Minutes that exist but are not final read "so far" (before_history has no minutes at all: dashes only).
+      if (!laborHoursComplete(s) && s !== "before_history") expect(overview, s).toContain("so far");
       const people = text(createElement(BusinessPeople, { dto, language: "en" }));
       if (!laborHoursComplete(s)) expect(people, s).toContain(reason);
       const compare = text(createElement(BusinessCompare, { dto, previous: dto, language: "en" }));
