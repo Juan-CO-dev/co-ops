@@ -277,14 +277,21 @@ export function parCoverageOz(unit: ParCoverageUnit, signalsFor: (validDate: str
 
 /**
  * One realized day of par demand.
- *   skuOz  THE RECORD: every SKU the day's lanes name, with its ounces (direct + production, never flattened).
- *          It is read from the lanes alone, so it does not depend on which SKUs carry a par on the night the
- *          target is frozen. The lanes are already rolled to product grain: each member of a product carries the
- *          product's total, so any member a forecast names answers for its product.
- *   oz     the same ounces by product (grain key), for the products the freeze night's par'd SKUs name. A
- *          convenience for totals; NEVER the source of a scored actual (review r1 #1).
+ *   skuOz     THE RECORD: every SKU the day's lanes name, with its ounces (direct + production, never flattened).
+ *             It is read from the lanes alone, so it does not depend on which SKUs carry a par on the night the
+ *             target is frozen. The lanes are rolled to product grain BY THE FREEZE NIGHT'S MEMBERSHIP: each SKU
+ *             carries the total of the product it belongs to THAT night, which is not always the product a
+ *             forecast named it for (review r2).
+ *   skuGrain  the freeze night's SKU -> product (grain key), for every SKU that night's par'd universe holds. It
+ *             is carried ONLY so the reader can refuse a SKU whose product changed; it never decides which
+ *             product a forecast meant (that is the forecast night's, `parMembersOf`).
+ *   oz        the same ounces by product (grain key), for the products the freeze night's par'd SKUs name. A
+ *             convenience for totals; a scored actual reads it only through `parActualOz` (review r1 #1).
  */
-export interface ParTarget { v: 1; target: "par_product_day_oz"; locationId: string; validDate: string; oz: Record<string, number>; skuOz: Record<string, number> }
+export interface ParTarget {
+  v: 1; target: "par_product_day_oz"; locationId: string; validDate: string;
+  oz: Record<string, number>; skuOz: Record<string, number>; skuGrain: Record<string, string>;
+}
 
 /**
  * The realized ounces of one day, as the engine's own loader reads them (direct + production, never flattened).
@@ -306,26 +313,65 @@ export function parTargetFromInputs(inputs: DemandInputs, validDate: string): { 
     if (v > 0) skuOz[skuId] = v;
   }
   const oz: Record<string, number> = {};
+  const skuGrain: Record<string, string> = {};
   for (const s of inputs.skus) {
+    skuGrain[s.skuId] = s.grainKey;
     if (oz[s.grainKey] !== undefined) continue;
     const v = used(s.skuId);
     if (v > 0) oz[s.grainKey] = v;
   }
-  return { coverage: "covered", payload: { v: 1, target: "par_product_day_oz", locationId: inputs.locationId, validDate, oz, skuOz } };
+  return { coverage: "covered", payload: { v: 1, target: "par_product_day_oz", locationId: inputs.locationId, validDate, oz, skuOz, skuGrain } };
+}
+
+/**
+ * THE FORECAST NIGHT'S product membership: grain key -> its member SKU ids (sorted). Which SKUs ARE a product is
+ * decided on the night the forecast was made, from that night's inputs. For a recorded forecast those are the
+ * stored ones: `parMembersOf(restoreParInputs(manifestHash, get))`. Never the freeze night's (review r2).
+ */
+export type ParMembers = Record<string, string[]>;
+export function parMembersOf(forecastNight: DemandInputs): ParMembers {
+  const out: ParMembers = {};
+  for (const s of forecastNight.skus) (out[s.grainKey] ??= []).push(s.skuId);
+  for (const k of Object.keys(out)) out[k]!.sort();
+  return out;
+}
+
+const grainsOfTarget = new WeakMap<ParTarget, Set<string>>();
+function targetHasGrain(t: ParTarget, grainKey: string): boolean {
+  let set = grainsOfTarget.get(t);
+  if (!set) { set = new Set(Object.values(t.skuGrain)); grainsOfTarget.set(t, set); }
+  return set.has(grainKey);
 }
 
 /**
  * What a product used on a frozen day, for a forecast that names it: THE one reader of a scored par actual.
- * The identity is the FORECAST night's (the SKU that spoke for the product then), never the freeze night's
- * universe. A covered day on which that SKU is not in the record is a true zero. The product-keyed fallback
- * answers only for a SKU that has since left its product while the product kept moving.
+ * The identity is the FORECAST night's: the product (grain key), the SKU that spoke for it, and its members that
+ * night (`parMembersOf`). The target's lanes are rolled by the FREEZE night's membership, so a SKU that has since
+ * been attached to another product carries THAT product's total: it is never read (review r2). In order:
+ *   1. the named SKU, while the freeze night still has it in this product (nothing recorded = a true zero);
+ *   2. the named SKU when it has left the par'd universe (review r1 #1: deactivated, its lane still holds its use);
+ *   3. another forecast-night member the freeze night still has in this product;
+ *   4. the product's own record, when the freeze night has any SKU in it (a member attached since);
+ *   5. another forecast-night member that left the par'd universe and whose lane is recorded;
+ *   6. null when the named SKU now belongs to another product and nothing above answered: the product's use is
+ *      UNKNOWN (excluded and counted, like an uncovered day), never another product's and never zero. Else 0.
  */
-export function parActualOz(t: ParTarget, unit: { grainKey: string; skuId: string }): number {
-  return t.skuOz[unit.skuId] ?? t.oz[unit.grainKey] ?? 0;
+export function parActualOz(t: ParTarget, unit: { grainKey: string; skuId: string }, members: ReadonlyArray<string>): number | null {
+  const grainNow = (skuId: string): string | undefined => t.skuGrain[skuId];
+  const named = grainNow(unit.skuId);
+  if (named === unit.grainKey) return t.skuOz[unit.skuId] ?? 0;
+  if (named === undefined && t.skuOz[unit.skuId] !== undefined) return t.skuOz[unit.skuId]!;
+  const others = members.filter((m) => m !== unit.skuId);
+  const still = others.find((m) => grainNow(m) === unit.grainKey);
+  if (still !== undefined) return t.skuOz[still] ?? 0;
+  if (targetHasGrain(t, unit.grainKey)) return t.oz[unit.grainKey] ?? 0;
+  const gone = others.find((m) => grainNow(m) === undefined && t.skuOz[m] !== undefined);
+  if (gone !== undefined) return t.skuOz[gone]!;
+  return named === undefined ? 0 : null;
 }
 
-/** Both arms of the product-day ounce score, for every lead whose target is frozen. */
-export function parScoreRows(shopId: string, f: ParForecast, targets: TargetLookup<ParTarget>, candidate: CandidateSpec): PairedRow[] {
+/** Both arms of the product-day ounce score, for every lead whose target is frozen. `members` = `parMembersOf` of the FORECAST night. */
+export function parScoreRows(shopId: string, f: ParForecast, members: ParMembers, targets: TargetLookup<ParTarget>, candidate: CandidateSpec): PairedRow[] {
   const out: PairedRow[] = [];
   for (const leadDays of PAR_LEADS) {
     const validDate = addDaysEt(f.decisionDate, leadDays);
@@ -336,7 +382,7 @@ export function parScoreRows(shopId: string, f: ParForecast, targets: TargetLook
     const episodeId = composeSignals(signals, 1) !== 1 ? candidate.episodeFor(validDate) : null;
     for (const unitKey of Object.keys(base)) {
       out.push({ shopId, target: "par_product_day_oz", leadDays, validDate, unitKey, baseline: base[unitKey]!, candidate: cand[unitKey] ?? null,
-        actual: t === "not_covered" ? null : parActualOz(t, { grainKey: unitKey, skuId: f.terms[unitKey]!.skuId }), episodeId });
+        actual: t === "not_covered" ? null : parActualOz(t, { grainKey: unitKey, skuId: f.terms[unitKey]!.skuId }, members[unitKey] ?? []), episodeId });
     }
   }
   return out;
