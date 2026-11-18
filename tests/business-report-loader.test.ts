@@ -20,7 +20,16 @@ const smm = { userId: "u-smm", level: 6, role: "social_media_mgr" as const, loca
 const moo = { userId: "u-moo", level: 8, role: "moo" as const, locations: [] as string[] };
 
 type Call = { fn: string; args: Record<string, unknown> };
-function fakeClient(o: { weeks?: Array<{ week_start: string; ot_scope: string; builder_version: string }>; facts?: string[]; failCuts?: boolean } = {}) {
+type FakeOpts = {
+  weeks?: Array<{ week_start: string; ot_scope: string; builder_version: string }>; facts?: string[]; failCuts?: boolean;
+  /** Replace an RPC's rows (per call args). */
+  rpcRows?: Record<string, (args: Record<string, unknown>) => unknown>;
+  /** PostgREST's max-rows (default 1,000): any response, ranged or not, is cut to this many rows. */
+  maxRows?: number;
+  /** Lie about the exact count (simulates a short page the server swears is not the end). */
+  countBias?: number;
+};
+function fakeClient(o: FakeOpts = {}) {
   const calls: Call[] = [];
   const tables: string[] = [];
   const day = (d: string) => ({ classes: [{ business_date: d, sale_class: "sale", checks: 2, amount_cents: 3_000, tax_cents: 0, amount_missing: 0, tax_missing: 0,
@@ -32,15 +41,34 @@ function fakeClient(o: { weeks?: Array<{ week_start: string; ot_scope: string; b
     return out;
   };
   const client = {
-    rpc: (fn: string, args: Record<string, unknown>) => {
+    rpc: (fn: string, args: Record<string, unknown>, opts?: { count?: string }) => {
       calls.push({ fn, args });
+      let lo = 0, hi = Number.POSITIVE_INFINITY;
+      const answer = () => {
+        const r = produce(fn, args) as { data: unknown; error: unknown };
+        if (r.error || !Array.isArray(r.data)) return r;
+        const all = r.data as unknown[];
+        const cap = o.maxRows ?? 1_000;
+        const page = all.slice(lo, Math.min(hi + 1, lo + cap));
+        return { data: page, error: null, count: opts?.count === "exact" ? all.length + (o.countBias ?? 0) : null };
+      };
+      const b = {
+        range: (a: number, z: number) => { lo = a; hi = z; return b; },
+        then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve(answer()).then(res, rej),
+      };
+      return b;
+    },
+  };
+  function produce(fn: string, args: Record<string, unknown>): { data: unknown; error: unknown } {
+    {
       const from = String(args.p_from), to = String(args.p_to);
       let data: unknown = null;
+      if (o.rpcRows?.[fn]) return { data: o.rpcRows[fn]!(args), error: null };
       if (fn === "sales_report_daily") {
         const raws = dates(from, to).map(day);
         data = { classes: raws.flatMap((r) => r.classes), tips: [], discounts: [], refunds: [], captured_days: dates(from, to), ezcater: raws.flatMap((r) => r.ezcater) };
       } else if (fn === "business_report_check_cuts") {
-        if (o.failCuts) return Promise.resolve({ data: null, error: { code: "PGRST202", message: "x" } });
+        if (o.failCuts) return { data: null, error: { code: "PGRST202", message: "x" } };
         data = dates(from, to).flatMap((d) => [
           { business_date: d, quarter_start_at: `${d}T16:00:00.000Z`, wall_quarter: 48, fold: 0, et_date: d, channel: "dine_in", provider: null,
             server_guid: "srv-1", server_label: "Ana", sale_class: "sale", checks: 1, amount_cents: 1_000, amount_missing: 0, large_checks: 0, large_cents: 0 },
@@ -58,8 +86,10 @@ function fakeClient(o: { weeks?: Array<{ week_start: string; ot_scope: string; b
           burden_pct: 12, burden_basis: "estimated", estimated_rate_minutes: 0, hourly_minutes: 30, ot_minutes: 0, salaried_minutes: 0, ot_state: "assessed",
           range_days: dates(from, to).length, days_covered: dates(from, to).length, days_pending: 0, days_fallback: 0, days_incomplete: 0, days_missing: 0, open_punches: 0 }];
       }
-      return Promise.resolve({ data, error: null });
-    },
+      return { data, error: null };
+    }
+  }
+  Object.assign(client, {
     from: (table: string) => {
       tables.push(table);
       const rows = table === "labor_week_coverage" ? (o.weeks ?? [{ week_start: "2026-09-27", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }, { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }])
@@ -67,10 +97,12 @@ function fakeClient(o: { weeks?: Array<{ week_start: string; ot_scope: string; b
         : table === "schedule_structures" ? [] : [];
       const q: Record<string, unknown> = {};
       for (const k of ["select", "eq", "gte", "lte", "lt", "in", "order", "range", "abortSignal", "limit"]) q[k] = () => q;
-      q.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: rows, error: null }).then(res);
+      let lo = 0, hi = Number.POSITIVE_INFINITY;
+      q.range = (a: number, z: number) => { lo = a; hi = z; return q; };
+      q.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: rows.slice(lo, Math.min(hi + 1, lo + (o.maxRows ?? 1_000))), error: null, count: rows.length }).then(res);
       return q;
     },
-  };
+  });
   return { client: client as never, calls, tables };
 }
 
@@ -170,5 +202,84 @@ describe("the report a GM and a MoO get", () => {
     const narrow = await loadBusinessReport(moo, { locationId: A, range }, { client: fakeClient().client, env: ON });
     expect(narrow.quarters?.length).toBeGreaterThan(0);
     expect(narrow.quarters![0]).toMatchObject({ basis: "toast_only_straight_time", pct: 90 });
+  });
+});
+
+// Fix round 1, P1: a table-returning RPC is read to completion (paged, exact count) or refused by name —
+// never cut at PostgREST's 1,000-row cap.
+describe("table-returning reads page to completion (never the 1,000-row cap)", () => {
+  const month = resolveBusinessRange({ range: "last30" }, TODAY);
+  const dates = (from: string, to: string) => {
+    const out: string[] = [];
+    for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`); t += 86_400_000) out.push(new Date(t).toISOString().slice(0, 10));
+    return out;
+  };
+  // 40 occupied quarters a day x 30 days = 1,200 rows in one window.
+  const quarters = (args: Record<string, unknown>) => dates(String(args.p_from), String(args.p_to)).flatMap((d) =>
+    Array.from({ length: 40 }, (_, i) => ({ business_date: d, week_start: null, quarter_start_at: new Date(Date.parse(`${d}T12:00:00.000Z`) + i * 900_000).toISOString(),
+      wall_quarter: 32 + i, fold: 0, minutes: 15, hourly_minutes: 15, salaried_minutes: 0, straight_cents: 10, estimated_minutes: 0 })));
+  // 40 gift-card rows a day ahead of each day's two sale rows: the late days' sales fall past row 1,000 unpaged.
+  const cuts = (args: Record<string, unknown>) => dates(String(args.p_from), String(args.p_to)).flatMap((d) => [
+    ...Array.from({ length: 40 }, (_, i) => ({ business_date: d, quarter_start_at: `${d}T15:00:00.000Z`, wall_quarter: 44, fold: 0, et_date: d, channel: "gift_card",
+      provider: `g${String(i).padStart(2, "0")}`, server_guid: null, server_label: null, sale_class: "gift_card", checks: 1, amount_cents: 500, amount_missing: 0, large_checks: 0, large_cents: 0 })),
+    { business_date: d, quarter_start_at: `${d}T16:00:00.000Z`, wall_quarter: 48, fold: 0, et_date: d, channel: "dine_in", provider: null,
+      server_guid: "srv-1", server_label: "Ana", sale_class: "sale", checks: 1, amount_cents: 1_000, amount_missing: 0, large_checks: 0, large_cents: 0 },
+    { business_date: d, quarter_start_at: `${d}T16:15:00.000Z`, wall_quarter: 49, fold: 0, et_date: d, channel: "online", provider: null,
+      server_guid: null, server_label: null, sale_class: "sale", checks: 1, amount_cents: 2_000, amount_missing: 0, large_checks: 0, large_cents: 0 },
+  ]);
+  const people = (args: Record<string, unknown>) => Array.from({ length: 1_300 }, (_, i) => ({ week_start: "2026-09-27",
+    person_key: `toast:${String(i).padStart(5, "0")}`, user_id: null, person_label: null, role_key: 0, source: "toast", pay_class: "hourly",
+    minutes: args.p_from === month.from ? 1 : 0, ot_minutes: 0, straight_cents: 0 }));
+
+  it("1,200 labor quarters, 1,260 cut rows and 1,300 people in one window all arrive", async () => {
+    const f = fakeClient({ rpcRows: { business_report_labor_quarters: quarters, business_report_check_cuts: cuts, business_report_labor_people: people } });
+    const dto = await loadBusinessReport(moo, { locationId: A, range: month }, { client: f.client, env: ON });
+    expect(dto.days.every((d) => d.cuts === "ok")).toBe(true);
+    const laborQuarters = dto.quarters!.filter((q) => q.laborMinutes !== null);
+    expect(laborQuarters).toHaveLength(30 * 40);
+    expect(laborQuarters.reduce((s, q) => s + q.laborMinutes!, 0)).toBe(30 * 40 * 15);
+    expect(dto.people).toHaveLength(1_300);
+    expect(f.calls.filter((c) => c.fn === "business_report_labor_quarters").length).toBeGreaterThan(1);
+  });
+  it("a server whose max-rows is below the page still delivers everything (exact count decides the end)", async () => {
+    const f = fakeClient({ maxRows: 300, rpcRows: { business_report_labor_quarters: quarters } });
+    const dto = await loadBusinessReport(moo, { locationId: A, range: month }, { client: f.client, env: ON });
+    expect(dto.quarters!.filter((q) => q.laborMinutes !== null)).toHaveLength(30 * 40);
+  });
+  it("a read that cannot be completed is refused by name, never a partial report", async () => {
+    const f = fakeClient({ countBias: 5, rpcRows: { business_report_labor_quarters: quarters } });
+    await expect(loadBusinessReport(moo, { locationId: A, range: month }, { client: f.client, env: ON }))
+      .rejects.toMatchObject({ status: 503, code: "business_reads_incomplete" });
+  });
+});
+
+// Fix round 1, P2: the quarter denominator is ALL that quarter's Toast check sales, catering channel included;
+// only the rush detector leaves catering out. Checks with no opened quarter are an unassigned bucket.
+describe("quarter sales include ordinary Toast catering; unassigned is shown", () => {
+  const D = "2026-10-07";
+  const one = resolveBusinessRange({ range: "yesterday" }, TODAY);
+  const daily = () => ({ classes: [{ business_date: D, sale_class: "sale", checks: 3, amount_cents: 52_500, tax_cents: 0, amount_missing: 0, tax_missing: 0,
+    gross_cents: 52_500, discounts_comps_cents: 0, voids_cents: 0, service_charges_cents: 0, accounting_missing: 0 }],
+    tips: [], discounts: [], refunds: [], captured_days: [D], ezcater: [] });
+  const cut = (channel: string, at: string | null, cents: number) => ({ business_date: D, quarter_start_at: at, wall_quarter: at ? 48 : null, fold: at ? 0 : null,
+    et_date: at ? D : null, channel, provider: null, server_guid: null, server_label: null, sale_class: "sale", checks: 1, amount_cents: cents, amount_missing: 0, large_checks: 0, large_cents: 0 });
+  const cuts = (args: Record<string, unknown>) => String(args.p_to) < D ? [] : [
+    cut("dine_in", `${D}T16:00:00.000Z`, 10_000), cut("catering", `${D}T16:00:00.000Z`, 40_000), cut("dine_in", null, 2_500)];
+  const labor = () => [{ business_date: D, week_start: null, quarter_start_at: `${D}T16:00:00.000Z`, wall_quarter: 48, fold: 0,
+    minutes: 15, hourly_minutes: 15, salaried_minutes: 0, straight_cents: 5_000, estimated_minutes: 0 }];
+
+  it("$100 ordinary + $400 unlinked Toast catering, $50 straight time = 10%, not 50%", async () => {
+    const f = fakeClient({ rpcRows: { sales_report_daily: daily, business_report_check_cuts: cuts, business_report_labor_quarters: labor } });
+    const dto = await loadBusinessReport(moo, { locationId: A, range: one }, { client: f.client, env: ON });
+    expect(dto.days[0]!.cuts).toBe("ok");
+    const q = dto.quarters!.find((x) => x.quarterStartAt === `${D}T16:00:00.000Z`)!;
+    expect(q).toMatchObject({ toastCents: 50_000, checks: 2, straightCents: 5_000, pct: 10 });
+  });
+  it("quarters plus the unassigned bucket recompose to the day's Toast check sales", async () => {
+    const f = fakeClient({ rpcRows: { sales_report_daily: daily, business_report_check_cuts: cuts, business_report_labor_quarters: labor } });
+    const dto = await loadBusinessReport(moo, { locationId: A, range: one }, { client: f.client, env: ON });
+    expect(dto.quartersUnassigned).toEqual([{ date: D, toastCents: 2_500, checks: 1 }]);
+    const sum = dto.quarters!.filter((x) => x.date === D).reduce((s, x) => s + (x.toastCents ?? 0), 0) + dto.quartersUnassigned![0]!.toastCents;
+    expect(sum).toBe(dto.days[0]!.sales.toastChecksCents);
   });
 });
