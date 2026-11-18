@@ -19,7 +19,7 @@ import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { figureKindOf, type Figure } from "@/lib/business-figure-shared";
 import type { BusinessReportView, CutView, DayView, LaborView, QuarterView, SalesView } from "@/lib/business-view-shared";
-import { Card, ChangeText, Dash, EmptyNote, FigureLine, FigureView, LaborShare, bizCard, dateRange, figureReasonText, figureText, figureValueText, tFor } from "./BusinessParts";
+import { Card, ChangeText, Dash, EmptyNote, FigureLine, FigureView, LaborShare, bizCard, dateRange, figureReasonText, figureText, figureValueText, figureWhyText, tFor } from "./BusinessParts";
 
 type Props = { view: BusinessReportView; language: Language };
 
@@ -156,7 +156,7 @@ export function BusinessHours({ view, language }: Props) {
         const rushText = rush === null ? t(d.sales.coverage !== "complete" ? `reports.business.coverage.${d.sales.coverage}` as TranslationKey : "reports.business.badge.rebuilding")
           : rush.state === "not_enough_history" ? t("reports.business.rush.not_enough_history")
           : [rush.any ? t("reports.business.rush.count", { n: figureValueText(rush.count, language) ?? "" }) : rush.none ? t("reports.business.rush.none") : null,
-            figureReasonText(rush.count, language)].filter((x) => x !== null).join(" · ");
+            figureWhyText(rush.count, language)].filter((x) => x !== null).join(" · ");
         // The closed row says whether the day's labor is final (the reason travels with the figure).
         const count = final ? rushText : `${rushText} · ${t("reports.business.row.hours", { h: figureText(hours, language, { short: true }) })}`;
         return <CollapsibleSection key={d.date} idBase={`biz-hours-${view.locationId}-${d.date}`} title={formatDateLabel(d.date, language)}
@@ -190,6 +190,13 @@ function CutLine({ label, sub, sales, checks, language }: { label: string; sub?:
   </li>;
 }
 
+/** Fix round 8: every class that is not a sale is listed under "Not counted as sales" (the classifier's closed set). */
+const EXCLUDED_LABELS: Record<string, TranslationKey> = {
+  gift_card: "reports.business.channels.excluded.gift_card", ezcater_linked: "reports.business.channels.excluded.ezcater_linked",
+  void: "reports.business.channels.excluded.void", excess_food: "reports.business.channels.excluded.excess_food",
+};
+const excludedLabel = (key: string): TranslationKey => EXCLUDED_LABELS[key] ?? "reports.business.channels.excluded.other";
+
 export function BusinessChannels({ view, language }: Props) {
   const t = tFor(language);
   const notice = view.breakdownNotice;
@@ -203,7 +210,7 @@ export function BusinessChannels({ view, language }: Props) {
     <ul><CutLine label={t("reports.business.channels.ezcater_label")} sales={view.channels.ezcater.sales} checks={view.channels.ezcater.orders} language={language} /></ul>
     <h3 className="mb-1 mt-4 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.channels.excluded")}</h3>
     {view.empty.excluded !== null ? <EmptyNote claim={view.empty.excluded} none="reports.business.channels.excluded_none" language={language} />
-      : <ul>{view.channels.excluded.map((c) => line(c, t(c.key === "gift_card" ? "reports.business.channels.excluded.gift_card" : "reports.business.channels.excluded.ezcater_linked"), null))}</ul>}
+      : <ul>{view.channels.excluded.map((c) => line(c, t(excludedLabel(c.key)), null))}</ul>}
   </section>;
 }
 

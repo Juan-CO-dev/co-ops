@@ -250,7 +250,7 @@ describe("P2 RUSH: zero / thin baselines never make a rush", () => {
   });
   it("thin history (< 4 covered same-weekdays) reads 'not enough history'", () => {
     const r = detectRushes(day(() => [20, 40_000]), history(3, () => [6, 12_000]));
-    expect(r).toEqual({ state: "not_enough_history", windows: [], uncompared: 0 });
+    expect(r).toEqual({ state: "not_enough_history", windows: [], uncompared: 0, untimed: 0, baselineUntimed: 0 });
   });
   it("uses at most the last 8 covered weeks", () => {
     const h = [...history(8, () => [6, 12_000]), ...history(20, () => [100, 200_000]).slice(8)];

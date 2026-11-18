@@ -27,7 +27,7 @@
  */
 import {
   compareChange, laborHoursComplete, laborReasonKey, loadedReasonKey,
-  type BUSINESS_REPORT_I18N_KEYS, type BreakdownCoverage, type CompareChange, type LaborFigures, type LaborState,
+  type BUSINESS_REPORT_I18N_KEYS, type BreakdownCoverage, type CompareChange, type LaborFigures, type LaborState, type RushResult,
 } from "@/lib/business-report-shared";
 
 export type FigureKind = "known" | "estimated" | "incomplete" | "unknown";
@@ -47,6 +47,8 @@ interface Data {
   kind: FigureKind;
   /** Why the figure is unknown or incomplete; null for known / estimated. */
   reason: FigureKey | null;
+  /** The reason's own numbers ("{n} checks have no time"), fix round 8. */
+  reasonValues?: Record<string, number>;
   notes: readonly FigureNote[];
   /** Every qualification this figure was built with, kept even when it is unknown (an unknown figure SHOWS only
    * its gaps): what a figure derived from this one inherits (`derivedFrom`). */
@@ -68,19 +70,21 @@ const seal = (d: Data): Figure => d as unknown as Figure;
 const open = (f: Figure): Data => f as unknown as Data;
 
 const FALLBACK: FigureKey = "reports.business.figure.not_available";
-type Opts = { notes?: readonly FigureNote[]; provisional?: boolean; soFar?: boolean; zero?: FigureKey; label?: FigureKey; missing?: number; coveredOnly?: boolean; daysOnly?: boolean };
+type Opts = { notes?: readonly FigureNote[]; reasonValues?: Record<string, number>; provisional?: boolean; soFar?: boolean; zero?: FigureKey; label?: FigureKey; missing?: number; coveredOnly?: boolean; daysOnly?: boolean };
 
 function make(unit: FigureUnit, value: number | null | undefined, reason: FigureKey | null, o: Opts = {}): Figure {
   const v = value === undefined ? null : value;
   const notes = o.notes ?? [];
   if (v === null) {
     // An unknown keeps only its gaps (an estimate qualifies a number that is not there).
-    return seal({ unit, value: null, kind: "unknown", reason: reason ?? FALLBACK, notes: notes.filter((n) => n.kind === "gap"), inherit: notes, soFar: false });
+    return seal({ unit, value: null, kind: "unknown", reason: reason ?? FALLBACK, notes: notes.filter((n) => n.kind === "gap"), inherit: notes, soFar: false,
+      ...(reason && o.reasonValues ? { reasonValues: o.reasonValues } : {}) });
   }
   const provisional = o.provisional ?? false;
   const kind: FigureKind = provisional || notes.some((n) => n.kind === "gap") ? "incomplete" : notes.length > 0 ? "estimated" : "known";
   return seal({
     unit, value: v, kind, reason: provisional ? reason ?? FALLBACK : null, notes, inherit: notes, soFar: provisional && (o.soFar ?? true),
+    ...(provisional && reason && o.reasonValues ? { reasonValues: o.reasonValues } : {}),
     ...(o.zero && kind !== "incomplete" ? { zero: o.zero } : {}), ...(o.label ? { label: o.label } : {}),
     ...(o.missing !== undefined ? { missing: o.missing } : {}), ...(o.coveredOnly ? { coveredOnly: true } : {}), ...(o.daysOnly ? { daysOnly: true } : {}),
   });
@@ -264,11 +268,24 @@ export function exactFigure(unit: "cents" | "count", value: number | null | unde
     { provisional: floor, soFar: false, label: o.label, ...(o.missing !== undefined && o.missing !== null ? { missing: o.missing } : {}) });
 }
 
-/** A count that may be short of the truth for a stated reason (a day's rushes when some 15 minutes could not be
- * compared): shown, incomplete, with `partialReason`. Absent = unknown with `unknownReason`. */
-export function partialCountFigure(value: number | null | undefined, partialReason: FigureKey | null, unknownReason: FigureKey): Figure {
-  if (value === null || value === undefined) return make("count", null, unknownReason);
-  return make("count", value, partialReason, { provisional: partialReason !== null, soFar: false });
+/** The day's rush count (fix round 8, review ITEM9B-r8 P2). "No rushes" is an EMPTY CLAIM, so the count is whole only
+ * when the detector saw every check that could be part of a rush:
+ *   - checks with NO opened time (the detector cannot place them): none found = UNKNOWN "{n} checks have no time —
+ *     rushes unknown"; some found = a floor, "there may be more rushes";
+ *   - a 15 minutes that could not be compared (a check with no amount): a floor (fix round 7);
+ *   - baseline days left out because they had checks with no time: the count stands on the remaining days, said
+ *     beside it (a qualification, not a gap).
+ * `rush` null = the day's breakdown is not shown (`unknownReason`). */
+export function rushCountFigure(rush: Pick<RushResult, "state" | "windows" | "uncompared" | "untimed" | "baselineUntimed"> | null, unknownReason: FigureKey): Figure {
+  if (rush === null) return make("count", null, unknownReason);
+  const left = rush.baselineUntimed ?? 0;
+  const notes: FigureNote[] = left > 0 ? [{ kind: "estimate", key: "reports.business.rush.baseline_untimed", short: "reports.business.qual.baseline_untimed", values: { n: left } }] : [];
+  if (rush.state !== "ok") return make("count", null, "reports.business.rush.not_enough_history", { notes });
+  const untimed = rush.untimed ?? 0, found = rush.windows.length;
+  if (untimed > 0) return make("count", found > 0 ? found : null, found > 0 ? "reports.business.rush.untimed_more" : "reports.business.rush.untimed_unknown",
+    { notes, provisional: true, soFar: false, reasonValues: { n: untimed } });
+  if (rush.uncompared > 0) return make("count", found, "reports.business.rush.not_all_compared", { notes, provisional: true, soFar: false });
+  return make("count", found, null, { notes });
 }
 /** A marker input for `emptyClaim`: something a list depends on is ready (`reason` null), or why it is not. */
 export function readyFigure(reason: FigureKey | null): Figure { return make("count", reason === null ? 0 : null, reason); }
@@ -339,7 +356,7 @@ export function figureDisplay(f: Figure, fmt: FigureFormat, o: { compact?: boole
   const d = open(f);
   const words = figureValueText(f, fmt);
   const show = d.reason !== null && (words === null || ((!o.compact || o.reason === "always") && reasonBesideValue(d)));
-  return { words, reason: show ? fmt.t(d.reason!) : null,
+  return { words, reason: show ? fmt.t(d.reason!, d.reasonValues) : null,
     notes: d.notes.map((n) => ({ id: n.key, gap: n.kind === "gap", text: fmt.t(o.compact ? n.short : n.key, n.values) })) };
 }
 /** One line of text (a collapsed row's summary): the value or "—", then "(reason; qualifications)". `short`
@@ -348,7 +365,7 @@ export function figureText(f: Figure, fmt: FigureFormat, o: { short?: boolean } 
   const d = open(f);
   const v = figureValueText(f, fmt) ?? "—";
   const parts = [
-    ...(d.reason && (d.value === null || reasonBesideValue(d)) ? [fmt.t(d.reason)] : []),
+    ...(d.reason && (d.value === null || reasonBesideValue(d)) ? [fmt.t(d.reason, d.reasonValues)] : []),
     ...d.notes.map((n) => fmt.t(o.short ? n.short : n.key, n.values)),
   ];
   return parts.length ? `${v} (${parts.join("; ")})` : v;

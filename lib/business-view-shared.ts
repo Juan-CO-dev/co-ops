@@ -20,8 +20,8 @@ import {
 } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
 import {
-  breakdownFigure, coverageFigure, emptyClaim, exactFigure, figureHasNote, figureIsPositive, figureKindOf, hoursFigure, loadedCentsFigure, loadedPctFigure, minutesFigure, netFigure,
-  otHoursFigure, partialCountFigure, personCostFigure, pureCentsFigure, purePctFigure, quarterCentsFigure, quarterHoursFigure, quarterPctFigure, readyFigure, salesFigure,
+  breakdownFigure, coverageFigure, emptyClaim, exactFigure, figureComparable, figureHasNote, figureIsPositive, hoursFigure, loadedCentsFigure, loadedPctFigure, minutesFigure, netFigure,
+  otHoursFigure, rushCountFigure, personCostFigure, pureCentsFigure, purePctFigure, quarterCentsFigure, quarterHoursFigure, quarterPctFigure, readyFigure, salesFigure,
   type EmptyClaim, type Figure, type FigureKey,
 } from "@/lib/business-figure-shared";
 
@@ -62,7 +62,8 @@ export interface DayView {
   cutsReason: FigureKey | null;
   largeChecks: { any: boolean; checks: Figure; amount: Figure };
   /** null = the day's breakdown is not shown. `none` (fix round 7) = "no rushes" is KNOWN: every 15 minutes that
-   * could be part of a rush was compared. With one that was not, `count` is incomplete and carries the reason. */
+   * could be part of a rush was compared. With one that was not, `count` is incomplete and carries the reason.
+   * Fix round 8: and every check the detector could have used had a time (`rushCountFigure`). */
   rush: { state: "ok" | "not_enough_history"; any: boolean; none: boolean; count: Figure; windows: RushWindowView[] } | null;
   rushes: Figure;
   quarters: QuarterView[];
@@ -194,10 +195,9 @@ export function businessView(dto: BusinessReportDto): BusinessReportView {
     const cutsReason = d.cuts === "sales_not_covered" ? "reports.business.labor.state.sales_not_covered" as const : "reports.business.cuts.rebuilding" as const;
     const ok = d.cuts === "ok";
     const large = { checks: exactFigure("count", ok ? d.largeChecks.checks : null, cutsReason), amount: exactFigure("cents", ok ? d.largeChecks.cents : null, cutsReason) };
-    // Fix round 7: a 15 minutes that could not be compared leaves the count a floor: incomplete, with why.
-    const rushCount = partialCountFigure(d.rush?.state === "ok" ? d.rush.windows.length : null,
-      (d.rush?.uncompared ?? 0) > 0 ? "reports.business.rush.not_all_compared" : null,
-      d.rush === null ? cutsReason : "reports.business.rush.not_enough_history");
+    // Fix round 7: a 15 minutes that could not be compared leaves the count a floor. Fix round 8: so do checks with no
+    // time (none found = unknown), and baseline days left out are said beside it. One builder decides.
+    const rushCount = rushCountFigure(d.rush, cutsReason);
     const un = unassigned.find((u) => u.date === d.date);
     const sales = salesView(d.sales), labor = laborView(d.labor);
     const listed = (quartersByDate.get(d.date) ?? []).filter((q) => q.active);
@@ -212,7 +212,7 @@ export function businessView(dto: BusinessReportDto): BusinessReportView {
       target: wk?.target ?? dto.total.target, loadedTarget: wk?.loadedTarget ?? dto.total.loadedTarget,
       largeChecks: { any: figureIsPositive(large.checks), ...large },
       rush: d.rush === null ? null : {
-        state: d.rush.state, any: figureIsPositive(rushCount), none: figureKindOf(rushCount) === "known" && !figureIsPositive(rushCount), count: rushCount,
+        state: d.rush.state, any: figureIsPositive(rushCount), none: figureComparable(rushCount) && !figureIsPositive(rushCount), count: rushCount,
         windows: d.rush.windows.map((w) => ({ startAt: w.startAt, endAt: w.endAt, checks: exactFigure("count", w.checks, cutsReason),
           usual: exactFigure("count", w.baselineChecks, cutsReason), sales: exactFigure("cents", w.cents, cutsReason) })),
       },

@@ -206,7 +206,7 @@ const SALES_KEYS = ["date", "coverage", "checks", "toastChecksCents", "toastAmou
   "ezcaterMissing", "refundCents", "totalCents", "giftCardCents", "ezcaterLinkedCents"] as const;
 const LABOR_KEYS = ["state", "minutes", "pureHourlyCents", "otPremiumCents", "otMinutes", "denominator", "denominator.cents", "denominator.state", "pct", "tone",
   "loadedState", "salariedCents", "burdenCents", "fullyLoadedCents", "loadedPct", "loadedTone", "burdenEstimated", "salaryEstimated", "salaryGaps", "wageEstimated", "hoursUnverified"] as const;
-const RUSH_KEYS = ["state", "uncompared", "windows[].startAt", "windows[].endAt", "windows[].quarters", "windows[].checks", "windows[].cents",
+const RUSH_KEYS = ["state", "uncompared", "untimed", "baselineUntimed", "windows[].startAt", "windows[].endAt", "windows[].quarters", "windows[].checks", "windows[].cents",
   "windows[].baselineChecks", "windows[].baselineCents"] as const;
 const CUT_KEYS = ["key", "label", "provider", "cents", "checks", "amountMissing", "unassigned"] as const;
 const PERSON_KEYS = ["personKey", "label", "source", "payClass", "minutes", "otMinutes", "weeksSuppressed"] as const;
@@ -326,6 +326,12 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
     return [...by.values()];
   };
   const rushPoints = (date: string) => points(date, true);
+  /** Fix round 8 (ITEM9B-r8 P2): the checks `rushPoints` had to leave out because they have no opened time (`sale`,
+   * not catering: the rush detector's own population). Counted, so a day holding any is never "no rushes". */
+  const rushUntimed = (date: string) => (cutsByDate.get(date) ?? [])
+    .filter((c) => c.sale_class === "sale" && c.channel !== "catering" && (!c.quarter_start_at || c.wall_quarter === null || c.fold === null))
+    .reduce((t, c) => t + c.checks, 0);
+  const rushDay = (date: string) => ({ date, quarters: rushPoints(date), untimed: rushUntimed(date) });
   /** `sale` checks the facts could not place in a quarter (no opened time): shown, never dropped. */
   const unassigned = (date: string) => (cutsByDate.get(date) ?? [])
     .filter((c) => c.sale_class === "sale" && (!c.quarter_start_at || c.wall_quarter === null || c.fold === null))
@@ -337,12 +343,12 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
     const rc = recomposeDay(s, dayCuts);
     const wt = weekTargets.get(payrollWeekStart(s.date));
     const history = Array.from({ length: RUSH_HISTORY_WEEKS }, (_, i) => shiftReportDate(s.date, -7 * (i + 1)))
-      .filter((d) => covered.has(d)).map((d) => ({ date: d, quarters: rushPoints(d) }));
+      .filter((d) => covered.has(d)).map(rushDay);
     return {
       date: s.date, sales: s, cuts: rc.reason,
       labor: laborDayFigures(s, costByDay.get(s.date) ?? null, weekMap.get(payrollWeekStart(s.date)), wt?.hourly.pct, wt?.loaded.pct),
       largeChecks: rc.ok ? largeCheckTotals(dayCuts) : { checks: 0, cents: 0 },
-      rush: rc.ok ? detectRushes({ date: s.date, quarters: rushPoints(s.date) }, history) : null,
+      rush: rc.ok ? detectRushes(rushDay(s.date), history) : null,
     };
   });
   const okCuts = dayDtos.filter((d) => d.cuts === "ok").flatMap((d) => cutsByDate.get(d.date) ?? []);

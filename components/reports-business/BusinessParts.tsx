@@ -76,6 +76,13 @@ export function figureReasonText(f: Figure, language: Language): string | null {
   const key = figureReasonOf(f);
   return key === null ? null : serverT(language, key);
 }
+/** Why a figure is not plain, as one sentence: its reason (with the reason's own numbers) then every qualification;
+ * null when it is plain. Fix round 8: the rush line ("3 checks have no time — rushes unknown"). */
+export function figureWhyText(f: Figure, language: Language): string | null {
+  const d = figureDisplay(f, figureFormatFor(language), { reason: "always" });
+  const parts = [d.reason, ...d.notes.map((n) => n.text)].filter((x): x is string => x !== null);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
 /** One line of text (a collapsed row's summary): the value or "—", then "(reason; qualifications)". */
 export function figureText(f: Figure, language: Language, opts: { short?: boolean } = {}): string {
   return figureWords(f, figureFormatFor(language), opts);

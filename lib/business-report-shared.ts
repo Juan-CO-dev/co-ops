@@ -444,7 +444,7 @@ export function recomposeDay(day: DaySales, cuts: readonly CutRow[]): { ok: bool
 }
 
 export interface CutTotal { key: string; label?: string | null; provider?: string | null; cents: number; checks: number; amountMissing?: number; unassigned?: boolean }
-/** Channels: `sale` checks by channel/provider (included) and the named exclusions (gift cards, ezCater-linked). */
+/** Channels: `sale` checks by channel/provider (included) and every other class, by class (never counted as sales). */
 export function channelTotals(cuts: readonly CutRow[]): { included: CutTotal[]; excluded: CutTotal[] } {
   const inc = new Map<string, CutTotal>();
   const exc = new Map<string, CutTotal>();
@@ -453,7 +453,9 @@ export function channelTotals(cuts: readonly CutRow[]): { included: CutTotal[]; 
       const k = `${c.channel}|${c.provider ?? ""}`;
       const t = inc.get(k) ?? inc.set(k, { key: c.channel, provider: c.provider, cents: 0, checks: 0, amountMissing: 0 }).get(k)!;
       t.cents += c.amount_cents; t.checks += c.checks; t.amountMissing! += c.amount_missing;
-    } else if (c.sale_class === "gift_card" || c.sale_class === "ezcater_linked") {
+    } else {
+      // Fix round 8: EVERY check that is not a sale is listed here (void, excess food, e-gift card, ezCater-linked):
+      // a class left out would let "Nothing excluded" stand over checks the list dropped.
       const t = exc.get(c.sale_class) ?? exc.set(c.sale_class, { key: c.sale_class, cents: 0, checks: 0, amountMissing: 0 }).get(c.sale_class)!;
       t.cents += c.amount_cents; t.checks += c.checks; t.amountMissing! += c.amount_missing;
     }
@@ -496,7 +498,14 @@ export interface RushWindow { startAt: string; endAt: string; quarters: number; 
 /** `uncompared` (item 9b fix round 7) = quarters of the day with enough checks to be part of a rush that could NOT
  * be compared, because a check there (today, or at that quarter on a baseline day) has no amount. Above zero, the
  * windows found are a floor and "no rushes" is not known. */
-export interface RushResult { state: "ok" | "not_enough_history"; windows: RushWindow[]; uncompared: number }
+export interface RushResult {
+  state: "ok" | "not_enough_history"; windows: RushWindow[]; uncompared: number;
+  /** Fix round 8 (ITEM9B-r8 P2): the day's rush-eligible checks (`sale`, not catering) with NO opened time: the
+   * detector cannot place them, so above zero "no rushes" is unknown and the windows found are a floor. */
+  untimed: number;
+  /** Fix round 8: baseline days left out of the usual because they had checks with no opened time. */
+  baselineUntimed: number;
+}
 
 const QUARTER_MS = 15 * 60_000;
 function median(xs: number[]): number {
@@ -507,10 +516,14 @@ function median(xs: number[]): number {
 /** Rushes of one day against the last 8 COVERED same weekdays (the caller passes only covered days and
  * leaves out catering-channel checks and ezCater). The baseline of a quarter is the median over those
  * days at the same ET wall quarter and fold (a day with no check there counts as 0). */
-export function detectRushes(day: { date: string; quarters: readonly QuarterPoint[] },
-  history: ReadonlyArray<{ date: string; quarters: readonly QuarterPoint[] }>): RushResult {
-  const hist = [...history].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, RUSH_HISTORY_WEEKS);
-  if (hist.length < RUSH_MIN_HISTORY) return { state: "not_enough_history", windows: [], uncompared: 0 };
+export function detectRushes(day: { date: string; quarters: readonly QuarterPoint[]; untimed?: number },
+  history: ReadonlyArray<{ date: string; quarters: readonly QuarterPoint[]; untimed?: number }>): RushResult {
+  const recent = [...history].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, RUSH_HISTORY_WEEKS);
+  // Fix round 8: a baseline day with checks that have no time does not say where its checks were: it is left out
+  // of the usual (counted), never a baseline lowered by checks it could not place.
+  const hist = recent.filter((h) => (h.untimed ?? 0) === 0);
+  const untimed = day.untimed ?? 0, baselineUntimed = recent.length - hist.length;
+  if (hist.length < RUSH_MIN_HISTORY) return { state: "not_enough_history", windows: [], uncompared: 0, untimed, baselineUntimed };
   const key = (q: { wallQuarter: number; fold: number }) => `${q.wallQuarter}|${q.fold}`;
   const hot: Array<QuarterPoint & { bChecks: number; bCents: number }> = [];
   let uncompared = 0;
@@ -548,7 +561,7 @@ export function detectRushes(day: { date: string; quarters: readonly QuarterPoin
     run.push(q);
   }
   flush();
-  return { state: "ok", windows, uncompared };
+  return { state: "ok", windows, uncompared, untimed, baselineUntimed };
 }
 
 // ── The page (item 9b) ──────────────────────────────────────────────────────────────────────────
@@ -668,4 +681,8 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   // Fix round 7: an empty list is a claim (said only over known-complete inputs; otherwise "not known" + why).
   "reports.business.empty.not_known", "reports.business.hours.no_timed_activity", "reports.business.channels.none_verified",
   "reports.business.people.servers_none", "reports.business.rush.not_all_compared", "reports.business.last_year.not_shown",
+  // Fix round 8: checks with no time block "No rushes"; every class that is not a sale is listed as not counted.
+  "reports.business.rush.untimed_unknown", "reports.business.rush.untimed_more", "reports.business.rush.baseline_untimed",
+  "reports.business.qual.baseline_untimed", "reports.business.channels.excluded.void", "reports.business.channels.excluded.excess_food",
+  "reports.business.channels.excluded.other",
 ] as const;
