@@ -29,7 +29,7 @@ import {
 } from "@/lib/midshift";
 import { timeWindowMinutes } from "@/lib/midshift-shared";
 import { readNotInToast } from "@/lib/catering/not-in-toast";
-import { toastReadyAt, toastRingTiming, type NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
+import { notRungSource, toastReadyAt, toastRingTiming, type NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
 import { loadRecentDeliveries, type DeliveryView } from "@/lib/receiving";
 import { loadOrderingAttention, type OrderingCutoffAttention } from "@/lib/ordering";
 import {
@@ -340,7 +340,7 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
     for (const o of notRung) {
       const timing = toastRingTiming(o, ctx.now, null);
       if (timing === "upcoming") continue;
-      rows.push({ key: `catering_not_rung:${o.order_id}`, kind: "catering_not_rung", severity: severityOf("catering_not_rung"), params: { order: o.order_number ?? "—", time: toastReadyAt(o) ?? "" }, href: `/catering/pipeline`, action: "ring" });
+      rows.push({ key: `catering_not_rung:${o.order_id}`, kind: "catering_not_rung", severity: severityOf("catering_not_rung"), params: { order: o.order_number ?? "", source: notRungSource(o), time: toastReadyAt(o) ?? "" }, href: `/catering/pipeline`, action: "ring" });
     }
   }
   const cateringToday = got("cateringToday");
@@ -575,7 +575,7 @@ async function catering(deps: PulseDeps, ctx: PulseCtx): Promise<CateringData> {
     })),
     tomorrow,
     notRung: notRung.map((o) => ({
-      orderId: o.order_id, orderNumber: o.order_number, readyAt: toastReadyAt(o), headcount: o.headcount,
+      orderId: o.order_id, orderNumber: o.order_number, source: notRungSource(o), readyAt: toastReadyAt(o), headcount: o.headcount,
       timing: toastRingTiming(o, ctx.now, null), ...(money ? { totalCents: o.total_cents } : {}),
     })),
     // B027: the AM chip is LAST NIGHT's list (what today's catering runs on); a shop with no AM prep

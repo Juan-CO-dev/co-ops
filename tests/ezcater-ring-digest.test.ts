@@ -21,7 +21,7 @@ describe("Toast ring digest reminders", () => {
     const sections = composeCateringSections(facts([order(), order({ order_number: "OTHER-SHOP", location_id: "b" }), order({ order_number: "OTHER-DAY", event_date: "2026-10-09" })]), scope, language, BASE);
     const section = sections.find((s) => s.title.includes(language === "en" ? "To ring into Toast" : "Por registrar en Toast"));
     expect(section?.lines).toHaveLength(1);
-    expect(section?.lines[0]).toMatchObject({ label: "CODE-A", href: `${BASE}/catering/pipeline` });
+    expect(section?.lines[0]).toMatchObject({ label: "ezCater CODE-A", href: `${BASE}/catering/pipeline` });
     expect(section?.lines[0]?.text).toContain("11:30");
     expect(section?.lines[0]?.text).toContain(language === "en" ? "12 guests" : "12 invitados");
     expect(section?.lines[0]?.text).toContain("123.45");

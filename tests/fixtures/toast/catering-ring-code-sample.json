@@ -1,0 +1,96 @@
+[
+  {
+    "guid": "ring-name-order",
+    "businessDate": 20261120,
+    "modifiedDate": "2026-11-20T15:00:00.000+0000",
+    "voided": false,
+    "diningOption": { "guid": "do-cat", "entityType": "DiningOption" },
+    "checks": [
+      {
+        "guid": "ring-name-check",
+        "voided": false,
+        "amount": 460.0,
+        "taxAmount": 40.0,
+        "totalAmount": 500.0,
+        "selections": [
+          {
+            "guid": "ring-name-open-item",
+            "item": { "guid": "tg-open-catering" },
+            "displayName": "CO-4KM7R",
+            "quantity": 1,
+            "price": 460.0,
+            "voided": false,
+            "modifiers": []
+          }
+        ],
+        "payments": []
+      }
+    ]
+  },
+  {
+    "guid": "ring-note-order",
+    "businessDate": 20261120,
+    "modifiedDate": "2026-11-20T16:00:00.000+0000",
+    "voided": false,
+    "diningOption": { "guid": "do-cat", "entityType": "DiningOption" },
+    "checks": [
+      {
+        "guid": "ring-note-check",
+        "voided": false,
+        "amount": 460.0,
+        "taxAmount": 40.0,
+        "totalAmount": 500.0,
+        "selections": [
+          {
+            "guid": "ring-note-tray",
+            "item": { "guid": "tg-sub-tray" },
+            "displayName": "Sub Tray (Large)",
+            "quantity": 2,
+            "price": 230.0,
+            "voided": false,
+            "modifiers": [
+              {
+                "guid": "ring-note-request",
+                "selectionType": "SPECIAL_REQUEST",
+                "displayName": "portal order CO-4KM7R call Dana 202-555-0199",
+                "quantity": 1,
+                "price": 0,
+                "voided": false
+              }
+            ]
+          }
+        ],
+        "payments": []
+      }
+    ]
+  },
+  {
+    "guid": "ring-tab-order",
+    "businessDate": 20261120,
+    "modifiedDate": "2026-11-20T17:00:00.000+0000",
+    "voided": false,
+    "diningOption": { "guid": "do-cat", "entityType": "DiningOption" },
+    "checks": [
+      {
+        "guid": "ring-tab-check",
+        "tabName": "CO-4KM7R",
+        "voided": false,
+        "amount": 460.0,
+        "taxAmount": 40.0,
+        "totalAmount": 500.0,
+        "selections": [
+          {
+            "guid": "ring-tab-tray",
+            "item": { "guid": "tg-sub-tray" },
+            "displayName": "Sub Tray (Large)",
+            "quantity": 2,
+            "price": 230.0,
+            "voided": false,
+            "modifiers": []
+          }
+        ],
+        "payments": []
+      }
+    ]
+  }
+]

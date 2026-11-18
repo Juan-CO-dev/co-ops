@@ -11,7 +11,8 @@
  *   3. takes day MONEY from the Sales report's own RPC (sales_report_daily), so the denominator is the Sales
  *      net by construction, and CUTS from the order facts (0341), shown only when they recompose to that day;
  *   4. takes LABOR from fact_labor_cost (day and week, the board's own pricer) and 0341's quarter / person
- *      reads, gated per payroll week on labor_week_coverage (0339 ot_scope per_shop + the current builder).
+ *      reads, gated per payroll week on labor_week_coverage (0339 ot_scope per_shop + the current builder, an
+ *      unchanged generation across the reads, and a stored fingerprint equal to the week's current source).
  * Cost per person is serialized only where PERSON_COST_MIN allows; no wage rate and no contact field ever.
  */
 import "server-only";
@@ -23,11 +24,12 @@ import { operationalDayUtcRange } from "@/lib/operational-day";
 import { SALES_READ_MIN, SALES_WINDOW_CONCURRENCY, salesWindows, summarizeSales, type DailyRaw } from "@/lib/sales-reports-shared";
 import { canSeeQuarterLaborCost, laborTargetsFor, rangeTargets, toLaborCostRow, type LaborCostRow, type LaborTargets } from "@/lib/facts/labor-cost-shared";
 import { LABOR_HISTORY_FLOOR_DAY, laborWageFallback, type WageFallback } from "@/lib/facts/labor-config-shared";
+import { readCurrentWeekFingerprints } from "@/lib/facts/labor-week-gate";
 import type { RoleCode } from "@/lib/roles";
 import {
   BUSINESS_QUARTER_MAX_DAYS, RUSH_HISTORY_WEEKS, RUSH_MIN_CHECKS, RUSH_MIN_HISTORY, RUSH_MULTIPLIER, RUSH_MIN_BASELINE_CHECKS, RUSH_MIN_RUN_QUARTERS,
   businessReportEnabled, businessReportRefusal, canSeePersonCost, channelTotals, daySalesFrom, detectRushes, eachDay, largeCheckTotals,
-  laborDayFigures, laborRangeFigures, laborWeekState, mergeCuts, payrollWeekStart, quarterFigures, recomposeDay, serverTotals, stableWeekCoverage, toCutRow,
+  currentWeekCoverage, laborDayFigures, laborRangeFigures, laborWeekState, mergeCuts, payrollWeekStart, quarterFigures, recomposeDay, serverTotals, toCutRow,
   type BusinessRange, type BusinessReportEnv, type CutRow, type CutTotal, type CutsState, type DaySales, type LaborFigures,
   type LaborWeekCoverageRow, type LaborWeekGenerationRow, type QuarterPoint, type RushResult,
 } from "@/lib/business-report-shared";
@@ -268,7 +270,7 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
   const weekStarts = [...new Set(days.map(payrollWeekStart))];
 
   // Fix round 3 (P2): coverage is read BEFORE any labor read starts and AGAIN after all have answered; a week
-  // whose generation moved in between is `rebuilding` (stableWeekCoverage). Never one read beside the labor reads.
+  // whose generation moved in between is `rebuilding` (currentWeekCoverage). Never one read beside the labor reads.
   const readWeekCoverage = () => rows<LaborWeekGenerationRow>(() => sb.from("labor_week_coverage")
     .select("week_start,ot_scope,builder_version,built_at,source_fingerprint", { count: "exact" })
     .gte("week_start", payrollWeekStart(range.from)).lte("week_start", range.to).order("week_start", { ascending: true }));
@@ -303,7 +305,10 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
     ]);
 
   const coverageAfter = range.empty ? [] : await readWeekCoverage();
-  const weekMap: ReadonlyMap<string, LaborWeekCoverageRow> = stableWeekCoverage(coverageBefore, coverageAfter);
+  // Board two views PR 1 (Astra r3 P1-2): unchanged generation is not enough. Each stored week's fingerprint must
+  // also be its CURRENT source's (read last, never throws: an unanswered week is `rebuilding`).
+  const currentFingerprints = await readCurrentWeekFingerprints(sb, coverageAfter.map((r) => ymd(r.week_start)));
+  const weekMap: ReadonlyMap<string, LaborWeekCoverageRow> = currentWeekCoverage(coverageBefore, coverageAfter, currentFingerprints);
   const weekTargets = new Map(weekStarts.map((ws) => [ws, targetsForWeek(structures, ws)]));
   const sales = range.empty ? [] : daySalesFrom(dailyRaws, range.from, range.to);
   const cuts = mergeCuts(cutChunks);

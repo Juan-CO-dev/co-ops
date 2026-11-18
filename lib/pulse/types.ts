@@ -220,7 +220,7 @@ export interface CateringData {
   today: CateringEventRow[];
   tomorrow: { count: number; firstWindow: string | null };
   /** Empty for crew (ezCater order numbers are not shop-level timing). */
-  notRung: Array<{ orderId: string; orderNumber: string | null; readyAt: string | null; headcount: number | null; timing: string; totalCents?: number | null }>;
+  notRung: Array<{ orderId: string; orderNumber: string | null; source: "ezcater" | "house"; readyAt: string | null; headcount: number | null; timing: string; totalCents?: number | null }>;
   prep: { amPrep: ReportProgress; midDay: ReportProgress };
 }
 

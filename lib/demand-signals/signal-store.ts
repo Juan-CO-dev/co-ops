@@ -25,6 +25,7 @@ import { runNwsCollection, type CollectDeps, type CollectionResult, type IngestR
 import type { SignalUsePoint } from "./contracts-shared";
 import { nwsGetJson } from "./nws-client";
 import { NWS_DEFINITION, NWS_SOURCE_ID } from "./nws-shared";
+import { pickShopPoints, type ShopNodeRow } from "./shop-points-shared";
 import {
   collectDecision, keepUsable, type DemandEventInput, type SourceGate, type SourceMarkInput, type SourceState,
 } from "./sources-shared";
@@ -190,16 +191,14 @@ export function nwsCollectDeps(sb: SupabaseClient, opts: { userAgent: string | u
         throw new Error(e instanceof DemandSignalError && e.code === "demand_signals_unavailable" ? "not_installed" : "register_unreadable");
       }
     },
-    // A shop's point is its catering fulfilment node (the one place a shop's coordinates are stored).
+    // A shop's point is its ACTIVE catering fulfilment node; the rule (one per shop, gaps listed) is pickShopPoints.
     loadShopPoints: async (signal) => {
       const client = withAbort(sb, signal);
       const { data: shops, error: shopErr } = await client.from("locations").select("id").eq("active", true).returns<Array<{ id: string }>>();
       if (shopErr) throw new Error("shops_unreadable");
-      const { data: nodes, error: nodeErr } = await client.from("catering_fulfillment_nodes").select("location_id, lat, lng").returns<Array<{ location_id: string; lat: number; lng: number }>>();
+      const { data: nodes, error: nodeErr } = await client.from("catering_fulfillment_nodes").select("location_id, lat, lng, active").returns<ShopNodeRow[]>();
       if (nodeErr) throw new Error("shops_unreadable");
-      const active = new Set((shops ?? []).map((s) => s.id));
-      const byShop = new Map((nodes ?? []).filter((n) => active.has(n.location_id)).map((n) => [n.location_id, n]));
-      return [...byShop.values()].map((n) => ({ locationId: n.location_id, lat: Number(n.lat), lon: Number(n.lng) }));
+      return pickShopPoints((shops ?? []).map((s) => s.id), nodes ?? []);
     },
     getJson: (url, signal) => nwsGetJson(url, { userAgent: opts.userAgent, signal, deadlineAt: opts.deadlineAt, now: () => Date.now(),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)), counter: opts.counter }),

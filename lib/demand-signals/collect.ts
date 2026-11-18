@@ -21,6 +21,7 @@ import {
 } from "./nws-shared";
 import { collectDecision, type SourceState } from "./sources-shared";
 import type { SignalUseRefusal } from "./contracts-shared";
+import type { ShopPoints } from "./shop-points-shared";
 
 export type FetchResult = { ok: true; json: unknown } | { ok: false; code: string };
 export type IngestResult = { ok: true; seen: number; written: number } | { ok: false; code: string };
@@ -29,7 +30,8 @@ export type SignalFeed = "weather_hourly" | "day_events";
 export interface CollectDeps {
   /** The register as it reads NOW. Throwing `not_installed` = 0343 is not applied. */
   loadSourceStates: (signal: AbortSignal) => Promise<SourceState[]>;
-  loadShopPoints: (signal: AbortSignal) => Promise<Array<{ locationId: string; lat: number; lon: number }>>;
+  /** Every active shop: a point (pickShopPoints, shop-points-shared.ts) or the named reason it has none. */
+  loadShopPoints: (signal: AbortSignal) => Promise<ShopPoints>;
   getJson: (url: string, signal: AbortSignal) => Promise<FetchResult>;
   ingestWeather: (args: { definitionHash: string; locationId: string; issuedAt: string; startedAt: string; rows: WeatherRow[] }, signal: AbortSignal) => Promise<IngestResult>;
   ingestEvents: (args: { definitionHash: string; locationId: string; startedAt: string; events: AlertEventRow[] }, signal: AbortSignal) => Promise<IngestResult>;
@@ -74,7 +76,12 @@ export async function runNwsCollection(deps: CollectDeps, opts: { deadlineAt: nu
     if (!decision.ok) return { status: decision.code, shops, weatherRows };
     if (!opts.userAgent?.trim()) return { status: "user_agent_missing", shops, weatherRows };
 
-    const points = await within((s) => deps.loadShopPoints(s));
+    const { points, unplaced } = await within((s) => deps.loadShopPoints(s));
+    // A shop with no single active point is LISTED by its reason (no request, no write, counted as failed):
+    // never silently skipped. Listed first, so a pass the register stops later still names them.
+    for (const gap of [...unplaced].sort((a, b) => (a.locationId < b.locationId ? -1 : 1))) {
+      shops.push({ locationId: gap.locationId, weather: { error: gap.reason }, alerts: { error: gap.reason } });
+    }
     for (const point of [...points].sort((a, b) => (a.locationId < b.locationId ? -1 : 1))) {
       const shop: ShopCollection = { locationId: point.locationId, weather: { error: DEADLINE }, alerts: { error: DEADLINE } };
       shops.push(shop);
