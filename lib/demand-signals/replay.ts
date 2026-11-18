@@ -341,7 +341,10 @@ export function parTargetFromInputs(inputs: Pick<DemandInputs, "locationId" | "w
     direct: record(inputs.rawDirectOzByDate), production: record(inputs.rawProductionOzByDate) } };
 }
 
-/** Everything the record says was used that day, over every SKU id (direct + production). A catalog-free total. */
+/** Everything the record says was used that day, over every SKU id (direct + production). A catalog-free total,
+ * for DISPLAY of the record only. Never divide it by, or compare it with, a forecast: a forecast speaks for some
+ * products, this is all of them (`parForecastActualOz` is the like-for-like total).
+ */
 export function parTargetTotalOz(t: ParTarget): number {
   let n = 0;
   for (const v of Object.values(t.direct)) n += v;
@@ -401,6 +404,18 @@ export function parScoreRows(shopId: string, f: ParForecast, identity: ParIdenti
     }
   }
   return out;
+}
+
+/**
+ * What a forecast's WHOLE population used on a frozen day: the sum of `parActualOz` over exactly the products
+ * `parDailyForecast(f, t.validDate, [])` speaks for, in the same order. This is the only total that may be set
+ * against a forecast total (review r5): `parTargetTotalOz` is every SKU in the record, including SKUs no forecast
+ * names, so a ratio or a trend built on it compares two different populations.
+ */
+export function parForecastActualOz(f: ParForecast, identity: ParIdentity, t: ParTarget): number {
+  let n = 0;
+  for (const grainKey of Object.keys(parDailyForecast(f, t.validDate, []))) n += parActualOz(t, { skuId: f.terms[grainKey]!.skuId }, identity);
+  return n;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

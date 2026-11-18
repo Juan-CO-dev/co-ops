@@ -2,10 +2,10 @@
 // and the report Juan reads. Synthetic history only.
 import { describe, expect, it } from "vitest";
 import { addDaysEt } from "@/lib/vendor-rhythm-shared";
-import { runBacktest, type ShopHistory } from "@/lib/demand-signals/backtest";
+import { runBacktest, type ReplayReport, type ShopHistory } from "@/lib/demand-signals/backtest";
 import { renderReplayReport } from "@/lib/demand-signals/report-shared";
-import { laborTargetFromDay, parTargetFromInputs, type LaborInputs, type LaborTarget, type PrepInputs } from "@/lib/demand-signals/replay";
-import { buildParInputs, prng } from "./helpers/par-engine-fixture";
+import { forecastPars, laborTargetFromDay, parDailyForecast, parTargetFromInputs, type LaborInputs, type LaborTarget, type ParTarget, type PrepInputs } from "@/lib/demand-signals/replay";
+import { buildParInputs, prng, sku } from "./helpers/par-engine-fixture";
 
 const isoDow = (d: string) => ((new Date(`${d}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
 const START = "2026-08-31", DAYS = 84; // through 2026-11-22: Labor Day, Columbus Day, Veterans Day
@@ -119,5 +119,53 @@ describe("the report for Juan", () => {
   });
   it("uses no em-dash in prose lines and no shop code", () => {
     for (const line of md.split("\n").filter((l) => !l.startsWith("|"))) expect(line).not.toContain("—");
+  });
+});
+
+// Review r5: A LEARNED RATIO COMPARES ONE PRODUCT POPULATION. The actual a candidate learns from is the usage of
+// exactly the products its forecast speaks for (the forecast night's identity), never every SKU in the record.
+describe("a par candidate learns only from the products its forecast speaks for (review r5)", () => {
+  const LABOR_DAY = "2026-09-07", COLUMBUS_DAY = "2026-10-12";
+  const UNFORECAST = sku(40); // no par, no rhythm, in no product: the engine never speaks for it
+  const nights = [buildParInputs({ runDate: addDaysEt(LABOR_DAY, -1), seed: 7 }), buildParInputs({ runDate: addDaysEt(COLUMBUS_DAY, -1), seed: 8 })];
+  const laborDayForecast = forecastPars(nights[0]!, LABOR_DAY);
+  const predicted = parDailyForecast(laborDayForecast, LABOR_DAY, []);
+  /** Flat use of two forecast SKUs every day; on Labor Day every forecast product used exactly what was forecast. */
+  const history = (extra: (date: string) => number): ShopHistory => ({
+    shopId: "a", shopName: "Shop a", parNights: nights, laborDays: [], laborTargets: () => undefined, prepDays: [], prepTargets: () => undefined,
+    parTargets: (date): ParTarget | undefined => {
+      if (date < "2026-08-01" || date > "2026-10-20") return undefined;
+      const direct: Record<string, number> = date === LABOR_DAY
+        ? Object.fromEntries(Object.entries(predicted).map(([grainKey, oz]) => [laborDayForecast.terms[grainKey]!.skuId, oz]))
+        : { [sku(1)]: 40, [sku(2)]: 22 };
+      const more = extra(date);
+      if (more > 0) direct[UNFORECAST] = more;
+      return { v: 1, target: "par_product_day_oz", locationId: "a", validDate: date, direct, production: {} };
+    },
+  });
+  const run = (extra: (date: string) => number) => runBacktest([history(extra)], { from: "2026-08-01", to: "2026-10-20" });
+  const signals = (r: ReplayReport, candidate: string) => r.debug.parSignals.filter((s) => s.candidate === candidate);
+  const clean = run(() => 0);
+
+  it("the fixture: the engine speaks for sku 1 and never for the unforecast SKU", () => {
+    expect(Object.values(laborDayForecast.terms).map((t) => t.skuId)).toContain(sku(1));
+    expect(nights.every((n) => !n.skus.some((s) => s.skuId === UNFORECAST) && !n.productBySku.has(UNFORECAST))).toBe(true);
+    expect(Object.values(predicted).reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
+  });
+  it("holiday: unforecast usage on an earlier holiday cannot change the learned multiplier", () => {
+    const total = Object.values(predicted).reduce((a, b) => a + b, 0);
+    const noisy = run((date) => (date === LABOR_DAY ? total : 0)); // equal usage again, from a SKU nobody forecast
+    const columbus = (r: ReplayReport) => signals(r, "calendar_holiday").filter((s) => s.validDate === COLUMBUS_DAY);
+    expect(columbus(clean).length).toBeGreaterThan(0);
+    // the forecast products were predicted exactly: ratio 1, nothing learned
+    for (const s of columbus(clean)) { expect(s.multiplier).toBeCloseTo(1, 9); }
+    expect(columbus(noisy)).toEqual(columbus(clean));
+    expect(JSON.stringify(noisy.candidates)).toBe(JSON.stringify(clean.candidates));
+  });
+  it("trend: a rise in unforecast usage is not a trend of the forecast products", () => {
+    const rising = run((date) => (date >= addDaysEt(COLUMBUS_DAY, -7) && date < COLUMBUS_DAY ? 500 : 0));
+    expect(signals(clean, "trend")).toEqual([]); // flat use: silent
+    expect(signals(rising, "trend")).toEqual([]);
+    expect(JSON.stringify(rising.candidates)).toBe(JSON.stringify(clean.candidates));
   });
 });

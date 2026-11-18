@@ -12,6 +12,15 @@
  * WALK-FORWARD: a candidate at a decision reads only what was known before it.
  *   trend     the daily totals of the days strictly before the decision date;
  *   holiday   actual / baseline on EARLIER holidays whose target had already frozen (holiday + 4 <= decision).
+ *
+ * ONE POPULATION PER RATIO (review r5). Every actual a candidate learns from is read through a decision's own
+ * `actualOn`: the realized total of exactly the units THAT decision's forecast speaks for. For pars that is the
+ * products the engine forecast that night, by that night's product identity (`parForecastActualOz`), never every
+ * SKU in the record: a SKU the engine does not speak for (no rhythm, no par) is in no forecast, so its usage is
+ * in no numerator.
+ *   holiday   each earlier holiday's ratio = that holiday decision's `actualOn` / that decision's own forecast;
+ *   trend     recent and prior weeks are both the CURRENT decision's population, the one the multiplier is applied to.
+ * There is no whole-record total in this file.
  */
 import type { DemandInputs } from "@/lib/dynamic-pars-engine-shared";
 import { addDaysEt } from "@/lib/vendor-rhythm-shared";
@@ -19,7 +28,7 @@ import { HOLIDAY_MODEL, TREND_MODEL, holidayOn, holidaySignal, trendSignal, type
 import type { EvidenceClass } from "./evidence-shared";
 import { candidateModel, TARGET_FREEZE_LAG_DAYS } from "./ledger-shared";
 import {
-  NO_SIGNAL, forecastLabor, forecastPars, forecastPrep, laborScoreRows, leadDaysOf, parActualOz, parCoverageOz, parDailyForecast, parIdentityOf, parScoreRows, parTargetTotalOz, prepScoreRows,
+  NO_SIGNAL, forecastLabor, forecastPars, forecastPrep, laborScoreRows, leadDaysOf, parActualOz, parCoverageOz, parDailyForecast, parForecastActualOz, parIdentityOf, parScoreRows, prepScoreRows,
   type CandidateSpec, type ClassCall, type LaborInputs, type LaborTarget, type ParForecast, type ParIdentity, type ParTarget, type PrepInputs, type PrepTarget,
   type ReplaySurface, type TargetLookup,
 } from "./replay";
@@ -69,17 +78,35 @@ interface Decision {
   validDates: string[];
   /** The baseline's total for the decision's own day (lead 0), for the holiday ratio. */
   baselineTotal0: number | null;
+  /**
+   * What was realized on `date` by exactly the units THIS decision's forecast speaks for on that date: the same
+   * population as its forecast total. null = the date is not covered (or not frozen): missing, never zero.
+   */
+  actualOn: (date: string) => number | null;
   rows: (candidate: CandidateSpec) => PairedRow[];
 }
-interface SurfaceRun { surface: ReplaySurface; decisions: Decision[]; actualTotal: (shopId: string, date: string) => number | null }
+interface SurfaceRun { surface: ReplaySurface; decisions: Decision[] }
 
-function signalAt(key: CandidateKey, run: SurfaceRun, d: Decision, validDate: string, series: ReadonlyArray<{ date: string; value: number }>, total0: ReadonlyMap<string, number>): SignalValue {
+/** The trend's days for one decision, in that decision's own population. */
+function trendSeries(d: Decision): Array<{ date: string; value: number }> {
+  const series: Array<{ date: string; value: number }> = [];
+  for (let i = TREND_MODEL.recentDays + TREND_MODEL.priorDays; i >= 1; i -= 1) {
+    const date = addDaysEt(d.decisionDate, -i);
+    const v = d.actualOn(date);
+    if (v !== null) series.push({ date, value: v });
+  }
+  return series;
+}
+
+function signalAt(key: CandidateKey, d: Decision, validDate: string, series: ReadonlyArray<{ date: string; value: number }>, holidayDecisions: ReadonlyArray<Decision>): SignalValue {
   if (key === "trend") return trendSignal(series, d.decisionDate, TREND_MODEL);
   if (holidayOn(validDate) === null) return { multiplier: 1, active: false, eventKey: null };
   const ratios: number[] = [];
-  for (const [date, forecast] of total0) {
-    if (holidayOn(date) === null || addDaysEt(date, TARGET_FREEZE_LAG_DAYS) > d.decisionDate || !(forecast > 0)) continue;
-    const actual = run.actualTotal(d.shopId, date);
+  for (const h of holidayDecisions) {
+    const forecast = h.baselineTotal0;
+    if (addDaysEt(h.decisionDate, TARGET_FREEZE_LAG_DAYS) > d.decisionDate || forecast === null || !(forecast > 0)) continue;
+    // Numerator and denominator are the SAME decision's: the products that forecast spoke for, and no other.
+    const actual = h.actualOn(h.decisionDate);
     if (actual !== null) ratios.push(actual / forecast);
   }
   return holidaySignal(validDate, ratios, HOLIDAY_MODEL);
@@ -92,13 +119,14 @@ function runCandidate(run: SurfaceRun, key: CandidateKey): { rows: PairedRow[]; 
   const sigKey = (d: Decision, validDate: string) => `${d.shopId}|${d.decisionDate}|${validDate}`;
   for (const shopId of shopIds) {
     const mine = run.decisions.filter((d) => d.shopId === shopId);
-    const dates = new Set<string>();
-    for (const d of mine) { for (let i = 1; i <= TREND_MODEL.recentDays + TREND_MODEL.priorDays; i += 1) dates.add(addDaysEt(d.decisionDate, -i)); }
-    const series: Array<{ date: string; value: number }> = [];
-    for (const date of [...dates].sort()) { const v = run.actualTotal(shopId, date); if (v !== null) series.push({ date, value: v }); }
-    const total0 = new Map<string, number>();
-    for (const d of mine) if (d.baselineTotal0 !== null) total0.set(d.decisionDate, d.baselineTotal0);
-    for (const d of mine) for (const validDate of d.validDates) signals.set(sigKey(d, validDate), signalAt(key, run, d, validDate, series, total0));
+    // One decision per holiday date (the last one given, as before), each carrying its own forecast and population.
+    const byDate = new Map<string, Decision>();
+    for (const d of mine) if (d.baselineTotal0 !== null && holidayOn(d.decisionDate) !== null) byDate.set(d.decisionDate, d);
+    const holidayDecisions = [...byDate.keys()].sort().map((date) => byDate.get(date)!);
+    for (const d of mine) {
+      const series = key === "trend" ? trendSeries(d) : [];
+      for (const validDate of d.validDates) signals.set(sigKey(d, validDate), signalAt(key, d, validDate, series, holidayDecisions));
+    }
   }
   // Episodes are per decision lead (the scope) and carry no shop: one event is one episode everywhere.
   const activeByLead = new Map<number, Array<{ date: string; eventKey: string }>>();
@@ -139,7 +167,6 @@ const sum = (xs: Iterable<number>): number => { let n = 0; for (const x of xs) n
 
 export function runBacktest(shops: ReadonlyArray<ShopHistory>, range: { from: string; to: string }): ReplayReport {
   const evidenceClass: EvidenceClass = "E1";
-  const byShop = new Map(shops.map((s) => [s.shopId, s]));
   const total = <T>(lookup: TargetLookup<T>, date: string, of: (t: T) => number): number | null => {
     const t = lookup(date);
     return t === undefined || t === "not_covered" ? null : of(t);
@@ -149,12 +176,13 @@ export function runBacktest(shops: ReadonlyArray<ShopHistory>, range: { from: st
   const classCalls: ClassCall[] = [];
   const labor: SurfaceRun = {
     surface: "labor",
-    actualTotal: (shopId, date) => total(byShop.get(shopId)!.laborTargets, date, (t) => t.dayCents),
     decisions: shops.flatMap((s) => s.laborDays.map((inputs): Decision => {
       const base = forecastLabor(inputs, NO_SIGNAL);
       classCalls.push(...laborScoreRows(s.shopId, base, inputs, s.laborTargets, NO_SIGNAL).classCalls);
       return {
         shopId: s.shopId, decisionDate: inputs.asOf, validDates: base.days.map((d) => d.date), baselineTotal0: base.days[0]?.dayCents ?? null,
+        // One population for every labor decision: the day's dollars in hours 0-23, as the forecast's `dayCents` is.
+        actualOn: (date) => total(s.laborTargets, date, (t) => t.dayCents),
         rows: (candidate) => { const r = laborScoreRows(s.shopId, base, inputs, s.laborTargets, candidate); return [...r.day, ...r.hour]; },
       };
     })),
@@ -165,7 +193,6 @@ export function runBacktest(shops: ReadonlyArray<ShopHistory>, range: { from: st
   const parForecasts: Array<{ shopId: string; f: ParForecast; identity: ParIdentity }> = [];
   const pars: SurfaceRun = {
     surface: "pars",
-    actualTotal: (shopId, date) => total(byShop.get(shopId)!.parTargets, date, parTargetTotalOz),
     decisions: shops.flatMap((s) => s.parNights.map((inputs): Decision => {
       const decisionDate = addDaysEt(inputs.runDateEt, 1);
       const f = forecastPars(inputs, decisionDate);
@@ -175,6 +202,7 @@ export function runBacktest(shops: ReadonlyArray<ShopHistory>, range: { from: st
       return {
         shopId: s.shopId, decisionDate, validDates: [...new Set([...Array.from({ length: 7 }, (_, i) => addDaysEt(decisionDate, i)), ...f.coverage.flatMap((u) => u.coveredDays)])].sort(),
         baselineTotal0: sum(Object.values(parDailyForecast(f, decisionDate, []))),
+        actualOn: (date) => total(s.parTargets, date, (t) => parForecastActualOz(f, identity, t)),
         rows: (candidate) => parScoreRows(s.shopId, f, identity, s.parTargets, candidate),
       };
     })),
