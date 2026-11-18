@@ -1,0 +1,30 @@
+{
+  "note": "Each shop's point for the demand-signal NWS collector (item 4), stored as a catering_fulfillment_nodes row with offers_delivery = false and offers_pickup = false so the customer order funnel does not change. Tenant DATA: written by scripts/seed-shop-points.ts (dry run by default; CC runs --apply, sim first, then prod), never by a migration. A shop is matched by name against ACTIVE locations (case-insensitive, exactly one match). A shop that already has a node is never touched: catering owns that row.",
+  "geocodedOn": "2026-11-18",
+  "geocoder": "U.S. Census Bureau geocoder, onelineaddress, benchmark Public_AR_Current (4), format=json: https://geocoding.geo.census.gov/geocoder/locations/onelineaddress",
+  "placeholderRadiusMeters": 1609,
+  "shops": [
+    {
+      "names": ["Capitol Hill", "Cap Hill"],
+      "address": "526 8th St SE, Washington, DC 20003",
+      "lat": 38.882490405378,
+      "lon": -76.994901886996,
+      "match": {
+        "matchedAddress": "526 8TH ST SE, WASHINGTON, DC, 20003",
+        "matches": 1,
+        "method": "address-range interpolation on TIGER/Line edge 76230676 (side L, range 500-698)"
+      }
+    },
+    {
+      "names": ["P Street", "P St"],
+      "address": "2029 P St NW, Washington, DC 20036",
+      "lat": 38.909697992057,
+      "lon": -77.046018059515,
+      "match": {
+        "matchedAddress": "2029 P ST NW, WASHINGTON, DC, 20036",
+        "matches": 1,
+        "method": "address-range interpolation on TIGER/Line edge 76225279 (side R, range 2005-2099)"
+      }
+    }
+  ]
+}
