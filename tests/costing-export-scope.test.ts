@@ -52,7 +52,9 @@ describe("the costing export follows the board's shop", () => {
     const route = readFileSync("app/api/reports/export/route.ts", "utf8");
     expect(route).toContain('"reports.export.pricing_scope_shop"');
     expect(route).toContain('"reports.export.pricing_scope_global"');
-    expect(route).toContain("toCsv(table.columns, table.rows, pricingLine ? [pricingLine] : [])");
+    // Item 9b: the pricing line now leads the shared top lines (pricing first, then any export notices).
+    expect(route).toContain("const topLines = [...(pricingLine ? [pricingLine] : []), ...noticeLines];");
+    expect(route).toContain("toCsv(table.columns, table.rows, topLines)");
     const page = readFileSync("app/admin/sandwiches/page.tsx", "utf8");
     expect(page).toContain('query={{ location: scope }}');
     expect(page).toContain('"admin.menu_costing.export_scope"');
