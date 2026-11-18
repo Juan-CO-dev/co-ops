@@ -179,7 +179,8 @@ describe("labor: figures built on an estimate (shown, and named)", () => {
         columns: ["burden_cost", "fully_loaded_cost", "fully_loaded_pct"] }],
     ["salaries from the shop's estimate", { salary_basis: "estimate" },
       { full: R("salary_estimated"), short: R("qual.salary_estimated"), code: "salary_estimated", flag: "salary_estimated",
-        columns: ["salaried_cost", "fully_loaded_cost", "fully_loaded_pct"] }],
+        // Fix round 7 (ITEM9B-r7 P2): burden is a share of hourly + SALARIED pay, so it carries the salary estimate too.
+        columns: ["salaried_cost", "burden_cost", "fully_loaded_cost", "fully_loaded_pct"] }],
   ];
   for (const [name, over, x] of cases) {
     it(`${name}: on the cards, in every drawer, on every closed row, in Compare and in the files`, async () => {

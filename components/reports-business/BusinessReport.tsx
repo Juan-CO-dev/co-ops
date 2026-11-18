@@ -17,9 +17,9 @@ import { channelLabel, providerLabel, serverLabel } from "@/components/reports-h
 import type { ReactNode } from "react";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import { figureChange, figureKindOf, type Figure } from "@/lib/business-figure-shared";
+import { figureKindOf, type Figure } from "@/lib/business-figure-shared";
 import type { BusinessReportView, CutView, DayView, LaborView, QuarterView, SalesView } from "@/lib/business-view-shared";
-import { Card, ChangeText, Dash, FigureLine, FigureView, LaborShare, bizCard, dateRange, figureReasonText, figureText, figureValueText, tFor } from "./BusinessParts";
+import { Card, ChangeText, Dash, EmptyNote, FigureLine, FigureView, LaborShare, bizCard, dateRange, figureReasonText, figureText, figureValueText, tFor } from "./BusinessParts";
 
 type Props = { view: BusinessReportView; language: Language };
 
@@ -51,13 +51,18 @@ function summaryLine(sales: SalesView, labor: LaborView, language: Language): st
   ].join(" · ");
 }
 
+/** "Same days last year": "No data until ..." only while that IS the reason; a year that has data is not shown here yet. */
+function lastYearKey(view: BusinessReportView): TranslationKey {
+  return view.range.lastYearReason === "no_data_yet" ? "reports.business.last_year.no_data_yet" : "reports.business.last_year.not_shown";
+}
+
 function DayBadges({ day, language }: { day: DayView; language: Language }) {
   const t = tFor(language);
   const badge = "rounded-full px-2 py-0.5 text-xs font-bold";
   return <>
     {day.sales.coverage !== "complete" ? <span className={`${badge} bg-co-warning-surface text-co-warning-text`}>{t(`reports.business.coverage.${day.sales.coverage}` as TranslationKey)}</span> : null}
     {day.cuts === "rebuilding" ? <span className={`${badge} bg-co-warning-surface text-co-warning-text`}>{t("reports.business.badge.rebuilding")}</span> : null}
-    {day.rush?.any ? <span className={`${badge} bg-co-gold/20 text-co-text`}>{t("reports.business.rush.count", { n: figureText(day.rush.count, language) })}</span> : null}
+    {day.rush?.any ? <span className={`${badge} bg-co-gold/20 text-co-text`}>{t("reports.business.rush.count", { n: figureValueText(day.rush.count, language) ?? "" })}</span> : null}
     {day.largeChecks.any ? <span className={`${badge} bg-co-gold/20 text-co-text`}>{t("reports.business.badge.large", { n: figureText(day.largeChecks.checks, language) })}</span> : null}
   </>;
 }
@@ -113,7 +118,7 @@ export function BusinessOverview({ view, language }: Props) {
           </CollapsibleSection>)}
         </div>
       </CollapsibleSection>
-      <p className="text-xs text-co-text-muted">{t("reports.business.last_year.label")}: {t("reports.business.last_year.no_data_yet")}</p>
+      <p className="text-xs text-co-text-muted">{t("reports.business.last_year.label")}: {t(lastYearKey(view))}</p>
     </div>
   </section>;
 }
@@ -146,8 +151,12 @@ export function BusinessHours({ view, language }: Props) {
         const rush = d.rush;
         const hours = d.labor.hours;
         const final = figureKindOf(hours) === "known";
-        const rushText = rush === null ? t("reports.business.badge.rebuilding") : rush.state === "not_enough_history" ? t("reports.business.rush.not_enough_history")
-          : rush.any ? t("reports.business.rush.count", { n: figureText(rush.count, language) }) : t("reports.business.rush.none");
+        // Fix round 7: "No rushes" is a claim (rush.none: every 15 minutes that could be one was compared); a
+        // breakdown that is not shown names its own reason (no sales captured is not "rebuilding").
+        const rushText = rush === null ? t(d.sales.coverage !== "complete" ? `reports.business.coverage.${d.sales.coverage}` as TranslationKey : "reports.business.badge.rebuilding")
+          : rush.state === "not_enough_history" ? t("reports.business.rush.not_enough_history")
+          : [rush.any ? t("reports.business.rush.count", { n: figureValueText(rush.count, language) ?? "" }) : rush.none ? t("reports.business.rush.none") : null,
+            figureReasonText(rush.count, language)].filter((x) => x !== null).join(" · ");
         // The closed row says whether the day's labor is final (the reason travels with the figure).
         const count = final ? rushText : `${rushText} · ${t("reports.business.row.hours", { h: figureText(hours, language, { short: true }) })}`;
         return <CollapsibleSection key={d.date} idBase={`biz-hours-${view.locationId}-${d.date}`} title={formatDateLabel(d.date, language)}
@@ -156,9 +165,10 @@ export function BusinessHours({ view, language }: Props) {
             {rush?.state === "ok" ? rush.windows.map((w) => <p key={w.startAt} className="rounded-lg bg-co-gold/20 p-2 text-sm font-semibold text-co-text">
               {t("reports.business.rush.window", { start: formatTime(w.startAt, language), end: formatTime(w.endAt, language), checks: figureText(w.checks, language),
                 usual: figureText(w.usual, language) })}{" · "}{figureText(w.sales, language)}</p>) : null}
-            {d.cuts !== "ok" ? <p className="text-xs text-co-warning-text">{t("reports.business.cuts.rebuilding")}</p> : null}
+            {d.cutsReason !== null ? <p className="text-xs text-co-warning-text">{t(d.cutsReason)}</p> : null}
             {!final ? <p className="text-xs text-co-warning-text">{t("reports.business.detail.hours")}: {figureText(hours, language)}</p> : null}
-            {d.quarters.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.hours.no_activity")}</p>
+            {d.activity !== null ? <EmptyNote claim={d.activity} language={language}
+              none={d.unassigned ? "reports.business.hours.no_timed_activity" : "reports.business.hours.no_activity"} />
               : <ul aria-label={t("reports.business.hours.list_aria")}>{d.quarters.map((q) => <QuarterLine key={q.quarterStartAt} q={q} language={language} />)}</ul>}
             {d.unassigned ? <p className="text-xs text-co-text-muted">{t("reports.business.quarter.unassigned")}: {figureText(d.unassigned.checks, language)} · {figureText(d.unassigned.sales, language)}</p> : null}
           </div>
@@ -187,12 +197,12 @@ export function BusinessChannels({ view, language }: Props) {
   return <section className={bizCard} aria-label={t("reports.business.tab.channels")}>
     {notice ? <p className="mb-3 text-xs font-bold text-co-warning-text">{t(notice.key, notice.values)}</p> : null}
     <h3 className="mb-1 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.channels.title")}</h3>
-    {view.channels.included.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.channels.none")}</p>
+    {view.empty.channels !== null ? <EmptyNote claim={view.empty.channels} none="reports.business.channels.none_verified" language={language} />
       : <ul>{view.channels.included.map((c) => line(c, channelLabel(language, c.key), c.provider ? providerLabel(language, c.provider) : null))}</ul>}
     <h3 className="mb-1 mt-4 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.channels.ezcater")}</h3>
     <ul><CutLine label={t("reports.business.channels.ezcater_label")} sales={view.channels.ezcater.sales} checks={view.channels.ezcater.orders} language={language} /></ul>
     <h3 className="mb-1 mt-4 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.channels.excluded")}</h3>
-    {view.channels.excluded.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.channels.excluded_none")}</p>
+    {view.empty.excluded !== null ? <EmptyNote claim={view.empty.excluded} none="reports.business.channels.excluded_none" language={language} />
       : <ul>{view.channels.excluded.map((c) => line(c, t(c.key === "gift_card" ? "reports.business.channels.excluded.gift_card" : "reports.business.channels.excluded.ezcater_linked"), null))}</ul>}
   </section>;
 }
@@ -204,12 +214,14 @@ export function BusinessPeople({ view, language }: Props) {
   const notice = view.breakdownNotice;
   const span = view.total.labor.hours;
   const spanReason = figureReasonText(span, language);
+  // Fix round 7: "0 people" in a closed header is a claim too: a dash when the empty list is not known to be empty.
+  const listCount = (n: number, claim: BusinessReportView["empty"]["people"]) => (claim?.kind === "unknown" ? "—" : t("reports.business.people.count", { n }));
   return <section className={bizCard} aria-label={t("reports.business.tab.people")}>
-    <CollapsibleSection idBase={`biz-people-${view.locationId}`} title={t("reports.business.people.title")} count={t("reports.business.people.count", { n: view.people.length })} defaultOpen>
+    <CollapsibleSection idBase={`biz-people-${view.locationId}`} title={t("reports.business.people.title")} count={listCount(view.people.length, view.empty.people)} defaultOpen>
       {!view.access.personCost ? <p className="mb-2 text-xs text-co-text-muted">{t("reports.business.people.cost_note")}</p> : null}
       {figureKindOf(span) !== "known" && spanReason ? <p className="mb-2 text-xs font-bold text-co-warning-text">
         {t("reports.business.people.hours_partial")} {spanReason}</p> : null}
-      {view.people.length === 0 ? <p className="text-sm text-co-text-muted">{t("reports.business.people.none")}</p> : <ul>
+      {view.empty.people !== null ? <EmptyNote claim={view.empty.people} none="reports.business.people.none" language={language} /> : <ul>
         {view.people.map((p) => <li key={p.key} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
           <span className="min-w-0 break-words"><span className="font-semibold text-co-text">{p.label ?? t("reports.business.people.unnamed")}</span>
             <span className="text-co-text-muted"> · {t(p.payClass === "hourly" ? "reports.business.people.pay.hourly" : "reports.business.people.pay.salaried")}</span></span>
@@ -225,10 +237,11 @@ export function BusinessPeople({ view, language }: Props) {
       </ul>}
     </CollapsibleSection>
     <div className="mt-3">
-      <CollapsibleSection idBase={`biz-servers-${view.locationId}`} title={t("reports.business.people.servers")} count={t("reports.business.people.count", { n: view.servers.length })}>
+      <CollapsibleSection idBase={`biz-servers-${view.locationId}`} title={t("reports.business.people.servers")} count={listCount(view.servers.length, view.empty.servers)}>
         <p className="mb-2 text-xs text-co-text-muted">{t("reports.business.people.server_note")}</p>
         {notice ? <p className="mb-2 text-xs font-bold text-co-warning-text">{t(notice.key, notice.values)}</p> : null}
-        <ul>{view.servers.map((s) => <CutLine key={s.key || "none"} label={serverLabel(language, s.key, s.label)} sales={s.sales} checks={s.checks} language={language} />)}</ul>
+        {view.empty.servers !== null ? <EmptyNote claim={view.empty.servers} none="reports.business.people.servers_none" language={language} />
+          : <ul>{view.servers.map((s) => <CutLine key={s.key || "none"} label={serverLabel(language, s.key, s.label)} sales={s.sales} checks={s.checks} language={language} />)}</ul>}
       </CollapsibleSection>
     </div>
   </section>;
@@ -262,13 +275,13 @@ export function BusinessCompare({ view, previous, language }: Props & { previous
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <span><span className="text-co-text-muted">{t("reports.business.compare.this")}: </span><span className="font-semibold">{cell(a)}</span></span>
             <span><span className="text-co-text-muted">{t("reports.business.compare.previous")}: </span><span className="font-semibold">{cell(b)}</span></span>
-            <ChangeText change={figureChange(a, b)} language={language} />
+            <ChangeText cur={a} prev={b} language={language} />
           </div>
         </li>;
       })}
       <li className="rounded-lg border border-co-border bg-co-surface-inset p-3 text-sm">
         <div className="mb-1 text-xs font-bold tracking-wide text-co-text-muted">{t("reports.business.last_year.label")}</div>
-        <p className="text-co-text-muted">{t("reports.business.last_year.no_data_yet")}</p>
+        <p className="text-co-text-muted">{t(lastYearKey(view))}</p>
       </li>
     </ul>
     <p className="mt-3 text-xs text-co-text-muted">{t("reports.business.compare.rule")}</p>

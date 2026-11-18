@@ -323,3 +323,37 @@ describe("every other empty sentence: said only over known-complete inputs", () 
     }
   });
 });
+
+// ── Source pins ─────────────────────────────────────────────────────────────────────────────────
+
+describe("the page cannot write a 'none' sentence, or a qualification list, by hand", () => {
+  const read = async (f: string) => (await import("node:fs")).readFileSync((await import("node:path")).resolve(__dirname, "..", f), "utf8");
+  it("every 'none' key reaches the page only as the `none` of an EmptyNote; no list is judged empty by its length", async () => {
+    const src = await read("components/reports-business/BusinessReport.tsx");
+    const NONE_KEYS = ["hours.no_activity", "hours.no_timed_activity", "channels.none_verified", "channels.excluded_none", "people.none", "people.servers_none"];
+    for (const k of NONE_KEYS) {
+      const uses = src.split(`"reports.business.${k}"`).length - 1;
+      expect(uses, k).toBe(1);
+      expect(src, k).toMatch(new RegExp(`none=\\{?[^>]*"reports\\.business\\.${k.replace(".", "\\.")}"`));
+    }
+    expect(src).not.toMatch(/\.length === 0/);
+    // "No rushes" only behind the view's verified flag.
+    expect(src.split('"reports.business.rush.none"').length - 1).toBe(1);
+    expect(src).toMatch(/rush\.none \? t\("reports\.business\.rush\.none"\)/);
+    // "No data until ..." only through the one function that reads the range's own reason.
+    expect(src.split('"reports.business.last_year.no_data_yet"').length - 1).toBe(1);
+  });
+  it("the figure module holds no hand-picked list: every labor builder's notes come from derivedFrom(...inputs)", async () => {
+    const src = await read("lib/business-figure-shared.ts");
+    expect(src).not.toMatch(/\bwageNotes\b|\bhourNotes\b|\bloadedNotes\b/);
+    // Every options object handed to `make` with notes: `{ notes: <who>...`.
+    const notes = [...src.matchAll(/\{ notes: (\w+)/g)].map((m) => m[1]!);
+    expect(notes.length).toBeGreaterThanOrEqual(12);
+    expect([...new Set(notes)]).toEqual(["derivedFrom"]);
+    // The four qualification constants are named only by their sources, the order, and nothing else.
+    for (const c of ["BURDEN", "SALARY", "RATE", "UNVERIFIED"]) {
+      const uses = [...src.matchAll(new RegExp(`\\[${c}\\]|\\b${c}\\.key\\b`, "g"))].length;
+      expect(uses, c).toBe(2);
+    }
+  });
+});

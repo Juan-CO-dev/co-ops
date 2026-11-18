@@ -140,7 +140,9 @@ const RULES: Array<{ name: string; re: RegExp }> = [
 /** What a surface may import from the report's modules. Anything else fails by name. */
 const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
   "@/lib/business-figure-shared": ["Figure", "FigureFormat", "figureChange", "figureKindOf", "figureReasonOf", "figureDisplay", "figureText", "figureValueText",
-    "figureCells", "FIGURE_NOTES_COLUMN"],
+    "figureCells", "FIGURE_NOTES_COLUMN",
+    // Fix round 7: an empty list's claim (a kind and reason keys, never a number) and its cell for a file.
+    "EmptyClaim", "emptyClaimNote"],
   "@/lib/business-figure-format": ["figureFormatFor", "changeWords"],
   "@/lib/business-view-shared": ["businessView", "BusinessReportView", "CutView", "DayView", "LaborView", "QuarterView", "SalesView", "WeekView", "PersonView", "RushWindowView"],
   "@/lib/business-report-shared": ["BUSINESS_RANGES", "BUSINESS_REPORT_TABS", "BusinessRange", "BusinessReportTab", "CompareChange", "businessReportEnabled", "businessReportRefusal", "businessTab",

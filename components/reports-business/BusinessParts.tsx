@@ -10,9 +10,9 @@ import { ReportRangeForm } from "@/components/reports-hub/ReportRangeForm";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import { BUSINESS_RANGES, BUSINESS_REPORT_TABS, type BusinessRangeEmptyReason, type BusinessRangeRequest, type BusinessReportTab, type CompareChange } from "@/lib/business-report-shared";
+import { BUSINESS_RANGES, BUSINESS_REPORT_TABS, type BusinessRangeEmptyReason, type BusinessRangeRequest, type BusinessReportTab } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
-import { figureDisplay, figureReasonOf, figureText as figureWords, figureValueText as figureValueWords, type Figure } from "@/lib/business-figure-shared";
+import { figureDisplay, figureReasonOf, figureText as figureWords, figureValueText as figureValueWords, type EmptyClaim, type Figure } from "@/lib/business-figure-shared";
 import { changeWords, figureFormatFor } from "@/lib/business-figure-format";
 import type { LaborView } from "@/lib/business-view-shared";
 
@@ -46,12 +46,25 @@ const TONE: Record<LaborTone, string> = {
 // may be said ("so far", "at least", covered days only, a dash) and returns WORDS
 // (tests/business-report-figure-census.test.ts).
 
-/** This period against the one before (lib/business-figure-shared.ts `figureChange` decided it): a whole %, or
- * a labor % in points; anything not whole on both sides is "Not comparable". */
-export function ChangeText({ change, language }: { change: CompareChange; language: Language }) {
-  const words = changeWords(change, language);
+/** This period against the one before (lib/business-figure-shared.ts `figureChange` decides it): a whole %, or
+ * a labor % in points; anything not whole on both sides is "Not comparable". Fix round 7: it takes the two FIGURES,
+ * so the change carries their qualifications ("+1.5 pts (salary estimated)"). */
+export function ChangeText({ cur, prev, language }: { cur: Figure; prev: Figure | null; language: Language }) {
+  const words = changeWords(cur, prev, language);
   return words === null ? <span className="text-co-text-muted">{serverT(language, "reports.business.compare.not_comparable")}</span>
     : <span className="font-semibold">{words}</span>;
+}
+
+/**
+ * Fix round 7 (review ITEM9B-r7 P2): AN EMPTY LIST IS A CLAIM. The view decides (`emptyClaim`) whether "none" may be
+ * said: `verified` = every input behind the list is known complete and zero, so `none` is written (with whatever
+ * qualifies it); otherwise "Not known yet." and every reason. A list on this page never writes a "none" sentence
+ * any other way.
+ */
+export function EmptyNote({ claim, none, language }: { claim: EmptyClaim; none: TranslationKey; language: Language }) {
+  const reasons = claim.reasons.map((k) => <span key={k}> {serverT(language, k)}</span>);
+  return claim.kind === "verified" ? <p className="text-sm text-co-text-muted">{serverT(language, none)}{reasons}</p>
+    : <p className="text-sm text-co-warning-text">{serverT(language, "reports.business.empty.not_known")}{reasons}</p>;
 }
 
 /** The value of a figure as words (qualified as its state demands), or null when it is unknown. */

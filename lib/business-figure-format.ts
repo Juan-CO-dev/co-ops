@@ -9,8 +9,7 @@
 import { formatCents, formatQuantity } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
-import type { FigureFormat } from "@/lib/business-figure-shared";
-import type { CompareChange } from "@/lib/business-report-shared";
+import { figureChange, figureChangeQualifiers, type Figure, type FigureFormat } from "@/lib/business-figure-shared";
 
 export function figureFormatFor(language: Language): FigureFormat {
   return {
@@ -22,11 +21,15 @@ export function figureFormatFor(language: Language): FigureFormat {
   };
 }
 
-/** This period against the one before (`figureChange` decided it), as words: "+10%", "+1.5 pts", or null when the
- * two periods are not comparable. */
-export function changeWords(change: CompareChange, language: Language): string | null {
+/** This period against the one before (`figureChange` decides it), as words: "+10%", "+1.5 pts", or null when the
+ * two periods are not comparable. Fix round 7: the change is derived from the two figures, so it takes THEM (never
+ * a bare change) and carries every qualification of both: "+1.5 pts (burden estimated; salary estimated)". */
+export function changeWords(cur: Figure, prev: Figure | null, language: Language): string | null {
+  const change = figureChange(cur, prev);
   if (change.kind === "not_comparable") return null;
   const sign = change.value > 0 ? "+" : "";
-  return change.kind === "pct" ? serverT(language, "reports.business.compare.pct", { n: `${sign}${change.value}` })
+  const words = change.kind === "pct" ? serverT(language, "reports.business.compare.pct", { n: `${sign}${change.value}` })
     : serverT(language, "reports.business.compare.points", { n: `${sign}${formatQuantity(change.value, language)}` });
+  const quals = figureChangeQualifiers(cur, prev, figureFormatFor(language));
+  return quals.length > 0 ? `${words} (${quals.join("; ")})` : words;
 }

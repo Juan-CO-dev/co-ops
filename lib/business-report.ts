@@ -206,7 +206,7 @@ const SALES_KEYS = ["date", "coverage", "checks", "toastChecksCents", "toastAmou
   "ezcaterMissing", "refundCents", "totalCents", "giftCardCents", "ezcaterLinkedCents"] as const;
 const LABOR_KEYS = ["state", "minutes", "pureHourlyCents", "otPremiumCents", "otMinutes", "denominator", "denominator.cents", "denominator.state", "pct", "tone",
   "loadedState", "salariedCents", "burdenCents", "fullyLoadedCents", "loadedPct", "loadedTone", "burdenEstimated", "salaryEstimated", "salaryGaps", "wageEstimated", "hoursUnverified"] as const;
-const RUSH_KEYS = ["state", "windows[].startAt", "windows[].endAt", "windows[].quarters", "windows[].checks", "windows[].cents",
+const RUSH_KEYS = ["state", "uncompared", "windows[].startAt", "windows[].endAt", "windows[].quarters", "windows[].checks", "windows[].cents",
   "windows[].baselineChecks", "windows[].baselineCents"] as const;
 const CUT_KEYS = ["key", "label", "provider", "cents", "checks", "amountMissing", "unassigned"] as const;
 const PERSON_KEYS = ["personKey", "label", "source", "payClass", "minutes", "otMinutes", "weeksSuppressed"] as const;

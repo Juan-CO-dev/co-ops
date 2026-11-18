@@ -48,6 +48,9 @@ interface Data {
   /** Why the figure is unknown or incomplete; null for known / estimated. */
   reason: FigureKey | null;
   notes: readonly FigureNote[];
+  /** Every qualification this figure was built with, kept even when it is unknown (an unknown figure SHOWS only
+   * its gaps): what a figure derived from this one inherits (`derivedFrom`). */
+  inherit: readonly FigureNote[];
   /** The value is what is counted SO FAR (hours or money of a week not final). */
   soFar: boolean;
   /** The word for a zero that is final ("No labor"); never set on an incomplete figure. */
@@ -72,12 +75,12 @@ function make(unit: FigureUnit, value: number | null | undefined, reason: Figure
   const notes = o.notes ?? [];
   if (v === null) {
     // An unknown keeps only its gaps (an estimate qualifies a number that is not there).
-    return seal({ unit, value: null, kind: "unknown", reason: reason ?? FALLBACK, notes: notes.filter((n) => n.kind === "gap"), soFar: false });
+    return seal({ unit, value: null, kind: "unknown", reason: reason ?? FALLBACK, notes: notes.filter((n) => n.kind === "gap"), inherit: notes, soFar: false });
   }
   const provisional = o.provisional ?? false;
   const kind: FigureKind = provisional || notes.some((n) => n.kind === "gap") ? "incomplete" : notes.length > 0 ? "estimated" : "known";
   return seal({
-    unit, value: v, kind, reason: provisional ? reason ?? FALLBACK : null, notes, soFar: provisional && (o.soFar ?? true),
+    unit, value: v, kind, reason: provisional ? reason ?? FALLBACK : null, notes, inherit: notes, soFar: provisional && (o.soFar ?? true),
     ...(o.zero && kind !== "incomplete" ? { zero: o.zero } : {}), ...(o.label ? { label: o.label } : {}),
     ...(o.missing !== undefined ? { missing: o.missing } : {}), ...(o.coveredOnly ? { coveredOnly: true } : {}), ...(o.daysOnly ? { daysOnly: true } : {}),
   });
@@ -105,47 +108,77 @@ const gaps = (n: number): FigureNote => ({ kind: "gap", key: "reports.business.s
 /** Fix round 4 (own sweep): some days' hours are the Toast fallback (7shifts not covered): shown, not confirmed. */
 const UNVERIFIED: FigureNote = { kind: "estimate", key: "reports.business.hours_unverified", short: "reports.business.qual.hours_unverified" };
 type Provenance = Pick<LaborFigures, "wageEstimated" | "hoursUnverified">;
-/** What qualifies a figure built on hourly MONEY: an estimated wage, hours from the unverified fallback. */
-const wageNotes = (l: Provenance): FigureNote[] => [...(l.wageEstimated ? [RATE] : []), ...(l.hoursUnverified ? [UNVERIFIED] : [])];
-/** What qualifies a figure of HOURS alone. */
-const hourNotes = (unverified: boolean): FigureNote[] => (unverified ? [UNVERIFIED] : []);
-/** The qualifications of a fully loaded figure (or one of its parts: `salaried` carries no burden and no hourly
- * wage; `burden` is a share of hourly + salaried pay, so it carries the wage and not the salary estimate label). */
-function loadedNotes(l: LaborFigures, part: "loaded" | "salaried" | "burden"): FigureNote[] {
-  return [
-    ...(part !== "salaried" ? wageNotes(l) : []),
-    ...(l.burdenEstimated && part !== "salaried" ? [BURDEN] : []),
-    ...(l.salaryEstimated && part !== "burden" ? [SALARY] : []),
-    ...(l.salaryGaps > 0 ? [gaps(l.salaryGaps)] : []),
-  ];
+
+// ── Derivation (fix round 7, review ITEM9B-r7 P2) ───────────────────────────────────────────────
+// A DERIVED figure's qualifications are never a hand-picked list. Each builder below names the INPUTS its number
+// is computed from (other figures, and the sources that are not shown as figures themselves: the wage, the burden
+// rate, the salaries) and `derivedFrom` returns every qualification of every input, each once. Burden was the miss
+// that made this a rule: it is a share of hourly + salaried pay, and its list had left the salary out.
+// A new derived figure lists its inputs; it never lists notes.
+
+/** A source that is not itself a figure on the page: what qualifies it. */
+type Source = readonly FigureNote[];
+type Input = Figure | Source;
+const RANK: readonly string[] = [RATE.key, UNVERIFIED.key, BURDEN.key, SALARY.key, "reports.business.salary_gaps"];
+/** THE qualifications of a figure computed from `inputs`: all of theirs (an unknown input still passes on what it
+ * was built with), each once, in one fixed order. */
+function derivedFrom(...inputs: readonly Input[]): FigureNote[] {
+  const out = new Map<string, FigureNote>();
+  for (const i of inputs) for (const n of Array.isArray(i) ? i as Source : open(i as Figure).inherit) if (!out.has(n.key)) out.set(n.key, n);
+  return [...out.values()].sort((x, y) => RANK.indexOf(x.key) - RANK.indexOf(y.key));
 }
+/** The hours behind a figure: unverified when some days' hours are the Toast fallback. */
+const hourSource = (l: Pick<LaborFigures, "hoursUnverified">): Source => (l.hoursUnverified ? [UNVERIFIED] : []);
+/** The wage hours are priced at: estimated when some are priced at the shop's estimated rate. */
+const wageSource = (l: Pick<LaborFigures, "wageEstimated">): Source => (l.wageEstimated ? [RATE] : []);
+/** The salaries: the shop's estimate, and the payroll gaps behind them. */
+const salarySource = (l: LaborFigures): Source => [...(l.salaryEstimated ? [SALARY] : []), ...(l.salaryGaps > 0 ? [gaps(l.salaryGaps)] : [])];
+/** The burden rate: the 12% default until payroll gives the real one. */
+const burdenRateSource = (l: LaborFigures): Source => (l.burdenEstimated ? [BURDEN] : []);
 
 // ── Labor ───────────────────────────────────────────────────────────────────────────────────────
 
+/** Every labor figure of one day / week / range, each built from the figures it is computed from. */
+function laborSet(l: LaborFigures) {
+  const provisional = !laborHoursComplete(l.state);
+  const pureReason = laborReasonKey(l.state), loadedReason = loadedReasonKey(l.loadedState);
+  const net = netFigure(l);
+  const hours = make("minutes", l.minutes, pureReason, { notes: derivedFrom(hourSource(l)), provisional });
+  const otHours = make("minutes", l.otMinutes, pureReason, { notes: derivedFrom(hourSource(l)), provisional });
+  // Hourly money = hours x wage.
+  const pureCost = make("cents", l.pureHourlyCents, pureReason, { notes: derivedFrom(hours, wageSource(l)), provisional });
+  const otPremium = make("cents", l.otPremiumCents, pureReason, { notes: derivedFrom(otHours, wageSource(l)), provisional });
+  const salaried = make("cents", l.salariedCents, loadedReason, { notes: derivedFrom(salarySource(l)), provisional });
+  // Burden = (hourly + salaried) x the burden rate.
+  const burden = make("cents", l.burdenCents, loadedReason, { notes: derivedFrom(pureCost, salaried, burdenRateSource(l)), provisional });
+  // Fully loaded = hourly + salaried + burden.
+  const loadedCost = make("cents", l.fullyLoadedCents, loadedReason, { notes: derivedFrom(pureCost, salaried, burden), provisional });
+  // A % = its cost / net sales.
+  const purePct = make("pct", l.pct, pureReason, { notes: derivedFrom(pureCost, net) });
+  const loadedPct = make("pct", l.loadedPct, loadedReason, { notes: derivedFrom(loadedCost, net) });
+  return { net, hours, otHours, pureCost, otPremium, salaried, burden, loadedCost, purePct, loadedPct };
+}
+
 /** Pure hourly %: shown only when the state is ok. */
-export function purePctFigure(l: LaborFigures): Figure {
-  return make("pct", l.pct, laborReasonKey(l.state), { notes: wageNotes(l) });
-}
+export function purePctFigure(l: LaborFigures): Figure { return laborSet(l).purePct; }
 /** Fully loaded %, with its estimates and payroll gaps. */
-export function loadedPctFigure(l: LaborFigures): Figure {
-  return make("pct", l.loadedPct, loadedReasonKey(l.loadedState), { notes: loadedNotes(l, "loaded") });
-}
+export function loadedPctFigure(l: LaborFigures): Figure { return laborSet(l).loadedPct; }
 /** Pure hourly money (straight + overtime premium, the premium alone): "so far" while hours are not final. */
 export function pureCentsFigure(l: LaborFigures, field: "pureHourlyCents" | "otPremiumCents"): Figure {
-  return make("cents", l[field], laborReasonKey(l.state), { notes: wageNotes(l), provisional: !laborHoursComplete(l.state) });
+  const s = laborSet(l);
+  return field === "pureHourlyCents" ? s.pureCost : s.otPremium;
 }
 /** Salaried / burden / fully loaded money. */
 export function loadedCentsFigure(l: LaborFigures, field: "salariedCents" | "burdenCents" | "fullyLoadedCents"): Figure {
-  const part = field === "salariedCents" ? "salaried" : field === "burdenCents" ? "burden" : "loaded";
-  return make("cents", l[field], loadedReasonKey(l.loadedState),
-    { notes: loadedNotes(l, part), provisional: !laborHoursComplete(l.state) });
+  const s = laborSet(l);
+  return field === "salariedCents" ? s.salaried : field === "burdenCents" ? s.burden : s.loadedCost;
 }
 /** Minutes under a labor state: final, "so far", or unknown with the state's reason. */
 export function minutesFigure(minutes: number | null | undefined, state: LaborState, unverified = false): Figure {
-  return make("minutes", minutes, laborReasonKey(state), { notes: hourNotes(unverified), provisional: !laborHoursComplete(state) });
+  return make("minutes", minutes, laborReasonKey(state), { notes: derivedFrom(hourSource({ hoursUnverified: unverified })), provisional: !laborHoursComplete(state) });
 }
-export function hoursFigure(l: LaborFigures): Figure { return minutesFigure(l.minutes, l.state, l.hoursUnverified); }
-export function otHoursFigure(l: LaborFigures): Figure { return minutesFigure(l.otMinutes, l.state, l.hoursUnverified); }
+export function hoursFigure(l: LaborFigures): Figure { return laborSet(l).hours; }
+export function otHoursFigure(l: LaborFigures): Figure { return laborSet(l).otHours; }
 /** Net sales for labor: the exact net, or what is known of it with why it is not exact. */
 export function netFigure(l: LaborFigures): Figure {
   const reason = l.denominator.state === "ok" ? null : `reports.business.labor.state.${l.denominator.state}` as const;
@@ -160,7 +193,8 @@ export function netFigure(l: LaborFigures): Figure {
 export function personCostFigure(cents: number | null | undefined, payClass: string, labor: Pick<LaborFigures, "state"> & Provenance): Figure {
   const withheld: FigureKey = payClass === "hourly" ? "reports.business.people.cost_withheld" : "reports.business.people.salaried_cost";
   if (cents === null || cents === undefined) return make("cents", null, withheld);
-  return make("cents", cents, laborReasonKey(labor.state), { notes: wageNotes(labor), provisional: !laborHoursComplete(labor.state) });
+  // Hours x wage.
+  return make("cents", cents, laborReasonKey(labor.state), { notes: derivedFrom(hourSource(labor), wageSource(labor)), provisional: !laborHoursComplete(labor.state) });
 }
 
 // ── 15 minutes ──────────────────────────────────────────────────────────────────────────────────
@@ -168,20 +202,26 @@ export function personCostFigure(cents: number | null | undefined, payClass: str
 /** A quarter's minutes. No minutes is "No labor" ONLY when the day's hours are final; otherwise unknown. */
 export function quarterHoursFigure(minutes: number | null | undefined, dayState: LaborState, unverified = false): Figure {
   if ((minutes ?? 0) === 0) {
-    return laborHoursComplete(dayState) ? make("minutes", 0, null, { notes: hourNotes(unverified), zero: "reports.business.hours.no_labor" })
+    return laborHoursComplete(dayState) ? make("minutes", 0, null, { notes: derivedFrom(hourSource({ hoursUnverified: unverified })), zero: "reports.business.hours.no_labor" })
       : make("minutes", null, laborReasonKey(dayState));
   }
   return minutesFigure(minutes, dayState, unverified);
 }
 /** A quarter's straight-time dollars (MoO+). No minutes on a day whose money is known = $0, never a dash. */
 export function quarterCentsFigure(cents: number | null | undefined, minutes: number | null | undefined, day: LaborFigures): Figure {
-  if ((cents === null || cents === undefined) && (minutes ?? 0) === 0 && day.pureHourlyCents !== null && laborHoursComplete(day.state)) return make("cents", 0, null);
+  // $0 because the hours say there were none (no minute was priced): it carries what the hours carry.
+  if ((cents === null || cents === undefined) && (minutes ?? 0) === 0 && day.pureHourlyCents !== null && laborHoursComplete(day.state)) {
+    return make("cents", 0, null, { notes: derivedFrom(hourSource(day)) });
+  }
+  // Hours x wage.
   return make("cents", cents, laborReasonKey(day.state) ?? "reports.business.labor.state.rebuilding",
-    { notes: wageNotes(day), provisional: !laborHoursComplete(day.state) });
+    { notes: derivedFrom(hourSource(day), wageSource(day)), provisional: !laborHoursComplete(day.state) });
 }
 /** A quarter's straight-time %: the day's reason when its hours are not final, else "no % for this 15 minutes". */
 export function quarterPctFigure(pct: number | null | undefined, day: Pick<LaborFigures, "state"> & Provenance): Figure {
-  return make("pct", pct, laborHoursComplete(day.state) ? "reports.business.hours.no_pct" : laborReasonKey(day.state), { notes: wageNotes(day) });
+  return make("pct", pct, laborHoursComplete(day.state) ? "reports.business.hours.no_pct" : laborReasonKey(day.state),
+    // (Hours x wage) / the quarter's sales; a % is shown only over sales that are exact.
+    { notes: derivedFrom(hourSource(day), wageSource(day)) });
 }
 
 // ── Sales ───────────────────────────────────────────────────────────────────────────────────────
@@ -222,6 +262,42 @@ export function exactFigure(unit: "cents" | "count", value: number | null | unde
   const floor = (o.missing ?? 0) > 0;
   return make(unit, value, floor ? "reports.business.figure.amount_missing" : reason,
     { provisional: floor, soFar: false, label: o.label, ...(o.missing !== undefined && o.missing !== null ? { missing: o.missing } : {}) });
+}
+
+/** A count that may be short of the truth for a stated reason (a day's rushes when some 15 minutes could not be
+ * compared): shown, incomplete, with `partialReason`. Absent = unknown with `unknownReason`. */
+export function partialCountFigure(value: number | null | undefined, partialReason: FigureKey | null, unknownReason: FigureKey): Figure {
+  if (value === null || value === undefined) return make("count", null, unknownReason);
+  return make("count", value, partialReason, { provisional: partialReason !== null, soFar: false });
+}
+/** A marker input for `emptyClaim`: something a list depends on is ready (`reason` null), or why it is not. */
+export function readyFigure(reason: FigureKey | null): Figure { return make("count", reason === null ? 0 : null, reason); }
+
+// ── An empty list is a claim (fix round 7, review ITEM9B-r7 P2) ─────────────────────────────────
+
+/**
+ * "No checks or labor this day", "Nothing excluded", "No hours in this range": each says something is ZERO. It may
+ * be said only when every figure the list is drawn from is shown, whole and zero. `emptyClaim(...inputs)` decides:
+ *   verified  every input is known (or an estimate, whose qualification rides along in `reasons`) and is 0;
+ *   unknown   an input is unknown or incomplete (its reason), or holds something the list does not show.
+ * A surface with an empty list renders the claim; it never writes a "none" sentence on its own.
+ */
+export interface EmptyClaim { readonly kind: "verified" | "unknown"; readonly reasons: readonly FigureKey[] }
+export function emptyClaim(...inputs: readonly Figure[]): EmptyClaim {
+  const why = new Set<FigureKey>(), quals = new Set<FigureKey>();
+  for (const f of inputs) {
+    const d = open(f);
+    if (d.value === null || d.kind === "incomplete") { why.add(d.reason ?? FALLBACK); for (const n of d.notes) if (n.kind === "gap") why.add(n.key); }
+    else if (d.value !== 0) why.add(FALLBACK);
+    else for (const n of d.notes) quals.add(n.key);
+  }
+  return why.size > 0 ? { kind: "unknown", reasons: [...why] } : { kind: "verified", reasons: [...quals] };
+}
+/** An empty list's state for a file's `figure_notes` cell: `activity=unknown(not_captured,unbuilt)`; null when it is
+ * a plain verified none. */
+export function emptyClaimNote(name: string, claim: EmptyClaim): string | null {
+  if (claim.reasons.length === 0) return null;
+  return `${name}=${claim.kind === "unknown" ? "unknown" : "estimated"}(${claim.reasons.map(codeOf).join(",")})`;
 }
 
 // ── Out: words ──────────────────────────────────────────────────────────────────────────────────
@@ -320,4 +396,10 @@ export function figureChange(cur: Figure, prev: Figure | null): CompareChange {
   const a = open(cur), b = prev === null ? null : open(prev);
   if (b === null || a.unit !== b.unit) return { kind: "not_comparable" };
   return compareChange({ value: a.value, complete: figureComparable(cur) }, { value: b.value, complete: figureComparable(prev!) }, a.unit === "pct" ? "points" : "money");
+}
+/** Fix round 7: a change is DERIVED from the two figures it compares, so it carries every qualification of both
+ * (short words: "burden estimated; salary estimated"). Empty when there is no change to show. */
+export function figureChangeQualifiers(cur: Figure, prev: Figure | null, fmt: FigureFormat): string[] {
+  if (prev === null || figureChange(cur, prev).kind === "not_comparable") return [];
+  return derivedFrom(cur, prev).map((n) => fmt.t(n.short, n.values));
 }

@@ -493,7 +493,10 @@ export const RUSH_MIN_BASELINE_CHECKS = 1;
 /** `amountMissing` = checks of unknown amount in the quarter (absent = 0): such a quarter's sales are unknown. */
 export interface QuarterPoint { quarterStartAt: string; wallQuarter: number; fold: number; checks: number; cents: number; amountMissing?: number }
 export interface RushWindow { startAt: string; endAt: string; quarters: number; checks: number; cents: number; baselineChecks: number; baselineCents: number }
-export interface RushResult { state: "ok" | "not_enough_history"; windows: RushWindow[] }
+/** `uncompared` (item 9b fix round 7) = quarters of the day with enough checks to be part of a rush that could NOT
+ * be compared, because a check there (today, or at that quarter on a baseline day) has no amount. Above zero, the
+ * windows found are a floor and "no rushes" is not known. */
+export interface RushResult { state: "ok" | "not_enough_history"; windows: RushWindow[]; uncompared: number }
 
 const QUARTER_MS = 15 * 60_000;
 function median(xs: number[]): number {
@@ -507,14 +510,18 @@ function median(xs: number[]): number {
 export function detectRushes(day: { date: string; quarters: readonly QuarterPoint[] },
   history: ReadonlyArray<{ date: string; quarters: readonly QuarterPoint[] }>): RushResult {
   const hist = [...history].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, RUSH_HISTORY_WEEKS);
-  if (hist.length < RUSH_MIN_HISTORY) return { state: "not_enough_history", windows: [] };
+  if (hist.length < RUSH_MIN_HISTORY) return { state: "not_enough_history", windows: [], uncompared: 0 };
   const key = (q: { wallQuarter: number; fold: number }) => `${q.wallQuarter}|${q.fold}`;
   const hot: Array<QuarterPoint & { bChecks: number; bCents: number }> = [];
+  let uncompared = 0;
   for (const q of day.quarters) {
     // Fix round 2: a quarter whose sales are unknown (today, or at the same quarter on any baseline day) is never compared.
-    if ((q.amountMissing ?? 0) > 0) continue;
+    // Fix round 7: it is COUNTED when it had the checks to be part of a rush (fewer could never qualify).
     const at = hist.map((h) => h.quarters.find((x) => key(x) === key(q)));
-    if (at.some((x) => (x?.amountMissing ?? 0) > 0)) continue;
+    if ((q.amountMissing ?? 0) > 0 || at.some((x) => (x?.amountMissing ?? 0) > 0)) {
+      if (q.checks >= RUSH_MIN_CHECKS) uncompared++;
+      continue;
+    }
     const bChecks = median(at.map((x) => x?.checks ?? 0));
     const bCents = median(at.map((x) => x?.cents ?? 0));
     const qualifies = bChecks >= RUSH_MIN_BASELINE_CHECKS && bCents > 0
@@ -541,7 +548,7 @@ export function detectRushes(day: { date: string; quarters: readonly QuarterPoin
     run.push(q);
   }
   flush();
-  return { state: "ok", windows };
+  return { state: "ok", windows, uncompared };
 }
 
 // ── The page (item 9b) ──────────────────────────────────────────────────────────────────────────
@@ -633,7 +640,7 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.detail.burden", "reports.business.detail.fully_loaded", "reports.business.last_year.label", "reports.business.hours.checks",
   "reports.business.hours.no_labor", "reports.business.hours.no_pct", "reports.business.hours.gm_note", "reports.business.hours.money_note",
   "reports.business.hours.too_wide", "reports.business.hours.no_activity", "reports.business.hours.list_aria", "reports.business.rush.count",
-  "reports.business.rush.none", "reports.business.rush.window", "reports.business.channels.title", "reports.business.channels.none",
+  "reports.business.rush.none", "reports.business.rush.window", "reports.business.channels.title",
   "reports.business.channels.ezcater", "reports.business.channels.ezcater_label", "reports.business.channels.excluded", "reports.business.channels.excluded_none",
   "reports.business.channels.excluded.gift_card", "reports.business.channels.excluded.ezcater_linked", "reports.business.channels.rebuilding_days", "reports.business.people.title",
   "reports.business.people.count", "reports.business.people.none", "reports.business.people.unnamed", "reports.business.people.pay.hourly",
@@ -658,4 +665,7 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.export.no_finished_days",
   // Fix round 6: every reason a request has no range, on the page and in the file.
   "reports.business.empty.dates_missing", "reports.business.empty.from_after_to", "reports.business.export.from_after_to",
+  // Fix round 7: an empty list is a claim (said only over known-complete inputs; otherwise "not known" + why).
+  "reports.business.empty.not_known", "reports.business.hours.no_timed_activity", "reports.business.channels.none_verified",
+  "reports.business.people.servers_none", "reports.business.rush.not_all_compared", "reports.business.last_year.not_shown",
 ] as const;

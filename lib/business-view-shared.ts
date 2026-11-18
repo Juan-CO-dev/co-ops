@@ -20,8 +20,9 @@ import {
 } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
 import {
-  breakdownFigure, coverageFigure, exactFigure, figureHasNote, figureIsPositive, hoursFigure, loadedCentsFigure, loadedPctFigure, minutesFigure, netFigure,
-  otHoursFigure, personCostFigure, pureCentsFigure, purePctFigure, quarterCentsFigure, quarterHoursFigure, quarterPctFigure, salesFigure, type Figure,
+  breakdownFigure, coverageFigure, emptyClaim, exactFigure, figureHasNote, figureIsPositive, figureKindOf, hoursFigure, loadedCentsFigure, loadedPctFigure, minutesFigure, netFigure,
+  otHoursFigure, partialCountFigure, personCostFigure, pureCentsFigure, purePctFigure, quarterCentsFigure, quarterHoursFigure, quarterPctFigure, readyFigure, salesFigure,
+  type EmptyClaim, type Figure, type FigureKey,
 } from "@/lib/business-figure-shared";
 
 type Target = number | "target_varies";
@@ -56,11 +57,21 @@ export interface QuarterView {
 export interface RushWindowView { startAt: string; endAt: string; checks: Figure; usual: Figure; sales: Figure }
 export interface DayView {
   date: string; cuts: CutsState; sales: SalesView; labor: LaborView; target: Target; loadedTarget: Target;
+  /** Why the day's breakdown (15 minutes, rushes, large checks) is not shown: sales not captured, or still
+   * rebuilding. Null when it is. */
+  cutsReason: FigureKey | null;
   largeChecks: { any: boolean; checks: Figure; amount: Figure };
-  /** null = the day's breakdown is not shown. */
-  rush: { state: "ok" | "not_enough_history"; any: boolean; count: Figure; windows: RushWindowView[] } | null;
+  /** null = the day's breakdown is not shown. `none` (fix round 7) = "no rushes" is KNOWN: every 15 minutes that
+   * could be part of a rush was compared. With one that was not, `count` is incomplete and carries the reason. */
+  rush: { state: "ok" | "not_enough_history"; any: boolean; none: boolean; count: Figure; windows: RushWindowView[] } | null;
   rushes: Figure;
   quarters: QuarterView[];
+  /** Fix round 7: the 15-minute list of this day is EMPTY on the page. Whether "no checks or labor" may be said
+   * (`verified`: breakdown ready, no check, hours final and zero) or not (`unknown`, with why). Null when the
+   * list has rows, or the range is too wide for the 15-minute view. */
+  activity: EmptyClaim | null;
+  /** The file's Hours table has at least one 15-minute row for this day. */
+  hasQuarterRows: boolean;
   unassigned: { checks: Figure; sales: Figure; amountMissing: Figure } | null;
 }
 export interface WeekView { weekStart: string; from: string; to: string; target: Target; loadedTarget: Target; sales: SalesView; labor: LaborView }
@@ -94,6 +105,9 @@ export interface BusinessReportView {
   channels: { included: CutView[]; excluded: CutView[]; ezcater: { orders: Figure; sales: Figure; amountMissing: Figure } };
   servers: CutView[];
   people: PersonView[];
+  /** Fix round 7: for each list that may be empty, whether "none" may be said (null = the list has rows). The
+   * breakdown lists need every day's breakdown ready; the people list needs final hours that are zero. */
+  empty: { channels: EmptyClaim | null; excluded: EmptyClaim | null; servers: EmptyClaim | null; people: EmptyClaim | null };
   rushRule: BusinessReportDto["rushRule"];
 }
 
@@ -180,20 +194,30 @@ export function businessView(dto: BusinessReportDto): BusinessReportView {
     const cutsReason = d.cuts === "sales_not_covered" ? "reports.business.labor.state.sales_not_covered" as const : "reports.business.cuts.rebuilding" as const;
     const ok = d.cuts === "ok";
     const large = { checks: exactFigure("count", ok ? d.largeChecks.checks : null, cutsReason), amount: exactFigure("cents", ok ? d.largeChecks.cents : null, cutsReason) };
-    const rushCount = exactFigure("count", d.rush?.state === "ok" ? d.rush.windows.length : null,
+    // Fix round 7: a 15 minutes that could not be compared leaves the count a floor: incomplete, with why.
+    const rushCount = partialCountFigure(d.rush?.state === "ok" ? d.rush.windows.length : null,
+      (d.rush?.uncompared ?? 0) > 0 ? "reports.business.rush.not_all_compared" : null,
       d.rush === null ? cutsReason : "reports.business.rush.not_enough_history");
     const un = unassigned.find((u) => u.date === d.date);
+    const sales = salesView(d.sales), labor = laborView(d.labor);
+    const listed = (quartersByDate.get(d.date) ?? []).filter((q) => q.active);
+    // The breakdown's own reason (a day with no sales captured is not "rebuilding").
+    const notShown: FigureKey | null = ok ? null : d.cuts === "sales_not_covered" ? "reports.business.sales.not_captured" : "reports.business.cuts.rebuilding";
+    // An empty 15-minute list says "no checks, no labor": the breakdown must be ready, the day's checks zero (or
+    // all of them without an opened time, listed beside it), and the hours final and zero.
+    const activity = quarters === null || listed.length > 0 ? null
+      : emptyClaim(...(ok ? (un ? [] : [sales.checks]) : [readyFigure(notShown)]), labor.hours);
     return {
-      date: d.date, cuts: d.cuts, sales: salesView(d.sales), labor: laborView(d.labor),
+      date: d.date, cuts: d.cuts, sales, labor, cutsReason: notShown,
       target: wk?.target ?? dto.total.target, loadedTarget: wk?.loadedTarget ?? dto.total.loadedTarget,
       largeChecks: { any: figureIsPositive(large.checks), ...large },
       rush: d.rush === null ? null : {
-        state: d.rush.state, any: figureIsPositive(rushCount), count: rushCount,
+        state: d.rush.state, any: figureIsPositive(rushCount), none: figureKindOf(rushCount) === "known" && !figureIsPositive(rushCount), count: rushCount,
         windows: d.rush.windows.map((w) => ({ startAt: w.startAt, endAt: w.endAt, checks: exactFigure("count", w.checks, cutsReason),
           usual: exactFigure("count", w.baselineChecks, cutsReason), sales: exactFigure("cents", w.cents, cutsReason) })),
       },
       rushes: rushCount,
-      quarters: (quartersByDate.get(d.date) ?? []).filter((q) => q.active),
+      quarters: listed, activity, hasQuarterRows: (quartersByDate.get(d.date) ?? []).length > 0,
       unassigned: un ? { checks: un.checks, sales: un.sales, amountMissing: un.amountMissing } : null,
     };
   });
@@ -205,11 +229,15 @@ export function businessView(dto: BusinessReportDto): BusinessReportView {
   });
   const largeTotal = { checks: breakdownFigure("count", dto.largeChecks.checks, breakdown), amount: breakdownFigure("cents", dto.largeChecks.cents, breakdown) };
   const totalLabor = dto.total.labor;
+  const totalLaborView = laborView(totalLabor);
+  // Fix round 7: an empty list is a claim. The breakdown lists are drawn from the days whose breakdown is ready;
+  // the people list from the range's hours.
+  const breakdownEmpty = (rows: readonly unknown[]) => (rows.length > 0 ? null : emptyClaim(breakdownFigure("count", 0, breakdown)));
   return {
     locationId: dto.locationId, range: dto.range, access: dto.access,
     salesDays: { covered: dto.days.filter((d) => d.sales.coverage === "complete").length, expected: dto.days.length },
     breakdown, breakdownNotice: breakdownNotice(dto, breakdown),
-    total: { sales: totalSales, labor: laborView(totalLabor), target: dto.total.target, loadedTarget: dto.total.loadedTarget,
+    total: { sales: totalSales, labor: totalLaborView, target: dto.total.target, loadedTarget: dto.total.loadedTarget,
       largeChecks: { any: figureIsPositive(largeTotal.checks), ...largeTotal } },
     weeks: dto.weeks.map((w) => ({
       weekStart: w.weekStart, from: w.from, to: w.to, target: w.target, loadedTarget: w.loadedTarget,
@@ -228,6 +256,8 @@ export function businessView(dto: BusinessReportDto): BusinessReportView {
       if ("straightCostCents" in p) out.cost = personCostFigure(p.straightCostCents, p.payClass, totalLabor);
       return out;
     }),
+    empty: { channels: breakdownEmpty(dto.channels.included), excluded: breakdownEmpty(dto.channels.excluded), servers: breakdownEmpty(dto.servers),
+      people: dto.people.length > 0 ? null : emptyClaim(totalLaborView.hours) },
     rushRule: dto.rushRule,
   };
 }

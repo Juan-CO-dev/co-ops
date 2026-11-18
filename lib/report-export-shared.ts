@@ -31,7 +31,7 @@ import type { CalendarEvent } from "@/lib/catering/insights-shared";
 import type { MenuCostRow } from "@/lib/menu-costing-shared";
 import type { BreakdownRow, SalesBucket, SalesCheckRow, SalesExportView, SalesEzcaterRow, SalesTotals } from "@/lib/sales-reports-shared";
 import { SALES_EXPORT_MAX_ROWS, rowAverageCents, salesHasData } from "@/lib/sales-reports-shared";
-import { FIGURE_NOTES_COLUMN, figureCells } from "@/lib/business-figure-shared";
+import { FIGURE_NOTES_COLUMN, emptyClaimNote, figureCells } from "@/lib/business-figure-shared";
 import { BUSINESS_REPORT_TABS, type BusinessReportTab } from "@/lib/business-report-shared";
 import type { BusinessReportView, CutView, LaborView, SalesView } from "@/lib/business-view-shared";
 
@@ -539,6 +539,14 @@ export function businessHoursRows(view: BusinessReportView, shop: ShopRef): Expo
       row_type: "unassigned", business_date: u.date, ...shopCells(shop), basis: "no_opened_time",
       ...figureCells({ checks: u.checks, toast_sales: u.sales, amount_missing: u.amountMissing }),
     })),
+    // Fix round 7 (review ITEM9B-r7 P2): a day with no 15-minute row is never silence. One row says whether that is
+    // a verified "nothing happened" (`no_activity`; `no_timed_activity` when its checks have no opened time and are
+    // the `unassigned` row) or NOT KNOWN (`activity_unknown`, with why in `figure_notes` and `labor_state`).
+    ...view.days.flatMap((d): ExportRow[] => (d.hasQuarterRows || d.activity === null ? [] : [{
+      row_type: "day", business_date: d.date, ...shopCells(shop), labor_state: d.labor.state,
+      status: d.activity.kind === "unknown" ? "activity_unknown" : d.unassigned ? "no_timed_activity" : "no_activity",
+      [FIGURE_NOTES_COLUMN]: emptyClaimNote("activity", d.activity),
+    }])),
   ];
 }
 
