@@ -139,6 +139,26 @@ describe("planned rows replace, never union (Astra r3 P1-1)", () => {
     // An overtime entry dated before the week's first masked date is refused (nothing planned reaches back).
     await refuses(planned(A, W, "2026-10-10", { ...plan, ot: [{ person_key: u(ALICE), business_date: "2026-10-07", ot_minutes: 10 }] }), "fact_invalid_request");
   });
+  it("fix r1 P2-2: a later PLANNED wage never re-prices the stored overtime of the days before the first masked date", async () => {
+    // Alice's 48 recorded hours at $20 hold 8 h of overtime on Friday: an $80 premium. Saturday is planned: 8 h at $40, all over.
+    const sat = "2026-10-10";
+    const plan = { mask: [sat], rows: [hourly(ALICE, sat, 480, 4000)], ot: [{ person_key: u(ALICE), business_date: sat, ot_minutes: 480 }] };
+    for (const [from, to] of [["2026-10-05", "2026-10-09"], ["2026-10-09", "2026-10-09"], [W, "2026-10-09"]] as const) {
+      const facts = (await planned(A, from, to, null))[0]!;
+      expect(Number(facts.ot_premium_cents), from + ".." + to).toBe(8000);
+      // The untouched actual days are the facts' own answer (the business report's), byte for byte, and not flagged.
+      expect((await planned(A, from, to, plan))[0], from + ".." + to).toEqual({ ...facts, ot_planned: false });
+    }
+    expect(Number((await planned(A, W, sat, { ...plan, only: ["2026-10-08", "2026-10-09"] }))[0]!.ot_premium_cents)).toBe(8000);
+    // The PLANNED overtime is priced at the blended rate of the selected population (48 h x $20 + 8 h x $40 over 56 h).
+    const blended = (2880 * 2000 + 480 * 4000) / 3360;
+    const [day] = await planned(A, sat, sat, plan);
+    expect(day).toMatchObject({ ot_planned: true, days_planned: 1 });
+    expect(num(day!, "ot_minutes", "ot_premium_cents")).toEqual({ ot_minutes: 480, ot_premium_cents: Math.round((0.5 * blended * 480) / 60) });
+    // The week: the stored premium as it is + the planned one (never the planned rate over all 16 h).
+    expect(num((await planned(A, W, sat, plan))[0]!, "ot_minutes", "ot_premium_cents"))
+      .toEqual({ ot_minutes: 960, ot_premium_cents: Math.round((0.5 * 2000 * 480 + 0.5 * blended * 480) / 60) });
+  });
   it("the premium uses the week's BLENDED rate over the selected population (an unsettled Sunday at another rate)", async () => {
     // Sunday 8 h at $30 from the plan + the 48 recorded hours at $20: 56 h, 16 h of overtime at (8x30 + 48x20) / 56.
     const plan = { mask: [W], rows: [hourly(ALICE, W, 480, 3000)],

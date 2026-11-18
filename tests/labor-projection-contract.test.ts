@@ -14,14 +14,14 @@ const row = (o: Partial<LaborCostRow> = {}): LaborCostRow => ({ week_start: "209
   estimated_rate_minutes: 0, hourly_minutes: 2880, ot_minutes: 480, salaried_minutes: 0, ot_state: "unbuilt", range_days: 7,
   days_covered: 0, days_pending: 0, days_fallback: 0, days_incomplete: 0, days_missing: 0, open_punches: 0,
   salaried_people: 1, salary_unplaced_people: 0, salary_missing_wage_people: 0, days_planned: 7, salary_projected: true, ...o });
-const complete: LaborProjectionInputs = { weekScheduleComplete: true, retainedFactsReady: true, otRecountMatches: true, wageUnknownPeople: 0 };
+const complete: LaborProjectionInputs = { weekScheduleComplete: true, retainedFactsReady: true, otRecountMatches: true, wageUnknownPeople: 0, storedSalaryCurrent: true };
 const targets = laborTargetsFor(null);
 
 describe("projected readiness (Astra r4 P1)", () => {
   it("a wholly planned, genuinely unbuilt week with complete inputs gets its overtime and both percentages, labelled projected", () => {
     const [v] = laborWeekViews([row()], () => complete);
     expect(v).toMatchObject({ projected: true, daysPlanned: 7, hoursKnown: true, otState: "projected", pureHourlyCents: 104_000, salaryProjected: true,
-      projection: { overtimeKnown: true, moneyKnown: true, gaps: [] } });
+      projection: { overtimeKnown: true, moneyKnown: true, salaryCurrent: true, gaps: [] } });
     const p = laborPercents(v!, 1_000_000, targets);
     expect(p).toMatchObject({ pureHourlyPct: 10.4, pureHourlyTone: "good" });
     expect(p.fullyLoadedPct).toBe(Math.round((1000 * (104_000 + 140_000 + Math.round(0.12 * 244_000))) / 1_000_000) / 10);
@@ -39,15 +39,15 @@ describe("projected readiness (Astra r4 P1)", () => {
   });
   it("fails closed: a planned row with no stated inputs has no overtime, no money and no %", () => {
     const [v] = laborWeekViews([row()]);
-    expect(v!.projection).toEqual({ overtimeKnown: false, moneyKnown: false, gaps: ["schedule_incomplete"] });
+    expect(v!.projection).toEqual({ overtimeKnown: false, moneyKnown: false, salaryCurrent: false, gaps: ["schedule_incomplete", "salary_rebuilding"] });
     expect(v!.otState).toBe("not_assessed");
     expect(laborPercents(v!, 1_000_000, targets).pureHourlyPct).toBeNull();
   });
   it("each missing input withholds what needs it, by name; never a 0", () => {
-    expect(laborProjectionReadiness({ ...complete, weekScheduleComplete: false })).toEqual({ overtimeKnown: false, moneyKnown: true, gaps: ["schedule_incomplete"] });
-    expect(laborProjectionReadiness({ ...complete, retainedFactsReady: false })).toEqual({ overtimeKnown: false, moneyKnown: true, gaps: ["actuals_rebuilding"] });
-    expect(laborProjectionReadiness({ ...complete, otRecountMatches: false })).toEqual({ overtimeKnown: false, moneyKnown: true, gaps: ["ot_not_assessed"] });
-    expect(laborProjectionReadiness({ ...complete, wageUnknownPeople: 2 })).toEqual({ overtimeKnown: true, moneyKnown: false, gaps: ["wage_unknown"] });
+    expect(laborProjectionReadiness({ ...complete, weekScheduleComplete: false })).toEqual({ overtimeKnown: false, moneyKnown: true, salaryCurrent: true, gaps: ["schedule_incomplete"] });
+    expect(laborProjectionReadiness({ ...complete, retainedFactsReady: false })).toEqual({ overtimeKnown: false, moneyKnown: true, salaryCurrent: true, gaps: ["actuals_rebuilding"] });
+    expect(laborProjectionReadiness({ ...complete, otRecountMatches: false })).toEqual({ overtimeKnown: false, moneyKnown: true, salaryCurrent: true, gaps: ["ot_not_assessed"] });
+    expect(laborProjectionReadiness({ ...complete, wageUnknownPeople: 2 })).toEqual({ overtimeKnown: true, moneyKnown: false, salaryCurrent: true, gaps: ["wage_unknown"] });
     for (const inputs of [{ ...complete, weekScheduleComplete: false }, { ...complete, wageUnknownPeople: 1 }]) {
       const [v] = laborWeekViews([row()], () => inputs);
       expect(laborPercents(v!, 1_000_000, targets)).toEqual({ pureHourlyPct: null, pureHourlyTone: "none", fullyLoadedPct: null, fullyLoadedTone: "none" });
@@ -82,7 +82,7 @@ describe("projected readiness (Astra r4 P1)", () => {
     const b = laborWeekViews([row({ week_start: "2099-01-11", range_days: 1, days_planned: 1, hourly_straight_cents: 10_000, ot_premium_cents: 0, salaried_cents: 20_000 })], () => complete)[0]!;
     const both = sumLaborViews([a, b])!;
     expect(both).toMatchObject({ pureHourlyCents: 114_000, salariedCents: 160_000, daysPlanned: 7, hoursKnown: true, otState: "projected",
-      fullyLoadedCents: a.fullyLoadedCents! + b.fullyLoadedCents!, projection: { overtimeKnown: true, moneyKnown: true, gaps: [] } });
+      fullyLoadedCents: a.fullyLoadedCents! + b.fullyLoadedCents!, projection: { overtimeKnown: true, moneyKnown: true, salaryCurrent: true, gaps: [] } });
     const gap = laborWeekViews([row({ week_start: "2099-01-11", salaried_cents: null, salary_basis: "unknown" })], () => ({ ...complete, wageUnknownPeople: 1 }))[0]!;
     expect(sumLaborViews([a, gap])).toMatchObject({ fullyLoadedCents: null, salariedCents: null, projection: { moneyKnown: false, gaps: ["wage_unknown"] } });
     expect(sumLaborViews([])).toBeNull();
@@ -93,6 +93,40 @@ describe("projected readiness (Astra r4 P1)", () => {
     const p = laborPercents(v!, 1_000_000, targets);
     expect(p).toMatchObject({ pureHourlyPct: 10.4, pureHourlyTone: "good", fullyLoadedPct: null, fullyLoadedTone: "none" });
     expect(v).toMatchObject({ salaryIncomplete: true, salaryGaps: 1 });
+  });
+});
+
+describe("fix r1 P2-1: a STORED salary of a stale generation never prices a projection", () => {
+  // A built week whose source moved (a payroll-shop reassignment, a salary change): its stored labor_week_salaried
+  // row is the OLD allocation. SQL still returns it (salary_basis wages, salary_projected false).
+  const stale = { ...complete, storedSalaryCurrent: false };
+  const stored = row({ ot_state: "week_open", days_planned: 5, days_covered: 0, range_days: 5, salary_projected: false });
+  it("the salary, its burden and fully loaded are withheld with the named reason; pure hourly keeps its number and tone", () => {
+    const [v] = laborWeekViews([stored], () => stale);
+    expect(v).toMatchObject({ salariedCents: null, burdenCents: null, fullyLoadedCents: null, salaryUnknown: true, pureHourlyCents: 104_000,
+      projection: { overtimeKnown: true, moneyKnown: true, salaryCurrent: false, gaps: ["salary_rebuilding"] } });
+    expect(laborPercents(v!, 1_000_000, targets)).toMatchObject({ pureHourlyPct: 10.4, pureHourlyTone: "good", fullyLoadedPct: null, fullyLoadedTone: "none" });
+  });
+  it("the same row in a current generation, or with nothing stored (the plan's fresh allocation), keeps its salary", () => {
+    expect(laborWeekViews([stored], () => complete)[0]).toMatchObject({ salariedCents: 140_000, projection: { salaryCurrent: true, gaps: [] } });
+    expect(laborWeekViews([row()], () => complete)[0]!.fullyLoadedCents).not.toBeNull();
+  });
+  it("the shop's ESTIMATE is a setting, not a generation: it is never withheld", () => {
+    const [v] = laborWeekViews([{ ...stored, salary_basis: "estimate" }], () => stale);
+    expect(v).toMatchObject({ salariedCents: 140_000, projection: { salaryCurrent: true, gaps: [] } });
+    expect(v!.fullyLoadedCents).not.toBeNull();
+  });
+  it("fails closed: an input that does not state it is not current; a row of facts only is never asked", () => {
+    const unstated: Partial<LaborProjectionInputs> = { ...complete };
+    delete unstated.storedSalaryCurrent;
+    expect(laborWeekViews([stored], () => unstated as LaborProjectionInputs)[0]).toMatchObject({ salariedCents: null, fullyLoadedCents: null });
+    expect(laborWeekViews([row({ ot_state: "assessed", days_planned: 0, days_covered: 7, salary_projected: false })], () => stale)[0])
+      .toMatchObject({ salariedCents: 140_000, projection: null });
+  });
+  it("sumLaborViews carries it: one stale week makes the loaded total unknown and names why", () => {
+    const a = laborWeekViews([row({ week_start: "2099-01-04" })], () => complete)[0]!;
+    const b = laborWeekViews([{ ...stored, week_start: "2099-01-11" }], () => stale)[0]!;
+    expect(sumLaborViews([a, b])).toMatchObject({ salariedCents: null, fullyLoadedCents: null, projection: { salaryCurrent: false, gaps: ["salary_rebuilding"] } });
   });
 });
 

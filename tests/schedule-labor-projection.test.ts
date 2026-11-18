@@ -42,7 +42,7 @@ function plan(o: Partial<BuildPlanInput> & { today: string; dayCoverage?: Return
   const classification = classifyLaborDays({ today: o.today, boardDates: BOARD, hasHead: o.shifts !== null, hasPrevHead: (o.prevShifts ?? null) !== null,
     dayCoverage: o.dayCoverage ?? [], weekStates: o.weekStates ?? new Map() });
   const built = buildLaborPlan({ locationId: LOC, boardDates: BOARD, classification, shifts: o.shifts ?? null, prevShifts: o.prevShifts ?? null, quarters: o.quarters ?? [],
-    sources: o.sources ?? new Map([[W, source(W)], [W2, source(W2)]]), storedSalariedWeeks: o.storedSalariedWeeks ?? new Set() });
+    sources: o.sources ?? new Map([[W, source(W)], [W2, source(W2)]]), storedSalariedWeeks: o.storedSalariedWeeks ?? new Set(), weekStates: o.weekStates ?? new Map() });
   return { classification, built };
 }
 
@@ -117,7 +117,7 @@ describe("overtime: one counter over one selected population (per shop, Sunday-S
   it("a 48-hour schedule: the 8 hours past 40 land on the last day", () => {
     const { built } = plan({ today: "2026-10-01", shifts: BOARD.slice(0, 6).map((d) => shift(ANA, d, 8)), prevShifts: [] });
     expect(built.plan.ot).toEqual([{ person_key: `u:${ANA}`, business_date: "2026-10-10", ot_minutes: 480 }]);
-    expect(built.weeks[W]).toEqual({ weekScheduleComplete: true, retainedFactsReady: true, otRecountMatches: true });
+    expect(built.weeks[W]).toEqual({ weekScheduleComplete: true, retainedFactsReady: true, otRecountMatches: true, storedSalaryCurrent: true });
   });
   it("Astra r3 P2-4: 8 unsettled Sunday hours on the PREVIOUS head + 40 h Mon-Fri = 8 overtime hours", () => {
     const { built, classification } = plan({ today: "2026-10-01", shifts: BOARD.slice(0, 5).map((d) => shift(ANA, d, 8)), prevShifts: [shift(ANA, W, 8)] });
@@ -154,7 +154,7 @@ describe("overtime: one counter over one selected population (per shop, Sunday-S
       { person_key: `u:${ANA}`, business_date: "2026-10-08", ot_minutes: 120 },
       { person_key: `u:${ANA}`, business_date: "2026-10-09", ot_minutes: 480 },
     ]);
-    expect(built.weeks[W]).toEqual({ weekScheduleComplete: true, retainedFactsReady: true, otRecountMatches: true });
+    expect(built.weeks[W]).toEqual({ weekScheduleComplete: true, retainedFactsReady: true, otRecountMatches: true, storedSalaryCurrent: true });
   });
   it("the counter must reproduce the STORED overtime of the stored rows, or the week says so", () => {
     const quarters = [...facts(ANA, "2026-10-05", 10, 3)];
@@ -169,7 +169,7 @@ describe("overtime: one counter over one selected population (per shop, Sunday-S
   });
   it("the board Sunday's own payroll week needs nothing more: a first day cannot carry overtime", () => {
     const { built } = plan({ today: "2026-10-01", shifts: [shift(ANA, "2026-10-11", 10)], prevShifts: [] });
-    expect(built.weeks[W2]).toEqual({ weekScheduleComplete: true, retainedFactsReady: true, otRecountMatches: true });
+    expect(built.weeks[W2]).toEqual({ weekScheduleComplete: true, retainedFactsReady: true, otRecountMatches: true, storedSalaryCurrent: true });
     expect(built.plan.ot).toEqual([]);
   });
 });
@@ -185,6 +185,28 @@ describe("salary (Astra r3 P2-3): the one allocation rule, this shop's row only"
     expect(built.plan.salaried[0]).toEqual({ week_start: W, salaried_cents: null, salaried_people: 1, unplaced_people: 1, missing_wage_people: 0 });
     expect(JSON.stringify(built.plan)).not.toContain("5200000");
     expect(JSON.stringify(built.plan)).not.toContain(OTHER);
+  });
+});
+
+describe("fix r1 P2-1: a stored salaried row is trusted only in its own current generation", () => {
+  const shifts = [shift(ANA, "2026-10-07", 8)];
+  const stored = new Set([W, W2]);
+  it("a week that is rebuilding (its source moved: a payroll-shop reassignment, a salary change) says its stored salary is NOT current", () => {
+    const { built } = plan({ today: "2026-10-07", shifts, prevShifts: [], storedSalariedWeeks: stored, weekStates: new Map([[W, "rebuilding" as const], [W2, "ready" as const]]) });
+    expect(built.weeks[W]!.storedSalaryCurrent).toBe(false);
+    expect(built.weeks[W2]!.storedSalaryCurrent).toBe(true);
+    // It is told to the pricer, and no plan row stands in for the stored one (0345's precedence is unchanged).
+    expect(projectionInputsFor(built, { week_start: W } as LaborCostRow, BOARD)).toMatchObject({ storedSalaryCurrent: false });
+    expect(built.plan.salaried).toEqual([]);
+  });
+  it("a ready week's stored row is current; a week with nothing stored uses the fresh allocation, which is current by construction", () => {
+    expect(plan({ today: "2026-10-07", shifts, prevShifts: [], storedSalariedWeeks: stored, weekStates: ready }).built.weeks[W]!.storedSalaryCurrent).toBe(true);
+    const fresh = plan({ today: "2026-10-07", shifts, prevShifts: [], weekStates: new Map([[W, "rebuilding" as const]]) }).built;
+    expect(fresh.weeks[W]!.storedSalaryCurrent).toBe(true);
+    expect(fresh.plan.salaried.map((s) => s.week_start)).toEqual([W, W2]);
+  });
+  it("fails closed: a stored row whose week has no stated state is not current", () => {
+    expect(plan({ today: "2026-10-07", shifts, prevShifts: [], storedSalariedWeeks: stored }).built.weeks[W]!.storedSalaryCurrent).toBe(false);
   });
 });
 
@@ -204,7 +226,7 @@ describe("what a request is sent, and what the pricer is told", () => {
   });
   it("the pricer is told the row's own week and the no-wage people of the row's own dates; an unknown week is nothing stated", () => {
     const row = { week_start: W } as LaborCostRow;
-    expect(projectionInputsFor(built, row, ["2026-10-05"])).toEqual({ weekScheduleComplete: true, retainedFactsReady: true, otRecountMatches: true, wageUnknownPeople: 0 });
+    expect(projectionInputsFor(built, row, ["2026-10-05"])).toEqual({ weekScheduleComplete: true, retainedFactsReady: true, otRecountMatches: true, storedSalaryCurrent: true, wageUnknownPeople: 0 });
     expect(projectionInputsFor(built, row, BOARD)!.wageUnknownPeople).toBe(1);
     expect(projectionInputsFor(built, { week_start: "2026-09-27" } as LaborCostRow, BOARD)).toBeUndefined();
   });

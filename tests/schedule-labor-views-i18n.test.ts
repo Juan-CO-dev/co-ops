@@ -24,7 +24,7 @@ it("the list is the whole schedule.labor_views namespace, and the es copy never 
 it("every reason code, day kind and view state the payload can carry has its line (the compiler closes the lists)", () => {
   const reasons: Record<BoardLaborReason, true> = {
     schedule_incomplete: true, actuals_rebuilding: true, ot_not_assessed: true, wage_unknown: true, hours_unknown: true, salary_incomplete: true,
-    salary_unknown: true, not_settled: true, no_schedule: true, sales_not_covered: true, net_unknown: true, ezcater_missing: true, zero_sales: true,
+    salary_unknown: true, salary_rebuilding: true, not_settled: true, no_schedule: true, sales_not_covered: true, net_unknown: true, ezcater_missing: true, zero_sales: true,
     forecast_missing: true, partial_week: true,
   };
   const kinds: Record<BoardLaborDayKind, true> = { actual: true, projected: true, not_settled: true, no_schedule: true };

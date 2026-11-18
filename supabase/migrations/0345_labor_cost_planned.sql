@@ -25,12 +25,20 @@
 --             Wednesday moves Thursday); the days BEFORE the week's first masked date keep their stored overtime
 --             (nothing planned can reach back), so they stay the facts, byte for byte.
 --             The caller counts it with the builder's own counter (lib/facts/labor-week-shared.ts createOtCounter).
+--             PREMIUM RATES (fix r1, review P2-2): a STORED overtime minute that stands (the days before the week's
+--             first masked date; every row of a week with no plan) is priced at the FACTS' blended rate: every
+--             stored hourly row of that person's week, masked dates included, exactly as fact_labor_cost prices
+--             it. Planned wages never reach it, so an untouched actual day's premium is the business report's.
+--             Only the PLAN's overtime (this list) is priced at the blended rate of the selected population.
 --   salaried  {week_start, salaried_cents, salaried_people, unplaced_people, missing_wage_people} for this shop,
 --             used ONLY for a week with no stored labor_week_salaried row (precedence: the shop's estimate, the
 --             stored row, this row, unknown). It is allocateSalaried's row (lib/facts/labor-payroll-shared.ts),
 --             coalesced into the same columns, so the share rounding and the three gap counts are 0340's.
 --   only      the dates of [p_from, p_to] to price (a non-contiguous set: the board's "actual so far" and
 --             "projected rest" are never blended). Absent = every date of the range. A week with none returns no row.
+--             A stored row of a week whose source moved since it was built is the OLD allocation, and it is still
+--             returned here (SQL has no generation gate): the caller states whether that row is current and the
+--             shared pricer withholds it otherwise (fix r1, review P2-1: storedSalaryCurrent / salary_rebuilding).
 -- New OUT columns (planned function only): days_planned, salary_projected, and ot_planned = the row's days reach
 -- the week's first masked date, so its overtime is (in part) the plan's count.
 -- ot_state is still the STORED week's (a future week reads 'unbuilt'): what a projection may show is decided by
@@ -152,23 +160,29 @@ begin
     select l.id loc from public.locations l
      where l.id = p_location_id
         or (p_location_id is null and exists (select 1 from public.labor_day_coverage c where c.location_id = l.id and c.week_start in (select weeks.w from weeks)))
-  ), priced as (
-    -- The facts, minus this shop's masked dates; from a week's first masked date on, this shop's stored overtime
-    -- is ignored (no plan week: the array lookup is NULL and the stored overtime stands).
-    select q.week_start ws, q.location_id loc, q.person_key pk, q.business_date bd, q.minutes::integer m,
-      case when q.location_id = p_location_id and q.business_date >= v_first[array_position(v_plan_weeks, q.week_start)] then 0 else q.ot_minutes::integer end ot, q.pay_class pc,
+  ), facts as (
+    -- Every stored row of the request's weeks, as 0340 prices it (emp0 = 0339's employer of the overtime: the
+    -- shop on a per_shop week, nobody (company) otherwise).
+    select q.week_start ws, q.location_id loc, q.person_key pk, q.business_date bd, q.minutes::integer m, q.ot_minutes::integer ot, q.pay_class pc,
       case when q.pay_class = 'salaried' then null
            when q.rate_basis in ('known', 'undated') then q.rate_cents
            when q.rate_basis = 'before_first_known' and p_wage_fallback = 'first_known' then q.carry_back_rate_cents
            else coalesce(s.estimated_hourly_cents, 1840) end rate,
       q.pay_class = 'hourly' and (q.rate_basis = 'none' or (q.rate_basis = 'before_first_known' and p_wage_fallback = 'dc_minimum')) est,
-      -- 0339: the employer the overtime belongs to: the shop on a per_shop week, nobody (company) otherwise.
-      -- A week this shop plans is always counted per shop (the plan's overtime list is).
-      case when wsc.ot_scope = 'company' and not (q.location_id = p_location_id and q.week_start = any(v_plan_weeks)) then null else q.location_id end emp
+      case when wsc.ot_scope = 'company' then null else q.location_id end emp0
     from public.labor_quarter q left join public.schedule_shop_settings s on s.location_id = q.location_id
     left join public.labor_week_coverage wsc on wsc.week_start = q.week_start
     where q.week_start in (select weeks.w from weeks)
-      and not (q.location_id = p_location_id and q.business_date = any(v_mask))
+  ), priced as (
+    -- The facts, minus this shop's masked dates; from a week's first masked date on, this shop's stored overtime
+    -- is ignored (no plan week: the array lookup is NULL and the stored overtime stands).
+    -- A week this shop plans is always counted per shop (the plan's overtime list is): emp.
+    -- stored = a fact row: whatever overtime it still carries is STORED overtime, priced by fact_blended.
+    select f.ws, f.loc, f.pk, f.bd, f.m,
+      case when f.loc = p_location_id and f.bd >= v_first[array_position(v_plan_weeks, f.ws)] then 0 else f.ot end ot, f.pc, f.rate, f.est,
+      case when f.loc = p_location_id and f.ws = any(v_plan_weeks) then f.loc else f.emp0 end emp, f.emp0, true stored
+    from facts f
+    where not (f.loc = p_location_id and f.bd = any(v_mask))
     union all
     -- The planned rows of the masked dates: the same rate CASE, this shop's estimate.
     select r.business_date - extract(dow from r.business_date)::integer, p_location_id, r.person_key, r.business_date, r.minutes, 0, r.pay_class,
@@ -177,26 +191,33 @@ begin
            when r.rate_basis = 'before_first_known' and p_wage_fallback = 'first_known' then r.carry_back_rate_cents
            else coalesce(s.estimated_hourly_cents, 1840) end,
       r.pay_class = 'hourly' and (r.rate_basis = 'none' or (r.rate_basis = 'before_first_known' and p_wage_fallback = 'dc_minimum')),
-      p_location_id
+      p_location_id, null::uuid, false
     from jsonb_to_recordset(v_rows) r(person_key text, business_date date, minutes integer, pay_class text, rate_cents integer, rate_basis text, carry_back_rate_cents integer)
     left join public.schedule_shop_settings s on s.location_id = p_location_id
     union all
     -- The plan's overtime, as rows of no minutes (they add nothing to straight time or to the blended rate).
     select o.business_date - extract(dow from o.business_date)::integer, p_location_id, o.person_key, o.business_date, 0, o.ot_minutes, 'hourly',
-      null::integer, false, p_location_id
+      null::integer, false, p_location_id, null::uuid, false
     from jsonb_to_recordset(v_ot) o(person_key text, business_date date, ot_minutes integer)
   ), blended as (
+    -- The SELECTED population's blended rate (retained facts + planned rows): prices the PLAN's overtime only.
     select priced.pk, priced.ws, priced.emp, sum(priced.m * priced.rate)::numeric / nullif(sum(priced.m), 0) r
       from priced where priced.pc = 'hourly' group by priced.pk, priced.ws, priced.emp
+  ), fact_blended as (
+    -- The FACTS' blended rate (0340's, every stored hourly row of the week, this shop's masked dates included):
+    -- prices every STORED overtime minute that stands, so no planned wage re-prices an untouched actual day.
+    select facts.pk, facts.ws, facts.emp0, sum(facts.m * facts.rate)::numeric / nullif(sum(facts.m), 0) r
+      from facts where facts.pc = 'hourly' group by facts.pk, facts.ws, facts.emp0
   ), agg as (
     select p.ws, p.loc,
       round(coalesce(sum(p.m * p.rate) filter (where p.pc = 'hourly'), 0) / 60.0)::bigint straight,
-      round(coalesce(sum(0.5 * b.r * p.ot) filter (where p.pc = 'hourly'), 0) / 60.0)::bigint prem,
+      round(coalesce(sum(0.5 * (case when p.stored then fb.r else b.r end) * p.ot) filter (where p.pc = 'hourly'), 0) / 60.0)::bigint prem,
       coalesce(sum(p.m) filter (where p.est), 0)::bigint est_m,
       coalesce(sum(p.m) filter (where p.pc = 'hourly'), 0)::bigint hm,
       coalesce(sum(p.ot), 0)::bigint otm,
       coalesce(sum(p.m) filter (where p.pc = 'salaried'), 0)::bigint sm
     from priced p left join blended b on b.pk = p.pk and b.ws = p.ws and b.emp is not distinct from p.emp
+    left join fact_blended fb on p.stored and fb.pk = p.pk and fb.ws = p.ws and fb.emp0 is not distinct from p.emp0
     where p.bd between p_from and p_to and p.loc in (select shops.loc from shops)
       and (v_only is null or p.bd = any(v_only))
     group by p.ws, p.loc

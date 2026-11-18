@@ -9111,6 +9111,7 @@
   "schedule.labor_views.reason.hours_unknown": "Faltan algunas horas",
   "schedule.labor_views.reason.salary_incomplete": "Salarios incompletos: falta una tienda de nómina o un salario",
   "schedule.labor_views.reason.salary_unknown": "No hay salarios guardados",
+  "schedule.labor_views.reason.salary_rebuilding": "Los salarios se están actualizando",
   "schedule.labor_views.reason.not_settled": "Aún sin cerrar: solo horas",
   "schedule.labor_views.reason.no_schedule": "Aún sin horario",
   "schedule.labor_views.reason.sales_not_covered": "Las ventas aún no llegan",

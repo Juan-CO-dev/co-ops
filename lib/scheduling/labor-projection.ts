@@ -14,6 +14,9 @@
  *      settled dates (the actual denominator);
  *   6. labor_week_coverage + the fingerprints once more (AFTER): a week that was `ready` and no longer is means
  *      the rows above came from two generations, so the whole view answers `rebuilding`.
+ * Fix r1 (P2-1): the same week states gate the STORED salaried row a projection is priced from. A week that is not
+ * `ready` (its source moved: a payroll-shop reassignment, a salary change) has its stored salary withheld
+ * (`salary_rebuilding`: no salary, no burden, no fully loaded) until the builder's next pass.
  * It never throws into the board: 0345 not applied = `not_installed`, any other failed read = `unavailable`.
  * No write, no email, no notification. No wage rate and nothing per person is returned.
  */
@@ -176,7 +179,7 @@ async function project(a: BoardLaborArgs): Promise<BoardLaborViews> {
   const prevShifts = a.shifts === null ? null : await a.loadPrevShifts();
   const classification = classifyLaborDays({ today: a.today, boardDates, hasHead: a.shifts !== null, hasPrevHead: prevShifts !== null, dayCoverage, weekStates });
   const sources = new Map(await Promise.all(classification.planWeeks.map(async (w) => [w, await reads.weekSource(w)] as const)));
-  const built = buildLaborPlan({ locationId, boardDates, classification, shifts: a.shifts, prevShifts, quarters, sources, storedSalariedWeeks: new Set(storedSalaried) });
+  const built = buildLaborPlan({ locationId, boardDates, classification, shifts: a.shifts, prevShifts, quarters, sources, storedSalariedWeeks: new Set(storedSalaried), weekStates });
 
   const kind = (d: string) => classification.kinds[d]!;
   const actual = boardDates.filter((d) => kind(d) === "actual");

@@ -9111,6 +9111,7 @@
   "schedule.labor_views.reason.hours_unknown": "Some hours are missing",
   "schedule.labor_views.reason.salary_incomplete": "Salaries incomplete: a payroll shop or a salary is missing",
   "schedule.labor_views.reason.salary_unknown": "Salaries aren't set",
+  "schedule.labor_views.reason.salary_rebuilding": "Salaries are updating",
   "schedule.labor_views.reason.not_settled": "Not settled yet: hours only",
   "schedule.labor_views.reason.no_schedule": "No schedule yet",
   "schedule.labor_views.reason.sales_not_covered": "Sales aren't in yet",

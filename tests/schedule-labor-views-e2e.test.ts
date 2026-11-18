@@ -22,7 +22,7 @@ import type { DemandResult } from "@/lib/scheduling/demand-shared";
 import { weekDays } from "@/lib/scheduling/time-shared";
 import { AGM, GM, MOO, P_REG, STAFF, scheduleStore, shopTables } from "./fixtures/schedule/lib-store";
 import { M0345 } from "./helpers/fact-0338-parents";
-import { A, ALICE, FUTURE_W, GMU, MGR, laborPlanDb, type LaborPlanDb } from "./helpers/labor-plan-fixture";
+import { A, ALICE, B, FUTURE_W, GMU, MGR, laborPlanDb, type LaborPlanDb } from "./helpers/labor-plan-fixture";
 import { pgliteClient, type PgliteClientOpts } from "./helpers/pglite-postgrest";
 import { BOARD_LABOR_VIEW_PATHS } from "./fixtures/schedule/labor-views-paths";
 
@@ -279,6 +279,29 @@ describe("a MIXED week: settled days are the facts, today and later are the sche
     // The projection counts the not-settled days' SCHEDULED minutes toward the 40 h (never their recorded ones on top):
     // Mon-Sat 8 h each = 48 h, so Saturday's 8 h are overtime.
     expect(views.strip.projected).toMatchObject({ days: 5, otMinutes: 480, otPremiumCents: 8_000 });
+  });
+
+  it("fix r1 P2-1, AFTER IT: the GM's salary REASSIGNED to the other shop with no rebuild: the stored (old) salary never prices the projection", async () => {
+    // The stored labor_week_salaried row still says $1,400 at shop A; a fresh allocation says nothing is paid here.
+    await f.q("select save_labor_payroll_shop($1, 20, $2, 'shop', '2026-07-19', 'test: moved to shop B payroll', (select max(seq) from labor_payroll_shops where sevenshifts_user_id = 20))", [MGR, B]);
+    try {
+      expect((await f.q<{ c: number }>("select salaried_cents::int c from labor_week_salaried where week_start = '2026-10-04' and location_id = $1", [A]))[0]!.c).toBe(140_000);
+      const { views } = await board({ now: NOW, week: WEEK, shifts });
+      for (const fig of [day(views, "2026-10-08"), views.strip.projected!]) {
+        expect(fig).toMatchObject({ salariedCents: null, burdenCents: null, fullyLoadedCents: null, fullyLoadedPct: null, fullyLoadedTone: "none", salaryProjected: false });
+        expect(fig.reasons).toEqual(["salary_rebuilding"]);
+      }
+      // Hourly money does not depend on the allocation: it keeps its number, its % and its tone.
+      expect(day(views, "2026-10-08")).toMatchObject({ straightCents: 16_000, pureHourlyCents: 16_000, pureHourlyPct: 8, pureHourlyTone: "good" });
+      // Once the week is rebuilt the stored row IS the new allocation: the old $200 a day is gone from shop A.
+      await f.build("2026-10-04"); await f.build("2026-10-11");
+      const rebuilt = (await board({ now: NOW, week: WEEK, shifts })).views;
+      expect(day(rebuilt, "2026-10-08").reasons).not.toContain("salary_rebuilding");
+      expect(day(rebuilt, "2026-10-08").salariedCents).not.toBe(20_000);
+    } finally {
+      await f.q("select save_labor_payroll_shop($1, 20, $2, 'shop', '2026-07-19', 'test: back to shop A payroll', (select max(seq) from labor_payroll_shops where sevenshifts_user_id = 20))", [MGR, A]);
+      await f.build("2026-10-04"); await f.build("2026-10-11");
+    }
   });
 });
 

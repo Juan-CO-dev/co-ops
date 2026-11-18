@@ -122,8 +122,14 @@ export interface BuildPlanInput {
   sources: ReadonlyMap<string, LaborWeekSource>;
   /** the payroll weeks that have a stored labor_week_salaried row for this shop */
   storedSalariedWeeks: ReadonlySet<string>;
+  /** per payroll week, from currentWeekCoverage (the classification's own; absent = unbuilt) */
+  weekStates: ReadonlyMap<string, LaborWeekState>;
 }
-export interface PlanWeekReadiness { weekScheduleComplete: boolean; retainedFactsReady: boolean; otRecountMatches: boolean }
+export interface PlanWeekReadiness {
+  weekScheduleComplete: boolean; retainedFactsReady: boolean; otRecountMatches: boolean;
+  /** Fix r1 (P2-1): this shop's stored salaried row of the week (if any) is of the week's current generation */
+  storedSalaryCurrent: boolean;
+}
 export interface BuiltPlan {
   plan: LaborPlan;
   /** per payroll week the board touches: what its plan is complete enough to say (minus the wages, which are per range) */
@@ -210,6 +216,11 @@ export function buildLaborPlan(input: BuildPlanInput): BuiltPlan {
       weekScheduleComplete: dates.every((d) => isActual(d) || masked.has(d)),
       retainedFactsReady: dates.filter((d) => !masked.has(d)).every(isActual),
       otRecountMatches,
+      // Fix r1 (P2-1): 0345 prices a week from its STORED salaried row whenever one exists. That row is the
+      // allocation of the generation that built it: once the week's source moved (`rebuilding`: a payroll-shop
+      // reassignment, a salary change), it is the OLD allocation and the pricer withholds it. Nothing stored =
+      // the fresh allocation below, current by construction. An unstated week state fails closed.
+      storedSalaryCurrent: !input.storedSalariedWeeks.has(week) || input.weekStates.get(week) === "ready",
     };
     if (weekMask.length === 0) continue;
     // The selected population: the retained fact rows + the planned quarters, counted once in instant order.
@@ -229,7 +240,8 @@ export function buildLaborPlan(input: BuildPlanInput): BuiltPlan {
       if (date >= first) ot.push({ person_key: k.slice(0, at), business_date: date, ot_minutes: v });
     }
     // Salary (Astra r3 P2-3): only for a week with no stored row; the one allocation rule over the week's global
-    // universe; only THIS shop's row leaves (no other shop's wage, account or cents).
+    // universe; only THIS shop's row leaves (no other shop's wage, account or cents). A week WITH a stored row
+    // gets none, stale or not (0345's precedence is unchanged): a stale one is withheld, see storedSalaryCurrent.
     if (!input.storedSalariedWeeks.has(week)) {
       const src = input.sources.get(week);
       if (!src) throw new Error("labor_projection_source_missing");
@@ -336,7 +348,8 @@ export function laborFigure(input: FigureInput): BoardLaborFigure {
   const moneyKnown = view.projection === null || view.projection.moneyKnown;
   const overtimeKnown = view.projection === null || view.projection.overtimeKnown;
   const pure = moneyKnown && overtimeKnown ? view.pureHourlyCents : null;
-  if (view.salaryUnknown) reasons.push(view.salaryIncomplete ? "salary_incomplete" : "salary_unknown");
+  // A stale stored salary already carries its own reason (salary_rebuilding); its stored gap flags are the old generation's.
+  if (view.salaryUnknown && (view.projection === null || view.projection.salaryCurrent)) reasons.push(view.salaryIncomplete ? "salary_incomplete" : "salary_unknown");
   const pct = laborPercents(view, denominator.cents, input.targets);
   return {
     minutes: input.rows.reduce((s, r) => s + Number(r.hourly_minutes) + Number(r.salaried_minutes), 0),
@@ -371,7 +384,7 @@ export const SCHEDULE_LABOR_VIEW_I18N_KEYS = [
   "schedule.labor_views.ot.projected", "schedule.labor_views.ot.not_assessed", "schedule.labor_views.salary_projected",
   "schedule.labor_views.reason.schedule_incomplete", "schedule.labor_views.reason.actuals_rebuilding", "schedule.labor_views.reason.ot_not_assessed",
   "schedule.labor_views.reason.wage_unknown", "schedule.labor_views.reason.hours_unknown", "schedule.labor_views.reason.salary_incomplete",
-  "schedule.labor_views.reason.salary_unknown", "schedule.labor_views.reason.not_settled", "schedule.labor_views.reason.no_schedule",
+  "schedule.labor_views.reason.salary_unknown", "schedule.labor_views.reason.salary_rebuilding", "schedule.labor_views.reason.not_settled", "schedule.labor_views.reason.no_schedule",
   "schedule.labor_views.reason.sales_not_covered", "schedule.labor_views.reason.net_unknown", "schedule.labor_views.reason.ezcater_missing",
   "schedule.labor_views.reason.zero_sales", "schedule.labor_views.reason.forecast_missing", "schedule.labor_views.reason.partial_week",
 ] as const;
