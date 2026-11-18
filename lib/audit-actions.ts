@@ -395,6 +395,9 @@ export const RESERVED_ACTIONS = [
   // SQL-only: 0338 save_labor_burden INSERTs its own audit row (destructive literally true, before/after
   // values) in the same transaction as the burden row. No TypeScript call site: the writer is the RPC.
   "labor_burden.save",
+  // SQL-only: 0340 save_labor_payroll_shop INSERTs its own audit row (destructive literally true; before /
+  // after the payroll shop in force at valid_from; has_note only) in the same transaction as the row.
+  "labor_payroll_shop.save",
   // SQL-only: migration 0330 (audit W23 B129, owner decision W23-4 b) switches off empty duplicate
   // catering companies and INSERTs one audit row per company itself. No TypeScript call site.
   "catering.company.deactivate_duplicate",

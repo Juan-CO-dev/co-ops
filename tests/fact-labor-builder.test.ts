@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { buildLaborWeek, type LaborWeekSource, type FrameDay } from "@/lib/facts/labor-week-shared";
 import type { WageVersion } from "@/lib/facts/labor-wages-shared";
+import type { PayrollShopRow } from "@/lib/facts/labor-payroll-shared";
 import { LABOR_OPEN_PUNCH_SPAN_HOURS } from "@/lib/facts/labor-config-shared";
 
 const A = "00000000-0000-4000-8000-00000000000a", B = "00000000-0000-4000-8000-00000000000b";
@@ -24,7 +25,7 @@ function src(o: Partial<LaborWeekSource> = {}): LaborWeekSource {
     weekStart: WEEK, builtThrough: "2026-10-10", floorDay: "2026-07-23",
     days: [...days(A), ...days(B)],
     locationLinks: [{ location_id: A, sevenshifts_location_id: "501" }, { location_id: B, sevenshifts_location_id: "502" }],
-    userLinks: [], toastLinks: [], punches: [], toastEntries: [], wages: [], laborSettings: [], ...o,
+    userLinks: [], toastLinks: [], punches: [], toastEntries: [], wages: [], laborSettings: [], payrollShops: [], ...o,
   };
 }
 const totals = (rows: { minutes: number; ot_minutes: number }[]) => rows.reduce((s, r) => ({ m: s.m + r.minutes, ot: s.ot + r.ot_minutes }), { m: 0, ot: 0 });
@@ -242,21 +243,46 @@ describe("weeks and time", () => {
   });
 });
 
-describe("salaried weekly cost from wages (estimate_first reads it only when the shop estimate is blank)", () => {
-  it("weekly and annual salaries per shop; one 7shifts account linked at both shops is split equally", () => {
+describe("salaried weekly cost goes to the PAYROLL shop (0340; plan r2 §2), never through links", () => {
+  const ps = (account: string, location_id: string | null, o: Partial<PayrollShopRow> = {}): PayrollShopRow =>
+    ({ seq: pid++, sevenshifts_user_id: account, location_id, disposition: location_id ? "shop" : "excluded", valid_from: "2026-07-19", ...o });
+  it("weekly and annual salaries go 100% to the assigned shop; a link at both shops never splits it", () => {
     const out = buildLaborWeek(src({
-      userLinks: [{ sevenshifts_user_id: "9", user_id: ALICE, linked_at_location_id: A }, { sevenshifts_user_id: "9", user_id: ALICE, linked_at_location_id: B },
-        { sevenshifts_user_id: "10", user_id: B, linked_at_location_id: B }, { sevenshifts_user_id: "11", user_id: A, linked_at_location_id: A }],
+      userLinks: [{ sevenshifts_user_id: "9", user_id: ALICE, linked_at_location_id: A }, { sevenshifts_user_id: "9", user_id: ALICE, linked_at_location_id: B }],
       wages: [wage("9", 200000, { wage_type: "weekly_salary" }), wage("10", 5200000, { wage_type: "annual_salary" }), wage("11", 2000)],
+      payrollShops: [ps("9", B), ps("10", B), ps("11", null)],
     }));
     expect(out.salaried).toEqual([
-      { location_id: A, salaried_cents: 100000, salaried_people: 1 },
-      { location_id: B, salaried_cents: 200000, salaried_people: 2 },
+      { location_id: A, salaried_cents: null, salaried_people: 0, unplaced_people: 0, missing_wage_people: 0 },
+      { location_id: B, salaried_cents: 300000, salaried_people: 2, unplaced_people: 0, missing_wage_people: 0 },
     ]);
   });
-  it("a linked shop with no salaried wage reports none (null), never 0", () => {
+  it("P1-2: one complete person plus one UNASSIGNED salaried account = NULL cents with the count, never the complete person's cents alone", () => {
+    const out = buildLaborWeek(src({ wages: [wage("9", 200000, { wage_type: "weekly_salary" }), wage("12", 100000, { wage_type: "weekly_salary" })],
+      payrollShops: [ps("9", A)] }));
+    expect(out.salaried).toEqual([
+      { location_id: A, salaried_cents: null, salaried_people: 1, unplaced_people: 1, missing_wage_people: 0 },
+      { location_id: B, salaried_cents: null, salaried_people: 0, unplaced_people: 1, missing_wage_people: 0 },
+    ]);
+  });
+  it("P1-1: unlinking, relinking or moving a link never changes a salaried row", () => {
+    const base = { wages: [wage("9", 200000, { wage_type: "weekly_salary" })], payrollShops: [ps("9", A)] };
+    const none = buildLaborWeek(src(base)).salaried;
+    const linkedB = buildLaborWeek(src({ ...base, userLinks: [{ sevenshifts_user_id: "9", user_id: ALICE, linked_at_location_id: B }] })).salaried;
+    const both = buildLaborWeek(src({ ...base, userLinks: [{ sevenshifts_user_id: "9", user_id: ALICE, linked_at_location_id: A },
+      { sevenshifts_user_id: "9", user_id: ALICE, linked_at_location_id: B }] })).salaried;
+    expect(linkedB).toEqual(none);
+    expect(both).toEqual(none);
+  });
+  it("a linked shop with nobody placed reports none (null), never 0", () => {
     expect(buildLaborWeek(src()).salaried).toEqual([
-      { location_id: A, salaried_cents: null, salaried_people: 0 }, { location_id: B, salaried_cents: null, salaried_people: 0 }]);
+      { location_id: A, salaried_cents: null, salaried_people: 0, unplaced_people: 0, missing_wage_people: 0 },
+      { location_id: B, salaried_cents: null, salaried_people: 0, unplaced_people: 0, missing_wage_people: 0 }]);
+  });
+  it("Astra r2 P2 #3: the destination's location link removed (shop not stored) leaves a no-wage assignee UNPLACED on every stored shop", () => {
+    const out = buildLaborWeek(src({ days: days(B), locationLinks: [{ location_id: B, sevenshifts_location_id: "502" }],
+      wages: [wage("10", 100000, { wage_type: "weekly_salary" })], payrollShops: [ps("9", A), ps("10", B)] }));
+    expect(out.salaried).toEqual([{ location_id: B, salaried_cents: null, salaried_people: 1, unplaced_people: 1, missing_wage_people: 0 }]);
   });
 });
 
@@ -273,6 +299,7 @@ describe("fix r3: an empty pending day is unknown hours, never a green 0%", () =
     const n = (s: string) => ds.filter((d) => d.state === s).length;
     return { week_start: WEEK, location_id: loc, hourly_straight_cents: qs.reduce((s, q) => s + q.minutes * (q.rate_cents ?? 0) / 60, 0), ot_premium_cents: 0,
       salaried_cents: 0, salary_basis: "estimate", burden_pct: 12, burden_basis: "estimated", estimated_rate_minutes: 0,
+      salaried_people: 1, salary_unplaced_people: 0, salary_missing_wage_people: 0,
       hourly_minutes: qs.reduce((s, q) => s + q.minutes, 0), ot_minutes: 0, salaried_minutes: 0, ot_state: out.week.ot_state, range_days: 1,
       days_covered: n("covered"), days_pending: n("pending_settle"), days_fallback: n("fallback_unverified"), days_incomplete: n("incomplete"),
       days_missing: 1 - ds.length, open_punches: ds.reduce((s, d) => s + d.open_punches, 0) };

@@ -31,7 +31,7 @@ function src(week: string, o: Partial<LaborWeekSource> = {}): LaborWeekSource {
     weekStart: week, builtThrough: addDays(week, 6), floorDay: "2026-07-23",
     days: [...frame(A, week), ...frame(B, week)],
     locationLinks: [{ location_id: A, sevenshifts_location_id: "501" }, { location_id: B, sevenshifts_location_id: "502" }],
-    userLinks: BOTH_SHOPS, toastLinks: [], punches: [], toastEntries: [], wages: [wage("7", 2000), wage("8", 2200)], laborSettings: [], ...o,
+    userLinks: BOTH_SHOPS, toastLinks: [], punches: [], toastEntries: [], wages: [wage("7", 2000), wage("8", 2200)], laborSettings: [], payrollShops: [], ...o,
   };
 }
 const sum = (rows: { minutes: number; ot_minutes: number }[]) => rows.reduce((s, r) => ({ m: s.m + r.minutes, ot: s.ot + r.ot_minutes }), { m: 0, ot: 0 });

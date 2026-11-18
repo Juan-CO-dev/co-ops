@@ -11,6 +11,8 @@ const read = (n: string) => readFileSync(`supabase/migrations/${n}`, "utf8");
 export const M0338 = read("0338_fact_layer_labor.sql");
 /** 0339 (Juan 2026-11-17): overtime per employer (shop), applied on top of 0338 = the production shape. */
 export const M0339 = read("0339_fact_labor_ot_per_shop.sql");
+/** 0340: salaried cost to the payroll shop (labor_payroll_shops), applied on top of 0339. */
+export const M0340 = read("0340_labor_payroll_shop.sql");
 function grab(file: string, re: RegExp, what: string): string {
   const m = read(file).match(re);
   if (!m) throw new Error(`harness: ${what} not found in ${file}`);
@@ -33,6 +35,7 @@ export const LABOR_PARENTS = [
   auditCreate.replace("CREATE TABLE audit_log", "CREATE TABLE public.audit_log"),
   ...auditAlters,
   tbl("0268_sevenshifts_sync.sql", "sevenshifts_sync_run_ids"),
+  tbl("0268_sevenshifts_sync.sql", "sevenshifts_users"),
   tbl("0268_sevenshifts_sync.sql", "sevenshifts_sync_runs"),
   tbl("0268_sevenshifts_sync.sql", "sevenshifts_time_punches"),
   tbl("0268_sevenshifts_sync.sql", "sevenshifts_labor_settings"),

@@ -8,7 +8,8 @@ const A = "loc-a", B = "loc-b";
 const row = (o: Partial<LaborCostRow> = {}): LaborCostRow => ({ week_start: "2026-10-04", location_id: A, hourly_straight_cents: 100_000,
   ot_premium_cents: 5_000, salaried_cents: 150_000, salary_basis: "estimate", burden_pct: 12, burden_basis: "estimated",
   estimated_rate_minutes: 0, hourly_minutes: 3000, ot_minutes: 300, salaried_minutes: 2400, ot_state: "assessed", range_days: 7,
-  days_covered: 7, days_pending: 0, days_fallback: 0, days_incomplete: 0, days_missing: 0, open_punches: 0, ...o });
+  days_covered: 7, days_pending: 0, days_fallback: 0, days_incomplete: 0, days_missing: 0, open_punches: 0,
+  salaried_people: 1, salary_unplaced_people: 0, salary_missing_wage_people: 0, ...o });
 
 describe("the two views", () => {
   it("pure hourly = straight + premium; fully loaded adds salary and burden on all gross pay", () => {
@@ -84,5 +85,28 @@ describe("salary spread and read access", () => {
     for (const r of ["moo", "owner", "cgs"] as const) expect(laborFactAccess(r)).toBe("person_money");
     expect(laborFactAccess("agm")).toBe("hours_only");
     for (const r of ["social_media_mgr", "catering_mgr", "prep_mgr", "shift_lead", "employee"] as const) expect(laborFactAccess(r)).toBe("none");
+  });
+});
+
+describe("0340: salary gaps (payroll shop) are visible, never a partial total", () => {
+  it("toLaborCostRow maps the gap columns, and a pre-0340 row (no columns) reads 0", async () => {
+    const { toLaborCostRow } = await import("@/lib/facts/labor-cost-shared");
+    const base = { ...row(), salary_basis: "incomplete", salaried_cents: null };
+    expect(toLaborCostRow({ ...base, salaried_people: "2", salary_unplaced_people: "1", salary_missing_wage_people: 3 }))
+      .toMatchObject({ salary_basis: "incomplete", salaried_cents: null, salaried_people: 2, salary_unplaced_people: 1, salary_missing_wage_people: 3 });
+    const old: Record<string, unknown> = { ...row() };
+    delete old.salaried_people; delete old.salary_unplaced_people; delete old.salary_missing_wage_people;
+    expect(toLaborCostRow(old)).toMatchObject({ salaried_people: 0, salary_unplaced_people: 0, salary_missing_wage_people: 0 });
+  });
+  it("an incomplete salary is unknown (fully loaded null) and its gaps are counted: the week's unplaced once, missing per shop", () => {
+    const [w] = laborWeekViews([
+      row({ salaried_cents: null, salary_basis: "incomplete", salary_unplaced_people: 1, salary_missing_wage_people: 0 }),
+      row({ location_id: B, salaried_cents: null, salary_basis: "incomplete", salary_unplaced_people: 1, salary_missing_wage_people: 2 }),
+    ]);
+    expect(w).toMatchObject({ salaryUnknown: true, salaryIncomplete: true, salaryGaps: 3, fullyLoadedCents: null });
+  });
+  it("gaps beside an estimate stay visible while the estimate prices the week", () => {
+    const [w] = laborWeekViews([row({ salary_basis: "estimate", salary_missing_wage_people: 1 })]);
+    expect(w).toMatchObject({ salaryUnknown: false, salaryIncomplete: false, salaryGaps: 1, salariedCents: 150_000 });
   });
 });
