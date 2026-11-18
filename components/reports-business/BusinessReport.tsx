@@ -19,7 +19,7 @@ import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { figureKindOf, type Figure } from "@/lib/business-figure-shared";
 import type { BusinessReportView, CutView, DayView, LaborView, QuarterView, SalesView } from "@/lib/business-view-shared";
-import { Card, ChangeText, Dash, EmptyNote, FigureLine, FigureView, LaborShare, bizCard, dateRange, figureReasonText, figureText, figureValueText, figureWhyText, tFor } from "./BusinessParts";
+import { Card, ChangeText, Dash, EmptyNote, FigureLine, FigureView, LaborShare, bizCard, dateRange, figureReasonText, figureText, figureWhyText, tFor } from "./BusinessParts";
 
 type Props = { view: BusinessReportView; language: Language };
 
@@ -62,8 +62,8 @@ function DayBadges({ day, language }: { day: DayView; language: Language }) {
   return <>
     {day.sales.coverage !== "complete" ? <span className={`${badge} bg-co-warning-surface text-co-warning-text`}>{t(`reports.business.coverage.${day.sales.coverage}` as TranslationKey)}</span> : null}
     {day.cuts === "rebuilding" ? <span className={`${badge} bg-co-warning-surface text-co-warning-text`}>{t("reports.business.badge.rebuilding")}</span> : null}
-    {day.rush?.any ? <span className={`${badge} bg-co-gold/20 text-co-text`}>{t("reports.business.rush.count", { n: figureValueText(day.rush.count, language) ?? "" })}</span> : null}
-    {day.largeChecks.any ? <span className={`${badge} bg-co-gold/20 text-co-text`}>{t("reports.business.badge.large", { n: figureText(day.largeChecks.checks, language) })}</span> : null}
+    {day.rush?.any ? <span className={`${badge} bg-co-gold/20 text-co-text`}>{figureText(day.rush.count, language, { short: true, wrap: (n) => t("reports.business.rush.count", { n }) })}</span> : null}
+    {day.largeChecks.any ? <span className={`${badge} bg-co-gold/20 text-co-text`}>{figureText(day.largeChecks.checks, language, { short: true, wrap: (n) => t("reports.business.badge.large", { n }) })}</span> : null}
   </>;
 }
 
@@ -155,8 +155,8 @@ export function BusinessHours({ view, language }: Props) {
         // breakdown that is not shown names its own reason (no sales captured is not "rebuilding").
         const rushText = rush === null ? t(d.sales.coverage !== "complete" ? `reports.business.coverage.${d.sales.coverage}` as TranslationKey : "reports.business.badge.rebuilding")
           : rush.state === "not_enough_history" ? t("reports.business.rush.not_enough_history")
-          : [rush.any ? t("reports.business.rush.count", { n: figureValueText(rush.count, language) ?? "" }) : rush.none ? t("reports.business.rush.none") : null,
-            figureWhyText(rush.count, language)].filter((x) => x !== null).join(" · ");
+          : rush.any ? figureText(rush.count, language, { wrap: (n) => t("reports.business.rush.count", { n }) })
+          : [rush.none ? t("reports.business.rush.none") : null, figureWhyText(rush.count, language)].filter((x) => x !== null).join(" · ");
         // The closed row says whether the day's labor is final (the reason travels with the figure).
         const count = final ? rushText : `${rushText} · ${t("reports.business.row.hours", { h: figureText(hours, language, { short: true }) })}`;
         return <CollapsibleSection key={d.date} idBase={`biz-hours-${view.locationId}-${d.date}`} title={formatDateLabel(d.date, language)}
@@ -183,7 +183,8 @@ export function BusinessHours({ view, language }: Props) {
 /** One line of a breakdown list: the amount through the formatter, then its count (which rides on the amount: an
  * unknown amount already shows the dash and the reason for the whole line). */
 function CutLine({ label, sub, sales, checks, language }: { label: string; sub?: string | null; sales: Figure; checks: Figure; language: Language }) {
-  const n = figureValueText(checks, language);
+  // Fix round 9: the count carries its own state (never a value-only text); an unknown count rides on the amount's dash.
+  const n = figureKindOf(checks) === "unknown" ? null : figureText(checks, language, { short: true });
   return <li className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-co-border/50 py-2 text-sm">
     <span className="min-w-0 break-words"><span className="font-semibold text-co-text">{label}</span>{sub ? <span className="text-co-text-muted"> · {sub}</span> : null}</span>
     <span className="inline-flex flex-wrap items-baseline justify-end gap-x-1 text-right"><FigureView f={sales} language={language} compact />{n !== null ? <span className="text-co-text-muted">· {n}</span> : null}</span>
@@ -235,7 +236,7 @@ export function BusinessPeople({ view, language }: Props) {
           <span className="flex flex-col items-end text-right">
             <FigureView f={p.hours} language={language} compact />
             {p.overtime === null ? <span className="text-xs text-co-warning-text">{t("reports.business.people.withheld", { n: p.weeksWithheld })}</span>
-              : p.overtimeAny ? <span className="text-xs text-co-text-muted">{t("reports.business.people.ot", { h: figureValueText(p.overtime, language) ?? "" })}</span> : null}
+              : p.overtimeAny ? <span className="text-xs text-co-text-muted">{figureText(p.overtime, language, { short: true, wrap: (h) => t("reports.business.people.ot", { h }) })}</span> : null}
             {/* Fix round 4 (ITEM9B-r4 P2): the cost is a figure like the hours above it: "so far" with its reason, a wage estimate named. */}
             {p.cost ? <span className="inline-flex flex-wrap items-baseline justify-end gap-x-1 text-xs text-co-text-muted">
               {figureKindOf(p.cost) === "unknown" ? null : <span>{t("reports.business.people.cost")}</span>}<FigureView f={p.cost} language={language} compact reason="always" /></span> : null}

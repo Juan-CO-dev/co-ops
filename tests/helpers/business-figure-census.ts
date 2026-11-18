@@ -20,7 +20,12 @@ export function between(src: string, begin: string, end: string): [number, numbe
 }
 
 /** What a surface may never write. The name is what the failure prints. */
-export const RULES: Array<{ name: string; re: RegExp }> = [
+export const RULES: Array<{ name: string; re: RegExp; except?: readonly string[] }> = [
+  // Fix round 9 (ITEM9B-r9): a figure's value WITHOUT its reason and qualifications. The figure module exports none;
+  // a helper of that shape defined or imported anywhere on a surface fails here by name.
+  { name: "a value-only figure accessor (drops the reason and qualifications)", re: /\b(figureValueText|figureValueWords|valueWords|figureValue|figureNumber)\b/ },
+  // The display parts (words / reason / notes) are read only by the page's ONE formatter, which renders all three.
+  { name: "a figure display outside the page's one formatter", re: /\bfigureDisplay\b|\.words\b/, except: ["components/reports-business/BusinessParts.tsx"] },
   { name: "raw cents (a *Cents / *_cents / cents identifier)", re: /\b[A-Za-z_]*[cC]ents\b/ },
   { name: "raw minutes (a *Minutes identifier or .minutes)", re: /\b[A-Za-z_]*Minutes\b|\.minutes\b/ },
   { name: "a figure's number read directly (.value)", re: /\.value\b/ },
@@ -31,7 +36,7 @@ export const RULES: Array<{ name: string; re: RegExp }> = [
 ];
 /** What a surface may import from the report's modules. Anything else fails by name. */
 export const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
-  "@/lib/business-figure-shared": ["Figure", "FigureFormat", "figureChange", "figureKindOf", "figureReasonOf", "figureDisplay", "figureText", "figureValueText",
+  "@/lib/business-figure-shared": ["Figure", "FigureFormat", "figureChange", "figureKindOf", "figureReasonOf", "figureDisplay", "figureText",
     "figureCells", "FIGURE_NOTES_COLUMN",
     // Fix round 7: an empty list's claim (a kind and reason keys, never a number) and its cell for a file.
     "EmptyClaim", "emptyClaimNote"],
@@ -52,7 +57,7 @@ export function census(file: string, src: string, opts: { only?: [number, number
   lines.forEach((text, i) => {
     const n = i + 1;
     if (opts.only && !inRange(n, opts.only)) return;
-    for (const r of RULES) if (r.re.test(text)) out.push({ file, line: n, rule: r.name, text: text.trim().slice(0, 140) });
+    for (const r of RULES) if (!r.except?.includes(file) && r.re.test(text)) out.push({ file, line: n, rule: r.name, text: text.trim().slice(0, 140) });
   });
   for (const m of code(src).matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+"([^"]+)"/g)) {
     const allowed = ALLOWED_IMPORTS[m[2]!];

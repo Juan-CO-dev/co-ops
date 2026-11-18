@@ -12,7 +12,7 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { BUSINESS_RANGES, BUSINESS_REPORT_TABS, type BusinessRangeEmptyReason, type BusinessRangeRequest, type BusinessReportTab } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
-import { figureDisplay, figureReasonOf, figureText as figureWords, figureValueText as figureValueWords, type EmptyClaim, type Figure } from "@/lib/business-figure-shared";
+import { figureDisplay, figureReasonOf, figureText as figureWords, type EmptyClaim, type Figure } from "@/lib/business-figure-shared";
 import { changeWords, figureFormatFor } from "@/lib/business-figure-format";
 import type { LaborView } from "@/lib/business-view-shared";
 
@@ -67,10 +67,6 @@ export function EmptyNote({ claim, none, language }: { claim: EmptyClaim; none: 
     : <p className="text-sm text-co-warning-text">{serverT(language, "reports.business.empty.not_known")}{reasons}</p>;
 }
 
-/** The value of a figure as words (qualified as its state demands), or null when it is unknown. */
-export function figureValueText(f: Figure, language: Language): string | null {
-  return figureValueWords(f, figureFormatFor(language));
-}
 /** The sentence that says why a figure is unknown or not whole, or null when it is plain. */
 export function figureReasonText(f: Figure, language: Language): string | null {
   const key = figureReasonOf(f);
@@ -83,8 +79,11 @@ export function figureWhyText(f: Figure, language: Language): string | null {
   const parts = [d.reason, ...d.notes.map((n) => n.text)].filter((x): x is string => x !== null);
   return parts.length > 0 ? parts.join(" · ") : null;
 }
-/** One line of text (a collapsed row's summary): the value or "—", then "(reason; qualifications)". */
-export function figureText(f: Figure, language: Language, opts: { short?: boolean } = {}): string {
+/** One line of text (a collapsed row's summary, a badge, a caption): the value or "—", then "(reason;
+ * qualifications)"; `wrap` sets the value in its sentence first. Fix round 9 (ITEM9B-r9 P2): there is NO value-only
+ * text on this page — every badge, chip, caption and attribute that says a figure says it through here or
+ * `FigureView`, with its state. */
+export function figureText(f: Figure, language: Language, opts: { short?: boolean; wrap?: (value: string) => string } = {}): string {
   return figureWords(f, figureFormatFor(language), opts);
 }
 /** A figure on the page: the value (or a dash) and, as visible captions, why it is not plain. `compact` (a list

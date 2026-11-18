@@ -327,8 +327,11 @@ export interface FigureFormat {
   count(n: number): string;
   t(key: FigureKey, values?: Record<string, string | number>): string;
 }
-/** The value of a figure as words, qualified as its state demands, or null when it is unknown. */
-export function figureValueText(f: Figure, fmt: FigureFormat): string | null {
+/** The value of a figure as words ("so far", "at least", covered days only are part of it), or null when it is
+ * unknown. INTERNAL (fix round 9, review ITEM9B-r9): it drops the reason and the qualifications, so it is not
+ * exported; a surface says a figure only through `figureText` / `figureDisplay` (the page's one formatter) /
+ * `figureCells`, which carry them. */
+function valueWords(f: Figure, fmt: FigureFormat): string | null {
   const d = open(f);
   if (d.value === null) return null;
   const n = d.missing ?? 0;
@@ -354,16 +357,19 @@ export interface FigureDisplay { /** The value as words; null = a dash. */ words
  * shows the reason only when there is no value, unless `reason: "always"`, and uses the short qualifier words. */
 export function figureDisplay(f: Figure, fmt: FigureFormat, o: { compact?: boolean; reason?: "always" } = {}): FigureDisplay {
   const d = open(f);
-  const words = figureValueText(f, fmt);
+  const words = valueWords(f, fmt);
   const show = d.reason !== null && (words === null || ((!o.compact || o.reason === "always") && reasonBesideValue(d)));
   return { words, reason: show ? fmt.t(d.reason!, d.reasonValues) : null,
     notes: d.notes.map((n) => ({ id: n.key, gap: n.kind === "gap", text: fmt.t(o.compact ? n.short : n.key, n.values) })) };
 }
-/** One line of text (a collapsed row's summary): the value or "—", then "(reason; qualifications)". `short`
- * uses the compact qualifier words so a phone row stays one or two lines. */
-export function figureText(f: Figure, fmt: FigureFormat, o: { short?: boolean } = {}): string {
+/** One line of text (a collapsed row's summary, a badge): the value or "—", then "(reason; qualifications)".
+ * `short` uses the compact qualifier words so a phone row stays one or two lines. `wrap` puts the value in its
+ * sentence BEFORE the state is added ("1 rushes (3 checks have no time — there may be more rushes)"), so a
+ * sentence around a figure never drops what qualifies it (fix round 9). */
+export function figureText(f: Figure, fmt: FigureFormat, o: { short?: boolean; wrap?: (value: string) => string } = {}): string {
   const d = open(f);
-  const v = figureValueText(f, fmt) ?? "—";
+  const raw = valueWords(f, fmt) ?? "—";
+  const v = o.wrap ? o.wrap(raw) : raw;
   const parts = [
     ...(d.reason && (d.value === null || reasonBesideValue(d)) ? [fmt.t(d.reason, d.reasonValues)] : []),
     ...d.notes.map((n) => fmt.t(o.short ? n.short : n.key, n.values)),
