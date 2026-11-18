@@ -10,6 +10,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { PulseScore } from "@/lib/midshift-shared";
 import type { AttentionData, AttentionRow } from "@/lib/pulse/types";
+import { notRungLabel } from "@/lib/catering/not-in-toast-shared";
 
 const SCORE_KEY: Record<PulseScore, TranslationKey> = { green: "midshift.score.green", yellow: "midshift.score.yellow", red: "midshift.score.red" };
 const SCORE_CHIP: Record<PulseScore, string> = {
@@ -41,6 +42,11 @@ function rowText(row: AttentionRow, t: ReturnType<typeof useTranslation>["t"]): 
       return count === 1 ? t("pulse.attention.clockin_unlinked_one", { names: String(p.names ?? "") }) : t("pulse.attention.clockin_unlinked_other", { count, names: String(p.names ?? "") });
     case "catering_unprepped":
       return p.event == null ? t("pulse.attention.catering_unprepped_crew", { time: String(p.time ?? "") }) : t("pulse.attention.catering_unprepped", p);
+    case "catering_not_rung": {
+      // Review r2 P2: the row names its source (ezCater vs a house lead), never "ezCater" for everything.
+      const label = notRungLabel(p.source === "house" ? "house" : "ezcater", p.order ? String(p.order) : null);
+      return t("pulse.attention.catering_not_rung", { order: t(label.key as TranslationKey, label.params) });
+    }
     default:
       return t(`pulse.attention.${row.kind}` as TranslationKey, p);
   }
