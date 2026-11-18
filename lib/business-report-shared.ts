@@ -201,6 +201,35 @@ export function laborWeekState(row: LaborWeekCoverageRow | undefined, builderVer
   if (!row) return "unbuilt";
   return row.ot_scope === "per_shop" && row.builder_version === builderVersion ? "ready" : "rebuilding";
 }
+
+/** One week's coverage row with the generation token every rebuild changes (`fact_replace_labor_week`
+ *  writes `built_at = clock_timestamp()` and the fingerprint in the same transaction as the labor rows). */
+export interface LaborWeekGenerationRow extends LaborWeekCoverageRow {
+  week_start: string; built_at?: string | null; source_fingerprint?: string | null;
+}
+const generationKey = (r: LaborWeekGenerationRow) =>
+  JSON.stringify([r.ot_scope, r.builder_version, r.built_at ? new Date(r.built_at).toISOString() : null, r.source_fingerprint ?? null]);
+
+/**
+ * Fix round 3 (P2): the labor reads (costs, quarters, people) are separate requests, each its own snapshot, so a
+ * rebuild may commit between them. Coverage is read BEFORE any labor read starts and AGAIN after every one has
+ * answered; every rebuild commits its rows and its coverage row together, so a week whose generation is the same
+ * in both reads was not rebuilt while its rows were read. Any week that differs (rebuilt, first built, or gone) is
+ * marked `rebuilding`: its minutes stay, its money and % are withheld until a fresh load.
+ */
+export function stableWeekCoverage(before: readonly LaborWeekGenerationRow[], after: readonly LaborWeekGenerationRow[]): Map<string, LaborWeekCoverageRow> {
+  const day = (v: string) => String(v).slice(0, 10);
+  const b = new Map(before.map((r) => [day(r.week_start), r]));
+  const a = new Map(after.map((r) => [day(r.week_start), r]));
+  const out = new Map<string, LaborWeekCoverageRow>();
+  for (const w of new Set([...b.keys(), ...a.keys()])) {
+    const x = b.get(w), y = a.get(w);
+    out.set(w, x && y && generationKey(x) === generationKey(y)
+      ? { ot_scope: y.ot_scope, builder_version: y.builder_version }
+      : { ot_scope: "moved_during_read", builder_version: "moved_during_read" });
+  }
+  return out;
+}
 /** The payroll week (Sunday 00:00 ET calendar) a business date falls in. */
 export function payrollWeekStart(date: string): string {
   return shiftReportDate(date, -new Date(`${date}T00:00:00Z`).getUTCDay());

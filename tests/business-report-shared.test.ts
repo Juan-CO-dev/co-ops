@@ -5,7 +5,7 @@ import {
   BUSINESS_REPORT_MAX_DAYS, BUSINESS_HISTORY_FLOOR, RUSH_MIN_CHECKS, RUSH_MULTIPLIER, RUSH_HISTORY_WEEKS, RUSH_MIN_HISTORY,
   businessReportEnabled, businessReportRefusal, canSeePersonCost, resolveBusinessRange, daySalesFrom, laborNetSales, sumNetSales,
   laborWeekState, payrollWeekStart, laborDayFigures, laborRangeFigures, quarterFigures, recomposeDay, detectRushes, mergeCuts,
-  combineShopDays, serverTotals, channelTotals, largeCheckTotals, toCutRow, type CutRow, type QuarterPoint, type DaySales,
+  combineShopDays, serverTotals, channelTotals, largeCheckTotals, toCutRow, stableWeekCoverage, type CutRow, type QuarterPoint, type DaySales,
 } from "@/lib/business-report-shared";
 import { summarizeSales, type DailyRaw } from "@/lib/sales-reports-shared";
 import { PERSON_COST_MIN, laborFactAccess, type LaborCostRow } from "@/lib/facts/labor-cost-shared";
@@ -183,6 +183,18 @@ describe("P2 OVERTIME GATE: only per_shop weeks of the current builder show hour
     expect(now).toMatchObject({ state: "ok", pureHourlyCents: 18_900, otPremiumCents: 900, otMinutes: 60, pct: 18.9 });
     const range = laborRangeFigures(days, [costRow("2026-10-04"), costRow("2026-10-11")], weeks, { hourly: 18 });
     expect(range).toMatchObject({ pct: null, state: "rebuilding", pureHourlyCents: null });
+  });
+  it("fix round 3: a week whose generation moved between the bracketing coverage reads is rebuilding", () => {
+    const g = { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION, built_at: "2026-11-01T00:00:00Z", source_fingerprint: "b".repeat(32) };
+    const same = stableWeekCoverage([g], [{ ...g, built_at: "2026-11-01T00:00:00.000+00:00" }]);
+    expect(laborWeekState(same.get("2026-10-04"))).toBe("ready");
+    for (const after of [[{ ...g, built_at: "2026-11-17T00:00:00Z" }], [{ ...g, source_fingerprint: "c".repeat(32) }], [{ ...g, builder_version: "labor-v1" }], []]) {
+      expect(laborWeekState(stableWeekCoverage([g], after).get("2026-10-04"))).toBe("rebuilding");
+    }
+    // Built for the first time during the reads: rebuilding, never ready.
+    expect(laborWeekState(stableWeekCoverage([], [g]).get("2026-10-04"))).toBe("rebuilding");
+    // Unbuilt in both reads stays unbuilt.
+    expect(laborWeekState(stableWeekCoverage([], []).get("2026-10-04"))).toBe("unbuilt");
   });
 });
 

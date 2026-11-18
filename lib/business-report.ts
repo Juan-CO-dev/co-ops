@@ -27,9 +27,9 @@ import type { RoleCode } from "@/lib/roles";
 import {
   BUSINESS_QUARTER_MAX_DAYS, RUSH_HISTORY_WEEKS, RUSH_MIN_CHECKS, RUSH_MIN_HISTORY, RUSH_MULTIPLIER, RUSH_MIN_BASELINE_CHECKS, RUSH_MIN_RUN_QUARTERS,
   businessReportEnabled, businessReportRefusal, canSeePersonCost, channelTotals, daySalesFrom, detectRushes, eachDay, largeCheckTotals,
-  laborDayFigures, laborRangeFigures, laborWeekState, mergeCuts, payrollWeekStart, quarterFigures, recomposeDay, serverTotals, toCutRow,
+  laborDayFigures, laborRangeFigures, laborWeekState, mergeCuts, payrollWeekStart, quarterFigures, recomposeDay, serverTotals, stableWeekCoverage, toCutRow,
   type BusinessRange, type BusinessReportEnv, type CutRow, type CutTotal, type CutsState, type DaySales, type LaborFigures,
-  type LaborWeekCoverageRow, type QuarterPoint, type RushResult,
+  type LaborWeekCoverageRow, type LaborWeekGenerationRow, type QuarterPoint, type RushResult,
 } from "@/lib/business-report-shared";
 
 export * from "@/lib/business-report-shared";
@@ -260,8 +260,14 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
   const laborDays = days.filter((d) => d >= LABOR_HISTORY_FLOOR_DAY);
   const weekStarts = [...new Set(days.map(payrollWeekStart))];
 
-  const [dailyRaws, cutChunks, quarterChunks, peopleChunks, factCoverage, weekCoverage, structures, dayCosts, weekCosts] = range.empty
-    ? [[], [], [], [], [], [], [], [], []] as never
+  // Fix round 3 (P2): coverage is read BEFORE any labor read starts and AGAIN after all have answered; a week
+  // whose generation moved in between is `rebuilding` (stableWeekCoverage). Never one read beside the labor reads.
+  const readWeekCoverage = () => rows<LaborWeekGenerationRow>(() => sb.from("labor_week_coverage")
+    .select("week_start,ot_scope,builder_version,built_at,source_fingerprint", { count: "exact" })
+    .gte("week_start", payrollWeekStart(range.from)).lte("week_start", range.to).order("week_start", { ascending: true }));
+  const coverageBefore = range.empty ? [] : await readWeekCoverage();
+  const [dailyRaws, cutChunks, quarterChunks, peopleChunks, factCoverage, structures, dayCosts, weekCosts] = range.empty
+    ? [[], [], [], [], [], [], [], []] as never
     : await Promise.all([
       mapBounded(salesWindows(range.from, range.to), SALES_WINDOW_CONCURRENCY, (w) => call<DailyRaw>(sb, "sales_report_daily", win(w))),
       mapBounded(salesWindows(histFrom, range.to), SALES_WINDOW_CONCURRENCY,
@@ -273,8 +279,6 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
       rows<{ business_date: string; state: string }>(() => sb.from("fact_day_coverage").select("business_date,state", { count: "exact" })
         .eq("location_id", locationId).eq("fact", "orders").gte("business_date", histFrom).lte("business_date", range.to)
         .order("business_date", { ascending: true })),
-      rows<{ week_start: string } & LaborWeekCoverageRow>(() => sb.from("labor_week_coverage").select("week_start,ot_scope,builder_version", { count: "exact" })
-        .gte("week_start", payrollWeekStart(range.from)).lte("week_start", range.to).order("week_start", { ascending: true })),
       rows<StructureRow>(() => sb.from("schedule_structures").select("structure,created_at", { count: "exact" }).eq("location_id", locationId)
         .order("created_at", { ascending: true }).order("id", { ascending: true })),
       mapBounded(laborDays, SALES_WINDOW_CONCURRENCY, async (d) => {
@@ -291,7 +295,8 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
       }),
     ]);
 
-  const weekMap = new Map<string, LaborWeekCoverageRow>(weekCoverage.map((w) => [ymd(w.week_start), w]));
+  const coverageAfter = range.empty ? [] : await readWeekCoverage();
+  const weekMap: ReadonlyMap<string, LaborWeekCoverageRow> = stableWeekCoverage(coverageBefore, coverageAfter);
   const weekTargets = new Map(weekStarts.map((ws) => [ws, targetsForWeek(structures, ws)]));
   const sales = range.empty ? [] : daySalesFrom(dailyRaws, range.from, range.to);
   const cuts = mergeCuts(cutChunks);
