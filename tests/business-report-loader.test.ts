@@ -28,10 +28,14 @@ type FakeOpts = {
   maxRows?: number;
   /** Lie about the exact count (simulates a short page the server swears is not the end). */
   countBias?: number;
+  /** Fix round 3: a rebuild COMMITS the moment the first fact_labor_cost read is answered; coverage reads
+   *  answer a macrotask later and see these rows from then on (the cost reads already saw the old generation). */
+  weeksAfterRebuild?: Array<{ week_start: string; ot_scope: string; builder_version: string; built_at?: string; source_fingerprint?: string }>;
 };
 function fakeClient(o: FakeOpts = {}) {
   const calls: Call[] = [];
   const tables: string[] = [];
+  let rebuilt = false;
   const day = (d: string) => ({ classes: [{ business_date: d, sale_class: "sale", checks: 2, amount_cents: 3_000, tax_cents: 0, amount_missing: 0, tax_missing: 0,
     gross_cents: 3_000, discounts_comps_cents: 0, voids_cents: 0, service_charges_cents: 0, accounting_missing: 0 }],
     tips: [], discounts: [], refunds: [], captured_days: [d], ezcater: [{ business_date: d, orders: 1, subtotal_cents: 2_000, amount_missing: 0 }] });
@@ -46,6 +50,7 @@ function fakeClient(o: FakeOpts = {}) {
       let lo = 0, hi = Number.POSITIVE_INFINITY;
       const answer = () => {
         const r = produce(fn, args) as { data: unknown; error: unknown };
+        if (fn === "fact_labor_cost") rebuilt = true;
         if (r.error || !Array.isArray(r.data)) return r;
         const all = r.data as unknown[];
         const cap = o.maxRows ?? 1_000;
@@ -92,14 +97,19 @@ function fakeClient(o: FakeOpts = {}) {
   Object.assign(client, {
     from: (table: string) => {
       tables.push(table);
-      const rows = table === "labor_week_coverage" ? (o.weeks ?? [{ week_start: "2026-09-27", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }, { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }])
+      const coverage = () => (rebuilt && o.weeksAfterRebuild ? o.weeksAfterRebuild : null);
+      const rowsNow = () => table === "labor_week_coverage" ? (coverage() ?? o.weeks ?? [{ week_start: "2026-09-27", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }, { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }])
         : table === "fact_day_coverage" ? (o.facts ?? dates("2026-08-01", "2026-10-07")).map((d) => ({ business_date: d, state: "covered" }))
         : table === "schedule_structures" ? [] : [];
       const q: Record<string, unknown> = {};
       for (const k of ["select", "eq", "gte", "lte", "lt", "in", "order", "range", "abortSignal", "limit"]) q[k] = () => q;
       let lo = 0, hi = Number.POSITIVE_INFINITY;
       q.range = (a: number, z: number) => { lo = a; hi = z; return q; };
-      q.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: rows.slice(lo, Math.min(hi + 1, lo + (o.maxRows ?? 1_000))), error: null, count: rows.length }).then(res);
+      q.then = (res: (v: unknown) => unknown) => {
+        const answer = () => { const rows = rowsNow(); return { data: rows.slice(lo, Math.min(hi + 1, lo + (o.maxRows ?? 1_000))), error: null, count: rows.length }; };
+        // A coverage read answers a macrotask later (read at answer time), so the interleaving is real.
+        return (table === "labor_week_coverage" && o.weeksAfterRebuild ? new Promise((r) => setTimeout(() => r(answer()), 0)) : Promise.resolve(answer())).then(res);
+      };
       return q;
     },
   });
@@ -183,6 +193,34 @@ describe("the report a GM and a MoO get", () => {
     expect(oldQ).toMatchObject({ laborMinutes: 30, straightCents: null, pct: null });
     const newQ = dto.quarters!.find((q) => q.date === "2026-10-04" && q.quarterStartAt === "2026-10-04T16:00:00.000Z")!;
     expect(newQ).toMatchObject({ laborMinutes: 30, straightCents: 900, pct: 90 });
+  });
+  it("fix round 3: a rebuild that commits DURING the labor reads is 'rebuilding', never old money under the new generation", async () => {
+    // The costs/people/quarters were read from the company-scope (labor-v1) build; the per_shop rebuild commits
+    // right after. A single coverage read taken alongside would see per_shop and pass the old overtime as ready.
+    const old = [{ week_start: "2026-09-27", ot_scope: "company", builder_version: "labor-v1", built_at: "2026-11-01T00:00:00Z", source_fingerprint: "a".repeat(32) },
+      { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION, built_at: "2026-11-01T00:00:00Z", source_fingerprint: "b".repeat(32) }];
+    const fresh = [{ ...old[0]!, ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION, built_at: "2026-11-17T12:00:00Z" }, old[1]!];
+    const f = fakeClient({ weeks: old, weeksAfterRebuild: fresh });
+    const dto = await loadBusinessReport(moo, { locationId: A, range }, { client: f.client, env: ON });
+    expect(dto.days.find((d) => d.date === "2026-10-03")!.labor).toMatchObject({ state: "rebuilding", pct: null, pureHourlyCents: null });
+    expect(dto.days.find((d) => d.date === "2026-10-04")!.labor.state).toBe("ok");
+    expect(dto.people[0]).toMatchObject({ weeksSuppressed: 1, straightCostCents: null });
+    expect(dto.total.labor).toMatchObject({ pct: null, state: "rebuilding" });
+    expect(dto.quarters!.find((q) => q.date === "2026-10-03" && q.quarterStartAt === "2026-10-03T16:00:00.000Z")).toMatchObject({ laborMinutes: 30, straightCents: null, pct: null });
+  });
+  it("fix round 3: a same-generation rebuild (new built_at only) during the reads is still 'rebuilding'", async () => {
+    const old = [{ week_start: "2026-09-27", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION, built_at: "2026-11-01T00:00:00Z", source_fingerprint: "a".repeat(32) },
+      { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION, built_at: "2026-11-01T00:00:00Z", source_fingerprint: "b".repeat(32) }];
+    const f = fakeClient({ weeks: old, weeksAfterRebuild: [{ ...old[0]!, built_at: "2026-11-17T12:00:00Z", source_fingerprint: "c".repeat(32) }, old[1]!] });
+    const dto = await loadBusinessReport(moo, { locationId: A, range }, { client: f.client, env: ON });
+    expect(dto.days.find((d) => d.date === "2026-10-03")!.labor.state).toBe("rebuilding");
+    expect(dto.days.find((d) => d.date === "2026-10-04")!.labor.state).toBe("ok");
+  });
+  it("fix round 3: a week built for the first time during the reads is 'rebuilding', not ready", async () => {
+    const built = { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION, built_at: "2026-11-01T00:00:00Z", source_fingerprint: "b".repeat(32) };
+    const f = fakeClient({ weeks: [built], weeksAfterRebuild: [{ ...built, week_start: "2026-09-27", source_fingerprint: "a".repeat(32) }, built] });
+    const dto = await loadBusinessReport(moo, { locationId: A, range }, { client: f.client, env: ON });
+    expect(dto.days.find((d) => d.date === "2026-10-03")!.labor).toMatchObject({ state: "rebuilding", pct: null });
   });
   it("a rebuilding week's labor-only quarter (no sales) is still listed with its minutes", async () => {
     const f = fakeClient({
