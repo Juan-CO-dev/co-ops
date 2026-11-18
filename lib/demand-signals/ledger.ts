@@ -24,7 +24,7 @@ import { addDaysEt } from "@/lib/vendor-rhythm-shared";
 import { runDemandLedgerForShop, type LedgerDeps, type ShopLedgerResult } from "./ledger-pass";
 import { LABOR_LEADS, type LaborInputs, type PrepInputs } from "./replay";
 
-/** One shop's pass may take this long; the nightly gives the whole step no more than DEMAND_LEDGER_BUDGET_MS. */
+/** The whole step (every shop, one after the other) gets at most this long inside the nightly. */
 export const DEMAND_LEDGER_BUDGET_MS = 40_000;
 
 /** The labor inputs for a build day: the scheduler's own demand read, its live structure, and the override in force per date. */
