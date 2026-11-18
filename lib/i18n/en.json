@@ -5668,6 +5668,7 @@
   "reports.export.title.counts": "On hand",
   "reports.export.title.costing": "Menu costing",
   "reports.export.title.sales": "Sales",
+  "reports.export.title.business": "Business report",
   "reportPackage.section.sales": "Sales",
   "reportPackage.section.cash": "Cash",
   "reportPackage.section.catering": "Catering",

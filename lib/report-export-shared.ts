@@ -30,7 +30,9 @@ import type { TeamOperatingHealth } from "@/lib/team-metrics";
 import type { CalendarEvent } from "@/lib/catering/insights-shared";
 import type { MenuCostRow } from "@/lib/menu-costing-shared";
 import type { BreakdownRow, SalesBucket, SalesCheckRow, SalesExportView, SalesEzcaterRow, SalesTotals } from "@/lib/sales-reports-shared";
-import { rowAverageCents, salesHasData } from "@/lib/sales-reports-shared";
+import { SALES_EXPORT_MAX_ROWS, rowAverageCents, salesHasData } from "@/lib/sales-reports-shared";
+import type { BusinessReportDto } from "@/lib/business-report";
+import type { DaySales, LaborFigures } from "@/lib/business-report-shared";
 
 // ── Cells ───────────────────────────────────────────────────────────────────────────────────
 
@@ -113,7 +115,7 @@ export function toCsv(columns: readonly ExportColumn[], rows: readonly ExportRow
 // ── Families ────────────────────────────────────────────────────────────────────────────────
 
 export const EXPORT_FAMILIES = [
-  "operations", "cash", "written", "trends_ops", "team", "catering", "receiving", "counts", "costing", "sales",
+  "operations", "cash", "written", "trends_ops", "team", "catering", "receiving", "counts", "costing", "sales", "business",
 ] as const;
 export type ExportFamily = (typeof EXPORT_FAMILIES)[number];
 export const EXPORT_FORMATS = ["csv", "pdf"] as const;
@@ -177,6 +179,43 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
 };
 
 /**
+ * BUSINESS (item 9c). One table per page tab, the page's own DTO projected (lib/business-report.ts): an
+ * export never shows more than the screen. Every unknown is an EMPTY cell with its reason in a `*_state`
+ * / `status` column, never a 0. Labor DOLLARS per person and per 15 minutes are filled only where the DTO
+ * carries them (PERSON_COST_MIN / QUARTER_COST_MIN, MoO+); a GM's file has those cells empty.
+ */
+export const BUSINESS_EXPORT_TABS = ["overview", "hours", "channels", "people", "compare"] as const;
+export type BusinessExportTab = (typeof BUSINESS_EXPORT_TABS)[number];
+export function isBusinessExportTab(v: unknown): v is BusinessExportTab {
+  return typeof v === "string" && (BUSINESS_EXPORT_TABS as readonly string[]).includes(v);
+}
+const BUSINESS_EXPORT_COLUMNS_OVERVIEW: readonly ExportColumn[] = [
+  col("row_type"), col("period"), ...PERIOD, ...SHOP, col("status"), col("coverage_status"), col("checks", "int"),
+  col("toast_check_totals", "money"), col("toast_item_sales_net", "money"), col("ezcater_sales", "money"), col("ezcater_orders", "int"),
+  col("refunds_captured_so_far", "money"), col("sales_before_refunds", "money"), col("net_sales_for_labor", "money"), col("net_sales_state"),
+  col("labor_hours", "number"), col("pure_hourly_cost", "money"), col("overtime_premium", "money"), col("overtime_hours", "number"),
+  col("pure_hourly_pct", "number"), col("pure_hourly_target_pct", "number"), col("labor_state"),
+  col("salaried_cost", "money"), col("burden_cost", "money"), col("burden_estimated", "bool"), col("fully_loaded_cost", "money"),
+  col("fully_loaded_pct", "number"), col("fully_loaded_target_pct", "number"), col("fully_loaded_state"),
+  col("large_checks", "int"), col("large_checks_amount", "money"), col("breakdown_state"), col("rushes", "int"), col("currency", "currency"),
+];
+export const BUSINESS_EXPORT_COLUMNS: Record<BusinessExportTab, readonly ExportColumn[]> = {
+  overview: BUSINESS_EXPORT_COLUMNS_OVERVIEW,
+  hours: [
+    col("row_type"), col("business_date", "date"), col("quarter_start", "datetime"), col("time_et"), ...SHOP, col("status"), col("checks", "int"),
+    col("toast_sales", "money"), col("amount_missing", "int"), col("labor_hours", "number"), col("straight_time_cost", "money"),
+    col("straight_time_pct", "number"), col("basis"), col("currency", "currency"),
+  ],
+  channels: [col("row_type"), ...PERIOD, ...SHOP, col("channel"), col("provider"), col("checks", "int"), col("sales", "money"), col("amount_missing", "int"), col("currency", "currency")],
+  people: [
+    col("row_type"), ...PERIOD, ...SHOP, col("name"), col("server_ref"), col("source"), col("pay_class"), col("hours", "number"),
+    col("overtime_hours", "number"), col("weeks_withheld", "int"), col("straight_time_cost", "money"), col("checks", "int"), col("sales", "money"),
+    col("amount_missing", "int"), col("currency", "currency"),
+  ],
+  compare: BUSINESS_EXPORT_COLUMNS_OVERVIEW,
+};
+
+/**
  * THE CONTRACT. Stable snake_case names; money in dollars with an explicit currency column.
  * Pinned by tests/report-export-shared.test.ts; listed in the PR body for the accountant.
  */
@@ -225,6 +264,8 @@ export const EXPORT_COLUMNS: Record<ExportFamily, readonly ExportColumn[]> = {
   ],
   /** The default Sales file is the summary; `view=` picks another SALES_EXPORT_COLUMNS table. */
   sales: SALES_EXPORT_COLUMNS.summary,
+  /** Item 9c: the business report's Overview; `tab=` picks another BUSINESS_EXPORT_COLUMNS table. */
+  business: BUSINESS_EXPORT_COLUMNS_OVERVIEW,
 };
 
 export interface ShopRef { id: string; code: string | null; name: string }
@@ -408,6 +449,133 @@ export function salesCateringRows(rows: readonly SalesEzcaterRow[], shop: ShopRe
     event_date: r.eventDate, ...shopCells(shop), ezcater_order_number: r.orderNumber, headcount: r.headcount,
     subtotal: r.subtotalCents, toast_status: r.status,
   }));
+}
+
+// ── Business rows (item 9c: pure projections of the SAME DTO the business page renders) ─────────
+
+/** Past the Sales row cap a business export refuses (413), never a cut file. */
+export function assertBusinessRowCap<T>(rows: readonly T[]): readonly T[] {
+  if (rows.length > SALES_EXPORT_MAX_ROWS) throw Object.assign(new Error("export_too_large"), { status: 413, code: "export_too_large" });
+  return rows;
+}
+const hoursOf = (minutes: number | null | undefined) => (minutes === null || minutes === undefined ? null : minutes / 60);
+/** ET wall clock of a 15-minute quarter (0..95), "HH:MM". The UTC instant beside it tells the two 01:15s apart. */
+export function quarterWallTime(wallQuarter: number): string {
+  const m = wallQuarter * 15;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+/** Days summed as raw cents (a week row): complete only when every day is; Toast net only when every day's is known. */
+export function sumBusinessDays(days: readonly DaySales[]): Omit<DaySales, "date"> {
+  const sum = (k: keyof DaySales) => days.reduce((s, d) => s + (d[k] as number), 0);
+  return {
+    coverage: days.length > 0 && days.every((d) => d.coverage === "complete") ? "complete" : days.some((d) => d.coverage !== "missing") ? "partial" : "missing",
+    checks: sum("checks"), toastChecksCents: sum("toastChecksCents"), toastAmountMissing: sum("toastAmountMissing"),
+    toastNetCents: days.length > 0 && days.every((d) => d.toastNetCents !== null) ? days.reduce((s, d) => s + d.toastNetCents!, 0) : null,
+    ezcaterCents: sum("ezcaterCents"), ezcaterOrders: sum("ezcaterOrders"), ezcaterMissing: sum("ezcaterMissing"), refundCents: sum("refundCents"),
+    totalCents: sum("totalCents"), giftCardCents: sum("giftCardCents"), ezcaterLinkedCents: sum("ezcaterLinkedCents"),
+  };
+}
+type SalesCells = Pick<DaySales, "coverage" | "checks" | "toastChecksCents" | "toastNetCents" | "ezcaterCents" | "ezcaterOrders" | "refundCents" | "totalCents">;
+function businessSalesCells(s: SalesCells | null): ExportRow {
+  if (!s) return {};
+  // No capture at all: empty metrics, never zeros (the Sales rule).
+  const v = (x: number | null) => (s.coverage === "missing" ? null : x);
+  return {
+    coverage_status: s.coverage, checks: v(s.checks), toast_check_totals: v(s.toastChecksCents), toast_item_sales_net: v(s.toastNetCents),
+    ezcater_sales: v(s.ezcaterCents), ezcater_orders: v(s.ezcaterOrders), refunds_captured_so_far: v(s.refundCents), sales_before_refunds: v(s.totalCents),
+  };
+}
+function businessLaborCells(l: LaborFigures, target: number | "target_varies", loadedTarget: number | "target_varies"): ExportRow {
+  return {
+    net_sales_for_labor: l.denominator.cents, net_sales_state: l.denominator.state, labor_hours: hoursOf(l.minutes),
+    pure_hourly_cost: l.pureHourlyCents, overtime_premium: l.otPremiumCents, overtime_hours: hoursOf(l.otMinutes), pure_hourly_pct: l.pct,
+    pure_hourly_target_pct: target, labor_state: l.state, salaried_cost: l.salariedCents, burden_cost: l.burdenCents,
+    burden_estimated: l.fullyLoadedCents === null ? null : l.burdenEstimated, fully_loaded_cost: l.fullyLoadedCents, fully_loaded_pct: l.loadedPct,
+    fully_loaded_target_pct: loadedTarget, fully_loaded_state: l.loadedState,
+  };
+}
+function businessTotalRow(dto: BusinessReportDto, period: string, shop: ShopRef): ExportRow {
+  const t = dto.total;
+  const sales: SalesCells | null = dto.range.empty ? null : {
+    coverage: t.sales.coverage as DaySales["coverage"], checks: dto.days.reduce((s, d) => s + d.sales.checks, 0),
+    toastChecksCents: t.sales.toastChecksCents, toastNetCents: t.sales.toastNetCents, ezcaterCents: t.sales.ezcaterCents,
+    ezcaterOrders: dto.days.reduce((s, d) => s + d.sales.ezcaterOrders, 0), refundCents: t.sales.refundCents, totalCents: t.sales.totalCents,
+  };
+  return {
+    row_type: "total", period, ...periodCells(dto.range), ...shopCells(shop), status: dto.range.empty ? "no_finished_days" : null,
+    ...businessSalesCells(sales), ...(dto.range.empty ? {} : businessLaborCells(t.labor, t.target, t.loadedTarget)),
+    large_checks: dto.range.empty ? null : dto.largeChecks.checks, large_checks_amount: dto.range.empty ? null : dto.largeChecks.cents,
+  };
+}
+
+/** Overview: one row per day, per payroll week, and the range total. */
+export function businessOverviewRows(dto: BusinessReportDto, shop: ShopRef): ExportRow[] {
+  const days: ExportRow[] = dto.days.map((d) => {
+    const wk = dto.weeks.find((w) => d.date >= w.from && d.date <= w.to);
+    return {
+      row_type: "day", period: "current", period_start: d.date, period_end: d.date, ...shopCells(shop),
+      ...businessSalesCells(d.sales), ...businessLaborCells(d.labor, wk?.target ?? dto.total.target, wk?.loadedTarget ?? dto.total.loadedTarget),
+      large_checks: d.cuts === "ok" ? d.largeChecks.checks : null, large_checks_amount: d.cuts === "ok" ? d.largeChecks.cents : null,
+      breakdown_state: d.cuts, rushes: d.rush?.state === "ok" ? d.rush.windows.length : null,
+    };
+  });
+  const weeks: ExportRow[] = dto.weeks.map((w) => ({
+    row_type: "week", period: "current", period_start: w.from, period_end: w.to, ...shopCells(shop),
+    ...businessSalesCells(sumBusinessDays(dto.days.filter((d) => d.date >= w.from && d.date <= w.to).map((d) => d.sales))),
+    ...businessLaborCells(w.labor, w.target, w.loadedTarget),
+  }));
+  return [...days, ...weeks, businessTotalRow(dto, "current", shop)];
+}
+
+/** Compare: this range, the one before, and the same days last year (no_data_yet until 2027-07-23, never zeros). */
+export function businessCompareRows(dto: BusinessReportDto, previous: BusinessReportDto | null, shop: ShopRef): ExportRow[] {
+  const ly = dto.range.lastYear;
+  return [
+    businessTotalRow(dto, "current", shop),
+    ...(previous ? [businessTotalRow(previous, "previous", shop)] : []),
+    { row_type: "total", period: "last_year", period_start: ly?.from ?? null, period_end: ly?.to ?? null, ...shopCells(shop),
+      status: dto.range.lastYearReason ?? "not_loaded" },
+  ];
+}
+
+/** Hours: every 15-minute quarter (<= 31 days), then each day's checks with no opened quarter. */
+export function businessHoursRows(dto: BusinessReportDto, shop: ShopRef): ExportRow[] {
+  if (dto.quarters === null) return [{ row_type: "notice", ...shopCells(shop), status: dto.quartersReason ?? "range_too_wide" }];
+  return [
+    ...dto.quarters.map((q): ExportRow => ({
+      row_type: "quarter", business_date: q.date, quarter_start: q.quarterStartAt, time_et: quarterWallTime(q.wallQuarter), ...shopCells(shop),
+      status: q.toastCents === null ? "breakdown_not_ready" : null, checks: q.checks, toast_sales: q.toastCents, amount_missing: q.amountMissing,
+      labor_hours: hoursOf(q.laborMinutes), straight_time_cost: q.straightCents ?? null, straight_time_pct: q.pct ?? null, basis: q.basis,
+    })),
+    ...(dto.quartersUnassigned ?? []).map((u): ExportRow => ({
+      row_type: "unassigned", business_date: u.date, ...shopCells(shop), checks: u.checks, toast_sales: u.toastCents, basis: "no_opened_time",
+    })),
+  ];
+}
+
+/** Channels: counted Toast channels, ezCater as its own source, and the named exclusions (never counted). */
+export function businessChannelRows(dto: BusinessReportDto, shop: ShopRef): ExportRow[] {
+  const base = { ...periodCells(dto.range), ...shopCells(shop) };
+  return [
+    ...dto.channels.included.map((c): ExportRow => ({ row_type: "channel", ...base, channel: c.key, provider: c.provider ?? null, checks: c.checks, sales: c.cents, amount_missing: c.amountMissing ?? 0 })),
+    ...(dto.range.empty ? [] : [{ row_type: "ezcater", ...base, channel: "ezcater", provider: null, checks: dto.days.reduce((s, d) => s + d.sales.ezcaterOrders, 0),
+      sales: dto.total.sales.ezcaterCents, amount_missing: dto.days.reduce((s, d) => s + d.sales.ezcaterMissing, 0) } as ExportRow]),
+    ...dto.channels.excluded.map((c): ExportRow => ({ row_type: "excluded", ...base, channel: c.key, provider: null, checks: c.checks, sales: c.cents })),
+  ];
+}
+
+/** People: hours per person (cost only where the DTO carries it, MoO+), then sales per server (the order's server). */
+export function businessPeopleRows(dto: BusinessReportDto, shop: ShopRef): ExportRow[] {
+  const base = { ...periodCells(dto.range), ...shopCells(shop) };
+  return [
+    ...dto.people.map((p): ExportRow => ({
+      row_type: "person", ...base, name: p.label, source: p.source, pay_class: p.payClass, hours: hoursOf(p.minutes),
+      overtime_hours: hoursOf(p.otMinutes), weeks_withheld: p.weeksSuppressed, straight_time_cost: p.straightCostCents ?? null,
+    })),
+    ...dto.servers.map((s): ExportRow => ({
+      row_type: "server", ...base, name: s.label, server_ref: s.key ? s.key.slice(-4) : null, checks: s.checks, sales: s.cents, amount_missing: s.amountMissing ?? 0,
+    })),
+  ];
 }
 
 /** `{family}_{shop-code}_{from}_{to}.{ext}`, filesystem-safe. */

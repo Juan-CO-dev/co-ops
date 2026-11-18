@@ -5668,6 +5668,7 @@
   "reports.export.title.counts": "Inventario disponible",
   "reports.export.title.costing": "Costeo del menú",
   "reports.export.title.sales": "Ventas",
+  "reports.export.title.business": "Reporte del negocio",
   "reportPackage.section.sales": "Ventas",
   "reportPackage.section.cash": "Caja",
   "reportPackage.section.catering": "Catering",

@@ -90,6 +90,7 @@ describe("the column registry is the documented contract", () => {
   it("stable names (renaming a column must fail this test first)", () => {
     expect(Object.fromEntries(EXPORT_FAMILIES.map((f) => [f, EXPORT_COLUMNS[f].map((c) => c.key).join(",")]))).toMatchInlineSnapshot(`
       {
+        "business": "row_type,period,period_start,period_end,location_code,location_name,status,coverage_status,checks,toast_check_totals,toast_item_sales_net,ezcater_sales,ezcater_orders,refunds_captured_so_far,sales_before_refunds,net_sales_for_labor,net_sales_state,labor_hours,pure_hourly_cost,overtime_premium,overtime_hours,pure_hourly_pct,pure_hourly_target_pct,labor_state,salaried_cost,burden_cost,burden_estimated,fully_loaded_cost,fully_loaded_pct,fully_loaded_target_pct,fully_loaded_state,large_checks,large_checks_amount,breakdown_state,rushes,currency",
         "cash": "business_date,location_code,location_name,report_id,projected,drawer_total,float,deposit,over_short,cash_tips,count_method,on_shift,signed_by,signed_at,over_short_note,payment_type,currency",
         "catering": "event_date,location_code,location_name,lead_id,event_name,time_window,headcount,lead_source,stage,money_status,value,currency",
         "costing": "menu_item_id,menu_item,section,menu_price,food_cost,food_cost_pct,margin,cost_status,currency",
