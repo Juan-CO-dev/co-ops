@@ -88,7 +88,7 @@ export type DayTypeOverride = "auto" | "slow" | "normal" | "busy";
  */
 export function dayTypeFor(
   date: string,
-  input: { override: { id: string; dayType: DayTypeOverride } | null; structure: ScheduleStructure; forecast: DayForecast | { kind: "unavailable"; cause: DemandUnavailableCause } | null },
+  input: { override: { id: string; dayType: DayTypeOverride } | null; structure: Pick<ScheduleStructure, "dayTypes">; forecast: DayForecast | { kind: "unavailable"; cause: DemandUnavailableCause } | null },
 ): { dayType: CrewType; source: "override" | "weekend" | "forecast" | "no_history"; overrideId: string | null } {
   const o = input.override;
   if (o && o.dayType !== "auto") return { dayType: o.dayType, source: "override", overrideId: o.id };
