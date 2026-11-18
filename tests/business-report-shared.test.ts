@@ -155,6 +155,8 @@ describe("P1 LABOR DENOMINATOR (CC ruling): labor cost / NET SALES = Sales net +
     expect(quarterFigures({ toastCents: 0, checks: 0, laborMinutes: 60, straightCents: 2_000, salesOk: true, laborOk: true }).pct).toBeNull();
     expect(quarterFigures({ toastCents: 20_000, checks: 4, laborMinutes: 60, straightCents: 2_000, salesOk: false, laborOk: true }).pct).toBeNull();
     expect(quarterFigures({ toastCents: 20_000, checks: 4, laborMinutes: 60, straightCents: 2_000, salesOk: true, laborOk: false }).pct).toBeNull();
+    // Fix round 2: any check of unknown amount = unknown sales = no %.
+    expect(quarterFigures({ toastCents: 20_000, checks: 4, amountMissing: 1, laborMinutes: 60, straightCents: 2_000, salesOk: true, laborOk: true }).pct).toBeNull();
   });
 });
 
@@ -221,6 +223,14 @@ describe("P2 RUSH: zero / thin baselines never make a rush", () => {
     expect(detectRushes(day(() => [RUSH_MIN_CHECKS - 1, 4_000]), history(8, () => [1, 1_000])).windows).toEqual([]);
     // Checks qualify but sales are 0 (comped quarter): no rush.
     expect(detectRushes(day(() => [9, 0]), history(8, () => [2, 2_000])).windows).toEqual([]);
+  });
+  it("fix round 2: a quarter with an unknown check amount is never compared (today or in the baseline)", () => {
+    const base = () => day((wq) => (wq === 46 || wq === 47 ? [12, 24_000] : [5, 10_000]));
+    const today = base();
+    today.quarters = today.quarters.map((q) => (q.wallQuarter === 47 ? { ...q, amountMissing: 1 } : q));
+    expect(detectRushes(today, history(8, () => [6, 12_000])).windows).toEqual([]);
+    const hist = history(8, () => [6, 12_000]).map((h, i) => (i === 0 ? { ...h, quarters: h.quarters.map((q) => (q.wallQuarter === 46 ? { ...q, amountMissing: 2 } : q)) } : h));
+    expect(detectRushes(base(), hist).windows).toEqual([]);
   });
   it("a single qualifying quarter is not a run", () => {
     expect(detectRushes(day((wq) => (wq === 46 ? [20, 40_000] : [5, 10_000])), history(8, () => [6, 12_000])).windows).toEqual([]);

@@ -178,6 +178,20 @@ describe("the report a GM and a MoO get", () => {
     expect(dto.people[0]).toMatchObject({ weeksSuppressed: 1 });
     expect(dto.people[0]!.straightCostCents).toBeNull();
     expect(dto.total.labor).toMatchObject({ pct: null, state: "rebuilding" });
+    // Fix round 2, P2: a rebuilding week keeps its quarter HOURS; only the money and the % are withheld.
+    const oldQ = dto.quarters!.find((q) => q.date === "2026-10-03" && q.quarterStartAt === "2026-10-03T16:00:00.000Z")!;
+    expect(oldQ).toMatchObject({ laborMinutes: 30, straightCents: null, pct: null });
+    const newQ = dto.quarters!.find((q) => q.date === "2026-10-04" && q.quarterStartAt === "2026-10-04T16:00:00.000Z")!;
+    expect(newQ).toMatchObject({ laborMinutes: 30, straightCents: 900, pct: 90 });
+  });
+  it("a rebuilding week's labor-only quarter (no sales) is still listed with its minutes", async () => {
+    const f = fakeClient({
+      weeks: [{ week_start: "2026-09-27", ot_scope: "company", builder_version: "labor-v1" }, { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }],
+      rpcRows: { business_report_labor_quarters: (args) => [{ business_date: "2026-10-03", week_start: null, quarter_start_at: "2026-10-03T13:00:00.000Z", wall_quarter: 36, fold: 0,
+        minutes: 45, hourly_minutes: 45, salaried_minutes: 0, straight_cents: 1_200, estimated_minutes: 0 }].filter(() => String(args.p_from) <= "2026-10-03" && String(args.p_to) >= "2026-10-03") },
+    });
+    const dto = await loadBusinessReport(moo, { locationId: A, range }, { client: f.client, env: ON });
+    expect(dto.quarters!.find((q) => q.quarterStartAt === "2026-10-03T13:00:00.000Z")).toMatchObject({ laborMinutes: 45, straightCents: null, pct: null, toastCents: 0 });
   });
   it("day money is the Sales report's own (parity with summarizeSales over sales_report_daily)", async () => {
     const f = fakeClient();
@@ -283,5 +297,28 @@ describe("quarter sales include ordinary Toast catering; unassigned is shown", (
     expect(dto.quartersUnassigned).toEqual([{ date: D, toastCents: 2_500, checks: 1 }]);
     const sum = dto.quarters!.filter((x) => x.date === D).reduce((s, x) => s + (x.toastCents ?? 0), 0) + dto.quartersUnassigned![0]!.toastCents;
     expect(sum).toBe(dto.days[0]!.sales.toastChecksCents);
+  });
+});
+
+// Fix round 2, P2: a quarter holding a check of UNKNOWN amount has unknown sales — no labor %, and it never
+// takes part in a rush comparison (today or as history). The day still recomposes (the missing counts match).
+describe("a quarter with an unknown check amount has no labor %", () => {
+  const D = "2026-10-07";
+  const one = resolveBusinessRange({ range: "yesterday" }, TODAY);
+  const daily = () => ({ classes: [{ business_date: D, sale_class: "sale", checks: 2, amount_cents: 10_000, tax_cents: 0, amount_missing: 1, tax_missing: 0,
+    gross_cents: 10_000, discounts_comps_cents: 0, voids_cents: 0, service_charges_cents: 0, accounting_missing: 0 }],
+    tips: [], discounts: [], refunds: [], captured_days: [D], ezcater: [] });
+  const cuts = (args: Record<string, unknown>) => String(args.p_to) < D ? [] : [
+    { business_date: D, quarter_start_at: `${D}T16:00:00.000Z`, wall_quarter: 48, fold: 0, et_date: D, channel: "dine_in", provider: null,
+      server_guid: null, server_label: null, sale_class: "sale", checks: 2, amount_cents: 10_000, amount_missing: 1, large_checks: 0, large_cents: 0 }];
+  const labor = () => [{ business_date: D, week_start: null, quarter_start_at: `${D}T16:00:00.000Z`, wall_quarter: 48, fold: 0,
+    minutes: 15, hourly_minutes: 15, salaried_minutes: 0, straight_cents: 5_000, estimated_minutes: 0 }];
+
+  it("$100 known + one unknown check, $50 straight time = no % (not 50%); the missing count is carried", async () => {
+    const f = fakeClient({ rpcRows: { sales_report_daily: daily, business_report_check_cuts: cuts, business_report_labor_quarters: labor } });
+    const dto = await loadBusinessReport(moo, { locationId: A, range: one }, { client: f.client, env: ON });
+    expect(dto.days[0]!.cuts).toBe("ok");
+    const q = dto.quarters!.find((x) => x.quarterStartAt === `${D}T16:00:00.000Z`)!;
+    expect(q).toMatchObject({ toastCents: 10_000, checks: 2, amountMissing: 1, straightCents: 5_000, pct: null });
   });
 });
