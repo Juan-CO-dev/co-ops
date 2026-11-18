@@ -318,3 +318,11 @@ describe("parity with summarizeSales over a 31-day window", () => {
       .toEqual(theirs.map((b) => [b.from, b.totalCents, b.toastChecksCents, b.toastNetCents, b.refundCents, b.ezcaterCents]));
   });
 });
+
+describe("range net with a refund-negative day", () => {
+  it("adds the negative day's exact net instead of skipping it", () => {
+    const days = daySalesFrom([dailyRaw("2026-10-05", { toast: 100_000 }), dailyRaw("2026-10-06", { toast: 0, gross: 0, checks: 0, refund: 5_000 })], "2026-10-05", "2026-10-06");
+    expect(laborNetSales(days[1]!).state).toBe("zero_sales");
+    expect(sumNetSales(days)).toEqual({ cents: 95_000, state: "ok" });
+  });
+});

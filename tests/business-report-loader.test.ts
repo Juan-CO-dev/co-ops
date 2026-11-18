@@ -117,7 +117,7 @@ describe("the report a GM and a MoO get", () => {
     expect(JSON.stringify(dto)).not.toMatch(/straight_cents|costCents|rate/);
     // Each day: $30 Toast + $20 ezCater = $50 net; labor $9 => 18%.
     expect(dto.days[0]!.labor).toMatchObject({ pureHourlyCents: 900, pct: 18, state: "ok", denominator: { cents: 5_000, state: "ok" } });
-    expect(dto.servers.find((s) => s.key === "srv-1")).toMatchObject({ label: "Ana", cents: 1_000 });
+    expect(dto.servers.find((s) => s.key === "srv-1")).toMatchObject({ label: "Ana", cents: 7_000, checks: 7 });
   });
   it("MoO: the same plus straight-time cost per person (one named constant decides)", async () => {
     const f = fakeClient();
