@@ -106,6 +106,25 @@ export function resolveBusinessRange(p: Record<string, string | undefined>, toda
   return { range, from, to, days, shortened, empty, previous, lastYear, lastYearReason: lastYear ? null : "no_data_yet" };
 }
 
+/**
+ * Fix round 5 (review ITEM9B-r5 P2): the query every link, form and export carries for a resolved range — the
+ * ONE place a range becomes URL params again. It re-resolves (same `today`) to the SAME range — empty, clipped
+ * and shortened included — because a custom range carries the REQUESTED bounds (the valid ones), never the
+ * normalized ones: an empty range's dates are normalized to yesterday only so nothing reads past the last closed
+ * day, and a link built from them asked for a populated day. Never rebuild `{ from: range.from, to: range.to }`.
+ */
+export function businessRangeQuery(range: BusinessRange, requested: Record<string, string | undefined>): { range: BusinessRange["range"]; from?: string; to?: string } {
+  if (range.range !== "custom") return { range: range.range };
+  return { range: "custom", ...(validReportDate(requested.from) ? { from: requested.from } : {}), ...(validReportDate(requested.to) ? { to: requested.to } : {}) };
+}
+
+/** The period an EMPTY range's file and caption name: what was asked (an empty range always has a valid `from`). */
+export function businessRequestedPeriod(range: BusinessRange, requested: Record<string, string | undefined>): { from: string; to: string } {
+  const q = businessRangeQuery(range, requested);
+  const from = q.from ?? range.from;
+  return { from, to: q.to ?? from };
+}
+
 /** Days [from, to], oldest first. */
 export function eachDay(from: string, to: string): string[] {
   const out: string[] = [];
@@ -618,4 +637,6 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.wage_estimated", "reports.business.qual.wage_estimated", "reports.business.figure.breakdown_partial",
   "reports.business.figure.breakdown_none", "reports.business.breakdown_days_only",
   "reports.business.hours_unverified", "reports.business.qual.hours_unverified",
+  // Fix round 5: the file of a range with no closed day says so.
+  "reports.business.export.no_finished_days",
 ] as const;

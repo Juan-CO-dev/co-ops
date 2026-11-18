@@ -563,6 +563,13 @@ export function businessHoursNotice(view: BusinessReportView): { key: "reports.b
   return { key: "reports.business.export.hours_partial", values: {} };
 }
 
+/** Fix round 5 (review ITEM9B-r5 P2): a range with no closed day (today only, future only, from after to) is ONE
+ * notice row, `no_finished_days`, over the REQUESTED period — never the normalized dates, never a neighbour's rows. */
+export function businessEmptyRangeRows(tab: BusinessExportTab, requested: Period, shop: ShopRef): ExportRow[] {
+  return [{ row_type: "notice", ...(tab === "compare" ? { period: "current" } : {}), ...(tab === "hours" ? {} : periodCells(requested)),
+    ...shopCells(shop), status: "no_finished_days" }];
+}
+
 /** Channels: counted Toast channels, ezCater as its own source, and the named exclusions (never counted).
  * Fix round 4 (ITEM9B-r4 P2): ezCater's row follows the SALES coverage like the page: no capture = empty cells
  * named `unknown(not_captured)`, part of the period = `incomplete(covered_days_only, ...)`; never a made-up 0. */

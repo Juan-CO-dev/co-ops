@@ -9268,6 +9268,7 @@
   "reports.business.compare.not_comparable": "No comparable",
   "reports.business.people.hours_partial": "Las horas por persona son solo hasta ahora.",
   "reports.business.export.hours_partial": "Las horas de este archivo no son finales (una semana de nómina todavía no está contada, se está recontando o tiene marcas abiertas). Las horas mostradas son hasta ahora; mira labor_state.",
+  "reports.business.export.no_finished_days": "No hay días cerrados en este rango: todavía no tiene ningún día de negocio terminado. No se cuenta nada para él.",
   "reports.business.amount_at_least": "al menos {amount} + {n} sin monto",
   "reports.business.amount_unknown": "monto desconocido ({n} cuentas)",
   "reports.business.hours_so_far": "{h} hasta ahora",

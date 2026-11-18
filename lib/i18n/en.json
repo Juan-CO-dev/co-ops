@@ -9268,6 +9268,7 @@
   "reports.business.compare.not_comparable": "Not comparable",
   "reports.business.people.hours_partial": "Hours per person are so far only.",
   "reports.business.export.hours_partial": "Labor hours in this file are not final (a payroll week is not counted yet, is being recounted, or has open punches). Hours shown are so far; see labor_state.",
+  "reports.business.export.no_finished_days": "No closed days in this range: it has no finished business day yet. Nothing is counted for it.",
   "reports.business.amount_at_least": "at least {amount} + {n} unknown",
   "reports.business.amount_unknown": "amount unknown ({n} checks)",
   "reports.business.hours_so_far": "{h} so far",

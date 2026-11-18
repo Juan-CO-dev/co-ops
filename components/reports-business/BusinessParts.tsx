@@ -122,7 +122,8 @@ const RANGE_LABEL: Record<(typeof BUSINESS_RANGES)[number], TranslationKey> = {
   last90: "reports.sales.range.last90", custom: "reports.hub.custom",
 };
 /** Finished days only (today stays on Pulse); no "compare" box: Compare is its own tab. */
-export function BusinessRangeControls({ range, locationId, tab, language }: { range: BusinessRange; locationId: string; tab: BusinessReportTab; language: Language }) {
+/** `query` = businessRangeQuery(range, params): the form shows what was ASKED (an empty range keeps its dates). */
+export function BusinessRangeControls({ range, query, locationId, tab, language }: { range: BusinessRange; query: { from?: string; to?: string }; locationId: string; tab: BusinessReportTab; language: Language }) {
   const t = tFor(language);
   return <ReportRangeForm action="/reports/business">
     <input type="hidden" name="location" value={locationId} />
@@ -132,8 +133,8 @@ export function BusinessRangeControls({ range, locationId, tab, language }: { ra
         {BUSINESS_RANGES.map((v) => <option key={v} value={v}>{t(RANGE_LABEL[v])}</option>)}
       </select>
     </label>
-    <label className="grid gap-1 text-xs font-bold">{t("reports.hub.from")}<input className={control} type="date" aria-label={t("reports.hub.from")} name="from" defaultValue={range.from} /></label>
-    <label className="grid gap-1 text-xs font-bold">{t("reports.hub.to")}<input className={control} type="date" aria-label={t("reports.hub.to")} name="to" defaultValue={range.to} /></label>
+    <label className="grid gap-1 text-xs font-bold">{t("reports.hub.from")}<input className={control} type="date" aria-label={t("reports.hub.from")} name="from" defaultValue={query.from ?? range.from} /></label>
+    <label className="grid gap-1 text-xs font-bold">{t("reports.hub.to")}<input className={control} type="date" aria-label={t("reports.hub.to")} name="to" defaultValue={query.to ?? range.to} /></label>
     <button className={control} type="submit">{t("reports.hub.apply")}</button>
     <p className="w-full text-xs text-co-text-muted">{t("reports.business.cap")}</p>
     {range.shortened ? <p className="w-full text-xs text-co-text-muted">{t("reports.business.range_shortened")}</p> : null}

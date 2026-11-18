@@ -19,7 +19,7 @@ import { BusinessRangeControls, BusinessTabs, BusinessUnavailable, bizCard, tFor
 import { BusinessChannels, BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople } from "@/components/reports-business/BusinessReport";
 import { BusinessReportError, loadBusinessReport, resolveBusinessRange } from "@/lib/business-report";
 import { businessView } from "@/lib/business-view-shared";
-import { businessReportEnabled, businessReportRefusal, businessTab } from "@/lib/business-report-shared";
+import { businessRangeQuery, businessReportEnabled, businessReportRefusal, businessTab } from "@/lib/business-report-shared";
 import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { reportNavigationHref } from "@/lib/report-navigation";
@@ -46,15 +46,17 @@ export default async function BusinessReportPage({ searchParams }: { searchParam
   const today = operationalNow(new Date()).date;
   const range = resolveBusinessRange(params, today);
   const tab = businessTab(params.tab);
-  const rangeParams: Params = range.range === "custom" ? { range: "custom", from: range.from, to: range.to } : { range: range.range };
-  const context: Params = { ...rangeParams, tab, hubLocation: params.hubLocation, location: locationId };
+  // Fix round 5 (ITEM9B-r5 P2): every link (controls, tabs, nav, shop tabs, both exports) carries the query that
+  // re-resolves to THIS range — an empty one stays empty — never one rebuilt from the normalized dates.
+  const rangeQuery = businessRangeQuery(range, params);
+  const context: Params = { ...rangeQuery, tab, hubLocation: params.hubLocation, location: locationId };
   const href = (extra: Params = {}) => reportNavigationHref("/reports/business", { ...context, ...extra });
 
   const header = <>
     <ReportPageNav viewerLevel={auth.level} path="/reports/business" params={context} language={language} />
     <ReportShopTabs path="/reports/business" params={context} locationId={locationId} language={language} viewer={auth} />
     <h1 className="mb-3 text-lg font-bold text-co-text">{t("reports.business.title")}</h1>
-    <BusinessRangeControls range={range} locationId={locationId} tab={tab} language={language} />
+    <BusinessRangeControls range={range} query={rangeQuery} locationId={locationId} tab={tab} language={language} />
     <BusinessTabs tab={tab} language={language} hrefFor={(v) => href({ tab: v })} />
   </>;
 

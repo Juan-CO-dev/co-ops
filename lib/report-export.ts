@@ -33,7 +33,7 @@ import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { BusinessReportError, loadBusinessReport, resolveBusinessRange } from "@/lib/business-report";
-import { businessReportEnabled, businessReportRefusal } from "@/lib/business-report-shared";
+import { businessReportEnabled, businessReportRefusal, businessRequestedPeriod } from "@/lib/business-report-shared";
 import { businessView } from "@/lib/business-view-shared";
 import {
   SALES_EXPORT_MAX_ROWS, SALES_READ_MIN, SalesReportError, VIEW_DIMENSION, isSalesExportView, loadSalesBreakdown,
@@ -42,6 +42,7 @@ import {
 import {
   BUSINESS_EXPORT_COLUMNS,
   EXPORT_COLUMNS,
+  businessEmptyRangeRows,
   assertBusinessRowCap,
   businessChannelRows,
   businessCompareRows,
@@ -165,6 +166,14 @@ async function businessExportTable(auth: AuthContext, params: Params, shop: Shop
   const tab = isBusinessExportTab(params.tab) ? params.tab : "overview";
   const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations, role: auth.role };
   const range = resolveBusinessRange(params, today);
+  const fileFamily = tab === "overview" ? "business" : `business-${tab}`;
+  // Fix round 5 (review ITEM9B-r5 P2): a range with no closed day is an explicit "no closed days in this range"
+  // file over the REQUESTED period. Nothing is loaded: its normalized dates name yesterday, a populated neighbour.
+  if (range.empty) {
+    const period = businessRequestedPeriod(range, params);
+    return { columns: BUSINESS_EXPORT_COLUMNS[tab], rows: businessEmptyRangeRows(tab, period, shop), from: period.from, to: period.to,
+      fileFamily, notices: [{ key: "reports.business.export.no_finished_days", values: {} }] };
+  }
   try {
     // The file is built from the page's VIEW (every figure sealed with its state), never from the DTO.
     const dto = businessView(await loadBusinessReport(viewer, { locationId: shop.id, range }));
@@ -175,8 +184,7 @@ async function businessExportTable(auth: AuthContext, params: Params, shop: Shop
       case "channels": rows = businessChannelRows(dto, shop); break;
       case "people": rows = businessPeopleRows(dto, shop); break;
       case "compare": {
-        const previous = range.empty ? null
-          : businessView(await loadBusinessReport(viewer, { locationId: shop.id, range: resolveBusinessRange({ range: "custom", ...range.previous }, today) }));
+        const previous = businessView(await loadBusinessReport(viewer, { locationId: shop.id, range: resolveBusinessRange({ range: "custom", ...range.previous }, today) }));
         rows = businessCompareRows(dto, previous, shop);
         break;
       }
@@ -185,7 +193,7 @@ async function businessExportTable(auth: AuthContext, params: Params, shop: Shop
     // on top of the file which days it covers when it leaves any out; never a partial total as the whole period.
     const notices = [tab === "compare" ? null : businessCoverageNotice(dto), businessHoursNotice(dto)].filter((n) => n !== null);
     return { columns: BUSINESS_EXPORT_COLUMNS[tab], rows: [...assertBusinessRowCap(rows)], from: range.from, to: range.to,
-      fileFamily: tab === "overview" ? "business" : `business-${tab}`, ...(notices.length ? { notices } : {}) };
+      fileFamily, ...(notices.length ? { notices } : {}) };
   } catch (error) {
     if (error instanceof BusinessReportError) throw new ExportError(error.status, error.code);
     throw error;
