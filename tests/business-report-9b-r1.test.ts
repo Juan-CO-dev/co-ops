@@ -136,7 +136,9 @@ describe("sweep: unbuilt labor is unknown, not zero, on Hours and People", () =>
     const out = html(createElement(BusinessHours, { dto: q, language: "en" }));
     const section = out.split("<section").find((s) => s.includes(">Labor for these days is not counted yet.<")) ?? "";
     expect(section).not.toContain("No labor");
-    expect(section).toContain('aria-label="Labor for these days is not counted yet."');
+    // Fix round 2: the reason is VISIBLE text beside the dash (not an attribute): the quarter row repeats it.
+    const quarterText = section.replace(/<[^>]*>/g, " ");
+    expect(quarterText.split("Labor for these days is not counted yet.").length - 1).toBeGreaterThanOrEqual(2);
   });
   it("People: the per-person hours say 'so far' while a week is not final; the export coverage row names the labor state", async () => {
     const dto = unbuiltTotal(await load());

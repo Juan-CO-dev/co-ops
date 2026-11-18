@@ -534,6 +534,19 @@ export function loadedReasonKey(state: LoadedState): (typeof BUSINESS_REPORT_I18
   return state === "ok" ? null : `reports.business.labor.state.${state}`;
 }
 
+/** Fix round 2 (review ITEM9B-r2 P2): THE qualifications of a fully loaded figure, in one place, so the page
+ * (Overview, every drawer, BOTH Compare periods) never shows the figure without them. The burden and salary
+ * estimates qualify a SHOWN figure; payroll gaps are named whether the figure shows or not. */
+export function loadedQualifiers(l: Pick<LaborFigures, "fullyLoadedCents" | "burdenEstimated" | "salaryEstimated" | "salaryGaps">):
+  Array<{ key: "reports.business.burden_estimated" | "reports.business.salary_estimated" | "reports.business.salary_gaps"; values?: Record<string, number> }> {
+  const shown = l.fullyLoadedCents !== null;
+  return [
+    ...(shown && l.burdenEstimated ? [{ key: "reports.business.burden_estimated" as const }] : []),
+    ...(shown && l.salaryEstimated ? [{ key: "reports.business.salary_estimated" as const }] : []),
+    ...(l.salaryGaps > 0 ? [{ key: "reports.business.salary_gaps" as const, values: { n: l.salaryGaps } }] : []),
+  ];
+}
+
 /** Every label a business-report reader shows (en + es tú, pinned by tests/business-report-i18n.test.ts). No page
  * ships in 9a; these exist so 9b is born translated. Every refusal code and every labor state has its line. */
 export const BUSINESS_REPORT_I18N_KEYS = [
@@ -575,4 +588,6 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.amount_at_least", "reports.business.amount_unknown", "reports.business.hours_so_far", "reports.business.sales_covered_only",
   "reports.business.sales.not_captured", "reports.business.export.breakdown_partial", "reports.business.export.breakdown_none",
   "reports.business.large_checks_partial", "reports.business.people.hours_partial", "reports.business.export.hours_partial",
+  // Fix round 2: a dash with no earlier period names that.
+  "reports.business.compare.no_previous",
 ] as const;

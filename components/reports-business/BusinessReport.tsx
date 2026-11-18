@@ -16,7 +16,7 @@ import {
   breakdownCoverage, compareChange, laborHoursComplete, laborReasonKey, loadedReasonKey, salesAmountMissing,
   type CompareChange, type LaborFigures,
 } from "@/lib/business-report-shared";
-import { Amount, Card, Dash, LaborPct, Line, Money, SalesValue, bizCard, dateRange, hoursText, laborHoursText, pctText, salesText, tFor } from "./BusinessParts";
+import { Amount, Card, Dash, LaborPct, LoadedQualifiers, Line, Money, dashText, SalesValue, bizCard, dateRange, hoursText, laborHoursText, pctText, salesText, tFor } from "./BusinessParts";
 
 type Props = { dto: BusinessReportDto; language: Language };
 
@@ -36,20 +36,23 @@ function LaborLines({ labor, language }: { labor: LaborFigures; language: Langua
     <Line language={language} label={t("reports.business.detail.salaried")} value={labor.salariedCents === null ? null : <Money cents={labor.salariedCents} language={language} />} reason={loadedReason} />
     <Line language={language} label={t("reports.business.detail.burden")} value={labor.burdenCents === null ? null : <Money cents={labor.burdenCents} language={language} />} reason={loadedReason} />
     <Line language={language} label={t("reports.business.detail.fully_loaded")} value={labor.fullyLoadedCents === null ? null : <Money cents={labor.fullyLoadedCents} language={language} />} reason={loadedReason} />
-    {labor.fullyLoadedCents !== null && labor.burdenEstimated ? <p className="text-xs text-co-warning-text">{t("reports.business.burden_estimated")}</p> : null}
-    {labor.fullyLoadedCents !== null && labor.salaryEstimated ? <p className="text-xs text-co-text-muted">{t("reports.business.salary_estimated")}</p> : null}
-    {labor.salaryGaps > 0 ? <p className="text-xs text-co-warning-text">{t("reports.business.salary_gaps", { n: labor.salaryGaps })}</p> : null}
+    <LoadedQualifiers labor={labor} language={language} />
   </div>;
+}
+
+/** Why net sales for labor are not shown. */
+function netReason(labor: LaborFigures): TranslationKey | null {
+  return labor.denominator.state === "ok" ? null : `reports.business.labor.state.${labor.denominator.state}` as TranslationKey;
 }
 
 /** The collapsed line of a day / week: its figures in words, so the closed list still reads. */
 function summaryLine(sales: string | null, labor: LaborFigures, language: Language): string {
   const t = tFor(language);
-  const dash = "—";
+  // Fix round 2 (ITEM9B-r2 P3): a dash in the collapsed line names its reason too.
   return [
-    sales === null ? dash : t("reports.business.row.sales", { amount: sales }),
-    t("reports.business.row.labor_pct", { pct: pctText(labor.pct, language) ?? dash }),
-    t("reports.business.row.loaded_pct", { pct: pctText(labor.loadedPct, language) ?? dash }),
+    sales === null ? dashText("reports.business.sales.not_captured", language) : t("reports.business.row.sales", { amount: sales }),
+    t("reports.business.row.labor_pct", { pct: pctText(labor.pct, language) ?? dashText(laborReasonKey(labor.state), language) }),
+    t("reports.business.row.loaded_pct", { pct: pctText(labor.loadedPct, language) ?? dashText(loadedReasonKey(labor.loadedState), language) }),
   ].join(" · ");
 }
 
@@ -76,14 +79,15 @@ export function BusinessOverview({ dto, language }: Props) {
     {covered < dto.days.length ? <p className="mb-3 text-xs font-bold text-co-warning-text">{t("reports.business.coverage.days", { covered, expected: dto.days.length })}</p> : null}
     <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 lg:grid-cols-3">
       <Card label={t("reports.business.card.sales")} sub={t("reports.business.card.sales_hint")}><SalesValue sales={total.sales} missing={totalMissing} language={language} /></Card>
-      <Card label={t("reports.business.card.net")} sub={total.labor.denominator.state === "ok" ? t("reports.business.card.net_hint") : t(`reports.business.labor.state.${total.labor.denominator.state}`)}>
-        <Money cents={total.labor.denominator.cents} language={language} /></Card>
+      <Card label={t("reports.business.card.net")} sub={total.labor.denominator.state === "ok" ? t("reports.business.card.net_hint")
+        : total.labor.denominator.cents === null ? null : t(`reports.business.labor.state.${total.labor.denominator.state}`)}>
+        <Money cents={total.labor.denominator.cents} reason={netReason(total.labor)} language={language} /></Card>
       <Card label={t("reports.business.card.hours")} sub={total.labor.minutes !== null && !laborHoursComplete(total.labor.state) && laborReasonKey(total.labor.state) ? t(laborReasonKey(total.labor.state)!) : null}>
         {laborHoursText(total.labor, language) ?? <Dash reason={laborReasonKey(total.labor.state)} language={language} />}</Card>
       <Card label={t("reports.business.card.pure_hourly")}><LaborPct figures={total.labor} view="pure" target={total.target} language={language} /></Card>
-      <Card label={t("reports.business.card.fully_loaded")} sub={total.labor.fullyLoadedCents !== null && total.labor.burdenEstimated ? t("reports.business.burden_estimated") : null}>
+      <Card label={t("reports.business.card.fully_loaded")} sub={<LoadedQualifiers labor={total.labor} language={language} />}>
         <LaborPct figures={total.labor} view="loaded" target={total.loadedTarget} language={language} /></Card>
-      <Card label={t("reports.business.card.refunds")} sub={t("reports.business.card.refunds_hint")}><Money cents={total.sales.coverage === "missing" ? null : total.sales.refundCents} language={language} /></Card>
+      <Card label={t("reports.business.card.refunds")} sub={t("reports.business.card.refunds_hint")}><Money cents={total.sales.coverage === "missing" ? null : total.sales.refundCents} reason="reports.business.sales.not_captured" language={language} /></Card>
     </div>
     <p className="mt-3 text-xs text-co-text-muted">{t("reports.business.labor.denominator")}</p>
     <p className="text-xs text-co-text-muted">{t("reports.business.loaded.basis")}</p>
@@ -258,26 +262,32 @@ export function BusinessCompare({ dto, previous, language }: Props & { previous:
   const curMissing = missingOf(dto), prevMissing = previous ? missingOf(previous) : 0;
   const done = (x: BusinessReportDto["total"] | null, missing: number) => x !== null && x.sales.coverage === "complete" && missing === 0;
   const hoursDone = (x: BusinessReportDto["total"] | null) => x !== null && x.labor.minutes !== null && laborHoursComplete(x.labor.state);
-  const hoursCell = (x: BusinessReportDto["total"] | null) => (x === null ? <Dash language={language} />
+  const none = <Dash reason="reports.business.compare.no_previous" language={language} />;
+  // Fix round 2 (ITEM9B-r2 P2): a fully loaded % keeps its burden / salary / gap labels beside EACH period.
+  const loadedCell = (x: BusinessReportDto["total"] | null) => (x === null ? none : <span className="inline-flex flex-col">
+    <span>{pctText(x.labor.loadedPct, language) ?? <Dash reason={loadedReasonKey(x.labor.loadedState)} language={language} />}</span>
+    <LoadedQualifiers labor={x.labor} language={language} /></span>);
+  const hoursCell = (x: BusinessReportDto["total"] | null) => (x === null ? none
     : laborHoursText(x.labor, language) ?? <Dash reason={laborReasonKey(x.labor.state)} language={language} />);
   const rows: Array<{ key: string; label: string; a: ReactNode; b: ReactNode; change: CompareChange }> = [
     { key: "sales", label: t("reports.business.card.sales"), a: <SalesValue sales={cur.sales} missing={curMissing} language={language} />,
-      b: prev ? <SalesValue sales={prev.sales} missing={prevMissing} language={language} /> : <Dash language={language} />,
+      b: prev ? <SalesValue sales={prev.sales} missing={prevMissing} language={language} /> : none,
       change: compareChange({ value: cur.sales.totalCents, complete: done(cur, curMissing) }, { value: prev?.sales.totalCents ?? null, complete: done(prev, prevMissing) }, "money") },
-    { key: "net", label: t("reports.business.card.net"), a: <Money cents={cur.labor.denominator.cents} language={language} />, b: <Money cents={prev?.labor.denominator.cents ?? null} language={language} />,
+    { key: "net", label: t("reports.business.card.net"), a: <Money cents={cur.labor.denominator.cents} reason={netReason(cur.labor)} language={language} />,
+      b: prev ? <Money cents={prev.labor.denominator.cents} reason={netReason(prev.labor)} language={language} /> : none,
       change: compareChange({ value: cur.labor.denominator.cents, complete: true }, { value: prev?.labor.denominator.cents ?? null, complete: true }, "money") },
     { key: "hours", label: t("reports.business.card.hours"), a: hoursCell(cur), b: hoursCell(prev),
       change: compareChange({ value: cur.labor.minutes, complete: hoursDone(cur) }, { value: prev?.labor.minutes ?? null, complete: hoursDone(prev) }, "money") },
     { key: "pure", label: t("reports.business.card.pure_hourly"), a: pctText(cur.labor.pct, language) ?? <Dash reason={laborReasonKey(cur.labor.state)} language={language} />,
-      b: pctText(prev?.labor.pct ?? null, language) ?? <Dash reason={prev ? laborReasonKey(prev.labor.state) : null} language={language} />,
+      b: prev ? pctText(prev.labor.pct, language) ?? <Dash reason={laborReasonKey(prev.labor.state)} language={language} /> : none,
       change: compareChange({ value: cur.labor.pct, complete: true }, { value: prev?.labor.pct ?? null, complete: true }, "points") },
-    { key: "loaded", label: t("reports.business.card.fully_loaded"), a: pctText(cur.labor.loadedPct, language) ?? <Dash reason={loadedReasonKey(cur.labor.loadedState)} language={language} />,
-      b: pctText(prev?.labor.loadedPct ?? null, language) ?? <Dash reason={prev ? loadedReasonKey(prev.labor.loadedState) : null} language={language} />,
+    { key: "loaded", label: t("reports.business.card.fully_loaded"), a: loadedCell(cur),
+      b: loadedCell(prev),
       change: compareChange({ value: cur.labor.loadedPct, complete: true }, { value: prev?.labor.loadedPct ?? null, complete: true }, "points") },
   ];
   return <section className={bizCard} aria-label={t("reports.business.tab.compare")}>
     <p className="mb-3 text-sm text-co-text-muted">{t("reports.business.compare.periods", { current: dateRange(dto.range.from, dto.range.to, language),
-      previous: previous ? dateRange(previous.range.from, previous.range.to, language) : "—" })}</p>
+      previous: previous ? dateRange(previous.range.from, previous.range.to, language) : t("reports.business.compare.no_previous") })}</p>
     <ul className="flex flex-col gap-2">
       {rows.map((r) => <li key={r.key} className="rounded-lg border border-co-border bg-co-surface-inset p-3 text-sm">
         <div className="mb-1 text-xs font-bold tracking-wide text-co-text-muted">{r.label}</div>

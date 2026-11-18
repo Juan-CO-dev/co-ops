@@ -9270,5 +9270,6 @@
   "reports.business.large_checks_partial": "Las cuentas grandes se cuentan en {covered} de {expected} días; los demás todavía se están reconstruyendo o no tienen ventas capturadas.",
   "reports.business.export.breakdown_partial": "Los canales y meseros cubren {covered} de {expected} días de este periodo. Se dejan fuera {excluded} día(s) (todavía reconstruyéndose o sin ventas capturadas), así que estos totales no son el periodo completo.",
   "reports.business.export.breakdown_none": "Ningún día de este periodo está listo todavía para canales y meseros ({expected} días fuera). Estas listas están vacías, no en cero.",
-  "reports.business.compare.rule": "Un cambio solo se muestra cuando los dos periodos están completos. El % de mano de obra cambia en puntos."
+  "reports.business.compare.rule": "Un cambio solo se muestra cuando los dos periodos están completos. El % de mano de obra cambia en puntos.",
+  "reports.business.compare.no_previous": "No hay un periodo anterior para comparar."
 }

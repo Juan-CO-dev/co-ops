@@ -11,7 +11,7 @@ import { formatCents, formatDateLabel, formatQuantity } from "@/lib/i18n/format"
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import {
-  BUSINESS_RANGES, BUSINESS_REPORT_TABS, laborHoursComplete, laborReasonKey, loadedReasonKey,
+  BUSINESS_RANGES, BUSINESS_REPORT_TABS, laborHoursComplete, laborReasonKey, loadedQualifiers, loadedReasonKey,
   type BusinessRange, type BusinessReportTab, type LaborFigures,
 } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
@@ -24,12 +24,27 @@ export function tFor(language: Language) {
   return (key: TranslationKey, values?: Record<string, string | number>) => serverT(language, key, values);
 }
 
-/** A dash that says why (screen readers hear the reason; sighted readers see it beside the figure). */
+/** A dash that says why. Fix round 2 (ITEM9B-r2 P3): the reason is VISIBLE text under the dash (a small caption,
+ * read on a phone without a tap), never only an attribute; screen readers read the same caption. */
 export function Dash({ reason, language }: { reason?: TranslationKey | null; language: Language }) {
-  return <span aria-label={reason ? serverT(language, reason) : serverT(language, "reports.sales.amount_unavailable")}>—</span>;
+  return <span className="inline-flex flex-col">
+    <span aria-hidden="true">—</span>
+    <span className="text-xs font-normal text-co-text-muted">{serverT(language, reason ?? "reports.sales.amount_unavailable")}</span>
+  </span>;
 }
-export function Money({ cents, language }: { cents: number | null | undefined; language: Language }) {
-  return cents === null || cents === undefined ? <Dash language={language} /> : <>{formatCents(cents, language)}</>;
+/** "— (reason)" for a one-line text (a collapsed row's summary), so a dash in a string says why too. */
+export function dashText(reason: TranslationKey | null | undefined, language: Language): string {
+  return `— (${serverT(language, reason ?? "reports.sales.amount_unavailable")})`;
+}
+export function Money({ cents, reason, language }: { cents: number | null | undefined; reason?: TranslationKey | null; language: Language }) {
+  return cents === null || cents === undefined ? <Dash reason={reason} language={language} /> : <>{formatCents(cents, language)}</>;
+}
+/** Fix round 2 (ITEM9B-r2 P2): the qualifications of a fully loaded figure, wherever it is shown. */
+export function LoadedQualifiers({ labor, language }: { labor: LaborFigures; language: Language }) {
+  const qs = loadedQualifiers(labor);
+  if (qs.length === 0) return null;
+  return <span className="flex flex-col">{qs.map((q) => <span key={q.key}
+    className={`text-xs font-normal ${q.key === "reports.business.salary_estimated" ? "text-co-text-muted" : "text-co-warning-text"}`}>{serverT(language, q.key, q.values)}</span>)}</span>;
 }
 /** Fix round 1: an amount that holds checks of unknown amount is a FLOOR, never a plain total: "at least $20.00
  * + 1 unknown"; when every check is unknown (no known cents) it is "amount unknown (2 checks)", never $0.00. */
@@ -85,7 +100,6 @@ export function LaborPct({ figures, view, target, language }: {
   return <span className="inline-flex flex-col">
     <span className={`font-bold ${TONE[tone]}`}>{pct === null ? <Dash reason={reason} language={language} /> : pctText(pct, language)}</span>
     <span className="text-xs text-co-text-muted">{targetLine}</span>
-    {pct === null && reason ? <span className="text-xs text-co-text-muted">{t(reason)}</span> : null}
   </span>;
 }
 

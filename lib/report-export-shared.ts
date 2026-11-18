@@ -196,7 +196,7 @@ const BUSINESS_EXPORT_COLUMNS_OVERVIEW: readonly ExportColumn[] = [
   col("refunds_captured_so_far", "money"), col("sales_before_refunds", "money"), col("amount_missing", "int"), col("net_sales_for_labor", "money"), col("net_sales_state"),
   col("labor_hours", "number"), col("pure_hourly_cost", "money"), col("overtime_premium", "money"), col("overtime_hours", "number"),
   col("pure_hourly_pct", "number"), col("pure_hourly_target_pct", "number"), col("labor_state"),
-  col("salaried_cost", "money"), col("burden_cost", "money"), col("burden_estimated", "bool"), col("fully_loaded_cost", "money"),
+  col("salaried_cost", "money"), col("burden_cost", "money"), col("burden_estimated", "bool"), col("salary_estimated", "bool"), col("salary_gaps", "int"), col("fully_loaded_cost", "money"),
   col("fully_loaded_pct", "number"), col("fully_loaded_target_pct", "number"), col("fully_loaded_state"),
   col("large_checks", "int"), col("large_checks_amount", "money"), col("breakdown_state"), col("rushes", "int"), col("currency", "currency"),
 ];
@@ -495,7 +495,9 @@ function businessLaborCells(l: LaborFigures, target: number | "target_varies", l
     net_sales_for_labor: l.denominator.cents, net_sales_state: l.denominator.state, labor_hours: hoursOf(l.minutes),
     pure_hourly_cost: l.pureHourlyCents, overtime_premium: l.otPremiumCents, overtime_hours: hoursOf(l.otMinutes), pure_hourly_pct: l.pct,
     pure_hourly_target_pct: target, labor_state: l.state, salaried_cost: l.salariedCents, burden_cost: l.burdenCents,
-    burden_estimated: l.fullyLoadedCents === null ? null : l.burdenEstimated, fully_loaded_cost: l.fullyLoadedCents, fully_loaded_pct: l.loadedPct,
+    burden_estimated: l.fullyLoadedCents === null ? null : l.burdenEstimated,
+    // Fix round 2 (ITEM9B-r2 P2): the salary's provenance travels with the figure; gaps are named whether it shows or not.
+    salary_estimated: l.fullyLoadedCents === null ? null : l.salaryEstimated, salary_gaps: l.salaryGaps, fully_loaded_cost: l.fullyLoadedCents, fully_loaded_pct: l.loadedPct,
     fully_loaded_target_pct: loadedTarget, fully_loaded_state: l.loadedState,
   };
 }
