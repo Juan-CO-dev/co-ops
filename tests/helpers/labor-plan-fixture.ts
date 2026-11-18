@@ -12,9 +12,12 @@ import { buildLaborWeek, laborWeekSourceFromJson } from "@/lib/facts/labor-week-
 import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
 import { M0338, M0339, M0340, freshLaborParents } from "./fact-0338-parents";
 
-export const A = "00000000-0000-4000-8000-0000000000aa", B = "00000000-0000-4000-8000-0000000000bb";
-export const MGR = "00000000-0000-4000-8000-0000000000f1", ALICE = "00000000-0000-4000-8000-0000000000f2";
-export const BOB = "00000000-0000-4000-8000-0000000000f3", GMU = "00000000-0000-4000-8000-0000000000f4";
+import { A as SHOP_A, B as SHOP_B, GM, MOO, STAFF } from "../fixtures/schedule/lib-store";
+
+// The ids are the in-memory schedule store's (tests/fixtures/schedule/lib-store), so the board's end-to-end test
+// reads ONE shop from both sides: the schedule from the store, the labor facts from this database.
+export const A = SHOP_A, B = SHOP_B;
+export const MGR = MOO, ALICE = STAFF[0]!, BOB = STAFF[1]!, GMU = GM;
 export const W = "2026-10-04", W2 = "2026-10-11";
 /** A payroll week nothing has built or could build yet (a Sunday far in the future). */
 export const FUTURE_W = "2099-01-04";
