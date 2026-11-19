@@ -142,6 +142,22 @@ Before 0346 the card reads "The burden setting is not installed yet." and a save
 
 Rollback: unset `SCHEDULE_LABOR_VIEWS`. Keep 0346's functions while a follow row or a structure with `hourlyTargetPct` exists.
 
+### 1f. The board's screens (board two labor views PR 3; no migration)
+
+PR 3 adds no migration and no read. It needs 0345 (PR 1) and 0346 (PR 2) applied, and the labor facts current.
+
+Turn-on order (each step on Juan's word):
+
+1. 0345 and 0346 are on prod (section 1d, 1e) and PR 3 is deployed. Nothing changes for anyone yet.
+2. Before the flip, the checks of section 1d: `fact_labor_weeks_stale(1000, 'labor-v3')` returns 0 and the payroll allocation check is clean.
+3. Tell the GMs: with the switch on, the board's "Labor % by hour" row becomes "Hours on the clock" for a GM (labor $ and % per hour are for the MoO and up). Day and week totals stay, now in two views.
+4. Set `SCHEDULE_LABOR_VIEWS=1` (with `FACT_LAYER=1` and `FACT_LAYER_LABOR=1`) in Vercel, redeploy.
+5. Open `/schedule` as a GM and as a MoO at each shop, in English and Spanish, at 375 px: the week strip ("Labor this week"), the day tabs (fully loaded first), the day card, the labor target card's allowance lines, the hours row.
+
+What a manager sees until the data is entered: fully loaded reads "—" with "Salaries aren't set" (or "Salaries incomplete") until the salaries or the shop's salaried estimate exist; pure hourly keeps its number. The current payroll week reads "Actuals are updating" from midnight ET until the next builder pass.
+
+To turn it off: unset `SCHEDULE_LABOR_VIEWS` and redeploy. The board is byte for byte what it was (its own strip money, tab % and labor % by hour).
+
 ## 2. What a pass does
 
 - The diff (`fact_labor_weeks_stale`) lists every payroll week (Sunday 00:00 ET calendar midnight; both shops built together, overtime counted per shop) from **2026-07-19** through the week holding yesterday whose fingerprint differs. It changes when a punch or Toast entry in the week changes (a moved punch makes both weeks stale), a link changes, an involved person's wage observation changes, the 7shifts overtime settings change, a shop-day gains ledger evidence or leaves its 36 h settle window, or another day of the week closes.
