@@ -6,7 +6,7 @@ import { materializeCapturedDepletion } from "@/lib/toast/depletion";
 import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
 import { refreshKnownEzcaterOrders } from "@/lib/ezcater/refresh";
 import { materializeEzcaterReconciliation } from "@/lib/ezcater/reconcile";
-import { runHouseCateringToast, type HouseReconcileResult } from "@/lib/catering/catering-toast-reconcile";
+import { coverHouseNoteEvidence, runHouseCateringToast, type HouseReconcileResult } from "@/lib/catering/catering-toast-reconcile";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { runParShadowForLocation } from "@/lib/dynamic-pars";
 import { captureBudget, captureErrorCode } from "@/lib/toast/capture-runner";
@@ -107,13 +107,17 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
   finally { heartbeatBudget.close(); }
   // Item 21 PR 4: the HOUSE reconciler, after the ezCater pass and as its own requests (never inside the ezCater
   // reconciler's transaction). Off unless a shop's settings say so; fail-soft, never part of this run's health, and
-  // only with a minute to spare. The nightly pass also looks for ring codes typed as special requests (the one note
-  // lookup, runbook contract #3).
+  // only with a minute to spare. First the one note lookup examines the captures of the window nobody examined yet
+  // (runbook contract #3); a check it did not reach stays pending for both sources. EACH STEP HAS ITS OWN DEADLINE
+  // inside this run's: every request carries its signal, so neither can hold the route (review PORTAL4-r1).
   {
-    const left = deadlineAt - Date.now() - 60_000;
-    if (left > 5_000) {
-      cateringToast = await runHouseCateringToast({ from: etYmdMinusDays(businessDate, 7), to: etYmdMinusDays(businessDate, -2), today: todayEt,
-        signal: opts.signal, noteLookupDeadlineAt: Date.now() + Math.min(30_000, left) });
+    const from = etYmdMinusDays(businessDate, 7), to = etYmdMinusDays(businessDate, -2);
+    const left = () => deadlineAt - Date.now() - 60_000;
+    if (left() > 5_000) {
+      await coverHouseNoteEvidence({ from: etYmdMinusDays(from, 1), to: todayEt, maxDays: 12, deadlineAt: Date.now() + Math.min(30_000, left()), signal: opts.signal });
+    }
+    if (left() > 5_000) {
+      cateringToast = await runHouseCateringToast({ from, to, today: todayEt, deadlineAt: Date.now() + Math.min(20_000, left()), signal: opts.signal });
     }
   }
   const perLocationFailures = results.filter((r) => !r.ok).length;

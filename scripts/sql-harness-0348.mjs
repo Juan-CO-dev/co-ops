@@ -26,6 +26,12 @@
  *   K. ring codes for booked leads (ensure_catering_ring_codes): only with ring_code_enabled, only house leads with an
  *      event on or after the date, never a Toast-origin or no-ring lead, idempotent;
  *   L. a transfer (the REAL 0225 writer) ends an automatic link in its own transaction; the old shop never relinks it.
+ *   M. EVIDENCE PENDING (review PORTAL4-r1): neither source admits a check whose current capture the one note lookup
+ *      has not examined. Both placements of the two codes (house code as a name + ezCater number as a special request,
+ *      and the reverse) in both arrival orders end the same way: nothing links before the lookup, and once it has
+ *      recorded the note-typed code the check is dual code and neither links. A lookup that finds nothing lets the
+ *      one source link; a recapture is pending again but never releases an incumbent; an order outside the lookup's
+ *      scope never waits; a shop that is off, or has no ring code, never holds ezCater back.
  * PGlite has ONE backend: lock waits are not provable here (the sim two-session proof covers them).
  */
 import { pathToFileURL } from 'node:url';
@@ -55,15 +61,26 @@ const settings = (db, s) => db.query(`insert into catering_toast_settings(locati
 const codes = db => db.exec(`update catering_pipeline set ring_code = 'CO-ACD34' where id = '${HA}' and ring_code is null;
   update catering_pipeline set ring_code = 'CO-ACD36' where id = '${HB}' and ring_code is null;
   update catering_pipeline set ring_code = 'CO-ACD37' where id = '${HC}' and ring_code is null`);
-const record = async (db, rows) => (await one(db, `select record_catering_toast_note_codes($1) n`, [JSON.stringify(rows)])).n;
+/** The one note lookup's write: `items` = [[order, snapshot, shop?]] examined captures, `found` = the codes on them. */
+const look = async (db, items, found = []) => (await one(db, `select record_catering_toast_note_lookup($1, $2) r`,
+  [JSON.stringify(items.map(([order, snapshot, shop = SHOP]) => ({ location_id: shop, order_guid: order, toast_snapshot_id: snapshot }))), JSON.stringify(found)])).r;
+/** A code found on an examined capture: the capture is examined in the same call. Returns the number of codes stored. */
+const record = async (db, rows) => Array.isArray(rows)
+  ? (await look(db, rows.map(r => [r.order_guid, r.toast_snapshot_id, r.location_id]), rows)).codes
+  : (await one(db, `select record_catering_toast_note_lookup('[]', $1) r`, [JSON.stringify(rows)])).r.codes;
+/** A ring whose capture the note lookup has examined (nothing found): the state every automatic link needs. */
+const ringC = async (db, snapshot, args) => { await ringEz(db, snapshot, args); await look(db, [[args.order, snapshot]]); };
 const note = (order, check_, snapshot, code, shop = SHOP) => ({ location_id: shop, order_guid: order, check_guid: check_, toast_snapshot_id: snapshot, code });
 const audits = async db => Number((await one(db, `select count(*) n from audit_log where action = 'catering.toast_reconciled'`)).n);
-const fresh = async (s) => { const db = await setup({ with0347: true }); await db.exec(m0348); if (s) await settings(db, s); return db; };
+/** The capture reads sales_channel_map.reviewed_at (the note lookup's scope); the 0344 stub predates it. */
+const REVIEWED = `alter table sales_channel_map add column reviewed_at timestamptz default now()`;
+const fresh = async (s) => { const db = await setup({ with0347: true }); await db.exec(REVIEWED); await db.exec(m0348); if (s) await settings(db, s); return db; };
 
 async function main() {
   // A. Equivalence with 0347 while no note code is recorded: both planners, with house evidence present.
   {
     const a = await setup({ with0347: true }), b = await fresh();
+    await a.exec(REVIEWED);
     for (const db of [a, b]) {
       await settings(db, {});
       await codes(db);
@@ -73,6 +90,7 @@ async function main() {
       await ringEz(db, snap(4), { order: 'Z4', date: '2026-11-20', checks: [{ guid: 'Z4c', total: 20000, names: ['CO-ACD34'] }] });
       await ringEz(db, snap(5), { order: 'Z5', date: '2026-11-20', checks: [{ guid: 'Z5c', total: 20000, names: ['ABC-123', 'CO-ACD34'] }] });
       await ringEz(db, snap(6), { order: 'Z6', date: '2026-11-22', checks: [{ guid: 'Z6c', total: 20000 }] });
+      if (db === b) await look(b, [['Z1', snap(1)], ['Z2', snap(2)], ['Z3', snap(3)], ['Z4', snap(4)], ['Z5', snap(5)], ['Z6', snap(6)]]);
       await decide(db, CM, HB, 'link', { loc: SHOP, order: 'Z6', check: 'Z6c' });
     }
     const pa = await planEz(a), pb = await planEz(b);
@@ -85,6 +103,20 @@ async function main() {
     check(JSON.stringify(await ezLinks(a)) === JSON.stringify(await ezLinks(b)) && (await ezLinks(b)).length >= 3, 'ezCater links identical with and without 0348');
     const one0347 = async (db, c) => (await one(db, `select catering_toast_check_house_code($1, $2, $3)::text h`, [SHOP, c[0], c[1]])).h;
     for (const c of [['Z4', 'Z4c'], ['Z5', 'Z5c'], ['Z1', 'Z1c']]) check(await one0347(a, c) === await one0347(b, c), `the dual-code test answers as 0347 did on ${c[1]}`);
+    // A shop that is OFF (no settings row) never waits for the note lookup, ring codes or not: 0347's rows exactly.
+    {
+      const x = await setup({ with0347: true }), y = await fresh();
+      for (const db of [x, y]) {
+        await codes(db);
+        await ringEz(db, snap(1), { order: 'Z1', date: '2026-11-20', checks: [{ guid: 'Z1c', total: 50000, names: ['ABC-123 party'] }] });
+        await ringEz(db, snap(2), { order: 'Z2', date: '2026-11-22', option: 'do-ez', checks: [{ guid: 'Z2a', total: 20000 }, { guid: 'Z2b', total: 30000 }] });
+      }
+      const px = await planEz(x), py = await planEz(y);
+      check(px.length === 3 && JSON.stringify(px) === JSON.stringify(py), `a shop that is off: the ezCater planner is 0347's with no lookup at all (${px.length} rows)`);
+      // ... and so is the publisher guard: an unexamined capture never holds ezCater back at a shop that is off.
+      for (const db of [x, y]) await publish(db, EO1, { links: [{ toast_snapshot_id: snap(1), order_guid: 'Z1', check_guid: 'Z1c', selection_guid: 'Z1c-s0', business_date: '2026-11-20' }], maps: [], reviews: [], shadow: [] });
+      check((await ezLinks(y, `and check_guid = 'Z1c'`)).length === 1 && JSON.stringify(await ezLinks(x)) === JSON.stringify(await ezLinks(y)), 'a shop that is off: the publisher links as under 0347, with no lookup');
+    }
     // The shop is on with NO automatic switch: nothing is written.
     check((await run(b)).skipped === 'off' && (await houseLinks(b)).length === 1, 'a shop with no automatic switch writes nothing');
   }
@@ -92,15 +124,16 @@ async function main() {
   // B. Ceiling and pins.
   {
     const db = await fresh();
-    check((await one(db, `select count(*)::int n from pg_policies where tablename = 'catering_toast_note_codes'`)).n === 4, 'four deny-all policies on the note codes');
-    const priv = await one(db, `select has_table_privilege('service_role','public.catering_toast_note_codes','select') s,
-      has_table_privilege('service_role','public.catering_toast_note_codes','insert') i,
+    check((await one(db, `select count(*)::int n from pg_policies where tablename in ('catering_toast_note_codes', 'catering_toast_note_lookups')`)).n === 8, 'four deny-all policies on the note codes and on the lookup coverage');
+    const priv = await one(db, `select has_table_privilege('service_role','public.catering_toast_note_codes','select') and has_table_privilege('service_role','public.catering_toast_note_lookups','select') s,
+      has_table_privilege('service_role','public.catering_toast_note_codes','insert') or has_table_privilege('service_role','public.catering_toast_note_lookups','insert')
+        or has_table_privilege('service_role','public.catering_toast_note_lookups','update') or has_table_privilege('service_role','public.catering_toast_note_lookups','delete') i,
       has_function_privilege('authenticated','public.reconcile_catering_toast(uuid,date,date)','execute') a,
-      has_function_privilege('anon','public.record_catering_toast_note_codes(jsonb)','execute') n,
+      has_function_privilege('anon','public.record_catering_toast_note_lookup(jsonb,jsonb)','execute') or has_function_privilege('authenticated','public.catering_toast_uncovered_orders(uuid,date,date)','execute') n,
       has_function_privilege('service_role','public.reconcile_catering_toast(uuid,date,date)','execute') x,
-      has_function_privilege('service_role','public.record_catering_toast_note_codes(jsonb)','execute') y,
+      has_function_privilege('service_role','public.record_catering_toast_note_lookup(jsonb,jsonb)','execute') and has_function_privilege('service_role','public.catering_toast_uncovered_orders(uuid,date,date)','execute') y,
       has_function_privilege('service_role','public.ensure_catering_ring_codes(uuid,date)','execute') z`);
-    check(priv.s && !priv.i && !priv.a && !priv.n && priv.x && priv.y && priv.z, 'service_role SELECT + the three RPCs; users nothing');
+    check(priv.s && !priv.i && !priv.a && !priv.n && priv.x && priv.y && priv.z, 'service_role SELECT + the four RPCs; users nothing');
     const writers = await all(db, `select p.proname, p.prosrc from pg_proc p where p.prosrc ~* 'insert into public\\.(catering_toast_links|ezcater_toast_links)' order by 1`);
     for (const w of writers) {
       const lock = w.prosrc.indexOf("pg_advisory_xact_lock(hashtext('ezcater-toast-reconcile'))");
@@ -115,13 +148,18 @@ async function main() {
     check(src.indexOf('for no key update') > src.indexOf('pg_advisory_xact_lock') && src.indexOf('insert into public.catering_toast_links') > src.indexOf('for no key update'),
       'lock order: the advisory lock, then the leads, then link rows');
     check((await one(db, `select catering_toast_link_ready() r`)).r === true, '0347\'s link step is still ready');
+    const guard = (await one(db, `select prosrc from pg_proc where proname = 'ezcater_toast_links_house_guard'`)).prosrc;
+    check(!/raise\s+exception/i.test(guard) && /exception when others then\n\s+return new;/.test(guard) && guard.includes('catering_toast_ezcater_admission_pending'),
+      'the re-emitted publisher guard still never raises, and asks the evidence-pending rule');
+    const noteWriters = await all(db, `select proname from pg_proc where prosrc ~* 'insert into public\\.catering_toast_note_(codes|lookups)' order by 1`);
+    check(noteWriters.map(w => w.proname).join() === 'record_catering_toast_note_lookup', 'ONE writer of the note codes and the coverage');
   }
 
   // C. OFF by default.
   {
     const db = await fresh();
     await codes(db);
-    await ringEz(db, snap(11), { order: 'R1', date: '2026-11-20', checks: [{ guid: 'R1c', total: 20000, names: ['CO-ACD34 party'] }] });
+    await ringC(db, snap(11), { order: 'R1', date: '2026-11-20', checks: [{ guid: 'R1c', total: 20000, names: ['CO-ACD34 party'] }] });
     check((await run(db)).skipped === 'off', 'no settings row = off');
     await settings(db, { enabled: false });
     check((await run(db)).skipped === 'off', 'a shop that is off = off');
@@ -138,8 +176,8 @@ async function main() {
   {
     const db = await fresh({ auto: true, from: '2026-11-21' });
     await codes(db);
-    await ringEz(db, snap(11), { order: 'R1', date: '2026-11-20', checks: [{ guid: 'R1c', total: 20000, names: ['CO-ACD34 party'] }] });
-    await ringEz(db, snap(12), { order: 'R2', date: '2026-11-22', checks: [{ guid: 'R2c', total: 20000, names: ['co-acd36'] }] });
+    await ringC(db, snap(11), { order: 'R1', date: '2026-11-20', checks: [{ guid: 'R1c', total: 20000, names: ['CO-ACD34 party'] }] });
+    await ringC(db, snap(12), { order: 'R2', date: '2026-11-22', checks: [{ guid: 'R2c', total: 20000, names: ['co-acd36'] }] });
     let r = await run(db);
     check(r.added === 1 && r.ring_code === 1 && r.toast_origin === 0 && r.skipped.before_start_date === 1, `D/E: one link, one before the start date (${JSON.stringify(r)})`);
     const hb = await current(db, HB);
@@ -167,7 +205,7 @@ async function main() {
     check((await current(db, HB)).length === 0, 'F: a person unlinked the automatic link');
     r = await run(db); await run(db);
     check(r.added === 0 && r.skipped.blocked === 1 && (await current(db, HB)).length === 0, 'F: two runs later it is still unlinked (blocked)');
-    await ringEz(db, snap(13), { order: 'R2', date: '2026-11-22', checks: [{ guid: 'R2c', total: 21000, names: ['CO-ACD36'] }] });
+    await ringC(db, snap(13), { order: 'R2', date: '2026-11-22', checks: [{ guid: 'R2c', total: 21000, names: ['CO-ACD36'] }] });
     r = await run(db);
     check(r.added === 0 && (await current(db, HB)).length === 0, 'F: a recapture does not dodge the tombstone');
     await decide(db, CM, HB, 'link', { loc: SHOP, order: 'R2', check: 'R2c', expected: await head(db, HB, 'R2', 'R2c') });
@@ -180,7 +218,7 @@ async function main() {
     check(Number((await one(db, `select count(*) n from catering_toast_links where is_current = false and retired_reason = 'unlinked'`)).n) === 2, 'F: both unlinks are on their rows');
 
     // G. No Toast ring expected.
-    await ringEz(db, snap(14), { order: 'R3', date: '2026-11-24', checks: [{ guid: 'R3c', total: 9000, names: ['CO-ACD37'] }] });
+    await ringC(db, snap(14), { order: 'R3', date: '2026-11-24', checks: [{ guid: 'R3c', total: 9000, names: ['CO-ACD37'] }] });
     await decide(db, CM, HC, 'no_ring_expected', { reason: 'comped' });
     r = await run(db); await run(db);
     check(r.skipped.no_ring_expected === 1 && (await current(db, HC)).length === 0, 'G: no link while the order is marked no Toast ring expected');
@@ -194,16 +232,16 @@ async function main() {
     const db = await fresh({ auto: true, from: '2026-11-01' });
     await codes(db);
     // ezCater holds X1c (EO3's number), then the check gains HC's code.
-    await ringEz(db, snap(21), { order: 'X1', date: '2026-11-24', checks: [{ guid: 'X1c', total: 9000, names: ['XYZ-789'] }] });
+    await ringC(db, snap(21), { order: 'X1', date: '2026-11-24', checks: [{ guid: 'X1c', total: 9000, names: ['XYZ-789'] }] });
     await reconcile(db);
     check((await ezLinks(db, `and check_guid = 'X1c'`)).length === 1, 'H: ezCater holds X1c');
-    await ringEz(db, snap(22), { order: 'X1', date: '2026-11-24', checks: [{ guid: 'X1c', total: 9000, names: ['XYZ-789', 'CO-ACD37'] }] });
+    await ringC(db, snap(22), { order: 'X1', date: '2026-11-24', checks: [{ guid: 'X1c', total: 9000, names: ['XYZ-789', 'CO-ACD37'] }] });
     await reconcile(db);
     let r = await run(db);
     check(r.added === 0 && r.skipped.owned === 1 && (await ezLinks(db, `and check_guid = 'X1c'`)).length === 1 && (await current(db, HC)).length === 0,
       'H: the reconciler never links over ezCater, and ezCater keeps its links');
     // An unowned dual-code check: neither source links (plan r3 #4), in either arrival order.
-    await ringEz(db, snap(23), { order: 'D1', date: '2026-11-20', checks: [{ guid: 'D1c', total: 50000, names: ['ABC-123', 'CO-ACD34'] }] });
+    await ringC(db, snap(23), { order: 'D1', date: '2026-11-20', checks: [{ guid: 'D1c', total: 50000, names: ['ABC-123', 'CO-ACD34'] }] });
     r = await run(db);
     check(r.skipped.dual_code === 1 && (await current(db, HA)).length === 0, 'H: house first: the dual-code check is not linked');
     await publish(db, EO1, { links: [{ toast_snapshot_id: snap(23), order_guid: 'D1', check_guid: 'D1c', selection_guid: 'D1c-s0', business_date: '2026-11-20' }], maps: [], reviews: [], shadow: [] });
@@ -213,7 +251,7 @@ async function main() {
       'H: then ezCater: still neither links; a person decides');
     check((await one(db, `select kind from catering_toast_conflicts where check_guid = 'D1c'`))?.kind === 'dual_code', 'H: the conflict is recorded for the ezCater side');
     // Two ring codes on one check.
-    await ringEz(db, snap(24), { order: 'T1', date: '2026-11-21', checks: [{ guid: 'T1c', total: 20000, names: ['CO-ACD34', 'CO-ACD36'] }] });
+    await ringC(db, snap(24), { order: 'T1', date: '2026-11-21', checks: [{ guid: 'T1c', total: 20000, names: ['CO-ACD34', 'CO-ACD36'] }] });
     r = await run(db);
     check(r.skipped.two_house_orders === 2 && (await houseLinks(db, `where check_guid = 'T1c'`)).length === 0, 'H: two house orders on one check: neither links');
     // A person settles it: not a match for HB, then the code links HA.
@@ -224,7 +262,7 @@ async function main() {
     const far = await fresh({ auto: true, origin: true, from: '2026-11-01' });
     await far.exec(`insert into catering_pipeline(id, location_id, event_date, stage, lead_source, estimated_revenue_cents) values ('${HT}', '${SHOP}', '2026-11-10', 'confirmed', 'toast_catering', 15000);
       insert into toast_catering_orders(location_id, order_guid, business_date, lead_id) values ('${SHOP}', 'F1', '2026-11-25', '${HT}')`);
-    await ringEz(far, snap(25), { order: 'F1', date: '2026-11-25', checks: [{ guid: 'F1c', total: 15000 }] });
+    await ringC(far, snap(25), { order: 'F1', date: '2026-11-25', checks: [{ guid: 'F1c', total: 15000 }] });
     r = await run(far);
     check(r.added === 0 && r.skipped.out_of_window === 1, 'H: a check outside the day-before to a-week-after window is never linked automatically');
     await refuses(far, () => decide(far, CM, HT, 'link', { loc: SHOP, order: 'F1', check: 'F1c' }), 'check_out_of_window', 'H: the same window the human Link refuses');
@@ -239,10 +277,10 @@ async function main() {
       update catering_pipeline set ring_code = 'CO-ACD39' where id = '${HW}';
       insert into toast_catering_orders(location_id, order_guid, business_date, lead_id) values
         ('${SHOP}', 'TO1', '2026-11-23', '${HT}'), ('${SHOP}', 'TO2', '2026-11-23', '${HU}'), ('${SHOP}', 'TO0', '2026-11-05', '${HV}'), ('${SHOP}', 'TO3', '2026-11-23', '${HW}')`);
-    await ringEz(db, snap(31), { order: 'TO1', date: '2026-11-23', checks: [{ guid: 'TO1a', total: 10000 }, { guid: 'TO1b', total: 5000 }, { guid: 'TO1v', total: 900, voided: true }] });
-    await ringEz(db, snap(32), { order: 'TO2', date: '2026-11-23', option: 'do-ez', checks: [{ guid: 'TO2c', total: 8000 }] });
-    await ringEz(db, snap(33), { order: 'TO0', date: '2026-11-05', checks: [{ guid: 'TO0c', total: 7000 }] });
-    await ringEz(db, snap(34), { order: 'TO3', date: '2026-11-23', checks: [{ guid: 'TO3c', total: 6000, names: ['CO-ACD39'] }] });
+    await ringC(db, snap(31), { order: 'TO1', date: '2026-11-23', checks: [{ guid: 'TO1a', total: 10000 }, { guid: 'TO1b', total: 5000 }, { guid: 'TO1v', total: 900, voided: true }] });
+    await ringC(db, snap(32), { order: 'TO2', date: '2026-11-23', option: 'do-ez', checks: [{ guid: 'TO2c', total: 8000 }] });
+    await ringC(db, snap(33), { order: 'TO0', date: '2026-11-05', checks: [{ guid: 'TO0c', total: 7000 }] });
+    await ringC(db, snap(34), { order: 'TO3', date: '2026-11-23', checks: [{ guid: 'TO3c', total: 6000, names: ['CO-ACD39'] }] });
     let r = await run(db);
     const hw = await current(db, HW);
     check(r.toast_origin === 0 && r.ring_code === 1 && hw.length === 1 && hw[0].evidence === 'ring_code',
@@ -267,9 +305,14 @@ async function main() {
   {
     const db = await fresh({ auto: true, from: '2026-11-01' });
     await codes(db);
-    await ringEz(db, snap(41), { order: 'N1', date: '2026-11-22', checks: [{ guid: 'N1c', total: 20000, names: ['Open Item'] }] });
+    await ringC(db, snap(41), { order: 'N1', date: '2026-11-22', checks: [{ guid: 'N1c', total: 20000, names: ['Open Item'] }] });
     await refuses(db, () => record(db, [note('N1', 'N1c', snap(41), 'please no onions')]), 'catering_toast_note_codes_invalid', 'J: note TEXT is refused by the writer');
     await refuses(db, () => record(db, { location_id: SHOP }), 'catering_toast_note_codes_invalid', 'J: a non-array is refused');
+    await refuses(db, () => look(db, [['N1', snap(41)]], [{ ...note('N1', 'N1c', snap(41), 'CO-ACD36'), note: 'allergy: nuts' }]), 'catering_toast_note_codes_invalid', 'J: no extra key rides in with a code');
+    await refuses(db, () => one(db, `select record_catering_toast_note_lookup($1, '[]')`, [JSON.stringify([{ location_id: SHOP, order_guid: 'N1', toast_snapshot_id: snap(41), text: 'x' }])]),
+      'catering_toast_note_lookup_invalid', 'J: no extra key rides in with an examined capture');
+    check((await look(db, [], [note('N1', 'N1c', snap(41), 'CO-ACD36')])).codes === 0, 'J: a code whose capture this call did not examine is dropped');
+    check((await look(db, [['N1', id('5999', 1)]])).examined === 0, 'J: coverage is stored only for the current capture');
     check(await record(db, [note('N1', 'N1c', snap(41), 'QQQ-999')]) === 0, 'J: a code that is no known code is dropped');
     check(await record(db, [note('N1', 'N1c', id('5999', 1), 'CO-ACD36')]) === 0, 'J: a code for a capture that is not the current one is dropped');
     check(await record(db, [note('N1', 'NOPE', snap(41), 'CO-ACD36')]) === 0, 'J: a code for a check the capture does not have is dropped');
@@ -285,7 +328,7 @@ async function main() {
     check((await ezLinks(db, `and check_guid = 'N1c'`)).length === 0 && (await one(db, `select kind, house_lead_id::text h from catering_toast_conflicts where check_guid = 'N1c'`))?.h === HB,
       'J: the unchanged publisher skips the check (dual_code), naming the house lead');
     // The ezCater planner: an ezCater-option check with a note-typed ring code is not batch-claimed.
-    await ringEz(db, snap(42), { order: 'N2', date: '2026-11-22', option: 'do-ez', checks: [{ guid: 'N2c', total: 50000 }] });
+    await ringC(db, snap(42), { order: 'N2', date: '2026-11-22', option: 'do-ez', checks: [{ guid: 'N2c', total: 50000 }] });
     check((await planEz(db)).some(p => p.check_guid === 'N2c' && p.evidence === 'daily_batch'), 'J: without a note code the batch plans the check');
     await record(db, [note('N2', 'N2c', snap(42), 'CO-ACD36')]);
     check((await planEz(db)).every(p => p.check_guid !== 'N2c'), 'J: with the recorded ring code the ezCater planner leaves it (planner and guard agree)');
@@ -295,13 +338,15 @@ async function main() {
     const hb = await current(db, HB);
     check(r.ring_code === 2 && hb.map(l => l.check_guid).join() === 'N1c,N2c' && hb.every(l => l.evidence === 'ring_code'), `J: the house reconciler links by the recorded note code (${JSON.stringify(r)})`);
     // Only the CURRENT capture counts.
-    await ringEz(db, snap(43), { order: 'N3', date: '2026-11-24', checks: [{ guid: 'N3c', total: 9000, names: ['Open Item'] }] });
+    await ringC(db, snap(43), { order: 'N3', date: '2026-11-24', checks: [{ guid: 'N3c', total: 9000, names: ['Open Item'] }] });
     await record(db, [note('N3', 'N3c', snap(43), 'CO-ACD37')]);
-    await ringEz(db, snap(44), { order: 'N3', date: '2026-11-24', checks: [{ guid: 'N3c', total: 9000, names: ['Open Item'] }] });
+    await ringC(db, snap(44), { order: 'N3', date: '2026-11-24', checks: [{ guid: 'N3c', total: 9000, names: ['Open Item'] }] });
     r = await run(db);
     check(r.added === 0 && (await current(db, HC)).length === 0 && (await one(db, `select catering_toast_check_house_code($1, 'N3', 'N3c') h`, [SHOP])).h === null,
       'J: after a recapture the recorded code no longer counts (until the lookup finds it again)');
     check(await record(db, [note('N3', 'N3c', snap(43), 'CO-ACD37')]) === 0, 'J: a lookup fenced to the OLD capture records nothing');
+    check((await look(db, [['N3', snap(43)]])).examined === 0 && (await one(db, `select toast_snapshot_id::text s from catering_toast_note_lookups where order_guid = 'N3'`)).s === snap(44),
+      'J: nor does it move the coverage off the current capture');
     check(await record(db, [note('N3', 'N3c', snap(44), 'CO-ACD37')]) === 1 && Number((await one(db, `select count(*) n from catering_toast_note_codes where order_guid = 'N3'`)).n) === 1,
       'J: found again on the new capture: the same row, re-fenced');
     r = await run(db);
@@ -309,7 +354,7 @@ async function main() {
     // A recorded ezCater NUMBER makes the check dual code for the house side: neither links.
     const dual = await fresh({ auto: true, from: '2026-11-01' });
     await codes(dual);
-    await ringEz(dual, snap(45), { order: 'M1', date: '2026-11-24', checks: [{ guid: 'M1c', total: 9000, names: ['CO-ACD37'] }] });
+    await ringC(dual, snap(45), { order: 'M1', date: '2026-11-24', checks: [{ guid: 'M1c', total: 9000, names: ['CO-ACD37'] }] });
     check(await record(dual, [note('M1', 'M1c', snap(45), 'XYZ-789')]) === 1, 'J: a known ezCater order number is recorded too');
     check((await planHouse(dual)).find(p => p.lead === HC && p.check_guid === 'M1c')?.dual_code === true, 'J: the house planner flags the check dual code');
     r = await run(dual);
@@ -339,7 +384,7 @@ async function main() {
   {
     const db = await fresh({ auto: true, from: '2026-11-01' });
     await codes(db);
-    await ringEz(db, snap(51), { order: 'R1', date: '2026-11-20', checks: [{ guid: 'R1c', total: 20000, names: ['CO-ACD34'] }] });
+    await ringC(db, snap(51), { order: 'R1', date: '2026-11-20', checks: [{ guid: 'R1c', total: 20000, names: ['CO-ACD34'] }] });
     await run(db);
     check((await current(db, HA)).length === 1, 'L: linked by the code');
     await one(db, `select transfer_catering_lead($1, $2, $3, 'capacity') r`, [HA, OTHER, CM]);
@@ -350,6 +395,96 @@ async function main() {
     check((await run(db, '2026-11-01', '2026-11-30', OTHER)).skipped === 'off', 'L: the other shop is off: nothing there either');
     check(Number((await one(db, `select count(*) n from catering_toast_links h join ezcater_toast_links z on z.is_current and z.location_id = h.location_id
       and z.order_guid = h.order_guid and z.check_guid = h.check_guid where h.is_current`)).n) === 0, 'L: no check has two owners');
+  }
+
+  // M. EVIDENCE PENDING (review PORTAL4-r1): neither source admits a check on incomplete note evidence.
+  {
+    // M1. A house code as an ITEM NAME and an ezCater number as a SPECIAL REQUEST, automatic linking on.
+    for (const first of ['house', 'ezcater']) {
+      const db = await fresh({ auto: true, from: '2026-11-01' });
+      await codes(db);
+      await ringEz(db, snap(61), { order: 'P1', date: '2026-11-20', checks: [{ guid: 'P1c', total: 20000, names: ['CO-ACD34'] }] });
+      check((await one(db, `select catering_toast_note_evidence_complete($1, 'P1') c`, [SHOP])).c === false, `M1 (${first} first): the capture is not examined yet`);
+      let r = await run(db);
+      check(r.added === 0 && r.skipped.evidence_pending === 1 && (await current(db, HA)).length === 0, `M1 (${first} first): the house reconciler waits for the note lookup (${JSON.stringify(r)})`);
+      // The lookup examines the capture and finds EO1's number typed as a special request.
+      check((await look(db, [['P1', snap(61)]], [note('P1', 'P1c', snap(61), 'ABC-123')])).codes === 1, `M1 (${first} first): the lookup records the ezCater number`);
+      const pub = () => publish(db, EO1, { links: [{ toast_snapshot_id: snap(61), order_guid: 'P1', check_guid: 'P1c', selection_guid: 'P1c-s0', business_date: '2026-11-20' }], maps: [], reviews: [], shadow: [] });
+      if (first === 'house') { r = await run(db); await pub(); await reconcile(db); } else { await pub(); await reconcile(db); r = await run(db); }
+      check(r.skipped.dual_code === 1 && (await current(db, HA)).length === 0 && (await ezLinks(db, `and check_guid = 'P1c'`)).length === 0,
+        `M1 (${first} first): with the evidence complete it is a dual-code check: neither links`);
+      check((await one(db, `select kind from catering_toast_conflicts where check_guid = 'P1c'`))?.kind === 'dual_code', `M1 (${first} first): the conflict is recorded`);
+    }
+
+    // M2. The reverse: an ezCater number as an ITEM NAME and a house code as a SPECIAL REQUEST, at an enabled shop with ring codes.
+    for (const first of ['house', 'ezcater']) {
+      const old = await setup({ with0347: true });
+      await old.exec(`insert into catering_toast_settings(location_id, enabled) values ('${SHOP}', true)`);
+      const db = await fresh({ auto: true, from: '2026-11-01' });
+      for (const x of [old, db]) { await codes(x); await ringEz(x, snap(62), { order: 'Q1', date: '2026-11-20', checks: [{ guid: 'Q1c', total: 50000, names: ['ABC-123'] }] }); }
+      check((await planEz(old)).some(p => p.check_guid === 'Q1c'), `M2 (${first} first): under 0347 alone the ezCater planner takes the check at once`);
+      check((await planEz(db)).every(p => p.check_guid !== 'Q1c') && (await one(db, `select catering_toast_ezcater_admission_pending($1, 'Q1') p`, [SHOP])).p === true,
+        `M2 (${first} first): the ezCater planner waits for the note lookup`);
+      await reconcile(db);
+      const pub = () => publish(db, EO1, { links: [{ toast_snapshot_id: snap(62), order_guid: 'Q1', check_guid: 'Q1c', selection_guid: 'Q1c-s0', business_date: '2026-11-20' }], maps: [], reviews: [], shadow: [] });
+      await pub();
+      check((await ezLinks(db, `and check_guid = 'Q1c'`)).length === 0 && Number((await one(db, `select count(*) n from catering_toast_conflicts`)).n) === 0,
+        `M2 (${first} first): neither the reconciler nor the publisher admits it, and nothing is recorded as a conflict yet`);
+      // The lookup examines the capture and finds HA's ring code typed as a special request.
+      await look(db, [['Q1', snap(62)]], [note('Q1', 'Q1c', snap(62), 'CO-ACD34')]);
+      let r;
+      if (first === 'house') { r = await run(db); await pub(); await reconcile(db); } else { await pub(); await reconcile(db); r = await run(db); }
+      check(r.skipped.dual_code === 1 && (await current(db, HA)).length === 0 && (await ezLinks(db, `and check_guid = 'Q1c'`)).length === 0,
+        `M2 (${first} first): with the evidence complete it is a dual-code check: neither links (${JSON.stringify(r)})`);
+      check((await one(db, `select kind, house_lead_id::text h from catering_toast_conflicts where check_guid = 'Q1c'`))?.h === HA, `M2 (${first} first): the conflict names the house lead`);
+    }
+
+    // M3. The lookup finds nothing: ezCater links at its next run. A capture is pending again after a recapture,
+    // but an INCUMBENT is never released by it (contract #2).
+    {
+      const db = await fresh({ from: null });
+      await codes(db);
+      await ringEz(db, snap(63), { order: 'Q2', date: '2026-11-24', checks: [{ guid: 'Q2c', total: 9000, names: ['XYZ-789'] }] });
+      await reconcile(db);
+      check((await ezLinks(db, `and check_guid = 'Q2c'`)).length === 0, 'M3: pending: not linked yet');
+      const uncovered = async () => (await all(db, `select order_guid, toast_snapshot_id::text snap from catering_toast_uncovered_orders($1, '2026-11-01', '2026-11-30')`, [SHOP]));
+      check(JSON.stringify(await uncovered()) === JSON.stringify([{ order_guid: 'Q2', snap: snap(63) }]), 'M3: the capture is listed for the next lookup');
+      check((await look(db, [['Q2', snap(63)]])).examined === 1 && (await uncovered()).length === 0, 'M3: examined, nothing found: no longer listed');
+      await reconcile(db);
+      check((await ezLinks(db, `and check_guid = 'Q2c'`))[0]?.o === EO3, 'M3: with complete evidence and no house code, ezCater links');
+      await ringEz(db, snap(64), { order: 'Q2', date: '2026-11-24', checks: [{ guid: 'Q2c', total: 9000, names: ['XYZ-789'] }] });
+      check((await uncovered())[0]?.snap === snap(64) && (await one(db, `select catering_toast_ezcater_admission_pending($1, 'Q2') p`, [SHOP])).p === true, 'M3: a recapture is pending again');
+      await reconcile(db);
+      const kept = await ezLinks(db, `and check_guid = 'Q2c'`);
+      check(kept.length === 1 && kept[0].o === EO3 && kept[0].snap === snap(64), 'M3: the incumbent keeps its check through the recapture, re-homed, while the evidence is pending');
+    }
+
+    // M4. Out of the lookup's scope (not a reviewed catering dining option): no note there is ever evidence, so nothing waits.
+    {
+      const db = await fresh({ auto: true, from: '2026-11-01' });
+      await codes(db);
+      await ringEz(db, snap(65), { order: 'S1', date: '2026-11-20', option: 'do-dine', checks: [{ guid: 'S1c', total: 20000, names: ['CO-ACD34'] }] });
+      await ringEz(db, snap(66), { order: 'S2', date: '2026-11-24', option: 'do-dine', checks: [{ guid: 'S2c', total: 9000, names: ['XYZ-789'] }] });
+      check((await one(db, `select catering_toast_note_evidence_complete($1, 'S1') c`, [SHOP])).c === true, 'M4: an order outside the scope is complete without a lookup');
+      const r = await run(db); await reconcile(db);
+      check(r.ring_code === 1 && (await current(db, HA))[0]?.check_guid === 'S1c' && (await ezLinks(db, `and check_guid = 'S2c'`)).length === 1, 'M4: both sources link there at once');
+      check((await one(db, `select catering_toast_note_evidence_complete($1, 'NOPE') c`, [SHOP])).c === false, 'M4: an order that is not captured is never complete');
+    }
+
+    // M5. Toast-origin with NO ring code anywhere: the house side still waits (an ezCater number may be a note); ezCater never does.
+    {
+      const db = await fresh({ origin: true, from: '2026-11-01' });
+      await db.exec(`insert into catering_pipeline(id, location_id, event_date, stage, lead_source, estimated_revenue_cents) values ('${HT}', '${SHOP}', '2026-11-23', 'confirmed', 'toast_catering', 15000);
+        insert into toast_catering_orders(location_id, order_guid, business_date, lead_id) values ('${SHOP}', 'TO1', '2026-11-23', '${HT}')`);
+      await ringEz(db, snap(67), { order: 'TO1', date: '2026-11-23', checks: [{ guid: 'TO1a', total: 15000 }] });
+      await ringEz(db, snap(68), { order: 'Q3', date: '2026-11-24', checks: [{ guid: 'Q3c', total: 9000, names: ['XYZ-789'] }] });
+      let r = await run(db); await reconcile(db);
+      check(r.skipped.evidence_pending === 1 && (await current(db, HT)).length === 0, 'M5: the origin link waits for the lookup');
+      check((await ezLinks(db, `and check_guid = 'Q3c'`)).length === 1, 'M5: with no ring code at the shop, ezCater never waits');
+      await look(db, [['TO1', snap(67)]]);
+      r = await run(db);
+      check(r.toast_origin === 1 && (await current(db, HT)).length === 1, 'M5: examined, nothing found: linked by origin');
+    }
   }
 
   console.log(`sql-harness-0348: ${checks} checks passed`);

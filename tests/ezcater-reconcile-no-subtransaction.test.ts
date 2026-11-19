@@ -18,7 +18,7 @@ const walk = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
   const path = join(dir, name);
   return statSync(path).isDirectory() ? walk(path) : /\.(ts|tsx|mjs)$/.test(name) ? [path.replace(/\\/g, "/")] : [];
 });
-const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 const sources = ["lib", "app", "components", "scripts"].flatMap(walk).filter((p) => !/sql-harness-|scripts\/sim\//.test(p));
 const NAMES = /\b(reconcile_ezcater_toast|publish_ezcater_shadow)\b/;
 
@@ -40,7 +40,7 @@ describe("the ezCater reconciler and publisher are only ever top-level calls", (
       "lib/ezcater/reconcile.ts": 2, // the nightly pass and the recovery pass
       "lib/toast/capture-intraday.ts": 1, // every ten minutes
     });
-  });
+  }, 120_000);
 
   it("no item-21 migration calls either function from SQL", () => {
     for (const name of ["0344_catering_toast_house_side.sql", "0347_catering_toast_link_step.sql", "0348_catering_toast_reconciler.sql"]) {

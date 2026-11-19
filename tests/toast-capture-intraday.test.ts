@@ -2,10 +2,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { captureIntraday } from "@/lib/toast/capture-intraday";
 import { captureEnabled, captureToastDaySystem } from "@/lib/toast/capture";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { runHouseCateringToast } from "@/lib/catering/catering-toast-reconcile";
+import { coverHouseNoteEvidence, runHouseCateringToast } from "@/lib/catering/catering-toast-reconcile";
 vi.mock("@/lib/toast/capture", () => ({ captureEnabled: vi.fn(() => true), captureToastDaySystem: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
-vi.mock("@/lib/catering/catering-toast-reconcile", () => ({ runHouseCateringToast: vi.fn() }));
+vi.mock("@/lib/catering/catering-toast-reconcile", () => ({ runHouseCateringToast: vi.fn(), coverHouseNoteEvidence: vi.fn() }));
 const reconcile = vi.fn();
 const rpc = vi.fn();
 beforeEach(() => {
@@ -15,7 +15,8 @@ beforeEach(() => {
   const query = { select: () => query, eq: () => query, not: () => query,
     abortSignal: async () => ({ data: [{ id: "shop" }], error: null }) };
   reconcile.mockResolvedValue({ error: null });
-  vi.mocked(runHouseCateringToast).mockResolvedValue({ shops: 0, added: 0, ringCode: 0, toastOrigin: 0, codes: 0, failed: 0 });
+  vi.mocked(runHouseCateringToast).mockResolvedValue({ shops: 0, added: 0, ringCode: 0, toastOrigin: 0, evidencePending: 0, codes: 0, failed: 0 });
+  vi.mocked(coverHouseNoteEvidence).mockResolvedValue({ lookups: 0, failed: 0 });
   rpc.mockReturnValue({ abortSignal: reconcile });
   vi.mocked(getServiceRoleClient).mockReturnValue({ from: () => query, rpc } as unknown as ReturnType<typeof getServiceRoleClient>);
 });
@@ -98,26 +99,46 @@ it("uses the smaller remaining route budget and skips when it is exhausted", asy
   expect(captureToastDaySystem).toHaveBeenCalledTimes(1);
 });
 
-// Item 21 PR 4: the house reconciler is its own step after the ezCater reconciler returned.
-it("runs the house reconciler after the ezCater reconciler has returned, with the same window", async () => {
-  let ezcaterDone = false;
-  reconcile.mockImplementation(async () => { await Promise.resolve(); ezcaterDone = true; return { error: null }; });
-  vi.mocked(runHouseCateringToast).mockImplementation(async () => { expect(ezcaterDone).toBe(true); return { shops: 1, added: 2, ringCode: 2, toastOrigin: 0, codes: 0, failed: 0 }; });
+// Item 21 PR 4: the note lookup first, then the ezCater reconciler, then the house reconciler as its own step.
+const HOUSE = { shops: 1, added: 2, ringCode: 2, toastOrigin: 0, evidencePending: 0, codes: 0, failed: 0 };
+it("examines the unexamined captures BEFORE either reconciler, then runs the house reconciler after the ezCater one returned", async () => {
+  const order: string[] = [];
+  vi.mocked(coverHouseNoteEvidence).mockImplementation(async () => { order.push("lookup"); return { lookups: 1, failed: 0 }; });
+  reconcile.mockImplementation(async () => { await Promise.resolve(); order.push("ezcater"); return { error: null }; });
+  vi.mocked(runHouseCateringToast).mockImplementation(async () => { order.push("house"); return HOUSE; });
   expect(await captureIntraday("2026-10-07")).toMatchObject({ failures: 0, cateringToast: { added: 2 } });
-  expect(runHouseCateringToast).toHaveBeenCalledWith({ from: "2026-09-29", to: "2026-10-08", today: "2026-10-07", signal: expect.any(AbortSignal) });
+  expect(order).toEqual(["lookup", "ezcater", "house"]);
+  expect(coverHouseNoteEvidence).toHaveBeenCalledWith({ from: "2026-10-06", to: "2026-10-07", maxDays: 2, deadlineAt: expect.any(Number), signal: expect.any(AbortSignal) });
+  expect(runHouseCateringToast).toHaveBeenCalledWith({ from: "2026-09-29", to: "2026-10-08", today: "2026-10-07", deadlineAt: expect.any(Number), signal: expect.any(AbortSignal) });
+});
+it("each house step gets a deadline inside the route's own", async () => {
+  const before = Date.now();
+  await captureIntraday("2026-10-07", undefined, 20_000);
+  const lookup = vi.mocked(coverHouseNoteEvidence).mock.calls[0]![0].deadlineAt, house = vi.mocked(runHouseCateringToast).mock.calls[0]![0].deadlineAt;
+  expect(lookup).toBeLessThanOrEqual(before + 12_000 + 1_000);
+  expect(house).toBeLessThanOrEqual(Date.now() + 15_000);
+  expect(Math.max(lookup, house)).toBeLessThanOrEqual(Date.now() + 20_000);
+});
+it("review PORTAL4-r1: a note lookup that could not run does not stop the reconcilers (the SQL refuses what is unexamined) and never fails the capture", async () => {
+  vi.mocked(coverHouseNoteEvidence).mockResolvedValue(null);
+  vi.mocked(runHouseCateringToast).mockResolvedValue({ ...HOUSE, added: 0, ringCode: 0, evidencePending: 3 });
+  expect(await captureIntraday("2026-10-07")).toMatchObject({ failures: 0, cateringToast: { added: 0, evidencePending: 3 } });
+  expect(rpc).toHaveBeenCalledWith("reconcile_ezcater_toast", expect.anything());
 });
 it("a house reconciler that fails or reports failures never fails the capture run", async () => {
   vi.mocked(runHouseCateringToast).mockResolvedValue(null);
   expect(await captureIntraday("2026-10-07")).toMatchObject({ failures: 0, cateringToast: null });
-  vi.mocked(runHouseCateringToast).mockResolvedValue({ shops: 1, added: 0, ringCode: 0, toastOrigin: 0, codes: 0, failed: 1 });
+  vi.mocked(runHouseCateringToast).mockResolvedValue({ ...HOUSE, failed: 1 });
   expect(await captureIntraday("2026-10-07")).toMatchObject({ failures: 0 });
 });
-it("still runs the house reconciler when the ezCater reconciler failed, and not at all without a published capture", async () => {
+it("still runs the house reconciler when the ezCater reconciler failed, and no house step at all without a published capture", async () => {
   reconcile.mockResolvedValue({ error: { message: "failure" } });
   expect(await captureIntraday("2026-10-07")).toMatchObject({ failures: 1, error: "capture_reconciliation_failed" });
   expect(runHouseCateringToast).toHaveBeenCalledTimes(1);
   vi.mocked(runHouseCateringToast).mockClear();
+  vi.mocked(coverHouseNoteEvidence).mockClear();
   vi.mocked(captureToastDaySystem).mockRejectedValue(new Error("capture_unavailable"));
   await captureIntraday("2026-10-08");
   expect(runHouseCateringToast).not.toHaveBeenCalled();
+  expect(coverHouseNoteEvidence).not.toHaveBeenCalled();
 });

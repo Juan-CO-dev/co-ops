@@ -38,12 +38,12 @@ Before 0347 is applied the link panel is READ-ONLY at an enabled shop: it lists 
 ## Applying 0348 (CC, after 0347)
 
 1. Sim first: apply `supabase/migrations/0348_catering_toast_reconciler.sql`. Its pre-flight refuses unless 0347 is in place, the link step is ready (`catering_toast_link_ready()`), and the live `plan_ezcater_toast`, `plan_catering_toast` and `catering_toast_check_house_code` are still 0347's bodies.
-2. Run the verify block at the end of the file: 4 policies on `catering_toast_note_codes`, zero rows, `catering_toast_link_ready()` true, and `reconcile_catering_toast` answers `{"skipped": "off"}` for every shop.
+2. Run the verify block at the end of the file: 4 policies on each of `catering_toast_note_codes` and `catering_toast_note_lookups`, zero rows in both, `catering_toast_link_ready()` true (the publisher guard is replaced, never dropped), and `reconcile_catering_toast` answers `{"skipped": "off"}` for every shop.
 3. **Planner equivalence and time (read-only), sim then prod:** with zero recorded note codes the new ezCater planner and the new house planner return 0347's rows exactly, both ways. Time the ezCater planner: it was about 2.4 s on prod under 0347 against the 8 s statement timeout, it runs every 10 minutes, and the prepared apply script refuses above 3 s.
 4. **The sim two-session proof (PR 4 gate), each in both commit orders:** the house reconciler vs a manual link on one check; vs the ezCater publisher; vs the ezCater reconciler; vs a lead transfer; two house reconciler runs at once. Expected: every pair serializes on `hashtext('ezcater-toast-reconcile')` (the transfer on the lead row), and a check is never held by both sources.
 5. Prod on Juan's word, then stamp the header.
 
-Before 0348 is applied the app behaves as it did: the cron step finds no function and reports `not_installed` (never a failure), and pass 2's note lookup records nothing.
+Before 0348 is applied the app behaves as it did: the cron steps find no function and report `not_installed` (never a failure), and pass 2's note lookup records nothing.
 
 ### A house link never comes back (fix round 1, review PORTAL3-r1)
 
@@ -75,13 +75,13 @@ The ezCater side: an ezCater order's reconciliation panel counts its Toast check
 
 ## Automatic linking (PR 4, migration 0348)
 
-The house reconciler (`reconcile_catering_toast`, one call per shop) only ADDS links. It runs as its own step after the ezCater reconciler: every ten minutes behind the Toast capture (`lib/toast/capture-intraday.ts`) and once in the nightly run. A failure there is recorded in the cron's own audit row (`catering_toast`) and never fails the capture.
+The house reconciler (`reconcile_catering_toast`, one call per shop) only ADDS links. It runs as its own step after the ezCater reconciler: every ten minutes behind the Toast capture (`lib/toast/capture-intraday.ts`) and once in the nightly run. Each step has its own deadline inside the cron's (every request carries its signal), a failure there is recorded in the cron's own audit row (`catering_toast`), and it never fails the capture.
 
 Two kinds of evidence, each behind its own switch, both behind `enabled` and `auto_link_from_date`:
 
 | Evidence | Switch | What links |
 |---|---|---|
-| `ring_code` | `auto_link_enabled` | The order's ring code is on the check: typed as an item name (seen within about ten minutes), or as a special request (seen after the nightly run: see below). |
+| `ring_code` | `auto_link_enabled` | The order's ring code is on the check: typed as an item name, or as a special request (found by the note lookup: see below). |
 | `toast_origin` | `origin_auto_link_enabled` | The order was created FROM a Toast order: every live check of that Toast order at the order's shop. |
 
 It never links, and says why in its answer (`skipped`, counted by reason):
@@ -94,6 +94,7 @@ It never links, and says why in its answer (`skipped`, counted by reason):
 | `before_start_date` | The event is before the shop's `auto_link_from_date`: old orders are suggestions only (Juan answer 7). |
 | `owned` | ezCater or another house order holds the check. |
 | `out_of_window` | The check is rung outside the day before to a week after the event (the window the human Link uses). |
+| `evidence_pending` | The note lookup has not examined this capture of the check yet, so an ezCater number typed as a special request may be on it. Nothing is decided on half the evidence; the next run asks again. |
 | `dual_code` | The check also carries an ezCater order number: neither source links, a person decides. |
 | `two_house_orders` | Two house orders claim the check (two ring codes, or a code on another order's Toast order): a person decides. |
 | `ezcater_dining_option` | A Toast-origin order rung on an ezCater dining option: ezCater's daily batch may claim it, so origin alone never decides. |
@@ -102,7 +103,17 @@ An automatic link has no decision row. A person undoes it with Unlink (the tombs
 
 **Ring codes.** With `ring_code_enabled` the same cron step gives each booked house order with an event from today on its code (`ensure_catering_ring_codes`; never a Toast-origin order, an ezCater order, or one marked no ring expected). The code is shown in the order's Toast panel with where to type it.
 
-**Codes typed as a special request (contract 3).** Toast note text is never stored. One lookup (`lib/catering/toast-note-codes.ts`) asks Toast for the day's catering orders with ezCater numbers and the shop's ring codes together, keeps only the codes it recognises, and records them (`catering_toast_note_codes`: the code, the check, and the capture it was read on). The publisher guard, both planners and the reconciler read that table, so they agree. A recorded code counts only while the check has not been captured again; after a recapture it counts once the next lookup finds it. The lookup runs in the nightly ezCater pass and, for a shop with ring codes, for the days its unlinked orders could be rung on (at most 12 days per shop and night). So a ring code typed as an ITEM NAME links within about ten minutes; one typed as a SPECIAL REQUEST links after the night's run. Until then it is not evidence for anyone, and an ezCater dining-option check carrying it could be batch-linked by ezCater first (it then shows as a conflict; nothing moves).
+**Codes typed as a special request (contract 3).** Toast note text is never stored. One lookup (`lib/catering/toast-note-codes.ts`) asks Toast for a day's catering orders with ezCater numbers and the shop's ring codes together, keeps only the codes it recognises, and records two things in one transaction (`record_catering_toast_note_lookup`): the codes (`catering_toast_note_codes`: the code, the check, and the capture it was read on) and the COVERAGE (`catering_toast_note_lookups`: which capture of each order it examined). The publisher guard, both planners and the reconciler read those tables, so they agree. A recorded code, and the coverage, count only while the check has not been captured again.
+
+**Nobody takes a check on half the evidence (review PORTAL4-r1).** A check whose current capture the lookup has not examined is not admitted: the house reconciler skips it (`evidence_pending`), and at a shop that is on and has a live ring code the ezCater planner and the publisher guard skip it too. So the order the two codes are typed in, and which source runs first, does not matter: nothing links before the lookup, and once it has run a check with both codes is a dual-code check that a person decides. Details:
+
+- **Scope.** The lookup reads orders on a reviewed catering dining option (the same rule that gives an order its "catering" sales channel). A note on any other order is never read and is never evidence, so those checks never wait.
+- **When it runs.** Every ten minutes, before the reconcilers, for today's and yesterday's unexamined captures; nightly, in the ezCater pass and then for the last nine days (at most 12 days per shop and night). A check rung more than a day late waits for the night.
+- **If the lookup fails or runs out of time**, the checks it did not reach stay unexamined and both sources keep waiting. A failed lookup can never let one side link.
+- **ezCater is held back only where a ring code can exist**: a shop that is on with at least one live ring code. With no row, a shop that is off, or no ring code (today, everywhere) ezCater links exactly as before.
+- **An owner is never released.** A check ezCater already holds keeps its links through a recapture while the new capture is unexamined.
+- **"Examined" means with the codes known at that time.** A code that becomes known later (an ezCater order that syncs after the ring) meets an owner that keeps the check, and shows as a conflict.
+- **No known code at all** (no ezCater number near the day, no ring code): nothing can match, so the captures count as examined without a Toast call.
 
 **The ezCater reconciler never runs inside a savepoint.** 0347's incumbent rule reads `xmin` of the row the reconciler retired in the same top-level transaction. Nothing in 0348 calls the ezCater reconciler or the publisher, the house reconciler is its own request and has no `EXCEPTION` block, and `tests/ezcater-reconcile-no-subtransaction.test.ts` holds the closed list of callers.
 

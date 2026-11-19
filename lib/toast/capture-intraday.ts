@@ -3,12 +3,13 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { etYmdMinusDays } from "@/lib/operational-day";
 import { captureEnabled, captureToastDaySystem } from "./capture";
 import { captureBudget, captureErrorCode } from "./capture-runner";
-import { runHouseCateringToast, type HouseReconcileResult } from "@/lib/catering/catering-toast-reconcile";
+import { coverHouseNoteEvidence, runHouseCateringToast, type HouseReconcileResult } from "@/lib/catering/catering-toast-reconcile";
 
 /** Additive best-effort capture. One deadline includes location reads and both dates. */
 export async function captureIntraday(today: string, signal?: AbortSignal, remainingMs = 45_000) {
   if (!captureEnabled()) return { failures: 0, results: [], skipped: true };
   if (remainingMs <= 0) return { failures: 0, results: [], skipped: true, reason: "capture_route_time_exhausted" };
+  const deadlineAt = Date.now() + Math.min(45_000, remainingMs);
   const budget = captureBudget(Math.min(45_000, remainingMs), signal);
   const results: { locationId: string; date: string; error: string | null; skipped?: boolean }[] = [];
   let hasPublishedCapture = false;
@@ -37,6 +38,10 @@ export async function captureIntraday(today: string, signal?: AbortSignal, remai
     // automatic review resolution. Yesterday's +7 late ring reaches today-8,
     // and today's -1 early ring can cover tomorrow. No depletion flag required.
     if (!budget.signal.aborted && hasPublishedCapture) {
+      // Item 21 PR 4 (review PORTAL4-r1): the one note lookup examines the captures nobody examined yet, BEFORE either
+      // reconciler admits a check. Off unless a shop's settings say so. If it fails or runs out of time the unexamined
+      // checks stay pending for both sources (0348 refuses them in SQL); it is never part of this run's failures.
+      await coverHouseNoteEvidence({ from: etYmdMinusDays(today, 1), to: today, maxDays: 2, deadlineAt: Math.min(deadlineAt, Date.now() + 12_000), signal: budget.signal });
       try {
         const reconciliation = await budget.wait(() => sb.rpc("reconcile_ezcater_toast", {
           p_from: etYmdMinusDays(today, 8), p_to: etYmdMinusDays(today, -1),
@@ -46,10 +51,10 @@ export async function captureIntraday(today: string, signal?: AbortSignal, remai
       // Item 21 PR 4: the HOUSE reconciler, AFTER the ezCater one returned and as its own requests (its own
       // transactions: the ezCater reconciler never runs inside a savepoint). Off unless a shop's settings say so;
       // fail-soft, never part of this run's failures.
+      // Bounded by its own deadline inside this route's; what it could not do, the next tick does.
       if (!budget.signal.aborted) {
-        try {
-          cateringToast = await budget.wait(() => runHouseCateringToast({ from: etYmdMinusDays(today, 8), to: etYmdMinusDays(today, -1), today, signal: budget.signal }));
-        } catch { cateringToast = null; /* The route's deadline passed while it ran: the next tick runs it again. */ }
+        cateringToast = await runHouseCateringToast({ from: etYmdMinusDays(today, 8), to: etYmdMinusDays(today, -1), today,
+          deadlineAt: Math.min(deadlineAt, Date.now() + 15_000), signal: budget.signal });
       }
     }
     return { failures: results.filter((r) => r.error).length + (reconciliationError ? 1 : 0), results, skipped: false,

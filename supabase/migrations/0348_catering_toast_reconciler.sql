@@ -28,7 +28,19 @@
 --                                      until the next lookup finds it again). No note text can reach this table: the
 --                                      writer refuses anything not code-shaped and stores a code only if it IS a known
 --                                      ring code or ezCater order number.
---   record_catering_toast_note_codes(rows)     its one writer (service_role, definer).
+--   catering_toast_note_lookups        COVERAGE: the capture of each order the one note lookup last examined. Neither
+--                                      source admits NEW ownership of a check on incomplete evidence (review
+--                                      PORTAL4-r1): the house reconciler skips a check in the lookup's scope whose
+--                                      CURRENT capture has not been examined ('evidence_pending': an ezCater number may
+--                                      be typed on it as a special request), and at an enabled shop with a live ring
+--                                      code the ezCater planner and the publisher guard do the same (a ring code may
+--                                      be). Scope = the lookup's own: a reviewed catering-channel dining option. "Complete"
+--                                      means examined with the codes KNOWN at that time; a code that becomes known
+--                                      later meets an owner that keeps the check (plan r3 #4, row 4).
+--   record_catering_toast_note_lookup(examined, codes)   the one writer of both tables (service_role, definer), ONE
+--                                      transaction: a capture is never "examined" without the codes found on it.
+--   catering_toast_uncovered_orders(shop, from, to)      the captures the next lookup must examine.
+--   ezcater_toast_links_house_guard    re-emitted from 0347 by ADDING LINES ONLY (pinned): the evidence-pending skip.
 --   plan_catering_toast(...)           re-emitted from 0347 by ADDING LINES ONLY (pinned): the recorded note codes of a
 --                                      check's current capture are tokens too. No recorded note code = 0347's rows.
 --   catering_toast_check_code_leads(...)       THE one rule for "which live house leads' ring codes are on this check":
@@ -56,7 +68,7 @@
 -- then takes hashtext('ezcater-toast-reconcile') FIRST (publisher, ezCater reconciler and decide_catering_toast do),
 -- reads the settings AGAIN under it, then the candidate lead rows FOR NO KEY UPDATE in id order, then plans again and
 -- writes only leads it holds, then link rows. Transfer (0225) holds a lead row and never waits for the advisory lock: no cycle.
--- record_catering_toast_note_codes writes no link and takes no lock: evidence that lands between two runs is read by
+-- record_catering_toast_note_lookup writes no link and takes no lock: evidence that lands between two runs is read by
 -- the next one.
 --
 -- APPEND-ONLY BY GRANT: deny-all RLS, service_role SELECT only, every write through SECURITY DEFINER.
@@ -88,13 +100,22 @@ begin
     raise exception '0348: the live plan_catering_toast is not the 0347 body; re-emit this file from the live definer';
   end if;
   if not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                  where n.nspname = 'public' and p.proname = 'ezcater_toast_links_house_guard'
+                    and strpos(p.prosrc, 'catering_toast_check_house_code') > 0 and strpos(p.prosrc, '0348') = 0) then
+    raise exception '0348: the live ezcater_toast_links_house_guard is not the 0347 body';
+  end if;
+  if to_regclass('public.sales_channel_map') is null or not exists (select 1 from information_schema.columns
+       where table_schema = 'public' and table_name = 'sales_channel_map' and column_name = 'reviewed_at') then
+    raise exception '0348: sales_channel_map.reviewed_at is missing (the note lookup''s scope reads it)';
+  end if;
+  if not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
                   where n.nspname = 'public' and p.proname = 'catering_toast_check_house_code'
                     and strpos(p.prosrc, 'catering_live_ring_codes') > 0 and strpos(p.prosrc, 'catering_toast_check_code_leads') = 0) then
     raise exception '0348: the live catering_toast_check_house_code is not the 0347 body';
   end if;
 end $$;
 
--- 1. Note codes: the one lookup's intersections, codes only (contract #3) ---------------------------------------------
+-- 1. Note codes and the lookup's coverage (contract #3; review PORTAL4-r1) ---------------------------------------------
 create table public.catering_toast_note_codes (
   location_id       uuid not null references public.locations(id),
   order_guid        text not null,
@@ -109,19 +130,84 @@ create table public.catering_toast_note_codes (
 );
 create index catering_toast_note_codes_snapshot on public.catering_toast_note_codes (toast_snapshot_id, check_guid);
 
--- The one writer. p_rows = [{location_id, order_guid, check_guid, toast_snapshot_id, code}]. A row is stored only when
--- (a) it names the order's CURRENT capture and a check of it, and (b) the code IS a known code: a house ring code or
--- an ezCater order number. Anything else is dropped (never an error for an unknown code: the lookup is ephemeral and
--- a code can stop being known between the lookup and this call). Returns the number of rows written.
-create function public.record_catering_toast_note_codes(p_rows jsonb) returns integer
+-- Coverage: the capture of the order the one note lookup last EXAMINED (its version matched Toast's and every note on
+-- it was intersected with the codes known then). One row per order; a recapture makes it stale until the next lookup.
+create table public.catering_toast_note_lookups (
+  location_id       uuid not null references public.locations(id),
+  order_guid        text not null,
+  toast_snapshot_id uuid not null,
+  looked_at         timestamptz not null default clock_timestamp(),
+  primary key (location_id, order_guid)
+);
+
+-- THE SCOPE of the note lookup, the rule lib/toast/captured-day.ts gives an order its "catering" sales channel by: its
+-- dining option is in the REVIEWED channel map as catering (never the gift-card provider). Notes on any other order are
+-- never looked up and are never evidence, for either source.
+create function public.catering_toast_note_scope(p_location_id uuid, p_dining_option_guid text) returns boolean
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select exists (select 1 from public.toast_dining_options d join public.sales_channel_map m on m.dining_option_label = d.name
+                  where d.location_id = p_location_id and d.guid = p_dining_option_guid
+                    and m.reviewed_at is not null and lower(m.channel) = 'catering' and coalesce(m.provider, '') <> 'gift_card')
+$$;
+
+-- Is the note evidence on this order COMPLETE? Out of the lookup's scope (no note there is ever evidence), or the
+-- order's CURRENT capture is the one the lookup examined. An order that is not captured answers false.
+create function public.catering_toast_note_evidence_complete(p_location_id uuid, p_order_guid text) returns boolean
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select coalesce((select not public.catering_toast_note_scope(t.location_id, t.dining_option_guid)
+                          or exists (select 1 from public.catering_toast_note_lookups k where k.location_id = t.location_id
+                                      and k.order_guid = t.order_guid and k.toast_snapshot_id = t.id)
+                     from public.toast_orders_latest t where t.location_id = p_location_id and t.order_guid = p_order_guid), false)
+$$;
+
+-- ezCater's side of the same rule: only a shop that is on AND has a live ring code can have a ring code typed as a
+-- note, so only there does an unexamined capture hold ezCater's NEW admission back. (No row / off / no code: never.)
+create function public.catering_toast_ezcater_admission_pending(p_location_id uuid, p_order_guid text) returns boolean
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select exists (select 1 from public.catering_toast_settings g where g.location_id = p_location_id and g.enabled)
+     and exists (select 1 from public.catering_live_ring_codes r where r.location_id = p_location_id)
+     and not public.catering_toast_note_evidence_complete(p_location_id, p_order_guid)
+$$;
+
+-- The captures the next lookup must examine: live orders in scope whose current capture has no coverage. Bounded.
+create function public.catering_toast_uncovered_orders(p_location_id uuid, p_from date, p_to date)
+returns table (order_guid text, toast_snapshot_id uuid, business_date date, modified_at timestamptz)
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select t.order_guid, t.id, t.business_date, t.modified_at
+    from public.toast_orders_latest t
+   where t.location_id = p_location_id and t.business_date between p_from and p_to
+     and not t.voided and not t.deleted and not t.excess_food
+     and public.catering_toast_note_scope(t.location_id, t.dining_option_guid)
+     and not exists (select 1 from public.catering_toast_note_lookups k where k.location_id = t.location_id
+                      and k.order_guid = t.order_guid and k.toast_snapshot_id = t.id)
+   order by t.business_date desc, t.order_guid
+   limit 500
+$$;
+
+-- The one writer of both tables, ONE transaction.
+--   p_examined = [{location_id, order_guid, toast_snapshot_id}]  the captures the lookup examined (version matched);
+--   p_codes    = [{location_id, order_guid, check_guid, toast_snapshot_id, code}]  the intersections found on them.
+-- Coverage is stored only for an order's CURRENT capture. A code is stored only when it names an EXAMINED capture of
+-- this call and a check of it, and the code IS a known code (a house ring code or an ezCater order number); anything
+-- else is dropped, never an error (the lookup is ephemeral and a code can stop being known before this call). No key
+-- but the ones above is accepted and `code` must be code-shaped: no note text can ride in.
+create function public.record_catering_toast_note_lookup(p_examined jsonb, p_codes jsonb) returns jsonb
 language plpgsql security definer set search_path = pg_catalog, public as $$
-declare v_n integer := 0;
+declare v_examined integer := 0; v_codes integer := 0;
 begin
-  if jsonb_typeof(coalesce(p_rows, '[]'::jsonb)) <> 'array' or exists (
-       select 1 from jsonb_array_elements(coalesce(p_rows, '[]'::jsonb)) n
+  if jsonb_typeof(coalesce(p_examined, '[]'::jsonb)) <> 'array' or exists (
+       select 1 from jsonb_array_elements(coalesce(p_examined, '[]'::jsonb)) n
+        where jsonb_typeof(n) <> 'object' or nullif(n->>'order_guid', '') is null
+           or coalesce(n->>'location_id', '') !~ '^[0-9a-fA-F-]{36}$' or coalesce(n->>'toast_snapshot_id', '') !~ '^[0-9a-fA-F-]{36}$'
+           or exists (select 1 from jsonb_object_keys(n) k where k not in ('location_id', 'order_guid', 'toast_snapshot_id'))) then
+    raise exception 'catering_toast_note_lookup_invalid' using errcode = 'P0001';
+  end if;
+  if jsonb_typeof(coalesce(p_codes, '[]'::jsonb)) <> 'array' or exists (
+       select 1 from jsonb_array_elements(coalesce(p_codes, '[]'::jsonb)) n
         where jsonb_typeof(n) <> 'object' or coalesce(n->>'code', '') !~ '^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$'
-           or length(n->>'code') > 32 or n->>'order_guid' is null or n->>'check_guid' is null
-           or coalesce(n->>'location_id', '') !~ '^[0-9a-fA-F-]{36}$' or coalesce(n->>'toast_snapshot_id', '') !~ '^[0-9a-fA-F-]{36}$') then
+           or length(n->>'code') > 32 or nullif(n->>'order_guid', '') is null or nullif(n->>'check_guid', '') is null
+           or coalesce(n->>'location_id', '') !~ '^[0-9a-fA-F-]{36}$' or coalesce(n->>'toast_snapshot_id', '') !~ '^[0-9a-fA-F-]{36}$'
+           or exists (select 1 from jsonb_object_keys(n) k where k not in ('location_id', 'order_guid', 'check_guid', 'toast_snapshot_id', 'code'))) then
     -- Codes only: a note's text can never be passed in.
     raise exception 'catering_toast_note_codes_invalid' using errcode = 'P0001';
   end if;
@@ -129,10 +215,13 @@ begin
   select distinct x.location_id, x.order_guid, x.check_guid, x.code_norm, x.toast_snapshot_id
     from (select (n->>'location_id')::uuid location_id, n->>'order_guid' order_guid, n->>'check_guid' check_guid,
                  upper(replace(btrim(n->>'code'), '-', '')) code_norm, (n->>'toast_snapshot_id')::uuid toast_snapshot_id
-            from jsonb_array_elements(coalesce(p_rows, '[]'::jsonb)) n) x
+            from jsonb_array_elements(coalesce(p_codes, '[]'::jsonb)) n) x
     join public.toast_orders_latest t on t.id = x.toast_snapshot_id and t.location_id = x.location_id and t.order_guid = x.order_guid
     join public.toast_order_checks c on c.snapshot_id = t.id and c.check_guid = x.check_guid
    where x.code_norm ~ '^[A-Z0-9]{4,32}$'
+     and exists (select 1 from jsonb_array_elements(coalesce(p_examined, '[]'::jsonb)) e
+                  where (e->>'location_id')::uuid = x.location_id and e->>'order_guid' = x.order_guid
+                    and (e->>'toast_snapshot_id')::uuid = x.toast_snapshot_id)
      and (exists (select 1 from public.catering_pipeline p
                    where p.ring_code is not null and upper(replace(p.ring_code, '-', '')) = x.code_norm)
           or exists (select 1 from public.ezcater_orders e
@@ -140,8 +229,17 @@ begin
                         and upper(replace(btrim(e.order_number), '-', '')) = x.code_norm))
   on conflict (location_id, order_guid, check_guid, code_norm)
   do update set toast_snapshot_id = excluded.toast_snapshot_id, last_seen_at = clock_timestamp();
-  get diagnostics v_n = row_count;
-  return v_n;
+  get diagnostics v_codes = row_count;
+  -- Coverage AFTER the codes, in the same transaction: no reader ever sees a capture as examined without its codes.
+  insert into public.catering_toast_note_lookups(location_id, order_guid, toast_snapshot_id)
+  select distinct t.location_id, t.order_guid, t.id
+    from jsonb_array_elements(coalesce(p_examined, '[]'::jsonb)) e
+    join public.toast_orders_latest t on t.id = (e->>'toast_snapshot_id')::uuid and t.location_id = (e->>'location_id')::uuid
+     and t.order_guid = e->>'order_guid'
+  on conflict (location_id, order_guid)
+  do update set toast_snapshot_id = excluded.toast_snapshot_id, looked_at = clock_timestamp();
+  get diagnostics v_examined = row_count;
+  return jsonb_build_object('examined', v_examined, 'codes', v_codes);
 end $$;
 
 -- The house planner, re-emitted from 0347 by ADDING LINES ONLY (pinned as a line-subsequence): the recorded note codes
@@ -301,6 +399,7 @@ with eligible as (
  and lower(coalesce(o.status,'')) !~ '(cancel|reject|fail)'
 ), checks as (
  select t.id toast_snapshot_id,t.location_id,t.order_guid,c.check_guid,t.business_date,c.amount_cents,t.selection_units,
+ t.dining_option_guid,
  exists(select 1 from public.toast_dining_options d where d.location_id=t.location_id and d.guid=t.dining_option_guid
  and lower(regexp_replace(d.name,'[^a-zA-Z0-9]','','g'))='ezcater') is_ezcater
  from public.toast_orders_latest t join public.toast_order_checks c on c.snapshot_id=t.id
@@ -334,6 +433,20 @@ with eligible as (
  join public.catering_toast_note_codes n on n.toast_snapshot_id=c.toast_snapshot_id and n.check_guid=c.check_guid
  join public.catering_live_ring_codes r on r.location_id=c.location_id and r.code_norm=n.code_norm
  where not public.catering_toast_pair_blocked(r.lead_id,c.location_id,c.order_guid,c.check_guid)
+ and not exists(select 1 from public.ezcater_toast_links z where z.is_current and z.location_id=c.location_id
+ and z.order_guid=c.order_guid and z.check_guid=c.check_guid)
+ union
+ -- 0348 (review PORTAL4-r1): EVIDENCE PENDING. At an enabled shop with a live ring code, a check in the note lookup's
+ -- scope whose CURRENT capture the lookup has not examined yet is not admitted either: a ring code typed as a special
+ -- request may be on it. The same test as catering_toast_ezcater_admission_pending, set-based (pinned equal).
+ select c.toast_snapshot_id,c.check_guid from checks c
+ where exists(select 1 from public.catering_toast_settings g where g.location_id=c.location_id and g.enabled)
+ and exists(select 1 from public.catering_live_ring_codes r where r.location_id=c.location_id)
+ and exists(select 1 from public.toast_dining_options d join public.sales_channel_map m on m.dining_option_label=d.name
+ where d.location_id=c.location_id and d.guid=c.dining_option_guid
+ and m.reviewed_at is not null and lower(m.channel)='catering' and coalesce(m.provider,'')<>'gift_card')
+ and not exists(select 1 from public.catering_toast_note_lookups k where k.location_id=c.location_id
+ and k.order_guid=c.order_guid and k.toast_snapshot_id=c.toast_snapshot_id)
  and not exists(select 1 from public.ezcater_toast_links z where z.is_current and z.location_id=c.location_id
  and z.order_guid=c.order_guid and z.check_guid=c.check_guid)
 ), candidates as (
@@ -387,6 +500,45 @@ with eligible as (
 )
 select * from planned
 $plan$;
+
+-- 3b. The publisher guard, re-emitted from 0347 by ADDING LINES ONLY (pinned as a line-subsequence): an unowned check
+-- whose capture the note lookup has not examined is skipped at the publisher's insertion boundary too (contract #1's
+-- boundary, the same rule the planner applies). An incumbent still always passes; it still never raises.
+create or replace function public.ezcater_toast_links_house_guard() returns trigger
+language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_lead uuid; v_kind text;
+begin
+  begin
+    if not new.is_current then return new; end if;
+    v_lead := public.catering_toast_house_owner(new.location_id, new.order_guid, new.check_guid);
+    if v_lead is not null then
+      v_kind := 'ownership_conflict';
+    elsif not public.ezcater_toast_incumbent(new.location_id, new.order_guid, new.check_guid) then
+      v_lead := public.catering_toast_check_house_code(new.location_id, new.order_guid, new.check_guid);
+      if v_lead is not null then v_kind := 'dual_code'; end if;
+      -- 0348 (review PORTAL4-r1): EVIDENCE PENDING. The note lookup has not examined this capture yet, so a ring code
+      -- typed as a special request may be on it: not admitted now (no conflict to record; the next run asks again).
+      if v_kind is null and public.catering_toast_ezcater_admission_pending(new.location_id, new.order_guid) then return null; end if;
+    end if;
+    if v_kind is null then
+      -- ezCater is admitted. A current house row still on this check is DORMANT (its lead no longer qualifies, or the
+      -- owner rule above would have answered): end it here, in the admitting transaction, so it can never own again.
+      update public.catering_toast_links h
+         set is_current = false, retired_at = clock_timestamp(),
+             retired_reason = public.catering_toast_stale_reason(h.lead_id, h.location_id)
+       where h.is_current and h.location_id = new.location_id and h.order_guid = new.order_guid and h.check_guid = new.check_guid;
+      return new;
+    end if;
+    insert into public.catering_toast_conflicts(location_id, order_guid, check_guid, kind, ezcater_order_id, house_lead_id, toast_snapshot_id)
+      values (new.location_id, new.order_guid, new.check_guid, v_kind, new.order_id, v_lead, new.toast_snapshot_id)
+      on conflict (location_id, order_guid, check_guid, kind, ezcater_order_id)
+      do update set last_seen_at = clock_timestamp(), seen_count = catering_toast_conflicts.seen_count + 1,
+                    house_lead_id = excluded.house_lead_id, toast_snapshot_id = excluded.toast_snapshot_id;
+    return null;
+  exception when others then
+    return new;
+  end;
+end $$;
 
 -- 4. Ring codes for booked house leads (cron, never a read path) --------------------------------------------------------
 -- Each booked house lead of the shop with an event on or after p_from, no code yet, not created from a Toast order
@@ -484,6 +636,9 @@ begin
       when r.owner is not null then 'owned'
       -- The window the human Link uses (decide_catering_toast: check_out_of_window).
       when r.business_date not between r.event_date - 1 and r.event_date + 7 then 'out_of_window'
+      -- EVIDENCE PENDING (review PORTAL4-r1): the note lookup has not examined this capture, so an ezCater number typed
+      -- as a special request may be on it. Nothing is decided on incomplete evidence; the next run asks again.
+      when not public.catering_toast_note_evidence_complete(p_location_id, r.order_guid) then 'evidence_pending'
       -- An ezCater number on the same check: neither source links, a person decides (plan r3 #4).
       when r.dual_code then 'dual_code'
       -- Two house orders claim one check (two ring codes, or a code on another lead's Toast order): a person decides.
@@ -528,6 +683,13 @@ begin
 end $$;
 
 -- 6. Row security and the privilege ceiling (0257 pattern) -------------------------------------------------------------
+alter table public.catering_toast_note_lookups enable row level security;
+create policy catering_toast_note_lookups_no_user_select on public.catering_toast_note_lookups for select using (false);
+create policy catering_toast_note_lookups_no_user_insert on public.catering_toast_note_lookups for insert with check (false);
+create policy catering_toast_note_lookups_no_user_update on public.catering_toast_note_lookups for update using (false);
+create policy catering_toast_note_lookups_no_user_delete on public.catering_toast_note_lookups for delete using (false);
+revoke all on public.catering_toast_note_lookups from public, anon, authenticated, service_role;
+grant select on public.catering_toast_note_lookups to service_role;
 alter table public.catering_toast_note_codes enable row level security;
 create policy catering_toast_note_codes_no_user_select on public.catering_toast_note_codes for select using (false);
 create policy catering_toast_note_codes_no_user_insert on public.catering_toast_note_codes for insert with check (false);
@@ -536,8 +698,14 @@ create policy catering_toast_note_codes_no_user_delete on public.catering_toast_
 revoke all on public.catering_toast_note_codes from public, anon, authenticated, service_role;
 grant select on public.catering_toast_note_codes to service_role;
 
-revoke all on function public.record_catering_toast_note_codes(jsonb) from public, anon, authenticated;
-grant execute on function public.record_catering_toast_note_codes(jsonb) to service_role;
+revoke all on function public.record_catering_toast_note_lookup(jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.record_catering_toast_note_lookup(jsonb, jsonb) to service_role;
+revoke all on function public.catering_toast_note_scope(uuid, text) from public, anon, authenticated;
+revoke all on function public.catering_toast_note_evidence_complete(uuid, text) from public, anon, authenticated;
+revoke all on function public.catering_toast_ezcater_admission_pending(uuid, text) from public, anon, authenticated;
+revoke all on function public.catering_toast_uncovered_orders(uuid, date, date) from public, anon, authenticated;
+grant execute on function public.catering_toast_uncovered_orders(uuid, date, date) to service_role;
+revoke all on function public.ezcater_toast_links_house_guard() from public, anon, authenticated;
 revoke all on function public.plan_catering_toast(uuid, date, date, jsonb) from public, anon, authenticated;
 grant execute on function public.plan_catering_toast(uuid, date, date, jsonb) to service_role;
 revoke all on function public.catering_toast_check_code_leads(uuid, text, text) from public, anon, authenticated;
@@ -550,34 +718,41 @@ revoke all on function public.reconcile_catering_toast(uuid, date, date) from pu
 grant execute on function public.reconcile_catering_toast(uuid, date, date) to service_role;
 
 do $$
-declare p text; f text;
+declare t text; p text; f text;
 begin
-  if not has_table_privilege('service_role', 'public.catering_toast_note_codes', 'select') then raise exception 'ceiling: select missing'; end if;
-  foreach p in array array['insert', 'update', 'delete', 'truncate', 'references', 'trigger'] loop
-    if has_table_privilege('service_role', 'public.catering_toast_note_codes', p) then raise exception 'ceiling: service_role holds %', p; end if;
-    if has_table_privilege('authenticated', 'public.catering_toast_note_codes', p) or has_table_privilege('anon', 'public.catering_toast_note_codes', p) then
-      raise exception 'ceiling: a user role holds %', p;
+  foreach t in array array['catering_toast_note_codes', 'catering_toast_note_lookups'] loop
+    if not has_table_privilege('service_role', 'public.' || t, 'select') then raise exception 'ceiling: % select missing', t; end if;
+    foreach p in array array['insert', 'update', 'delete', 'truncate', 'references', 'trigger'] loop
+      if has_table_privilege('service_role', 'public.' || t, p) then raise exception 'ceiling: service_role holds % on %', p, t; end if;
+      if has_table_privilege('authenticated', 'public.' || t, p) or has_table_privilege('anon', 'public.' || t, p) then
+        raise exception 'ceiling: a user role holds % on %', p, t;
+      end if;
+    end loop;
+    if has_table_privilege('authenticated', 'public.' || t, 'select') or has_table_privilege('anon', 'public.' || t, 'select') then
+      raise exception 'ceiling: a user role can read %', t;
     end if;
   end loop;
-  if has_table_privilege('authenticated', 'public.catering_toast_note_codes', 'select') or has_table_privilege('anon', 'public.catering_toast_note_codes', 'select') then
-    raise exception 'ceiling: a user role can read catering_toast_note_codes';
-  end if;
-  foreach f in array array['record_catering_toast_note_codes(jsonb)', 'plan_catering_toast(uuid,date,date,jsonb)',
+  foreach f in array array['record_catering_toast_note_lookup(jsonb,jsonb)', 'catering_toast_note_scope(uuid,text)',
+                           'catering_toast_note_evidence_complete(uuid,text)', 'catering_toast_ezcater_admission_pending(uuid,text)',
+                           'catering_toast_uncovered_orders(uuid,date,date)', 'plan_catering_toast(uuid,date,date,jsonb)',
                            'catering_toast_check_code_leads(uuid,text,text)', 'catering_toast_check_house_code(uuid,text,text)',
-                           'catering_toast_check_on_ezcater_option(uuid,text)', 'plan_ezcater_toast()',
+                           'catering_toast_check_on_ezcater_option(uuid,text)', 'plan_ezcater_toast()', 'ezcater_toast_links_house_guard()',
                            'ensure_catering_ring_codes(uuid,date)', 'reconcile_catering_toast(uuid,date,date)'] loop
     if has_function_privilege('authenticated', 'public.' || f, 'execute') or has_function_privilege('anon', 'public.' || f, 'execute') then
       raise exception 'ceiling: a user role can execute %', f;
     end if;
   end loop;
+  -- 0347's link step is still whole (the guard was replaced, not dropped).
+  if not public.catering_toast_link_ready() then raise exception '0348: the link step is no longer ready'; end if;
 end $$;
 
 commit;
 
 -- Verify after apply:
---   select count(*) from pg_policies where tablename = 'catering_toast_note_codes';      -- 4
---   select count(*) from public.catering_toast_note_codes;                                -- 0 (no lookup has run)
---   select public.catering_toast_link_ready();                                            -- true (0347 untouched)
+--   select count(*) from pg_policies where tablename in ('catering_toast_note_codes','catering_toast_note_lookups'); -- 8
+--   select (select count(*) from public.catering_toast_note_codes) + (select count(*) from public.catering_toast_note_lookups); -- 0 (no lookup has run)
+--   select public.catering_toast_link_ready();                                            -- true (the guard is replaced, never dropped)
+--   select public.catering_toast_ezcater_admission_pending(l.id, 'x') from public.locations l; -- false everywhere (no shop is on)
 --   select public.reconcile_catering_toast('<shop>', current_date - 8, current_date + 1); -- {"skipped": "off"} (no settings row)
 --   Planner equivalence (read-only, sim then prod; zero recorded note codes): the 0347 bodies run beside the new
 --   planners return identical rows, both ways (ezCater and house), and the ezCater planner's time stays near 0347's
