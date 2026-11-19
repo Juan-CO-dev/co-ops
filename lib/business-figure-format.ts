@@ -74,18 +74,19 @@ export function figureLegend(language: Language, figures: ReadonlyArray<Figure |
     if (o.reasons && d.reason !== null) add(d.reason, true);
     for (const n of d.notes) add(n.text, n.gap);
   }
+  const entries = [...byText.values()];
   const read = (f: Figure): LegendRead => {
     const d = display(f);
     const reasonEntry = d.reason !== null && o.reasons ? byText.get(d.reason) : undefined;
     const noteEntries = d.notes.map((n) => ({ n, e: byText.get(n.text) }));
     return {
       said: d.words,
-      marks: [...(reasonEntry ? [reasonEntry] : []), ...noteEntries.flatMap((x) => (x.e ? [x.e] : []))],
+      // In legend order ("a, b", never "b, a"), each once.
+      marks: entries.filter((e) => e === reasonEntry || noteEntries.some((x) => x.e === e)),
       reason: reasonEntry ? null : d.reason,
       loose: noteEntries.flatMap((x) => (x.e ? [] : [x.n])),
     };
   };
-  const entries = [...byText.values()];
   return {
     entries, read,
     of: (list) => { const used = new Set(list.flatMap((f) => (f ? read(f).marks.map((m) => m.mark) : []))); return entries.filter((e) => used.has(e.mark)); },

@@ -134,11 +134,12 @@ function salesView(s: SalesIn): SalesView {
   return {
     coverage: s.coverage,
     total: salesFigure(s, missing),
-    checks: coverageFigure("count", s.checks, s.coverage, { missingReason: "reports.business.labor.state.sales_not_covered" }),
+    // Polish: a check count's reason is about CHECKS (the code stays `sales_not_covered` in a file's figure_notes).
+    checks: coverageFigure("count", s.checks, s.coverage, { missingReason: "reports.business.checks.state.sales_not_covered" }),
     toastChecks: coverageFigure("cents", s.toastChecksCents, s.coverage, { missing: s.toastAmountMissing }),
     // The exact Toast net is absent whenever any day's is: say that, whatever the coverage.
     toastNet: coverageFigure("cents", s.toastNetCents, s.toastNetCents === null ? "partial" : s.coverage,
-      { missingReason: "reports.business.labor.state.net_unknown", unknownReason: "reports.business.labor.state.net_unknown" }),
+      { missingReason: "reports.business.toast_net.state.net_unknown", unknownReason: "reports.business.toast_net.state.net_unknown" }),
     ezcater: coverageFigure("cents", s.ezcaterCents, s.coverage, { missing: s.ezcaterMissing }),
     ezcaterOrders: coverageFigure("count", s.ezcaterOrders, s.coverage, { label: CHECKS }),
     refunds: coverageFigure("cents", s.refundCents, s.coverage),

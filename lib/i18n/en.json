@@ -9403,5 +9403,7 @@
   "reports.business.pdf.col.measure": "Measure",
   "reports.business.pdf.hourly_pct": "Hourly %",
   "reports.business.pdf.loaded_pct": "Fully loaded %",
-  "reports.export.notes": "Notes"
+  "reports.export.notes": "Notes",
+  "reports.business.checks.state.sales_not_covered": "No sales were captured, so the number of checks is not known.",
+  "reports.business.toast_net.state.net_unknown": "Toast's exact net is not available for at least one day."
 }

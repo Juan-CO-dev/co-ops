@@ -725,6 +725,7 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.qual.baseline_untimed", "reports.business.channels.excluded.void", "reports.business.channels.excluded.excess_food",
   "reports.business.channels.excluded.other",
   // Polish (2026-11-18): labels for every figure, the per-scope legend, precise "not shown" reasons, the files.
+  "reports.business.checks.state.sales_not_covered", "reports.business.toast_net.state.net_unknown",
   "reports.business.legend.title", "reports.business.net.state.sales_not_covered", "reports.business.net.state.net_unknown",
   "reports.business.net.state.ezcater_missing", "reports.business.net.state.zero_sales", "reports.business.sum.sales",
   "reports.business.sum.hours", "reports.business.sum.pure", "reports.business.sum.loaded",

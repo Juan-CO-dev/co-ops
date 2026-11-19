@@ -76,9 +76,10 @@ const BODY_FONT = "Helvetica";
 const MIN_COL = 34;
 const MAX_COL = 200;
 
-/** WinAnsi-safe text: keep printable ASCII, Latin-1 and the ellipsis; replace everything else. */
+/** WinAnsi-safe text: keep printable ASCII, Latin-1, the ellipsis and the dashes (WinAnsi draws all of them: the
+ * business report prints an unknown as "—"); replace everything else. */
 export function pdfSafe(text: string): string {
-  return text.replace(/\s+/g, " ").replace(/[^\x20-\x7E -ÿ…]/g, "?");
+  return text.replace(/\s+/g, " ").replace(/[^\x20-\x7E -ÿ…—–]/g, "?");
 }
 
 /** Header labels read better with spaces; the keys stay the CSV contract. */

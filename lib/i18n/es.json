@@ -9403,5 +9403,7 @@
   "reports.business.pdf.col.measure": "Medida",
   "reports.business.pdf.hourly_pct": "% por hora",
   "reports.business.pdf.loaded_pct": "% total",
-  "reports.export.notes": "Notas"
+  "reports.export.notes": "Notas",
+  "reports.business.checks.state.sales_not_covered": "No se capturaron ventas, así que no se sabe cuántos cheques hubo.",
+  "reports.business.toast_net.state.net_unknown": "El neto exacto de Toast no está disponible en al menos un día."
 }

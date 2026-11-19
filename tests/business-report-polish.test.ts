@@ -454,6 +454,35 @@ describe("8. the PDF is for a person: words, marks and one Notes legend", () => 
   });
 });
 
+describe("found on the first printed sample (review of the v2 capture)", () => {
+  it("an unknown prints as a dash, not '?': the PDF text filter keeps the dashes WinAnsi can draw", async () => {
+    const { pdfSafe } = await import("@/lib/report-pdf");
+    expect(pdfSafe("— (a)")).toBe("— (a)");
+    expect(pdfSafe("ok 🙂 →")).toBe("ok ?? ?");
+  });
+  it("a check count and Toast net say their own reason, never 'so no labor %'; the file codes did not move", async () => {
+    const base = withLabor(await load(), (l) => laborIn(l, "ok"));
+    const dto: BusinessReportDto = { ...base, days: base.days.map((d) => ({ ...d, sales: { ...d.sales, coverage: "missing" as const, toastNetCents: null } })) };
+    const v = businessView(dto);
+    const cell = (f: Parameters<ReturnType<typeof figureLegend>["cell"]>[0]) => figureLegend("en", []).cell(f);
+    expect(cell(v.days[0]!.sales.checks)).toBe(`— (${R("checks.state.sales_not_covered")})`);
+    expect(cell(v.days[0]!.sales.toastNet)).toBe(`— (${R("toast_net.state.net_unknown")})`);
+    for (const k of ["checks.state.sales_not_covered", "toast_net.state.net_unknown"]) expect(R(k)).not.toMatch(/labor %/);
+    const day = businessOverviewRows(v, SHOP).find((r) => r.row_type === "day")!;
+    expect(String(day.figure_notes)).toContain("checks=unknown(sales_not_covered)");
+    expect(String(day.figure_notes)).toContain("toast_item_sales_net=unknown(net_unknown)");
+  });
+  it("a figure's marks are in legend order (a, b — never b, a)", async () => {
+    const v = businessView(estimated(await load()));
+    const legend = figureLegend("en", [v.total.labor.hours, v.total.labor.pureCost, v.total.labor.loadedCost], { reasons: true });
+    for (const f of [v.total.labor.pureCost, v.total.labor.loadedCost]) {
+      const marks = legend.read(f).marks.map((m) => m.mark);
+      expect(marks).toEqual([...marks].sort());
+      expect(marks.length).toBeGreaterThan(1);
+    }
+  });
+});
+
 describe("the legend is one mechanism for the page and the PDF", () => {
   it("the page's marks and the PDF's marks come from figureLegend, and the page reads a figure only through it or figureDisplay", () => {
     const parts = readFileSync(path.join(ROOT, "components/reports-business/BusinessParts.tsx"), "utf8");
