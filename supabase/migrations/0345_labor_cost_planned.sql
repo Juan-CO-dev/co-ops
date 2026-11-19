@@ -1,5 +1,6 @@
 -- Migration 0345_labor_cost_planned
 -- AUTHORED 2026-11-18 (board two labor views PR 1, CO Claude, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118190114, name 'labor_cost_planned'), after sim. The line above is the authoring-time gate note, kept as history.
 -- Apply AFTER 0340 (labor_payroll_shops; labor-v3 deployed). Nothing reads the new function until SCHEDULE_LABOR_VIEWS=1.
 -- Plan: CHIEF item-02-BOARD-TWO-VIEWS-PLAN-r4.md, with Astra r4's P1 + P2 per CC's rulings (the projected readiness
 -- and the projected denominator live in the shared TS contract, lib/facts/labor-cost-shared.ts and

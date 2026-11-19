@@ -34,7 +34,7 @@ Rollback: unset `FACT_LAYER_LABOR`. After 0339, an app rolled back to `labor-v1`
 
 Juan, 2026-11-17: the shops are separate LLC payrolls. **P Street** pays the owner, the director of operations (MoO) and P Street's GM-and-down salaries. **Capitol Hill** pays the catering manager and Capitol Hill's GM-and-down salaries. The CGS is not salaried. 0338/0339 split a salary by the person's 7shifts LINKS (an account linked at both shops was halved); 0340 replaces that with an explicit, dated, audited **payroll shop per 7shifts account** (`labor_payroll_shops`, one writer `save_labor_payroll_shop`, owner / CGS / MoO). Links never enter the allocation. No fallback, no split: an account with a salary and no payroll shop, an assignee with no salary, or an assignment to a shop that is no longer linked makes the week's salaried total **incomplete** (NULL, with the counts), never a partial total. The rule is `allocateSalaried` (`lib/facts/labor-payroll-shared.ts`).
 
-`0340_labor_payroll_shop` is FILE ONLY. Order:
+`0340_labor_payroll_shop` was APPLIED to prod 2026-11-18 (20261118064617). Order:
 
 1. **Sim**: apply `0340`. Pre-flight refuses by name without 0339, when a re-emitted body (`fact_labor_week_source`, `fact_labor_week_fingerprint` from 0338; `fact_replace_labor_week`, `fact_labor_cost` from 0339) is not its source (a later definer), when `labor_week_salaried_check` is missing, and when 0340 is already applied.
 2. **Prod** (Juan's word): apply `0340`, stamp its header.
@@ -111,7 +111,7 @@ Rollback: unset `FACT_LAYER_LABOR`. An app rolled back past labor-v3 writes noth
 
 ### 1d. The planned pricer for the schedule board (0345, board two labor views PR 1)
 
-`0345_labor_cost_planned` is FILE ONLY. It adds no table and writes no row: `fact_labor_cost`'s body (0340) moves into `fact_labor_cost_planned(…, p_plan jsonb)` and the public `fact_labor_cost(uuid, date, date, text)` keeps its signature and 23 columns and calls it with no plan. With no plan every answer is 0340's, row for row (`tests/fact-labor-0345-migration.test.ts` reads a built week before and after). The business report and every other reader are unchanged by the apply.
+`0345_labor_cost_planned` was APPLIED to prod 2026-11-18 (20261118190114). It adds no table and writes no row: `fact_labor_cost`'s body (0340) moves into `fact_labor_cost_planned(…, p_plan jsonb)` and the public `fact_labor_cost(uuid, date, date, text)` keeps its signature and 23 columns and calls it with no plan. With no plan every answer is 0340's, row for row (`tests/fact-labor-0345-migration.test.ts` reads a built week before and after). The business report and every other reader are unchanged by the apply.
 
 Order:
 

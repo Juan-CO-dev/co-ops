@@ -1,5 +1,6 @@
 -- Migration 0342_demand_signals_replay
 -- AUTHORED 2026-11-17 (item 4 PR 1, CO Claude). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118051449, name 'demand_signals_replay'), after sim. The line above is the authoring-time gate note, kept as history.
 -- Plan: CHIEF 03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-04-DEMAND-SIGNALS-PLAN-r2.md (Astra r2: no P1),
 -- with Astra r2's P2 #1 and P2 #2 folded in:
 --   P2 #1  A forecast plus a fingerprint cannot be replayed. Every input the engine read at its boundary is

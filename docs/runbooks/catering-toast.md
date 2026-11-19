@@ -1,13 +1,13 @@
 # Portal catering ↔ Toast cross-check (item 21)
 
-Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md` (Juan's 8 answers at its top override its defaults). Built so far: PRs 0, 1 and 2. Migration **0344** is authored, NOT applied (0343 may be claimed by the board PR in flight, so this work took 0344).
+Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md` (Juan's 8 answers at its top override its defaults). Built so far: PRs 0, 1 and 2. Migration **0344** is APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118185441), after sim; every shop stays off until Juan's word.
 
 ## What ships, and what it changes
 
 | PR | What | Live behaviour |
 |---|---|---|
 | 0 | `tests/catering-pipeline-value-census.test.ts`, `tests/catering-toast-classifier-untouched.test.ts` | None |
-| 1 | 0344 + `scripts/sql-harness-0344.mjs` + the ring-code capture fixture | None (file only) |
+| 1 | 0344 + `scripts/sql-harness-0344.mjs` + the ring-code capture fixture | None (0344 applied to prod 2026-11-18, 20261118185441) |
 | 2 | House leads on the not-rung list with suggestions; the pipeline label on Sales → Catering | Only for a shop whose `catering_toast_settings.enabled` is true. No row = off. |
 
 Nothing in PRs 0–2 writes a link, changes a sales number or changes pipeline value. A linked Toast check stays a `sale`.

@@ -2,11 +2,11 @@
 
 What this is: a list of outside sources (weather, closures, events), a rule that nothing is taken from a source until a person has marked it verified, the tables the signals are stored in, and one adapter (the National Weather Service). It changes no par, no prep number, no order and no schedule.
 
-Law: `AGENTS.md`, section "Demand signals, PR 2". Migration: `supabase/migrations/0343_demand_signal_sources.sql` (file only until CC applies it). The sources and their terms: `docs/demand-signal-sources.md`.
+Law: `AGENTS.md`, section "Demand signals, PR 2". Migration: `supabase/migrations/0343_demand_signal_sources.sql` (applied to prod 2026-11-18, schema_migrations version 20261118181429). The sources and their terms: `docs/demand-signal-sources.md`.
 
 ## State as shipped
 
-- 0343 is authored, not applied.
+- 0343 is applied to prod (2026-11-18, 20261118181429).
 - The register is empty, so every source is `unverified`.
 - `DEMAND_SIGNALS` and `NWS_USER_AGENT` are unset. The cron answers `demand_signals_off` and reads nothing.
 - Nothing sends an email, an SMS or a notification.

@@ -1,5 +1,6 @@
 -- Migration 0341_business_report_reads
 -- AUTHORED 2026-11-17 (item 9 PR 9a, CO Claude). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118051439, name 'business_report_reads'), after sim. The line above is the authoring-time gate note, kept as history.
 -- Number: 0340 is taken by the payroll-shop WIP (e6f8ae17, 0340_labor_payroll_shop.sql), so this is 0341.
 -- Apply AFTER 0337, 0338 and 0339 (all applied to prod 2026-11-17). Ships DARK: the app reads these only with
 -- BUSINESS_REPORT=1 AND FACT_LAYER=1 AND FACT_LAYER_LABOR=1 (lib/business-report.ts), authorized before any call.
