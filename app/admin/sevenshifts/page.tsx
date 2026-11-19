@@ -58,6 +58,6 @@ export default async function SevenShiftsPage({ searchParams }: { searchParams: 
     {screen && <SevenShiftsScreen key={screen.locationId} screen={screen} />}
     {payroll && <PayrollShopCard data={payroll.state === "ready" ? payroll : null} />}
     {burden && <LaborBurdenCard data={burden.state === "ready" ? burden : null} />}
-    {visibility && <BusinessVisibilityCard key={visibility.state === "ready" ? visibility.headId ?? "defaults" : "unavailable"} data={visibility.state === "ready" ? visibility : null} />}
+    {visibility && <BusinessVisibilityCard data={visibility.state === "ready" ? visibility : null} />}
   </div>;
 }

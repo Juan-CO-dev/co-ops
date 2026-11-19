@@ -68,17 +68,17 @@ describe("the card", () => {
   });
   it("one save of the whole set, behind Tier B every time, bound to the head the card showed", () => {
     expect(src.match(/fetch\("\/api\/admin\/reports\/business-visibility"/g)).toHaveLength(1);
-    expect(src).toContain("const payload = { settings: draft, expectedId: data.headId };");
+    expect(src).toContain("const against = data.headId;\n      const payload = { settings: draft, expectedId: against };");
     expect(src.indexOf("await requestStepUp(\"B\") !== \"ok\"")).toBeGreaterThan(-1);
     expect(src.indexOf("await requestStepUp(\"B\") !== \"ok\"")).toBeLessThan(src.indexOf("const post = "));
   });
   it("a switch that needs another is disabled while that one is off, and turning a parent off turns its children off in the draft", () => {
-    expect(src).toContain("disabled={parent !== undefined || busy}");
+    expect(src).toContain("disabled={parent !== undefined || busy || waiting}");
     expect(src).toContain("if (!next[k]) for (const child of dependents(k)) next[child] = false;");
   });
   it("disclosure: collapsed by default, the count on the header, and it cannot close over an unsaved draft", () => {
     expect(src).toContain("const [open, setOpen] = useState(false);");
-    expect(src).toContain("open={open || dirty}");
+    expect(src).toContain("open={open || dirty} onToggle={() => { if (!dirty) setOpen((o) => !o); else setOpen(true); }}");
     expect(src).toContain("count={t(\"business.visibility.count\", { on, total: GM_VISIBILITY_KEYS.length })}");
   });
   it("there is no toggle for cost per person or labor dollars per 15 minutes: two fixed lines", () => {
@@ -94,7 +94,9 @@ describe("where it shows", () => {
     const src = readFileSync("app/admin/sevenshifts/page.tsx", "utf8");
     expect(src).toContain("const visibility = canManageBusinessVisibility(auth.role) && businessReportEnabled(process.env)\n    ? await loadBusinessVisibilityCard(");
     expect(src.match(/loadBusinessVisibilityCard\(/g)).toHaveLength(1);
-    expect(src).toContain("data={visibility.state === \"ready\" ? visibility : null} />}");
+    expect(src).toContain("{visibility && <BusinessVisibilityCard data={visibility.state === \"ready\" ? visibility : null} />}");
+    // The card is never remounted by a new head (a React key would silently drop an edit made while the refresh is in flight).
+    expect(src).not.toMatch(/<BusinessVisibilityCard[^>]*\bkey=/);
   });
   it("the server lib refuses anyone else before any read, and reports a missing 0349 as unavailable (never a 500)", async () => {
     const { loadBusinessVisibilityCard, saveBusinessVisibility } = await import("@/lib/business-visibility");
