@@ -149,8 +149,8 @@ it('classifies every route and runtime HTTP export, including aliases and re-exp
     expect(mutations.some(e => `${e.path} ${e.method}` === key), key).toBe(true);
     expect(entry.reason.length).toBeGreaterThanOrEqual(15);
   }
-  expect(mutations.length).toBe(116); // +1 W26: POST /api/notifications/mark-all-read; +2 W23: reopen + portal logout
-  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(93);
+  expect(mutations.length).toBe(117); // +1 item 21 PR 3: POST toast-links; +1 W26: POST /api/notifications/mark-all-read; +2 W23: reopen + portal logout
+  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(94);
 }, 120_000);
 
 // Full parsed stub source includes alias targets and module initializers: an implemented

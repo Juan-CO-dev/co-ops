@@ -7,7 +7,18 @@ export interface EzcaterReconciliationDetail {
   linkCount: number;
   shadowRows: number;
   truncated: boolean;
+  /** Item 21 PR 3 (0347): Toast checks of this order that also carry a house ring code (held, or skipped at publication),
+   * counted only while the conflict still holds. A manager decides; nothing moves on its own. Fix round 2 (review
+   * PORTAL3-r2 P2 #2): an unknown is never a zero. `known` = the read answered (0 is a verified zero); `not_installed`
+   * = 0347 is not applied, so there is nothing to show; `unavailable` = the read failed, and the panel SAYS so.
+   * Absent = not an ezCater order (nothing to compare). */
+  houseConflicts?: HouseConflicts;
 }
+
+export type HouseConflicts =
+  | { state: "known"; count: number }
+  | { state: "not_installed" }
+  | { state: "unavailable" };
 
 /**
  * Which open review-queue rows belong to a lead (B5 #32). A lead with an ezCater

@@ -11,6 +11,7 @@ import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
 import { isBookableSignal } from "@/lib/catering/capacity-shared";
 import { EzcaterReconciliationPanel } from "./EzcaterReconciliationPanel";
+import { HouseToastPanel } from "./HouseToastPanel";
 import { TransferLead } from "./TransferLead";
 import { EzcaterDetail } from "./EzcaterDetail";
 import { ReopenLead } from "./ReopenLead";
@@ -548,6 +549,9 @@ function LeadDetail({
       {canWrite && reopen && lead.stage === "lost" && <ReopenLead leadId={lead.id} target={reopen.target} onReopened={onClose} />}
 
       <EzcaterReconciliationPanel leadId={lead.id} />
+
+      {/* Item 21 PR 3: a house order's Toast checks (renders nothing unless the server returns a panel). */}
+      {lead.leadSource !== "ezcater" && <HouseToastPanel leadId={lead.id} />}
 
       {canTransfer && <TransferLead leadId={lead.id} locationId={lead.locationId} locations={locations} onMoved={onClose} />}
 

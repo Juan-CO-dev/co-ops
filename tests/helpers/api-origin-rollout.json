@@ -15,6 +15,7 @@
   "catering/inbox/[id]/reassign/route.ts": "POST",
   "catering/inbox/[id]/send/route.ts": "POST",
   "catering/pipeline/[id]/route.ts": "PATCH",
+  "catering/pipeline/[id]/toast-links/route.ts": "POST",
   "catering/pipeline/[id]/transfer/route.ts": "POST",
   "catering/pipeline/route.ts": "POST",
   "catering/quotes/[id]/payments/route.ts": "POST",

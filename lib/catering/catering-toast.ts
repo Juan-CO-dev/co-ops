@@ -21,14 +21,14 @@ import {
 type Sb = ReturnType<typeof getServiceRoleClient>;
 
 /** A relation or function 0344 adds is missing: the migration is not applied yet. */
-const NOT_INSTALLED = new Set(["42P01", "42883", "PGRST202", "PGRST205"]);
+export const NOT_INSTALLED = new Set(["42P01", "42883", "PGRST202", "PGRST205"]);
 export class CateringToastNotInstalled extends Error { constructor() { super("catering_toast_not_installed"); } }
-function raise(error: { code?: string; message?: string }): never {
+export function raise(error: { code?: string; message?: string }): never {
   if (error.code && NOT_INSTALLED.has(error.code)) throw new CateringToastNotInstalled();
   throw new Error("catering_toast_read_failed");
 }
 
-async function shopSettings(sb: Sb, locationId: string): Promise<CateringToastShopSettings | null> {
+export async function shopSettings(sb: Sb, locationId: string): Promise<CateringToastShopSettings | null> {
   const { data, error } = await sb.from("catering_toast_settings").select(CATERING_TOAST_SETTINGS_COLUMNS)
     .eq("location_id", locationId).eq("enabled", true).order("location_id").range(0, 0);
   if (error) raise(error);
@@ -67,7 +67,7 @@ export const PLAN_MAX_PAGES = 50;
  * over the function's TOTAL order (one row per (lead, order, check), the key its DISTINCT ON and ORDER BY use), with an
  * exact count; a missing or moving count, a short page before the count, or more than PLAN_MAX_PAGES pages throws
  * `catering_toast_plan_incomplete`. Never a truncated list that reads as "no matching Toast check". */
-async function readPlanToCompletion(sb: Sb, args: Record<string, unknown>): Promise<CateringToastPlanRow[]> {
+export async function readPlanToCompletion(sb: Sb, args: Record<string, unknown>): Promise<CateringToastPlanRow[]> {
   const out: CateringToastPlanRow[] = [];
   let expected: number | null = null;
   for (let page = 0; ; page += 1) {
