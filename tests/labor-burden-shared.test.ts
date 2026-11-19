@@ -1,9 +1,11 @@
 // Board two labor views PR 2: the burden card's pure rules (lib/facts/labor-burden-shared.ts). The resolution is
 // the TS twin of 0346's fact_labor_burden_for (compared against the real SQL in the migration test's own data here
 // by hand-built rows; the SQL side is tests/labor-burden-0346-migration.test.ts).
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  burdenCardView, burdenFor, canManageLaborBurden, parseBurdenSave, type BurdenRow,
+  burdenCardView, burdenFor, canFollowCompanyOn, canManageLaborBurden, parseBurdenSave, type BurdenRow,
 } from "@/lib/facts/labor-burden-shared";
 import { ROLES, type RoleCode } from "@/lib/roles";
 
@@ -65,10 +67,42 @@ describe("burdenCardView", () => {
     expect(view.scopes[1]!.headId).toBeNull();
     expect(view.scopes[2]!.headId).toBe(rows[2]!.id); // the NEWEST row of the scope, in force or not
   });
-  it("a shop may follow the company only while it reads its own rate; history is newest first; a later start is 'scheduled'", () => {
-    expect(view.scopes.map((s) => s.canFollowCompany)).toEqual([false, false, true]);
+  it("the mode selector is offered to a shop that has ever had its own rate; history is newest first; a later start is 'scheduled'", () => {
+    expect(view.scopes.map((s) => s.hasOwnRate)).toEqual([false, false, true]);
     expect(view.scopes[2]!.history.map((h) => [h.validFrom, h.pct, h.followsCompany, h.scheduled])).toEqual([["2026-12-06", 16, false, true], ["2026-08-02", 15.5, false, false]]);
     expect(view.estimatedCount).toBe(1);
+  });
+});
+
+describe("canFollowCompanyOn: judged at the SELECTED start, never this week (review BOARD2-r1 P2)", () => {
+  it("a future override, scheduled while the shop follows the company this week, can be cancelled before it starts", () => {
+    const rows = [row({ valid_from: "2026-07-19", burden_pct: 10 }), row({ location_id: B, valid_from: "2026-11-22", burden_pct: 14 })];
+    const shop = burdenCardView(rows, [{ id: B, name: "Shop B" }], "2026-11-15").scopes[1]!;
+    expect(shop.scope).toBe("company"); // this week it follows the company
+    expect(shop.hasOwnRate).toBe(true); // so the selector must still be offered
+    expect(canFollowCompanyOn(shop.history, "2026-11-22")).toBe(true);
+    expect(canFollowCompanyOn(shop.history, "2026-12-06")).toBe(true);
+    expect(canFollowCompanyOn(shop.history, "2026-11-15")).toBe(false); // nothing of its own in force yet
+  });
+  it("a shop back on the company rate can backdate the return into an earlier override period", () => {
+    const rows = [row({ valid_from: "2026-07-19", burden_pct: 10 }), row({ location_id: B, valid_from: "2026-08-02", burden_pct: 15.5, source: "estimated" }),
+      follow(B, "2026-10-04")];
+    const shop = burdenCardView(rows, [{ id: B, name: "Shop B" }], "2026-11-15").scopes[1]!;
+    expect(shop.scope).toBe("company");
+    expect(canFollowCompanyOn(shop.history, "2026-09-06")).toBe(true);  // inside the override: a correction
+    expect(canFollowCompanyOn(shop.history, "2026-10-11")).toBe(false); // already following then
+    expect(canFollowCompanyOn(shop.history, "2026-07-26")).toBe(false); // before the shop's own rate
+  });
+  it("same-date rows: the newer one decides, whatever order the history arrives in", () => {
+    const rows = [row({ location_id: B, valid_from: "2026-10-04", burden_pct: 13 }), follow(B, "2026-10-04")];
+    const h = burdenCardView(rows, [{ id: B, name: "Shop B" }], "2026-11-15").scopes[1]!.history;
+    expect(canFollowCompanyOn(h, "2026-10-04")).toBe(false);
+    expect(canFollowCompanyOn([...h].reverse(), "2026-10-04")).toBe(false);
+  });
+  it("the card judges the date in its own Starts field (source pin)", () => {
+    const src = readFileSync(join(process.cwd(), "components/admin/sevenshifts/LaborBurdenCard.tsx"), "utf8");
+    expect(src).toContain("canFollowCompanyOn(scope.history, starts)");
+    expect(src).not.toMatch(/scope\.canFollowCompany\b/);
   });
   it("with nothing saved every scope is the 12% estimate", () => {
     const empty = burdenCardView([], [{ id: A, name: "Shop A" }], "2026-11-15");

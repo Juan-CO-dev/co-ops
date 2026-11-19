@@ -72,9 +72,21 @@ export interface BurdenScopeView extends BurdenInForce {
   locationId: string | null; name: string | null;
   /** the newest row of this scope (p_expected_id of the next save); null = none yet */
   headId: string | null;
-  /** a shop reading its OWN rate this week (the only state "follow the company" can end) */
-  canFollowCompany: boolean;
+  /** a shop with at least one rate row of its own, at any date: the only scope the "Follow the company" choice is
+   *  offered to. Whether following is possible is judged at the SELECTED start (canFollowCompanyOn), never this week:
+   *  a future override can be cancelled, and a return to the company rate backdated (review BOARD2-r1 P2). */
+  hasOwnRate: boolean;
   history: BurdenHistoryEntry[];
+}
+
+/** May this shop "follow the company" from `validFrom`? Exactly 0346's save_labor_burden rule: the shop's own row in
+ *  force at that date (greatest valid_from <= it, then the newest save) exists and carries a rate; otherwise the
+ *  writer refuses labor_burden_already_following. The card's TS twin; the SQL stays the authority (the route maps
+ *  its refusal), pinned equal in tests/labor-burden-0346-migration.test.ts. */
+export function canFollowCompanyOn(history: readonly BurdenHistoryEntry[], validFrom: string): boolean {
+  const inForce = history.filter((h) => h.validFrom <= validFrom)
+    .sort((a, b) => cmp(b.validFrom, a.validFrom) || cmp(b.createdAt, a.createdAt) || cmp(b.id, a.id))[0];
+  return !!inForce && !inForce.followsCompany && inForce.pct !== null && inForce.source !== null;
 }
 export interface BurdenCardView {
   /** the current payroll week (the card's "as of") */
@@ -91,7 +103,7 @@ export function burdenCardView(rows: readonly BurdenRow[], shops: readonly { id:
     const inForce = locationId === null ? companyBurden(rows, weekStart) : burdenFor(rows, locationId, weekStart);
     return {
       ...inForce, locationId, name, headId: [...own].sort(bySave)[0]?.id ?? null,
-      canFollowCompany: locationId !== null && inForce.scope === "shop",
+      hasOwnRate: locationId !== null && own.some((r) => !r.follows_company && r.burden_pct !== null && r.source !== null),
       history: [...own].sort(byForce).map((r) => ({ id: r.id, validFrom: r.valid_from, pct: r.burden_pct, source: r.source, followsCompany: r.follows_company,
         createdAt: r.created_at, createdBy: r.created_by, hasNote: r.has_note, scheduled: r.valid_from > weekStart })),
     };

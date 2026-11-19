@@ -12,7 +12,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { M0338, M0345, freshLaborParents, M0339, M0340 } from "./helpers/fact-0338-parents";
 import { A, B, GMU, MGR, W, laborPlanDb, type LaborPlanDb } from "./helpers/labor-plan-fixture";
 import { validScheduleStructure } from "@/lib/scheduling/structure-shared";
-import { burdenFor, type BurdenRow } from "@/lib/facts/labor-burden-shared";
+import { burdenCardView, burdenFor, canFollowCompanyOn, type BurdenRow } from "@/lib/facts/labor-burden-shared";
 import { crewStructureCases, loadStructureCases, materializeStructureCase } from "../scripts/schedule-structure-cases.mjs";
 
 const read = (n: string) => readFileSync(`supabase/migrations/${n}`, "utf8").replace(/\r\n/g, "\n");
@@ -224,6 +224,25 @@ describe("the TS twin", () => {
       const ts = burdenFor(rows, loc, w);
       expect([ts.pct, ts.basis], `${loc} ${w}`).toEqual(await burden(loc, w));
     }
+  });
+  it("canFollowCompanyOn (the card) offers follow at a date exactly when save_labor_burden accepts it there (review BOARD2-r1 P2)", async () => {
+    const raw = await q<Record<string, unknown>>("select id, location_id, burden_pct, source, valid_from::text valid_from, follows_company, created_at::text created_at, created_by from labor_burden_settings");
+    const rows: BurdenRow[] = raw.map((r) => ({ id: String(r.id), location_id: r.location_id as string | null, burden_pct: r.burden_pct === null ? null : Number(r.burden_pct),
+      source: r.source as BurdenRow["source"], valid_from: String(r.valid_from), follows_company: r.follows_company === true, created_at: String(r.created_at),
+      created_by: r.created_by as string | null, has_note: false }));
+    const view = burdenCardView(rows, [A, B, C].map((id) => ({ id, name: id })), W);
+    let accepted = 0;
+    for (const s of view.scopes.slice(1)) for (const w of [...WEEKS, "2026-09-27", "2026-10-11", "2026-11-08", "2026-11-15"]) {
+      const ts = canFollowCompanyOn(s.history, w);
+      await f.db.exec("begin");
+      let sql: boolean;
+      try { await save(MGR, s.locationId, { follow: true, from: w }); sql = true; }
+      catch (e) { expect(String(e)).toContain("labor_burden_already_following"); sql = false; }
+      finally { await f.db.exec("rollback"); }
+      expect(ts, `${s.locationId} ${w}`).toBe(sql);
+      if (sql) accepted++;
+    }
+    expect(accepted).toBeGreaterThan(0);
   });
 });
 

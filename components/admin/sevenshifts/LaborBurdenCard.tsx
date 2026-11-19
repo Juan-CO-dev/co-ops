@@ -20,7 +20,7 @@ import { formatDateLabelWithYear } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import {
-  LABOR_BURDEN_ERROR_CODES, LABOR_BURDEN_MAX_PCT, LABOR_BURDEN_NOTE_MAX, validBurdenStart, type BurdenCardView, type BurdenScopeView, type BurdenSource,
+  canFollowCompanyOn, LABOR_BURDEN_ERROR_CODES, LABOR_BURDEN_MAX_PCT, LABOR_BURDEN_NOTE_MAX, validBurdenStart, type BurdenCardView, type BurdenScopeView, type BurdenSource,
 } from "@/lib/facts/labor-burden-shared";
 import { LABOR_FLOOR_WEEK } from "@/lib/facts/labor-config-shared";
 
@@ -70,11 +70,13 @@ function BurdenRowView({ scope, data }: { scope: BurdenScopeView; data: LaborBur
   const name = scope.name ?? t("labor.burden.scope.company");
   const key = scope.locationId ?? "company";
   const panelId = `labor-burden-row-${key}`;
-  const follow = mode === "follow" && scope.canFollowCompany;
+  const follow = mode === "follow" && scope.hasOwnRate;
   const pctValue = pct.trim() === "" ? Number.NaN : Number(pct);
   const pctOk = Number.isFinite(pctValue) && pctValue >= 0 && pctValue <= LABOR_BURDEN_MAX_PCT;
   const startOk = validBurdenStart(starts);
-  const ready = startOk && (follow || pctOk);
+  // Judged at the date in the Starts field, never this week (review BOARD2-r1 P2); the writer re-judges it.
+  const followOk = follow && startOk && canFollowCompanyOn(scope.history, starts);
+  const ready = startOk && (follow ? followOk : pctOk);
   const touched = () => { setSaved(false); setError(null); };
 
   async function save() {
@@ -119,7 +121,7 @@ function BurdenRowView({ scope, data }: { scope: BurdenScopeView; data: LaborBur
             {h.scheduled ? ` (${t("labor.burden.history_scheduled")})` : ""}{h.hasNote ? ` (${t("labor.burden.history_note")})` : ""}</li>)}</ul>}
       </div>
       <div className="flex flex-wrap gap-3">
-        {scope.canFollowCompany && <label className={fieldLabel}>{t("labor.burden.field.mode")}
+        {scope.hasOwnRate && <label className={fieldLabel}>{t("labor.burden.field.mode")}
           <select className={control} value={mode} aria-label={t("labor.burden.aria.mode", { name })} onChange={(e) => { setMode(e.target.value === "follow" ? "follow" : "rate"); touched(); }}>
             <option value="rate">{t("labor.burden.mode.rate")}</option>
             <option value="follow">{t("labor.burden.mode.follow")}</option>
@@ -141,6 +143,7 @@ function BurdenRowView({ scope, data }: { scope: BurdenScopeView; data: LaborBur
         </label>
       </div>
       {follow && <p className="text-sm text-co-text-dim">{t("labor.burden.follow_help")}</p>}
+      {follow && startOk && !followOk && <p className="text-sm font-bold text-co-cta-text">{t("labor.burden.error.already_following")}</p>}
       {pct.trim() !== "" && !follow && !pctOk && <p className="text-sm font-bold text-co-cta-text">{t("labor.burden.error.invalid")}</p>}
       {starts !== "" && !startOk && <p className="text-sm font-bold text-co-cta-text">{t("labor.burden.error.invalid_date")}</p>}
       <label className={fieldLabel}>{t("labor.burden.field.note")}
