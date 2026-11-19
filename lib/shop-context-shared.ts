@@ -97,6 +97,7 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/admin/recipes": ["location"],
   "/admin/items": ["location"],
   "/reports/sales": ["location"],
+  "/reports/business": ["location"],
   "/reports/sales/catering": ["location"],
   "/reports/sales/checks": ["location"],
   "/reports/written": ["location"],

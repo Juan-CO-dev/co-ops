@@ -32,13 +32,27 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { BusinessReportError, loadBusinessReport, resolveBusinessRange } from "@/lib/business-report";
+import { businessReportEnabled, businessReportRefusal, parseBusinessRangeRequest } from "@/lib/business-report-shared";
+import { businessView } from "@/lib/business-view-shared";
 import {
   SALES_EXPORT_MAX_ROWS, SALES_READ_MIN, SalesReportError, VIEW_DIMENSION, isSalesExportView, loadSalesBreakdown,
   loadSalesCheckPage, loadSalesEzcaterOrders, loadSalesSummary, parseSalesCheckFilters, resolveSalesRange,
 } from "@/lib/sales-reports";
 import {
+  BUSINESS_EXPORT_COLUMNS,
   EXPORT_COLUMNS,
+  businessEmptyRangeRows,
+  assertBusinessRowCap,
+  businessChannelRows,
+  businessCompareRows,
+  businessCoverageNotice,
+  businessHoursNotice,
+  businessHoursRows,
+  businessOverviewRows,
+  businessPeopleRows,
   cashRows,
+  isBusinessExportTab,
   cateringRows,
   costingRows,
   countRows,
@@ -78,6 +92,9 @@ export interface ExportTable {
   pricingScope?: { kind: "global" } | { kind: "shop"; name: string };
   /** File-name family when one family has several tables (sales views: `sales-items`). */
   fileFamily?: string;
+  /** Item 9b fix round 1: sentences the file must carry on top (CSV preamble, PDF header) — the business
+   * family's "these lists cover N of M days" when a breakdown leaves days out. Absent = none (byte-identical). */
+  notices?: Array<{ key: TranslationKey; values: Record<string, string | number> }>;
 }
 
 type Params = Record<string, string | undefined>;
@@ -138,6 +155,54 @@ async function salesExportTable(auth: AuthContext, params: Params, shop: ShopRef
     throw error;
   }
 }
+/**
+ * Item 9c: the BUSINESS family. The page's own loader (loadBusinessReport) for the page's own range and tab, with
+ * the page's viewer (role included: per-person and per-quarter dollars ride only where the DTO carries them).
+ * Compare loads the previous range through the same loader; last year is `no_data_yet` until 2027-07-23.
+ * Past the Sales row cap: 413, never a cut file. Like every other family, a DOWNLOAD is not gated by the
+ * digest delivery mode (that switch only stops sending); the family has its own switch, checked first.
+ */
+async function businessExportTable(auth: AuthContext, params: Params, shop: ShopRef, today: string): Promise<Pick<ExportTable, "columns" | "rows" | "from" | "to" | "fileFamily" | "notices">> {
+  const tab = isBusinessExportTab(params.tab) ? params.tab : "overview";
+  const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations, role: auth.role };
+  // Fix round 6 (review ITEM9B-r6 P2): the page's ONE parse. A request missing a date is refused (no default date
+  // is ever assumed); one with no closed day is an explicit file over the ASKED period, and nothing is loaded.
+  const request = parseBusinessRangeRequest(params, today);
+  const fileFamily = tab === "overview" ? "business" : `business-${tab}`;
+  if (request.kind === "empty") {
+    const reason = request.reason;
+    if (reason === "dates_missing" || request.period === null) throw new ExportError(400, "range_dates_missing");
+    const period = request.period;
+    return { columns: BUSINESS_EXPORT_COLUMNS[tab], rows: businessEmptyRangeRows(tab, period, shop, reason), from: period.from, to: period.to,
+      fileFamily, notices: [{ key: reason === "from_after_to" ? "reports.business.export.from_after_to" : "reports.business.export.no_finished_days", values: {} }] };
+  }
+  const range = request.range;
+  try {
+    // The file is built from the page's VIEW (every figure sealed with its state), never from the DTO.
+    const dto = businessView(await loadBusinessReport(viewer, { locationId: shop.id, range }));
+    let rows: ExportRow[];
+    switch (tab) {
+      case "overview": rows = businessOverviewRows(dto, shop); break;
+      case "hours": rows = businessHoursRows(dto, shop); break;
+      case "channels": rows = businessChannelRows(dto, shop); break;
+      case "people": rows = businessPeopleRows(dto, shop); break;
+      case "compare": {
+        const previous = businessView(await loadBusinessReport(viewer, { locationId: shop.id, range: resolveBusinessRange({ range: "custom", ...range.previous }, today) }));
+        rows = businessCompareRows(dto, previous, shop);
+        break;
+      }
+    }
+    // Fix round 1: every tab that reads the cuts (all but Compare, whose total row carries breakdown_state) says
+    // on top of the file which days it covers when it leaves any out; never a partial total as the whole period.
+    const notices = [tab === "compare" ? null : businessCoverageNotice(dto), businessHoursNotice(dto)].filter((n) => n !== null);
+    return { columns: BUSINESS_EXPORT_COLUMNS[tab], rows: [...assertBusinessRowCap(rows)], from: range.from, to: range.to,
+      fileFamily, ...(notices.length ? { notices } : {}) };
+  } catch (error) {
+    if (error instanceof BusinessReportError) throw new ExportError(error.status, error.code);
+    throw error;
+  }
+}
+
 /** Bounded like every hub list: written reports page 50 at a time; 40 pages = 2,000 rows max. */
 const WRITTEN_MAX_PAGES = 40;
 
@@ -172,12 +237,17 @@ export function assertExportShop(auth: AuthContext, family: ExportFamily, locati
 }
 
 /** The family's own role floor (mirrors each page's redirect), checked before any database work. */
-export function assertFamilyFloor(auth: AuthContext, family: ExportFamily): void {
+export function assertFamilyFloor(auth: AuthContext, family: ExportFamily, env: Record<string, string | undefined> = process.env): void {
+  // Item 9c: the business family is dark until its three switches agree, then GM / MoO / Owner / CGS by ROLE.
+  if (family === "business") {
+    if (!businessReportEnabled(env)) throw new ExportError(503, "business_report_unavailable");
+    if (businessReportRefusal(auth.role)) throw new ExportError(403, "role_insufficient");
+  }
   if (family === "costing" && !canViewSandwiches(auth.user.role)) throw new ExportError(403, "role_insufficient");
   const floor: Record<ExportFamily, number> = {
     operations: 2, written: 2, cash: REPORTS_HUB_CASH_LEVEL, trends_ops: OPS_TRENDS_LEVEL, team: TEAM_VIEW_LEVEL,
     catering: INSIGHTS_READ_MIN, receiving: RECEIVE_MIN, counts: COUNT_READ_MIN, costing: MENU_COSTING_READ_MIN,
-    sales: SALES_EXPORT_MIN,
+    sales: SALES_EXPORT_MIN, business: SALES_EXPORT_MIN,
   };
   if (auth.level < floor[family]) throw new ExportError(403, "role_insufficient");
   // Task 13 (R7): the team section is people data about others — the social media manager is
@@ -327,6 +397,8 @@ export async function loadExportTable(auth: AuthContext, family: ExportFamily, p
       }
       case "sales":
         return { ...base, ...(await salesExportTable(auth, params, shop!, today)) };
+      case "business":
+        return { ...base, ...(await businessExportTable(auth, params, shop!, today)) };
     }
   } catch (error) {
     if (error instanceof ExportError) throw error;
@@ -354,4 +426,5 @@ export const EXPORT_TITLE_KEY: Record<ExportFamily, TranslationKey> = {
   counts: "reports.export.title.counts",
   costing: "reports.export.title.costing",
   sales: "reports.export.title.sales",
+  business: "reports.export.title.business",
 };

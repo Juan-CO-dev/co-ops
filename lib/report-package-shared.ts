@@ -35,9 +35,12 @@ export type PackageKind = "package_daily" | "package_weekly" | "package_monthly"
 export const PACKAGE_KINDS: readonly PackageKind[] = ["package_daily", "package_weekly", "package_monthly"];
 
 const col = (key: string, kind: ExportColumn["kind"] = "text"): ExportColumn => ({ key, kind });
+/** An identity column (ExportColumn.identity, review r10): the PDF repeats it in every column part. The
+ * CSV column ORDER here is the frozen accountant contract, so the PDF brings these forward instead. */
+const idc = (key: string, kind: ExportColumn["kind"] = "text"): ExportColumn => ({ key, kind, identity: true });
 /** Every per-day section row starts with these (spec: "per shop per day"). */
-const DAY = [col("business_date", "date"), col("location_code"), col("location_name"), col("currency", "currency")];
-const PERIOD = [col("period_start", "date"), col("period_end", "date"), col("location_code"), col("location_name"), col("currency", "currency")];
+const DAY = [idc("business_date", "date"), idc("location_code"), idc("location_name"), col("currency", "currency")];
+const PERIOD = [idc("period_start", "date"), idc("period_end", "date"), idc("location_code"), idc("location_name"), col("currency", "currency")];
 
 /**
  * THE ACCOUNTANT CONTRACT. Stable snake_case names, pinned by tests/report-package.test.ts.
@@ -47,16 +50,16 @@ export const PACKAGE_COLUMNS: Record<PackageTableKey, readonly ExportColumn[]> =
   sales: [
     ...DAY, col("status"), col("gross", "money"), col("discounts", "money"), col("comps", "money"), col("voids", "money"),
     col("refunds", "money"), col("net", "money"), col("sales_tax", "money"), col("tips", "money"), col("service_fees", "money"),
-    col("delivery_fees", "money"), col("gift_cards", "money"), col("payment_type"), col("channel"),
+    col("delivery_fees", "money"), col("gift_cards", "money"), idc("payment_type"), idc("channel"),
   ],
   cash: [
-    ...DAY, col("report_id"), col("projected", "money"), col("drawer_total", "money"), col("float", "money"),
+    ...DAY, idc("report_id"), col("projected", "money"), col("drawer_total", "money"), col("float", "money"),
     col("deposit", "money"), col("over_short", "money"), col("cash_tips", "money"), col("count_method"),
     col("paid_ins", "money"), col("paid_outs", "money"), col("paid_ins_outs_status"), col("closer"), col("signed_at", "datetime"),
     col("payment_type"),
   ],
   catering: [
-    ...DAY, col("lead_id"), col("external_ref"), col("lead_source"), col("stage"), col("money_status"), col("customer"),
+    ...DAY, idc("lead_id"), col("external_ref"), col("lead_source"), col("stage"), col("money_status"), col("customer"),
     col("headcount", "int"), col("quote_id"), col("quote_version", "int"), col("subtotal", "money"), col("delivery_fee", "money"),
     col("service_charge", "money"), col("gratuity", "money"), col("tax", "money"), col("total", "money"), col("deposit", "money"),
     col("value", "money"), col("value_basis"), col("paid_total", "money"), col("paid_stripe", "money"), col("paid_manual", "money"),
@@ -67,28 +70,28 @@ export const PACKAGE_COLUMNS: Record<PackageTableKey, readonly ExportColumn[]> =
   // ledger row, dated by when it was filed, keeping its delivery reference). Sum invoice_total over
   // delivery rows, extended over line rows, credit_amount over credit rows: nothing is counted twice.
   purchases: [
-    ...DAY, col("row_type"), col("kind"), col("delivery_id"), col("vendor_or_store"), col("invoice_number"), col("invoice_total", "money"),
+    ...DAY, idc("row_type"), col("kind"), idc("delivery_id"), col("vendor_or_store"), col("invoice_number"), col("invoice_total", "money"),
     col("line_count", "int"), col("priced_line_count", "int"), col("lines_total", "money"),
-    col("line_id"), col("sku_id"), col("sku"), col("qty", "number"), col("unit"), col("unit_price", "money"), col("extended", "money"),
+    idc("line_id"), col("sku_id"), col("sku"), col("qty", "number"), col("unit"), col("unit_price", "money"), col("extended", "money"),
     col("has_receipt_photo", "bool"), col("receipt_link"), col("detail_link"), col("po_code"), col("match_state"), col("delivery_status"),
-    col("received_by"), col("credit_id"), col("credit_reason"), col("credit_amount", "money"), col("credit_status"), col("credit_delivery_date", "date"),
+    col("received_by"), idc("credit_id"), col("credit_reason"), col("credit_amount", "money"), col("credit_status"), col("credit_delivery_date", "date"),
   ],
   waste: [
-    ...DAY, col("item"), col("category"), col("tossed_qty", "number"), col("par_unit"), col("tossed_at", "datetime"),
+    ...DAY, idc("item"), col("category"), col("tossed_qty", "number"), col("par_unit"), idc("tossed_at", "datetime"),
     col("tossed_by"), col("source"), col("unit_cost", "money"), col("est_cost", "money"), col("cost_status"),
   ],
   inventory: [
-    ...DAY, col("row_type"), col("count_event_id"), col("counted_at", "datetime"), col("counted_by"), col("sku_id"), col("sku"),
+    ...DAY, idc("row_type"), idc("count_event_id"), col("counted_at", "datetime"), col("counted_by"), idc("sku_id"), col("sku"),
     col("level_label"), col("qty", "number"), col("resolved_oz", "number"), col("cost_per_oz", "number"), col("value", "money"),
     col("cost_status"),
   ],
-  rollup_sales_by_tax_category: [...PERIOD, col("tax_category"), col("status"), col("net_sales", "money"), col("sales_tax", "money")],
+  rollup_sales_by_tax_category: [...PERIOD, idc("tax_category"), col("status"), col("net_sales", "money"), col("sales_tax", "money")],
   rollup_purchases_by_vendor: [
-    ...PERIOD, col("kind"), col("vendor_or_store"), col("deliveries", "int"), col("invoice_total", "money"),
+    ...PERIOD, idc("kind"), idc("vendor_or_store"), col("deliveries", "int"), col("invoice_total", "money"),
     col("lines_total", "money"), col("credits_total", "money"),
   ],
   rollup_waste_by_category: [
-    ...PERIOD, col("category"), col("tosses", "int"), col("est_cost", "money"), col("uncosted_tosses", "int"),
+    ...PERIOD, idc("category"), col("tosses", "int"), col("est_cost", "money"), col("uncosted_tosses", "int"),
   ],
   rollup_cash_variance: [
     ...PERIOD, col("cash_reports", "int"), col("deposits", "money"), col("over_short_total", "money"), col("over_total", "money"),

@@ -344,6 +344,7 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/(authed)/my-feedback/page.tsx": "/my-feedback",
   "app/(authed)/reports/page.tsx": "/reports",
   "app/(authed)/reports/sales/page.tsx": "/reports/sales",
+  "app/(authed)/reports/business/page.tsx": "/reports/business", // item 9b — the business report, per shop
   "app/(authed)/reports/sales/catering/page.tsx": "/reports/sales/catering",
   "app/(authed)/reports/sales/checks/page.tsx": "/reports/sales/checks",
   "app/(authed)/reports/written/page.tsx": "/reports/written",
@@ -466,6 +467,7 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   "app/(authed)/dashboard/page.tsx": /await resolveShop\(locations, shopParamFor\("\/dashboard", /,
   "app/(authed)/reports/page.tsx": /shopParamFor\("\/reports", searchParamValues\(raw\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
   "app/(authed)/reports/sales/page.tsx": /shopParamFor\("\/reports\/sales", searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
+  "app/(authed)/reports/business/page.tsx": /shopParamFor\("\/reports\/business", searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
   "app/(authed)/reports/sales/catering/page.tsx": /shopParamFor\("\/reports\/sales\/catering", searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
   "app/(authed)/reports/sales/checks/page.tsx": /shopParamFor\("\/reports\/sales\/checks", searchParamValues\(params\)\) \?\? \(await resolveReportShopId\(auth\)\)/,
   "app/(authed)/reports/written/page.tsx": /await resolveShopId\(auth\.locations\)/,

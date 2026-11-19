@@ -250,7 +250,7 @@ describe("P2 RUSH: zero / thin baselines never make a rush", () => {
   });
   it("thin history (< 4 covered same-weekdays) reads 'not enough history'", () => {
     const r = detectRushes(day(() => [20, 40_000]), history(3, () => [6, 12_000]));
-    expect(r).toEqual({ state: "not_enough_history", windows: [] });
+    expect(r).toEqual({ state: "not_enough_history", windows: [], uncompared: 0, untimed: 0, baselineUntimed: 0 });
   });
   it("uses at most the last 8 covered weeks", () => {
     const h = [...history(8, () => [6, 12_000]), ...history(20, () => [100, 200_000]).slice(8)];
@@ -296,7 +296,7 @@ describe("recompose: every cut sums to the Sales report's own day (parity with s
     expect(rc).toMatchObject({ ok: true, cutCents: 3_000, toastChecksCents: 3_000 });
     const ch = channelTotals(cuts);
     expect(ch.included.reduce((s, r) => s + r.cents, 0)).toBe(day!.toastChecksCents);
-    expect(ch.excluded).toEqual([{ key: "gift_card", cents: 2_500, checks: 1 }]);
+    expect(ch.excluded).toEqual([{ key: "gift_card", cents: 2_500, checks: 1, amountMissing: 0 }]);
     const sv = serverTotals(cuts);
     expect(sv.reduce((s, r) => s + r.cents, 0)).toBe(3_000);
     expect(sv.find((r) => r.key === "")).toMatchObject({ unassigned: true, cents: 1_200 });

@@ -97,8 +97,8 @@ describe("nothing is truncated (Astra P2): cells wrap, tall rows continue, wide 
   });
 
   it("splitColumns packs parts that fit and repeats the identifying columns", () => {
-    expect(splitColumns([50, 50, 50], 200, 2)).toEqual([[0, 1, 2]]);
-    const parts = splitColumns([40, 40, 100, 100, 100, 100], 300, 2);
+    expect(splitColumns([50, 50, 50], 200, [0, 1])).toEqual([[0, 1, 2]]);
+    const parts = splitColumns([40, 40, 100, 100, 100, 100], 300, [0, 1]);
     expect(parts).toEqual([[0, 1, 2, 3], [0, 1, 4, 5]]);
     for (const p of parts) expect(p.slice(0, 2)).toEqual([0, 1]);
   });
