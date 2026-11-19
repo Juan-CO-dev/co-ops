@@ -57,6 +57,9 @@ interface BoardOpts {
   /** business dates the Sales report has captured (default: every day asked) */
   salesCaptured?: (date: string) => boolean;
   viewer?: PeopleActor; env?: Record<string, string | undefined>; rpc?: PgliteClientOpts["rpc"];
+  /** PR 3: generate the week with this forecast per hour (7:00 to 20:59, cents), so the stored day contexts carry a
+   * demand curve and the labor card computes (default: the store's own inputs, no sales history). */
+  genHourlyCents?: number;
 }
 async function board(o: BoardOpts) {
   const s = scheduleStore(shopTables());
@@ -74,9 +77,13 @@ async function board(o: BoardOpts) {
     const p = await lib.generateWeek(gen, { actor: gm, locationId: A, weekStart: prevWeek, expectedHead: null });
     setShifts(p.revisionId, o.prevShifts ?? []);
   }
-  const g = await lib.generateWeek(gen, { actor: gm, locationId: A, weekStart: o.week, expectedHead: null });
-  setShifts(g.revisionId, o.shifts);
   const dates = weekDays(o.week);
+  const genDemand: DemandResult | null = o.genHourlyCents === undefined ? null : { kind: "ok", days: dates.map((date) => ({
+    kind: "ok" as const, date, hourlyCents: Array.from({ length: 24 }, (_, h) => (h >= 7 && h <= 20 ? o.genHourlyCents! : 0)), dayCents: 14 * o.genHourlyCents!,
+    weeks: 4, basis: "trailing_same_weekday" as const, weeksAhead: 1, confidence: "normal" as const, unknownCents: 0, catering: [] })) };
+  const g = await lib.generateWeek(genDemand ? { ...gen, loadInputs: async (svc, a) => ({ ...(await loadSchedulingInputs(svc, a)), demand: genDemand }) } : gen,
+    { actor: gm, locationId: A, weekStart: o.week, expectedHead: null });
+  setShifts(g.revisionId, o.shifts);
   const demand: DemandResult = { kind: "ok", days: dates.map((date) => {
     const cents = (o.forecast ?? (() => 200_000))(date);
     return cents === null ? { kind: "no_history" as const, date, weeksAhead: 1, catering: [] }
@@ -302,6 +309,91 @@ describe("a MIXED week: settled days are the facts, today and later are the sche
       await f.q("select save_labor_payroll_shop($1, 20, $2, 'shop', '2026-07-19', 'test: back to shop A payroll', (select max(seq) from labor_payroll_shops where sevenshifts_user_id = 20))", [MGR, A]);
       await f.build("2026-10-04"); await f.build("2026-10-11");
     }
+  });
+});
+
+// ── PR 3: the screens' payload, over the REAL loader ────────────────────────────────────────────
+describe("PR 3: with the views the real board prices no labor; who gets what per hour", () => {
+  const WEEK = "2099-01-05", NOW = new Date("2099-01-01T16:00:00Z");
+  const shifts = weekDays(WEEK).slice(0, 6).map((d) => shift(ALICE, d, 8));
+  type AnyBoard = { strip: { money?: unknown } | null; tabs: Array<Record<string, unknown>>; days: Array<Record<string, unknown> & { date: string; hours: number[]; labor: { state: string; lines?: Array<{ key: string; params?: Record<string, number> }>; errand?: { key: string } } | null }> };
+  const full = async (o: Partial<BoardOpts>) => (await board({ now: NOW, week: WEEK, shifts, ...o })).json as unknown as AnyBoard & { laborViews?: BoardLaborViews };
+  const MONEY_KEYS = /"(money|hourlyCostCents|hourlyPct|salariedFixedCents|totalPct|centsByHour)"/;
+
+  it("a GM: no strip money, no tab %, no labor $ / % and no forecast $ per hour; hours per hour; the day and week totals are the views'", async () => {
+    const b = await full({ viewer: gm });
+    expect(b.laborViews?.state).toBe("ready");
+    expect(b.strip!.money).toBeUndefined();
+    expect(b.tabs.every((t) => !("hourlyPct" in t))).toBe(true);
+    const withHours = b.days.filter((d) => d.hours.length > 0);
+    expect(withHours.length).toBeGreaterThan(0);
+    for (const d of withHours) {
+      expect(d.laborByHour).toBeNull();
+      expect("centsByHour" in d).toBe(false);
+      const byHour = d.hoursByHour as Array<{ hour: number; hours: number }>;
+      expect(byHour.map((h) => h.hour)).toEqual(d.hours);
+      // Alice's shift (6:00 to 14:00) on the days she works, hour by hour of the shop's axis; nothing on Sunday.
+      for (const h of byHour) expect(h.hours, `${d.date} ${h.hour}`).toBe(d.date !== "2099-01-11" && h.hour >= 6 && h.hour < 14 ? 1 : 0);
+      if (d.date !== "2099-01-11") expect(byHour.some((h) => h.hours === 1)).toBe(true);
+    }
+    // The labor card never shows the board's own money lines: the views' lines, or a named errand.
+    for (const d of b.days.filter((x) => x.labor)) {
+      const keys = (d.labor!.lines ?? []).map((l) => l.key);
+      expect(keys.some((k) => /schedule\.labor\.(max_labor|minus_salaried|max_hours)$/.test(k))).toBe(false);
+      if (d.labor!.state === "ok") expect(keys).toEqual(expect.arrayContaining(["schedule.labor.views_max_hours"]));
+    }
+    // Outside `laborViews` and the labor card, no money key at all.
+    const rest = JSON.parse(JSON.stringify(b)) as Record<string, unknown>;
+    delete rest.laborViews;
+    for (const d of rest.days as Array<Record<string, unknown>>) delete d.labor;
+    expect(JSON.stringify(rest)).not.toMatch(MONEY_KEYS);
+  });
+  it("the labor card's lines ARE the day's views figure: the same sales, salaries, burden and pure hourly $ (a week generated with a forecast)", async () => {
+    const b = await full({ viewer: gm, genHourlyCents: 20_000 });
+    const views = b.laborViews as BoardLaborViewsReady;
+    const mon = day(views, "2099-01-05");
+    // Monday as PR 1 pins it: Alice 8 h at $20, a seventh of the $1,400 salary, 12% burden, $2,000 forecast.
+    expect(mon).toMatchObject({ straightCents: 16_000, hourlyMinutes: 480, otPremiumCents: 0, pureHourlyCents: 16_000, salariedCents: 20_000, burdenPct: 12, sales: { basis: "forecast", cents: 200_000 } });
+    const card = b.days.find((d) => d.date === "2099-01-05")!.labor!;
+    expect(card.state).toBe("ok");
+    const params = (key: string) => card.lines!.find((l) => l.key === key)?.params;
+    // $2,000 x 28% / 1.12 = $500; minus $200 of salaries = $300.
+    expect(params("schedule.labor.views_allowance_total")).toEqual({ salesCents: mon.sales.cents, targetPct: views.targets.loadedPct, burdenPct: mon.burdenPct, salariedDayCents: mon.salariedCents, allowanceCents: 30_000 });
+    expect(params("schedule.labor.views_max_hours")).toEqual({ allowanceCents: 30_000, premiumCents: mon.otPremiumCents, wageExactCents: 2_000, hours: 15 });
+    expect(params("schedule.labor.views_verdict_under")).toEqual({ projectedCents: mon.pureHourlyCents, allowanceCents: 30_000, diffCents: 14_000 });
+    // Saturday carries the week's 8 overtime hours: its premium comes off the hours, and the verdict is its pure hourly $.
+    const sat = day(views, "2099-01-10");
+    const satCard = b.days.find((d) => d.date === "2099-01-10")!.labor!;
+    expect(sat).toMatchObject({ otPremiumCents: 8_000, pureHourlyCents: 24_000 });
+    expect(satCard.lines!.find((l) => l.key === "schedule.labor.views_max_hours")?.params).toEqual({ allowanceCents: 30_000, premiumCents: 8_000, wageExactCents: 2_000, hours: 11 });
+    expect(satCard.lines!.find((l) => l.key === "schedule.labor.views_verdict_under")?.params).toEqual({ projectedCents: 24_000, allowanceCents: 30_000, diffCents: 6_000 });
+    // A GM's windows are the displayed fields only.
+    for (const w of (card as unknown as { windows: Array<Record<string, unknown>> }).windows) expect(Object.keys(w).sort()).toEqual(["amberReasons", "floorHeads", "fromQ", "key", "on", "optimal", "toQ", "tone"]);
+  });
+  it("a MoO: the same board plus straight-time % per hour and the forecast $ per hour; still no strip money and no tab %", async () => {
+    const b = await full({ viewer: moo });
+    expect(b.strip!.money).toBeUndefined();
+    expect(b.tabs.every((t) => !("hourlyPct" in t))).toBe(true);
+    for (const d of b.days.filter((x) => x.hours.length > 0)) {
+      expect(Array.isArray(d.laborByHour)).toBe(true);
+      expect((d.hoursByHour as unknown[]).length).toBe(d.hours.length);
+    }
+  });
+  it("an AGM's board with the switch on is byte for byte the board with it off (no additions)", async () => {
+    const on = await board({ now: NOW, week: WEEK, shifts, viewer: agm });
+    const off = await board({ now: NOW, week: WEEK, shifts, viewer: agm, env: {} });
+    expect(JSON.stringify(on.json)).toBe(JSON.stringify(off.json));
+    expect(JSON.stringify(on.json)).not.toMatch(/hoursByHour|laborViews/);
+  });
+  it("switch OFF: a GM's board is what it was (its own strip money, tab %, labor % per hour; no hours row, no views)", async () => {
+    const b = await full({ viewer: gm, env: {} });
+    expect(b.strip!.money).toBeDefined();
+    expect(b.tabs.every((t) => "hourlyPct" in t)).toBe(true);
+    for (const d of b.days.filter((x) => x.hours.length > 0)) {
+      expect(Array.isArray(d.laborByHour)).toBe(true);
+      expect("hoursByHour" in d).toBe(false);
+    }
+    expect("laborViews" in b).toBe(false);
   });
 });
 

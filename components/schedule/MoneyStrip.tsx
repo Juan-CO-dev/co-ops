@@ -42,7 +42,7 @@ export function BudgetLineItem({ line: l, canBudget, render, setLink }: {
   );
 }
 
-export function MoneyStrip({ strip, budgetLines, names, positions, canSetEstimates, canBudget = false, locationId }: {
+export function MoneyStrip({ strip, budgetLines, names, positions, canSetEstimates, canBudget = false, locationId, laborViews = false }: {
   strip: Strip;
   budgetLines: Array<{ key: string; params?: Record<string, string | number> }>;
   names: Record<string, string>;
@@ -52,6 +52,8 @@ export function MoneyStrip({ strip, budgetLines, names, positions, canSetEstimat
   /** The budget act: "Set one" links the budget control. */
   canBudget?: boolean;
   locationId: string;
+  /** PR 3: the two labor views carry the money (the `LaborViewsStrip` below this strip); this strip is hours only then. */
+  laborViews?: boolean;
 }) {
   const { t, language, line } = useBoardLine({ names, positions });
   const hrs = strip.hours;
@@ -101,7 +103,7 @@ export function MoneyStrip({ strip, budgetLines, names, positions, canSetEstimat
           ))}
         </ul>
       ) : null}
-      {!money ? <p className="text-xs text-co-text-muted">{t("schedule.board.money.hidden")}</p> : null}
+      {!money && !laborViews ? <p className="text-xs text-co-text-muted">{t("schedule.board.money.hidden")}</p> : null}
       {moneyBlank ? (
         <p className="text-sm font-bold text-co-warning-text">
           {canSetEstimates

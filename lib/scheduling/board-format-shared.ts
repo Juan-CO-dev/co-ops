@@ -5,7 +5,7 @@
  * an ISO date → a short date label, a window / scope / day-type key → its own translated label. Counts stay numbers
  * (`coverableQ`, `requiredQ` are counts of quarters, not clock times). Never builds English prose.
  */
-import { formatCentsWhole, formatDateLabel } from "@/lib/i18n/format";
+import { formatCents, formatCentsWhole, formatDateLabel } from "@/lib/i18n/format";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import type { NarrativeLine } from "@/lib/people-narrative";
 import { formatQ, isYmd } from "./time-shared";
@@ -49,7 +49,9 @@ export function personName(ctx: Pick<LineContext, "names" | "t">, id: string | n
 export function formatParams(params: Readonly<Record<string, string | number>> | undefined, ctx: LineContext): TranslationParams {
   const out: TranslationParams = {};
   for (const [k, v] of Object.entries(params ?? {})) {
-    if (typeof v === "number" && /Cents$/.test(k)) out[k] = formatCentsWhole(v, ctx.language);
+    // A wage inside an equation is shown to the CENT ($20.50, never "$21"): whole dollars would make the line's arithmetic read false.
+    if (typeof v === "number" && /ExactCents$/.test(k)) out[k] = formatCents(v, ctx.language);
+    else if (typeof v === "number" && /Cents$/.test(k)) out[k] = formatCentsWhole(v, ctx.language);
     else if (typeof v === "number" && CLOCK_Q.has(k)) out[k] = formatQ(v, ctx.language);
     else if (k === "peopleIds" && typeof v === "string") out.people = (JSON.parse(v) as string[]).map((id) => personName(ctx, id)).join(", ");
     else if (k === "userId" && typeof v === "string") out[k] = personName(ctx, v);
