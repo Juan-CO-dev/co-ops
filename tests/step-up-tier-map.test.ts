@@ -135,6 +135,10 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // Item 2 (0340): the payroll shop re-allocates salaried labor cost (a backdated row re-prices history): Tier B.
   "app/api/admin/labor/payroll-shop/route.ts": ["B"],
   "app/api/admin/labor/burden/route.ts": ["B"],
+  // Item 21 PR 5 (0350): a shop's catering / Toast switches turn automatic linking on: Tier B. Confirming the old
+  // orders links many checks in batches that outlast Tier B's two minutes: Tier A (the password once).
+  "app/api/admin/catering/toast-settings/route.ts": ["B"],
+  "app/api/admin/catering/toast-settings/old-orders/route.ts": ["A"],
   // Item 4 PR 2 (0343): marking a demand-signal source verified / revoked opens or closes what may be ingested and used: Tier B.
   "app/api/admin/demand-signals/sources/mark/route.ts": ["B"],
   // Scheduling Phase 1 (Task 16): the people settings (skill tunables MoO+, shop settings) take the Tier E edit
@@ -289,6 +293,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/InboundSettings.tsx": ["A"],
+  "components/admin/catering/CateringToastSettings.tsx": ["A", "B"],
   "components/admin/vendors/VendorImportPanel.tsx": ["A", "E"],
   "components/admin/marketing/MarketingWriteForms.tsx": ["A", "B"],
   "app/admin/marketing/ad-codes/AdCodesClient.tsx": ["A", "B"],

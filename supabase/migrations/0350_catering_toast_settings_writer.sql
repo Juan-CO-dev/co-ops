@@ -25,6 +25,8 @@
 --     switch turned off is either seen by a run or lands after it; then the actor row, then the settings row.
 --     AUDIT: one row in the same transaction, `catering.toast_settings_update`, destructive (a person changes shared
 --     operational config): the shop, and the settings before and after. No free text exists in a setting.
+--   catering_toast_settings_ready()  what the card asks before it offers a switch: is the link step (0347) ready, and
+--     is the house reconciler (0348) installed. The writer refuses on the same two facts; the card never guesses them.
 -- Nothing else changes: the table keeps its deny-all RLS and its service-role SELECT ceiling (0344), every write is
 -- this SECURITY DEFINER function, and no shop is switched by this file (no row is inserted).
 -- Proof: scripts/sql-harness-0350.mjs (PGlite, the REAL 0344 file), CI-pinned by
@@ -133,6 +135,16 @@ begin
   return to_jsonb(v_new);
 end $$;
 
+-- The two facts the writer's dependency refusals rest on, for the card (read-only).
+create function public.catering_toast_settings_ready() returns jsonb
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select jsonb_build_object(
+    'link_step', coalesce(public.catering_toast_link_ready(), false),
+    'automatic', to_regprocedure('public.reconcile_catering_toast(uuid,date,date)') is not null)
+$$;
+
+revoke all on function public.catering_toast_settings_ready() from public, anon, authenticated;
+grant execute on function public.catering_toast_settings_ready() to service_role;
 revoke all on function public.set_catering_toast_settings(uuid, uuid, jsonb, timestamptz) from public, anon, authenticated;
 grant execute on function public.set_catering_toast_settings(uuid, uuid, jsonb, timestamptz) to service_role;
 
@@ -154,10 +166,15 @@ begin
      or has_function_privilege('anon', 'public.set_catering_toast_settings(uuid,uuid,jsonb,timestamptz)', 'execute') then
     raise exception 'ceiling: a user role can execute set_catering_toast_settings';
   end if;
+  if has_function_privilege('authenticated', 'public.catering_toast_settings_ready()', 'execute')
+     or has_function_privilege('anon', 'public.catering_toast_settings_ready()', 'execute') then
+    raise exception 'ceiling: a user role can execute catering_toast_settings_ready';
+  end if;
 end $$;
 
 commit;
 
 -- Verify after apply:
 --   select has_function_privilege('service_role', 'public.set_catering_toast_settings(uuid,uuid,jsonb,timestamptz)', 'execute'); -- true
+--   select public.catering_toast_settings_ready();        -- {"link_step": true, "automatic": <true once 0348 is applied>}
 --   select count(*) from public.catering_toast_settings;  -- unchanged (0 on prod today: this file switches no shop)

@@ -134,12 +134,16 @@ What the table says, in short:
 
 ## Turning a shop on (Juan's word, per shop)
 
-Settings have no app writer yet (the settings card and its audited writer were deferred from PR 3; CC's call where it lands). CC runs, as the database owner:
+Since PR 5 (migration **0350**, authored, NOT applied) a shop is turned on from the app: **Admin → Catering → Toast matching** (`/admin/catering/toast`). Never by SQL again: `set_catering_toast_settings` is the only writer of the table, and every save writes its own audit row (`catering.toast_settings_update`, who, which shop, the settings before and after).
 
-```sql
-insert into public.catering_toast_settings(location_id, enabled) values ('<shop id>', true)
-on conflict (location_id) do update set enabled = true, updated_at = clock_timestamp();
-```
+- **Who:** the Owner, the CGS and the MoO. Saving asks for the password every time.
+- **What a save is:** the shop's whole row. If someone else changed it meanwhile the save is refused ("Someone else just changed this shop's settings") and the card shows theirs.
+- **What cannot be saved, and the card says so before the press:** a dependent switch without "Check catering orders against Toast"; automatic linking without a start date; listing Toast-origin orders without origin linking; turning a shop on while the link step (0347) is not ready; ring codes or automatic linking while the house reconciler (0348) is not installed.
+- **Applying 0350 (CC):** sim first, after 0347 (it does not need 0348). Verify block at the end of the file. Before it is applied the page says "These settings are not installed yet" and shows no switch.
+
+### Matching the old orders (Juan answer 7)
+
+On the same page, for a shop that is on: **Orders not matched yet → Find matches**. It lists how many booked house orders have no Toast check linked, and how many of them have a check the system is sure about: the order's own Toast order, or its ring code on the check. Amount-and-date suggestions are never included. "Link these N checks" (password once) confirms them in one step. Each one is an ordinary link made by that person (its own decision and audit row), exactly as if they had pressed "Link this check" in the order's panel, and each can be unlinked later. Left out, with the count and the reason: a pair a manager already said no to, a check another order holds, a check that also carries an ezCater number, a check outside the day before to a week after the event, a check two orders point at. Those are decided one by one in the order's Toast panel.
 
 What a manager then sees: house leads (booked, dated, not ezCater) with no Toast check linked appear on the pipeline's "Not rung in Toast yet" list, labelled "House order", with the best suggested check (ring code, Toast order, or amount and date) — and in the pulse and both digests. Sales → Catering shows "Of this, $X is also rung in Toast" under the pipeline block.
 

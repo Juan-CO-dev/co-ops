@@ -119,6 +119,19 @@ async function main() {
       'with the reconciler installed every switch can be turned on');
   }
 
+  // The card's probe answers the same two facts the refusals rest on.
+  {
+    const ready = async (x) => (await one(x, `select catering_toast_settings_ready() r`)).r;
+    check(JSON.stringify(await ready(db)) === JSON.stringify({ automatic: false, link_step: true }), 'probe: link step ready, reconciler not installed');
+    const full = await base({ reconciler: true }); await full.exec(m0350);
+    check((await ready(full)).automatic === true, 'probe: the reconciler is installed');
+    const notReady = await base({ ready: false }); await notReady.exec(m0350);
+    check((await ready(notReady)).link_step === false, 'probe: the link step is not ready');
+    const p = await one(db, `select has_function_privilege('service_role', 'public.catering_toast_settings_ready()', 'execute') s,
+      has_function_privilege('authenticated', 'public.catering_toast_settings_ready()', 'execute') a`);
+    check(p.s && !p.a, 'probe: service_role only');
+  }
+
   // E. Insert, update, the row the person saw.
   const first = await save(db, MOO, SHOP, ON);
   check(first.enabled === true && first.location_id === SHOP && typeof first.updated_at === 'string', 'the first save inserts the row');

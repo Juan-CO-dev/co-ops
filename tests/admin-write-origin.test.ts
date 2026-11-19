@@ -67,6 +67,8 @@ const mutationRoutes: Record<string, string> = {
   "catering/pricing/route.ts": "GET POST",
   "catering/rate-rules/[ruleId]/route.ts": "DELETE",
   "catering/rate-rules/route.ts": "GET POST",
+  "catering/toast-settings/old-orders/route.ts": "GET POST",
+  "catering/toast-settings/route.ts": "GET POST",
   "catering/zones/[id]/route.ts": "PATCH",
   "catering/zones/route.ts": "GET POST",
   "checklist-templates/[id]/items/[itemId]/definition/route.ts": "PATCH",
