@@ -17,7 +17,7 @@ import { useId, useState } from "react";
 import { formatCentsWhole } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
-import type { BoardLaborDay, BoardLaborFigure, BoardLaborViews } from "@/lib/scheduling/labor-projection-shared";
+import { laborFigureQualifications, type BoardLaborDay, type BoardLaborFigure, type BoardLaborViews } from "@/lib/scheduling/labor-projection-shared";
 
 const TONE = { good: "text-co-confirm-text", watch: "text-co-warning-text", high: "text-co-cta-text", none: "text-co-text" } as const;
 const h1 = (minutes: number) => String(Math.round((minutes / 60) * 10) / 10);
@@ -54,14 +54,11 @@ function Figure({ figure: g, targets, id, hoursOnly = false }: { figure: BoardLa
   const f = useFmt();
   const [open, setOpen] = useState(false);
   const panel = useId();
-  // The overtime state that needs saying (a settled, assessed week says nothing).
-  const ot: TranslationKey | null = g.otState === "projected" ? "schedule.labor_views.ot.projected" : g.otState === "not_assessed" ? "schedule.labor_views.ot.not_assessed"
-    : g.otState === "lower_bound" ? "labor.facts.ot_lower_bound" : g.otState === "week_open" ? "labor.facts.week_open" : null;
-  const flags: string[] = [];
-  if (g.rateEstimated) flags.push(f.t("schedule.labor_views.flag.rate_estimated"));
-  if (g.burdenEstimated) flags.push(f.t("schedule.labor_views.flag.burden_estimated"));
-  if (g.salaryProjected) flags.push(f.t("schedule.labor_views.salary_projected"));
-  if (g.salaryGaps > 0) flags.push(f.t("schedule.labor_views.flag.salary_gaps", { n: g.salaryGaps }));
+  // The figure's qualifications, from the ONE list (the labor target card derived from this figure shows the same).
+  const quals = laborFigureQualifications(g);
+  const otQ = quals.find((q) => q.code === "ot");
+  const ot = otQ ? (otQ.key as TranslationKey) : null;
+  const flags = quals.filter((q) => q.code !== "ot").map((q) => f.t(q.key as TranslationKey, q.params));
   const rows: Array<[string, string, string]> = [
     ["hours", f.t("schedule.labor_views.row.hours"), f.hours(g.minutes)],
     ["ot_hours", f.t("schedule.labor_views.row.ot_hours"), f.hours(g.otMinutes)],

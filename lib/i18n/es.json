@@ -7815,6 +7815,8 @@
   "schedule.labor.views_salary_fallback": "No se conocen los salarios de este día, así que se usa el objetivo solo por hora ({targetPct}%).",
   "schedule.labor.views_max_hours": "Máx. de horas con las horas extra de este borrador = (tope − prima de horas extra) ÷ salario base promedio: ({allowanceCents} − {premiumCents}) ÷ {wageExactCents}/h = {hours} h",
   "schedule.labor.views_salaries_over_target": "Solo los salarios ({salariedDayCents}) pasan por {overCents} lo que el objetivo deja para toda la mano de obra antes de impuestos y prestaciones ({capCents}). Ninguna mano de obra por hora cabe en el objetivo de este día.",
+  "schedule.labor.views_basis_forecast": "Las ventas aquí son el pronóstico de este día (ventas netas proyectadas).",
+  "schedule.labor.views_basis_actual": "Las ventas aquí son las ventas netas reales de este día.",
   "schedule.labor.views_no_hours": "No queda nada para horas de personal por hora con las horas extra de este borrador: tope de {allowanceCents} − prima de horas extra de {premiumCents} = {remainingCents}.",
   "schedule.labor.views_minimums_over_math": "Horas de equipo mínimo que no cubren los gerentes asalariados: {minHours} h × {wageExactCents}/h = {minCostCents}, más que los {remainingCents} que quedan con las horas extra de este borrador (tope de {allowanceCents} − prima de horas extra de {premiumCents}).",
   "schedule.labor.views_verdict_under": "La mano de obra por hora con horas extra es {projectedCents}: {diffCents} por debajo del tope de {allowanceCents}.",

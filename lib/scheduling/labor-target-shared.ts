@@ -32,7 +32,7 @@
  * money permission (the AGM, J1) every $-bearing line and field is ABSENT; the windows' heads stay.
  */
 import type { NarrativeLine } from "@/lib/people-narrative";
-import type { BoardLaborDayKind, BoardLaborFigure, BoardLaborReason } from "./labor-projection-shared";
+import { laborFigureQualifications, type BoardLaborDayKind, type BoardLaborFigure, type BoardLaborReason } from "./labor-projection-shared";
 import type { DayNeed, RulePerson } from "./context-shared";
 import { MOD, type Shift } from "./rules-shared";
 import type { ScheduleStructure } from "./structure-shared";
@@ -47,6 +47,7 @@ export const LABOR_LINE_KEYS = [
   "schedule.labor.views_allowance_total", "schedule.labor.views_allowance_hourly", "schedule.labor.views_salary_fallback",
   "schedule.labor.views_max_hours", "schedule.labor.views_verdict_under", "schedule.labor.views_verdict_over",
   "schedule.labor.views_salaries_over_target", "schedule.labor.views_no_hours", "schedule.labor.views_minimums_over_math",
+  "schedule.labor.views_basis_forecast", "schedule.labor.views_basis_actual",
 ] as const;
 export type LaborLineKey = (typeof LABOR_LINE_KEYS)[number];
 
@@ -283,10 +284,13 @@ function viewsMoney(input: LaborTargetInput, v: LaborTargetViews): DayMoney | { 
   const hourlyH = f.hourlyMinutes / 60;
   const blended = hourlyH > 0 ? f.straightCents / hourlyH : input.shopEstimateHourlyCents;
   if (blended === null || blended <= 0) return { state: "no_wage", errand: { key: "schedule.labor.errand.set_wage_estimate" } };
-  const lines: NarrativeLine[] = [];
+  // The card is DERIVED from the figure, so it says what the figure's own reader is told: which sales these are, and
+  // (below) every qualification of the inputs it used (`laborFigureQualifications`, the day card's one list).
+  const lines: NarrativeLine[] = [{ key: f.sales.basis === "forecast" ? "schedule.labor.views_basis_forecast" : "schedule.labor.views_basis_actual" }];
   let allowance: number;
   let salariedDayCents = 0;
   let targetPct: number;
+  const usesSalary = v.basis === "total" && f.salariedCents !== null && f.burdenPct !== null;
   if (v.basis === "total" && f.salariedCents !== null && f.burdenPct !== null) {
     // Fully loaded = (pure hourly + salaries) x (1 + burden) <= sales x target  <=>  pure hourly <= this allowance.
     targetPct = v.targets.loadedPct;
@@ -315,6 +319,11 @@ function viewsMoney(input: LaborTargetInput, v: LaborTargetViews): DayMoney | { 
   lines.push(diff > 0
     ? { key: "schedule.labor.views_verdict_over", params: { projectedCents: f.pureHourlyCents, allowanceCents: allowance, diffCents: diff } }
     : { key: "schedule.labor.views_verdict_under", params: { projectedCents: f.pureHourlyCents, allowanceCents: allowance, diffCents: -diff } });
+  // The salary-side qualifications (estimated burden, projected salaries, payroll gaps) only when the salaries entered the allowance.
+  for (const q of laborFigureQualifications(f)) {
+    if (!usesSalary && (q.code === "burden_estimated" || q.code === "salary_projected" || q.code === "salary_gaps")) continue;
+    lines.push(q.params ? { key: q.key, params: q.params } : { key: q.key });
+  }
   return { maxLaborCents: allowance, maxHoursExact, blended, blendedWageCents, salariedDayCents, targetPct, lines,
     minimumsLine: (minHours, minCostCents) => ({ key: "schedule.labor.views_minimums_over_math",
       params: { minHours, wageExactCents: blendedWageCents, minCostCents, remainingCents, allowanceCents: allowance, premiumCents } }) };

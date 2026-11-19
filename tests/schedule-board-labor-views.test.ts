@@ -17,7 +17,7 @@ import es from "@/lib/i18n/es.json";
 import { canSeeSubDayLaborMoney } from "@/lib/scheduling/access-shared";
 import type { PeopleActor } from "@/lib/people/access-shared";
 import { LABOR_LINE_KEYS, laborTarget, type LaborTargetInput, type LaborTargetViews } from "@/lib/scheduling/labor-target-shared";
-import type { BoardLaborDay, BoardLaborFigure, BoardLaborReason, BoardLaborViews, BoardLaborViewsReady } from "@/lib/scheduling/labor-projection-shared";
+import { laborFigureQualifications, type BoardLaborDay, type BoardLaborFigure, type BoardLaborReason, type BoardLaborViews, type BoardLaborViewsReady } from "@/lib/scheduling/labor-projection-shared";
 import type { DayNeed } from "@/lib/scheduling/context-shared";
 import { DATES, boardSource } from "./fixtures/schedule/board-source";
 import { AGM_BOARD_PATHS } from "./fixtures/schedule/agm-board-paths";
@@ -235,9 +235,46 @@ describe("the heads maths over the labor facts' figure (plan r4 'Heads budget')"
     expect(card).toContain("($875 − $10) ÷ $20.50/h = 42.2 h");
     expect(card).not.toContain("$21/h");
   });
+  // ── The card inherits the figure's qualifications (a derived figure says what its inputs say) ──────
+  const SALARY_ONLY = ["schedule.labor_views.flag.burden_estimated", "schedule.labor_views.salary_projected", "schedule.labor_views.flag.salary_gaps"];
+  it("the card names its sales basis: the forecast on a projected day, actual net sales on an actual one", () => {
+    expect(lineOf(target(views(figure())), "schedule.labor.views_basis_forecast")).toBeDefined();
+    expect(lineOf(target(views(figure())), "schedule.labor.views_basis_actual")).toBeUndefined();
+    const actual = target(views(figure({ sales: { basis: "actual", cents: 500_000 }, otState: "assessed" }), "total", "actual"));
+    expect(lineOf(actual, "schedule.labor.views_basis_actual")).toBeDefined();
+    expect(lineOf(actual, "schedule.labor.views_basis_forecast")).toBeUndefined();
+  });
+  it("(the class) every qualification the day card shows for the figure is on the labor card that is computed from it", () => {
+    let cases = 0;
+    for (const basis of ["total", "hourly"] as const) for (const otState of ["assessed", "projected", "lower_bound", "week_open"] as const)
+      for (const rateEstimated of [false, true]) for (const burdenEstimated of [false, true]) for (const salaryProjected of [false, true]) for (const salaryGaps of [0, 2])
+        for (const salaried of [20_000, null]) {
+          const f = figure({ otState, rateEstimated, burdenEstimated, salaryProjected, salaryGaps, salariedCents: salaried });
+          const t = target(views(f, basis));
+          if (t.state !== "ok") throw new Error("not ok");
+          cases++;
+          const usesSalary = basis === "total" && salaried !== null;
+          // What the day card says about this figure (the ONE list), less what does not enter this card's numbers.
+          const expected = laborFigureQualifications(f).filter((q) => usesSalary || !SALARY_ONLY.includes(q.key));
+          const all = new Set(laborFigureQualifications(figure({ otState: "projected", rateEstimated: true, burdenEstimated: true, salaryProjected: true, salaryGaps: 1 })).map((q) => q.key)
+            .concat(["labor.facts.ot_lower_bound", "labor.facts.week_open", "schedule.labor_views.ot.not_assessed"]));
+          expect(t.lines.filter((l) => all.has(l.key)).map((l) => ({ key: l.key, ...(l.params ? { params: l.params } : {}) }))).toEqual(expected.map((q) => ({ key: q.key, ...(q.params ? { params: q.params } : {}) })));
+        }
+    expect(cases).toBe(2 * 4 * 2 * 2 * 2 * 2 * 2);
+    // The list itself: an assessed, fully known figure has nothing to say; each flag has its line.
+    expect(laborFigureQualifications(figure({ otState: "assessed", burdenEstimated: false }))).toEqual([]);
+    expect(laborFigureQualifications(figure({ otState: "week_open", rateEstimated: true, burdenEstimated: true, salaryProjected: true, salaryGaps: 2 })).map((q) => q.key)).toEqual([
+      "labor.facts.week_open", "schedule.labor_views.flag.rate_estimated", "schedule.labor_views.flag.burden_estimated", "schedule.labor_views.salary_projected", "schedule.labor_views.flag.salary_gaps"]);
+    for (const q of laborFigureQualifications(figure({ otState: "lower_bound", rateEstimated: true, burdenEstimated: true, salaryProjected: true, salaryGaps: 2 }))) { expect(EN[q.key], q.key).toBeTruthy(); expect(ES[q.key], q.key).toBeTruthy(); }
+  });
+  it("rendered: the labor card under a projected day says the forecast, the draft's overtime and the estimated burden, like the day card above it", () => {
+    const html = renderBoard({ state: "ready", ...boardView(gmSource()) }, "en", { initialDate: DATES[2] });
+    const card = text(html.slice(html.indexOf('data-section="labor-target"')));
+    for (const k of ["schedule.labor.views_basis_forecast", "schedule.labor_views.ot.projected", "schedule.labor_views.flag.burden_estimated"]) expect(card, k).toContain(EN[k]);
+  });
   it("every new line key is in the closed list with en + es and the same params", () => {
     const keys = LABOR_LINE_KEYS.filter((k) => k.includes(".views_"));
-    expect(keys).toHaveLength(9);
+    expect(keys).toHaveLength(11);
     const params = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!).sort();
     for (const k of keys) {
       expect(EN[k], k).toBeTruthy();
@@ -377,7 +414,7 @@ describe("the WHOLE serialized board with the views is an allowlist (every gener
     return out;
   }
   // Every other day's salaries alone are above the target, so every line the card can write is emitted somewhere.
-  const allProjected = (): BoardLaborViewsReady => ({ state: "ready", targets: TARGETS, days: DATES.map((date, i) => ({ ...figure(i % 2 ? { salariedCents: 200_000 } : {}), date, kind: "projected" as const })),
+  const allProjected = (): BoardLaborViewsReady => ({ state: "ready", targets: TARGETS, days: DATES.map((date, i) => ({ ...figure(i % 2 ? { salariedCents: 200_000, salaryGaps: 1 } : {}), date, kind: "projected" as const })),
     strip: { actual: null, projected: { ...figure(), days: 7 }, notSettledDays: 0, noScheduleDays: 0 } });
   const extrasOf = (subDayMoney: boolean) => {
     const base = new Set<string>([...AGM_BOARD_PATHS, ...BOARD_LABOR_VIEW_PATHS.map((p) => `.laborViews${p}`)]);
@@ -487,6 +524,39 @@ describe("the day card and the day tabs", () => {
     const none = dayCard(renderBoard(page(), "en", { initialDate: DATES[6] }));
     expect(text(none)).toContain(EN["schedule.labor_views.reason.no_schedule"]);
     expect(none).not.toContain("$");
+  });
+  it("r2: a week with labor facts but NO schedule head still shows each selected day's labor (the card does not hang off the schedule day)", () => {
+    const src = gmSource(readyViews(), false, { week: null });
+    expect(boardView(src).days).toEqual([]);
+    for (const [date, kind] of [[DATES[0]!, "actual"], [DATES[1]!, "not_settled"], [DATES[3]!, "projected"]] as const) {
+      const html = renderBoard(page(src), "en", { initialDate: date });
+      const i = html.indexOf('data-section="labor-day"');
+      expect(i, date).toBeGreaterThan(-1);
+      const card = html.slice(i);
+      expect(card).toContain(`data-labor-kind="${kind}"`);
+      expect(html.match(/data-section="labor-day"/g)).toHaveLength(1);
+    }
+    const actual = renderBoard(page(src), "en", { initialDate: DATES[0] });
+    const card = text(actual.slice(actual.indexOf('data-section="labor-day"')));
+    expect(card).toContain("23.1%");
+    expect(card).toContain("48 h");
+    const noWage = renderBoard(page(src), "en", { initialDate: DATES[3] });
+    expect(text(noWage.slice(noWage.indexOf('data-section="labor-day"')))).toContain(EN["schedule.labor_views.reason.wage_unknown"]);
+    // The tabs and the strip are there too, and the card follows the tabs (the selected day's detail).
+    expect(actual.indexOf('role="tablist"')).toBeLessThan(actual.indexOf('data-section="labor-day"'));
+    expect(actual).toContain('data-section="labor-views"');
+  });
+  it("r2 (the class): every labor-views screen renders from `laborViews` alone, whatever the schedule has: a week, no week, or a day with no stored context", () => {
+    const withWeek = gmSource();
+    const noContext = gmSource(readyViews(), false, { week: { ...withWeek.week!, dayContexts: Object.fromEntries(DATES.map((d) => [d, null])) } });
+    for (const src of [withWeek, gmSource(readyViews(), false, { week: null }), noContext]) {
+      for (const date of DATES) {
+        const html = renderBoard(page(src), "en", { initialDate: date });
+        expect(html.match(/data-section="labor-views"/g), date).toHaveLength(1);
+        expect(html.match(/data-section="labor-day"/g), date).toHaveLength(1);
+        expect(html.match(/data-tab-labor=/g), date).toHaveLength(7);
+      }
+    }
   });
   it("an actual day says 'Actual' and names its sales as net sales", () => {
     const card = dayCard(renderBoard(page(), "en", { initialDate: DATES[0] }));

@@ -370,6 +370,26 @@ export function laborFigure(input: FigureInput): BoardLaborFigure {
   };
 }
 
+/** One thing a figure's reader must be told about it (an i18n key + params). */
+export interface LaborQualification { code: "ot" | "rate_estimated" | "burden_estimated" | "salary_projected" | "salary_gaps"; key: string; params?: Record<string, number> }
+/**
+ * PR 3: THE qualifications of a figure, in ONE list: its overtime state (projected at this schedule, not assessed, a
+ * lower bound, a week still open), an estimated wage, an estimated burden, salaries projected from payroll, payroll gaps.
+ * Every surface that shows the figure, AND every figure derived from it (the labor target card's allowance, hours and
+ * verdict), shows these: a derived figure inherits its inputs' qualifications. Never a second list.
+ */
+export function laborFigureQualifications(f: BoardLaborFigure): LaborQualification[] {
+  const out: LaborQualification[] = [];
+  const ot = f.otState === "projected" ? "schedule.labor_views.ot.projected" : f.otState === "not_assessed" || f.otState === "unbuilt" ? "schedule.labor_views.ot.not_assessed"
+    : f.otState === "lower_bound" ? "labor.facts.ot_lower_bound" : f.otState === "week_open" ? "labor.facts.week_open" : null;
+  if (ot) out.push({ code: "ot", key: ot });
+  if (f.rateEstimated) out.push({ code: "rate_estimated", key: "schedule.labor_views.flag.rate_estimated" });
+  if (f.burdenEstimated) out.push({ code: "burden_estimated", key: "schedule.labor_views.flag.burden_estimated" });
+  if (f.salaryProjected) out.push({ code: "salary_projected", key: "schedule.labor_views.salary_projected" });
+  if (f.salaryGaps > 0) out.push({ code: "salary_gaps", key: "schedule.labor_views.flag.salary_gaps", params: { n: f.salaryGaps } });
+  return out;
+}
+
 /** A day that shows hours only (not settled) or nothing (no schedule): never a $, a % or a tone. */
 export function hoursOnlyFigure(kind: "not_settled" | "no_schedule", minutes: number | null): BoardLaborFigure {
   return { ...EMPTY, minutes: kind === "no_schedule" ? null : minutes, reasons: [kind] };

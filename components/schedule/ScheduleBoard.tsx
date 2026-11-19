@@ -137,6 +137,9 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
   // CC chunk H9 (a11y): the handle a keyboard edit used is focused again after the re-render (PersonRow).
   const focusMemo = useFocusMemo();
   const weekHref = (w: string) => `/schedule?loc=${view.locationId}&week=${w}`;
+  // PR 3 (review r2): the selected day's labor comes from `laborViews` and the SELECTED DATE alone. A week with settled
+  // labor facts and no schedule head has no schedule day, and still shows each day's hours, figures and reasons.
+  const laborDay = view.laborViews ? <LaborDayCard key={selected} views={view.laborViews} date={selected} /> : null;
 
   // Astra chunk F P2-3: a week with manager edits is rebuilt only after the horizon's own warning, then Tier B, then
   // confirmEdited: true. Cancelling the warning or the password posts nothing.
@@ -222,7 +225,7 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
             <ReasonPanel row={pickedRow} shift={pickedShift} segment={picked?.segment ?? null} editable={editable && !pickedShift.locked} busy={!!edit.pending}
               names={view.names} positions={view.positions} onEdit={submitEdit} />
           ) : null}
-          {view.laborViews ? <LaborDayCard key={day.date} views={view.laborViews} date={day.date} /> : null}
+          {laborDay}
           {day.labor ? <LaborTargetCard labor={day.labor} names={view.names} positions={view.positions} /> : null}
           {day.gaps.length > 0 ? (
             <ul className="grid gap-2" aria-label={t("schedule.board.gap.title", { n: day.gaps.length })}>
@@ -230,7 +233,7 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
             </ul>
           ) : null}
         </section>
-      ) : null}
+      ) : laborDay /* review r2: no schedule day (no week yet) never hides the selected day's labor */}
 
       {view.perms.canEdit ? (
         <div className="grid gap-2">

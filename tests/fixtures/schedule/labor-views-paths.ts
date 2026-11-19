@@ -31,6 +31,8 @@ export const GM_VIEWS_BOARD_EXTRA_PATHS: readonly string[] = [
   ".days[].labor.lines[].params.projectedCents", ".days[].labor.lines[].params.diffCents",
   ".days[].labor.lines[].params.capCents", ".days[].labor.lines[].params.overCents", ".days[].labor.lines[].params.remainingCents",
   ".days[].labor.lines[].params.minCostCents",
+  // a COUNT of salaried payroll gaps behind the day's salaries (the figure's own qualification, repeated on the card)
+  ".days[].labor.lines[].params.n",
 ];
 /** MoO / Owner / CGS only (`canSeeSubDayLaborMoney`): straight-time % per hour, the forecast $ per hour, and the labor
  * card's per-window intermediates. A GM's board carries NONE of these with the views on. */
