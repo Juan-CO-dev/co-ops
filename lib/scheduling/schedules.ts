@@ -44,6 +44,7 @@ import { generatorInputFor, historicalCrewDates, otherShopOverlaps, sqlStructure
 import { approveWeekCall, commitRevisionCall } from "./rpc-args-shared";
 import { approvalRefusal, checkScheduleRules, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
 import type { PeopleActor } from "@/lib/people/access-shared";
+import type { ScheduleLaborViewsEnv } from "./labor-projection-shared";
 
 // ─── Deps, refusals ──────────────────────────────────────────────────────────
 
@@ -55,6 +56,8 @@ export interface ScheduleDeps {
   loadInputs?: LoadInputs;
   /** A new uuid (an edit's revision id, a horizon run id). */
   newId?: () => string;
+  /** Injected in tests: the env the labor-views switch is read from (default process.env). */
+  env?: ScheduleLaborViewsEnv;
 }
 const nowOf = (d: ScheduleDeps) => d.now ?? new Date();
 const todayOf = (d: ScheduleDeps) => operationalNow(nowOf(d)).date;

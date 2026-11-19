@@ -69,7 +69,7 @@ export function ScheduleSettings({ view, initialStructureError = null, initialSa
             </ul>
           ) : null}
           <StructureEditor locationId={v.locationId} structure={v.structure} timeProvenance={v.timeProvenance} closing={v.closing} positions={v.positions} names={v.names}
-            onDirty={mark("structure")} initialError={initialStructureError} initialSaved={initialSaved} />
+            hourlyTarget={v.hourlyTarget ?? "hidden"} onDirty={mark("structure")} initialError={initialStructureError} initialSaved={initialSaved} />
         </Section>
       ) : null}
       {v.perms.people ? (

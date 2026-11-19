@@ -23,7 +23,8 @@ import { ScheduleError } from "./errors-shared";
 import { loadPersonSettingsWithIds, loadScheduleShopSettings, loadSchedulingInputs, loadStationSeedRows } from "./inputs";
 import { gate, type ScheduleDeps } from "./schedules";
 import { loadToastJobHours, toastSuggestions } from "./position-suggest";
-import { presenceDates, presenceWeekStarts, stationAdvisory, type ScheduleSettingsView, type SettingsMember } from "./settings-view-shared";
+import { hourlyTargetAccess, presenceDates, presenceWeekStarts, stationAdvisory, type ScheduleSettingsView, type SettingsMember } from "./settings-view-shared";
+import { scheduleLaborViewsEnabled, type ScheduleLaborViewsEnv } from "./labor-projection-shared";
 import { canWorkAs, effectiveScheduleRole } from "./works-as-shared";
 import { structureFromStations, type PositionRole } from "./structure-shared";
 
@@ -117,6 +118,7 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
     state: "ready", locationId, today, dates, perms, shiftTypes: perms.people ? shiftTypesOf(live) : [], shopDay: { prepStartQ: live.shopDay.prepStartQ, outLatestQ: live.shopDay.outLatestQ },
     structure: perms.structure ? { id: inputs.structure.source === "saved" ? inputs.structure.id : null, source: inputs.structure.source, value: live } : null,
     closing: { measuredMinutes: inputs.closing.basis === "measured" ? inputs.closing.minutes : null, samples: inputs.closing.samples },
+    hourlyTarget: hourlyTargetAccess(actor, scheduleLaborViewsEnabled(deps.env ?? (process.env as ScheduleLaborViewsEnv))),
     stationAdvisory: advisory, positions, livePositionIds: Object.keys(live.positions).sort(), timeProvenance, positionRolesKnown: rolesKnown, names, members, presencePeople,
     pins: perms.presence ? inputs.pins.filter((p) => p.date >= today).map((p) => ({ id: p.id, date: p.date, userId: p.userId, startQ: p.startQ, endQ: p.endQ, positions: [...p.positions], kind: p.kind })) : [],
     shop: perms.shopSwitch ? shopSettings : null,
