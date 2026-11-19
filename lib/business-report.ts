@@ -239,7 +239,7 @@ export const BUSINESS_REPORT_DTO_PATHS = {
 interface QuarterRaw { business_date: string; quarter_start_at: string; wall_quarter: number; fold: number; minutes: number | string; straight_cents: number | string }
 interface PersonRaw { week_start: string; person_key: string; person_label: string | null; source: string; pay_class: string;
   minutes: number | string; ot_minutes: number | string; straight_cents: number | string | null }
-interface StructureRow { structure: { labor?: { targetPct: number; basis: "hourly" | "total" } } | null; created_at: string }
+interface StructureRow { structure: { labor?: { targetPct: number; basis: "hourly" | "total"; hourlyTargetPct?: number } } | null; created_at: string }
 
 const ymd = (v: unknown) => String(v).slice(0, 10);
 const isoOf = (v: unknown) => new Date(v as string).toISOString();

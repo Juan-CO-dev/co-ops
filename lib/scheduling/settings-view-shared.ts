@@ -9,6 +9,8 @@ import type { ShiftType } from "./structure-shared";
 import type { NarrativeLine } from "@/lib/people-narrative";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
+import type { PeopleActor } from "@/lib/people/access-shared";
+import { canEditHourlyTarget } from "./access-shared";
 import type { SkillTunables } from "@/lib/people/tunables-shared";
 import type { PositionLabel } from "./board-view-shared";
 import type { ScheduleShopSettings } from "./inputs-shared";
@@ -31,6 +33,19 @@ export interface SettingsPerms {
   /** The prep evidence position (GM own / MoO+; Tier E). */
   prepCard: boolean;
 }
+
+/** The pure-hourly target field (0346, board two labor views PR 2): MoO+ edits it, anyone else who can open the
+ * structure reads it, and nobody sees it while the labor views are dark. */
+export type HourlyTargetAccess = "edit" | "read" | "hidden";
+export function hourlyTargetAccess(actor: PeopleActor, laborViewsEnabled: boolean): HourlyTargetAccess {
+  if (!laborViewsEnabled) return "hidden";
+  return canEditHourlyTarget(actor) ? "edit" : "read";
+}
+/** The field's strings (en + es, pinned by tests/labor-burden-i18n.test.ts). */
+export const HOURLY_TARGET_I18N_KEYS = [
+  "schedule.settings.labor.hourly_target", "schedule.settings.labor.hourly_target_help", "schedule.settings.labor.hourly_target_read",
+  "schedule.settings.labor.hourly_basis_note", "schedule.error.structure_hourly_target",
+] as const;
 
 export interface SettingsMember {
   suggestedUsualShift?: UsualShiftGuess | null;
@@ -66,6 +81,8 @@ export interface ScheduleSettingsView {
   dates: string[];
   perms: SettingsPerms;
   structure: { id: string | null; source: "saved" | "defaults"; value: ScheduleStructure } | null;
+  /** The pure-hourly target field in the structure editor (absent = hidden). */
+  hourlyTarget?: HourlyTargetAccess;
   closing: { measuredMinutes: number | null; samples: number };
   stationAdvisory: NarrativeLine[];
   positions: Record<string, PositionLabel>;
@@ -130,6 +147,7 @@ const POSITION_FIELD_LABELS: Record<string, TranslationKey> = {
 export function structureProblemLine(key: string): { key: TranslationKey; params: Record<string, string> } {
   if (key === "engine") return { key: "schedule.error.structure_engine", params: {} };
   if (key === "shiftTypes") return { key: "schedule.error.structure_shift_types", params: {} };
+  if (key === "labor.hourlyTargetPct") return { key: "schedule.error.structure_hourly_target", params: {} };
   const shift = /^shiftTypes\.(\d+)(?:\.([^.]+))?/.exec(key);
   if (shift?.[2] === "id") return { key: "schedule.error.structure_shift_identity", params: { number: String(Number(shift[1]) + 1) } };
   const shiftFields: Record<string, string> = { id: "id", name: "name", fromQ: "from", toQ: "to", startFlexQ: "flex", minLengthQ: "minimum", headcount: "headcount_label", stations: "stations", countsTowardMod: "mod" };

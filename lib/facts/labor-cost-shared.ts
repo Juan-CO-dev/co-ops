@@ -215,13 +215,17 @@ export function sumLaborViews(views: readonly LaborWeekView[]): LaborWeekView | 
 
 export interface LaborTarget { pct: number; source: "structure" | "default" }
 export interface LaborTargets { loaded: LaborTarget; hourly: LaborTarget }
-/** The structure in force at the week's start decides which view its targetPct is for (its `basis`). */
-export function laborTargetsFor(structure: { labor: { targetPct: number; basis: "hourly" | "total" } } | null): LaborTargets {
+/** The structure in force at the week's start decides which view its targetPct is for (its `basis`). On the total
+ * basis the pure-hourly target is the structure's optional `hourlyTargetPct` (0346; Juan 2026-11-18: "a setting,
+ * tweak up and down"), else the 18% default. On the hourly basis targetPct IS the hourly target (the key is refused
+ * there by both validators and ignored here) and the loaded target stays the 28% default. */
+export function laborTargetsFor(structure: { labor: { targetPct: number; basis: "hourly" | "total"; hourlyTargetPct?: number } } | null): LaborTargets {
   const loaded: LaborTarget = { pct: LABOR_TARGET_LOADED_PCT, source: "default" };
   const hourly: LaborTarget = { pct: LABOR_TARGET_HOURLY_PCT, source: "default" };
   if (!structure) return { loaded, hourly };
   return structure.labor.basis === "total"
-    ? { loaded: { pct: structure.labor.targetPct, source: "structure" }, hourly }
+    ? { loaded: { pct: structure.labor.targetPct, source: "structure" },
+        hourly: typeof structure.labor.hourlyTargetPct === "number" ? { pct: structure.labor.hourlyTargetPct, source: "structure" } : hourly }
     : { loaded, hourly: { pct: structure.labor.targetPct, source: "structure" } };
 }
 /** A range's targets: one number when every week agrees, else `target_varies` (never an average). */

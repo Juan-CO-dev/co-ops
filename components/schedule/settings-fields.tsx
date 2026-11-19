@@ -9,13 +9,13 @@ import { qToTime, timeToQ } from "@/lib/scheduling/settings-view-shared";
 const LABEL = "grid min-w-0 gap-1 text-[11px] font-bold tracking-[0.12em] text-co-text-dim";
 const INPUT = "min-h-[44px] w-full min-w-0 rounded-lg border-2 border-co-border bg-co-surface px-2 text-sm font-normal tracking-normal text-co-text";
 
-export function NumField({ label, name, value, onChange, step = 1, min = 0, max }: {
-  label: string; name: string; value: number | null; onChange: (v: number | null) => void; step?: number; min?: number; max?: number;
+export function NumField({ label, name, value, onChange, step = 1, min = 0, max, placeholder }: {
+  label: string; name: string; value: number | null; onChange: (v: number | null) => void; step?: number; min?: number; max?: number; placeholder?: string;
 }) {
   return (
     <label className={LABEL}>
       {label}
-      <input type="number" inputMode="decimal" name={name} className={INPUT} step={step} min={min} max={max} value={value === null ? "" : value}
+      <input type="number" inputMode="decimal" name={name} className={INPUT} step={step} min={min} max={max} placeholder={placeholder} value={value === null ? "" : value}
         onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))} />
     </label>
   );

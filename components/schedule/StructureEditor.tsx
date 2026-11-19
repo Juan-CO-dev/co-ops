@@ -20,7 +20,8 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
-import { structureBody, structureProblemLine, structureSaveRefusal } from "@/lib/scheduling/settings-view-shared";
+import { structureBody, structureProblemLine, structureSaveRefusal, type HourlyTargetAccess } from "@/lib/scheduling/settings-view-shared";
+import { LABOR_TARGET_HOURLY_PCT, LABOR_TARGET_LOADED_PCT } from "@/lib/facts/labor-config-shared";
 import {
   CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, applyRoleChange, effectiveLineFloorLimit, isLineRole, isSecondary, positionIds, reconcileLineFloors, reconcilePriorityPairs, type PositionRole, type PositionTimeProvenance, type ScheduleStructure,
 } from "@/lib/scheduling/structure-shared";
@@ -59,13 +60,15 @@ function Section({ id, title, children }: { id: string; title: string; children:
   );
 }
 
-export function StructureEditor({ locationId, structure, closing, positions, names, timeProvenance = {}, onDirty, initialError = null, initialSaved = false }: {
+export function StructureEditor({ locationId, structure, closing, positions, names, timeProvenance = {}, hourlyTarget = "hidden", onDirty, initialError = null, initialSaved = false }: {
   locationId: string;
   structure: { id: string | null; source: "saved" | "defaults"; value: ScheduleStructure };
   closing: { measuredMinutes: number | null; samples: number };
   positions: Record<string, { name: string; nameEs: string | null }>;
   names: Record<string, string>;
   timeProvenance?: Record<string, PositionTimeProvenance>;
+  /** The pure-hourly target (0346): MoO+ edits it, others read it, hidden while the labor views are dark. */
+  hourlyTarget?: HourlyTargetAccess;
   onDirty?: (dirty: boolean) => void;
   /** SSR tests only. */
   initialError?: string | null;
@@ -327,11 +330,17 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
           <NumField name="labor.targetPct" label={t("schedule.settings.labor.target")} value={d.labor.targetPct} step={0.5} onChange={(v) => edit((s) => { s.labor.targetPct = num(v); })} />
           <SelectField name="labor.basis" label={t("schedule.settings.labor.basis")} value={d.labor.basis}
             options={[{ value: "total", label: t("schedule.settings.labor.basis_total") }, { value: "hourly", label: t("schedule.settings.labor.basis_hourly") }]}
-            onChange={(v) => edit((s) => { s.labor.basis = v === "hourly" ? "hourly" : "total"; })} />
+            onChange={(v) => edit((s) => { s.labor.basis = v === "hourly" ? "hourly" : "total"; if (s.labor.basis === "hourly") delete s.labor.hourlyTargetPct; })} />
+          {hourlyTarget === "edit" && d.labor.basis === "total" && <NumField name="labor.hourlyTargetPct" label={t("schedule.settings.labor.hourly_target")}
+            value={d.labor.hourlyTargetPct ?? null} step={0.5} max={d.labor.targetPct} placeholder={String(LABOR_TARGET_HOURLY_PCT)}
+            onChange={(v) => edit((s) => { if (v === null) delete s.labor.hourlyTargetPct; else s.labor.hourlyTargetPct = v; })} />}
           <NumField name="labor.strong" label={t("schedule.settings.labor.strong")} value={d.labor.strong} step={0.05} max={1} onChange={(v) => edit((s) => { s.labor.strong = num(v); })} />
           <NumField name="labor.watch" label={t("schedule.settings.labor.watch")} value={d.labor.watch} step={0.05} max={1} onChange={(v) => edit((s) => { s.labor.watch = num(v); })} />
           <NumField name="labor.budgetDeadbandH" label={t("schedule.settings.labor.deadband")} value={d.labor.budgetDeadbandH} step={0.25} onChange={(v) => edit((s) => { s.labor.budgetDeadbandH = num(v); })} />
         </Fields>
+        {hourlyTarget === "edit" && d.labor.basis === "total" && <p className="text-sm text-co-text-muted">{t("schedule.settings.labor.hourly_target_help", { pct: LABOR_TARGET_HOURLY_PCT })}</p>}
+        {hourlyTarget === "read" && d.labor.basis === "total" && <p className="text-sm text-co-text-muted">{t("schedule.settings.labor.hourly_target_read", { pct: d.labor.hourlyTargetPct ?? LABOR_TARGET_HOURLY_PCT })}</p>}
+        {hourlyTarget !== "hidden" && d.labor.basis === "hourly" && <p className="text-sm text-co-text-muted">{t("schedule.settings.labor.hourly_basis_note", { pct: LABOR_TARGET_LOADED_PCT })}</p>}
       </Section>
 
       <Section id="roster" title={t("schedule.settings.section.roster")}>

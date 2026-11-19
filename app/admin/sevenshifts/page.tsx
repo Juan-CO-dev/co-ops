@@ -11,6 +11,10 @@ import { SevenShiftsScreen } from "@/components/admin/sevenshifts/SevenShiftsScr
 import { PayrollShopCard } from "@/components/admin/sevenshifts/PayrollShopCard";
 import { canManagePayrollShops } from "@/lib/facts/labor-payroll-shared";
 import { loadPayrollShopCard } from "@/lib/facts/labor-payroll";
+import { LaborBurdenCard } from "@/components/admin/sevenshifts/LaborBurdenCard";
+import { canManageLaborBurden } from "@/lib/facts/labor-burden-shared";
+import { loadLaborBurdenCard } from "@/lib/facts/labor-burden";
+import { scheduleLaborViewsEnabled, type ScheduleLaborViewsEnv } from "@/lib/scheduling/labor-projection-shared";
 
 /**
  * Scheduling Phase 1, Task 10: the 7shifts connection, the shop links (MoO+), the person links (GM own shop,
@@ -32,6 +36,10 @@ export default async function SevenShiftsPage({ searchParams }: { searchParams: 
   const screen = selected ? await loadLinkScreen(sb, { actor, locationId: selected.id }) : null;
   // Item 2: the payroll shop card (owner / CGS / MoO only; every shop's accounts, not the selected shop's).
   const payroll = canManagePayrollShops(auth.role) ? await loadPayrollShopCard(sb, { userId: auth.user.id, role: auth.role }) : null;
+  // Board two labor views PR 2: the burden card, beside the payroll shop card (owner / CGS / MoO only; dark behind
+  // SCHEDULE_LABOR_VIEWS with the two fact switches: nothing is read and nothing is shown while it is off).
+  const burden = canManageLaborBurden(auth.role) && scheduleLaborViewsEnabled(process.env as ScheduleLaborViewsEnv)
+    ? await loadLaborBurdenCard(sb, { userId: auth.user.id, role: auth.role }) : null;
   return <div className="space-y-4">
     <h1 className="text-2xl font-bold text-co-text">{serverT(language, "sevenshifts.title")}</h1>
     <p className="text-co-text-muted">{serverT(language, "sevenshifts.intro")}</p>
@@ -40,5 +48,6 @@ export default async function SevenShiftsPage({ searchParams }: { searchParams: 
         className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border px-3 font-bold text-co-text aria-[current=page]:border-co-text">{location.name}</Link>)}</nav>}
     {screen && <SevenShiftsScreen key={screen.locationId} screen={screen} />}
     {payroll && <PayrollShopCard data={payroll.state === "ready" ? payroll : null} />}
+    {burden && <LaborBurdenCard data={burden.state === "ready" ? burden : null} />}
   </div>;
 }

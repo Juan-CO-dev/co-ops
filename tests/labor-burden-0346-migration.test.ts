@@ -12,7 +12,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { M0338, M0345, freshLaborParents, M0339, M0340 } from "./helpers/fact-0338-parents";
 import { A, B, GMU, MGR, W, laborPlanDb, type LaborPlanDb } from "./helpers/labor-plan-fixture";
 import { validScheduleStructure } from "@/lib/scheduling/structure-shared";
-// @ts-expect-error plain JS case materialiser shared with the SQL harnesses
+import { burdenFor, type BurdenRow } from "@/lib/facts/labor-burden-shared";
 import { crewStructureCases, loadStructureCases, materializeStructureCase } from "../scripts/schedule-structure-cases.mjs";
 
 const read = (n: string) => readFileSync(`supabase/migrations/${n}`, "utf8").replace(/\r\n/g, "\n");
@@ -213,6 +213,20 @@ describe("A. the writer's rules", () => {
   }, 240_000);
 });
 
+describe("the TS twin", () => {
+  it("burdenFor (the card) reads what fact_labor_burden_for (the pricer) reads, for every shop-week of this database", async () => {
+    const raw = await q<Record<string, unknown>>("select id, location_id, burden_pct, source, valid_from::text valid_from, follows_company, created_at::text created_at, created_by from labor_burden_settings");
+    expect(raw.some((r) => r.follows_company)).toBe(true);
+    const rows: BurdenRow[] = raw.map((r) => ({ id: String(r.id), location_id: r.location_id as string | null, burden_pct: r.burden_pct === null ? null : Number(r.burden_pct),
+      source: r.source as BurdenRow["source"], valid_from: String(r.valid_from), follows_company: r.follows_company === true, created_at: String(r.created_at),
+      created_by: r.created_by as string | null, has_note: false }));
+    for (const loc of [A, B, C]) for (const w of [...WEEKS, "2026-09-27", "2026-10-11", "2026-11-08", "2026-11-15"]) {
+      const ts = burdenFor(rows, loc, w);
+      expect([ts.pct, ts.basis], `${loc} ${w}`).toEqual(await burden(loc, w));
+    }
+  });
+});
+
 describe("the pre-flight", () => {
   it("a second apply is refused", async () => {
     await refuses(f.db.exec(M0346), "0346: already applied");
@@ -256,7 +270,7 @@ describe("B. valid_schedule_structure: 0286's body plus the optional labor.hourl
     }
   }, 120_000);
   it("the key: a number above 0, total basis only, never above targetPct; SQL and TS agree on every case", async () => {
-    const base = crewStructureCases().find((c: { name: string }) => c.name === "crew").value as { labor: Record<string, unknown> };
+    const base = (crewStructureCases() as { name: string; value: unknown }[]).find((c) => c.name === "crew")!.value as { labor: Record<string, unknown> };
     const withLabor = (labor: Record<string, unknown>) => ({ ...structuredClone(base), labor: { ...base.labor, ...labor } });
     const cases: [Record<string, unknown>, boolean][] = [
       [{}, true], [{ hourlyTargetPct: 18 }, true], [{ hourlyTargetPct: 16.5 }, true], [{ hourlyTargetPct: 28 }, true], [{ hourlyTargetPct: 0.5 }, true],

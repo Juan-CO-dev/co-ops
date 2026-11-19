@@ -100,6 +100,14 @@ export function canManageShopSwitch(actor: PeopleActor): boolean {
   return isMooPlus(actor);
 }
 
+/**
+ * The PURE-HOURLY labor target (`labor.hourlyTargetPct`, 0346): MoO+ only (Juan 2026-11-18: "MoO+ edits settings"), any
+ * shop. A GM still saves the rest of the structure; the save path refuses only a CHANGE of this one key.
+ */
+export function canEditHourlyTarget(actor: PeopleActor): boolean {
+  return isMooPlus(actor);
+}
+
 /** The three-way reconciliation view (CO-OPS user ↔ Toast link ↔ 7shifts link): GM own, MoO+ any. */
 export function canViewReconciliation(actor: PeopleActor, locationId: string): boolean {
   return scheduleActRefusal(actor, locationId, "reconciliation", { agmAccess: "read" }) === null;

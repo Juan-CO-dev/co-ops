@@ -134,6 +134,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/admin/sevenshifts/route.ts": ["B"],
   // Item 2 (0340): the payroll shop re-allocates salaried labor cost (a backdated row re-prices history): Tier B.
   "app/api/admin/labor/payroll-shop/route.ts": ["B"],
+  "app/api/admin/labor/burden/route.ts": ["B"],
   // Item 4 PR 2 (0343): marking a demand-signal source verified / revoked opens or closes what may be ingested and used: Tier B.
   "app/api/admin/demand-signals/sources/mark/route.ts": ["B"],
   // Scheduling Phase 1 (Task 16): the people settings (skill tunables MoO+, shop settings) take the Tier E edit
@@ -330,6 +331,7 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/toast-employees/ToastEmployeeLinks.tsx": ["B"],
   "components/admin/sevenshifts/SevenShiftsScreen.tsx": ["B"],
   "components/admin/sevenshifts/PayrollShopCard.tsx": ["B"],
+  "components/admin/sevenshifts/LaborBurdenCard.tsx": ["B"],
   "components/admin/customers/CancelImportButton.tsx": ["B"],
   "components/admin/customers/ConsentTools.tsx": ["A", "B"],
   "components/admin/customers/CustomerContactPanel.tsx": ["A", "B"],
