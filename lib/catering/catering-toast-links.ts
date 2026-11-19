@@ -2,7 +2,11 @@
  * Item 21 PR 3 — the LINK step's server side (migration 0347). Read with docs/runbooks/catering-toast.md.
  *
  *  - loadHouseToastPanelFor: a house lead's current Toast links and candidate checks. The catering read gate first;
- *    null (nothing to show) when the shop is off, 0344/0347 are not installed, or the lead is not a booked house lead.
+ *    null (nothing to show) when the shop is off, 0344 is not installed, or the lead is not a booked house lead.
+ *    With 0344 but WITHOUT 0347 every read below still succeeds (they are all 0344 objects), so the loader asks
+ *    0347's own probe, `catering_toast_link_ready` (linkStepReady): not ready = the panel is returned read-only with
+ *    `linkStep: "not_installed"`, never a Link / No-ring control whose every click would fail (review PORTAL3-r1).
+ *    Ownership shown is the database's effective owner (0347's planner + `catering_toast_ended_links`).
  *  - decideCateringToastLink: one decision through `decide_catering_toast`, the ONE writer of house links and decisions.
  *    The actor and the shop are bound here BEFORE the call (Juan answer 8); the function re-checks both under the
  *    reconcile lock, refuses a shop that is off, and writes the audit row in the same transaction. Never write
@@ -14,10 +18,10 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { canReadCateringLead, loadCateringReader } from "./ezcater-detail";
 import { CateringPipelineError } from "./pipeline";
-import { CateringToastNotInstalled, raise, readPlanToCompletion, shopSettings } from "./catering-toast";
+import { CateringToastNotInstalled, NOT_INSTALLED, raise, readPlanToCompletion, shopSettings } from "./catering-toast";
 import {
   buildHouseToastPanel, canDecideCateringToast, TOAST_DECISION_ERRORS,
-  type HouseToastPanel, type ToastDecisionHead, type ToastDecisionInput, type ToastLinkRow,
+  type HouseToastPanel, type LinkStepState, type ToastDecisionHead, type ToastDecisionInput, type ToastEndedRow, type ToastLinkRow,
 } from "./catering-toast-links-shared";
 import type { HouseStatusRow } from "./catering-toast-shared";
 
@@ -31,6 +35,23 @@ async function leadLocation(sb: Sb, leadId: string): Promise<string | null> {
   return data.location_id;
 }
 
+/**
+ * Is the LINK STEP (migration 0347) installed? Asked of 0347's own probe, never inferred: with 0344 alone every panel
+ * read succeeds. A missing function is `not_installed`; an answer other than `true` (a guard dropped or disabled) is
+ * `not_installed` too; any other error throws (the panel is unavailable, never silently actionable).
+ */
+export async function linkStepReady(sb: Sb): Promise<LinkStepState> {
+  const { data, error } = await sb.rpc("catering_toast_link_ready");
+  if (error) {
+    if (error.code && NOT_INSTALLED.has(error.code)) return "not_installed";
+    throw new Error("catering_toast_read_failed");
+  }
+  return data === true ? "ready" : "not_installed";
+}
+
+type Pair = { location_id: string; order_guid: string; check_guid: string };
+type CheckNow = { total_cents: number | null; business_date: string | null; live: boolean };
+
 /** The lead's current links with their checks as Toast has them now (`live` false = voided, removed or recaptured away). */
 async function currentLinks(sb: Sb, leadId: string): Promise<ToastLinkRow[]> {
   const links = await selectAllRows<{ location_id: string; order_guid: string; check_guid: string; evidence: ToastLinkRow["evidence"] }>(async (from, to) => {
@@ -39,8 +60,23 @@ async function currentLinks(sb: Sb, leadId: string): Promise<ToastLinkRow[]> {
     if (res.error) raise(res.error);
     return res;
   });
+  return withChecksNow(sb, links);
+}
+
+/** Links of this lead the SYSTEM ended (moved shops, lost, became ezCater), each with who holds the check now (0347). */
+async function endedLinks(sb: Sb, leadId: string): Promise<ToastEndedRow[]> {
+  const rows = await selectAllRows<Omit<ToastEndedRow, keyof CheckNow>>(async (from, to) => {
+    const res = await sb.rpc("catering_toast_ended_links", { p_lead_id: leadId })
+      .order("location_id").order("order_guid").order("check_guid").range(from, to);
+    if (res.error) raise(res.error);
+    return res;
+  });
+  return withChecksNow(sb, rows);
+}
+
+async function withChecksNow<T extends Pair>(sb: Sb, links: readonly T[]): Promise<Array<T & CheckNow>> {
   if (links.length === 0) return [];
-  const out: ToastLinkRow[] = [];
+  const out: Array<T & CheckNow> = [];
   for (const locationId of new Set(links.map((l) => l.location_id))) {
     const guids = [...new Set(links.filter((l) => l.location_id === locationId).map((l) => l.order_guid))];
     const orders = await selectAllRows<{ id: string; order_guid: string; business_date: string; voided: boolean; deleted: boolean; excess_food: boolean }>(async (from, to) => {
@@ -86,7 +122,10 @@ export async function loadHouseToastPanelFor(actor: AuthContext, leadId: string)
     });
     const links = await currentLinks(sb, leadId);
     const plan = await readPlanToCompletion(sb, { p_location_id: locationId, p_from: status.event_date, p_to: status.event_date, p_note_codes: [] });
-    return buildHouseToastPanel({ status, plan, heads, links: links.filter((l) => l.location_id === locationId),
+    // The named readiness check (review PORTAL3-r1): 0344 alone answers every read above.
+    const linkStep = await linkStepReady(sb);
+    const ended = linkStep === "ready" ? await endedLinks(sb, leadId) : [];
+    return buildHouseToastPanel({ status, plan, heads, links: links.filter((l) => l.location_id === locationId), ended, linkStep,
       canDecide: reader !== null && canDecideCateringToast(reader, locationId) });
   } catch (error) {
     if (error instanceof CateringToastNotInstalled) return null;

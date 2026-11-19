@@ -15,7 +15,13 @@
  *   - the ONE writer decide_catering_toast: roles (catering manager any shop, GM own shop, level 8+ any), refusals by
  *     name, the expected head, the unlink tombstone and relink, no_ring_expected / ring_expected, a stale holder
  *     retired by the system, an audit row per decision, and a linked lead LEAVING the not-rung list;
- *   - the publisher guard never raises; the house guard does; the ceiling.
+ *   - the publisher guard never raises; the house guard does; the ceiling;
+ *   - fix round 1 (review PORTAL3-r1): OWNERSHIP TRANSITIONS on the REAL 0225 transfer writer. A transfer away ENDS the
+ *     house link (recorded lead_moved); a round trip never revives it, in both orders (ezCater claims while the lead is
+ *     away / after it is back) and with the publisher or the reconciler claiming; the returning lead shows the ended
+ *     link with its present owner (a conflict), never ownership. Same for lost -> re-opened, for a holder that became
+ *     an ezCater lead, a voided / un-voided check, and a lead that cannot be deleted; the house planner, the orphans
+ *     view and the writer all answer from ONE owner rule (catering_toast_house_owner).
  * PGlite has ONE backend: lock waits are not provable here (CC's sim two-session proof covers them).
  */
 import { PGlite } from '@electric-sql/pglite';
@@ -26,6 +32,7 @@ function check(ok, message) { checks++; if (!ok) throw new Error(`FAIL: ${messag
 
 const publisher0229 = read('0229_ezcater_toast_reconcile.sql').match(/create or replace function public\.publish_ezcater_shadow[\s\S]*?\nend \$\$;/)?.[0];
 const planner0231 = read('0231_ezcater_reconcile_planner_speed.sql').match(/create or replace function public\.plan_ezcater_toast[\s\S]*?\$plan\$;/)?.[0];
+const transfer0225 = read('0225_ezcater_pass2.sql').match(/create function public\.transfer_catering_lead[\s\S]*?\nend \$\$;/)?.[0];
 const reconcile0330 = read('0330_ezcater_catering_records_fixes.sql').match(/create or replace function public\.reconcile_ezcater_toast[\s\S]*?\nend \$\$;/)?.[0];
 export const m0347 = read('0347_catering_toast_link_step.sql');
 
@@ -56,8 +63,21 @@ async function setup({ with0347 }) {
     create table ezcater_reconciliation_status(order_id uuid, location_id uuid, event_date date, rule text);
     create table ezcater_shadow_depletion(order_id uuid, snapshot_id uuid, location_id uuid, event_date date, ordinal int, sku_id uuid,
       sales_oz numeric, suppressed_oz numeric, shadow_oz numeric, current_day_sales_oz numeric, is_current boolean not null default true);
+    -- What the REAL 0225 transfer writer touches.
+    alter table locations add column active boolean not null default true, add column ezcater_caterer_uuid text;
+    alter table catering_pipeline add column updated_at timestamptz, add column location_manually_moved_at timestamptz;
+    alter table catering_quotes add column location_id uuid;
+    create table catering_orders(id uuid primary key default gen_random_uuid(), pipeline_id uuid, location_id uuid);
+    create table catering_prep_demand(id uuid primary key default gen_random_uuid(), pipeline_id uuid, quote_id uuid, location_id uuid,
+      need_date date, item_id uuid, menu_item_id uuid, choice_package_item_id uuid, portion text, qty numeric, created_by uuid,
+      status text not null default 'reserved', released_at timestamptz);
+    alter table ezcater_orders add column provider_location_observed_at timestamptz, add column fetched_at timestamptz,
+      add column created_at timestamptz default now(), add column location_conflict boolean not null default false,
+      add column location_manual_override boolean not null default false, add column caterer_uuid text;
+    create table catering_pipeline_events(id bigserial primary key, pipeline_id uuid, from_stage text, to_stage text, note text, actor_id uuid);
     grant all on all tables in schema public to service_role;`);
-  check(Boolean(publisher0229 && planner0231 && reconcile0330), 'real 0229 publisher / 0231 planner / 0330 reconciler extracted');
+  check(Boolean(publisher0229 && planner0231 && reconcile0330 && transfer0225), 'real 0229 publisher / 0231 planner / 0330 reconciler / 0225 transfer extracted');
+  await db.exec(transfer0225);
   await db.exec(publisher0229);
   await db.exec(planner0231);
   await db.exec(reconcile0330);
@@ -153,7 +173,7 @@ async function main() {
   }
   check(writers.map(w => w.proname).sort().join() === 'decide_catering_toast,publish_ezcater_shadow,reconcile_ezcater_toast', `link writers: ${writers.map(w => w.proname)}`);
   const house = await all(db, `select proname from pg_proc where prosrc ~* 'update\\s+public\\.ezcater_toast_links' order by 1`);
-  check(house.map(h => h.proname).join() === 'publish_ezcater_shadow,reconcile_ezcater_toast', 'no house function updates ezcater_toast_links');
+  check(house.map(h => h.proname).join() === 'publish_ezcater_shadow,reconcile_ezcater_toast,transfer_catering_lead', 'no house function updates ezcater_toast_links (the ezCater writers and the 0225 transfer only)');
 
   // Everything stays behind the shop's enabled switch: off (no row) refuses every decision by name.
   await refuses(db, () => decide(db, CM, HA, 'no_ring_expected', { reason: 'comped' }), 'catering_toast_off', 'a shop that is off refuses decisions');
@@ -306,12 +326,12 @@ async function main() {
   await decide(db, CM, H2, 'unlink', { loc: SHOP, order: 'G1', check: 'G1c', expected: other.decision_id });
   const re = await decide(db, GM, H, 'link', { loc: SHOP, order: 'G1', check: 'G1c', expected: un.decision_id });
   check(re.link_id && (await head(db, H, 'G1', 'G1c')) === re.decision_id, 'a human relink clears the tombstone');
-  // A stale holder (lead lost) is retired by the system with no tombstone.
+  // A lost lead's link is ENDED at the stage change (fix round 1), with no tombstone; the check is free at once.
   await db.exec(`update catering_pipeline set stage = 'lost' where id = '${H}'`);
-  const take = await decide(db, CM, H2, 'link', { loc: SHOP, order: 'G1', check: 'G1c', expected: await head(db, H2, 'G1', 'G1c') });
   check((await one(db, `select retired_reason from catering_toast_links where id = $1`, [re.link_id])).retired_reason === 'lead_lost'
     && (await head(db, H, 'G1', 'G1c')) === re.decision_id, 'a lost holder is retired lead_lost, its decision chain untouched');
-  check((await one(db, `select metadata from audit_log order by id desc limit 1`)).metadata.retired_stale_link === re.link_id, 'the retirement is named in the audit row');
+  const take = await decide(db, CM, H2, 'link', { loc: SHOP, order: 'G1', check: 'G1c', expected: await head(db, H2, 'G1', 'G1c') });
+  check(take.link_id && (await one(db, `select metadata from audit_log order by id desc limit 1`)).metadata.retired_stale_link === undefined, 'the next lead links the freed check');
   // not_a_match / no_ring_expected / ring_expected.
   const H3 = id('3000', 303);
   await db.exec(`insert into catering_pipeline(id, location_id, event_date, stage, lead_source, estimated_revenue_cents) values ('${H3}', '${SHOP}', '2026-11-10', 'out', 'portal', 30000)`);
@@ -329,6 +349,202 @@ async function main() {
     .every(n => actions.some(a => a.action === n)), 'every decision kind writes its own destructive audit row');
   check(Number((await one(db, `select count(*) n from catering_toast_link_decisions`)).n) === Number((await one(db, `select count(*) n from audit_log where action like 'catering.toast_%'`)).n),
     'one audit row per decision');
+
+  // I. Fix round 1 (review PORTAL3-r1): ownership transitions, on the REAL 0225 transfer writer.
+  {
+    const transfer = async (lead, to) => (await one(db, `select transfer_catering_lead($1, $2, $3, 'capacity') r`, [lead, to, CM])).r;
+    const houseLinks = (lead) => all(db, `select id::text, is_current, retired_reason, location_id::text loc, check_guid from catering_toast_links where lead_id = $1 order by created_at`, [lead]);
+    const owners = async (order, chk) => one(db, `select
+      exists(select 1 from ezcater_toast_links z where z.is_current and z.location_id = $1 and z.order_guid = $2 and z.check_guid = $3) ez,
+      catering_toast_house_owner($1, $2, $3)::text house,
+      (select count(*)::int from catering_toast_links h where h.is_current and h.location_id = $1 and h.order_guid = $2 and h.check_guid = $3) house_rows`, [SHOP, order, chk]);
+    const ended = (lead) => all(db, `select order_guid, check_guid, retired_reason, owner, head_id::text from catering_toast_ended_links($1)`, [lead]);
+    const planRow = async (lead, chk, from = '2026-11-08', to = '2026-11-20') =>
+      (await all(db, `select * from plan_catering_toast($1, $2, $3, '[]')`, [SHOP, from, to])).find(r => r.lead_id === lead && r.check_guid === chk);
+    const status = async (lead) => (await one(db, `select status from catering_reconciliation_status where lead_id = $1`, [lead]))?.status ?? null;
+    const mkHouse = (lead, date, cents) => db.exec(`insert into catering_pipeline(id, location_id, event_date, stage, lead_source, estimated_revenue_cents)
+      values ('${lead}', '${SHOP}', '${date}', 'confirmed', 'portal', ${cents})`);
+    const mkEz = async (n, date, number, cents) => {
+      const lead = id('3000', 400 + n), order = id('3100', 400 + n), snap = id('3200', 400 + n);
+      await db.exec(`insert into catering_pipeline(id, location_id, event_date, stage, lead_source, estimated_revenue_cents) values ('${lead}', '${SHOP}', '${date}', 'confirmed', 'ezcater', ${cents});
+        insert into ezcater_orders(id, lead_id, location_id, order_number, snapshot_id, provider_uuid, event_date, status, subtotal_cents)
+          values ('${order}', '${lead}', '${SHOP}', '${number}', '${snap}', 'prov-t${n}', '${date}', 'submitted', ${cents});`);
+      return { lead, order, snap };
+    };
+    const publishFor = (ez, link) => asService(db, () => db.query(`select publish_ezcater_shadow($1, $2, $3, $4)`, [ez.order, ez.snap, SHOP,
+      JSON.stringify({ links: [link], maps: [], reviews: [], shadow: [] })]));
+    await db.exec(`insert into catering_toast_settings(location_id, enabled) values ('${OTHER}', true)`);
+
+    // I1. Away -> ezCater claims (the RECONCILER) -> back. The reviewer's exact sequence.
+    const TA = id('3000', 501);
+    await mkHouse(TA, '2026-11-12', 40000);
+    await mkEz(1, '2026-11-12', 'TRN-111', 40000);
+    await ringEz(db, id('5000', 101), { order: 'T1', date: '2026-11-12', checks: [{ guid: 'T1c', total: 40000, names: ['TRN-111'] }] });
+    const l1 = await decide(db, CM, TA, 'link', { loc: SHOP, order: 'T1', check: 'T1c' });
+    await reconcile(db);
+    let o = await owners('T1', 'T1c');
+    check(o.house === TA && !o.ez, 'I1: linked; the house lead holds the check and the reconciler leaves it');
+    check((await transfer(TA, OTHER)).result === 'moved', 'I1: the real transfer writer moved the lead');
+    let hl = await houseLinks(TA);
+    check(hl.length === 1 && hl[0].is_current === false && hl[0].retired_reason === 'lead_moved', `I1: a transfer away ENDS the link, recorded lead_moved (${JSON.stringify(hl)})`);
+    check((await head(db, TA, 'T1', 'T1c')) === l1.decision_id, 'I1: a system end is no tombstone (the decision chain is untouched)');
+    await reconcile(db);
+    o = await owners('T1', 'T1c');
+    check(o.ez && o.house === null, 'I1: while the lead is away ezCater claims the unowned check');
+    check((await transfer(TA, SHOP)).result === 'moved', 'I1: ... and the lead comes back');
+    o = await owners('T1', 'T1c');
+    check(o.ez && o.house === null && o.house_rows === 0, `I1: round trip: ezCater keeps the check, the house link is NOT revived (${JSON.stringify(o)})`);
+    check((await status(TA)) === 'not_rung_in_toast', 'I1: the returning lead is not counted as rung');
+    const e1 = await ended(TA);
+    check(e1.length === 1 && e1[0].check_guid === 'T1c' && e1[0].owner === 'ezcater' && e1[0].retired_reason === 'lead_moved' && e1[0].head_id === l1.decision_id,
+      `I1: the returning lead SHOWS the conflict: its ended link, now ezCater's (${JSON.stringify(e1)})`);
+    check((await planRow(TA, 'T1c'))?.owner === 'ezcater', 'I1: the house planner says ezCater owns it');
+    await refuses(db, () => decide(db, CM, TA, 'link', { loc: SHOP, order: 'T1', check: 'T1c', expected: l1.decision_id }), 'check_owned_by_ezcater', 'I1: no relink over ezCater');
+    await reconcile(db);
+    o = await owners('T1', 'T1c');
+    check(o.ez && o.house === null, 'I1: a reconcile after the return changes nothing: one owner');
+    const pr = await one(db, `select (catering_pipeline_reconciliation($1, '2026-11-12', '2026-11-12')->'parts'->'rung_in_toast') r`, [SHOP]);
+    check(pr.r === null, 'I1: the pipeline partition does not count the returning lead as rung in Toast');
+
+    // I2. The other order: away -> back -> THEN ezCater (the PUBLISHER) arrives. The link stays ended; ezCater takes it.
+    const TB = id('3000', 502);
+    await mkHouse(TB, '2026-11-13', 41000);
+    const ez2 = await mkEz(2, '2026-11-13', 'TRN-222', 41000);
+    await ringEz(db, id('5000', 102), { order: 'T2', date: '2026-11-13', checks: [{ guid: 'T2c', total: 41000, names: ['TRN-222'] }] });
+    const l2 = await decide(db, CM, TB, 'link', { loc: SHOP, order: 'T2', check: 'T2c' });
+    const t2link = { toast_snapshot_id: id('5000', 102), order_guid: 'T2', check_guid: 'T2c', selection_guid: 'T2c-s0', business_date: '2026-11-13' };
+    await publishFor(ez2, t2link);
+    check(!(await owners('T2', 'T2c')).ez, 'I2: the publisher is refused while the house lead holds the check');
+    await transfer(TB, OTHER);
+    await transfer(TB, SHOP);
+    o = await owners('T2', 'T2c');
+    check(o.house === null && o.house_rows === 0 && !o.ez, 'I2: away and back with nobody claiming: the link stays ENDED, the check is unowned');
+    const e2 = await ended(TB);
+    check(e2.length === 1 && e2[0].owner === null, 'I2: the lead shows its ended link, free to link again');
+    check((await planRow(TB, 'T2c'))?.owner === null, 'I2: the planner offers the check again (owner none)');
+    await publishFor(ez2, t2link);
+    o = await owners('T2', 'T2c');
+    check(o.ez && o.house === null, 'I2: ezCater (publisher) arriving after the return takes the unowned check');
+    check((await ended(TB))[0].owner === 'ezcater', 'I2: ... and the lead now shows the conflict');
+    await refuses(db, () => decide(db, CM, TB, 'link', { loc: SHOP, order: 'T2', check: 'T2c', expected: l2.decision_id }), 'check_owned_by_ezcater', 'I2: no relink over ezCater');
+
+    // I3. Away -> back -> a PERSON links again first -> ezCater (publisher, then reconciler) is refused.
+    const TC = id('3000', 503);
+    await mkHouse(TC, '2026-11-14', 42000);
+    const ez3 = await mkEz(3, '2026-11-14', 'TRN-333', 42000);
+    await ringEz(db, id('5000', 103), { order: 'T3', date: '2026-11-14', checks: [{ guid: 'T3c', total: 42000, names: ['TRN-333'] }] });
+    const l3 = await decide(db, CM, TC, 'link', { loc: SHOP, order: 'T3', check: 'T3c' });
+    await transfer(TC, OTHER);
+    await refuses(db, () => decide(db, CM, TC, 'link', { loc: SHOP, order: 'T3', check: 'T3c', expected: l3.decision_id }), 'lead_moved', 'I3: no link at the old shop while away');
+    await transfer(TC, SHOP);
+    const l3b = await decide(db, GM, TC, 'link', { loc: SHOP, order: 'T3', check: 'T3c', expected: l3.decision_id });
+    await publishFor(ez3, { toast_snapshot_id: id('5000', 103), order_guid: 'T3', check_guid: 'T3c', selection_guid: 'T3c-s0', business_date: '2026-11-14' });
+    await reconcile(db);
+    o = await owners('T3', 'T3c');
+    check(o.house === TC && !o.ez && o.house_rows === 1 && l3b.link_id !== l3.link_id, 'I3: a human relink after the return is a NEW link and holds against ezCater');
+    check((await ended(TC)).length === 0 && (await status(TC)) === 'matched', 'I3: relinked: nothing shown as ended, matched');
+    hl = await houseLinks(TC);
+    check(hl.length === 2 && hl[0].retired_reason === 'lead_moved' && hl[1].is_current, 'I3: history kept: the ended row and the new one');
+
+    // I4. ezCater claims while away, by the PUBLISHER; then the lead returns.
+    const TD = id('3000', 504);
+    await mkHouse(TD, '2026-11-15', 43000);
+    const ez4 = await mkEz(4, '2026-11-15', 'TRN-444', 43000);
+    await ringEz(db, id('5000', 104), { order: 'T4', date: '2026-11-15', checks: [{ guid: 'T4c', total: 43000, names: ['TRN-444'] }] });
+    await decide(db, CM, TD, 'link', { loc: SHOP, order: 'T4', check: 'T4c' });
+    await transfer(TD, OTHER);
+    await publishFor(ez4, { toast_snapshot_id: id('5000', 104), order_guid: 'T4', check_guid: 'T4c', selection_guid: 'T4c-s0', business_date: '2026-11-15' });
+    await transfer(TD, SHOP);
+    await reconcile(db);
+    o = await owners('T4', 'T4c');
+    check(o.ez && o.house === null && o.house_rows === 0, 'I4: publisher claims while away; after the return and a reconcile ezCater still alone');
+
+    // I5. Lost -> ezCater claims -> re-opened: the same rule.
+    const TE = id('3000', 505);
+    await mkHouse(TE, '2026-11-16', 44000);
+    await mkEz(5, '2026-11-16', 'TRN-555', 44000);
+    await ringEz(db, id('5000', 105), { order: 'T5', date: '2026-11-16', checks: [{ guid: 'T5c', total: 44000, names: ['TRN-555'] }] });
+    await decide(db, CM, TE, 'link', { loc: SHOP, order: 'T5', check: 'T5c' });
+    await db.exec(`update catering_pipeline set stage = 'lost' where id = '${TE}'`);
+    hl = await houseLinks(TE);
+    check(hl[0].is_current === false && hl[0].retired_reason === 'lead_lost', 'I5: a lost lead ENDS its links (lead_lost)');
+    await reconcile(db);
+    await db.exec(`update catering_pipeline set stage = 'confirmed' where id = '${TE}'`);
+    o = await owners('T5', 'T5c');
+    check(o.ez && o.house === null && o.house_rows === 0, 'I5: lost -> ezCater claims -> re-opened: not revived');
+    check((await ended(TE))[0]?.owner === 'ezcater' && (await ended(TE))[0]?.retired_reason === 'lead_lost', 'I5: the re-opened lead shows the conflict');
+    // A stage move that is not `lost` (confirmed -> out -> completed -> quote_sent) ends nothing.
+    const TF = id('3000', 506);
+    await mkHouse(TF, '2026-11-17', 45000);
+    await ringEz(db, id('5000', 106), { order: 'T6', date: '2026-11-17', checks: [{ guid: 'T6c', total: 45000 }] });
+    await decide(db, CM, TF, 'link', { loc: SHOP, order: 'T6', check: 'T6c' });
+    for (const st of ['out', 'completed', 'quote_sent', 'confirmed']) await db.exec(`update catering_pipeline set stage = '${st}', headcount = 9 where id = '${TF}'`);
+    check((await owners('T6', 'T6c')).house === TF && (await houseLinks(TF)).every(l => l.is_current), 'I5: other stage moves and edits end nothing');
+
+    // I6. A voided, then re-opened check: the link is held throughout (no window for ezCater), the lead leaves and
+    // re-joins the rung set with the check.
+    await ringEz(db, id('5000', 107), { order: 'T6', date: '2026-11-17', checks: [{ guid: 'T6c', total: 45000, voided: true }] });
+    check((await status(TF)) === 'not_rung_in_toast' && (await owners('T6', 'T6c')).house === TF, 'I6: voided check: the lead is not rung, the link is still held');
+    await refuses(db, () => decide(db, CM, TF, 'no_ring_expected', { reason: 'comped' }), 'lead_has_links', 'I6: unlink first, even when the check is voided');
+    await ringEz(db, id('5000', 108), { order: 'T6', date: '2026-11-17', checks: [{ guid: 'T6c', total: 45000, names: ['TRN-666'] }] });
+    const ez6 = await mkEz(6, '2026-11-17', 'TRN-666', 45000);
+    await publishFor(ez6, { toast_snapshot_id: id('5000', 108), order_guid: 'T6', check_guid: 'T6c', selection_guid: 'T6c-s0', business_date: '2026-11-17' });
+    await reconcile(db);
+    o = await owners('T6', 'T6c');
+    check((await status(TF)) === 'matched' && o.house === TF && !o.ez, 'I6: re-opened check: matched again, still the house lead alone');
+
+    // I7. A lead is never deleted from under its links.
+    await refuses(db, () => db.exec(`delete from catering_pipeline where id = '${TF}'`), 'violates foreign key', 'I7: a linked lead cannot be deleted');
+
+    // I8. One owner rule everywhere (review P2 #1). A holder that BECAME an ezCater lead (an order attached to it) no
+    // longer owns: the planner, the orphans view and the writer agree, and the next lead can take the check from the UI.
+    const TG = id('3000', 507), TH = id('3000', 508);
+    await mkHouse(TG, '2026-11-18', 46000); await mkHouse(TH, '2026-11-18', 46000);
+    await ringEz(db, id('5000', 109), { order: 'T8', date: '2026-11-18', checks: [{ guid: 'T8c', total: 46000 }] });
+    const l8 = await decide(db, CM, TG, 'link', { loc: SHOP, order: 'T8', check: 'T8c' });
+    check((await planRow(TH, 'T8c'))?.owner === 'house' && (await planRow(TH, 'T8c')).owner_lead_id === TG, 'I8: a live holder is the owner in the plan');
+    check(Number((await one(db, `select count(*) n from catering_toast_orphans where check_guid = 'T8c'`)).n) === 0, 'I8: a held check is no orphan');
+    await db.exec(`insert into ezcater_orders(id, lead_id, location_id, provider_uuid) values ('${id('3100', 480)}', '${TG}', '${SHOP}', 'prov-attach')`);
+    const p8 = await planRow(TH, 'T8c');
+    check(p8?.owner === null && p8.owner_lead_id === null, `I8: a holder that no longer qualifies is NOT the owner in the plan (${p8?.owner})`);
+    check(Number((await one(db, `select count(*) n from catering_toast_orphans where check_guid = 'T8c'`)).n) === 1, 'I8: ... and the check is an orphan again');
+    const take8 = await decide(db, CM, TH, 'link', { loc: SHOP, order: 'T8', check: 'T8c' });
+    check((await one(db, `select retired_reason from catering_toast_links where id = $1`, [l8.link_id])).retired_reason === 'lead_ezcater'
+      && (await one(db, `select metadata from audit_log order by id desc limit 1`)).metadata.retired_stale_link === l8.link_id && take8.link_id,
+      'I8: the writer retires the stale holder (lead_ezcater), named in the audit row');
+    // The same stale holder, with ezCater arriving instead of a person: the claim ENDS the dormant row, so a holder that
+    // turns house again later can never own beside ezCater.
+    const TI = id('3000', 509);
+    await mkHouse(TI, '2026-11-19', 47000);
+    const ez9 = await mkEz(9, '2026-11-19', 'TRN-999', 47000);
+    await ringEz(db, id('5000', 110), { order: 'T9', date: '2026-11-19', checks: [{ guid: 'T9c', total: 47000, names: ['TRN-999'] }] });
+    await decide(db, CM, TI, 'link', { loc: SHOP, order: 'T9', check: 'T9c' });
+    await db.exec(`insert into ezcater_orders(id, lead_id, location_id, provider_uuid) values ('${id('3100', 481)}', '${TI}', '${SHOP}', 'prov-attach-2')`);
+    await publishFor(ez9, { toast_snapshot_id: id('5000', 110), order_guid: 'T9', check_guid: 'T9c', selection_guid: 'T9c-s0', business_date: '2026-11-19' });
+    hl = await houseLinks(TI);
+    check(hl[0].is_current === false && hl[0].retired_reason === 'lead_ezcater', `I8: an ezCater claim ENDS the dormant house row (${JSON.stringify(hl)})`);
+    await db.exec(`delete from ezcater_orders where id = '${id('3100', 481)}'`);
+    o = await owners('T9', 'T9c');
+    check(o.ez && o.house === null && o.house_rows === 0, 'I8: the holder turning house again does not own beside ezCater');
+
+    // A lead that becomes ezCater by its OWN row (lead_source) ends its links at once (the trigger).
+    const TJ = id('3000', 510);
+    await mkHouse(TJ, '2026-11-19', 48000);
+    await ringEz(db, id('5000', 111), { order: 'TJ', date: '2026-11-19', checks: [{ guid: 'TJc', total: 48000 }] });
+    await decide(db, CM, TJ, 'link', { loc: SHOP, order: 'TJ', check: 'TJc' });
+    await db.exec(`update catering_pipeline set lead_source = 'ezcater' where id = '${TJ}'`);
+    hl = await houseLinks(TJ);
+    check(hl[0].is_current === false && hl[0].retired_reason === 'lead_ezcater', `I8: lead_source -> ezcater ENDS the link (${JSON.stringify(hl)})`);
+    await db.exec(`update catering_pipeline set lead_source = 'portal' where id = '${TJ}'`);
+    check((await owners('TJ', 'TJc')).house === null && (await ended(TJ))[0]?.owner === null, 'I8: turning house again revives nothing; the ended link is shown, free');
+
+    // I9. Across everything above: no check ever has two owners.
+    const dual = await all(db, `select h.check_guid from catering_toast_links h where h.is_current and exists (select 1 from ezcater_toast_links z
+      where z.is_current and z.location_id = h.location_id and z.order_guid = h.order_guid and z.check_guid = h.check_guid)`);
+    check(dual.length === 0, `I9: no check holds a current house row beside a current ezCater row (${JSON.stringify(dual)})`);
+    // The readiness probe the panel asks before it offers a control.
+    check((await asService(db, () => one(db, `select catering_toast_link_ready() r`))).r === true, 'the link-step readiness probe answers true');
+  }
 
   // H. The publisher guard never raises: break its helper inside a transaction; the row passes through.
   await db.exec('begin');

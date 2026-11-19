@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  buildHouseToastPanel, canDecideCateringToast, decisionErrorKey, parseToastDecision, TOAST_DECISION_ERRORS,
+  buildHouseToastPanel, candidateActions, endedActions, canDecideCateringToast, decisionErrorKey, parseToastDecision, TOAST_DECISION_ERRORS,
   TOAST_DECISION_KINDS, TOAST_NO_RING_REASONS,
 } from "@/lib/catering/catering-toast-links-shared";
 import type { CateringToastPlanRow } from "@/lib/catering/catering-toast-shared";
@@ -78,8 +78,37 @@ describe("buildHouseToastPanel", () => {
   });
   const base = {
     status: { lead_id: LEAD, location_id: SHOP, event_date: "2026-11-20", ring_code: null, value_cents: 30000, status: "not_rung_in_toast" as const },
-    canDecide: true,
+    canDecide: true, linkStep: "ready" as const,
   };
+  it("fix round 1: an ended link is listed once, under `ended`, with its present owner; never as a link or a suggestion", () => {
+    const row = { location_id: SHOP, order_guid: "a", check_guid: "1", evidence: "manual" as const, retired_reason: "lead_moved" as const,
+      head_id: U(11), owner: "ezcater" as const, total_cents: 40000, business_date: "2026-11-20", live: true };
+    const panel = buildHouseToastPanel({
+      ...base,
+      plan: [plan({ order_guid: "a", check_guid: "1", owner: "ezcater" }), plan({ order_guid: "b", check_guid: "1" })],
+      heads: [{ id: U(11), kind: "link", location_id: SHOP, order_guid: "a", check_guid: "1", reason_code: null }],
+      links: [],
+      ended: [row, { ...row, order_guid: "x", location_id: U(3), owner: null }, { ...row, order_guid: "y", owner: null, live: false }, { ...row, order_guid: "w", owner: null }],
+    });
+    expect(panel.links).toEqual([]);
+    expect(panel.ended.map((e) => [e.orderGuid, e.owner, e.reason, e.headId])).toEqual([["a", "ezcater", "lead_moved", U(11)], ["y", null, "lead_moved", U(11)], ["w", null, "lead_moved", U(11)]]);
+    expect(panel.candidates.map((c) => c.orderGuid)).toEqual(["b"]);
+    expect(panel.ended.map((e) => endedActions(e))).toEqual([[], [], ["link"]]);
+  });
+  it("fix round 1: a holder that no longer owns (planner owner null) is an OPEN candidate with its actions", () => {
+    // 0347's planner answers owner from catering_toast_house_owner: a lost / moved / ezCater holder is not an owner.
+    const panel = buildHouseToastPanel({ ...base, plan: [plan({ order_guid: "a", check_guid: "1", owner: null, owner_lead_id: null })], heads: [], links: [] });
+    expect(panel.candidates[0]).toMatchObject({ state: "open" });
+    expect(candidateActions(panel.candidates[0]!)).toEqual(["link", "not_a_match"]);
+    expect(candidateActions({ ...panel.candidates[0]!, state: "owned_house" })).toEqual([]);
+  });
+  it("fix round 1: no decision control unless the link step (0347) is installed, whoever asks", () => {
+    const off = buildHouseToastPanel({ ...base, linkStep: "not_installed", plan: [plan({})], heads: [], links: [] });
+    expect(off).toMatchObject({ canDecide: false, linkStep: "not_installed", ended: [] });
+    expect(off.candidates).toHaveLength(1);
+    expect(buildHouseToastPanel({ ...base, plan: [], heads: [], links: [] })).toMatchObject({ canDecide: true, linkStep: "ready" });
+    expect(buildHouseToastPanel({ ...base, canDecide: false, plan: [], heads: [], links: [] }).canDecide).toBe(false);
+  });
   it("orders candidates like the suggestion, names each state, and carries each pair's head", () => {
     const panel = buildHouseToastPanel({
       ...base,

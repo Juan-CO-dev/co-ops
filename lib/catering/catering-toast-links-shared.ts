@@ -11,6 +11,12 @@
  *  - REFUSALS are named, each with an en + es message (`decisionErrorKey`); an unknown code is generic.
  *  - THE PANEL lists a lead's current links and its candidate checks from the house planner, each with the state that
  *    decides what a person may do with it. A suggestion never links anything: only "Link this check" does.
+ *  - OWNERSHIP IS THE DATABASE'S (fix round 1): a candidate's `owner` is the planner's, and 0347's planner answers it
+ *    from `catering_toast_house_owner`, the writer's own rule. A lead that was lost, moved or became ezCater owns
+ *    nothing. A link the SYSTEM ended (the lead moved shops and came back, was lost and re-opened) is listed under
+ *    `ended` with who holds the check NOW: the lead shows the conflict, it never owns the check again by itself.
+ *  - THE LINK STEP MUST BE INSTALLED (`linkStep`): every object the panel reads exists since 0344, so the server asks
+ *    0347's readiness probe. `not_installed` = no decision control at all, and the panel says why.
  * Zero I/O. Client-safe.
  */
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
@@ -87,6 +93,17 @@ export interface ToastLinkRow {
   total_cents: number | null; business_date: string | null; live: boolean;
 }
 
+/** A link the system ended (0347 `catering_toast_ended_links`), with its check as Toast has it now. */
+export const TOAST_ENDED_REASONS = ["lead_moved", "lead_lost", "lead_ezcater"] as const;
+export type ToastEndedReason = (typeof TOAST_ENDED_REASONS)[number];
+export interface ToastEndedRow {
+  location_id: string; order_guid: string; check_guid: string; evidence: ToastLinkRow["evidence"];
+  retired_reason: ToastEndedReason; head_id: string; owner: "ezcater" | "house" | null;
+  total_cents: number | null; business_date: string | null; live: boolean;
+}
+/** Is migration 0347 (the writer and its guards) in place? Asked by name; never inferred from the reads working. */
+export type LinkStepState = "ready" | "not_installed";
+
 export type CandidateState = "open" | "dual_code" | "owned_ezcater" | "owned_house" | "blocked";
 const STATE_ORDER: readonly CandidateState[] = ["open", "dual_code", "owned_ezcater", "owned_house", "blocked"];
 
@@ -99,10 +116,19 @@ export interface ToastLinkView {
   locationId: string; orderGuid: string; checkGuid: string; evidence: ToastLinkRow["evidence"];
   totalCents: number | null; businessDate: string | null; live: boolean; headId: string | null;
 }
+export interface ToastEndedLink {
+  orderGuid: string; checkGuid: string; evidence: ToastLinkRow["evidence"]; reason: ToastEndedReason;
+  /** Who holds the check now. null = nobody: a person may link it again. */
+  owner: "ezcater" | "house" | null;
+  totalCents: number | null; businessDate: string | null; live: boolean; headId: string;
+}
 export interface HouseToastPanel {
   leadId: string; locationId: string; eventDate: string; ringCode: string | null; valueCents: number | null;
   status: "matched" | "amount_mismatch" | "not_rung_in_toast" | "no_ring_expected";
+  linkStep: LinkStepState;
+  /** May this viewer decide HERE and NOW: the role and shop rule AND the link step installed. */
   canDecide: boolean;
+  ended: ToastEndedLink[];
   leadHead: { id: string; kind: ToastDecisionKind; reasonCode: ToastNoRingReason | null } | null;
   links: ToastLinkView[];
   candidates: ToastCandidate[];
@@ -115,6 +141,7 @@ const num = (v: number | string | null) => (v === null ? null : Number(v));
 export function buildHouseToastPanel(args: {
   status: { lead_id: string; location_id: string; event_date: string; ring_code: string | null; value_cents: number | null; status: HouseToastPanel["status"] };
   plan: readonly CateringToastPlanRow[]; heads: readonly ToastDecisionHead[]; links: readonly ToastLinkRow[]; canDecide: boolean;
+  linkStep: LinkStepState; ended?: readonly ToastEndedRow[];
 }): HouseToastPanel {
   const { status } = args;
   const headByPair = new Map(args.heads.filter((h) => h.location_id !== null).map((h) => [pairKey(h.location_id, h.order_guid, h.check_guid), h]));
@@ -122,11 +149,21 @@ export function buildHouseToastPanel(args: {
   const linked = new Set(args.links.map((l) => pairKey(l.location_id, l.order_guid, l.check_guid)));
   const stateOf = (r: CateringToastPlanRow): CandidateState => r.blocked ? "blocked"
     : r.owner === "ezcater" ? "owned_ezcater" : r.owner === "house" ? "owned_house" : r.dual_code ? "dual_code" : "open";
-  const rows = args.plan.filter((r) => r.lead_id === status.lead_id && !linked.has(pairKey(r.location_id, r.order_guid, r.check_guid)));
+  // An ended link is shown once, under `ended`, with its present owner: never also as a fresh suggestion.
+  const ended = (args.ended ?? []).filter((e) => e.location_id === status.location_id && !linked.has(pairKey(e.location_id, e.order_guid, e.check_guid)));
+  const endedPairs = new Set(ended.map((e) => pairKey(e.location_id, e.order_guid, e.check_guid)));
+  const rows = args.plan.filter((r) => r.lead_id === status.lead_id && !linked.has(pairKey(r.location_id, r.order_guid, r.check_guid))
+    && !endedPairs.has(pairKey(r.location_id, r.order_guid, r.check_guid)));
   rows.sort((a, b) => STATE_ORDER.indexOf(stateOf(a)) - STATE_ORDER.indexOf(stateOf(b)) || compareToastCandidates(a, b));
   return {
     leadId: status.lead_id, locationId: status.location_id, eventDate: status.event_date, ringCode: status.ring_code,
-    valueCents: num(status.value_cents), status: status.status, canDecide: args.canDecide,
+    valueCents: num(status.value_cents), status: status.status, linkStep: args.linkStep,
+    // No control without the writer: a click would only fail (review PORTAL3-r1).
+    canDecide: args.canDecide && args.linkStep === "ready",
+    ended: ended.map((e) => ({
+      orderGuid: e.order_guid, checkGuid: e.check_guid, evidence: e.evidence, reason: e.retired_reason, owner: e.owner,
+      totalCents: num(e.total_cents), businessDate: e.business_date, live: e.live, headId: e.head_id,
+    })),
     leadHead: lead ? { id: lead.id, kind: lead.kind, reasonCode: lead.reason_code } : null,
     links: args.links.map((l) => ({
       locationId: l.location_id, orderGuid: l.order_guid, checkGuid: l.check_guid, evidence: l.evidence,
@@ -151,4 +188,8 @@ export function candidateActions(c: ToastCandidate): Array<"link" | "not_a_match
   if (c.state === "open" || c.state === "dual_code") return ["link", "not_a_match"];
   if (c.state === "blocked") return ["link"];
   return [];
+}
+/** An ended link may be linked again only while nobody holds the check and it is still live in Toast. */
+export function endedActions(e: ToastEndedLink): Array<"link"> {
+  return e.owner === null && e.live ? ["link"] : [];
 }

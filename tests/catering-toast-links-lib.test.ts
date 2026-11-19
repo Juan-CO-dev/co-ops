@@ -1,8 +1,10 @@
 /**
  * Item 21 PR 3: lib/catering/catering-toast-links.ts. The writer binds the actor and the shop BEFORE the RPC
  * (Juan answer 8), maps every refusal by name, retries only a deadlock, and never reports a success the database did
- * not return. The panel is null when the shop is off or 0344/0347 are missing, and a linked lead's panel lists the
- * link (with its head) instead of offering it again.
+ * not return. The panel is null when the shop is off or 0344 is missing, and a linked lead's panel lists the
+ * link (with its head) instead of offering it again. Fix round 1 (review PORTAL3-r1): with 0344 installed and 0347
+ * ABSENT every panel read still succeeds, so the loader asks 0347's readiness probe by name and returns the panel
+ * read-only (`linkStep: "not_installed"`, canDecide false) instead of controls whose every click would fail.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
@@ -23,6 +25,9 @@ let tables: Record<string, Row[] | { code: string; message: string }>;
 let rpcResults: Array<{ data: unknown; error: { code?: string; message: string } | null }>;
 let rpcCalls: Array<{ fn: string; args: Row }>;
 let planRows: Row[];
+/** 0347's probe and ended-links read: a value, or the PostgREST error a missing function answers. */
+let ready: { data: unknown; error: { code?: string; message: string } | null };
+let endedRows: Row[] | { code: string; message: string };
 
 function client() {
   return {
@@ -49,6 +54,13 @@ function client() {
         const b = { order() { return b; }, range(from: number, to: number) { return Promise.resolve({ data: planRows.slice(from, to + 1), error: null, count: planRows.length }); } };
         return b;
       }
+      if (fn === "catering_toast_link_ready") return Promise.resolve(ready);
+      if (fn === "catering_toast_ended_links") {
+        const b = { order() { return b; }, range(from: number, to: number) {
+          return Promise.resolve(Array.isArray(endedRows) ? { data: endedRows.slice(from, to + 1), error: null } : { data: null, error: endedRows });
+        } };
+        return b;
+      }
       return Promise.resolve(rpcResults.shift() ?? { data: null, error: { message: "no result" } });
     },
   };
@@ -69,6 +81,8 @@ beforeEach(() => {
   rpcResults = [];
   rpcCalls = [];
   planRows = [];
+  ready = { data: true, error: null };
+  endedRows = [];
 });
 
 const link = { kind: "link" as const, locationId: SHOP, orderGuid: "o", checkGuid: "c", reasonCode: null, expectedHeadId: null };
@@ -117,7 +131,43 @@ describe("loadHouseToastPanelFor", () => {
     vi.mocked(canReadCateringLead).mockResolvedValue(false);
     await expect(loadHouseToastPanelFor(actor, LEAD)).rejects.toMatchObject({ status: 403 });
   });
-  it("null when the shop is off or 0344/0347 are missing", async () => {
+  it("fix round 1: 0344 installed, 0347 ABSENT, shop enabled: the panel is read-only and names the reason", async () => {
+    // The exact deployment state of the review: every 0344 object answers; only 0347's functions are missing.
+    vi.mocked(loadCateringReader).mockResolvedValue({ role: "catering_mgr", active: true, locations: [] });
+    ready = { data: null, error: { code: "PGRST202", message: "Could not find the function public.catering_toast_link_ready" } };
+    endedRows = { code: "PGRST202", message: "missing" };
+    planRows = [{ lead_id: LEAD, location_id: SHOP, order_guid: "o", check_guid: "c", toast_snapshot_id: "snap", business_date: "2026-11-20",
+      evidence: "amount_date", check_total_cents: 30000, lead_value_cents: 30000, amount_diff_cents: 0, amount_mismatch: false,
+      dual_code: false, owner: null, owner_lead_id: null, blocked: false }];
+    const panel = await loadHouseToastPanelFor(actor, LEAD);
+    expect(panel).toMatchObject({ linkStep: "not_installed", canDecide: false, ended: [] });
+    expect(panel?.candidates).toHaveLength(1); // the facts are still shown
+    expect(rpcCalls.map((c) => c.fn)).toContain("catering_toast_link_ready");
+    expect(rpcCalls.map((c) => c.fn)).not.toContain("catering_toast_ended_links");
+    // 42883 (the function is missing, asked over SQL) and an answer that is not `true` (a guard dropped) are the same.
+    for (const answer of [{ data: null, error: { code: "42883", message: "x" } }, { data: false, error: null }, { data: null, error: null }]) {
+      ready = answer;
+      expect(await loadHouseToastPanelFor(actor, LEAD)).toMatchObject({ linkStep: "not_installed", canDecide: false });
+    }
+  });
+  it("fix round 1: a probe that FAILS is 'unavailable', never an actionable panel", async () => {
+    ready = { data: null, error: { code: "57014", message: "timeout" } };
+    await expect(loadHouseToastPanelFor(actor, LEAD)).rejects.toMatchObject({ status: 503, code: "catering_toast_unavailable" });
+  });
+  it("fix round 1: installed: the decider may decide, and a link the system ended is listed with its present owner", async () => {
+    endedRows = [{ location_id: SHOP, order_guid: "o", check_guid: "c", evidence: "manual", retired_reason: "lead_moved", head_id: "h1", owner: "ezcater" }];
+    tables.toast_orders_latest = [{ id: "snap", location_id: SHOP, order_guid: "o", business_date: "2026-11-20", voided: false, deleted: false, excess_food: false }];
+    tables.toast_order_checks = [{ snapshot_id: "snap", check_guid: "c", total_cents: 40000, voided: false, deleted: false }];
+    planRows = [{ lead_id: LEAD, location_id: SHOP, order_guid: "o", check_guid: "c", toast_snapshot_id: "snap", business_date: "2026-11-20",
+      evidence: "amount_date", check_total_cents: 40000, lead_value_cents: 30000, amount_diff_cents: 10000, amount_mismatch: true,
+      dual_code: false, owner: "ezcater", owner_lead_id: null, blocked: false }];
+    const panel = await loadHouseToastPanelFor(actor, LEAD);
+    expect(panel).toMatchObject({ linkStep: "ready", canDecide: true, links: [], candidates: [] });
+    expect(panel?.ended).toEqual([{ orderGuid: "o", checkGuid: "c", evidence: "manual", reason: "lead_moved", owner: "ezcater",
+      totalCents: 40000, businessDate: "2026-11-20", live: true, headId: "h1" }]);
+    expect(rpcCalls.find((c) => c.fn === "catering_toast_ended_links")?.args).toEqual({ p_lead_id: LEAD });
+  });
+  it("null when the shop is off or 0344 is missing", async () => {
     tables.catering_toast_settings = [];
     expect(await loadHouseToastPanelFor(actor, LEAD)).toBeNull();
     tables.catering_toast_settings = { code: "42P01", message: "missing" };

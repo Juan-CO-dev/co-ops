@@ -19,7 +19,7 @@ const cand = (o: Partial<ToastCandidate>): ToastCandidate => ({ orderGuid: "o", 
   checkTotalCents: 30000, amountDiffCents: 0, amountMismatch: false, state: "open", blockedBy: null, headId: null, ...o });
 const panel = (o: Partial<Panel> = {}): Panel => ({
   leadId: "lead", locationId: SHOP, eventDate: "2026-11-20", ringCode: null, valueCents: 30000, status: "not_rung_in_toast", canDecide: true,
-  leadHead: null, links: [], candidates: [
+  linkStep: "ready", ended: [], leadHead: null, links: [], candidates: [
     cand({ orderGuid: "a", evidence: "ring_code" }),
     cand({ orderGuid: "b", state: "dual_code" }),
     cand({ orderGuid: "c", state: "owned_ezcater" }),
@@ -64,6 +64,38 @@ describe("the link panel, en + es", () => {
     expect(en).toContain("View only");
     for (const control of ["Link this check", "Not a match", "Relink", "No Toast ring expected"]) expect(en).not.toContain(control);
     expect(render(panel({ canDecide: false }), "es")).toContain("Solo lectura");
+  });
+  it("fix round 1: without migration 0347 the panel is read-only and says why (never a control that can only fail)", () => {
+    // What buildHouseToastPanel returns for a decider at a shop with 0344 only: canDecide false, linkStep not_installed.
+    const en = render(panel({ canDecide: false, linkStep: "not_installed" }), "en");
+    expect(en).toContain("Linking Toast checks is not installed yet.");
+    expect(en).not.toContain("View only");
+    for (const control of ["Link this check", "Not a match", "Relink", "No Toast ring expected"]) expect(en).not.toContain(control);
+    expect(en).toContain("Possible Toast checks"); // the facts stay
+    const es = render(panel({ canDecide: false, linkStep: "not_installed" }), "es");
+    expect(es).toContain("Vincular cuentas de Toast aún no está instalado.");
+    expect(es).not.toContain("Vincular esta cuenta");
+  });
+  it("fix round 1: a link the system ended shows who holds the check now: a conflict, never ownership", () => {
+    const ended = (o: Partial<Panel["ended"][number]>): Panel["ended"][number] => ({ orderGuid: "o", checkGuid: "c", evidence: "manual", reason: "lead_moved",
+      owner: "ezcater", totalCents: 40000, businessDate: "2026-11-20", live: true, headId: "h", ...o });
+    const taken = render(panel({ candidates: [], ended: [ended({})] }), "en");
+    expect(taken).toContain("Not rung in Toast yet");
+    expect(taken).toContain("Links that ended");
+    expect(taken).toContain("until the order moved to another shop");
+    expect(taken).toContain("An ezCater order holds this check now.");
+    expect(taken).not.toContain("Linked Toast checks"); // it is not shown as this order's link
+    expect(taken).not.toContain("Relink");
+    const free = render(panel({ candidates: [], ended: [ended({ owner: null, reason: "lead_lost" })] }), "en");
+    expect(free).toContain("until the order was marked lost");
+    expect(free).toContain("Nobody holds this check now.");
+    expect(count(free, "Relink")).toBe(2); // the sentence and the button
+    expect(count(render(panel({ candidates: [], ended: [ended({ owner: null, live: false })] }), "en"), "Relink")).toBe(1); // no button: the check is gone
+    expect(count(render(panel({ candidates: [], canDecide: false, ended: [ended({ owner: null })] }), "en"), "Relink")).toBe(1); // no button for a reader
+    const es = render(panel({ candidates: [], ended: [ended({ owner: "house", reason: "lead_ezcater" })] }), "es");
+    expect(es).toContain("Vínculos que terminaron");
+    expect(es).toContain("pasó a ser de ezCater");
+    expect(es).toContain("Ahora esta cuenta es de otro pedido de catering.");
   });
   it("a 'no ring expected' order says why and offers the undo", () => {
     const en = render(panel({ status: "no_ring_expected", leadHead: { id: "h", kind: "no_ring_expected", reasonCode: "paid_outside_toast" } }), "en");

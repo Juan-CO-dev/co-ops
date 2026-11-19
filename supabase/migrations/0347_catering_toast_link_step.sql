@@ -27,11 +27,29 @@
 --                                      stays in candidates / batch_checks, so the unchanged reconciler never retires an
 --                                      owner). With no house link and no ring code it returns 0231's rows exactly.
 --   ezcater_order_house_conflicts(...) a read: the ezCater side of a conflict, for the lead's reconciliation panel.
+--   catering_pipeline_end_toast_links  AFTER UPDATE on catering_pipeline (fix round 1): a lead that leaves its shop, is
+--                                      lost, or becomes an ezCater lead ENDS its house links in the same transaction
+--                                      (recorded lead_moved / lead_lost / lead_ezcater). Nothing revives a link.
+--   plan_catering_toast(...)           re-emitted from 0344 with ONE change (pinned): owner / owner_lead_id come from
+--                                      catering_toast_house_owner, the writer's own rule, not from the raw current row.
+--   catering_toast_orphans             re-created from 0344 with the same one change.
+--   catering_toast_ended_links(...)    a read: links of a lead that the SYSTEM ended, with the check's owner now.
+--   catering_toast_link_ready()        the readiness probe the link panel asks before it offers a control.
 --
--- OWNERSHIP (plan r3). ezCater owns a check while a RAW is_current row exists in ezcater_toast_links on the logical key
--- (shop, order guid, check guid). House owns it while a current catering_toast_links row exists AND its lead is still at
--- that shop, not lost, not ezCater (catering_toast_house_owner). Each source's links are retired only by its own
--- writers: nothing here updates ezcater_toast_links (pinned).
+-- OWNERSHIP (plan r3; fix round 1, review PORTAL3-r1). ezCater owns a check while a RAW is_current row exists in
+-- ezcater_toast_links on the logical key (shop, order guid, check guid). House owns it while a current
+-- catering_toast_links row exists AND its lead is still at that shop, not lost, not ezCater
+-- (catering_toast_house_owner: THE one owner rule; the guards, both planners, the orphans view and the writer ask it).
+-- A HOUSE LINK NEVER COMES BACK. It ends, for good and on the row (retired_at + retired_reason), when
+--   (a) a person unlinks it (decide_catering_toast, the tombstone);
+--   (b) its lead leaves the shop, is lost, or becomes an ezCater lead by an UPDATE of catering_pipeline (the trigger in
+--       section 3b, same transaction as the 0225 transfer or the stage change);
+--   (c) ezCater is admitted to the check while the holder no longer qualifies (the guard in section 3 ends the dormant
+--       row in the admitting transaction; this covers a holder that stopped qualifying with no UPDATE of its own row,
+--       e.g. an ezCater order attached to it), or another house lead takes it (the writer).
+-- So a round-trip transfer, or lost -> re-opened, returns a lead with NO link: if ezCater took the check meanwhile,
+-- ezCater keeps it and the lead shows the ended link with its present owner (catering_toast_ended_links); otherwise a
+-- person may link it again (a NEW link row). Nothing here updates ezcater_toast_links (pinned).
 --
 -- EVIDENCE. The dual-code test reads the RETAINED evidence: item-bearing selection names (the 0229 token rule, copied
 -- verbatim) matched against live house ring codes (catering_live_ring_codes). A pair whose head is `unlink` or
@@ -43,12 +61,15 @@
 -- reconciler do), then the lead row FOR NO KEY UPDATE, then the link row(s) FOR UPDATE, then appends the decision.
 -- Transfer (0225) holds a lead row and never waits for that advisory lock, so there is no cycle. Every function that
 -- inserts into either link table takes the advisory lock first (pinned).
+-- The lead trigger (3b) runs inside whatever updated the lead: it holds that lead row, then takes the lead's OWN link
+-- rows. The guard's end of a dormant row (3) runs under the advisory lock and takes a link row only. Nothing waits for
+-- a lead row or the advisory lock while holding a link row, so the order (advisory) -> lead -> link has no cycle.
 --
 -- APPEND-ONLY BY GRANT: deny-all RLS, service_role SELECT only, every write through SECURITY DEFINER.
 -- Proof: scripts/sql-harness-0347.mjs (PGlite; the REAL 0221 view, 0229 publisher, 0231 planner, 0330 reconciler and
 -- 0344 file), CI-pinned by tests/catering-toast-0347-migration.test.ts. Two-session proof (CC, sim only, both commit
 -- orders): publisher vs manual link; ezCater reconcile vs manual link; two managers on one check; link vs lead transfer;
--- recapture then manual link then reconcile.
+-- recapture then manual link then reconcile; transfer away vs an ezCater publication of the same check.
 
 begin;
 
@@ -67,6 +88,12 @@ begin
   end if;
 end $$;
 
+-- 0b. One more closed reason for a link the system ends: its lead became an ezCater lead. (0344 named the column's
+-- inline check; the table is empty until this migration's writer exists.)
+alter table public.catering_toast_links drop constraint catering_toast_links_retired_reason_check;
+alter table public.catering_toast_links add constraint catering_toast_links_retired_reason_check
+  check (retired_reason in ('unlinked', 'check_gone', 'lead_moved', 'lead_lost', 'lead_ezcater'));
+
 -- 1. Ownership and evidence helpers ----------------------------------------------------------------------------------
 -- Live house ring codes: a house lead (not ezCater, not lost) at a shop, normalized the 0229:46 way.
 create view public.catering_live_ring_codes with (security_invoker = true) as
@@ -84,6 +111,14 @@ language sql stable security definer set search_path = pg_catalog, public as $$
      and p.location_id = h.location_id and p.stage <> 'lost' and coalesce(p.lead_source, '') <> 'ezcater'
      and not exists (select 1 from public.ezcater_orders e where e.lead_id = p.id)
    limit 1
+$$;
+
+-- Why a holder no longer qualifies (the reason recorded on a link the system ends). Never NULL.
+create function public.catering_toast_stale_reason(p_lead_id uuid, p_link_location_id uuid) returns text
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select coalesce((select case when p.location_id is distinct from p_link_location_id then 'lead_moved'
+                               when p.stage = 'lost' then 'lead_lost' else 'lead_ezcater' end
+                     from public.catering_pipeline p where p.id = p_lead_id), 'lead_moved')
 $$;
 
 -- An unlink or not_a_match head on the pair: the person said this lead is not this check (plan r3 #5).
@@ -154,7 +189,15 @@ begin
       v_lead := public.catering_toast_check_house_code(new.location_id, new.order_guid, new.check_guid);
       if v_lead is not null then v_kind := 'dual_code'; end if;
     end if;
-    if v_kind is null then return new; end if;
+    if v_kind is null then
+      -- ezCater is admitted. A current house row still on this check is DORMANT (its lead no longer qualifies, or the
+      -- owner rule above would have answered): end it here, in the admitting transaction, so it can never own again.
+      update public.catering_toast_links h
+         set is_current = false, retired_at = clock_timestamp(),
+             retired_reason = public.catering_toast_stale_reason(h.lead_id, h.location_id)
+       where h.is_current and h.location_id = new.location_id and h.order_guid = new.order_guid and h.check_guid = new.check_guid;
+      return new;
+    end if;
     insert into public.catering_toast_conflicts(location_id, order_guid, check_guid, kind, ezcater_order_id, house_lead_id)
       values (new.location_id, new.order_guid, new.check_guid, v_kind, new.order_id, v_lead)
       on conflict (location_id, order_guid, check_guid, kind, ezcater_order_id)
@@ -179,6 +222,26 @@ begin
 end $$;
 create trigger catering_toast_links_ezcater_guard before insert on public.catering_toast_links
   for each row execute function public.catering_toast_links_ezcater_guard();
+
+-- 3b. A house link ends when its lead stops qualifying (fix round 1) --------------------------------------------------
+-- Fires inside whatever updated the lead (the 0225 transfer, a stage move, an edit), so the link ends in the SAME
+-- transaction: there is no dormant row for a later transfer back, or a re-open, to bring back to life. A lead's link
+-- at ANOTHER shop than the lead's is ended as lead_moved whatever else changed.
+create function public.catering_pipeline_end_toast_links() returns trigger
+language plpgsql security definer set search_path = pg_catalog, public as $$
+begin
+  update public.catering_toast_links h
+     set is_current = false, retired_at = clock_timestamp(),
+         retired_reason = case when h.location_id is distinct from new.location_id then 'lead_moved'
+                               when new.stage = 'lost' then 'lead_lost' else 'lead_ezcater' end
+   where h.lead_id = new.id and h.is_current
+     and (h.location_id is distinct from new.location_id or new.stage = 'lost' or coalesce(new.lead_source, '') = 'ezcater');
+  return null;
+end $$;
+create trigger catering_pipeline_end_toast_links after update on public.catering_pipeline
+  for each row when (old.location_id is distinct from new.location_id or old.stage is distinct from new.stage
+                     or old.lead_source is distinct from new.lead_source)
+  execute function public.catering_pipeline_end_toast_links();
 
 -- 4. The ezCater planner, re-emitted from 0231 by ADDING LINES ONLY ----------------------------------------------------
 create or replace function public.plan_ezcater_toast() returns table(
@@ -348,10 +411,10 @@ begin
       if v_other.lead_id = p_lead_id then raise exception 'already_linked' using errcode = 'P0001'; end if;
       v_owner := public.catering_toast_house_owner(p_location_id, p_order_guid, p_check_guid);
       if v_owner is not null then raise exception 'check_owned_by_house' using errcode = 'P0001'; end if;
-      -- The holder no longer qualifies (moved or lost): a SYSTEM retirement, no tombstone.
+      -- The holder no longer qualifies with no change of its own row (an ezCater order attached to it; a move or a
+      -- loss already ended the link, section 3b): a SYSTEM retirement, no tombstone.
       update public.catering_toast_links set is_current = false, retired_at = clock_timestamp(),
-             retired_reason = case when (select p.stage from public.catering_pipeline p where p.id = v_other.lead_id) = 'lost'
-                                   then 'lead_lost' else 'lead_moved' end
+             retired_reason = public.catering_toast_stale_reason(v_other.lead_id, v_other.location_id)
        where id = v_other.id and is_current;
       get diagnostics v_retired = row_count;
     end if;
@@ -425,6 +488,160 @@ language sql stable security definer set search_path = pg_catalog, public as $$
   order by 1, 2, 3, 4
 $$;
 
+-- 6b. ONE owner rule for every reader (fix round 1, review PORTAL3-r1 P2) ---------------------------------------------
+-- The house planner, re-emitted from 0344 with ONE change (pinned by tests/catering-toast-0347-migration.test.ts): the
+-- owner of a candidate check is catering_toast_house_owner, the rule the writer and the guards use, never the raw
+-- current row. A check whose holder no longer qualifies is offered as open, so the panel's "Link this check" reaches
+-- the writer's stale-holder path. A later definer of plan_catering_toast is re-emitted FROM this file.
+create or replace function public.plan_catering_toast(p_location_id uuid, p_from date, p_to date, p_note_codes jsonb default '[]'::jsonb)
+returns table (
+  lead_id uuid, location_id uuid, order_guid text, check_guid text, toast_snapshot_id uuid, business_date date,
+  evidence text, check_total_cents bigint, lead_value_cents bigint, amount_diff_cents bigint, amount_mismatch boolean,
+  dual_code boolean, owner text, owner_lead_id uuid, blocked boolean)
+language plpgsql stable security definer set search_path = pg_catalog, public as $$
+begin
+  if p_location_id is null or p_from is null or p_to is null or p_to < p_from then
+    raise exception 'catering_toast_invalid_window' using errcode = 'P0001';
+  end if;
+  if p_to - p_from > 62 then raise exception 'catering_toast_window_too_wide' using errcode = 'P0001'; end if;
+  if jsonb_typeof(coalesce(p_note_codes, '[]'::jsonb)) <> 'array' or exists (
+       select 1 from jsonb_array_elements(coalesce(p_note_codes, '[]'::jsonb)) n
+        where jsonb_typeof(n) <> 'object' or coalesce(n->>'code', '') !~ '^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$'
+           or length(n->>'code') > 32 or n->>'order_guid' is null or n->>'check_guid' is null or n->>'location_id' is null) then
+    -- Codes only: a note's text can never be passed in.
+    raise exception 'catering_toast_note_codes_invalid' using errcode = 'P0001';
+  end if;
+  return query
+  with tol as (
+    select coalesce((select s.tolerance_cents from public.catering_toast_settings s where s.location_id = p_location_id), 5000) cents,
+           coalesce((select s.tolerance_pct from public.catering_toast_settings s where s.location_id = p_location_id), 0.150) pct
+  ), leads as (
+    select r.lead_id, r.location_id, r.event_date, r.value_cents,
+           case when r.ring_code is null then null else upper(replace(r.ring_code, '-', '')) end code_norm
+      from public.catering_reconciliation_status r
+     where r.location_id = p_location_id and r.event_date between p_from and p_to
+  ), checks as (
+    select t.id toast_snapshot_id, t.location_id, t.order_guid, c.check_guid, t.business_date, c.total_cents,
+           t.selection_units, t.dining_option_guid
+      from public.toast_orders_latest t
+      join public.toast_order_checks c on c.snapshot_id = t.id
+     where t.location_id = p_location_id and t.business_date between p_from - 1 and p_to + 7
+       and not t.voided and not t.deleted and not t.excess_food and not c.voided and not c.deleted
+  ), tokens as (
+    -- (a) retained item-bearing selection names, the 0229 token rule.
+    select c.toast_snapshot_id, c.check_guid, upper(replace(tok[1], '-', '')) token
+      from checks c
+      cross join lateral jsonb_array_elements(c.selection_units) s
+      cross join lateral regexp_matches(coalesce(s->>'name', ''), '[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*', 'g') tok
+     where s->>'check_guid' = c.check_guid
+       and not coalesce((s->>'voided')::boolean, false) and not coalesce((s->>'deleted')::boolean, false)
+    union
+    -- (b) codes the ephemeral note lookup intersected with known codes (never text).
+    select c.toast_snapshot_id, c.check_guid, upper(replace(btrim(n->>'code'), '-', ''))
+      from checks c
+      join jsonb_array_elements(coalesce(p_note_codes, '[]'::jsonb)) n
+        on (n->>'location_id')::uuid = c.location_id and n->>'order_guid' = c.order_guid and n->>'check_guid' = c.check_guid
+  ), candidates as (
+    select l.lead_id, c.toast_snapshot_id, c.order_guid, c.check_guid, c.business_date, c.total_cents, l.value_cents,
+           'toast_origin'::text evidence, 1 priority
+      from leads l
+      join public.toast_catering_orders o on o.lead_id = l.lead_id and o.location_id = l.location_id and not o.voided
+      join checks c on c.order_guid = o.order_guid
+    union all
+    select l.lead_id, c.toast_snapshot_id, c.order_guid, c.check_guid, c.business_date, c.total_cents, l.value_cents, 'ring_code', 2
+      from leads l
+      join checks c on c.business_date between l.event_date - 1 and l.event_date + 7
+     where l.code_norm is not null
+       and exists (select 1 from tokens k where k.toast_snapshot_id = c.toast_snapshot_id and k.check_guid = c.check_guid
+                    and k.token = l.code_norm)
+    union all
+    select l.lead_id, c.toast_snapshot_id, c.order_guid, c.check_guid, c.business_date, c.total_cents, l.value_cents, 'amount_date', 3
+      from leads l
+      cross join tol
+      join checks c on c.business_date between l.event_date - 1 and l.event_date + 1
+     where l.value_cents is not null and c.total_cents is not null
+       and abs(c.total_cents - l.value_cents) <= greatest(tol.cents, abs(l.value_cents) * tol.pct)
+       and exists (select 1 from public.toast_dining_options d join public.sales_channel_map m on m.dining_option_label = d.name
+                    where d.location_id = p_location_id and d.guid = c.dining_option_guid
+                      and m.channel = 'catering' and lower(coalesce(m.provider, '')) <> 'ezcater')
+  ), best as (
+    select distinct on (x.lead_id, x.order_guid, x.check_guid) x.*
+      from candidates x
+     order by x.lead_id, x.order_guid, x.check_guid, x.priority
+  )
+  select b.lead_id, p_location_id, b.order_guid, b.check_guid, b.toast_snapshot_id, b.business_date, b.evidence,
+         b.total_cents::bigint, b.value_cents,
+         case when b.total_cents is not null and b.value_cents is not null then (b.total_cents - b.value_cents)::bigint end,
+         coalesce(b.total_cents is not null and b.value_cents is not null
+                  and abs(b.total_cents - b.value_cents) > tol.cents
+                  and abs(b.total_cents - b.value_cents) > abs(b.value_cents) * tol.pct, false),
+         -- The same check also carries an ezCater order number of this shop: neither source may take it alone.
+         exists (select 1 from tokens k
+                   join public.ezcater_orders e on upper(replace(btrim(coalesce(e.order_number, '')), '-', '')) = k.token
+                   left join public.catering_pipeline ep on ep.id = e.lead_id
+                  where k.toast_snapshot_id = b.toast_snapshot_id and k.check_guid = b.check_guid
+                    and coalesce(ep.location_id, e.location_id) = p_location_id and nullif(btrim(e.order_number), '') is not null),
+         case when exists (select 1 from public.ezcater_toast_links z where z.is_current and z.location_id = p_location_id
+                             and z.order_guid = b.order_guid and z.check_guid = b.check_guid) then 'ezcater'
+              when public.catering_toast_house_owner(p_location_id, b.order_guid, b.check_guid) is not null then 'house' end,
+         public.catering_toast_house_owner(p_location_id, b.order_guid, b.check_guid),
+         exists (select 1 from public.catering_toast_decision_heads d
+                  where d.lead_id = b.lead_id and d.location_id = p_location_id and d.order_guid = b.order_guid
+                    and d.check_guid = b.check_guid and d.kind in ('unlink', 'not_a_match'))
+    from best b cross join tol
+   order by b.lead_id, b.order_guid, b.check_guid;
+end $$;
+
+-- The orphans view, re-created from 0344 with the same one change.
+create or replace view public.catering_toast_orphans with (security_invoker = true) as
+select t.location_id, t.business_date, t.order_guid, c.check_guid, c.total_cents
+  from public.toast_orders_latest t
+  join public.toast_order_checks c on c.snapshot_id = t.id
+ where not t.voided and not t.deleted and not t.excess_food and not c.voided and not c.deleted
+   and exists (select 1 from public.toast_dining_options d join public.sales_channel_map m on m.dining_option_label = d.name
+                where d.location_id = t.location_id and d.guid = t.dining_option_guid
+                  and m.channel = 'catering' and lower(coalesce(m.provider, '')) <> 'ezcater')
+   and not exists (select 1 from public.ezcater_toast_links z where z.is_current and z.location_id = t.location_id
+                    and z.order_guid = t.order_guid and z.check_guid = c.check_guid)
+   and public.catering_toast_house_owner(t.location_id, t.order_guid, c.check_guid) is null
+   and not exists (select 1 from public.toast_catering_orders o where o.location_id = t.location_id
+                    and o.order_guid = t.order_guid and o.lead_id is not null)
+   and t.business_date >= (select min(r.event_date) - 1 from public.catering_reconciliation_status r where r.location_id = t.location_id);
+
+-- Links of this lead that the SYSTEM ended (the lead moved, was lost, or became ezCater) and that nobody has decided
+-- on since: the pair's head is still the `link` decision, the lead is back at the link's shop, and it holds no current
+-- link on the pair. `owner` = who holds the check NOW ('ezcater' | 'house' | null = free to link again). This is how a
+-- returning lead SHOWS the conflict instead of owning the check.
+create function public.catering_toast_ended_links(p_lead_id uuid)
+returns table (location_id uuid, order_guid text, check_guid text, evidence text, retired_reason text, head_id uuid, owner text)
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select distinct on (h.location_id, h.order_guid, h.check_guid)
+         h.location_id, h.order_guid, h.check_guid, h.evidence, h.retired_reason, d.id,
+         case when exists (select 1 from public.ezcater_toast_links z where z.is_current and z.location_id = h.location_id
+                             and z.order_guid = h.order_guid and z.check_guid = h.check_guid) then 'ezcater'
+              when public.catering_toast_house_owner(h.location_id, h.order_guid, h.check_guid) is not null then 'house' end
+    from public.catering_toast_links h
+    join public.catering_pipeline p on p.id = h.lead_id and p.location_id = h.location_id
+    join public.catering_toast_decision_heads d on d.lead_id = h.lead_id and d.location_id = h.location_id
+     and d.order_guid = h.order_guid and d.check_guid = h.check_guid and d.kind = 'link'
+   where h.lead_id = p_lead_id and not h.is_current and h.retired_reason in ('lead_moved', 'lead_lost', 'lead_ezcater')
+     and not exists (select 1 from public.catering_toast_links c where c.is_current and c.lead_id = h.lead_id
+                      and c.location_id = h.location_id and c.order_guid = h.order_guid and c.check_guid = h.check_guid)
+   order by h.location_id, h.order_guid, h.check_guid, h.retired_at desc, h.id
+$$;
+
+-- The readiness probe (review PORTAL3-r1 P2): every object the panel READS exists since 0344, so the panel asks this
+-- before it offers a control. true only while the writer and both guards of the link step are in place and enabled.
+create function public.catering_toast_link_ready() returns boolean
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select to_regprocedure('public.decide_catering_toast(uuid,uuid,text,uuid,text,text,text,uuid)') is not null
+     and (select count(*) from pg_catalog.pg_trigger g
+           where not g.tgisinternal and g.tgenabled <> 'D'
+             and (g.tgrelid, g.tgname) in (('public.ezcater_toast_links'::regclass, 'ezcater_toast_links_house_guard'),
+                                           ('public.catering_toast_links'::regclass, 'catering_toast_links_ezcater_guard'),
+                                           ('public.catering_pipeline'::regclass, 'catering_pipeline_end_toast_links'))) = 3
+$$;
+
 -- 7. Row security and the privilege ceiling (0257 pattern) -------------------------------------------------------------
 alter table public.catering_toast_conflicts enable row level security;
 create policy catering_toast_conflicts_no_user_select on public.catering_toast_conflicts for select using (false);
@@ -437,6 +654,18 @@ revoke all on public.catering_live_ring_codes from public, anon, authenticated, 
 grant select on public.catering_live_ring_codes to service_role;
 
 revoke all on function public.catering_toast_house_owner(uuid,text,text) from public, anon, authenticated;
+-- catering_toast_orphans is security_invoker: its reader (service_role) calls the owner rule itself.
+grant execute on function public.catering_toast_house_owner(uuid,text,text) to service_role;
+revoke all on function public.catering_toast_stale_reason(uuid,uuid) from public, anon, authenticated;
+revoke all on function public.catering_pipeline_end_toast_links() from public, anon, authenticated;
+revoke all on function public.catering_toast_ended_links(uuid) from public, anon, authenticated;
+grant execute on function public.catering_toast_ended_links(uuid) to service_role;
+revoke all on function public.catering_toast_link_ready() from public, anon, authenticated;
+grant execute on function public.catering_toast_link_ready() to service_role;
+revoke all on function public.plan_catering_toast(uuid, date, date, jsonb) from public, anon, authenticated;
+grant execute on function public.plan_catering_toast(uuid, date, date, jsonb) to service_role;
+revoke all on public.catering_toast_orphans from public, anon, authenticated, service_role;
+grant select on public.catering_toast_orphans to service_role;
 revoke all on function public.catering_toast_pair_blocked(uuid,uuid,text,text) from public, anon, authenticated;
 revoke all on function public.catering_toast_check_house_code(uuid,text,text) from public, anon, authenticated;
 revoke all on function public.ezcater_toast_incumbent(uuid,text,text) from public, anon, authenticated;
@@ -461,7 +690,8 @@ begin
   foreach f in array array['decide_catering_toast(uuid,uuid,text,uuid,text,text,text,uuid)', 'ezcater_order_house_conflicts(uuid)',
                            'catering_toast_house_owner(uuid,text,text)', 'catering_toast_pair_blocked(uuid,uuid,text,text)',
                            'catering_toast_check_house_code(uuid,text,text)', 'ezcater_toast_incumbent(uuid,text,text)',
-                           'plan_ezcater_toast()'] loop
+                           'plan_ezcater_toast()', 'catering_toast_stale_reason(uuid,uuid)', 'catering_toast_ended_links(uuid)',
+                           'catering_toast_link_ready()', 'plan_catering_toast(uuid,date,date,jsonb)'] loop
     if has_function_privilege('authenticated', 'public.' || f, 'execute') or has_function_privilege('anon', 'public.' || f, 'execute') then
       raise exception 'ceiling: a user role can execute %', f;
     end if;
@@ -472,7 +702,8 @@ commit;
 
 -- Verify after apply:
 --   select count(*) from pg_policies where tablename = 'catering_toast_conflicts';                 -- 4
---   select count(*) from pg_trigger where tgname in ('ezcater_toast_links_house_guard','catering_toast_links_ezcater_guard'); -- 2
+--   select count(*) from pg_trigger where tgname in ('ezcater_toast_links_house_guard','catering_toast_links_ezcater_guard','catering_pipeline_end_toast_links'); -- 3
+--   select public.catering_toast_link_ready();                                                      -- true
 --   Planner equivalence (read-only, sim then prod; zero house links and zero ring codes): the 0231 body run beside
 --   the live planner returns identical rows (the 0231 precedent):
 --     begin read only; <create temp function from 0231's body as plan_ezcater_toast_0231>; select count(*) from (

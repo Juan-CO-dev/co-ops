@@ -1,6 +1,7 @@
 /**
  * Item 21 PR 3 — a house catering lead's Toast checks. GET: the link panel (null = nothing to show: the shop is off,
- * 0344/0347 not installed, or not a booked house lead). POST: one decision (link / unlink / not_a_match /
+ * 0344 not installed, or not a booked house lead; with 0344 but without 0347 the panel is read-only, `linkStep:
+ * "not_installed"`). POST: one decision (link / unlink / not_a_match /
  * no_ring_expected / ring_expected) through decideCateringToastLink, which binds the actor and the shop before any
  * write; decide_catering_toast (0347) re-checks both under its locks and writes the audit row.
  */

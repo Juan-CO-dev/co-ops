@@ -84,6 +84,67 @@ describe("0347 header and shape", () => {
   });
 });
 
+describe("0347 fix round 1 (review PORTAL3-r1): a house link never comes back; one owner rule", () => {
+  const m0344 = read("0344_catering_toast_house_side.sql");
+  const RAW_OWNER = [
+    "              when exists (select 1 from public.catering_toast_links h where h.is_current and h.location_id = p_location_id",
+    "                             and h.order_guid = b.order_guid and h.check_guid = b.check_guid) then 'house' end,",
+    "         (select h.lead_id from public.catering_toast_links h where h.is_current and h.location_id = p_location_id",
+    "            and h.order_guid = b.order_guid and h.check_guid = b.check_guid),",
+  ].join("\n");
+  const RULE_OWNER = [
+    "              when public.catering_toast_house_owner(p_location_id, b.order_guid, b.check_guid) is not null then 'house' end,",
+    "         public.catering_toast_house_owner(p_location_id, b.order_guid, b.check_guid),",
+  ].join("\n");
+
+  it("the house planner is 0344's body with ONE change: the owner comes from catering_toast_house_owner", () => {
+    const old = fn(m0344, "plan_catering_toast");
+    expect(old.split(RAW_OWNER)).toHaveLength(2);
+    expect(fn(sql, "plan_catering_toast")).toBe(old.replace(RAW_OWNER, RULE_OWNER).replace("create function", "create or replace function"));
+  });
+
+  it("the orphans view is 0344's with the same one change", () => {
+    const view = (src: string) => src.match(/create (?:or replace )?view public\.catering_toast_orphans[\s\S]*?;\n/)![0];
+    const raw = "   and not exists (select 1 from public.catering_toast_links h where h.is_current and h.location_id = t.location_id\n"
+      + "                    and h.order_guid = t.order_guid and h.check_guid = c.check_guid)\n";
+    expect(view(m0344).split(raw)).toHaveLength(2);
+    expect(view(sql)).toBe(view(m0344).replace(raw, "   and public.catering_toast_house_owner(t.location_id, t.order_guid, c.check_guid) is null\n")
+      .replace("create view", "create or replace view"));
+  });
+
+  it("a lead that moves, is lost or becomes ezCater ENDS its links in the same transaction (a trigger on the lead)", () => {
+    const end = fn(sql, "catering_pipeline_end_toast_links");
+    expect(end).toMatch(/update public\.catering_toast_links h\s+set is_current = false, retired_at = clock_timestamp\(\)/);
+    expect(end).not.toMatch(/exception\s+when/i); // it is part of the lead's write: both commit or neither
+    expect(code).toMatch(/create trigger catering_pipeline_end_toast_links after update on public\.catering_pipeline\s+for each row when \(old\.location_id is distinct from new\.location_id or old\.stage is distinct from new\.stage\s+or old\.lead_source is distinct from new\.lead_source\)/);
+    expect(code).toContain("check (retired_reason in ('unlinked', 'check_gone', 'lead_moved', 'lead_lost', 'lead_ezcater'))");
+  });
+
+  it("no statement ever sets a house link current again; the only way to own a check is a NEW row from the writer", () => {
+    expect(code).not.toMatch(/is_current\s*=\s*true/i);
+    for (const set of code.match(/update public\.catering_toast_links[\s\S]*?;/g) ?? []) expect(set).toMatch(/set is_current = false, retired_at = clock_timestamp\(\)/);
+    expect(code.match(/update public\.catering_toast_links\b/g)).toHaveLength(4); // writer x2 (stale holder, unlink), the guard, the lead trigger
+  });
+
+  it("the publisher guard ends a dormant house row only when it ADMITS ezCater, inside its never-raising block", () => {
+    const guard = fn(sql, "ezcater_toast_links_house_guard");
+    const admit = guard.indexOf("if v_kind is null then");
+    const end = guard.indexOf("update public.catering_toast_links h");
+    expect(admit).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(admit);
+    expect(guard.indexOf("exception when others then")).toBeGreaterThan(end);
+  });
+
+  it("the readiness probe names the writer and all three triggers", () => {
+    const probe = fn(sql, "catering_toast_link_ready");
+    for (const name of ["decide_catering_toast(uuid,uuid,text,uuid,text,text,text,uuid)", "ezcater_toast_links_house_guard", "catering_toast_links_ezcater_guard", "catering_pipeline_end_toast_links"]) {
+      expect(probe).toContain(name);
+    }
+    expect(code).toContain("grant execute on function public.catering_toast_link_ready() to service_role;");
+    expect(code).toContain("grant execute on function public.catering_toast_ended_links(uuid) to service_role;");
+  });
+});
+
 describe("0347 executable proof", () => {
   it("scripts/sql-harness-0347.mjs passes on the real 0229 / 0231 / 0330 / 0344 bodies", () => {
     const out = execFileSync(process.execPath, ["scripts/sql-harness-0347.mjs"], { encoding: "utf8" });

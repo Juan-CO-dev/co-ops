@@ -31,7 +31,17 @@ Before 0344 is applied the readers treat the missing tables as "not installed": 
 5. **The sim two-session proof (PR 3 gate), each in both commit orders:** publisher vs a manual link on one check; ezCater reconcile vs a manual link; two managers on one check; a link vs a lead transfer; recapture, then a manual link, then reconcile. Expected: every pair serializes on `hashtext('ezcater-toast-reconcile')` (transfer only on the lead row), and the end state matches the PGlite harness: a check is never held by both sources.
 6. Prod on Juan's word, then stamp the header.
 
-Before 0347 is applied the panel answers "not installed" (no panel), the decision route answers 503 `catering_toast_unavailable`, and the ezCater reconciliation panel shows no conflict count.
+Before 0347 is applied the link panel is READ-ONLY at an enabled shop: it lists the candidate checks, shows no Link / Not a match / No-ring control, and says "Linking Toast checks is not installed yet." The server decides this by name: `linkStepReady` (`lib/catering/catering-toast-links.ts`) asks 0347's probe `catering_toast_link_ready()` (the writer and all three triggers present and enabled). Every other object the panel reads exists since 0344, so readiness is never inferred from the reads working. A probe that is missing or answers anything but `true` is `not_installed`; a probe that fails is 503. The decision route answers 503 `catering_toast_unavailable`, and the ezCater reconciliation panel shows no conflict count.
+
+### A house link never comes back (fix round 1, review PORTAL3-r1)
+
+A house lead owns a check only through `catering_toast_house_owner`: a current link whose lead is still at that shop, not lost, not ezCater. That one rule answers the guards, both planners, the orphans view, the writer and the panel. A link ENDS, for good and on its row (`retired_at`, `retired_reason`), when:
+
+- a person unlinks it (`unlinked`, the tombstone);
+- its lead moves to another shop, is marked lost, or becomes an ezCater lead: the trigger `catering_pipeline_end_toast_links` ends it in the same transaction as the transfer or the stage change (`lead_moved` / `lead_lost` / `lead_ezcater`);
+- ezCater is admitted to the check while the holder no longer qualifies (an ezCater order was attached to the lead, which changes no column of the lead): the publisher guard ends the dormant row in the admitting transaction.
+
+So a lead that moves away and comes back, or is lost and re-opened, returns with NO link. If ezCater took the check meanwhile, ezCater keeps it. The panel lists the ended link under "Links that ended" with who holds the check now (`catering_toast_ended_links`): an ezCater order, another catering order, or nobody. Only "nobody" offers Relink, and a relink is a NEW link row. No statement ever sets a link current again (pinned).
 
 ## The link step (PR 3)
 

@@ -2,9 +2,10 @@
 
 /**
  * Item 21 PR 3 — a house catering order's Toast checks: what is linked, what could be, and the decisions (link, unlink,
- * not a match, no Toast ring expected). Shown only when the server returns a panel (the shop is on, 0347 is applied,
- * and this is a booked house order). Decision controls only for the catering manager and GM and up (Juan answer 8);
- * everyone else reads it. Every POST names the head the person saw, so a decision someone else made in the meantime is
+ * not a match, no Toast ring expected). Shown only when the server returns a panel (the shop is on and this is a
+ * booked house order). Decision controls only for the catering manager and GM and up (Juan answer 8), and only while
+ * the link step is installed (`linkStep`, migration 0347): without it the panel is read-only and says why. A link the
+ * system ended (the order moved shops, was lost) is listed with who holds the check now; everyone else reads it. Every POST names the head the person saw, so a decision someone else made in the meantime is
  * refused ("decision_moved") instead of overwritten. After any answer the panel reloads and the page refreshes, so a
  * linked order leaves the "Not in Toast yet" list.
  */
@@ -14,7 +15,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import {
-  candidateActions, decisionErrorKey, TOAST_NO_RING_REASONS,
+  candidateActions, decisionErrorKey, endedActions, TOAST_NO_RING_REASONS,
   type HouseToastPanel as Panel, type ToastCandidate, type ToastDecisionKind, type ToastNoRingReason,
 } from "@/lib/catering/catering-toast-links-shared";
 
@@ -92,7 +93,8 @@ export function HouseToastPanel({ leadId, startOpen = false, initial }: { leadId
       </span>
     </button>
     <div id={bodyId} hidden={!open} className="space-y-3 text-xs text-co-text-muted">
-      {!panel.canDecide && <p>{t("catering.toast_link.view_only")}</p>}
+      {panel.linkStep !== "ready" ? <p role="status" className="text-co-warning-text">{t("catering.toast_link.not_installed")}</p>
+        : !panel.canDecide && <p>{t("catering.toast_link.view_only")}</p>}
       {message && <p role="alert" className="text-co-cta-text">{message}</p>}
       {busy && <p role="status">{t("catering.toast_link.saving")}</p>}
 
@@ -122,6 +124,20 @@ export function HouseToastPanel({ leadId, startOpen = false, initial }: { leadId
               : <button type="button" className={QUIET} disabled={busy} onClick={() => setConfirmUnlink(key)}>{t("catering.toast_link.action.unlink")}</button>)}
           </li>;
         })}</ul>
+      </div>}
+
+      {panel.ended.length > 0 && <div>
+        <h4 className="text-xs font-bold tracking-wide text-co-text-muted">{t("catering.toast_link.ended_heading")}</h4>
+        <ul className="mt-1 space-y-2">{panel.ended.map((e) => <li key={`${e.orderGuid}|${e.checkGuid}`} className="space-y-1">
+          <p className="text-co-text">{t("catering.toast_link.check_line", {
+            amount: money(e.totalCents), date: e.businessDate ? formatDateLabel(e.businessDate, language) : "—", evidence: evidence(e.evidence),
+          })}</p>
+          <p>{t(`catering.toast_link.ended.${e.reason}` as TranslationKey)}</p>
+          <p className={e.owner === null ? "" : "text-co-warning-text"}>{t(`catering.toast_link.ended_owner.${e.owner ?? "none"}` as TranslationKey)}</p>
+          {!e.live && <p className="text-co-warning-text">{t("catering.toast_link.check_gone")}</p>}
+          {panel.canDecide && endedActions(e).length > 0 && <button type="button" className={PRIMARY} disabled={busy}
+            onClick={() => void decide(pairBody("link", e))}>{t("catering.toast_link.action.relink")}</button>}
+        </li>)}</ul>
       </div>}
 
       {panel.leadHead?.kind !== "no_ring_expected" && <div>
