@@ -71,17 +71,16 @@ export interface DayNoteLookup {
   deadlineAt?: number; signal?: AbortSignal;
 }
 
-/** One lookup result per (shop, day, known codes, captured versions) for the life of the process: the nightly run
- * asks twice (pass 2, then the house pass) and the answer for the same versions and codes is the same. Stored only
- * AFTER the record succeeded, so a failed record is asked again. */
-const memo = new Map<string, Map<string, string[]>>();
-export function resetNoteLookupMemo() { memo.clear(); }
-
 /**
  * THE one lookup. Returns the ezCater intersections only, in pass 2's shape (key = toastCodeSelectionKey).
  * For an enabled shop it records the intersections AND the examined captures BEFORE it returns, so a publication that
  * follows is judged on them. A failed record throws (fail closed); 0348 not applied = nothing to record.
  * With no known code at all nothing can intersect: every capture counts as examined and Toast is not called.
+ *
+ * NOTHING IS REMEMBERED HERE BETWEEN CALLS (review PORTAL4-r2): the only memory of a lookup is the coverage it
+ * recorded. A capture Toast did not hand back this time (so it was not examined and not recorded) is asked for again by
+ * the very next call, and `catering_toast_uncovered_orders` stops listing a capture only once it IS recorded. A cache
+ * of results would turn one incomplete answer into a check that waits for the life of the process.
  */
 export async function lookupDayNoteCodes(sb: Sb, house: HouseNoteContext, args: DayNoteLookup): Promise<Map<string, string[]>> {
   const ez = new Set(args.ezcaterCodes.map(normalizeOrderCode).filter(Boolean));
@@ -91,21 +90,15 @@ export async function lookupDayNoteCodes(sb: Sb, house: HouseNoteContext, args: 
   const out = new Map<string, string[]>();
   if (args.captured.length === 0 || (known.length === 0 && !houseOn)) return out;
   const versions = new Map(args.captured.map((r) => [r.orderGuid, r.modifiedAt]));
-  const key = JSON.stringify([args.locationId, args.date, houseOn, known, [...versions].sort((a, b) => a[0].localeCompare(b[0]))]);
-  let found = memo.get(key);
-  if (!found) {
-    const examined = new Set<string>();
-    if (known.length === 0) {
-      found = new Map();
-      for (const r of args.captured) examined.add(r.orderGuid);
-    } else {
-      found = await loadKnownToastOrderCodes(args.restaurantGuid, args.date, known,
-        { deadlineAt: args.deadlineAt, signal: args.signal, expectedVersions: versions, examined });
-    }
-    if (houseOn) await recordNoteLookup(sb, args, examined, found);
-    if (memo.size > 200) memo.clear();
-    memo.set(key, found);
+  const examined = new Set<string>();
+  let found = new Map<string, string[]>();
+  if (known.length === 0) {
+    for (const r of args.captured) examined.add(r.orderGuid);
+  } else {
+    found = await loadKnownToastOrderCodes(args.restaurantGuid, args.date, known,
+      { deadlineAt: args.deadlineAt, signal: args.signal, expectedVersions: versions, examined });
   }
+  if (houseOn) await recordNoteLookup(sb, args, examined, found);
   for (const [selection, codes] of found) {
     const kept = codes.filter((code) => ez.has(code));
     if (kept.length) out.set(selection, kept);

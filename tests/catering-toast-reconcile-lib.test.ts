@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { coverHouseNoteEvidence, reconcileHouseCateringToast, runHouseCateringToast } from "@/lib/catering/catering-toast-reconcile";
-import { coverUncoveredNotes, loadHouseNoteContext, lookupDayNoteCodes, resetNoteLookupMemo, NO_HOUSE_SIDE, type HouseNoteContext } from "@/lib/catering/toast-note-codes";
+import { coverUncoveredNotes, loadHouseNoteContext, lookupDayNoteCodes, NO_HOUSE_SIDE, type HouseNoteContext } from "@/lib/catering/toast-note-codes";
 import { loadKnownToastOrderCodes, toastCodeSelectionKey } from "@/lib/ezcater/toast-codes";
 
 vi.mock("server-only", () => ({}));
@@ -44,7 +44,7 @@ const shop = (id: string, s: Partial<{ codes: boolean; auto: boolean; origin: bo
 const WINDOW = () => ({ from: "2026-11-11", to: "2026-11-20", today: "2026-11-19", deadlineAt: Date.now() + 10_000 });
 const EMPTY = { shops: 0, added: 0, ringCode: 0, toastOrigin: 0, evidencePending: 0, codes: 0, failed: 0 };
 
-beforeEach(() => { vi.clearAllMocks(); resetNoteLookupMemo(); vi.spyOn(console, "error").mockImplementation(() => {}); });
+beforeEach(() => { vi.clearAllMocks(); vi.spyOn(console, "error").mockImplementation(() => {}); });
 afterEach(() => { vi.useRealTimers(); });
 
 describe("reconcileHouseCateringToast", () => {
@@ -212,15 +212,31 @@ describe("lookupDayNoteCodes: ONE lookup for both sources (contract #3)", () => 
     expect([...(await lookupDayNoteCodes(sb, house([]), day))]).toHaveLength(1);
   });
 
-  it("the same shop, day, codes and versions are looked up once per process; a new version looks again", async () => {
-    toast([], ["O1", "O2"]);
+  it("review PORTAL4-r2: nothing is cached. An order Toast omitted the first time is asked for again and recorded the second time", async () => {
+    const answers: string[][] = [["O1"], ["O1", "O2"]];
+    vi.mocked(loadKnownToastOrderCodes).mockImplementation(async (_r, _d, _k, opts) => {
+      for (const guid of answers.shift() ?? []) opts?.examined?.add(guid);
+      return new Map();
+    });
     const { sb, calls } = client({}, { record_catering_toast_note_lookup: () => ({ data: {}, error: null }) });
     await lookupDayNoteCodes(sb, house(), day);
     await lookupDayNoteCodes(sb, house(), day);
-    expect(loadKnownToastOrderCodes).toHaveBeenCalledTimes(1);
-    expect(calls).toHaveLength(1);
-    await lookupDayNoteCodes(sb, house(), { ...day, captured: [{ ...captured[0]!, modifiedAt: "2026-11-19T13:00:00Z", snapshotId: "snap-9" }] });
     expect(loadKnownToastOrderCodes).toHaveBeenCalledTimes(2);
+    expect(calls.map((c) => (c[1].p_examined as Array<{ order_guid: string }>).map((e) => e.order_guid))).toEqual([["O1"], ["O1", "O2"]]);
+  });
+
+  it("review PORTAL4-r2: the same holds when the first answer examined nothing at all", async () => {
+    const answers: string[][] = [[], ["O1", "O2"]];
+    vi.mocked(loadKnownToastOrderCodes).mockImplementation(async (_r, _d, _k, opts) => {
+      for (const guid of answers.shift() ?? []) opts?.examined?.add(guid);
+      return new Map();
+    });
+    const { sb, calls } = client({}, { record_catering_toast_note_lookup: () => ({ data: {}, error: null }) });
+    await lookupDayNoteCodes(sb, house(), day);
+    expect(calls).toEqual([]);
+    await lookupDayNoteCodes(sb, house(), day);
+    expect(loadKnownToastOrderCodes).toHaveBeenCalledTimes(2);
+    expect(calls).toHaveLength(1);
   });
 
   it("no captured catering order, or a shop that is off with no known code = no Toast call", async () => {
@@ -294,6 +310,21 @@ describe("coverUncoveredNotes: the captures nobody examined yet", () => {
     expect(await coverUncoveredNotes(sb, args())).toEqual({ lookups: 0, failed: 1 });
     // The one writer was asked once and refused: there is no second, partial write of coverage.
     expect(calls.filter((c) => c[0] === "record_catering_toast_note_lookup")).toHaveLength(1);
+  });
+
+  it("review PORTAL4-r2: a capture left unexamined by one run is looked up again by the next (the coverage is the only memory)", async () => {
+    const answers: string[][] = [[], ["O1"]];
+    vi.mocked(loadKnownToastOrderCodes).mockImplementation(async (_r, _d, _k, opts) => {
+      for (const guid of answers.shift() ?? []) opts?.examined?.add(guid);
+      return new Map();
+    });
+    // The database keeps listing O1 until a lookup records it.
+    const { sb, calls } = client(tables, { catering_toast_uncovered_orders: uncovered(["O1", "2026-11-19"]), record_catering_toast_note_lookup: () => ({ data: {}, error: null }) });
+    expect(await coverUncoveredNotes(sb, args())).toEqual({ lookups: 1, failed: 0 });
+    expect(calls.filter((c) => c[0] === "record_catering_toast_note_lookup")).toHaveLength(0);
+    expect(await coverUncoveredNotes(sb, args())).toEqual({ lookups: 1, failed: 0 });
+    expect(loadKnownToastOrderCodes).toHaveBeenCalledTimes(2);
+    expect(calls.filter((c) => c[0] === "record_catering_toast_note_lookup").map((c) => c[1].p_examined)).toEqual([[{ location_id: "a", order_guid: "O1", toast_snapshot_id: "snap-O1" }]]);
   });
 
   it("a failed Toast lookup or a failed read is counted, never thrown; 0348 missing is not installed", async () => {
