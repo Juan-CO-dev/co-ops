@@ -56,8 +56,52 @@ export function withLabor(dto: BusinessReportDto, f: (l: LaborFigures) => LaborF
     quarters, quartersUnassigned: [] };
 }
 
-/** What a sighted reader sees: markup with every tag (and so every attribute) removed. */
+const strip = (markup: string) => markup.replace(/<[^>]*>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/\s+/g, " ");
+const decode = (s: string) => s.replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/&quot;/g, "\"");
+
+// ── The marker + legend form (polish, 2026-11-18) ───────────────────────────────────────────────
+// A qualification is written ONCE per scope in a legend (`<ul data-legend>`: a mark, then the sentence), and every
+// figure it qualifies shows the MARK (`<sup data-marks="a,b">`) and carries the sentence as visually hidden text
+// for a screen reader (`<span class="sr-only" data-figure-note>`). The helpers below read that form and PROVE it.
+
+/** Every legend of a markup: mark -> sentence. */
+export function legendsOf(markup: string): Array<Map<string, string>> {
+  return [...markup.matchAll(/<ul data-legend=""[^>]*>([\s\S]*?)<\/ul>/g)].map((m) =>
+    new Map([...m[1]!.matchAll(/<span[^>]*data-mark="([a-z]+)"[^>]*>[^<]*<\/span><span[^>]*>([\s\S]*?)<\/span>/g)].map((e) => [e[1]!, decode(e[2]!)])));
+}
+/** Every marked figure of a markup: its marks and the sentence it carries for a screen reader. */
+export function markedFigures(markup: string): Array<{ marks: string[]; said: string }> {
+  return [...markup.matchAll(/<sup[^>]*data-marks="([a-z,]+)"[^>]*>[^<]*<\/sup><span class="sr-only" data-figure-note="">([\s\S]*?)<\/span>/g)]
+    .map((m) => ({ marks: m[1]!.split(","), said: decode(m[2]!) }));
+}
+/** THE PROOF: every mark on every figure names a line of a legend in the same markup, and the sentence that line
+ * holds is one the figure itself carries. A mark with no legend line (a dangling footnote), a marked figure with no
+ * hidden sentence, or a `<sup>` mark that is not in this form fails by name. */
+export function assertMarksResolve(markup: string): void {
+  const legends = legendsOf(markup);
+  const figures = markedFigures(markup);
+  const sups = (markup.match(/<sup\b/g) ?? []).length;
+  if (sups !== figures.length) throw new Error(`marker + legend: ${sups} marks on the page, ${figures.length} carry their sentence for a screen reader`);
+  for (const f of figures) {
+    for (const mark of f.marks) {
+      if (!legends.some((l) => l.has(mark) && f.said.includes(l.get(mark)!))) {
+        throw new Error(`marker + legend: mark "${mark}" (${f.said.trim()}) has no legend line with that sentence`);
+      }
+    }
+  }
+}
+/** What a SIGHTED reader sees: the hidden screen-reader sentences removed, so a figure shows its marks and the
+ * sentence is where the legend puts it. */
+export function sightedText(markup: string): string {
+  assertMarksResolve(markup);
+  return strip(markup.replace(/<span class="sr-only"[^>]*>[\s\S]*?<\/span>/g, ""));
+}
+/** What a reader GETS from the page, figure by figure: the text with each figure's qualification said in place
+ * (the sentence a screen reader reads at the figure; a sighted reader follows the mark to the same sentence in the
+ * legend) — returned only after `assertMarksResolve` proved every mark against its legend. So "this row says X"
+ * holds in the marker + legend form exactly when the row's figure is marked with a legend line that says X. */
 export function visibleText(markup: string): string {
-  return markup.replace(/<[^>]*>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/\s+/g, " ");
+  assertMarksResolve(markup);
+  return strip(markup);
 }
 export const reasonOf = (s: string) => EN[`reports.business.labor.state.${s}`]!;

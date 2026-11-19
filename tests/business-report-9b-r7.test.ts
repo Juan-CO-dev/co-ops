@@ -17,6 +17,12 @@ vi.mock("@/components/ui/CollapsibleSection", async () => {
   return { CollapsibleSection: ({ title, count, badge, children }: { title: unknown; count?: unknown; badge?: unknown; children: unknown }) =>
     h("section", null, h("span", null, title as never), h("span", null, count as never), badge as never, children as never) };
 });
+// Polish: an hour of the 15-minute list is closed on the server too; open every one (its quarters are what a tap shows).
+vi.mock("@/components/reports-business/HourDisclosure", async () => {
+  const { createElement: h } = await import("react");
+  return { HourDisclosure: ({ title, summary, children }: { title: unknown; summary?: unknown; children: unknown }) =>
+    h("li", { "data-hour": "" }, h("span", null, title as never), h("span", null, summary as never), h("ul", null, children as never)) };
+});
 
 import { loadBusinessReport, type BusinessReportDto } from "@/lib/business-report";
 import { detectRushes, resolveBusinessRange, type LaborFigures, type QuarterPoint } from "@/lib/business-report-shared";
@@ -101,7 +107,9 @@ describe("P2-1: burden carries the salary estimate (it is a share of hourly + sa
   it("the page: the burden line of every week and day drawer says so", async () => {
     const dto = await loadWith({ rpcRows: cost({ salary_basis: "estimate" }) });
     const t = text(createElement(BusinessOverview, { dto, language: "en" }));
-    const line = new RegExp(`${esc(R("detail.burden"))} \\$[\\d.,]+ ${esc(R("salary_estimated"))}`, "g");
+    // Polish (marker + legend form): the burden figure shows its marks and carries its sentences (`text` proved each
+    // mark against the drawer's legend): label, amount, marks, then the sentences up to the next amount.
+    const line = new RegExp(`${esc(R("detail.burden"))} \\$[\\d.,]+ [a-z,]+ \\([^$]*?${esc(R("salary_estimated"))}`, "g");
     expect(t.match(line)?.length ?? 0).toBe(dto.weeks.length + dto.days.length);
   });
   it("real salaries: burden carries no such words", async () => {

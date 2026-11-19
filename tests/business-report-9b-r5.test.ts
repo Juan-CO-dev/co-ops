@@ -128,9 +128,13 @@ describe("the export of an empty range is an explicit 'no closed days' file, nev
         const [, from, to] = /_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})\.csv/.exec(disposition)!;
         expect(`from=${from}&to=${to}`).toBe(q);
         const text = await lines(r);
-        expect(text[0]).toBe((en as Record<string, string>)["reports.business.export.no_finished_days"]);
-        const header = text[1]!.split(",");
-        const body = text.slice(2).map((l) => l.split(","));
+        // Polish: line 1 is the HEADER ROW (Excel / Sheets read the columns); the sentence follows the table, behind
+        // one blank line and a "Notes" line. It is still in the file, whole.
+        const header = text[0]!.split(",");
+        expect(header[0]).toBe("row_type");
+        const blank = text.indexOf("");
+        expect(text.slice(blank)).toEqual(["", (en as Record<string, string>)["reports.export.notes"], (en as Record<string, string>)["reports.business.export.no_finished_days"]]);
+        const body = text.slice(1, blank).map((l) => l.split(","));
         expect(body).toHaveLength(1);
         expect(body[0]![header.indexOf("row_type")]).toBe("notice");
         expect(body[0]![header.indexOf("status")]).toBe("no_finished_days");

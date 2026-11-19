@@ -16,12 +16,18 @@ vi.mock("@/components/ui/CollapsibleSection", async () => {
   return { CollapsibleSection: ({ title, count, badge, children }: { title: unknown; count?: unknown; badge?: unknown; children: unknown }) =>
     h("section", null, h("span", null, title as never), h("span", null, count as never), badge as never, children as never) };
 });
+// Polish: an hour of the 15-minute list is closed on the server too; open every one (its quarters are what a tap shows).
+vi.mock("@/components/reports-business/HourDisclosure", async () => {
+  const { createElement: h } = await import("react");
+  return { HourDisclosure: ({ title, summary, children }: { title: unknown; summary?: unknown; children: unknown }) =>
+    h("li", { "data-hour": "" }, h("span", null, title as never), h("span", null, summary as never), h("ul", null, children as never)) };
+});
 
 import { loadBusinessReport, type BusinessReportDto } from "@/lib/business-report";
 import { resolveBusinessRange } from "@/lib/business-report-shared";
 import { BUSINESS_EXPORT_COLUMNS } from "@/lib/report-export-shared";
 import { A, fakeClient } from "./helpers/business-report-fake";
-import { EN, laborIn, reasonOf, visibleText, withLabor } from "./helpers/business-report-states";
+import { EN, laborIn, markedFigures, reasonOf, sightedText, visibleText, withLabor } from "./helpers/business-report-states";
 import {
   BusinessChannels, BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople,
   businessChannelRows, businessCompareRows, businessHoursRows, businessOverviewRows, businessPeopleRows,
@@ -56,11 +62,17 @@ describe("P2-1: an estimated wage qualifies every figure built on it", () => {
   });
   it("Overview: the cards, every week and day drawer", async () => {
     const dto = await load(30);
-    const t = text(createElement(BusinessOverview, { dto, language: "en" }));
-    // Cards: pure hourly % and fully loaded %. Each open drawer: the two % and the hourly, premium, burden and loaded lines.
-    expect(count(t, RATE)).toBeGreaterThanOrEqual(2 + 6 * (dto.weeks.length + dto.days.length));
-    // Collapsed summaries (short words), both labor figures of every week and day.
-    expect(count(t, RATE_SHORT)).toBeGreaterThanOrEqual(2 * (dto.weeks.length + dto.days.length));
+    const markup = renderToStaticMarkup(createElement(BusinessOverview, { dto, language: "en" }));
+    const n = dto.weeks.length + dto.days.length;
+    // Polish (marker + legend form). EVERY figure built on the wage carries the sentence (its mark; the sentence for a
+    // screen reader): the two % cards; in each open drawer the two % and the hourly, premium, burden and loaded
+    // lines; in each collapsed summary both labor %.
+    expect(markedFigures(markup).filter((f) => f.said.includes(RATE)).length).toBe(2 + 6 * n + 2 * n);
+    // A sighted reader reads it ONCE per scope: under the cards, on top of the weeks list and of the days list, and in
+    // each open drawer's own notes. `sightedText` first proves every mark against its legend line.
+    expect(count(sightedText(markup), RATE)).toBe(3 + n);
+    // The short words are no longer repeated on every figure.
+    expect(count(sightedText(markup), RATE_SHORT)).toBe(0);
   });
   it("a real wage carries no such words", async () => {
     const t = text(createElement(BusinessOverview, { dto: await load(0), language: "en" }));
@@ -70,9 +82,15 @@ describe("P2-1: an estimated wage qualifies every figure built on it", () => {
   it("Compare: both periods; Hours: each quarter's dollars and %; People: each hourly cost", async () => {
     const dto = await load(30);
     expect(count(text(createElement(BusinessCompare, { dto, previous: dto, language: "en" })), RATE)).toBeGreaterThanOrEqual(4);
-    const hours = text(createElement(BusinessHours, { dto, language: "en" }));
-    expect(count(hours, RATE_SHORT)).toBeGreaterThanOrEqual(2 * dto.days.length);
-    expect(text(createElement(BusinessPeople, { dto, language: "en" }))).toContain(RATE_SHORT);
+    // Hours: each hour's dollars, and each quarter's dollars and %, carry the sentence; the day's notes say it once.
+    const hours = renderToStaticMarkup(createElement(BusinessHours, { dto, language: "en" }));
+    expect(markedFigures(hours).filter((f) => f.said.includes(RATE)).length).toBeGreaterThanOrEqual(3 * dto.days.length);
+    expect(count(sightedText(hours), RATE)).toBe(dto.days.length);
+    // People: every hourly cost carries it; the list's notes say it once.
+    const people = renderToStaticMarkup(createElement(BusinessPeople, { dto, language: "en" }));
+    expect(markedFigures(people).filter((f) => f.said.includes(RATE)).length).toBe(dto.people.filter((p) => p.payClass === "hourly").length);
+    expect(markedFigures(people).length).toBeGreaterThan(0);
+    expect(count(sightedText(people), RATE)).toBe(1);
   });
   it("the export: a wage_estimated column, and every figure built on the wage is named as estimated", async () => {
     for (const tab of ["overview", "compare"] as const) {

@@ -15,12 +15,20 @@ vi.mock("@/components/ui/CollapsibleSection", async () => {
   return { CollapsibleSection: ({ title, count, badge, children }: { title: unknown; count?: unknown; badge?: unknown; children: unknown }) =>
     h("section", null, h("span", null, title as never), h("span", null, count as never), badge as never, children as never) };
 });
+// Polish: an hour of the 15-minute list is closed on the server too; open every one (its quarters are what a tap shows).
+vi.mock("@/components/reports-business/HourDisclosure", async () => {
+  const { createElement: h } = await import("react");
+  return { HourDisclosure: ({ title, summary, children }: { title: unknown; summary?: unknown; children: unknown }) =>
+    h("li", { "data-hour": "" }, h("span", null, title as never), h("span", null, summary as never), h("ul", null, children as never)) };
+});
 const pdfHeaders: string[][] = [];
+const pdfTrailers: string[][] = [];
 vi.mock("@/lib/report-pdf", async (orig) => {
   const real = await orig<typeof import("@/lib/report-pdf")>();
-  return { ...real, renderReportPdf: vi.fn(async (header: { lines: string[] }, ...rest: unknown[]) => {
+  return { ...real, renderReportPdf: vi.fn(async (header: { lines: string[] }, tables: unknown, options: { trailer?: Array<{ lines: string[] }> }) => {
     pdfHeaders.push(header.lines);
-    return (real.renderReportPdf as (...a: unknown[]) => Promise<Buffer>)(header, ...rest);
+    pdfTrailers.push((options.trailer ?? []).flatMap((b) => b.lines));
+    return (real.renderReportPdf as (...a: unknown[]) => Promise<Buffer>)(header, tables, options);
   }) };
 });
 
@@ -35,6 +43,7 @@ import {
   businessChannelRows, businessHoursRows, businessOverviewRows, businessPeopleRows,
 } from "./helpers/business-report-views";
 import { A, fakeClient } from "./helpers/business-report-fake";
+import { assertMarksResolve, legendsOf, markedFigures } from "./helpers/business-report-states";
 
 const ON = { BUSINESS_REPORT: "1", FACT_LAYER: "1", FACT_LAYER_LABOR: "1" };
 const moo = { userId: "u-moo", level: 8, role: "moo" as const, locations: [] as string[] };
@@ -137,11 +146,16 @@ describe("sweep: unbuilt labor is unknown, not zero, on Hours and People", () =>
     const q: BusinessReportDto = { ...dto, days: dto.days.map((d, i) => (i === 0 ? { ...d, labor: unbuilt(d.labor) } : d)),
       quarters: dto.quarters!.map((x) => (x.date === day.date ? { ...x, laborMinutes: null } : x)) };
     const out = html(createElement(BusinessHours, { dto: q, language: "en" }));
-    const section = out.split("<section").find((s) => s.includes(">Labor for these days is not counted yet.<")) ?? "";
+    // The day's own drawer (the piece that holds its hour rows; the list's notes on top say the sentence too).
+    const section = out.split("<section").find((s) => s.includes(">Labor for these days is not counted yet.<") && s.includes("data-hour")) ?? "";
     expect(section).not.toContain("No labor");
-    // Fix round 2: the reason is VISIBLE text beside the dash (not an attribute): the quarter row repeats it.
-    const quarterText = section.replace(/<[^>]*>/g, " ");
-    expect(quarterText.split("Labor for these days is not counted yet.").length - 1).toBeGreaterThanOrEqual(2);
+    // Fix round 2: the reason is VISIBLE text (not an attribute). Polish (marker + legend form): it is written ONCE
+    // in the day's notes, and every figure it explains (the day's hours, each hour's and quarter's labor) shows its
+    // mark and carries the sentence for a screen reader; every mark is proved against the notes.
+    const REASON = "Labor for these days is not counted yet.";
+    assertMarksResolve(section);
+    expect(legendsOf(section).some((l) => [...l.values()].includes(REASON))).toBe(true);
+    expect(markedFigures(section).filter((f) => f.said.includes(REASON)).length).toBeGreaterThanOrEqual(2);
   });
   it("People: the per-person hours say 'so far' while a week is not final; the export coverage row names the labor state", async () => {
     const dto = unbuiltTotal(await load());
@@ -203,22 +217,37 @@ describe("P2-2: exports say which days a breakdown covers", () => {
     afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
     const get = (q: string) => GET(new NextRequest(`https://example.test/api/reports/export?family=business&location=${A}&range=custom&from=2026-10-01&to=2026-10-07&${q}`));
 
-    it("CSV: a notice line before the header and a coverage row naming 6 of 7 days", async () => {
-      for (const tab of ["channels", "people"]) {
+    // Polish (2026-11-18): line 1 of the CSV is the HEADER ROW (Excel / Sheets). The notice is still in the file,
+    // AFTER the table (a blank line, "Notes", the sentence), and it is the TAB's own sentence.
+    it("CSV: the header row first, a coverage row naming 6 of 7 days, and the notice in the notes block after the table", async () => {
+      for (const [tab, what] of [["channels", "Channels cover 6 of 7 days"], ["people", "Sales by server cover 6 of 7 days"]] as const) {
         const text = (await (await get(`format=csv&tab=${tab}`)).text()).replace(/^﻿/, "");
         const lines = text.trim().split("\r\n");
-        expect(lines[0], tab).toMatch(/6 of 7 days/);
-        expect(lines[1]!.startsWith("row_type,"), tab).toBe(true);
-        expect(lines[2]!.startsWith("coverage,"), tab).toBe(true);
-        expect(lines[2], tab).toContain("partial");
+        expect(lines[0]!.startsWith("row_type,"), tab).toBe(true);
+        expect(lines[1]!.startsWith("coverage,"), tab).toBe(true);
+        expect(lines[1], tab).toContain("partial");
+        const blank = lines.indexOf("");
+        expect(blank, tab).toBeGreaterThan(1);
+        expect(lines[blank + 1], tab).toBe("Notes");
+        expect(lines.slice(blank + 2).join("\n"), tab).toContain(what);
+        // Nothing but the notes follows the blank line, and no table row follows them.
+        expect(lines.slice(blank + 1).every((l) => !/^(coverage|channel|person|server|ezcater|excluded),/.test(l)), tab).toBe(true);
       }
     });
-    it("PDF: the notice is a header line", async () => {
-      pdfHeaders.length = 0;
+    it("CSV: the notice names what THIS file holds (an Overview or People file never talks about channels)", async () => {
+      const text = async (tab: string) => (await (await get(`format=csv&tab=${tab}`)).text());
+      expect(await text("overview")).toContain("Large checks and rushes are counted on 6 of 7 days");
+      expect(await text("overview")).not.toMatch(/[Cc]hannels/);
+      expect(await text("people")).not.toMatch(/Channels (and servers )?cover/);
+      expect(await text("hours")).toContain("Checks and sales by time are filled for 6 of 7 days");
+    });
+    it("PDF: the notice is in the Notes block under the tables (never cut to one header line)", async () => {
+      pdfHeaders.length = 0; pdfTrailers.length = 0;
       const r = await get("format=pdf&tab=channels");
       expect(r.status).toBe(200);
       expect(r.headers.get("content-type")).toBe("application/pdf");
-      expect(pdfHeaders[0]!.some((l) => /6 of 7 days/.test(l))).toBe(true);
+      expect(pdfTrailers[0]!.some((l) => /Channels cover 6 of 7 days/.test(l))).toBe(true);
+      expect(pdfHeaders[0]!.some((l) => /6 of 7 days/.test(l))).toBe(false);
     });
   });
 });

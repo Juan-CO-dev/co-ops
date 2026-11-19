@@ -17,6 +17,12 @@ vi.mock("@/components/ui/CollapsibleSection", async () => {
   return { CollapsibleSection: ({ title, count, badge, children }: { title: unknown; count?: unknown; badge?: unknown; children: unknown }) =>
     h("section", null, h("span", null, title as never), h("span", null, count as never), badge as never, children as never) };
 });
+// Polish: an hour of the 15-minute list is closed on the server too; open every one (its quarters are what a tap shows).
+vi.mock("@/components/reports-business/HourDisclosure", async () => {
+  const { createElement: h } = await import("react");
+  return { HourDisclosure: ({ title, summary, children }: { title: unknown; summary?: unknown; children: unknown }) =>
+    h("li", { "data-hour": "" }, h("span", null, title as never), h("span", null, summary as never), h("ul", null, children as never)) };
+});
 
 import { loadBusinessReport } from "@/lib/business-report";
 import { channelTotals, detectRushes, resolveBusinessRange, type CutRow, type QuarterPoint } from "@/lib/business-report-shared";

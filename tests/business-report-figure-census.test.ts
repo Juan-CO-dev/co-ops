@@ -65,7 +65,7 @@ const PLAIN_NUMBERS = new Set([
   "breakdownNotice.values.n", "breakdownNotice.values.covered", "breakdownNotice.values.expected", "breakdownNotice.values.excluded",
   "total.target", "total.loadedTarget", "weeks[].target", "weeks[].loadedTarget", "days[].target", "days[].loadedTarget",
   "total.labor.salaryGaps", "weeks[].labor.salaryGaps", "days[].labor.salaryGaps",
-  "quarters[].wallQuarter", "days[].quarters[].wallQuarter",
+  "quarters[].wallQuarter", "days[].quarters[].wallQuarter", "days[].hourly[].quarters[].wallQuarter",
   "people[].weeksWithheld",
   "rushRule.multiplier", "rushRule.historyWeeks", "rushRule.minHistory", "rushRule.minChecks", "rushRule.minBaselineChecks", "rushRule.minRunQuarters",
 ]);
@@ -110,6 +110,7 @@ describe("the view: every number is a Figure or named configuration", () => {
 
 const COMPONENT_DIR = "components/reports-business";
 const EXPORT_FILE = "lib/report-export-shared.ts";
+const PDF_FILE = "lib/business-report-pdf.ts";
 const EXPORT_BEGIN = "// ── Business rows (item 9c";
 const EXPORT_END = "/** `{family}_{shop-code}_{from}_{to}.{ext}`";
 
@@ -123,6 +124,8 @@ function surfaceOffences(): Offence[] {
   out.push(...census(page, readFileSync(path.join(ROOT, page), "utf8"), { mayLoad: true }));
   const exp = readFileSync(path.join(ROOT, EXPORT_FILE), "utf8");
   out.push(...census(EXPORT_FILE, exp, { only: between(exp, EXPORT_BEGIN, EXPORT_END) }));
+  // Polish: the readable PDF is a surface too (it prints figures): the page's rules, whole file.
+  out.push(...census(PDF_FILE, readFileSync(path.join(ROOT, PDF_FILE), "utf8")));
   return out;
 }
 

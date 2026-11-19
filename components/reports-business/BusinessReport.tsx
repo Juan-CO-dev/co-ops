@@ -343,7 +343,7 @@ export function BusinessCompare({ view, previous, language }: Props & { previous
   const none = <Dash reason="reports.business.compare.no_previous" language={language} />;
   // Both periods are laid out the same way: the label on its own line, the figure under it.
   const cell = (label: string, f: Figure | null): ReactNode => <span className="flex min-w-0 flex-col">
-    <span className="text-xs text-co-text-muted">{label}</span>
+    <span className="text-xs text-co-text-muted">{label}:</span>
     <span className="break-words font-semibold text-co-text">{f === null ? none : <FigureView f={f} language={language} legend={legend} />}</span>
   </span>;
   return <section className={bizCard} aria-label={t("reports.business.tab.compare")}>

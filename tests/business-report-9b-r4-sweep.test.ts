@@ -25,6 +25,12 @@ vi.mock("@/components/ui/CollapsibleSection", async () => {
   return { CollapsibleSection: ({ title, count, badge, children }: { title: unknown; count?: unknown; badge?: unknown; children: unknown }) =>
     h("section", null, h("span", null, title as never), h("span", null, count as never), badge as never, children as never) };
 });
+// Polish: an hour of the 15-minute list is closed on the server too; open every one (its quarters are what a tap shows).
+vi.mock("@/components/reports-business/HourDisclosure", async () => {
+  const { createElement: h } = await import("react");
+  return { HourDisclosure: ({ title, summary, children }: { title: unknown; summary?: unknown; children: unknown }) =>
+    h("li", { "data-hour": "" }, h("span", null, title as never), h("span", null, summary as never), h("ul", null, children as never)) };
+});
 
 import { loadBusinessReport, type BusinessReportDto } from "@/lib/business-report";
 import { resolveBusinessRange } from "@/lib/business-report-shared";
@@ -187,9 +193,11 @@ describe("labor: figures built on an estimate (shown, and named)", () => {
       const dto = await loadWith({ rpcRows: cost(over) });
       expect([dto.total.labor.state, dto.total.labor.loadedState]).toEqual(["ok", "ok"]);
       const p = pages(dto);
-      // Closed: the two cards + one short qualifier per week and per day row at least.
-      expect(count(p.overview, x.full)).toBeGreaterThanOrEqual(1);
-      expect(count(p.overview, x.short)).toBeGreaterThanOrEqual(dto.weeks.length);
+      // Polish (marker + legend form; `text` proves every mark against its legend and says each figure's sentence
+      // in place): the cards' legend, the weeks' legend and EVERY week row and day row carry the full sentence.
+      expect(count(p.overview, x.full)).toBeGreaterThanOrEqual(2 + dto.weeks.length + dto.days.length);
+      // The short words are gone from the page: a qualification is one sentence, said once per scope.
+      expect(count(p.overview, `(${x.short})`)).toBe(0);
       expect(count(p.compare, x.full)).toBeGreaterThanOrEqual(2);
       // An estimate is whole: it compares, with its label on both sides.
       expect(p.compare).not.toContain(`${R("card.fully_loaded")} ${R("compare.this")}: — `);
@@ -250,7 +258,10 @@ describe("sales: not captured, partly captured, a breakdown still rebuilding, an
     // Nothing on a tab that lists the breakdown says the totals are final.
     for (const tab of ["channels", "people"] as const) {
       expect(p[tab], tab).not.toContain("totals are final");
-      expect(p[tab], tab).toContain("These lists are empty, not zero.");
+      // Polish: the banner names the REAL cause (no sales captured), never "rebuilding", and that empty is not zero.
+      expect(p[tab], tab).toContain("No sales were captured on 7 of 7 days");
+      expect(p[tab], tab).toContain("Empty here means not known, not zero.");
+      expect(p[tab], tab).not.toContain("rebuilding");
     }
     // Labor % has no denominator: a dash with the sales reason, and labor money stays what it is.
     expect(p.overview).toContain(R("labor.state.sales_not_covered"));
@@ -280,8 +291,10 @@ describe("sales: not captured, partly captured, a breakdown still rebuilding, an
     // Compare: a partly covered period never yields a change for sales.
     expect(p.compare).toMatch(/Sales before refunds This period: \$300\.00 \(covered days only\)/);
     expect(p.compare).toMatch(/Sales before refunds This period:[^%]*Not comparable Net sales/);
-    // The list banner names both causes (a day with no sales is not "rebuilding", and the totals are not final).
-    expect(p.channels).toContain("still rebuilding or sales not captured");
+    // Polish: the list banner names the day's REAL cause (no sales captured; it is not "rebuilding"), and the totals
+    // are not called final.
+    expect(p.channels).toContain("No sales were captured on 1 of 7 days");
+    expect(p.channels).not.toContain("rebuilding");
     expect(p.channels).not.toContain("totals are final");
     const f = files(dto);
     fileInvariant(f, "sales partial");

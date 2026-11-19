@@ -15,7 +15,7 @@ import { laborHoursComplete, resolveBusinessRange } from "@/lib/business-report-
 // Fix round 4: the page takes the VIEW; these adapters build it from a DTO as the page does.
 import { BusinessHours, BusinessOverview } from "./helpers/business-report-views";
 import { A, fakeClient } from "./helpers/business-report-fake";
-import { EN, LOADED_VARIANTS, PURE_STATES, laborIn, loadedIn, reasonOf, visibleText, withLabor } from "./helpers/business-report-states";
+import { EN, LOADED_VARIANTS, PURE_STATES, laborIn, loadedIn, markedFigures, reasonOf, sightedText, visibleText, withLabor } from "./helpers/business-report-states";
 
 const ON = { BUSINESS_REPORT: "1", FACT_LAYER: "1", FACT_LAYER_LABOR: "1" };
 const moo = { userId: "u-moo", level: 8, role: "moo" as const, locations: [] as string[] };
@@ -35,8 +35,11 @@ describe("closed drawers really hide their children (the r1/r2 mock opened every
 });
 
 describe("P2-2: collapsed week rows keep the fully loaded qualifications", () => {
-  const SHORT = { burden: EN["reports.business.qual.burden_estimated"]!, salary: EN["reports.business.qual.salary_estimated"]!,
-    gaps: EN["reports.business.qual.salary_gaps"]!.replace("{n}", "2") };
+  // Polish (marker + legend form): a closed row no longer repeats the short words; each figure is MARKED and the
+  // list's legend holds the sentence once. `text` proves every mark against its legend and returns each figure's
+  // sentence in place, so a row "says" a qualification exactly when its figure carries the mark of that sentence.
+  const SHORT = { burden: EN["reports.business.burden_estimated"]!, salary: EN["reports.business.salary_estimated"]!,
+    gaps: EN["reports.business.salary_gaps"]!.replace("{n}", "2") };
   for (const v of LOADED_VARIANTS) {
     it(`fully loaded ${v}`, async () => {
       const dto = withLabor(await load(), (l) => loadedIn(l, v));
@@ -67,9 +70,15 @@ describe("collapsed rows, every labor state", () => {
     });
     it(`state ${s}: each closed Hours day row says the labor is not final when it is not`, async () => {
       const dto = withLabor(await load(), (l) => laborIn(l, s));
-      const t = text(createElement(BusinessHours, { dto, language: "en" }));
+      const markup = renderToStaticMarkup(createElement(BusinessHours, { dto, language: "en" }));
+      const t = visibleText(markup);
       expect(t).not.toMatch(NO_LABOR);
-      if (!laborHoursComplete(s)) expect(t.split(reasonOf(s)).length - 1, s).toBe(dto.days.length);
+      if (!laborHoursComplete(s)) {
+        // Marker + legend: EVERY closed day row's hours figure carries the reason (its mark, and the sentence for a
+        // screen reader), and a sighted reader reads the sentence ONCE, in the list's legend.
+        expect(markedFigures(markup).filter((f) => f.said.includes(reasonOf(s))).length, s).toBe(dto.days.length);
+        expect(sightedText(markup).split(reasonOf(s)).length - 1, s).toBe(1);
+      }
     });
   }
 });
