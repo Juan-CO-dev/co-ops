@@ -19,7 +19,6 @@ import type { BoardLaborViews } from "@/lib/scheduling/labor-projection-shared";
 export function DayTabs({ tabs, selected, onSelect, labor }: { tabs: DayTab[]; selected: string; onSelect: (date: string) => void; labor?: BoardLaborViews }) {
   const { t, language } = useTranslation();
   const laborDays = labor?.state === "ready" ? labor.days : [];
-  const pct = (p: number | null) => (p === null ? t("schedule.board.money.blank") : String(p));
   function onKey(e: KeyboardEvent<HTMLDivElement>) {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
@@ -42,8 +41,8 @@ export function DayTabs({ tabs, selected, onSelect, labor }: { tabs: DayTab[]; s
             {ld && (ld.kind === "actual" || ld.kind === "projected") ? (
               <span className="grid justify-items-center" data-tab-labor={ld.kind}>
                 <span className="text-[10px] font-bold tracking-[0.08em] text-co-text-muted">{t(`schedule.labor_views.tab.${ld.kind}` as TranslationKey)}</span>
-                <span className="font-bold tabular-nums">{t("schedule.labor_views.tab.loaded", { pct: pct(ld.fullyLoadedPct) })}</span>
-                <span className="tabular-nums">{t("schedule.labor_views.tab.hourly", { pct: pct(ld.pureHourlyPct) })}</span>
+                <span className="font-bold tabular-nums">{ld.fullyLoadedPct === null ? t("schedule.labor_views.tab.loaded_unknown") : t("schedule.labor_views.tab.loaded", { pct: ld.fullyLoadedPct })}</span>
+                <span className="tabular-nums">{ld.pureHourlyPct === null ? t("schedule.labor_views.tab.hourly_unknown") : t("schedule.labor_views.tab.hourly", { pct: ld.pureHourlyPct })}</span>
               </span>
             ) : ld ? <span className="text-[10px] font-bold text-co-text-muted" data-tab-labor={ld.kind}>{t(`schedule.labor_views.kind.${ld.kind}` as TranslationKey)}</span> : null}
           </button>

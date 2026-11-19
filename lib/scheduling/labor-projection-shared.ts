@@ -403,5 +403,6 @@ export const SCHEDULE_LABOR_VIEW_I18N_KEYS = [
   "schedule.labor_views.flag.rate_estimated", "schedule.labor_views.flag.burden_estimated", "schedule.labor_views.flag.salary_gaps",
   "schedule.labor_views.strip.ot_estimated",
   "schedule.labor_views.tab.actual", "schedule.labor_views.tab.projected", "schedule.labor_views.tab.loaded", "schedule.labor_views.tab.hourly",
+  "schedule.labor_views.tab.loaded_unknown", "schedule.labor_views.tab.hourly_unknown",
   "schedule.labor_views.timeline.hours", "schedule.labor_views.timeline.straight_pct", "schedule.labor_views.hour_money_note",
 ] as const;

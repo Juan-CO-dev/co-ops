@@ -150,7 +150,7 @@ Turn-on order (each step on Juan's word):
 
 1. 0345 and 0346 are on prod (section 1d, 1e) and PR 3 is deployed. Nothing changes for anyone yet.
 2. Before the flip, the checks of section 1d: `fact_labor_weeks_stale(1000, 'labor-v3')` returns 0 and the payroll allocation check is clean.
-3. Tell the GMs: with the switch on, the board's "Labor % by hour" row becomes "Hours on the clock" for a GM (labor $ and % per hour are for the MoO and up). Day and week totals stay, now in two views.
+3. Tell the GMs: with the switch on, the board's "Labor % by hour" row becomes "Scheduled hours" for a GM (labor $ and % per hour are for the MoO and up). Day and week totals stay, now in two views.
 4. Set `SCHEDULE_LABOR_VIEWS=1` (with `FACT_LAYER=1` and `FACT_LAYER_LABOR=1`) in Vercel, redeploy.
 5. Open `/schedule` as a GM and as a MoO at each shop, in English and Spanish, at 375 px: the week strip ("Labor this week"), the day tabs (fully loaded first), the day card, the labor target card's allowance lines, the hours row.
 

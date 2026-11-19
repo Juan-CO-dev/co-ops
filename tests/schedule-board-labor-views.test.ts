@@ -408,7 +408,9 @@ describe("the day card and the day tabs", () => {
     expect(text(tab(DATES[0]!))).toContain(fill(EN["schedule.labor_views.tab.hourly"]!, { pct: 16.6 }));
     expect(text(tab(DATES[2]!))).toContain(EN["schedule.labor_views.tab.projected"]);
     expect(tab(DATES[2]!).indexOf("26.8")).toBeLessThan(tab(DATES[2]!).indexOf("19.3"));
-    expect(text(tab(DATES[3]!))).toContain(fill(EN["schedule.labor_views.tab.loaded"]!, { pct: "—" }));
+    expect(text(tab(DATES[3]!))).toContain(EN["schedule.labor_views.tab.loaded_unknown"]);
+    expect(text(tab(DATES[3]!))).toContain(EN["schedule.labor_views.tab.hourly_unknown"]);
+    expect(tab(DATES[3]!)).not.toContain("%");
     expect(text(tab(DATES[1]!))).toContain(EN["schedule.labor_views.kind.not_settled"]);
     expect(text(tab(DATES[6]!))).toContain(EN["schedule.labor_views.kind.no_schedule"]);
     expect(tab(DATES[1]!)).not.toContain("%");
