@@ -1,11 +1,11 @@
-/** Item 21 PR 5: the pure rules of the settings card and of "match the old orders". */
+/** Item 21 PR 5: the pure rules of the settings card and of "match the older orders". */
 import { describe, expect, it } from "vitest";
 import {
   canManageCateringToastSettings, DEFAULT_CATERING_TOAST_SETTINGS as OFF, fromSettingsRow, parseSettingsSave, sameSettings, SETTINGS_ERRORS, settingsErrorKey,
   settingsRefusal, toSettingsRow, type CateringToastSettingsValues,
 } from "@/lib/catering/catering-toast-settings-shared";
-import { oldOrderMatches, oldOrdersView, OLD_ORDER_SKIPS, OLD_ORDERS_SAMPLE, parseOldOrdersLink, type PairHead } from "@/lib/catering/catering-toast-old-orders-shared";
-import type { CateringToastPlanRow, HouseStatusRow } from "@/lib/catering/catering-toast-shared";
+import { addDays, backfillSkips, backfillWindow, BACKFILL_SKIPS, BACKFILL_WINDOW_DAYS, nextCursor, parseBackfillStep, realDate } from "@/lib/catering/catering-toast-backfill-shared";
+import { readFileSync } from "node:fs";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
@@ -56,6 +56,16 @@ describe("parseSettingsSave: strict", () => {
       { ...good, values: { ...values, autoLinkFromDate: "2026-02-30" } }, { ...good, values: { ...values, autoLinkFromDate: "11/19/2026" } }, { ...good, values: { ...values, autoLinkFromDate: 20261119 } }];
     for (const body of bad) expect([JSON.stringify(body), parseSettingsSave(body)]).toEqual([JSON.stringify(body), null]);
   });
+  it("review PORTAL5-r1: a date that looks like one and is not is REFUSED, never thrown (no month 13, no day 32, no February 30)", () => {
+    for (const date of ["2026-13-01", "2026-00-10", "2026-01-32", "2026-01-00", "2026-02-30", "2025-02-29", "0000-00-00", "9999-99-99"]) {
+      expect(() => parseSettingsSave({ ...good, values: { ...values, autoLinkFromDate: date } })).not.toThrow();
+      expect([date, parseSettingsSave({ ...good, values: { ...values, autoLinkFromDate: date } })]).toEqual([date, null]);
+      expect([date, realDate(date)]).toEqual([date, false]);
+      expect(parseBackfillStep({ locationId: SHOP, cursor: date })).toBeNull();
+    }
+    expect(realDate("2024-02-29")).toBe(true);
+    expect(parseSettingsSave({ ...good, values: { ...values, autoLinkFromDate: "2024-02-29" } })?.values.autoLinkFromDate).toBe("2024-02-29");
+  });
   it("round-trips the database row", () => {
     const v = { ...ON, tolerancePct: 0.2, autoLinkFromDate: "2026-11-19" };
     expect(fromSettingsRow({ ...toSettingsRow(v), tolerance_pct: "0.200" })).toEqual(v);
@@ -71,7 +81,7 @@ describe("messages", () => {
     }
     expect(settingsErrorKey("nope")).toBe("admin.catering.toast.error.generic");
     expect(settingsErrorKey(undefined)).toBe("admin.catering.toast.error.generic");
-    for (const reason of OLD_ORDER_SKIPS) for (const dict of [en, es] as Array<Record<string, string>>) expect(typeof dict[`admin.catering.toast.old.skipped.${reason}`]).toBe("string");
+    for (const reason of BACKFILL_SKIPS) for (const dict of [en, es] as Array<Record<string, string>>) expect([reason, typeof dict[`admin.catering.toast.backfill.skipped.${reason}`]]).toEqual([reason, "string"]);
   });
   it("every admin.catering.toast key exists in both languages with the same placeholders", () => {
     const keys = Object.keys(en).filter((k) => k.startsWith("admin.catering.toast.") || k === "admin.catering.hub.toast");
@@ -82,48 +92,49 @@ describe("messages", () => {
   });
 });
 
-const status = (lead_id: string, event_date: string, o: Partial<HouseStatusRow> = {}): HouseStatusRow =>
-  ({ lead_id, location_id: SHOP, event_date, lead_source: "toast_catering", ring_code: null, headcount: null, value_cents: 10000, toast_origin: true, status: "not_rung_in_toast", ...o });
-const plan = (lead_id: string, order_guid: string, check_guid: string, business_date: string, o: Partial<CateringToastPlanRow> = {}): CateringToastPlanRow =>
-  ({ lead_id, location_id: SHOP, order_guid, check_guid, toast_snapshot_id: "s", business_date, evidence: "toast_origin", check_total_cents: 10000, lead_value_cents: 10000,
-    amount_diff_cents: 0, amount_mismatch: false, dual_code: false, owner: null, owner_lead_id: null, blocked: false, ...o });
-
-describe("oldOrderMatches: only what the system is sure about", () => {
-  it("strong, linkable, undisputed checks are matches; everything else is counted by reason", () => {
-    const heads: PairHead[] = [{ id: "h1", lead_id: "a", kind: "link", location_id: SHOP, order_guid: "A", check_guid: "A1" }, { id: "hx", lead_id: "a", kind: "no_ring_expected", location_id: null, order_guid: null, check_guid: null }];
-    const m = oldOrderMatches({
-      status: [status("a", "2026-10-10"), status("b", "2026-10-11"), status("c", "2026-10-12"), status("d", "2026-10-13"), status("e", "2026-10-14"), status("f", "2026-10-15"),
-        status("g", "2026-10-16", { status: "matched" }), status("h", "2026-10-17"), status("i", "2026-10-17")],
-      plan: [
-        plan("a", "A", "A1", "2026-10-10"), plan("a", "A", "A2", "2026-10-10", { amount_mismatch: true }),
-        plan("b", "B", "B1", "2026-10-11", { evidence: "amount_date" }),
-        plan("c", "C", "C1", "2026-10-12", { blocked: true }),
-        plan("d", "D", "D1", "2026-10-13", { owner: "ezcater" }), plan("d", "D", "D2", "2026-10-13", { owner: "house", owner_lead_id: "zz" }),
-        plan("e", "E", "E1", "2026-10-14", { dual_code: true, evidence: "ring_code" }),
-        plan("f", "F", "F1", "2026-10-30"),
-        plan("g", "G", "G1", "2026-10-16"),
-        plan("h", "H", "H1", "2026-10-17", { evidence: "ring_code" }), plan("i", "H", "H1", "2026-10-17", { evidence: "ring_code" }),
-      ],
-      heads,
-    });
-    expect(m.orders).toBe(8);
-    expect(m.matches.map((x) => [x.leadId, x.checkGuid, x.evidence, x.expectedHeadId, x.amountMismatch])).toEqual([["a", "A1", "toast_origin", "h1", false], ["a", "A2", "toast_origin", null, true]]);
-    expect(m.ordersMatched).toBe(1);
-    expect(m.skipped).toEqual({ blocked: 1, owned: 2, dual_code: 1, out_of_window: 1, two_orders: 2 });
+describe("the backfill: stretches of dates, never offsets", () => {
+  it("a stretch starts at the first unmatched event on or after the cursor, runs at most 60 days and never past today", () => {
+    const dates = ["2025-10-06", "2025-10-20", "2026-01-15", "2026-11-18", "2026-12-25"];
+    expect(backfillWindow(dates, "2025-01-01", "2026-11-19")).toEqual({ from: "2025-10-06", to: addDays("2025-10-06", BACKFILL_WINDOW_DAYS) });
+    expect(backfillWindow(dates, "2025-10-07", "2026-11-19")).toEqual({ from: "2025-10-20", to: "2025-12-19" });
+    expect(backfillWindow(dates, "2026-11-01", "2026-11-19")).toEqual({ from: "2026-11-18", to: "2026-11-19" });
+    // An event after today is not rung yet: it is not the backfill's.
+    expect(backfillWindow(dates, "2026-11-19", "2026-11-19")).toBeNull();
+    expect(backfillWindow([], "2025-01-01", "2026-11-19")).toBeNull();
   });
-  it("the day-before to a-week-after window is the writer's", () => {
-    const edge = (date: string) => oldOrderMatches({ status: [status("a", "2026-10-10")], plan: [plan("a", "A", "A1", date)], heads: [] }).matches.length;
-    expect([edge("2026-10-08"), edge("2026-10-09"), edge("2026-10-17"), edge("2026-10-18")]).toEqual([0, 1, 1, 0]);
+  it("the next cursor is the day after the stretch; the last stretch (through today) ends the run", () => {
+    expect(nextCursor({ to: "2025-12-05" }, "2026-11-19")).toBe("2025-12-06");
+    expect(nextCursor({ to: "2026-11-19" }, "2026-11-19")).toBeNull();
+    expect(addDays("2026-02-28", 1)).toBe("2026-03-01");
+    expect(addDays("2026-03-08", 1)).toBe("2026-03-09"); // a DST day is still one day
   });
-  it("the view shows counts and a bounded sample, never more", () => {
-    const many = Array.from({ length: OLD_ORDERS_SAMPLE + 5 }, (_, i) => `l${String(i).padStart(2, "0")}`);
-    const v = oldOrdersView(oldOrderMatches({ status: many.map((l) => status(l, "2026-10-10")), plan: many.map((l) => plan(l, `O${l}`, "c", "2026-10-10")), heads: [] }));
-    expect([v.state, v.orders, v.ordersMatched, v.checks, v.sample.length]).toEqual(["ready", OLD_ORDERS_SAMPLE + 5, OLD_ORDERS_SAMPLE + 5, OLD_ORDERS_SAMPLE + 5, OLD_ORDERS_SAMPLE]);
-    expect(Object.keys(v.sample[0]!).sort()).toEqual(["amountMismatch", "businessDate", "checkGuid", "checkTotalCents", "eventDate", "evidence", "leadId", "valueCents"]);
+  it("review PORTAL5-r1: walking the stretches visits every unmatched order exactly once, even when the list changes between steps", () => {
+    const today = "2026-11-19";
+    let unmatched = ["2025-10-06", "2025-11-01", "2025-12-30", "2026-03-03", "2026-03-04", "2026-11-10"];
+    const visited: string[] = [];
+    for (let cursor: string | null = "2025-01-01", guard = 0; cursor !== null && guard < 50; guard += 1) {
+      const window = backfillWindow(unmatched, cursor, today);
+      if (!window) break;
+      visited.push(...unmatched.filter((d) => d >= window.from && d <= window.to));
+      // Between two steps: every order of the stretch is linked (leaves the list) and someone else links a later one.
+      unmatched = unmatched.filter((d) => d > window.to && d !== "2026-03-03");
+      cursor = nextCursor(window, today);
+    }
+    expect(visited).toEqual(["2025-10-06", "2025-11-01", "2025-12-30", "2026-03-04", "2026-11-10"]);
   });
-  it("parseOldOrdersLink: exactly the shop and the skip count", () => {
-    expect(parseOldOrdersLink({ locationId: SHOP, skip: 0 })).toEqual({ locationId: SHOP, skip: 0 });
-    for (const bad of [null, {}, { locationId: SHOP }, { locationId: SHOP, skip: -1 }, { locationId: SHOP, skip: 1.5 }, { locationId: SHOP, skip: 5001 }, { locationId: "x", skip: 0 },
-      { locationId: SHOP, skip: 0, pairs: [] }]) expect(parseOldOrdersLink(bad)).toBeNull();
+  it("parseBackfillStep: exactly the shop and a date cursor (or null to start)", () => {
+    expect(parseBackfillStep({ locationId: SHOP, cursor: null })).toEqual({ locationId: SHOP, cursor: null });
+    expect(parseBackfillStep({ locationId: SHOP.toUpperCase(), cursor: "2026-01-15" })).toEqual({ locationId: SHOP, cursor: "2026-01-15" });
+    for (const bad of [null, [], {}, { locationId: SHOP }, { locationId: SHOP, cursor: 3 }, { locationId: SHOP, cursor: "soon" }, { locationId: "x", cursor: null },
+      { locationId: SHOP, cursor: null, pairs: [] }, { locationId: SHOP, skip: 0 }]) expect(parseBackfillStep(bad)).toBeNull();
+  });
+  it("the reasons are the reconciler's own, in its order (0348), and only its counts are kept", () => {
+    const sql = readFileSync("supabase/migrations/0348_catering_toast_reconciler.sql", "utf8").replace(/\r\n/g, "\n");
+    const house = sql.match(/create function public\.reconcile_catering_toast\([\s\S]*?\nend \$\$;/)![0];
+    const reasons = [...house.slice(house.indexOf("v_reason := case"), house.indexOf("else null end;")).matchAll(/then '(\w+)'/g)].map((m) => m[1]!);
+    expect([...new Set(reasons)]).toEqual([...BACKFILL_SKIPS]);
+    expect(backfillSkips({ owned: 2, evidence_pending: 1, dual_code: 0, bogus: 9, blocked: 1.5, switch_off: "3" })).toEqual({ owned: 2, evidence_pending: 1 });
+    expect(backfillSkips("off")).toEqual({});
+    expect(backfillSkips(null)).toEqual({});
   });
 });

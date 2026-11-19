@@ -1,13 +1,13 @@
 /**
  * Item 21 PR 5: the settings card renders the truth in en + es (tú): each shop's state, what is installed, what cannot
- * be saved and why (before the press), and the old-orders worklist. Also where it is mounted and who reaches it.
+ * be saved and why (before the press), and "match older orders". Also where it is mounted and who reaches it.
  */
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CATERING_TOAST_SETTINGS as OFF, type CateringToastShopCard, type SettingsReadiness } from "@/lib/catering/catering-toast-settings-shared";
-import { EMPTY_OLD_ORDERS, type OldOrdersView } from "@/lib/catering/catering-toast-old-orders-shared";
+import { EMPTY_BACKFILL_STATUS, type BackfillStatus } from "@/lib/catering/catering-toast-backfill-shared";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 const { TranslationProvider } = await import("@/lib/i18n/provider");
@@ -77,50 +77,41 @@ describe("the settings card, en + es", () => {
   });
 });
 
-describe("orders not matched yet", () => {
-  const on = shop({ values: { ...OFF, enabled: true }, updatedAt: "x" });
-  const view: OldOrdersView = { state: "ready", orders: 361, ordersMatched: 340, checks: 352, skipped: { blocked: 0, owned: 3, dual_code: 2, out_of_window: 0, two_orders: 4 },
-    sample: [{ leadId: "l1", checkGuid: "c1", eventDate: "2026-10-10", valueCents: 45000, businessDate: "2026-10-10", checkTotalCents: 45000, evidence: "toast_origin", amountMismatch: false },
-      { leadId: "l2", checkGuid: "c2", eventDate: "2026-10-11", valueCents: null, businessDate: "2026-10-11", checkTotalCents: 30000, evidence: "ring_code", amountMismatch: true }] };
+describe("match older orders", () => {
+  const auto = shop({ values: { ...OFF, enabled: true, originAutoLinkEnabled: true, autoLinkFromDate: "2025-10-01" }, updatedAt: "x" });
+  const status: BackfillStatus = { state: "ready", startDate: "2025-10-01", unmatched: 361, fromStart: 340, beforeStart: 21 };
 
-  it("only a shop that is on (with the link step installed) offers it", () => {
-    expect(text(render({ shops: [shop()], readiness: READY }))).not.toContain("Orders not matched yet");
-    expect(text(render({ shops: [on], readiness: { linkStep: false, automatic: false } }))).not.toContain("Orders not matched yet");
-    // Collapsed by default: the header only. Nothing is looked up, and nothing can be linked, before the person asks.
-    const html = text(render({ shops: [on], readiness: READY }));
-    expect(html).toContain("Orders not matched yet");
-    expect(html).not.toContain("Older orders are never linked by themselves.");
-    expect(html).not.toContain("Link these");
-    // Open, before any search: the explanation and the one button.
-    const open = text(render({ shops: [on], readiness: READY, initialOldOrders: { locationId: A, view: EMPTY_OLD_ORDERS("off") } }));
-    expect(open).toContain("Older orders are never linked by themselves.");
-    expect(open).toContain("Look again");
-    expect(open).not.toContain("Link these");
+  it("offered only where it can run: the shop is on, an automatic switch and its date are saved, and the reconciler is installed", () => {
+    expect(text(render({ shops: [shop()], readiness: READY }))).not.toContain("Match older orders");
+    expect(text(render({ shops: [shop({ values: { ...OFF, enabled: true }, updatedAt: "x" })], readiness: READY }))).not.toContain("Match older orders");
+    expect(text(render({ shops: [auto], readiness: { linkStep: true, automatic: false } }))).not.toContain("Match older orders");
+    // Collapsed by default: the header only. Nothing is counted, and nothing can be run, before the person asks.
+    const html = text(render({ shops: [auto], readiness: READY }));
+    expect(html).toContain("Match older orders");
+    expect(html).not.toContain("Automatic linking only looks at the last nine days.");
+    expect(html).not.toContain("Match orders from");
   });
 
-  it("the matches: the counts, a sample, why the rest were left out, and ONE confirm; an unknown amount is said, never $0", () => {
-    const html = text(render({ shops: [on], readiness: READY, initialOldOrders: { locationId: A, view } }));
-    expect(html).toContain("361 orders are not matched yet. 340 of them have a Toast check we are sure about (352 checks).");
-    expect(html).toContain("order $450.00 · Toast check $450.00 on");
-    expect(html).toContain("order amount not available · Toast check $300.00 on");
-    expect(html).not.toContain("$0.00");
-    expect(html).toContain("the amount differs");
-    expect(html).toContain("and 350 more");
-    expect(html).toContain("3 left out: another order already holds the check.");
-    expect(html).toContain("2 left out: the check also carries an ezCater order number.");
-    expect(html).toContain("4 left out: two orders point at the same check.");
-    expect(html).not.toContain("0 left out");
-    expect(html).toContain("Link these 352 checks");
-    expect(html).toContain("361 orders");
-    const es = text(render({ shops: [on], readiness: READY, initialOldOrders: { locationId: A, view } }, "es"));
-    expect(es).toContain("361 pedidos aún no están emparejados. 340 de ellos tienen una cuenta de Toast de la que estamos seguros (352 cuentas).");
-    expect(es).toContain("Enlazar estas 352 cuentas");
+  it("open: what it does, the counts split at the start date, and ONE button that names the date", () => {
+    const html = text(render({ shops: [auto], readiness: READY, initialBackfill: { locationId: A, status } }));
+    expect(html).toContain("Automatic linking only looks at the last nine days.");
+    expect(html).toContain("361 not matched");
+    expect(html).toContain("361 booked orders have no Toast check linked. 340 are from");
+    expect(html).toContain("and can be matched now. 21 are older and stay as suggestions.");
+    expect(html.match(/Match orders from/g)).toHaveLength(1);
+    expect(html).toContain("Count again");
+    const es = text(render({ shops: [auto], readiness: READY, initialBackfill: { locationId: A, status } }, "es"));
+    expect(es).toContain("361 pedidos confirmados no tienen una cuenta de Toast enlazada. 340 son del");
+    expect(es).toContain("Emparejar pedidos desde el");
   });
 
-  it("nothing to confirm = no confirm button", () => {
-    const html = text(render({ shops: [on], readiness: READY, initialOldOrders: { locationId: A, view: { ...EMPTY_OLD_ORDERS("ready"), orders: 4 } } }));
-    expect(html).toContain("4 orders are not matched yet. 0 of them have a Toast check we are sure about (0 checks).");
-    expect(html).not.toContain("Link these");
+  it("nothing the backfill may reach = no run button; a shop that lost its switch says why", () => {
+    const none = text(render({ shops: [auto], readiness: READY, initialBackfill: { locationId: A, status: { ...status, fromStart: 0, beforeStart: 361 } } }));
+    expect(none).toContain("0 are from");
+    expect(none).not.toContain("Match orders from");
+    const lost = text(render({ shops: [auto], readiness: READY, initialBackfill: { locationId: A, status: EMPTY_BACKFILL_STATUS("no_switch") } }));
+    expect(lost).toContain("Turn on automatic linking and save a start date first.");
+    expect(lost).not.toContain("Match orders from");
   });
 });
 
@@ -133,11 +124,12 @@ describe("where it is mounted, and for whom", () => {
     const hub = readFileSync("app/admin/catering/page.tsx", "utf8");
     expect(hub).toContain('{canManageCateringToastSettings(auth.user.role) && <Link href="/admin/catering/toast"');
   });
-  it("the component never sends the pairs to link: the body is the shop and the skip count", () => {
+  it("the component decides nothing about the older orders: it posts the shop and the date cursor the server handed back", () => {
     const src = readFileSync("components/admin/catering/CateringToastSettings.tsx", "utf8");
-    expect(src).toContain('post("/api/admin/catering/toast-settings/old-orders", { locationId: shop.locationId, skip })');
+    expect(src).toContain('post("/api/admin/catering/toast-settings/backfill", { locationId: shop.locationId, cursor })');
+    expect(src).toContain("cursor = step.next;");
     expect(src).toContain('requestStepUp("B")');
     expect(src).toContain('requestStepUp("A")');
-    expect(src).not.toMatch(/useEffect|localStorage|sessionStorage/);
+    expect(src).not.toMatch(/useEffect|localStorage|sessionStorage|orderGuid|checkGuid|leadId/);
   });
 });

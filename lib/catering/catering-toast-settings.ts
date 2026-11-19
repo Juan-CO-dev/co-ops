@@ -1,37 +1,38 @@
 /**
- * Item 21 PR 5 — the server side of the catering ↔ Toast settings card (migration 0350) and of "match the old orders".
+ * Item 21 PR 5 — the server side of the catering ↔ Toast settings card (migration 0350) and of "match the older orders".
  *
  * Every entry point refuses anyone but the Owner / CGS / MoO by TRUSTED ROLE before any I/O.
  *  - loadCateringToastSettings: every active shop with its row (no row = the defaults, off) and the two facts the
  *    writer's refusals rest on (0350's probe). 0344 or 0350 missing = `not_installed`, never a 500.
  *  - saveCateringToastSettings: ONE call of `set_catering_toast_settings`, the only writer of the table. It re-checks
  *    the role on the locked users row, the row the person saw, every dependency, and writes its own destructive
- *    `catering.toast_settings_update` audit row in the same transaction (so this module never calls audit(): there is
- *    no way to change a switch without that row). Never write `catering_toast_settings` any other way.
- *  - loadOldOrders / linkOldOrders: the orders not matched yet and the checks the system is sure about
- *    (`oldOrderMatches`). Linking them is a batch of ordinary human links through `decideCateringToastLink` (the one
- *    writer of links: its own decision row and audit row each, the same refusals). The server RECOMPUTES the list on
- *    every batch; a client never sends pairs.
+ *    `catering.toast_settings_update` audit row in the same transaction (so this module never calls audit() for a
+ *    save: there is no way to change a switch without that row). Never write `catering_toast_settings` any other way.
+ *  - loadBackfillStatus / runBackfillStep: the older orders (Juan answer 7). The cron's reconciler looks at the last
+ *    nine days only; a step runs the SAME reconciler (`reconcile_catering_toast`, 0348) over one older stretch, after
+ *    the one note lookup examined that stretch's captures. It decides nothing itself: every rule is the reconciler's,
+ *    in SQL, including "never before the shop's start date" and "never a check whose capture has not been examined".
+ *    The cursor is a date. A step that added links writes one audit row naming the person who started it.
  */
 import "server-only";
 import type { AuthContext } from "@/lib/session";
+import { audit } from "@/lib/audit";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { etCalendarDate } from "@/lib/operational-day";
-import { CateringPipelineError } from "./pipeline";
-import { CateringToastNotInstalled, NOT_INSTALLED, raise, readPlanToCompletion } from "./catering-toast";
-import { decideCateringToastLink, linkStepReady } from "./catering-toast-links";
-import { HOUSE_STATUS_COLUMNS, plannerWindows, type CateringToastPlanRow, type HouseStatusRow } from "./catering-toast-shared";
+import { CateringToastNotInstalled, NOT_INSTALLED, raise } from "./catering-toast";
+import { coverUncoveredNotes } from "./toast-note-codes";
 import {
   canManageCateringToastSettings, DEFAULT_CATERING_TOAST_SETTINGS, fromSettingsRow, SETTINGS_ERRORS, SETTINGS_ROW_COLUMNS, toSettingsRow,
   type CateringToastSettingsView, type CateringToastShopCard, type SettingsError, type SettingsRow, type SettingsSave,
 } from "./catering-toast-settings-shared";
 import {
-  EMPTY_OLD_ORDERS, OLD_ORDERS_BATCH, oldOrderMatches, oldOrdersView,
-  type OldOrderMatches, type OldOrdersLinkResult, type OldOrdersView, type PairHead,
-} from "./catering-toast-old-orders-shared";
+  addDays, backfillSkips, backfillWindow, EMPTY_BACKFILL_STATUS, nextCursor, type BackfillStatus, type BackfillStep,
+} from "./catering-toast-backfill-shared";
 
 type Sb = ReturnType<typeof getServiceRoleClient>;
+/** Every day of a stretch may need its own Toast lookup; a step examines as many as its deadline allows. */
+export const BACKFILL_LOOKUP_DAYS = 80;
 export class CateringToastSettingsError extends Error {
   constructor(public status: number, public code: SettingsError | "generic") { super(code); }
 }
@@ -87,85 +88,117 @@ export async function saveCateringToastSettings(actor: AuthContext, input: Setti
   return { ...fromSettingsRow(row), updatedAt: row.updated_at };
 }
 
-/** The shop's unmatched house orders (through today) and their strong, linkable checks. Read to completion or throw. */
-async function matchesFor(sb: Sb, locationId: string, now: Date): Promise<OldOrderMatches> {
-  const today = etCalendarDate(now.toISOString());
-  const status = await selectAllRows<HouseStatusRow>(async (from, to) => {
-    const res = await sb.from("catering_reconciliation_status").select(HOUSE_STATUS_COLUMNS)
-      .eq("location_id", locationId).eq("status", "not_rung_in_toast").lte("event_date", today).order("event_date").order("lead_id").range(from, to);
+interface ShopSwitches { enabled: boolean; auto_link_enabled: boolean; origin_auto_link_enabled: boolean; auto_link_from_date: string | null }
+async function shopSwitches(sb: Sb, locationId: string): Promise<ShopSwitches | null> {
+  const { data, error } = await sb.from("catering_toast_settings").select("enabled,auto_link_enabled,origin_auto_link_enabled,auto_link_from_date")
+    .eq("location_id", locationId).maybeSingle<ShopSwitches>();
+  if (error) raise(error);
+  return data ?? null;
+}
+/** What the backfill may run for: null = it may; otherwise why not. */
+function backfillState(row: ShopSwitches | null): "off" | "no_switch" | null {
+  if (!row?.enabled) return "off";
+  if (!(row.auto_link_enabled || row.origin_auto_link_enabled) || !row.auto_link_from_date) return "no_switch";
+  return null;
+}
+/** Event dates of the shop's booked house orders with no Toast check linked, through `today`. Read to completion. */
+async function unmatchedDates(sb: Sb, locationId: string, today: string, from?: string): Promise<string[]> {
+  const rows = await selectAllRows<{ event_date: string }>(async (a, b) => {
+    let q = sb.from("catering_reconciliation_status").select("lead_id,event_date").eq("location_id", locationId).eq("status", "not_rung_in_toast").lte("event_date", today);
+    if (from) q = q.gte("event_date", from);
+    const res = await q.order("event_date").order("lead_id").range(a, b);
     if (res.error) raise(res.error);
     return res;
   });
-  const plan: CateringToastPlanRow[] = [];
-  for (const window of plannerWindows(status.map((s) => s.event_date))) {
-    plan.push(...await readPlanToCompletion(sb, { p_location_id: locationId, p_from: window.from, p_to: window.to, p_note_codes: [] }));
-  }
-  const strongLeads = [...new Set(plan.filter((p) => p.evidence === "toast_origin" || p.evidence === "ring_code").map((p) => p.lead_id))];
-  const heads: PairHead[] = [];
-  for (let i = 0; i < strongLeads.length; i += 50) {
-    const ids = strongLeads.slice(i, i + 50);
-    heads.push(...await selectAllRows<PairHead>(async (from, to) => {
-      const res = await sb.from("catering_toast_decision_heads").select("id,lead_id,kind,location_id,order_guid,check_guid")
-        .in("lead_id", ids).eq("location_id", locationId).order("id").range(from, to);
-      if (res.error) raise(res.error);
-      return res;
-    }));
-  }
-  return oldOrderMatches({ status, plan, heads });
+  return rows.map((r) => String(r.event_date).slice(0, 10));
 }
 
-async function shopIsOn(sb: Sb, locationId: string): Promise<boolean> {
-  const { data, error } = await sb.from("catering_toast_settings").select("enabled").eq("location_id", locationId).maybeSingle<{ enabled: boolean }>();
-  if (error) raise(error);
-  return data?.enabled === true;
-}
-
-export async function loadOldOrders(actor: AuthContext, locationId: string, deps: { client?: Sb; now?: Date } = {}): Promise<OldOrdersView> {
+export async function loadBackfillStatus(actor: AuthContext, locationId: string, deps: { client?: Sb; now?: Date } = {}): Promise<BackfillStatus> {
   assertRole(actor);
   const sb = deps.client ?? getServiceRoleClient();
   try {
-    if (!await shopIsOn(sb, locationId)) return EMPTY_OLD_ORDERS("off");
-    if (await linkStepReady(sb) !== "ready") return EMPTY_OLD_ORDERS("not_installed");
-    return oldOrdersView(await matchesFor(sb, locationId, deps.now ?? new Date()));
+    const row = await shopSwitches(sb, locationId);
+    const start = row?.auto_link_from_date ? String(row.auto_link_from_date).slice(0, 10) : null;
+    const state = backfillState(row);
+    if (state === "off") return EMPTY_BACKFILL_STATUS("off", start);
+    const dates = await unmatchedDates(sb, locationId, etCalendarDate((deps.now ?? new Date()).toISOString()));
+    const fromStart = start ? dates.filter((d) => d >= start).length : 0;
+    return { state: state ?? "ready", startDate: start, unmatched: dates.length, fromStart, beforeStart: dates.length - fromStart };
   } catch (error) {
-    if (error instanceof CateringToastNotInstalled) return EMPTY_OLD_ORDERS("not_installed");
+    if (error instanceof CateringToastNotInstalled) return EMPTY_BACKFILL_STATUS("not_installed");
     throw new CateringToastSettingsError(503, "settings_unavailable");
   }
 }
+
+const ZERO = { examined: 0, pendingOrders: 0, added: 0, ringCode: 0, toastOrigin: 0, skipped: {} };
+const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 
 /**
- * One batch: recompute the matches, skip the `skip` first (the ones the writer refused in earlier batches), then link
- * up to OLD_ORDERS_BATCH of them, each through the one writer as THIS person. A refusal (someone decided meanwhile,
- * ezCater took the check, the shop went off) is counted by its name and the batch goes on. `remaining` = what is left
- * after this batch.
+ * ONE step of the backfill for one shop. `cursor` = where to go on from (null = the shop's start date; never earlier).
+ *  1. The next stretch: from the first unmatched event on or after the cursor, at most 60 days, never past today.
+ *  2. The note lookup examines the stretch's unexamined captures (its checks are rung from the day before to a week
+ *     after). If it examined some and some are left, the step answers "checking" with the SAME cursor.
+ *  3. Otherwise (nothing left, or what is left cannot be read now) the reconciler runs over the stretch. What it could
+ *     not link it counts by reason; an unexamined capture is `evidence_pending`, never a link.
  */
-export async function linkOldOrders(actor: AuthContext, locationId: string, skip: number,
-  deps: { client?: Sb; now?: Date; deadlineAt?: number; decide?: typeof decideCateringToastLink } = {}): Promise<OldOrdersLinkResult> {
+export async function runBackfillStep(actor: AuthContext, locationId: string, cursor: string | null,
+  deps: { client?: Sb; now?: Date; deadlineAt?: number; signal?: AbortSignal; cover?: typeof coverUncoveredNotes } = {}): Promise<BackfillStep> {
   assertRole(actor);
   const sb = deps.client ?? getServiceRoleClient();
-  const decide = deps.decide ?? decideCateringToastLink;
-  let matches: OldOrderMatches;
+  const cover = deps.cover ?? coverUncoveredNotes;
+  const deadlineAt = deps.deadlineAt ?? Date.now() + 40_000;
+  const today = etCalendarDate((deps.now ?? new Date()).toISOString());
   try {
-    if (!await shopIsOn(sb, locationId)) throw new CateringToastSettingsError(409, "switch_needs_enabled");
-    if (await linkStepReady(sb) !== "ready") throw new CateringToastSettingsError(409, "link_step_not_installed");
-    matches = await matchesFor(sb, locationId, deps.now ?? new Date());
+    const row = await shopSwitches(sb, locationId);
+    const state = backfillState(row);
+    if (state === "off") throw new CateringToastSettingsError(409, "switch_needs_enabled");
+    if (state === "no_switch") throw new CateringToastSettingsError(409, "backfill_needs_switch");
+    const start = String(row!.auto_link_from_date).slice(0, 10);
+    // Never before the shop's start date, whatever cursor was sent.
+    const from = cursor && cursor > start ? cursor : start;
+    const window = backfillWindow(await unmatchedDates(sb, locationId, today, from), from, today);
+    if (!window) return { phase: "done", from: null, to: null, ...ZERO, next: null };
+
+    const lookFrom = addDays(window.from, -1), lookTo = addDays(window.to, 7) < today ? addDays(window.to, 7) : today;
+    const uncovered = async () => {
+      const res = await sb.rpc("catering_toast_uncovered_orders", { p_location_id: locationId, p_from: lookFrom, p_to: lookTo });
+      if (res.error) {
+        if (res.error.code && NOT_INSTALLED.has(res.error.code)) throw new CateringToastSettingsError(409, "automatic_not_installed");
+        throw new CateringToastSettingsError(503, "settings_unavailable");
+      }
+      return ((res.data ?? []) as unknown[]).length;
+    };
+    if (await uncovered() > 0 && deadlineAt - Date.now() > 12_000) {
+      const looked = await cover(sb, { from: lookFrom, to: lookTo, maxDays: BACKFILL_LOOKUP_DAYS, deadlineAt: deadlineAt - 10_000, signal: deps.signal, onlyLocationId: locationId });
+      if (looked.examined > 0) {
+        const left = await uncovered();
+        // Progress, and more to examine: the same stretch again. (No progress = what is left cannot be read now: link.)
+        if (left > 0) return { phase: "checking", from: window.from, to: window.to, ...ZERO, examined: looked.examined, pendingOrders: left, next: window.from };
+      }
+    }
+
+    const run = await sb.rpc("reconcile_catering_toast", { p_location_id: locationId, p_from: window.from, p_to: window.to });
+    if (run.error) {
+      if (run.error.code && NOT_INSTALLED.has(run.error.code)) throw new CateringToastSettingsError(409, "automatic_not_installed");
+      throw new CateringToastSettingsError(503, "settings_unavailable");
+    }
+    const answer = run.data as { added?: unknown; ring_code?: unknown; toast_origin?: unknown; skipped?: unknown } | null;
+    // The switch went off between the read above and the reconciler's own read under its lock: nothing was linked.
+    if (answer?.skipped === "off" || answer?.skipped === "not_ready") throw new CateringToastSettingsError(409, "backfill_needs_switch");
+    const step: BackfillStep = { phase: "linked", from: window.from, to: window.to, examined: 0, pendingOrders: 0, added: count(answer?.added),
+      ringCode: count(answer?.ring_code), toastOrigin: count(answer?.toast_origin), skipped: backfillSkips(answer?.skipped), next: nextCursor(window, today) };
+    if (step.next === null) step.phase = "done";
+    if (step.added > 0) {
+      // The links themselves are recorded by the reconciler (catering.toast_reconciled, no actor). This row names the
+      // PERSON who ran it over an older stretch. Ids and counts only.
+      await audit({ actorId: actor.user.id, actorRole: actor.role, action: "catering.toast_backfill", resourceTable: "catering_toast_links", resourceId: null,
+        metadata: { location_id: locationId, from: window.from, to: window.to, added: step.added, ring_code: step.ringCode, toast_origin: step.toastOrigin, skipped: step.skipped },
+        ipAddress: null, userAgent: null });
+    }
+    return step;
   } catch (error) {
     if (error instanceof CateringToastSettingsError) throw error;
+    if (error instanceof CateringToastNotInstalled) throw new CateringToastSettingsError(409, "automatic_not_installed");
     throw new CateringToastSettingsError(503, "settings_unavailable");
   }
-  const out: OldOrdersLinkResult = { linked: 0, refused: {}, remaining: 0 };
-  let attempted = 0;
-  for (const m of matches.matches.slice(skip, skip + OLD_ORDERS_BATCH)) {
-    if (deps.deadlineAt && Date.now() >= deps.deadlineAt) break;
-    attempted += 1;
-    try {
-      await decide(actor, m.leadId, { kind: "link", locationId, orderGuid: m.orderGuid, checkGuid: m.checkGuid, reasonCode: null, expectedHeadId: m.expectedHeadId });
-      out.linked += 1;
-    } catch (error) {
-      const code = error instanceof CateringPipelineError ? error.code : "generic";
-      out.refused[code] = (out.refused[code] ?? 0) + 1;
-    }
-  }
-  out.remaining = Math.max(0, matches.matches.length - skip - attempted);
-  return out;
 }

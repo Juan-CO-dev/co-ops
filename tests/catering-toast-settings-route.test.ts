@@ -2,7 +2,7 @@
  * Item 21 PR 5: the settings routes. POST /api/admin/catering/toast-settings (0350 set_catering_toast_settings):
  * same-origin, the session, the trusted role, Tier B, the strict parse, then the writer. Run UNMOCKED over the
  * predicate-aware fake (like tests/labor-burden-route.test.ts): the route lives under /api/admin, so its own
- * requireSession keeps the Tier B unlock the preceding POST /api/auth/step-up set. The old-orders route (Tier A) runs
+ * requireSession keeps the Tier B unlock the preceding POST /api/auth/step-up set. The backfill route (Tier A) runs
  * over the same fake with its lib mocked at the two entry points.
  */
 import { NextRequest } from "next/server";
@@ -20,19 +20,19 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/catering/catering-toast-settings", async (original) => {
   const real = await original<typeof import("@/lib/catering/catering-toast-settings")>();
-  return { ...real, loadOldOrders: vi.fn(), linkOldOrders: vi.fn() };
+  return { ...real, loadBackfillStatus: vi.fn(), runBackfillStep: vi.fn() };
 });
 
 import { audit } from "@/lib/audit";
 import { isStepUpSurface, requireSession, SESSION_COOKIE_NAME, unlockStepUp } from "@/lib/session";
 import { GET, POST } from "@/app/api/admin/catering/toast-settings/route";
-import { GET as GET_OLD, POST as POST_OLD } from "@/app/api/admin/catering/toast-settings/old-orders/route";
-import { CateringToastSettingsError, linkOldOrders, loadOldOrders } from "@/lib/catering/catering-toast-settings";
+import { GET as GET_OLD, POST as POST_OLD } from "@/app/api/admin/catering/toast-settings/backfill/route";
+import { CateringToastSettingsError, loadBackfillStatus, runBackfillStep } from "@/lib/catering/catering-toast-settings";
 import { DEFAULT_CATERING_TOAST_SETTINGS as OFF, toSettingsRow } from "@/lib/catering/catering-toast-settings-shared";
-import { EMPTY_OLD_ORDERS } from "@/lib/catering/catering-toast-old-orders-shared";
+import { EMPTY_BACKFILL_STATUS } from "@/lib/catering/catering-toast-backfill-shared";
 
 const PATH = "/api/admin/catering/toast-settings";
-const OLD = `${PATH}/old-orders`;
+const OLD = `${PATH}/backfill`;
 const LOC = "1c000000-0000-4000-8000-000000000002";
 const cookie = { cookie: `${SESSION_COOKIE_NAME}=jwt` };
 const visit = async (path: string) => {
@@ -65,7 +65,7 @@ function seed(role: string) {
     catering_toast_settings: [],
   }, { set_catering_toast_settings: save, catering_toast_settings_ready: ready });
 }
-beforeEach(() => { seed("moo"); vi.mocked(audit).mockClear(); vi.mocked(loadOldOrders).mockReset(); vi.mocked(linkOldOrders).mockReset(); });
+beforeEach(() => { seed("moo"); vi.mocked(audit).mockClear(); vi.mocked(loadBackfillStatus).mockReset(); vi.mocked(runBackfillStep).mockReset(); });
 const code = async (res: Response) => { const body = (await res.json()) as { code?: string; error?: string }; return body.code ?? body.error; };
 
 describe("POST the settings: same-origin, the role, Tier B, the strict parse, the writer", () => {
@@ -126,7 +126,9 @@ describe("POST the settings: same-origin, the role, Tier B, the strict parse, th
 
   it("a body that is not the whole row is 400 before the writer", async () => {
     await unlockStepUp("session-1");
-    for (const body of [{ ...SAVE, values: { enabled: true } }, { ...SAVE, extra: 1 }, { ...SAVE, values: { ...VALUES, note: "x" } }, []]) {
+    for (const body of [{ ...SAVE, values: { enabled: true } }, { ...SAVE, extra: 1 }, { ...SAVE, values: { ...VALUES, note: "x" } }, [],
+      // review PORTAL5-r1: a date that looks like one and is not is a 400, never a thrown RangeError (500).
+      { ...SAVE, values: { ...VALUES, autoLinkFromDate: "2026-13-01" } }, { ...SAVE, values: { ...VALUES, autoLinkFromDate: "2026-01-32" } }, { ...SAVE, values: { ...VALUES, autoLinkFromDate: "2026-02-30" } }]) {
       const res = await POST(post(PATH, body));
       expect([res.status, await code(res)]).toEqual([400, "invalid_settings"]);
     }
@@ -161,51 +163,55 @@ describe("GET the settings", () => {
   });
 });
 
-describe("the old orders: GET the matches, POST one batch (Tier A)", () => {
+describe("the older orders: GET the status, POST one step (Tier A)", () => {
+  const STEP = { phase: "linked" as const, from: "2025-10-06", to: "2025-12-05", examined: 0, pendingOrders: 0, added: 3, ringCode: 0, toastOrigin: 3, skipped: { owned: 1 }, next: "2025-12-06" };
   it("GET: the role, a shop id, then the lib", async () => {
-    vi.mocked(loadOldOrders).mockResolvedValue(EMPTY_OLD_ORDERS("ready"));
+    vi.mocked(loadBackfillStatus).mockResolvedValue(EMPTY_BACKFILL_STATUS("ready", "2025-10-01"));
     const res = await GET_OLD(get(`${OLD}?location=${LOC}`));
     expect(res.status).toBe(200);
-    expect(vi.mocked(loadOldOrders).mock.calls[0]![1]).toBe(LOC);
+    expect(vi.mocked(loadBackfillStatus).mock.calls[0]![1]).toBe(LOC);
     expect((await GET_OLD(get(`${OLD}?location=nope`))).status).toBe(400);
     expect((await GET_OLD(get(OLD))).status).toBe(400);
     seed("catering_mgr");
     expect((await GET_OLD(get(`${OLD}?location=${LOC}`))).status).toBe(403);
-    expect(loadOldOrders).toHaveBeenCalledTimes(1);
+    expect(loadBackfillStatus).toHaveBeenCalledTimes(1);
   });
 
   it("POST: another origin, a role outside the three, no password, a loose body are each refused before the lib", async () => {
-    vi.mocked(linkOldOrders).mockResolvedValue({ linked: 2, refused: {}, remaining: 0 });
-    expect(await code(await POST_OLD(post(OLD, { locationId: LOC, skip: 0 }, "https://evil.example")))).toBe("bad_origin");
-    expect(await code(await POST_OLD(post(OLD, { locationId: LOC, skip: 0 })))).toBe("step_up_required");
+    vi.mocked(runBackfillStep).mockResolvedValue(STEP);
+    expect(await code(await POST_OLD(post(OLD, { locationId: LOC, cursor: null }, "https://evil.example")))).toBe("bad_origin");
+    expect(await code(await POST_OLD(post(OLD, { locationId: LOC, cursor: null })))).toBe("step_up_required");
     await unlockStepUp("session-1");
-    for (const body of [{ locationId: LOC }, { locationId: LOC, skip: 0, pairs: [] }, { locationId: "x", skip: 0 }]) expect((await POST_OLD(post(OLD, body))).status).toBe(400);
+    for (const body of [{ locationId: LOC }, { locationId: LOC, cursor: null, pairs: [] }, { locationId: "x", cursor: null }, { locationId: LOC, cursor: "2026-13-01" }, { locationId: LOC, cursor: 4 }]) {
+      const res = await POST_OLD(post(OLD, body));
+      expect([JSON.stringify(body), res.status, await code(res)]).toEqual([JSON.stringify(body), 400, "invalid_settings"]);
+    }
     seed("gm");
     await unlockStepUp("session-1");
-    expect((await POST_OLD(post(OLD, { locationId: LOC, skip: 0 }))).status).toBe(403);
-    expect(linkOldOrders).not.toHaveBeenCalled();
+    expect((await POST_OLD(post(OLD, { locationId: LOC, cursor: null }))).status).toBe(403);
+    expect(runBackfillStep).not.toHaveBeenCalled();
   });
 
-  it("POST: one batch as the person who pressed, with the skip count and a deadline inside the route's; Tier A does not go stale", async () => {
-    vi.mocked(linkOldOrders).mockResolvedValue({ linked: 60, refused: { decision_moved: 1 }, remaining: 12 });
+  it("POST: one step as the person who pressed, with the date cursor and a deadline inside the route's; Tier A does not go stale", async () => {
+    vi.mocked(runBackfillStep).mockResolvedValue(STEP);
     await unlockStepUp("session-1");
     (h.db.tables.sessions as Array<Record<string, unknown>>)[0]!.step_up_unlocked_at = new Date(Date.now() - 600_000).toISOString();
     const before = Date.now();
-    const res = await POST_OLD(post(OLD, { locationId: LOC, skip: 3 }));
+    const res = await POST_OLD(post(OLD, { locationId: LOC, cursor: "2025-12-06" }));
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { result: unknown }).result).toEqual({ linked: 60, refused: { decision_moved: 1 }, remaining: 12 });
-    const [actor, shop, skip, deps] = vi.mocked(linkOldOrders).mock.calls[0]!;
-    expect([actor.user.id, actor.role, shop, skip]).toEqual(["user-1", "moo", LOC, 3]);
+    expect(((await res.json()) as { step: unknown }).step).toEqual(STEP);
+    const [actor, shop, cursor, deps] = vi.mocked(runBackfillStep).mock.calls[0]!;
+    expect([actor.user.id, actor.role, shop, cursor]).toEqual(["user-1", "moo", LOC, "2025-12-06"]);
     expect(deps!.deadlineAt!).toBeGreaterThanOrEqual(before + 40_000);
     expect(deps!.deadlineAt!).toBeLessThan(before + 60_000);
   });
 
   it("the lib's refusals keep their status and name", async () => {
-    vi.mocked(linkOldOrders).mockRejectedValue(new CateringToastSettingsError(409, "switch_needs_enabled"));
+    vi.mocked(runBackfillStep).mockRejectedValue(new CateringToastSettingsError(409, "backfill_needs_switch"));
     await unlockStepUp("session-1");
-    const res = await POST_OLD(post(OLD, { locationId: LOC, skip: 0 }));
-    expect([res.status, await code(res)]).toEqual([409, "switch_needs_enabled"]);
-    vi.mocked(loadOldOrders).mockRejectedValue(new CateringToastSettingsError(503, "settings_unavailable"));
+    const res = await POST_OLD(post(OLD, { locationId: LOC, cursor: null }));
+    expect([res.status, await code(res)]).toEqual([409, "backfill_needs_switch"]);
+    vi.mocked(loadBackfillStatus).mockRejectedValue(new CateringToastSettingsError(503, "settings_unavailable"));
     const down = await GET_OLD(get(`${OLD}?location=${LOC}`));
     expect([down.status, down.headers.get("Retry-After")]).toEqual([503, "60"]);
   });

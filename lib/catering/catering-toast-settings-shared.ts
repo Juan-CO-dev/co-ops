@@ -12,6 +12,7 @@
  * Zero I/O. Client-safe.
  */
 import type { RoleCode } from "@/lib/roles";
+import { realDate } from "./catering-toast-backfill-shared";
 
 export const CATERING_TOAST_SETTINGS_ROLES: readonly RoleCode[] = ["owner", "cgs", "moo"];
 export const canManageCateringToastSettings = (role: RoleCode): boolean => CATERING_TOAST_SETTINGS_ROLES.includes(role);
@@ -71,7 +72,7 @@ export const fromSettingsRow = (r: SettingsRow): CateringToastSettingsValues => 
 export const SETTINGS_ERRORS = [
   "forbidden", "location_not_found", "invalid_settings", "settings_moved", "no_change",
   "switch_needs_enabled", "auto_needs_start_date", "origin_listing_needs_origin_link", "link_step_not_installed", "automatic_not_installed",
-  "settings_unavailable", "step_up_required", "step_up_stale",
+  "backfill_needs_switch", "settings_unavailable", "step_up_required", "step_up_stale",
 ] as const;
 export type SettingsError = (typeof SETTINGS_ERRORS)[number];
 export function settingsErrorKey(code: unknown): `admin.catering.toast.error.${string}` {
@@ -94,7 +95,6 @@ export const sameSettings = (a: CateringToastSettingsValues, b: CateringToastSet
   SETTINGS_SWITCHES.every((k) => a[k] === b[k]) && a.toleranceCents === b.toleranceCents && a.tolerancePct === b.tolerancePct && a.autoLinkFromDate === b.autoLinkFromDate;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const realDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 export const MAX_TOLERANCE_CENTS = 100_000;
 
 export interface SettingsSave { locationId: string; values: CateringToastSettingsValues; expectedUpdatedAt: string | null }
@@ -114,7 +114,8 @@ export function parseSettingsSave(raw: unknown): SettingsSave | null {
   const cents = values.toleranceCents, pct = values.tolerancePct, from = values.autoLinkFromDate;
   if (typeof cents !== "number" || !Number.isInteger(cents) || cents < 0 || cents > MAX_TOLERANCE_CENTS) return null;
   if (typeof pct !== "number" || !Number.isFinite(pct) || pct < 0 || pct > 1 || Math.round(pct * 1000) / 1000 !== pct) return null;
-  if (from !== null && (typeof from !== "string" || !realDate(from))) return null;
+  // A date that looks like one and is not (2026-13-01, 2026-02-30) is refused here, never thrown (review PORTAL5-r1).
+  if (from !== null && !realDate(from)) return null;
   return {
     locationId: body.locationId.toLowerCase(), expectedUpdatedAt: body.expectedUpdatedAt as string | null,
     values: { enabled: values.enabled as boolean, ringCodeEnabled: values.ringCodeEnabled as boolean, autoLinkEnabled: values.autoLinkEnabled as boolean,

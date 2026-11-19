@@ -135,10 +135,10 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // Item 2 (0340): the payroll shop re-allocates salaried labor cost (a backdated row re-prices history): Tier B.
   "app/api/admin/labor/payroll-shop/route.ts": ["B"],
   "app/api/admin/labor/burden/route.ts": ["B"],
-  // Item 21 PR 5 (0350): a shop's catering / Toast switches turn automatic linking on: Tier B. Confirming the old
-  // orders links many checks in batches that outlast Tier B's two minutes: Tier A (the password once).
+  // Item 21 PR 5 (0350): a shop's catering / Toast switches turn automatic linking on: Tier B. Matching the older
+  // orders is many steps that outlast Tier B's two minutes: Tier A (the password once).
   "app/api/admin/catering/toast-settings/route.ts": ["B"],
-  "app/api/admin/catering/toast-settings/old-orders/route.ts": ["A"],
+  "app/api/admin/catering/toast-settings/backfill/route.ts": ["A"],
   // Item 4 PR 2 (0343): marking a demand-signal source verified / revoked opens or closes what may be ingested and used: Tier B.
   "app/api/admin/demand-signals/sources/mark/route.ts": ["B"],
   // Scheduling Phase 1 (Task 16): the people settings (skill tunables MoO+, shop settings) take the Tier E edit

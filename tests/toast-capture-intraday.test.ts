@@ -16,7 +16,7 @@ beforeEach(() => {
     abortSignal: async () => ({ data: [{ id: "shop" }], error: null }) };
   reconcile.mockResolvedValue({ error: null });
   vi.mocked(runHouseCateringToast).mockResolvedValue({ shops: 0, added: 0, ringCode: 0, toastOrigin: 0, evidencePending: 0, codes: 0, failed: 0 });
-  vi.mocked(coverHouseNoteEvidence).mockResolvedValue({ lookups: 0, failed: 0 });
+  vi.mocked(coverHouseNoteEvidence).mockResolvedValue({ lookups: 0, examined: 0, failed: 0 });
   rpc.mockReturnValue({ abortSignal: reconcile });
   vi.mocked(getServiceRoleClient).mockReturnValue({ from: () => query, rpc } as unknown as ReturnType<typeof getServiceRoleClient>);
 });
@@ -103,7 +103,7 @@ it("uses the smaller remaining route budget and skips when it is exhausted", asy
 const HOUSE = { shops: 1, added: 2, ringCode: 2, toastOrigin: 0, evidencePending: 0, codes: 0, failed: 0 };
 it("examines the unexamined captures BEFORE either reconciler, then runs the house reconciler after the ezCater one returned", async () => {
   const order: string[] = [];
-  vi.mocked(coverHouseNoteEvidence).mockImplementation(async () => { order.push("lookup"); return { lookups: 1, failed: 0 }; });
+  vi.mocked(coverHouseNoteEvidence).mockImplementation(async () => { order.push("lookup"); return { lookups: 1, examined: 1, failed: 0 }; });
   reconcile.mockImplementation(async () => { await Promise.resolve(); order.push("ezcater"); return { error: null }; });
   vi.mocked(runHouseCateringToast).mockImplementation(async () => { order.push("house"); return HOUSE; });
   expect(await captureIntraday("2026-10-07")).toMatchObject({ failures: 0, cateringToast: { added: 2 } });

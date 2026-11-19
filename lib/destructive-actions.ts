@@ -81,6 +81,9 @@ export const DESTRUCTIVE_ACTIONS = [
   // Item 21 PR 5 (0350, written in SQL in the save's own transaction): a person changed a shop's catering ↔ Toast
   // switches (the list, ring codes, automatic linking, its start date, the amount tolerance).
   "catering.toast_settings_update",
+  // Item 21 PR 5: a person ran the house reconciler over an OLDER stretch of orders (the cron only looks at the last
+  // nine days) and it added links. The links' own record is catering.toast_reconciled; this names who started it.
+  "catering.toast_backfill",
   // W23/B129, owner decision W23-4 b — SQL-only (migration 0330): an EMPTY duplicate catering company
   // (no domain, no contact, a same-name company created after it) is switched off (active = false,
   // reversible). One row per company, destructive literally true, actor_context migration_apply.

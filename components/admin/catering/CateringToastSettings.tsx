@@ -8,9 +8,9 @@
  *  - Save asks for the password every time (Tier B), then posts the shop's WHOLE row with the `updated_at` the person
  *    saw. Someone else's change in between is refused "Someone else just changed this" and the page reloads the row.
  *  - What cannot be saved is said before the press: `settingsRefusal` is the writer's own dependency rule (0350).
- *  - "Orders not matched yet" (a shop that is on): the person asks for the matches, sees how many checks the system is
- *    sure about and why the rest were left, and confirms them in one step (Tier A). Each is an ordinary human link.
- *    The server recomputes the list for every batch; this component never sends pairs.
+ *  - "Match older orders" (a shop with an automatic switch on): the cron only looks at the last nine days, so this runs
+ *    the same reconciler over older stretches, from the shop's start date to today (Tier A, one step per request, the
+ *    cursor is a date the server hands back). This component decides nothing and never sends an order or a check.
  * en + es (tú); 44 px controls with items-center; flex-wrap rows for a 375 px phone; useState only.
  */
 import { useId, useState } from "react";
@@ -19,13 +19,13 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { useTranslation } from "@/lib/i18n/provider";
-import { formatCents, formatDateLabel } from "@/lib/i18n/format";
+import { formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import {
   MAX_TOLERANCE_CENTS, SETTINGS_SWITCHES, sameSettings, settingsErrorKey, settingsRefusal,
   type CateringToastSettingsValues, type CateringToastShopCard, type SettingsReadiness, type SettingsSwitch,
 } from "@/lib/catering/catering-toast-settings-shared";
-import { OLD_ORDER_SKIPS, type OldOrdersLinkResult, type OldOrdersView } from "@/lib/catering/catering-toast-old-orders-shared";
+import { BACKFILL_SKIPS, type BackfillSkip, type BackfillStatus, type BackfillStep } from "@/lib/catering/catering-toast-backfill-shared";
 
 const BUTTON = "inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 px-3 text-sm font-bold disabled:opacity-60";
 const PRIMARY = `${BUTTON} border-co-gold-deep bg-co-gold text-co-text`;
@@ -35,11 +35,13 @@ const SWITCH_KEY: Record<SettingsSwitch, string> = {
   enabled: "enabled", ringCodeEnabled: "ring_code", autoLinkEnabled: "auto_link", originAutoLinkEnabled: "origin_auto_link", includeToastOriginLeads: "list_origin",
 };
 const k = (key: string) => `admin.catering.toast.${key}` as TranslationKey;
+/** A backfill is a few stretches, each a handful of steps: this only stops a loop that could never end. */
+const BACKFILL_MAX_STEPS = 400;
 
-export function CateringToastSettings({ shops, readiness, initialOpen = null, initialOldOrders = null }: {
+export function CateringToastSettings({ shops, readiness, initialOpen = null, initialBackfill = null }: {
   shops: readonly CateringToastShopCard[]; readiness: SettingsReadiness;
-  /** SSR tests only: a shop whose form starts open, and a loaded old-orders answer. */
-  initialOpen?: string | null; initialOldOrders?: { locationId: string; view: OldOrdersView } | null;
+  /** SSR tests only: a shop whose form starts open, and a loaded backfill status. */
+  initialOpen?: string | null; initialBackfill?: { locationId: string; status: BackfillStatus } | null;
 }) {
   const { t } = useTranslation();
   return <div className="grid gap-4">
@@ -47,7 +49,7 @@ export function CateringToastSettings({ shops, readiness, initialOpen = null, in
     {readiness.linkStep && !readiness.automatic && <p role="status" className="co-card p-4 text-sm text-co-text-muted">{t(k("not_ready.automatic"))}</p>}
     <ul className="grid gap-4">
       {shops.map((shop) => <ShopCard key={shop.locationId} shop={shop} readiness={readiness} startOpen={initialOpen === shop.locationId}
-        initialOldOrders={initialOldOrders?.locationId === shop.locationId ? initialOldOrders.view : null} />)}
+        initialBackfill={initialBackfill?.locationId === shop.locationId ? initialBackfill.status : null} />)}
     </ul>
   </div>;
 }
@@ -63,7 +65,7 @@ function summary(v: CateringToastSettingsValues, t: (key: TranslationKey, vars?:
   return parts.join(" · ");
 }
 
-function ShopCard({ shop, readiness, startOpen, initialOldOrders }: { shop: CateringToastShopCard; readiness: SettingsReadiness; startOpen: boolean; initialOldOrders: OldOrdersView | null }) {
+function ShopCard({ shop, readiness, startOpen, initialBackfill }: { shop: CateringToastShopCard; readiness: SettingsReadiness; startOpen: boolean; initialBackfill: BackfillStatus | null }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
@@ -167,88 +169,80 @@ function ShopCard({ shop, readiness, startOpen, initialOldOrders }: { shop: Cate
       </div>
     </form>
 
-    {shop.values.enabled && readiness.linkStep && <OldOrders shop={shop} initial={initialOldOrders} />}
+    {/* Offered only where it can run: the shop is on, an automatic switch and its start date are SAVED, and 0348 is installed. */}
+    {shop.values.enabled && (shop.values.autoLinkEnabled || shop.values.originAutoLinkEnabled) && shop.values.autoLinkFromDate !== null
+      && readiness.linkStep && readiness.automatic && <Backfill shop={shop} initial={initialBackfill} />}
   </li>;
 }
 
-function OldOrders({ shop, initial }: { shop: CateringToastShopCard; initial: OldOrdersView | null }) {
+function Backfill({ shop, initial }: { shop: CateringToastShopCard; initial: BackfillStatus | null }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const post = useStepUpPost();
   const sectionId = useId();
-  const [view, setView] = useState<OldOrdersView | null>(initial);
+  const [status, setStatus] = useState<BackfillStatus | null>(initial);
   const [open, setOpen] = useState(initial !== null);
-  const [busy, setBusy] = useState<"find" | "link" | null>(null);
+  const [busy, setBusy] = useState<"status" | "run" | null>(null);
   const [error, setError] = useState<TranslationKey | null>(null);
-  const [progress, setProgress] = useState<{ linked: number; refused: Record<string, number> } | null>(null);
-  const money = (cents: number | null) => (cents === null ? t(k("old.amount_unknown")) : formatCents(cents, language));
+  const [progress, setProgress] = useState<{ phase: BackfillStep["phase"]; added: number; pending: number; skipped: Partial<Record<BackfillSkip, number>> } | null>(null);
+  const start = shop.values.autoLinkFromDate ? formatDateLabel(shop.values.autoLinkFromDate, language) : "—";
 
-  async function find() {
-    setBusy("find"); setError(null);
+  async function check() {
+    setBusy("status"); setError(null);
     try {
-      const res = await fetch(`/api/admin/catering/toast-settings/old-orders?location=${shop.locationId}`, { redirect: "error" });
-      const body = (await res.json().catch(() => ({}))) as { oldOrders?: OldOrdersView; code?: string };
-      if (!res.ok || !body.oldOrders) { setError(settingsErrorKey(body.code) as TranslationKey); return; }
-      setView(body.oldOrders);
+      const res = await fetch(`/api/admin/catering/toast-settings/backfill?location=${shop.locationId}`, { redirect: "error" });
+      const body = (await res.json().catch(() => ({}))) as { status?: BackfillStatus; code?: string };
+      if (!res.ok || !body.status) { setError(settingsErrorKey(body.code) as TranslationKey); return; }
+      setStatus(body.status);
     } catch { setError(settingsErrorKey("generic") as TranslationKey); }
     finally { setBusy(null); }
   }
-  async function link() {
-    setBusy("link"); setError(null);
-    const total = { linked: 0, refused: {} as Record<string, number> };
+  async function run() {
+    setBusy("run"); setError(null);
+    const total = { phase: "checking" as BackfillStep["phase"], added: 0, pending: 0, skipped: {} as Partial<Record<BackfillSkip, number>> };
     try {
       if (await requestStepUp("A") !== "ok") return;
-      // One batch per request; go on while a batch still links something and something is left.
-      for (let skip = 0, batch = 0; batch < 100; batch += 1) {
-        const r = await post("/api/admin/catering/toast-settings/old-orders", { locationId: shop.locationId, skip });
+      // One step per request. The cursor is a date the server hands back; a "checking" step repeats its own stretch.
+      for (let cursor: string | null = null, steps = 0; steps < BACKFILL_MAX_STEPS; steps += 1) {
+        const r = await post("/api/admin/catering/toast-settings/backfill", { locationId: shop.locationId, cursor });
         if (!r.ok) { setError(settingsErrorKey(r.code) as TranslationKey); break; }
-        const result = r.data.result as OldOrdersLinkResult;
-        total.linked += result.linked;
-        for (const [code, n] of Object.entries(result.refused)) { total.refused[code] = (total.refused[code] ?? 0) + n; skip += n; }
-        setProgress({ linked: total.linked, refused: { ...total.refused } });
-        if (result.remaining <= 0 || (result.linked === 0 && Object.keys(result.refused).length === 0)) break;
+        const step = r.data.step as BackfillStep;
+        total.phase = step.phase; total.added += step.added; total.pending = step.pendingOrders;
+        for (const reason of BACKFILL_SKIPS) if (step.skipped[reason]) total.skipped[reason] = (total.skipped[reason] ?? 0) + step.skipped[reason]!;
+        setProgress({ ...total, skipped: { ...total.skipped } });
+        if (step.next === null) break;
+        cursor = step.next;
       }
     } finally {
       setBusy(null);
-      await find();
+      await check();
       router.refresh();
     }
   }
 
-  const refusedTotal = progress ? Object.values(progress.refused).reduce((a, b) => a + b, 0) : 0;
-  const skipped = view ? OLD_ORDER_SKIPS.filter((reason) => view.skipped[reason] > 0) : [];
-  // Collapsed by default (secondary content); it cannot be closed while a batch is running.
-  return <CollapsibleSection idBase={sectionId} title={t(k("old.title"))} count={view?.state === "ready" ? t(k("old.count"), { n: view.orders }) : undefined}
+  const skipped = progress ? BACKFILL_SKIPS.filter((reason) => (progress.skipped[reason] ?? 0) > 0) : [];
+  // Collapsed by default (secondary content); it cannot be closed while a run is going.
+  return <CollapsibleSection idBase={sectionId} title={t(k("backfill.title"))} count={status && status.state !== "not_installed" ? t(k("backfill.count"), { n: status.unmatched }) : undefined}
     open={open} onToggle={() => { if (busy === null) setOpen(!open); }}>
     <div className="grid gap-3 text-sm text-co-text">
-      <p className="text-co-text-muted">{t(k("old.intro"))}</p>
+      <p className="text-co-text-muted">{t(k("backfill.intro"), { date: start })}</p>
       {error && <p role="alert" className="font-bold text-co-cta-text">{t(error)}</p>}
-      {busy === "find" && <p role="status">{t(k("old.finding"))}</p>}
-      {busy === "link" && <p role="status">{t(k("old.linking"), { n: progress?.linked ?? 0 })}</p>}
-      {progress && busy === null && <p role="status" className="font-bold text-co-confirm-text">{t(k("old.linked"), { n: progress.linked })}</p>}
-      {progress && busy === null && refusedTotal > 0 && <p role="status" className="text-co-warning-text">{t(k("old.refused"), { n: refusedTotal })}</p>}
-      {view?.state === "ready" && <>
-        <p>{t(k("old.found"), { orders: view.orders, matched: view.ordersMatched, checks: view.checks })}</p>
-        {view.sample.length > 0 && <ul className="grid gap-1">
-          {view.sample.map((m) => <li key={`${m.leadId}|${m.checkGuid}`} className="flex flex-wrap gap-x-2">
-            <span className="font-bold">{formatDateLabel(m.eventDate, language)}</span>
-            <span>{t(k("old.row"), { value: money(m.valueCents), check: money(m.checkTotalCents), date: formatDateLabel(m.businessDate, language) })}</span>
-            <span className="text-co-text-muted">{t(k(`old.evidence.${m.evidence}`))}</span>
-            {m.amountMismatch && <span className="text-co-warning-text">{t(k("old.amount_differs"))}</span>}
-          </li>)}
-          {view.checks > view.sample.length && <li className="text-co-text-muted">{t(k("old.more"), { n: view.checks - view.sample.length })}</li>}
-        </ul>}
-        {skipped.length > 0 && <ul className="grid gap-1 text-co-text-muted">
-          {skipped.map((reason) => <li key={reason}>{t(k(`old.skipped.${reason}`), { n: view.skipped[reason] })}</li>)}
-        </ul>}
-      </>}
-      {view?.state === "off" && <p className="text-co-warning-text">{t(settingsErrorKey("switch_needs_enabled") as TranslationKey)}</p>}
-      {view?.state === "not_installed" && <p className="text-co-warning-text">{t(settingsErrorKey("link_step_not_installed") as TranslationKey)}</p>}
+      {busy === "status" && <p role="status">{t(k("backfill.checking_status"))}</p>}
+      {busy === "run" && <p role="status">{progress?.phase === "checking" ? t(k("backfill.checking_notes"), { n: progress.pending }) : t(k("backfill.linking"), { n: progress?.added ?? 0 })}</p>}
+      {progress && busy === null && <p role="status" className="font-bold text-co-confirm-text">{t(k("backfill.linked"), { n: progress.added })}</p>}
+      {progress && busy === null && skipped.length > 0 && <div className="grid gap-1 text-co-text-muted">
+        <p>{t(k("backfill.left"))}</p>
+        <ul className="grid gap-1">{skipped.map((reason) => <li key={reason}>{t(k(`backfill.skipped.${reason}`), { n: progress.skipped[reason] ?? 0 })}</li>)}</ul>
+      </div>}
+      {status?.state === "ready" && <p>{t(k("backfill.status"), { unmatched: status.unmatched, from: status.fromStart, before: status.beforeStart, date: start })}</p>}
+      {status?.state === "no_switch" && <p className="text-co-warning-text">{t(settingsErrorKey("backfill_needs_switch") as TranslationKey)}</p>}
+      {status?.state === "off" && <p className="text-co-warning-text">{t(settingsErrorKey("switch_needs_enabled") as TranslationKey)}</p>}
+      {status?.state === "not_installed" && <p className="text-co-warning-text">{t(settingsErrorKey("automatic_not_installed") as TranslationKey)}</p>}
       <div className="flex flex-wrap gap-2">
-        <button type="button" className={QUIET} disabled={busy !== null} onClick={() => void find()}>{t(k(view ? "old.find_again" : "old.find"))}</button>
-        {view?.state === "ready" && view.checks > 0 && <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void link()}>
-          {t(k("old.link"), { n: view.checks })}</button>}
+        <button type="button" className={QUIET} disabled={busy !== null} onClick={() => void check()}>{t(k(status ? "backfill.check_again" : "backfill.check"))}</button>
+        {status?.state === "ready" && status.fromStart > 0 && <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void run()}>
+          {t(k("backfill.run"), { date: start })}</button>}
       </div>
     </div>
   </CollapsibleSection>;
