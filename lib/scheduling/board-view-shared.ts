@@ -9,6 +9,13 @@
  * labor % per hour, the labor card's $ lines. The wages are dropped before every maths except the labor card's HEADS
  * ("Lunch rush: 5 on, optimal 4–5"), whose output carries no $ field then (chunk C's pinned contract). Never per person.
  *
+ * TWO LABOR VIEWS (PR 3, dark behind SCHEDULE_LABOR_VIEWS): when `src.laborViews` is given (a money viewer with the
+ * switch on; `loadBoard` decides) the board STOPS PRICING LABOR. The strip's `money`, the tabs' `hourlyPct` and the labor
+ * card's own money maths are gone; the strip, the tabs, the day card and the heads maths read the labor facts' figures
+ * (`laborViews`, serialized as is). Labor $ and % per HOUR stay only for `subDayMoney` (MoO / Owner / CGS: the straight-time
+ * % by hour, labelled so, and the forecast $ by hour); everyone with views gets `hoursByHour` (the scheduled hours on the
+ * clock in each hour). Without `laborViews` every byte is what it was.
+ *
  * The board shows the HEAD exactly as saved (the historical contract): a day's coverage reads that day's own stored
  * context; an inherited day with no context still shows its shifts and its recorded problems.
  */
@@ -20,7 +27,8 @@ import {
 } from "./board-shared";
 import type { BudgetForDates, BudgetSuggestion } from "./budget-shared";
 import type { AdvisoryItem, DayContext, RuleContext, RulePerson } from "./context-shared";
-import { laborTarget, type LaborTarget } from "./labor-target-shared";
+import { laborTarget, type LaborTarget, type LaborTargetViews } from "./labor-target-shared";
+import type { BoardLaborViews } from "./labor-projection-shared";
 import { skillOf, type SchedSkillBand, type SkillLookup } from "./people-input-shared";
 import { shiftKey, type Reason, type ShiftReasons } from "./reasons-shared";
 import { MOD, approvalRefusal, modCountsOn, shiftCountsAsMod, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
@@ -94,6 +102,17 @@ export interface BoardSource {
   suggestion: BudgetSuggestion | null;
   advisory: AdvisoryItem[];
   week: BoardWeekSource | null;
+  /** PR 3: the two labor views (present only for a money viewer with SCHEDULE_LABOR_VIEWS on; see the header). */
+  laborViews?: BoardLaborViewsInput;
+}
+
+/** PR 3: what the board needs to show the labor views. Only `views` is serialized; the rest decides what is shown. */
+export interface BoardLaborViewsInput {
+  views: BoardLaborViews;
+  /** labor $ and % per hour (`canSeeSubDayLaborMoney`: MoO / Owner / CGS by role) */
+  subDayMoney: boolean;
+  /** the live structure's target basis (`labor.basis`): which view the fully loaded target is cut for */
+  basis: "hourly" | "total";
 }
 
 export type BannerTone = "info" | "warn" | "danger";
@@ -171,7 +190,10 @@ export interface DayView {
   /** The demand curve as RELATIVE heights 0..1 (no $); `centsByHour` only with money permission. */
   curve: Array<{ hour: number; level: number }> | null;
   centsByHour?: Array<{ hour: number; cents: number }>;
+  /** With labor views on, null unless the viewer may see labor money per hour (then it is STRAIGHT time, labelled so). */
   laborByHour: LaborHour[] | null;
+  /** PR 3 (labor views on, money viewers): the scheduled hours on the clock in each shop hour. */
+  hoursByHour?: Array<{ hour: number; hours: number }>;
   coverage: CoverageCell[];
   positionOrder: string[];
   mod: ModLaneHour[];
@@ -206,6 +228,8 @@ export interface BoardView {
   approve: { allowed: boolean; refusal: "unresolved_gaps" | "rules_failing" | "forbidden" | "no_week" | "approved" | null };
   names: Record<string, string>;
   positions: Record<string, PositionLabel>;
+  /** PR 3: the two labor views (money viewers, SCHEDULE_LABOR_VIEWS on); absent otherwise. */
+  laborViews?: BoardLaborViews;
 }
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -345,10 +369,30 @@ function rowsFor(src: BoardSource, week: BoardWeekSource, date: string, ctx: Day
   return rows.sort((a, b) => (a.shifts[0]?.startQ ?? 0) - (b.shifts[0]?.startQ ?? 0) || cmp(a.name, b.name) || cmp(a.userId, b.userId));
 }
 
+/** PR 3: the scheduled hours on the clock in each shop hour (every person, MoD time included). */
+function hoursByHourOf(hours: readonly number[], shifts: readonly Shift[]): Array<{ hour: number; hours: number }> {
+  return hours.map((hour) => {
+    let q = 0;
+    for (const sh of shifts) q += Math.max(0, Math.min(sh.endQ, (hour + 1) * Q_PER_HOUR) - Math.max(sh.startQ, hour * Q_PER_HOUR));
+    return { hour, hours: q / Q_PER_HOUR };
+  });
+}
+
+/** PR 3: the labor card's input for one date: the day's labor-views figure, or the named state when there is none. */
+function viewsCardInput(lv: BoardLaborViewsInput, date: string): { errand: LaborTarget } | { views: LaborTargetViews } {
+  if (lv.views.state !== "ready") return { errand: { state: "views_unknown", errand: { key: `schedule.labor_views.state.${lv.views.state}` } } };
+  const d = lv.views.days.find((x) => x.date === date);
+  if (!d) return { errand: { state: "views_unknown", errand: { key: "schedule.labor_views.reason.hours_unknown" } } };
+  return { views: { kind: d.kind, figure: d, basis: lv.basis, targets: lv.views.targets } };
+}
+
 function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: Map<string, number>, wages: Record<string, number | null>, gaps: GapLine[], showDeletedUsualShifts: boolean): DayView {
   const ctx = week.dayContexts[date] ?? null;
   const record = week.days.find((d) => d.date === date);
   const money = src.perms.canSeeMoney;
+  const lv = money ? src.laborViews : undefined;
+  // With labor views, money per HOUR only for the sub-day viewer (MoO / Owner / CGS).
+  const hourMoney = money && (!lv || lv.subDayMoney);
   const shifts = week.shifts.filter((sh) => sh.date === date);
   const notes: NarrativeLine[] = [];
   if (week.historicalCrewDates?.includes(date)) notes.push({ key: "schedule.note.crew_history_preserved" });
@@ -398,7 +442,8 @@ function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: M
   const peak = curve ? Math.max(0, ...curve.map((c) => c.cents)) : 0;
   const s = ctx.structure;
   const strength = teamStrength(week.shifts, date, week.people, s, src.skills, ctx.dayType, ctx.scheduledOutQ).map(({ mean: _mean, ...w }) => w);
-  const labor = laborTarget({
+  const card = lv ? viewsCardInput(lv, date) : null;
+  const labor = card && "errand" in card ? card.errand : laborTarget({
     date, demand: src.demand === "unavailable" && ctx.inputs.demandKind !== "ok" ? { kind: "unavailable" }
       : ctx.inputs.demandKind === "ok" && ctx.inputs.hourlyCents && ctx.inputs.dayCents !== null ? { kind: "ok", hourlyCents: ctx.inputs.hourlyCents, dayCents: ctx.inputs.dayCents } : { kind: "no_history" },
     structure: s, need: ctx.need, windows: strengthWindows(s, ctx.dayType, ctx.scheduledOutQ).map((w) => ({ key: w.key, fromQ: w.fromQ, toQ: w.toQ })),
@@ -406,13 +451,15 @@ function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: M
     // (labor-target-shared's contract, pinned in chunk C), so the AGM sees "Lunch rush: 5 on, optimal 4–5" and no dollar.
     shifts, people: week.people, wageCentsByUser: src.wageCentsByUser, shopEstimateHourlyCents: src.shopEstimateHourlyCents,
     salariedWeeklyCents: src.salariedWeeklyCents, weekForecastCents: src.forecastWeekCents,
-  }, { canSeeMoney: money });
+    ...(card && "views" in card ? { views: card.views } : {}),
+  }, { canSeeMoney: money, windowDetail: hourMoney });
   return {
     ...base,
     hours: shopHours(ctx),
     curve: curve ? curve.map((c) => ({ hour: c.hour, level: peak > 0 ? round2(c.cents / peak) : 0 })) : null,
-    ...(money && curve ? { centsByHour: curve } : {}),
-    laborByHour: laborPctByHour(input, { canSeeMoney: money }),
+    ...(hourMoney && curve ? { centsByHour: curve } : {}),
+    laborByHour: laborPctByHour(input, { canSeeMoney: hourMoney }),
+    ...(lv ? { hoursByHour: hoursByHourOf(shopHours(ctx), shifts) } : {}),
     coverage: coverageCells(input),
     positionOrder: positionIds(s),
     mod: modLane(input),
@@ -427,6 +474,9 @@ function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: M
 
 export function boardView(src: BoardSource): BoardView {
   const money = src.perms.canSeeMoney;
+  // PR 3: with the labor views the board prices no labor itself (no strip money, no tab %): the views carry it.
+  const lv = money ? src.laborViews : undefined;
+  const boardPrices = money && !lv;
   // J1: wages never enter the maths of an actor who may not see money.
   const wages: Record<string, number | null> = money ? src.wageCentsByUser : {};
   const dates = weekDays(src.weekStart);
@@ -458,13 +508,14 @@ export function boardView(src: BoardSource): BoardView {
       week: null, strip: null, budgetLines: src.budget.lines, suggestion: src.perms.canBudget ? src.suggestion : null, advisory: [],
       tabs: dates.map((date) => ({ date, dayType: null, locked: date < src.today })), days: [],
       rules: { fresh: [], inherited: [] }, gaps: [], approve: { allowed: false, refusal: "no_week" }, names: src.names, positions: src.positions,
+      ...(lv ? { laborViews: lv.views } : {}),
     };
   }
 
   const ctx = ruleContext(src, week);
   const weekQ = new Map<string, number>();
   for (const sh of week.shifts) weekQ.set(sh.userId, (weekQ.get(sh.userId) ?? 0) + (sh.endQ - sh.startQ));
-  const strip = moneyStrip({ dates, shifts: week.shifts, ctx, wageCentsByUser: wages, forecastWeekCents: money ? src.forecastWeekCents : null, salariedWeeklyCents: money ? src.salariedWeeklyCents : null, overtimeMultiplier: money ? src.overtimeMultiplier ?? null : null }, { canSeeMoney: money });
+  const strip = moneyStrip({ dates, shifts: week.shifts, ctx, wageCentsByUser: boardPrices ? wages : {}, forecastWeekCents: boardPrices ? src.forecastWeekCents : null, salariedWeeklyCents: boardPrices ? src.salariedWeeklyCents : null, overtimeMultiplier: boardPrices ? src.overtimeMultiplier ?? null : null }, { canSeeMoney: boardPrices });
   const gaps = gapLines(week);
   const problems = problemLines(week);
   const headProblems: RuleProblem[] = week.days.flatMap((d) => d.problems.map((p) => ({ ...p, inherited: d.inherited || p.inherited })));
@@ -476,11 +527,12 @@ export function boardView(src: BoardSource): BoardView {
     generate: { disabled: src.demand === "unavailable" || !src.perms.canEdit, expectedHead: week.headRevisionId, edited: week.edited || (src.liveEngine === "crew" && !!week.historicalCrewDates?.some((d) => d >= src.today)), engine: src.liveEngine, historicalEditedDates: src.liveEngine === "crew" ? week.historicalCrewDates?.filter((d) => d >= src.today) : [] },
     week: { headRevisionId: week.headRevisionId, approved, edited: week.edited },
     strip, budgetLines: src.budget.lines, suggestion: src.perms.canBudget ? src.suggestion : null, advisory,
-    tabs: dayTabs({ dates, today: src.today, ctx, shifts: week.shifts, wageCentsByUser: wages }, { canSeeMoney: money }),
+    tabs: dayTabs({ dates, today: src.today, ctx, shifts: week.shifts, wageCentsByUser: boardPrices ? wages : {} }, { canSeeMoney: boardPrices }),
     days: dates.map((d) => dayView(src, week, d, weekQ, wages, gaps, d === week.days.find((day) => !day.inherited)?.date)),
     rules: { fresh: problems.filter((p) => !p.inherited), inherited: problems.filter((p) => p.inherited) },
     gaps,
     approve: { allowed: approveRefusal === null, refusal: approveRefusal },
     names: src.names, positions: src.positions,
+    ...(lv ? { laborViews: lv.views } : {}),
   };
 }

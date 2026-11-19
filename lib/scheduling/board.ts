@@ -14,10 +14,11 @@
  * TWO LABOR VIEWS (PR 1, dark): with SCHEDULE_LABOR_VIEWS=1 (and FACT_LAYER=1, FACT_LAYER_LABOR=1) a MONEY viewer's
  * board also carries `laborViews`: each day and the week priced by the labor facts' own SQL body and pricer (settled
  * days = the facts over the Sales report's net; today and later = the schedule over the forecast; never blended).
- * The board's existing strip and labor card are untouched until PR 3. Off, or for anyone else, the key is ABSENT and
- * no labor read is made.
+ * PR 3: with them the board STOPS pricing labor (no strip money, no tab %, the labor card's heads maths over the views'
+ * figures, labor $ / % per hour only for MoO / Owner / CGS). Off, or for anyone else, the key is ABSENT, no labor read is
+ * made and every byte of the board is what it was.
  */
-import { canApproveSchedule, canEditStructure, canManageShopSwitch, canSeeScheduleMoney, scheduleActRefusal } from "./access-shared";
+import { canApproveSchedule, canEditStructure, canManageShopSwitch, canSeeScheduleMoney, canSeeSubDayLaborMoney, scheduleActRefusal } from "./access-shared";
 import type { PeopleActor } from "@/lib/people/access-shared";
 import { operationalNow } from "@/lib/midshift-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
@@ -37,7 +38,7 @@ import { addDays, isoWeekStart, weekDays } from "./time-shared";
 import { laborWageFallback } from "@/lib/facts/labor-config-shared";
 import { laborTargetsFor } from "@/lib/facts/labor-cost-shared";
 import { loadBoardLaborViews, loadHeadShiftTimes, supabaseLaborReads, type LaborProjectionReads } from "./labor-projection";
-import { scheduleLaborViewsEnabled, type BoardLaborViews, type ScheduleLaborViewsEnv } from "./labor-projection-shared";
+import { scheduleLaborViewsEnabled, type ScheduleLaborViewsEnv } from "./labor-projection-shared";
 
 /** The shop's position labels (en + es). */
 export async function loadPositionLabelRows(service: ScheduleDeps["service"], locationId: string): Promise<Array<{ id: string; name: string; name_es: string | null }>> {
@@ -56,7 +57,7 @@ export async function loadOriginContexts(service: ScheduleDeps["service"], locat
 }
 
 export type BoardLoad = { state: "off"; canTurnOn: boolean; locationId: string } | { state: "not_installed" }
-  | ({ state: "ready" } & BoardView & { laborViews?: BoardLaborViews });
+  | ({ state: "ready" } & BoardView);
 
 /** The board loader's own injections (tests): the env the labor-views switch is read from, and the labor reads. */
 export interface BoardDeps extends ScheduleDeps {
@@ -154,10 +155,10 @@ export async function loadBoard(deps: BoardDeps, args: { actor: PeopleActor; loc
       shifts: head.shifts, days: head.days, gaps: head.gaps, reasons: head.reasons, dayContexts, people, closingWindowByDate: head.context.closingWindowByDate,
     } : null,
   };
-  const view = boardView(source);
-  // The two labor views (PR 1, dark): money viewers only; the switch is checked before any labor read.
+  // The two labor views (PR 1 reads, PR 3 screens; dark): money viewers only; the switch is checked before any labor
+  // read. With them the board view prices no labor itself (board-view-shared's header); off, every byte is as before.
   const env = deps.env ?? (process.env as NonNullable<BoardDeps["env"]>);
-  if (!money || !scheduleLaborViewsEnabled(env)) return { state: "ready", ...view };
+  if (!money || !scheduleLaborViewsEnabled(env)) return { state: "ready", ...boardView(source) };
   const forecastCentsByDate: Record<string, number | null> = {};
   for (const date of dates) {
     const d = inputs.demand.kind === "ok" ? inputs.demand.days.find((x) => x.date === date) : undefined;
@@ -169,5 +170,6 @@ export async function loadBoard(deps: BoardDeps, args: { actor: PeopleActor; loc
     loadPrevShifts: () => loadHeadShiftTimes(deps.service, locationId, addDays(weekStart, -7)),
     forecastCentsByDate, targets: laborTargetsFor({ labor: structure.labor }), wageFallback: laborWageFallback(env.LABOR_WAGE_FALLBACK),
   });
-  return { state: "ready", ...view, laborViews };
+  const view = boardView({ ...source, laborViews: { views: laborViews, subDayMoney: canSeeSubDayLaborMoney(actor, locationId), basis: structure.labor.basis } });
+  return { state: "ready", ...view };
 }

@@ -290,9 +290,14 @@ export type BoardLaborReason = ProjectionGap | "hours_unknown" | "salary_incompl
 export interface BoardLaborFigure {
   /** worked / scheduled minutes (hourly + salaried presence); null = unknown, never 0 */
   minutes: number | null;
+  /** PR 3: the HOURLY part of `minutes` (the heads maths' blended straight wage = straightCents / these hours); null = unknown */
+  hourlyMinutes: number | null;
   otMinutes: number | null;
   straightCents: number | null; otPremiumCents: number | null; pureHourlyCents: number | null;
   salariedCents: number | null; burdenCents: number | null; fullyLoadedCents: number | null;
+  /** PR 3: the shop's burden % behind `burdenCents` (one number when every payroll week of the range reads the same, else
+   * null). A shop setting, never a wage: the heads maths' total-basis allowance divides by (1 + burden). */
+  burdenPct: number | null;
   /** `actual` = the Sales report's net sales; `forecast` = PROJECTED net sales (the scheduling forecast). Never mixed. */
   sales: { basis: "actual" | "forecast"; cents: number | null };
   pureHourlyPct: number | null; pureHourlyTone: LaborTone;
@@ -315,8 +320,8 @@ export interface BoardLaborViewsReady {
 export type BoardLaborViews = BoardLaborViewsReady | { state: "not_installed" | "rebuilding" | "unavailable" };
 
 const EMPTY: BoardLaborFigure = {
-  minutes: null, otMinutes: null, straightCents: null, otPremiumCents: null, pureHourlyCents: null, salariedCents: null, burdenCents: null,
-  fullyLoadedCents: null, sales: { basis: "actual", cents: null }, pureHourlyPct: null, pureHourlyTone: "none", fullyLoadedPct: null, fullyLoadedTone: "none",
+  minutes: null, hourlyMinutes: null, otMinutes: null, straightCents: null, otPremiumCents: null, pureHourlyCents: null, salariedCents: null, burdenCents: null,
+  fullyLoadedCents: null, burdenPct: null, sales: { basis: "actual", cents: null }, pureHourlyPct: null, pureHourlyTone: "none", fullyLoadedPct: null, fullyLoadedTone: "none",
   otState: null, rateEstimated: false, burdenEstimated: false, salaryProjected: false, salaryGaps: 0, reasons: [],
 };
 
@@ -353,9 +358,11 @@ export function laborFigure(input: FigureInput): BoardLaborFigure {
   const pct = laborPercents(view, denominator.cents, input.targets);
   return {
     minutes: input.rows.reduce((s, r) => s + Number(r.hourly_minutes) + Number(r.salaried_minutes), 0),
+    hourlyMinutes: input.rows.reduce((s, r) => s + Number(r.hourly_minutes), 0),
     otMinutes: overtimeKnown ? input.rows.reduce((s, r) => s + Number(r.ot_minutes), 0) : null,
     straightCents: moneyKnown ? view.hourlyStraightCents : null, otPremiumCents: pure === null ? null : view.otPremiumCents, pureHourlyCents: pure,
     salariedCents: view.salariedCents, burdenCents: pure === null ? null : view.burdenCents, fullyLoadedCents: pure === null ? null : view.fullyLoadedCents,
+    burdenPct: new Set(input.rows.map((r) => Number(r.burden_pct))).size === 1 ? Number(input.rows[0]!.burden_pct) : null,
     sales: { basis: input.basis, cents: denominator.cents },
     pureHourlyPct: pct.pureHourlyPct, pureHourlyTone: pct.pureHourlyTone, fullyLoadedPct: pct.fullyLoadedPct, fullyLoadedTone: pct.fullyLoadedTone,
     otState: view.otState, rateEstimated: view.rateEstimated, burdenEstimated: view.burdenEstimated, salaryProjected: view.salaryProjected,
@@ -375,7 +382,7 @@ export function untonedPartialWeek(f: BoardLaborFigure, days: number): BoardLabo
 }
 
 /** Every label a board labor-views reader shows (en + es, pinned by tests/schedule-labor-views-i18n.test.ts).
- * No UI ships in PR 1; these exist so PR 3's board is born translated. */
+ * PR 1 shipped the reasons, kinds and states; PR 3 the screens' own labels. */
 export const SCHEDULE_LABOR_VIEW_I18N_KEYS = [
   "schedule.labor_views.kind.actual", "schedule.labor_views.kind.projected", "schedule.labor_views.kind.not_settled", "schedule.labor_views.kind.no_schedule",
   "schedule.labor_views.sales.actual", "schedule.labor_views.sales.forecast",
@@ -387,4 +394,14 @@ export const SCHEDULE_LABOR_VIEW_I18N_KEYS = [
   "schedule.labor_views.reason.salary_unknown", "schedule.labor_views.reason.salary_rebuilding", "schedule.labor_views.reason.not_settled", "schedule.labor_views.reason.no_schedule",
   "schedule.labor_views.reason.sales_not_covered", "schedule.labor_views.reason.net_unknown", "schedule.labor_views.reason.ezcater_missing",
   "schedule.labor_views.reason.zero_sales", "schedule.labor_views.reason.forecast_missing", "schedule.labor_views.reason.partial_week",
+  // PR 3: the screens (the week strip, the day card, the day tabs, the timeline rows).
+  "schedule.labor_views.title.week", "schedule.labor_views.title.day", "schedule.labor_views.view.fully_loaded", "schedule.labor_views.view.pure_hourly",
+  "schedule.labor_views.target", "schedule.labor_views.detail",
+  "schedule.labor_views.row.hours", "schedule.labor_views.row.ot_hours", "schedule.labor_views.row.straight", "schedule.labor_views.row.premium",
+  "schedule.labor_views.row.pure_hourly", "schedule.labor_views.row.salaries", "schedule.labor_views.row.burden", "schedule.labor_views.row.burden_plain",
+  "schedule.labor_views.row.fully_loaded",
+  "schedule.labor_views.flag.rate_estimated", "schedule.labor_views.flag.burden_estimated", "schedule.labor_views.flag.salary_gaps",
+  "schedule.labor_views.strip.ot_estimated",
+  "schedule.labor_views.tab.actual", "schedule.labor_views.tab.projected", "schedule.labor_views.tab.loaded", "schedule.labor_views.tab.hourly",
+  "schedule.labor_views.timeline.hours", "schedule.labor_views.timeline.straight_pct", "schedule.labor_views.hour_money_note",
 ] as const;
