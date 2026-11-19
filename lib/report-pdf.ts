@@ -38,6 +38,11 @@ export interface PdfHeader {
 export interface PdfTable {
   /** Section heading (the accountant package has one table per section); null = none. */
   heading: string | null;
+  /** Never split into "Columns i of n": the columns are scaled to the page and their cells wrap (the business
+   * report's readable tables, each built to fit one page width). Absent = split when too wide, as before. */
+  fit?: boolean;
+  /** The cells are final words, written as they are (no CSV cell formatting). */
+  plain?: boolean;
   columns: readonly ExportColumn[];
   rows: readonly ExportRow[];
   /** Shown when the table has no rows (translated). */
@@ -51,12 +56,16 @@ export interface PdfOptions {
   partLabel?: (i: number, n: number) => string;
   /** Tests turn compression off so the content stream can be read. */
   compress?: boolean;
+  /** Page orientation; absent = landscape (every family before the business report's readable PDF). */
+  layout?: "portrait" | "landscape";
+  /** Body font size; absent = 7. */
+  fontSize?: number;
+  /** Blocks of wrapped text under the tables (a legend of footnote marks, a file's notes): a heading, then lines. */
+  trailer?: ReadonlyArray<{ heading: string; lines: readonly string[] }>;
 }
 
 const MARGIN = 32;
-const FONT_SIZE = 7;
-/** One text line at FONT_SIZE, the gap under a row, the cell padding, the footer band. */
-const LINE = 9;
+const DEFAULT_FONT_SIZE = 7;
 const ROW_GAP = 3;
 const CELL_PAD = 1.5;
 const FOOTER_SPACE = 14;
@@ -79,6 +88,13 @@ function headerLabel(key: string): string {
 
 type Doc = InstanceType<typeof PDFDocument>;
 
+/** One cell as text. A `plain` table holds words that are already final (the business report's readable PDF):
+ * they are written as they are; the CSV formatter's formula guard is for a spreadsheet, not for print. */
+function cellText(table: PdfTable, c: ExportColumn, row: ExportRow): string {
+  const v = row[c.key];
+  return pdfSafe(table.plain ? (v === null || v === undefined ? "" : String(v)) : formatCell(c.kind, v));
+}
+
 function fit(doc: Doc, text: string, width: number): string {
   if (doc.widthOfString(text) <= width) return text;
   let lo = 0;
@@ -92,12 +108,12 @@ function fit(doc: Doc, text: string, width: number): string {
 }
 
 /** Natural width per column (header vs the first 200 cells), clamped to [MIN_COL, MAX_COL]. */
-function naturalWidths(doc: Doc, table: PdfTable): number[] {
+function naturalWidths(doc: Doc, table: PdfTable, FONT_SIZE: number): number[] {
   return table.columns.map((c) => {
     doc.font(HEADER_FONT).fontSize(FONT_SIZE);
     let w = Math.min(doc.widthOfString(c.label ?? headerLabel(c.key)), 90);
     doc.font(BODY_FONT).fontSize(FONT_SIZE);
-    for (const row of table.rows.slice(0, 200)) w = Math.max(w, doc.widthOfString(pdfSafe(formatCell(c.kind, row[c.key]))));
+    for (const row of table.rows.slice(0, 200)) w = Math.max(w, doc.widthOfString(cellText(table, c, row)));
     return Math.min(MAX_COL, Math.max(MIN_COL, w + CELL_PAD * 2));
   });
 }
@@ -128,8 +144,11 @@ export function splitColumns(widths: number[], available: number, identity: read
 
 /** Render a report: header block on every page, wrapped cells with variable row heights, "Page n / N". */
 export async function renderReportPdf(header: PdfHeader, tables: readonly PdfTable[], options: PdfOptions): Promise<Buffer> {
+  const FONT_SIZE = options.fontSize ?? DEFAULT_FONT_SIZE;
+  /** One text line at FONT_SIZE. */
+  const LINE = FONT_SIZE + 2;
   const doc: Doc = new PDFDocument({
-    size: "LETTER", layout: "landscape", margin: MARGIN, bufferPages: true, compress: options.compress ?? true,
+    size: "LETTER", layout: options.layout ?? "landscape", margin: MARGIN, bufferPages: true, compress: options.compress ?? true,
     info: { Title: pdfSafe(header.title) },
   });
   const chunks: Buffer[] = [];
@@ -191,14 +210,14 @@ export async function renderReportPdf(header: PdfHeader, tables: readonly PdfTab
   let y = drawHeader();
   const headerBottom = y;
   for (const [index, table] of tables.entries()) {
-    const natural = naturalWidths(doc, table);
+    const natural = naturalWidths(doc, table, FONT_SIZE);
     const identity = table.columns.flatMap((c, i) => (c.identity === true ? [i] : []));
     if (natural.reduce((a, b) => a + b, 0) > width) {
       // A split repeats the identity in every part; past its share of the page it is narrowed (it wraps), never dropped.
       const idWidth = identity.reduce((a, i) => a + natural[i]!, 0);
       if (idWidth > width * IDENTITY_SHARE) for (const i of identity) natural[i] = (natural[i]! / idWidth) * width * IDENTITY_SHARE;
     }
-    const parts = splitColumns(natural, width, identity);
+    const parts = table.fit ? [natural.map((_, i) => i)] : splitColumns(natural, width, identity);
     for (const [p, part] of parts.entries()) {
       const cols = part.map((i) => table.columns[i]!);
       const nat = part.map((i) => natural[i]!);
@@ -222,11 +241,14 @@ export async function renderReportPdf(header: PdfHeader, tables: readonly PdfTab
         y += headerH;
       };
       if (table.rows.length === 0) {
-        doc.font(BODY_FONT).fontSize(FONT_SIZE).fillColor("#555").text(pdfSafe(table.emptyText), MARGIN, y, { width, lineBreak: false });
-        y += LINE + ROW_GAP;
+        const empty = pdfSafe(table.emptyText);
+        doc.font(BODY_FONT).fontSize(FONT_SIZE).fillColor("#555");
+        // A fitted table's empty line is a sentence with its reason: it wraps. Elsewhere one short line, as before.
+        if (table.fit) { doc.text(empty, MARGIN, y, { width }); y += doc.heightOfString(empty, { width }) + ROW_GAP; }
+        else { doc.text(empty, MARGIN, y, { width, lineBreak: false }); y += LINE + ROW_GAP; }
       }
       for (const row of table.rows) {
-        let texts = cols.map((c) => pdfSafe(formatCell(c.kind, row[c.key])));
+        let texts = cols.map((c) => cellText(table, c, row));
         // Every cell WRAPS (nothing is ellipsized): a row is as tall as its tallest cell. A row
         // taller than a whole page continues on the next one, so long text survives in full.
         for (;;) {
@@ -244,6 +266,23 @@ export async function renderReportPdf(header: PdfHeader, tables: readonly PdfTab
       }
       y += LINE;
     }
+  }
+
+  // Trailer blocks (a legend, a file's notes): wrapped text under the last table, never cut.
+  for (const block of options.trailer ?? []) {
+    if (block.lines.length === 0) continue;
+    if (y + 16 + LINE * 2 > bottom()) { doc.addPage(); y = drawHeader(); }
+    doc.font(HEADER_FONT).fontSize(9).fillColor("#000").text(pdfSafe(block.heading), MARGIN, y + 4, { width, lineBreak: false });
+    y += 16;
+    for (const line of block.lines) {
+      const text = pdfSafe(line);
+      doc.font(BODY_FONT).fontSize(FONT_SIZE);
+      const h = doc.heightOfString(text, { width }) + ROW_GAP;
+      if (y + h > bottom()) { doc.addPage(); y = drawHeader(); }
+      doc.font(BODY_FONT).fontSize(FONT_SIZE).fillColor("#333").text(text, MARGIN, y, { width });
+      y += h;
+    }
+    y += LINE;
   }
 
   // Footer pass. Writing below the bottom margin makes pdfkit add a page, so the margin is lifted

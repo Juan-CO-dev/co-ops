@@ -185,7 +185,8 @@ export function hoursFigure(l: LaborFigures): Figure { return laborSet(l).hours;
 export function otHoursFigure(l: LaborFigures): Figure { return laborSet(l).otHours; }
 /** Net sales for labor: the exact net, or what is known of it with why it is not exact. */
 export function netFigure(l: LaborFigures): Figure {
-  const reason = l.denominator.state === "ok" ? null : `reports.business.labor.state.${l.denominator.state}` as const;
+  // Polish: the reason is about SALES (this figure is net sales), never "so no labor %" (that is the % figure's line).
+  const reason = l.denominator.state === "ok" ? null : `reports.business.net.state.${l.denominator.state}` as const;
   return make("cents", l.denominator.cents, reason, { provisional: l.denominator.state !== "ok", soFar: false });
 }
 /**

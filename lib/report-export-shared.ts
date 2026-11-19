@@ -116,12 +116,19 @@ export function csvField(text: string): string {
   return /[",\r\n]|^\s|\s$/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-/** The whole file: BOM + optional preamble lines + one header row + one line per row, CRLF, trailing CRLF. */
-export function toCsv(columns: readonly ExportColumn[], rows: readonly ExportRow[], preamble: readonly string[] = []): string {
-  // Optional context lines BEFORE the header row (the costing export's pricing scope). Every other
-  // family passes none, so their files are byte-identical.
+/**
+ * The whole file: BOM + optional preamble lines + one header row + one line per row + an optional notes block,
+ * CRLF, trailing CRLF.
+ *
+ * `preamble` = context lines BEFORE the header row. ONLY the costing export uses it (its pricing scope names
+ * whose prices the whole file is in, so it leads; tests/costing-export-scope.test.ts). `notes` = sentences AFTER
+ * the table, behind one blank line (the business export's "these lists cover N of M days"): line 1 stays the
+ * header row, so Excel / Sheets read the columns. A family that passes neither is byte-identical.
+ */
+export function toCsv(columns: readonly ExportColumn[], rows: readonly ExportRow[], preamble: readonly string[] = [], notes: readonly string[] = []): string {
   const lines = [...preamble.map((p) => csvField(p)), columns.map((c) => csvField(c.key)).join(",")];
   for (const row of rows) lines.push(columns.map((c) => csvField(formatCell(c.kind, row[c.key]))).join(","));
+  if (notes.length > 0) lines.push("", ...notes.map((n) => csvField(n)));
   return `${CSV_BOM}${lines.join("\r\n")}\r\n`;
 }
 
@@ -570,14 +577,19 @@ export function businessCoverageRow(view: BusinessReportView, shop: ShopRef): Ex
   return { row_type: "coverage", ...periodCells(view.range), ...shopCells(shop), status: view.range.empty ? "no_finished_days" : c.state,
     days_included: c.included, days_in_period: c.expected };
 }
-/** The sentence a partial business file carries on top (CSV preamble, PDF header), or none when it is whole. */
-export function businessCoverageNotice(view: BusinessReportView): { key: "reports.business.export.breakdown_partial" | "reports.business.export.breakdown_none"; values: Record<string, number> } | null {
+/** The tabs whose file reads the day breakdown (Compare's total row carries `breakdown_state` instead). */
+export type BusinessCoverageTab = Exclude<BusinessExportTab, "compare">;
+/** The sentence a partial business file carries in its notes block (after the CSV table, under the PDF tables), or
+ * none when it is whole. Polish: the sentence names what THIS file holds from the breakdown (large checks and
+ * rushes on Overview, checks and sales by time on Hours, channels, sales by server), never another tab's lists. */
+export function businessCoverageNotice(view: BusinessReportView, tab: BusinessCoverageTab):
+  { key: `reports.business.export.cover_partial.${BusinessCoverageTab}` | `reports.business.export.cover_none.${BusinessCoverageTab}`; values: Record<string, number> } | null {
   const c = view.breakdown;
   if (view.range.empty || c.state === "complete") return null;
-  return { key: c.state === "none" ? "reports.business.export.breakdown_none" : "reports.business.export.breakdown_partial",
+  return { key: c.state === "none" ? `reports.business.export.cover_none.${tab}` : `reports.business.export.cover_partial.${tab}`,
     values: { covered: c.included, expected: c.expected, excluded: c.excluded } };
 }
-/** Fix round 1 sweep: labor hours that are not final (a week unbuilt / rebuilding / unknown) say so on top of the file. */
+/** Fix round 1 sweep: labor hours that are not final (a week unbuilt / rebuilding / unknown) say so in the file's notes. */
 export function businessHoursNotice(view: BusinessReportView): { key: "reports.business.export.hours_partial"; values: Record<string, string> } | null {
   if (view.range.empty || view.total.labor.hoursFinal) return null;
   return { key: "reports.business.export.hours_partial", values: {} };

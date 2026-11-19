@@ -12,8 +12,8 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { BUSINESS_RANGES, BUSINESS_REPORT_TABS, type BusinessRangeEmptyReason, type BusinessRangeRequest, type BusinessReportTab } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
-import { figureDisplay, figureReasonOf, figureText as figureWords, type EmptyClaim, type Figure } from "@/lib/business-figure-shared";
-import { changeWords, figureFormatFor } from "@/lib/business-figure-format";
+import { figureDisplay, figureKindOf, figureReasonOf, figureText as figureWords, type EmptyClaim, type Figure } from "@/lib/business-figure-shared";
+import { changeWords, figureFormatFor, figureLegend, type FigureLegend, type LegendEntry } from "@/lib/business-figure-format";
 import type { LaborView } from "@/lib/business-view-shared";
 
 export const bizCard = "min-w-0 max-w-full break-words rounded-xl border border-co-border bg-co-surface p-4";
@@ -86,10 +86,47 @@ export function figureWhyText(f: Figure, language: Language): string | null {
 export function figureText(f: Figure, language: Language, opts: { short?: boolean; wrap?: (value: string) => string } = {}): string {
   return figureWords(f, figureFormatFor(language), opts);
 }
-/** A figure on the page: the value (or a dash) and, as visible captions, why it is not plain. `compact` (a list
- * row) shows the reason only when there is no value (or always, with `reason="always"`) and puts the short
- * qualifier words on the same line; "so far" / "at least" / "covered days only" are part of the value itself. */
-export function FigureView({ f, language, compact = false, reason, className = "" }: { f: Figure; language: Language; compact?: boolean; reason?: "always"; className?: string }) {
+// ── Say it once (polish, 2026-11-18) ────────────────────────────────────────────────────────────
+// A card grid, a drawer or a list is a SCOPE with one legend (lib/business-figure-format.ts `figureLegend`): each
+// qualification is written ONCE there under a short mark, and a figure shows the marks of what qualifies it. Every
+// affected figure still carries its qualification: the mark for the eye, the full sentence for a screen reader
+// (visually hidden text beside the figure) and on hover (`title`). A sentence the legend does not hold is written
+// beside the figure as before, so passing a legend can never drop one.
+
+/** The legend of a scope. `reasons` also moves the reasons (why a figure is a dash or not whole) into it. */
+export function legendFor(language: Language, figures: ReadonlyArray<Figure | null | undefined>, o: { reasons?: boolean } = {}): FigureLegend {
+  return figureLegend(language, figures, o);
+}
+function Marks({ marks }: { marks: readonly LegendEntry[] }) {
+  if (marks.length === 0) return null;
+  const said = marks.map((m) => m.text).join(" ");
+  const letters = marks.map((m) => m.mark).join(",");
+  return <>
+    <sup aria-hidden="true" title={said} data-marks={letters} className="ml-0.5 text-[10px] font-bold text-co-text-muted">{letters}</sup>
+    <span className="sr-only" data-figure-note=""> ({said})</span>
+  </>;
+}
+/** The notes of a scope: each qualification once, under its mark. Nothing when the scope has none. */
+export function LegendNotes({ entries, language, className = "" }: { entries: readonly LegendEntry[]; language: Language; className?: string }) {
+  if (entries.length === 0) return null;
+  return <ul data-legend="" aria-label={serverT(language, "reports.business.legend.title")} className={`flex flex-col gap-0.5 rounded-lg bg-co-surface-inset p-2 text-xs text-co-text-muted ${className}`}>
+    {entries.map((e) => <li key={e.mark} className="flex gap-1.5"><span aria-hidden="true" data-mark={e.mark} className="min-w-[1rem] font-bold text-co-text">{e.mark}</span><span className="min-w-0 break-words">{e.text}</span></li>)}
+  </ul>;
+}
+
+/** A figure on the page: the value (or a dash) and why it is not plain. With a `legend` (the scope's), what the
+ * legend holds is a mark; anything else is a visible caption. `compact` (a list row without a legend) shows the
+ * reason only when there is no value (or always, with `reason="always"`) and puts the short qualifier words on the
+ * same line; "so far" / "at least" / "covered days only" are part of the value itself. */
+export function FigureView({ f, language, compact = false, reason, className = "", legend }: { f: Figure; language: Language; compact?: boolean; reason?: "always"; className?: string; legend?: FigureLegend }) {
+  if (legend) {
+    const r = legend.read(f);
+    return <span className="inline-flex flex-col">
+      <span className={className}>{r.said === null ? <span aria-hidden="true">—</span> : r.said}<Marks marks={r.marks} /></span>
+      {r.reason !== null ? <span className={`text-xs font-normal ${r.said === null ? "text-co-text-muted" : "text-co-warning-text"}`}>{r.reason}</span> : null}
+      {r.loose.map((n) => <span key={n.id} className={`text-xs font-normal ${n.gap ? "text-co-warning-text" : "text-co-text-muted"}`}>{n.text}</span>)}
+    </span>;
+  }
   const d = figureDisplay(f, figureFormatFor(language), { compact, reason });
   const inline = compact && d.words !== null && d.notes.length > 0 ? ` (${d.notes.map((n) => n.text).join("; ")})` : "";
   return <span className="inline-flex flex-col">
@@ -98,24 +135,37 @@ export function FigureView({ f, language, compact = false, reason, className = "
     {inline ? null : d.notes.map((n) => <span key={n.id} className={`text-xs font-normal ${n.gap ? "text-co-warning-text" : "text-co-text-muted"}`}>{n.text}</span>)}
   </span>;
 }
-/** One label / figure line inside a drawer. */
-export function FigureLine({ label, f, language }: { label: string; f: Figure; language: Language }) {
-  return <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
-    <span className="text-co-text-muted">{label}</span>
-    <span className="min-w-0 break-words text-right font-semibold text-co-text"><FigureView f={f} language={language} /></span>
+/** One label / figure line inside a drawer: the label left (an optional small line under it), the figure right. */
+export function FigureLine({ label, sub, f, language, legend, tone }: { label: string; sub?: string; f: Figure; language: Language; legend?: FigureLegend; tone?: string }) {
+  return <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 text-sm">
+    <span className="min-w-0 break-words text-co-text-muted">{label}{sub ? <span className="block text-xs text-co-text-dim">{sub}</span> : null}</span>
+    <span className="max-w-[12rem] break-words text-right font-semibold text-co-text"><FigureView f={f} language={language} legend={legend} className={tone} /></span>
   </div>;
 }
+/** A figure WITH its label, inline (a closed row's summary, a 15-minute line): never a bare value or dash. A figure
+ * whose words name themselves ("3 checks") takes the label only when it is a dash (`selfLabeled`). */
+export function Labeled({ label, f, language, legend, selfLabeled = false }: { label: string; f: Figure; language: Language; legend?: FigureLegend; selfLabeled?: boolean }) {
+  const dash = figureKindOf(f) === "unknown";
+  return <span className="inline-flex items-baseline gap-1">
+    {selfLabeled && !dash ? null : <span className="text-co-text-dim">{label}</span>}
+    <FigureView f={f} language={language} legend={legend} compact className="font-semibold text-co-text" />
+  </span>;
+}
 
-/** A labor % (pure hourly or fully loaded) with its target, through the one formatter. */
-export function LaborShare({ labor, view, target, language }: {
-  labor: LaborView; view: "pure" | "loaded"; target: number | "target_varies"; language: Language;
-}) {
+/** The target line of a labor % ("Target 18%"). */
+export function targetLine(view: "pure" | "loaded", target: number | "target_varies", language: Language): string {
   const t = tFor(language);
-  const targetLine = target === "target_varies" ? t("reports.business.target_varies")
-    : t(view === "pure" ? "reports.business.target" : "reports.business.target_le", { pct: target });
+  return target === "target_varies" ? t("reports.business.target_varies") : t(view === "pure" ? "reports.business.target" : "reports.business.target_le", { pct: target });
+}
+/** The tone class of a labor % (the view's tone is "none" whenever the % is a dash). */
+export function shareTone(labor: LaborView, view: "pure" | "loaded"): string { return TONE[view === "pure" ? labor.pureTone : labor.loadedTone]; }
+/** A labor % (pure hourly or fully loaded) with its target, through the one formatter (a KPI card's body). */
+export function LaborShare({ labor, view, target, language, legend }: {
+  labor: LaborView; view: "pure" | "loaded"; target: number | "target_varies"; language: Language; legend?: FigureLegend;
+}) {
   return <span className="inline-flex flex-col">
-    <span className="font-bold"><FigureView f={view === "pure" ? labor.purePct : labor.loadedPct} language={language} className={TONE[view === "pure" ? labor.pureTone : labor.loadedTone]} /></span>
-    <span className="text-xs text-co-text-muted">{targetLine}</span>
+    <span className="font-bold"><FigureView f={view === "pure" ? labor.purePct : labor.loadedPct} language={language} className={shareTone(labor, view)} legend={legend} /></span>
+    <span className="text-xs text-co-text-muted">{targetLine(view, target, language)}</span>
   </span>;
 }
 
@@ -167,6 +217,13 @@ export const BUSINESS_EMPTY_KEY: Record<BusinessRangeEmptyReason, TranslationKey
   dates_missing: "reports.business.empty.dates_missing",
   from_after_to: "reports.business.empty.from_after_to",
   no_finished_days: "reports.business.no_finished_days",
+};
+
+/** Why the CSV / PDF links are not offered for an empty request (one per reason, en + es). */
+export const BUSINESS_EXPORT_OFF_KEY: Record<BusinessRangeEmptyReason, TranslationKey> = {
+  dates_missing: "reports.business.export.off.dates_missing",
+  from_after_to: "reports.business.export.off.from_after_to",
+  no_finished_days: "reports.business.export.off.no_finished_days",
 };
 
 /** Why a section has no numbers (switch off, a refused scope, 0341 missing, a read that failed). */

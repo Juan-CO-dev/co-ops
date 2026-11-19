@@ -27,5 +27,5 @@ export const businessPeopleRows = (dto: BusinessReportDto, shop: ShopRef): Expor
 export const businessCompareRows = (dto: BusinessReportDto, previous: BusinessReportDto | null, shop: ShopRef): ExportRow[] =>
   Exp.businessCompareRows(businessView(dto), previous ? businessView(previous) : null, shop);
 export const businessCoverageRow = (dto: BusinessReportDto, shop: ShopRef): ExportRow => Exp.businessCoverageRow(businessView(dto), shop);
-export const businessCoverageNotice = (dto: BusinessReportDto) => Exp.businessCoverageNotice(businessView(dto));
+export const businessCoverageNotice = (dto: BusinessReportDto, tab: Exp.BusinessCoverageTab = "channels") => Exp.businessCoverageNotice(businessView(dto), tab);
 export const businessHoursNotice = (dto: BusinessReportDto) => Exp.businessHoursNotice(businessView(dto));
