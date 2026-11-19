@@ -92,7 +92,7 @@ export function businessPdf(tab: BusinessReportTab, view: BusinessReportView, pr
       rows: periods((x) => [x.sales.total, x.sales.checks, x.sales.toastNet, x.sales.ezcater, x.sales.refunds, x.labor.net]),
     }, {
       // Hours always; hourly labor money (cost, premium, %, its target) only where the view holds it.
-      heading: t("reports.business.pdf.hourly"), empty: t("reports.export.empty"),
+      heading: t(shown.hourlyCost ? "reports.business.pdf.hourly" : "reports.business.card.hours"), empty: t("reports.export.empty"),
       columns: [DAY, t("reports.business.detail.hours"), t("reports.business.detail.ot_hours"),
         ...(shown.hourlyCost ? [t("reports.business.detail.pure_hourly_cost"), t("reports.business.detail.ot_premium"), t("reports.business.pdf.hourly_pct"), t("reports.business.pdf.col.target")] : [])],
       rows: periods((x) => held([x.labor.hours, x.labor.otHours, x.labor.pureCost, x.labor.otPremium, x.labor.purePct, shown.hourlyCost ? target("pure", x.target) : undefined])),

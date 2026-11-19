@@ -296,3 +296,84 @@ describe("a quarter with an unknown check amount has no labor %", () => {
     expect(q).toMatchObject({ toastCents: 10_000, checks: 2, amountMissing: 1, straightCents: 5_000, pct: null });
   });
 });
+
+// ── Business report access (2026-11-19): who reads which shop, and the settings a GM's report is cut by ──
+describe("business report access: scope by ROLE, and the settings store read fail closed", () => {
+  const ALL_ON = { report: true, hourly_cost: true, loaded: true, quarters: true, channels: true, people: true, servers: true, compare: true, export: true };
+  const load = (viewer: Parameters<typeof loadBusinessReport>[0], o: Parameters<typeof fakeClient>[0] = {}, locationId = A) => {
+    const f = fakeClient(o);
+    return { f, p: loadBusinessReport(viewer, { locationId, range }, { client: f.client, env: ON }) };
+  };
+  it("a GM reads only a shop they belong to; MoO / Owner / CGS any shop; nobody reads 'all'", async () => {
+    await expect(load(gm, {}, B).p).rejects.toMatchObject({ status: 403, code: "location_forbidden" });
+    await expect(load({ ...gm, locations: [A, B] }, {}, B).p).resolves.toMatchObject({ locationId: B });
+    for (const viewer of [moo, { userId: "o", level: 9, role: "owner" as const, locations: [] }, { userId: "c", level: 10, role: "cgs" as const, locations: [] }]) {
+      await expect(load(viewer, {}, B).p).resolves.toMatchObject({ locationId: B });
+      await expect(load(viewer, {}, "all").p).rejects.toMatchObject({ status: 400, code: "invalid_location" });
+    }
+  });
+  it("the shop is by ROLE, never by level: a level 8+ that is not MoO / Owner / CGS reads no shop it does not belong to", async () => {
+    // No such role exists today; the rule must not hand a future one every shop because of its number.
+    const r = load({ userId: "x", level: 9, role: "gm", locations: [A] }, {}, B);
+    await expect(r.p).rejects.toMatchObject({ status: 403, code: "location_forbidden" });
+    expect(r.f.tables).toHaveLength(0);
+  });
+  it("a GM's load reads the settings FIRST, once, before any report read", async () => {
+    const { f, p } = load(gm);
+    await p;
+    expect(f.tables[0]).toBe("business_report_gm_visibility");
+    expect(f.visibilityReads()).toBe(1);
+  });
+  it("MoO / Owner / CGS never read the settings, whatever state the store is in", async () => {
+    for (const visibility of [["missing"], ["error"], ["throw"], [{ raw: "junk" }], [{ ...ALL_ON, report: false, hourly_cost: false, loaded: false, quarters: false,
+      channels: false, people: false, servers: false, compare: false, export: false }]] as const) {
+      const { f, p } = load(moo, { visibility });
+      const dto = await p;
+      expect(Object.values(dto.access).every((v) => v === true)).toBe(true);
+      expect(f.visibilityReads()).toBe(0);
+      expect(dto.people[0]).toMatchObject({ straightCostCents: 18_000 });
+    }
+  });
+  const REFUSED: Array<[string, Parameters<typeof fakeClient>[0], number, string]> = [
+    ["the table is missing (0349 not applied)", { visibility: ["missing"] }, 503, "business_access_not_installed"],
+    ["the read fails", { visibility: ["error"] }, 503, "business_access_unavailable"],
+    ["the read throws", { visibility: ["throw"] }, 503, "business_access_unavailable"],
+    ["the row has an extra key", { visibility: [{ raw: { ...ALL_ON, extra: true } }] }, 503, "business_access_unavailable"],
+    ["the row has a non-boolean", { visibility: [{ raw: { ...ALL_ON, people: 1 } }] }, 503, "business_access_unavailable"],
+    ["the row is incoherent", { visibility: [{ raw: { ...ALL_ON, hourly_cost: false } }] }, 503, "business_access_unavailable"],
+    ["the row's settings are not an object", { visibility: [{ raw: [ALL_ON] }] }, 503, "business_access_unavailable"],
+    ["the report is switched off for GMs", { visibility: [{ report: false, hourly_cost: false, loaded: false, quarters: false, channels: false, people: false, servers: false,
+      compare: false, export: false }] }, 403, "gm_report_off"],
+  ];
+  for (const [name, opts, status, code] of REFUSED) {
+    it(`a GM, when ${name}: ${status} ${code}, and NOTHING of the report is read (never the defaults, never wider)`, async () => {
+      const { f, p } = load(gm, opts);
+      await expect(p).rejects.toMatchObject({ status, code });
+      expect(f.calls).toHaveLength(0);
+      expect(f.tables).toEqual(["business_report_gm_visibility"]);
+    });
+  }
+  it("no row saved yet: the defaults; a saved row: its settings", async () => {
+    expect((await load(gm, { visibility: [null] }).p).access).toEqual(businessAccessFor("gm", null));
+    expect((await load(gm, { visibility: [ALL_ON] }).p).access).toMatchObject({ loaded: true, personCost: false, quarterCost: false });
+    const hoursOnly = await load(gm, { visibility: [{ ...ALL_ON, hourly_cost: false, loaded: false }] }).p;
+    expect(hoursOnly.access).toMatchObject({ hourlyCost: false, loaded: false, people: true });
+    expect(hoursOnly.total.labor).not.toHaveProperty("pureHourlyCents");
+    expect(hoursOnly.total.labor).not.toHaveProperty("pct");
+    expect(hoursOnly.total.labor).toMatchObject({ minutes: expect.any(Number) });
+  });
+  it("the settings are read per load: nothing is remembered between two loads", async () => {
+    const f = fakeClient({ visibility: [ALL_ON, { ...ALL_ON, loaded: false }] });
+    const first = await loadBusinessReport(gm, { locationId: A, range }, { client: f.client, env: ON });
+    const second = await loadBusinessReport(gm, { locationId: A, range }, { client: f.client, env: ON });
+    expect([first.access.loaded, second.access.loaded]).toEqual([true, false]);
+    expect(second.total.labor).not.toHaveProperty("fullyLoadedCents");
+  });
+  it("the switch and the role are still judged before the settings (nothing is read while dark or for a refused role)", async () => {
+    for (const [viewer, env] of [[gm, { ...ON, BUSINESS_REPORT: "0" }], [agm, ON], [smm, ON]] as const) {
+      const f = fakeClient({ visibility: ["throw"] });
+      await expect(loadBusinessReport(viewer, { locationId: A, range }, { client: f.client, env })).rejects.toBeInstanceOf(BusinessReportError);
+      expect(f.tables).toHaveLength(0);
+    }
+  });
+});
