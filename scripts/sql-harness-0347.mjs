@@ -155,6 +155,10 @@ async function main() {
   const house = await all(db, `select proname from pg_proc where prosrc ~* 'update\\s+public\\.ezcater_toast_links' order by 1`);
   check(house.map(h => h.proname).join() === 'publish_ezcater_shadow,reconcile_ezcater_toast', 'no house function updates ezcater_toast_links');
 
+  // Everything stays behind the shop's enabled switch: off (no row) refuses every decision by name.
+  await refuses(db, () => decide(db, CM, HA, 'no_ring_expected', { reason: 'comped' }), 'catering_toast_off', 'a shop that is off refuses decisions');
+  await db.exec(`insert into catering_toast_settings(location_id, enabled) values ('${SHOP}', true)`);
+
   // Rings for the scenarios. HA's code CO-ACD34, HB's CO-ACD36, HC's CO-ACD37.
   await db.exec(`update catering_pipeline set ring_code = 'CO-ACD34' where id = '${HA}'; update catering_pipeline set ring_code = 'CO-ACD36' where id = '${HB}';
     update catering_pipeline set ring_code = 'CO-ACD37' where id = '${HC}'`);

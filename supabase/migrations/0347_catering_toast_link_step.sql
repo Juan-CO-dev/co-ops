@@ -310,6 +310,10 @@ begin
      or coalesce(v_lead.lead_source, '') = 'ezcater' or exists (select 1 from public.ezcater_orders e where e.lead_id = v_lead.id) then
     raise exception 'lead_not_eligible' using errcode = 'P0001';
   end if;
+  -- Everything stays behind the shop's `enabled` switch (no row = off): no decision is written for a shop that is off.
+  if not coalesce((select s.enabled from public.catering_toast_settings s where s.location_id = v_lead.location_id), false) then
+    raise exception 'catering_toast_off' using errcode = 'P0001';
+  end if;
   if v_pair and p_kind <> 'unlink' and p_location_id <> v_lead.location_id then
     raise exception 'lead_moved' using errcode = 'P0001';
   end if;

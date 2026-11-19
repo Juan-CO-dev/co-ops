@@ -68,6 +68,13 @@ export interface HouseSuggestions { best: ToastSuggestion | null; count: number;
 const rank = (e: ToastEvidence) => TOAST_EVIDENCE.indexOf(e);
 const absDiff = (r: CateringToastPlanRow) => r.amount_diff_cents === null ? Number.POSITIVE_INFINITY : Math.abs(Number(r.amount_diff_cents));
 
+/** THE order of a lead's candidate checks: strongest evidence, then closest amount, then date, then identity. The
+ * suggestion line and the link panel (PR 3) both use it, so "the suggested check" is the panel's first open row. */
+export function compareToastCandidates(a: CateringToastPlanRow, b: CateringToastPlanRow): number {
+  return rank(a.evidence) - rank(b.evidence) || absDiff(a) - absDiff(b)
+    || a.business_date.localeCompare(b.business_date) || a.order_guid.localeCompare(b.order_guid) || a.check_guid.localeCompare(b.check_guid);
+}
+
 export function suggestionsFor(leadId: string, rows: readonly CateringToastPlanRow[]): HouseSuggestions {
   const open: CateringToastPlanRow[] = [];
   let conflicts = 0;
@@ -77,8 +84,7 @@ export function suggestionsFor(leadId: string, rows: readonly CateringToastPlanR
     if (r.owner !== null || r.dual_code) { conflicts += 1; continue; }
     open.push(r);
   }
-  open.sort((a, b) => rank(a.evidence) - rank(b.evidence) || absDiff(a) - absDiff(b)
-    || a.business_date.localeCompare(b.business_date) || a.order_guid.localeCompare(b.order_guid) || a.check_guid.localeCompare(b.check_guid));
+  open.sort(compareToastCandidates);
   const top = open[0];
   return {
     best: top ? {

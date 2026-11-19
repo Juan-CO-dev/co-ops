@@ -1,0 +1,120 @@
+/**
+ * Item 21 PR 3: the pure rules of the LINK step (lib/catering/catering-toast-links-shared.ts).
+ * Who decides (Juan answer 8: catering manager + GM and up; a GM at a shop they belong to), what a request may say,
+ * how a refusal is named (en + es), and how the panel orders and labels a lead's candidate checks.
+ */
+import { describe, expect, it } from "vitest";
+import {
+  buildHouseToastPanel, canDecideCateringToast, decisionErrorKey, parseToastDecision, TOAST_DECISION_ERRORS,
+  TOAST_DECISION_KINDS, TOAST_NO_RING_REASONS,
+} from "@/lib/catering/catering-toast-links-shared";
+import type { CateringToastPlanRow } from "@/lib/catering/catering-toast-shared";
+import en from "@/lib/i18n/en.json";
+import es from "@/lib/i18n/es.json";
+
+const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const LEAD = U(1), SHOP = U(2), OTHER = U(3);
+
+describe("who may decide (Juan answer 8)", () => {
+  const actor = (role: string, locations: string[] = [], active = true) => ({ role, locations, active }) as never;
+  it.each([
+    ["catering_mgr", [], true], ["gm", [SHOP], true], ["gm", [OTHER], false], ["moo", [], true], ["owner", [], true], ["cgs", [], true],
+    ["agm", [SHOP], false], ["prep_mgr", [SHOP], false], ["social_media_mgr", [SHOP], false], ["shift_lead", [SHOP], false], ["employee", [SHOP], false],
+  ])("%s at %j -> %s", (role, locations, ok) => {
+    expect(canDecideCateringToast(actor(role, locations as string[]), SHOP)).toBe(ok);
+  });
+  it("an inactive actor never decides; a lead with no shop is nobody's", () => {
+    expect(canDecideCateringToast(actor("owner", [], false), SHOP)).toBe(false);
+    expect(canDecideCateringToast(actor("owner"), null)).toBe(false);
+  });
+});
+
+describe("parseToastDecision", () => {
+  it("accepts each kind with exactly its key", () => {
+    expect(parseToastDecision({ kind: "link", locationId: SHOP, orderGuid: "o", checkGuid: "c", expectedHeadId: null }))
+      .toEqual({ kind: "link", locationId: SHOP, orderGuid: "o", checkGuid: "c", reasonCode: null, expectedHeadId: null });
+    expect(parseToastDecision({ kind: "no_ring_expected", reasonCode: "paid_outside_toast", expectedHeadId: U(9) }))
+      .toEqual({ kind: "no_ring_expected", locationId: null, orderGuid: null, checkGuid: null, reasonCode: "paid_outside_toast", expectedHeadId: U(9) });
+    expect(parseToastDecision({ kind: "ring_expected", expectedHeadId: U(9) })?.kind).toBe("ring_expected");
+  });
+  it.each([
+    null, [], {}, { kind: "delete" },
+    { kind: "link", locationId: SHOP, orderGuid: "o", expectedHeadId: null },
+    { kind: "link", locationId: "not-a-uuid", orderGuid: "o", checkGuid: "c", expectedHeadId: null },
+    { kind: "link", locationId: SHOP, orderGuid: "o", checkGuid: "c" },
+    { kind: "link", locationId: SHOP, orderGuid: "o", checkGuid: "c", expectedHeadId: null, reasonCode: "comped" },
+    { kind: "no_ring_expected", expectedHeadId: null },
+    { kind: "no_ring_expected", reasonCode: "because I said so", expectedHeadId: null },
+    { kind: "ring_expected", locationId: SHOP, expectedHeadId: null },
+    { kind: "unlink", locationId: SHOP, orderGuid: "x".repeat(201), checkGuid: "c", expectedHeadId: null },
+    { kind: "link", locationId: SHOP, orderGuid: "o", checkGuid: "c", expectedHeadId: "nope" },
+  ])("refuses %j", (body) => {
+    expect(parseToastDecision(body)).toBeNull();
+  });
+  it("the vocabularies are the database's", () => {
+    expect(TOAST_DECISION_KINDS).toEqual(["link", "unlink", "not_a_match", "no_ring_expected", "ring_expected"]);
+    expect(TOAST_NO_RING_REASONS).toEqual(["paid_outside_toast", "cancelled", "comped", "duplicate_lead", "other"]);
+  });
+});
+
+describe("refusals are named, en + es", () => {
+  it("every refusal has a message in both languages; an unknown one is generic", () => {
+    // The dictionaries are flat (one dotted key per string).
+    const e = en as Record<string, string>, s = es as Record<string, string>;
+    for (const code of TOAST_DECISION_ERRORS) {
+      const key = decisionErrorKey(code);
+      expect([code, key in e && key in s]).toEqual([code, true]);
+    }
+    expect(decisionErrorKey("something_new")).toBe("catering.toast_link.error.generic");
+    for (const r of TOAST_NO_RING_REASONS) expect([r, `catering.toast_link.reason.${r}` in e && `catering.toast_link.reason.${r}` in s]).toEqual([r, true]);
+  });
+});
+
+describe("buildHouseToastPanel", () => {
+  const plan = (o: Partial<CateringToastPlanRow>): CateringToastPlanRow => ({
+    lead_id: LEAD, location_id: SHOP, order_guid: "o", check_guid: "c", toast_snapshot_id: U(50), business_date: "2026-11-20",
+    evidence: "amount_date", check_total_cents: 30000, lead_value_cents: 30000, amount_diff_cents: 0, amount_mismatch: false,
+    dual_code: false, owner: null, owner_lead_id: null, blocked: false, ...o,
+  });
+  const base = {
+    status: { lead_id: LEAD, location_id: SHOP, event_date: "2026-11-20", ring_code: null, value_cents: 30000, status: "not_rung_in_toast" as const },
+    canDecide: true,
+  };
+  it("orders candidates like the suggestion, names each state, and carries each pair's head", () => {
+    const panel = buildHouseToastPanel({
+      ...base,
+      plan: [
+        plan({ order_guid: "a", check_guid: "1", evidence: "amount_date", amount_diff_cents: 500 }),
+        plan({ order_guid: "b", check_guid: "1", evidence: "ring_code" }),
+        plan({ order_guid: "c", check_guid: "1", owner: "ezcater" }),
+        plan({ order_guid: "d", check_guid: "1", owner: "house", owner_lead_id: U(77) }),
+        plan({ order_guid: "e", check_guid: "1", dual_code: true }),
+        plan({ order_guid: "f", check_guid: "1", blocked: true }),
+        plan({ lead_id: U(99), order_guid: "z", check_guid: "1" }),
+      ],
+      heads: [{ id: U(10), kind: "unlink", location_id: SHOP, order_guid: "f", check_guid: "1", reason_code: null }],
+      links: [],
+    });
+    expect(panel.candidates.map((c) => [c.orderGuid, c.state])).toEqual([
+      ["b", "open"], ["a", "open"], ["e", "dual_code"], ["c", "owned_ezcater"], ["d", "owned_house"], ["f", "blocked"],
+    ]);
+    expect(panel.candidates.find((c) => c.orderGuid === "f")).toMatchObject({ headId: U(10), blockedBy: "unlink" });
+    expect(panel.candidates.find((c) => c.orderGuid === "a")?.headId).toBeNull();
+    expect(panel.leadHead).toBeNull();
+  });
+  it("a linked check is listed under links, not candidates, with its head and its money", () => {
+    const panel = buildHouseToastPanel({
+      ...base,
+      status: { ...base.status, status: "matched" },
+      plan: [plan({ order_guid: "a", check_guid: "1", owner: "house", owner_lead_id: LEAD })],
+      heads: [{ id: U(11), kind: "link", location_id: SHOP, order_guid: "a", check_guid: "1", reason_code: null },
+        { id: U(12), kind: "no_ring_expected", location_id: null, order_guid: null, check_guid: null, reason_code: "comped" }],
+      links: [{ location_id: SHOP, order_guid: "a", check_guid: "1", evidence: "manual", total_cents: 31000, business_date: "2026-11-20", live: true }],
+    });
+    expect(panel.candidates).toEqual([]);
+    expect(panel.links).toEqual([{ locationId: SHOP, orderGuid: "a", checkGuid: "1", evidence: "manual", totalCents: 31000,
+      businessDate: "2026-11-20", live: true, headId: U(11) }]);
+    expect(panel.leadHead).toEqual({ id: U(12), kind: "no_ring_expected", reasonCode: "comped" });
+    expect(panel.status).toBe("matched");
+  });
+});
