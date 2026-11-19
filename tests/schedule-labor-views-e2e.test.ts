@@ -305,6 +305,69 @@ describe("a MIXED week: settled days are the facts, today and later are the sche
   });
 });
 
+// ── PR 3: the screens' payload, over the REAL loader ────────────────────────────────────────────
+describe("PR 3: with the views the real board prices no labor; who gets what per hour", () => {
+  const WEEK = "2099-01-05", NOW = new Date("2099-01-01T16:00:00Z");
+  const shifts = weekDays(WEEK).slice(0, 6).map((d) => shift(ALICE, d, 8));
+  type AnyBoard = { strip: { money?: unknown } | null; tabs: Array<Record<string, unknown>>; days: Array<Record<string, unknown> & { date: string; hours: number[]; labor: { state: string; lines?: Array<{ key: string; params?: Record<string, number> }>; errand?: { key: string } } | null }> };
+  const full = async (o: Partial<BoardOpts>) => (await board({ now: NOW, week: WEEK, shifts, ...o })).json as unknown as AnyBoard & { laborViews?: BoardLaborViews };
+  const MONEY_KEYS = /"(money|hourlyCostCents|hourlyPct|salariedFixedCents|totalPct|centsByHour)"/;
+
+  it("a GM: no strip money, no tab %, no labor $ / % and no forecast $ per hour; hours per hour; the day and week totals are the views'", async () => {
+    const b = await full({ viewer: gm });
+    expect(b.laborViews?.state).toBe("ready");
+    expect(b.strip!.money).toBeUndefined();
+    expect(b.tabs.every((t) => !("hourlyPct" in t))).toBe(true);
+    const withHours = b.days.filter((d) => d.hours.length > 0);
+    expect(withHours.length).toBeGreaterThan(0);
+    for (const d of withHours) {
+      expect(d.laborByHour).toBeNull();
+      expect("centsByHour" in d).toBe(false);
+      const byHour = d.hoursByHour as Array<{ hour: number; hours: number }>;
+      expect(byHour.map((h) => h.hour)).toEqual(d.hours);
+      // Alice's shift (6:00 to 14:00) on the days she works, hour by hour of the shop's axis; nothing on Sunday.
+      for (const h of byHour) expect(h.hours, `${d.date} ${h.hour}`).toBe(d.date !== "2099-01-11" && h.hour >= 6 && h.hour < 14 ? 1 : 0);
+      if (d.date !== "2099-01-11") expect(byHour.some((h) => h.hours === 1)).toBe(true);
+    }
+    // The labor card never shows the board's own money lines: the views' lines, or a named errand.
+    for (const d of b.days.filter((x) => x.labor)) {
+      const keys = (d.labor!.lines ?? []).map((l) => l.key);
+      expect(keys.some((k) => /schedule\.labor\.(max_labor|minus_salaried|max_hours)$/.test(k))).toBe(false);
+      if (d.labor!.state === "ok") expect(keys).toEqual(expect.arrayContaining(["schedule.labor.views_max_hours"]));
+    }
+    // Outside `laborViews` and the labor card, no money key at all.
+    const rest = JSON.parse(JSON.stringify(b)) as Record<string, unknown>;
+    delete rest.laborViews;
+    for (const d of rest.days as Array<Record<string, unknown>>) delete d.labor;
+    expect(JSON.stringify(rest)).not.toMatch(MONEY_KEYS);
+  });
+  it("a MoO: the same board plus straight-time % per hour and the forecast $ per hour; still no strip money and no tab %", async () => {
+    const b = await full({ viewer: moo });
+    expect(b.strip!.money).toBeUndefined();
+    expect(b.tabs.every((t) => !("hourlyPct" in t))).toBe(true);
+    for (const d of b.days.filter((x) => x.hours.length > 0)) {
+      expect(Array.isArray(d.laborByHour)).toBe(true);
+      expect((d.hoursByHour as unknown[]).length).toBe(d.hours.length);
+    }
+  });
+  it("an AGM's board with the switch on is byte for byte the board with it off (no additions)", async () => {
+    const on = await board({ now: NOW, week: WEEK, shifts, viewer: agm });
+    const off = await board({ now: NOW, week: WEEK, shifts, viewer: agm, env: {} });
+    expect(JSON.stringify(on.json)).toBe(JSON.stringify(off.json));
+    expect(JSON.stringify(on.json)).not.toMatch(/hoursByHour|laborViews/);
+  });
+  it("switch OFF: a GM's board is what it was (its own strip money, tab %, labor % per hour; no hours row, no views)", async () => {
+    const b = await full({ viewer: gm, env: {} });
+    expect(b.strip!.money).toBeDefined();
+    expect(b.tabs.every((t) => "hourlyPct" in t)).toBe(true);
+    for (const d of b.days.filter((x) => x.hours.length > 0)) {
+      expect(Array.isArray(d.laborByHour)).toBe(true);
+      expect("hoursByHour" in d).toBe(false);
+    }
+    expect("laborViews" in b).toBe(false);
+  });
+});
+
 describe("dark by default; who receives it; what is in it", () => {
   const WEEK = "2099-01-05", NOW = new Date("2099-01-01T16:00:00Z");
   const shifts = weekDays(WEEK).slice(0, 6).map((d) => shift(ALICE, d, 8));

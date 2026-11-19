@@ -7,6 +7,10 @@
  * crew (judged per quarter; CC chunk G). When the minimum crews alone are above the target it says so ONCE for the day,
  * with its math line. With no forecast or no wage it names its errand. An AGM sees the heads, never the dollar lines
  * (J1: they are absent from the view-model).
+ *
+ * Two labor views (PR 3, dark): for a money viewer with SCHEDULE_LABOR_VIEWS on the math lines are the labor facts' own
+ * figures (the allowance cut from the same sales and the same projection the day card shows, the hours "at this draft's
+ * overtime", the verdict in dollars); a figure the projection withholds is the card's errand, by the projection's reason.
  */
 import type { LaborTarget } from "@/lib/scheduling/labor-target-shared";
 import { useBoardLine } from "./use-board-line";
@@ -28,7 +32,7 @@ export function LaborTargetCard({ labor, names, positions }: {
           {amber ? <p className="text-sm font-bold text-co-warning-text">{t("schedule.board.labor_card.amber")}</p> : null}
           <ul className="grid gap-1 text-sm text-co-text">
             {labor.lines.map((l, i) => (
-              <li key={i} data-labor-line={l.key} className={/window_over_target|minimums_over_target$/.test(l.key) ? "font-bold text-co-warning-text" : ""}>{line(l)}</li>
+              <li key={i} data-labor-line={l.key} className={/window_over_target|minimums_over_target$|views_verdict_over$|views_salary_fallback$/.test(l.key) ? "font-bold text-co-warning-text" : ""}>{line(l)}</li>
             ))}
           </ul>
         </>

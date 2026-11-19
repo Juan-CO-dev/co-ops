@@ -32,6 +32,7 @@ import { ShortStretchList } from "./ShortStretchList";
 import { ApproveBar, HorizonBuilder } from "./HorizonBuilder";
 import { regenerateBody, runRegenerate } from "./horizon-flow-shared";
 import { LaborTargetCard } from "./LaborTargetCard";
+import { LaborDayCard, LaborViewsStrip } from "./LaborViews";
 import { BudgetLineItem, MoneyStrip } from "./MoneyStrip";
 import { EditNotice, PersonRow, barKeyOf, rowEditProps, shiftKeyOf, useFocusMemo } from "./PersonRow";
 import { ReasonPanel } from "./ReasonPanel";
@@ -175,11 +176,14 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
 
       {view.strip ? (
         <MoneyStrip strip={view.strip} budgetLines={view.budgetLines} names={view.names} positions={view.positions}
-          canSetEstimates={view.perms.canManageSwitch} canBudget={view.perms.canBudget} locationId={view.locationId} />
+          canSetEstimates={view.perms.canManageSwitch} canBudget={view.perms.canBudget} locationId={view.locationId} laborViews={!!view.laborViews} />
       ) : view.budgetLines.length > 0 ? (
         <ul className="grid gap-1 text-sm text-co-text-muted" data-section="budget-lines">{view.budgetLines.map((l, i) =>
           <BudgetLineItem key={i} line={l} canBudget={view.perms.canBudget} render={line} setLink={t("schedule.board.budget.set_link")} />)}</ul>
       ) : null}
+
+      {/* PR 3 (dark): the two labor views, the week. Present only for a money viewer with SCHEDULE_LABOR_VIEWS on. */}
+      {view.laborViews ? <LaborViewsStrip views={view.laborViews} /> : null}
 
       {view.suggestion ? <BudgetSuggestion suggestion={view.suggestion} locationId={view.locationId} weekStart={view.weekStart} names={view.names} positions={view.positions} /> : null}
 
@@ -199,7 +203,7 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
         <p className="co-card p-4 text-sm text-co-text" data-section="no-week">{t("schedule.board.no_week")}</p>
       )}
 
-      <DayTabs tabs={view.tabs} selected={selected} onSelect={setSelected} />
+      <DayTabs tabs={view.tabs} selected={selected} onSelect={setSelected} labor={view.laborViews} />
 
       {day ? (
         <section className="grid min-w-0 gap-2" aria-label={formatDateLabel(day.date, language)} data-day={day.date}>
@@ -218,6 +222,7 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
             <ReasonPanel row={pickedRow} shift={pickedShift} segment={picked?.segment ?? null} editable={editable && !pickedShift.locked} busy={!!edit.pending}
               names={view.names} positions={view.positions} onEdit={submitEdit} />
           ) : null}
+          {view.laborViews ? <LaborDayCard key={day.date} views={view.laborViews} date={day.date} /> : null}
           {day.labor ? <LaborTargetCard labor={day.labor} names={view.names} positions={view.positions} /> : null}
           {day.gaps.length > 0 ? (
             <ul className="grid gap-2" aria-label={t("schedule.board.gap.title", { n: day.gaps.length })}>
