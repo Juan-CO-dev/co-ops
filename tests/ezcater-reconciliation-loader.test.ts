@@ -68,7 +68,7 @@ describe("reconciliation diagnostics authorization and disclosure", () => {
       { location_id: "shop", order_guid: "o", check_guid: "c", kind: "ownership_conflict", house_lead_id: "h" },
       { location_id: "shop", order_guid: "o", check_guid: "c", kind: "dual_code", house_lead_id: "h" },
     ], error: null });
-    expect(await loadEzcaterReconciliation(actor, "lead")).toMatchObject({ available: true, houseConflicts: 1 });
+    expect(await loadEzcaterReconciliation(actor, "lead")).toMatchObject({ available: true, houseConflicts: { state: "known", count: 1 } });
     expect(rpc).toHaveBeenCalledWith("ezcater_order_house_conflicts", { p_order_id: "order" });
     queues.catering_pipeline = [{ data: { location_id: "shop" }, error: null }];
     queues.ezcater_orders = [{ data: { id: "order", snapshot_id: "snapshot" }, error: null }];
@@ -76,7 +76,34 @@ describe("reconciliation diagnostics authorization and disclosure", () => {
     queues.ezcater_toast_links = [{ count: 1, error: null }];
     queues.ezcater_shadow_depletion = [{ count: 0, error: null }];
     rpc.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "missing" } });
-    expect(await loadEzcaterReconciliation(actor, "lead")).toMatchObject({ available: true, houseConflicts: null });
+    expect(await loadEzcaterReconciliation(actor, "lead")).toMatchObject({ available: true, houseConflicts: { state: "not_installed" } });
+  });
+  it("fix round 2: a failed conflict read is UNKNOWN (unavailable), never zero; an empty answer is a verified zero", async () => {
+    const queue = () => {
+      queues.catering_pipeline = [{ data: { location_id: "shop" }, error: null }];
+      queues.ezcater_orders = [{ data: { id: "order", snapshot_id: "snapshot" }, error: null }];
+      queues.ezcater_review_queue = [{ data: [], error: null }];
+      queues.ezcater_toast_links = [{ count: 0, error: null }];
+      queues.ezcater_shadow_depletion = [{ count: 0, error: null }];
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const error of [{ code: "57014", message: "statement timeout" }, { code: "PGRST000", message: "down" }, { message: "network" }]) {
+      queue();
+      rpc.mockResolvedValue({ data: null, error });
+      const r = await loadEzcaterReconciliation(actor, "lead");
+      expect(r.houseConflicts).toEqual({ state: "unavailable" });
+    }
+    queue();
+    rpc.mockResolvedValue({ data: [], error: null });
+    expect((await loadEzcaterReconciliation(actor, "lead")).houseConflicts).toEqual({ state: "known", count: 0 });
+    log.mockRestore();
+  });
+  it("a lead with no ezCater order has no conflict state at all", async () => {
+    queues.ezcater_orders = [{ data: null, error: null }];
+    queues.ezcater_review_queue = [{ data: [], error: null }];
+    const r = await loadEzcaterReconciliation(actor, "house-lead");
+    expect(r.houseConflicts).toBeUndefined();
+    expect(rpc).not.toHaveBeenCalled();
   });
   it("discloses schema or query failure instead of displaying zero issues as success", async () => {
     queues.ezcater_orders = [{ data: null, error: { code: "42P01" } }];

@@ -289,6 +289,7 @@
   "catering.toast_link.error.catering_toast_retry": "Chocó con otro guardado. Inténtalo de nuevo.",
   "catering.toast_link.error.generic": "No se guardó. Recarga e inténtalo de nuevo.",
   "catering.reconciliation.house_conflicts": "{n} cuentas de Toast de este pedido también llevan un código de caja propio. Un gerente decide a qué pedido pertenecen.",
+  "catering.reconciliation.house_conflicts_unavailable": "No se pudieron cargar los conflictos con pedidos propios de este pedido. Algunas cuentas de Toast podrían llevar también un código de caja propio. Inténtalo de nuevo en un momento.",
   "digest.catering.to_ring.title": "Por registrar en Toast",
   "digest.catering.to_ring.tomorrow": "Registra en Toast mañana",
   "digest.catering.to_ring.ready": "Listo a las {time}",

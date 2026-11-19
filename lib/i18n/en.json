@@ -289,6 +289,7 @@
   "catering.toast_link.error.catering_toast_retry": "That collided with another save. Try again.",
   "catering.toast_link.error.generic": "That did not save. Reload and try again.",
   "catering.reconciliation.house_conflicts": "{n} Toast checks for this order also carry a house ring code. A manager decides which order they belong to.",
+  "catering.reconciliation.house_conflicts_unavailable": "Could not load house conflicts for this order. Some Toast checks may also carry a house ring code. Try again shortly.",
   "digest.catering.to_ring.title": "To ring into Toast",
   "digest.catering.to_ring.tomorrow": "Ring into Toast tomorrow",
   "digest.catering.to_ring.ready": "Ready {time}",

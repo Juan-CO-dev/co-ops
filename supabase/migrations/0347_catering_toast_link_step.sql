@@ -27,6 +27,10 @@
 --                                      stays in candidates / batch_checks, so the unchanged reconciler never retires an
 --                                      owner). With no house link and no ring code it returns 0231's rows exactly.
 --   ezcater_order_house_conflicts(...) a read: the ezCater side of a conflict, for the lead's reconciliation panel.
+--                                      Only conflicts whose facts hold NOW (fix round 2): a recorded conflict is not
+--                                      shown once the check is voided, the house evidence is gone or unlinked, the
+--                                      ezCater order is cancelled / lost, or ezCater rang the order on another check.
+--                                      The ledger is history and is never deleted.
 --   catering_pipeline_end_toast_links  AFTER UPDATE on catering_pipeline (fix round 1): a lead that leaves its shop, is
 --                                      lost, or becomes an ezCater lead ENDS its house links in the same transaction
 --                                      (recorded lead_moved / lead_lost / lead_ezcater). Nothing revives a link.
@@ -468,9 +472,23 @@ begin
   return jsonb_strip_nulls(jsonb_build_object('decision_id', v_decision, 'kind', p_kind, 'link_id', v_link_id));
 end $$;
 
--- 6. The ezCater side of a conflict, for that lead's reconciliation panel (read-only). A check of this order that also
--- carries a live house ring code while ezCater holds it ('ownership_conflict', read now), plus the ledger's skipped
--- publications for this order whose check is still not ezCater's ('dual_code' / 'ownership_conflict').
+-- 6. The ezCater side of a conflict, for that lead's reconciliation panel (read-only). Every row is a conflict whose
+-- facts hold NOW (fix round 2, review PORTAL3-r2 P2 #1): the ledger is history and is never deleted; this read shows
+-- a ledger row only while it is still actionable.
+--   (a) a LIVE check of this order that ezCater holds while it also carries a live house ring code ('ownership_conflict');
+--   (b) a skipped publication (the ledger) only while: the check is still live in Toast; no ezCater order holds it;
+--       a house lead still holds it or a live house ring code is still on it (an unlink / not-a-match tombstones the
+--       pair, so that code no longer counts); the ezCater order still claims (eligible as the planner reads it: a
+--       snapshot, an event date, not cancelled / rejected / failed, its lead not lost); and ezCater has not rung the
+--       order on another check (a current link of this order elsewhere). The house lead named is the one that holds
+--       or carries the code NOW, never the one recorded.
+create function public.catering_toast_check_live(p_location_id uuid, p_order_guid text, p_check_guid text) returns boolean
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select exists (select 1 from public.toast_orders_latest t join public.toast_order_checks c on c.snapshot_id = t.id
+                  where t.location_id = p_location_id and t.order_guid = p_order_guid and c.check_guid = p_check_guid
+                    and not t.voided and not t.deleted and not t.excess_food and not c.voided and not c.deleted)
+$$;
+
 create function public.ezcater_order_house_conflicts(p_order_id uuid)
 returns table (location_id uuid, order_guid text, check_guid text, kind text, house_lead_id uuid)
 language sql stable security definer set search_path = pg_catalog, public as $$
@@ -478,13 +496,23 @@ language sql stable security definer set search_path = pg_catalog, public as $$
          public.catering_toast_check_house_code(z.location_id, z.order_guid, z.check_guid)
     from public.ezcater_toast_links z
    where z.order_id = p_order_id and z.is_current
+     and public.catering_toast_check_live(z.location_id, z.order_guid, z.check_guid)
      and public.catering_toast_check_house_code(z.location_id, z.order_guid, z.check_guid) is not null
   union
-  select k.location_id, k.order_guid, k.check_guid, k.kind, k.house_lead_id
+  select k.location_id, k.order_guid, k.check_guid, k.kind, h.lead_id
     from public.catering_toast_conflicts k
+    cross join lateral (select coalesce(public.catering_toast_house_owner(k.location_id, k.order_guid, k.check_guid),
+                                        public.catering_toast_check_house_code(k.location_id, k.order_guid, k.check_guid)) lead_id) h
    where k.ezcater_order_id = p_order_id
-     and not exists (select 1 from public.ezcater_toast_links z where z.is_current and z.order_id = p_order_id
+     and h.lead_id is not null
+     and public.catering_toast_check_live(k.location_id, k.order_guid, k.check_guid)
+     and not exists (select 1 from public.ezcater_toast_links z where z.is_current
                       and z.location_id = k.location_id and z.order_guid = k.order_guid and z.check_guid = k.check_guid)
+     and not exists (select 1 from public.ezcater_toast_links z where z.is_current and z.order_id = p_order_id
+                      and not (z.location_id = k.location_id and z.order_guid = k.order_guid and z.check_guid = k.check_guid))
+     and exists (select 1 from public.ezcater_orders o left join public.catering_pipeline p on p.id = o.lead_id
+                  where o.id = p_order_id and o.snapshot_id is not null and o.event_date is not null
+                    and coalesce(p.stage, '') <> 'lost' and lower(coalesce(o.status, '')) !~ '(cancel|reject|fail)')
   order by 1, 2, 3, 4
 $$;
 
@@ -668,6 +696,7 @@ revoke all on public.catering_toast_orphans from public, anon, authenticated, se
 grant select on public.catering_toast_orphans to service_role;
 revoke all on function public.catering_toast_pair_blocked(uuid,uuid,text,text) from public, anon, authenticated;
 revoke all on function public.catering_toast_check_house_code(uuid,text,text) from public, anon, authenticated;
+revoke all on function public.catering_toast_check_live(uuid,text,text) from public, anon, authenticated;
 revoke all on function public.ezcater_toast_incumbent(uuid,text,text) from public, anon, authenticated;
 revoke all on function public.ezcater_toast_links_house_guard() from public, anon, authenticated;
 revoke all on function public.catering_toast_links_ezcater_guard() from public, anon, authenticated;
@@ -689,7 +718,7 @@ begin
   end loop;
   foreach f in array array['decide_catering_toast(uuid,uuid,text,uuid,text,text,text,uuid)', 'ezcater_order_house_conflicts(uuid)',
                            'catering_toast_house_owner(uuid,text,text)', 'catering_toast_pair_blocked(uuid,uuid,text,text)',
-                           'catering_toast_check_house_code(uuid,text,text)', 'ezcater_toast_incumbent(uuid,text,text)',
+                           'catering_toast_check_house_code(uuid,text,text)', 'catering_toast_check_live(uuid,text,text)', 'ezcater_toast_incumbent(uuid,text,text)',
                            'plan_ezcater_toast()', 'catering_toast_stale_reason(uuid,uuid)', 'catering_toast_ended_links(uuid)',
                            'catering_toast_link_ready()', 'plan_catering_toast(uuid,date,date,jsonb)'] loop
     if has_function_privilege('authenticated', 'public.' || f, 'execute') or has_function_privilege('anon', 'public.' || f, 'execute') then

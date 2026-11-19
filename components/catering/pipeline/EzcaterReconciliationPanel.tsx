@@ -6,7 +6,6 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import type { EzcaterReconciliationDetail } from "@/lib/catering/ezcater-reconciliation-shared";
 
 export function EzcaterReconciliationPanel({ leadId }: { leadId: string }) {
-  const { t } = useTranslation();
   const panelId = useId();
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<{ leadId: string; data: EzcaterReconciliationDetail | null } | null>(null);
@@ -23,21 +22,33 @@ export function EzcaterReconciliationPanel({ leadId }: { leadId: string }) {
   }, [leadId]);
   const current = state?.leadId === leadId ? state : null;
   if (!current) return null;
-  const data = current.data;
+  return <EzcaterReconciliationView data={current.data} panelId={panelId} open={open} onToggle={() => setOpen(!open)} />;
+}
+
+/** The panel as rendered for one answer (null = the request failed). Exported for the render tests. */
+export function EzcaterReconciliationView({ data, panelId, open, onToggle }: {
+  data: EzcaterReconciliationDetail | null; panelId: string; open: boolean; onToggle: () => void;
+}) {
+  const { t } = useTranslation();
   if (!data?.available) return <div role="status" className="mt-3 text-xs text-co-warning-text">
     {data?.manualLocation && <p className="text-co-text-muted">{t("catering.pipeline.transfer.manual_info", data.manualLocation)}</p>}
     {data?.locationConflict && <p>{t("catering.pipeline.transfer.conflict")}</p>}
     <p>{t("catering.reconciliation.unavailable" as TranslationKey)}</p>
   </div>;
-  const houseConflicts = data.houseConflicts ?? 0;
-  if (!data.reviews.length && !data.linkCount && !data.shadowRows && !data.locationConflict && !data.manualLocation && !houseConflicts) return null;
+  // Fix round 2 (review PORTAL3-r2 P2 #2): a failed conflict read is UNKNOWN, never zero. It is said, and it keeps the
+  // panel on screen; only a missing 0347 (not_installed) or no ezCater order shows nothing.
+  const house = data.houseConflicts;
+  const houseCount = house?.state === "known" ? house.count : 0;
+  const houseUnknown = house?.state === "unavailable";
+  if (!data.reviews.length && !data.linkCount && !data.shadowRows && !data.locationConflict && !data.manualLocation && !houseCount && !houseUnknown) return null;
   return <section className="mt-3 border-t border-co-border pt-2">
     {data.manualLocation && <p className="text-xs text-co-text-muted">{t("catering.pipeline.transfer.manual_info", data.manualLocation)}</p>}
     {data.locationConflict && <p role="alert" className="text-xs text-co-warning-text">{t("catering.pipeline.transfer.conflict")}</p>}
-    {houseConflicts > 0 && <p role="status" className="text-xs text-co-warning-text">{t("catering.reconciliation.house_conflicts", { n: houseConflicts })}</p>}
+    {houseCount > 0 && <p role="status" className="text-xs text-co-warning-text">{t("catering.reconciliation.house_conflicts", { n: houseCount })}</p>}
+    {houseUnknown && <p role="status" className="text-xs text-co-warning-text">{t("catering.reconciliation.house_conflicts_unavailable")}</p>}
     {data.reviews.length > 0 && <p role="status" className="text-xs text-co-warning-text">{t("catering.reconciliation.needs_review" as TranslationKey, { n: data.reviews.length })}</p>}
     <button type="button" className="min-h-[44px] w-full text-left text-sm font-bold text-co-text"
-      aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(!open)}>
+      aria-expanded={open} aria-controls={panelId} onClick={onToggle}>
       {t("catering.reconciliation.title" as TranslationKey, { n: data.reviews.length })}
     </button>
     {open && <div id={panelId} className="space-y-2 text-xs text-co-text-muted">

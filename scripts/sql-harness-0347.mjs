@@ -22,6 +22,9 @@
  *     link with its present owner (a conflict), never ownership. Same for lost -> re-opened, for a holder that became
  *     an ezCater lead, a voided / un-voided check, and a lead that cannot be deleted; the house planner, the orphans
  *     view and the writer all answer from ONE owner rule (catering_toast_house_owner).
+ *   - fix round 2 (review PORTAL3-r2): the ezCater side's conflict read shows a recorded conflict only while its facts
+ *     hold NOW: not once the check is voided (back when re-opened), the house code is removed, the house side unlinks,
+ *     ezCater rings the order on another check, or the ezCater order is cancelled / its lead lost. The ledger is kept.
  * PGlite has ONE backend: lock waits are not provable here (CC's sim two-session proof covers them).
  */
 import { PGlite } from '@electric-sql/pglite';
@@ -544,6 +547,69 @@ async function main() {
     check(dual.length === 0, `I9: no check holds a current house row beside a current ezCater row (${JSON.stringify(dual)})`);
     // The readiness probe the panel asks before it offers a control.
     check((await asService(db, () => one(db, `select catering_toast_link_ready() r`))).r === true, 'the link-step readiness probe answers true');
+
+    // J. Fix round 2 (review PORTAL3-r2 P2 #1): a recorded conflict is shown only while its facts still hold NOW. The
+    // ledger stays as history (nothing deleted); the read filters it against the live check, the house evidence, the
+    // ezCater order's claim and where ezCater rang the order.
+    const conflictsOf = async (order) => all(db, `select check_guid, kind, house_lead_id::text h from ezcater_order_house_conflicts($1) order by 1, 2`, [order]);
+    const ledgerRows = async (chk) => Number((await one(db, `select count(*) n from catering_toast_conflicts where check_guid = $1`, [chk])).n);
+    const mkCoded = async (lead, date, code) => { await mkHouse(lead, date, 30000); await db.exec(`update catering_pipeline set ring_code = '${code}' where id = '${lead}'`); };
+
+    // J1. Voided check -> gone; re-opened -> back (a read, not a deletion). House evidence removed -> gone.
+    const HJ = id('3000', 521);
+    await mkCoded(HJ, '2026-11-21', 'CO-JJA34');
+    const ezJ = await mkEz(21, '2026-11-21', 'JJJ-100', 30000);
+    const jLink = (snap) => ({ toast_snapshot_id: snap, order_guid: 'J1', check_guid: 'J1c', selection_guid: 'J1c-s0', business_date: '2026-11-21' });
+    await ringEz(db, id('5000', 201), { order: 'J1', date: '2026-11-21', checks: [{ guid: 'J1c', total: 30000, names: ['JJJ-100', 'CO-JJA34'] }] });
+    await publishFor(ezJ, jLink(id('5000', 201)));
+    let cj = await conflictsOf(ezJ.order);
+    check(cj.length === 1 && cj[0].check_guid === 'J1c' && cj[0].kind === 'dual_code' && cj[0].h === HJ, `J1: baseline, the dual-code conflict shows (${JSON.stringify(cj)})`);
+    await ringEz(db, id('5000', 202), { order: 'J1', date: '2026-11-21', checks: [{ guid: 'J1c', total: 30000, names: ['JJJ-100', 'CO-JJA34'], voided: true }] });
+    cj = await conflictsOf(ezJ.order);
+    check(cj.length === 0, `J1: the Toast check voided -> the conflict is no longer shown (${JSON.stringify(cj)})`);
+    check(await ledgerRows('J1c') === 1, 'J1: ... and the ledger row is kept as history');
+    await ringEz(db, id('5000', 203), { order: 'J1', date: '2026-11-21', checks: [{ guid: 'J1c', total: 30000, names: ['JJJ-100', 'CO-JJA34'] }] });
+    check((await conflictsOf(ezJ.order)).length === 1, 'J1: the check re-opened with both codes -> the conflict shows again');
+    await ringEz(db, id('5000', 204), { order: 'J1', date: '2026-11-21', checks: [{ guid: 'J1c', total: 30000, names: ['JJJ-100'] }] });
+    cj = await conflictsOf(ezJ.order);
+    check(cj.length === 0, `J1: the house ring code removed from the check -> not shown (${JSON.stringify(cj)})`);
+
+    // J2. The house side linked, then unlinked (a tombstone on the pair): not shown once unlinked.
+    await ringEz(db, id('5000', 205), { order: 'J1', date: '2026-11-21', checks: [{ guid: 'J1c', total: 30000, names: ['JJJ-100', 'CO-JJA34'] }] });
+    const lj = await decide(db, CM, HJ, 'link', { loc: SHOP, order: 'J1', check: 'J1c' });
+    await publishFor(ezJ, jLink(id('5000', 205)));
+    cj = await conflictsOf(ezJ.order);
+    check(cj.length >= 1 && cj.every(c => c.h === HJ), `J2: the house lead holds the check: the conflict shows, naming it (${JSON.stringify(cj)})`);
+    await decide(db, CM, HJ, 'unlink', { loc: SHOP, order: 'J1', check: 'J1c', expected: lj.decision_id });
+    cj = await conflictsOf(ezJ.order);
+    check(cj.length === 0, `J2: the house side unlinked (its pair tombstoned) -> not shown (${JSON.stringify(cj)})`);
+
+    // J3. The ezCater order rung on ANOTHER check (ezCater holds it there) -> the old check's conflict is not shown.
+    const HK = id('3000', 522);
+    await mkCoded(HK, '2026-11-21', 'CO-KKA34');
+    const ezK = await mkEz(22, '2026-11-21', 'KKK-200', 30000);
+    await ringEz(db, id('5000', 206), { order: 'K1', date: '2026-11-21', checks: [{ guid: 'K1c', total: 30000, names: ['KKK-200', 'CO-KKA34'] }] });
+    await publishFor(ezK, { toast_snapshot_id: id('5000', 206), order_guid: 'K1', check_guid: 'K1c', selection_guid: 'K1c-s0', business_date: '2026-11-21' });
+    check((await conflictsOf(ezK.order)).length === 1, 'J3: baseline, the conflict shows');
+    await ringEz(db, id('5000', 207), { order: 'K2', date: '2026-11-21', checks: [{ guid: 'K2c', total: 30000, names: ['KKK-200'] }] });
+    await publishFor(ezK, { toast_snapshot_id: id('5000', 207), order_guid: 'K2', check_guid: 'K2c', selection_guid: 'K2c-s0', business_date: '2026-11-21' });
+    check((await ezLinks(db, `and check_guid = 'K2c'`)).length === 1, 'J3: ezCater holds the order on the replacement check');
+    cj = await conflictsOf(ezK.order);
+    check(cj.length === 0, `J3: the order rung on another check -> the old conflict is not shown (${JSON.stringify(cj)})`);
+
+    // J4. The ezCater side gone (the order cancelled) -> not shown.
+    const HL = id('3000', 523);
+    await mkCoded(HL, '2026-11-21', 'CO-LLA34');
+    const ezL = await mkEz(23, '2026-11-21', 'LLL-300', 30000);
+    await ringEz(db, id('5000', 208), { order: 'L1', date: '2026-11-21', checks: [{ guid: 'L1c', total: 30000, names: ['LLL-300', 'CO-LLA34'] }] });
+    await publishFor(ezL, { toast_snapshot_id: id('5000', 208), order_guid: 'L1', check_guid: 'L1c', selection_guid: 'L1c-s0', business_date: '2026-11-21' });
+    check((await conflictsOf(ezL.order)).length === 1, 'J4: baseline, the conflict shows');
+    await db.exec(`update ezcater_orders set status = 'cancelled' where id = '${ezL.order}'`);
+    cj = await conflictsOf(ezL.order);
+    check(cj.length === 0, `J4: the ezCater order cancelled -> not shown (${JSON.stringify(cj)})`);
+    await db.exec(`update ezcater_orders set status = 'submitted' where id = '${ezL.order}'; update catering_pipeline set stage = 'lost' where id = '${ezL.lead}'`);
+    cj = await conflictsOf(ezL.order);
+    check(cj.length === 0, `J4: the ezCater lead lost -> not shown (${JSON.stringify(cj)})`);
   }
 
   // H. The publisher guard never raises: break its helper inside a transaction; the row passes through.

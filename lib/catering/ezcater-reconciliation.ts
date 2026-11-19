@@ -3,7 +3,10 @@ import type { AuthContext } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { canReadCateringLead } from "./ezcater-detail";
 import { CateringPipelineError } from "./pipeline";
-import { reviewQueueScope, type EzcaterReconciliationDetail } from "./ezcater-reconciliation-shared";
+import { reviewQueueScope, type EzcaterReconciliationDetail, type HouseConflicts } from "./ezcater-reconciliation-shared";
+
+/** 0347 not applied: the function is missing (PostgREST's schema-cache miss, or Postgres's undefined function). */
+const CONFLICT_READ_NOT_INSTALLED = new Set(["PGRST202", "42883"]);
 
 /** Review is a read, never a mapping confirmation or a depletion write. */
 export async function loadEzcaterReconciliation(actor: AuthContext, leadId: string): Promise<EzcaterReconciliationDetail> {
@@ -44,13 +47,22 @@ export async function loadEzcaterReconciliation(actor: AuthContext, leadId: stri
     sb.from("ezcater_shadow_depletion").select("order_id", { count: "exact", head: true }).eq("order_id", order.id).eq("snapshot_id", order.snapshot_id).eq("location_id", lead.location_id).eq("is_current", true),
   ]) : [];
   if (counts.some((r) => r.error)) return unavailable;
-  // Item 21 PR 3: the ezCater side of a house/ezCater conflict on a check (0347). Advisory: unknown, never 0, on failure.
-  let houseConflicts: number | null = null;
+  // Item 21 PR 3: the ezCater side of a house/ezCater conflict on a check (0347). Fix round 2: a failed read is
+  // `unavailable` (the panel says so), never a zero; only a missing function (0347 not applied) is `not_installed`.
+  let houseConflicts: HouseConflicts | undefined;
   if (order) {
     const conflicts = await sb.rpc("ezcater_order_house_conflicts", { p_order_id: order.id });
-    if (!conflicts.error && Array.isArray(conflicts.data)) {
-      houseConflicts = new Set((conflicts.data as Array<{ location_id: string; order_guid: string; check_guid: string }>)
-        .map((c) => `${c.location_id}|${c.order_guid}|${c.check_guid}`)).size;
+    if (conflicts.error) {
+      if (conflicts.error.code && CONFLICT_READ_NOT_INSTALLED.has(conflicts.error.code)) houseConflicts = { state: "not_installed" };
+      else {
+        console.error(`[ezcater-reconciliation] house conflict read failed: ${conflicts.error.code ?? ""} ${conflicts.error.message ?? ""}`.trim());
+        houseConflicts = { state: "unavailable" };
+      }
+    } else if (Array.isArray(conflicts.data)) {
+      houseConflicts = { state: "known", count: new Set((conflicts.data as Array<{ location_id: string; order_guid: string; check_guid: string }>)
+        .map((c) => `${c.location_id}|${c.order_guid}|${c.check_guid}`)).size };
+    } else {
+      houseConflicts = { state: "unavailable" };
     }
   }
   return { available: true, locationConflict: order?.location_conflict ?? false, manualLocation: unavailable.manualLocation, reviews: (reviews ?? []).slice(0, 100).map((row) => ({
