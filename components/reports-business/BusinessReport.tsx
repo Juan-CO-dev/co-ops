@@ -4,7 +4,10 @@
  * (CollapsibleSection, D1-D10), phone-first at 375 px: no tables, lines that wrap.
  *
  * What a viewer gets is decided by the loader, never here: a GM's view carries no cost per person and no
- * labor dollars per 15 minutes (PERSON_COST_MIN / QUARTER_COST_MIN), so this page cannot show them.
+ * labor dollars per 15 minutes (PERSON_COST_MIN / QUARTER_COST_MIN), so this page cannot show them. Business report
+ * access (2026-11-19): a group a GM may not see (hourly labor money, fully loaded labor, a list) has NO figure in the
+ * view (`labor.pureCost` and its like are optional), so its line, card or section is simply not rendered: never a
+ * row of dashes, never a number.
  *
  * Fix round 4 (review ITEM9B-r4): THIS FILE NEVER SEES A NUMBER OF THE REPORT. It receives `BusinessReportView`,
  * in which every money, percent, hours and count value is an opaque `Figure`; the only thing it can do with one
@@ -30,15 +33,16 @@ import { HourDisclosure } from "./HourDisclosure";
 type Props = { view: BusinessReportView; language: Language };
 type Target = number | "target_varies";
 
-/** Every labor figure a drawer shows (the scope of its legend). */
-const laborFigures = (l: LaborView): Figure[] => [l.net, l.hours, l.pureCost, l.purePct, l.otPremium, l.otHours, l.salaried, l.burden, l.loadedCost, l.loadedPct];
+/** Every labor figure a drawer shows (the scope of its legend); a group the view does not hold is absent. */
+const laborFigures = (l: LaborView): Array<Figure | undefined> => [l.net, l.hours, l.pureCost, l.purePct, l.otPremium, l.otHours, l.salaried, l.burden, l.loadedCost, l.loadedPct];
 /** The figures of a closed day / week row. */
-const summaryFigures = (sales: SalesView, labor: LaborView): Figure[] => [sales.total, labor.hours, labor.purePct, labor.loadedPct];
+const summaryFigures = (sales: SalesView, labor: LaborView): Array<Figure | undefined> => [sales.total, labor.hours, labor.purePct, labor.loadedPct];
 
 /** The labor lines of a day / week drawer, each with its label: money, then the % it gives against its target. */
 function LaborLines({ labor, target, loadedTarget, language, legend }: { labor: LaborView; target: Target; loadedTarget: Target; language: Language; legend: FigureLegend }) {
   const t = tFor(language);
-  const line = (key: TranslationKey, f: Figure, extra: { sub?: string; tone?: string } = {}) => <FigureLine language={language} legend={legend} label={t(key)} f={f} {...extra} />;
+  // A figure the view does not hold (a group this viewer may not see) has no line.
+  const line = (key: TranslationKey, f: Figure | undefined, extra: { sub?: string; tone?: string } = {}) => (f ? <FigureLine language={language} legend={legend} label={t(key)} f={f} {...extra} /> : null);
   return <div className="flex flex-col gap-1.5">
     {line("reports.business.detail.net_sales", labor.net)}
     {line("reports.business.detail.hours", labor.hours)}
@@ -60,8 +64,8 @@ function SummaryLine({ sales, labor, language, legend }: { sales: SalesView; lab
   return <span className="flex flex-wrap gap-x-3 gap-y-0.5">
     <Labeled language={language} legend={legend} label={t("reports.business.sum.sales")} f={sales.total} />
     <Labeled language={language} legend={legend} label={t("reports.business.sum.hours")} f={labor.hours} />
-    <Labeled language={language} legend={legend} label={t("reports.business.sum.pure")} f={labor.purePct} />
-    <Labeled language={language} legend={legend} label={t("reports.business.sum.loaded")} f={labor.loadedPct} />
+    {labor.purePct ? <Labeled language={language} legend={legend} label={t("reports.business.sum.pure")} f={labor.purePct} /> : null}
+    {labor.loadedPct ? <Labeled language={language} legend={legend} label={t("reports.business.sum.loaded")} f={labor.loadedPct} /> : null}
   </span>;
 }
 
@@ -94,7 +98,7 @@ export function BusinessOverview({ view, language }: Props) {
   // The six cards are one scope: a reason stays in its card, a qualification is said once under them.
   const cards = legendFor(language, [total.sales.total, total.labor.net, total.labor.hours, total.labor.purePct, total.labor.loadedPct, total.sales.refunds]);
   const weeks = legendFor(language, view.weeks.flatMap((w) => [...summaryFigures(w.sales, w.labor), ...laborFigures(w.labor)]), { reasons: true });
-  const dayFigures = (d: DayView): Figure[] => [d.sales.total, d.sales.checks, d.sales.toastNet, d.sales.ezcater, ...laborFigures(d.labor)];
+  const dayFigures = (d: DayView): Array<Figure | undefined> => [d.sales.total, d.sales.checks, d.sales.toastNet, d.sales.ezcater, ...laborFigures(d.labor)];
   const days = legendFor(language, view.days.flatMap(dayFigures), { reasons: true });
   return <section className={bizCard} aria-label={t("reports.business.tab.overview")}>
     <p className="mb-3 text-sm text-co-text-muted">{dateRange(view.range.from, view.range.to, language)} · {t("reports.business.caption")}</p>
@@ -104,13 +108,13 @@ export function BusinessOverview({ view, language }: Props) {
       <Card label={t("reports.business.card.net")} sub={total.labor.netState === "ok" ? t("reports.business.card.net_hint") : null}>
         <FigureView f={total.labor.net} language={language} legend={cards} /></Card>
       <Card label={t("reports.business.card.hours")}><FigureView f={total.labor.hours} language={language} legend={cards} /></Card>
-      <Card label={t("reports.business.card.pure_hourly")}><LaborShare labor={total.labor} view="pure" target={total.target} language={language} legend={cards} /></Card>
-      <Card label={t("reports.business.card.fully_loaded")}><LaborShare labor={total.labor} view="loaded" target={total.loadedTarget} language={language} legend={cards} /></Card>
+      {total.labor.purePct ? <Card label={t("reports.business.card.pure_hourly")}><LaborShare f={total.labor.purePct} labor={total.labor} view="pure" target={total.target} language={language} legend={cards} /></Card> : null}
+      {total.labor.loadedPct ? <Card label={t("reports.business.card.fully_loaded")}><LaborShare f={total.labor.loadedPct} labor={total.labor} view="loaded" target={total.loadedTarget} language={language} legend={cards} /></Card> : null}
       <Card label={t("reports.business.card.refunds")} sub={t("reports.business.card.refunds_hint")}><FigureView f={total.sales.refunds} language={language} legend={cards} /></Card>
     </div>
     <LegendNotes entries={cards.entries} language={language} className="mt-2" />
-    <p className="mt-3 text-xs text-co-text-muted">{t("reports.business.labor.denominator")}</p>
-    <p className="text-xs text-co-text-muted">{t("reports.business.loaded.basis")}</p>
+    {total.labor.shown.hourlyCost ? <p className="mt-3 text-xs text-co-text-muted">{t("reports.business.labor.denominator")}</p> : null}
+    {total.labor.shown.loaded ? <p className="text-xs text-co-text-muted">{t("reports.business.loaded.basis")}</p> : null}
     {total.largeChecks.any ? <p className="mt-1 text-xs font-bold text-co-warning-text">{t("reports.business.large_checks", { count: figureText(total.largeChecks.checks, language), amount: figureText(total.largeChecks.amount, language) })}</p> : null}
     {view.breakdownLeftOut !== null && breakdown.expected > 0 ? <p className="mt-1 text-xs text-co-text-muted">{t(LARGE_PARTIAL[view.breakdownLeftOut], { covered: breakdown.included, expected: breakdown.expected })}</p> : null}
 
@@ -184,7 +188,7 @@ export function BusinessHours({ view, language }: Props) {
     <p className="mb-1 text-xs text-co-text-muted">{t("reports.business.quarter.basis")}</p>
     <p className="mb-1 text-xs text-co-text-muted">{t("reports.business.rush.rule", { quarters: r.minRunQuarters, multiplier: r.multiplier, checks: r.minChecks })}</p>
     <p className="mb-3 text-xs text-co-text-muted">{t(money ? "reports.business.hours.money_note" : "reports.business.hours.gm_note")}</p>
-    {view.quarters === null ? <p className="text-sm text-co-text-muted">{t("reports.business.hours.too_wide")}</p> : <div className="flex flex-col gap-2">
+    {view.quarters === null ? <p className="text-sm text-co-text-muted">{t(view.quartersReason === "not_shared" ? "reports.business.access.not_shared" : "reports.business.hours.too_wide")}</p> : <div className="flex flex-col gap-2">
       <LegendNotes entries={rows.entries} language={language} />
       {[...view.days].reverse().map((d) => {
         const rush = d.rush;
@@ -291,7 +295,7 @@ export function BusinessPeople({ view, language }: Props) {
   const people = legendFor(language, view.people.flatMap((p) => [p.hours, p.overtime, p.cost]), { reasons: true });
   const servers = legendFor(language, view.servers.flatMap(cutFigures), { reasons: true });
   return <section className={bizCard} aria-label={t("reports.business.tab.people")}>
-    <CollapsibleSection idBase={`biz-people-${view.locationId}`} title={t("reports.business.people.title")} count={listCount(view.people.length, view.empty.people)} defaultOpen>
+    {view.access.people ? <CollapsibleSection idBase={`biz-people-${view.locationId}`} title={t("reports.business.people.title")} count={listCount(view.people.length, view.empty.people)} defaultOpen>
       {!view.access.personCost ? <p className="mb-2 text-xs text-co-text-muted">{t("reports.business.people.cost_note")}</p> : null}
       {figureKindOf(span) !== "known" && spanReason ? <p className="mb-2 text-xs font-bold text-co-warning-text">
         {t("reports.business.people.hours_partial")} {spanReason}</p> : null}
@@ -310,8 +314,8 @@ export function BusinessPeople({ view, language }: Props) {
           </span>
         </li>)}
       </ul>}
-    </CollapsibleSection>
-    <div className="mt-3">
+    </CollapsibleSection> : null}
+    {view.access.servers ? <div className="mt-3">
       <CollapsibleSection idBase={`biz-servers-${view.locationId}`} title={t("reports.business.people.servers")} count={listCount(view.servers.length, view.empty.servers)}>
         <p className="mb-2 text-xs text-co-text-muted">{t("reports.business.people.server_note")}</p>
         {notice ? <p className="mb-2 text-xs font-bold text-co-warning-text">{t(notice.key, notice.values)}</p> : null}
@@ -319,7 +323,7 @@ export function BusinessPeople({ view, language }: Props) {
         {view.empty.servers !== null ? <EmptyNote claim={view.empty.servers} none="reports.business.people.servers_none" language={language} />
           : <ul>{view.servers.map((s) => <CutLine key={s.key || "none"} label={serverLabel(language, s.key, s.label)} sales={s.sales} checks={s.checks} language={language} legend={servers} />)}</ul>}
       </CollapsibleSection>
-    </div>
+    </div> : null}
   </section>;
 }
 
@@ -331,15 +335,18 @@ export function BusinessCompare({ view, previous, language }: Props & { previous
   const cur = view.total, prev = previous?.total ?? null;
   // A figure compares only when BOTH periods are shown and whole (figureChange: known or estimated, never
   // "so far", a sales floor, covered-days-only or a payroll gap). Every cell is the descriptor of its period.
-  const rows: Array<{ key: string; label: string; fig: (x: Total) => Figure }> = [
+  // A measure this view does not hold (a group the viewer may not see) is not a row. Both periods were built with
+  // the same access (the loader's surface check refuses a request whose two loads differ).
+  const measures: Array<{ key: string; label: string; fig: (x: Total) => Figure | undefined }> = [
     { key: "sales", label: t("reports.business.card.sales"), fig: (x) => x.sales.total },
     { key: "net", label: t("reports.business.card.net"), fig: (x) => x.labor.net },
     { key: "hours", label: t("reports.business.card.hours"), fig: (x) => x.labor.hours },
     { key: "pure", label: t("reports.business.card.pure_hourly"), fig: (x) => x.labor.purePct },
     { key: "loaded", label: t("reports.business.card.fully_loaded"), fig: (x) => x.labor.loadedPct },
   ];
+  const rows = measures.flatMap((m) => { const a = m.fig(cur); return a ? [{ key: m.key, label: m.label, cur: a, prev: prev ? m.fig(prev) ?? null : null }] : []; });
   // Both periods of every card are one scope: "Sales are missing ..." is said once under the cards.
-  const legend = legendFor(language, rows.flatMap((r) => [r.fig(cur), prev ? r.fig(prev) : null]), { reasons: true });
+  const legend = legendFor(language, rows.flatMap((r) => [r.cur, r.prev]), { reasons: true });
   const none = <Dash reason="reports.business.compare.no_previous" language={language} />;
   // Both periods are laid out the same way: the label on its own line, the figure under it.
   const cell = (label: string, f: Figure | null): ReactNode => <span className="flex min-w-0 flex-col">
@@ -351,7 +358,7 @@ export function BusinessCompare({ view, previous, language }: Props & { previous
       previous: previous ? dateRange(previous.range.from, previous.range.to, language) : t("reports.business.compare.no_previous") })}</p>
     <ul className="flex flex-col gap-2">
       {rows.map((r) => {
-        const a = r.fig(cur), b = prev ? r.fig(prev) : null;
+        const a = r.cur, b = r.prev;
         return <li key={r.key} className="rounded-lg border border-co-border bg-co-surface-inset p-3 text-sm">
           <div className="mb-1 text-xs font-bold tracking-wide text-co-text-muted">{r.label}</div>
           <div className="grid grid-cols-2 gap-x-3">

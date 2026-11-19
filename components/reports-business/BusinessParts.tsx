@@ -166,12 +166,13 @@ export function targetLine(view: "pure" | "loaded", target: number | "target_var
 }
 /** The tone class of a labor % (the view's tone is "none" whenever the % is a dash). */
 export function shareTone(labor: LaborView, view: "pure" | "loaded"): string { return TONE[view === "pure" ? labor.pureTone : labor.loadedTone]; }
-/** A labor % (pure hourly or fully loaded) with its target, through the one formatter (a KPI card's body). */
-export function LaborShare({ labor, view, target, language, legend }: {
-  labor: LaborView; view: "pure" | "loaded"; target: number | "target_varies"; language: Language; legend?: FigureLegend;
+/** A labor % (pure hourly or fully loaded) with its target, through the one formatter (a KPI card's body). The
+ * caller passes the figure: a view that does not hold the group has none, and shows no card. */
+export function LaborShare({ f, labor, view, target, language, legend }: {
+  f: Figure; labor: LaborView; view: "pure" | "loaded"; target: number | "target_varies"; language: Language; legend?: FigureLegend;
 }) {
   return <span className="inline-flex flex-col">
-    <span className="font-bold"><FigureView f={view === "pure" ? labor.purePct : labor.loadedPct} language={language} className={shareTone(labor, view)} legend={legend} /></span>
+    <span className="font-bold"><FigureView f={f} language={language} className={shareTone(labor, view)} legend={legend} /></span>
     <span className="text-xs text-co-text-muted">{targetLine(view, target, language)}</span>
   </span>;
 }
@@ -184,9 +185,11 @@ export function Card({ label, children, sub }: { label: string; children: ReactN
   </div>;
 }
 
-export function BusinessTabs({ tab, hrefFor, language }: { tab: BusinessReportTab; hrefFor: (tab: BusinessReportTab) => string; language: Language }) {
+/** The tab strip. `tabs` = the tabs this viewer's report holds (the loaded report's own access decides, in the page);
+ * a tab that is not in it is not offered. */
+export function BusinessTabs({ tab, tabs = BUSINESS_REPORT_TABS, hrefFor, language }: { tab: BusinessReportTab; tabs?: readonly BusinessReportTab[]; hrefFor: (tab: BusinessReportTab) => string; language: Language }) {
   return <nav className="mb-4 flex flex-wrap gap-2" aria-label={serverT(language, "reports.business.tabs_aria")}>
-    {BUSINESS_REPORT_TABS.map((v) => <Link key={v} href={hrefFor(v)} aria-current={v === tab ? "page" : undefined}
+    {BUSINESS_REPORT_TABS.filter((v) => tabs.includes(v)).map((v) => <Link key={v} href={hrefFor(v)} aria-current={v === tab ? "page" : undefined}
       className={`${pill} ${v === tab ? "border-co-text bg-co-gold text-co-text" : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text"}`}>
       {serverT(language, `reports.business.tab.${v}` as TranslationKey)}
     </Link>)}
@@ -235,7 +238,9 @@ export const BUSINESS_EXPORT_OFF_KEY: Record<BusinessRangeEmptyReason, Translati
 
 /** Why a section has no numbers (switch off, a refused scope, 0341 missing, a read that failed). */
 export function BusinessUnavailable({ code, language }: { code: string; language: Language }) {
-  const known = ["business_report_unavailable", "role_insufficient", "location_forbidden", "business_reads_not_installed", "business_reads_timeout", "business_reads_incomplete"];
+  const known = ["business_report_unavailable", "role_insufficient", "location_forbidden", "business_reads_not_installed", "business_reads_timeout", "business_reads_incomplete",
+    // Business report access: what a GM may see is a setting; each refusal says which.
+    "gm_report_off", "business_access_not_installed", "business_access_unavailable", "business_tab_off", "business_export_off", "business_access_changed"];
   const key = (known.includes(code) ? `reports.business.error.${code}` : "reports.business.error.business_reads_timeout") as TranslationKey;
   return <p className={`${bizCard} text-sm text-co-text-muted`} role="status">{serverT(language, key)}</p>;
 }

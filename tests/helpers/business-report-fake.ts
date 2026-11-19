@@ -19,12 +19,32 @@ export type FakeOpts = {
   /** Board two views PR 1: what fact_labor_week_fingerprint answers for a week (default: the stored row's own
    *  fingerprint = nothing moved). "error" = the RPC fails; null = it answers nothing. */
   currentFingerprint?: (week: string) => string | null | "error" | undefined;
+  /** Business report access: what each read of 0349 business_report_gm_visibility answers, in order (the last one
+   *  repeats). An object = the newest row's settings (well-formed or not: the loader must judge it); null = no row
+   *  saved yet; "missing" = the table is not there (42P01); "error" = any other error; "throw" = the read throws.
+   *  Default: no row (the defaults). Only a GM's load reads it. */
+  visibility?: ReadonlyArray<VisibilityAnswer>;
 };
+export type VisibilityAnswer = Record<string, unknown> | null | "missing" | "error" | "throw" | { raw: unknown };
+/** Every switch on: what a GM received before the settings existed (fully loaded labor included). */
+export const GM_ALL_ON = { report: true, hourly_cost: true, loaded: true, quarters: true, channels: true, people: true, servers: true, compare: true, export: true };
+export const VISIBILITY_TABLE = "business_report_gm_visibility";
 const FP = "f".repeat(32);
 export function fakeClient(o: FakeOpts = {}) {
   const calls: Call[] = [];
   const tables: string[] = [];
   let rebuilt = false;
+  let visibilityReads = 0;
+  const visibilityAnswer = (): { data: unknown; error: unknown } => {
+    const list = o.visibility ?? [null];
+    const a = list[Math.min(visibilityReads, list.length - 1)]!;
+    visibilityReads++;
+    if (a === "throw") throw new Error("network");
+    if (a === "missing") return { data: null, error: { code: "42P01", message: "relation does not exist" } };
+    if (a === "error") return { data: null, error: { code: "57014", message: "x" } };
+    if (a === null) return { data: [], error: null };
+    return { data: [{ id: "00000000-0000-4000-8000-0000000000f1", settings: "raw" in a ? (a as { raw: unknown }).raw : a }], error: null };
+  };
   const day = (d: string) => ({ classes: [{ business_date: d, sale_class: "sale", checks: 2, amount_cents: 3_000, tax_cents: 0, amount_missing: 0, tax_missing: 0,
     gross_cents: 3_000, discounts_comps_cents: 0, voids_cents: 0, service_charges_cents: 0, accounting_missing: 0 }],
     tips: [], discounts: [], refunds: [], captured_days: [d], ezcater: [{ business_date: d, orders: 1, subtotal_cents: 2_000, amount_missing: 0 }] });
@@ -96,6 +116,12 @@ export function fakeClient(o: FakeOpts = {}) {
   Object.assign(client, {
     from: (table: string) => {
       tables.push(table);
+      if (table === VISIBILITY_TABLE) {
+        const v: Record<string, unknown> = {};
+        for (const k of ["select", "order", "limit"]) v[k] = () => v;
+        v.then = (res: (x: unknown) => unknown, rej?: (e: unknown) => unknown) => new Promise((r) => r(visibilityAnswer())).then(res, rej);
+        return v;
+      }
       const rowsNow = () => table === "labor_week_coverage" ? coverageRows()
         : table === "fact_day_coverage" ? (o.facts ?? dates("2026-08-01", "2026-10-07")).map((d) => ({ business_date: d, state: "covered" }))
         : table === "schedule_structures" ? [] : [];
@@ -111,5 +137,5 @@ export function fakeClient(o: FakeOpts = {}) {
       return q;
     },
   });
-  return { client: client as never, calls, tables };
+  return { client: client as never, calls, tables, visibilityReads: () => visibilityReads };
 }

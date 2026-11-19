@@ -102,8 +102,8 @@ describe("1. a qualification is said ONCE per scope, and every figure it qualifi
     const markup = html(tabs(dto).people);
     expect(count(sightedText(markup), R("hours_unverified"))).toBe(1);
     expect(count(sightedText(markup), R("wage_estimated"))).toBe(1);
-    expect(dto.people.length).toBeGreaterThan(0);
-    expect(markedFigures(markup).filter((f) => f.said.includes(R("hours_unverified"))).length).toBeGreaterThanOrEqual(dto.people.length);
+    expect(dto.people!.length).toBeGreaterThan(0);
+    expect(markedFigures(markup).filter((f) => f.said.includes(R("hours_unverified"))).length).toBeGreaterThanOrEqual(dto.people!.length);
   });
   it("Compare: 'Sales are missing ...' is said once under the cards, not in all four labor cells", async () => {
     const dto = withLabor(await load(), (l) => laborIn(l, "sales_not_covered"));
@@ -114,7 +114,7 @@ describe("1. a qualification is said ONCE per scope, and every figure it qualifi
   });
   it("a legend can never drop a sentence: what the scope's legend does not hold is written beside the figure", async () => {
     const view = businessView(estimated(await load()));
-    const f = view.total.labor.loadedCost;
+    const f = view.total.labor.loadedCost!;
     const other = figureLegend("en", [view.total.sales.total], { reasons: true }).read(f);
     expect(other.marks).toEqual([]);
     expect(other.loose.map((n) => n.text)).toEqual(expect.arrayContaining(QUALS));
@@ -175,9 +175,9 @@ describe("2. every figure has a visible label", () => {
   });
   it("People: a cost always has its label, a dash included; overtime has its label", async () => {
     const dto = withLabor(await load(), (l) => laborIn(l, "ok"));
-    const withheld: BusinessReportDto = { ...dto, people: dto.people.map((p, i) => (i === 0 ? { ...p, straightCostCents: null, otMinutes: 120 } : p)) };
+    const withheld: BusinessReportDto = { ...dto, people: dto.people!.map((p, i) => (i === 0 ? { ...p, straightCostCents: null, otMinutes: 120 } : p)) };
     const t = sightedText(html(createElement(BusinessPeople, { dto: withheld, language: "en" })));
-    expect(count(t, `${R("people.cost")} `)).toBe(withheld.people.length);
+    expect(count(t, `${R("people.cost")} `)).toBe(withheld.people!.length);
     expect(t).toMatch(new RegExp(`${R("people.cost")} — [a-z]`));
     expect(t).toContain(`${R("people.ot_label")} 2 h`);
   });
@@ -305,10 +305,10 @@ describe("4. the 15-minute list is HOURS that open", () => {
 describe("5. rows are two fixed columns, and Compare lays both periods out the same way", () => {
   it("every People and Channels row is the same two-column grid (a person with overtime is not indented differently)", async () => {
     const dto = withLabor(await load(), (l) => laborIn(l, "ok"));
-    const ot: BusinessReportDto = { ...dto, people: dto.people.map((p, i) => (i === 0 ? { ...p, otMinutes: 480 } : p)) };
+    const ot: BusinessReportDto = { ...dto, people: dto.people!.map((p, i) => (i === 0 ? { ...p, otMinutes: 480 } : p)) };
     const people = html(createElement(BusinessPeople, { dto: ot, language: "en" }));
     const rows = people.split("<li").slice(1).filter((r) => r.includes("border-b"));
-    expect(rows.length).toBeGreaterThanOrEqual(ot.people.length);
+    expect(rows.length).toBeGreaterThanOrEqual(ot.people!.length);
     for (const r of rows) expect(r.slice(0, 200)).toContain("grid grid-cols-[minmax(0,1fr)_auto]");
     const channels = html(tabs(dto).channels).split("<li").slice(1).filter((r) => r.includes("border-b"));
     expect(channels.length).toBeGreaterThan(0);
@@ -335,7 +335,7 @@ describe("5. rows are two fixed columns, and Compare lays both periods out the s
 describe("6. an empty range offers no download, and says why", () => {
   it("the page shows the reason in place of the CSV / PDF links for every empty request", () => {
     const page = readFileSync(path.join(ROOT, "app/(authed)/reports/business/page.tsx"), "utf8");
-    expect(page).toMatch(/request\.kind === "empty" \? <p[^>]*role="note">\{t\(BUSINESS_EXPORT_OFF_KEY\[request\.reason\]\)\}<\/p>\s*: <ExportLinks/);
+    expect(page).toMatch(/request\.kind === "empty" \? <p[^>]*role="note">\{t\(BUSINESS_EXPORT_OFF_KEY\[request\.reason\]\)\}<\/p>\s*: access\.export \? <ExportLinks/);
     expect(count(page, "<ExportLinks")).toBe(1);
   });
   it("each reason has its sentence in en and es", async () => {
@@ -475,7 +475,7 @@ describe("found on the first printed sample (review of the v2 capture)", () => {
   it("a figure's marks are in legend order (a, b — never b, a)", async () => {
     const v = businessView(estimated(await load()));
     const legend = figureLegend("en", [v.total.labor.hours, v.total.labor.pureCost, v.total.labor.loadedCost], { reasons: true });
-    for (const f of [v.total.labor.pureCost, v.total.labor.loadedCost]) {
+    for (const f of [v.total.labor.pureCost!, v.total.labor.loadedCost!]) {
       const marks = legend.read(f).marks.map((m) => m.mark);
       expect(marks).toEqual([...marks].sort());
       expect(marks.length).toBeGreaterThan(1);

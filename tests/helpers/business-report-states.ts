@@ -37,9 +37,16 @@ export function loadedIn(base: LaborFigures, v: LoadedVariant): LaborFigures {
     salaryGaps: v === "salary_incomplete" ? 2 : 0 };
 }
 
-/** Every labor figure of `dto` replaced by `f(labor)`, with two quarters per day (sales-only + labor-carrying). */
-export function withLabor(dto: BusinessReportDto, f: (l: LaborFigures) => LaborFigures): BusinessReportDto {
-  const days = dto.days.map((d) => ({ ...d, labor: f(d.labor) }));
+/** A labor as serialized (a GM's may lack the money groups the settings do not hold) with every key, the absent
+ * ones as "nothing here": what `f` below reads. */
+const NOTHING = { pureHourlyCents: null, otPremiumCents: null, pct: null, tone: "none" as const, wageEstimated: false, salariedCents: null, burdenCents: null,
+  fullyLoadedCents: null, loadedPct: null, loadedTone: "none" as const, burdenEstimated: false, salaryEstimated: false, salaryGaps: 0 };
+const whole = (l: BusinessReportDto["total"]["labor"]): LaborFigures => ({ ...NOTHING, loadedState: l.state, ...l });
+/** Every labor figure of `dto` replaced by `f(labor)`, with two quarters per day (sales-only + labor-carrying).
+ * The report keeps its `access`: writing a figure into a report whose access does not hold its group must change
+ * nothing a surface shows (the view follows the access, never a key). */
+export function withLabor<T extends BusinessReportDto>(dto: T, f: (l: LaborFigures) => LaborFigures): T {
+  const days = dto.days.map((d) => ({ ...d, labor: f(whole(d.labor)) }));
   const quarters = days.flatMap((d, i) => {
     const complete = laborHoursComplete(d.labor.state);
     const at = (h: number) => new Date(Date.parse(`${d.date}T${String(h).padStart(2, "0")}:00:00Z`)).toISOString();
@@ -52,7 +59,7 @@ export function withLabor(dto: BusinessReportDto, f: (l: LaborFigures) => LaborF
         straightCents: d.labor.pureHourlyCents === null ? null : 1_400, pct: complete && d.labor.state === "ok" ? 12.5 : null },
     ];
   });
-  return { ...dto, days, weeks: dto.weeks.map((w) => ({ ...w, labor: f(w.labor) })), total: { ...dto.total, labor: f(dto.total.labor) },
+  return { ...dto, days, weeks: dto.weeks.map((w) => ({ ...w, labor: f(whole(w.labor)) })), total: { ...dto.total, labor: f(whole(dto.total.labor)) },
     quarters, quartersUnassigned: [] };
 }
 

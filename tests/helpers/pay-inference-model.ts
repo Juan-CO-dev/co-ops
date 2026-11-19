@@ -10,22 +10,22 @@
 // ROUNDINGS of some of them (tests/business-report-pay-inference.test.ts, "model to serialized").
 
 export type Q = { n: bigint; d: bigint };
-const gcd = (a: bigint, b: bigint): bigint => { a = a < 0n ? -a : a; b = b < 0n ? -b : b; while (b) [a, b] = [b, a % b]; return a; };
+const gcd = (a: bigint, b: bigint): bigint => { a = a < BigInt(0) ? -a : a; b = b < BigInt(0) ? -b : b; while (b) [a, b] = [b, a % b]; return a; };
 export function q(n: number | bigint, d: number | bigint = 1): Q {
   let nn = BigInt(n), dd = BigInt(d);
-  if (dd === 0n) throw new Error("division by zero");
-  if (dd < 0n) { nn = -nn; dd = -dd; }
-  const g = gcd(nn, dd) || 1n;
+  if (dd === BigInt(0)) throw new Error("division by zero");
+  if (dd < BigInt(0)) { nn = -nn; dd = -dd; }
+  const g = gcd(nn, dd) || BigInt(1);
   return { n: nn / g, d: dd / g };
 }
 export const add = (a: Q, b: Q) => q(a.n * b.d + b.n * a.d, a.d * b.d);
 export const sub = (a: Q, b: Q) => q(a.n * b.d - b.n * a.d, a.d * b.d);
 export const mul = (a: Q, b: Q) => q(a.n * b.n, a.d * b.d);
 export const div = (a: Q, b: Q) => q(a.n * b.d, a.d * b.n);
-export const isZero = (a: Q) => a.n === 0n;
+export const isZero = (a: Q) => a.n === BigInt(0);
 export const eq = (a: Q, b: Q) => a.n === b.n && a.d === b.d;
 export const num = (a: Q) => Number(a.n) / Number(a.d);
-export const isWhole = (a: Q) => a.d === 1n;
+export const isWhole = (a: Q) => a.d === BigInt(1);
 const ZERO = q(0), ONE = q(1);
 
 /** The shop: who worked (minutes, overtime minutes), how many people are salaried, net sales, the burden rate. */

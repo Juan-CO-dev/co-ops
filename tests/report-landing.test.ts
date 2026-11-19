@@ -10,6 +10,9 @@ import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import type { RoleCode } from "@/lib/roles";
 import { businessReportEnabled, businessReportRefusal } from "@/lib/business-report-shared";
 
+/** lib/business-report.ts businessReportOffered: for a GM, whether the MoO+ setting offers the report (one read). */
+const businessReportOffered = vi.fn(async (_viewer: unknown) => true);
+
 type Node = { type: unknown; props: Record<string, unknown>; children: unknown[] };
 function flatten(value: unknown): Node[] {
   if (!value || typeof value !== "object") return [];
@@ -36,6 +39,7 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
     reportLandingContext, parseReportRange, reportRangeParams, shiftReportDate, composeLastClose, composeReportSummary, reportIsFinalized,
     shopParamFor, searchParamValues, resolveReportShopId: async () => "mine", // B2: the real contract getter; default = the membership
     businessReportEnabled, businessReportRefusal, // item 9b: the business tile (switch + role)
+    businessReportOffered, // business report access: for a GM, also the MoO+ setting (one read; hidden when unreadable)
     canDoOperationalTask, listReports, countHotTempReadings: async () => 0, SALES_READ_MIN: 7, // D-62 / review #4: the newest finalized closing is found directly (here: Sep 30, a week+ back),
     // then only that day's reports are loaded.
     latestFinalizedClosingDate: async () => lastClose ? "2026-09-30" : null,
@@ -104,13 +108,22 @@ describe("actual reports landing card gates", () => {
   it("item 9b: the business tile shows only with the switch on, and only to GM / MoO / Owner / CGS", async () => {
     const tile = (r: { hrefs: string[] }) => r.hrefs.some((h) => h.startsWith("/reports/business?"));
     vi.stubEnv("BUSINESS_REPORT", ""); vi.stubEnv("FACT_LAYER", "1"); vi.stubEnv("FACT_LAYER_LABOR", "1");
+    businessReportOffered.mockClear();
     expect(tile(await render(7, "gm"))).toBe(false);
+    expect(businessReportOffered).not.toHaveBeenCalled(); // the switch is judged first: nothing is read while dark
     vi.stubEnv("BUSINESS_REPORT", "1");
     try {
       expect(tile(await render(7, "gm"))).toBe(true);
+      expect(businessReportOffered).toHaveBeenCalledWith({ userId: "viewer", level: 7, locations: ["mine"], role: "gm" });
+      businessReportOffered.mockClear();
       expect(tile(await render(6, "agm"))).toBe(false);
       expect(tile(await render(6, "social_media_mgr"))).toBe(false);
-    } finally { vi.unstubAllEnvs(); }
+      expect(businessReportOffered).not.toHaveBeenCalled(); // a refused role is judged before any read
+      // Business report access: the MoO switched the report off for GMs (or the settings cannot be read): no tile.
+      businessReportOffered.mockResolvedValueOnce(false);
+      expect(tile(await render(7, "gm"))).toBe(false);
+      expect(tile(await render(8, "moo"))).toBe(true);
+    } finally { vi.unstubAllEnvs(); businessReportOffered.mockReset(); businessReportOffered.mockResolvedValue(true); }
   });
   it("MoO report grant never grants operational or catering access to an unassigned shop", async () => {
     const result = await render(8, "moo", "other", true);

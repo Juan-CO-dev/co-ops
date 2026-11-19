@@ -15,7 +15,7 @@ import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { BUSINESS_EXPORT_COLUMNS, BUSINESS_EXPORT_TABS, EXPORT_COLUMNS, EXPORT_FAMILIES, assertBusinessRowCap } from "@/lib/report-export-shared";
 import { SALES_EXPORT_MAX_ROWS } from "@/lib/sales-reports-shared";
-import { A, fakeClient } from "./helpers/business-report-fake";
+import { A, GM_ALL_ON, fakeClient } from "./helpers/business-report-fake";
 
 const B = "bbbbbbbb-0000-4000-8000-00000000000b";
 
@@ -25,8 +25,8 @@ function session(role: string, level: number, locations: string[]) {
   } as never);
 }
 let reads = 0;
-function wire() {
-  const biz = fakeClient();
+function wire(o: Parameters<typeof fakeClient>[0] = {}) {
+  const biz = fakeClient(o);
   const shopQ = { select: () => shopQ, eq: () => shopQ, maybeSingle: async () => ({ data: { id: A, code: "MEP", name: "Capitol Hill" }, error: null }) };
   vi.mocked(getServiceRoleClient).mockImplementation(() => ({
     rpc: (...a: unknown[]) => { reads++; return (biz.client as { rpc: (...x: unknown[]) => unknown }).rpc(...a); },
@@ -95,7 +95,9 @@ describe("gates run before any read", () => {
 
 describe("the files", () => {
   it("overview CSV: day, week and total rows; fully loaded empty with its reason; audited", async () => {
-    session("gm", 7, [A]); wire();
+    // Fully loaded labor is in a GM's file only with the MoO+ switch on (tests/business-report-export-access.test.ts
+    // covers every setting); here it is on, so the file is the one a GM had before the settings existed.
+    session("gm", 7, [A]); wire({ visibility: [GM_ALL_ON] });
     const r = await get(`location=${A}&format=csv&${RANGE}`);
     expect(r.status).toBe(200);
     expect(r.headers.get("content-disposition")).toContain("business_MEP_2026-10-01_2026-10-07.csv");

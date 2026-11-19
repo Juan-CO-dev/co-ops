@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn(() => { throw new Error("no database in unit tests"); }) }));
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { BusinessReportError, loadBusinessReport, BUSINESS_REPORT_DTO_PATHS } from "@/lib/business-report";
+import { businessAccessFor, businessDtoPaths } from "@/lib/business-access-shared";
+import { BusinessReportError, loadBusinessReport } from "@/lib/business-report";
 import { resolveBusinessRange } from "@/lib/business-report-shared";
 import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
 import { summarizeSales } from "@/lib/sales-reports-shared";
@@ -58,30 +59,37 @@ describe("the report a GM and a MoO get", () => {
   it("GM own shop: hours per person and sales per server, NO person cost; day % uses Toast net + ezCater", async () => {
     const f = fakeClient();
     const dto = await loadBusinessReport(gm, { locationId: A, range }, { client: f.client, env: ON });
-    expect(dto.access).toEqual({ personCost: false, quarterCost: false });
-    expect(dto.people[0]).toEqual({ personKey: "u:11111111-1111-4111-8111-111111111111", label: "Ana", source: "7shifts", payClass: "hourly", minutes: 600, otMinutes: 0, weeksSuppressed: 0 });
+    // Business report access: no settings row yet = the defaults (everything but fully loaded labor); cost per
+    // person and labor dollars per 15 minutes are never a GM's.
+    expect(dto.access).toEqual(businessAccessFor("gm", null));
+    expect(dto.access).toMatchObject({ report: true, hourlyCost: true, loaded: false, people: true, servers: true, personCost: false, quarterCost: false });
+    expect(dto.people![0]).toEqual({ personKey: "u:11111111-1111-4111-8111-111111111111", label: "Ana", source: "7shifts", payClass: "hourly", minutes: 600, otMinutes: 0, weeksSuppressed: 0 });
     expect(JSON.stringify(dto)).not.toMatch(/straight_cents|costCents|rate/);
     // Each day: $30 Toast + $20 ezCater = $50 net; labor $9 => 18%.
     expect(dto.days[0]!.labor).toMatchObject({ pureHourlyCents: 900, pct: 18, state: "ok", denominator: { cents: 5_000, state: "ok" } });
-    expect(dto.servers.find((s) => s.key === "srv-1")).toMatchObject({ label: "Ana", cents: 7_000, checks: 7 });
+    expect(dto.servers!.find((s) => s.key === "srv-1")).toMatchObject({ label: "Ana", cents: 7_000, checks: 7 });
   });
   it("MoO: the same plus straight-time cost per person (one named constant decides)", async () => {
     const f = fakeClient();
     const dto = await loadBusinessReport(moo, { locationId: A, range }, { client: f.client, env: ON });
-    expect(dto.access).toEqual({ personCost: true, quarterCost: true });
+    expect(Object.values(dto.access).every((v) => v === true)).toBe(true);
+    expect(dto.access).toMatchObject({ personCost: true, quarterCost: true });
     expect(dto.people[0]).toMatchObject({ straightCostCents: 18_000 });
+    expect(f.tables).not.toContain("business_report_gm_visibility"); // MoO / Owner / CGS never read the settings
   });
   it("serialized payload paths are an allowlist per role (an unknown path fails)", async () => {
     const paths = (v: unknown, prefix = ""): string[] => v === null || typeof v !== "object" ? [prefix]
       : Array.isArray(v) ? v.flatMap((x) => paths(x, `${prefix}[]`)) : Object.entries(v).flatMap(([k, x]) => paths(x, prefix ? `${prefix}.${k}` : k));
     for (const viewer of [gm, moo]) {
       const dto = await loadBusinessReport(viewer, { locationId: A, range }, { client: fakeClient().client, env: ON });
-      const allowed = new Set(BUSINESS_REPORT_DTO_PATHS[viewer.role === "gm" ? "shop_money" : "person_money"]);
+      // The allowlist is the group table of lib/business-access-shared.ts: the base and every group the viewer holds
+      // (tests/business-report-gm-payload.test.ts runs every coherent setting against a hand-written copy).
+      const allowed = new Set(businessDtoPaths(dto.access));
       const unknown = [...new Set(paths(dto))].filter((p) => !allowed.has(p.replace(/\[\]/g, "[]")));
       expect(unknown).toEqual([]);
     }
-    expect(BUSINESS_REPORT_DTO_PATHS.shop_money).not.toContain("people[].straightCostCents");
-    expect(BUSINESS_REPORT_DTO_PATHS.person_money).toContain("people[].straightCostCents");
+    expect(businessDtoPaths(businessAccessFor("gm", null))).not.toContain("people[].straightCostCents");
+    expect(businessDtoPaths(businessAccessFor("moo", null))).toContain("people[].straightCostCents");
   });
   it("company-scope (labor-v1) weeks are suppressed as 'rebuilding'", async () => {
     const f = fakeClient({ weeks: [{ week_start: "2026-09-27", ot_scope: "company", builder_version: "labor-v1" }, { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }] });
