@@ -8,6 +8,7 @@ import { parseReportRange, reportRangeParams, shiftReportDate } from "@/lib/repo
 import { composeLastClose, composeReportSummary, reportIsFinalized } from "@/lib/report-summary";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import type { RoleCode } from "@/lib/roles";
+import { businessReportEnabled, businessReportRefusal } from "@/lib/business-report-shared";
 
 type Node = { type: unknown; props: Record<string, unknown>; children: unknown[] };
 function flatten(value: unknown): Node[] {
@@ -34,6 +35,7 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
     operationalNow: () => ({ date: "2026-10-07" }), formatDateLabel: (date: string) => date,
     reportLandingContext, parseReportRange, reportRangeParams, shiftReportDate, composeLastClose, composeReportSummary, reportIsFinalized,
     shopParamFor, searchParamValues, resolveReportShopId: async () => "mine", // B2: the real contract getter; default = the membership
+    businessReportEnabled, businessReportRefusal, // item 9b: the business tile (switch + role)
     canDoOperationalTask, listReports, countHotTempReadings: async () => 0, SALES_READ_MIN: 7, // D-62 / review #4: the newest finalized closing is found directly (here: Sep 30, a week+ back),
     // then only that day's reports are loaded.
     latestFinalizedClosingDate: async () => lastClose ? "2026-09-30" : null,
@@ -98,6 +100,17 @@ describe("actual reports landing card gates", () => {
       expect(link, path).toBeTruthy();
       expect(new URL(link!, "https://local").searchParams.get("location")).toBe("mine");
     }
+  });
+  it("item 9b: the business tile shows only with the switch on, and only to GM / MoO / Owner / CGS", async () => {
+    const tile = (r: { hrefs: string[] }) => r.hrefs.some((h) => h.startsWith("/reports/business?"));
+    vi.stubEnv("BUSINESS_REPORT", ""); vi.stubEnv("FACT_LAYER", "1"); vi.stubEnv("FACT_LAYER_LABOR", "1");
+    expect(tile(await render(7, "gm"))).toBe(false);
+    vi.stubEnv("BUSINESS_REPORT", "1");
+    try {
+      expect(tile(await render(7, "gm"))).toBe(true);
+      expect(tile(await render(6, "agm"))).toBe(false);
+      expect(tile(await render(6, "social_media_mgr"))).toBe(false);
+    } finally { vi.unstubAllEnvs(); }
   });
   it("MoO report grant never grants operational or catering access to an unassigned shop", async () => {
     const result = await render(8, "moo", "other", true);

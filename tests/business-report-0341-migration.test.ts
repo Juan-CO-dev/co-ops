@@ -85,7 +85,7 @@ describe("business_report_check_cuts", () => {
     expect(rows.find((r) => r.sale_class === "ezcater_linked")).toMatchObject({ amount_cents: 9_000 });
     expect(rows.find((r) => r.sale_class === "void")).toMatchObject({ checks: 1 });
     expect(sale.find((r) => r.channel === "third_party")).toMatchObject({ provider: "grubhub", server_guid: null, quarter_start_at: `${D.slice(0, 10)}T23:45:00.000Z` });
-    expect(channelTotals(rows).excluded.map((e) => e.key).sort()).toEqual(["ezcater_linked", "gift_card"]);
+    expect(channelTotals(rows).excluded.map((e) => e.key).sort()).toEqual(["ezcater_linked", "gift_card", "void"]); // fix round 8: every non-sale class is listed
   });
   it("recomposes to sales_report_daily's day shape (same classifier, same money)", async () => {
     const rows = (await q("select * from business_report_check_cuts($1,$2,$2)", [LOC, D])).map((r) => toCutRow(r));

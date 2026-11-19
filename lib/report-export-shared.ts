@@ -30,13 +30,21 @@ import type { TeamOperatingHealth } from "@/lib/team-metrics";
 import type { CalendarEvent } from "@/lib/catering/insights-shared";
 import type { MenuCostRow } from "@/lib/menu-costing-shared";
 import type { BreakdownRow, SalesBucket, SalesCheckRow, SalesExportView, SalesEzcaterRow, SalesTotals } from "@/lib/sales-reports-shared";
-import { rowAverageCents, salesHasData } from "@/lib/sales-reports-shared";
+import { SALES_EXPORT_MAX_ROWS, rowAverageCents, salesHasData } from "@/lib/sales-reports-shared";
+import { FIGURE_NOTES_COLUMN, emptyClaimNote, figureCells } from "@/lib/business-figure-shared";
+import { BUSINESS_REPORT_TABS, type BusinessReportTab } from "@/lib/business-report-shared";
+import type { BusinessReportView, CutView, LaborView, SalesView } from "@/lib/business-view-shared";
 
 // ── Cells ───────────────────────────────────────────────────────────────────────────────────
 
 /** text · date (YYYY-MM-DD) · datetime (ISO UTC) · money (integer cents → "12.34") · int · number · bool · currency ("USD"). */
 export type ColumnKind = "text" | "date" | "datetime" | "money" | "int" | "number" | "bool" | "currency";
-export interface ExportColumn { key: string; kind: ColumnKind; label?: string }
+/**
+ * `identity` (review r10): this column names the ROW. A PDF that splits a wide table across pages
+ * repeats every identity column in every part, so a part on its own still says whose row it is.
+ * Declared per table, never inferred from position; the on-screen registries also LEAD with them.
+ */
+export interface ExportColumn { key: string; kind: ColumnKind; label?: string; identity?: boolean }
 export type ExportValue = string | number | boolean | null | undefined;
 export type ExportRow = Record<string, ExportValue>;
 
@@ -46,6 +54,13 @@ export const CSV_BOM = "﻿";
 export const NOT_YET_AVAILABLE = "not_yet_available";
 
 const col = (key: string, kind: ColumnKind = "text"): ExportColumn => ({ key, kind });
+/** An identity column (see ExportColumn.identity). */
+const idc = (key: string, kind: ColumnKind = "text"): ExportColumn => ({ key, kind, identity: true });
+
+/** The keys of a table's identity columns, in registry order. */
+export function identityKeys(columns: readonly ExportColumn[]): string[] {
+  return columns.filter((c) => c.identity === true).map((c) => c.key);
+}
 
 /** Integer cents → "12.34" / "-0.05". Integer math only: a float never decides a cent. */
 export function centsToDollars(cents: number): string {
@@ -113,7 +128,7 @@ export function toCsv(columns: readonly ExportColumn[], rows: readonly ExportRow
 // ── Families ────────────────────────────────────────────────────────────────────────────────
 
 export const EXPORT_FAMILIES = [
-  "operations", "cash", "written", "trends_ops", "team", "catering", "receiving", "counts", "costing", "sales",
+  "operations", "cash", "written", "trends_ops", "team", "catering", "receiving", "counts", "costing", "sales", "business",
 ] as const;
 export type ExportFamily = (typeof EXPORT_FAMILIES)[number];
 export const EXPORT_FORMATS = ["csv", "pdf"] as const;
@@ -127,7 +142,7 @@ export function isExportFormat(v: unknown): v is ExportFormat {
 }
 
 /** Every per-shop row starts with these (spec: "per shop per day"). */
-const SHOP = [col("location_code"), col("location_name")];
+const SHOP = [idc("location_code"), idc("location_name")];
 
 /**
  * SALES (piece 4, Phase 2b). One column set per Sales view, because each view is its own table
@@ -136,10 +151,10 @@ const SHOP = [col("location_code"), col("location_name")];
  * EXCLUSIONS, never sales; ezCater orders are their own source; server = the order's server, by
  * Toast first name. No customer, card or comment field exists in any of them.
  */
-const PERIOD = [col("period_start", "date"), col("period_end", "date")];
+const PERIOD = [idc("period_start", "date"), idc("period_end", "date")];
 export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn[]> = {
   summary: [
-    col("row_type"), ...PERIOD, ...SHOP, col("coverage_status"), col("covered_days", "int"), col("expected_days", "int"),
+    idc("row_type"), ...PERIOD, ...SHOP, col("coverage_status"), col("covered_days", "int"), col("expected_days", "int"),
     col("toast_check_totals", "money"), col("checks", "int"), col("average_check", "money"), col("discounts", "money"),
     col("discount_count", "int"), col("sales_tax", "money"), col("tips", "money"), col("refunds_captured_so_far", "money"),
     col("refunds_captured_count", "int"), col("ezcater_sales", "money"), col("ezcater_orders", "int"), col("sales_before_refunds", "money"),
@@ -150,30 +165,70 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
     col("toast_service_charges", "money"), col("toast_sales_refunds", "money"), col("toast_item_sales_net", "money"),
     col("accounting_missing", "int"), col("sales_refund_missing", "int"), col("toast_net_basis"),
   ],
-  items: [...PERIOD, ...SHOP, col("item_guid"), col("item"), col("units", "number"), col("checks", "int")],
-  modifiers: [...PERIOD, ...SHOP, col("item_guid"), col("modifier"), col("units", "number"), col("checks", "int")],
+  items: [...PERIOD, ...SHOP, idc("item_guid"), idc("item"), col("units", "number"), col("checks", "int")],
+  modifiers: [...PERIOD, ...SHOP, idc("item_guid"), idc("modifier"), col("units", "number"), col("checks", "int")],
   channels: [
-    ...PERIOD, ...SHOP, col("channel"), col("provider"), col("source"), col("counted", "bool"), col("class"),
+    ...PERIOD, ...SHOP, idc("channel"), idc("provider"), idc("source"), idc("counted", "bool"), idc("class"),
     col("checks_or_orders", "int"), col("sales", "money"), col("amount_missing", "int"), col("currency", "currency"),
   ],
-  heatmap: [...PERIOD, ...SHOP, col("weekday", "int"), col("hour_et", "int"), col("checks", "int"), col("sales", "money"), col("currency", "currency")],
+  heatmap: [...PERIOD, ...SHOP, idc("weekday", "int"), idc("hour_et", "int"), col("checks", "int"), col("sales", "money"), col("currency", "currency")],
   discounts: [
-    ...PERIOD, ...SHOP, col("discount_name"), col("applications", "int"), col("checks", "int"), col("amount", "money"),
+    ...PERIOD, ...SHOP, idc("discount_name"), col("applications", "int"), col("checks", "int"), col("amount", "money"),
     col("amount_missing", "int"), col("currency", "currency"),
   ],
   servers: [
-    ...PERIOD, ...SHOP, col("server_first_name"), col("server_ref"), col("checks", "int"), col("sales", "money"),
+    ...PERIOD, ...SHOP, idc("server_first_name"), idc("server_ref"), col("checks", "int"), col("sales", "money"),
     col("amount_missing", "int"), col("average_check", "money"), col("currency", "currency"),
   ],
   checks: [
-    col("business_date", "date"), ...SHOP, col("check_guid"), col("opened_at", "datetime"), col("channel"), col("provider"),
+    idc("business_date", "date"), ...SHOP, idc("check_guid"), col("opened_at", "datetime"), col("channel"), col("provider"),
     col("dining_option"), col("server_first_name"), col("server_ref"), col("units", "number"), col("discounts", "money"),
     col("check_amount_pre_tax", "money"), col("sales_tax", "money"), col("currency", "currency"),
   ],
   catering: [
-    col("event_date", "date"), ...SHOP, col("ezcater_order_number"), col("headcount", "int"), col("subtotal", "money"),
+    idc("event_date", "date"), ...SHOP, idc("ezcater_order_number"), col("headcount", "int"), col("subtotal", "money"),
     col("toast_status"), col("currency", "currency"),
   ],
+};
+
+/**
+ * BUSINESS (item 9c). One table per page tab, the page's own VIEW projected (lib/business-view-shared.ts): an
+ * export never shows more than the screen. Every unknown is an EMPTY cell, never a 0, and every figure that is
+ * not plainly known (unknown, estimated, "so far", covered days only, a floor) is named with its reason in the
+ * row's `figure_notes` cell (`column=kind(codes)`), beside the `*_state` / `status` columns. Labor DOLLARS per person and per 15 minutes are filled only where the DTO
+ * carries them (PERSON_COST_MIN / QUARTER_COST_MIN, MoO+); a GM's file has those cells empty.
+ */
+/** The page's own tab list (one table per tab). */
+export const BUSINESS_EXPORT_TABS = BUSINESS_REPORT_TABS;
+export type BusinessExportTab = BusinessReportTab;
+export function isBusinessExportTab(v: unknown): v is BusinessExportTab {
+  return typeof v === "string" && (BUSINESS_EXPORT_TABS as readonly string[]).includes(v);
+}
+const BUSINESS_EXPORT_COLUMNS_OVERVIEW: readonly ExportColumn[] = [
+  idc("row_type"), idc("period"), ...PERIOD, ...SHOP, col("status"), col("coverage_status"), col("checks", "int"),
+  col("toast_check_totals", "money"), col("toast_item_sales_net", "money"), col("ezcater_sales", "money"), col("ezcater_orders", "int"),
+  col("refunds_captured_so_far", "money"), col("sales_before_refunds", "money"), col("amount_missing", "int"), col("net_sales_for_labor", "money"), col("net_sales_state"),
+  col("labor_hours", "number"), col("pure_hourly_cost", "money"), col("overtime_premium", "money"), col("overtime_hours", "number"),
+  col("pure_hourly_pct", "number"), col("pure_hourly_target_pct", "number"), col("labor_state"),
+  col("salaried_cost", "money"), col("burden_cost", "money"), col("burden_estimated", "bool"), col("salary_estimated", "bool"), col("salary_gaps", "int"), col("wage_estimated", "bool"), col("hours_unverified", "bool"), col("fully_loaded_cost", "money"),
+  col("fully_loaded_pct", "number"), col("fully_loaded_target_pct", "number"), col("fully_loaded_state"),
+  col("large_checks", "int"), col("large_checks_amount", "money"), col("breakdown_state"), col("rushes", "int"), col(FIGURE_NOTES_COLUMN), col("currency", "currency"),
+];
+export const BUSINESS_EXPORT_COLUMNS: Record<BusinessExportTab, readonly ExportColumn[]> = {
+  overview: BUSINESS_EXPORT_COLUMNS_OVERVIEW,
+  hours: [
+    idc("row_type"), idc("business_date", "date"), idc("quarter_start", "datetime"), idc("time_et"), ...SHOP, col("status"), col("checks", "int"),
+    col("toast_sales", "money"), col("amount_missing", "int"), col("labor_hours", "number"), col("labor_state"), col("straight_time_cost", "money"),
+    col("straight_time_pct", "number"), col("basis"), col(FIGURE_NOTES_COLUMN), col("currency", "currency"),
+  ],
+  channels: [idc("row_type"), ...PERIOD, ...SHOP, idc("channel"), idc("provider"), col("status"), col("days_included", "int"), col("days_in_period", "int"),
+    col("checks", "int"), col("sales", "money"), col("amount_missing", "int"), col(FIGURE_NOTES_COLUMN), col("currency", "currency")],
+  people: [
+    idc("row_type"), ...PERIOD, ...SHOP, idc("name"), idc("server_ref"), idc("source"), col("status"), col("days_included", "int"), col("days_in_period", "int"), col("labor_state"), col("pay_class"), col("hours", "number"),
+    col("overtime_hours", "number"), col("weeks_withheld", "int"), col("straight_time_cost", "money"), col("checks", "int"), col("sales", "money"),
+    col("amount_missing", "int"), col(FIGURE_NOTES_COLUMN), col("currency", "currency"),
+  ],
+  compare: BUSINESS_EXPORT_COLUMNS_OVERVIEW,
 };
 
 /**
@@ -182,49 +237,51 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
  */
 export const EXPORT_COLUMNS: Record<ExportFamily, readonly ExportColumn[]> = {
   operations: [
-    col("business_date", "date"), ...SHOP, col("report_type"), col("report_id"), col("status"), col("submitted_by"),
+    idc("business_date", "date"), ...SHOP, idc("report_type"), idc("report_id"), col("status"), col("submitted_by"),
     col("under_par", "int"), col("over_par", "int"), col("skipped", "int"), col("not_started", "int"), col("temp_flags", "int"),
     col("cash_over_short", "money"), col("currency", "currency"),
   ],
   cash: [
-    col("business_date", "date"), ...SHOP, col("report_id"), col("projected", "money"), col("drawer_total", "money"),
+    idc("business_date", "date"), ...SHOP, idc("report_id"), col("projected", "money"), col("drawer_total", "money"),
     col("float", "money"), col("deposit", "money"), col("over_short", "money"), col("cash_tips", "money"),
     col("count_method"), col("on_shift"), col("signed_by"), col("signed_at", "datetime"), col("over_short_note"),
     col("payment_type"), col("currency", "currency"),
   ],
   written: [
-    col("submitted_at", "datetime"), ...SHOP, col("report_id"), col("category"), col("title"), col("body"),
+    idc("submitted_at", "datetime"), ...SHOP, idc("report_id"), col("category"), col("title"), col("body"),
     col("submitted_by"), col("submitted_by_role"), col("edit_count", "int"), col("last_edited_at", "datetime"),
   ],
   trends_ops: [
-    col("bucket_start", "date"), ...SHOP, col("granularity"), col("has_data", "bool"), col("under_par", "int"),
+    idc("bucket_start", "date"), ...SHOP, idc("granularity"), col("has_data", "bool"), col("under_par", "int"),
     col("over_par", "int"), col("temp_flags", "int"), col("completion_pct", "number"), col("cash_over_short", "money"),
     col("currency", "currency"),
   ],
   team: [
-    col("period_from", "date"), col("period_to", "date"), ...SHOP, col("name"), col("role"), col("score", "int"),
+    idc("period_from", "date"), idc("period_to", "date"), ...SHOP, idc("name"), col("role"), col("score", "int"),
     col("previous_score", "int"), col("health"), col("tasks", "int"), col("finalizations", "int"),
     col("people_mgmt", "int"), col("oversight", "int"), col("notes", "int"),
   ],
   catering: [
-    col("event_date", "date"), ...SHOP, col("lead_id"), col("event_name"), col("time_window"), col("headcount", "int"),
+    idc("event_date", "date"), ...SHOP, idc("lead_id"), idc("event_name"), col("time_window"), col("headcount", "int"),
     col("lead_source"), col("stage"), col("money_status"), col("value", "money"), col("currency", "currency"),
   ],
   receiving: [
-    col("delivery_date", "date"), ...SHOP, col("delivery_id"), col("vendor_or_store"), col("invoice_number"),
+    idc("delivery_date", "date"), ...SHOP, idc("delivery_id"), col("vendor_or_store"), col("invoice_number"),
     col("line_count", "int"), col("received_by"), col("match_state"), col("delivery_status"),
     col("has_receipt_photo", "bool"), col("po_code"),
   ],
   counts: [
-    ...SHOP, col("sku_id"), col("sku"), col("dimension"), col("anchor_at", "datetime"), col("anchor_age_days", "int"),
+    ...SHOP, idc("sku_id"), idc("sku"), idc("dimension"), col("anchor_at", "datetime"), col("anchor_age_days", "int"),
     col("anchor_qty", "number"), col("on_hand_qty", "number"), col("unit"), col("anchor_stale", "bool"),
   ],
   costing: [
-    col("menu_item_id"), col("menu_item"), col("section"), col("menu_price", "money"), col("food_cost", "money"),
+    idc("menu_item_id"), idc("menu_item"), col("section"), col("menu_price", "money"), col("food_cost", "money"),
     col("food_cost_pct", "number"), col("margin", "money"), col("cost_status"), col("currency", "currency"),
   ],
   /** The default Sales file is the summary; `view=` picks another SALES_EXPORT_COLUMNS table. */
   sales: SALES_EXPORT_COLUMNS.summary,
+  /** Item 9c: the business report's Overview; `tab=` picks another BUSINESS_EXPORT_COLUMNS table. */
+  business: BUSINESS_EXPORT_COLUMNS_OVERVIEW,
 };
 
 export interface ShopRef { id: string; code: string | null; name: string }
@@ -408,6 +465,165 @@ export function salesCateringRows(rows: readonly SalesEzcaterRow[], shop: ShopRe
     event_date: r.eventDate, ...shopCells(shop), ezcater_order_number: r.orderNumber, headcount: r.headcount,
     subtotal: r.subtotalCents, toast_status: r.status,
   }));
+}
+
+/** Past the Sales row cap a business export refuses (413), never a cut file. */
+export function assertBusinessRowCap<T>(rows: readonly T[]): readonly T[] {
+  if (rows.length > SALES_EXPORT_MAX_ROWS) throw Object.assign(new Error("export_too_large"), { status: 413, code: "export_too_large" });
+  return rows;
+}
+/** ET wall clock of a 15-minute quarter (0..95), "HH:MM". The UTC instant beside it tells the two 01:15s apart. */
+export function quarterWallTime(wallQuarter: number): string {
+  const m = wallQuarter * 15;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+// ── Business rows (item 9c: pure projections of the SAME view the business page renders) ───────
+// Fix round 4 (review ITEM9B-r4): nothing below can read a number. The view's money, percent, hours and count
+// values are opaque `Figure`s; `figureCells({ column: figure })` is the only way one becomes a cell, and it writes
+// the value TOGETHER with the row's `figure_notes`. One call per row. Pinned by
+// tests/business-report-figure-census.test.ts (this section may not name a raw amount, a DTO or a sum).
+
+type Target = number | "target_varies";
+const salesFigures = (s: SalesView) => ({
+  checks: s.checks, toast_check_totals: s.toastChecks, toast_item_sales_net: s.toastNet, ezcater_sales: s.ezcater, ezcater_orders: s.ezcaterOrders,
+  refunds_captured_so_far: s.refunds, sales_before_refunds: s.total, amount_missing: s.amountMissing,
+});
+const laborFigures = (l: LaborView) => ({
+  net_sales_for_labor: l.net, labor_hours: l.hours, pure_hourly_cost: l.pureCost, overtime_premium: l.otPremium, overtime_hours: l.otHours,
+  pure_hourly_pct: l.purePct, salaried_cost: l.salaried, burden_cost: l.burden, fully_loaded_cost: l.loadedCost, fully_loaded_pct: l.loadedPct,
+});
+/** The state columns beside the labor figures: why, and which estimates are behind the SHOWN figures. */
+const laborStates = (l: LaborView, target: Target, loadedTarget: Target): ExportRow => ({
+  net_sales_state: l.netState, pure_hourly_target_pct: target, labor_state: l.state, burden_estimated: l.burdenEstimated,
+  salary_estimated: l.salaryEstimated, wage_estimated: l.wageEstimated, hours_unverified: l.hoursUnverified, salary_gaps: l.salaryGaps,
+  fully_loaded_target_pct: loadedTarget, fully_loaded_state: l.loadedState,
+});
+function businessTotalRow(view: BusinessReportView, period: string, shop: ShopRef): ExportRow {
+  const head = { row_type: "total", period, ...periodCells(view.range), ...shopCells(shop) };
+  if (view.range.empty) return { ...head, status: "no_finished_days" };
+  const t = view.total;
+  // Fix round 1: the range's large checks come from the days whose cuts recomposed only; the row says so.
+  return {
+    ...head, status: null, coverage_status: t.sales.coverage, ...laborStates(t.labor, t.target, t.loadedTarget),
+    breakdown_state: view.breakdown.state === "complete" ? "ok" : view.breakdown.state,
+    ...figureCells({ ...salesFigures(t.sales), ...laborFigures(t.labor), large_checks: t.largeChecks.checks, large_checks_amount: t.largeChecks.amount }),
+  };
+}
+
+/** Overview: one row per day, per payroll week, and the range total. */
+export function businessOverviewRows(view: BusinessReportView, shop: ShopRef): ExportRow[] {
+  const days: ExportRow[] = view.days.map((d) => ({
+    row_type: "day", period: "current", period_start: d.date, period_end: d.date, ...shopCells(shop),
+    coverage_status: d.sales.coverage, ...laborStates(d.labor, d.target, d.loadedTarget), breakdown_state: d.cuts,
+    ...figureCells({ ...salesFigures(d.sales), ...laborFigures(d.labor), large_checks: d.largeChecks.checks, large_checks_amount: d.largeChecks.amount, rushes: d.rushes }),
+  }));
+  const weeks: ExportRow[] = view.weeks.map((w) => ({
+    row_type: "week", period: "current", period_start: w.from, period_end: w.to, ...shopCells(shop),
+    coverage_status: w.sales.coverage, ...laborStates(w.labor, w.target, w.loadedTarget),
+    ...figureCells({ ...salesFigures(w.sales), ...laborFigures(w.labor) }),
+  }));
+  return [...days, ...weeks, businessTotalRow(view, "current", shop)];
+}
+
+/** Compare: this range, the one before, and the same days last year (no_data_yet until 2027-07-23, never zeros). */
+export function businessCompareRows(view: BusinessReportView, previous: BusinessReportView | null, shop: ShopRef): ExportRow[] {
+  const ly = view.range.lastYear;
+  return [
+    businessTotalRow(view, "current", shop),
+    ...(previous ? [businessTotalRow(previous, "previous", shop)] : []),
+    { row_type: "total", period: "last_year", period_start: ly?.from ?? null, period_end: ly?.to ?? null, ...shopCells(shop),
+      status: view.range.lastYearReason ?? "not_loaded" },
+  ];
+}
+
+/** Hours: every 15-minute quarter (<= 31 days), then each day's checks with no opened quarter. */
+export function businessHoursRows(view: BusinessReportView, shop: ShopRef): ExportRow[] {
+  if (view.quarters === null) return [{ row_type: "notice", ...shopCells(shop), status: view.quartersReason ?? "range_too_wide" }];
+  // Fix round 3: a quarter's hours are judged against its DAY's labor state: no minutes on a day whose hours are not
+  // final is EMPTY (unknown), never 0; `labor_state` names why. A GM's view has no cost / % figure: those cells stay empty.
+  return [
+    ...view.quarters.map((q): ExportRow => ({
+      row_type: "quarter", business_date: q.date, quarter_start: q.quarterStartAt, time_et: quarterWallTime(q.wallQuarter), ...shopCells(shop),
+      status: q.breakdownReady ? null : "breakdown_not_ready", labor_state: q.laborState, basis: q.basis,
+      ...figureCells({ checks: q.checks, toast_sales: q.sales, amount_missing: q.amountMissing, labor_hours: q.hours, straight_time_cost: q.cost, straight_time_pct: q.pct }),
+    })),
+    ...view.unassigned.map((u): ExportRow => ({
+      row_type: "unassigned", business_date: u.date, ...shopCells(shop), basis: "no_opened_time",
+      ...figureCells({ checks: u.checks, toast_sales: u.sales, amount_missing: u.amountMissing }),
+    })),
+    // Fix round 7 (review ITEM9B-r7 P2): a day with no 15-minute row is never silence. One row says whether that is
+    // a verified "nothing happened" (`no_activity`; `no_timed_activity` when its checks have no opened time and are
+    // the `unassigned` row) or NOT KNOWN (`activity_unknown`, with why in `figure_notes` and `labor_state`).
+    ...view.days.flatMap((d): ExportRow[] => (d.hasQuarterRows || d.activity === null ? [] : [{
+      row_type: "day", business_date: d.date, ...shopCells(shop), labor_state: d.labor.state,
+      status: d.activity.kind === "unknown" ? "activity_unknown" : d.unassigned ? "no_timed_activity" : "no_activity",
+      [FIGURE_NOTES_COLUMN]: emptyClaimNote("activity", d.activity),
+    }])),
+  ];
+}
+
+/** Fix round 1 (review ITEM9B-r1 P2): the channel and server lists hold only the days whose cuts recomposed, so
+ * the file opens with the days it covers: `status` complete | partial | none, `days_included` of `days_in_period`.
+ * A partial file is never presented as the whole period (the route also puts the sentence on top of the file). */
+export function businessCoverageRow(view: BusinessReportView, shop: ShopRef): ExportRow {
+  const c = view.breakdown;
+  return { row_type: "coverage", ...periodCells(view.range), ...shopCells(shop), status: view.range.empty ? "no_finished_days" : c.state,
+    days_included: c.included, days_in_period: c.expected };
+}
+/** The sentence a partial business file carries on top (CSV preamble, PDF header), or none when it is whole. */
+export function businessCoverageNotice(view: BusinessReportView): { key: "reports.business.export.breakdown_partial" | "reports.business.export.breakdown_none"; values: Record<string, number> } | null {
+  const c = view.breakdown;
+  if (view.range.empty || c.state === "complete") return null;
+  return { key: c.state === "none" ? "reports.business.export.breakdown_none" : "reports.business.export.breakdown_partial",
+    values: { covered: c.included, expected: c.expected, excluded: c.excluded } };
+}
+/** Fix round 1 sweep: labor hours that are not final (a week unbuilt / rebuilding / unknown) say so on top of the file. */
+export function businessHoursNotice(view: BusinessReportView): { key: "reports.business.export.hours_partial"; values: Record<string, string> } | null {
+  if (view.range.empty || view.total.labor.hoursFinal) return null;
+  return { key: "reports.business.export.hours_partial", values: {} };
+}
+
+/** Fix rounds 5 + 6 (reviews ITEM9B-r5 / r6 P2): a request with no closed day (today only, future only) or a start
+ * after its end is ONE notice row, status = the reason, over the ASKED period — never normalized dates, never a
+ * neighbour's rows. (A request missing a date never reaches here: the export refuses it.) */
+export function businessEmptyRangeRows(tab: BusinessExportTab, requested: Period, shop: ShopRef, reason: "no_finished_days" | "from_after_to"): ExportRow[] {
+  return [{ row_type: "notice", ...(tab === "compare" ? { period: "current" } : {}), ...(tab === "hours" ? {} : periodCells(requested)),
+    ...shopCells(shop), status: reason }];
+}
+
+/** Channels: counted Toast channels, ezCater as its own source, and the named exclusions (never counted).
+ * Fix round 4 (ITEM9B-r4 P2): ezCater's row follows the SALES coverage like the page: no capture = empty cells
+ * named `unknown(not_captured)`, part of the period = `incomplete(covered_days_only, ...)`; never a made-up 0. */
+export function businessChannelRows(view: BusinessReportView, shop: ShopRef): ExportRow[] {
+  const base = { ...periodCells(view.range), ...shopCells(shop) };
+  const cut = (row_type: string, c: CutView, provider: string | null): ExportRow => ({
+    row_type, ...base, channel: c.key, provider, ...figureCells({ checks: c.checks, sales: c.sales, amount_missing: c.amountMissing }),
+  });
+  const ez = view.channels.ezcater;
+  return [
+    businessCoverageRow(view, shop),
+    ...view.channels.included.map((c) => cut("channel", c, c.provider)),
+    ...(view.range.empty ? [] : [{ row_type: "ezcater", ...base, channel: "ezcater", provider: null,
+      ...figureCells({ checks: ez.orders, sales: ez.sales, amount_missing: ez.amountMissing }) } as ExportRow]),
+    ...view.channels.excluded.map((c) => cut("excluded", c, null)),
+  ];
+}
+
+/** People: hours per person (cost only where the view carries it, MoO+), then sales per server (the order's server). */
+export function businessPeopleRows(view: BusinessReportView, shop: ShopRef): ExportRow[] {
+  const base = { ...periodCells(view.range), ...shopCells(shop) };
+  return [
+    // The people list is hours: its coverage row also says whether those hours are final.
+    { ...businessCoverageRow(view, shop), labor_state: view.range.empty ? null : view.total.labor.state },
+    ...view.people.map((p): ExportRow => ({
+      row_type: "person", ...base, name: p.label, source: p.source, pay_class: p.payClass, weeks_withheld: p.weeksWithheld,
+      ...figureCells({ hours: p.hours, overtime_hours: p.overtime, straight_time_cost: p.cost }),
+    })),
+    ...view.servers.map((s): ExportRow => ({
+      row_type: "server", ...base, name: s.label, server_ref: s.key ? s.key.slice(-4) : null,
+      ...figureCells({ checks: s.checks, sales: s.sales, amount_missing: s.amountMissing }),
+    })),
+  ];
 }
 
 /** `{family}_{shop-code}_{from}_{to}.{ext}`, filesystem-safe. */

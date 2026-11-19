@@ -24,7 +24,7 @@
 import { shiftReportDate, validReportDate } from "@/lib/report-range";
 import { summarizeSales, type CoverageStatus, type DailyRaw } from "@/lib/sales-reports-shared";
 import { laborWeekViews, canSeePersonCost as laborCanSeePersonCost, type LaborCostRow } from "@/lib/facts/labor-cost-shared";
-import { LABOR_BUILDER_VERSION, LABOR_HISTORY_FLOOR_DAY, LABOR_TARGET_HOURLY_PCT } from "@/lib/facts/labor-config-shared";
+import { LABOR_BUILDER_VERSION, LABOR_HISTORY_FLOOR_DAY, LABOR_TARGET_HOURLY_PCT, LABOR_TARGET_LOADED_PCT } from "@/lib/facts/labor-config-shared";
 import { laborTone, type LaborTone } from "@/lib/scheduling/board-shared";
 import type { RoleCode } from "@/lib/roles";
 
@@ -41,7 +41,7 @@ export const LARGE_CHECK_CENTS = 500_000;
 
 export interface BusinessReportEnv { BUSINESS_REPORT?: string; FACT_LAYER?: string; FACT_LAYER_LABOR?: string }
 /** Dark unless all three are exactly "1" (plan finding 3: BUSINESS_REPORT, FACT_LAYER, FACT_LAYER_LABOR). */
-export function businessReportEnabled(env: BusinessReportEnv): boolean {
+export function businessReportEnabled(env: BusinessReportEnv | Readonly<Record<string, string | undefined>>): boolean {
   return env.BUSINESS_REPORT === "1" && env.FACT_LAYER === "1" && env.FACT_LAYER_LABOR === "1";
 }
 
@@ -79,31 +79,67 @@ export function inclusiveDays(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
 }
 
-/** Finished business days only (today stays on Pulse). Default: the seven days ending yesterday. */
-export function resolveBusinessRange(p: Record<string, string | undefined>, today: string): BusinessRange {
-  const yesterday = shiftReportDate(today, -1);
-  const range = (BUSINESS_RANGES as readonly string[]).includes(p.range ?? "") ? p.range as BusinessRange["range"]
-    : p.from || p.to ? "custom" : "last7";
-  let from = shiftReportDate(yesterday, -6);
-  let to = yesterday;
-  if (range === "yesterday") from = yesterday;
-  else if (range === "last30") from = shiftReportDate(yesterday, -29);
-  else if (range === "last90") from = shiftReportDate(yesterday, -89);
-  else if (range === "custom") {
-    if (validReportDate(p.to)) to = p.to;
-    if (validReportDate(p.from)) from = p.from;
-  }
+/** Why a request has no range to read. `dates_missing`: a custom range lacks a valid start or end date (absent or
+ * malformed — the person picks both, nothing is assumed); `from_after_to`; `no_finished_days`: every asked day is
+ * today or later (today stays on Pulse). */
+export const BUSINESS_RANGE_EMPTY_REASONS = ["dates_missing", "from_after_to", "no_finished_days"] as const;
+export type BusinessRangeEmptyReason = (typeof BUSINESS_RANGE_EMPTY_REASONS)[number];
+/** The query every link and export carries: it re-parses to the SAME request. */
+export type BusinessRangeQuery = { range: BusinessRange["range"]; from?: string; to?: string };
+/** What the form's date boxes show: what was ASKED ("" = blank), or the preset's own dates. */
+export interface BusinessRangeForm { from: string; to: string }
+export type BusinessRangeRequest =
+  | { kind: "empty"; reason: BusinessRangeEmptyReason; query: BusinessRangeQuery; form: BusinessRangeForm;
+      /** The asked period — both dates valid — for `from_after_to` / `no_finished_days`; null for `dates_missing`. */
+      period: { from: string; to: string } | null }
+  | { kind: "range"; range: BusinessRange; query: BusinessRangeQuery; form: BusinessRangeForm };
+
+function concreteRange(range: BusinessRange["range"], from: string, to: string, yesterday: string): BusinessRange {
   if (to > yesterday) to = yesterday;
   let shortened = false;
   const floor = shiftReportDate(to, -(BUSINESS_REPORT_MAX_DAYS - 1));
   if (from < floor) { from = floor; shortened = range === "custom"; }
-  const empty = from > to;
-  if (empty) from = to;
-  const days = empty ? 0 : inclusiveDays(from, to);
-  const previous = { from: shiftReportDate(from, -Math.max(days, 1)), to: shiftReportDate(from, -1) };
+  const days = inclusiveDays(from, to);
+  const previous = { from: shiftReportDate(from, -days), to: shiftReportDate(from, -1) };
   const ly = { from: minusYear(from), to: minusYear(to) };
   const lastYear = ly.from >= BUSINESS_HISTORY_FLOOR ? ly : null;
-  return { range, from, to, days, shortened, empty, previous, lastYear, lastYearReason: lastYear ? null : "no_data_yet" };
+  return { range, from, to, days, shortened, empty: false, previous, lastYear, lastYearReason: lastYear ? null : "no_data_yet" };
+}
+
+/**
+ * Fix round 6 (review ITEM9B-r6 P2): THE ONE place the raw query (range, from, to) becomes a range. The page's
+ * resolver, the form's date boxes, every link (`query`) and both exports read only this; nothing else turns a
+ * query into dates. It NEVER substitutes a date the person did not give: a custom request with a missing or
+ * malformed bound is `dates_missing` (blank box, nothing read) — never "the seven days ending yesterday", and an
+ * empty request's dates are never normalized onto a neighbouring populated day. `query` re-parses (same `today`)
+ * to the same request; `form` submitted as-is re-parses to the same request too.
+ * Finished business days only. No params: the seven days ending yesterday (a PRESET, not a substituted date).
+ */
+export function parseBusinessRangeRequest(p: Record<string, string | undefined>, today: string): BusinessRangeRequest {
+  const yesterday = shiftReportDate(today, -1);
+  const kind = (BUSINESS_RANGES as readonly string[]).includes(p.range ?? "") ? p.range as BusinessRange["range"]
+    : p.from || p.to ? "custom" : "last7";
+  if (kind !== "custom") {
+    const from = kind === "yesterday" ? yesterday : shiftReportDate(yesterday, kind === "last30" ? -29 : kind === "last90" ? -89 : -6);
+    const range = concreteRange(kind, from, yesterday, yesterday);
+    return { kind: "range", range, query: { range: kind }, form: { from: range.from, to: range.to } };
+  }
+  const from = validReportDate(p.from) ? p.from : null;
+  const to = validReportDate(p.to) ? p.to : null;
+  const query: BusinessRangeQuery = { range: "custom", ...(from ? { from } : {}), ...(to ? { to } : {}) };
+  const form = { from: from ?? "", to: to ?? "" };
+  if (from === null || to === null) return { kind: "empty", reason: "dates_missing", query, form, period: null };
+  if (from > to) return { kind: "empty", reason: "from_after_to", query, form, period: { from, to } };
+  if (from > yesterday) return { kind: "empty", reason: "no_finished_days", query, form, period: { from, to } };
+  return { kind: "range", range: concreteRange("custom", from, to, yesterday), query, form };
+}
+
+/** A range that must exist (Compare's previous period, tests): the same parse; an empty request is a programmer
+ * error here — a surface that can receive one calls `parseBusinessRangeRequest` and handles `empty`. */
+export function resolveBusinessRange(p: Record<string, string | undefined>, today: string): BusinessRange {
+  const r = parseBusinessRangeRequest(p, today);
+  if (r.kind === "empty") throw new Error(`resolveBusinessRange: empty request (${r.reason}); use parseBusinessRangeRequest`);
+  return r.range;
 }
 
 /** Days [from, to], oldest first. */
@@ -165,6 +201,18 @@ export function combineShopDays(shops: readonly (readonly DaySales[])[]): DaySal
       refundCents: sum("refundCents"), totalCents: sum("totalCents"), giftCardCents: sum("giftCardCents"), ezcaterLinkedCents: sum("ezcaterLinkedCents"),
     };
   });
+}
+
+/** Days summed as raw cents (a week row): complete only when every day is; Toast net only when every day's is known. */
+export function sumBusinessDays(days: readonly DaySales[]): Omit<DaySales, "date"> {
+  const sum = (k: keyof DaySales) => days.reduce((s, d) => s + (d[k] as number), 0);
+  return {
+    coverage: days.length > 0 && days.every((d) => d.coverage === "complete") ? "complete" : days.some((d) => d.coverage !== "missing") ? "partial" : "missing",
+    checks: sum("checks"), toastChecksCents: sum("toastChecksCents"), toastAmountMissing: sum("toastAmountMissing"),
+    toastNetCents: days.length > 0 && days.every((d) => d.toastNetCents !== null) ? days.reduce((s, d) => s + d.toastNetCents!, 0) : null,
+    ezcaterCents: sum("ezcaterCents"), ezcaterOrders: sum("ezcaterOrders"), ezcaterMissing: sum("ezcaterMissing"), refundCents: sum("refundCents"),
+    totalCents: sum("totalCents"), giftCardCents: sum("giftCardCents"), ezcaterLinkedCents: sum("ezcaterLinkedCents"),
+  };
 }
 
 // ── P1: the labor denominator ───────────────────────────────────────────────────────────────────
@@ -277,6 +325,10 @@ export function payrollWeekStart(date: string): string {
 // ── Labor figures ───────────────────────────────────────────────────────────────────────────────
 
 export type LaborState = "ok" | "rebuilding" | "unbuilt" | "before_history" | "hours_unknown" | DenominatorState;
+/** Item 9b: why a FULLY LOADED figure is missing. `salary_incomplete` = 0340's payroll-shop gap (salaries not set
+ * up yet); `salary_unknown` = no salary known at all (no shop estimate, no 7shifts salaries). Otherwise the pure
+ * hourly state (a blocked week, unknown hours, an unknown denominator) withholds it too. */
+export type LoadedState = LaborState | "salary_incomplete" | "salary_unknown";
 export interface LaborFigures {
   state: LaborState;
   /** Worked minutes (hourly + salaried presence): independent of the overtime scope, always shown when built. */
@@ -288,50 +340,91 @@ export interface LaborFigures {
   denominator: Denominator;
   pct: number | null;
   tone: LaborTone;
+  /** Item 9b, FULLY LOADED (Juan 2026-11-16/18): pure hourly + salaried + burden, over the same net sales
+   * (target <= 28%). Priced by THE shared pricer (laborWeekViews); null with `loadedState` saying why. */
+  loadedState: LoadedState;
+  salariedCents: number | null;
+  burdenCents: number | null;
+  fullyLoadedCents: number | null;
+  loadedPct: number | null;
+  loadedTone: LaborTone;
+  /** The 12% default burden (no payroll figure yet): always labelled "estimated". */
+  burdenEstimated: boolean;
+  /** A salary came from the shop's estimate, not 7shifts wages. */
+  salaryEstimated: boolean;
+  /** 0340 payroll-shop gaps behind the figures (unplaced + missing wage), shown beside any figure. */
+  salaryGaps: number;
+  /** Fix round 4 (ITEM9B-r4): some hourly minutes are priced at the shop's ESTIMATED wage (no wage on file, or the
+   * Q5 fallback): the shared pricer's `rateEstimated`. Every figure built on hourly money carries it. */
+  wageEstimated: boolean;
+  /** Fix round 4 (own sweep): some days' hours come from the Toast FALLBACK (`fallback_unverified`: 7shifts was not
+   * covered for the day, Toast punches stand in). The pricer shows them (`hoursKnown`), so every figure built on
+   * hours says so. */
+  hoursUnverified: boolean;
 }
 const round1 = (x: number) => Math.round(x * 10) / 10;
 
-type ViewWithOt = ReturnType<typeof laborWeekViews>[number] & { otMinutes: number };
+type ViewWithOt = ReturnType<typeof laborWeekViews>[number] & { otMinutes: number; salaryEstimated: boolean; fallbackDays: number };
+type Target = number | "target_varies";
+const NO_LOADED = { salariedCents: null, burdenCents: null, fullyLoadedCents: null, loadedPct: null, loadedTone: "none" as LaborTone };
+function withheld(state: LaborState, minutes: number | null, denominator: Denominator): LaborFigures {
+  return { state, minutes, pureHourlyCents: null, otPremiumCents: null, otMinutes: null, denominator, pct: null, tone: "none",
+    loadedState: state, ...NO_LOADED, burdenEstimated: false, salaryEstimated: false, salaryGaps: 0, wageEstimated: false, hoursUnverified: false };
+}
 function figures(views: readonly ViewWithOt[], weekStates: readonly LaborWeekState[], minutes: number | null,
-  denominator: Denominator, target: number | "target_varies"): LaborFigures {
+  denominator: Denominator, target: { hourly: Target; loaded: Target }): LaborFigures {
   const blocked = weekStates.find((s) => s !== "ready");
-  if (blocked) return { state: blocked, minutes, pureHourlyCents: null, otPremiumCents: null, otMinutes: null, denominator, pct: null, tone: "none" };
+  if (blocked) return withheld(blocked, minutes, denominator);
   const pure = views.reduce((s, v) => s + v.pureHourlyCents, 0);
   const prem = views.reduce((s, v) => s + v.otPremiumCents, 0);
   const otMinutes = views.reduce((s, v) => s + v.otMinutes, 0);
   const known = views.length > 0 && views.every((v) => v.hoursKnown);
   const state: LaborState = !known ? "hours_unknown" : denominator.state;
-  const pct = state === "ok" && denominator.cents !== null && denominator.cents > 0 ? round1((100 * pure) / denominator.cents) : null;
-  return { state, minutes, pureHourlyCents: pure, otPremiumCents: prem, otMinutes, denominator, pct,
-    tone: pct === null || target === "target_varies" ? "none" : laborTone(pct, target) };
+  const pctOf = (c: number) => (state === "ok" && denominator.cents !== null && denominator.cents > 0 ? round1((100 * c) / denominator.cents) : null);
+  const toneOf = (p: number | null, t: Target) => (p === null || t === "target_varies" ? "none" as const : laborTone(p, t));
+  const pct = pctOf(pure);
+  const flags = {
+    burdenEstimated: views.some((v) => v.burdenEstimated), salaryEstimated: views.some((v) => v.salaryEstimated),
+    salaryGaps: views.reduce((s, v) => s + v.salaryGaps, 0), wageEstimated: views.some((v) => v.rateEstimated),
+    hoursUnverified: views.some((v) => v.fallbackDays > 0),
+  };
+  const base = { state, minutes, pureHourlyCents: pure, otPremiumCents: prem, otMinutes, denominator, pct, tone: toneOf(pct, target.hourly), ...flags };
+  // Any week with an unknown salary leaves the whole span's fully loaded unknown (never a partial sum).
+  if (views.length === 0 || views.some((v) => v.fullyLoadedCents === null)) {
+    return { ...base, loadedState: views.some((v) => v.salaryIncomplete) ? "salary_incomplete" : "salary_unknown", ...NO_LOADED };
+  }
+  const salaried = views.reduce((s, v) => s + v.salariedCents!, 0);
+  const burden = views.reduce((s, v) => s + v.burdenCents!, 0);
+  const loaded = views.reduce((s, v) => s + v.fullyLoadedCents!, 0);
+  const loadedPct = pctOf(loaded);
+  return { ...base, loadedState: state, salariedCents: salaried, burdenCents: burden, fullyLoadedCents: loaded, loadedPct, loadedTone: toneOf(loadedPct, target.loaded) };
 }
 function views(rows: readonly LaborCostRow[]): ViewWithOt[] {
-  return rows.map((r) => ({ ...laborWeekViews([r])[0]!, otMinutes: Number(r.ot_minutes) }));
+  return rows.map((r) => ({ ...laborWeekViews([r])[0]!, otMinutes: Number(r.ot_minutes), salaryEstimated: r.salary_basis === "estimate",
+    fallbackDays: Number(r.days_fallback ?? 0) }));
 }
 const rowMinutes = (rows: readonly LaborCostRow[]) => rows.reduce((s, r) => s + Number(r.hourly_minutes) + Number(r.salaried_minutes), 0);
 
 /** One day: its fact_labor_cost(day, day) row against its own net sales. */
 export function laborDayFigures(day: DaySales, row: LaborCostRow | null, week: LaborWeekCoverageRow | undefined,
-  target: number | "target_varies" = LABOR_TARGET_HOURLY_PCT): LaborFigures {
+  target: Target = LABOR_TARGET_HOURLY_PCT, loadedTarget: Target = LABOR_TARGET_LOADED_PCT): LaborFigures {
   const denominator = laborNetSales(day);
-  if (day.date < BUSINESS_HISTORY_FLOOR) return { state: "before_history", minutes: null, pureHourlyCents: null, otPremiumCents: null, otMinutes: null, denominator, pct: null, tone: "none" };
-  if (!row) return { state: "unbuilt", minutes: null, pureHourlyCents: null, otPremiumCents: null, otMinutes: null, denominator, pct: null, tone: "none" };
+  if (day.date < BUSINESS_HISTORY_FLOOR) return withheld("before_history", null, denominator);
+  if (!row) return withheld("unbuilt", null, denominator);
   const state = row.ot_state === "unbuilt" ? "unbuilt" as const : laborWeekState(week);
-  return figures(views([row]), [state], rowMinutes([row]), denominator, target);
+  return figures(views([row]), [state], rowMinutes([row]), denominator, { hourly: target, loaded: loadedTarget });
 }
 /** A week or a whole range: the weeks' fact_labor_cost rows (raw cents summed first) over the days' net. */
 export function laborRangeFigures(days: readonly DaySales[], rows: readonly LaborCostRow[], weeks: ReadonlyMap<string, LaborWeekCoverageRow>,
-  target: { hourly: number | "target_varies" }): LaborFigures {
+  target: { hourly: Target; loaded?: Target }): LaborFigures {
   const denominator = sumNetSales(days);
-  if (days.length === 0 || days[0]!.date < BUSINESS_HISTORY_FLOOR) {
-    return { state: "before_history", minutes: null, pureHourlyCents: null, otPremiumCents: null, otMinutes: null, denominator, pct: null, tone: "none" };
-  }
+  if (days.length === 0 || days[0]!.date < BUSINESS_HISTORY_FLOOR) return withheld("before_history", null, denominator);
   const weekStarts = [...new Set(days.map((d) => payrollWeekStart(d.date)))];
   const states = weekStarts.map((w) => {
     const r = rows.find((x) => x.week_start === w);
     return !r || r.ot_state === "unbuilt" ? "unbuilt" as const : laborWeekState(weeks.get(w));
   });
-  return figures(views(rows), states, rows.length ? rowMinutes(rows) : null, denominator, target.hourly);
+  return figures(views(rows), states, rows.length ? rowMinutes(rows) : null, denominator, { hourly: target.hourly, loaded: target.loaded ?? LABOR_TARGET_LOADED_PCT });
 }
 
 /** A 15-minute (or hour) cell: Toast-hour sales only, straight time, never toned (plan: tones at day/week).
@@ -390,7 +483,7 @@ export function recomposeDay(day: DaySales, cuts: readonly CutRow[]): { ok: bool
 }
 
 export interface CutTotal { key: string; label?: string | null; provider?: string | null; cents: number; checks: number; amountMissing?: number; unassigned?: boolean }
-/** Channels: `sale` checks by channel/provider (included) and the named exclusions (gift cards, ezCater-linked). */
+/** Channels: `sale` checks by channel/provider (included) and every other class, by class (never counted as sales). */
 export function channelTotals(cuts: readonly CutRow[]): { included: CutTotal[]; excluded: CutTotal[] } {
   const inc = new Map<string, CutTotal>();
   const exc = new Map<string, CutTotal>();
@@ -399,9 +492,11 @@ export function channelTotals(cuts: readonly CutRow[]): { included: CutTotal[]; 
       const k = `${c.channel}|${c.provider ?? ""}`;
       const t = inc.get(k) ?? inc.set(k, { key: c.channel, provider: c.provider, cents: 0, checks: 0, amountMissing: 0 }).get(k)!;
       t.cents += c.amount_cents; t.checks += c.checks; t.amountMissing! += c.amount_missing;
-    } else if (c.sale_class === "gift_card" || c.sale_class === "ezcater_linked") {
-      const t = exc.get(c.sale_class) ?? exc.set(c.sale_class, { key: c.sale_class, cents: 0, checks: 0 }).get(c.sale_class)!;
-      t.cents += c.amount_cents; t.checks += c.checks;
+    } else {
+      // Fix round 8: EVERY check that is not a sale is listed here (void, excess food, e-gift card, ezCater-linked):
+      // a class left out would let "Nothing excluded" stand over checks the list dropped.
+      const t = exc.get(c.sale_class) ?? exc.set(c.sale_class, { key: c.sale_class, cents: 0, checks: 0, amountMissing: 0 }).get(c.sale_class)!;
+      t.cents += c.amount_cents; t.checks += c.checks; t.amountMissing! += c.amount_missing;
     }
   }
   const order = (a: CutTotal, b: CutTotal) => b.cents - a.cents || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
@@ -439,7 +534,17 @@ export const RUSH_MIN_BASELINE_CHECKS = 1;
 /** `amountMissing` = checks of unknown amount in the quarter (absent = 0): such a quarter's sales are unknown. */
 export interface QuarterPoint { quarterStartAt: string; wallQuarter: number; fold: number; checks: number; cents: number; amountMissing?: number }
 export interface RushWindow { startAt: string; endAt: string; quarters: number; checks: number; cents: number; baselineChecks: number; baselineCents: number }
-export interface RushResult { state: "ok" | "not_enough_history"; windows: RushWindow[] }
+/** `uncompared` (item 9b fix round 7) = quarters of the day with enough checks to be part of a rush that could NOT
+ * be compared, because a check there (today, or at that quarter on a baseline day) has no amount. Above zero, the
+ * windows found are a floor and "no rushes" is not known. */
+export interface RushResult {
+  state: "ok" | "not_enough_history"; windows: RushWindow[]; uncompared: number;
+  /** Fix round 8 (ITEM9B-r8 P2): the day's rush-eligible checks (`sale`, not catering) with NO opened time: the
+   * detector cannot place them, so above zero "no rushes" is unknown and the windows found are a floor. */
+  untimed: number;
+  /** Fix round 8: baseline days left out of the usual because they had checks with no opened time. */
+  baselineUntimed: number;
+}
 
 const QUARTER_MS = 15 * 60_000;
 function median(xs: number[]): number {
@@ -450,17 +555,25 @@ function median(xs: number[]): number {
 /** Rushes of one day against the last 8 COVERED same weekdays (the caller passes only covered days and
  * leaves out catering-channel checks and ezCater). The baseline of a quarter is the median over those
  * days at the same ET wall quarter and fold (a day with no check there counts as 0). */
-export function detectRushes(day: { date: string; quarters: readonly QuarterPoint[] },
-  history: ReadonlyArray<{ date: string; quarters: readonly QuarterPoint[] }>): RushResult {
-  const hist = [...history].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, RUSH_HISTORY_WEEKS);
-  if (hist.length < RUSH_MIN_HISTORY) return { state: "not_enough_history", windows: [] };
+export function detectRushes(day: { date: string; quarters: readonly QuarterPoint[]; untimed?: number },
+  history: ReadonlyArray<{ date: string; quarters: readonly QuarterPoint[]; untimed?: number }>): RushResult {
+  const recent = [...history].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, RUSH_HISTORY_WEEKS);
+  // Fix round 8: a baseline day with checks that have no time does not say where its checks were: it is left out
+  // of the usual (counted), never a baseline lowered by checks it could not place.
+  const hist = recent.filter((h) => (h.untimed ?? 0) === 0);
+  const untimed = day.untimed ?? 0, baselineUntimed = recent.length - hist.length;
+  if (hist.length < RUSH_MIN_HISTORY) return { state: "not_enough_history", windows: [], uncompared: 0, untimed, baselineUntimed };
   const key = (q: { wallQuarter: number; fold: number }) => `${q.wallQuarter}|${q.fold}`;
   const hot: Array<QuarterPoint & { bChecks: number; bCents: number }> = [];
+  let uncompared = 0;
   for (const q of day.quarters) {
     // Fix round 2: a quarter whose sales are unknown (today, or at the same quarter on any baseline day) is never compared.
-    if ((q.amountMissing ?? 0) > 0) continue;
+    // Fix round 7: it is COUNTED when it had the checks to be part of a rush (fewer could never qualify).
     const at = hist.map((h) => h.quarters.find((x) => key(x) === key(q)));
-    if (at.some((x) => (x?.amountMissing ?? 0) > 0)) continue;
+    if ((q.amountMissing ?? 0) > 0 || at.some((x) => (x?.amountMissing ?? 0) > 0)) {
+      if (q.checks >= RUSH_MIN_CHECKS) uncompared++;
+      continue;
+    }
     const bChecks = median(at.map((x) => x?.checks ?? 0));
     const bCents = median(at.map((x) => x?.cents ?? 0));
     const qualifies = bChecks >= RUSH_MIN_BASELINE_CHECKS && bCents > 0
@@ -487,7 +600,67 @@ export function detectRushes(day: { date: string; quarters: readonly QuarterPoin
     run.push(q);
   }
   flush();
-  return { state: "ok", windows };
+  return { state: "ok", windows, uncompared, untimed, baselineUntimed };
+}
+
+// ── The page (item 9b) ──────────────────────────────────────────────────────────────────────────
+
+/** The page's tabs; the export's `tab=` uses the same list (lib/report-export-shared.ts). */
+export const BUSINESS_REPORT_TABS = ["overview", "hours", "channels", "people", "compare"] as const;
+export type BusinessReportTab = (typeof BUSINESS_REPORT_TABS)[number];
+export function businessTab(v: string | undefined): BusinessReportTab {
+  return (BUSINESS_REPORT_TABS as readonly string[]).includes(v ?? "") ? v as BusinessReportTab : "overview";
+}
+
+export type CompareChange = { kind: "pct"; value: number } | { kind: "points"; value: number } | { kind: "not_comparable" };
+/** This period vs the one before. Money: a whole % only when BOTH periods are complete and the earlier is above
+ * zero. A labor %: the difference in POINTS (never a % of a %). Anything unknown is not comparable, never 0. */
+export function compareChange(cur: { value: number | null; complete: boolean }, prev: { value: number | null; complete: boolean },
+  kind: "money" | "points"): CompareChange {
+  if (cur.value === null || prev.value === null || !cur.complete || !prev.complete) return { kind: "not_comparable" };
+  if (kind === "points") return { kind: "points", value: round1(cur.value - prev.value) };
+  if (prev.value <= 0) return { kind: "not_comparable" };
+  return { kind: "pct", value: Math.round(((cur.value - prev.value) / prev.value) * 100) };
+}
+
+/** Fix round 1 (review ITEM9B-r1 P2): hours are FINAL only when every payroll week behind them is built and
+ * ready and every week's hours are known. An `unbuilt` / `rebuilding` span still carries the minutes it HAS
+ * (shown "so far"), which is exactly why "minutes is a number" never means "complete". The denominator states
+ * are about sales, not hours. Never compare hours that are not final. */
+export function laborHoursComplete(state: LaborState): boolean {
+  return state !== "unbuilt" && state !== "rebuilding" && state !== "before_history" && state !== "hours_unknown";
+}
+/** Fix round 1: which days a channel / server / large-check breakdown covers (only days whose cuts recomposed). */
+export interface BreakdownCoverage { state: "complete" | "partial" | "none"; included: number; expected: number; excluded: number }
+export function breakdownCoverage(days: readonly { cuts: CutsState }[]): BreakdownCoverage {
+  const included = days.filter((d) => d.cuts === "ok").length;
+  const expected = days.length;
+  return { state: included === expected ? "complete" : included === 0 ? "none" : "partial", included, expected, excluded: expected - included };
+}
+/** Fix round 1: checks / orders of unknown amount behind a day's sales total (Toast + ezCater). */
+export function salesAmountMissing(s: { toastAmountMissing: number; ezcaterMissing: number }): number {
+  return s.toastAmountMissing + s.ezcaterMissing;
+}
+
+/** The sentence beside a '—' (a labor % that is not shown). Null when there is a figure. */
+export function laborReasonKey(state: LaborState): (typeof BUSINESS_REPORT_I18N_KEYS)[number] | null {
+  return state === "ok" ? null : `reports.business.labor.state.${state}`;
+}
+export function loadedReasonKey(state: LoadedState): (typeof BUSINESS_REPORT_I18N_KEYS)[number] | null {
+  return state === "ok" ? null : `reports.business.labor.state.${state}`;
+}
+
+/** Fix round 2 (review ITEM9B-r2 P2): THE qualifications of a fully loaded figure, in one place, so the page
+ * (Overview, every drawer, BOTH Compare periods) never shows the figure without them. The burden and salary
+ * estimates qualify a SHOWN figure; payroll gaps are named whether the figure shows or not. */
+export function loadedQualifiers(l: Pick<LaborFigures, "fullyLoadedCents" | "burdenEstimated" | "salaryEstimated" | "salaryGaps">):
+  Array<{ key: "reports.business.burden_estimated" | "reports.business.salary_estimated" | "reports.business.salary_gaps"; values?: Record<string, number> }> {
+  const shown = l.fullyLoadedCents !== null;
+  return [
+    ...(shown && l.burdenEstimated ? [{ key: "reports.business.burden_estimated" as const }] : []),
+    ...(shown && l.salaryEstimated ? [{ key: "reports.business.salary_estimated" as const }] : []),
+    ...(l.salaryGaps > 0 ? [{ key: "reports.business.salary_gaps" as const, values: { n: l.salaryGaps } }] : []),
+  ];
 }
 
 /** Every label a business-report reader shows (en + es tú, pinned by tests/business-report-i18n.test.ts). No page
@@ -501,4 +674,54 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.labor.state.ezcater_missing", "reports.business.labor.state.zero_sales",
   "reports.business.labor.denominator", "reports.business.quarter.basis", "reports.business.cuts.rebuilding", "reports.business.large_checks",
   "reports.business.rush.not_enough_history", "reports.business.rush.rule", "reports.business.last_year.no_data_yet",
+  // Item 9b: the page.
+  "reports.business.title", "reports.business.hub_hint", "reports.business.hub_open", "reports.business.tabs_aria",
+  "reports.business.tab.overview", "reports.business.tab.hours", "reports.business.tab.channels", "reports.business.tab.people",
+  "reports.business.tab.compare", "reports.business.caption", "reports.business.cap", "reports.business.range_shortened",
+  "reports.business.no_finished_days", "reports.business.coverage.days", "reports.business.coverage.partial", "reports.business.coverage.missing",
+  "reports.business.card.sales", "reports.business.card.sales_hint", "reports.business.card.net", "reports.business.card.net_hint",
+  "reports.business.card.hours", "reports.business.card.pure_hourly", "reports.business.card.fully_loaded", "reports.business.card.refunds",
+  "reports.business.card.refunds_hint", "reports.business.target", "reports.business.target_le", "reports.business.target_varies",
+  "reports.business.pct_value", "reports.business.hours_value", "reports.business.loaded.basis", "reports.business.burden_estimated",
+  "reports.business.salary_estimated", "reports.business.salary_gaps", "reports.business.labor.state.salary_incomplete", "reports.business.labor.state.salary_unknown",
+  "reports.business.weeks", "reports.business.week_of", "reports.business.days", "reports.business.count_days",
+  "reports.business.count_weeks", "reports.business.row.sales", "reports.business.row.labor_pct", "reports.business.row.loaded_pct",
+  "reports.business.badge.rebuilding", "reports.business.badge.large", "reports.business.detail.sales", "reports.business.detail.checks",
+  "reports.business.detail.toast_net", "reports.business.detail.ezcater", "reports.business.detail.net_sales", "reports.business.detail.hours",
+  "reports.business.detail.pure_hourly_cost", "reports.business.detail.ot_premium", "reports.business.detail.ot_hours", "reports.business.detail.salaried",
+  "reports.business.detail.burden", "reports.business.detail.fully_loaded", "reports.business.last_year.label", "reports.business.hours.checks",
+  "reports.business.hours.no_labor", "reports.business.hours.no_pct", "reports.business.hours.gm_note", "reports.business.hours.money_note",
+  "reports.business.hours.too_wide", "reports.business.hours.no_activity", "reports.business.hours.list_aria", "reports.business.rush.count",
+  "reports.business.rush.none", "reports.business.rush.window", "reports.business.channels.title",
+  "reports.business.channels.ezcater", "reports.business.channels.ezcater_label", "reports.business.channels.excluded", "reports.business.channels.excluded_none",
+  "reports.business.channels.excluded.gift_card", "reports.business.channels.excluded.ezcater_linked", "reports.business.channels.rebuilding_days", "reports.business.people.title",
+  "reports.business.people.count", "reports.business.people.none", "reports.business.people.unnamed", "reports.business.people.pay.hourly",
+  "reports.business.people.pay.salaried", "reports.business.people.ot", "reports.business.people.withheld", "reports.business.people.cost",
+  "reports.business.people.cost_withheld", "reports.business.people.salaried_cost", "reports.business.people.cost_note", "reports.business.people.servers",
+  "reports.business.people.server_note", "reports.business.compare.periods", "reports.business.compare.this", "reports.business.compare.previous",
+  "reports.business.compare.pct", "reports.business.compare.points", "reports.business.compare.not_comparable", "reports.business.compare.rule",
+  // Fix round 1: unknowns are qualified, never plain numbers.
+  "reports.business.amount_at_least", "reports.business.amount_unknown", "reports.business.hours_so_far", "reports.business.sales_covered_only",
+  "reports.business.sales.not_captured", "reports.business.export.breakdown_partial", "reports.business.export.breakdown_none",
+  "reports.business.large_checks_partial", "reports.business.people.hours_partial", "reports.business.export.hours_partial",
+  // Fix round 2: a dash with no earlier period names that.
+  "reports.business.compare.no_previous",
+  // Fix round 3: the figure descriptor (lib/business-figure-shared.ts) — short qualifiers for collapsed rows.
+  "reports.business.row.hours", "reports.business.qual.burden_estimated", "reports.business.qual.salary_estimated",
+  "reports.business.qual.salary_gaps", "reports.business.figure.not_available", "reports.business.figure.amount_missing",
+  // Fix round 4: the estimated wage, a breakdown that covers only its ready days, counts, the per-person lines.
+  "reports.business.wage_estimated", "reports.business.qual.wage_estimated", "reports.business.figure.breakdown_partial",
+  "reports.business.figure.breakdown_none", "reports.business.breakdown_days_only",
+  "reports.business.hours_unverified", "reports.business.qual.hours_unverified",
+  // Fix round 5: the file of a range with no closed day says so.
+  "reports.business.export.no_finished_days",
+  // Fix round 6: every reason a request has no range, on the page and in the file.
+  "reports.business.empty.dates_missing", "reports.business.empty.from_after_to", "reports.business.export.from_after_to",
+  // Fix round 7: an empty list is a claim (said only over known-complete inputs; otherwise "not known" + why).
+  "reports.business.empty.not_known", "reports.business.hours.no_timed_activity", "reports.business.channels.none_verified",
+  "reports.business.people.servers_none", "reports.business.rush.not_all_compared", "reports.business.last_year.not_shown",
+  // Fix round 8: checks with no time block "No rushes"; every class that is not a sale is listed as not counted.
+  "reports.business.rush.untimed_unknown", "reports.business.rush.untimed_more", "reports.business.rush.baseline_untimed",
+  "reports.business.qual.baseline_untimed", "reports.business.channels.excluded.void", "reports.business.channels.excluded.excess_food",
+  "reports.business.channels.excluded.other",
 ] as const;

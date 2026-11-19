@@ -64,6 +64,7 @@ const RULES: ParentRule[] = [
   { pattern: "/reports/operations", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/reports/written", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/reports/sales", parent: { href: "/reports", labelKey: "reports.page.title" } },
+  { pattern: "/reports/business", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/reports/sales/checks", parent: { href: "/reports/sales", labelKey: "reports.hub.sales" } },
   { pattern: "/reports/sales/catering", parent: { href: "/reports/sales", labelKey: "reports.hub.sales" } },
   { pattern: "/reports/sales/checks/[checkGuid]", parent: { href: "/reports/sales/checks", labelKey: "reports.sales.checks.title" } },
