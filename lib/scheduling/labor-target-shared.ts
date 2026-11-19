@@ -19,6 +19,11 @@
  *   hourly basis: allowance = sales x pure-hourly target
  *   max hours  = (allowance - the projected overtime premium) / the blended STRAIGHT wage, "at this draft's overtime"
  *   the verdict in dollars: the projected pure hourly $ against the allowance.
+ * EVERY SENTENCE IS ARITHMETICALLY TRUE FOR THE NUMBERS IT SHOWS (review BOARD3-r1): the allowance is SIGNED (salaries
+ * alone above the target leave a NEGATIVE allowance, said so, never clamped to $0); only the HOURS are floored at 0, and
+ * then the card writes the subtraction ("nothing is left"), not a division; the minimum-crew explanation compares against
+ * what is left AFTER the premium, the same quantity the hours were cut from (`DayMoney.minimumsLine`: each money source
+ * words its own explanation). A wage inside an equation is shown to the cent (`wageExactCents`).
  * A figure the projection withholds (not settled, no wage, overtime not assessed, no sales) is the card's errand, named
  * by the projection's own reason (never a 0). Only money viewers ever take this path (an AGM's board has no views).
  *
@@ -41,6 +46,7 @@ export const LABOR_LINE_KEYS = [
   // PR 3: the heads maths over the labor views.
   "schedule.labor.views_allowance_total", "schedule.labor.views_allowance_hourly", "schedule.labor.views_salary_fallback",
   "schedule.labor.views_max_hours", "schedule.labor.views_verdict_under", "schedule.labor.views_verdict_over",
+  "schedule.labor.views_salaries_over_target", "schedule.labor.views_no_hours", "schedule.labor.views_minimums_over_math",
 ] as const;
 export type LaborLineKey = (typeof LABOR_LINE_KEYS)[number];
 
@@ -192,7 +198,7 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
   if (minimumsOver) {
     lines.push({ key: "schedule.labor.minimums_over_target", params: { targetPct } });
     lines.push(opts.canSeeMoney
-      ? { key: "schedule.labor.minimums_over_target_math", params: { minHours: round1(minHours), wageCents: blendedWageCents, minCostCents: Math.round(minHours * blended), maxLaborCents } }
+      ? money.minimumsLine(round1(minHours), Math.round(minHours * blended))
       : { key: "schedule.labor.minimums_over_target_hours", params: { minHours: round1(minHours) } });
   }
   for (const w of windows) {
@@ -214,7 +220,16 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
   return { state: "ok", windows: opts.windowDetail === false ? shown() : windows, lines, maxLaborCents, salariedDayCents, blendedWageCents, maxHours: round1(maxHoursExact) };
 }
 
-type DayMoney = { maxLaborCents: number; maxHoursExact: number; blended: number; blendedWageCents: number; salariedDayCents: number; targetPct: number; lines: NarrativeLine[] };
+interface DayMoney {
+  /** the hourly allowance; SIGNED with the views (negative = the day's salaries alone are above the target) */
+  maxLaborCents: number;
+  /** the hours the windows are cut from; never negative */
+  maxHoursExact: number;
+  blended: number; blendedWageCents: number; salariedDayCents: number; targetPct: number; lines: NarrativeLine[];
+  /** The "minimum crews alone are above the target" explanation, worded by the money source against the SAME quantity
+   * its `maxHoursExact` was cut from (so the card never contradicts its own arithmetic). */
+  minimumsLine: (minHours: number, minCostCents: number) => NarrativeLine;
+}
 type OkDemand = { kind: "ok"; hourlyCents: number[]; dayCents: number };
 
 /** The card's own money maths (the switch OFF, or an AGM): the draft priced by the board's wages. */
@@ -247,7 +262,8 @@ function boardMoney(input: LaborTargetInput, d: OkDemand): DayMoney | { state: "
   const lines: NarrativeLine[] = [{ key: "schedule.labor.max_labor", params: { salesCents: d.dayCents, targetPct, maxLaborCents: gross } }];
   if (basis === "total") lines.push({ key: "schedule.labor.minus_salaried", params: { salariedDayCents, maxLaborCents } });
   lines.push({ key: "schedule.labor.max_hours", params: { maxLaborCents, wageCents: blendedWageCents, hours: round1(maxHoursExact) } });
-  return { maxLaborCents, maxHoursExact, blended, blendedWageCents, salariedDayCents, targetPct, lines };
+  return { maxLaborCents, maxHoursExact, blended, blendedWageCents, salariedDayCents, targetPct, lines,
+    minimumsLine: (minHours, minCostCents) => ({ key: "schedule.labor.minimums_over_target_math", params: { minHours, wageCents: blendedWageCents, minCostCents, maxLaborCents } }) };
 }
 
 /** PR 3: the allowance and the hours over the day's labor-views figure (see the header). */
@@ -275,21 +291,31 @@ function viewsMoney(input: LaborTargetInput, v: LaborTargetViews): DayMoney | { 
     // Fully loaded = (pure hourly + salaries) x (1 + burden) <= sales x target  <=>  pure hourly <= this allowance.
     targetPct = v.targets.loadedPct;
     salariedDayCents = f.salariedCents;
-    allowance = Math.max(0, Math.round((sales * targetPct) / 100 / (1 + f.burdenPct / 100)) - salariedDayCents);
+    const capCents = Math.round((sales * targetPct) / 100 / (1 + f.burdenPct / 100));
+    // SIGNED: salaries alone above the cap leave a negative allowance (never clamped: "$0 under" would be false).
+    allowance = capCents - salariedDayCents;
     lines.push({ key: "schedule.labor.views_allowance_total", params: { salesCents: sales, targetPct, burdenPct: f.burdenPct, salariedDayCents, allowanceCents: allowance } });
+    if (allowance < 0) lines.push({ key: "schedule.labor.views_salaries_over_target", params: { salariedDayCents, capCents, overCents: -allowance } });
   } else {
     // The hourly basis, or the total basis with the day's salaries unknown: the pure-hourly target, said so.
     targetPct = v.targets.hourlyPct;
-    allowance = Math.max(0, Math.round((sales * targetPct) / 100));
+    allowance = Math.round((sales * targetPct) / 100);
     if (v.basis === "total") lines.push({ key: "schedule.labor.views_salary_fallback", params: { targetPct } });
     lines.push({ key: "schedule.labor.views_allowance_hourly", params: { salesCents: sales, targetPct, allowanceCents: allowance } });
   }
-  const maxHoursExact = Math.max(0, allowance - f.otPremiumCents) / blended;
+  // What is left for straight-time hours at this draft's overtime. Only the HOURS are floored at 0; the cents stay signed.
+  const premiumCents = f.otPremiumCents;
+  const remainingCents = allowance - premiumCents;
+  const maxHoursExact = Math.max(0, remainingCents) / blended;
   const blendedWageCents = Math.round(blended);
-  lines.push({ key: "schedule.labor.views_max_hours", params: { allowanceCents: allowance, premiumCents: f.otPremiumCents, wageCents: blendedWageCents, hours: round1(maxHoursExact) } });
+  lines.push(remainingCents > 0
+    ? { key: "schedule.labor.views_max_hours", params: { allowanceCents: allowance, premiumCents, wageExactCents: blendedWageCents, hours: round1(maxHoursExact) } }
+    : { key: "schedule.labor.views_no_hours", params: { allowanceCents: allowance, premiumCents, remainingCents } });
   const diff = f.pureHourlyCents - allowance;
   lines.push(diff > 0
     ? { key: "schedule.labor.views_verdict_over", params: { projectedCents: f.pureHourlyCents, allowanceCents: allowance, diffCents: diff } }
     : { key: "schedule.labor.views_verdict_under", params: { projectedCents: f.pureHourlyCents, allowanceCents: allowance, diffCents: -diff } });
-  return { maxLaborCents: allowance, maxHoursExact, blended, blendedWageCents, salariedDayCents, targetPct, lines };
+  return { maxLaborCents: allowance, maxHoursExact, blended, blendedWageCents, salariedDayCents, targetPct, lines,
+    minimumsLine: (minHours, minCostCents) => ({ key: "schedule.labor.views_minimums_over_math",
+      params: { minHours, wageExactCents: blendedWageCents, minCostCents, remainingCents, allowanceCents: allowance, premiumCents } }) };
 }

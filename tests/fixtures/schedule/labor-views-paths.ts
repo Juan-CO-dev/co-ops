@@ -27,9 +27,10 @@ export const GM_VIEWS_BOARD_EXTRA_PATHS: readonly string[] = [
   ".days[].hoursByHour[].hour", ".days[].hoursByHour[].hours",
   ".days[].labor.maxLaborCents", ".days[].labor.salariedDayCents", ".days[].labor.blendedWageCents", ".days[].labor.maxHours",
   ".days[].labor.lines[].params.salesCents", ".days[].labor.lines[].params.burdenPct", ".days[].labor.lines[].params.salariedDayCents",
-  ".days[].labor.lines[].params.allowanceCents", ".days[].labor.lines[].params.premiumCents", ".days[].labor.lines[].params.wageCents",
+  ".days[].labor.lines[].params.allowanceCents", ".days[].labor.lines[].params.premiumCents", ".days[].labor.lines[].params.wageExactCents",
   ".days[].labor.lines[].params.projectedCents", ".days[].labor.lines[].params.diffCents",
-  ".days[].labor.lines[].params.maxLaborCents", ".days[].labor.lines[].params.minCostCents",
+  ".days[].labor.lines[].params.capCents", ".days[].labor.lines[].params.overCents", ".days[].labor.lines[].params.remainingCents",
+  ".days[].labor.lines[].params.minCostCents",
 ];
 /** MoO / Owner / CGS only (`canSeeSubDayLaborMoney`): straight-time % per hour, the forecast $ per hour, and the labor
  * card's per-window intermediates. A GM's board carries NONE of these with the views on. */

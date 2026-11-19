@@ -88,7 +88,7 @@ describe("the heads maths over the labor facts' figure (plan r4 'Heads budget')"
     // $4,300 x 28% / 1.12 = $1,075.00; minus $200 of salaries = $875.00.
     expect(lineOf(t, "schedule.labor.views_allowance_total")?.params).toEqual({ salesCents: 430_000, targetPct: 28, burdenPct: 12, salariedDayCents: 20_000, allowanceCents: 87_500 });
     // The blended STRAIGHT wage is the figure's own: $820 over 40 hourly hours = $20.50. ($875 - $10 premium) / $20.50 = 42.2 h.
-    expect(lineOf(t, "schedule.labor.views_max_hours")?.params).toEqual({ allowanceCents: 87_500, premiumCents: 1_000, wageCents: 2_050, hours: 42.2 });
+    expect(lineOf(t, "schedule.labor.views_max_hours")?.params).toEqual({ allowanceCents: 87_500, premiumCents: 1_000, wageExactCents: 2_050, hours: 42.2 });
     // The verdict in dollars, against the SAME projection the day card shows (pure hourly $830).
     expect(lineOf(t, "schedule.labor.views_verdict_under")?.params).toEqual({ projectedCents: 83_000, allowanceCents: 87_500, diffCents: 4_500 });
     expect(t).toMatchObject({ maxLaborCents: 87_500, salariedDayCents: 20_000, blendedWageCents: 2_050, maxHours: 42.2 });
@@ -142,9 +142,102 @@ describe("the heads maths over the labor facts' figure (plan r4 'Heads budget')"
     expect(target(views(zero))).toMatchObject({ state: "no_wage" });
     expect(target(views(zero), { shopEstimateHourlyCents: 1_840 })).toMatchObject({ state: "ok", blendedWageCents: 1_840 });
   });
+  // ── Review BOARD3-r1: every sentence the card writes is arithmetically TRUE ──────────────────────
+  /** A floor of `heads` people for `quarters` quarters from 11:00, and nobody scheduled (so nothing covers it). */
+  const floorNeed = (heads: number, quarters: number): DayNeed => {
+    const minHeads = zeros();
+    for (let q = 44; q < 44 + quarters; q++) minHeads[q] = heads;
+    return { positions: {}, lineTotal: zeros(), minHeads, maxHeads: zeros(), sources: [], shapeNote: "normal" };
+  };
+  it("r1 P2-1: salaries alone above the target: the allowance is NEGATIVE and said so, never clamped to $0 ('$0 under' was false)", () => {
+    // $1,000 x 28% / 1.12 = $250 for hourly labor + salaries; $400 of salaries leaves -$150. Nobody hourly is scheduled.
+    const f = figure({ sales: { basis: "forecast", cents: 100_000 }, salariedCents: 40_000, hourlyMinutes: 0, straightCents: 0, otPremiumCents: 0, pureHourlyCents: 0 });
+    const t = target(views(f), { shopEstimateHourlyCents: 2_000, shifts: [] });
+    expect(lineOf(t, "schedule.labor.views_allowance_total")?.params).toEqual({ salesCents: 100_000, targetPct: 28, burdenPct: 12, salariedDayCents: 40_000, allowanceCents: -15_000 });
+    expect(lineOf(t, "schedule.labor.views_salaries_over_target")?.params).toEqual({ salariedDayCents: 40_000, capCents: 25_000, overCents: 15_000 });
+    expect(lineOf(t, "schedule.labor.views_no_hours")?.params).toEqual({ allowanceCents: -15_000, premiumCents: 0, remainingCents: -15_000 });
+    expect(lineOf(t, "schedule.labor.views_max_hours")).toBeUndefined();
+    expect(lineOf(t, "schedule.labor.views_verdict_over")?.params).toEqual({ projectedCents: 0, allowanceCents: -15_000, diffCents: 15_000 });
+    expect(lineOf(t, "schedule.labor.views_verdict_under")).toBeUndefined();
+    expect(t).toMatchObject({ maxLaborCents: -15_000, maxHours: 0 });
+  });
+  it("r1 P2-2: the minimum-crew explanation compares against what is LEFT after this draft's overtime premium (never '$90 more than $100')", () => {
+    // Hourly basis: $555.56 x 18% = $100 allowance; $20 premium; $20/h; the minimum crew needs 4.5 h = $90.
+    const f = figure({ sales: { basis: "forecast", cents: 55_556 }, hourlyMinutes: 240, straightCents: 8_000, otPremiumCents: 2_000, pureHourlyCents: 10_000 });
+    const t = target(views(f, "hourly"), { need: floorNeed(1, 18), shifts: [] });
+    expect(lineOf(t, "schedule.labor.views_max_hours")?.params).toEqual({ allowanceCents: 10_000, premiumCents: 2_000, wageExactCents: 2_000, hours: 4 });
+    expect(lineOf(t, "schedule.labor.views_minimums_over_math")?.params).toEqual({ minHours: 4.5, wageExactCents: 2_000, minCostCents: 9_000, remainingCents: 8_000, allowanceCents: 10_000, premiumCents: 2_000 });
+    expect(lineOf(t, "schedule.labor.minimums_over_target_math")).toBeUndefined();
+    // The same day with no overtime: $90 fits in $100, and the card does not warn.
+    const calm = target(views(figure({ sales: { basis: "forecast", cents: 55_556 }, hourlyMinutes: 240, straightCents: 8_000, otPremiumCents: 0, pureHourlyCents: 8_000 }), "hourly"), { need: floorNeed(1, 18), shifts: [] });
+    expect(lineOf(calm, "schedule.labor.minimums_over_target")).toBeUndefined();
+    expect(lineOf(calm, "schedule.labor.views_minimums_over_math")).toBeUndefined();
+  });
+  it("r1 (the class): over a grid of days, every equation and comparison the card states holds for the numbers it shows", () => {
+    let cases = 0, negative = 0, minimums = 0, noHours = 0;
+    for (const basis of ["total", "hourly"] as const) for (const sales of [50_000, 100_000, 430_000]) for (const salaried of [0, 20_000, 40_000, null])
+      for (const premium of [0, 2_000, 20_000]) for (const [hourlyMinutes, straight] of [[0, 0], [240, 8_000], [2_400, 82_000], [420, 12_915]] as const) for (const heads of [0, 1, 3]) {
+        const f = figure({ sales: { basis: "forecast", cents: sales }, salariedCents: salaried, hourlyMinutes, straightCents: straight, otPremiumCents: premium, pureHourlyCents: straight + premium });
+        const t = target(views(f, basis), { need: floorNeed(heads, 18), shifts: [], shopEstimateHourlyCents: 1_840 });
+        if (t.state !== "ok") throw new Error(`not ok: ${basis} ${sales} ${salaried}`);
+        cases++;
+        const one = (key: string) => { const ls = t.lines.filter((l) => l.key === key); expect(ls.length, key).toBeLessThanOrEqual(1); return ls[0]?.params as Record<string, number> | undefined; };
+        const total = one("schedule.labor.views_allowance_total"), hourly = one("schedule.labor.views_allowance_hourly");
+        expect(!!total !== !!hourly).toBe(true);
+        expect(!!total).toBe(basis === "total" && salaried !== null);
+        const allowance = total ? total.allowanceCents! : hourly!.allowanceCents!;
+        if (total) expect(Math.round((total.salesCents! * total.targetPct!) / 100 / (1 + total.burdenPct! / 100)) - total.salariedDayCents!).toBe(allowance);
+        else expect(Math.round((hourly!.salesCents! * hourly!.targetPct!) / 100)).toBe(allowance);
+        expect(t.maxLaborCents).toBe(allowance);
+        // Salaries above the target: said, with the cap they exceed; never hidden behind a 0.
+        const over = one("schedule.labor.views_salaries_over_target");
+        expect(!!over).toBe(allowance < 0);
+        if (over) { negative++; expect(over.capCents! - over.salariedDayCents!).toBe(allowance); expect(over.overCents).toBe(-allowance); }
+        // The hours: an equation only when something is left; otherwise the subtraction, and 0 hours.
+        const exactWage = hourlyMinutes > 0 ? straight / (hourlyMinutes / 60) : 1_840;
+        const hours = one("schedule.labor.views_max_hours"), none = one("schedule.labor.views_no_hours");
+        expect(!!hours !== !!none).toBe(true);
+        const remaining = allowance - premium;
+        if (hours) {
+          expect(remaining).toBeGreaterThan(0);
+          expect(hours).toEqual({ allowanceCents: allowance, premiumCents: premium, wageExactCents: Math.round(exactWage), hours: Math.round((remaining / exactWage) * 10) / 10 });
+          expect(t.maxHours).toBe(hours.hours);
+        } else {
+          noHours++;
+          expect(remaining).toBeLessThanOrEqual(0);
+          expect(none).toEqual({ allowanceCents: allowance, premiumCents: premium, remainingCents: remaining });
+          expect(t.maxHours).toBe(0);
+        }
+        // The verdict: the projected pure hourly $ against the SIGNED allowance.
+        const under = one("schedule.labor.views_verdict_under"), above = one("schedule.labor.views_verdict_over");
+        expect(!!under !== !!above).toBe(true);
+        const projected = straight + premium;
+        expect(!!above).toBe(projected > allowance);
+        expect((above ?? under)!).toEqual({ projectedCents: projected, allowanceCents: allowance, diffCents: Math.abs(projected - allowance) });
+        // The minimum crews: warned exactly when their straight-time cost does not fit in what is left, and the line says THAT.
+        const minHours = (heads * 18) / 4;
+        const math = one("schedule.labor.views_minimums_over_math");
+        expect(!!math).toBe(minHours * exactWage > Math.max(0, remaining) + 1e-6);
+        expect(!!one("schedule.labor.minimums_over_target")).toBe(!!math);
+        expect(one("schedule.labor.minimums_over_target_math")).toBeUndefined();
+        if (math) {
+          minimums++;
+          expect(math).toEqual({ minHours, wageExactCents: Math.round(exactWage), minCostCents: Math.round(minHours * exactWage), remainingCents: remaining, allowanceCents: allowance, premiumCents: premium });
+          expect(math.minCostCents!).toBeGreaterThanOrEqual(Math.max(0, math.remainingCents!));
+        }
+      }
+    expect(cases).toBe(2 * 3 * 4 * 3 * 4 * 3);
+    for (const n of [negative, minimums, noHours]) expect(n).toBeGreaterThan(10);
+  });
+  it("r1: the wage in an equation is shown to the cent (a $20.50 wage is never '$21'), so the line's arithmetic reads true", () => {
+    const html = renderBoard({ state: "ready", ...boardView(gmSource()) }, "en", { initialDate: DATES[2] });
+    const card = text(html.slice(html.indexOf('data-section="labor-target"')));
+    expect(card).toContain("($875 − $10) ÷ $20.50/h = 42.2 h");
+    expect(card).not.toContain("$21/h");
+  });
   it("every new line key is in the closed list with en + es and the same params", () => {
     const keys = LABOR_LINE_KEYS.filter((k) => k.includes(".views_"));
-    expect(keys).toHaveLength(6);
+    expect(keys).toHaveLength(9);
     const params = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!).sort();
     for (const k of keys) {
       expect(EN[k], k).toBeTruthy();
@@ -283,7 +376,8 @@ describe("the WHOLE serialized board with the views is an allowlist (every gener
     out.add(p);
     return out;
   }
-  const allProjected = (): BoardLaborViewsReady => ({ state: "ready", targets: TARGETS, days: DATES.map((date) => ({ ...figure(), date, kind: "projected" as const })),
+  // Every other day's salaries alone are above the target, so every line the card can write is emitted somewhere.
+  const allProjected = (): BoardLaborViewsReady => ({ state: "ready", targets: TARGETS, days: DATES.map((date, i) => ({ ...figure(i % 2 ? { salariedCents: 200_000 } : {}), date, kind: "projected" as const })),
     strip: { actual: null, projected: { ...figure(), days: 7 }, notSettledDays: 0, noScheduleDays: 0 } });
   const extrasOf = (subDayMoney: boolean) => {
     const base = new Set<string>([...AGM_BOARD_PATHS, ...BOARD_LABOR_VIEW_PATHS.map((p) => `.laborViews${p}`)]);
@@ -450,7 +544,7 @@ describe("the labor card with the views; en + es", () => {
     const html = renderBoard(page(), "en", { initialDate: DATES[2] });
     const card = text(html.slice(html.indexOf('data-section="labor-target"')));
     expect(card).toContain("$4,300 × 28% ÷ (1 + 12%) − $200 = $875");
-    expect(card).toContain("($875 − $10) ÷ $21/h = 42.2 h");
+    expect(card).toContain("($875 − $10) ÷ $20.50/h = 42.2 h");
     expect(card).toContain("$830: $45 under the $875 allowance");
     const withheld = renderBoard(page(), "en", { initialDate: DATES[3] });
     expect(text(withheld.slice(withheld.indexOf('data-section="labor-target"')))).toContain(EN["schedule.labor_views.reason.wage_unknown"]);

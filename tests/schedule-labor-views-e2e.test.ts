@@ -359,13 +359,13 @@ describe("PR 3: with the views the real board prices no labor; who gets what per
     const params = (key: string) => card.lines!.find((l) => l.key === key)?.params;
     // $2,000 x 28% / 1.12 = $500; minus $200 of salaries = $300.
     expect(params("schedule.labor.views_allowance_total")).toEqual({ salesCents: mon.sales.cents, targetPct: views.targets.loadedPct, burdenPct: mon.burdenPct, salariedDayCents: mon.salariedCents, allowanceCents: 30_000 });
-    expect(params("schedule.labor.views_max_hours")).toEqual({ allowanceCents: 30_000, premiumCents: mon.otPremiumCents, wageCents: 2_000, hours: 15 });
+    expect(params("schedule.labor.views_max_hours")).toEqual({ allowanceCents: 30_000, premiumCents: mon.otPremiumCents, wageExactCents: 2_000, hours: 15 });
     expect(params("schedule.labor.views_verdict_under")).toEqual({ projectedCents: mon.pureHourlyCents, allowanceCents: 30_000, diffCents: 14_000 });
     // Saturday carries the week's 8 overtime hours: its premium comes off the hours, and the verdict is its pure hourly $.
     const sat = day(views, "2099-01-10");
     const satCard = b.days.find((d) => d.date === "2099-01-10")!.labor!;
     expect(sat).toMatchObject({ otPremiumCents: 8_000, pureHourlyCents: 24_000 });
-    expect(satCard.lines!.find((l) => l.key === "schedule.labor.views_max_hours")?.params).toEqual({ allowanceCents: 30_000, premiumCents: 8_000, wageCents: 2_000, hours: 11 });
+    expect(satCard.lines!.find((l) => l.key === "schedule.labor.views_max_hours")?.params).toEqual({ allowanceCents: 30_000, premiumCents: 8_000, wageExactCents: 2_000, hours: 11 });
     expect(satCard.lines!.find((l) => l.key === "schedule.labor.views_verdict_under")?.params).toEqual({ projectedCents: 24_000, allowanceCents: 30_000, diffCents: 6_000 });
     // A GM's windows are the displayed fields only.
     for (const w of (card as unknown as { windows: Array<Record<string, unknown>> }).windows) expect(Object.keys(w).sort()).toEqual(["amberReasons", "floorHeads", "fromQ", "key", "on", "optimal", "toQ", "tone"]);

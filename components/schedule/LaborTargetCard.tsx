@@ -32,7 +32,7 @@ export function LaborTargetCard({ labor, names, positions }: {
           {amber ? <p className="text-sm font-bold text-co-warning-text">{t("schedule.board.labor_card.amber")}</p> : null}
           <ul className="grid gap-1 text-sm text-co-text">
             {labor.lines.map((l, i) => (
-              <li key={i} data-labor-line={l.key} className={/window_over_target|minimums_over_target$|views_verdict_over$|views_salary_fallback$/.test(l.key) ? "font-bold text-co-warning-text" : ""}>{line(l)}</li>
+              <li key={i} data-labor-line={l.key} className={/window_over_target|minimums_over_target$|views_verdict_over$|views_salary_fallback$|views_salaries_over_target$|views_no_hours$/.test(l.key) ? "font-bold text-co-warning-text" : ""}>{line(l)}</li>
             ))}
           </ul>
         </>
