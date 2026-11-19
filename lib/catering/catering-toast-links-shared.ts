@@ -15,6 +15,10 @@
  *    from `catering_toast_house_owner`, the writer's own rule. A lead that was lost, moved or became ezCater owns
  *    nothing. A link the SYSTEM ended (the lead moved shops and came back, was lost and re-opened) is listed under
  *    `ended` with who holds the check NOW: the lead shows the conflict, it never owns the check again by itself.
+ *  - A CHECK ANOTHER ORDER HOLDS CAN STILL BE DISMISSED (fix round 3, review PORTAL3-r3): "Not a match" is offered on a
+ *    check ezCater or another house order holds, and on an ended link, so a manager can clear the conflict. It only
+ *    tombstones THIS order's pair; ownership never moves. "Link" is never offered over an owner, tombstoned or not.
+ *    Every reachable (lead x check x owner) state is a row of tests/fixtures/catering-toast-state-table.json.
  *  - THE LINK STEP MUST BE INSTALLED (`linkStep`): every object the panel reads exists since 0344, so the server asks
  *    0347's readiness probe. `not_installed` = no decision control at all, and the panel says why.
  * Zero I/O. Client-safe.
@@ -111,6 +115,8 @@ export interface ToastCandidate {
   orderGuid: string; checkGuid: string; businessDate: string; evidence: ToastEvidence;
   checkTotalCents: number | null; amountDiffCents: number | null; amountMismatch: boolean;
   state: CandidateState; blockedBy: "unlink" | "not_a_match" | null; headId: string | null;
+  /** Who holds the check now, whatever the state (a tombstoned pair keeps its owner). */
+  owner: "ezcater" | "house" | null;
 }
 export interface ToastLinkView {
   locationId: string; orderGuid: string; checkGuid: string; evidence: ToastLinkRow["evidence"];
@@ -177,19 +183,22 @@ export function buildHouseToastPanel(args: {
         orderGuid: r.order_guid, checkGuid: r.check_guid, businessDate: r.business_date, evidence: r.evidence,
         checkTotalCents: num(r.check_total_cents), amountDiffCents: num(r.amount_diff_cents), amountMismatch: r.amount_mismatch,
         state, blockedBy: state === "blocked" && (head?.kind === "unlink" || head?.kind === "not_a_match") ? head.kind : null,
-        headId: head?.id ?? null,
+        headId: head?.id ?? null, owner: r.owner,
       };
     }),
   };
 }
 
-/** What a person may do with a candidate. A dual-code check is linkable: the human decides (plan r3 #4). */
+/** What a person may do with a candidate. A dual-code check is linkable: the human decides (plan r3 #4). A check
+ * another order holds is never linkable, but "Not a match" stays: it is how a manager clears the conflict without
+ * touching the owner. A tombstoned pair (blocked) offers Relink only while nobody holds the check. */
 export function candidateActions(c: ToastCandidate): Array<"link" | "not_a_match"> {
   if (c.state === "open" || c.state === "dual_code") return ["link", "not_a_match"];
-  if (c.state === "blocked") return ["link"];
-  return [];
+  if (c.state === "blocked") return c.owner === null ? ["link"] : [];
+  return ["not_a_match"];
 }
-/** An ended link may be linked again only while nobody holds the check and it is still live in Toast. */
-export function endedActions(e: ToastEndedLink): Array<"link"> {
-  return e.owner === null && e.live ? ["link"] : [];
+/** An ended link may be linked again only while nobody holds the check and it is still live in Toast. "Not a match"
+ * dismisses it (the row leaves "Links that ended"; the pair becomes a tombstone), whoever holds the check. */
+export function endedActions(e: ToastEndedLink): Array<"link" | "not_a_match"> {
+  return e.owner === null && e.live ? ["link", "not_a_match"] : ["not_a_match"];
 }

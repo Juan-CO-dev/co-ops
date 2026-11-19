@@ -5,7 +5,8 @@
  * not a match, no Toast ring expected). Shown only when the server returns a panel (the shop is on and this is a
  * booked house order). Decision controls only for the catering manager and GM and up (Juan answer 8), and only while
  * the link step is installed (`linkStep`, migration 0347): without it the panel is read-only and says why. A link the
- * system ended (the order moved shops, was lost) is listed with who holds the check now; everyone else reads it. Every POST names the head the person saw, so a decision someone else made in the meantime is
+ * system ended (the order moved shops, was lost) is listed with who holds the check now; everyone else reads it. A check
+ * another order holds offers "Not a match" only (it clears the conflict and never moves the owner). Every POST names the head the person saw, so a decision someone else made in the meantime is
  * refused ("decision_moved") instead of overwritten. After any answer the panel reloads and the page refreshes, so a
  * linked order leaves the "Not in Toast yet" list.
  */
@@ -135,8 +136,10 @@ export function HouseToastPanel({ leadId, startOpen = false, initial }: { leadId
           <p>{t(`catering.toast_link.ended.${e.reason}` as TranslationKey)}</p>
           <p className={e.owner === null ? "" : "text-co-warning-text"}>{t(`catering.toast_link.ended_owner.${e.owner ?? "none"}` as TranslationKey)}</p>
           {!e.live && <p className="text-co-warning-text">{t("catering.toast_link.check_gone")}</p>}
-          {panel.canDecide && endedActions(e).length > 0 && <button type="button" className={PRIMARY} disabled={busy}
-            onClick={() => void decide(pairBody("link", e))}>{t("catering.toast_link.action.relink")}</button>}
+          {panel.canDecide && <div className="flex flex-wrap gap-2">
+            {endedActions(e).map((kind) => <button key={kind} type="button" className={kind === "link" ? PRIMARY : QUIET} disabled={busy}
+              onClick={() => void decide(pairBody(kind, e))}>{t(kind === "link" ? "catering.toast_link.action.relink" : "catering.toast_link.action.not_a_match")}</button>)}
+          </div>}
         </li>)}</ul>
       </div>}
 

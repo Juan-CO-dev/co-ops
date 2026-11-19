@@ -93,14 +93,19 @@ describe("buildHouseToastPanel", () => {
     expect(panel.links).toEqual([]);
     expect(panel.ended.map((e) => [e.orderGuid, e.owner, e.reason, e.headId])).toEqual([["a", "ezcater", "lead_moved", U(11)], ["y", null, "lead_moved", U(11)], ["w", null, "lead_moved", U(11)]]);
     expect(panel.candidates.map((c) => c.orderGuid)).toEqual(["b"]);
-    expect(panel.ended.map((e) => endedActions(e))).toEqual([[], [], ["link"]]);
+    // Fix round 3: an ended link can always be dismissed ("not a match"); Relink only while nobody holds a live check.
+    expect(panel.ended.map((e) => endedActions(e))).toEqual([["not_a_match"], ["not_a_match"], ["link", "not_a_match"]]);
   });
   it("fix round 1: a holder that no longer owns (planner owner null) is an OPEN candidate with its actions", () => {
     // 0347's planner answers owner from catering_toast_house_owner: a lost / moved / ezCater holder is not an owner.
     const panel = buildHouseToastPanel({ ...base, plan: [plan({ order_guid: "a", check_guid: "1", owner: null, owner_lead_id: null })], heads: [], links: [] });
     expect(panel.candidates[0]).toMatchObject({ state: "open" });
     expect(candidateActions(panel.candidates[0]!)).toEqual(["link", "not_a_match"]);
-    expect(candidateActions({ ...panel.candidates[0]!, state: "owned_house" })).toEqual([]);
+    // Fix round 3 (review PORTAL3-r3): a check another order holds is dismissible, never linkable; tombstoned too.
+    expect(candidateActions({ ...panel.candidates[0]!, state: "owned_house", owner: "house" })).toEqual(["not_a_match"]);
+    expect(candidateActions({ ...panel.candidates[0]!, state: "owned_ezcater", owner: "ezcater" })).toEqual(["not_a_match"]);
+    expect(candidateActions({ ...panel.candidates[0]!, state: "blocked", owner: "ezcater" })).toEqual([]);
+    expect(candidateActions({ ...panel.candidates[0]!, state: "blocked", owner: null })).toEqual(["link"]);
   });
   it("fix round 1: no decision control unless the link step (0347) is installed, whoever asks", () => {
     const off = buildHouseToastPanel({ ...base, linkStep: "not_installed", plan: [plan({})], heads: [], links: [] });

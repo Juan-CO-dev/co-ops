@@ -25,8 +25,13 @@
  *   - fix round 2 (review PORTAL3-r2): the ezCater side's conflict read shows a recorded conflict only while its facts
  *     hold NOW: not once the check is voided (back when re-opened), the house code is removed, the house side unlinks,
  *     ezCater rings the order on another check, or the ezCater order is cancelled / its lead lost. The ledger is kept.
+ *   - fix round 3 (review PORTAL3-r3): THE STATE TABLE (section K). Every (lead state x check state x owner) row of
+ *     tests/fixtures/catering-toast-state-table.json is built on the real writers and every database answer compared:
+ *     a conflict ends when the ezCater order moves to another shop (the real 0225 transfer), is cancelled, or its
+ *     event leaves the check's window; "not a match" is accepted on a check another order holds and moves no owner.
  * PGlite has ONE backend: lock waits are not provable here (CC's sim two-session proof covers them).
  */
+import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { SHOP, OTHER, id, read, migration as m0344, schema as baseSchema, ring } from './sql-harness-0344-lib.mjs';
 
@@ -610,6 +615,95 @@ async function main() {
     await db.exec(`update ezcater_orders set status = 'submitted' where id = '${ezL.order}'; update catering_pipeline set stage = 'lost' where id = '${ezL.lead}'`);
     cj = await conflictsOf(ezL.order);
     check(cj.length === 0, `J4: the ezCater lead lost -> not shown (${JSON.stringify(cj)})`);
+
+    // K. Fix round 3 (review PORTAL3-r3): THE STATE TABLE. One row per (lead state x check state x owner), shared with
+    // tests/catering-toast-state-table.test.ts and the runbook (tests/fixtures/catering-toast-state-table.json). Each
+    // row is built on the real writers (decide, the 0229 publisher, the 0225 transfer), then every answer the database
+    // gives for that lead and check is compared with the row: the house planner, the not-rung list, the ezCater
+    // order's conflict read, the ended-links read, and the writer's answer to "link" and to "not a match" (each tried
+    // in a transaction that is rolled back). An accepted "not a match" never moves ownership.
+    {
+      const table = JSON.parse(readFileSync('tests/fixtures/catering-toast-state-table.json', 'utf8')).rows;
+      const day = (i, plus = 0) => new Date(Date.UTC(2027, 0, 5) + (i * 10 + plus) * 86400000).toISOString().slice(0, 10);
+      const ctx = (i) => ({ i, L: id('3000', 1000 + i), X: id('3000', 1100 + i), d: day(i), order: `S${i}`, chk: `S${i}c`,
+        snap: k => id('5000', 1000 + i * 10 + k), code: `CO-X${'ACDEFGHJKLMNPQRTUVWXY'[i - 1]}Y34`, num: `SEZ-${100 + i}`, ez: null });
+      const ringS = (c, k, names, voided = false) => ringEz(db, c.snap(k), { order: c.order, date: c.d, checks: [{ guid: c.chk, total: 50000, names, voided }] });
+      const house = async (c, names = [], coded = false) => {
+        await mkHouse(c.L, c.d, 50000);
+        if (coded) await db.exec(`update catering_pipeline set ring_code = '${c.code}' where id = '${c.L}'`);
+        await ringS(c, 0, names);
+      };
+      const ezOf = async (c) => { c.ez = await mkEz(200 + c.i, c.d, c.num, 50000); return c.ez; };
+      const pub = (c, k = 0) => publishFor(c.ez, { toast_snapshot_id: c.snap(k), order_guid: c.order, check_guid: c.chk, selection_guid: `${c.chk}-s0`, business_date: c.d });
+      const act = async (c, kind, lead = c.L) => decide(db, CM, lead, kind, { loc: SHOP, order: c.order, check: c.chk, expected: await head(db, lead, c.order, c.chk) });
+      // S02: an unowned check carrying both codes; the publisher is skipped and a dual_code conflict is recorded.
+      const dual = async (c) => { await house(c, [c.num, c.code], true); await ezOf(c); await pub(c); };
+      // S09: ezCater holds the check first, then the check gains the house order's ring code.
+      const incumbent = async (c) => { await house(c, [c.num], true); await ezOf(c); await pub(c); await ringS(c, 1, [c.num, c.code]); };
+      // S12: linked, moved to another shop and back (the link ended; nothing revives it).
+      const roundTrip = async (c) => { await house(c); await act(c, 'link'); await transfer(c.L, OTHER); await transfer(c.L, SHOP); };
+      // S13: linked, moved away, ezCater took the check, moved back.
+      const takenAway = async (c) => { await house(c, [c.num]); await act(c, 'link'); await transfer(c.L, OTHER); await ezOf(c); await pub(c); await transfer(c.L, SHOP); };
+      const build = {
+        S01: c => house(c),
+        S02: dual,
+        S03: async c => { await dual(c); await act(c, 'not_a_match'); },
+        S04: async c => { await dual(c); await act(c, 'not_a_match'); await pub(c); },
+        S05: async c => { await house(c); await act(c, 'link'); },
+        S06: async c => { await house(c, [c.num]); await act(c, 'link'); await ezOf(c); await pub(c); },
+        S07: async c => { await house(c); await act(c, 'link'); await ringS(c, 1, [], true); },
+        S08: async c => { await house(c); await mkHouse(c.X, c.d, 50000); await act(c, 'link', c.X); },
+        S09: incumbent,
+        S10: async c => { await incumbent(c); await act(c, 'not_a_match'); },
+        S11: async c => { await house(c); await act(c, 'link'); await act(c, 'unlink'); },
+        S12: roundTrip,
+        S13: takenAway,
+        S14: async c => { await takenAway(c); await act(c, 'not_a_match'); },
+        S15: async c => { await roundTrip(c); await ringS(c, 1, [], true); },
+        S16: async c => { await house(c); await act(c, 'link'); await transfer(c.L, OTHER); },
+        S17: async c => { await house(c); await act(c, 'link'); await db.exec(`update catering_pipeline set stage = 'lost' where id = '${c.L}'`); },
+        S18: async c => { await house(c); await decide(db, CM, c.L, 'no_ring_expected', { reason: 'comped' }); },
+        // Review PORTAL3-r3 P2 #1: the ezCater order leaves the check's shop (the real 0225 transfer).
+        S19: async c => { await dual(c); check((await transfer(c.ez.lead, OTHER)).result === 'moved', 'S19: the ezCater lead moved'); },
+        S20: async c => { await dual(c); await db.exec(`update ezcater_orders set status = 'cancelled' where id = '${c.ez.order}'`); },
+        S21: async c => { await dual(c); await db.exec(`update ezcater_orders set event_date = '${day(c.i, 30)}' where id = '${c.ez.order}'`); },
+      };
+      check(table.map(r => r.id).join() === Object.keys(build).join(), `K: the table and the harness name the same rows (${table.map(r => r.id)})`);
+      const holders = async (c) => JSON.stringify([await owners(c.order, c.chk), await ezLinks(db, `and check_guid = '${c.chk}'`)]);
+      const attempt = async (c, kind) => {
+        const before = await holders(c);
+        await db.exec('begin'); let answer = 'ok';
+        try {
+          await act(c, kind);
+          if (kind === 'not_a_match') check(await holders(c) === before, `K ${c.order}: an accepted "not a match" moves no ownership`);
+        } catch (e) { answer = String(e.message); }
+        await db.exec('rollback');
+        return answer;
+      };
+      for (const [n, row] of table.entries()) {
+        const c = ctx(n + 1);
+        const ledgerBefore = Number((await one(db, `select count(*) n from catering_toast_conflicts`)).n);
+        await build[row.id](c);
+        const p = await planRow(c.L, c.chk, c.d, c.d);
+        const e = (await ended(c.L)).find(x => x.check_guid === c.chk);
+        const actual = {
+          planner: p ? { owner: p.owner === 'house' ? (p.owner_lead_id === c.L ? 'this' : 'other_house') : p.owner ?? 'nobody', dual_code: p.dual_code, blocked: p.blocked } : null,
+          list: (await one(db, `select status from catering_reconciliation_status where lead_id = $1 and location_id = $2`, [c.L, SHOP]))?.status ?? 'absent',
+          conflict: c.ez ? (await conflictsOf(c.ez.order)).find(x => x.check_guid === c.chk)?.kind ?? null : null,
+          linked: Number((await one(db, `select count(*) n from catering_toast_links where is_current and lead_id = $1 and check_guid = $2`, [c.L, c.chk])).n) === 1,
+          ended: e ? e.owner ?? 'nobody' : null,
+          checkLive: (await one(db, `select catering_toast_check_live($1, $2, $3) v`, [SHOP, c.order, c.chk])).v,
+          link: await attempt(c, 'link'),
+          not_a_match: await attempt(c, 'not_a_match'),
+        };
+        check(JSON.stringify(actual) === JSON.stringify(row.sql), `K ${row.id} (${row.lead} | ${row.check} | ${row.owner}): expected ${JSON.stringify(row.sql)}, got ${JSON.stringify(actual)}`);
+        // The ledger is history: a conflict that stops showing is never deleted.
+        check(Number((await one(db, `select count(*) n from catering_toast_conflicts`)).n) >= ledgerBefore, `K ${row.id}: the ledger only grows`);
+        const two = await one(db, `select count(*)::int n from catering_toast_links h where h.is_current and exists (select 1 from ezcater_toast_links z
+          where z.is_current and z.location_id = h.location_id and z.order_guid = h.order_guid and z.check_guid = h.check_guid)`);
+        check(two.n === 0, `K ${row.id}: no check has two owners`);
+      }
+    }
   }
 
   // H. The publisher guard never raises: break its helper inside a transaction; the row passes through.

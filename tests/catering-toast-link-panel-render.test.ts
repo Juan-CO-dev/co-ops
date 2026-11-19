@@ -1,7 +1,7 @@
 /**
  * Item 21 PR 3: the link panel as people see it, en + es. A decider gets Link / Not a match on an open check, Relink on
  * a tombstoned one, Unlink on a linked one and the "no Toast ring expected" control; a dual-code check says what
- * linking it means; an ezCater-held check offers nothing. A reader (not the catering manager / a GM / 8+) gets the
+ * linking it means; an ezCater-held check offers "Not a match" only. A reader (not the catering manager / a GM / 8+) gets the
  * same facts and no control. Pins that the not-rung list mounts the panel only for house rows, on request.
  */
 import { createElement } from "react";
@@ -16,13 +16,13 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 const SHOP = "00000000-0000-4000-8000-000000000002";
 const cand = (o: Partial<ToastCandidate>): ToastCandidate => ({ orderGuid: "o", checkGuid: "c", businessDate: "2026-11-20", evidence: "amount_date",
-  checkTotalCents: 30000, amountDiffCents: 0, amountMismatch: false, state: "open", blockedBy: null, headId: null, ...o });
+  checkTotalCents: 30000, amountDiffCents: 0, amountMismatch: false, state: "open", blockedBy: null, headId: null, owner: null, ...o });
 const panel = (o: Partial<Panel> = {}): Panel => ({
   leadId: "lead", locationId: SHOP, eventDate: "2026-11-20", ringCode: null, valueCents: 30000, status: "not_rung_in_toast", canDecide: true,
   linkStep: "ready", ended: [], leadHead: null, links: [], candidates: [
     cand({ orderGuid: "a", evidence: "ring_code" }),
     cand({ orderGuid: "b", state: "dual_code" }),
-    cand({ orderGuid: "c", state: "owned_ezcater" }),
+    cand({ orderGuid: "c", state: "owned_ezcater", owner: "ezcater" }),
     cand({ orderGuid: "d", state: "blocked", blockedBy: "unlink", headId: "h" }),
   ], ...o,
 });
@@ -37,7 +37,7 @@ describe("the link panel, en + es", () => {
     const en = render(panel(), "en");
     expect(en).toContain("Not rung in Toast yet");
     expect(count(en, "Link this check")).toBe(2); // open + dual code, never the ezCater-held one
-    expect(count(en, "Not a match")).toBe(2);
+    expect(count(en, "Not a match")).toBe(3); // fix round 3: the ezCater-held check can be dismissed (never linked)
     expect(en).toContain("Relink");
     expect(en).toContain("Unlinked by a manager.");
     expect(en).toContain("also carries an ezCater order number");
@@ -86,6 +86,7 @@ describe("the link panel, en + es", () => {
     expect(taken).toContain("An ezCater order holds this check now.");
     expect(taken).not.toContain("Linked Toast checks"); // it is not shown as this order's link
     expect(taken).not.toContain("Relink");
+    expect(count(taken, "Not a match")).toBe(1); // fix round 3: the conflict can be dismissed
     const free = render(panel({ candidates: [], ended: [ended({ owner: null, reason: "lead_lost" })] }), "en");
     expect(free).toContain("until the order was marked lost");
     expect(free).toContain("Nobody holds this check now.");

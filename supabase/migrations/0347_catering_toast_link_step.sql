@@ -29,7 +29,8 @@
 --   ezcater_order_house_conflicts(...) a read: the ezCater side of a conflict, for the lead's reconciliation panel.
 --                                      Only conflicts whose facts hold NOW (fix round 2): a recorded conflict is not
 --                                      shown once the check is voided, the house evidence is gone or unlinked, the
---                                      ezCater order is cancelled / lost, or ezCater rang the order on another check.
+--                                      ezCater order is cancelled / lost, moved to another shop or to a date outside
+--                                      the check's window (fix round 3), or ezCater rang the order on another check.
 --                                      The ledger is history and is never deleted.
 --   catering_pipeline_end_toast_links  AFTER UPDATE on catering_pipeline (fix round 1): a lead that leaves its shop, is
 --                                      lost, or becomes an ezCater lead ENDS its house links in the same transaction
@@ -479,9 +480,12 @@ end $$;
 --   (b) a skipped publication (the ledger) only while: the check is still live in Toast; no ezCater order holds it;
 --       a house lead still holds it or a live house ring code is still on it (an unlink / not-a-match tombstones the
 --       pair, so that code no longer counts); the ezCater order still claims (eligible as the planner reads it: a
---       snapshot, an event date, not cancelled / rejected / failed, its lead not lost); and ezCater has not rung the
---       order on another check (a current link of this order elsewhere). The house lead named is the one that holds
---       or carries the code NOW, never the one recorded.
+--       snapshot, an event date, not cancelled / rejected / failed, its lead not lost) AT THE CHECK'S SHOP and with
+--       the check inside its window (fix round 3: a transferred ezCater order, or a moved event date, ends it); and
+--       ezCater has not rung the order on another check (a current link of this order elsewhere). The house lead
+--       named is the one that holds or carries the code NOW, never the one recorded.
+--   Not checked, on purpose: whether the ezCater number is still typed on the check. A number typed as a special
+--   request is not retained evidence (contract #3), so its absence from the selection names proves nothing.
 create function public.catering_toast_check_live(p_location_id uuid, p_order_guid text, p_check_guid text) returns boolean
 language sql stable security definer set search_path = pg_catalog, public as $$
   select exists (select 1 from public.toast_orders_latest t join public.toast_order_checks c on c.snapshot_id = t.id
@@ -510,9 +514,16 @@ language sql stable security definer set search_path = pg_catalog, public as $$
                       and z.location_id = k.location_id and z.order_guid = k.order_guid and z.check_guid = k.check_guid)
      and not exists (select 1 from public.ezcater_toast_links z where z.is_current and z.order_id = p_order_id
                       and not (z.location_id = k.location_id and z.order_guid = k.order_guid and z.check_guid = k.check_guid))
-     and exists (select 1 from public.ezcater_orders o left join public.catering_pipeline p on p.id = o.lead_id
+     -- BOTH sides must still match (fix round 3, review PORTAL3-r3): the ezCater order is still eligible, its CURRENT
+     -- shop (the planner's: the lead's, else the order's) is the recorded check's shop, and the check is still inside
+     -- the order's window (D-1 .. D+7). A transfer of the ezCater order, or a moved event date, ends the conflict.
+     and exists (select 1 from public.ezcater_orders o
+                   join public.toast_orders_latest t on t.location_id = k.location_id and t.order_guid = k.order_guid
+                   left join public.catering_pipeline p on p.id = o.lead_id
                   where o.id = p_order_id and o.snapshot_id is not null and o.event_date is not null
-                    and coalesce(p.stage, '') <> 'lost' and lower(coalesce(o.status, '')) !~ '(cancel|reject|fail)')
+                    and coalesce(p.stage, '') <> 'lost' and lower(coalesce(o.status, '')) !~ '(cancel|reject|fail)'
+                    and coalesce(p.location_id, o.location_id) = k.location_id
+                    and t.business_date between o.event_date - 1 and o.event_date + 7)
   order by 1, 2, 3, 4
 $$;
 

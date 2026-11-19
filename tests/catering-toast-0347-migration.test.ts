@@ -145,6 +145,21 @@ describe("0347 fix round 1 (review PORTAL3-r1): a house link never comes back; o
   });
 });
 
+describe("0347 fix round 3 (review PORTAL3-r3): a recorded conflict needs BOTH sides now", () => {
+  it("the ledger branch binds the ezCater order's current shop and window to the recorded check", () => {
+    const read3 = fn(sql, "ezcater_order_house_conflicts");
+    expect(read3).toContain("and coalesce(p.location_id, o.location_id) = k.location_id");
+    expect(read3).toContain("and t.business_date between o.event_date - 1 and o.event_date + 7");
+    expect(read3).not.toMatch(/delete|update|insert/i); // a read: the ledger is history
+  });
+  it("'not a match' never touches a link row or checks ownership: it can clear a conflict, it cannot move an owner", () => {
+    const writer = fn(sql, "decide_catering_toast");
+    const branch = writer.slice(writer.indexOf("elsif p_kind = 'not_a_match' then"), writer.indexOf("elsif p_kind = 'no_ring_expected' then"));
+    expect(branch).toContain("insert into public.catering_toast_link_decisions");
+    expect(branch).not.toMatch(/update public.|insert into public.catering_toast_links|ezcater_toast_links/);
+  });
+});
+
 describe("0347 executable proof", () => {
   it("scripts/sql-harness-0347.mjs passes on the real 0229 / 0231 / 0330 / 0344 bodies", () => {
     const out = execFileSync(process.execPath, ["scripts/sql-harness-0347.mjs"], { encoding: "utf8" });
