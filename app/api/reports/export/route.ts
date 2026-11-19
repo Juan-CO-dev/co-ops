@@ -38,20 +38,29 @@ export async function GET(req: NextRequest) {
       ? serverT(language, "reports.export.pricing_scope_shop", { shop: table.pricingScope.name })
       : serverT(language, "reports.export.pricing_scope_global")
     : null;
-  // Item 9b fix round 1: a file that leaves days out says so on top (CSV preamble, PDF header).
+  // Item 9b fix round 1: a file that leaves days out says so. Polish (2026-11-18): AFTER the table, so line 1 of the
+  // CSV is the header row (Excel / Sheets) — a "Notes" line, then the sentences. The costing pricing scope still
+  // LEADS its file (it names whose prices every row is in); the two never meet in one family.
   const noticeLines = (table.notices ?? []).map((n) => serverT(language, n.key, n.values));
-  const topLines = [...(pricingLine ? [pricingLine] : []), ...noticeLines];
+  const topLines = pricingLine ? [pricingLine] : [];
+  const csvNotes = noticeLines.length ? [serverT(language, "reports.export.notes"), ...noticeLines] : [];
+  const pageLabels = { pageLabel: (n: number, total: number) => serverT(language, "reports.export.page", { n, total }), partLabel: (i: number, n: number) => serverT(language, "reports.export.part", { i, n }) };
+  const pdfHeader = (extra: string[]) => ({ title: serverT(language, EXPORT_TITLE_KEY[family]),
+    lines: [...pdfHeaderLines(language, { shop: shopLabel, from: table.from, to: table.to, at: new Date(), by: ctx.user.name }), ...extra] });
   const filename = exportFilename(table.fileFamily ?? family, table.shop?.code ?? "all", table.from, table.to, format);
   let body: string | Buffer;
   try {
     body = format === "csv"
-      ? toCsv(table.columns, table.rows, topLines)
-      : await renderReportPdf(
-        { title: serverT(language, EXPORT_TITLE_KEY[family]), lines: [...pdfHeaderLines(language, { shop: shopLabel, from: table.from, to: table.to, at: new Date(), by: ctx.user.name }), ...topLines] },
+      ? toCsv(table.columns, table.rows, topLines, csvNotes)
+      // The business report's PDF is its own readable layout: translated labels, no code columns, each
+      // qualification once in "Notes" with a mark on the figures it qualifies (lib/business-report-pdf.ts).
+      : table.pdf ? await renderReportPdf(pdfHeader([]), table.pdf.tables, { ...pageLabels, layout: table.pdf.layout, fontSize: 8,
+        trailer: [{ heading: serverT(language, "reports.business.pdf.notes"), lines: [...noticeLines, ...table.pdf.legend, ...table.pdf.notes] }] })
+      : await renderReportPdf(pdfHeader([...topLines, ...noticeLines]),
         [{ heading: null, columns: table.columns.map((c) => c.key === "check_amount_pre_tax"
           ? { ...c, label: serverT(language, "reports.export.column.check_amount_pre_tax") } : c),
         rows: table.rows, emptyText: serverT(language, "reports.export.empty") }],
-        { pageLabel: (n, total) => serverT(language, "reports.export.page", { n, total }), partLabel: (i, n) => serverT(language, "reports.export.part", { i, n }) },
+        pageLabels,
       );
   } catch (error) {
     console.error("[/api/reports/export] render", error instanceof Error ? error.message : String(error));

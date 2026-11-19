@@ -48,13 +48,24 @@ describe("the costing export follows the board's shop", () => {
     const csv = toCsv(EXPORT_COLUMNS.costing, [], ["Prices: P Street"]);
     expect(csv.replace(/^﻿/, "").split("\r\n").slice(0, 2)).toEqual(["Prices: P Street", EXPORT_COLUMNS.costing.map((c) => c.key).join(",")]);
   });
+  it("notes go AFTER the table: with no pricing scope the header row is line 1, and the two can sit in one file", () => {
+    const header = EXPORT_COLUMNS.costing.map((c) => c.key).join(",");
+    const lines = (csv: string) => csv.replace(/^﻿/, "").split("\r\n");
+    expect(lines(toCsv(EXPORT_COLUMNS.costing, [], [], ["Notes", "Covers 6 of 7 days."]))).toEqual([header, "", "Notes", "Covers 6 of 7 days.", ""]);
+    expect(lines(toCsv(EXPORT_COLUMNS.costing, [], ["Prices: P Street"], ["Notes", "One, with a comma"]))).toEqual(["Prices: P Street", header, "", "Notes", "\"One, with a comma\"", ""]);
+    // No notes: byte-identical to before (no blank line, no block).
+    expect(toCsv(EXPORT_COLUMNS.costing, [], [], [])).toBe(toCsv(EXPORT_COLUMNS.costing, []));
+  });
   it("the route writes that line (CSV) and that header line (PDF); the page links the export with its own scope", () => {
     const route = readFileSync("app/api/reports/export/route.ts", "utf8");
     expect(route).toContain('"reports.export.pricing_scope_shop"');
     expect(route).toContain('"reports.export.pricing_scope_global"');
-    // Item 9b: the pricing line now leads the shared top lines (pricing first, then any export notices).
-    expect(route).toContain("const topLines = [...(pricingLine ? [pricingLine] : []), ...noticeLines];");
-    expect(route).toContain("toCsv(table.columns, table.rows, topLines)");
+    // Business-report polish (2026-11-18): the two kinds of line have two places and never trade them. The costing
+    // PRICING SCOPE still LEADS its file (it names whose prices every row is in: line 1, then the header row — the
+    // test above). An export NOTICE (the business family's "this file covers N of M days") goes AFTER the table, so
+    // a file without a pricing scope has its header row on line 1.
+    expect(route).toContain("const topLines = pricingLine ? [pricingLine] : [];");
+    expect(route).toContain("toCsv(table.columns, table.rows, topLines, csvNotes)");
     const page = readFileSync("app/admin/sandwiches/page.tsx", "utf8");
     expect(page).toContain('query={{ location: scope }}');
     expect(page).toContain('"admin.menu_costing.export_scope"');

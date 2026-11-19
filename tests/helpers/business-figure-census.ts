@@ -40,8 +40,9 @@ export const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
     "figureCells", "FIGURE_NOTES_COLUMN",
     // Fix round 7: an empty list's claim (a kind and reason keys, never a number) and its cell for a file.
     "EmptyClaim", "emptyClaimNote"],
-  "@/lib/business-figure-format": ["figureFormatFor", "changeWords"],
-  "@/lib/business-view-shared": ["businessView", "BusinessReportView", "CutView", "DayView", "LaborView", "QuarterView", "SalesView", "WeekView", "PersonView", "RushWindowView"],
+  // Polish: the per-scope legend (marks + sentences, never a number).
+  "@/lib/business-figure-format": ["figureFormatFor", "changeWords", "figureLegend", "FigureLegend", "LegendEntry"],
+  "@/lib/business-view-shared": ["businessView", "BusinessReportView", "CutView", "DayView", "LaborView", "QuarterView", "SalesView", "WeekView", "PersonView", "RushWindowView", "HourView"],
   "@/lib/business-report-shared": ["BUSINESS_RANGES", "BUSINESS_REPORT_TABS", "BusinessRange", "BusinessReportTab", "CompareChange", "businessReportEnabled", "businessReportRefusal", "businessTab",
     // Fix round 6: the ONE parse of the raw range query (date strings, never a figure): form, links, exports.
     "parseBusinessRangeRequest", "BusinessRangeRequest", "BusinessRangeEmptyReason"],

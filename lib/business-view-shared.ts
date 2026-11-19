@@ -15,7 +15,7 @@
  */
 import type { BusinessReportDto, BusinessDayDto, BusinessQuarterDto } from "@/lib/business-report";
 import {
-  breakdownCoverage, laborHoursComplete, salesAmountMissing, sumBusinessDays,
+  breakdownCoverage, laborHoursComplete, quarterFigures, salesAmountMissing, sumBusinessDays,
   type BreakdownCoverage, type BusinessRange, type CutTotal, type CutsState, type DenominatorState, type LaborFigures, type LaborState, type LoadedState,
 } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
@@ -54,6 +54,17 @@ export interface QuarterView {
   /** Labor dollars and % per 15 minutes: present ONLY where the DTO carries them (QUARTER_COST_MIN, MoO+). */
   cost?: Figure; pct?: Figure;
 }
+/** Polish: one HOUR of a day's 15-minute list (the page shows hours, each opening its quarters; the PDF prints
+ * hours). Its figures are built from that hour's quarters by the same builders a quarter uses: checks and sales
+ * unknown whenever the day's breakdown is not shown, hours and dollars judged against the DAY's labor state. */
+export interface HourView {
+  hourStartAt: string;
+  checks: Figure; sales: Figure; amountMissing: Figure; hours: Figure;
+  /** Labor dollars and % (the quarter rule over the hour's sums): present ONLY where the quarters carry them
+   * (QUARTER_COST_MIN, MoO+). */
+  cost?: Figure; pct?: Figure;
+  quarters: QuarterView[];
+}
 export interface RushWindowView { startAt: string; endAt: string; checks: Figure; usual: Figure; sales: Figure }
 export interface DayView {
   date: string; cuts: CutsState; sales: SalesView; labor: LaborView; target: Target; loadedTarget: Target;
@@ -67,6 +78,8 @@ export interface DayView {
   rush: { state: "ok" | "not_enough_history"; any: boolean; none: boolean; count: Figure; windows: RushWindowView[] } | null;
   rushes: Figure;
   quarters: QuarterView[];
+  /** Polish: the same listed quarters, grouped by hour. */
+  hourly: HourView[];
   /** Fix round 7: the 15-minute list of this day is EMPTY on the page. Whether "no checks or labor" may be said
    * (`verified`: breakdown ready, no check, hours final and zero) or not (`unknown`, with why). Null when the
    * list has rows, or the range is too wide for the 15-minute view. */
@@ -95,7 +108,10 @@ export interface BusinessReportView {
   /** The sentence on top of a breakdown list that leaves days out, or null when it holds every day. Only when
    * every left-out day is merely REBUILDING may it say the Overview totals are final; a day with no sales
    * captured is named as that (fix round 4, own sweep). */
-  breakdownNotice: { key: "reports.business.channels.rebuilding_days" | "reports.business.export.breakdown_partial" | "reports.business.export.breakdown_none"; values: Record<string, number> } | null;
+  breakdownNotice: { key: "reports.business.channels.rebuilding_days" | "reports.business.channels.not_captured_days" | "reports.business.export.breakdown_partial" | "reports.business.export.breakdown_none"; values: Record<string, number> } | null;
+  /** Polish: WHY days are left out of the breakdown, so a sentence says "still rebuilding" only when a day is:
+   * every left-out day is rebuilding, every one has no sales captured, or both kinds. Null = none left out. */
+  breakdownLeftOut: "rebuilding" | "not_captured" | "mixed" | null;
   total: { sales: SalesView; labor: LaborView; target: Target; loadedTarget: Target; largeChecks: { any: boolean; checks: Figure; amount: Figure } };
   weeks: WeekView[];
   days: DayView[];
@@ -119,11 +135,12 @@ function salesView(s: SalesIn): SalesView {
   return {
     coverage: s.coverage,
     total: salesFigure(s, missing),
-    checks: coverageFigure("count", s.checks, s.coverage, { missingReason: "reports.business.labor.state.sales_not_covered" }),
+    // Polish: a check count's reason is about CHECKS (the code stays `sales_not_covered` in a file's figure_notes).
+    checks: coverageFigure("count", s.checks, s.coverage, { missingReason: "reports.business.checks.state.sales_not_covered" }),
     toastChecks: coverageFigure("cents", s.toastChecksCents, s.coverage, { missing: s.toastAmountMissing }),
     // The exact Toast net is absent whenever any day's is: say that, whatever the coverage.
     toastNet: coverageFigure("cents", s.toastNetCents, s.toastNetCents === null ? "partial" : s.coverage,
-      { missingReason: "reports.business.labor.state.net_unknown", unknownReason: "reports.business.labor.state.net_unknown" }),
+      { missingReason: "reports.business.toast_net.state.net_unknown", unknownReason: "reports.business.toast_net.state.net_unknown" }),
     ezcater: coverageFigure("cents", s.ezcaterCents, s.coverage, { missing: s.ezcaterMissing }),
     ezcaterOrders: coverageFigure("count", s.ezcaterOrders, s.coverage, { label: CHECKS }),
     refunds: coverageFigure("cents", s.refundCents, s.coverage),
@@ -143,8 +160,12 @@ function laborView(l: LaborFigures): LaborView {
     wageEstimated: figureHasNote(pureCost, "wage_estimated"), hoursUnverified: figureHasNote(hours, "hours_unverified"), salaryGaps: l.salaryGaps,
   };
 }
+/** Why a day's breakdown (15 minutes, unplaced checks) is not shown: a day with no sales captured says THAT, never
+ * "still being rebuilt" (polish). */
+const notShownReason = (day: Pick<BusinessDayDto, "cuts">): FigureKey =>
+  (day.cuts === "sales_not_covered" ? "reports.business.sales.not_captured" : "reports.business.cuts.rebuilding");
 function quarterView(q: BusinessQuarterDto, day: BusinessDayDto): QuarterView {
-  const REBUILDING = "reports.business.cuts.rebuilding" as const;
+  const REBUILDING = notShownReason(day);
   const out: QuarterView = {
     date: q.date, quarterStartAt: q.quarterStartAt, wallQuarter: q.wallQuarter, basis: q.basis, laborState: day.labor.state,
     breakdownReady: q.toastCents !== null, active: (q.checks ?? 0) > 0 || (q.laborMinutes ?? 0) > 0,
@@ -158,6 +179,46 @@ function quarterView(q: BusinessQuarterDto, day: BusinessDayDto): QuarterView {
   if ("pct" in q) out.pct = quarterPctFigure(q.pct, day.labor);
   return out;
 }
+/** One hour of a day from its listed quarters (raw, same DTO rows the quarter figures are built from). */
+function hourViews(rows: ReadonlyArray<{ q: BusinessQuarterDto; v: QuarterView }>, day: BusinessDayDto): HourView[] {
+  const byHour = new Map<string, Array<{ q: BusinessQuarterDto; v: QuarterView }>>();
+  for (const r of rows) {
+    // ET is a whole number of hours from UTC, so the UTC hour of the instant IS the wall hour (and tells the two 1 AMs apart).
+    const hour = `${r.q.quarterStartAt.slice(0, 13)}:00:00.000Z`;
+    (byHour.get(hour) ?? byHour.set(hour, []).get(hour)!).push(r);
+  }
+  const reason = notShownReason(day);
+  return [...byHour.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([hourStartAt, list]) => {
+    const qs = list.map((r) => r.q);
+    const all = <K extends "checks" | "toastCents">(k: K) => (qs.some((q) => q[k] === null) ? null : qs.reduce((s, q) => s + (q[k] ?? 0), 0));
+    const minutes = qs.reduce((s, q) => s + (q.laborMinutes ?? 0), 0);
+    const missing = qs.reduce((s, q) => s + (q.amountMissing ?? 0), 0);
+    const out: HourView = {
+      hourStartAt, quarters: list.map((r) => r.v),
+      checks: exactFigure("count", all("checks"), reason, { label: CHECKS }),
+      sales: exactFigure("cents", all("toastCents"), reason, { missing }),
+      // Fix round 1: the checks of unknown amount behind the hour's sales (the CSV's quarter `amount_missing`).
+      amountMissing: exactFigure("count", all("toastCents") === null ? null : missing, reason),
+      hours: quarterHoursFigure(minutes, day.labor.state, day.labor.hoursUnverified),
+    };
+    if (qs.every((q) => "straightCents" in q)) {
+      // The hour's dollars are known only when every quarter that carries minutes has its dollars.
+      const worked = qs.filter((q) => (q.laborMinutes ?? 0) > 0);
+      const cents = worked.some((q) => q.straightCents === null || q.straightCents === undefined) ? null : worked.reduce((s, q) => s + (q.straightCents ?? 0), 0);
+      out.cost = quarterCentsFigure(worked.length === 0 ? null : cents, minutes, day.labor);
+    }
+    if (qs.every((q) => "pct" in q)) {
+      // Fix round 1 (review POLISH-r1 P2): the hour's labor %, by THE quarter rule (quarterFigures) over the hour's
+      // sums: straight time / the hour's exact Toast sales, never over sales with an unknown amount.
+      const worked = qs.filter((q) => (q.laborMinutes ?? 0) > 0);
+      const straight = worked.some((q) => q.straightCents === null || q.straightCents === undefined) ? null : worked.reduce((s, q) => s + (q.straightCents ?? 0), 0);
+      const sales = all("toastCents");
+      out.pct = quarterPctFigure(quarterFigures({ toastCents: sales ?? 0, checks: all("checks") ?? 0, amountMissing: missing, laborMinutes: minutes, straightCents: straight,
+        salesOk: day.cuts === "ok" && sales !== null, laborOk: day.labor.pureHourlyCents !== null && day.labor.state !== "hours_unknown" }).pct, day.labor);
+    }
+    return out;
+  });
+}
 const cutView = (c: CutTotal, days: BreakdownCoverage): CutView => ({
   key: c.key, label: c.label ?? null, provider: c.provider ?? null,
   checks: breakdownFigure("count", c.checks, days, { label: CHECKS }),
@@ -168,6 +229,8 @@ const cutView = (c: CutTotal, days: BreakdownCoverage): CutView => ({
 function breakdownNotice(dto: BusinessReportDto, b: BreakdownCoverage): BusinessReportView["breakdownNotice"] {
   if (dto.range.empty || b.state === "complete") return null;
   if (dto.days.every((d) => d.cuts === "ok" || d.cuts === "rebuilding")) return { key: "reports.business.channels.rebuilding_days", values: { n: b.excluded } };
+  // Polish: every left-out day has no sales captured: say that, not "still rebuilding".
+  if (dto.days.every((d) => d.cuts === "ok" || d.cuts === "sales_not_covered")) return { key: "reports.business.channels.not_captured_days", values: { n: b.excluded, expected: b.expected } };
   return { key: b.state === "none" ? "reports.business.export.breakdown_none" : "reports.business.export.breakdown_partial",
     values: { covered: b.included, expected: b.expected, excluded: b.excluded } };
 }
@@ -177,12 +240,14 @@ export function businessView(dto: BusinessReportDto): BusinessReportView {
   const breakdown = breakdownCoverage(dto.days);
   const inWeek = (date: string) => dto.weeks.find((w) => date >= w.from && date <= w.to);
   const quartersByDate = new Map<string, QuarterView[]>();
+  const rawByDate = new Map<string, Array<{ q: BusinessQuarterDto; v: QuarterView }>>();
   const dayByDate = new Map(dto.days.map((d) => [d.date, d]));
   const quarters = dto.quarters === null ? null : dto.quarters.flatMap((q) => {
     const day = dayByDate.get(q.date);
     if (!day) return [];
     const v = quarterView(q, day);
     (quartersByDate.get(q.date) ?? quartersByDate.set(q.date, []).get(q.date)!).push(v);
+    (rawByDate.get(q.date) ?? rawByDate.set(q.date, []).get(q.date)!).push({ q, v });
     return [v];
   });
   const unassigned = (dto.quartersUnassigned ?? []).map((u) => ({
@@ -217,7 +282,7 @@ export function businessView(dto: BusinessReportDto): BusinessReportView {
           usual: exactFigure("count", w.baselineChecks, cutsReason), sales: exactFigure("cents", w.cents, cutsReason) })),
       },
       rushes: rushCount,
-      quarters: listed, activity, hasQuarterRows: (quartersByDate.get(d.date) ?? []).length > 0,
+      quarters: listed, hourly: hourViews((rawByDate.get(d.date) ?? []).filter((r) => r.v.active), d), activity, hasQuarterRows: (quartersByDate.get(d.date) ?? []).length > 0,
       unassigned: un ? { checks: un.checks, sales: un.sales, amountMissing: un.amountMissing } : null,
     };
   });
@@ -237,6 +302,8 @@ export function businessView(dto: BusinessReportDto): BusinessReportView {
     locationId: dto.locationId, range: dto.range, access: dto.access,
     salesDays: { covered: dto.days.filter((d) => d.sales.coverage === "complete").length, expected: dto.days.length },
     breakdown, breakdownNotice: breakdownNotice(dto, breakdown),
+    breakdownLeftOut: dto.range.empty || breakdown.state === "complete" ? null
+      : dto.days.every((d) => d.cuts !== "sales_not_covered") ? "rebuilding" : dto.days.every((d) => d.cuts !== "rebuilding") ? "not_captured" : "mixed",
     total: { sales: totalSales, labor: totalLaborView, target: dto.total.target, loadedTarget: dto.total.loadedTarget,
       largeChecks: { any: figureIsPositive(largeTotal.checks), ...largeTotal } },
     weeks: dto.weeks.map((w) => ({

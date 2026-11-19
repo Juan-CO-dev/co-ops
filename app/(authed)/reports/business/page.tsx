@@ -15,7 +15,7 @@ import { ExportLinks } from "@/components/reports-export/ExportLinks";
 import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
 import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
 import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
-import { BUSINESS_EMPTY_KEY, BusinessRangeControls, BusinessTabs, BusinessUnavailable, bizCard, tFor } from "@/components/reports-business/BusinessParts";
+import { BUSINESS_EMPTY_KEY, BUSINESS_EXPORT_OFF_KEY, BusinessRangeControls, BusinessTabs, BusinessUnavailable, bizCard, tFor } from "@/components/reports-business/BusinessParts";
 import { BusinessChannels, BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople } from "@/components/reports-business/BusinessReport";
 import { BusinessReportError, loadBusinessReport, resolveBusinessRange } from "@/lib/business-report";
 import { businessView } from "@/lib/business-view-shared";
@@ -80,9 +80,10 @@ export default async function BusinessReportPage({ searchParams }: { searchParam
       if (error instanceof BusinessReportError) body = <BusinessUnavailable code={error.code} language={language} />;
       else throw error;
     }
-    // A request with no dates has nothing to export (the export refuses it 400 `range_dates_missing`): no links.
+    // Polish: a request with no range (no dates, a start after the end, no finished day yet) has nothing to
+    // download, so the CSV / PDF links are not offered and the reason is said in their place.
     return <div className="mb-6">
-      {request.kind === "empty" && request.reason === "dates_missing" ? null
+      {request.kind === "empty" ? <p className="mb-3 text-xs text-co-text-muted" role="note">{t(BUSINESS_EXPORT_OFF_KEY[request.reason])}</p>
         : <ExportLinks className="mb-3" family="business" language={language} query={{ ...context, location: shopId }} />}
       {body}
     </div>;

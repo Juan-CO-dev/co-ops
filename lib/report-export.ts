@@ -35,6 +35,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { BusinessReportError, loadBusinessReport, resolveBusinessRange } from "@/lib/business-report";
 import { businessReportEnabled, businessReportRefusal, parseBusinessRangeRequest } from "@/lib/business-report-shared";
 import { businessView } from "@/lib/business-view-shared";
+import { businessPdf, type BusinessPdf } from "@/lib/business-report-pdf";
 import {
   SALES_EXPORT_MAX_ROWS, SALES_READ_MIN, SalesReportError, VIEW_DIMENSION, isSalesExportView, loadSalesBreakdown,
   loadSalesCheckPage, loadSalesEzcaterOrders, loadSalesSummary, parseSalesCheckFilters, resolveSalesRange,
@@ -92,9 +93,12 @@ export interface ExportTable {
   pricingScope?: { kind: "global" } | { kind: "shop"; name: string };
   /** File-name family when one family has several tables (sales views: `sales-items`). */
   fileFamily?: string;
-  /** Item 9b fix round 1: sentences the file must carry on top (CSV preamble, PDF header) — the business
-   * family's "these lists cover N of M days" when a breakdown leaves days out. Absent = none (byte-identical). */
+  /** Item 9b fix round 1: sentences the file must carry — the business family's "this file covers N of M days"
+   * when a breakdown leaves days out. Polish: they go AFTER the table (a notes block under the CSV rows, so line 1
+   * stays the header row; the "Notes" of the PDF). Absent = none (byte-identical). */
   notices?: Array<{ key: TranslationKey; values: Record<string, string | number> }>;
+  /** Polish: the business family's PDF is its own readable layout (lib/business-report-pdf.ts), not the CSV table. */
+  pdf?: BusinessPdf;
 }
 
 type Params = Record<string, string | undefined>;
@@ -162,7 +166,7 @@ async function salesExportTable(auth: AuthContext, params: Params, shop: ShopRef
  * Past the Sales row cap: 413, never a cut file. Like every other family, a DOWNLOAD is not gated by the
  * digest delivery mode (that switch only stops sending); the family has its own switch, checked first.
  */
-async function businessExportTable(auth: AuthContext, params: Params, shop: ShopRef, today: string): Promise<Pick<ExportTable, "columns" | "rows" | "from" | "to" | "fileFamily" | "notices">> {
+async function businessExportTable(auth: AuthContext, params: Params, shop: ShopRef, today: string): Promise<Pick<ExportTable, "columns" | "rows" | "from" | "to" | "fileFamily" | "notices" | "pdf">> {
   const tab = isBusinessExportTab(params.tab) ? params.tab : "overview";
   const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations, role: auth.role };
   // Fix round 6 (review ITEM9B-r6 P2): the page's ONE parse. A request missing a date is refused (no default date
@@ -174,13 +178,16 @@ async function businessExportTable(auth: AuthContext, params: Params, shop: Shop
     if (reason === "dates_missing" || request.period === null) throw new ExportError(400, "range_dates_missing");
     const period = request.period;
     return { columns: BUSINESS_EXPORT_COLUMNS[tab], rows: businessEmptyRangeRows(tab, period, shop, reason), from: period.from, to: period.to,
-      fileFamily, notices: [{ key: reason === "from_after_to" ? "reports.business.export.from_after_to" : "reports.business.export.no_finished_days", values: {} }] };
+      fileFamily, notices: [{ key: reason === "from_after_to" ? "reports.business.export.from_after_to" : "reports.business.export.no_finished_days", values: {} }],
+      // Nothing was loaded: the PDF is the sentence alone (its notes), no table.
+      pdf: { tables: [], legend: [], notes: [], layout: "portrait" } };
   }
   const range = request.range;
   try {
     // The file is built from the page's VIEW (every figure sealed with its state), never from the DTO.
     const dto = businessView(await loadBusinessReport(viewer, { locationId: shop.id, range }));
     let rows: ExportRow[];
+    let previousView: ReturnType<typeof businessView> | null = null;
     switch (tab) {
       case "overview": rows = businessOverviewRows(dto, shop); break;
       case "hours": rows = businessHoursRows(dto, shop); break;
@@ -188,15 +195,17 @@ async function businessExportTable(auth: AuthContext, params: Params, shop: Shop
       case "people": rows = businessPeopleRows(dto, shop); break;
       case "compare": {
         const previous = businessView(await loadBusinessReport(viewer, { locationId: shop.id, range: resolveBusinessRange({ range: "custom", ...range.previous }, today) }));
+        previousView = previous;
         rows = businessCompareRows(dto, previous, shop);
         break;
       }
     }
     // Fix round 1: every tab that reads the cuts (all but Compare, whose total row carries breakdown_state) says
-    // on top of the file which days it covers when it leaves any out; never a partial total as the whole period.
-    const notices = [tab === "compare" ? null : businessCoverageNotice(dto), businessHoursNotice(dto)].filter((n) => n !== null);
+    // in the file which days it covers when it leaves any out; never a partial total as the whole period. Polish:
+    // the sentence is the tab's own (an Overview file does not talk about channels).
+    const notices = [tab === "compare" ? null : businessCoverageNotice(dto, tab), businessHoursNotice(dto)].filter((n) => n !== null);
     return { columns: BUSINESS_EXPORT_COLUMNS[tab], rows: [...assertBusinessRowCap(rows)], from: range.from, to: range.to,
-      fileFamily, ...(notices.length ? { notices } : {}) };
+      fileFamily, ...(notices.length ? { notices } : {}), pdf: businessPdf(tab, dto, previousView, auth.user.language) };
   } catch (error) {
     if (error instanceof BusinessReportError) throw new ExportError(error.status, error.code);
     throw error;
