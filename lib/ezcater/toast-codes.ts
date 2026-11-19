@@ -12,10 +12,12 @@ const versionInstant = (value: unknown): number => typeof value === "string" && 
 
 /** Ephemeral lookup only: raw notes never enter capture snapshots, audit, or storage.
  * Pass expectedVersions for captured catering-channel orders to fence both scope
- * and source version. Unknown/missing versions cannot authorize snapshot links. */
+ * and source version. Unknown/missing versions cannot authorize snapshot links.
+ * `examined` (item 21 PR 4) collects the guid of every order whose notes were actually read: live in Toast and, with
+ * expectedVersions, at exactly the captured version. Trust it only when the call returns (a failed page throws). */
 export async function loadKnownToastOrderCodes(restaurantGuid: string, businessDate: string,
   knownCodes: string[], opts: { deadlineAt?: number; signal?: AbortSignal;
-    expectedVersions?: Map<string, string | null> } = {}): Promise<Map<string, string[]>> {
+    expectedVersions?: Map<string, string | null>; examined?: Set<string> } = {}): Promise<Map<string, string[]>> {
   const result = new Map<string, string[]>();
   const known = new Set(knownCodes.map(normalizeOrderCode).filter(Boolean));
   if (!known.size || opts.expectedVersions?.size === 0) return result;
@@ -33,6 +35,7 @@ export async function loadKnownToastOrderCodes(restaurantGuid: string, businessD
           const expected = versionInstant(opts.expectedVersions.get(orderGuid));
           if (!Number.isFinite(expected) || versionInstant(order.modifiedDate) !== expected) continue;
         }
+        opts.examined?.add(orderGuid);
         for (const check of rows(order.checks)) {
           const checkGuid = id(check.guid);
           if (!checkGuid || check.voided === true || check.deleted === true) continue;

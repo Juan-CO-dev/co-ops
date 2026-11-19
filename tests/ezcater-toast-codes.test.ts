@@ -63,3 +63,24 @@ it("does no provider read when the captured catering order scope is empty", asyn
   expect(result.size).toBe(0);
   expect(toastGet).not.toHaveBeenCalled();
 });
+
+// Item 21 PR 4 (review PORTAL4-r1): the lookup reports which orders it actually READ, so its caller can record coverage.
+it("reports as examined only live orders read at exactly the captured version, with or without a match", async () => {
+  const at = (guid: string, modifiedDate: string, extra: Record<string, unknown> = {}) => ({ ...order("no code here"), guid, modifiedDate, ...extra });
+  vi.mocked(toastGet).mockResolvedValue([
+    at("same", "2026-10-08T12:00:00.000+0000"), at("moved", "2026-10-08T12:30:00.000+0000"), at("gone", "2026-10-08T12:00:00.000+0000", { voided: true }),
+    at("unlisted", "2026-10-08T12:00:00.000+0000"), { ...order("AB-1234"), guid: "hit", modifiedDate: "2026-10-08T12:00:00.000+0000" },
+  ]);
+  const examined = new Set<string>();
+  const matched = await loadKnownToastOrderCodes("restaurant", "2026-10-08", ["AB1234"], { examined,
+    expectedVersions: new Map<string, string | null>([["same", "2026-10-08T12:00:00+00:00"], ["moved", "2026-10-08T12:00:00+00:00"],
+      ["gone", "2026-10-08T12:00:00+00:00"], ["hit", "2026-10-08T12:00:00+00:00"], ["absent", "2026-10-08T12:00:00+00:00"], ["undated", null]]) });
+  expect([...examined].sort()).toEqual(["hit", "same"]);
+  expect([...matched.keys()]).toEqual([toastCodeSelectionKey("hit", "check", "selection")]);
+});
+
+it("a failed page throws, so a partial examined set is never trusted by a caller that awaits the result", async () => {
+  vi.mocked(toastGet).mockResolvedValue({ not: "an array" });
+  await expect(loadKnownToastOrderCodes("restaurant", "2026-10-08", ["AB1234"], { examined: new Set(), expectedVersions: new Map([["o", "2026-10-08T12:00:00Z"]]) }))
+    .rejects.toThrow("ezcater_toast_bad_page");
+});

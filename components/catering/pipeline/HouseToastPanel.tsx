@@ -105,6 +105,8 @@ export function HouseToastPanel({ leadId, startOpen = false, initial }: { leadId
           onClick={() => void decide({ kind: "ring_expected", expectedHeadId: panel.leadHead!.id })}>{t("catering.toast_link.action.ring_expected")}</button>}
       </div>}
 
+      {panel.ringCode && panel.leadHead?.kind !== "no_ring_expected" && <p className="text-co-text">{t("catering.toast_link.ring_code", { code: panel.ringCode })}</p>}
+
       {panel.links.length > 0 && <div>
         <h4 className="text-xs font-bold tracking-wide text-co-text-muted">{t("catering.toast_link.linked_heading")}</h4>
         <ul className="mt-1 space-y-2">{panel.links.map((l) => {

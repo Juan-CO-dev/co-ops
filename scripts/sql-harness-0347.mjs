@@ -40,6 +40,7 @@
  * PGlite has ONE backend: lock waits are not provable here (CC's sim two-session proof covers them).
  */
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { SHOP, OTHER, id, read, migration as m0344, schema as baseSchema, ring } from './sql-harness-0344-lib.mjs';
 
@@ -52,12 +53,12 @@ const transfer0225 = read('0225_ezcater_pass2.sql').match(/create function publi
 const reconcile0330 = read('0330_ezcater_catering_records_fixes.sql').match(/create or replace function public\.reconcile_ezcater_toast[\s\S]*?\nend \$\$;/)?.[0];
 export const m0347 = read('0347_catering_toast_link_step.sql');
 
-const CM = id('2000', 11), GM = id('2000', 12), GM_ELSEWHERE = id('2000', 13), MOO = id('2000', 14), EMP = id('2000', 15), AGM = id('2000', 16);
-const EZL1 = id('3000', 101), EZL2 = id('3000', 102), EZL3 = id('3000', 103);
-const EO1 = id('3100', 1), EO2 = id('3100', 2), EO3 = id('3100', 3);
-const HA = id('3000', 201), HB = id('3000', 202), HC = id('3000', 203);
+export const CM = id('2000', 11), GM = id('2000', 12), GM_ELSEWHERE = id('2000', 13), MOO = id('2000', 14), EMP = id('2000', 15), AGM = id('2000', 16);
+export const EZL1 = id('3000', 101), EZL2 = id('3000', 102), EZL3 = id('3000', 103);
+export const EO1 = id('3100', 1), EO2 = id('3100', 2), EO3 = id('3100', 3);
+export const HA = id('3000', 201), HB = id('3000', 202), HC = id('3000', 203);
 
-async function setup({ with0347 }) {
+export async function setup({ with0347 }) {
   const db = new PGlite();
   await baseSchema(db, check);
   await db.exec(`alter table ezcater_orders add column snapshot_id uuid, add column provider_uuid text, add column event_date date,
@@ -116,36 +117,36 @@ async function setup({ with0347 }) {
   return db;
 }
 
-async function ringEz(db, snap, args) {
+export async function ringEz(db, snap, args) {
   await ring(db, snap, args);
   // The real publisher reads (s->>'voided')::boolean without a default: capture always writes both flags.
   await db.query(`update toast_orders set selection_units = (select coalesce(jsonb_agg(u || '{"voided":false,"deleted":false}'::jsonb), '[]'::jsonb)
     from jsonb_array_elements(selection_units) u) where id = $1`, [snap]);
   for (const c of args.checks) await db.query(`update toast_order_checks set amount_cents = total_cents where snapshot_id = $1 and check_guid = $2`, [snap, c.guid]);
 }
-const one = async (db, q, p = []) => (await db.query(q, p)).rows[0];
-const all = async (db, q, p = []) => (await db.query(q, p)).rows;
-async function refuses(db, run, code, message) {
+export const one = async (db, q, p = []) => (await db.query(q, p)).rows[0];
+export const all = async (db, q, p = []) => (await db.query(q, p)).rows;
+export async function refuses(db, run, code, message) {
   await db.exec('begin'); let error;
   try { await run(); } catch (e) { error = e; }
   await db.exec('rollback');
   check(String(error?.message ?? '').includes(code), `${message}: expected ${code}, got ${error?.message ?? 'success'}`);
 }
-const asService = async (db, fn) => { await db.exec('begin; set local role service_role'); try { return await fn(); } finally { await db.exec('commit'); } };
-const reconcile = db => asService(db, () => one(db, `select reconcile_ezcater_toast('2026-11-01', '2026-11-30') r`));
-const publish = (db, order, payload) => asService(db, () => db.query(`select publish_ezcater_shadow($1, $2, $3, $4)`,
+export const asService = async (db, fn) => { await db.exec('begin; set local role service_role'); try { return await fn(); } finally { await db.exec('commit'); } };
+export const reconcile = db => asService(db, () => one(db, `select reconcile_ezcater_toast('2026-11-01', '2026-11-30') r`));
+export const publish = (db, order, payload) => asService(db, () => db.query(`select publish_ezcater_shadow($1, $2, $3, $4)`,
   [order, order === EO1 ? id('3200', 1) : order === EO2 ? id('3200', 2) : id('3200', 3), SHOP, JSON.stringify(payload)]));
-const ezLinks = async (db, where = '') => (await all(db, `select order_id::text o, order_guid, check_guid, selection_guid, evidence, toast_snapshot_id::text snap,
+export const ezLinks = async (db, where = '') => (await all(db, `select order_id::text o, order_guid, check_guid, selection_guid, evidence, toast_snapshot_id::text snap,
   amount_diff_cents::text diff, amount_mismatch, reconciliation_details::text det from ezcater_toast_links where is_current ${where}
   order by 1, 2, 3, 4, 5`));
-async function decide(db, actor, lead, kind, args = {}) {
+export async function decide(db, actor, lead, kind, args = {}) {
   const r = await one(db, `select decide_catering_toast($1, $2, $3, $4, $5, $6, $7, $8) d`,
     [actor, lead, kind, args.loc ?? null, args.order ?? null, args.check ?? null, args.reason ?? null, args.expected ?? null]);
   return r.d;
 }
-const head = async (db, lead, order = null, check_ = null) => (await one(db, `select id from catering_toast_decision_heads where lead_id = $1
+export const head = async (db, lead, order = null, check_ = null) => (await one(db, `select id from catering_toast_decision_heads where lead_id = $1
   and order_guid is not distinct from $2 and check_guid is not distinct from $3`, [lead, order, check_]))?.id ?? null;
-const planEz = async db => all(db, `select order_id::text o, toast_snapshot_id::text snap, order_guid, check_guid, selection_guid, business_date::text d, evidence,
+export const planEz = async db => all(db, `select order_id::text o, toast_snapshot_id::text snap, order_guid, check_guid, selection_guid, business_date::text d, evidence,
   amount_diff_cents::text diff, amount_mismatch, reconciliation_details::text det from plan_ezcater_toast() order by 1, 2, 3, 4, 5, 7`);
 
 /** The shared Toast rings for the equivalence run: codes on names, an ezCater dining-option batch with a D+1 fallback. */
@@ -778,4 +779,5 @@ async function main() {
   console.log(`sql-harness-0347: ${checks} checks passed`);
 }
 
-main().catch(e => { console.error(e.message); process.exit(1); });
+// Run only when invoked directly: scripts/sql-harness-0348.mjs imports the setup and helpers above.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(e => { console.error(e.message); process.exit(1); });
