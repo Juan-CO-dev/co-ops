@@ -36,3 +36,9 @@ it("the card renders 44px controls with items-center, every key it names exists,
   for (const m of src.matchAll(/"(labor\.burden\.[a-z_.]+)"/g)) expect(LABOR_BURDEN_I18N_KEYS as readonly string[], m[1]).toContain(m[1]!);
   for (const m of src.matchAll(/`labor\.burden\.([a-z_]+)\.\$\{/g)) expect(LABOR_BURDEN_I18N_KEYS.some((k) => k.startsWith(`labor.burden.${m[1]}.`)), m[1]).toBe(true);
 });
+it("the page shows the card only to the burden roles AND with the switch on, and reads nothing for it otherwise", () => {
+  const src = readFileSync("app/admin/sevenshifts/page.tsx", "utf8");
+  expect(src).toContain("const burden = canManageLaborBurden(auth.role) && scheduleLaborViewsEnabled(process.env as ScheduleLaborViewsEnv)\n    ? await loadLaborBurdenCard(");
+  expect(src.match(/loadLaborBurdenCard\(/g)).toHaveLength(1);
+  expect(src).toContain("{burden && <LaborBurdenCard data={burden.state === \"ready\" ? burden : null} />}");
+});
