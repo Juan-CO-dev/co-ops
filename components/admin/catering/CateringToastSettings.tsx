@@ -25,7 +25,7 @@ import {
   MAX_TOLERANCE_CENTS, SETTINGS_SWITCHES, sameSettings, settingsErrorKey, settingsRefusal,
   type CateringToastSettingsValues, type CateringToastShopCard, type SettingsReadiness, type SettingsSwitch,
 } from "@/lib/catering/catering-toast-settings-shared";
-import { BACKFILL_SKIPS, type BackfillSkip, type BackfillStatus, type BackfillStep } from "@/lib/catering/catering-toast-backfill-shared";
+import { BACKFILL_SKIPS, runBackfillLoop, type BackfillRun, type BackfillStatus, type BackfillStep } from "@/lib/catering/catering-toast-backfill-shared";
 
 const BUTTON = "inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 px-3 text-sm font-bold disabled:opacity-60";
 const PRIMARY = `${BUTTON} border-co-gold-deep bg-co-gold text-co-text`;
@@ -35,13 +35,11 @@ const SWITCH_KEY: Record<SettingsSwitch, string> = {
   enabled: "enabled", ringCodeEnabled: "ring_code", autoLinkEnabled: "auto_link", originAutoLinkEnabled: "origin_auto_link", includeToastOriginLeads: "list_origin",
 };
 const k = (key: string) => `admin.catering.toast.${key}` as TranslationKey;
-/** A backfill is a few stretches, each a handful of steps: this only stops a loop that could never end. */
-const BACKFILL_MAX_STEPS = 400;
 
 export function CateringToastSettings({ shops, readiness, initialOpen = null, initialBackfill = null }: {
   shops: readonly CateringToastShopCard[]; readiness: SettingsReadiness;
-  /** SSR tests only: a shop whose form starts open, and a loaded backfill status. */
-  initialOpen?: string | null; initialBackfill?: { locationId: string; status: BackfillStatus } | null;
+  /** SSR tests only: a shop whose form starts open; a loaded backfill status and / or how a run ended. */
+  initialOpen?: string | null; initialBackfill?: { locationId: string; status: BackfillStatus | null; run?: BackfillRun | null } | null;
 }) {
   const { t } = useTranslation();
   return <div className="grid gap-4">
@@ -49,7 +47,8 @@ export function CateringToastSettings({ shops, readiness, initialOpen = null, in
     {readiness.linkStep && !readiness.automatic && <p role="status" className="co-card p-4 text-sm text-co-text-muted">{t(k("not_ready.automatic"))}</p>}
     <ul className="grid gap-4">
       {shops.map((shop) => <ShopCard key={shop.locationId} shop={shop} readiness={readiness} startOpen={initialOpen === shop.locationId}
-        initialBackfill={initialBackfill?.locationId === shop.locationId ? initialBackfill.status : null} />)}
+        initialBackfill={initialBackfill?.locationId === shop.locationId ? initialBackfill.status : null}
+        initialRun={initialBackfill?.locationId === shop.locationId ? initialBackfill.run ?? null : null} />)}
     </ul>
   </div>;
 }
@@ -65,7 +64,7 @@ function summary(v: CateringToastSettingsValues, t: (key: TranslationKey, vars?:
   return parts.join(" · ");
 }
 
-function ShopCard({ shop, readiness, startOpen, initialBackfill }: { shop: CateringToastShopCard; readiness: SettingsReadiness; startOpen: boolean; initialBackfill: BackfillStatus | null }) {
+function ShopCard({ shop, readiness, startOpen, initialBackfill, initialRun }: { shop: CateringToastShopCard; readiness: SettingsReadiness; startOpen: boolean; initialBackfill: BackfillStatus | null; initialRun: BackfillRun | null }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
@@ -171,49 +170,45 @@ function ShopCard({ shop, readiness, startOpen, initialBackfill }: { shop: Cater
 
     {/* Offered only where it can run: the shop is on, an automatic switch and its start date are SAVED, and 0348 is installed. */}
     {shop.values.enabled && (shop.values.autoLinkEnabled || shop.values.originAutoLinkEnabled) && shop.values.autoLinkFromDate !== null
-      && readiness.linkStep && readiness.automatic && <Backfill shop={shop} initial={initialBackfill} />}
+      && readiness.linkStep && readiness.automatic && <Backfill shop={shop} initial={initialBackfill} initialRun={initialRun} />}
   </li>;
 }
 
-function Backfill({ shop, initial }: { shop: CateringToastShopCard; initial: BackfillStatus | null }) {
+function Backfill({ shop, initial, initialRun }: { shop: CateringToastShopCard; initial: BackfillStatus | null; initialRun: BackfillRun | null }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const post = useStepUpPost();
   const sectionId = useId();
   const [status, setStatus] = useState<BackfillStatus | null>(initial);
-  const [open, setOpen] = useState(initial !== null);
+  const [open, setOpen] = useState(initial !== null || initialRun !== null);
   const [busy, setBusy] = useState<"status" | "run" | null>(null);
-  const [error, setError] = useState<TranslationKey | null>(null);
-  const [progress, setProgress] = useState<{ phase: BackfillStep["phase"]; added: number; pending: number; skipped: Partial<Record<BackfillSkip, number>> } | null>(null);
+  // TWO facts, two states (review PORTAL5-r2): how the last RUN ended, and whether the COUNT could be read. Counting
+  // again after a run never touches the run's outcome: a run that stopped keeps saying so.
+  const [statusError, setStatusError] = useState<TranslationKey | null>(null);
+  const [run, setRun] = useState<BackfillRun | null>(initialRun);
+  const [progress, setProgress] = useState<BackfillRun | null>(null);
   const start = shop.values.autoLinkFromDate ? formatDateLabel(shop.values.autoLinkFromDate, language) : "—";
 
   async function check() {
-    setBusy("status"); setError(null);
+    setBusy("status"); setStatusError(null);
     try {
       const res = await fetch(`/api/admin/catering/toast-settings/backfill?location=${shop.locationId}`, { redirect: "error" });
       const body = (await res.json().catch(() => ({}))) as { status?: BackfillStatus; code?: string };
-      if (!res.ok || !body.status) { setError(settingsErrorKey(body.code) as TranslationKey); return; }
+      if (!res.ok || !body.status) { setStatusError(settingsErrorKey(body.code) as TranslationKey); return; }
       setStatus(body.status);
-    } catch { setError(settingsErrorKey("generic") as TranslationKey); }
+    } catch { setStatusError(settingsErrorKey("generic") as TranslationKey); }
     finally { setBusy(null); }
   }
-  async function run() {
-    setBusy("run"); setError(null);
-    const total = { phase: "checking" as BackfillStep["phase"], added: 0, pending: 0, skipped: {} as Partial<Record<BackfillSkip, number>> };
+  async function start_() {
+    setBusy("run"); setRun(null); setProgress(null);
     try {
       if (await requestStepUp("A") !== "ok") return;
-      // One step per request. The cursor is a date the server hands back; a "checking" step repeats its own stretch.
-      for (let cursor: string | null = null, steps = 0; steps < BACKFILL_MAX_STEPS; steps += 1) {
+      // The shop and the date cursor the server handed back: nothing else is ever sent.
+      setRun(await runBackfillLoop(async (cursor) => {
         const r = await post("/api/admin/catering/toast-settings/backfill", { locationId: shop.locationId, cursor });
-        if (!r.ok) { setError(settingsErrorKey(r.code) as TranslationKey); break; }
-        const step = r.data.step as BackfillStep;
-        total.phase = step.phase; total.added += step.added; total.pending = step.pendingOrders;
-        for (const reason of BACKFILL_SKIPS) if (step.skipped[reason]) total.skipped[reason] = (total.skipped[reason] ?? 0) + step.skipped[reason]!;
-        setProgress({ ...total, skipped: { ...total.skipped } });
-        if (step.next === null) break;
-        cursor = step.next;
-      }
+        return r.ok ? { ok: true, step: r.data.step as BackfillStep } : { ok: false, code: r.code };
+      }, setProgress));
     } finally {
       setBusy(null);
       await check();
@@ -221,28 +216,34 @@ function Backfill({ shop, initial }: { shop: CateringToastShopCard; initial: Bac
     }
   }
 
-  const skipped = progress ? BACKFILL_SKIPS.filter((reason) => (progress.skipped[reason] ?? 0) > 0) : [];
+  const skipped = run ? BACKFILL_SKIPS.filter((reason) => (run.skipped[reason] ?? 0) > 0) : [];
   // Collapsed by default (secondary content); it cannot be closed while a run is going.
   return <CollapsibleSection idBase={sectionId} title={t(k("backfill.title"))} count={status && status.state !== "not_installed" ? t(k("backfill.count"), { n: status.unmatched }) : undefined}
+    badge={run && !run.finished ? <span className="rounded-full bg-co-warning-surface px-2 py-0.5 text-xs font-bold text-co-warning-text">{t(k("backfill.stopped_badge"))}</span> : undefined}
     open={open} onToggle={() => { if (busy === null) setOpen(!open); }}>
     <div className="grid gap-3 text-sm text-co-text">
       <p className="text-co-text-muted">{t(k("backfill.intro"), { date: start })}</p>
-      {error && <p role="alert" className="font-bold text-co-cta-text">{t(error)}</p>}
       {busy === "status" && <p role="status">{t(k("backfill.checking_status"))}</p>}
       {busy === "run" && <p role="status">{progress?.phase === "checking" ? t(k("backfill.checking_notes"), { n: progress.pending }) : t(k("backfill.linking"), { n: progress?.added ?? 0 })}</p>}
-      {progress && busy === null && <p role="status" className="font-bold text-co-confirm-text">{t(k("backfill.linked"), { n: progress.added })}</p>}
-      {progress && busy === null && skipped.length > 0 && <div className="grid gap-1 text-co-text-muted">
+      {run && busy !== "run" && (run.finished
+        ? <p role="status" className="font-bold text-co-confirm-text">{t(k("backfill.linked"), { n: run.added })}</p>
+        : <div role="alert" className="grid gap-1 font-bold text-co-cta-text">
+          <p>{t(k("backfill.stopped"), { n: run.added })}</p>
+          <p>{t(settingsErrorKey(run.error) as TranslationKey)}</p>
+        </div>)}
+      {run && busy !== "run" && skipped.length > 0 && <div className="grid gap-1 text-co-text-muted">
         <p>{t(k("backfill.left"))}</p>
-        <ul className="grid gap-1">{skipped.map((reason) => <li key={reason}>{t(k(`backfill.skipped.${reason}`), { n: progress.skipped[reason] ?? 0 })}</li>)}</ul>
+        <ul className="grid gap-1">{skipped.map((reason) => <li key={reason}>{t(k(`backfill.skipped.${reason}`), { n: run.skipped[reason] ?? 0 })}</li>)}</ul>
       </div>}
+      {statusError && <p role="alert" className="font-bold text-co-cta-text">{t(k("backfill.count_failed"))} {t(statusError)}</p>}
       {status?.state === "ready" && <p>{t(k("backfill.status"), { unmatched: status.unmatched, from: status.fromStart, before: status.beforeStart, date: start })}</p>}
       {status?.state === "no_switch" && <p className="text-co-warning-text">{t(settingsErrorKey("backfill_needs_switch") as TranslationKey)}</p>}
       {status?.state === "off" && <p className="text-co-warning-text">{t(settingsErrorKey("switch_needs_enabled") as TranslationKey)}</p>}
       {status?.state === "not_installed" && <p className="text-co-warning-text">{t(settingsErrorKey("automatic_not_installed") as TranslationKey)}</p>}
       <div className="flex flex-wrap gap-2">
         <button type="button" className={QUIET} disabled={busy !== null} onClick={() => void check()}>{t(k(status ? "backfill.check_again" : "backfill.check"))}</button>
-        {status?.state === "ready" && status.fromStart > 0 && <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void run()}>
-          {t(k("backfill.run"), { date: start })}</button>}
+        {status?.state === "ready" && status.fromStart > 0 && <button type="button" className={PRIMARY} disabled={busy !== null} onClick={() => void start_()}>
+          {t(k(run && !run.finished ? "backfill.run_again" : "backfill.run"), { date: start })}</button>}
       </div>
     </div>
   </CollapsibleSection>;

@@ -83,3 +83,34 @@ export function parseBackfillStep(raw: unknown): { locationId: string; cursor: s
   if (body.cursor !== null && !realDate(body.cursor)) return null;
   return { locationId: body.locationId.toLowerCase(), cursor: body.cursor as string | null };
 }
+
+/** What a whole run added up to. `finished` is true only when the server said there is nothing left (`next` null). */
+export interface BackfillRun {
+  phase: BackfillStep["phase"]; added: number; pending: number; skipped: Partial<Record<BackfillSkip, number>>;
+  finished: boolean;
+  /** Why the run stopped before it finished (the refusal's code); null while it runs and when it finished. */
+  error: string | null;
+}
+/** A backfill is a few stretches, each a handful of steps: this only stops a loop that could never end. */
+export const BACKFILL_MAX_STEPS = 400;
+export type BackfillPost = (cursor: string | null) => Promise<{ ok: true; step: BackfillStep } | { ok: false; code: string }>;
+/**
+ * The run: one step per request, the cursor a date the server hands back (a "checking" step repeats its own stretch).
+ * It RETURNS how the run ended and never loses it (review PORTAL5-r2): a step that failed after earlier steps linked
+ * something is `finished: false` with the failure's code AND the count linked so far. Whoever shows the result must
+ * keep it apart from any later refresh.
+ */
+export async function runBackfillLoop(post: BackfillPost, onProgress: (run: BackfillRun) => void = () => {}, maxSteps = BACKFILL_MAX_STEPS): Promise<BackfillRun> {
+  const run: BackfillRun = { phase: "checking", added: 0, pending: 0, skipped: {}, finished: false, error: null };
+  let cursor: string | null = null;
+  for (let steps = 0; steps < maxSteps; steps += 1) {
+    const r = await post(cursor);
+    if (!r.ok) return { ...run, skipped: { ...run.skipped }, error: r.code || "generic" };
+    run.phase = r.step.phase; run.added += r.step.added; run.pending = r.step.pendingOrders;
+    for (const reason of BACKFILL_SKIPS) if (r.step.skipped[reason]) run.skipped[reason] = (run.skipped[reason] ?? 0) + r.step.skipped[reason]!;
+    onProgress({ ...run, skipped: { ...run.skipped } });
+    if (r.step.next === null) return { ...run, skipped: { ...run.skipped }, finished: true };
+    cursor = r.step.next;
+  }
+  return { ...run, skipped: { ...run.skipped }, error: "backfill_stopped" };
+}

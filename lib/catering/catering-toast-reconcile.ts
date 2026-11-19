@@ -90,8 +90,12 @@ async function reconcile(sb: Sb, args: HouseStepArgs, signal: AbortSignal): Prom
   return out;
 }
 
-/** One deadline for the whole step: its signal goes to every request, and the step itself is raced against it. */
-async function bounded<T>(args: { deadlineAt: number; signal?: AbortSignal }, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+/**
+ * One deadline for the whole step: its signal goes to every request, and the step itself is raced against it (rejects
+ * `capture_deadline`). THE one helper for a deadline-bound catering / Toast step: the cron's two house steps here and
+ * the backfill step (lib/catering/catering-toast-settings.ts) all run under it, never under a bare request signal.
+ */
+export async function bounded<T>(args: { deadlineAt: number; signal?: AbortSignal }, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const budget = captureBudget(Math.max(1, args.deadlineAt - Date.now()), args.signal);
   try { return await budget.wait(() => work(budget.signal)); }
   finally { budget.close(); }

@@ -72,7 +72,7 @@ export const fromSettingsRow = (r: SettingsRow): CateringToastSettingsValues => 
 export const SETTINGS_ERRORS = [
   "forbidden", "location_not_found", "invalid_settings", "settings_moved", "no_change",
   "switch_needs_enabled", "auto_needs_start_date", "origin_listing_needs_origin_link", "link_step_not_installed", "automatic_not_installed",
-  "backfill_needs_switch", "settings_unavailable", "step_up_required", "step_up_stale",
+  "backfill_needs_switch", "backfill_timeout", "backfill_stopped", "settings_unavailable", "step_up_required", "step_up_stale",
 ] as const;
 export type SettingsError = (typeof SETTINGS_ERRORS)[number];
 export function settingsErrorKey(code: unknown): `admin.catering.toast.error.${string}` {

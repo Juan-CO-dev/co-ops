@@ -3,7 +3,7 @@
  * 500; the older orders are matched by the house reconciler itself (0348), one stretch of dates per step, after the
  * note lookup examined that stretch. The lib decides nothing: it sequences, counts and records who started it.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 import { CateringToastSettingsError, loadBackfillStatus, loadCateringToastSettings, runBackfillStep, saveCateringToastSettings } from "@/lib/catering/catering-toast-settings";
 import { audit } from "@/lib/audit";
@@ -20,10 +20,12 @@ const actor = (role: string): AuthContext => ({ user: { id: "user-1", role }, ro
 /** A chainable PostgREST stand-in. Tables and RPCs answer functions of the filters applied (`eq` / `in` / `range`). */
 function client(tables: Record<string, (q: Query) => Result>, rpcs: Record<string, (params: Record<string, unknown>, q: Query) => Result>) {
   const reads: string[] = [];
+  const signals: string[] = [];
   const chain = (name: string, answer: (q: Query) => Result) => {
     const query: Query = { eq: {}, in: {}, gte: {}, lte: {}, range: null };
     const q: Record<string, unknown> = {};
-    for (const m of ["select", "not", "order", "abortSignal"]) q[m] = () => q;
+    for (const m of ["select", "not", "order"]) q[m] = () => q;
+    q.abortSignal = (signal: unknown) => { if (signal instanceof AbortSignal) signals.push(name); return q; };
     q.gte = (col: string, value: unknown) => { query.gte[col] = value; return q; };
     q.lte = (col: string, value: unknown) => { query.lte[col] = value; return q; };
     q.eq = (col: string, value: unknown) => { query.eq[col] = value; return q; };
@@ -38,11 +40,12 @@ function client(tables: Record<string, (q: Query) => Result>, rpcs: Record<strin
     from: (name: string) => chain(name, (q) => { const t = tables[name]; if (!t) throw new Error(`unexpected table ${name}`); return t(q); }),
     rpc: (name: string, params: Record<string, unknown>) => chain(name, (q) => { const f = rpcs[name]; if (!f) throw new Error(`unexpected rpc ${name}`); return f(params, q); }),
   };
-  return { sb: sb as never, reads };
+  return { sb: sb as never, reads, signals };
 }
 interface Query { eq: Record<string, unknown>; in: Record<string, unknown[]>; gte: Record<string, unknown>; lte: Record<string, unknown>; range: [number, number] | null }
 
 beforeEach(() => vi.clearAllMocks());
+afterEach(() => { vi.useRealTimers(); });
 
 describe("the role is bound before any I/O", () => {
   it("every entry point refuses a GM, the catering manager and the social media manager without touching the database", async () => {
@@ -165,7 +168,7 @@ describe("the older orders: one step", () => {
 
   it("review PORTAL5-r1 P1: unexamined captures are looked up FIRST. Progress with more left = 'checking' with the same cursor, and nothing is linked", async () => {
     const s = shopWith({ dates: ["2025-10-06"], uncovered: [40, 25] });
-    const cover = vi.fn(async (..._args: unknown[]) => ({ lookups: 6, examined: 15, failed: 0 }));
+    const cover = vi.fn(async (...args: unknown[]) => { void args; return { lookups: 6, examined: 15, failed: 0 }; });
     const step = await runBackfillStep(actor("moo"), SHOP, null, { client: s.sb, now: NOW, cover });
     expect(step).toMatchObject({ phase: "checking", from: "2025-10-06", to: "2025-12-05", examined: 15, pendingOrders: 25, added: 0, next: "2025-10-06" });
     expect(cover.mock.calls[0]![1]).toMatchObject({ from: "2025-10-05", to: "2025-12-12", onlyLocationId: SHOP });
@@ -187,6 +190,66 @@ describe("the older orders: one step", () => {
     expect(step.phase).toBe("linked");
     expect(step.skipped.evidence_pending).toBe(2);
     expect(s.calls.map((c) => c[0])).toEqual(["uncovered", "reconcile"]);
+  });
+
+  it("review PORTAL5-r2 P2: every request of a step carries the step's own deadline signal", async () => {
+    const s = shopWith({ dates: ["2025-10-06"], uncovered: [3, 0] });
+    const cover = vi.fn(async (...args: unknown[]) => { void args; return { lookups: 1, examined: 3, failed: 0 }; });
+    await runBackfillStep(actor("moo"), SHOP, null, { client: s.sb, now: NOW, cover });
+    expect(s.reads).toEqual(["catering_toast_settings", "catering_reconciliation_status", "catering_toast_uncovered_orders", "catering_toast_uncovered_orders", "reconcile_catering_toast"]);
+    expect(s.signals).toEqual(s.reads);
+    expect((cover.mock.calls[0]![1] as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("review PORTAL5-r2 P2: a deadline that has already passed starts NOTHING (no read, no lookup, no reconcile)", async () => {
+    const s = shopWith({ dates: ["2025-10-06"], uncovered: [3] });
+    const cover = vi.fn(async () => ({ lookups: 1, examined: 3, failed: 0 }));
+    await expect(runBackfillStep(actor("moo"), SHOP, null, { client: s.sb, now: NOW, cover, deadlineAt: Date.now() - 1 })).rejects.toMatchObject({ status: 503, code: "backfill_timeout" });
+    expect(s.reads).toEqual([]);
+    expect(s.calls).toEqual([]);
+    expect(cover).not.toHaveBeenCalled();
+  });
+
+  it("review PORTAL5-r2 P2: a request that never answers cannot hold the step past its deadline, whichever request it is; nothing is linked after it", async () => {
+    vi.useFakeTimers({ now: Date.now() });
+    const never = () => new Promise<never>(() => {});
+    const stalls: Array<[string, () => ReturnType<typeof shopWith>]> = [
+      ["the settings read", () => { const s = shopWith({ dates: ["2025-10-06"] }); stall(s, "catering_toast_settings"); return s; }],
+      ["the unmatched orders", () => { const s = shopWith({ dates: ["2025-10-06"] }); stall(s, "catering_reconciliation_status"); return s; }],
+      ["the uncovered orders", () => { const s = shopWith({ dates: ["2025-10-06"] }); stall(s, "catering_toast_uncovered_orders"); return s; }],
+      ["the reconciler", () => { const s = shopWith({ dates: ["2025-10-06"] }); stall(s, "reconcile_catering_toast"); return s; }],
+    ];
+    function stall(s: ReturnType<typeof shopWith>, name: string) {
+      const sb = s.sb as unknown as { from: (n: string) => unknown; rpc: (n: string, p: Record<string, unknown>) => unknown };
+      const from = sb.from.bind(sb), rpc = sb.rpc.bind(sb);
+      const hang = () => { const q: Record<string, unknown> = {}; for (const m of ["select", "eq", "gte", "lte", "order", "range", "abortSignal"]) q[m] = () => q; q.maybeSingle = never; q.then = (a: never, b: never) => never().then(a, b); return q; };
+      sb.from = (n) => (n === name ? hang() : from(n));
+      sb.rpc = (n, p) => (n === name ? hang() : rpc(n, p));
+    }
+    for (const [what, make] of stalls) {
+      const s = make();
+      const pending = runBackfillStep(actor("moo"), SHOP, null, { client: s.sb, now: NOW, cover: noCover, deadlineAt: Date.now() + 5_000 });
+      let outcome: unknown = "pending";
+      void pending.then((v) => { outcome = v; }, (e) => { outcome = e; });
+      await vi.advanceTimersByTimeAsync(4_900);
+      expect([what, outcome]).toEqual([what, "pending"]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect([what, (outcome as { code?: string }).code]).toEqual([what, "backfill_timeout"]);
+      expect([what, s.calls.some((c) => c[0] === "reconcile")]).toEqual([what, false]);
+    }
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("review PORTAL5-r2 P2: a lookup that used up the step's time is not followed by a reconcile", async () => {
+    vi.useFakeTimers({ now: Date.now() });
+    const s = shopWith({ dates: ["2025-10-06"], uncovered: [9] });
+    // The lookup made no progress and returned only after the step's deadline.
+    const cover = vi.fn(async () => { await new Promise((r) => setTimeout(r, 30_000)); return { lookups: 4, examined: 0, failed: 0 }; });
+    const pending = runBackfillStep(actor("moo"), SHOP, null, { client: s.sb, now: NOW, cover, deadlineAt: Date.now() + 20_000 });
+    const settled = pending.then(() => "resolved", (e: { code?: string }) => e.code);
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(await settled).toBe("backfill_timeout");
+    expect(s.calls.map((c) => c[0])).toEqual(["uncovered"]);
   });
 
   it("with no time left for a lookup the step links what is already examined and leaves the rest pending", async () => {

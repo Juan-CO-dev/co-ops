@@ -4,7 +4,7 @@ import {
   canManageCateringToastSettings, DEFAULT_CATERING_TOAST_SETTINGS as OFF, fromSettingsRow, parseSettingsSave, sameSettings, SETTINGS_ERRORS, settingsErrorKey,
   settingsRefusal, toSettingsRow, type CateringToastSettingsValues,
 } from "@/lib/catering/catering-toast-settings-shared";
-import { addDays, backfillSkips, backfillWindow, BACKFILL_SKIPS, BACKFILL_WINDOW_DAYS, nextCursor, parseBackfillStep, realDate } from "@/lib/catering/catering-toast-backfill-shared";
+import { addDays, backfillSkips, backfillWindow, BACKFILL_SKIPS, BACKFILL_WINDOW_DAYS, nextCursor, parseBackfillStep, realDate, runBackfillLoop, type BackfillPost, type BackfillRun, type BackfillStep } from "@/lib/catering/catering-toast-backfill-shared";
 import { readFileSync } from "node:fs";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import en from "@/lib/i18n/en.json";
@@ -136,5 +136,39 @@ describe("the backfill: stretches of dates, never offsets", () => {
     expect(backfillSkips({ owned: 2, evidence_pending: 1, dual_code: 0, bogus: 9, blocked: 1.5, switch_off: "3" })).toEqual({ owned: 2, evidence_pending: 1 });
     expect(backfillSkips("off")).toEqual({});
     expect(backfillSkips(null)).toEqual({});
+  });
+});
+
+describe("review PORTAL5-r2: the run loop returns how it ended, and a failure after a success keeps both", () => {
+  const step = (o: Partial<BackfillStep>): BackfillStep => ({ phase: "linked", from: "2025-10-06", to: "2025-12-05", examined: 0, pendingOrders: 0, added: 0, ringCode: 0, toastOrigin: 0, skipped: {}, next: null, ...o });
+  const script = (answers: Array<Awaited<ReturnType<BackfillPost>>>) => {
+    const cursors: Array<string | null> = [];
+    const post: BackfillPost = async (cursor) => { cursors.push(cursor); return answers.shift() ?? { ok: false, code: "generic" }; };
+    return { post, cursors };
+  };
+
+  it("a successful step, then a failed POST: not finished, the failure's code, and what was linked before it", async () => {
+    const { post, cursors } = script([{ ok: true, step: step({ added: 61, skipped: { owned: 2 }, next: "2025-12-06" }) }, { ok: false, code: "settings_unavailable" }]);
+    const seen: BackfillRun[] = [];
+    const run = await runBackfillLoop(post, (r) => seen.push(r));
+    expect(run).toEqual({ phase: "linked", added: 61, pending: 0, skipped: { owned: 2 }, finished: false, error: "settings_unavailable" });
+    expect(cursors).toEqual([null, "2025-12-06"]);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("checking steps repeat their own stretch; the totals add up; only a null next finishes", async () => {
+    const { post, cursors } = script([
+      { ok: true, step: step({ phase: "checking", examined: 15, pendingOrders: 25, next: "2025-10-06" }) },
+      { ok: true, step: step({ added: 3, skipped: { evidence_pending: 1, dual_code: 2 }, next: "2025-12-06" }) },
+      { ok: true, step: step({ phase: "done", added: 4, skipped: { dual_code: 1 }, next: null }) }]);
+    expect(await runBackfillLoop(post)).toEqual({ phase: "done", added: 7, pending: 0, skipped: { evidence_pending: 1, dual_code: 3 }, finished: true, error: null });
+    expect(cursors).toEqual([null, "2025-10-06", "2025-12-06"]);
+  });
+
+  it("a failure on the very first step, and a loop that never ends, both stop with a name", async () => {
+    expect(await runBackfillLoop(script([{ ok: false, code: "backfill_timeout" }]).post)).toMatchObject({ finished: false, error: "backfill_timeout", added: 0 });
+    const forever: BackfillPost = async () => ({ ok: true, step: step({ phase: "checking", examined: 1, pendingOrders: 9, next: "2025-10-06" }) });
+    expect(await runBackfillLoop(forever, () => {}, 5)).toMatchObject({ finished: false, error: "backfill_stopped" });
+    for (const code of ["backfill_timeout", "backfill_stopped"]) for (const dict of [en, es] as Array<Record<string, string>>) expect(typeof dict[settingsErrorKey(code)]).toBe("string");
   });
 });

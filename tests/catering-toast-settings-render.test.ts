@@ -7,7 +7,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CATERING_TOAST_SETTINGS as OFF, type CateringToastShopCard, type SettingsReadiness } from "@/lib/catering/catering-toast-settings-shared";
-import { EMPTY_BACKFILL_STATUS, type BackfillStatus } from "@/lib/catering/catering-toast-backfill-shared";
+import { EMPTY_BACKFILL_STATUS, type BackfillRun, type BackfillStatus } from "@/lib/catering/catering-toast-backfill-shared";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 const { TranslationProvider } = await import("@/lib/i18n/provider");
@@ -115,6 +115,49 @@ describe("match older orders", () => {
   });
 });
 
+describe("review PORTAL5-r2: how a run ended is never lost to the count that follows it", () => {
+  const auto = shop({ values: { ...OFF, enabled: true, originAutoLinkEnabled: true, autoLinkFromDate: "2025-10-01" }, updatedAt: "x" });
+  const status: BackfillStatus = { state: "ready", startDate: "2025-10-01", unmatched: 300, fromStart: 280, beforeStart: 20 };
+  const stopped: BackfillRun = { phase: "linked", added: 61, pending: 0, skipped: { owned: 2 }, finished: false, error: "settings_unavailable" };
+
+  it("a run that stopped after linking some says so beside a count that loaded fine: an alert, the number linked, the reason, and a way on", () => {
+    const html = render({ shops: [auto], readiness: READY, initialBackfill: { locationId: A, status, run: stopped } });
+    const plain = text(html);
+    expect(plain).toContain("The run stopped before it finished. 61 checks were linked before it stopped.");
+    expect(plain).toContain("These settings could not be loaded right now. Try again in a minute.");
+    expect(html).toMatch(/role="alert"[^>]*>\s*<p>The run stopped before it finished/);
+    expect(plain).toContain("Stopped early");
+    expect(plain).toContain("300 booked orders have no Toast check linked.");
+    expect(plain).toContain("Go on matching orders from");
+    // Never the green "Done": the run did not finish.
+    expect(plain).not.toContain("Done. 61 checks linked.");
+    expect(plain).toContain("2: another order already holds the check.");
+    const es = text(render({ shops: [auto], readiness: READY, initialBackfill: { locationId: A, status, run: stopped } }, "es"));
+    expect(es).toContain("El proceso se detuvo antes de terminar. Se enlazaron 61 cuentas antes de detenerse.");
+  });
+
+  it("a timeout is named and says nothing is lost; a finished run is the only one that says Done", () => {
+    const timed = text(render({ shops: [auto], readiness: READY, initialBackfill: { locationId: A, status, run: { ...stopped, added: 0, skipped: {}, error: "backfill_timeout" } } }));
+    expect(timed).toContain("The run stopped before it finished. 0 checks were linked before it stopped.");
+    expect(timed).toContain("That step took too long and was stopped. Nothing is lost");
+    const done = text(render({ shops: [auto], readiness: READY, initialBackfill: { locationId: A, status, run: { ...stopped, finished: true, error: null } } }));
+    expect(done).toContain("Done. 61 checks linked.");
+    expect(done).not.toContain("The run stopped");
+    expect(done).not.toContain("Stopped early");
+  });
+
+  it("the count's own handler cannot touch the run's outcome (two facts, two states)", () => {
+    const src = readFileSync("components/admin/catering/CateringToastSettings.tsx", "utf8");
+    const check = src.slice(src.indexOf("  async function check() {"), src.indexOf("  async function start_() {"));
+    expect(check).toContain("setStatusError(");
+    expect(check).not.toMatch(/setRun\(|setProgress\(/);
+    const start = src.slice(src.indexOf("  async function start_() {"), src.indexOf("  const skipped = run ?"));
+    expect(start).not.toContain("setStatusError(");
+    // The run's outcome is set from the loop's own return value, before the count is refreshed.
+    expect(start.indexOf("setRun(await runBackfillLoop(")).toBeLessThan(start.indexOf("await check();"));
+  });
+});
+
 describe("where it is mounted, and for whom", () => {
   it("the page binds the three roles and renders the card only when the settings are installed", () => {
     const page = readFileSync("app/admin/catering/toast/page.tsx", "utf8");
@@ -127,7 +170,8 @@ describe("where it is mounted, and for whom", () => {
   it("the component decides nothing about the older orders: it posts the shop and the date cursor the server handed back", () => {
     const src = readFileSync("components/admin/catering/CateringToastSettings.tsx", "utf8");
     expect(src).toContain('post("/api/admin/catering/toast-settings/backfill", { locationId: shop.locationId, cursor })');
-    expect(src).toContain("cursor = step.next;");
+    // The loop itself is the shared, pure one (tests/catering-toast-settings-shared.test.ts runs it).
+    expect(src).toContain("setRun(await runBackfillLoop(async (cursor) => {");
     expect(src).toContain('requestStepUp("B")');
     expect(src).toContain('requestStepUp("A")');
     expect(src).not.toMatch(/useEffect|localStorage|sessionStorage|orderGuid|checkGuid|leadId/);
