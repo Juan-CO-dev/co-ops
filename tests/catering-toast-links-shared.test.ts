@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  buildHouseToastPanel, candidateActions, endedActions, canDecideCateringToast, decisionErrorKey, parseToastDecision, TOAST_DECISION_ERRORS,
+  buildHouseToastPanel, candidateActions, endedActions, linkRefusal, canDecideCateringToast, decisionErrorKey, parseToastDecision, TOAST_DECISION_ERRORS,
   TOAST_DECISION_KINDS, TOAST_NO_RING_REASONS,
 } from "@/lib/catering/catering-toast-links-shared";
 import type { CateringToastPlanRow } from "@/lib/catering/catering-toast-shared";
@@ -94,18 +94,46 @@ describe("buildHouseToastPanel", () => {
     expect(panel.ended.map((e) => [e.orderGuid, e.owner, e.reason, e.headId])).toEqual([["a", "ezcater", "lead_moved", U(11)], ["y", null, "lead_moved", U(11)], ["w", null, "lead_moved", U(11)]]);
     expect(panel.candidates.map((c) => c.orderGuid)).toEqual(["b"]);
     // Fix round 3: an ended link can always be dismissed ("not a match"); Relink only while nobody holds a live check.
-    expect(panel.ended.map((e) => endedActions(e))).toEqual([["not_a_match"], ["not_a_match"], ["link", "not_a_match"]]);
+    expect(panel.ended.map((e) => endedActions(e, panel))).toEqual([["not_a_match"], ["not_a_match"], ["link", "not_a_match"]]);
   });
   it("fix round 1: a holder that no longer owns (planner owner null) is an OPEN candidate with its actions", () => {
     // 0347's planner answers owner from catering_toast_house_owner: a lost / moved / ezCater holder is not an owner.
     const panel = buildHouseToastPanel({ ...base, plan: [plan({ order_guid: "a", check_guid: "1", owner: null, owner_lead_id: null })], heads: [], links: [] });
     expect(panel.candidates[0]).toMatchObject({ state: "open" });
-    expect(candidateActions(panel.candidates[0]!)).toEqual(["link", "not_a_match"]);
+    expect(candidateActions(panel.candidates[0]!, panel)).toEqual(["link", "not_a_match"]);
     // Fix round 3 (review PORTAL3-r3): a check another order holds is dismissible, never linkable; tombstoned too.
-    expect(candidateActions({ ...panel.candidates[0]!, state: "owned_house", owner: "house" })).toEqual(["not_a_match"]);
-    expect(candidateActions({ ...panel.candidates[0]!, state: "owned_ezcater", owner: "ezcater" })).toEqual(["not_a_match"]);
-    expect(candidateActions({ ...panel.candidates[0]!, state: "blocked", owner: "ezcater" })).toEqual([]);
-    expect(candidateActions({ ...panel.candidates[0]!, state: "blocked", owner: null })).toEqual(["link"]);
+    expect(candidateActions({ ...panel.candidates[0]!, state: "owned_house", owner: "house" }, panel)).toEqual(["not_a_match"]);
+    expect(candidateActions({ ...panel.candidates[0]!, state: "owned_ezcater", owner: "ezcater" }, panel)).toEqual(["not_a_match"]);
+    expect(candidateActions({ ...panel.candidates[0]!, state: "blocked", owner: "ezcater" }, panel)).toEqual([]);
+    expect(candidateActions({ ...panel.candidates[0]!, state: "blocked", owner: null }, panel)).toEqual(["link"]);
+  });
+  it("fix round 4 (review PORTAL3-r4 P3): Link and Relink come from the writer's refusals, in the writer's order", () => {
+    const lead = { eventDate: "2026-11-20", leadHead: null };
+    const check = { live: true, businessDate: "2026-11-20", owner: null };
+    expect(linkRefusal(lead, check)).toBeNull();
+    // The window is the day before the event to a week after, on calendar days (a month boundary included).
+    expect(["2026-11-18", "2026-11-19", "2026-11-27", "2026-11-28"].map((d) => linkRefusal(lead, { ...check, businessDate: d })))
+      .toEqual(["check_out_of_window", null, null, "check_out_of_window"]);
+    expect(linkRefusal({ eventDate: "2026-11-28", leadHead: null }, { ...check, businessDate: "2026-12-05" })).toBeNull();
+    expect(linkRefusal(lead, { ...check, owner: "ezcater" })).toBe("check_owned_by_ezcater");
+    expect(linkRefusal(lead, { ...check, owner: "house" })).toBe("check_owned_by_house");
+    expect(linkRefusal(lead, { ...check, live: false })).toBe("check_not_found");
+    // The writer's order: no ring expected, then the check, then the window, then the owner.
+    const noRing = { eventDate: "2026-11-20", leadHead: { kind: "no_ring_expected" as const } };
+    expect(linkRefusal(noRing, { live: false, businessDate: null, owner: "ezcater" })).toBe("lead_no_ring_expected");
+    expect(linkRefusal(lead, { live: false, businessDate: "2027-01-01", owner: "ezcater" })).toBe("check_not_found");
+    expect(linkRefusal(lead, { live: true, businessDate: "2027-01-01", owner: "ezcater" })).toBe("check_out_of_window");
+    // An ended link nobody holds: Relink, unless the order is marked no ring expected or the check left its window.
+    const ended = { orderGuid: "a", checkGuid: "1", evidence: "manual" as const, reason: "lead_moved" as const, owner: null,
+      totalCents: 1, businessDate: "2026-11-20", live: true, headId: U(11) };
+    expect(endedActions(ended, lead)).toEqual(["link", "not_a_match"]);
+    expect(endedActions(ended, noRing)).toEqual(["not_a_match"]);
+    expect(endedActions(ended, { eventDate: "2026-12-25", leadHead: null })).toEqual(["not_a_match"]);
+    // A tombstoned candidate outside the window (a Toast-origin check far from the event) offers nothing.
+    const cand = { orderGuid: "a", checkGuid: "1", businessDate: "2026-12-25", evidence: "toast_origin" as const, checkTotalCents: 1,
+      amountDiffCents: null, amountMismatch: false, state: "blocked" as const, blockedBy: "unlink" as const, headId: null, owner: null };
+    expect(candidateActions(cand, lead)).toEqual([]);
+    expect(candidateActions({ ...cand, state: "open", blockedBy: null }, lead)).toEqual(["not_a_match"]);
   });
   it("fix round 1: no decision control unless the link step (0347) is installed, whoever asks", () => {
     const off = buildHouseToastPanel({ ...base, linkStep: "not_installed", plan: [plan({})], heads: [], links: [] });

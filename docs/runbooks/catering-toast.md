@@ -59,9 +59,9 @@ Who decides: the catering manager (any shop), a GM at a shop they belong to, the
 
 A dual-code check (an ezCater number AND a house ring code on one check) is linkable by a person: the human decides (plan r3 #4). Every decision names the decision the person saw; if someone else decided meanwhile it is refused "Someone else just changed this" and the panel reloads. Each decision writes its own audit row (`catering.toast_*`, destructive, ids and the closed reason only).
 
-The ezCater side: an ezCater order's reconciliation panel counts its Toast checks that also carry a house ring code ("A manager decides which order they belong to"): checks ezCater holds that gained a house code, and checks the publisher skipped (the `catering_toast_conflicts` ledger). A recorded conflict is shown only while BOTH sides still match now: the check is live, the house order still holds it or its code is on it (not marked not a match), and the ezCater order is still eligible, still at the check's shop, with the check inside its window (the day before to a week after). Moving the ezCater order to another shop ends the conflict. The ledger is history and is never deleted.
+The ezCater side: an ezCater order's reconciliation panel counts its Toast checks that also carry a house ring code ("A manager decides which order they belong to"): checks ezCater holds that gained a house code, and checks the publisher skipped (the `catering_toast_conflicts` ledger). A recorded conflict is shown only while BOTH sides still match now: the check is live, the house order still holds it or its code is on it (not marked not a match), and the ezCater order is still eligible, still at the check's shop, with the check inside its window (the day before to a week after). Moving the ezCater order to another shop ends the conflict. So does a recapture of the check without the ezCater number: the ezCater evidence must still be on the check as Toast has it now (fix round 4). The ledger is history and is never deleted.
 
-## The state table (fix round 3, review PORTAL3-r3)
+## The state table (fix rounds 3 and 4, reviews PORTAL3-r3 and r4)
 
 One row per state a house order (the lead) and one Toast check can be in. This is the single reference for the conflict and ownership lifecycle: change a rule and a row here changes with it. The source is `tests/fixtures/catering-toast-state-table.json`; `scripts/sql-harness-0347.mjs` section K builds every row on the real writers and asserts the database columns, and `tests/catering-toast-state-table.test.ts` asserts the panel column and that this copy is the table, line for line.
 
@@ -72,6 +72,8 @@ Columns:
 - **Conflict read**: what the ezCater order's reconciliation panel shows for this check (`ezcater_order_house_conflicts`).
 - **Panel**: where the check appears in the house order's Toast panel, and the controls a decider gets.
 - **Link / Not a match**: what `decide_catering_toast` answers to that decision (`ok` or the refusal). A control is offered only where the answer is `ok`.
+
+Two axes are covered in full since fix round 4 (rows S27 to S44, with S02 and S03): what the check carries after a recapture (both codes, the ezCater number removed, the house code removed, neither, both again with ezCater synced) x what the house order decided (nothing, not a match, no Toast ring expected, a link the system ended). Rows S24 to S26 are the other evidence source: the ezCater number typed as a special request. The harness refuses a table that misses a combination.
 
 | Row | House order | Toast check | Owner | House planner | Not-rung list | Conflict read | Panel | Link | Not a match |
 |---|---|---|---|---|---|---|---|---|---|
@@ -96,13 +98,39 @@ Columns:
 | S19 | S02, then the ezCater order moved to another shop | Live, still carries the ezCater number | Nobody | owner nobody | on the list | none | possible check (open): Link, Not a match | ok | ok |
 | S20 | S02, then the ezCater order was cancelled | Live, still carries the ezCater number | Nobody | owner nobody, dual code | on the list | none | possible check (dual_code): Link, Not a match | ok | ok |
 | S21 | S02, then the ezCater event moved out of the check's window | Live, still carries the ezCater number | Nobody | owner nobody, dual code | on the list | none | possible check (dual_code): Link, Not a match | ok | ok |
+| S22 | Linked, moved to another shop and back, then marked no Toast ring expected | Live | Nobody | owner nobody | off (no ring expected) | none | ended link: Not a match | `lead_no_ring_expected` | ok |
+| S23 | Linked, moved to another shop and back, then its event moved out of the check's window | Live, outside the order's window | Nobody | no row | on the list | none | ended link: Not a match | `check_out_of_window` | ok |
+| S24 | Booked, its ring code is on the check | Live; the ezCater number is a special request, not a retained name | Nobody (ezCater was skipped) | owner nobody | on the list | `dual_code` | possible check (open): Link, Not a match | ok | ok |
+| S25 | Booked, its ring code is on the check | S24 recaptured; the special request is gone (ezCater did not publish it again) | Nobody | owner nobody | on the list | none | possible check (open): Link, Not a match | ok | ok |
+| S26 | Booked, its ring code is on the check | S24 recaptured; the special request is still there (ezCater published it again) | Nobody (ezCater was skipped) | owner nobody | on the list | `dual_code` | possible check (open): Link, Not a match | ok | ok |
+| S27 | Booked, its ring code was on the check (S02) | Recaptured without the ezCater number (the house code stays) | Nobody | owner nobody | on the list | none | possible check (open): Link, Not a match | ok | ok |
+| S28 | Booked, its ring code was on the check (S02) | Recaptured without the house code (the ezCater number stays) | Nobody (ezCater takes it at its next sync) | owner nobody, dual code | on the list | none | possible check (dual_code): Link, Not a match | ok | ok |
+| S29 | Booked, its ring code was on the check (S02) | Recaptured with neither code | Nobody | owner nobody | on the list | none | possible check (open): Link, Not a match | ok | ok |
+| S30 | Booked, its ring code was on the check (S02) | Recaptured with both codes, ezCater synced again | Nobody (ezCater was skipped) | owner nobody, dual code | on the list | `dual_code` | possible check (dual_code): Link, Not a match | ok | ok |
+| S31 | S02, then marked not a match (S03) | Recaptured without the ezCater number (the house code stays) | Nobody | owner nobody, blocked | on the list | none | possible check (blocked): Link | ok | `already_decided` |
+| S32 | S02, then marked not a match (S03) | Recaptured without the house code (the ezCater number stays) | Nobody (ezCater takes it at its next sync) | owner nobody, dual code, blocked | on the list | none | possible check (blocked): Link | ok | `already_decided` |
+| S33 | S02, then marked not a match (S03) | Recaptured with neither code | Nobody | owner nobody, blocked | on the list | none | possible check (blocked): Link | ok | `already_decided` |
+| S34 | S02, then marked not a match (S03) | Recaptured with both codes, ezCater synced again | ezCater | owner ezCater, dual code, blocked | on the list | none | possible check (blocked): no control | `check_owned_by_ezcater` | `already_decided` |
+| S35 | S02, then marked no Toast ring expected | Live, carries both codes | Nobody (ezCater takes it at its next sync) | owner nobody, dual code | off (no ring expected) | none | not shown | `lead_no_ring_expected` | ok |
+| S36 | S02, then marked no Toast ring expected | Recaptured without the ezCater number (the house code stays) | Nobody | owner nobody | off (no ring expected) | none | not shown | `lead_no_ring_expected` | ok |
+| S37 | S02, then marked no Toast ring expected | Recaptured without the house code (the ezCater number stays) | Nobody (ezCater takes it at its next sync) | owner nobody, dual code | off (no ring expected) | none | not shown | `lead_no_ring_expected` | ok |
+| S38 | S02, then marked no Toast ring expected | Recaptured with neither code | Nobody | owner nobody | off (no ring expected) | none | not shown | `lead_no_ring_expected` | ok |
+| S39 | S02, then marked no Toast ring expected | Recaptured with both codes, ezCater synced again | ezCater | owner ezCater, dual code | off (no ring expected) | none | not shown | `lead_no_ring_expected` | ok |
+| S40 | Linked to the check carrying both codes, moved to another shop and back | Live, carries both codes | Nobody (ezCater was skipped) | owner nobody, dual code | on the list | `dual_code` | ended link: Link, Not a match | ok | ok |
+| S41 | Linked to the check carrying both codes, moved to another shop and back | Recaptured without the ezCater number (the house code stays) | Nobody | owner nobody | on the list | none | ended link: Link, Not a match | ok | ok |
+| S42 | Linked to the check carrying both codes, moved to another shop and back | Recaptured without the house code (the ezCater number stays) | Nobody (ezCater takes it at its next sync) | owner nobody, dual code | on the list | none | ended link: Link, Not a match | ok | ok |
+| S43 | Linked to the check carrying both codes, moved to another shop and back | Recaptured with neither code | Nobody | owner nobody | on the list | none | ended link: Link, Not a match | ok | ok |
+| S44 | Linked to the check carrying both codes, moved to another shop and back | Recaptured with both codes, ezCater synced again | Nobody (ezCater was skipped) | owner nobody, dual code | on the list | `dual_code` | ended link: Link, Not a match | ok | ok |
 
 What the table says, in short:
 
 - A check has at most one owner, and "Link" is accepted only while nobody owns it.
 - "Not a match" is accepted on any check the order is not linked to, whoever owns it. It tombstones this order's pair only: the owner is unchanged (S10, S14), the conflict stops showing on both sides, and no control is left on that row while another order holds the check.
-- A conflict on the ezCater side needs both sides now: S02 shows; S03 (marked not a match), S19 (the ezCater order moved shops), S20 (cancelled) and S21 (event moved out of the window) do not. Whether the ezCater number is still typed on the check is not tested: a number typed as a special request is not retained, so its absence proves nothing.
-- The house planner's "dual code" flag only says the check carries an ezCater number of this shop (S20, S21 keep it after the ezCater order stops claiming). It is a label on the row, not a conflict.
+- A conflict on the ezCater side needs both sides now: S02 shows; S03 (marked not a match), S19 (the ezCater order moved shops), S20 (cancelled) and S21 (event moved out of the window) do not.
+- A conflict also needs the evidence now (fix round 4). The check as Toast has it now must still carry both codes: with the ezCater number removed (S27, S41), the house code removed (S28, S42) or both (S29, S43) nothing shows; recaptured with both, it shows again (S30, S44). How the ezCater number is tested: the publication that was skipped named a Toast capture of the check; the conflict holds while that is still the check's current capture, or while the current capture's item names still carry the number. A number typed as a special request is not kept (S24 shows): after a recapture it counts again only once ezCater's next sync has found it on the new capture (S26 shows, S25 does not). So for a special-request number, the conflict is not shown between a recapture and the next sync.
+- An order marked "no Toast ring expected" claims no check: its ring code is not evidence, it never shows a conflict (S35 to S39), and ezCater takes the check at its next sync (S39). "Ring expected" brings the code back.
+- "Link" and "Relink" are offered by one rule, the writer's own refusals in the writer's order (`linkRefusal`): the order is not marked no ring expected, the check is live, the check is inside the order's window, nobody holds it. An ended link whose order was then marked no ring expected (S22), or whose event moved out of the check's window (S23), keeps "Not a match" only.
+- The house planner's "dual code" flag only says the check's item names carry an ezCater number of this shop (S20, S21 keep it after the ezCater order stops claiming; S24 does not have it, the number is a special request). It is a label on the row, not a conflict.
 
 ## Turning a shop on (Juan's word, per shop)
 

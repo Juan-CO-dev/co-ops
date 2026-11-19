@@ -29,6 +29,14 @@
  *     tests/fixtures/catering-toast-state-table.json is built on the real writers and every database answer compared:
  *     a conflict ends when the ezCater order moves to another shop (the real 0225 transfer), is cancelled, or its
  *     event leaves the check's window; "not a match" is accepted on a check another order holds and moves no owner.
+ *   - fix round 4 (review PORTAL3-r4): the table gains two axes, every combination a row and the harness refuses a
+ *     table that misses one: the EVIDENCE on a dual-code check (both codes, the ezCater number removed, the house code
+ *     removed, neither, recaptured with both and ezCater synced; and the ezCater number as a special request: present,
+ *     gone after a recapture, published again) x the house order's DECISION (none, not a match, no Toast ring expected,
+ *     a link the system ended). A recorded conflict holds only while the check as Toast has it now still carries the
+ *     ezCater evidence; a lead marked no ring expected has no live code; and each row's check-in-window answer is
+ *     compared, so the panel's link rule can be held to the writer's answer row by row. K_DUMP=1 prints every row's
+ *     answers instead of asserting them (for adding rows).
  * PGlite has ONE backend: lock waits are not provable here (CC's sim two-session proof covers them).
  */
 import { readFileSync } from 'node:fs';
@@ -626,7 +634,7 @@ async function main() {
       const table = JSON.parse(readFileSync('tests/fixtures/catering-toast-state-table.json', 'utf8')).rows;
       const day = (i, plus = 0) => new Date(Date.UTC(2027, 0, 5) + (i * 10 + plus) * 86400000).toISOString().slice(0, 10);
       const ctx = (i) => ({ i, L: id('3000', 1000 + i), X: id('3000', 1100 + i), d: day(i), order: `S${i}`, chk: `S${i}c`,
-        snap: k => id('5000', 1000 + i * 10 + k), code: `CO-X${'ACDEFGHJKLMNPQRTUVWXY'[i - 1]}Y34`, num: `SEZ-${100 + i}`, ez: null });
+        snap: k => id('5000', 1000 + i * 10 + k), code: `CO-${'XWVUT'[Math.floor((i - 1) / 21)]}${'ACDEFGHJKLMNPQRTUVWXY'[(i - 1) % 21]}Y34`, num: `SEZ-${100 + i}`, ez: null });
       const ringS = (c, k, names, voided = false) => ringEz(db, c.snap(k), { order: c.order, date: c.d, checks: [{ guid: c.chk, total: 50000, names, voided }] });
       const house = async (c, names = [], coded = false) => {
         await mkHouse(c.L, c.d, 50000);
@@ -644,6 +652,29 @@ async function main() {
       const roundTrip = async (c) => { await house(c); await act(c, 'link'); await transfer(c.L, OTHER); await transfer(c.L, SHOP); };
       // S13: linked, moved away, ezCater took the check, moved back.
       const takenAway = async (c) => { await house(c, [c.num]); await act(c, 'link'); await transfer(c.L, OTHER); await ezOf(c); await pub(c); await transfer(c.L, SHOP); };
+      // Fix round 4. The lead decision "no Toast ring expected".
+      const noRing = async (c) => decide(db, CM, c.L, 'no_ring_expected', { reason: 'comped', expected: await head(db, c.L) });
+      // The ezCater number typed as a special request: not in the retained names; the publisher's payload carries it.
+      const noteDual = async (c) => { await house(c, [c.code], true); await ezOf(c); await pub(c); };
+      // Linked on the dual-code check (ezCater skipped), then moved away and back: the link ended, the codes remain.
+      const endedDual = async (c) => { await house(c, [c.num, c.code], true); await act(c, 'link'); await ezOf(c); await pub(c);
+        await transfer(c.L, OTHER); await transfer(c.L, SHOP); await pub(c); };
+      const DECISION = {
+        none: dual,
+        not_a_match: async c => { await dual(c); await act(c, 'not_a_match'); },
+        no_ring_expected: async c => { await dual(c); await noRing(c); },
+        ended: endedDual,
+      };
+      // A recapture (snapshot 5) of the check: which codes its names still carry, and whether the publisher ran again.
+      const EVIDENCE = {
+        present: async () => {},
+        ezcater_removed: c => ringS(c, 5, [c.code]),
+        house_removed: c => ringS(c, 5, [c.num]),
+        both_removed: c => ringS(c, 5, []),
+        recaptured: async c => { await ringS(c, 5, [c.num, c.code]); await pub(c, 5); },
+      };
+      const axes = { S02: { evidence: 'present', decision: 'none' }, S03: { evidence: 'present', decision: 'not_a_match' },
+        S24: { evidence: 'note_present', decision: 'none' }, S25: { evidence: 'note_removed', decision: 'none' }, S26: { evidence: 'note_recaptured', decision: 'none' } };
       const build = {
         S01: c => house(c),
         S02: dual,
@@ -667,8 +698,33 @@ async function main() {
         S19: async c => { await dual(c); check((await transfer(c.ez.lead, OTHER)).result === 'moved', 'S19: the ezCater lead moved'); },
         S20: async c => { await dual(c); await db.exec(`update ezcater_orders set status = 'cancelled' where id = '${c.ez.order}'`); },
         S21: async c => { await dual(c); await db.exec(`update ezcater_orders set event_date = '${day(c.i, 30)}' where id = '${c.ez.order}'`); },
+        // Fix round 4 (review PORTAL3-r4 P3): an ended link whose order is then marked "no Toast ring expected", or
+        // whose event moved out of the check's window: the writer refuses a link, so the panel must not offer one.
+        S22: async c => { await roundTrip(c); await noRing(c); },
+        S23: async c => { await roundTrip(c); await db.exec(`update catering_pipeline set event_date = '${day(c.i, 35)}' where id = '${c.L}'`); },
+        // Fix round 4 (review PORTAL3-r4 P2): ezCater evidence that never was a selection name (a special-request
+        // note: the publisher's payload names the check, the retained names carry the house code only).
+        S24: noteDual,
+        S25: async c => { await noteDual(c); await ringS(c, 5, [c.code]); },
+        S26: async c => { await noteDual(c); await ringS(c, 5, [c.code]); await pub(c, 5); },
       };
-      check(table.map(r => r.id).join() === Object.keys(build).join(), `K: the table and the harness name the same rows (${table.map(r => r.id)})`);
+      // THE AXES (fix round 4): every EVIDENCE state of a dual-code check x every DECISION of the house order is a row.
+      // The decision is taken first (on the check carrying both codes, the publisher skipped), then the evidence moves.
+      {
+        let n = 26;
+        for (const decision of Object.keys(DECISION)) for (const evidence of Object.keys(EVIDENCE)) {
+          if ((decision === 'none' || decision === 'not_a_match') && evidence === 'present') continue; // S02, S03
+          build[`S${++n}`] = async c => { await DECISION[decision](c); await EVIDENCE[evidence](c); };
+          axes[`S${n}`] = { evidence, decision };
+        }
+      }
+      if (process.env.K_DUMP) console.log(JSON.stringify(axes));
+      else {
+        check(table.map(r => r.id).join() === Object.keys(build).join(), `K: the table and the harness name the same rows (${table.map(r => r.id)})`);
+        for (const row of table) check(JSON.stringify(row.axes ?? null) === JSON.stringify(axes[row.id] ?? null), `K ${row.id}: the row's axes are the harness's (${JSON.stringify(axes[row.id])})`);
+        const combos = new Set(Object.values(axes).filter(a => a.evidence in EVIDENCE).map(a => `${a.evidence}|${a.decision}`));
+        check(combos.size === Object.keys(EVIDENCE).length * Object.keys(DECISION).length, `K: every evidence x decision combination is a row (${combos.size})`);
+      }
       const holders = async (c) => JSON.stringify([await owners(c.order, c.chk), await ezLinks(db, `and check_guid = '${c.chk}'`)]);
       const attempt = async (c, kind) => {
         const before = await holders(c);
@@ -680,7 +736,8 @@ async function main() {
         await db.exec('rollback');
         return answer;
       };
-      for (const [n, row] of table.entries()) {
+      const rowsToRun = process.env.K_DUMP ? Object.keys(build).map(k => table.find(r => r.id === k) ?? { id: k, sql: null }) : table;
+      for (const [n, row] of rowsToRun.entries()) {
         const c = ctx(n + 1);
         const ledgerBefore = Number((await one(db, `select count(*) n from catering_toast_conflicts`)).n);
         await build[row.id](c);
@@ -693,10 +750,14 @@ async function main() {
           linked: Number((await one(db, `select count(*) n from catering_toast_links where is_current and lead_id = $1 and check_guid = $2`, [c.L, c.chk])).n) === 1,
           ended: e ? e.owner ?? 'nobody' : null,
           checkLive: (await one(db, `select catering_toast_check_live($1, $2, $3) v`, [SHOP, c.order, c.chk])).v,
+          // Is the check's day inside the order's window (the day before to a week after its event)?
+          window: (await one(db, `select coalesce((select t.business_date between p.event_date - 1 and p.event_date + 7
+            from toast_orders_latest t, catering_pipeline p where t.location_id = $1 and t.order_guid = $2 and p.id = $3), false) v`, [SHOP, c.order, c.L])).v,
           link: await attempt(c, 'link'),
           not_a_match: await attempt(c, 'not_a_match'),
         };
-        check(JSON.stringify(actual) === JSON.stringify(row.sql), `K ${row.id} (${row.lead} | ${row.check} | ${row.owner}): expected ${JSON.stringify(row.sql)}, got ${JSON.stringify(actual)}`);
+        if (process.env.K_DUMP) console.log(`${JSON.stringify(row.sql) === JSON.stringify(actual) ? 'same' : 'DIFF'} ${row.id} ${JSON.stringify(actual)}`);
+        else check(JSON.stringify(actual) === JSON.stringify(row.sql), `K ${row.id} (${row.lead} | ${row.check} | ${row.owner}): expected ${JSON.stringify(row.sql)}, got ${JSON.stringify(actual)}`);
         // The ledger is history: a conflict that stops showing is never deleted.
         check(Number((await one(db, `select count(*) n from catering_toast_conflicts`)).n) >= ledgerBefore, `K ${row.id}: the ledger only grows`);
         const two = await one(db, `select count(*)::int n from catering_toast_links h where h.is_current and exists (select 1 from ezcater_toast_links z

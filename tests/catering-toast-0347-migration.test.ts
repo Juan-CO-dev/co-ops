@@ -160,6 +160,26 @@ describe("0347 fix round 3 (review PORTAL3-r3): a recorded conflict needs BOTH s
   });
 });
 
+describe("0347 fix round 4 (review PORTAL3-r4): a recorded conflict needs its ezCater EVIDENCE now", () => {
+  it("the guard stamps the Toast snapshot of every skipped publication on the ledger row", () => {
+    const guard = fn(sql, "ezcater_toast_links_house_guard");
+    expect(guard).toContain("values (new.location_id, new.order_guid, new.check_guid, v_kind, new.order_id, v_lead, new.toast_snapshot_id)");
+    expect(guard).toContain("toast_snapshot_id = excluded.toast_snapshot_id");
+  });
+  it("the ledger branch shows a row only on the check's current snapshot, or while its retained names carry the number", () => {
+    const read4 = fn(sql, "ezcater_order_house_conflicts");
+    expect(read4).toContain("and (k.toast_snapshot_id = (select t.id from public.toast_orders_latest t");
+    expect(read4).toContain("or public.catering_toast_check_ezcater_code(k.location_id, k.order_guid, k.check_guid, p_order_id))");
+    // The kind is the one that holds now, never the one recorded.
+    expect(read4).not.toContain("k.kind");
+    expect(read4).not.toMatch(/delete|update|insert/i);
+  });
+  it("a lead marked 'no Toast ring expected' has no live ring code", () => {
+    const view = code.slice(code.indexOf("create view public.catering_live_ring_codes"), code.indexOf("create function public.catering_toast_house_owner"));
+    expect(view).toContain("d.lead_id = p.id and d.location_id is null and d.kind = 'no_ring_expected'");
+  });
+});
+
 describe("0347 executable proof", () => {
   it("scripts/sql-harness-0347.mjs passes on the real 0229 / 0231 / 0330 / 0344 bodies", () => {
     const out = execFileSync(process.execPath, ["scripts/sql-harness-0347.mjs"], { encoding: "utf8" });

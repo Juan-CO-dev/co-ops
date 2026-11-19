@@ -10,23 +10,35 @@
  *   - the RUNBOOK's copy (docs/runbooks/catering-toast.md) must be this table, line for line.
  * And the two halves must agree: a control is offered only where the writer accepts it, and a link the writer would
  * accept is always offered.
+ *
+ * Fix round 4 (review PORTAL3-r4):
+ *   - the panel's "Link" comes from ONE rule, `linkRefusal`, the app's copy of the writer's own refusals in the
+ *     writer's own order (pinned against 0347's link branch below); every row's database answer to "link" must be
+ *     what that rule says for the row's facts, shown or not;
+ *   - two more axes, every combination a row: the EVIDENCE on a dual-code check (both codes present, the ezCater
+ *     number removed, the house code removed, both removed, recaptured with both) x the house order's DECISION
+ *     (none, not a match, no Toast ring expected, a link the system ended).
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  buildHouseToastPanel, candidateActions, endedActions, type ToastEndedRow, type ToastLinkRow,
+  buildHouseToastPanel, candidateActions, endedActions, linkRefusal, LINK_REFUSALS, type ToastDecisionHead, type ToastEndedRow,
+  type ToastLinkRow,
 } from "@/lib/catering/catering-toast-links-shared";
 import type { CateringToastPlanRow } from "@/lib/catering/catering-toast-shared";
 import fixture from "./fixtures/catering-toast-state-table.json";
 
 type Owner = "nobody" | "this" | "other_house" | "ezcater";
+const EVIDENCE = ["present", "ezcater_removed", "house_removed", "both_removed", "recaptured"] as const;
+const DECISIONS = ["none", "not_a_match", "no_ring_expected", "ended"] as const;
 interface Row {
   id: string; lead: string; check: string; owner: string;
+  axes?: { evidence: (typeof EVIDENCE)[number] | "note_present" | "note_removed" | "note_recaptured"; decision: (typeof DECISIONS)[number] };
   sql: {
     planner: { owner: Owner; dual_code: boolean; blocked: boolean } | null;
     list: "not_rung_in_toast" | "matched" | "no_ring_expected" | "absent";
     conflict: "dual_code" | "ownership_conflict" | null; linked: boolean; ended: "nobody" | "ezcater" | "house" | null;
-    checkLive: boolean; link: string; not_a_match: string;
+    checkLive: boolean; window: boolean; link: string; not_a_match: string;
   };
   panel: { where: "candidate" | "linked" | "ended" | "none"; state: string; actions: string[] };
 }
@@ -34,31 +46,38 @@ const rows = fixture.rows as Row[];
 
 const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const LEAD = U(1), SHOP = U(2), OTHER_LEAD = U(77);
+const EVENT = "2027-01-15";
+/** The check's day: the event day, or a month later when the row says the check is outside the order's window. */
+const checkDay = (row: Row) => (row.sql.window ? EVENT : "2027-02-14");
+const leadHeads = (row: Row): ToastDecisionHead[] => row.sql.list === "no_ring_expected"
+  ? [{ id: U(12), kind: "no_ring_expected", location_id: null, order_guid: null, check_guid: null, reason_code: "comped" }] : [];
 
 /** What the panel shows for a row's database answers, through the real builders. */
 function panelOf(row: Row): Row["panel"] {
   const { sql } = row;
-  // No status row = the server returns no panel; a "no ring expected" order hides its possible checks (pinned below).
-  if (sql.list === "absent" || sql.list === "no_ring_expected") return { where: "none", state: "none", actions: [] };
+  // No status row = the server returns no panel.
+  if (sql.list === "absent") return { where: "none", state: "none", actions: [] };
   const plan: CateringToastPlanRow[] = sql.planner ? [{
-    lead_id: LEAD, location_id: SHOP, order_guid: "o", check_guid: "c", toast_snapshot_id: U(50), business_date: "2027-01-15",
+    lead_id: LEAD, location_id: SHOP, order_guid: "o", check_guid: "c", toast_snapshot_id: U(50), business_date: checkDay(row),
     evidence: "amount_date", check_total_cents: 50000, lead_value_cents: 50000, amount_diff_cents: 0, amount_mismatch: false,
     dual_code: sql.planner.dual_code, blocked: sql.planner.blocked,
     owner: sql.planner.owner === "nobody" ? null : sql.planner.owner === "ezcater" ? "ezcater" : "house",
     owner_lead_id: sql.planner.owner === "this" ? LEAD : sql.planner.owner === "other_house" ? OTHER_LEAD : null,
   }] : [];
   const links: ToastLinkRow[] = sql.linked ? [{ location_id: SHOP, order_guid: "o", check_guid: "c", evidence: "manual",
-    total_cents: 50000, business_date: "2027-01-15", live: sql.checkLive }] : [];
+    total_cents: 50000, business_date: checkDay(row), live: sql.checkLive }] : [];
   const ended: ToastEndedRow[] = sql.ended ? [{ location_id: SHOP, order_guid: "o", check_guid: "c", evidence: "manual", retired_reason: "lead_moved",
-    head_id: U(11), owner: sql.ended === "nobody" ? null : sql.ended, total_cents: 50000, business_date: "2027-01-15", live: sql.checkLive }] : [];
+    head_id: U(11), owner: sql.ended === "nobody" ? null : sql.ended, total_cents: 50000, business_date: checkDay(row), live: sql.checkLive }] : [];
   const panel = buildHouseToastPanel({
-    status: { lead_id: LEAD, location_id: SHOP, event_date: "2027-01-15", ring_code: null, value_cents: 50000, status: sql.list },
-    plan, heads: [], links, canDecide: true, linkStep: "ready", ended,
+    status: { lead_id: LEAD, location_id: SHOP, event_date: EVENT, ring_code: null, value_cents: 50000, status: sql.list },
+    plan, heads: leadHeads(row), links, canDecide: true, linkStep: "ready", ended,
   });
   expect(panel.links.length + panel.ended.length + panel.candidates.length).toBeLessThanOrEqual(1); // a check is shown once
   if (panel.links[0]) return { where: "linked", state: "linked", actions: ["unlink"] };
-  if (panel.ended[0]) return { where: "ended", state: `ended_${panel.ended[0].owner ?? "nobody"}`, actions: endedActions(panel.ended[0]) };
-  if (panel.candidates[0]) return { where: "candidate", state: panel.candidates[0].state, actions: candidateActions(panel.candidates[0]) };
+  if (panel.ended[0]) return { where: "ended", state: `ended_${panel.ended[0].owner ?? "nobody"}`, actions: endedActions(panel.ended[0], panel) };
+  // A "no ring expected" order hides its possible checks (the component's rule, pinned below); its ended links stay.
+  if (panel.leadHead?.kind === "no_ring_expected") return { where: "none", state: "none", actions: [] };
+  if (panel.candidates[0]) return { where: "candidate", state: panel.candidates[0].state, actions: candidateActions(panel.candidates[0], panel) };
   return { where: "none", state: "none", actions: [] };
 }
 
@@ -85,6 +104,15 @@ describe("the state table: every (lead x check x owner) row", () => {
       // ... and so is "not a match", unless the pair is already a tombstone (blocked).
       if (row.sql.not_a_match === "ok" && row.panel.state !== "blocked") expect(actions).toContain("not_a_match");
     }
+    // ONE rule (review PORTAL3-r4 P3): whatever the writer answers to "link" for an order that can decide at all is
+    // what the app's rule says for the row's facts, on every row, shown or not.
+    if (!["lead_moved", "lead_not_eligible", "already_linked"].includes(row.sql.link)) {
+      const owner = row.sql.planner ? row.sql.planner.owner : row.sql.ended ?? "nobody";
+      expect(linkRefusal(
+        { eventDate: EVENT, leadHead: leadHeads(row)[0] ?? null },
+        { live: row.sql.checkLive, businessDate: row.sql.checkLive ? checkDay(row) : null, owner: owner === "nobody" ? null : owner === "ezcater" ? "ezcater" : "house" },
+      ) ?? "ok").toBe(row.sql.link);
+    }
     // Nothing is ever linkable over an owner.
     if (row.sql.planner && row.sql.planner.owner !== "nobody") expect(row.sql.link).not.toBe("ok");
     // The ezCater side shows a conflict only while the house side is not tombstoned and still at the shop.
@@ -107,11 +135,51 @@ describe("the state table: every (lead x check x owner) row", () => {
     for (const id of ["S19", "S20", "S21"]) expect([id, rows.find((r) => r.id === id)!.sql.conflict]).toEqual([id, null]);
   });
 
+  it("review PORTAL3-r4 P3: an ended link offers Relink only where the writer accepts it", () => {
+    const ended = rows.filter((r) => r.panel.where === "ended");
+    for (const r of ended) expect([r.id, r.panel.actions.includes("link")]).toEqual([r.id, r.sql.link === "ok"]);
+    const byId = (id: string) => rows.find((r) => r.id === id)!;
+    // Marked "no Toast ring expected" after the link ended, and an event moved out of the check's window.
+    expect([byId("S22").sql.link, byId("S22").panel]).toEqual(["lead_no_ring_expected", { where: "ended", state: "ended_nobody", actions: ["not_a_match"] }]);
+    expect([byId("S23").sql.link, byId("S23").panel]).toEqual(["check_out_of_window", { where: "ended", state: "ended_nobody", actions: ["not_a_match"] }]);
+    // Every refusal the rule knows is a row of the table.
+    for (const code of LINK_REFUSALS) expect([code, rows.some((r) => r.sql.link === code)]).toEqual([code, true]);
+  });
+
+  it("review PORTAL3-r4 P3: the app's link rule is the writer's, refusal by refusal and in the writer's order", () => {
+    const sql = readFileSync("supabase/migrations/0347_catering_toast_link_step.sql", "utf8");
+    const branch = sql.slice(sql.indexOf("  if p_kind = 'link' then"), sql.indexOf("  elsif p_kind = 'unlink' then"));
+    const raised = [...branch.matchAll(/raise exception '(\w+)'/g)].map((m) => m[1]);
+    // already_linked is the one refusal the panel never meets: a linked check is listed under "linked", not offered.
+    expect(raised.filter((c) => c !== "already_linked")).toEqual([...LINK_REFUSALS]);
+  });
+
+  it("review PORTAL3-r4 P2: a dual-code conflict holds only while the check still carries both codes", () => {
+    const conflictOf = (evidence: string, decision: string) => rows.find((r) => r.axes?.evidence === evidence && r.axes.decision === decision)!.sql.conflict;
+    // Nothing decided, or a link the system ended: both codes present (first seen or recaptured) = a conflict; the
+    // ezCater number removed, the house code removed, or both = none.
+    for (const decision of ["none", "ended"]) {
+      expect([decision, ...EVIDENCE.map((e) => conflictOf(e, decision))]).toEqual([decision, "dual_code", null, null, null, "dual_code"]);
+    }
+    // The house order said "not a match" or "no Toast ring expected": never a conflict, whatever the check carries.
+    for (const decision of ["not_a_match", "no_ring_expected"]) {
+      expect([decision, ...EVIDENCE.map((e) => conflictOf(e, decision))]).toEqual([decision, null, null, null, null, null]);
+    }
+    // The other evidence source: the ezCater number typed as a special request (never a retained name).
+    expect(["note_present", "note_removed", "note_recaptured"].map((e) => conflictOf(e, "none"))).toEqual(["dual_code", null, "dual_code"]);
+  });
+
+  it("fix round 4: every evidence x decision combination is exactly one row", () => {
+    for (const evidence of EVIDENCE) for (const decision of DECISIONS) {
+      expect([evidence, decision, rows.filter((r) => r.axes?.evidence === evidence && r.axes.decision === decision).length]).toEqual([evidence, decision, 1]);
+    }
+  });
+
   it("the panel rules this table mirrors are the component's", () => {
     const src = readFileSync("components/catering/pipeline/HouseToastPanel.tsx", "utf8");
     expect(src).toContain('{panel.leadHead?.kind !== "no_ring_expected" && <div>'); // possible checks hidden under "no ring expected"
-    expect(src).toContain("candidateActions(c).map(");
-    expect(src).toContain("endedActions(e).map(");
+    expect(src).toContain("candidateActions(c, panel).map(");
+    expect(src).toContain("endedActions(e, panel).map(");
     expect(src).toContain('t("catering.toast_link.action.unlink")');
   });
 });
@@ -146,5 +214,6 @@ describe("the database half", () => {
     expect(harness).toContain("tests/fixtures/catering-toast-state-table.json");
     expect(harness).toContain("table.map(r => r.id).join() === Object.keys(build).join()");
     expect(harness).toContain("JSON.stringify(actual) === JSON.stringify(row.sql)");
+    expect(harness).toContain("K: every evidence x decision combination is a row");
   });
 });

@@ -19,6 +19,9 @@
  *    check ezCater or another house order holds, and on an ended link, so a manager can clear the conflict. It only
  *    tombstones THIS order's pair; ownership never moves. "Link" is never offered over an owner, tombstoned or not.
  *    Every reachable (lead x check x owner) state is a row of tests/fixtures/catering-toast-state-table.json.
+ *  - "LINK" IS OFFERED BY ONE RULE (fix round 4, review PORTAL3-r4): `linkRefusal`, the writer's own refusals in the
+ *    writer's own order (no ring expected, check gone, outside the window, owned). Candidates and ended links both ask
+ *    it; neither keeps a rule of its own.
  *  - THE LINK STEP MUST BE INSTALLED (`linkStep`): every object the panel reads exists since 0344, so the server asks
  *    0347's readiness probe. `not_installed` = no decision control at all, and the panel says why.
  * Zero I/O. Client-safe.
@@ -189,16 +192,43 @@ export function buildHouseToastPanel(args: {
   };
 }
 
-/** What a person may do with a candidate. A dual-code check is linkable: the human decides (plan r3 #4). A check
- * another order holds is never linkable, but "Not a match" stays: it is how a manager clears the conflict without
- * touching the owner. A tombstoned pair (blocked) offers Relink only while nobody holds the check. */
-export function candidateActions(c: ToastCandidate): Array<"link" | "not_a_match"> {
-  if (c.state === "open" || c.state === "dual_code") return ["link", "not_a_match"];
-  if (c.state === "blocked") return c.owner === null ? ["link"] : [];
-  return ["not_a_match"];
+/** THE LINK RULE (fix round 4, review PORTAL3-r4 P3). The app's copy of the refusals `decide_catering_toast` (0347,
+ * section 5) raises for a `link` on a check this order is not linked to, IN THE WRITER'S ORDER: the first that applies
+ * is the writer's answer. Every "Link" / "Relink" control asks this and nothing else, so a control is never offered
+ * where the writer would refuse. Pinned against the migration's link branch and, row by row, against the writer's
+ * real answers (tests/catering-toast-state-table.test.ts). The window is the suggestion window: the day before the
+ * event to a week after. */
+export const LINK_REFUSALS = ["lead_no_ring_expected", "check_not_found", "check_out_of_window", "check_owned_by_ezcater", "check_owned_by_house"] as const;
+export type LinkRefusal = (typeof LINK_REFUSALS)[number];
+const dayNumber = (iso: string) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) / 86_400_000;
+export function linkRefusal(
+  lead: { eventDate: string; leadHead: { kind: ToastDecisionKind } | null },
+  check: { live: boolean; businessDate: string | null; owner: "ezcater" | "house" | null },
+): LinkRefusal | null {
+  if (lead.leadHead?.kind === "no_ring_expected") return "lead_no_ring_expected";
+  if (!check.live || check.businessDate === null) return "check_not_found";
+  const offset = dayNumber(check.businessDate) - dayNumber(lead.eventDate);
+  if (!(offset >= -1 && offset <= 7)) return "check_out_of_window";
+  if (check.owner === "ezcater") return "check_owned_by_ezcater";
+  if (check.owner === "house") return "check_owned_by_house";
+  return null;
 }
-/** An ended link may be linked again only while nobody holds the check and it is still live in Toast. "Not a match"
- * dismisses it (the row leaves "Links that ended"; the pair becomes a tombstone), whoever holds the check. */
-export function endedActions(e: ToastEndedLink): Array<"link" | "not_a_match"> {
-  return e.owner === null && e.live ? ["link", "not_a_match"] : ["not_a_match"];
+type LinkContext = { eventDate: string; leadHead: { kind: ToastDecisionKind } | null };
+
+/** What a person may do with a candidate. "Link" (Relink on a tombstoned pair) is offered exactly where THE LINK
+ * RULE has no refusal: a dual-code check is linkable, the human decides (plan r3 #4); a check another order holds
+ * never is. "Not a match" stays on a check another order holds: it is how a manager clears the conflict without
+ * touching the owner. A tombstoned pair (blocked) is already dismissed, so it offers Relink or nothing. A planner
+ * row is a live check by construction. */
+export function candidateActions(c: ToastCandidate, panel: LinkContext): Array<"link" | "not_a_match"> {
+  const link = linkRefusal(panel, { live: true, businessDate: c.businessDate, owner: c.owner }) === null;
+  if (c.state === "blocked") return link ? ["link"] : [];
+  return link ? ["link", "not_a_match"] : ["not_a_match"];
+}
+/** An ended link may be linked again exactly where THE LINK RULE has no refusal: nobody holds the check, it is still
+ * live in Toast and inside the order's window, and the order is not marked "no Toast ring expected" (fix round 4:
+ * the last two were missing, so Relink was offered where the writer refused). "Not a match" dismisses it (the row
+ * leaves "Links that ended"; the pair becomes a tombstone), whoever holds the check. */
+export function endedActions(e: ToastEndedLink, panel: LinkContext): Array<"link" | "not_a_match"> {
+  return linkRefusal(panel, { live: e.live, businessDate: e.businessDate, owner: e.owner }) === null ? ["link", "not_a_match"] : ["not_a_match"];
 }

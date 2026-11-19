@@ -137,7 +137,7 @@ export function HouseToastPanel({ leadId, startOpen = false, initial }: { leadId
           <p className={e.owner === null ? "" : "text-co-warning-text"}>{t(`catering.toast_link.ended_owner.${e.owner ?? "none"}` as TranslationKey)}</p>
           {!e.live && <p className="text-co-warning-text">{t("catering.toast_link.check_gone")}</p>}
           {panel.canDecide && <div className="flex flex-wrap gap-2">
-            {endedActions(e).map((kind) => <button key={kind} type="button" className={kind === "link" ? PRIMARY : QUIET} disabled={busy}
+            {endedActions(e, panel).map((kind) => <button key={kind} type="button" className={kind === "link" ? PRIMARY : QUIET} disabled={busy}
               onClick={() => void decide(pairBody(kind, e))}>{t(kind === "link" ? "catering.toast_link.action.relink" : "catering.toast_link.action.not_a_match")}</button>)}
           </div>}
         </li>)}</ul>
@@ -146,7 +146,7 @@ export function HouseToastPanel({ leadId, startOpen = false, initial }: { leadId
       {panel.leadHead?.kind !== "no_ring_expected" && <div>
         <h4 className="text-xs font-bold tracking-wide text-co-text-muted">{t("catering.toast_link.candidates_heading")}</h4>
         {panel.candidates.length === 0 ? <p className="mt-1">{t("catering.toast_link.no_candidates")}</p>
-          : <ul className="mt-1 space-y-3">{panel.candidates.map((c) => <Candidate key={`${c.orderGuid}|${c.checkGuid}`} c={c}
+          : <ul className="mt-1 space-y-3">{panel.candidates.map((c) => <Candidate key={`${c.orderGuid}|${c.checkGuid}`} c={c} panel={panel}
             canDecide={panel.canDecide} busy={busy} money={money} evidence={evidence} onDecide={(kind) => void decide(pairBody(kind, c))} />)}</ul>}
       </div>}
 
@@ -171,8 +171,8 @@ export function HouseToastPanel({ leadId, startOpen = false, initial }: { leadId
   </section>;
 }
 
-function Candidate({ c, canDecide, busy, money, evidence, onDecide }: {
-  c: ToastCandidate; canDecide: boolean; busy: boolean; money: (cents: number | null) => string; evidence: (e: string) => string;
+function Candidate({ c, panel, canDecide, busy, money, evidence, onDecide }: {
+  c: ToastCandidate; panel: Pick<Panel, "eventDate" | "leadHead">; canDecide: boolean; busy: boolean; money: (cents: number | null) => string; evidence: (e: string) => string;
   onDecide: (kind: "link" | "not_a_match") => void;
 }) {
   const { t, language } = useTranslation();
@@ -186,7 +186,7 @@ function Candidate({ c, canDecide, busy, money, evidence, onDecide }: {
     </p>
     {note && <p className={c.state === "dual_code" ? "text-co-warning-text" : ""}>{t(note as TranslationKey)}</p>}
     {canDecide && <div className="flex flex-wrap gap-2">
-      {candidateActions(c).map((kind) => <button key={kind} type="button" disabled={busy} className={kind === "link" ? PRIMARY : QUIET}
+      {candidateActions(c, panel).map((kind) => <button key={kind} type="button" disabled={busy} className={kind === "link" ? PRIMARY : QUIET}
         onClick={() => onDecide(kind)}>
         {t(kind === "link" ? (c.state === "blocked" ? "catering.toast_link.action.relink" : "catering.toast_link.action.link") : "catering.toast_link.action.not_a_match")}
       </button>)}

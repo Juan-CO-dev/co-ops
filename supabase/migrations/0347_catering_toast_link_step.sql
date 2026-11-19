@@ -30,8 +30,9 @@
 --                                      Only conflicts whose facts hold NOW (fix round 2): a recorded conflict is not
 --                                      shown once the check is voided, the house evidence is gone or unlinked, the
 --                                      ezCater order is cancelled / lost, moved to another shop or to a date outside
---                                      the check's window (fix round 3), or ezCater rang the order on another check.
---                                      The ledger is history and is never deleted.
+--                                      the check's window (fix round 3), or ezCater rang the order on another check,
+--                                      or the ezCater evidence is gone from the check as Toast has it now (fix
+--                                      round 4). The ledger is history and is never deleted.
 --   catering_pipeline_end_toast_links  AFTER UPDATE on catering_pipeline (fix round 1): a lead that leaves its shop, is
 --                                      lost, or becomes an ezCater lead ENDS its house links in the same transaction
 --                                      (recorded lead_moved / lead_lost / lead_ezcater). Nothing revives a link.
@@ -58,7 +59,12 @@
 --
 -- EVIDENCE. The dual-code test reads the RETAINED evidence: item-bearing selection names (the 0229 token rule, copied
 -- verbatim) matched against live house ring codes (catering_live_ring_codes). A pair whose head is `unlink` or
--- `not_a_match` is not evidence (the person said this lead is not this check). Ring codes typed as SPECIAL_REQUEST notes
+-- `not_a_match` is not evidence (the person said this lead is not this check), and neither is the code of a lead
+-- marked "no Toast ring expected" (the person said this order has no check at all; fix round 4).
+-- A RECORDED conflict holds only while the ezCater evidence is still on the check AS TOAST HAS IT NOW (fix round 4,
+-- review PORTAL3-r4): the ledger row remembers the Toast snapshot the skipped publication named, and the read shows
+-- it only while that is still the check's current snapshot (the publisher found its evidence, a name or a special
+-- request, on this very capture) or the current capture's retained names still carry the ezCater order's number. Ring codes typed as SPECIAL_REQUEST notes
 -- join this test in PR 4, when the reconcile pass hands the one note lookup's intersections to both sides (contract #3);
 -- until then no ring code exists anywhere (ring_code_enabled is off and waits for the fixture gate AND for PR 4).
 --
@@ -106,7 +112,11 @@ select p.id lead_id, p.location_id, upper(replace(p.ring_code, '-', '')) code_no
   from public.catering_pipeline p
  where p.ring_code is not null and p.location_id is not null and p.stage <> 'lost'
    and coalesce(p.lead_source, '') <> 'ezcater'
-   and not exists (select 1 from public.ezcater_orders e where e.lead_id = p.id);
+   and not exists (select 1 from public.ezcater_orders e where e.lead_id = p.id)
+   -- Fix round 4: a lead marked "no Toast ring expected" claims no check, so its code is not evidence (the writer
+   -- refuses it a link, lead_no_ring_expected). "Ring expected" brings the code back.
+   and not exists (select 1 from public.catering_toast_decision_heads d
+                    where d.lead_id = p.id and d.location_id is null and d.kind = 'no_ring_expected');
 
 -- The lead that HOLDS a check for house: a current link whose lead is still at that shop, not lost, not ezCater.
 create function public.catering_toast_house_owner(p_location_id uuid, p_order_guid text, p_check_guid text) returns uuid
@@ -171,6 +181,8 @@ create table public.catering_toast_conflicts (
   kind             text not null check (kind in ('dual_code', 'ownership_conflict')),
   ezcater_order_id uuid not null,
   house_lead_id    uuid,
+  -- The Toast snapshot the skipped publication named, as last seen (fix round 4): the capture its evidence was on.
+  toast_snapshot_id uuid,
   first_seen_at    timestamptz not null default clock_timestamp(),
   last_seen_at     timestamptz not null default clock_timestamp(),
   seen_count       integer not null default 1
@@ -203,11 +215,11 @@ begin
        where h.is_current and h.location_id = new.location_id and h.order_guid = new.order_guid and h.check_guid = new.check_guid;
       return new;
     end if;
-    insert into public.catering_toast_conflicts(location_id, order_guid, check_guid, kind, ezcater_order_id, house_lead_id)
-      values (new.location_id, new.order_guid, new.check_guid, v_kind, new.order_id, v_lead)
+    insert into public.catering_toast_conflicts(location_id, order_guid, check_guid, kind, ezcater_order_id, house_lead_id, toast_snapshot_id)
+      values (new.location_id, new.order_guid, new.check_guid, v_kind, new.order_id, v_lead, new.toast_snapshot_id)
       on conflict (location_id, order_guid, check_guid, kind, ezcater_order_id)
       do update set last_seen_at = clock_timestamp(), seen_count = catering_toast_conflicts.seen_count + 1,
-                    house_lead_id = excluded.house_lead_id;
+                    house_lead_id = excluded.house_lead_id, toast_snapshot_id = excluded.toast_snapshot_id;
     return null;
   exception when others then
     return new;
@@ -482,15 +494,35 @@ end $$;
 --       pair, so that code no longer counts); the ezCater order still claims (eligible as the planner reads it: a
 --       snapshot, an event date, not cancelled / rejected / failed, its lead not lost) AT THE CHECK'S SHOP and with
 --       the check inside its window (fix round 3: a transferred ezCater order, or a moved event date, ends it); and
---       ezCater has not rung the order on another check (a current link of this order elsewhere). The house lead
---       named is the one that holds or carries the code NOW, never the one recorded.
---   Not checked, on purpose: whether the ezCater number is still typed on the check. A number typed as a special
---   request is not retained evidence (contract #3), so its absence from the selection names proves nothing.
+--       ezCater has not rung the order on another check (a current link of this order elsewhere); and the ezCater
+--       EVIDENCE is still on the check as Toast has it now (fix round 4, review PORTAL3-r4): the recorded
+--       publication named the check's CURRENT snapshot, or the current capture's retained selection names still
+--       carry the ezCater order's number. A recapture without the number ends the conflict; a number typed as a
+--       special request is not retained (contract #3), so after a recapture that evidence counts again only once
+--       the publisher has found it on the new capture (its skipped row re-stamps the ledger). The house lead named
+--       is the one that holds or carries the code NOW, and the kind is the one that holds NOW (a house owner =
+--       ownership_conflict, else dual_code), never the ones recorded.
 create function public.catering_toast_check_live(p_location_id uuid, p_order_guid text, p_check_guid text) returns boolean
 language sql stable security definer set search_path = pg_catalog, public as $$
   select exists (select 1 from public.toast_orders_latest t join public.toast_order_checks c on c.snapshot_id = t.id
                   where t.location_id = p_location_id and t.order_guid = p_order_guid and c.check_guid = p_check_guid
                     and not t.voided and not t.deleted and not t.excess_food and not c.voided and not c.deleted)
+$$;
+
+-- The check's live retained selection names carry this ezCater order's number (the 0229 token rule).
+create function public.catering_toast_check_ezcater_code(p_location_id uuid, p_order_guid text, p_check_guid text, p_order_id uuid) returns boolean
+language sql stable security definer set search_path = pg_catalog, public as $$
+  select exists (
+    select 1
+      from public.ezcater_orders o
+      join public.toast_orders_latest t on t.location_id = p_location_id and t.order_guid = p_order_guid
+      cross join lateral jsonb_array_elements(t.selection_units) s
+      cross join lateral regexp_matches(coalesce(s->>'name',''),'[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*','g') tok
+     where o.id = p_order_id and nullif(btrim(o.order_number), '') is not null
+       and upper(replace(tok[1],'-','')) = upper(replace(btrim(o.order_number),'-',''))
+       and not t.voided and not t.deleted and not t.excess_food
+       and s->>'check_guid' = p_check_guid
+       and not coalesce((s->>'voided')::boolean,false) and not coalesce((s->>'deleted')::boolean,false))
 $$;
 
 create function public.ezcater_order_house_conflicts(p_order_id uuid)
@@ -503,7 +535,10 @@ language sql stable security definer set search_path = pg_catalog, public as $$
      and public.catering_toast_check_live(z.location_id, z.order_guid, z.check_guid)
      and public.catering_toast_check_house_code(z.location_id, z.order_guid, z.check_guid) is not null
   union
-  select k.location_id, k.order_guid, k.check_guid, k.kind, h.lead_id
+  select k.location_id, k.order_guid, k.check_guid,
+         case when public.catering_toast_house_owner(k.location_id, k.order_guid, k.check_guid) is not null
+              then 'ownership_conflict' else 'dual_code' end,
+         h.lead_id
     from public.catering_toast_conflicts k
     cross join lateral (select coalesce(public.catering_toast_house_owner(k.location_id, k.order_guid, k.check_guid),
                                         public.catering_toast_check_house_code(k.location_id, k.order_guid, k.check_guid)) lead_id) h
@@ -514,6 +549,11 @@ language sql stable security definer set search_path = pg_catalog, public as $$
                       and z.location_id = k.location_id and z.order_guid = k.order_guid and z.check_guid = k.check_guid)
      and not exists (select 1 from public.ezcater_toast_links z where z.is_current and z.order_id = p_order_id
                       and not (z.location_id = k.location_id and z.order_guid = k.order_guid and z.check_guid = k.check_guid))
+     -- The ezCater evidence is still on the check as Toast has it NOW (fix round 4, review PORTAL3-r4): the recorded
+     -- publication named the current snapshot, or the current retained names still carry the order's number.
+     and (k.toast_snapshot_id = (select t.id from public.toast_orders_latest t
+                                  where t.location_id = k.location_id and t.order_guid = k.order_guid)
+          or public.catering_toast_check_ezcater_code(k.location_id, k.order_guid, k.check_guid, p_order_id))
      -- BOTH sides must still match (fix round 3, review PORTAL3-r3): the ezCater order is still eligible, its CURRENT
      -- shop (the planner's: the lead's, else the order's) is the recorded check's shop, and the check is still inside
      -- the order's window (D-1 .. D+7). A transfer of the ezCater order, or a moved event date, ends the conflict.
@@ -708,6 +748,7 @@ grant select on public.catering_toast_orphans to service_role;
 revoke all on function public.catering_toast_pair_blocked(uuid,uuid,text,text) from public, anon, authenticated;
 revoke all on function public.catering_toast_check_house_code(uuid,text,text) from public, anon, authenticated;
 revoke all on function public.catering_toast_check_live(uuid,text,text) from public, anon, authenticated;
+revoke all on function public.catering_toast_check_ezcater_code(uuid,text,text,uuid) from public, anon, authenticated;
 revoke all on function public.ezcater_toast_incumbent(uuid,text,text) from public, anon, authenticated;
 revoke all on function public.ezcater_toast_links_house_guard() from public, anon, authenticated;
 revoke all on function public.catering_toast_links_ezcater_guard() from public, anon, authenticated;
@@ -729,7 +770,7 @@ begin
   end loop;
   foreach f in array array['decide_catering_toast(uuid,uuid,text,uuid,text,text,text,uuid)', 'ezcater_order_house_conflicts(uuid)',
                            'catering_toast_house_owner(uuid,text,text)', 'catering_toast_pair_blocked(uuid,uuid,text,text)',
-                           'catering_toast_check_house_code(uuid,text,text)', 'catering_toast_check_live(uuid,text,text)', 'ezcater_toast_incumbent(uuid,text,text)',
+                           'catering_toast_check_house_code(uuid,text,text)', 'catering_toast_check_live(uuid,text,text)', 'catering_toast_check_ezcater_code(uuid,text,text,uuid)', 'ezcater_toast_incumbent(uuid,text,text)',
                            'plan_ezcater_toast()', 'catering_toast_stale_reason(uuid,uuid)', 'catering_toast_ended_links(uuid)',
                            'catering_toast_link_ready()', 'plan_catering_toast(uuid,date,date,jsonb)'] loop
     if has_function_privilege('authenticated', 'public.' || f, 'execute') or has_function_privilege('anon', 'public.' || f, 'execute') then
