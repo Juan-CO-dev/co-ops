@@ -7,7 +7,7 @@
 //   - the tab strip and the CSV / PDF links of a loaded panel follow the access that report was BUILT with, in both
 //     directions of a change between the early read and the load; the early read decides only when nothing loaded.
 import { readFileSync } from "node:fs";
-import { createElement, type ReactElement } from "react";
+import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

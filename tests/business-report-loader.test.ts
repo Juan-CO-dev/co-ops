@@ -331,7 +331,7 @@ describe("business report access: scope by ROLE, and the settings store read fai
       const dto = await p;
       expect(Object.values(dto.access).every((v) => v === true)).toBe(true);
       expect(f.visibilityReads()).toBe(0);
-      expect(dto.people[0]).toMatchObject({ straightCostCents: 18_000 });
+      expect(dto.people![0]).toMatchObject({ straightCostCents: 18_000 });
     }
   });
   const REFUSED: Array<[string, Parameters<typeof fakeClient>[0], number, string]> = [
