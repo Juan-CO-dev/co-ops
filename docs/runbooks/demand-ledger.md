@@ -2,11 +2,11 @@
 
 What this is: a nightly record of what each baseline forecast said, the inputs it said it from, and (four days later) what really happened. It is the only way to get point-in-time (E2) evidence for a demand signal. It changes no par, no prep number and no schedule.
 
-Law: `AGENTS.md`, section "Demand signals, PR 1". Migration: `supabase/migrations/0342_demand_signals_replay.sql` (file only until CC applies it).
+Law: `AGENTS.md`, section "Demand signals, PR 1". Migration: `supabase/migrations/0342_demand_signals_replay.sql` (applied to prod 2026-11-18, schema_migrations version 20261118051449).
 
 ## State as shipped
 
-- 0342 is authored, not applied.
+- 0342 is applied to prod (2026-11-18, 20261118051449).
 - `DEMAND_LEDGER` is unset. The nightly does not import or call the ledger pass.
 - No outside feed, no cron lease, no email.
 
