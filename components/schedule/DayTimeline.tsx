@@ -72,6 +72,7 @@ export function DayTimeline({ day, names, positions, renderRows }: {
           {t("schedule.board.timeline.fit")}
         </button>
       </div>
+      {day.hoursByHour && !day.laborByHour ? <p className="text-xs text-co-text-muted" data-note="hour-money">{t("schedule.labor_views.hour_money_note")}</p> : null}
       <div data-section="timeline" className="max-w-full overflow-x-auto rounded-lg border border-co-border bg-co-surface">
         <div className="grid text-xs" style={cols}>
           <div className={`${label} font-bold tracking-[0.12em] text-co-text-dim`}>{t("schedule.board.timeline.axis")}</div>
@@ -90,11 +91,23 @@ export function DayTimeline({ day, names, positions, renderRows }: {
 
           {day.laborByHour ? (
             <>
-              <div className={label}><strong className="text-co-text">{t("schedule.board.timeline.labor_label")}</strong></div>
+              {/* PR 3: with the labor views this row is STRAIGHT time (before overtime), said so; MoO / Owner / CGS only. */}
+              <div className={label}><strong className="text-co-text">{t(day.hoursByHour ? "schedule.labor_views.timeline.straight_pct" : "schedule.board.timeline.labor_label")}</strong></div>
               {day.laborByHour.map((c) => (
                 <div key={c.hour} data-labor-tone={c.tone} className={`flex min-h-[44px] flex-col items-center justify-center border-b border-co-border tabular-nums ${LABOR_TONE[c.tone]}`}>
                   <span className="font-bold">{c.pct === null ? t("schedule.board.money.blank") : `${num(c.pct)}%`}</span>
                   <small className="text-[10px]">{t(`schedule.board.labor.${c.tone}` as TranslationKey)}</small>
+                </div>
+              ))}
+            </>
+          ) : null}
+
+          {day.hoursByHour ? (
+            <>
+              <div className={label}><strong className="text-co-text">{t("schedule.labor_views.timeline.hours")}</strong></div>
+              {day.hoursByHour.map((c) => (
+                <div key={c.hour} data-hours-hour={c.hour} className="flex min-h-[44px] items-center justify-center border-b border-co-border font-bold tabular-nums text-co-text">
+                  {t("schedule.board.money.hours_only", { hours: num(c.hours) })}
                 </div>
               ))}
             </>
