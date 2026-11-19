@@ -252,6 +252,7 @@
   "catering.toast_link.confirm_unlink": "¿Desvincular esta cuenta? El pedido vuelve a la lista de Todavía no está en Toast, y esta cuenta no se le vuelve a vincular a menos que alguien la vincule otra vez.",
   "catering.toast_link.no_ring_reason": "¿Por qué no hay cuenta en Toast?",
   "catering.toast_link.no_ring_marked": "Marcado: no se espera cuenta en Toast ({reason}).",
+  "catering.toast_link.ring_code": "Código para Toast: {code}. Escríbelo en la cuenta de Toast (como nombre de artículo o petición especial) para que la cuenta se pueda emparejar con este pedido.",
   "catering.toast_link.not_installed": "Vincular cuentas de Toast aún no está instalado. Aquí puedes ver las cuentas; podrás vincular tras la próxima actualización.",
   "catering.toast_link.ended_heading": "Vínculos que terminaron",
   "catering.toast_link.ended.lead_moved": "Esta cuenta estuvo vinculada a este pedido hasta que el pedido pasó a otra tienda.",

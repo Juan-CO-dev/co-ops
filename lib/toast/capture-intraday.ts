@@ -3,6 +3,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { etYmdMinusDays } from "@/lib/operational-day";
 import { captureEnabled, captureToastDaySystem } from "./capture";
 import { captureBudget, captureErrorCode } from "./capture-runner";
+import { runHouseCateringToast, type HouseReconcileResult } from "@/lib/catering/catering-toast-reconcile";
 
 /** Additive best-effort capture. One deadline includes location reads and both dates. */
 export async function captureIntraday(today: string, signal?: AbortSignal, remainingMs = 45_000) {
@@ -30,6 +31,7 @@ export async function captureIntraday(today: string, signal?: AbortSignal, remai
       if (budget.signal.aborted) break;
     }
     let reconciliationError: string | null = null;
+    let cateringToast: HouseReconcileResult | null | undefined;
     // Reconcile committed snapshots even if a different shop/date failed. The
     // planner reads latest published pointers globally; this range only scopes
     // automatic review resolution. Yesterday's +7 late ring reaches today-8,
@@ -41,9 +43,17 @@ export async function captureIntraday(today: string, signal?: AbortSignal, remai
         }).abortSignal(budget.signal));
         if (reconciliation.error) throw new Error("capture_reconciliation_failed");
       } catch (error) { reconciliationError = captureErrorCode(error); }
+      // Item 21 PR 4: the HOUSE reconciler, AFTER the ezCater one returned and as its own requests (its own
+      // transactions: the ezCater reconciler never runs inside a savepoint). Off unless a shop's settings say so;
+      // fail-soft, never part of this run's failures.
+      if (!budget.signal.aborted) {
+        try {
+          cateringToast = await budget.wait(() => runHouseCateringToast({ from: etYmdMinusDays(today, 8), to: etYmdMinusDays(today, -1), today, signal: budget.signal }));
+        } catch { cateringToast = null; /* The route's deadline passed while it ran: the next tick runs it again. */ }
+      }
     }
     return { failures: results.filter((r) => r.error).length + (reconciliationError ? 1 : 0), results, skipped: false,
-      ...(reconciliationError ? { error: reconciliationError } : {}) };
+      ...(reconciliationError ? { error: reconciliationError } : {}), ...(cateringToast !== undefined ? { cateringToast } : {}) };
   } catch (error) {
     return { failures: 1, results, skipped: false, error: captureErrorCode(error) };
   } finally { budget.close(); }

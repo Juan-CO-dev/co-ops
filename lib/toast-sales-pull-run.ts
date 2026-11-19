@@ -6,6 +6,7 @@ import { materializeCapturedDepletion } from "@/lib/toast/depletion";
 import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
 import { refreshKnownEzcaterOrders } from "@/lib/ezcater/refresh";
 import { materializeEzcaterReconciliation } from "@/lib/ezcater/reconcile";
+import { runHouseCateringToast, type HouseReconcileResult } from "@/lib/catering/catering-toast-reconcile";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { runParShadowForLocation } from "@/lib/dynamic-pars";
 import { captureBudget, captureErrorCode } from "@/lib/toast/capture-runner";
@@ -19,6 +20,7 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
   const deadlineAt = opts.deadlineAt ?? Date.now() + 300_000;
   const ezcaterEnabled = process.env.EZCATER_DEPLETION_ENABLED === "1";
   let ezcaterShadow = { processed: 0, failed: 0, deferred: false };
+  let cateringToast: HouseReconcileResult | null | undefined;
   const reconcile = async () => {
     try {
       const result = await materializeEzcaterReconciliation(etYmdMinusDays(businessDate, 7), businessDate, Math.min(deadlineAt, Date.now() + 60_000));
@@ -103,6 +105,17 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
       ipAddress: null, userAgent: null }));
   } catch { /* Heartbeat persistence is fail-open, independent of sales health. */ }
   finally { heartbeatBudget.close(); }
+  // Item 21 PR 4: the HOUSE reconciler, after the ezCater pass and as its own requests (never inside the ezCater
+  // reconciler's transaction). Off unless a shop's settings say so; fail-soft, never part of this run's health, and
+  // only with a minute to spare. The nightly pass also looks for ring codes typed as special requests (the one note
+  // lookup, runbook contract #3).
+  {
+    const left = deadlineAt - Date.now() - 60_000;
+    if (left > 5_000) {
+      cateringToast = await runHouseCateringToast({ from: etYmdMinusDays(businessDate, 7), to: etYmdMinusDays(businessDate, -2), today: todayEt,
+        signal: opts.signal, noteLookupDeadlineAt: Date.now() + Math.min(30_000, left) });
+    }
+  }
   const perLocationFailures = results.filter((r) => !r.ok).length;
   const fixtureSkip = capture.skipped && capture.reason === "capture_fixture_mode";
   const healthy = ((!capture.skipped || fixtureSkip) && capture.failures === 0) && perLocationFailures === 0
@@ -113,6 +126,7 @@ export async function runToastSalesPull(opts: { businessDate: string; deadlineAt
     capture_failures: capture.failures, capture_skipped: capture.skipped,
     capture_skip_reason: capture.skipped ? capture.reason ?? null : null,
     ezcater_shadow: ezcaterShadow,
+    ...(cateringToast !== undefined ? { catering_toast: cateringToast } : {}),
     per_location_failures: perLocationFailures, depletion_rows: depletionRows,
     depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures,
     pars_pending_activation: false,
