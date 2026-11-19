@@ -16,7 +16,8 @@ import type { AuditAction } from "@/lib/audit-actions";
 import { operationalNow } from "@/lib/midshift-shared";
 import type { PeopleActor } from "@/lib/people/access-shared";
 import { summarizeSales, type DailyRaw } from "@/lib/sales-reports-shared";
-import { canManageShopSwitch } from "./access-shared";
+import { canEditHourlyTarget, canManageShopSwitch } from "./access-shared";
+import { scheduleLaborViewsEnabled, type ScheduleLaborViewsEnv } from "./labor-projection-shared";
 import {
   acceptSuggestion, apportion, budgetForDates, entryDates, minCrewHours, referenceStructureOf, structureDeltaHours, suggestBudget, type BudgetEntry, type BudgetSuggestion,
 } from "./budget-shared";
@@ -36,7 +37,7 @@ import {
 } from "./rpc-args-shared";
 import { MOD } from "./rules-shared";
 import { gate, rpcRefusal, type ScheduleDeps } from "./schedules";
-import { validScheduleStructure, type PositionRole } from "./structure-shared";
+import { validScheduleStructure, type PositionRole, type ScheduleStructure } from "./structure-shared";
 import { addDays, isYmd, isoWeekStart, weekDays } from "./time-shared";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import { loadSchedulingInputs } from "./inputs";
@@ -59,6 +60,19 @@ export async function saveStructure(deps: ScheduleDeps, args: { actor: PeopleAct
   await gate(deps.service, args.actor, args.locationId, "structure");
   const v = validScheduleStructure(args.structure);
   if (!v.ok) throw new ScheduleError("structure_invalid", { key: v.key });
+  // 0346 / board two labor views PR 2: the pure-hourly target is MoO+ (Juan 2026-11-18) and dark behind
+  // SCHEDULE_LABOR_VIEWS. Anyone who may not set it may still save the structure AROUND it: only a CHANGE of the key
+  // (set, moved or removed against the live head) is refused. The head compared is the one the writer re-checks
+  // (expectedId): if it moved in between, the RPC answers structure_moved.
+  const enabled = scheduleLaborViewsEnabled(deps.env ?? (process.env as ScheduleLaborViewsEnv));
+  if (!enabled || !canEditHourlyTarget(args.actor)) {
+    const next = (args.structure as ScheduleStructure).labor.hourlyTargetPct;
+    const live = await loadLiveStructure(deps.service, args.locationId);
+    if (live.structure.labor.hourlyTargetPct !== next) {
+      if (!enabled) throw new ScheduleError("structure_invalid", { key: "labor.hourlyTargetPct" });
+      throw new ScheduleError("schedule_forbidden");
+    }
+  }
   const expected = args.expectedId === STRUCTURE_DEFAULTS_ID ? null : args.expectedId;
   const r = await rpc(deps.service, saveStructureCall({ actorId: args.actor.userId, locationId: args.locationId, expectedId: expected, structure: args.structure }));
   const out = { beforeId: (r.before_id as string | null) ?? null, afterId: String(r.after_id) };

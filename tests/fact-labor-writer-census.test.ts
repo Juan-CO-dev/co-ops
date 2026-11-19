@@ -49,6 +49,9 @@ const CENSUS: Record<string, Record<string, number>> = {
   "supabase/migrations/0340_labor_payroll_shop.sql": { "delete labor_quarter": 1, "delete labor_day_coverage": 1,
     "delete labor_week_salaried": 1, "insert labor_quarter": 1, "insert labor_day_coverage": 1, "insert labor_week_salaried": 1,
     "insert labor_week_coverage": 1, "insert labor_payroll_shops": 1 },
+  // 0346 (burden "follow the company"): THE burden writer re-emitted with its new contract (same one insert; read
+  // time only, in no fingerprint: the writer's own audit row records every change).
+  "supabase/migrations/0346_labor_burden_follow_company.sql": { "insert labor_burden_settings": 1 },
   // The ledger row (append-only, one per finished run) and the Toast labor pull (upsert by entry guid).
   "lib/sevenshifts/sync.ts": { "insert sevenshifts_sync_runs": 1 },
   "lib/toast/labor.ts": { "insert toast_time_entries": 1 },

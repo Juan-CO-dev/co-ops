@@ -122,7 +122,13 @@ export interface ScheduleStructure {
     salariedFlexH: number;
   };
   catering: { minHeadcount: number; extraPrepDishHeads: number; defaultStartQ: number; defaultEndQ: number; leadMinutes: number; crewShift?: CrewCateringSetting };
-  labor: { targetPct: number; basis: "hourly" | "total"; strong: number; watch: number; budgetDeadbandH: number };
+  /**
+   * `targetPct` is the target of the view `basis` names: `total` = FULLY LOADED (default 28), `hourly` = PURE HOURLY.
+   * `hourlyTargetPct` (0346, Juan 2026-11-18: "a setting, tweak up and down") is the PURE-HOURLY target on the total
+   * basis; absent = 18 (`LABOR_TARGET_HOURLY_PCT`). Refused on the hourly basis (there `targetPct` IS the hourly
+   * target: one number for one thing) and above `targetPct` (pure hourly is a part of fully loaded). MoO+ sets it.
+   */
+  labor: { targetPct: number; basis: "hourly" | "total"; strong: number; watch: number; budgetDeadbandH: number; hourlyTargetPct?: number };
   roster: { excludedRoles: RoleCode[]; backupCoverPerDay?: number; backupCoverPerPersonWeek?: number };
 }
 
@@ -603,13 +609,15 @@ function checkCatering(v: unknown): Problem {
 
 function checkLabor(v: unknown): Problem {
   if (!isObj(v)) return "labor";
-  const k = exactKeys(v, ["targetPct", "basis", "strong", "watch", "budgetDeadbandH"], "labor.");
+  const k = exactKeys(v, ["targetPct", "basis", "strong", "watch", "budgetDeadbandH", ...("hourlyTargetPct" in v ? ["hourlyTargetPct"] : [])], "labor.");
   if (k) return k;
   if (!isNum(v.targetPct) || v.targetPct <= 0 || v.targetPct > 100) return "labor.targetPct";
   if (v.basis !== "hourly" && v.basis !== "total") return "labor.basis";
   if (!isNum(v.strong) || v.strong <= 0 || v.strong >= 1) return "labor.strong";
   if (!isNum(v.watch) || v.watch <= 0 || v.watch >= v.strong) return "labor.watch";
   if (!isQuarterHours(v.budgetDeadbandH, 0, 40)) return "labor.budgetDeadbandH";
+  // 0346 hourly target (SQL twin: valid_schedule_structure): optional; total basis only; never above targetPct.
+  if ("hourlyTargetPct" in v && (!isNum(v.hourlyTargetPct) || v.hourlyTargetPct <= 0 || v.basis !== "total" || v.hourlyTargetPct > v.targetPct)) return "labor.hourlyTargetPct";
   return null;
 }
 

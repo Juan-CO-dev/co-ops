@@ -124,6 +124,24 @@ With the switch on, a GM / MoO+ board payload carries `laborViews` (an AGM's nev
 
 Rollback: unset `SCHEDULE_LABOR_VIEWS`. The functions can stay (the public one answers as 0340 did).
 
+### 1e. The burden card and the pure-hourly target (0346, board two labor views PR 2)
+
+`0346_labor_burden_follow_company` is AUTHORED, NOT APPLIED. It writes no row. Two parts:
+
+- **Burden.** `labor_burden_settings` gains `follows_company` (a shop row with no % and no source: "follow the company from <date>"); `fact_labor_burden_for` is replaced (same signature; with no follow row every answer is 0338's); 0338's six-argument `save_labor_burden` is DROPPED and the new eight-argument one created (section 3).
+- **Structure.** `valid_schedule_structure` is re-emitted from 0286 with the optional `labor.hourlyTargetPct`.
+
+Order:
+
+1. **Sim**: apply `0346` after 0345. Pre-flight refuses by name without 0345, when the live `save_labor_burden` / `fact_labor_burden_for` body is not 0338's (a later definer), without 0286's validator, and when 0346 is already applied. Then the header's VERIFY queries.
+2. **Prod** (Juan's word): apply `0346`, stamp its header. From here a hand-run burden save uses the NEW signature (section 3).
+3. **Deploy** PR 2. Nothing shows: the card, its route (503 `unavailable`) and the pure-hourly field are dark until `SCHEDULE_LABOR_VIEWS=1` (with `FACT_LAYER=1` and `FACT_LAYER_LABOR=1`).
+4. With the switch on (Juan's word, after PR 3): the owner / CGS / MoO see "Burden (taxes and benefits)" on `/admin/sevenshifts`, and the MoO+ see "Pure hourly target" in the schedule structure's labor section. Do not save a pure-hourly target while a deployment older than PR 2 is still serving.
+
+Before 0346 the card reads "The burden setting is not installed yet." and a save answers 503 `unavailable`.
+
+Rollback: unset `SCHEDULE_LABOR_VIEWS`. Keep 0346's functions while a follow row or a structure with `hourlyTargetPct` exists.
+
 ## 2. What a pass does
 
 - The diff (`fact_labor_weeks_stale`) lists every payroll week (Sunday 00:00 ET calendar midnight; both shops built together, overtime counted per shop) from **2026-07-19** through the week holding yesterday whose fingerprint differs. It changes when a punch or Toast entry in the week changes (a moved punch makes both weeks stale), a link changes, an involved person's wage observation changes, the 7shifts overtime settings change, a shop-day gains ledger evidence or leaves its 36 h settle window, or another day of the week closes.
@@ -134,13 +152,20 @@ Day states: `covered` (a finished ledger run whose `time_punches` result has a n
 
 ## 3. The burden %
 
-No row = **12% default, always labelled `estimated`** (placeholder until Juan / Pete give the payroll figure). There is no screen in 2c. CC enters the real figure through the one writer, as a MoO / Owner / CGS actor:
+No row = **12% default, always labelled `estimated`** (placeholder until Juan / Pete give the payroll figure: the burden is an estimate until payroll gives the real one). With `SCHEDULE_LABOR_VIEWS=1` the owner / CGS / MoO set it on the card (section 1e). By hand, through the one writer, as a MoO / Owner / CGS actor:
 
 ```sql
+-- BEFORE 0346 is applied (0338's signature):
 select save_labor_burden('<actor user id>', null, 11.5, '2026-07-19', 'payroll', 'payroll register 2026');
+-- AFTER 0346 (actor, shop | null, follow_company, %, start, source, note, expected head):
+select save_labor_burden('<actor user id>', null, false, 11.5, '2026-07-19', 'payroll', 'payroll register 2026',
+  (select id from labor_burden_settings where location_id is null order by created_at desc, id desc limit 1));
+-- a shop back to the company rate from a Sunday on:
+select save_labor_burden('<actor user id>', '<shop id>', true, null, '2026-11-22', null, 'back to the company rate',
+  (select id from labor_burden_settings where location_id = '<shop id>' order by created_at desc, id desc limit 1));
 ```
 
-`location_id` null = company; a shop row beats it. `valid_from` 2026-07-19 re-prices all history at once (burden is read time, never rebuilt). Refusals: `labor_burden_forbidden`, `labor_burden_invalid` (outside 0–50). Rows are never edited: a correction is a newer row. Every save writes ONE destructive `labor_burden.save` audit row itself, in the same transaction (actor, role, scope, the value in force for that scope before and the new value; the note never enters the audit row) — there is no unaudited way to change the burden.
+`location_id` null = company. A shop's own rate beats it from its start; a shop's "follow the company" row ends that from its start (0346). `valid_from` 2026-07-19 re-prices all history at once (burden is read time, never rebuilt). Refusals: `labor_burden_forbidden`, `labor_burden_invalid` (outside 0–50, a follow row for the company or with a rate), and after 0346 `labor_burden_invalid_date` (not a Sunday, or before 2026-07-19), `labor_burden_moved` (the expected head is not the scope's newest row), `labor_burden_already_following`. Rows are never edited: a correction is a newer row. Every save writes ONE destructive `labor_burden.save` audit row itself, in the same transaction (actor, role, scope, the value in force for that scope before and the new value; the note never enters the audit row) — there is no unaudited way to change the burden.
 
 ## 4. Reading (for the reader PR)
 
