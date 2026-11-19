@@ -44,8 +44,17 @@ export async function loadEzcaterReconciliation(actor: AuthContext, leadId: stri
     sb.from("ezcater_shadow_depletion").select("order_id", { count: "exact", head: true }).eq("order_id", order.id).eq("snapshot_id", order.snapshot_id).eq("location_id", lead.location_id).eq("is_current", true),
   ]) : [];
   if (counts.some((r) => r.error)) return unavailable;
+  // Item 21 PR 3: the ezCater side of a house/ezCater conflict on a check (0347). Advisory: unknown, never 0, on failure.
+  let houseConflicts: number | null = null;
+  if (order) {
+    const conflicts = await sb.rpc("ezcater_order_house_conflicts", { p_order_id: order.id });
+    if (!conflicts.error && Array.isArray(conflicts.data)) {
+      houseConflicts = new Set((conflicts.data as Array<{ location_id: string; order_guid: string; check_guid: string }>)
+        .map((c) => `${c.location_id}|${c.order_guid}|${c.check_guid}`)).size;
+    }
+  }
   return { available: true, locationConflict: order?.location_conflict ?? false, manualLocation: unavailable.manualLocation, reviews: (reviews ?? []).slice(0, 100).map((row) => ({
     id: row.id, source: row.source, code: row.code,
     candidateCount: Array.isArray(row.candidates) ? row.candidates.length : 0,
-  })), linkCount: counts[0]?.count ?? 0, shadowRows: counts[1]?.count ?? 0, truncated: (reviews?.length ?? 0) > 100 };
+  })), linkCount: counts[0]?.count ?? 0, shadowRows: counts[1]?.count ?? 0, truncated: (reviews?.length ?? 0) > 100, houseConflicts };
 }

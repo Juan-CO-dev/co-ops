@@ -8,6 +8,7 @@ import type { PipelineToastOrder } from "@/lib/catering/not-in-toast";
 import { notRungLabel, notRungSource, toastReadyAt } from "@/lib/catering/not-in-toast-shared";
 import type { HouseSuggestions } from "@/lib/catering/catering-toast-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { HouseToastPanel } from "./HouseToastPanel";
 
 export function NotInToastChip() {
   const { t } = useTranslation();
@@ -50,6 +51,7 @@ export function NotInToast({ rows, locations }: {
             row.total_cents === null ? t("catering.toast_pending.amount_unknown") : formatCents(row.total_cents, language),
           ].join(" · ")}</p>
           {house && <HouseSuggestionLine suggestion={row.suggestion} />}
+          {house && row.lead_id && <HouseReview leadId={row.lead_id} />}
         </li>;
       })}
     </ul>
@@ -57,7 +59,19 @@ export function NotInToast({ rows, locations }: {
   </CollapsibleSection>;
 }
 
-/** Read-only (item 21 PR 2): what the planner would offer. It never clears the row; linking ships in PR 3. */
+/** Item 21 PR 3: the link panel, mounted only when asked for (one read per opened row, never one per listed row). */
+function HouseReview({ leadId }: { leadId: string }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  if (open) return <HouseToastPanel leadId={leadId} startOpen />;
+  return <button type="button" onClick={() => setOpen(true)}
+    className="mt-2 inline-flex min-h-[44px] items-center rounded-lg border border-co-border bg-co-surface px-3 text-xs font-bold tracking-[0.1em] text-co-text">
+    {t("catering.toast_link.review")}
+  </button>;
+}
+
+/** Read-only (item 21 PR 2): what the planner would offer. It never clears the row: only a link (PR 3, HouseReview)
+ * or "no Toast ring expected" does. */
 function HouseSuggestionLine({ suggestion }: { suggestion: HouseSuggestions | null | undefined }) {
   const { t, language } = useTranslation();
   if (suggestion === undefined) return null;

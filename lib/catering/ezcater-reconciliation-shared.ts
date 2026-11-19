@@ -7,6 +7,9 @@ export interface EzcaterReconciliationDetail {
   linkCount: number;
   shadowRows: number;
   truncated: boolean;
+  /** Item 21 PR 3 (0347): Toast checks of this order that also carry a house ring code (held, or skipped at publication).
+   * A manager decides; nothing moves on its own. null = not known (0347 not applied, or the read failed). */
+  houseConflicts?: number | null;
 }
 
 /**

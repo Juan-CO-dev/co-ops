@@ -70,6 +70,14 @@ export const DESTRUCTIVE_ACTIONS = [
   // confirmed/inquiry, re-reserving prep on confirmed). It rewrites the accountability record of an
   // order the board had closed, the same class as a transfer.
   "catering.pipeline.reopen",
+  // Item 21 PR 3 — SQL-only (migration 0347, decide_catering_toast): a person links a house catering order to a Toast
+  // check, unlinks it, says a check is not a match, or says no Toast ring is expected (and undoes that). Each decides
+  // which Toast money is the record of that order, so each is a human act on the accountability record.
+  "catering.toast_link",
+  "catering.toast_unlink",
+  "catering.toast_not_a_match",
+  "catering.toast_no_ring_expected",
+  "catering.toast_ring_expected",
   // W23/B129, owner decision W23-4 b — SQL-only (migration 0330): an EMPTY duplicate catering company
   // (no domain, no contact, a same-name company created after it) is switched off (active = false,
   // reversible). One row per company, destructive literally true, actor_context migration_apply.
