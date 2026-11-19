@@ -9,7 +9,7 @@
 import { formatCents, formatQuantity } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
-import { figureChange, figureChangeQualifiers, figureDisplay, type Figure, type FigureFormat } from "@/lib/business-figure-shared";
+import { figureChange, figureChangeNotes, figureDisplay, type Figure, type FigureFormat } from "@/lib/business-figure-shared";
 
 export function figureFormatFor(language: Language): FigureFormat {
   return {
@@ -25,13 +25,18 @@ export function figureFormatFor(language: Language): FigureFormat {
  * two periods are not comparable. Fix round 7: the change is derived from the two figures, so it takes THEM (never
  * a bare change) and carries every qualification of both: "+1.5 pts (burden estimated; salary estimated)". */
 export function changeWords(cur: Figure, prev: Figure | null, language: Language): string | null {
+  const said = changeValueWords(cur, prev, language);
+  if (said === null) return null;
+  const quals = figureChangeNotes(cur, prev, figureFormatFor(language)).map((n) => n.short);
+  return quals.length > 0 ? `${said} (${quals.join("; ")})` : said;
+}
+/** The change itself, without its qualifications ("+10%", "+1.5 pts"); null when not comparable. */
+function changeValueWords(cur: Figure, prev: Figure | null, language: Language): string | null {
   const change = figureChange(cur, prev);
   if (change.kind === "not_comparable") return null;
   const sign = change.value > 0 ? "+" : "";
-  const words = change.kind === "pct" ? serverT(language, "reports.business.compare.pct", { n: `${sign}${change.value}` })
+  return change.kind === "pct" ? serverT(language, "reports.business.compare.pct", { n: `${sign}${change.value}` })
     : serverT(language, "reports.business.compare.points", { n: `${sign}${formatQuantity(change.value, language)}` });
-  const quals = figureChangeQualifiers(cur, prev, figureFormatFor(language));
-  return quals.length > 0 ? `${words} (${quals.join("; ")})` : words;
 }
 
 // ── Say each qualification ONCE per scope (polish, 2026-11-18) ──────────────────────────────────
@@ -58,6 +63,12 @@ export interface FigureLegend {
   of(figures: ReadonlyArray<Figure | null | undefined>): LegendEntry[];
   /** One cell of text for a printed table: the value or a dash, then its marks: "$1,251.20 (a, b)". */
   cell(f: Figure): string;
+  /** Fix round 1 (review POLISH-r1 P3): a change between two figures of THIS scope. It carries every qualification of
+   * both periods (changeWords' rule), each as the mark the scope's legend gives it; one the legend does not hold is
+   * said beside it in short words. Null when the two are not comparable. */
+  change(cur: Figure, prev: Figure | null): { said: string; marks: LegendEntry[]; loose: string[] } | null;
+  /** The change as one cell of text: "+10% (a, b)". Null when not comparable. */
+  changeCell(cur: Figure, prev: Figure | null): string | null;
 }
 const markAt = (i: number): string => (i < 26 ? "" : markAt(Math.floor(i / 26) - 1)) + String.fromCharCode(97 + (i % 26));
 
@@ -87,8 +98,18 @@ export function figureLegend(language: Language, figures: ReadonlyArray<Figure |
       loose: noteEntries.flatMap((x) => (x.e ? [] : [x.n])),
     };
   };
+  const change = (cur: Figure, prev: Figure | null) => {
+    const said = changeValueWords(cur, prev, language);
+    if (said === null) return null;
+    const notes = figureChangeNotes(cur, prev, fmt);
+    return { said, marks: entries.filter((e) => notes.some((n) => n.text === e.text)), loose: notes.filter((n) => !byText.has(n.text)).map((n) => n.short) };
+  };
   return {
-    entries, read,
+    entries, read, change,
+    changeCell: (cur, prev) => {
+      const c = change(cur, prev);
+      return c === null ? null : `${c.said}${c.marks.length ? ` (${c.marks.map((m) => m.mark).join(", ")})` : ""}${c.loose.length ? ` (${c.loose.join("; ")})` : ""}`;
+    },
     of: (list) => { const used = new Set(list.flatMap((f) => (f ? read(f).marks.map((m) => m.mark) : []))); return entries.filter((e) => used.has(e.mark)); },
     cell: (f) => {
       const r = read(f);

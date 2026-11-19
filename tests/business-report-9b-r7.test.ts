@@ -163,14 +163,17 @@ describe("a derived figure inherits EVERY qualification of EVERY input, in every
   it("Compare: a change between estimated figures names the estimates; a change between plain figures is plain", async () => {
     const est = await loadWith({ rpcRows: cost({ salary_basis: "estimate" }) });
     const t = text(createElement(BusinessCompare, { dto: est, previous: est, language: "en" }));
-    expect(t).toContain(`0 pts (${R("qual.salary_estimated")})`);
+    // Polish fix round 1 (review POLISH-r1 P3): the change names the estimate as the Compare legend's MARK (proved
+    // against its legend line by visibleText), never the short words again beside it.
+    expect(t).toMatch(new RegExp(`0 pts [a-z]+ \\(${esc(R("salary_estimated"))}\\)`));
+    expect(t).not.toContain(`pts (${R("qual.salary_estimated")})`);
     const clean = await loadWith({ rpcRows: cost() });
     const c = text(createElement(BusinessCompare, { dto: clean, previous: clean, language: "en" }));
     expect(c).toContain("0 pts");
     expect(c).not.toMatch(/0 pts \(/);
     // One side estimated is enough.
     const mixed = text(createElement(BusinessCompare, { dto: clean, previous: est, language: "en" }));
-    expect(mixed).toMatch(new RegExp(`pts \\(${esc(R("qual.salary_estimated"))}\\)`));
+    expect(mixed).toMatch(new RegExp(`pts [a-z]+ \\(${esc(R("salary_estimated"))}\\)`));
   });
 });
 

@@ -738,9 +738,15 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.export.cover_partial.hours", "reports.business.export.cover_none.hours", "reports.business.export.cover_partial.channels",
   "reports.business.export.cover_none.channels", "reports.business.export.cover_partial.people", "reports.business.export.cover_none.people",
   "reports.business.pdf.sales", "reports.business.pdf.hourly", "reports.business.pdf.loaded",
-  "reports.business.pdf.by_hour", "reports.business.pdf.hours_note", "reports.business.pdf.total",
+  "reports.business.pdf.hours_note", "reports.business.pdf.total",
   "reports.business.pdf.notes", "reports.business.pdf.note_line", "reports.business.pdf.col.day",
   "reports.business.pdf.col.hour", "reports.business.pdf.col.name", "reports.business.pdf.col.pay",
   "reports.business.pdf.col.channel", "reports.business.pdf.col.provider", "reports.business.pdf.col.server",
   "reports.business.pdf.col.measure", "reports.business.pdf.hourly_pct", "reports.business.pdf.loaded_pct",
+  // Polish fix round 1 (review POLISH-r1 P2): every figure of the CSV rows has its place in the PDF.
+  "reports.business.pdf.sales_detail", "reports.business.pdf.col.toast_checks", "reports.business.pdf.col.no_amount",
+  "reports.business.pdf.col.target", "reports.business.pdf.large_rush", "reports.business.pdf.col.large_checks",
+  "reports.business.pdf.col.large_amount", "reports.business.pdf.col.rushes", "reports.business.pdf.rush_windows",
+  "reports.business.pdf.col.from", "reports.business.pdf.col.to", "reports.business.pdf.col.usual",
+  "reports.business.pdf.hourly_target", "reports.business.pdf.loaded_target",
 ] as const;

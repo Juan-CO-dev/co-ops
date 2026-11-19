@@ -358,7 +358,7 @@ export function BusinessCompare({ view, previous, language }: Props & { previous
             {cell(t("reports.business.compare.this"), a)}
             {cell(t("reports.business.compare.previous"), b)}
           </div>
-          <div className="mt-1 flex flex-wrap items-baseline gap-x-2"><span className="text-xs text-co-text-muted">{t("reports.business.compare.change")}</span><ChangeText cur={a} prev={b} language={language} /></div>
+          <div className="mt-1 flex flex-wrap items-baseline gap-x-2"><span className="text-xs text-co-text-muted">{t("reports.business.compare.change")}</span><ChangeText cur={a} prev={b} language={language} legend={legend} /></div>
         </li>;
       })}
       <li className="rounded-lg border border-co-border bg-co-surface-inset p-3 text-sm">

@@ -77,7 +77,11 @@ function busy(dto: BusinessReportDto): BusinessReportDto {
     })),
     largeChecks: { checks: 2, cents: 1_234_500 },
   };
-  return withLabor(withRush, (l) => ({ ...loadedIn(l, "estimated"), wageEstimated: true, hoursUnverified: true }));
+  const out = withLabor(withRush, (l) => ({ ...loadedIn(l, "estimated"), wageEstimated: true, hoursUnverified: true }));
+  // withLabor writes quarter dollars for every role; the loader serializes them only at QUARTER_COST_MIN (a GM's
+  // quarters carry neither key), so the fixture follows the loader.
+  if (!out.access.quarterCost) for (const q of out.quarters ?? []) { delete q.straightCents; delete q.pct; }
+  return out;
 }
 
 /** What a CSV column is when it is not a figure. `shown` columns are checked in the PDF's text below. */
@@ -118,6 +122,16 @@ const NON_FIGURE: Record<string, { kind: Kind; why: string }> = {
   pay_class: { kind: "shown", why: "the Pay column" },
   weeks_withheld: { kind: "shown", why: "the overtime cell says the weeks still being recounted" },
 };
+/** A column a tab's CSV rows never fill (checked: every cell of it is empty in that tab's rows). */
+/** Columns a GM's file leaves EMPTY because the view does not carry them (QUARTER_COST_MIN / PERSON_COST_MIN, MoO+);
+ * for a MoO they are figures and the census above holds them. Checked empty like EMPTY_IN. */
+const COST_GATED: Record<string, string> = {
+  straight_time_cost: "labor dollars per person / per 15 minutes are MoO+; a GM's view has no such figure",
+  straight_time_pct: "labor % per 15 minutes is MoO+; a GM's view has no such figure",
+};
+const EMPTY_IN: Partial<Record<BusinessExportTab, Record<string, string>>> = {
+  compare: { rushes: "rushes are per day; Compare's total rows (the CSV's businessTotalRow) carry none" },
+};
 
 const builders: Record<BusinessExportTab, (v: BusinessReportView, prev: BusinessReportView) => unknown> = {
   overview: (v) => businessOverviewRows(v, SHOP), hours: (v) => businessHoursRows(v, SHOP), channels: (v) => businessChannelRows(v, SHOP),
@@ -131,7 +145,7 @@ const hourOf = (at: string) => `${at.slice(0, 13)}:00:00.000Z`;
 
 function census(tab: BusinessExportTab, v: BusinessReportView, prev: BusinessReportView): string[] {
   seen.csv.length = 0; seen.pdf.clear();
-  builders[tab](v, prev);
+  const rows = builders[tab](v, prev) as Array<Record<string, unknown>>;
   const csv = [...seen.csv];
   const pdf = businessPdf(tab, v, tab === "compare" ? prev : null, "en");
   const quarters = new Map((v.quarters ?? []).flatMap((q) => Object.entries(q).filter(([, f]) => typeof f === "object" && f !== null).map(([, f]) => [f, q] as const)));
@@ -153,6 +167,10 @@ function census(tab: BusinessExportTab, v: BusinessReportView, prev: BusinessRep
   const text = [...pdf.tables.flatMap((t) => [t.heading ?? "", ...t.columns.map((c) => c.label ?? ""), ...t.rows.flatMap((r) => Object.values(r).map((x) => String(x ?? "")))]), ...pdf.notes].join("\n");
   for (const c of BUSINESS_EXPORT_COLUMNS[tab]) {
     if (figureColumns.has(c.key) || c.key in BUSINESS_PDF_OMITTED[tab]) continue;
+    if (EMPTY_IN[tab]?.[c.key] || (!v.access.quarterCost && COST_GATED[c.key])) {
+      if (rows.some((r) => r[c.key] !== null && r[c.key] !== undefined && r[c.key] !== "")) missing.push(`${tab}: ${c.key} is filled in the CSV but listed as empty`);
+      continue;
+    }
     const k = NON_FIGURE[c.key];
     if (!k) { missing.push(`${tab}: ${c.key} is neither a figure nor classified`); continue; }
     if (k.kind !== "shown") continue;

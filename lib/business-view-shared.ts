@@ -15,7 +15,7 @@
  */
 import type { BusinessReportDto, BusinessDayDto, BusinessQuarterDto } from "@/lib/business-report";
 import {
-  breakdownCoverage, laborHoursComplete, salesAmountMissing, sumBusinessDays,
+  breakdownCoverage, laborHoursComplete, quarterFigures, salesAmountMissing, sumBusinessDays,
   type BreakdownCoverage, type BusinessRange, type CutTotal, type CutsState, type DenominatorState, type LaborFigures, type LaborState, type LoadedState,
 } from "@/lib/business-report-shared";
 import type { LaborTone } from "@/lib/scheduling/board-shared";
@@ -59,9 +59,10 @@ export interface QuarterView {
  * unknown whenever the day's breakdown is not shown, hours and dollars judged against the DAY's labor state. */
 export interface HourView {
   hourStartAt: string;
-  checks: Figure; sales: Figure; hours: Figure;
-  /** Labor dollars: present ONLY where the quarters carry them (QUARTER_COST_MIN, MoO+). */
-  cost?: Figure;
+  checks: Figure; sales: Figure; amountMissing: Figure; hours: Figure;
+  /** Labor dollars and % (the quarter rule over the hour's sums): present ONLY where the quarters carry them
+   * (QUARTER_COST_MIN, MoO+). */
+  cost?: Figure; pct?: Figure;
   quarters: QuarterView[];
 }
 export interface RushWindowView { startAt: string; endAt: string; checks: Figure; usual: Figure; sales: Figure }
@@ -191,10 +192,13 @@ function hourViews(rows: ReadonlyArray<{ q: BusinessQuarterDto; v: QuarterView }
     const qs = list.map((r) => r.q);
     const all = <K extends "checks" | "toastCents">(k: K) => (qs.some((q) => q[k] === null) ? null : qs.reduce((s, q) => s + (q[k] ?? 0), 0));
     const minutes = qs.reduce((s, q) => s + (q.laborMinutes ?? 0), 0);
+    const missing = qs.reduce((s, q) => s + (q.amountMissing ?? 0), 0);
     const out: HourView = {
       hourStartAt, quarters: list.map((r) => r.v),
       checks: exactFigure("count", all("checks"), reason, { label: CHECKS }),
-      sales: exactFigure("cents", all("toastCents"), reason, { missing: qs.reduce((s, q) => s + (q.amountMissing ?? 0), 0) }),
+      sales: exactFigure("cents", all("toastCents"), reason, { missing }),
+      // Fix round 1: the checks of unknown amount behind the hour's sales (the CSV's quarter `amount_missing`).
+      amountMissing: exactFigure("count", all("toastCents") === null ? null : missing, reason),
       hours: quarterHoursFigure(minutes, day.labor.state, day.labor.hoursUnverified),
     };
     if (qs.every((q) => "straightCents" in q)) {
@@ -202,6 +206,15 @@ function hourViews(rows: ReadonlyArray<{ q: BusinessQuarterDto; v: QuarterView }
       const worked = qs.filter((q) => (q.laborMinutes ?? 0) > 0);
       const cents = worked.some((q) => q.straightCents === null || q.straightCents === undefined) ? null : worked.reduce((s, q) => s + (q.straightCents ?? 0), 0);
       out.cost = quarterCentsFigure(worked.length === 0 ? null : cents, minutes, day.labor);
+    }
+    if (qs.every((q) => "pct" in q)) {
+      // Fix round 1 (review POLISH-r1 P2): the hour's labor %, by THE quarter rule (quarterFigures) over the hour's
+      // sums: straight time / the hour's exact Toast sales, never over sales with an unknown amount.
+      const worked = qs.filter((q) => (q.laborMinutes ?? 0) > 0);
+      const straight = worked.some((q) => q.straightCents === null || q.straightCents === undefined) ? null : worked.reduce((s, q) => s + (q.straightCents ?? 0), 0);
+      const sales = all("toastCents");
+      out.pct = quarterPctFigure(quarterFigures({ toastCents: sales ?? 0, checks: all("checks") ?? 0, amountMissing: missing, laborMinutes: minutes, straightCents: straight,
+        salesOk: day.cuts === "ok" && sales !== null, laborOk: day.labor.pureHourlyCents !== null && day.labor.state !== "hours_unknown" }).pct, day.labor);
     }
     return out;
   });

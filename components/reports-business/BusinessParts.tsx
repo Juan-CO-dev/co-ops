@@ -49,7 +49,14 @@ const TONE: Record<LaborTone, string> = {
 /** This period against the one before (lib/business-figure-shared.ts `figureChange` decides it): a whole %, or
  * a labor % in points; anything not whole on both sides is "Not comparable". Fix round 7: it takes the two FIGURES,
  * so the change carries their qualifications ("+1.5 pts (salary estimated)"). */
-export function ChangeText({ cur, prev, language }: { cur: Figure; prev: Figure | null; language: Language }) {
+export function ChangeText({ cur, prev, language, legend }: { cur: Figure; prev: Figure | null; language: Language; legend?: FigureLegend }) {
+  // Fix round 1 (review POLISH-r1 P3): inside a scope the change's qualifications (both periods') are the scope's
+  // marks, said once in its legend; only one the legend does not hold is written beside it.
+  if (legend) {
+    const c = legend.change(cur, prev);
+    return c === null ? <span className="text-co-text-muted">{serverT(language, "reports.business.compare.not_comparable")}</span>
+      : <span className="font-semibold">{c.said}<Marks marks={c.marks} />{c.loose.length ? <span className="text-xs font-normal text-co-text-muted"> ({c.loose.join("; ")})</span> : null}</span>;
+  }
   const words = changeWords(cur, prev, language);
   return words === null ? <span className="text-co-text-muted">{serverT(language, "reports.business.compare.not_comparable")}</span>
     : <span className="font-semibold">{words}</span>;

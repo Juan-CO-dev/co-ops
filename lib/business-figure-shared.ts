@@ -424,6 +424,11 @@ export function figureChange(cur: Figure, prev: Figure | null): CompareChange {
 /** Fix round 7: a change is DERIVED from the two figures it compares, so it carries every qualification of both
  * (short words: "burden estimated; salary estimated"). Empty when there is no change to show. */
 export function figureChangeQualifiers(cur: Figure, prev: Figure | null, fmt: FigureFormat): string[] {
+  return figureChangeNotes(cur, prev, fmt).map((n) => n.short);
+}
+/** Fix round 1 (review POLISH-r1 P3): the same qualifications, each in BOTH registers: `text` is the sentence a
+ * scope's legend holds for it (figureDisplay's), `short` the compact words said beside a change no legend holds. */
+export function figureChangeNotes(cur: Figure, prev: Figure | null, fmt: FigureFormat): Array<{ text: string; short: string }> {
   if (prev === null || figureChange(cur, prev).kind === "not_comparable") return [];
-  return derivedFrom(cur, prev).map((n) => fmt.t(n.short, n.values));
+  return derivedFrom(cur, prev).map((n) => ({ text: fmt.t(n.key, n.values), short: fmt.t(n.short, n.values) }));
 }
