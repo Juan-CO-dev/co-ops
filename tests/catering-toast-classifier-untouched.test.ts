@@ -27,21 +27,47 @@ const EZCATER_WRITER = /function\s+public\.(publish_ezcater_shadow|reconcile_ezc
 
 /** The single, named exception: 0347 (item 21 PR 3) re-emits the ezCater PLANNER with added lines only (its own pin,
  * tests/catering-toast-0347-migration.test.ts, holds 0231's body as a line-subsequence). Only that one function name is
- * allowed there; every other writer pattern still applies to 0347. */
-const PLANNER_EXCEPTION: Record<string, RegExp> = { "0347_catering_toast_link_step.sql": /function\s+public\.plan_ezcater_toast\b/gi };
+ * allowed there; every other writer pattern still applies to 0347.
+ * 0348 (item 21 PR 4) re-emits the planner FROM 0347, again by added lines only (its own pin,
+ * tests/catering-toast-0348-migration.test.ts): a note-typed ring code joins the dual-code test (contract #3). */
+const PLANNER = /function\s+public\.plan_ezcater_toast\b/gi;
+const PLANNER_EXCEPTION: Record<string, RegExp> = { "0347_catering_toast_link_step.sql": PLANNER, "0348_catering_toast_reconciler.sql": PLANNER };
 const withoutException = (name: string) => PLANNER_EXCEPTION[name] ? sql(name).replace(PLANNER_EXCEPTION[name], "") : sql(name);
+
+/** A migration of this era that is NOT item 21 and whose OWN objects carry a name the classifier pattern matches.
+ * Named one by one, each with exactly the names that are its own: with those removed the pattern must still find
+ * nothing (it creates no classifier, re-emits no reader, and reads none).
+ *   0349 (business report access): the settings table `business_report_gm_visibility`, its validator, defaults and
+ *   writer (all `..._business_report_gm_visibility...`), and its pre-flight's existence check of 0341
+ *   (`to_regprocedure('public.business_report_check_cuts(uuid,date,date)')`: a name in a string, never a call), and
+ *   the audit action its writer records (`'business_report_visibility.save'`). */
+const OWN_NAMES: Record<string, RegExp> = {
+  "0349_business_report_gm_visibility.sql": /\b\w*business_report_gm_visibility\w*\b|'business_report_visibility\.save'|to_regprocedure\('public\.business_report_check_cuts\(uuid,date,date\)'\)/g,
+};
+const classifierText = (name: string) => OWN_NAMES[name] ? sql(name).replace(OWN_NAMES[name], "") : sql(name);
 
 describe("item 21 leaves the sales classifier and the ezCater writers alone", () => {
   it("no item-21 migration names a classifier or fact object", () => {
-    for (const name of migrations) expect([name, CLASSIFIER.test(sql(name))]).toEqual([name, false]);
+    for (const name of migrations) expect([name, CLASSIFIER.test(classifierText(name))]).toEqual([name, false]);
+  });
+  it("the own-name exceptions are exactly 0349, and it really is only its own names (it calls no business_report_* read)", () => {
+    expect(Object.keys(OWN_NAMES)).toEqual(["0349_business_report_gm_visibility.sql"]);
+    expect(migrations).toContain("0349_business_report_gm_visibility.sql");
+    const raw = sql("0349_business_report_gm_visibility.sql");
+    expect(CLASSIFIER.test(raw)).toBe(true);
+    expect(raw).not.toMatch(/(from|join|perform|select)\s+public\.business_report_(check_cuts|labor_quarters|labor_people)\b/i);
+    expect(raw).not.toMatch(/function\s+public\.(business_report_(check_cuts|labor_quarters|labor_people)|sales_report_\w+|fact_\w+)\b/i);
   });
   it("no item-21 migration re-emits an ezCater writer or writes ezcater_toast_links", () => {
     for (const name of migrations) expect([name, EZCATER_WRITER.test(withoutException(name))]).toEqual([name, false]);
   });
-  it("the exception is exactly the planner, in exactly 0347", () => {
-    expect(Object.keys(PLANNER_EXCEPTION)).toEqual(["0347_catering_toast_link_step.sql"]);
-    expect(migrations).toContain("0347_catering_toast_link_step.sql");
-    expect(EZCATER_WRITER.test(sql("0347_catering_toast_link_step.sql"))).toBe(true);
+  it("the exception is exactly the planner, in exactly 0347 and 0348", () => {
+    expect(Object.keys(PLANNER_EXCEPTION)).toEqual(["0347_catering_toast_link_step.sql", "0348_catering_toast_reconciler.sql"]);
+    for (const name of Object.keys(PLANNER_EXCEPTION)) {
+      expect(migrations).toContain(name);
+      expect(EZCATER_WRITER.test(sql(name))).toBe(true);
+      expect(sql(name).match(/create or replace function public\.plan_ezcater_toast\(/g)).toHaveLength(1);
+    }
   });
   it("the patterns are not vacuous", () => {
     expect(CLASSIFIER.test("select public.sales_report_class(a,b,c,d,e)")).toBe(true);
