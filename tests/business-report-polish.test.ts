@@ -37,7 +37,7 @@ import { businessView } from "@/lib/business-view-shared";
 import { renderReportPdf } from "@/lib/report-pdf";
 import { BUSINESS_EXPORT_COLUMNS, BUSINESS_EXPORT_TABS, businessCoverageNotice, businessOverviewRows, toCsv } from "@/lib/report-export-shared";
 import { BusinessChannels, BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople } from "./helpers/business-report-views";
-import { A, fakeClient } from "./helpers/business-report-fake";
+import { A, fakeClient, gmOff, type FakeOpts } from "./helpers/business-report-fake";
 import { PURE_STATES, assertMarksResolve, laborIn, legendsOf, loadedIn, markedFigures, sightedText, visibleText, withLabor } from "./helpers/business-report-states";
 
 const EN = en as Record<string, string>, ES = es as Record<string, string>;
@@ -47,7 +47,10 @@ const ON = { BUSINESS_REPORT: "1", FACT_LAYER: "1", FACT_LAYER_LABOR: "1" };
 const SHOP = { id: A, code: "MEP", name: "Capitol Hill" };
 const range = resolveBusinessRange({ range: "custom", from: "2026-10-01", to: "2026-10-07" }, "2026-10-08");
 const viewer = (role: "moo" | "gm") => ({ userId: `u-${role}`, level: role === "moo" ? 8 : 7, role, locations: role === "gm" ? [A] : [] as string[] });
-const load = (role: "moo" | "gm" = "moo") => loadBusinessReport(viewer(role), { locationId: A, range }, { client: fakeClient().client, env: ON });
+const load = (role: "moo" | "gm" = "moo", visibility?: FakeOpts["visibility"]) =>
+  loadBusinessReport(viewer(role), { locationId: A, range }, { client: fakeClient({ visibility }).client, env: ON });
+/** A GM whose MoO+ turned cost per person and labor dollars per 15 minutes off. */
+const TOTALS_ONLY = [gmOff("person_cost", "quarter_cost")];
 const count = (t: string, s: string) => t.split(s).length - 1;
 type El = Parameters<typeof renderToStaticMarkup>[0];
 const html = (el: El) => renderToStaticMarkup(el);
@@ -102,8 +105,8 @@ describe("1. a qualification is said ONCE per scope, and every figure it qualifi
     const markup = html(tabs(dto).people);
     expect(count(sightedText(markup), R("hours_unverified"))).toBe(1);
     expect(count(sightedText(markup), R("wage_estimated"))).toBe(1);
-    expect(dto.people.length).toBeGreaterThan(0);
-    expect(markedFigures(markup).filter((f) => f.said.includes(R("hours_unverified"))).length).toBeGreaterThanOrEqual(dto.people.length);
+    expect(dto.people!.length).toBeGreaterThan(0);
+    expect(markedFigures(markup).filter((f) => f.said.includes(R("hours_unverified"))).length).toBeGreaterThanOrEqual(dto.people!.length);
   });
   it("Compare: 'Sales are missing ...' is said once under the cards, not in all four labor cells", async () => {
     const dto = withLabor(await load(), (l) => laborIn(l, "sales_not_covered"));
@@ -114,7 +117,7 @@ describe("1. a qualification is said ONCE per scope, and every figure it qualifi
   });
   it("a legend can never drop a sentence: what the scope's legend does not hold is written beside the figure", async () => {
     const view = businessView(estimated(await load()));
-    const f = view.total.labor.loadedCost;
+    const f = view.total.labor.loadedCost!;
     const other = figureLegend("en", [view.total.sales.total], { reasons: true }).read(f);
     expect(other.marks).toEqual([]);
     expect(other.loose.map((n) => n.text)).toEqual(expect.arrayContaining(QUALS));
@@ -175,9 +178,9 @@ describe("2. every figure has a visible label", () => {
   });
   it("People: a cost always has its label, a dash included; overtime has its label", async () => {
     const dto = withLabor(await load(), (l) => laborIn(l, "ok"));
-    const withheld: BusinessReportDto = { ...dto, people: dto.people.map((p, i) => (i === 0 ? { ...p, straightCostCents: null, otMinutes: 120 } : p)) };
+    const withheld: BusinessReportDto = { ...dto, people: dto.people!.map((p, i) => (i === 0 ? { ...p, straightCostCents: null, otMinutes: 120 } : p)) };
     const t = sightedText(html(createElement(BusinessPeople, { dto: withheld, language: "en" })));
-    expect(count(t, `${R("people.cost")} `)).toBe(withheld.people.length);
+    expect(count(t, `${R("people.cost")} `)).toBe(withheld.people!.length);
     expect(t).toMatch(new RegExp(`${R("people.cost")} — [a-z]`));
     expect(t).toContain(`${R("people.ot_label")} 2 h`);
   });
@@ -283,11 +286,13 @@ describe("4. the 15-minute list is HOURS that open", () => {
     expect(legend.cell(worked!.hours)).toBe(`0.75 h so far (${R("labor.state.unbuilt")})`);
     expect(legend.cell(worked!.cost!)).toBe(`— (${R("labor.state.unbuilt")})`);
   });
-  it("a GM's hour has no labor dollars at all (QUARTER_COST_MIN), like its quarters", async () => {
-    const gm = businessView(await load("gm")), moo = businessView(await load("moo"));
+  it("without labor dollars per 15 minutes an hour has no labor dollars at all, like its quarters; a GM by default has them", async () => {
+    const gm = businessView(await load("gm", TOTALS_ONLY)), moo = businessView(await load("moo")), byDefault = businessView(await load("gm"));
     expect(gm.days.flatMap((d) => d.hourly).every((h) => !("cost" in h))).toBe(true);
     expect(moo.days.flatMap((d) => d.hourly).every((h) => "cost" in h)).toBe(true);
-    expect(visibleText(html(createElement(BusinessHours, { dto: await load("gm"), language: "en" })))).not.toContain(R("slot.cost"));
+    expect(byDefault.days.flatMap((d) => d.hourly).every((h) => "cost" in h)).toBe(true);
+    expect(visibleText(html(createElement(BusinessHours, { dto: await load("gm", TOTALS_ONLY), language: "en" })))).not.toContain(R("slot.cost"));
+    expect(visibleText(html(createElement(BusinessHours, { dto: await load("gm"), language: "en" })))).toContain(R("slot.cost"));
   });
   it("the hour row is a full-row button with the disclosure contract (44 px, aria-expanded + aria-controls, useState only)", () => {
     const src = readFileSync(path.join(ROOT, "components/reports-business/HourDisclosure.tsx"), "utf8");
@@ -305,10 +310,10 @@ describe("4. the 15-minute list is HOURS that open", () => {
 describe("5. rows are two fixed columns, and Compare lays both periods out the same way", () => {
   it("every People and Channels row is the same two-column grid (a person with overtime is not indented differently)", async () => {
     const dto = withLabor(await load(), (l) => laborIn(l, "ok"));
-    const ot: BusinessReportDto = { ...dto, people: dto.people.map((p, i) => (i === 0 ? { ...p, otMinutes: 480 } : p)) };
+    const ot: BusinessReportDto = { ...dto, people: dto.people!.map((p, i) => (i === 0 ? { ...p, otMinutes: 480 } : p)) };
     const people = html(createElement(BusinessPeople, { dto: ot, language: "en" }));
     const rows = people.split("<li").slice(1).filter((r) => r.includes("border-b"));
-    expect(rows.length).toBeGreaterThanOrEqual(ot.people.length);
+    expect(rows.length).toBeGreaterThanOrEqual(ot.people!.length);
     for (const r of rows) expect(r.slice(0, 200)).toContain("grid grid-cols-[minmax(0,1fr)_auto]");
     const channels = html(tabs(dto).channels).split("<li").slice(1).filter((r) => r.includes("border-b"));
     expect(channels.length).toBeGreaterThan(0);
@@ -335,7 +340,7 @@ describe("5. rows are two fixed columns, and Compare lays both periods out the s
 describe("6. an empty range offers no download, and says why", () => {
   it("the page shows the reason in place of the CSV / PDF links for every empty request", () => {
     const page = readFileSync(path.join(ROOT, "app/(authed)/reports/business/page.tsx"), "utf8");
-    expect(page).toMatch(/request\.kind === "empty" \? <p[^>]*role="note">\{t\(BUSINESS_EXPORT_OFF_KEY\[request\.reason\]\)\}<\/p>\s*: <ExportLinks/);
+    expect(page).toMatch(/request\.kind === "empty" \? <p[^>]*role="note">\{t\(BUSINESS_EXPORT_OFF_KEY\[request\.reason\]\)\}<\/p>\s*: access\.export \? <ExportLinks/);
     expect(count(page, "<ExportLinks")).toBe(1);
   });
   it("each reason has its sentence in en and es", async () => {
@@ -423,13 +428,15 @@ describe("8. the PDF is for a person: words, marks and one Notes legend", () => 
       for (const t of p.tables) { expect(t.columns.length, tab).toBeLessThanOrEqual(7); expect(t.fit, tab).toBe(true); expect(t.plain, tab).toBe(true); }
     }
   });
-  it("a GM's PDF has no cost column on People and no labor-cost column on Hours", async () => {
-    const gm = businessView(await load("gm")), moo = businessView(await load("moo"));
+  it("a PDF without the two groups has no cost column on People and no labor-cost column on Hours; a GM's default PDF has both", async () => {
+    const gm = businessView(await load("gm", TOTALS_ONLY)), moo = businessView(await load("moo")), byDefault = businessView(await load("gm"));
     const cols = (v: typeof gm, tab: "people" | "hours") => businessPdf(tab, v, null, "en").tables[0]!.columns.map((c) => c.label);
     expect(cols(gm, "people")).not.toContain(R("people.cost"));
-    expect(cols(moo, "people")).toContain(R("people.cost"));
     expect(cols(gm, "hours")).not.toContain(R("slot.cost"));
-    expect(cols(moo, "hours")).toContain(R("slot.cost"));
+    for (const v of [moo, byDefault]) {
+      expect(cols(v, "people")).toContain(R("people.cost"));
+      expect(cols(v, "hours")).toContain(R("slot.cost"));
+    }
   });
   it("Spanish: the labels and the legend are Spanish", async () => {
     const [, p] = (await all(estimated(await load()), "es"))[0]!;
@@ -475,7 +482,7 @@ describe("found on the first printed sample (review of the v2 capture)", () => {
   it("a figure's marks are in legend order (a, b — never b, a)", async () => {
     const v = businessView(estimated(await load()));
     const legend = figureLegend("en", [v.total.labor.hours, v.total.labor.pureCost, v.total.labor.loadedCost], { reasons: true });
-    for (const f of [v.total.labor.pureCost, v.total.labor.loadedCost]) {
+    for (const f of [v.total.labor.pureCost!, v.total.labor.loadedCost!]) {
       const marks = legend.read(f).marks.map((m) => m.mark);
       expect(marks).toEqual([...marks].sort());
       expect(marks.length).toBeGreaterThan(1);

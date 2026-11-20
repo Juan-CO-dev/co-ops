@@ -47,7 +47,9 @@ export const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
     // Fix round 6: the ONE parse of the raw range query (date strings, never a figure): form, links, exports.
     "parseBusinessRangeRequest", "BusinessRangeRequest", "BusinessRangeEmptyReason"],
   // Only the page loads; it hands the DTO straight to businessView.
-  "@/lib/business-report": ["BusinessReportError", "loadBusinessReport", "resolveBusinessRange"],
+  "@/lib/business-report": ["BusinessReportError", "loadBusinessReport", "resolveBusinessRange",
+    // Business report access: what the viewer may see (booleans) and the tab / download check on the loaded report.
+    "resolveBusinessAccess", "assertBusinessSurface"],
 };
 
 export interface Offence { file: string; line: number; rule: string; text: string }
