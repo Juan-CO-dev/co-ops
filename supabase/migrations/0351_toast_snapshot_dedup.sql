@@ -52,8 +52,10 @@
 -- membership for a candidate's order started, finished or is running at or after the manifest's begun_at, and pointers
 -- move only when such a run finishes, so the order has had ONE pointer target since begun_at and it is not the
 -- candidate; (2) open_transaction_older_than_manifest / prepared_transaction_open -- every other transaction alive
--- at the apply began after begun_at. So build and apply belong to ONE quiet window; a capture of an old order in
--- between makes that batch refuse, and the manifest is abandoned and rebuilt.
+-- at the apply began after begun_at. Guard (2) runs BEFORE the reference scans and the function refuses any isolation
+-- level but READ COMMITTED, so a reference committed by a transaction that ended just before the guard is seen by the
+-- scans that follow it. So build and apply belong to ONE quiet window; a capture of an old order in between makes that
+-- batch refuse, and the manifest is abandoned and rebuilt.
 -- KNOWN LIMIT: a snapshot id stored in a text column, or in a jsonb column of a table outside those name prefixes,
 -- is not seen. None exists on main at e9e29073.
 --
@@ -498,6 +500,22 @@ begin
   if (select count(*) from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch and t.applied_at is null) <> b.snapshots then
     raise exception 'manifest_count_mismatch'; end if;
 
+  -- QUIESCENCE FIRST, THEN THE SCANS (review TOASTDUP-r1 P1). A writer that saves a snapshot id with no FK may still be
+  -- uncommitted. Every scan below is a later statement, so under READ COMMITTED it sees everything committed before it
+  -- started. If a transaction older than the manifest is open NOW, refuse; if it ended before this check, the scans
+  -- below see what it committed. The other order (scan, then check) would miss a reference committed in between.
+  -- Order inside the guard: backends first, then prepared transactions (a backend that PREPAREs between the two reads
+  -- is then still caught as prepared; the reverse order would lose it).
+  if current_setting('transaction_isolation') <> 'read committed' then raise exception 'isolation_not_read_committed'; end if;
+  if not coalesce((select r.rolsuper or pg_has_role(r.oid, 'pg_read_all_stats', 'USAGE') from pg_roles r where r.rolname = current_user), false) then
+    raise exception 'cannot_see_transactions'; end if;
+  perform pg_stat_clear_snapshot();
+  if exists (select 1 from pg_stat_activity a where a.pid <> pg_backend_pid() and a.datname = current_database()
+               and a.xact_start is not null and a.xact_start < m.begun_at) then
+    raise exception 'open_transaction_older_than_manifest'; end if;
+  if exists (select 1 from pg_prepared_xacts x where x.database = current_database()) then
+    raise exception 'prepared_transaction_open'; end if;
+
   -- Every refusal below leaves the database untouched (the transaction raises).
   if exists (select 1 from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch and not exists (
                select 1 from public.toast_orders o where o.id = t.snapshot_id and o.location_id = t.location_id and o.business_date = t.business_date)) then
@@ -518,20 +536,13 @@ begin
   if exists (select 1 from public.toast_capture_run_orders ro join public.toast_capture_runs r on r.id = ro.run_id
               where r.status = 'running' and ro.snapshot_id in (select t.snapshot_id from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch)) then
     raise exception 'candidate_in_running_run'; end if;
-  -- No reference can be pending in a transaction this function cannot see (header: A REFERENCE NOT YET COMMITTED).
+  -- The other half of the quiescence proof (header: A REFERENCE NOT YET COMMITTED): one pointer target since begun_at.
   if exists (select 1 from public.toast_capture_run_orders ro join public.toast_capture_runs r on r.id = ro.run_id
               where (r.status = 'running' or r.started_at >= m.begun_at or r.finished_at >= m.begun_at)
                 and (ro.location_id, ro.order_guid) in (
                   select g.location_id, g.order_guid from public.toast_snapshot_registry g
                    where g.id in (select t.snapshot_id from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch))) then
     raise exception 'candidate_order_recently_captured'; end if;
-  if not coalesce((select r.rolsuper or pg_has_role(r.oid, 'pg_read_all_stats', 'USAGE') from pg_roles r where r.rolname = current_user), false) then
-    raise exception 'cannot_see_transactions'; end if;
-  if exists (select 1 from pg_prepared_xacts x where x.database = current_database()) then
-    raise exception 'prepared_transaction_open'; end if;
-  if exists (select 1 from pg_stat_activity a where a.pid <> pg_backend_pid() and a.datname = current_database()
-               and a.xact_start is not null and a.xact_start < m.begun_at) then
-    raise exception 'open_transaction_older_than_manifest'; end if;
   -- The manifest's digest binds each candidate's content: it must still be what was listed, and FULLY equal to its
   -- survivor's (jsonb equality, never the md5). One pass: each content is computed once.
   select coalesce(bool_or(md5(x.candidate::text) is distinct from t.content_md5), false),

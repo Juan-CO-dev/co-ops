@@ -1,6 +1,6 @@
 /** FILE ONLY: CC runs after 0351 on SIM, before 0351 reaches prod. No direct DB URL or pg needed.
  * SUPABASE_ACCESS_TOKEN=<operator environment>; node scripts/sim/toast-dedup-lock-check-management.mjs --ref=jepgzucrvklhqpthowsc
- * The two-session half of the 0351 proof (plan r3 section 2, r5 P1). The PGlite proof
+ * The two-session half of the 0351 proof (plan r3 section 2, r5 P1, review TOASTDUP-r1 P1). The PGlite proof
  * (tests/toast-snapshot-dedup-migration.test.ts) is single-session; this proves, on real Postgres, with two REAL
  * concurrent connections (two simultaneous Management API requests) and a third as observer:
  *   L1. a capture page + finish holding toast_orders: the apply WAITS (an ungranted lock blocked by the capture's
@@ -12,8 +12,11 @@
  *   L4. the apply holding its lock: reads of toast_orders_latest and the ezCater planner are NOT blocked.
  *   L5. a page that names a candidate's stored hash: the apply refuses candidate_in_running_run; once that run
  *       finishes (the pointer moves to the candidate) it refuses candidate_now_target. Nothing is deleted.
- *   L6. a transaction opened BEFORE the manifest began and still open: the apply refuses
- *       open_transaction_older_than_manifest and deletes nothing; when that transaction ends, the batch applies.
+ *   L6. a transaction opened BEFORE the manifest began that holds an UNCOMMITTED reference to a candidate (a row
+ *       naming its id, no foreign key): the apply refuses open_transaction_older_than_manifest; once that transaction
+ *       has committed, the apply's reference scan (which runs after the guard) refuses candidate_now_evidence.
+ *       Nothing is deleted at any point.
+ *   L7. an older transaction that only read: refused while open; the batch applies once it has ended.
  *   And pg_stat_database.deadlocks is the same before and after.
  * WRITES only: a new fixture shop (deactivated at the end), synthetic 1999-dated Toast rows for it (the manifests'
  * cutoff is 1999-12-31, so no real sim snapshot can ever be listed), and manifest / registry / audit rows for those.
@@ -194,19 +197,38 @@ export async function runProof(query, log = console.log) {
     await query(`select public.toast_snapshot_dedup_abandon(${m.version})`);
     log('L5. candidate_in_running_run, then candidate_now_target; nothing deleted; manifest abandoned');
 
-    // L6. a transaction older than the manifest and still open: refused; applies once it has ended.
+    // L6. an older transaction holding an UNCOMMITTED reference to the candidate (review TOASTDUP-r1 P1): the apply refuses
+    // because that transaction is open; the moment it has committed, the apply's scans (which run AFTER the guard) see
+    // the reference and refuse by name. At no point is the payload deleted.
     await seedDuplicates(query, f, 'l6', 2);
-    holder = settled(query(transactionSQL('dd-l6-h', `perform count(*) from public.toast_orders_latest t where t.location_id = ${q(f.shop)};`, { hold: 9 })));
-    assert.ok(await waitSleeping(query, 'dd-l6-h'), 'L6 the old transaction is open in pg_sleep');
+    const reference = `insert into public.fact_order_snapshot(location_id, business_date, order_guid, snapshot_id, run_member, check_count)
+      select o.location_id, o.business_date, 'l6-ref', o.id, true, 1 from public.toast_orders o
+       where o.location_id = ${q(f.shop)} and o.order_guid = 'l6'
+         and not exists (select 1 from public.toast_order_latest_pointers p where p.snapshot_id = o.id);`;
+    holder = settled(query(transactionSQL('dd-l6-h', reference, { hold: 9 })));
+    assert.ok(await waitSleeping(query, 'dd-l6-h'), 'L6 the older transaction is open in pg_sleep with its reference uncommitted');
     m = await buildManifest(query);
+    assert.ok(m.items >= 1, 'L6 the manifest lists the candidate (the reference is invisible to the build)');
     assert.match(String(out(await settled(query(transactionSQL('dd-l6-a', applyStatement(m)))))), /open_transaction_older_than_manifest/, 'L6 refuses while the older transaction is open');
     assert.ok(await sleeping(query, 'dd-l6-h'), 'L6 the refusal came while the older transaction was still open');
+    assert.equal(out(await holder), 'ok', 'L6 the older transaction commits its reference');
+    assert.match(String(out(await settled(query(transactionSQL('dd-l6-b', applyStatement(m)))))), /candidate_now_evidence/, 'L6 once committed, the scan after the guard sees the reference');
+    assert.deepEqual(await manifestState(query, m), { status: 'built', applied_batches: 0, deleted: 0, verify_ok: true });
+    await query(`select public.toast_snapshot_dedup_abandon(${m.version})`);
+    log('L6. open_transaction_older_than_manifest while the reference was uncommitted, then candidate_now_evidence once it committed; nothing deleted');
+
+    // L7. an older transaction that only READ: refused while it is open; the batch applies once it has ended.
+    await seedDuplicates(query, f, 'l7', 2);
+    holder = settled(query(transactionSQL('dd-l7-h', `perform count(*) from public.toast_orders_latest t where t.location_id = ${q(f.shop)};`, { hold: 9 })));
+    assert.ok(await waitSleeping(query, 'dd-l7-h'), 'L7 the old transaction is open in pg_sleep');
+    m = await buildManifest(query);
+    assert.match(String(out(await settled(query(transactionSQL('dd-l7-a', applyStatement(m)))))), /open_transaction_older_than_manifest/, 'L7 refuses while the older transaction is open');
+    assert.ok(await sleeping(query, 'dd-l7-h'), 'L7 the refusal came while the older transaction was still open');
     assert.deepEqual(await manifestState(query, m), { status: 'built', applied_batches: 0, deleted: 0, verify_ok: true });
     assert.equal(out(await holder), 'ok');
-    assert.equal(out(await settled(query(transactionSQL('dd-l6-b', applyStatement(m))))), 'ok', 'L6 applies once the older transaction ended');
-    // L5 left its pointer on the recaptured twin, so this manifest also lists L5's other twin: compare with its own count.
+    assert.equal(out(await settled(query(transactionSQL('dd-l7-b', applyStatement(m))))), 'ok', 'L7 applies once the older transaction ended');
     assert.deepEqual(await manifestState(query, m), { status: 'applied', applied_batches: 1, deleted: m.items, verify_ok: true });
-    log('L6. open_transaction_older_than_manifest while an older transaction was open; applied after it ended');
+    log('L7. open_transaction_older_than_manifest while an older reader was open; applied after it ended');
 
     assert.equal(await deadlocks(query), before, 'pg_stat_database.deadlocks unchanged');
     log(`deadlocks unchanged (${before})`);

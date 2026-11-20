@@ -195,6 +195,22 @@ describe("0351 header and shape", () => {
     expect(body).toContain("raise exception 'cannot_see_transactions'");
     expect(body).toContain("raise exception 'dedup_busy'");
   });
+
+  it("quiescence comes BEFORE every reference scan, and only under READ COMMITTED (review TOASTDUP-r1 P1)", () => {
+    // A reference committed by a transaction that ended between a scan and the open-transaction check would be missed
+    // by both. So: the guard first (backends, then prepared transactions), every scan after it as a later statement.
+    const body = fn("toast_snapshot_dedup_apply").replace(/--[^\n]*/g, "");
+    const at = (needle: string) => { const i = body.indexOf(needle); expect(i, needle).toBeGreaterThan(-1); return i; };
+    const guard = [at("raise exception 'isolation_not_read_committed'"), at("raise exception 'cannot_see_transactions'"), at("perform pg_stat_clear_snapshot()"),
+      at("from pg_stat_activity a"), at("from pg_prepared_xacts x")];
+    expect([...guard].sort((a, b) => a - b)).toEqual(guard);
+    const scans = [at("raise exception 'candidate_missing'"), at("from public.toast_snapshot_reference_ids() f"), at("from public.toast_snapshot_evidence_ids("),
+      at("raise exception 'candidate_in_running_run'"), at("raise exception 'candidate_order_recently_captured'"), at("raise exception 'content_changed'"),
+      at("update public.toast_snapshot_registry g"), at("delete from public.toast_check_discounts")];
+    for (const scan of scans) expect(scan).toBeGreaterThan(Math.max(...guard));
+    expect(body.match(/from pg_stat_activity/g)).toHaveLength(1);
+    expect(body.match(/from pg_prepared_xacts/g)).toHaveLength(1);
+  });
 });
 
 describe("stored content: equal means equal after ignoring storage identity, array order and synthetic ordinals only", () => {
@@ -488,6 +504,20 @@ describe("the apply: exactly the manifest, and every refusal leaves the database
     await refuses("batch_out_of_order", none, () => apply(db, 1, built.digest, 2));
     await refuses("batch_not_found", none, () => apply(db, 1, built.digest, 9, good));
     await refuses("manifest_not_found", none, () => apply(db, 7, built.digest, 1, good));
+  });
+
+  it("refuses any isolation level but READ COMMITTED: a frozen snapshot would not see a reference committed before the guard", async () => {
+    for (const level of ["repeatable read", "serializable"]) {
+      await db.exec(`begin isolation level ${level}`);
+      try {
+        const before = await counts(db);
+        await db.exec("savepoint s");
+        const error = await errorOf(() => apply(db, 1, built.digest, 1));
+        await db.exec("rollback to savepoint s");
+        expect(error, level).toContain("isolation_not_read_committed");
+        expect(await counts(db)).toEqual(before);
+      } finally { await db.exec("rollback"); }
+    }
   });
 
   it("refuses when the survivor's payload is gone (only reachable for a survivor nothing else protects)", async () => {

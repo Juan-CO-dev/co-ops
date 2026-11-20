@@ -46,6 +46,8 @@ A few writers save a snapshot id with no foreign key (the house catering link, t
 - no run touched a candidate's order since the manifest began (`candidate_order_recently_captured`);
 - no other transaction is older than the manifest (`open_transaction_older_than_manifest`).
 
+The apply checks this **before** it scans for references, and each scan is a later statement, so a reference committed by a transaction that ended just before the check is seen by the scans.
+
 So if the intraday capture or a backfill runs between `begin` and a batch and touches an old order, that batch refuses. Then: `select public.toast_snapshot_dedup_abandon(1);` and build version 2. Batches already applied stay applied and recorded.
 
 ## Refusals (the apply deletes nothing when it refuses)
@@ -60,6 +62,7 @@ So if the intraday capture or a backfill runs between `begin` and a batch and to
 | `candidate_in_running_run`, `candidate_order_recently_captured` | A capture touched a listed order after the manifest began | Wait for the quiet window; abandon, build the next version |
 | `open_transaction_older_than_manifest`, `prepared_transaction_open` | A transaction older than the manifest is still open | Find it in `pg_stat_activity`; when it ends, run the batch again |
 | `cannot_see_transactions` | The function's owner cannot read `pg_stat_activity` in full | Stop and report |
+| `isolation_not_read_committed` | The apply was called inside a REPEATABLE READ or SERIALIZABLE transaction | Call it on its own, as the prepared script does |
 | `content_changed`, `content_not_equal` | A listed snapshot or its survivor is not what was listed | Stop and report. This should be impossible |
 | `candidate_missing`, `survivor_missing`, `manifest_count_mismatch`, `registry_stamp_mismatch`, `delete_count_mismatch` | The rows are not the manifest's | Stop and report |
 | `snapshot_fk_census_changed` | A new table references `toast_orders` or `toast_order_checks` | Stop: the equivalence must learn about that table first |
