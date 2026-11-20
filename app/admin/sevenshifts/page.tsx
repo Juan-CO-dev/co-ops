@@ -15,6 +15,10 @@ import { LaborBurdenCard } from "@/components/admin/sevenshifts/LaborBurdenCard"
 import { canManageLaborBurden } from "@/lib/facts/labor-burden-shared";
 import { loadLaborBurdenCard } from "@/lib/facts/labor-burden";
 import { scheduleLaborViewsEnabled, type ScheduleLaborViewsEnv } from "@/lib/scheduling/labor-projection-shared";
+import { BusinessVisibilityCard } from "@/components/admin/sevenshifts/BusinessVisibilityCard";
+import { canManageBusinessVisibility } from "@/lib/business-access-shared";
+import { businessReportEnabled } from "@/lib/business-report-shared";
+import { loadBusinessVisibilityCard } from "@/lib/business-visibility";
 
 /**
  * Scheduling Phase 1, Task 10: the 7shifts connection, the shop links (MoO+), the person links (GM own shop,
@@ -40,6 +44,11 @@ export default async function SevenShiftsPage({ searchParams }: { searchParams: 
   // SCHEDULE_LABOR_VIEWS with the two fact switches: nothing is read and nothing is shown while it is off).
   const burden = canManageLaborBurden(auth.role) && scheduleLaborViewsEnabled(process.env as ScheduleLaborViewsEnv)
     ? await loadLaborBurdenCard(sb, { userId: auth.user.id, role: auth.role }) : null;
+  // Business report access: what GMs can see in the business report, beside the other labor money settings (owner /
+  // CGS / MoO only; dark behind BUSINESS_REPORT with the two fact switches: nothing is read and nothing is shown
+  // while it is off).
+  const visibility = canManageBusinessVisibility(auth.role) && businessReportEnabled(process.env)
+    ? await loadBusinessVisibilityCard(sb, { userId: auth.user.id, role: auth.role }) : null;
   return <div className="space-y-4">
     <h1 className="text-2xl font-bold text-co-text">{serverT(language, "sevenshifts.title")}</h1>
     <p className="text-co-text-muted">{serverT(language, "sevenshifts.intro")}</p>
@@ -49,5 +58,6 @@ export default async function SevenShiftsPage({ searchParams }: { searchParams: 
     {screen && <SevenShiftsScreen key={screen.locationId} screen={screen} />}
     {payroll && <PayrollShopCard data={payroll.state === "ready" ? payroll : null} />}
     {burden && <LaborBurdenCard data={burden.state === "ready" ? burden : null} />}
+    {visibility && <BusinessVisibilityCard data={visibility.state === "ready" ? visibility : null} />}
   </div>;
 }

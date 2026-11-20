@@ -12,6 +12,10 @@
  * it, anything the legend does not hold), so a value cannot be printed without its state
  * (tests/business-report-figure-census.test.ts scans this file with the page's rules).
  *
+ * Business report access (2026-11-19): a group the view does not hold (hourly labor money, fully loaded labor, a
+ * list the viewer may not see) has no figure in the view, so its columns, its table or its Compare rows are not
+ * printed at all: never a column of dashes.
+ *
  * Fix round 1 (review POLISH-r1 P2): it prints EVERY figure the CSV's rows carry — the large checks, the rushes, the
  * targets, the sales detail, Compare's whole total rows; the Hours tab prints each hour with every measure of its
  * quarters. tests/business-report-pdf-parity.test.ts is the census (by figure, at `figureCells` and `cell`).
@@ -65,6 +69,8 @@ export function businessPdf(tab: BusinessReportTab, view: BusinessReportView, pr
 
   /** Day rows, then payroll weeks, then the range: the same three grains as the Overview. */
   type Period = { sales: SalesView; labor: LaborView; target: Target; loadedTarget: Target };
+  /** A figure the view does not hold is not a cell (its column is not a column either: `cols`). */
+  const held = (cells: ReadonlyArray<Cell | undefined>): Cell[] => cells.filter((c): c is Cell => c !== undefined);
   const periods = (pick: (x: Period) => Cell[]): Cell[][] => [
     ...view.days.map((d) => [day(d.date), ...pick(d)]),
     ...view.weeks.map((w) => [t("reports.business.week_of", { range: span(w.from, w.to) }), ...pick(w)]),
@@ -74,6 +80,8 @@ export function businessPdf(tab: BusinessReportTab, view: BusinessReportView, pr
   const target = (v: "pure" | "loaded", x: Target) => (x === "target_varies" ? t("reports.business.target_varies")
     : t(v === "pure" ? "reports.business.target" : "reports.business.target_le", { pct: x }));
   const DAY = t("reports.business.pdf.col.day");
+  /** Which labor money groups this view holds (the report's access). */
+  const shown = view.total.labor.shown;
   const NO_AMOUNT = t("reports.business.pdf.col.no_amount");
 
   if (tab === "overview") {
@@ -83,16 +91,17 @@ export function businessPdf(tab: BusinessReportTab, view: BusinessReportView, pr
         t("reports.business.card.refunds"), t("reports.business.card.net")],
       rows: periods((x) => [x.sales.total, x.sales.checks, x.sales.toastNet, x.sales.ezcater, x.sales.refunds, x.labor.net]),
     }, {
-      heading: t("reports.business.pdf.hourly"), empty: t("reports.export.empty"),
-      columns: [DAY, t("reports.business.detail.hours"), t("reports.business.detail.ot_hours"), t("reports.business.detail.pure_hourly_cost"), t("reports.business.detail.ot_premium"),
-        t("reports.business.pdf.hourly_pct"), t("reports.business.pdf.col.target")],
-      rows: periods((x) => [x.labor.hours, x.labor.otHours, x.labor.pureCost, x.labor.otPremium, x.labor.purePct, target("pure", x.target)]),
-    }, {
+      // Hours always; hourly labor money (cost, premium, %, its target) only where the view holds it.
+      heading: t(shown.hourlyCost ? "reports.business.pdf.hourly" : "reports.business.card.hours"), empty: t("reports.export.empty"),
+      columns: [DAY, t("reports.business.detail.hours"), t("reports.business.detail.ot_hours"),
+        ...(shown.hourlyCost ? [t("reports.business.detail.pure_hourly_cost"), t("reports.business.detail.ot_premium"), t("reports.business.pdf.hourly_pct"), t("reports.business.pdf.col.target")] : [])],
+      rows: periods((x) => held([x.labor.hours, x.labor.otHours, x.labor.pureCost, x.labor.otPremium, x.labor.purePct, shown.hourlyCost ? target("pure", x.target) : undefined])),
+    }, ...(shown.loaded ? [{
       heading: t("reports.business.pdf.loaded"), empty: t("reports.export.empty"),
       columns: [DAY, t("reports.business.detail.salaried"), t("reports.business.detail.burden"), t("reports.business.detail.fully_loaded"), t("reports.business.pdf.loaded_pct"),
         t("reports.business.pdf.col.target")],
-      rows: periods((x) => [x.labor.salaried, x.labor.burden, x.labor.loadedCost, x.labor.loadedPct, target("loaded", x.loadedTarget)]),
-    }, {
+      rows: periods((x) => held([x.labor.salaried, x.labor.burden, x.labor.loadedCost, x.labor.loadedPct, target("loaded", x.loadedTarget)])),
+    }] : []), {
       heading: t("reports.business.pdf.sales_detail"), empty: t("reports.export.empty"),
       columns: [DAY, t("reports.business.pdf.col.toast_checks"), t("reports.business.channels.ezcater_label"), NO_AMOUNT],
       rows: periods((x) => [x.sales.toastChecks, x.sales.ezcaterOrders, x.sales.amountMissing]),
@@ -115,7 +124,8 @@ export function businessPdf(tab: BusinessReportTab, view: BusinessReportView, pr
           t("reports.business.pdf.sales")],
       });
     }
-    notes.push(t("reports.business.labor.denominator"), t("reports.business.loaded.basis"));
+    if (shown.hourlyCost) notes.push(t("reports.business.labor.denominator"));
+    if (shown.loaded) notes.push(t("reports.business.loaded.basis"));
   } else if (tab === "hours") {
     if (view.quarters === null) notes.push(t("reports.business.hours.too_wide"));
     else {
@@ -151,7 +161,7 @@ export function businessPdf(tab: BusinessReportTab, view: BusinessReportView, pr
     });
   } else if (tab === "people") {
     const cost = view.access.personCost;
-    specs.push({
+    if (view.access.people) specs.push({
       heading: t("reports.business.people.title"), empty: claim(view.empty.people, "reports.business.people.none"),
       columns: [t("reports.business.pdf.col.name"), t("reports.business.pdf.col.pay"), t("reports.business.sum.hours"), t("reports.business.people.ot_label"),
         ...(cost ? [t("reports.business.people.cost")] : [])],
@@ -159,18 +169,19 @@ export function businessPdf(tab: BusinessReportTab, view: BusinessReportView, pr
         p.label ?? t("reports.business.people.unnamed"), t(p.payClass === "hourly" ? "reports.business.people.pay.hourly" : "reports.business.people.pay.salaried"), p.hours,
         p.overtime ?? t("reports.business.people.withheld", { n: p.weeksWithheld }), ...(cost && p.cost ? [p.cost] : []),
       ]),
-    }, {
+    });
+    if (view.access.servers) specs.push({
       heading: t("reports.business.people.servers"), empty: claim(view.empty.servers, "reports.business.people.servers_none"),
       columns: [t("reports.business.pdf.col.server"), t("reports.business.detail.checks"), t("reports.business.pdf.sales"), NO_AMOUNT],
       rows: view.servers.map((s): Cell[] => [serverLabel(language, s.key, s.label), s.checks, s.sales, s.amountMissing]),
     });
-    if (!cost) notes.push(t("reports.business.people.cost_note"));
-    notes.push(t("reports.business.people.server_note"));
+    if (view.access.people && !cost) notes.push(t("reports.business.people.cost_note"));
+    if (view.access.servers) notes.push(t("reports.business.people.server_note"));
   } else {
     // Every measure of the CSV's two total rows, both periods side by side, with the change.
     const cur = view.total, prev = previous?.total ?? null;
     const none = t("reports.business.compare.no_previous");
-    const rows: Array<[TranslationKey, (x: BusinessReportView["total"]) => Figure]> = [
+    const measures: Array<[TranslationKey, (x: BusinessReportView["total"]) => Figure | undefined]> = [
       ["reports.business.card.sales", (x) => x.sales.total], ["reports.business.detail.checks", (x) => x.sales.checks],
       ["reports.business.pdf.col.toast_checks", (x) => x.sales.toastChecks], ["reports.business.detail.toast_net", (x) => x.sales.toastNet],
       ["reports.business.detail.ezcater", (x) => x.sales.ezcater], ["reports.business.channels.ezcater_label", (x) => x.sales.ezcaterOrders],
@@ -187,9 +198,10 @@ export function businessPdf(tab: BusinessReportTab, view: BusinessReportView, pr
       columns: [t("reports.business.pdf.col.measure"), `${t("reports.business.compare.this")} (${span(view.range.from, view.range.to)})`,
         previous ? `${t("reports.business.compare.previous")} (${span(previous.range.from, previous.range.to)})` : t("reports.business.compare.previous"), t("reports.business.compare.change")],
       rows: [
-        ...rows.map(([key, fig]): Cell[] => [t(key), fig(cur), prev ? fig(prev) : none, new Change(fig(cur), prev ? fig(prev) : null)]),
-        [t("reports.business.pdf.hourly_target"), target("pure", cur.target), prev ? target("pure", prev.target) : none, ""],
-        [t("reports.business.pdf.loaded_target"), target("loaded", cur.loadedTarget), prev ? target("loaded", prev.loadedTarget) : none, ""],
+        // A measure the view does not hold is not a row (both periods were built with the same access).
+        ...measures.flatMap(([key, fig]): Cell[][] => { const a = fig(cur); const b = prev ? fig(prev) ?? null : null; return a ? [[t(key), a, b ?? none, new Change(a, b)]] : []; }),
+        ...(shown.hourlyCost ? [[t("reports.business.pdf.hourly_target"), target("pure", cur.target), prev ? target("pure", prev.target) : none, ""] as Cell[]] : []),
+        ...(shown.loaded ? [[t("reports.business.pdf.loaded_target"), target("loaded", cur.loadedTarget), prev ? target("loaded", prev.loadedTarget) : none, ""] as Cell[]] : []),
         [t("reports.business.last_year.label"), t(view.range.lastYearReason === "no_data_yet" ? "reports.business.last_year.no_data_yet" : "reports.business.last_year.not_shown"), "", ""],
       ],
     });

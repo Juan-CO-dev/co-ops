@@ -1,6 +1,6 @@
 -- Migration 0347_catering_toast_link_step
 -- AUTHORED 2026-11-18 (item 21 PR 3, CO Claude). NOT YET APPLIED -- GATE CC/JUAN: sim first (with the sim two-session proof), then prod on Juan's word. Apply AFTER 0344.
--- APPLIED TO PROD 2026-11-19 (schema_migrations version 20261119041752, name '0347_catering_toast_link_step'), after sim. The line above is the authoring-time gate note, kept as history.
+-- APPLIED TO PROD 2026-11-19 UTC (schema_migrations version 20261119041752, name '0347_catering_toast_link_step'), after sim. The line above is the authoring-time gate note, kept as history.
 -- NUMBER: 0345 is the highest on main; 0346 may be claimed by board PR 2 (worktree board2), so this file takes 0347 to be safe.
 -- Plan: CHIEF 03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md ("Migration B"),
 -- with Juan's 8 answers and the two contracts PR 2 left for PR 3 (docs/runbooks/catering-toast.md, Astra r3 #1 and #2).
