@@ -146,10 +146,14 @@ describe("0351 header and shape", () => {
   });
 
   it("no app code path: nothing in lib/ or app/ names a dedup function, and service_role may not execute one", () => {
-    let hits = "";
-    try { hits = execFileSync("git", ["grep", "-l", "-E", "toast_snapshot_dedup|toast_snapshot_content|toast_snapshot_registry", "--", "lib", "app", "components"], { encoding: "utf8" }); }
-    catch (e) { if ((e as { status?: number }).status !== 1) throw e; }
-    expect(hits).toBe("");
+    const grep = (pattern: string) => {
+      try { return execFileSync("git", ["grep", "-l", "-E", pattern, "--", "lib", "app", "components", "proxy.ts"], { encoding: "utf8" }).trim().split(/\r?\n/).filter(Boolean); }
+      catch (e) { if ((e as { status?: number }).status !== 1) throw e; return []; }
+    };
+    // The only mentions are the two audit-vocabulary registries (comments beside the action name).
+    expect(grep("toast_snapshot_(dedup|content|registry|reference|evidence|register)")).toEqual(["lib/audit-actions.ts", "lib/destructive-actions.ts"]);
+    // And nothing calls or reads any of it.
+    expect(grep("(rpc|from)[(][^)]*toast_snapshot_")).toEqual([]);
     expect(code).toMatch(/revoke all on function public\.%s from public, anon, authenticated, service_role/);
   });
 
@@ -160,6 +164,27 @@ describe("0351 header and shape", () => {
     expect(body).toMatch(/'counts', v_expected\), true\)/);
     expect(body.match(/insert into public\.audit_log/g)).toHaveLength(1);
     expect(code.match(/insert into public\.audit_log/g)).toHaveLength(1);
+  });
+
+  it("ONE reference census, asked by build and apply, with exactly the reviewed exclusions (plan r6)", () => {
+    const census = fn("toast_snapshot_reference_ids");
+    const excluded = census.match(/c[.]table_name not in [(]([^)]*)[)]/)![1]!.match(/[a-z_]+/g)!;
+    expect([...excluded].sort()).toEqual([
+      // the deletable payload's own children
+      "toast_check_discounts", "toast_check_service_charges", "toast_order_checks", "toast_payments",
+      // the preserved memberships
+      "toast_capture_run_orders",
+      // the cleanup's own bookkeeping
+      "toast_snapshot_dedup_items", "toast_snapshot_dedup_retained", "toast_snapshot_registry",
+    ].sort());
+    expect(census).toContain("c.column_name like '%snapshot%'");
+    expect(census).toContain("from public.toast_snapshot_registry where survivor_id is not null");
+    for (const caller of ["toast_snapshot_dedup_build_range", "toast_snapshot_dedup_apply"]) expect(fn(caller)).toContain("public.toast_snapshot_reference_ids()");
+    // No second list of referencing tables anywhere in the file.
+    expect(code.match(/toast_snapshot_reference_ids[(][)]/g)!.length).toBe(4);
+    const evidence = fn("toast_snapshot_evidence_ids");
+    expect(evidence).toContain("c.table_name not in ('toast_orders','toast_order_checks') and c.table_name !~ '^toast_snapshot_'");
+    expect(evidence).toContain("(c.table_name = 'audit_log' or c.table_name ~ '^(toast|ezcater|catering_toast|fact)_')");
   });
 
   it("the transaction guard is written against pg_stat_activity and prepared transactions (proven live on sim)", () => {
