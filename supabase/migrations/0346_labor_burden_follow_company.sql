@@ -1,5 +1,6 @@
 -- Migration 0346_labor_burden_follow_company
 -- AUTHORED 2026-11-18 (board two labor views PR 2, CO Claude, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO PROD 2026-11-19 (schema_migrations version 20261119035123, name '0346_labor_burden_follow_company'), after sim. The line above is the authoring-time gate note, kept as history.
 -- Apply AFTER 0345 (labor_cost_planned) and 0286 (the live valid_schedule_structure). Nothing shows the new card or
 -- the new field until SCHEDULE_LABOR_VIEWS=1 (with FACT_LAYER=1 and FACT_LAYER_LABOR=1).
 -- Plan: CHIEF item-02-BOARD-TWO-VIEWS-PLAN-r4.md, "Migration" steps 2 and 3 (the two 0345 left for PR 2), "Burden
