@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
         captured: capture.results.filter((r) => !r.skipped && !r.error).length,
         skipped: capture.results.filter((r) => r.skipped).length,
         errors: capture.failures, capture_disabled: capture.skipped,
+        ...("cateringToast" in capture ? { catering_toast: capture.cateringToast } : {}),
       },
       ipAddress: null, userAgent: null,
     });

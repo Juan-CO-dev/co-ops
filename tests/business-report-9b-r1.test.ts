@@ -35,7 +35,7 @@ vi.mock("@/lib/report-pdf", async (orig) => {
 import { GET } from "@/app/api/reports/export/route";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { loadBusinessReport, type BusinessReportDto } from "@/lib/business-report";
+import { loadBusinessReport, type WholeBusinessReportDto as BusinessReportDto } from "@/lib/business-report";
 import { breakdownCoverage, laborHoursComplete, resolveBusinessRange, type LaborFigures } from "@/lib/business-report-shared";
 // Fix round 4: the page and the export take the VIEW; these adapters build it from a DTO as the page does.
 import {

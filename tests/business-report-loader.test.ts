@@ -5,11 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn(() => { throw new Error("no database in unit tests"); }) }));
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { BusinessReportError, loadBusinessReport, BUSINESS_REPORT_DTO_PATHS } from "@/lib/business-report";
+import { businessAccessFor, businessDtoPaths } from "@/lib/business-access-shared";
+import { BusinessReportError, loadBusinessReport } from "@/lib/business-report";
 import { resolveBusinessRange } from "@/lib/business-report-shared";
 import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
 import { summarizeSales } from "@/lib/sales-reports-shared";
-import { fakeClient } from "./helpers/business-report-fake";
+import { GM_ALL_ON, fakeClient, gmOff } from "./helpers/business-report-fake";
 
 const A = "aaaaaaaa-0000-4000-8000-00000000000a";
 const B = "bbbbbbbb-0000-4000-8000-00000000000b";
@@ -55,33 +56,47 @@ describe("refusals run before any I/O", () => {
 });
 
 describe("the report a GM and a MoO get", () => {
-  it("GM own shop: hours per person and sales per server, NO person cost; day % uses Toast net + ezCater", async () => {
+  it("GM own shop, the defaults: hours and hourly cost per person, sales per server, no fully loaded labor; day % uses Toast net + ezCater", async () => {
     const f = fakeClient();
     const dto = await loadBusinessReport(gm, { locationId: A, range }, { client: f.client, env: ON });
-    expect(dto.access).toEqual({ personCost: false, quarterCost: false });
-    expect(dto.people[0]).toEqual({ personKey: "u:11111111-1111-4111-8111-111111111111", label: "Ana", source: "7shifts", payClass: "hourly", minutes: 600, otMinutes: 0, weeksSuppressed: 0 });
-    expect(JSON.stringify(dto)).not.toMatch(/straight_cents|costCents|rate/);
+    // Business report access: no settings row yet = the defaults. Juan 2026-11-19: a GM knows their shop's hourly
+    // pay, so each hourly person's cost and the labor dollars per 15 minutes are ON; the salaried side is OFF.
+    expect(dto.access).toEqual(businessAccessFor("gm", null));
+    expect(dto.access).toMatchObject({ report: true, hourlyCost: true, loaded: false, people: true, servers: true, personCost: true, quarterCost: true, personSalary: false });
+    expect(dto.people![0]).toEqual({ personKey: "u:11111111-1111-4111-8111-111111111111", label: "Ana", source: "7shifts", payClass: "hourly", minutes: 600, otMinutes: 0, weeksSuppressed: 0,
+      straightCostCents: 18_000 });
+    expect(JSON.stringify(dto)).not.toMatch(/straight_cents|rate|salariedCents|fullyLoadedCents|burdenCents/);
+    // The MoO+ turned the two switches off: hours per person and per 15 minutes, no dollars.
+    const totals = await loadBusinessReport(gm, { locationId: A, range }, { client: fakeClient({ visibility: [gmOff("person_cost", "quarter_cost")] }).client, env: ON });
+    expect(totals.access).toMatchObject({ hourlyCost: true, people: true, quarters: true, personCost: false, quarterCost: false });
+    expect(totals.people![0]).toEqual({ personKey: "u:11111111-1111-4111-8111-111111111111", label: "Ana", source: "7shifts", payClass: "hourly", minutes: 600, otMinutes: 0, weeksSuppressed: 0 });
+    expect(JSON.stringify(totals)).not.toMatch(/straight_cents|straightCents|CostCents|rate/);
     // Each day: $30 Toast + $20 ezCater = $50 net; labor $9 => 18%.
     expect(dto.days[0]!.labor).toMatchObject({ pureHourlyCents: 900, pct: 18, state: "ok", denominator: { cents: 5_000, state: "ok" } });
-    expect(dto.servers.find((s) => s.key === "srv-1")).toMatchObject({ label: "Ana", cents: 7_000, checks: 7 });
+    expect(dto.servers!.find((s) => s.key === "srv-1")).toMatchObject({ label: "Ana", cents: 7_000, checks: 7 });
   });
-  it("MoO: the same plus straight-time cost per person (one named constant decides)", async () => {
+  it("MoO: everything, always (no settings read)", async () => {
     const f = fakeClient();
     const dto = await loadBusinessReport(moo, { locationId: A, range }, { client: f.client, env: ON });
-    expect(dto.access).toEqual({ personCost: true, quarterCost: true });
+    expect(Object.values(dto.access).every((v) => v === true)).toBe(true);
+    expect(dto.access).toMatchObject({ personCost: true, quarterCost: true });
     expect(dto.people[0]).toMatchObject({ straightCostCents: 18_000 });
+    expect(f.tables).not.toContain("business_report_gm_visibility"); // MoO / Owner / CGS never read the settings
   });
   it("serialized payload paths are an allowlist per role (an unknown path fails)", async () => {
     const paths = (v: unknown, prefix = ""): string[] => v === null || typeof v !== "object" ? [prefix]
       : Array.isArray(v) ? v.flatMap((x) => paths(x, `${prefix}[]`)) : Object.entries(v).flatMap(([k, x]) => paths(x, prefix ? `${prefix}.${k}` : k));
     for (const viewer of [gm, moo]) {
       const dto = await loadBusinessReport(viewer, { locationId: A, range }, { client: fakeClient().client, env: ON });
-      const allowed = new Set(BUSINESS_REPORT_DTO_PATHS[viewer.role === "gm" ? "shop_money" : "person_money"]);
+      // The allowlist is the group table of lib/business-access-shared.ts: the base and every group the viewer holds
+      // (tests/business-report-gm-payload.test.ts runs every coherent setting against a hand-written copy).
+      const allowed = new Set(businessDtoPaths(dto.access));
       const unknown = [...new Set(paths(dto))].filter((p) => !allowed.has(p.replace(/\[\]/g, "[]")));
       expect(unknown).toEqual([]);
     }
-    expect(BUSINESS_REPORT_DTO_PATHS.shop_money).not.toContain("people[].straightCostCents");
-    expect(BUSINESS_REPORT_DTO_PATHS.person_money).toContain("people[].straightCostCents");
+    expect(businessDtoPaths(businessAccessFor("gm", null))).toContain("people[].straightCostCents");
+    expect(businessDtoPaths(businessAccessFor("gm", gmOff("person_cost")))).not.toContain("people[].straightCostCents");
+    expect(businessDtoPaths(businessAccessFor("moo", null))).toContain("people[].straightCostCents");
   });
   it("company-scope (labor-v1) weeks are suppressed as 'rebuilding'", async () => {
     const f = fakeClient({ weeks: [{ week_start: "2026-09-27", ot_scope: "company", builder_version: "labor-v1" }, { week_start: "2026-10-04", ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION }] });
@@ -286,5 +301,87 @@ describe("a quarter with an unknown check amount has no labor %", () => {
     expect(dto.days[0]!.cuts).toBe("ok");
     const q = dto.quarters!.find((x) => x.quarterStartAt === `${D}T16:00:00.000Z`)!;
     expect(q).toMatchObject({ toastCents: 10_000, checks: 2, amountMissing: 1, straightCents: 5_000, pct: null });
+  });
+});
+
+// ── Business report access (2026-11-19): who reads which shop, and the settings a GM's report is cut by ──
+describe("business report access: scope by ROLE, and the settings store read fail closed", () => {
+  const ALL_ON = GM_ALL_ON;
+  const load = (viewer: Parameters<typeof loadBusinessReport>[0], o: Parameters<typeof fakeClient>[0] = {}, locationId = A) => {
+    const f = fakeClient(o);
+    return { f, p: loadBusinessReport(viewer, { locationId, range }, { client: f.client, env: ON }) };
+  };
+  it("a GM reads only a shop they belong to; MoO / Owner / CGS any shop; nobody reads 'all'", async () => {
+    await expect(load(gm, {}, B).p).rejects.toMatchObject({ status: 403, code: "location_forbidden" });
+    await expect(load({ ...gm, locations: [A, B] }, {}, B).p).resolves.toMatchObject({ locationId: B });
+    for (const viewer of [moo, { userId: "o", level: 9, role: "owner" as const, locations: [] }, { userId: "c", level: 10, role: "cgs" as const, locations: [] }]) {
+      await expect(load(viewer, {}, B).p).resolves.toMatchObject({ locationId: B });
+      await expect(load(viewer, {}, "all").p).rejects.toMatchObject({ status: 400, code: "invalid_location" });
+    }
+  });
+  it("the shop is by ROLE, never by level: a level 8+ that is not MoO / Owner / CGS reads no shop it does not belong to", async () => {
+    // No such role exists today; the rule must not hand a future one every shop because of its number.
+    const r = load({ userId: "x", level: 9, role: "gm", locations: [A] }, {}, B);
+    await expect(r.p).rejects.toMatchObject({ status: 403, code: "location_forbidden" });
+    expect(r.f.tables).toHaveLength(0);
+  });
+  it("a GM's load reads the settings FIRST, once, before any report read", async () => {
+    const { f, p } = load(gm);
+    await p;
+    expect(f.tables[0]).toBe("business_report_gm_visibility");
+    expect(f.visibilityReads()).toBe(1);
+  });
+  it("MoO / Owner / CGS never read the settings, whatever state the store is in", async () => {
+    for (const visibility of [["missing"], ["error"], ["throw"], [{ raw: "junk" }], [gmOff("report")]] as const) {
+      const { f, p } = load(moo, { visibility });
+      const dto = await p;
+      expect(Object.values(dto.access).every((v) => v === true)).toBe(true);
+      expect(f.visibilityReads()).toBe(0);
+      expect(dto.people![0]).toMatchObject({ straightCostCents: 18_000 });
+    }
+  });
+  const REFUSED: Array<[string, Parameters<typeof fakeClient>[0], number, string]> = [
+    ["the table is missing (0349 not applied)", { visibility: ["missing"] }, 503, "business_access_not_installed"],
+    ["the read fails", { visibility: ["error"] }, 503, "business_access_unavailable"],
+    ["the read throws", { visibility: ["throw"] }, 503, "business_access_unavailable"],
+    ["the row has an extra key", { visibility: [{ raw: { ...ALL_ON, extra: true } }] }, 503, "business_access_unavailable"],
+    ["the row has a non-boolean", { visibility: [{ raw: { ...ALL_ON, people: 1 } }] }, 503, "business_access_unavailable"],
+    ["the row is incoherent", { visibility: [{ raw: { ...ALL_ON, hourly_cost: false } }] }, 503, "business_access_unavailable"],
+    ["the row's settings are not an object", { visibility: [{ raw: [ALL_ON] }] }, 503, "business_access_unavailable"],
+    ["the report is switched off for GMs", { visibility: [gmOff("report")] }, 403, "gm_report_off"],
+    ["the row is the nine keys of 0349's first draft", { visibility: [{ raw: { report: true, hourly_cost: true, loaded: true, quarters: true, channels: true, people: true,
+      servers: true, compare: true, export: true } }] }, 503, "business_access_unavailable"],
+  ];
+  for (const [name, opts, status, code] of REFUSED) {
+    it(`a GM, when ${name}: ${status} ${code}, and NOTHING of the report is read (never the defaults, never wider)`, async () => {
+      const { f, p } = load(gm, opts);
+      await expect(p).rejects.toMatchObject({ status, code });
+      expect(f.calls).toHaveLength(0);
+      expect(f.tables).toEqual(["business_report_gm_visibility"]);
+    });
+  }
+  it("no row saved yet: the defaults; a saved row: its settings", async () => {
+    expect((await load(gm, { visibility: [null] }).p).access).toEqual(businessAccessFor("gm", null));
+    expect((await load(gm, { visibility: [ALL_ON] }).p).access).toMatchObject({ loaded: true, personCost: true, quarterCost: true, personSalary: true });
+    const hoursOnly = await load(gm, { visibility: [gmOff("hourly_cost")] }).p;
+    expect(hoursOnly.access).toMatchObject({ hourlyCost: false, loaded: false, people: true, personCost: false, quarterCost: false, personSalary: false });
+    expect(JSON.stringify(hoursOnly)).not.toMatch(/straightCents|CostCents/);
+    expect(hoursOnly.total.labor).not.toHaveProperty("pureHourlyCents");
+    expect(hoursOnly.total.labor).not.toHaveProperty("pct");
+    expect(hoursOnly.total.labor).toMatchObject({ minutes: expect.any(Number) });
+  });
+  it("the settings are read per load: nothing is remembered between two loads", async () => {
+    const f = fakeClient({ visibility: [ALL_ON, gmOff("loaded")] });
+    const first = await loadBusinessReport(gm, { locationId: A, range }, { client: f.client, env: ON });
+    const second = await loadBusinessReport(gm, { locationId: A, range }, { client: f.client, env: ON });
+    expect([first.access.loaded, second.access.loaded]).toEqual([true, false]);
+    expect(second.total.labor).not.toHaveProperty("fullyLoadedCents");
+  });
+  it("the switch and the role are still judged before the settings (nothing is read while dark or for a refused role)", async () => {
+    for (const [viewer, env] of [[gm, { ...ON, BUSINESS_REPORT: "0" }], [agm, ON], [smm, ON]] as const) {
+      const f = fakeClient({ visibility: ["throw"] });
+      await expect(loadBusinessReport(viewer, { locationId: A, range }, { client: f.client, env })).rejects.toBeInstanceOf(BusinessReportError);
+      expect(f.tables).toHaveLength(0);
+    }
   });
 });

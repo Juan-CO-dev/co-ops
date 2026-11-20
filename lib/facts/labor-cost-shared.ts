@@ -267,15 +267,17 @@ export function laborFactAccess(role: RoleCode): LaborFactAccess {
 }
 
 const ACCESS_RANK: Record<LaborFactAccess, number> = { none: 0, hours_only: 1, shop_money: 2, person_money: 3 };
-/** Item 9 (Juan's default, plan r2 finding 4): the ONE switch for cost BY PERSON on every labor reader (the
- * business report, its export, the board). `person_money` = MoO / Owner / CGS; set it to `shop_money` and a GM
+/** Item 9 (Juan's default, plan r2 finding 4): the switch for cost BY PERSON on the labor readers OTHER than the
+ * business report. (Juan 2026-11-19: in the business report and its export a GM's cost per hourly person is a
+ * MoO+ setting, ON by default; lib/business-access-shared.ts.) `person_money` = MoO / Owner / CGS; set it to `shop_money` and a GM
  * sees it too, everywhere at once. Never a second rule beside this one. */
 export const PERSON_COST_MIN: LaborFactAccess = "person_money";
 export function canSeePersonCost(role: RoleCode): boolean {
   return ACCESS_RANK[laborFactAccess(role)] >= ACCESS_RANK[PERSON_COST_MIN];
 }
-/** Item 9b (Juan 2026-11-18: "GMs see hours only for 15-min"): the ONE switch for labor DOLLARS (and %) per
- * 15-minute quarter on every labor reader. `person_money` = MoO / Owner / CGS; a GM sees that quarter's minutes. */
+/** Item 9b (Juan 2026-11-18: "GMs see hours only for 15-min"): the switch for sub-day labor DOLLARS (and %) on the
+ * schedule board. (Juan 2026-11-19 superseded it for the business report: there labor dollars per 15 minutes are a
+ * MoO+ setting for GMs, ON by default; lib/business-access-shared.ts.) `person_money` = MoO / Owner / CGS; a GM sees that quarter's minutes. */
 export const QUARTER_COST_MIN: LaborFactAccess = "person_money";
 export function canSeeQuarterLaborCost(role: RoleCode): boolean {
   return ACCESS_RANK[laborFactAccess(role)] >= ACCESS_RANK[QUARTER_COST_MIN];

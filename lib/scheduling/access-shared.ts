@@ -84,8 +84,7 @@ export function canSeeScheduleMoney(actor: PeopleActor, locationId: string): boo
 /**
  * Board two labor views PR 3 (plan r4, Juan: "GM sees hours per hour plus day and week totals; sub-day $ and % need
  * person_money"): with SCHEDULE_LABOR_VIEWS on, labor $ and % per HOUR (the board's straight-time % by hour and the
- * forecast $ by hour) are for MoO / Owner / CGS only, by trusted ROLE (`canSeeQuarterLaborCost`, the business report's
- * one switch), at a shop they may see money for. A GM keeps the day and week totals and sees hours per hour. Switch off,
+ * forecast $ by hour) are for MoO / Owner / CGS only, by trusted ROLE (`canSeeQuarterLaborCost`), at a shop they may see money for. A GM keeps the day and week totals and sees hours per hour. Switch off,
  * nothing changes (the board's pre-PR 3 per-hour % stays the GM's).
  */
 export function canSeeSubDayLaborMoney(actor: PeopleActor, locationId: string): boolean {

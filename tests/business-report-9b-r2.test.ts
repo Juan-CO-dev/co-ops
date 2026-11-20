@@ -21,7 +21,7 @@ vi.mock("@/components/reports-business/HourDisclosure", async () => {
     h("li", { "data-hour": "" }, h("span", null, title as never), h("span", null, summary as never), h("ul", null, children as never)) };
 });
 
-import { loadBusinessReport, type BusinessReportDto } from "@/lib/business-report";
+import { loadBusinessReport, type WholeBusinessReportDto as BusinessReportDto } from "@/lib/business-report";
 import { loadedQualifiers, resolveBusinessRange, type LaborFigures } from "@/lib/business-report-shared";
 import { BUSINESS_EXPORT_COLUMNS } from "@/lib/report-export-shared";
 // Fix round 4: the page and the export take the VIEW; these adapters build it from a DTO as the page does.

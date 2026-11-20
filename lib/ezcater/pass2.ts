@@ -6,7 +6,8 @@ import { loadCapturedToastDay } from "@/lib/toast/captured-day";
 import { loadRawToastSalesRows } from "@/lib/toast/effective-depletion";
 import { etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 import { captureBudget } from "@/lib/toast/capture-runner";
-import { loadKnownToastOrderCodes, toastCodeSelectionKey } from "./toast-codes";
+import { toastCodeSelectionKey } from "./toast-codes";
+import { cateringCaptured, loadHouseNoteContext, lookupDayNoteCodes } from "@/lib/catering/toast-note-codes";
 import { loadPackageShadowContext } from "./shadow-package";
 import { loadCustomizationContext } from "./customizations";
 import { customizedLineAmounts, resolveCustomizations } from "./customizations-shared";
@@ -91,6 +92,10 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
     .order("id").range(from, to).abortSignal(signal));
   const dayCache = new Map<string, Awaited<ReturnType<typeof loadCapturedToastDay>>>();
   const codeCache = new Map<string, Map<string, string[]>>();
+  // Item 21 PR 4 (contract #3): the note lookup is ONE call for both sources. An enabled shop's live house ring codes
+  // ride along and every intersection is recorded before this order is published; with no enabled shop it is the
+  // same lookup as before.
+  const house = await loadHouseNoteContext(sb, signal);
   const baseline = await loadRawToastSalesRows(sb, { fromDate, untilDateExclusive: etYmdMinusDays(toDate, -1) });
   let processed = 0, failed = 0;
   for (const order of targets) {
@@ -109,10 +114,10 @@ async function materialize(fromDate: string, toDate: string, deadlineAt: number,
         if (!day) { if (delta === 0) covered = false; continue; }
         if (!codeCache.has(key)) {
           const restaurant = locations.find((l) => l.id === order.location_id)?.toast_restaurant_guid;
-          const catering = day.orders.filter((r) => r.salesChannel?.toLowerCase() === "catering" && !r.voided && !r.deleted && !r.excessFood);
-          codeCache.set(key, restaurant && catering.length ? await loadKnownToastOrderCodes(restaurant, date,
-            orders.filter((o) => o.location_id === order.location_id && o.order_number).map((o) => o.order_number!),
-            { deadlineAt, signal, expectedVersions: new Map(catering.map((r) => [r.orderGuid, r.modifiedAt])) }) : new Map());
+          const catering = cateringCaptured(day.orders);
+          codeCache.set(key, restaurant && catering.length ? await lookupDayNoteCodes(sb, house, { locationId: order.location_id, restaurantGuid: restaurant, date,
+            ezcaterCodes: orders.filter((o) => o.location_id === order.location_id && o.order_number).map((o) => o.order_number!),
+            captured: catering, deadlineAt, signal }) : new Map());
         }
         for (const ring of day.orders) {
           if (ring.voided || ring.deleted || ring.excessFood) continue;

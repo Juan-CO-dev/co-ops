@@ -23,7 +23,7 @@ import { resolveBusinessRange } from "@/lib/business-report-shared";
 import { figureCells, figureKindOf, purePctFigure, type Figure } from "@/lib/business-figure-shared";
 import { businessView, type BusinessReportView } from "@/lib/business-view-shared";
 import { BUSINESS_EXPORT_COLUMNS, businessChannelRows, businessCompareRows, businessHoursRows, businessOverviewRows, businessPeopleRows, type ExportRow } from "@/lib/report-export-shared";
-import { A, fakeClient } from "./helpers/business-report-fake";
+import { A, fakeClient, gmOff, type FakeOpts } from "./helpers/business-report-fake";
 import { PURE_STATES, laborIn, withLabor } from "./helpers/business-report-states";
 import { between, census, code, filesUnder, show, type Offence } from "./helpers/business-figure-census";
 
@@ -32,7 +32,8 @@ const ON = { BUSINESS_REPORT: "1", FACT_LAYER: "1", FACT_LAYER_LABOR: "1" };
 const SHOP = { id: A, code: "MEP", name: "Capitol Hill" };
 const range = resolveBusinessRange({ range: "custom", from: "2026-10-01", to: "2026-10-07" }, "2026-10-08");
 const viewer = (role: "moo" | "gm") => ({ userId: `u-${role}`, level: role === "moo" ? 8 : 7, role, locations: role === "gm" ? [A] : [] as string[] });
-const load = (role: "moo" | "gm" = "moo") => loadBusinessReport(viewer(role), { locationId: A, range }, { client: fakeClient().client, env: ON });
+const load = (role: "moo" | "gm" = "moo", visibility?: FakeOpts["visibility"]) =>
+  loadBusinessReport(viewer(role), { locationId: A, range }, { client: fakeClient({ visibility }).client, env: ON });
 
 // ── 1. Types ────────────────────────────────────────────────────────────────────────────────────
 
@@ -97,12 +98,14 @@ describe("the view: every number is a Figure or named configuration", () => {
     plainNumbers(view, "", found, { n: 0 });
     expect([...found].filter((p) => !PLAIN_NUMBERS.has(p))).toEqual(["total.sales.totalCents"]);
   });
-  it("a GM's view has no cost-per-person and no per-15-minute cost figure at all", async () => {
-    const gm = businessView(await load("gm")), moo = businessView(await load("moo"));
+  it("a view without the two groups has no cost-per-person and no per-15-minute cost figure at all; a GM's default view has both", async () => {
+    const gm = businessView(await load("gm", [gmOff("person_cost", "quarter_cost")])), moo = businessView(await load("moo")), byDefault = businessView(await load("gm"));
     expect(gm.people.every((p) => !("cost" in p))).toBe(true);
     expect(gm.quarters!.every((q) => !("cost" in q) && !("pct" in q))).toBe(true);
-    expect(moo.people.every((p) => "cost" in p)).toBe(true);
-    expect(moo.quarters!.every((q) => "cost" in q && "pct" in q)).toBe(true);
+    for (const v of [moo, byDefault]) {
+      expect(v.people.every((p) => "cost" in p)).toBe(true);
+      expect(v.quarters!.every((q) => "cost" in q && "pct" in q)).toBe(true);
+    }
   });
 });
 

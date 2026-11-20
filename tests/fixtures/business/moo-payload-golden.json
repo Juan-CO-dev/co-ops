@@ -1,0 +1,865 @@
+{
+ "oneDay": {
+  "locationId": "aaaaaaaa-0000-4000-8000-00000000000a",
+  "range": {
+   "range": "custom",
+   "from": "2026-10-05",
+   "to": "2026-10-05",
+   "days": 1,
+   "shortened": false,
+   "empty": false,
+   "previous": {
+    "from": "2026-10-04",
+    "to": "2026-10-04"
+   },
+   "lastYear": null,
+   "lastYearReason": "no_data_yet"
+  },
+  "days": [
+   {
+    "date": "2026-10-05",
+    "sales": {
+     "date": "2026-10-05",
+     "coverage": "complete",
+     "checks": 2,
+     "toastChecksCents": 750000,
+     "toastAmountMissing": 0,
+     "toastNetCents": 750000,
+     "ezcaterCents": 250000,
+     "ezcaterOrders": 1,
+     "ezcaterMissing": 0,
+     "refundCents": 0,
+     "totalCents": 1000000,
+     "giftCardCents": 0,
+     "ezcaterLinkedCents": 0
+    },
+    "cuts": "ok",
+    "labor": {
+     "state": "ok",
+     "minutes": 7500,
+     "pureHourlyCents": 186000,
+     "otPremiumCents": 6000,
+     "otMinutes": 300,
+     "denominator": {
+      "cents": 1000000,
+      "state": "ok"
+     },
+     "pct": 18.6,
+     "tone": "watch",
+     "burdenEstimated": false,
+     "salaryEstimated": false,
+     "salaryGaps": 0,
+     "wageEstimated": false,
+     "hoursUnverified": false,
+     "loadedState": "ok",
+     "salariedCents": 100000,
+     "burdenCents": 34320,
+     "fullyLoadedCents": 320320,
+     "loadedPct": 32,
+     "loadedTone": "watch"
+    },
+    "largeChecks": {
+     "checks": 0,
+     "cents": 0
+    },
+    "rush": {
+     "state": "not_enough_history",
+     "windows": [],
+     "uncompared": 0,
+     "untimed": 0,
+     "baselineUntimed": 0
+    }
+   }
+  ],
+  "weeks": [
+   {
+    "weekStart": "2026-10-04",
+    "from": "2026-10-05",
+    "to": "2026-10-05",
+    "target": 18,
+    "loadedTarget": 28,
+    "labor": {
+     "state": "ok",
+     "minutes": 7500,
+     "pureHourlyCents": 186000,
+     "otPremiumCents": 6000,
+     "otMinutes": 300,
+     "denominator": {
+      "cents": 1000000,
+      "state": "ok"
+     },
+     "pct": 18.6,
+     "tone": "watch",
+     "burdenEstimated": false,
+     "salaryEstimated": false,
+     "salaryGaps": 0,
+     "wageEstimated": false,
+     "hoursUnverified": false,
+     "loadedState": "ok",
+     "salariedCents": 100000,
+     "burdenCents": 34320,
+     "fullyLoadedCents": 320320,
+     "loadedPct": 32,
+     "loadedTone": "watch"
+    }
+   }
+  ],
+  "total": {
+   "sales": {
+    "totalCents": 1000000,
+    "toastChecksCents": 750000,
+    "toastNetCents": 750000,
+    "ezcaterCents": 250000,
+    "refundCents": 0,
+    "coverage": "complete"
+   },
+   "labor": {
+    "state": "ok",
+    "minutes": 7500,
+    "pureHourlyCents": 186000,
+    "otPremiumCents": 6000,
+    "otMinutes": 300,
+    "denominator": {
+     "cents": 1000000,
+     "state": "ok"
+    },
+    "pct": 18.6,
+    "tone": "watch",
+    "burdenEstimated": false,
+    "salaryEstimated": false,
+    "salaryGaps": 0,
+    "wageEstimated": false,
+    "hoursUnverified": false,
+    "loadedState": "ok",
+    "salariedCents": 100000,
+    "burdenCents": 34320,
+    "fullyLoadedCents": 320320,
+    "loadedPct": 32,
+    "loadedTone": "watch"
+   },
+   "target": 18,
+   "loadedTarget": 28
+  },
+  "quarters": [
+   {
+    "date": "2026-10-05",
+    "quarterStartAt": "2026-10-05T16:00:00.000Z",
+    "wallQuarter": 48,
+    "fold": 0,
+    "toastCents": 450000,
+    "checks": 1,
+    "amountMissing": 0,
+    "laborMinutes": 3000,
+    "straightCents": 105000,
+    "pct": 23.3,
+    "basis": "toast_only_straight_time",
+    "tone": "none"
+   },
+   {
+    "date": "2026-10-05",
+    "quarterStartAt": "2026-10-05T16:15:00.000Z",
+    "wallQuarter": 49,
+    "fold": 0,
+    "toastCents": 300000,
+    "checks": 1,
+    "amountMissing": 0,
+    "laborMinutes": 2100,
+    "straightCents": 75000,
+    "pct": 25,
+    "basis": "toast_only_straight_time",
+    "tone": "none"
+   }
+  ],
+  "quartersUnassigned": [],
+  "quartersReason": null,
+  "channels": {
+   "included": [
+    {
+     "key": "dine_in",
+     "provider": null,
+     "cents": 450000,
+     "checks": 1,
+     "amountMissing": 0
+    },
+    {
+     "key": "online",
+     "provider": null,
+     "cents": 300000,
+     "checks": 1,
+     "amountMissing": 0
+    }
+   ],
+   "excluded": []
+  },
+  "servers": [
+   {
+    "key": "srv-1",
+    "label": "Ana",
+    "cents": 450000,
+    "checks": 1,
+    "amountMissing": 0,
+    "unassigned": false
+   },
+   {
+    "key": "srv-2",
+    "label": "Ben",
+    "cents": 300000,
+    "checks": 1,
+    "amountMissing": 0,
+    "unassigned": false
+   }
+  ],
+  "people": [
+   {
+    "personKey": "u:11111111-1111-4111-8111-111111111111",
+    "label": "Ana",
+    "source": "7shifts",
+    "payClass": "hourly",
+    "minutes": 2700,
+    "otMinutes": 300,
+    "weeksSuppressed": 0,
+    "straightCostCents": 108000
+   },
+   {
+    "personKey": "u:22222222-1111-4111-8111-111111111111",
+    "label": "Ben",
+    "source": "7shifts",
+    "payClass": "hourly",
+    "minutes": 2400,
+    "otMinutes": 0,
+    "weeksSuppressed": 0,
+    "straightCostCents": 72000
+   },
+   {
+    "personKey": "u:33333333-1111-4111-8111-111111111111",
+    "label": "Cy",
+    "source": "7shifts",
+    "payClass": "salaried",
+    "minutes": 2400,
+    "otMinutes": 0,
+    "weeksSuppressed": 0,
+    "straightCostCents": null
+   }
+  ],
+  "largeChecks": {
+   "checks": 0,
+   "cents": 0
+  },
+  "rushRule": {
+   "multiplier": 1.5,
+   "historyWeeks": 8,
+   "minHistory": 4,
+   "minChecks": 3,
+   "minBaselineChecks": 1,
+   "minRunQuarters": 2
+  }
+ },
+ "week": {
+  "locationId": "aaaaaaaa-0000-4000-8000-00000000000a",
+  "range": {
+   "range": "custom",
+   "from": "2026-10-01",
+   "to": "2026-10-07",
+   "days": 7,
+   "shortened": false,
+   "empty": false,
+   "previous": {
+    "from": "2026-09-24",
+    "to": "2026-09-30"
+   },
+   "lastYear": null,
+   "lastYearReason": "no_data_yet"
+  },
+  "days": [
+   {
+    "date": "2026-10-01",
+    "sales": {
+     "date": "2026-10-01",
+     "coverage": "missing",
+     "checks": 0,
+     "toastChecksCents": 0,
+     "toastAmountMissing": 0,
+     "toastNetCents": null,
+     "ezcaterCents": 0,
+     "ezcaterOrders": 0,
+     "ezcaterMissing": 0,
+     "refundCents": 0,
+     "totalCents": 0,
+     "giftCardCents": 0,
+     "ezcaterLinkedCents": 0
+    },
+    "cuts": "sales_not_covered",
+    "labor": {
+     "state": "unbuilt",
+     "minutes": null,
+     "pureHourlyCents": null,
+     "otPremiumCents": null,
+     "otMinutes": null,
+     "denominator": {
+      "cents": null,
+      "state": "sales_not_covered"
+     },
+     "pct": null,
+     "tone": "none",
+     "loadedState": "unbuilt",
+     "salariedCents": null,
+     "burdenCents": null,
+     "fullyLoadedCents": null,
+     "loadedPct": null,
+     "loadedTone": "none",
+     "burdenEstimated": false,
+     "salaryEstimated": false,
+     "salaryGaps": 0,
+     "wageEstimated": false,
+     "hoursUnverified": false
+    },
+    "largeChecks": {
+     "checks": 0,
+     "cents": 0
+    },
+    "rush": null
+   },
+   {
+    "date": "2026-10-02",
+    "sales": {
+     "date": "2026-10-02",
+     "coverage": "complete",
+     "checks": 2,
+     "toastChecksCents": 750000,
+     "toastAmountMissing": 0,
+     "toastNetCents": 750000,
+     "ezcaterCents": 250000,
+     "ezcaterOrders": 1,
+     "ezcaterMissing": 0,
+     "refundCents": 0,
+     "totalCents": 1000000,
+     "giftCardCents": 0,
+     "ezcaterLinkedCents": 0
+    },
+    "cuts": "ok",
+    "labor": {
+     "state": "ok",
+     "minutes": 7500,
+     "pureHourlyCents": 372000,
+     "otPremiumCents": 12000,
+     "otMinutes": 300,
+     "denominator": {
+      "cents": 1000000,
+      "state": "ok"
+     },
+     "pct": 37.2,
+     "tone": "high",
+     "burdenEstimated": false,
+     "salaryEstimated": false,
+     "salaryGaps": 0,
+     "wageEstimated": false,
+     "hoursUnverified": false,
+     "loadedState": "ok",
+     "salariedCents": 200000,
+     "burdenCents": 68640,
+     "fullyLoadedCents": 640640,
+     "loadedPct": 64.1,
+     "loadedTone": "high"
+    },
+    "largeChecks": {
+     "checks": 0,
+     "cents": 0
+    },
+    "rush": {
+     "state": "not_enough_history",
+     "windows": [],
+     "uncompared": 0,
+     "untimed": 0,
+     "baselineUntimed": 0
+    }
+   },
+   {
+    "date": "2026-10-03",
+    "sales": {
+     "date": "2026-10-03",
+     "coverage": "missing",
+     "checks": 0,
+     "toastChecksCents": 0,
+     "toastAmountMissing": 0,
+     "toastNetCents": null,
+     "ezcaterCents": 0,
+     "ezcaterOrders": 0,
+     "ezcaterMissing": 0,
+     "refundCents": 0,
+     "totalCents": 0,
+     "giftCardCents": 0,
+     "ezcaterLinkedCents": 0
+    },
+    "cuts": "sales_not_covered",
+    "labor": {
+     "state": "unbuilt",
+     "minutes": null,
+     "pureHourlyCents": null,
+     "otPremiumCents": null,
+     "otMinutes": null,
+     "denominator": {
+      "cents": null,
+      "state": "sales_not_covered"
+     },
+     "pct": null,
+     "tone": "none",
+     "loadedState": "unbuilt",
+     "salariedCents": null,
+     "burdenCents": null,
+     "fullyLoadedCents": null,
+     "loadedPct": null,
+     "loadedTone": "none",
+     "burdenEstimated": false,
+     "salaryEstimated": false,
+     "salaryGaps": 0,
+     "wageEstimated": false,
+     "hoursUnverified": false
+    },
+    "largeChecks": {
+     "checks": 0,
+     "cents": 0
+    },
+    "rush": null
+   },
+   {
+    "date": "2026-10-04",
+    "sales": {
+     "date": "2026-10-04",
+     "coverage": "missing",
+     "checks": 0,
+     "toastChecksCents": 0,
+     "toastAmountMissing": 0,
+     "toastNetCents": null,
+     "ezcaterCents": 0,
+     "ezcaterOrders": 0,
+     "ezcaterMissing": 0,
+     "refundCents": 0,
+     "totalCents": 0,
+     "giftCardCents": 0,
+     "ezcaterLinkedCents": 0
+    },
+    "cuts": "sales_not_covered",
+    "labor": {
+     "state": "unbuilt",
+     "minutes": null,
+     "pureHourlyCents": null,
+     "otPremiumCents": null,
+     "otMinutes": null,
+     "denominator": {
+      "cents": null,
+      "state": "sales_not_covered"
+     },
+     "pct": null,
+     "tone": "none",
+     "loadedState": "unbuilt",
+     "salariedCents": null,
+     "burdenCents": null,
+     "fullyLoadedCents": null,
+     "loadedPct": null,
+     "loadedTone": "none",
+     "burdenEstimated": false,
+     "salaryEstimated": false,
+     "salaryGaps": 0,
+     "wageEstimated": false,
+     "hoursUnverified": false
+    },
+    "largeChecks": {
+     "checks": 0,
+     "cents": 0
+    },
+    "rush": null
+   },
+   {
+    "date": "2026-10-05",
+    "sales": {
+     "date": "2026-10-05",
+     "coverage": "complete",
+     "checks": 2,
+     "toastChecksCents": 750000,
+     "toastAmountMissing": 0,
+     "toastNetCents": 750000,
+     "ezcaterCents": 250000,
+     "ezcaterOrders": 1,
+     "ezcaterMissing": 0,
+     "refundCents": 0,
+     "totalCents": 1000000,
+     "giftCardCents": 0,
+     "ezcaterLinkedCents": 0
+    },
+    "cuts": "ok",
+    "labor": {
+     "state": "ok",
+     "minutes": 7500,
+     "pureHourlyCents": 186000,
+     "otPremiumCents": 6000,
+     "otMinutes": 300,
+     "denominator": {
+      "cents": 1000000,
+      "state": "ok"
+     },
+     "pct": 18.6,
+     "tone": "watch",
+     "burdenEstimated": false,
+     "salaryEstimated": false,
+     "salaryGaps": 0,
+     "wageEstimated": false,
+     "hoursUnverified": false,
+     "loadedState": "ok",
+     "salariedCents": 100000,
+     "burdenCents": 34320,
+     "fullyLoadedCents": 320320,
+     "loadedPct": 32,
+     "loadedTone": "watch"
+    },
+    "largeChecks": {
+     "checks": 0,
+     "cents": 0
+    },
+    "rush": {
+     "state": "not_enough_history",
+     "windows": [],
+     "uncompared": 0,
+     "untimed": 0,
+     "baselineUntimed": 0
+    }
+   },
+   {
+    "date": "2026-10-06",
+    "sales": {
+     "date": "2026-10-06",
+     "coverage": "missing",
+     "checks": 0,
+     "toastChecksCents": 0,
+     "toastAmountMissing": 0,
+     "toastNetCents": null,
+     "ezcaterCents": 0,
+     "ezcaterOrders": 0,
+     "ezcaterMissing": 0,
+     "refundCents": 0,
+     "totalCents": 0,
+     "giftCardCents": 0,
+     "ezcaterLinkedCents": 0
+    },
+    "cuts": "sales_not_covered",
+    "labor": {
+     "state": "unbuilt",
+     "minutes": null,
+     "pureHourlyCents": null,
+     "otPremiumCents": null,
+     "otMinutes": null,
+     "denominator": {
+      "cents": null,
+      "state": "sales_not_covered"
+     },
+     "pct": null,
+     "tone": "none",
+     "loadedState": "unbuilt",
+     "salariedCents": null,
+     "burdenCents": null,
+     "fullyLoadedCents": null,
+     "loadedPct": null,
+     "loadedTone": "none",
+     "burdenEstimated": false,
+     "salaryEstimated": false,
+     "salaryGaps": 0,
+     "wageEstimated": false,
+     "hoursUnverified": false
+    },
+    "largeChecks": {
+     "checks": 0,
+     "cents": 0
+    },
+    "rush": null
+   },
+   {
+    "date": "2026-10-07",
+    "sales": {
+     "date": "2026-10-07",
+     "coverage": "missing",
+     "checks": 0,
+     "toastChecksCents": 0,
+     "toastAmountMissing": 0,
+     "toastNetCents": null,
+     "ezcaterCents": 0,
+     "ezcaterOrders": 0,
+     "ezcaterMissing": 0,
+     "refundCents": 0,
+     "totalCents": 0,
+     "giftCardCents": 0,
+     "ezcaterLinkedCents": 0
+    },
+    "cuts": "sales_not_covered",
+    "labor": {
+     "state": "unbuilt",
+     "minutes": null,
+     "pureHourlyCents": null,
+     "otPremiumCents": null,
+     "otMinutes": null,
+     "denominator": {
+      "cents": null,
+      "state": "sales_not_covered"
+     },
+     "pct": null,
+     "tone": "none",
+     "loadedState": "unbuilt",
+     "salariedCents": null,
+     "burdenCents": null,
+     "fullyLoadedCents": null,
+     "loadedPct": null,
+     "loadedTone": "none",
+     "burdenEstimated": false,
+     "salaryEstimated": false,
+     "salaryGaps": 0,
+     "wageEstimated": false,
+     "hoursUnverified": false
+    },
+    "largeChecks": {
+     "checks": 0,
+     "cents": 0
+    },
+    "rush": null
+   }
+  ],
+  "weeks": [
+   {
+    "weekStart": "2026-09-27",
+    "from": "2026-10-01",
+    "to": "2026-10-03",
+    "target": 18,
+    "loadedTarget": 28,
+    "labor": {
+     "state": "sales_not_covered",
+     "minutes": 7500,
+     "pureHourlyCents": 372000,
+     "otPremiumCents": 12000,
+     "otMinutes": 300,
+     "denominator": {
+      "cents": null,
+      "state": "sales_not_covered"
+     },
+     "pct": null,
+     "tone": "none",
+     "burdenEstimated": false,
+     "salaryEstimated": false,
+     "salaryGaps": 0,
+     "wageEstimated": false,
+     "hoursUnverified": false,
+     "loadedState": "sales_not_covered",
+     "salariedCents": 200000,
+     "burdenCents": 68640,
+     "fullyLoadedCents": 640640,
+     "loadedPct": null,
+     "loadedTone": "none"
+    }
+   },
+   {
+    "weekStart": "2026-10-04",
+    "from": "2026-10-04",
+    "to": "2026-10-07",
+    "target": 18,
+    "loadedTarget": 28,
+    "labor": {
+     "state": "sales_not_covered",
+     "minutes": 7500,
+     "pureHourlyCents": 186000,
+     "otPremiumCents": 6000,
+     "otMinutes": 300,
+     "denominator": {
+      "cents": null,
+      "state": "sales_not_covered"
+     },
+     "pct": null,
+     "tone": "none",
+     "burdenEstimated": false,
+     "salaryEstimated": false,
+     "salaryGaps": 0,
+     "wageEstimated": false,
+     "hoursUnverified": false,
+     "loadedState": "sales_not_covered",
+     "salariedCents": 100000,
+     "burdenCents": 34320,
+     "fullyLoadedCents": 320320,
+     "loadedPct": null,
+     "loadedTone": "none"
+    }
+   }
+  ],
+  "total": {
+   "sales": {
+    "totalCents": 2000000,
+    "toastChecksCents": 1500000,
+    "toastNetCents": null,
+    "ezcaterCents": 500000,
+    "refundCents": 0,
+    "coverage": "partial"
+   },
+   "labor": {
+    "state": "sales_not_covered",
+    "minutes": 15000,
+    "pureHourlyCents": 558000,
+    "otPremiumCents": 18000,
+    "otMinutes": 600,
+    "denominator": {
+     "cents": null,
+     "state": "sales_not_covered"
+    },
+    "pct": null,
+    "tone": "none",
+    "burdenEstimated": false,
+    "salaryEstimated": false,
+    "salaryGaps": 0,
+    "wageEstimated": false,
+    "hoursUnverified": false,
+    "loadedState": "sales_not_covered",
+    "salariedCents": 300000,
+    "burdenCents": 102960,
+    "fullyLoadedCents": 960960,
+    "loadedPct": null,
+    "loadedTone": "none"
+   },
+   "target": 18,
+   "loadedTarget": 28
+  },
+  "quarters": [
+   {
+    "date": "2026-10-02",
+    "quarterStartAt": "2026-10-02T16:00:00.000Z",
+    "wallQuarter": 48,
+    "fold": 0,
+    "toastCents": 450000,
+    "checks": 1,
+    "amountMissing": 0,
+    "laborMinutes": 3000,
+    "straightCents": 210000,
+    "pct": 46.7,
+    "basis": "toast_only_straight_time",
+    "tone": "none"
+   },
+   {
+    "date": "2026-10-02",
+    "quarterStartAt": "2026-10-02T16:15:00.000Z",
+    "wallQuarter": 49,
+    "fold": 0,
+    "toastCents": 300000,
+    "checks": 1,
+    "amountMissing": 0,
+    "laborMinutes": 2100,
+    "straightCents": 150000,
+    "pct": 50,
+    "basis": "toast_only_straight_time",
+    "tone": "none"
+   },
+   {
+    "date": "2026-10-05",
+    "quarterStartAt": "2026-10-05T16:00:00.000Z",
+    "wallQuarter": 48,
+    "fold": 0,
+    "toastCents": 450000,
+    "checks": 1,
+    "amountMissing": 0,
+    "laborMinutes": 3000,
+    "straightCents": 105000,
+    "pct": 23.3,
+    "basis": "toast_only_straight_time",
+    "tone": "none"
+   },
+   {
+    "date": "2026-10-05",
+    "quarterStartAt": "2026-10-05T16:15:00.000Z",
+    "wallQuarter": 49,
+    "fold": 0,
+    "toastCents": 300000,
+    "checks": 1,
+    "amountMissing": 0,
+    "laborMinutes": 2100,
+    "straightCents": 75000,
+    "pct": 25,
+    "basis": "toast_only_straight_time",
+    "tone": "none"
+   }
+  ],
+  "quartersUnassigned": [],
+  "quartersReason": null,
+  "channels": {
+   "included": [
+    {
+     "key": "dine_in",
+     "provider": null,
+     "cents": 900000,
+     "checks": 2,
+     "amountMissing": 0
+    },
+    {
+     "key": "online",
+     "provider": null,
+     "cents": 600000,
+     "checks": 2,
+     "amountMissing": 0
+    }
+   ],
+   "excluded": []
+  },
+  "servers": [
+   {
+    "key": "srv-1",
+    "label": "Ana",
+    "cents": 900000,
+    "checks": 2,
+    "amountMissing": 0,
+    "unassigned": false
+   },
+   {
+    "key": "srv-2",
+    "label": "Ben",
+    "cents": 600000,
+    "checks": 2,
+    "amountMissing": 0,
+    "unassigned": false
+   }
+  ],
+  "people": [
+   {
+    "personKey": "u:11111111-1111-4111-8111-111111111111",
+    "label": "Ana",
+    "source": "7shifts",
+    "payClass": "hourly",
+    "minutes": 5400,
+    "otMinutes": 600,
+    "weeksSuppressed": 0,
+    "straightCostCents": 324000
+   },
+   {
+    "personKey": "u:22222222-1111-4111-8111-111111111111",
+    "label": "Ben",
+    "source": "7shifts",
+    "payClass": "hourly",
+    "minutes": 4800,
+    "otMinutes": 0,
+    "weeksSuppressed": 0,
+    "straightCostCents": 216000
+   },
+   {
+    "personKey": "u:33333333-1111-4111-8111-111111111111",
+    "label": "Cy",
+    "source": "7shifts",
+    "payClass": "salaried",
+    "minutes": 4800,
+    "otMinutes": 0,
+    "weeksSuppressed": 0,
+    "straightCostCents": null
+   }
+  ],
+  "largeChecks": {
+   "checks": 0,
+   "cents": 0
+  },
+  "rushRule": {
+   "multiplier": 1.5,
+   "historyWeeks": 8,
+   "minHistory": 4,
+   "minChecks": 3,
+   "minBaselineChecks": 1,
+   "minRunQuarters": 2
+  }
+ }
+}
