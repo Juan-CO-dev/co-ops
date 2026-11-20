@@ -32,6 +32,7 @@ import { ShortStretchList } from "./ShortStretchList";
 import { ApproveBar, HorizonBuilder } from "./HorizonBuilder";
 import { regenerateBody, runRegenerate } from "./horizon-flow-shared";
 import { LaborTargetCard } from "./LaborTargetCard";
+import { LaborDayCard, LaborViewsStrip } from "./LaborViews";
 import { BudgetLineItem, MoneyStrip } from "./MoneyStrip";
 import { EditNotice, PersonRow, barKeyOf, rowEditProps, shiftKeyOf, useFocusMemo } from "./PersonRow";
 import { ReasonPanel } from "./ReasonPanel";
@@ -136,6 +137,9 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
   // CC chunk H9 (a11y): the handle a keyboard edit used is focused again after the re-render (PersonRow).
   const focusMemo = useFocusMemo();
   const weekHref = (w: string) => `/schedule?loc=${view.locationId}&week=${w}`;
+  // PR 3 (review r2): the selected day's labor comes from `laborViews` and the SELECTED DATE alone. A week with settled
+  // labor facts and no schedule head has no schedule day, and still shows each day's hours, figures and reasons.
+  const laborDay = view.laborViews ? <LaborDayCard key={selected} views={view.laborViews} date={selected} /> : null;
 
   // Astra chunk F P2-3: a week with manager edits is rebuilt only after the horizon's own warning, then Tier B, then
   // confirmEdited: true. Cancelling the warning or the password posts nothing.
@@ -175,11 +179,14 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
 
       {view.strip ? (
         <MoneyStrip strip={view.strip} budgetLines={view.budgetLines} names={view.names} positions={view.positions}
-          canSetEstimates={view.perms.canManageSwitch} canBudget={view.perms.canBudget} locationId={view.locationId} />
+          canSetEstimates={view.perms.canManageSwitch} canBudget={view.perms.canBudget} locationId={view.locationId} laborViews={!!view.laborViews} />
       ) : view.budgetLines.length > 0 ? (
         <ul className="grid gap-1 text-sm text-co-text-muted" data-section="budget-lines">{view.budgetLines.map((l, i) =>
           <BudgetLineItem key={i} line={l} canBudget={view.perms.canBudget} render={line} setLink={t("schedule.board.budget.set_link")} />)}</ul>
       ) : null}
+
+      {/* PR 3 (dark): the two labor views, the week. Present only for a money viewer with SCHEDULE_LABOR_VIEWS on. */}
+      {view.laborViews ? <LaborViewsStrip views={view.laborViews} /> : null}
 
       {view.suggestion ? <BudgetSuggestion suggestion={view.suggestion} locationId={view.locationId} weekStart={view.weekStart} names={view.names} positions={view.positions} /> : null}
 
@@ -199,7 +206,7 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
         <p className="co-card p-4 text-sm text-co-text" data-section="no-week">{t("schedule.board.no_week")}</p>
       )}
 
-      <DayTabs tabs={view.tabs} selected={selected} onSelect={setSelected} />
+      <DayTabs tabs={view.tabs} selected={selected} onSelect={setSelected} labor={view.laborViews} />
 
       {day ? (
         <section className="grid min-w-0 gap-2" aria-label={formatDateLabel(day.date, language)} data-day={day.date}>
@@ -218,6 +225,7 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
             <ReasonPanel row={pickedRow} shift={pickedShift} segment={picked?.segment ?? null} editable={editable && !pickedShift.locked} busy={!!edit.pending}
               names={view.names} positions={view.positions} onEdit={submitEdit} />
           ) : null}
+          {laborDay}
           {day.labor ? <LaborTargetCard labor={day.labor} names={view.names} positions={view.positions} /> : null}
           {day.gaps.length > 0 ? (
             <ul className="grid gap-2" aria-label={t("schedule.board.gap.title", { n: day.gaps.length })}>
@@ -225,7 +233,7 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
             </ul>
           ) : null}
         </section>
-      ) : null}
+      ) : laborDay /* review r2: no schedule day (no week yet) never hides the selected day's labor */}
 
       {view.perms.canEdit ? (
         <div className="grid gap-2">

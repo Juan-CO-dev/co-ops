@@ -404,6 +404,9 @@ export const RESERVED_ACTIONS = [
   // SQL-only: 0340 save_labor_payroll_shop INSERTs its own audit row (destructive literally true; before /
   // after the payroll shop in force at valid_from; has_note only) in the same transaction as the row.
   "labor_payroll_shop.save",
+  // SQL-only: 0349 save_business_report_gm_visibility INSERTs its own audit row (destructive literally true; the
+  // settings in force before, the new ones, which switches went on / off) in the same transaction as the row.
+  "business_report_visibility.save",
   // SQL-only: 0343 demand_source_mark and demand_event_save INSERT their own audit rows (destructive literally
   // true) in the same transaction as the status event / the correction. The note never enters the row.
   "demand_source.mark",

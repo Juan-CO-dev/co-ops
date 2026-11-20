@@ -11,6 +11,7 @@
  * actor acts only at shops in its own memberships; MoO (8)+ acts at any shop.
  */
 import { MOO_LEVEL, GM_LEVEL, OPERATIONAL_LEVEL6_ROLES, canSeeShopLaborTotals, type PeopleActor } from "@/lib/people/access-shared";
+import { canSeeQuarterLaborCost } from "@/lib/facts/labor-cost-shared";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import type { ScheduleErrorCode } from "./errors-shared";
 
@@ -78,6 +79,16 @@ export function canViewSchedule(actor: PeopleActor, locationId: string): boolean
 /** The money strip's $ and %, the labor-target $ lines, labor % per hour: GM own, MoO+ any (J1, J9: never per person). */
 export function canSeeScheduleMoney(actor: PeopleActor, locationId: string): boolean {
   return canSeeShopLaborTotals(actor, locationId);
+}
+
+/**
+ * Board two labor views PR 3 (plan r4, Juan: "GM sees hours per hour plus day and week totals; sub-day $ and % need
+ * person_money"): with SCHEDULE_LABOR_VIEWS on, labor $ and % per HOUR (the board's straight-time % by hour and the
+ * forecast $ by hour) are for MoO / Owner / CGS only, by trusted ROLE (`canSeeQuarterLaborCost`), at a shop they may see money for. A GM keeps the day and week totals and sees hours per hour. Switch off,
+ * nothing changes (the board's pre-PR 3 per-hour % stays the GM's).
+ */
+export function canSeeSubDayLaborMoney(actor: PeopleActor, locationId: string): boolean {
+  return canSeeScheduleMoney(actor, locationId) && canSeeQuarterLaborCost(actor.role);
 }
 
 /** Generate a new week, edit, set a budget, presence, day type, person settings, regenerate (Tier B separately). */
