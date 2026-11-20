@@ -51,7 +51,7 @@ import {
   BUSINESS_EXPORT_COLUMNS, BUSINESS_EXPORT_TABS, businessChannelRows, businessCompareRows, businessHoursRows, businessOverviewRows, businessPeopleRows,
   type BusinessExportTab,
 } from "@/lib/report-export-shared";
-import { A, fakeClient } from "./helpers/business-report-fake";
+import { A, GM_ALL_ON, fakeClient, gmOff, type FakeOpts } from "./helpers/business-report-fake";
 import { BusinessCompare } from "./helpers/business-report-views";
 import { assertMarksResolve, loadedIn, withLabor } from "./helpers/business-report-states";
 
@@ -59,8 +59,9 @@ const EN = en as Record<string, string>;
 const R = (k: string) => EN[`reports.business.${k}`]!;
 const ON = { BUSINESS_REPORT: "1", FACT_LAYER: "1", FACT_LAYER_LABOR: "1" };
 const range = resolveBusinessRange({ range: "custom", from: "2026-10-01", to: "2026-10-07" }, "2026-11-10");
-const load = (role: "moo" | "gm" = "moo") => loadBusinessReport({ userId: `u-${role}`, level: role === "moo" ? 8 : 7, role, locations: role === "gm" ? [A] : [] },
-  { locationId: A, range }, { client: fakeClient().client, env: ON });
+const load = (role: "moo" | "gm" = "moo", visibility?: FakeOpts["visibility"]) =>
+  loadBusinessReport({ userId: `u-${role}`, level: role === "moo" ? 8 : 7, role, locations: role === "gm" ? [A] : [] },
+    { locationId: A, range }, { client: fakeClient({ visibility }).client, env: ON });
 const SHOP = { id: A, code: "CH", name: "Capitol Hill" };
 
 /** A day with large checks and two detected rushes (the review's own example), and estimates on every labor figure. */
@@ -129,6 +130,15 @@ const COST_GATED: Record<string, string> = {
   straight_time_cost: "labor dollars per person / per 15 minutes are MoO+; a GM's view has no such figure",
   straight_time_pct: "labor % per 15 minutes is MoO+; a GM's view has no such figure",
 };
+/** Business report access (2026-11-19): a column of a money group the view does NOT hold (the MoO+ setting for GMs).
+ * The view has no figure for it, so its CSV cell is EMPTY and the PDF prints no column for it: parity holds as
+ * "absent from both". Checked empty like EMPTY_IN, and the PDF's words must not name its target. */
+const GROUP_GATED: Record<string, "hourlyCost" | "loaded"> = {
+  pure_hourly_cost: "hourlyCost", overtime_premium: "hourlyCost", pure_hourly_pct: "hourlyCost", pure_hourly_target_pct: "hourlyCost", wage_estimated: "hourlyCost",
+  salaried_cost: "loaded", burden_cost: "loaded", fully_loaded_cost: "loaded", fully_loaded_pct: "loaded", fully_loaded_target_pct: "loaded",
+  fully_loaded_state: "loaded", burden_estimated: "loaded", salary_estimated: "loaded", salary_gaps: "loaded",
+};
+const notHeld = (v: BusinessReportView, column: string) => { const g = GROUP_GATED[column]; return g !== undefined && !v.access[g]; };
 const EMPTY_IN: Partial<Record<BusinessExportTab, Record<string, string>>> = {
   compare: { rushes: "rushes are per day; Compare's total rows (the CSV's businessTotalRow) carry none" },
 };
@@ -167,7 +177,7 @@ function census(tab: BusinessExportTab, v: BusinessReportView, prev: BusinessRep
   const text = [...pdf.tables.flatMap((t) => [t.heading ?? "", ...t.columns.map((c) => c.label ?? ""), ...t.rows.flatMap((r) => Object.values(r).map((x) => String(x ?? "")))]), ...pdf.notes].join("\n");
   for (const c of BUSINESS_EXPORT_COLUMNS[tab]) {
     if (figureColumns.has(c.key) || c.key in BUSINESS_PDF_OMITTED[tab]) continue;
-    if (EMPTY_IN[tab]?.[c.key] || (!v.access.quarterCost && COST_GATED[c.key])) {
+    if (EMPTY_IN[tab]?.[c.key] || (!v.access.quarterCost && COST_GATED[c.key]) || notHeld(v, c.key)) {
       if (rows.some((r) => r[c.key] !== null && r[c.key] !== undefined && r[c.key] !== "")) missing.push(`${tab}: ${c.key} is filled in the CSV but listed as empty`);
       continue;
     }
@@ -187,13 +197,23 @@ function census(tab: BusinessExportTab, v: BusinessReportView, prev: BusinessRep
 
 describe("P2: the readable PDF carries every figure the CSV rows carry", () => {
   it("every tab, MoO (every cost) and GM: no figure of the old row builders is missing from the PDF", async () => {
-    for (const role of ["moo", "gm"] as const) {
-      const dto = busy(await load(role));
+    // A GM under the three labor states the MoO+ setting allows: everything on, the defaults (no fully loaded
+    // labor), hours and sales only. What a view does not hold is absent from the CSV cells AND from the PDF.
+    const HOURS_ONLY = gmOff("hourly_cost");
+    for (const [role, visibility, held] of [["moo", undefined, 2], ["gm", [GM_ALL_ON], 2], ["gm", undefined, 1], ["gm", [HOURS_ONLY], 0]] as const) {
+      const dto = busy(await load(role, visibility));
       const v = businessView(dto), prev = businessView(dto);
       expect(v.days[0]!.largeChecks.any, "the fixture has large checks").toBe(true);
       expect(v.days[0]!.rush?.windows.length, "the fixture has rushes").toBe(2);
+      expect(Number(v.access.hourlyCost) + Number(v.access.loaded), role).toBe(held);
       const missing = BUSINESS_EXPORT_TABS.flatMap((tab) => census(tab, v, prev));
-      expect(missing, role).toEqual([]);
+      expect(missing, `${role} ${JSON.stringify(visibility)}`).toEqual([]);
+      // The fixture writes every labor figure into the DTO whatever its access (busy -> withLabor): a group the
+      // access does not hold is still in NEITHER file (the view follows the access, never a key).
+      const pdfText = BUSINESS_EXPORT_TABS.flatMap((tab) => { const p = businessPdf(tab, v, tab === "compare" ? prev : null, "en");
+        return [...p.tables.flatMap((t) => [t.heading ?? "", ...t.columns.map((c) => c.label ?? ""), ...t.rows.flatMap((r) => Object.values(r).map((x) => String(x ?? "")))]), ...p.notes, ...p.legend]; }).join("\n");
+      if (!v.access.loaded) for (const w of [R("detail.salaried"), R("detail.burden"), R("detail.fully_loaded"), R("pdf.loaded_pct"), R("burden_estimated"), R("salary_estimated")]) expect(pdfText, w).not.toContain(w);
+      if (!v.access.hourlyCost) for (const w of [R("detail.pure_hourly_cost"), R("detail.ot_premium"), R("pdf.hourly_pct"), R("wage_estimated")]) expect(pdfText, w).not.toContain(w);
     }
   });
   it("the census can fail: a figure the PDF does not print is named", async () => {
@@ -268,7 +288,7 @@ describe("P3: Compare's change uses the scope's marks, not the qualification sen
   it("a qualification the legend does not hold is still said beside the change (nothing dropped)", async () => {
     const v = businessView(busy(await load()));
     const l = figureLegend("en", []);
-    const c = l.change(v.total.labor.purePct, v.total.labor.purePct);
+    const c = l.change(v.total.labor.purePct!, v.total.labor.purePct!);
     expect(c).not.toBeNull();
     expect(c!.marks).toEqual([]);
     expect(c!.loose.length).toBeGreaterThan(0);

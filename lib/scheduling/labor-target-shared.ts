@@ -11,11 +11,28 @@
  *               per-window "already over the target" line (CC chunk G). Only the minimum head-hours NOT covered by
  *               salaried / presence people on the floor are priced, hourly, against the hourly allowance (Astra G P2-1).
  *
+ * BOARD TWO LABOR VIEWS, PR 3 (plan r4 "Heads budget"; dark behind SCHEDULE_LABOR_VIEWS): with `views` the card stops
+ * pricing labor itself. The day's money comes from the labor facts' own projection (the SAME figure the day tab and the
+ * day card show), and the allowance is cut from the same denominator:
+ *   total basis:  allowance = sales x fully loaded target / (1 + burden %) - the day's salaries   (fully loaded <= target)
+ *                 (salaries unknown -> the PURE-HOURLY target instead, and the card says so)
+ *   hourly basis: allowance = sales x pure-hourly target
+ *   max hours  = (allowance - the projected overtime premium) / the blended STRAIGHT wage, "at this draft's overtime"
+ *   the verdict in dollars: the projected pure hourly $ against the allowance.
+ * EVERY SENTENCE IS ARITHMETICALLY TRUE FOR THE NUMBERS IT SHOWS (review BOARD3-r1): the allowance is SIGNED (salaries
+ * alone above the target leave a NEGATIVE allowance, said so, never clamped to $0); only the HOURS are floored at 0, and
+ * then the card writes the subtraction ("nothing is left"), not a division; the minimum-crew explanation compares against
+ * what is left AFTER the premium, the same quantity the hours were cut from (`DayMoney.minimumsLine`: each money source
+ * words its own explanation). A wage inside an equation is shown to the cent (`wageExactCents`).
+ * A figure the projection withholds (not settled, no wage, overtime not assessed, no sales) is the card's errand, named
+ * by the projection's own reason (never a 0). Only money viewers ever take this path (an AGM's board has no views).
+ *
  * Every line is an i18n KEY + numeric params (`LABOR_LINE_KEYS`, closed; the en + es strings are Task 15's, as
  * for the rule and reason keys). Unknown forecast / wage are named states with their errand, never a 0. Without
  * money permission (the AGM, J1) every $-bearing line and field is ABSENT; the windows' heads stay.
  */
 import type { NarrativeLine } from "@/lib/people-narrative";
+import { laborFigureQualifications, type BoardLaborDayKind, type BoardLaborFigure, type BoardLaborReason } from "./labor-projection-shared";
 import type { DayNeed, RulePerson } from "./context-shared";
 import { MOD, type Shift } from "./rules-shared";
 import type { ScheduleStructure } from "./structure-shared";
@@ -26,6 +43,11 @@ export const LABOR_LINE_KEYS = [
   "schedule.labor.window", "schedule.labor.window_exact", "schedule.labor.window_under_floor", "schedule.labor.window_over_target",
   "schedule.labor.minimums_over_target", "schedule.labor.minimums_over_target_math", "schedule.labor.minimums_over_target_hours",
   "schedule.labor.errand.no_forecast", "schedule.labor.errand.set_wage_estimate",
+  // PR 3: the heads maths over the labor views.
+  "schedule.labor.views_allowance_total", "schedule.labor.views_allowance_hourly", "schedule.labor.views_salary_fallback",
+  "schedule.labor.views_max_hours", "schedule.labor.views_verdict_under", "schedule.labor.views_verdict_over",
+  "schedule.labor.views_salaries_over_target", "schedule.labor.views_no_hours", "schedule.labor.views_minimums_over_math",
+  "schedule.labor.views_basis_forecast", "schedule.labor.views_basis_actual",
 ] as const;
 export type LaborLineKey = (typeof LABOR_LINE_KEYS)[number];
 
@@ -47,6 +69,16 @@ export interface LaborTargetInput {
   salariedWeeklyCents: number | null;
   /** The week's forecast sales (the day's share of the salaried cost); null → an even 1/7 split. */
   weekForecastCents: number | null;
+  /** PR 3: the day's labor-views figure (money viewers with SCHEDULE_LABOR_VIEWS only); its presence replaces the money maths. */
+  views?: LaborTargetViews;
+}
+
+/** The labor views behind one day's card (PR 3): the day's figure, its kind, the live targets and the target basis. */
+export interface LaborTargetViews {
+  kind: BoardLaborDayKind;
+  figure: BoardLaborFigure;
+  basis: "hourly" | "total";
+  targets: { hourlyPct: number; loadedPct: number };
 }
 
 export interface LaborWindow {
@@ -82,7 +114,9 @@ export type LaborTarget =
     maxHours?: number;
   }
   | { state: "no_forecast"; errand: NarrativeLine }
-  | { state: "no_wage"; errand: NarrativeLine };
+  | { state: "no_wage"; errand: NarrativeLine }
+  /** PR 3: the labor views withhold a figure the heads maths needs; the errand is the views' own reason line. */
+  | { state: "views_unknown"; errand: NarrativeLine };
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const isHourly = (p: RulePerson | undefined) => !!p && !p.salaried && !p.presenceOnly;
@@ -111,34 +145,12 @@ function fixedCostHeadsOn(shifts: readonly Shift[], people: Record<string, RuleP
   return n;
 }
 
-export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolean }): LaborTarget {
+export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolean; windowDetail?: boolean }): LaborTarget {
   const d = input.demand;
   if (d.kind !== "ok" || d.dayCents <= 0) return { state: "no_forecast", errand: { key: "schedule.labor.errand.no_forecast" } };
-  const noWage = { state: "no_wage" as const, errand: { key: "schedule.labor.errand.set_wage_estimate" } };
-  // The blended wage: hours-weighted over the draft's hourly people; an unknown wage on the draft blanks the money.
-  let wq = 0;
-  let q4 = 0;
-  for (const sh of input.shifts) {
-    if (!isHourly(input.people[sh.userId])) continue;
-    const wage = input.wageCentsByUser[sh.userId];
-    if (wage === null || wage === undefined) return noWage;
-    wq += wage * (sh.endQ - sh.startQ);
-    q4 += sh.endQ - sh.startQ;
-  }
-  const blended = q4 > 0 ? wq / q4 : input.shopEstimateHourlyCents;
-  if (blended === null || blended <= 0) return noWage;
-  const { targetPct, basis } = input.structure.labor;
-  const gross = Math.round((d.dayCents * targetPct) / 100);
-  let salariedDayCents = 0;
-  if (basis === "total") {
-    if (input.salariedWeeklyCents === null) return noWage;
-    salariedDayCents = input.weekForecastCents !== null && input.weekForecastCents > 0
-      ? Math.round((input.salariedWeeklyCents * d.dayCents) / input.weekForecastCents)
-      : Math.round(input.salariedWeeklyCents / 7);
-  }
-  const maxLaborCents = Math.max(0, gross - salariedDayCents);
-  const maxHoursExact = maxLaborCents / blended;
-  const blendedWageCents = Math.round(blended);
+  const money = input.views ? viewsMoney(input, input.views) : boardMoney(input, d);
+  if ("state" in money) return money;
+  const { maxLaborCents, maxHoursExact, blended, blendedWageCents, salariedDayCents, targetPct } = money;
 
   const windows: Array<Required<LaborWindow>> = input.windows.map((w) => {
     let cents = 0;
@@ -183,16 +195,11 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
   const minHours = minQ / Q_PER_HOUR;
   const minimumsOver = minHours > maxHoursExact + 1e-9;
 
-  const lines: NarrativeLine[] = [];
-  if (opts.canSeeMoney) {
-    lines.push({ key: "schedule.labor.max_labor", params: { salesCents: d.dayCents, targetPct, maxLaborCents: gross } });
-    if (basis === "total") lines.push({ key: "schedule.labor.minus_salaried", params: { salariedDayCents, maxLaborCents } });
-    lines.push({ key: "schedule.labor.max_hours", params: { maxLaborCents, wageCents: blendedWageCents, hours: round1(maxHoursExact) } });
-  }
+  const lines: NarrativeLine[] = opts.canSeeMoney ? [...money.lines] : [];
   if (minimumsOver) {
     lines.push({ key: "schedule.labor.minimums_over_target", params: { targetPct } });
     lines.push(opts.canSeeMoney
-      ? { key: "schedule.labor.minimums_over_target_math", params: { minHours: round1(minHours), wageCents: blendedWageCents, minCostCents: Math.round(minHours * blended), maxLaborCents } }
+      ? money.minimumsLine(round1(minHours), Math.round(minHours * blended))
       : { key: "schedule.labor.minimums_over_target_hours", params: { minHours: round1(minHours) } });
   }
   for (const w of windows) {
@@ -206,9 +213,118 @@ export function laborTarget(input: LaborTargetInput, opts: { canSeeMoney: boolea
   // Astra chunk F P2-1 (CC): without money permission a window carries ONLY what the card displays — the heads on, the
   // optimal range, the minimum crew, the tone and its reason. No spread, demand share or quarter counts behind them (the
   // lines above were built from the full windows first).
-  if (!opts.canSeeMoney) {
-    const shown = windows.map(({ key, fromQ, toQ, floorHeads, optimal, on, amberReasons, tone }) => ({ key, fromQ, toQ, floorHeads, optimal, on, amberReasons, tone }));
-    return { state: "ok", windows: shown, lines };
+  const shown = () => windows.map(({ key, fromQ, toQ, floorHeads, optimal, on, amberReasons, tone }) => ({ key, fromQ, toQ, floorHeads, optimal, on, amberReasons, tone }));
+  if (!opts.canSeeMoney) return { state: "ok", windows: shown(), lines };
+  // PR 3 (`windowDetail: false`): a money viewer without labor money per HOUR (a GM with the labor views) keeps the day's
+  // figures and gets the windows as displayed only: beside the day's allowance, a window's demand share and exact spread
+  // would be that window's labor $.
+  return { state: "ok", windows: opts.windowDetail === false ? shown() : windows, lines, maxLaborCents, salariedDayCents, blendedWageCents, maxHours: round1(maxHoursExact) };
+}
+
+interface DayMoney {
+  /** the hourly allowance; SIGNED with the views (negative = the day's salaries alone are above the target) */
+  maxLaborCents: number;
+  /** the hours the windows are cut from; never negative */
+  maxHoursExact: number;
+  blended: number; blendedWageCents: number; salariedDayCents: number; targetPct: number; lines: NarrativeLine[];
+  /** The "minimum crews alone are above the target" explanation, worded by the money source against the SAME quantity
+   * its `maxHoursExact` was cut from (so the card never contradicts its own arithmetic). */
+  minimumsLine: (minHours: number, minCostCents: number) => NarrativeLine;
+}
+type OkDemand = { kind: "ok"; hourlyCents: number[]; dayCents: number };
+
+/** The card's own money maths (the switch OFF, or an AGM): the draft priced by the board's wages. */
+function boardMoney(input: LaborTargetInput, d: OkDemand): DayMoney | { state: "no_wage"; errand: NarrativeLine } {
+  const noWage = { state: "no_wage" as const, errand: { key: "schedule.labor.errand.set_wage_estimate" } };
+  // The blended wage: hours-weighted over the draft's hourly people; an unknown wage on the draft blanks the money.
+  let wq = 0;
+  let q4 = 0;
+  for (const sh of input.shifts) {
+    if (!isHourly(input.people[sh.userId])) continue;
+    const wage = input.wageCentsByUser[sh.userId];
+    if (wage === null || wage === undefined) return noWage;
+    wq += wage * (sh.endQ - sh.startQ);
+    q4 += sh.endQ - sh.startQ;
   }
-  return { state: "ok", windows, lines, maxLaborCents, salariedDayCents, blendedWageCents, maxHours: round1(maxHoursExact) };
+  const blended = q4 > 0 ? wq / q4 : input.shopEstimateHourlyCents;
+  if (blended === null || blended <= 0) return noWage;
+  const { targetPct, basis } = input.structure.labor;
+  const gross = Math.round((d.dayCents * targetPct) / 100);
+  let salariedDayCents = 0;
+  if (basis === "total") {
+    if (input.salariedWeeklyCents === null) return noWage;
+    salariedDayCents = input.weekForecastCents !== null && input.weekForecastCents > 0
+      ? Math.round((input.salariedWeeklyCents * d.dayCents) / input.weekForecastCents)
+      : Math.round(input.salariedWeeklyCents / 7);
+  }
+  const maxLaborCents = Math.max(0, gross - salariedDayCents);
+  const maxHoursExact = maxLaborCents / blended;
+  const blendedWageCents = Math.round(blended);
+  const lines: NarrativeLine[] = [{ key: "schedule.labor.max_labor", params: { salesCents: d.dayCents, targetPct, maxLaborCents: gross } }];
+  if (basis === "total") lines.push({ key: "schedule.labor.minus_salaried", params: { salariedDayCents, maxLaborCents } });
+  lines.push({ key: "schedule.labor.max_hours", params: { maxLaborCents, wageCents: blendedWageCents, hours: round1(maxHoursExact) } });
+  return { maxLaborCents, maxHoursExact, blended, blendedWageCents, salariedDayCents, targetPct, lines,
+    minimumsLine: (minHours, minCostCents) => ({ key: "schedule.labor.minimums_over_target_math", params: { minHours, wageCents: blendedWageCents, minCostCents, maxLaborCents } }) };
+}
+
+/** PR 3: the allowance and the hours over the day's labor-views figure (see the header). */
+function viewsMoney(input: LaborTargetInput, v: LaborTargetViews): DayMoney | { state: "views_unknown" | "no_wage"; errand: NarrativeLine } {
+  const f = v.figure;
+  // The errand is the projection's OWN reason for the figure that is missing (the first of `among` it gave), else the fallback.
+  const unknown = (among: readonly BoardLaborReason[], fallback: BoardLaborReason) =>
+    ({ state: "views_unknown" as const, errand: { key: `schedule.labor_views.reason.${among.find((r) => f.reasons.includes(r)) ?? fallback}` } });
+  if (v.kind !== "actual" && v.kind !== "projected") return unknown([v.kind], v.kind);
+  const sales = f.sales.cents;
+  if (sales === null) return f.sales.basis === "forecast" ? unknown(["forecast_missing", "zero_sales"], "forecast_missing")
+    : unknown(["sales_not_covered", "net_unknown", "ezcater_missing", "zero_sales"], "sales_not_covered");
+  if (sales <= 0) return unknown(["zero_sales"], "zero_sales");
+  if (f.straightCents === null || f.hourlyMinutes === null || f.otPremiumCents === null || f.pureHourlyCents === null) {
+    return unknown(["wage_unknown", "schedule_incomplete", "actuals_rebuilding", "ot_not_assessed", "hours_unknown"], "hours_unknown");
+  }
+  const hourlyH = f.hourlyMinutes / 60;
+  const blended = hourlyH > 0 ? f.straightCents / hourlyH : input.shopEstimateHourlyCents;
+  if (blended === null || blended <= 0) return { state: "no_wage", errand: { key: "schedule.labor.errand.set_wage_estimate" } };
+  // The card is DERIVED from the figure, so it says what the figure's own reader is told: which sales these are, and
+  // (below) every qualification of the inputs it used (`laborFigureQualifications`, the day card's one list).
+  const lines: NarrativeLine[] = [{ key: f.sales.basis === "forecast" ? "schedule.labor.views_basis_forecast" : "schedule.labor.views_basis_actual" }];
+  let allowance: number;
+  let salariedDayCents = 0;
+  let targetPct: number;
+  const usesSalary = v.basis === "total" && f.salariedCents !== null && f.burdenPct !== null;
+  if (v.basis === "total" && f.salariedCents !== null && f.burdenPct !== null) {
+    // Fully loaded = (pure hourly + salaries) x (1 + burden) <= sales x target  <=>  pure hourly <= this allowance.
+    targetPct = v.targets.loadedPct;
+    salariedDayCents = f.salariedCents;
+    const capCents = Math.round((sales * targetPct) / 100 / (1 + f.burdenPct / 100));
+    // SIGNED: salaries alone above the cap leave a negative allowance (never clamped: "$0 under" would be false).
+    allowance = capCents - salariedDayCents;
+    lines.push({ key: "schedule.labor.views_allowance_total", params: { salesCents: sales, targetPct, burdenPct: f.burdenPct, salariedDayCents, allowanceCents: allowance } });
+    if (allowance < 0) lines.push({ key: "schedule.labor.views_salaries_over_target", params: { salariedDayCents, capCents, overCents: -allowance } });
+  } else {
+    // The hourly basis, or the total basis with the day's salaries unknown: the pure-hourly target, said so.
+    targetPct = v.targets.hourlyPct;
+    allowance = Math.round((sales * targetPct) / 100);
+    if (v.basis === "total") lines.push({ key: "schedule.labor.views_salary_fallback", params: { targetPct } });
+    lines.push({ key: "schedule.labor.views_allowance_hourly", params: { salesCents: sales, targetPct, allowanceCents: allowance } });
+  }
+  // What is left for straight-time hours at this draft's overtime. Only the HOURS are floored at 0; the cents stay signed.
+  const premiumCents = f.otPremiumCents;
+  const remainingCents = allowance - premiumCents;
+  const maxHoursExact = Math.max(0, remainingCents) / blended;
+  const blendedWageCents = Math.round(blended);
+  lines.push(remainingCents > 0
+    ? { key: "schedule.labor.views_max_hours", params: { allowanceCents: allowance, premiumCents, wageExactCents: blendedWageCents, hours: round1(maxHoursExact) } }
+    : { key: "schedule.labor.views_no_hours", params: { allowanceCents: allowance, premiumCents, remainingCents } });
+  const diff = f.pureHourlyCents - allowance;
+  lines.push(diff > 0
+    ? { key: "schedule.labor.views_verdict_over", params: { projectedCents: f.pureHourlyCents, allowanceCents: allowance, diffCents: diff } }
+    : { key: "schedule.labor.views_verdict_under", params: { projectedCents: f.pureHourlyCents, allowanceCents: allowance, diffCents: -diff } });
+  // The salary-side qualifications (estimated burden, projected salaries, payroll gaps) only when the salaries entered the allowance.
+  for (const q of laborFigureQualifications(f)) {
+    if (!usesSalary && (q.code === "burden_estimated" || q.code === "salary_projected" || q.code === "salary_gaps")) continue;
+    lines.push(q.params ? { key: q.key, params: q.params } : { key: q.key });
+  }
+  return { maxLaborCents: allowance, maxHoursExact, blended, blendedWageCents, salariedDayCents, targetPct, lines,
+    minimumsLine: (minHours, minCostCents) => ({ key: "schedule.labor.views_minimums_over_math",
+      params: { minHours, wageExactCents: blendedWageCents, minCostCents, remainingCents, allowanceCents: allowance, premiumCents } }) };
 }

@@ -57,6 +57,7 @@ export const DESTRUCTIVE_ACTIONS = [
   "labor_burden.save", // 0338 (SQL-only): a person sets the payroll burden %, which re-prices labor history at read time.
   "demand_source.mark", // 0343 (SQL-only): a MoO+ marks a demand-signal source verified or revoked (opens or closes what may be ingested and used).
   "demand_event.correct", // 0343 (SQL-only): a GM+ corrects or retracts a manually entered demand event (the earlier row stays).
+  "business_report_visibility.save", // 0349 (SQL-only): a MoO+ changes what GMs may see in the business report (who sees the labor money).
   "labor_payroll_shop.save", // 0340 (SQL-only): a person sets which shop's payroll a salary belongs to (re-allocates labor history on rebuild).
   "landing_ad_code.create",
   "landing_ad_code.retire",
