@@ -9779,5 +9779,22 @@
   "signals.sources.error.demand_signals_unavailable": "Las señales de demanda todavía no están instaladas en este sistema.",
   "signals.sources.error.generic": "No se pudo guardar. Vuelve a intentarlo.",
   "signals.weather.old_badge": "Puede estar viejo",
-  "signals.weather.detail_old": "La fuente del pronóstico no ha corrido bien en las últimas 13 horas para esta tienda, así que este pronóstico puede estar viejo. Mira Fuentes más abajo."
+  "signals.weather.detail_old": "La fuente del pronóstico no ha corrido bien en las últimas 13 horas para esta tienda, así que este pronóstico puede estar viejo. Mira Fuentes más abajo.",
+  "ordering.signals.title": "Lo que viene",
+  "ordering.signals.count": "{n} eventos en los próximos {days} días",
+  "ordering.signals.badge": "{n} para revisar",
+  "ordering.signals.none": "No hay ningún evento registrado para los próximos {days} días.",
+  "ordering.signals.unreadable": "No se pudieron leer los próximos eventos en este momento. Pide como siempre.",
+  "ordering.signals.par_note": "Esto es solo para este pedido. Nada de aquí cambia un par.",
+  "ordering.signals.open_page": "Ver todas las señales",
+  "ordering.signals.nudge.no_approved_signal": "Todavía no hay un número probado para estos días. Si esperas un día distinto, cambia tú las líneas en este pedido.",
+  "ordering.signals.nudge.wrong_target": "La señal aprobada no es para pedidos, así que aquí no hay número.",
+  "ordering.signals.nudge.evidence_not_point_in_time": "La señal no se ha probado en días que no pudo haber visto, así que no hay número.",
+  "ordering.signals.nudge.not_authorized_for_scope": "La señal no está aprobada para esta tienda y esta anticipación, así que no hay número.",
+  "ordering.signals.nudge.source_unverified": "Una fuente detrás de la señal no está verificada, así que no hay número.",
+  "ordering.signals.nudge.source_revoked": "Una fuente detrás de la señal fue revocada, así que no hay número.",
+  "ordering.signals.nudge.no_term_for_date": "La señal no tiene número para este día.",
+  "ordering.signals.nudge.no_effect": "La señal probada dice que este día es como uno normal.",
+  "ordering.signals.nudge.number_up": "Señal probada: planea cerca de {pct}% más que un día normal. Cambia tú las líneas.",
+  "ordering.signals.nudge.number_down": "Señal probada: planea cerca de {pct}% menos que un día normal. Cambia tú las líneas."
 }
