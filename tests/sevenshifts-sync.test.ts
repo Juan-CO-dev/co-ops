@@ -675,6 +675,28 @@ describe("the heartbeat is honest: a few rejected rows of a non-critical resourc
     expect(JSON.stringify([ledger(w)[0]!.results, w.audits[0]])).not.toMatch(/2026-11-(16|23|30)|05:00/);
   });
 
+  it("the prod case, read (2026-11-19): six `week` values shaped 9999-99-99 that are the zero date all land with week NULL -> a clean run, cron.success", async () => {
+    const zero = (id: number) => ({ ...PAYLOAD.availabilities, id, week: "0000-00-00" });
+    const w = world({ routes: healthyRoutes(availability([3001, 3002, 3003, 3004, 3005, 3006].map(zero))) });
+    const out = await run(w);
+    expect(out).toMatchObject({ ran: true, status: "success", warnings: [] });
+    expect((ledger(w)[0]!.results as Record<string, Row>).availabilities).toMatchObject({ rows: 6, skipped: 0, error_code: null });
+    expect((ledger(w)[0]!.results as Record<string, Row>).availabilities).not.toHaveProperty("reasons");
+    expect(w.tables.sevenshifts_availabilities!.map((r) => [String(r.id), r.week])).toEqual([3001, 3002, 3003, 3004, 3005, 3006].map((id) => [String(id), null]));
+    expect(state(w, "availabilities")).toMatchObject({ last_error_code: null });
+    expect(w.audits[0]!.action).toBe("cron.success");
+    expect(meta(w)).toMatchObject({ outcome: "ok", errors: [], warnings: [] });
+  });
+
+  it("any other non-date in that shape is still refused, and the ledger and the heartbeat say which kind, never which date", async () => {
+    const w = world({ routes: healthyRoutes(availability([good(3001), good(3002), { ...PAYLOAD.availabilities, id: 3003, week: "2031-02-30" }])) });
+    await run(w);
+    const reasons = { bad_date: 1, date_shapes: { week: ["9999-99-99", "<no-such-day>"] } };
+    expect((ledger(w)[0]!.results as Record<string, Row>).availabilities).toEqual({ rows: 2, skipped: 1, pages: 2, error_code: "rejected_rows", reasons });
+    expect(meta(w)).toMatchObject({ outcome: "ok_with_warnings", warnings: ["availabilities:rejected_rows"], rejected_reasons: { availabilities: reasons } });
+    expect(JSON.stringify([ledger(w)[0]!.results, w.audits[0]])).not.toMatch(/2031|02-30/);
+  });
+
   it("EVERY availability row rejected (the 2026-11-11 first sync) is a real failure: cron.failure", async () => {
     const w = world({ routes: healthyRoutes(availability([bad(3001), bad(3002)])) });
     await run(w);
