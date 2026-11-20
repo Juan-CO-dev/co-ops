@@ -550,6 +550,14 @@ export const DESTRUCTIVE_ACTIONS = [
   //   the vocabulary stays closed and the row reads destructive=true in the admin hub.
   "catering.test_data_purge",
 
+  // ── Toast duplicate snapshot cleanup (0351, 2026-11-19) ───────────────────
+  // toast.snapshot_dedup = one batch of exact duplicate Toast snapshot payloads deleted by
+  //   toast_snapshot_dedup_apply under a stamped manifest (Juan's ruling 2026-11-16). Emitted
+  //   from SQL only, one row per apply transaction; no TypeScript call site exists or may
+  //   exist. Every deleted snapshot keeps its identity, hash and run memberships in
+  //   toast_snapshot_registry.
+  "toast.snapshot_dedup",
+
   // ── Report recipients + digest settings (0220, 2026-10-07) ────────────────
   // Who receives the closing / unified / catering digests (and, from the exports PR, the
   // accountant package) is shared operational config: a human adding, editing or switching

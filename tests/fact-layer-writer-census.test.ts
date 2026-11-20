@@ -34,6 +34,14 @@ const CENSUS: Record<string, Record<string, number>> = {
   // 0239: the page writer re-emitted with additive child fields (same immutability).
   "supabase/migrations/0239_sales_true_net.sql": { "insert toast_orders": 1, "insert toast_order_checks": 1,
     "insert toast_check_discounts": 1, "insert toast_payments": 1, "insert toast_capture_run_orders": 1, "update toast_capture_runs": 1 },
+  // 0351: toast_snapshot_dedup_apply, the duplicate-snapshot cleanup (G1 re-opened and classified here). It deletes the
+  // payload of EXACT duplicate snapshots only, never a latest-pointer target (refused by name, candidate_now_target, with
+  // the pointer FK as the backstop), and never writes a run, a membership or a pointer. A fact day's fingerprint is its
+  // pointer set + its latest completed run (id, orders) + the builder version, so no fingerprint input can change and
+  // the fingerprint needs no new term. tests/toast-snapshot-dedup-migration.test.ts proves pointers and memberships
+  // byte-identical across an apply.
+  "supabase/migrations/0351_toast_snapshot_dedup.sql": { "delete toast_check_discounts": 1, "delete toast_payments": 1,
+    "delete toast_order_checks": 1, "delete toast_orders": 1 },
   // lib/toast/capture.ts: run lifecycle (running/failed) and catering_status on a completed run; no fingerprint column.
   "lib/toast/capture.ts": { "insert toast_capture_runs": 1, "update toast_capture_runs": 3 },
 };
@@ -55,7 +63,12 @@ it("every writer of a fact-day source relation is in the census (G1)", () => {
   expect(found).toEqual(CENSUS);
 });
 
-it("no DELETE or TRUNCATE of a source relation exists anywhere (a snapshot delete must re-open G1)", () => {
+it("the only DELETEs of a source relation are 0351's duplicate cleanup; no TRUNCATE, no other deleter (a new one must re-open G1)", () => {
+  const deleters = Object.entries(CENSUS).filter(([, ops]) => Object.keys(ops).some((k) => /^(delete|truncate)/.test(k)));
+  expect(deleters.map(([file]) => file)).toEqual(["supabase/migrations/0351_toast_snapshot_dedup.sql"]);
+  expect(Object.keys(deleters[0]![1]).sort()).toEqual(["delete toast_check_discounts", "delete toast_order_checks", "delete toast_orders", "delete toast_payments"]);
+  // Never a run, a membership or a pointer: the fingerprint's inputs.
   const all = Object.values(CENSUS).flatMap((ops) => Object.keys(ops));
-  expect(all.filter((k) => /^(delete|truncate)/.test(k))).toEqual([]);
+  expect(all.filter((k) => /^(delete|truncate) (toast_order_latest_pointers|toast_capture_runs|toast_capture_run_orders)$/.test(k))).toEqual([]);
+  expect(all.filter((k) => /^truncate/.test(k))).toEqual([]);
 });
