@@ -53,8 +53,7 @@ beforeAll(async () => {
 describe("0349 static shape", () => {
   it("keeps its authoring gate note, is stamped applied with its prod version, and writes no row", () => {
     expect(M0349).toMatch(/^-- Migration 0349_business_report_gm_visibility\n-- AUTHORED 2026-11-19 .* NOT YET APPLIED -- GATE CC\/JUAN/);
-    expect(M0349).toMatch(/
--- APPLIED TO PROD 2026-11-20 UTC \(schema_migrations version 20261120014322, name '0349_business_report_gm_visibility'\)/);
+    expect(M0349).toMatch(/\n-- APPLIED TO PROD 2026-11-20 UTC \(schema_migrations version 20261120014322, name '0349_business_report_gm_visibility'\)/);
     expect(M0349).not.toMatch(/insert into public\.business_report_gm_visibility[^(]*\([^)]*\)\s*select/i);
     expect(M0349).toMatch(/\nbegin;\n/);
     expect(M0349.trimEnd().endsWith("commit;")).toBe(true);
