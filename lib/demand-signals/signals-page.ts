@@ -62,14 +62,14 @@ async function section<T>(read: () => Promise<T[]>): Promise<SectionRead<T>> {
   }
 }
 
-async function adapterHealth(sb: SupabaseClient, row: SourceRow, rows: ReadonlyArray<SourceRow>, locationId: string, nowMs: number): Promise<AdapterHealth> {
+async function adapterHealth(sb: SupabaseClient, row: SourceRow, rows: ReadonlyArray<SourceRow>, locationId: string, nowMs: number, signal?: AbortSignal): Promise<AdapterHealth> {
   const decision = usableNow(rows, [row.sourceId], "render");
   const status: SourceStatus = decision.ok ? "verified" : decision.code === "source_revoked" ? "revoked" : "unverified";
   try {
     const feeds: FeedHealth[] = [];
     for (const feed of FEEDS) {
-      const last = await loadLatestRun(sb, { sourceId: row.sourceId, locationId, feed, goodOnly: false });
-      const good = last && last.outcome === "failed" ? await loadLatestRun(sb, { sourceId: row.sourceId, locationId, feed, goodOnly: true }) : last;
+      const last = await loadLatestRun(sb, { sourceId: row.sourceId, locationId, feed, goodOnly: false }, signal);
+      const good = last && last.outcome === "failed" ? await loadLatestRun(sb, { sourceId: row.sourceId, locationId, feed, goodOnly: true }, signal) : last;
       const lastGoodAt = good?.finishedAt ?? null;
       feeds.push({ feed, last, lastGoodAt, state: runStateOf(last, lastGoodAt, nowMs) });
     }
@@ -81,25 +81,29 @@ async function adapterHealth(sb: SupabaseClient, row: SourceRow, rows: ReadonlyA
 
 export async function loadSignalsPage(sb: SupabaseClient, args: {
   actor: { role: string; locations: ReadonlyArray<string> }; shop: { id: string; name: string }; nowIso: string;
+  /** The day strip's length (default SIGNALS_HORIZON_DAYS). The order walk asks for its own look-ahead. */
+  horizonDays?: number;
+  /** One deadline for every read (the order walk's panel must never hold the walk up). A cut read is "unreadable". */
+  signal?: AbortSignal;
 }): Promise<SignalsPageData> {
-  const { actor, shop, nowIso } = args;
+  const { actor, shop, nowIso, signal } = args;
   const today = etCalendarDate(nowIso);
   let rows: SourceRow[];
-  try { rows = await loadSourceRows(sb); } catch (e) {
+  try { rows = await loadSourceRows(sb, signal); } catch (e) {
     return { state: e instanceof DemandSignalError && e.code === "demand_signals_unavailable" ? "unavailable" : "unreadable" };
   }
   try {
     const weatherStatus = weatherSourceStatus(rows, NWS_SOURCE_ID);
-    const events = await section<EventIn>(() => loadUsableDayEvents(sb, { locationId: shop.id, from: today, to: addDays(today, SIGNALS_EVENT_WINDOW_DAYS), asOfIso: nowIso, use: "render" }));
+    const events = await section<EventIn>(() => loadUsableDayEvents(sb, { locationId: shop.id, from: today, to: addDays(today, SIGNALS_EVENT_WINDOW_DAYS), asOfIso: nowIso, use: "render" }, signal));
     // A source that is not verified has no usable row by definition: nothing is read, and the days say why.
     const weather: SectionRead<WeatherHourIn> = weatherStatus !== "verified" ? { read: "ok", rows: [] }
       : await section<WeatherHourIn>(() => loadUsableWeather(sb, { locationId: shop.id, fromIso: operationalDayUtcRange(today).startIso,
-        toIso: operationalDayUtcRange(addDays(today, WEATHER_REACH_DAYS + 1)).startIso, asOfIso: nowIso, use: "render" }));
+        toIso: operationalDayUtcRange(addDays(today, WEATHER_REACH_DAYS + 1)).startIso, asOfIso: nowIso, use: "render" }, signal));
     const adapters: AdapterHealth[] = [];
-    for (const row of rows.filter((r) => r.adapter !== null)) adapters.push(await adapterHealth(sb, row, rows, shop.id, Date.parse(nowIso)));
+    for (const row of rows.filter((r) => r.adapter !== null)) adapters.push(await adapterHealth(sb, row, rows, shop.id, Date.parse(nowIso), signal));
     return {
       state: "ok", today, shop,
-      days: buildSignalsDays({ today, horizonDays: SIGNALS_HORIZON_DAYS, weather, weatherStatus, events }),
+      days: buildSignalsDays({ today, horizonDays: args.horizonDays ?? SIGNALS_HORIZON_DAYS, weather, weatherStatus, events }),
       events: events.read === "ok" ? events.rows.map((e) => ({ id: e.id, origin: e.origin, sourceId: e.sourceId, locationId: e.locationId, category: e.category,
         validFrom: e.validFrom, validTo: e.validTo, startLocal: e.startLocal, endLocal: e.endLocal, title: e.title, expectedImpact: e.expectedImpact, severity: e.severity,
         canEdit: e.origin === "manual" && canEnterDemandEvent(actor.role) && demandEventShopAllowed(actor.role, actor.locations, e.locationId) })) : null,
