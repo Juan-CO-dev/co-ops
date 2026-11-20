@@ -45,12 +45,16 @@ export const retireSQL = f => `update public.locations set active=false where id
 
 /** One order's capture entry. `salt` changes ONLY the content hash: the same stored content under another hash is
  *  exactly what the pre-PR-1 churn stored. Fixtures are synthetic, so they never touch toastContentHash. */
-export function entry(guid, salt, { amount = 1000, modified = `${DAY}T17:00:00Z` } = {}) {
+export function entry(guid, salt, { amount = 1000, modified = `${DAY}T17:00:00Z`, payment = false } = {}) {
   const order = { order_guid: guid, business_date: DAY, opened_at: `${DAY}T16:00:00Z`, closed_at: null, paid_at: null, modified_at: modified,
     promised_at: null, source: 'SIM', revenue_center_guid: null, dining_option_guid: null, server_guid: null, deleted: false, voided: false,
     excess_food: false, third_party_provider_guid: null, third_party_provider_name: null, selection_units: [{ selection_guid: `${guid}-s`, quantity: 1 }] };
   const checks = [{ check_guid: `${guid}-c`, amount_cents: amount, tax_cents: 0, total_cents: amount, voided: false, deleted: false, accounting: null }];
-  return { order, checks, discounts: [], service_charges: [], payments: [], salt };
+  // toast_modified_save writes only when the payments differ from the pointer's: a sweep entry needs one.
+  const payments = payment ? [{ check_guid: `${guid}-c`, payment_guid: `${guid}-p`, type: 'CASH', payment_status: 'CAPTURED', refund_status: 'NONE',
+    amount_cents: amount, tip_cents: 0, paid_business_date: DAY, refund_amount_cents: null, refund_tip_cents: null, refund_business_date: null,
+    void_business_date: null, server_guid: null, sales_refund_cents: 0 }] : [];
+  return { order, checks, discounts: [], service_charges: [], payments, salt };
 }
 export const entriesSQL = entries => `(select jsonb_agg((e - 'salt') || jsonb_build_object('content_hash',
   encode(sha256(convert_to((e->'order'->>'order_guid') || '|' || (e->>'salt'), 'UTF8')), 'hex'))) from jsonb_array_elements(${q(JSON.stringify(entries))}::jsonb) e)`;
@@ -165,9 +169,9 @@ export async function runProof(query, log = console.log) {
     m = await buildManifest(query);
     holder = settled(query(transactionSQL('dd-l3-h', applyStatement(m), { hold: HOLD_SECONDS })));
     assert.ok(await waitSleeping(query, 'dd-l3-h'), 'L3 apply holds its lock in pg_sleep');
-    const sweep = [entry('l3-mod', 'a', { modified: `${DAY}T18:00:00Z` })];
+    const sweep = [entry('l3-mod', 'a', { modified: `${DAY}T18:00:00Z`, payment: true })];
     const refused = out(await settled(query(transactionSQL('dd-l3-r', modifiedSaveStatement(f, sweep), { role: 'service_role' }))));
-    assert.match(String(refused), /^55P03 /, 'L3 the modified sweep fails lock_not_available');
+    assert.match(String(refused), /^55P03 /, `L3 the modified sweep fails lock_not_available (got: ${String(refused).slice(0, 80)})`);
     assert.ok(await sleeping(query, 'dd-l3-h'), 'L3 the sweep gave up while the apply still held its lock');
     assert.equal(out(await holder), 'ok', 'L3 apply commits');
     assert.equal(out(await settled(query(transactionSQL('dd-l3-r2', modifiedSaveStatement(f, sweep), { role: 'service_role' })))), 'ok', 'L3 the sweep succeeds when run again');
