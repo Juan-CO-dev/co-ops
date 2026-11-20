@@ -1,5 +1,6 @@
 -- Migration 0352_demand_ai_insights
 -- AUTHORED 2026-11-19 (item 4 PR 7, CO Claude). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word. Apply AFTER 0343.
+-- APPLIED TO PROD 2026-11-20 UTC (schema_migrations version 20261120033423, name '0352_demand_ai_insights'), after sim. The line above is the authoring-time gate note, kept as history.
 -- NUMBER: 0347 is the highest on main; 0348-0351 are claimed by other open PRs (portal 4 / 5, business-report access,
 -- toast snapshot dedup), so this file takes 0352. It touches no object of theirs and can be applied in any order with them.
 -- Plan: CHIEF 03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-04-DEMAND-SIGNALS-PLAN-r2.md, section 8 (AI

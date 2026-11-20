@@ -13,7 +13,7 @@ On the demand signals page (`/admin/demand-signals`), a section "AI insights". O
 | `DEMAND_SIGNALS=1` | CC, in Vercel | The page does not exist (404). |
 | `DEMAND_AI=1` | CC, in Vercel, on Juan's word | The section does not exist. |
 | `DEMAND_AI_API_KEY` | **Juan** (his own key, in Vercel; CC and builders never set, read, print or log it) | The section says "AI insights are not configured: no key is set for them. Nothing is sent anywhere." The route answers 503. Nothing is read, reserved or sent. |
-| Migration 0352 applied | CC (sim first, then prod on Juan's word) | The section says "not set up in this system yet." |
+| Migration 0352 applied | CC. **Done:** sim 2026-11-20 (20261120024511), prod 2026-11-20 UTC (schema_migrations version 20261120033423) | The section says "not set up in this system yet." |
 
 This feature never uses `ANTHROPIC_API_KEY` (the receipt parser's key). The two are separate on purpose.
 
@@ -24,7 +24,7 @@ Optional:
 
 ## Turning it on (in order)
 
-1. Apply 0352 to sim, verify, then prod on Juan's word (after 0343). It creates two tables and six functions and touches nothing that exists. Pre-flight is in the file header. The prepared scripts are named in the PR.
+1. **Done 2026-11-20 UTC** (sim 20261120024511, prod 20261120033423): apply 0352 to sim, verify, then prod on Juan's word (after 0343). It creates two tables and six functions and touches nothing that exists. Pre-flight is in the file header. The prepared scripts are named in the PR.
 2. Juan sets `DEMAND_AI_API_KEY` in Vercel.
 3. CC sets `DEMAND_AI=1`. Redeploy.
 4. Open the page as a GM or above. The section should show the button and "This month: $0.00 of at most $5.00".
