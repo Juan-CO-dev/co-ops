@@ -72,7 +72,7 @@ where business_date between :from and :to group by 1, 2 order by 1, 2;
 
 ## Hard check: the violation query (read-only, must be zero rows)
 
-`toast_orders` has no creation timestamp. A snapshot's creation time is the start of the first capture run that referenced it. Every writer, the modified-orders sweep included (0237 → `toast_capture_page`), records it in `toast_capture_run_orders`. `:t0` = the switch-on instant.
+`toast_orders` has no creation timestamp. A snapshot's creation time is the start of the first capture run that referenced it. Since migration 0351 (the duplicate cleanup) the query reads each snapshot's identity (`modified_at`) from `toast_snapshot_registry`, which keeps a row for every snapshot ever created even after its payload was deleted as an exact duplicate; before 0351 is applied, read `toast_orders` instead. Every writer, the modified-orders sweep included (0237 → `toast_capture_page`), records it in `toast_capture_run_orders`. `:t0` = the switch-on instant.
 
 ```sql
 with first_seen as (
@@ -81,12 +81,12 @@ with first_seen as (
   group by ro.snapshot_id
 ), touched as (            -- orders with at least one snapshot first seen after t0
   select distinct o.location_id, o.order_guid
-  from public.toast_orders o join first_seen f on f.snapshot_id = o.id
+  from public.toast_snapshot_registry o join first_seen f on f.snapshot_id = o.id
   where f.first_seen > :t0
 ), chain as (
   select o.id, o.location_id, o.business_date, o.order_guid, o.modified_at, f.first_seen,
          lag(o.id) over w as prev_id, lag(o.modified_at) over w as prev_modified_at
-  from public.toast_orders o
+  from public.toast_snapshot_registry o
   join touched t on t.location_id = o.location_id and t.order_guid = o.order_guid
   join first_seen f on f.snapshot_id = o.id
   window w as (partition by o.location_id, o.order_guid order by f.first_seen, o.id)
