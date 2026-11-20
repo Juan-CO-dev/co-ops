@@ -679,7 +679,7 @@ describe("the heartbeat is honest: a few rejected rows of a non-critical resourc
     const zero = (id: number) => ({ ...PAYLOAD.availabilities, id, week: "0000-00-00" });
     const w = world({ routes: healthyRoutes(availability([3001, 3002, 3003, 3004, 3005, 3006].map(zero))) });
     const out = await run(w);
-    expect(out).toMatchObject({ ran: true, status: "success", warnings: [] });
+    expect(out).toMatchObject({ ran: true, status: "ok", warnings: [] });
     expect((ledger(w)[0]!.results as Record<string, Row>).availabilities).toMatchObject({ rows: 6, skipped: 0, error_code: null });
     expect((ledger(w)[0]!.results as Record<string, Row>).availabilities).not.toHaveProperty("reasons");
     expect(w.tables.sevenshifts_availabilities!.map((r) => [String(r.id), r.week])).toEqual([3001, 3002, 3003, 3004, 3005, 3006].map((id) => [String(id), null]));
