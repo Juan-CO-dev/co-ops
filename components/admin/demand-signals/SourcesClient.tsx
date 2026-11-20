@@ -4,8 +4,12 @@
  * One summary row per registered source (name, its status NOW, its gate), a lens over the list (D6), and a
  * drawer with what the register holds: where the data is, the terms page, the sentence quoted from it, the
  * conditions. The mark form is TRIGGERED: the person says they read the terms, writes why, and is asked for
- * their password (Tier B, always prompted) before POST /api/admin/demand-signals/sources/mark, which carries the
- * definition THIS screen showed; a definition that changed since is refused (`source_definition_moved`).
+ * their password (Tier B, always prompted) before POST /api/admin/demand-signals/sources/mark.
+ * THE FORM IS BOUND TO THE DEFINITION IT WAS OPENED ON (review r1 P2): the hash is captured when the form opens
+ * and THAT hash is what is sent. A refresh that brings a replacement definition (another save on this page
+ * refreshes every row) never re-points an open form, its tick or its note at details the person did not read:
+ * the form says the details changed, Save is off, and the writer would refuse the old hash anyway
+ * (`source_definition_moved`). To mark the new definition the person closes the form and reads it.
  * Only "Allowed" and "Allowed with conditions" sources can be verified; the screen says why the others cannot.
  */
 import { useState, useTransition } from "react";
@@ -82,7 +86,10 @@ function SourceRowView({ source, open, onToggle }: { source: SourceView; open: b
   const { t, language } = useTranslation();
   const { requestStepUp } = useStepUp();
   const router = useRouter();
-  const [marking, setMarking] = useState<"verified" | "revoked" | null>(null);
+  // What the open form is about: the act AND the definition the person was shown when they opened it.
+  const [form, setForm] = useState<{ status: "verified" | "revoked"; definitionHash: string } | null>(null);
+  const marking = form?.status ?? null;
+  const moved = form !== null && form.definitionHash !== source.definitionHash;
   const [read, setRead] = useState(false);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -96,16 +103,17 @@ function SourceRowView({ source, open, onToggle }: { source: SourceView; open: b
   const canRevoke = source.status === "verified";
   const termsUrl = safeUrl(source.termsUrl);
   const noteOk = note.trim().length >= SOURCE_MARK_NOTE_MIN && note.trim().length <= SOURCE_MARK_NOTE_MAX;
-  const ready = marking !== null && noteOk && (marking === "revoked" || read);
+  const ready = marking !== null && !moved && noteOk && (marking === "revoked" || read);
   // A drawer with an open form stays mounted and locked open (D10).
   const isOpen = open || marking !== null;
 
   async function save() {
-    if (marking === null) return;
+    if (form === null || marking === null || moved) return;
     setBusy(true); setError(null); setSaved(false);
     try {
       if (await requestStepUp("B") !== "ok") return;
-      const payload = { sourceId: source.sourceId, definitionHash: source.definitionHash, status: marking, note: note.trim() };
+      // The hash captured when the form opened, never the row's current one.
+      const payload = { sourceId: source.sourceId, definitionHash: form.definitionHash, status: marking, note: note.trim() };
       const post = () => fetch("/api/admin/demand-signals/sources/mark", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       let response = await post();
       let body: { code?: string } = {};
@@ -117,7 +125,7 @@ function SourceRowView({ source, open, onToggle }: { source: SourceView; open: b
         }
       }
       if (!response.ok || response.redirected) { setError(markErrorKey(body.code)); return; }
-      setSaved(true); setMarking(null); setNote(""); setRead(false);
+      setSaved(true); setForm(null); setNote(""); setRead(false);
       startTransition(() => router.refresh());
     } catch { setError("signals.sources.error.generic"); } finally { setBusy(false); }
   }
@@ -156,13 +164,14 @@ function SourceRowView({ source, open, onToggle }: { source: SourceView; open: b
       {saved && <p role="status" className="font-bold text-co-confirm-text">{t("signals.sources.saved")}</p>}
       {error && <p role="alert" className="font-bold text-co-cta-text">{t(error)}</p>}
       {marking === null && <div className="flex flex-wrap gap-2">
-        {canVerify && <button type="button" className={button} onClick={() => { setMarking("verified"); setSaved(false); setError(null); }}>{t("signals.sources.verify")}</button>}
-        {canRevoke && <button type="button" className={danger} onClick={() => { setMarking("revoked"); setSaved(false); setError(null); }}>{t("signals.sources.revoke")}</button>}
+        {canVerify && <button type="button" className={button} onClick={() => { setForm({ status: "verified", definitionHash: source.definitionHash }); setRead(false); setNote(""); setSaved(false); setError(null); }}>{t("signals.sources.verify")}</button>}
+        {canRevoke && <button type="button" className={danger} onClick={() => { setForm({ status: "revoked", definitionHash: source.definitionHash }); setRead(false); setNote(""); setSaved(false); setError(null); }}>{t("signals.sources.revoke")}</button>}
       </div>}
       {marking === null && !ingestible && <p className="text-co-text-dim">{t("signals.sources.cannot_verify")}</p>}
       {marking !== null && <div className="space-y-3 rounded-lg bg-co-surface-inset p-3">
         <p className="font-bold">{t(marking === "verified" ? "signals.sources.form.verify_title" : "signals.sources.form.revoke_title", { name: source.name })}</p>
         <p className="text-co-text-muted">{t(marking === "verified" ? "signals.sources.form.verify_help" : "signals.sources.form.revoke_help")}</p>
+        {moved && <p role="alert" className="font-bold text-co-cta-text">{t("signals.sources.form.moved")}</p>}
         {marking === "verified" && <label className="flex min-h-[44px] items-center gap-3">
           <input type="checkbox" className="h-5 w-5" checked={read} aria-label={t("signals.sources.aria.read", { name: source.name })} onChange={(e) => setRead(e.target.checked)} />
           <span>{t("signals.sources.form.read")}</span>
@@ -173,7 +182,7 @@ function SourceRowView({ source, open, onToggle }: { source: SourceView; open: b
         <div className="flex flex-wrap gap-2">
           <button type="button" className={marking === "verified" ? button : danger} disabled={busy || !ready} onClick={save}>
             {t(marking === "verified" ? "signals.sources.form.verify_save" : "signals.sources.form.revoke_save")}</button>
-          <button type="button" className={quiet} disabled={busy} onClick={() => { setMarking(null); setError(null); }}>{t("signals.event.cancel")}</button>
+          <button type="button" className={quiet} disabled={busy} onClick={() => { setForm(null); setRead(false); setNote(""); setError(null); }}>{t("signals.event.cancel")}</button>
         </div>
       </div>}
     </div>}
