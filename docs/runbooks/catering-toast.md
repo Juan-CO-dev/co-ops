@@ -1,6 +1,6 @@
 # Portal catering ↔ Toast cross-check (item 21)
 
-Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md` (Juan's 8 answers at its top override its defaults). Built so far: PRs 0, 1, 2, 3 and 4. Migration **0344** is APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118185441), after sim. Migration **0347** (PR 3, the link step) is APPLIED TO PROD 2026-11-19 UTC (version 20261119041752), after sim. Migration **0348** (PR 4, the house reconciler) is authored, NOT applied. Every shop stays off until Juan's word.
+Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md` (Juan's 8 answers at its top override its defaults). Built so far: PRs 0 to 5. Migration **0344** is APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118185441), after sim. Migration **0347** (PR 3, the link step) is APPLIED TO PROD 2026-11-19 UTC (version 20261119041752), after sim. Migration **0348** (PR 4, the house reconciler) is APPLIED TO PROD 2026-11-20 UTC (version 20261120014618) and **0350** (PR 5, the settings writer) is APPLIED TO PROD 2026-11-20 UTC (version 20261120014637), after sim. Shops are switched on from the settings card at /admin/catering/toast. Every shop stays off until Juan's word.
 
 ## What ships, and what it changes
 
@@ -192,12 +192,22 @@ What the table says, in short:
 
 ## Turning a shop on (Juan's word, per shop)
 
-Settings have no app writer yet (the settings card and its audited writer were deferred from PR 3; CC's call where it lands). CC runs, as the database owner:
+Since PR 5 (migration **0350**, APPLIED TO PROD 2026-11-20 UTC) a shop is turned on from the app: **Admin → Catering → Toast matching** (`/admin/catering/toast`). Never by SQL again: `set_catering_toast_settings` is the only writer of the table, and every save writes its own audit row (`catering.toast_settings_update`, who, which shop, the settings before and after).
 
-```sql
-insert into public.catering_toast_settings(location_id, enabled) values ('<shop id>', true)
-on conflict (location_id) do update set enabled = true, updated_at = clock_timestamp();
-```
+- **Who:** the Owner, the CGS and the MoO. Saving asks for the password every time.
+- **What a save is:** the shop's whole row. If someone else changed it meanwhile the save is refused ("Someone else just changed this shop's settings") and the card shows theirs.
+- **What cannot be saved, and the card says so before the press:** a dependent switch without "Check catering orders against Toast"; automatic linking without a start date; listing Toast-origin orders without origin linking; turning a shop on while the link step (0347) is not ready; ring codes or automatic linking while the house reconciler (0348) is not installed.
+- **Applying 0350 (CC):** sim first, after 0347 (it does not need 0348). Verify block at the end of the file. Before it is applied the page says "These settings are not installed yet" and shows no switch.
+
+### Matching the older orders (Juan answer 7)
+
+The automatic reconciler only looks at the last nine days, so an order older than that is never matched by the cron. On the same page, for a shop with an automatic switch and a start date saved: **Match older orders**.
+
+- **Count the orders** shows how many booked house orders have no Toast check linked, how many are from the start date on (the backfill may reach them), and how many are older (they stay suggestions a person links in the order's Toast panel).
+- **Match orders from <date>** (password once) runs the SAME reconciler over older stretches, from the start date to today, 60 days of events at a time. Before each stretch it lets the note lookup examine that stretch's Toast orders (a Toast call per day that has any), then it links. Every rule is the reconciler's own, in the database: never before the start date, never over an owner, never a pair a manager said no to, never a dual-code check, never a check whose notes have not been examined. What it could not link is listed by reason.
+- It can take a while on a year of history: about one Toast call for each day that has a catering order. Leave the page open; it goes on by itself and can be started again at any time (it only ever adds what is still missing).
+- Each stretch that added links writes one audit row naming the person (`catering.toast_backfill`), beside the reconciler's own row (`catering.toast_reconciled`). Any link can be unlinked.
+- To include older orders, move "Link by itself from this event date" back, save, and run it again. On prod today (read-only probe, 2026-11-19) there are 361 booked house orders, all created from a Toast order with the Toast business date equal to the event date.
 
 What a manager then sees: house leads (booked, dated, not ezCater) with no Toast check linked appear on the pipeline's "Not rung in Toast yet" list, labelled "House order", with the best suggested check (ring code, Toast order, or amount and date) — and in the pulse and both digests. Sales → Catering shows "Of this, $X is also rung in Toast" under the pipeline block.
 

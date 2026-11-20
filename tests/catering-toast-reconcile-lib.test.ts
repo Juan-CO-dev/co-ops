@@ -279,7 +279,7 @@ describe("coverUncoveredNotes: the captures nobody examined yet", () => {
     toast([[toastCodeSelectionKey("O1", "C1", "S1"), ["COACD34"]]], ["O1", "O2", "O3"]);
     const { sb, calls, unsignalled } = client(tables, { catering_toast_uncovered_orders: uncovered(["O1", "2026-11-19"], ["O2", "2026-11-19"], ["O3", "2026-11-18"]),
       record_catering_toast_note_lookup: () => ({ data: {}, error: null }) });
-    expect(await coverUncoveredNotes(sb, args())).toEqual({ lookups: 2, failed: 0 });
+    expect(await coverUncoveredNotes(sb, args())).toMatchObject({ lookups: 2, failed: 0 });
     expect(calls[0]).toEqual(["catering_toast_uncovered_orders", { p_location_id: "a", p_from: "2026-11-18", p_to: "2026-11-19" }]);
     expect(vi.mocked(loadKnownToastOrderCodes).mock.calls.map((c) => [c[1], c[2]])).toEqual([["2026-11-19", ["ABC123", "COACD34"]], ["2026-11-18", ["ABC123", "COACD34"]]]);
     expect(calls[1]![1]).toEqual({
@@ -288,17 +288,30 @@ describe("coverUncoveredNotes: the captures nobody examined yet", () => {
     expect(unsignalled).toEqual([]);
   });
 
+  it("item 21 PR 5: it reports how many captures it recorded as examined, and can be narrowed to one shop", async () => {
+    toast([], ["O1", "O2", "O3"]);
+    const { sb, calls } = client(tables, { catering_toast_uncovered_orders: uncovered(["O1", "2026-11-19"], ["O2", "2026-11-19"], ["O3", "2026-11-18"]),
+      record_catering_toast_note_lookup: () => ({ data: {}, error: null }) });
+    expect(await coverUncoveredNotes(sb, args())).toEqual({ lookups: 2, examined: 3, failed: 0 });
+    calls.length = 0;
+    expect(await coverUncoveredNotes(sb, { ...args(), onlyLocationId: "another-shop" })).toEqual({ lookups: 0, examined: 0, failed: 0 });
+    expect(calls).toEqual([]);
+    // Nothing read at the captured version = no progress, and it says so.
+    toast([], []);
+    expect(await coverUncoveredNotes(sb, { ...args(), onlyLocationId: "a" })).toEqual({ lookups: 2, examined: 0, failed: 0 });
+  });
+
   it("at most maxDays days per shop and call (the rest waits for the next run)", async () => {
     toast([], []);
     const { sb } = client(tables, { catering_toast_uncovered_orders: uncovered(["O1", "2026-11-19"], ["O2", "2026-11-18"], ["O3", "2026-11-17"]) });
-    expect(await coverUncoveredNotes(sb, { ...args(), maxDays: 2 })).toEqual({ lookups: 2, failed: 0 });
+    expect(await coverUncoveredNotes(sb, { ...args(), maxDays: 2 })).toMatchObject({ lookups: 2, failed: 0 });
   });
 
   it("nothing uncovered = no shop read and no Toast call; a shop with no ring code and no automatic switch is not even asked", async () => {
     const quiet = client(tables, { catering_toast_uncovered_orders: uncovered() });
-    expect(await coverUncoveredNotes(quiet.sb, args())).toEqual({ lookups: 0, failed: 0 });
+    expect(await coverUncoveredNotes(quiet.sb, args())).toMatchObject({ lookups: 0, failed: 0 });
     const idle = client({ catering_toast_settings: settings(shop("a")), catering_live_ring_codes: { data: [], error: null } }, {});
-    expect(await coverUncoveredNotes(idle.sb, args())).toEqual({ lookups: 0, failed: 0 });
+    expect(await coverUncoveredNotes(idle.sb, args())).toMatchObject({ lookups: 0, failed: 0 });
     expect(idle.calls).toEqual([]);
     expect(loadKnownToastOrderCodes).not.toHaveBeenCalled();
   });
@@ -307,7 +320,7 @@ describe("coverUncoveredNotes: the captures nobody examined yet", () => {
     toast([[toastCodeSelectionKey("O1", "C1", "S1"), ["COACD34"]]], ["O1"]);
     const { sb, calls } = client(tables, { catering_toast_uncovered_orders: uncovered(["O1", "2026-11-19"]),
       record_catering_toast_note_lookup: () => ({ error: { code: "57014", message: "timeout" } }) });
-    expect(await coverUncoveredNotes(sb, args())).toEqual({ lookups: 0, failed: 1 });
+    expect(await coverUncoveredNotes(sb, args())).toMatchObject({ lookups: 0, failed: 1 });
     // The one writer was asked once and refused: there is no second, partial write of coverage.
     expect(calls.filter((c) => c[0] === "record_catering_toast_note_lookup")).toHaveLength(1);
   });
@@ -320,18 +333,18 @@ describe("coverUncoveredNotes: the captures nobody examined yet", () => {
     });
     // The database keeps listing O1 until a lookup records it.
     const { sb, calls } = client(tables, { catering_toast_uncovered_orders: uncovered(["O1", "2026-11-19"]), record_catering_toast_note_lookup: () => ({ data: {}, error: null }) });
-    expect(await coverUncoveredNotes(sb, args())).toEqual({ lookups: 1, failed: 0 });
+    expect(await coverUncoveredNotes(sb, args())).toMatchObject({ lookups: 1, failed: 0 });
     expect(calls.filter((c) => c[0] === "record_catering_toast_note_lookup")).toHaveLength(0);
-    expect(await coverUncoveredNotes(sb, args())).toEqual({ lookups: 1, failed: 0 });
+    expect(await coverUncoveredNotes(sb, args())).toMatchObject({ lookups: 1, failed: 0 });
     expect(loadKnownToastOrderCodes).toHaveBeenCalledTimes(2);
     expect(calls.filter((c) => c[0] === "record_catering_toast_note_lookup").map((c) => c[1].p_examined)).toEqual([[{ location_id: "a", order_guid: "O1", toast_snapshot_id: "snap-O1" }]]);
   });
 
   it("a failed Toast lookup or a failed read is counted, never thrown; 0348 missing is not installed", async () => {
     vi.mocked(loadKnownToastOrderCodes).mockRejectedValue(new Error("capture_deadline"));
-    expect(await coverUncoveredNotes(client(tables, { catering_toast_uncovered_orders: uncovered(["O1", "2026-11-19"]) }).sb, args())).toEqual({ lookups: 0, failed: 1 });
-    expect(await coverUncoveredNotes(client(tables, { catering_toast_uncovered_orders: () => ({ error: { code: "57014" } }) }).sb, args())).toEqual({ lookups: 0, failed: 1 });
+    expect(await coverUncoveredNotes(client(tables, { catering_toast_uncovered_orders: uncovered(["O1", "2026-11-19"]) }).sb, args())).toMatchObject({ lookups: 0, failed: 1 });
+    expect(await coverUncoveredNotes(client(tables, { catering_toast_uncovered_orders: () => ({ error: { code: "57014" } }) }).sb, args())).toMatchObject({ lookups: 0, failed: 1 });
     expect(await coverUncoveredNotes(client(tables, { catering_toast_uncovered_orders: () => ({ error: { code: "PGRST202" } }) }).sb, args()))
-      .toEqual({ lookups: 0, failed: 0, skipped: "not_installed" });
+      .toEqual({ lookups: 0, examined: 0, failed: 0, skipped: "not_installed" });
   });
 });

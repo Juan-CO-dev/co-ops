@@ -1,4 +1,10 @@
--- CC SIM ONLY, after 0225. All fixtures and publications roll back.
+-- CC SIM ONLY, after 0229 (the current publish_ezcater_shadow; still current after 0347, which does not re-emit it).
+-- All fixtures and publications roll back.
+-- Two assertions were rewritten 2026-11-19 for 0229's publisher (they still described 0225's):
+--   a retry of the same publication keeps the still-evidenced link and writes no second row (0225 retired and re-inserted);
+--   link uniqueness is per ORDER (0229 re-created ezcater_toast_links_selection on (order_id, location_id, check_guid,
+--   selection_guid) where is_current, because one batch ring can pay for several orders), so a second order naming a
+--   selection another order holds is not a unique violation. History is still never deleted: a replaced link is retired.
 -- psql -v ON_ERROR_STOP=1 -f scripts/test-ezcater-pass2.sql
 begin;
 set local plpgsql.check_asserts=on;
@@ -43,7 +49,7 @@ begin
  assert (select snapshot_id=o.snapshot_id and location_id=loc from public.ezcater_review_queue where order_id=o.id),'review fenced';
  perform public.publish_ezcater_shadow(o.id,o.snapshot_id,loc,payload);
  assert (select count(*)=1 from public.ezcater_toast_links where order_id=o.id and is_current),'retry one current link';
- assert (select count(*)=2 from public.ezcater_toast_links where order_id=o.id),'history retained';
+ assert (select count(*)=1 from public.ezcater_toast_links where order_id=o.id),'retry writes no second row';
  begin perform public.publish_ezcater_shadow(o.id,gen_random_uuid(),loc,payload); raise exception 'stale snapshot accepted';
  exception when raise_exception then if sqlerrm<>'ezcater_shadow_source_changed' then raise; end if; end;
  begin perform public.publish_ezcater_shadow(o.id,o.snapshot_id,other_loc,payload); raise exception 'wrong shop accepted';
@@ -52,15 +58,22 @@ begin
  begin perform public.publish_ezcater_shadow(o.id,o.snapshot_id,loc,bad); raise exception 'missing selection accepted';
  exception when raise_exception then if sqlerrm<>'ezcater_shadow_toast_changed' then raise; end if; end;
  assert (select count(*)=1 from public.ezcater_toast_links where order_id=o.id and is_current),'failed publish atomic';
- -- Multiple provider orders may share one ring, but never one selection.
+ -- Multiple provider orders may share one ring. Since 0229 they may also name the same selection: uniqueness is per order.
  perform public.apply_ezcater_order(provider||'-second',caterer,'{"orderNumber":"SIM-5678","eventTimestamp":"2026-10-08T16:00:00Z","items":[]}', 'pass2-second','submitted');
  select * into other from public.ezcater_orders where provider_uuid=provider||'-second';
  perform public.publish_ezcater_shadow(other.id,other.snapshot_id,loc,jsonb_set(payload,'{links,0,selection_guid}','"second"'));
  assert (select count(*)=2 from public.ezcater_toast_links where order_guid=ring and is_current),'two orders on one ring';
- begin perform public.publish_ezcater_shadow(other.id,other.snapshot_id,loc,payload); raise exception 'selection double linked';
- exception when unique_violation then null; end;
+ perform public.publish_ezcater_shadow(other.id,other.snapshot_id,loc,payload);
+ assert (select count(*)=2 and count(distinct order_id)=2 from public.ezcater_toast_links
+  where location_id=loc and check_guid='check' and selection_guid='selection' and is_current),'uniqueness is per order';
+ assert (select count(*)=1 from public.ezcater_toast_links where order_id=other.id and is_current),'replaced link is not current';
+ assert (select count(*)=1 from public.ezcater_toast_links where order_id=other.id and selection_guid='second' and not is_current),'history retained';
+ perform public.publish_ezcater_shadow(other.id,other.snapshot_id,loc,payload);
+ assert (select count(*)=2 from public.ezcater_toast_links where order_id=other.id),'second order retry writes no row';
  perform public.publish_ezcater_shadow(o.id,o.snapshot_id,loc,'{"links":[],"maps":[],"shadow":[],"reviews":[]}');
  assert not exists(select 1 from public.ezcater_toast_links where order_id=o.id and is_current),'empty generation retires links';
+ assert (select count(*)=1 from public.ezcater_toast_links where order_id=o.id and not is_current),'retired link kept as history';
+ assert (select count(*)=1 from public.ezcater_toast_links where order_id=other.id and is_current),'other order keeps its link';
  assert exists(select 1 from public.ezcater_review_queue where order_id=o.id and resolved_at is null),'publish must not silently resolve queue';
 end $$;
 -- Approval, ignore, history, publisher preservation and live authorization.
