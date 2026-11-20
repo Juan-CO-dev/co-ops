@@ -360,6 +360,9 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // records a new manual demand event. Both rows are written by the definer function itself.
   "demand_source.register",
   "demand_event.record",
+  // SQL-only (0352, item 4 PR 7): a GM+ asks for AI insights; the row says who, which shop, which model and how
+  // much was set aside, never what was sent. Written by demand_ai_reserve itself.
+  "demand_ai.request",
   "ezcater.set_location_uuid",
   "maintenance.note",
   "photo.upload",
