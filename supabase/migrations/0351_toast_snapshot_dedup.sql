@@ -148,6 +148,9 @@ create table public.toast_snapshot_dedup_manifests (
   totals jsonb,
   registry_rows_at_begin bigint not null,
   memberships_at_begin bigint not null,
+  -- Completed runs whose membership count already differed from runs.orders when the manifest began (0 on a healthy
+  -- database). Verify compares against it, so a pre-existing mismatch is reported but is not blamed on the cleanup.
+  completed_runs_wrong_at_begin bigint not null default 0,
   check ((status in ('building','abandoned')) or (digest is not null and batches is not null and items is not null and totals is not null))
 );
 -- One manifest in flight at a time: structural, not by convention.
@@ -343,8 +346,13 @@ begin
   values (p_version, p_cutoff, (select count(*) from public.toast_snapshot_registry), (select count(*) from public.toast_capture_run_orders))
   returning id into v_id;
   insert into public.toast_snapshot_dedup_runs (manifest_id, run_id, memberships, finished)
-  select v_id, r.id, (select count(*) from public.toast_capture_run_orders ro where ro.run_id = r.id), r.status <> 'running'
-    from public.toast_capture_runs r;
+  select v_id, r.id, coalesce(c.n, 0), r.status <> 'running'
+    from public.toast_capture_runs r
+    left join (select ro.run_id, count(*) as n from public.toast_capture_run_orders ro group by ro.run_id) c on c.run_id = r.id;
+  update public.toast_snapshot_dedup_manifests m
+     set completed_runs_wrong_at_begin = (select count(*) from public.toast_snapshot_dedup_runs x join public.toast_capture_runs r on r.id = x.run_id
+                                           where x.manifest_id = v_id and r.status = 'completed' and r.orders <> x.memberships)
+   where m.id = v_id;
   insert into public.toast_snapshot_dedup_retained (manifest_id, snapshot_id, reason)
   select v_id, e.snapshot_id, e.reason from public.toast_snapshot_evidence_ids(null) e;
   get diagnostics v_evidence = row_count;
@@ -466,7 +474,7 @@ create function public.toast_snapshot_dedup_apply(p_version integer, p_digest te
 language plpgsql security definer set search_path = pg_catalog, public set timezone = 'UTC' set lock_timeout = '5s' as $$
 declare
   m public.toast_snapshot_dedup_manifests%rowtype; b public.toast_snapshot_dedup_batches%rowtype;
-  v_expected jsonb; v_reason text; v_n bigint; v_audit uuid; v_last boolean;
+  v_expected jsonb; v_reason text; v_n bigint; v_audit uuid; v_last boolean; v_changed boolean; v_unequal boolean;
 begin
   begin
     lock table public.toast_orders in share row exclusive mode;
@@ -525,12 +533,15 @@ begin
                and a.xact_start is not null and a.xact_start < m.begun_at) then
     raise exception 'open_transaction_older_than_manifest'; end if;
   -- The manifest's digest binds each candidate's content: it must still be what was listed, and FULLY equal to its
-  -- survivor's (jsonb equality, never the md5).
-  if exists (select 1 from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch and public.toast_snapshot_content_md5(t.snapshot_id) is distinct from t.content_md5) then
-    raise exception 'content_changed'; end if;
-  if exists (select 1 from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch
-               and public.toast_snapshot_content(t.snapshot_id) is distinct from public.toast_snapshot_content(t.survivor_id)) then
-    raise exception 'content_not_equal'; end if;
+  -- survivor's (jsonb equality, never the md5). One pass: each content is computed once.
+  select coalesce(bool_or(md5(x.candidate::text) is distinct from t.content_md5), false),
+         coalesce(bool_or(x.candidate is distinct from public.toast_snapshot_content(t.survivor_id)), false)
+    into v_changed, v_unequal
+    from public.toast_snapshot_dedup_items t
+    cross join lateral (select public.toast_snapshot_content(t.snapshot_id) as candidate) x
+   where t.manifest_id = m.id and t.batch = p_batch;
+  if v_changed then raise exception 'content_changed'; end if;
+  if v_unequal then raise exception 'content_not_equal'; end if;
   if (select count(*) from public.toast_order_checks c where c.snapshot_id in (select t.snapshot_id from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch)) <> b.checks
      or (select count(*) from public.toast_check_discounts c where c.snapshot_id in (select t.snapshot_id from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch)) <> b.discounts
      or (select count(*) from public.toast_check_service_charges c where c.snapshot_id in (select t.snapshot_id from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch)) <> b.service_charges
@@ -596,20 +607,22 @@ begin
     'snapshots_without_registry_row', a, 'registry_rows_disagreeing_with_payload', b, 'registry_rows', c,
     'registry_rows_at_begin', m.registry_rows_at_begin));
 
-  -- memberships: no run lost one (per-run baseline from begin; a run still running then may have grown), and every
-  -- completed run still has exactly runs.orders of them (the readers' guard).
-  select count(*) into a from public.toast_snapshot_dedup_runs x
-   where x.manifest_id = m.id and (select count(*) from public.toast_capture_run_orders ro where ro.run_id = x.run_id)
-         < x.memberships;
-  select count(*) into b from public.toast_capture_runs r
-   where r.status = 'completed' and r.orders <> (select count(*) from public.toast_capture_run_orders ro where ro.run_id = r.id);
-  select count(*) into c from public.toast_snapshot_dedup_runs x
-   where x.manifest_id = m.id and x.finished
-     and (select count(*) from public.toast_capture_run_orders ro where ro.run_id = x.run_id) <> x.memberships;
-  select count(*) into d from public.toast_capture_run_orders;
-  v := v || jsonb_build_object('memberships', jsonb_build_object('ok', a = 0 and b = 0 and c = 0,
+  -- memberships: no run lost one (per-run baseline from begin; a run still running then may have grown), and no
+  -- completed run's count moved away from runs.orders (the readers' guard), beyond what was already so at begin.
+  with now_counts as (
+    select ro.run_id, count(*) as n from public.toast_capture_run_orders ro group by ro.run_id
+  ), base as (
+    select x.run_id, x.memberships, x.finished, coalesce(c.n, 0) as n
+      from public.toast_snapshot_dedup_runs x left join now_counts c on c.run_id = x.run_id where x.manifest_id = m.id
+  )
+  select (select count(*) from base where n < memberships),
+         (select count(*) from base where finished and n <> memberships),
+         (select count(*) from public.toast_capture_runs r left join now_counts c on c.run_id = r.id where r.status = 'completed' and r.orders <> coalesce(c.n, 0)),
+         (select coalesce(sum(n), 0) from now_counts)
+    into a, c, b, d;
+  v := v || jsonb_build_object('memberships', jsonb_build_object('ok', a = 0 and c = 0 and b <= m.completed_runs_wrong_at_begin,
     'runs_with_fewer_memberships', a, 'finished_runs_changed', c, 'completed_runs_with_wrong_count', b,
-    'memberships', d, 'memberships_at_begin', m.memberships_at_begin));
+    'completed_runs_with_wrong_count_at_begin', m.completed_runs_wrong_at_begin, 'memberships', d, 'memberships_at_begin', m.memberships_at_begin));
 
   -- payload: exactly the applied batches are gone, parents and every child row.
   select coalesce(sum(x.snapshots), 0) into a from public.toast_snapshot_dedup_batches x where x.manifest_id = m.id and x.applied_at is not null;
