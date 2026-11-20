@@ -1,5 +1,6 @@
 -- Migration 0350_catering_toast_settings_writer
 -- AUTHORED 2026-11-19 (item 21 PR 5, CO Claude). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word. Apply AFTER 0347 (it needs 0344's table and 0347's readiness probe; it does NOT need 0348).
+-- APPLIED TO PROD 2026-11-20 UTC (schema_migrations version 20261120014637, name '0350_catering_toast_settings_writer'), after sim. The line above is the authoring-time gate note, kept as history.
 -- NUMBER: 0347 is the highest on main and on prod; 0348 (item 21 PR 4) and 0349 (unit br-access) are claimed in
 -- co-ops-wt/.mig-claims, so this file takes 0350 (claimed there by unit portal45).
 -- Plan: CHIEF 03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md and

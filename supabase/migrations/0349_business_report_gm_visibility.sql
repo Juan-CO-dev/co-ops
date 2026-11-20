@@ -1,5 +1,6 @@
 -- Migration 0349_business_report_gm_visibility
 -- AUTHORED 2026-11-19 (business report access, CO Claude unit lead, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO PROD 2026-11-20 UTC (schema_migrations version 20261120014322, name '0349_business_report_gm_visibility'), after sim. The line above is the authoring-time gate note, kept as history.
 -- NUMBER: 0347 is the highest on main; 0348 is claimed by the portal45 unit (.mig-claims), so this file takes 0349.
 -- Apply AFTER 0341 (the business report's reads). Order against 0348 does not matter (no shared object).
 -- Plan: CHIEF 03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-09-BUSINESS-REPORT-ACCESS-PLAN-r6.md

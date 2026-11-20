@@ -1,5 +1,6 @@
 -- Migration 0348_catering_toast_reconciler
 -- AUTHORED 2026-11-19 (item 21 PR 4, CO Claude). NOT YET APPLIED -- GATE CC/JUAN: sim first (planner timing + equivalence, then the two-session proof), then prod on Juan's word. Apply AFTER 0347.
+-- APPLIED TO PROD 2026-11-20 UTC (schema_migrations version 20261120014618, name '0348_catering_toast_reconciler'), after sim. The line above is the authoring-time gate note, kept as history.
 -- NUMBER: 0347 is the highest on main and on prod; 0348 was claimed in co-ops-wt/.mig-claims (unit portal45).
 -- Plan: CHIEF 03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md (PR 4), with
 -- Juan's 8 answers and the two contracts PR 3 left binding on PR 4 (docs/runbooks/catering-toast.md, Astra r3 #3 and #4).

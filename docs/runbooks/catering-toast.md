@@ -1,6 +1,6 @@
 # Portal catering ↔ Toast cross-check (item 21)
 
-Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md` (Juan's 8 answers at its top override its defaults). Built so far: PRs 0, 1, 2, 3 and 4. Migration **0344** is APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118185441), after sim. Migration **0347** (PR 3, the link step) is APPLIED TO PROD 2026-11-19 UTC (version 20261119041752), after sim. Migration **0348** (PR 4, the house reconciler) is authored, NOT applied. Every shop stays off until Juan's word.
+Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md` (Juan's 8 answers at its top override its defaults). Built so far: PRs 0 to 5. Migration **0344** is APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118185441), after sim. Migration **0347** (PR 3, the link step) is APPLIED TO PROD 2026-11-19 UTC (version 20261119041752), after sim. Migration **0348** (PR 4, the house reconciler) is APPLIED TO PROD 2026-11-20 UTC (version 20261120014618) and **0350** (PR 5, the settings writer) is APPLIED TO PROD 2026-11-20 UTC (version 20261120014637), after sim. Shops are switched on from the settings card at /admin/catering/toast. Every shop stays off until Juan's word.
 
 ## What ships, and what it changes
 
@@ -192,7 +192,7 @@ What the table says, in short:
 
 ## Turning a shop on (Juan's word, per shop)
 
-Since PR 5 (migration **0350**, authored, NOT applied) a shop is turned on from the app: **Admin → Catering → Toast matching** (`/admin/catering/toast`). Never by SQL again: `set_catering_toast_settings` is the only writer of the table, and every save writes its own audit row (`catering.toast_settings_update`, who, which shop, the settings before and after).
+Since PR 5 (migration **0350**, APPLIED TO PROD 2026-11-20 UTC) a shop is turned on from the app: **Admin → Catering → Toast matching** (`/admin/catering/toast`). Never by SQL again: `set_catering_toast_settings` is the only writer of the table, and every save writes its own audit row (`catering.toast_settings_update`, who, which shop, the settings before and after).
 
 - **Who:** the Owner, the CGS and the MoO. Saving asks for the password every time.
 - **What a save is:** the shop's whole row. If someone else changed it meanwhile the save is refused ("Someone else just changed this shop's settings") and the card shows theirs.
