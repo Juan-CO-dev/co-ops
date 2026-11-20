@@ -37,6 +37,12 @@ const CENSUS: Record<string, { contract: "none" | "revocation" | "ai"; why: stri
   "app/admin/demand-signals/page.tsx": { contract: "none", why: "renders what signals-page.ts returns; every sourced row there came through the gated readers at render" },
   "app/admin/demand-signals/sources/page.tsx": { contract: "none", why: "shows the register itself (MoO+); it uses no signal" },
   "app/api/admin/demand-signals/events/route.ts": { contract: "none", why: "a manual event has no source, so no revocation applies; GM+ by role, behind the switch" },
+  // PR 7 (AI insights; OFF behind DEMAND_AI, inert without its own key).
+  "app/api/admin/demand-signals/insights/route.ts": { contract: "ai", why: "the one door to the model: builds facts, then requestInsights, whose answer passes acceptClaims (validateInsightClaims) or is dropped" },
+  "lib/demand-signals/ai-client.ts": { contract: "none", why: "the SDK call itself; it returns raw text to insights.ts, which validates it, and renders nothing" },
+  "lib/demand-signals/ai-store.ts": { contract: "none", why: "the spend ledger's store (0352); it stores only claims that already passed validation" },
+  "lib/demand-signals/insights-shared.ts": { contract: "ai", why: "the facts, the schema, parseModelClaims and acceptClaims, which ends in validateInsightClaims; no model text survives it" },
+  "lib/demand-signals/insights.ts": { contract: "ai", why: "the one request path: reserve, ask, parseModelClaims, acceptClaims (validateInsightClaims), settle" },
   // PR 6, first half (signals on the order walk, by name; no number, no writer).
   "lib/demand-signals/order-signals-shared.ts": { contract: "revocation", why: "render: the gate a tested number must pass asks usableNow with the register read for that render" },
   "lib/demand-signals/order-signals.ts": { contract: "none", why: "composes signals-page.ts (gated at render) and the gate in order-signals-shared.ts; it reads nothing itself" },
@@ -77,8 +83,8 @@ describe("dark by default", () => {
     // PR 2 added two doors: the collection cron (OFF, and gated by the register) and the source mark route.
     // PR 5 adds the pages (dark behind DEMAND_SIGNALS), the manual-event route, the hub tile and the two clients.
     expect(importers.sort()).toEqual(["app/admin/demand-signals/page.tsx", "app/admin/demand-signals/sources/page.tsx", "app/admin/page.tsx",
-      "app/api/admin/demand-signals/events/route.ts", "app/api/admin/demand-signals/sources/mark/route.ts", "app/api/cron/demand-signals/route.ts",
-      "app/ordering/page.tsx", "components/admin/demand-signals/DemandSignalsClient.tsx", "components/admin/demand-signals/SourcesClient.tsx",
+      "app/api/admin/demand-signals/events/route.ts", "app/api/admin/demand-signals/insights/route.ts", "app/api/admin/demand-signals/sources/mark/route.ts",
+      "app/api/cron/demand-signals/route.ts", "app/ordering/page.tsx", "components/admin/demand-signals/DemandSignalsClient.tsx", "components/admin/demand-signals/SourcesClient.tsx",
       "components/ordering/OrderSignalsPanel.tsx", "lib/toast-sales-pull-run.ts"]);
     // PR 6 (first half): the order walk's page reaches the layer only inside its DEMAND_SIGNALS branch (tests/demand-signals-order.test.ts).
     // The hub reaches only the two import-free rule files (who may see the tile, and the switch).
@@ -105,7 +111,10 @@ describe("dark by default", () => {
   });
   it("ONE module makes an outside call (the NWS client, api.weather.gov only), and no module writes a table directly", () => {
     const strip = (p: string) => read(p).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"])\/\/.*$/gm, "$1");
-    const DB = ["lib/demand-signals/ledger.ts", "lib/demand-signals/signal-store.ts"];
+    // The modules that talk to the database: the ledger, the signal store, and (PR 7) the AI spend ledger's store.
+    const DB = ["lib/demand-signals/ledger.ts", "lib/demand-signals/signal-store.ts", "lib/demand-signals/ai-store.ts"];
+    // PR 7: the model client is server-only as well; it reads no environment and no table (tests/demand-signals-insights.test.ts).
+    const SERVER_ONLY = [...DB, "lib/demand-signals/nws-client.ts", "lib/demand-signals/ai-client.ts"];
     for (const p of walk("lib/demand-signals")) {
       const src = strip(p);
       expect(src, p).not.toMatch(/axios|node:https?|\.insert\(|\.upsert\(|\.delete\(/);
@@ -119,8 +128,10 @@ describe("dark by default", () => {
       // hash.ts calls createHash().update(): the one `.update(` of the layer, and not a table write.
       if (p !== "lib/demand-signals/hash.ts") expect(src, p).not.toMatch(/\.update\(/);
       if (!DB.includes(p)) expect(src, p).not.toMatch(/\bsb\.(rpc|from)\(|\bclient\.(rpc|from)\(|\.from\("|supabase-server/);
-      if (![...DB, "lib/demand-signals/nws-client.ts"].includes(p)) expect(src, p).not.toMatch(/server-only/);
+      if (!SERVER_ONLY.includes(p)) expect(src, p).not.toMatch(/server-only/);
       if (!DB.includes(p)) expect(src, p).not.toMatch(/Date\.now\(|new Date\(\)|Math\.random|process\.env/);
+      // PR 7: no module of the layer reads an environment value for the AI; the route and the page pass it in.
+      expect(src, p).not.toMatch(/process\.env\.(DEMAND_AI|ANTHROPIC)/);
     }
     // The NWS client is wired in exactly one place, behind the collection pass's gate.
     const users = walk("lib").concat(walk("app")).filter((p) => /nws-client"/.test(read(p)) && !p.endsWith("nws-client.ts"));
@@ -173,7 +184,7 @@ describe("the module census (PR 2 and PR 7 must come through here)", () => {
   it("every module of the layer AND every signal route is listed, and nothing listed is gone", () => {
     const routes = [...walk("app")].filter((p) => /\/(signals|demand-signals)\//.test(p));
     expect(routes.sort()).toEqual(["app/admin/demand-signals/page.tsx", "app/admin/demand-signals/sources/page.tsx", "app/api/admin/demand-signals/events/route.ts",
-      "app/api/admin/demand-signals/sources/mark/route.ts", "app/api/cron/demand-signals/route.ts"]);
+      "app/api/admin/demand-signals/insights/route.ts", "app/api/admin/demand-signals/sources/mark/route.ts", "app/api/cron/demand-signals/route.ts"]);
     expect([...walk("lib/demand-signals"), ...routes].sort()).toEqual(Object.keys(CENSUS).sort());
   });
   it("PR 5 added the two pages; there is still no chip and no accept route (PR 6 adds them under 'revocation')", () => {
@@ -186,7 +197,13 @@ describe("the module census (PR 2 and PR 7 must come through here)", () => {
       // PR 2: the one check is signalUsable; the register helpers (sources-shared.ts) and the cron's precheck are
       // the ONLY spellings built on it, and each is proved to end in it below.
       if (entry.contract === "revocation") expect(read(path), path).toMatch(/\b(signalUsable|usableNow|collectDecision|keepUsable|collectionPrecheck)\(/);
-      if (entry.contract === "ai") { expect(read(path), path).toMatch(/\bvalidateInsightClaims\(/); expect(read(path), path).toMatch(/MODEL_FREE_TEXT_RENDERED/); }
+      // PR 7: the one check is validateInsightClaims; acceptClaims and requestInsights are the ONLY spellings built
+      // on it, and each is proved to end in it below. A module under this contract also names the constant that
+      // keeps model text off the page (a route reaches it through requestInsights).
+      if (entry.contract === "ai") {
+        expect(read(path), path).toMatch(/\b(validateInsightClaims|acceptClaims|requestInsights)\(/);
+        if (path.startsWith("lib/")) expect(read(path), path).toMatch(/MODEL_FREE_TEXT_RENDERED/);
+      }
       expect(entry.why.length).toBeGreaterThan(10);
     }
   });
@@ -253,6 +270,34 @@ describe("PR 2 contract: a revoked source stops USE at every point", () => {
     register.set("nws", "revoked");
     expect(signalUsable(current(), "accept")).toEqual({ ok: false, code: "source_revoked", sourceId: "nws" });
     expect(REVOCATION_KEEPS_HISTORY).toBe(true);
+  });
+});
+
+describe("PR 7: every spelling of the check ends in validateInsightClaims, and model text has no way out", () => {
+  const shared = read("lib/demand-signals/insights-shared.ts"), path = read("lib/demand-signals/insights.ts");
+  const fn = (src: string, name: string) => { const at = src.indexOf(`export function ${name}`) >= 0 ? src.indexOf(`export function ${name}`) : src.indexOf(`export async function ${name}`); return src.slice(at, src.indexOf("\n}\n", at)); };
+  it("acceptClaims validates against the facts that were sent and refuses to run if free text were ever turned on", () => {
+    const body = fn(shared, "acceptClaims");
+    expect(body).toContain('if (MODEL_FREE_TEXT_RENDERED) throw new Error("model_free_text_must_stay_off");');
+    expect(body).toContain("validateInsightClaims(offered, facts.map((f) => ({ id: f.id, kind: f.kind })))");
+    expect(shared.match(/validateInsightClaims\(/g)!.length).toBe(1);
+  });
+  it("requestInsights reserves before it asks, and the answer reaches storage only through parseModelClaims and acceptClaims", () => {
+    const body = fn(path, "requestInsights");
+    const at = (s: string) => { const i = body.indexOf(s); expect(i, s).toBeGreaterThan(-1); return i; };
+    expect(at("await deps.reserve(")).toBeLessThan(at("await deps.ask("));
+    expect(at("await deps.ask(")).toBeLessThan(at("parseModelClaims(answer.text)"));
+    expect(at("parseModelClaims(answer.text)")).toBeLessThan(at("acceptClaims(parsed, facts)"));
+    expect(at("acceptClaims(parsed, facts)")).toBeLessThan(at('outcome: "ok"'));
+    // The only use of the model's text is as the argument of the parser.
+    expect(body.match(/answer\.text/g)!.length).toBe(1);
+    expect(body).toContain("claims: accepted");
+    expect(path).not.toMatch(/console\./);
+  });
+  it("no type of the layer has a field that could carry a sentence the model wrote", () => {
+    for (const p of ["lib/demand-signals/insights-shared.ts", "lib/demand-signals/insights.ts", "lib/demand-signals/ai-store.ts"]) {
+      expect(read(p).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"])\/\/.*$/gm, "$1"), p).not.toMatch(/\b(sentence|prose|summary|explanation|freeText|narrative)\s*[:?]/);
+    }
   });
 });
 

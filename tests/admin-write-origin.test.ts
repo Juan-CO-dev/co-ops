@@ -121,6 +121,7 @@ const mutationRoutes: Record<string, string> = {
   "labor/burden/route.ts": "POST",
   "demand-signals/sources/mark/route.ts": "POST",
   "demand-signals/events/route.ts": "POST",
+  "demand-signals/insights/route.ts": "POST",
   "sevenshifts/route.ts": "POST",
   "skus/[id]/location-settings/route.ts": "PUT",
   "skus/[id]/pack-chain/route.ts": "GET POST",

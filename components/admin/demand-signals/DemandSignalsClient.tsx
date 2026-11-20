@@ -17,9 +17,12 @@ import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import {
   DEMAND_EVENT_CATEGORIES, DEMAND_EVENT_IMPACTS, DEMAND_EVENT_MAX_SPAN_DAYS, DEMAND_EVENT_TITLE_MAX, parseDemandEvent,
 } from "@/lib/demand-signals/input-shared";
+import { insightSentenceKey } from "@/lib/demand-signals/contracts-shared";
+import type { InsightsView } from "@/lib/demand-signals/insights";
+import type { InsightFact } from "@/lib/demand-signals/insights-shared";
 import type { AdapterHealth, SignalsEvent, SignalsPageData } from "@/lib/demand-signals/signals-page";
 import type { SignalsDay } from "@/lib/demand-signals/signals-view-shared";
-import { formatClockTimeShort, formatDateLabel, formatDateLabelWithYear, formatTime, formatWeekday } from "@/lib/i18n/format";
+import { formatCents, formatClockTimeShort, formatDateLabel, formatDateLabelWithYear, formatTime, formatWeekday } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { etDisplayDate } from "@/lib/operational-day";
@@ -49,7 +52,7 @@ function eventWhen(t: T, e: SignalsEvent, language: Language): string {
   return day;
 }
 
-export function DemandSignalsClient({ data }: { data: OkData }) {
+export function DemandSignalsClient({ data, insights = null }: { data: OkData; insights?: InsightsView | null }) {
   const { t, language } = useTranslation();
   const [adding, setAdding] = useState(false);
   const byId = new Map((data.events ?? []).map((e) => [e.id, e]));
@@ -86,6 +89,8 @@ export function DemandSignalsClient({ data }: { data: OkData }) {
         {data.can.mark && <Link href="/admin/demand-signals/sources" className="inline-flex min-h-[44px] items-center font-bold text-co-text underline">{t("signals.feeds.manage")}</Link>}
       </div>
     </CollapsibleSection>
+
+    {insights && <InsightsSection view={insights} locationId={data.shop.id} />}
 
     <CollapsibleSection idBase="signals-tested" title={t("signals.tested.title")} count={t("signals.tested.count")}>
       <div className="space-y-2 text-sm text-co-text">
@@ -293,4 +298,58 @@ function AdapterRow({ adapter }: { adapter: AdapterHealth }) {
         : t("signals.feeds.state.failed_never_good", { when: dateTime(f.last.finishedAt, language) })}</span>}
     </li>)}</ul>}
   </div>;
+}
+
+const AI_ERRORS = ["demand_ai_forbidden", "demand_ai_shop_forbidden", "demand_ai_daily_limit", "demand_ai_cap_reached", "demand_ai_not_configured", "demand_ai_model_unpriced",
+  "demand_ai_off", "demand_ai_unavailable", "demand_ai_facts_incomplete", "demand_ai_nothing_to_say", "demand_ai_input_too_large", "demand_ai_timeout", "demand_ai_auth",
+  "demand_ai_rate_limited", "demand_ai_refused_request", "demand_ai_answer_unreadable", "demand_ai_usage_unreadable", "demand_ai_not_recorded", "demand_signals_off",
+  "demand_signals_unavailable"];
+const aiErrorKey = (code: string): TranslationKey => (AI_ERRORS.includes(code) ? `signals.ai.error.${code}` : "signals.ai.error.generic") as TranslationKey;
+/** Microdollars as whole cents, rounded UP (a cost is never shown smaller than it is). */
+const microToCents = (micro: number) => Math.ceil(micro / 10_000);
+
+/**
+ * AI insights (item 4 PR 7). The section exists only when DEMAND_AI is on. Without a key it says "not
+ * configured" and offers nothing. A sentence here is OURS: a template filled from the facts a validated claim
+ * cites. Nothing the model wrote is on this page. Asking is a button a person presses, once a day per shop.
+ */
+function InsightsSection({ view, locationId }: { view: InsightsView; locationId: string }) {
+  const { t, language } = useTranslation();
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [, startTransition] = useTransition();
+  const [error, setError] = useState<TranslationKey | null>(null);
+  const when = (f: InsightFact) => (f.date === f.endDate ? formatDateLabel(f.date, language)
+    : t("signals.event.range", { from: formatDateLabel(f.date, language), to: formatDateLabel(f.endDate, language) }));
+
+  async function ask() {
+    setBusy(true); setError(null);
+    const result = await postJson("/api/admin/demand-signals/insights", { locationId });
+    setBusy(false);
+    if (!result.ok) setError(aiErrorKey(result.code));
+    // Whatever happened, the day's one attempt may now be used: show the stored row.
+    startTransition(() => router.refresh());
+  }
+
+  const count = view.status !== "ready" ? t("signals.ai.count.off") : view.attempt?.state === "ok" ? t("signals.ai.count.n", { n: view.attempt.claims.length }) : t("signals.ai.count.none");
+  return <CollapsibleSection idBase="signals-ai" title={t("signals.ai.title")} count={count}>
+    <div className="space-y-3 text-sm text-co-text">
+      {view.status !== "ready" && <p className="text-co-text-muted">{t(`signals.ai.status.${view.status}` as TranslationKey)}</p>}
+      {view.status === "ready" && <>
+        <p className="text-co-text-muted">{t("signals.ai.intro")}</p>
+        {view.attempt?.state === "ok" && view.attempt.claims.length === 0 && <p>{t("signals.ai.nothing_picked")}</p>}
+        {view.attempt?.state === "ok" && view.attempt.claims.length > 0 && <ul className="list-disc space-y-1 pl-5">{view.attempt.claims.flatMap((claim, i) => claim.facts.map((fact) =>
+          <li key={`${i}-${fact.id}`}>{fact.kind === "named_event"
+            ? t(insightSentenceKey(claim.type) as TranslationKey, { when: when(fact), category: categoryLabel(t, fact.category), impact: impactLabel(t, fact.impact) })
+            : t(insightSentenceKey(claim.type) as TranslationKey, { when: when(fact), reason: t(`signals.weather.gap.${fact.reason}` as TranslationKey) })}</li>))}</ul>}
+        {view.attempt && view.attempt.state !== "ok" && <p className="font-bold text-co-warning-text">{t(`signals.ai.attempt.${view.attempt.state}` as TranslationKey)}</p>}
+        {view.attempt && <p className="text-co-text-muted">{t("signals.ai.asked_at", { when: dateTime(view.attempt.askedAt, language) })}{view.attempt.factsChanged ? ` ${t("signals.ai.facts_changed")}` : ""}</p>}
+        {view.attempt && view.attempt.rejected > 0 && <p className="text-co-text-muted">{t("signals.ai.rejected", { n: view.attempt.rejected })}</p>}
+        {error && <p role="alert" className="font-bold text-co-cta-text">{t(error)}</p>}
+        {view.blocked === null && <button type="button" className={button} disabled={busy} onClick={ask}>{busy ? t("signals.ai.asking") : t("signals.ai.ask")}</button>}
+        {view.blocked !== null && <p className="text-co-text-dim">{t(`signals.ai.blocked.${view.blocked}` as TranslationKey)}</p>}
+        <p className="text-co-text-dim">{t("signals.ai.spend", { spent: formatCents(microToCents(view.monthSpentMicro), language), cap: formatCents(microToCents(view.capMicro), language) })}</p>
+      </>}
+    </div>
+  </CollapsibleSection>;
 }
