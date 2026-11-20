@@ -50,17 +50,23 @@
  * WHICH date it is; the raw value still never leaves this module. It rides in the ledger's `reasons`
  * as `date_shapes` (`rejectionReasons`), and `cleanDateShapes` is the gate any copy of it passes.
  *
- * THE ZERO DATE (2026-11-19, read from that capture). Prod's ledger then said, for 57 hourly runs:
- * availabilities 0 landed, 6 refused `bad_date`, one shape, on `week`: `9999-99-99`. So the values are
- * exactly `YYYY-MM-DD` and name NO calendar day (every real day in that spelling is accepted). The one
- * non-date with a meaning is the SQL zero date `0000-00-00`, "no date": on availability `week` /
- * `week_to` (optional, nullable in the mirror) that exact value is read as NULL, like an absent or empty
- * one (`optWeekDate`). It is the ONLY thing loosened: every other non-date, the zero date with a clock or a
- * zone, and the zero date on a required or strict date (time off, `hire_date`, `effective_date`) are
- * still `bad_date`. That the six values ARE the zero date is an inference the shape cannot confirm (it
- * hides the digits), so a refused date whose `YYYY-MM-DD` part is not a calendar day now also leaves its
- * KIND beside its shape, one fixed token of `DATE_CLASS_TOKENS` (`dateClass`): which rule of the calendar
- * it breaks, never which date it is.
+ * A WEEK THAT IS NOT A DAY (2026-11-19, read from that capture). Prod's ledger then said, for 57 hourly
+ * runs: availabilities 0 landed, 6 refused `bad_date`, one shape, on `week`: `9999-99-99`. So each value
+ * is exactly `YYYY-MM-DD` and names NO calendar day (every real day in that spelling was accepted). The
+ * shape hides the digits, so WHICH non-date it is (the SQL zero date `0000-00-00` is the likely one) is
+ * not known, and the rule does not depend on it:
+ *   · on availability `week` / `week_to` ONLY (optional, nullable in the mirror), a value spelled exactly
+ *     `YYYY-MM-DD` that names no calendar day is NO DATE: stored NULL, the row LANDS (`optWeekDate`). There
+ *     is no date in it to keep, and the row's facts are its days. Same reading as `softInstant`: an
+ *     optional value that cannot be what its field holds is left null rather than guessed or made to cost
+ *     the row;
+ *   · it is never silent: the result carries `dateNotes` → the ledger's `notes` (`dateNotes()`):
+ *     `{ no_date: n, date_shapes: { field: [kind] } }`, n = how many such values were read (before the
+ *     sync de-duplicates rows), the kind one fixed token of `DATE_CLASS_TOKENS` (`dateClass`): which rule
+ *     of the calendar the value breaks, never which date it is;
+ *   · nothing else is loosened: the same value with a clock or a zone, any other spelling, and every
+ *     non-date on a required or strict date (time off, `hire_date`, `effective_date`) are still
+ *     `bad_date`, and such a refusal now leaves its kind beside its shape.
  */
 import type { AssignmentsSnapshot, WagesSnapshot } from "@/lib/sevenshifts/paginate-shared";
 
@@ -80,6 +86,8 @@ export interface Normalized<R> {
   rejected: Rejected[];
   /** Present only when a date was refused: the SHAPES of the refused values, per field. Never a value. */
   dateShapes?: DateShapes;
+  /** Present only when a LANDED row carried a week that is not a day, read as no date (see the header). */
+  dateNotes?: DateNotes;
 }
 
 // ─── The shape of a rejected date (PII-free; see the header) ───
@@ -94,15 +102,20 @@ export type DateShapes = Partial<Record<DateField, string[]>>;
 /** What the ledger's `reasons` holds: the histogram, plus the shapes when a date was refused. */
 export type RejectionReasons = RejectionHistogram & { date_shapes?: DateShapes };
 
-/** The SQL zero date: "no date". Read as NULL on availability `week` / `week_to` only (`optWeekDate`). */
+/** The SQL zero date, the likeliest "date" that names no day. Its kind is `<zero-date>`. */
 export const ZERO_DATE = "0000-00-00";
 /**
- * The KIND of a refused date whose `YYYY-MM-DD` part names no calendar day (closed; see `dateClass`):
- * the zero date where it is not accepted · a zero month or day that is not the zero date · a month past
- * 12 or a day past its month's end. A fixed token: it says which calendar rule broke, never which date.
+ * The KIND of a date whose `YYYY-MM-DD` part names no calendar day (closed; see `dateClass`): the zero
+ * date · a zero month or day that is not the zero date · a month past 12 or a day past its month's end.
+ * A fixed token: it says which calendar rule broke, never which date.
  */
 export const DATE_CLASS_TOKENS = ["<zero-date>", "<zero-month-or-day>", "<no-such-day>"] as const;
 export type DateClassToken = (typeof DATE_CLASS_TOKENS)[number];
+/**
+ * What the ledger's `notes` holds for a resource whose LANDED rows carried a week that is not a day:
+ * how many such values were read as no date, and their kinds per field. Never a value.
+ */
+export interface DateNotes { no_date: number; date_shapes: DateShapes }
 const SHAPE_TOKENS = ["<empty>", "<number>", "<boolean>", "<object>", "<array>", ...DATE_CLASS_TOKENS] as const;
 const SHAPE_OK = /^[9aTZ?\-:/., +]{1,40}$/;
 const isDigit = (c: string | undefined) => c !== undefined && c >= "0" && c <= "9";
@@ -154,6 +167,21 @@ export function cleanDateShapes(x: unknown): DateShapes {
     if (kept.length > 0) out[field] = kept;
   }
   return out;
+}
+
+/**
+ * THE GATE for `notes`: a positive whole count and `{ known date field: [kind tokens] }`, or nothing.
+ * Only `DATE_CLASS_TOKENS` pass (a shape is not a kind), so no spelling and no value can ride in a note.
+ */
+export function dateNotes(out: Pick<Normalized<unknown>, "dateNotes">): DateNotes | undefined {
+  const n = out.dateNotes;
+  if (!n || typeof n !== "object" || !Number.isSafeInteger(n.no_date) || n.no_date < 1) return undefined;
+  const kinds: DateShapes = {};
+  for (const [field, list] of Object.entries(cleanDateShapes(n.date_shapes)) as Array<[DateField, string[]]>) {
+    const kept = list.filter((k) => (DATE_CLASS_TOKENS as readonly string[]).includes(k));
+    if (kept.length > 0) kinds[field] = kept;
+  }
+  return Object.keys(kinds).length > 0 ? { no_date: n.no_date, date_shapes: kinds } : undefined;
 }
 
 /** Two shape sets merged under the same cap, `a` first. */
@@ -363,15 +391,24 @@ function reqWallDate(o: Obj, k: DateField): string {
 function optWallDate(o: Obj, k: DateField): string | null {
   return absent(o[k]) || o[k] === "" ? null : dateField(o, k, wallDateOf);
 }
+/** Records, for the row being read, that `field` held a non-date of this kind and was read as no date. */
+type NoteDate = (field: DateField, kind: DateClassToken) => void;
 /**
- * AN OPTIONAL WEEK DATE (availability `week` / `week_to` ONLY): as `optWallDate`, and the SQL zero date
- * `0000-00-00`, exactly (surrounding space aside, as every date is trimmed), is NO DATE → null. See the
- * header: prod sent six `week` values spelled `YYYY-MM-DD` that name no calendar day. Nothing else is
- * loosened; a zero date with a clock or a zone goes on to `wallDateOf` and is refused there.
+ * AN OPTIONAL WEEK DATE (availability `week` / `week_to` ONLY): as `optWallDate`, except that a value
+ * spelled exactly `YYYY-MM-DD` (surrounding space aside, as every date is trimmed) that names no calendar
+ * day is NO DATE → null, noted with its kind. See the header: prod sent six `week` values of exactly that
+ * class. Nothing else is loosened; the same value with a clock or a zone goes on to `wallDateOf` and is
+ * refused there.
  */
-function optWeekDate(o: Obj, k: "week" | "week_to"): string | null {
+function optWeekDate(o: Obj, k: "week" | "week_to", note: NoteDate): string | null {
   const v = o[k];
-  if (typeof v === "string" && v.trim() === ZERO_DATE) return null;
+  if (typeof v === "string" && STRICT_DATE.test(v.trim())) {
+    const kind = dateClass(v);
+    if (kind !== null) {
+      note(k, kind);
+      return null;
+    }
+  }
   return optWallDate(o, k);
 }
 /**
@@ -470,21 +507,30 @@ function reqInt(o: Obj, k: string): number {
   return n as number;
 }
 
-function each<R>(input: readonly unknown[], map: (o: Obj) => R, part?: string): Normalized<R> {
+function each<R>(input: readonly unknown[], map: (o: Obj, note: NoteDate) => R, part?: string): Normalized<R> {
   const rows: R[] = [];
   const rejected: Rejected[] = [];
   let shapes: DateShapes = {};
+  let noDate = 0;
+  let kinds: DateShapes = {};
   input.forEach((raw, index) => {
     try {
       if (!isObj(raw)) throw new Reject("not_object");
-      rows.push(map(raw));
+      // A row's notes count only if the row LANDS: a row refused for another field is a rejection, not a note.
+      const noted: Array<[DateField, DateClassToken]> = [];
+      rows.push(map(raw, (field, kind) => noted.push([field, kind])));
+      for (const [field, kind] of noted) {
+        noDate++;
+        kinds = addDateShapes(kinds, { [field]: [kind] });
+      }
     } catch (e) {
       if (!(e instanceof Reject)) throw e;
       rejected.push(part === undefined ? { index, reason: e.reason } : { index, reason: e.reason, part });
       if (e.shape) shapes = addDateShapes(shapes, { [e.shape.field]: e.shape.shapes });
     }
   });
-  return withShapes({ rows, rejected }, shapes);
+  const out = withShapes({ rows, rejected }, shapes);
+  return noDate > 0 ? { ...out, dateNotes: { no_date: noDate, date_shapes: kinds } } : out;
 }
 /** `dateShapes` is set only when there is one to report. */
 function withShapes<R>(out: Normalized<R>, ...sets: Array<DateShapes | undefined>): Normalized<R> {
@@ -637,19 +683,19 @@ export function normalizeTimePunches(input: readonly unknown[]): Normalized<Time
 /**
  * Availability (reference/listavailabilities, re-read 2026-11-11 and 2026-11-19: `week` / `week_to` are
  * nullable bare strings with no format and no example): week DATES (a repeating set has `week_to` null),
- * each day is a code + wall times, `modified` is "in UTC". A `week` / `week_to` that is the SQL zero date
- * is NO DATE (null; `optWeekDate`, from prod's captured shape). Comments, reasons, the approver and
- * `old_approved_data` are dropped.
+ * each day is a code + wall times, `modified` is "in UTC". A `week` / `week_to` spelled `YYYY-MM-DD` that
+ * names no calendar day is NO DATE (null, noted; `optWeekDate`, from prod's captured shape). Comments,
+ * reasons, the approver and `old_approved_data` are dropped.
  */
 export function normalizeAvailabilities(input: readonly unknown[]): Normalized<AvailabilityRow> {
-  return each(input, (o) => {
+  return each(input, (o, note) => {
     const days = {} as Record<Weekday, AvailabilityDay>;
     for (const d of WEEKDAYS) days[d] = { code: optCode(o, d), from: optTime(o, `${d}_from`), to: optTime(o, `${d}_to`) };
     return {
       id: reqId(o, "id"),
       user_id: reqId(o, "user_id"),
-      week: optWeekDate(o, "week"),
-      week_to: optWeekDate(o, "week_to"),
+      week: optWeekDate(o, "week", note),
+      week_to: optWeekDate(o, "week_to", note),
       repeating: optFlag(o, "repeat"),
       status: optCode(o, "status"),
       days,

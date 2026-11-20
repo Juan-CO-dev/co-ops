@@ -675,26 +675,33 @@ describe("the heartbeat is honest: a few rejected rows of a non-critical resourc
     expect(JSON.stringify([ledger(w)[0]!.results, w.audits[0]])).not.toMatch(/2026-11-(16|23|30)|05:00/);
   });
 
-  it("the prod case, read (2026-11-19): six `week` values shaped 9999-99-99 that are the zero date all land with week NULL -> a clean run, cron.success", async () => {
-    const zero = (id: number) => ({ ...PAYLOAD.availabilities, id, week: "0000-00-00" });
-    const w = world({ routes: healthyRoutes(availability([3001, 3002, 3003, 3004, 3005, 3006].map(zero))) });
-    const out = await run(w);
-    expect(out).toMatchObject({ ran: true, status: "ok", warnings: [] });
-    expect((ledger(w)[0]!.results as Record<string, Row>).availabilities).toMatchObject({ rows: 6, skipped: 0, error_code: null });
-    expect((ledger(w)[0]!.results as Record<string, Row>).availabilities).not.toHaveProperty("reasons");
-    expect(w.tables.sevenshifts_availabilities!.map((r) => [String(r.id), r.week])).toEqual([3001, 3002, 3003, 3004, 3005, 3006].map((id) => [String(id), null]));
-    expect(state(w, "availabilities")).toMatchObject({ last_error_code: null });
-    expect(w.audits[0]!.action).toBe("cron.success");
-    expect(meta(w)).toMatchObject({ outcome: "ok", errors: [], warnings: [] });
+  it("the prod case, read (2026-11-19): six `week` values shaped 9999-99-99 that name no calendar day all land with week NULL -> a clean run, cron.success, and the ledger NOTES the kind", async () => {
+    // The captured shape hides the digits, so each kind of non-date is run: the outcome must not depend on which it is.
+    for (const [value, kind] of [["0000-00-00", "<zero-date>"], ["2026-00-00", "<zero-month-or-day>"], ["2031-02-30", "<no-such-day>"]] as const) {
+      const row = (id: number) => ({ ...PAYLOAD.availabilities, id, week: value });
+      const w = world({ routes: healthyRoutes(availability([3001, 3002, 3003, 3004, 3005, 3006].map(row))) });
+      const out = await run(w);
+      expect(out, value).toMatchObject({ ran: true, status: "ok", warnings: [] });
+      expect((ledger(w)[0]!.results as Record<string, Row>).availabilities, value)
+        .toEqual({ rows: 6, skipped: 0, pages: 2, error_code: null, notes: { no_date: 6, date_shapes: { week: [kind] } } });
+      expect(w.tables.sevenshifts_availabilities!.map((r) => [String(r.id), r.week])).toEqual([3001, 3002, 3003, 3004, 3005, 3006].map((id) => [String(id), null]));
+      expect(state(w, "availabilities")).toMatchObject({ last_error_code: null });
+      expect(w.audits[0]!.action).toBe("cron.success");
+      expect(meta(w)).toMatchObject({ outcome: "ok", errors: [], warnings: [] });
+      expect(JSON.stringify([ledger(w)[0]!.results, w.audits[0]]), value).not.toContain(value);
+    }
   });
 
-  it("any other non-date in that shape is still refused, and the ledger and the heartbeat say which kind, never which date", async () => {
-    const w = world({ routes: healthyRoutes(availability([good(3001), good(3002), { ...PAYLOAD.availabilities, id: 3003, week: "2031-02-30" }])) });
+  it("a clean availability run has no `notes` key; the same non-date on time off (a required date) is still refused, with its kind and no value", async () => {
+    const w = world({ routes: healthyRoutes({ "/v2/time_off": () => list([PAYLOAD.time_off, { ...PAYLOAD.time_off, id: 4002 }, { ...PAYLOAD.time_off, id: 4003, to_date: "2031-02-30" }]) }) });
     await run(w);
-    const reasons = { bad_date: 1, date_shapes: { week: ["9999-99-99", "<no-such-day>"] } };
-    expect((ledger(w)[0]!.results as Record<string, Row>).availabilities).toEqual({ rows: 2, skipped: 1, pages: 2, error_code: "rejected_rows", reasons });
-    expect(meta(w)).toMatchObject({ outcome: "ok_with_warnings", warnings: ["availabilities:rejected_rows"], rejected_reasons: { availabilities: reasons } });
-    expect(JSON.stringify([ledger(w)[0]!.results, w.audits[0]])).not.toMatch(/2031|02-30/);
+    const results = ledger(w)[0]!.results as Record<string, Row>;
+    expect(results.availabilities).not.toHaveProperty("notes");
+    const reasons = { bad_date: 1, date_shapes: { to_date: ["9999-99-99", "<no-such-day>"] } };
+    expect(results.time_off).toMatchObject({ rows: 2, skipped: 1, error_code: "rejected_rows", reasons });
+    expect(results.time_off).not.toHaveProperty("notes");
+    expect(meta(w)).toMatchObject({ outcome: "ok_with_warnings", warnings: ["time_off:rejected_rows"], rejected_reasons: { time_off: reasons } });
+    expect(JSON.stringify([results, w.audits[0]])).not.toMatch(/2031|02-30/);
   });
 
   it("EVERY availability row rejected (the 2026-11-11 first sync) is a real failure: cron.failure", async () => {
