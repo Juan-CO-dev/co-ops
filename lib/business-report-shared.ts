@@ -51,7 +51,8 @@ const READ_ROLES: ReadonlySet<RoleCode> = new Set<RoleCode>(["gm", "moo", "owner
 export function businessReportRefusal(role: RoleCode): "role_insufficient" | null {
   return READ_ROLES.has(role) ? null : "role_insufficient";
 }
-/** $ per person: decided by THE shared labor policy constant (PERSON_COST_MIN), never here. */
+/** The shared labor policy constant (PERSON_COST_MIN). NOT read by the business report since Juan's ruling of
+ * 2026-11-19: there, cost per hourly person is a group of the viewer's access (lib/business-access-shared.ts). */
 export const canSeePersonCost = laborCanSeePersonCost;
 
 // ── Range ───────────────────────────────────────────────────────────────────────────────────────
@@ -749,4 +750,8 @@ export const BUSINESS_REPORT_I18N_KEYS = [
   "reports.business.pdf.col.large_amount", "reports.business.pdf.col.rushes", "reports.business.pdf.rush_windows",
   "reports.business.pdf.col.from", "reports.business.pdf.col.to", "reports.business.pdf.col.usual",
   "reports.business.pdf.hourly_target", "reports.business.pdf.loaded_target",
+  // Business report access (2026-11-19): what a GM may see is a MoO+ setting; a part that is not in a view says so.
+  "reports.business.access.not_shared", "reports.business.access.settings_link", "reports.business.export.off.not_shared",
+  "reports.business.error.gm_report_off", "reports.business.error.business_access_not_installed", "reports.business.error.business_access_unavailable",
+  "reports.business.error.business_tab_off", "reports.business.error.business_export_off", "reports.business.error.business_access_changed",
 ] as const;
