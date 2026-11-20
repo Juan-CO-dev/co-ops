@@ -14,7 +14,7 @@ import { daySalesFrom, laborDayFigures, laborRangeFigures, resolveBusinessRange 
 import { QUARTER_COST_MIN, canSeeQuarterLaborCost, type LaborCostRow } from "@/lib/facts/labor-cost-shared";
 import { LABOR_BUILDER_VERSION, LABOR_TARGET_LOADED_PCT } from "@/lib/facts/labor-config-shared";
 import type { DailyRaw } from "@/lib/sales-reports-shared";
-import { A, GM_ALL_ON, fakeClient } from "./helpers/business-report-fake";
+import { A, GM_ALL_ON, fakeClient, gmOff } from "./helpers/business-report-fake";
 
 const LOC = "00000000-0000-4000-8000-000000000001";
 const READY = { ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION };
@@ -75,24 +75,29 @@ describe("fully loaded labor (Juan 2026-11-18)", () => {
   });
 });
 
-describe("15-minute labor dollars are MoO+ only", () => {
-  it("one named constant decides, beside PERSON_COST_MIN", () => {
+describe("15-minute labor dollars: MoO+ always; a GM by the `quarter_cost` setting (Juan 2026-11-19, ON by default)", () => {
+  it("the labor constant is unchanged (it still decides the schedule board's per-hour money; the business report no longer reads it)", () => {
     expect(QUARTER_COST_MIN).toBe("person_money");
     expect(canSeeQuarterLaborCost("gm")).toBe(false);
     expect(canSeeQuarterLaborCost("agm")).toBe(false);
     for (const r of ["moo", "owner", "cgs"] as const) expect(canSeeQuarterLaborCost(r)).toBe(true);
   });
   const range = resolveBusinessRange({}, "2026-10-08");
-  it("a GM's quarters carry minutes only: no straightCents, no pct key at all", async () => {
+  it("a GM by default gets the quarter dollars and %", async () => {
     const dto = await loadBusinessReport(gm, { locationId: A, range }, { client: fakeClient().client, env: ON });
-    expect(dto.access).toMatchObject({ personCost: false, quarterCost: false });
+    expect(dto.access).toMatchObject({ personCost: true, quarterCost: true });
+    expect(dto.quarters!.find((q) => q.laborMinutes === 30)).toMatchObject({ straightCents: 900, pct: 90 });
+  });
+  it("with the switch off a GM's quarters carry minutes only: no straightCents, no pct key at all", async () => {
+    const dto = await loadBusinessReport(gm, { locationId: A, range }, { client: fakeClient({ visibility: [gmOff("quarter_cost")] }).client, env: ON });
+    expect(dto.access).toMatchObject({ personCost: true, quarterCost: false });
     expect(dto.quarters!.length).toBeGreaterThan(0);
     for (const q of dto.quarters!) {
       expect(q).not.toHaveProperty("straightCents");
       expect(q).not.toHaveProperty("pct");
     }
     expect(dto.quarters!.some((q) => q.laborMinutes === 30)).toBe(true);
-    // Business report access: the two keys are their own group, held only where QUARTER_COST_MIN allows (never a GM).
+    // Business report access: the two keys are their own group, held only with `quarterCost`.
     expect(businessDtoPaths(dto.access)).not.toContain("quarters[].straightCents");
     expect(businessDtoPaths(dto.access)).not.toContain("quarters[].pct");
   });

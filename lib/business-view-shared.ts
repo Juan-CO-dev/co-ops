@@ -66,7 +66,7 @@ export interface QuarterView {
   /** Something happened in this quarter (a check or a labor minute): the page lists only these. */
   active: boolean;
   checks: Figure; sales: Figure; amountMissing: Figure; hours: Figure;
-  /** Labor dollars and % per 15 minutes: present ONLY where the DTO carries them (QUARTER_COST_MIN, MoO+). */
+  /** Labor dollars and % per 15 minutes: present ONLY where the DTO carries them (access `quarterCost`). */
   cost?: Figure; pct?: Figure;
 }
 /** Polish: one HOUR of a day's 15-minute list (the page shows hours, each opening its quarters; the PDF prints
@@ -76,7 +76,7 @@ export interface HourView {
   hourStartAt: string;
   checks: Figure; sales: Figure; amountMissing: Figure; hours: Figure;
   /** Labor dollars and % (the quarter rule over the hour's sums): present ONLY where the quarters carry them
-   * (QUARTER_COST_MIN, MoO+). */
+   * (access `quarterCost`). */
   cost?: Figure; pct?: Figure;
   quarters: QuarterView[];
 }
@@ -109,7 +109,7 @@ export interface PersonView {
   key: string; label: string | null; source: string; payClass: string; hours: Figure;
   /** null = overtime withheld (weeks still being recounted). */
   overtime: Figure | null; overtimeAny: boolean; weeksWithheld: number;
-  /** Present ONLY where the DTO carries cost per person (PERSON_COST_MIN, MoO+). */
+  /** Present ONLY where the DTO carries cost per person (access `personCost`). */
   cost?: Figure;
 }
 export interface BusinessReportView {

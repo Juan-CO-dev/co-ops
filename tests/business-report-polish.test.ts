@@ -37,7 +37,7 @@ import { businessView } from "@/lib/business-view-shared";
 import { renderReportPdf } from "@/lib/report-pdf";
 import { BUSINESS_EXPORT_COLUMNS, BUSINESS_EXPORT_TABS, businessCoverageNotice, businessOverviewRows, toCsv } from "@/lib/report-export-shared";
 import { BusinessChannels, BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople } from "./helpers/business-report-views";
-import { A, fakeClient } from "./helpers/business-report-fake";
+import { A, fakeClient, gmOff, type FakeOpts } from "./helpers/business-report-fake";
 import { PURE_STATES, assertMarksResolve, laborIn, legendsOf, loadedIn, markedFigures, sightedText, visibleText, withLabor } from "./helpers/business-report-states";
 
 const EN = en as Record<string, string>, ES = es as Record<string, string>;
@@ -47,7 +47,10 @@ const ON = { BUSINESS_REPORT: "1", FACT_LAYER: "1", FACT_LAYER_LABOR: "1" };
 const SHOP = { id: A, code: "MEP", name: "Capitol Hill" };
 const range = resolveBusinessRange({ range: "custom", from: "2026-10-01", to: "2026-10-07" }, "2026-10-08");
 const viewer = (role: "moo" | "gm") => ({ userId: `u-${role}`, level: role === "moo" ? 8 : 7, role, locations: role === "gm" ? [A] : [] as string[] });
-const load = (role: "moo" | "gm" = "moo") => loadBusinessReport(viewer(role), { locationId: A, range }, { client: fakeClient().client, env: ON });
+const load = (role: "moo" | "gm" = "moo", visibility?: FakeOpts["visibility"]) =>
+  loadBusinessReport(viewer(role), { locationId: A, range }, { client: fakeClient({ visibility }).client, env: ON });
+/** A GM whose MoO+ turned cost per person and labor dollars per 15 minutes off. */
+const TOTALS_ONLY = [gmOff("person_cost", "quarter_cost")];
 const count = (t: string, s: string) => t.split(s).length - 1;
 type El = Parameters<typeof renderToStaticMarkup>[0];
 const html = (el: El) => renderToStaticMarkup(el);
@@ -283,11 +286,13 @@ describe("4. the 15-minute list is HOURS that open", () => {
     expect(legend.cell(worked!.hours)).toBe(`0.75 h so far (${R("labor.state.unbuilt")})`);
     expect(legend.cell(worked!.cost!)).toBe(`— (${R("labor.state.unbuilt")})`);
   });
-  it("a GM's hour has no labor dollars at all (QUARTER_COST_MIN), like its quarters", async () => {
-    const gm = businessView(await load("gm")), moo = businessView(await load("moo"));
+  it("without labor dollars per 15 minutes an hour has no labor dollars at all, like its quarters; a GM by default has them", async () => {
+    const gm = businessView(await load("gm", TOTALS_ONLY)), moo = businessView(await load("moo")), byDefault = businessView(await load("gm"));
     expect(gm.days.flatMap((d) => d.hourly).every((h) => !("cost" in h))).toBe(true);
     expect(moo.days.flatMap((d) => d.hourly).every((h) => "cost" in h)).toBe(true);
-    expect(visibleText(html(createElement(BusinessHours, { dto: await load("gm"), language: "en" })))).not.toContain(R("slot.cost"));
+    expect(byDefault.days.flatMap((d) => d.hourly).every((h) => "cost" in h)).toBe(true);
+    expect(visibleText(html(createElement(BusinessHours, { dto: await load("gm", TOTALS_ONLY), language: "en" })))).not.toContain(R("slot.cost"));
+    expect(visibleText(html(createElement(BusinessHours, { dto: await load("gm"), language: "en" })))).toContain(R("slot.cost"));
   });
   it("the hour row is a full-row button with the disclosure contract (44 px, aria-expanded + aria-controls, useState only)", () => {
     const src = readFileSync(path.join(ROOT, "components/reports-business/HourDisclosure.tsx"), "utf8");
@@ -423,13 +428,15 @@ describe("8. the PDF is for a person: words, marks and one Notes legend", () => 
       for (const t of p.tables) { expect(t.columns.length, tab).toBeLessThanOrEqual(7); expect(t.fit, tab).toBe(true); expect(t.plain, tab).toBe(true); }
     }
   });
-  it("a GM's PDF has no cost column on People and no labor-cost column on Hours", async () => {
-    const gm = businessView(await load("gm")), moo = businessView(await load("moo"));
+  it("a PDF without the two groups has no cost column on People and no labor-cost column on Hours; a GM's default PDF has both", async () => {
+    const gm = businessView(await load("gm", TOTALS_ONLY)), moo = businessView(await load("moo")), byDefault = businessView(await load("gm"));
     const cols = (v: typeof gm, tab: "people" | "hours") => businessPdf(tab, v, null, "en").tables[0]!.columns.map((c) => c.label);
     expect(cols(gm, "people")).not.toContain(R("people.cost"));
-    expect(cols(moo, "people")).toContain(R("people.cost"));
     expect(cols(gm, "hours")).not.toContain(R("slot.cost"));
-    expect(cols(moo, "hours")).toContain(R("slot.cost"));
+    for (const v of [moo, byDefault]) {
+      expect(cols(v, "people")).toContain(R("people.cost"));
+      expect(cols(v, "hours")).toContain(R("slot.cost"));
+    }
   });
   it("Spanish: the labels and the legend are Spanish", async () => {
     const [, p] = (await all(estimated(await load()), "es"))[0]!;

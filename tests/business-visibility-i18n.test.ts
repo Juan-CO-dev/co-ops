@@ -45,13 +45,19 @@ describe("strings", () => {
       expect(parts, `BusinessUnavailable knows ${c}`).toContain(`"${c}"`);
     }
   });
-  it("the card says what a switch does (GMs do not see it), never that GMs cannot work something out; and it names the pay residual", () => {
+  it("the card says what a switch does (GMs do not see it), never that GMs cannot work something out; and it says whose salaries a shop's total can hold", () => {
     expect(EN["business.visibility.promise"]).toMatch(/GMs do not see it/);
     expect(ES["business.visibility.promise"]).toMatch(/no la ven/);
     for (const k of BUSINESS_VISIBILITY_I18N_KEYS) expect(EN[k], k).not.toMatch(/cannot (work out|compute|derive|estimate|figure out)/i);
-    expect(EN["business.visibility.pay_note"]).toBe("With labor dollars on, a GM can estimate pay from who worked.");
-    expect(ES["business.visibility.pay_note"]).toMatch(/puede estimar el pago/);
-    expect(EN["business.visibility.fixed.title"]).toBe("Always MoO and up");
+    expect(EN["business.visibility.salary_note"]).toBe("A shop's salary total covers every salary on that shop's payroll. That can include an owner's or a director's.");
+    expect(ES["business.visibility.salary_note"]).toMatch(/todos los salarios de la nómina de esa tienda/);
+    // Juan 2026-11-19: the two per-person / per-15-minute lines are switches now; nothing says they are fixed, on the card or on the report.
+    for (const dict of [EN, ES]) {
+      for (const k of ["business.visibility.pay_note", "business.visibility.fixed.title", "business.visibility.fixed.person_cost", "business.visibility.fixed.quarter_cost"]) expect(dict[k], k).toBeUndefined();
+      for (const k of ["reports.business.people.cost_note", "reports.business.hours.gm_note"]) expect(dict[k], k).not.toMatch(/MoO/);
+    }
+    expect(EN["business.visibility.hint.person_cost"]).toMatch(/Never a salary/);
+    expect(EN["business.visibility.hint.person_salary"]).toMatch(/does not list this yet/);
   });
 });
 
@@ -81,11 +87,13 @@ describe("the card", () => {
     expect(src).toContain("open={open || dirty} onToggle={() => { if (!dirty) setOpen((o) => !o); else setOpen(true); }}");
     expect(src).toContain("count={t(\"business.visibility.count\", { on, total: GM_VISIBILITY_KEYS.length })}");
   });
-  it("there is no toggle for cost per person or labor dollars per 15 minutes: two fixed lines", () => {
-    expect(GM_VISIBILITY_KEYS as readonly string[]).not.toContain("person_cost");
-    expect(src).toContain("business.visibility.fixed.person_cost");
-    expect(src).toContain("business.visibility.fixed.quarter_cost");
-    expect(Object.keys(GM_VISIBILITY_DEFAULTS)).toHaveLength(9);
+  it("cost per person, labor dollars per 15 minutes and a salary per person are toggles like the rest: no fixed line, every switch in a group", () => {
+    for (const k of ["person_cost", "quarter_cost", "person_salary"]) expect(GM_VISIBILITY_KEYS as readonly string[]).toContain(k);
+    expect(src).not.toContain("business.visibility.fixed.");
+    expect(src).toContain("business.visibility.salary_note");
+    expect(Object.keys(GM_VISIBILITY_DEFAULTS)).toHaveLength(12);
+    const grouped = [...src.matchAll(/keys: \[([^\]]*)\]/g)].flatMap((m) => m[1]!.split(",").map((x) => x.trim().replace(/"/g, "")).filter(Boolean));
+    expect([...grouped].sort()).toEqual([...GM_VISIBILITY_KEYS].sort());
   });
 });
 
@@ -115,7 +123,7 @@ describe("where it shows", () => {
     expect(await loadBusinessVisibilityCard(sb({ data: null, error: { code: "42P01", message: "x" } }), { userId: "u", role: "moo" })).toEqual({ state: "unavailable" });
     expect(await loadBusinessVisibilityCard(sb({ data: [], error: null }), { userId: "u", role: "owner" }))
       .toEqual({ state: "ready", settings: GM_VISIBILITY_DEFAULTS, headId: null, savedBy: null, savedAt: null });
-    // A stored row that is not the exact nine is never shown as if it were settings.
+    // A stored row that is not the exact twelve is never shown as if it were settings.
     expect(await loadBusinessVisibilityCard(sb({ data: [{ id: "h", settings: { report: true }, created_by: null, created_at: "2026-11-19T00:00:00Z" }], error: null }), { userId: "u", role: "cgs" }))
       .toEqual({ state: "unavailable" });
   });

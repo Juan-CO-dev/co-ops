@@ -51,7 +51,7 @@ import {
   BUSINESS_EXPORT_COLUMNS, BUSINESS_EXPORT_TABS, businessChannelRows, businessCompareRows, businessHoursRows, businessOverviewRows, businessPeopleRows,
   type BusinessExportTab,
 } from "@/lib/report-export-shared";
-import { A, GM_ALL_ON, fakeClient, type FakeOpts } from "./helpers/business-report-fake";
+import { A, GM_ALL_ON, fakeClient, gmOff, type FakeOpts } from "./helpers/business-report-fake";
 import { BusinessCompare } from "./helpers/business-report-views";
 import { assertMarksResolve, loadedIn, withLabor } from "./helpers/business-report-states";
 
@@ -199,7 +199,7 @@ describe("P2: the readable PDF carries every figure the CSV rows carry", () => {
   it("every tab, MoO (every cost) and GM: no figure of the old row builders is missing from the PDF", async () => {
     // A GM under the three labor states the MoO+ setting allows: everything on, the defaults (no fully loaded
     // labor), hours and sales only. What a view does not hold is absent from the CSV cells AND from the PDF.
-    const HOURS_ONLY = { ...GM_ALL_ON, hourly_cost: false, loaded: false };
+    const HOURS_ONLY = gmOff("hourly_cost");
     for (const [role, visibility, held] of [["moo", undefined, 2], ["gm", [GM_ALL_ON], 2], ["gm", undefined, 1], ["gm", [HOURS_ONLY], 0]] as const) {
       const dto = busy(await load(role, visibility));
       const v = businessView(dto), prev = businessView(dto);

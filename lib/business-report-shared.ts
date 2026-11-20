@@ -51,7 +51,8 @@ const READ_ROLES: ReadonlySet<RoleCode> = new Set<RoleCode>(["gm", "moo", "owner
 export function businessReportRefusal(role: RoleCode): "role_insufficient" | null {
   return READ_ROLES.has(role) ? null : "role_insufficient";
 }
-/** $ per person: decided by THE shared labor policy constant (PERSON_COST_MIN), never here. */
+/** The shared labor policy constant (PERSON_COST_MIN). NOT read by the business report since Juan's ruling of
+ * 2026-11-19: there, cost per hourly person is a group of the viewer's access (lib/business-access-shared.ts). */
 export const canSeePersonCost = laborCanSeePersonCost;
 
 // ── Range ───────────────────────────────────────────────────────────────────────────────────────

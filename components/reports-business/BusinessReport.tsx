@@ -3,8 +3,8 @@
  * (the export, lib/report-export-shared.ts business*Rows, projects the same view). Summary rows with drawers
  * (CollapsibleSection, D1-D10), phone-first at 375 px: no tables, lines that wrap.
  *
- * What a viewer gets is decided by the loader, never here: a GM's view carries no cost per person and no
- * labor dollars per 15 minutes (PERSON_COST_MIN / QUARTER_COST_MIN), so this page cannot show them. Business report
+ * What a viewer gets is decided by the loader, never here: a view without cost per person or labor dollars per
+ * 15 minutes (a GM whose MoO+ turned those switches off) does not carry them, so this page cannot show them. Business report
  * access (2026-11-19): a group a GM may not see (hourly labor money, fully loaded labor, a list) has NO figure in the
  * view (`labor.pureCost` and its like are optional), so its line, card or section is simply not rendered: never a
  * row of dashes, never a number.
@@ -155,7 +155,7 @@ export function BusinessOverview({ view, language }: Props) {
 
 // ── Hours (15-minute grid, rushes) ──────────────────────────────────────────────────────────────
 
-/** The labelled figures of one hour or one 15 minutes: checks, sales, labor hours and (MoO+) labor dollars and %.
+/** The labelled figures of one hour or one 15 minutes: checks, sales, labor hours and (where the view carries them) labor dollars and %.
  * Its labor is judged against the DAY's labor state (fix round 3): no minutes is "No labor" only when the day's
  * hours are final; otherwise a dash, and minutes are "so far". Every figure has its label: never a bare dash. */
 function SlotFigures({ slot, language, legend }: { slot: Pick<QuarterView, "checks" | "sales" | "hours" | "cost" | "pct"> | HourView; language: Language; legend: FigureLegend }) {

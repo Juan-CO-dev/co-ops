@@ -2,14 +2,33 @@
 -- AUTHORED 2026-11-19 (business report access, CO Claude unit lead, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
 -- NUMBER: 0347 is the highest on main; 0348 is claimed by the portal45 unit (.mig-claims), so this file takes 0349.
 -- Apply AFTER 0341 (the business report's reads). Order against 0348 does not matter (no shared object).
--- Plan: CHIEF 03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-09-BUSINESS-REPORT-ACCESS-PLAN-r5.md (Astra APPROVE at r5).
+-- Plan: CHIEF 03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-09-BUSINESS-REPORT-ACCESS-PLAN-r6.md
+--   (r5 = Astra APPROVE; r6 = r5 amended by Juan's ruling below).
 -- Juan 2026-11-19: "the business report should be GM+, with MoO+ seeing the full all shops business report and GMs
 --   get their per shop business report. MoO+ should be able to switch on or off the things the GMs can see."
+-- Juan 2026-11-19, RULING (amends this file before prod ever saw it): "the GMs at each shop are doing the hiring and
+--   onboarding. So they inherently know and see the pay of everyone at the shop." So each person's HOURLY cost and
+--   labor dollars per 15 minutes are switches (ON by default); a SALARY per person is its own switch (OFF by
+--   default: a shop's payroll can carry an owner's or a director's salary).
+--
+-- AMENDED 2026-11-19 (nine switches -> twelve). PROD never had the nine-switch file: apply this one as written.
+-- SIM had it (schema_migrations version 20261119230203, table empty). SIM RE-APPLY, in ONE transaction, only while
+--   the table holds no row (a row would be a record of who changed what; then write a follow-up migration instead):
+--     begin;
+--     do $$ begin if (select count(*) from public.business_report_gm_visibility) <> 0 then raise exception 'rows exist'; end if; end $$;
+--     drop function public.save_business_report_gm_visibility(uuid, jsonb, uuid);
+--     drop table public.business_report_gm_visibility;
+--     drop function public.business_report_gm_visibility_defaults();
+--     drop function public.valid_business_report_gm_visibility(jsonb);
+--     delete from supabase_migrations.schema_migrations where version = '20261119230203' and name = '0349_business_report_gm_visibility';
+--     commit;
+--   then apply this file and record it under a new version (scripted: SCRATCH/br-access-0349/reapply-0349-sim.mjs --drop,
+--   which also refuses on an audit row or on any other recorded file, then apply-0349-sim.mjs --dry-run / --apply / --behaviour).
 --
 -- WHAT THIS IS. One company-wide, append-only setting: what a GM may see in the business report.
 --   business_report_gm_visibility                the rows. The NEWEST (greatest seq) is in force from the moment it is
 --                                                saved; no row = the defaults. Nothing is ever updated or deleted.
---   valid_business_report_gm_visibility(jsonb)   the row's shape: EXACTLY nine keys, each a JSON boolean, and no switch
+--   valid_business_report_gm_visibility(jsonb)   the row's shape: EXACTLY twelve keys, each a JSON boolean, and no switch
 --                                                ON under a switch it needs that is OFF. Total: any input answers
 --                                                true or false, never raises. TS twin: parseGmVisibility
 --                                                (lib/business-access-shared.ts), pinned equal case by case.
@@ -23,11 +42,13 @@
 --     - ONE destructive business_report_visibility.save audit row in the same transaction: the settings in force
 --       before, the new ones, and which switches went on / off. No free text exists to enter it.
 --
--- THE NINE SWITCHES (needs): report (-), hourly_cost (report), loaded (hourly_cost), quarters (report),
---   channels (report), people (report), servers (report), compare (report), export (report).
---   Defaults: everything ON except `loaded` (salaries, burden, fully loaded labor).
---   NOT here, on purpose: cost per person and labor dollars per 15 minutes stay MoO+ in code (PERSON_COST_MIN /
---   QUARTER_COST_MIN). A GM never gets them, whatever a row says. Adding them is a later migration, after Juan's ruling.
+-- THE TWELVE SWITCHES (needs):
+--   report (-), hourly_cost (report), loaded (hourly_cost), quarters (report), quarter_cost (quarters, hourly_cost),
+--   channels (report), people (report), person_cost (people, hourly_cost), person_salary (people, loaded),
+--   servers (report), compare (report), export (report).
+--   Defaults: everything ON except the salaried side: `loaded` (salaries, burden, fully loaded labor) and
+--   `person_salary` (a salaried amount per person; the report lists none today, the switch is held for the day it does).
+--   person_cost = each HOURLY person's labor cost; quarter_cost = labor dollars and % per 15 minutes.
 --
 -- WHO READS IT. Only the business report's loader, and only for a GM (MoO / Owner / CGS get everything and never read
 --   it). A database without this migration answers a GM "not available" (never the defaults over a store that could
@@ -60,25 +81,24 @@ language plpgsql immutable set search_path = pg_catalog, public as $$
 declare k text;
 begin
   if p is null or jsonb_typeof(p) <> 'object' then return false; end if;
-  -- jsonb keys are unique: nine keys, and each of the nine present as a boolean, is EXACTLY the nine.
-  if (select count(*) from jsonb_object_keys(p)) <> 9 then return false; end if;
-  foreach k in array array['report', 'hourly_cost', 'loaded', 'quarters', 'channels', 'people', 'servers', 'compare', 'export'] loop
+  -- jsonb keys are unique: twelve keys, and each of the twelve present as a boolean, is EXACTLY the twelve.
+  if (select count(*) from jsonb_object_keys(p)) <> 12 then return false; end if;
+  foreach k in array array['report', 'hourly_cost', 'loaded', 'quarters', 'quarter_cost', 'channels', 'people', 'person_cost', 'person_salary', 'servers', 'compare', 'export'] loop
     if jsonb_typeof(p -> k) is distinct from 'boolean' then return false; end if;
   end loop;
-  -- No switch ON under a switch it needs that is OFF.
-  if not (p ->> 'report')::boolean then
-    foreach k in array array['hourly_cost', 'quarters', 'channels', 'people', 'servers', 'compare', 'export'] loop
-      if (p ->> k)::boolean then return false; end if;
-    end loop;
-  end if;
-  if (p ->> 'loaded')::boolean and not (p ->> 'hourly_cost')::boolean then return false; end if;
+  -- No switch ON under a switch it needs that is OFF (TS twin GM_VISIBILITY_NEEDS, pinned edge for edge).
+  if exists (
+    select 1 from (values ('hourly_cost', 'report'), ('loaded', 'hourly_cost'), ('quarters', 'report'), ('quarter_cost', 'quarters'),
+      ('quarter_cost', 'hourly_cost'), ('channels', 'report'), ('people', 'report'), ('person_cost', 'people'), ('person_cost', 'hourly_cost'),
+      ('person_salary', 'people'), ('person_salary', 'loaded'), ('servers', 'report'), ('compare', 'report'), ('export', 'report')) as n(child, parent)
+    where (p ->> n.child)::boolean and not (p ->> n.parent)::boolean) then return false; end if;
   return true;
 end $$;
 
 create function public.business_report_gm_visibility_defaults() returns jsonb
 language sql immutable set search_path = pg_catalog, public as $$
-  select jsonb_build_object('report', true, 'hourly_cost', true, 'loaded', false, 'quarters', true, 'channels', true,
-    'people', true, 'servers', true, 'compare', true, 'export', true)
+  select jsonb_build_object('report', true, 'hourly_cost', true, 'loaded', false, 'quarters', true, 'quarter_cost', true, 'channels', true,
+    'people', true, 'person_cost', true, 'person_salary', false, 'servers', true, 'compare', true, 'export', true)
 $$;
 
 -- ── The rows (append-only; the greatest seq is in force) ─────────────────────────────────────────
@@ -112,7 +132,7 @@ begin
   select coalesce(jsonb_agg(k.key order by k.ord) filter (where (p_settings ->> k.key)::boolean and not (v_before ->> k.key)::boolean), '[]'::jsonb),
          coalesce(jsonb_agg(k.key order by k.ord) filter (where not (p_settings ->> k.key)::boolean and (v_before ->> k.key)::boolean), '[]'::jsonb)
     into v_on, v_off
-    from unnest(array['report', 'hourly_cost', 'loaded', 'quarters', 'channels', 'people', 'servers', 'compare', 'export']) with ordinality as k(key, ord);
+    from unnest(array['report', 'hourly_cost', 'loaded', 'quarters', 'quarter_cost', 'channels', 'people', 'person_cost', 'person_salary', 'servers', 'compare', 'export']) with ordinality as k(key, ord);
   insert into public.audit_log (actor_id, actor_role, action, resource_table, resource_id, before_state, after_state, metadata, destructive)
   values (p_actor, v_role, 'business_report_visibility.save', 'business_report_gm_visibility', v_id, v_before, p_settings,
     jsonb_build_object('turned_on', v_on, 'turned_off', v_off, 'first_save', v_first), true);

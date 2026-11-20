@@ -1,49 +1,56 @@
 /**
- * Business report ACCESS (item 9, Juan 2026-11-19; plan CHIEF item-09-BUSINESS-REPORT-ACCESS-PLAN-r5.md).
+ * Business report ACCESS (item 9, Juan 2026-11-19; plan CHIEF item-09-BUSINESS-REPORT-ACCESS-PLAN-r6.md).
  *
  *   "the business report should be GM+, with MoO+ seeing the full all shops business report and GMs get their per
  *    shop business report. MoO+ should be able to switch on or off the things the GMs can see."
  *
  * Pure: zero I/O, no env, no clock, client-safe. ONE table of groups drives everything:
  *
- *   - GM_VISIBILITY_KEYS: the nine switches a MoO / Owner / CGS saves (0349 business_report_gm_visibility; SQL twin
+ *   - GM_VISIBILITY_KEYS: the twelve switches a MoO / Owner / CGS saves (0349 business_report_gm_visibility; SQL twin
  *     valid_business_report_gm_visibility, pinned equal in tests/business-report-visibility-0349-migration.test.ts).
  *   - businessAccessFor(role, settings): what ONE viewer gets. MoO / Owner / CGS: everything, always (the settings
  *     never apply). GM: the settings, fail closed. Anyone else: nothing.
  *   - BUSINESS_ACCESS_GROUPS: every leaf path of the serialized report, each in the base or in exactly one group,
  *     and redactBusinessDto, the ONE place a key is removed for access (the loader's last statement).
  *
- * WHAT THE SWITCHES PROMISE (plan r5 section 2): ABSENCE, enforced on the server. A group that is off is not in a
- * GM's payload, page, CSV or PDF. They do NOT promise that a hidden figure cannot be worked out: a figure that
- * follows from visible ones (no overtime hours = a $0 premium; nobody salaried = burden is hourly cost times a
- * setting) tells the viewer nothing new. What the grouping protects is PAY INPUTS, within a stated model
- * (tests/business-report-pay-inference.test.ts): hourly cost off = no rate and no salary share can be worked out;
- * fully loaded off = no salary share. With hourly labor dollars ON a GM who knows who worked can estimate pay
- * (inherent in "a GM gets shop totals"; said on the card).
+ * WHAT THE SWITCHES PROMISE (plan r6 section 2): ABSENCE, enforced on the server. A group that is off is not in a
+ * GM's payload, page, CSV or PDF. They do NOT promise that a hidden figure cannot be worked out from visible ones.
  *
- * NOT SWITCHES: cost per person and labor dollars per 15 minutes stay MoO+ by the two labor constants
- * (PERSON_COST_MIN / QUARTER_COST_MIN; AGENTS.md "individual rates are MoO+ only", Juan: "GMs see hours only for
- * 15-min"). No setting can open them. The overtime premium is not a switch either: the hours a GM sees tie it to
- * the hourly total, so it is shown with hourly cost and hidden with it.
+ * JUAN'S RULING 2026-11-19 (plan r6): "the GMs at each shop are doing the hiring and onboarding. So they inherently
+ * know and see the pay of everyone at the shop." So HOURLY pay is not a secret from a shop's GM: each person's
+ * hourly cost (`person_cost`) and labor dollars per 15 minutes (`quarter_cost`) are switches, ON by default, and a GM
+ * only ever reads a shop they belong to. What the grouping still protects is SALARIED amounts (a shop's payroll can
+ * carry an owner's or a director's salary), within a stated model (tests/business-report-pay-inference.test.ts):
+ * fully loaded off = no salaried total and no salaried share can be worked out, whatever hourly switch is on. A
+ * salaried amount per person has its OWN switch (`person_salary`, OFF by default). The report lists no such amount
+ * today, for anyone; the switch is held now so that the day it does, a GM gets it only where a MoO+ turned it on, and
+ * until then the redactor blanks any amount on a salaried person's row for a viewer without it.
+ *
+ * MoO / Owner / CGS never read the settings: everything, always. The two labor constants (PERSON_COST_MIN /
+ * QUARTER_COST_MIN) are no longer read by the business report; they still decide the schedule board's per-hour
+ * money. The overtime premium is not a switch: the hours a GM sees tie it to the hourly total, so it is shown with
+ * hourly cost and hidden with it.
  */
 import type { RoleCode } from "@/lib/roles";
-import { canSeePersonCost, canSeeQuarterLaborCost } from "@/lib/facts/labor-cost-shared";
 import type { BusinessReportTab } from "@/lib/business-report-shared";
 
 // ── The settings ────────────────────────────────────────────────────────────────────────────────
 
-export const GM_VISIBILITY_KEYS = ["report", "hourly_cost", "loaded", "quarters", "channels", "people", "servers", "compare", "export"] as const;
+export const GM_VISIBILITY_KEYS = ["report", "hourly_cost", "loaded", "quarters", "quarter_cost", "channels", "people", "person_cost", "person_salary", "servers",
+  "compare", "export"] as const;
 export type GmVisibilityKey = (typeof GM_VISIBILITY_KEYS)[number];
 export type GmVisibility = Record<GmVisibilityKey, boolean>;
 
 /** A switch is in effect (and savable ON) only when every switch it needs is ON. */
 export const GM_VISIBILITY_NEEDS: Record<GmVisibilityKey, readonly GmVisibilityKey[]> = {
-  report: [], hourly_cost: ["report"], loaded: ["hourly_cost"], quarters: ["report"], channels: ["report"], people: ["report"], servers: ["report"],
-  compare: ["report"], export: ["report"],
+  report: [], hourly_cost: ["report"], loaded: ["hourly_cost"], quarters: ["report"], quarter_cost: ["quarters", "hourly_cost"], channels: ["report"],
+  people: ["report"], person_cost: ["people", "hourly_cost"], person_salary: ["people", "loaded"], servers: ["report"], compare: ["report"], export: ["report"],
 };
-/** No row saved yet: what a GM has today, minus fully loaded labor (salaries, burden). Juan approves this table. */
+/** No row saved yet (Juan 2026-11-19): everything ON, hourly cost per person and labor dollars per 15 minutes
+ * included, except the salaried side: fully loaded labor (salaries, burden) and a salary per person are OFF. */
 export const GM_VISIBILITY_DEFAULTS: GmVisibility = {
-  report: true, hourly_cost: true, loaded: false, quarters: true, channels: true, people: true, servers: true, compare: true, export: true,
+  report: true, hourly_cost: true, loaded: false, quarters: true, quarter_cost: true, channels: true, people: true, person_cost: true, person_salary: false,
+  servers: true, compare: true, export: true,
 };
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -51,7 +58,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 export function coherentGmVisibility(s: GmVisibility): boolean {
   return GM_VISIBILITY_KEYS.every((k) => !s[k] || GM_VISIBILITY_NEEDS[k].every((p) => s[p]));
 }
-/** Exactly the nine keys, each a boolean, coherent: or null. (The stored row's reader and the route's settings.) */
+/** Exactly the twelve keys, each a boolean, coherent: or null. (The stored row's reader and the route's settings.) */
 export function parseGmVisibility(v: unknown): GmVisibility | null {
   if (!isRecord(v)) return null;
   if (Object.keys(v).sort().join() !== [...GM_VISIBILITY_KEYS].sort().join()) return null;
@@ -107,14 +114,16 @@ export interface BusinessAccess {
   compare: boolean;
   /** CSV and PDF downloads. */
   export: boolean;
-  /** NOT a setting: PERSON_COST_MIN (MoO+). */
+  /** Each HOURLY person's labor cost (Juan 2026-11-19: a GM knows their shop's hourly pay). Never a salaried amount. */
   personCost: boolean;
-  /** NOT a setting: QUARTER_COST_MIN (MoO+). */
+  /** Labor dollars and % per 15 minutes (hourly labor only). */
   quarterCost: boolean;
+  /** A salaried amount per person: its own switch, OFF by default. The report lists none today. */
+  personSalary: boolean;
 }
-const ACCESS_KEYS = ["report", "hourlyCost", "loaded", "quarters", "channels", "people", "servers", "compare", "export", "personCost", "quarterCost"] as const satisfies readonly (keyof BusinessAccess)[];
+const ACCESS_KEYS = ["report", "hourlyCost", "loaded", "quarters", "channels", "people", "servers", "compare", "export", "personCost", "quarterCost", "personSalary"] as const satisfies readonly (keyof BusinessAccess)[];
 const NONE: BusinessAccess = { report: false, hourlyCost: false, loaded: false, quarters: false, channels: false, people: false, servers: false, compare: false,
-  export: false, personCost: false, quarterCost: false };
+  export: false, personCost: false, quarterCost: false, personSalary: false };
 const FULL_ROLES: ReadonlySet<RoleCode> = new Set<RoleCode>(["moo", "owner", "cgs"]);
 
 /**
@@ -127,10 +136,11 @@ export function businessAccessFor(role: RoleCode, settings: unknown): BusinessAc
   if (!full && role !== "gm") return { ...NONE };
   const s: Record<string, unknown> = full ? {} : settings === null ? GM_VISIBILITY_DEFAULTS : isRecord(settings) ? settings : {};
   const on = (k: GmVisibilityKey): boolean => full || (s[k] === true && GM_VISIBILITY_NEEDS[k].every(on));
-  const a = { report: on("report"), hourlyCost: on("hourly_cost"), loaded: on("loaded"), quarters: on("quarters"), channels: on("channels"),
-    people: on("people"), servers: on("servers"), compare: on("compare"), export: on("export") };
-  // The two constants, read here for the report and nowhere else in it. Never without the figures they sit on.
-  return { ...a, personCost: canSeePersonCost(role) && a.people && a.hourlyCost, quarterCost: canSeeQuarterLaborCost(role) && a.quarters && a.hourlyCost };
+  // Every key is a switch; `on` already holds a child off under a parent that is off (cost per person needs the
+  // people list AND hourly cost; a salary per person needs the people list AND fully loaded labor).
+  return { report: on("report"), hourlyCost: on("hourly_cost"), loaded: on("loaded"), quarters: on("quarters"), channels: on("channels"),
+    people: on("people"), servers: on("servers"), compare: on("compare"), export: on("export"),
+    personCost: on("person_cost"), quarterCost: on("quarter_cost"), personSalary: on("person_salary") };
 }
 export function sameBusinessAccess(a: BusinessAccess, b: BusinessAccess): boolean {
   return ACCESS_KEYS.every((k) => a[k] === b[k]);
@@ -183,7 +193,8 @@ interface Group {
 /**
  * Every leaf path of the serialized report (`x[]` = each element of x), in the base or in exactly ONE group. An
  * unknown path fails tests/business-report-gm-payload.test.ts; `compare`, `export` and `report` hold no key (they
- * are refusals). The 15-minute grid's two keys stay in the base as `null` when the grid is not shared.
+ * are refusals), and neither does `personSalary` (the report lists no salaried amount per person; see
+ * `blankSalariedAmounts`). The 15-minute grid's two keys stay in the base as `null` when the grid is not shared.
  */
 export const BUSINESS_ACCESS_GROUPS: Record<"base" | BusinessAccessGroup, Group> = {
   base: { roots: [], paths: [
@@ -227,13 +238,31 @@ function remove(node: unknown, path: readonly string[]): void {
   if (list) { if (Array.isArray(next)) for (const el of next) remove(el, rest); } else remove(next, rest);
 }
 
+/** The keys of a people row that are NOT money (hand-listed: anything else on a salaried person's row is an amount). */
+export const PERSON_NON_MONEY_KEYS: readonly string[] = ["personKey", "label", "source", "payClass", "minutes", "otMinutes", "weeksSuppressed"];
+/**
+ * A salaried person's row carries no amount for a viewer without `personSalary`: every key of the row that is not
+ * in PERSON_NON_MONEY_KEYS and holds a value is set to null. The loader prices hourly people only, so today this
+ * changes nothing; it is the server-side hold that keeps a salaried amount (an owner's or a director's salary on a
+ * shop's payroll) out of a GM's payload if a later read ever prices that row, whatever `personCost` says.
+ */
+function blankSalariedAmounts(dto: unknown): void {
+  const people = isRecord(dto) ? dto.people : undefined;
+  if (!Array.isArray(people)) return;
+  for (const p of people) {
+    if (!isRecord(p) || p.payClass === "hourly") continue;
+    for (const k of Object.keys(p)) if (!PERSON_NON_MONEY_KEYS.includes(k) && p[k] !== null) p[k] = null;
+  }
+}
+
 /** What is left of a report once the groups a viewer may not see are gone. */
 export type Redacted<T> = T & { access: BusinessAccess };
 /**
  * THE redaction (the loader's last statement; the only place a key is removed for access). Every root of every
  * group that is OFF is deleted from the report, and the access it was cut with is stamped on it: the page and the
  * export judge tabs and downloads on THAT (`assertBusinessSurface`), never on an earlier read. The 15-minute grid
- * that is not shared is `null` with `quartersReason: "not_shared"` (a list that is absent is never "none").
+ * that is not shared is `null` with `quartersReason: "not_shared"` (a list that is absent is never "none"). The
+ * one VALUE it changes: an amount on a salaried person's row, for a viewer without `personSalary`.
  * Mutates and returns `dto` (the loader built it for this one request).
  */
 export function redactBusinessDto<T extends { quarters?: unknown; quartersUnassigned?: unknown; quartersReason?: unknown }>(dto: T, access: BusinessAccess): Redacted<T> {
@@ -242,6 +271,7 @@ export function redactBusinessDto<T extends { quarters?: unknown; quartersUnassi
     if (g === "quarters") { dto.quarters = null; dto.quartersUnassigned = null; dto.quartersReason = "not_shared"; continue; }
     for (const root of BUSINESS_ACCESS_GROUPS[g].roots) remove(dto, root.split("."));
   }
+  if (!access.personSalary) blankSalariedAmounts(dto);
   return Object.assign(dto, { access: { ...access } });
 }
 
@@ -252,8 +282,7 @@ export const BUSINESS_VISIBILITY_I18N_KEYS = [
   "business.visibility.title", "business.visibility.intro", "business.visibility.count", "business.visibility.unavailable", "business.visibility.promise",
   "business.visibility.group.access", "business.visibility.group.money", "business.visibility.group.tabs", "business.visibility.group.downloads",
   ...GM_VISIBILITY_KEYS.map((k) => `business.visibility.switch.${k}` as const), ...GM_VISIBILITY_KEYS.map((k) => `business.visibility.hint.${k}` as const),
-  "business.visibility.needs", "business.visibility.pay_note", "business.visibility.fixed.title", "business.visibility.fixed.person_cost",
-  "business.visibility.fixed.quarter_cost", "business.visibility.state.on", "business.visibility.state.off",
+  "business.visibility.needs", "business.visibility.salary_note", "business.visibility.state.on", "business.visibility.state.off",
   "business.visibility.save", "business.visibility.saving", "business.visibility.success", "business.visibility.no_changes", "business.visibility.last_saved",
   "business.visibility.never_saved", "business.visibility.open_report", "business.visibility.aria.switch",
   ...BUSINESS_VISIBILITY_ERROR_CODES.map((c) => `business.visibility.error.${c}` as const),

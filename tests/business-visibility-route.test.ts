@@ -35,9 +35,10 @@ const visit = async (path: string) => {
 const post = (body: unknown, origin = "http://localhost") => new NextRequest(`http://localhost${PATH}`, {
   method: "POST", body: JSON.stringify(body), headers: { ...cookie, origin, "content-type": "application/json" },
 });
-const ALL_ON = { report: true, hourly_cost: true, loaded: true, quarters: true, channels: true, people: true, servers: true, compare: true, export: true };
+const ALL_ON = { report: true, hourly_cost: true, loaded: true, quarters: true, quarter_cost: true, channels: true, people: true, person_cost: true, person_salary: true,
+  servers: true, compare: true, export: true };
 const FIRST = { settings: ALL_ON, expectedId: null };
-const NEXT = { settings: { ...ALL_ON, hourly_cost: false, loaded: false }, expectedId: HEAD };
+const NEXT = { settings: { ...ALL_ON, hourly_cost: false, loaded: false, quarter_cost: false, person_cost: false, person_salary: false }, expectedId: HEAD };
 const save: FakeRpc = (args) => {
   h.calls.push(args);
   return h.rpcError ? { data: null, error: h.rpcError } : { data: "row-1", error: null };
@@ -77,7 +78,7 @@ describe("Tier B survives the route's own requireSession", () => {
     expect(await res.json()).toMatchObject({ id: "row-1" });
     expect(h.calls).toEqual([{ p_actor: "user-1", p_settings: ALL_ON, p_expected_id: null }]);
   });
-  it("the next save carries the head the card showed (lowercase), and the whole set of nine", async () => {
+  it("the next save carries the head the card showed (lowercase), and the whole set of twelve", async () => {
     await unlockStepUp("session-1");
     expect((await POST(post({ ...NEXT, expectedId: HEAD.toUpperCase() }))).status).toBe(200);
     expect(h.calls).toEqual([{ p_actor: "user-1", p_settings: NEXT.settings, p_expected_id: HEAD }]);
@@ -151,11 +152,12 @@ describe("order and refusals", () => {
     expect((await (await POST(post(FIRST))).json()).code).toBe("forbidden"); // the role is judged first
     expect(h.calls).toEqual([]);
   });
-  it("a body that is not exactly { settings: the coherent nine, expectedId } is 400 before the RPC", async () => {
+  it("a body that is not exactly { settings: the coherent twelve, expectedId } is 400 before the RPC", async () => {
     await unlockStepUp("session-1");
     const { export: _drop, ...missing } = ALL_ON;
-    for (const bad of [{ settings: ALL_ON }, { ...FIRST, note: "x" }, { settings: missing, expectedId: null }, { settings: { ...ALL_ON, person_cost: true }, expectedId: null },
-      { settings: { ...ALL_ON, quarter_cost: true }, expectedId: null }, { settings: { ...ALL_ON, loaded: "yes" }, expectedId: null },
+    for (const bad of [{ settings: ALL_ON }, { ...FIRST, note: "x" }, { settings: missing, expectedId: null }, { settings: { ...ALL_ON, ot_premium: true }, expectedId: null },
+      { settings: { ...ALL_ON, loaded: false }, expectedId: null }, { settings: { ...ALL_ON, people: false }, expectedId: null }, { settings: { ...ALL_ON, quarters: false }, expectedId: null },
+      { settings: { report: true, hourly_cost: true, loaded: true, quarters: true, channels: true, people: true, servers: true, compare: true, export: true }, expectedId: null }, { settings: { ...ALL_ON, loaded: "yes" }, expectedId: null },
       { settings: { ...ALL_ON, hourly_cost: false }, expectedId: null }, { settings: { ...ALL_ON, report: false }, expectedId: null },
       { settings: ALL_ON, expectedId: "not-a-uuid" }, { settings: ALL_ON, expectedId: 7 }, [FIRST], "x"]) {
       const res = await POST(post(bad));

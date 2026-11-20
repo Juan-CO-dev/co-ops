@@ -19,8 +19,10 @@
  *   4. takes LABOR from fact_labor_cost (day and week, the board's own pricer) and 0341's quarter / person
  *      reads, gated per payroll week on labor_week_coverage (0339 ot_scope per_shop + the current builder, an
  *      unchanged generation across the reads, and a stored fingerprint equal to the week's current source).
- * Cost per person and labor dollars per 15 minutes are serialized only where PERSON_COST_MIN / QUARTER_COST_MIN
- * allow (MoO+; not settings: no row of 0349 can open them); no wage rate and no contact field ever.
+ * Each hourly person's cost and labor dollars per 15 minutes are serialized only where the viewer's access holds
+ * them (MoO / Owner / CGS always; a GM by the `person_cost` / `quarter_cost` settings, ON by default: Juan
+ * 2026-11-19, a GM knows their shop's hourly pay). A salaried person's row never carries an amount. No wage rate
+ * and no contact field ever.
  */
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -102,7 +104,7 @@ export async function resolveBusinessAccess(viewer: BusinessViewer, deps: Busine
   let settings: ReturnType<typeof parseGmVisibility> = null;
   if (res.data.length > 0) {
     settings = parseGmVisibility((res.data[0] as { settings?: unknown } | null)?.settings);
-    // A stored row that is not the exact coherent nine is not read "as far as it goes": the report is unavailable.
+    // A stored row that is not the exact coherent twelve is not read "as far as it goes": the report is unavailable.
     if (settings === null) throw new BusinessReportError(503, "business_access_unavailable");
   }
   const access = businessAccessFor(viewer.role, settings);
@@ -247,8 +249,8 @@ export interface BusinessQuarterDto {
   date: string; quarterStartAt: string; wallQuarter: number; fold: number;
   /** `amountMissing` = checks of unknown amount in this quarter (> 0 = its sales are partial, so no %). */
   toastCents: number | null; checks: number | null; amountMissing: number | null; laborMinutes: number | null;
-  /** Item 9b: the quarter's labor DOLLARS and % exist only where QUARTER_COST_MIN allows (MoO+); a GM's quarter
-   * has neither key (a % times the shown sales would be the dollars). */
+  /** The quarter's labor DOLLARS and % exist only where the access holds `quarterCost` (MoO+ always; a GM by the
+   * `quarter_cost` setting); without it a quarter has neither key (a % times the shown sales would be the dollars). */
   straightCents?: number | null; pct?: number | null;
   basis: "toast_only_straight_time"; tone: "none";
 }
@@ -260,7 +262,8 @@ export interface BusinessPersonDto {
   minutes: number; otMinutes: number | null;
   /** Payroll weeks in the range whose overtime / cost is withheld (not rebuilt per shop yet). */
   weeksSuppressed: number;
-  /** Straight-time cost; present ONLY where PERSON_COST_MIN allows (MoO+ by default). */
+  /** Straight-time cost of an HOURLY person (null for a salaried one, always); present ONLY where the access holds
+   * `personCost` (MoO+ always; a GM by the `person_cost` setting). */
   straightCostCents?: number | null;
 }
 export interface BusinessReportDto {
@@ -328,8 +331,8 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
   assertBusinessScope(viewer, args.locationId, env);
   const sb = deps.client ?? getServiceRoleClient();
   const { range, locationId } = args;
-  // What this viewer may see, resolved HERE (before any report read; a refused GM cost one read). Cost per person
-  // and labor dollars per 15 minutes are the two labor constants (MoO+), read through the access: no setting opens them.
+  // What this viewer may see, resolved HERE (before any report read; a refused GM cost one read). Cost per hourly
+  // person and labor dollars per 15 minutes come from the access like every other group (a GM: the settings).
   const access = await resolveBusinessAccess(viewer, { client: sb, env });
   const { personCost, quarterCost } = access;
   const wf = deps.wageFallback ?? laborWageFallback(env.LABOR_WAGE_FALLBACK);
@@ -479,7 +482,7 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
       const f = quarterFigures({ toastCents: c.toastCents ?? 0, checks: c.checks ?? 0, amountMissing: c.amountMissing ?? 0, laborMinutes: c.laborMinutes, straightCents: c.straightCents ?? null,
         salesOk, laborOk: day.labor.pureHourlyCents !== null && day.labor.state !== "hours_unknown" });
       const out: BusinessQuarterDto = { ...c, toastCents: salesOk ? c.toastCents ?? 0 : null, checks: salesOk ? c.checks ?? 0 : null, amountMissing: salesOk ? c.amountMissing ?? 0 : null, ...f };
-      // Item 9b: below QUARTER_COST_MIN the quarter's dollars and % are not serialized at all.
+      // Without `quarterCost` the quarter's dollars and % are not serialized at all.
       if (!quarterCost) { delete out.straightCents; delete out.pct; }
       return out;
     });

@@ -203,7 +203,7 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
  * export never shows more than the screen. Every unknown is an EMPTY cell, never a 0, and every figure that is
  * not plainly known (unknown, estimated, "so far", covered days only, a floor) is named with its reason in the
  * row's `figure_notes` cell (`column=kind(codes)`), beside the `*_state` / `status` columns. Labor DOLLARS per person and per 15 minutes are filled only where the DTO
- * carries them (PERSON_COST_MIN / QUARTER_COST_MIN, MoO+); a GM's file has those cells empty.
+ * carries them (access `personCost` / `quarterCost`: MoO+ always, a GM by the settings); otherwise those cells are empty.
  * Business report access (2026-11-19): the same holds for every group a GM may not see (hourly labor money, fully
  * loaded labor): the view has no figure, so the cell is EMPTY, the row's `figure_notes` names nothing for it, and
  * its state / flag columns are empty too. The columns themselves never vary by viewer.
@@ -625,7 +625,7 @@ export function businessChannelRows(view: BusinessReportView, shop: ShopRef): Ex
   ];
 }
 
-/** People: hours per person (cost only where the view carries it, MoO+), then sales per server (the order's server). */
+/** People: hours per person (cost only where the view carries it), then sales per server (the order's server). */
 export function businessPeopleRows(view: BusinessReportView, shop: ShopRef): ExportRow[] {
   const base = { ...periodCells(view.range), ...shopCells(shop) };
   return [

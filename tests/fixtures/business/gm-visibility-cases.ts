@@ -1,15 +1,26 @@
 // What GMs can see in the business report: the ONE case file for the row's shape. The SQL validator
 // (0349 valid_business_report_gm_visibility) and the TS parser (parseGmVisibility) must agree on every case
 // (tests/business-report-visibility-0349-migration.test.ts).
-const ON = { report: true, hourly_cost: true, loaded: true, quarters: true, channels: true, people: true, servers: true, compare: true, export: true };
-const OFF = { report: false, hourly_cost: false, loaded: false, quarters: false, channels: false, people: false, servers: false, compare: false, export: false };
+const ON = { report: true, hourly_cost: true, loaded: true, quarters: true, quarter_cost: true, channels: true, people: true, person_cost: true, person_salary: true,
+  servers: true, compare: true, export: true };
+const OFF = { report: false, hourly_cost: false, loaded: false, quarters: false, quarter_cost: false, channels: false, people: false, person_cost: false,
+  person_salary: false, servers: false, compare: false, export: false };
+const NINE = ["report", "hourly_cost", "loaded", "quarters", "channels", "people", "servers", "compare", "export"];
 const without = (k: keyof typeof ON) => { const { [k]: _drop, ...rest } = ON; return rest; };
 
 export const GM_VISIBILITY_CASES: ReadonlyArray<{ name: string; value: unknown; valid: boolean }> = [
   { name: "everything on", value: ON, valid: true },
   { name: "everything off", value: OFF, valid: true },
-  { name: "the defaults (fully loaded off)", value: { ...ON, loaded: false }, valid: true },
-  { name: "hours and sales only", value: { ...ON, hourly_cost: false, loaded: false }, valid: true },
+  { name: "the defaults (the salaried side off)", value: { ...ON, loaded: false, person_salary: false }, valid: true },
+  { name: "hours and sales only", value: { ...ON, hourly_cost: false, loaded: false, quarter_cost: false, person_cost: false, person_salary: false }, valid: true },
+  { name: "shop totals only (no cost per person, no dollars per 15 minutes)", value: { ...ON, quarter_cost: false, person_cost: false, person_salary: false }, valid: true },
+  { name: "a salary per person on under fully loaded off", value: { ...ON, loaded: false }, valid: false },
+  { name: "a salary per person on under the people list off", value: { ...ON, people: false, person_cost: false }, valid: false },
+  { name: "cost per person on under the people list off", value: { ...ON, people: false, person_salary: false }, valid: false },
+  { name: "cost per person on under hourly cost off", value: { ...ON, hourly_cost: false, loaded: false, quarter_cost: false, person_salary: false }, valid: false },
+  { name: "dollars per 15 minutes on under the hours section off", value: { ...ON, quarters: false }, valid: false },
+  { name: "dollars per 15 minutes on under hourly cost off", value: { ...ON, hourly_cost: false, loaded: false, person_cost: false, person_salary: false }, valid: false },
+  { name: "the nine keys of the first draft of 0349 (all on)", value: Object.fromEntries(NINE.map((k) => [k, true])), valid: false },
   { name: "report on, nothing else", value: { ...OFF, report: true }, valid: true },
   { name: "report and one tab", value: { ...OFF, report: true, compare: true }, valid: true },
   { name: "fully loaded on under hourly cost off", value: { ...ON, hourly_cost: false }, valid: false },
@@ -20,8 +31,8 @@ export const GM_VISIBILITY_CASES: ReadonlyArray<{ name: string; value: unknown; 
   { name: "a key missing", value: without("export"), valid: false },
   { name: "the first key missing", value: without("report"), valid: false },
   { name: "an extra key", value: { ...ON, extra: true }, valid: false },
-  { name: "a tenth key that is not a switch (cost per person)", value: { ...ON, person_cost: false }, valid: false },
-  { name: "a swapped key (labor dollars per 15 minutes instead of compare)", value: { ...without("compare"), quarter_cost: true }, valid: false },
+  { name: "a thirteenth key that is not a switch (the overtime premium)", value: { ...ON, ot_premium: false }, valid: false },
+  { name: "a swapped key (the overtime premium instead of compare)", value: { ...without("compare"), ot_premium: true }, valid: false },
   { name: "a number for a boolean", value: { ...ON, report: 1 }, valid: false },
   { name: "a string for a boolean", value: { ...ON, loaded: "true" }, valid: false },
   { name: "null for a boolean", value: { ...ON, people: null }, valid: false },

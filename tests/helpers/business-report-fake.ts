@@ -1,6 +1,7 @@
 // Item 9: the fake PostgREST client the business-report tests share (loader, export). Extracted from
 // tests/business-report-loader.test.ts unchanged.
 import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
+import { GM_VISIBILITY_KEYS, GM_VISIBILITY_NEEDS, type GmVisibility, type GmVisibilityKey } from "@/lib/business-access-shared";
 
 export const A = "aaaaaaaa-0000-4000-8000-00000000000a";
 
@@ -27,7 +28,15 @@ export type FakeOpts = {
 };
 export type VisibilityAnswer = Record<string, unknown> | null | "missing" | "error" | "throw" | { raw: unknown };
 /** Every switch on: what a GM received before the settings existed (fully loaded labor included). */
-export const GM_ALL_ON = { report: true, hourly_cost: true, loaded: true, quarters: true, channels: true, people: true, servers: true, compare: true, export: true };
+export const GM_ALL_ON = { report: true, hourly_cost: true, loaded: true, quarters: true, quarter_cost: true, channels: true, people: true, person_cost: true,
+  person_salary: true, servers: true, compare: true, export: true };
+/** Every switch on EXCEPT `keys` and every switch that needs one of them (so the row is always a coherent one). */
+export function gmOff(...keys: GmVisibilityKey[]): GmVisibility {
+  const out: GmVisibility = { ...GM_ALL_ON };
+  const drop = (k: GmVisibilityKey) => { if (!out[k]) return; out[k] = false; for (const c of GM_VISIBILITY_KEYS) if (GM_VISIBILITY_NEEDS[c].includes(k)) drop(c); };
+  for (const k of keys) drop(k);
+  return out;
+}
 export const VISIBILITY_TABLE = "business_report_gm_visibility";
 const FP = "f".repeat(32);
 export function fakeClient(o: FakeOpts = {}) {

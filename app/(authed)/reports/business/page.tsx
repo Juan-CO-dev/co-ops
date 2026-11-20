@@ -6,7 +6,7 @@
  * (every level-6 role and below, the AGM and the social media manager included), and the page redirects to the
  * hub before any read. The loader re-checks all of it (lib/business-report.ts assertBusinessScope).
  *
- * WHO SEES WHAT (business report access, Juan 2026-11-19; plan item-09-BUSINESS-REPORT-ACCESS-PLAN-r5.md):
+ * WHO SEES WHAT (business report access, Juan 2026-11-19; plan item-09-BUSINESS-REPORT-ACCESS-PLAN-r6.md):
  *   MoO / Owner / CGS (by ROLE): every shop, "All shops" (each shop's report stacked; ratios are never blended across
  *     shops), and everything in it.
  *   GM (by ROLE): the shops they belong to, never "All shops", and what the MoO+ setting holds for GMs

@@ -1,4 +1,4 @@
-// Business report access (plan r5, test 4): the DOWNLOAD boundary, through the REAL export entry point.
+// Business report access (plan r6, test 4): the DOWNLOAD boundary, through the REAL export entry point.
 //
 // loadExportTable (the route's own loader) runs the real businessExportTable, the real report loader, the real view,
 // the real CSV row builders, the real CSV writer and the real PDF model. Only the database is fake.
@@ -19,7 +19,7 @@ import { ExportError, loadExportTable, type ExportTable } from "@/lib/report-exp
 import { BUSINESS_EXPORT_TABS, toCsv, type BusinessExportTab } from "@/lib/report-export-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { serverT } from "@/lib/i18n/server";
-import { A, GM_ALL_ON, VISIBILITY_TABLE, type FakeOpts } from "./helpers/business-report-fake";
+import { A, GM_ALL_ON, VISIBILITY_TABLE, gmOff, type FakeOpts } from "./helpers/business-report-fake";
 import { DAY, figuresOf, pricedFake } from "./helpers/business-access-fixture";
 
 const B = "bbbbbbbb-0000-4000-8000-00000000000b";
@@ -75,7 +75,8 @@ function secrets(scale: number) {
 const CSV_COLUMNS = {
   hourly: ["pure_hourly_cost", "overtime_premium", "pure_hourly_pct", "pure_hourly_target_pct", "wage_estimated"],
   loaded: ["salaried_cost", "burden_cost", "fully_loaded_cost", "fully_loaded_pct", "fully_loaded_target_pct", "fully_loaded_state", "burden_estimated", "salary_estimated", "salary_gaps"],
-  never: ["straight_time_cost", "straight_time_pct"],
+  /** One column pair, two groups: on the People file it is cost per hourly person, on the Hours file labor dollars per 15 minutes. */
+  cost: ["straight_time_cost", "straight_time_pct"],
 };
 function cells(t: ExportTable, column: string): unknown[] {
   return t.columns.some((c) => c.key === column) ? t.rows.map((r) => r[column]) : [];
@@ -123,8 +124,18 @@ describe("a GM: every coherent setting x every tab, CSV and PDF", () => {
         const periods = tab === "compare" ? [1, 2] : [1];
         for (const scale of periods) {
           const x = secrets(scale);
-          // Never a GM's, under any setting: cost per person, labor dollars per 15 minutes.
-          for (const n of [...x.people, ...x.quarters]) for (const file of [CSV(csv), PDF(pdf)]) expect(hasMoney(file, n), `${n} (person / 15-minute cost) in ${label}`).toBe(false);
+          // Juan 2026-11-19: cost per hourly person is in the People file exactly with `person_cost`, labor dollars
+          // per 15 minutes in the Hours file exactly with `quarter_cost` (the PDF prints the HOUR: both quarters of
+          // the fixture are one hour, so it holds their sum). Nowhere else, under any setting.
+          const personCost = tab === "people" && s.person_cost, quarterCost = tab === "hours" && s.quarter_cost;
+          for (const n of x.people) for (const file of [CSV(csv), PDF(pdf)]) expect(hasMoney(file, n), `${n} (cost per person) in ${label}`).toBe(personCost);
+          for (const n of x.quarters) {
+            expect(hasMoney(CSV(csv), n), `${n} (15-minute dollars) in the CSV: ${label}`).toBe(quarterCost);
+            expect(hasMoney(PDF(pdf), n), `${n} (15-minute dollars) in the PDF: ${label}`).toBe(false);
+          }
+          if (tab === "hours") expect(hasMoney(PDF(pdf), x.quarters.reduce((a, b) => a + b, 0)), `the hour's labor dollars in the PDF: ${label}`).toBe(s.quarter_cost);
+          // A SALARIED amount is never in the People file, whatever is on (the salary per person included: the report lists none).
+          if (tab === "people") for (const n of x.loaded) for (const file of [CSV(csv), PDF(pdf)]) expect(hasMoney(file, n), `${n} (a salaried amount) in ${label}`).toBe(false);
           // A group that is off: none of its amounts, in either file.
           if (!s.hourly_cost) for (const n of x.hourly) for (const file of [CSV(csv), PDF(pdf)]) expect(hasMoney(file, n), `${n} (hourly) in ${label}`).toBe(false);
           if (!s.loaded) for (const n of x.loaded) for (const file of [CSV(csv), PDF(pdf)]) expect(hasMoney(file, n), `${n} (loaded) in ${label}`).toBe(false);
@@ -139,12 +150,16 @@ describe("a GM: every coherent setting x every tab, CSV and PDF", () => {
           }
         }
         // The CSV, column by column: a group that is off has EMPTY cells (state and flag columns included) and no
-        // entry in figure_notes; the two MoO-only columns are always empty for a GM.
-        for (const c of CSV_COLUMNS.never) expect(filled(cells(t, c)), `${c}: ${label}`).toEqual([]);
+        // entry in figure_notes; the cost columns are filled only on the file and under the switch that holds them.
+        const costOn = (tab === "people" && s.person_cost) || (tab === "hours" && s.quarter_cost);
+        if (!costOn) for (const c of CSV_COLUMNS.cost) expect(filled(cells(t, c)), `${c}: ${label}`).toEqual([]);
+        else expect(filled(cells(t, "straight_time_cost")).length, `straight_time_cost: ${label}`).toBeGreaterThan(0);
+        // ... and a salaried person's cost cell is empty under EVERY setting.
+        if (tab === "people") for (const r of t.rows.filter((x) => x.row_type === "person" && x.pay_class !== "hourly")) expect(filled([r.straight_time_cost]), `a salaried person's cost: ${label}`).toEqual([]);
         if (!s.hourly_cost) for (const c of CSV_COLUMNS.hourly) expect(filled(cells(t, c)), `${c}: ${label}`).toEqual([]);
         if (!s.loaded) for (const c of CSV_COLUMNS.loaded) expect(filled(cells(t, c)), `${c}: ${label}`).toEqual([]);
         const notes = cells(t, "figure_notes").map((x) => String(x ?? "")).join("; ");
-        for (const c of [...CSV_COLUMNS.never, ...(s.hourly_cost ? [] : CSV_COLUMNS.hourly), ...(s.loaded ? [] : CSV_COLUMNS.loaded)]) expect(notes, `figure_notes names ${c}: ${label}`).not.toContain(`${c}=`);
+        for (const c of [...(costOn ? [] : CSV_COLUMNS.cost), ...(s.hourly_cost ? [] : CSV_COLUMNS.hourly), ...(s.loaded ? [] : CSV_COLUMNS.loaded)]) expect(notes, `figure_notes names ${c}: ${label}`).not.toContain(`${c}=`);
         // The PDF names no hidden column and holds no "not included" dash: a hidden group is simply not printed.
         if (!s.loaded) for (const w of ["Salaries", "Burden", "Fully loaded"]) expect(pdf, `"${w}" in the PDF: ${label}`).not.toContain(w);
         if (!s.hourly_cost) for (const w of ["Hourly labor", "Pure hourly labor", "Overtime premium", "Hourly %", "Labor % ="]) expect(pdf, `"${w}" in the PDF: ${label}`).not.toContain(w);
@@ -160,10 +175,12 @@ describe("a GM: every coherent setting x every tab, CSV and PDF", () => {
         }
       }
     }
-    // 192 settings with the report on x 5 tabs.
-    // 96 of them allow downloads: Overview for all 96, Hours / Channels / Compare for 48 each, People for 72.
-    expect([files, refused]).toEqual([96 + 48 * 3 + 72, 192 * 5 - (96 + 48 * 3 + 72)]);
-  }, 300_000);
+    // 448 settings with the report on x 5 tabs.
+    // 224 of them allow downloads: Overview for all 224, Channels / Compare for 112 each, Hours for 144 (8 x the 18
+    // of 28 money states with the hours section on), People for 192 (112 with servers on + 4 x the 20 with people on).
+    expect(combos).toHaveLength(448);
+    expect([files, refused]).toEqual([224 + 112 * 2 + 144 + 192, 448 * 5 - (224 + 112 * 2 + 144 + 192)]);
+  }, 600_000);
   it("the report switched off for GMs: every tab is 403 gm_report_off, zero report reads", async () => {
     const off = gmVisibilityCombinations().filter((s) => !s.report);
     expect(off).toHaveLength(1);
@@ -251,7 +268,7 @@ describe("empty ranges obey the same switches (nothing is loaded, so the early c
 });
 
 describe("settings that MOVE during the request: the file follows the access the report was BUILT with", () => {
-  const off = (k: keyof GmVisibility) => ({ ...GM_ALL_ON, [k]: false, ...(k === "hourly_cost" ? { loaded: false } : {}) });
+  const off = (k: keyof GmVisibility) => gmOff(k);
   it("downloads ON at the early check, OFF when the loader reads: 403 business_export_off, no file", async () => {
     wire({ visibility: [GM_ALL_ON, off("export")] });
     expect(await refusal(load(GM, "overview"))).toEqual([403, "business_export_off"]);

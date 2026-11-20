@@ -1,8 +1,10 @@
-// Business report access, plan r5 section 2 (contract points 2 to 4) and section 7 test 3: THE MODEL.
+// Business report access, plan r6 section 2 (the contract) and section 7 test 3: THE MODEL.
 //
 // A small exact (rational) model of how the labor figures of the report depend on PAY INPUTS (each hourly person's
 // rate, each salaried person's share), and a checker that says which unknowns a viewer can work out from the terms
-// they see. DOMAIN, exactly: the relations below; the fixtures F1 to F5; one rate per hourly person; a viewer who
+// they see. Since Juan's ruling of 2026-11-19 (a GM hires at their shop and knows its hourly pay) the contract
+// guards SALARIED amounts only: the hourly rates are in the model so the checker can show that no hourly term,
+// per person or per 15 minutes, leads to a salaried one. DOMAIN, exactly: the relations below; the fixtures F1 to F5; one rate per hourly person; a viewer who
 // knows every visible term EXACTLY, plus net sales, the burden rate and everyone's minutes. It is a design check of
 // the grouping in lib/business-access-shared.ts, not a proof about every report that can exist.
 //
@@ -35,12 +37,18 @@ export interface Pay { rates: Q[]; shares: Q[] }
 
 export const FIGURE_TERMS = ["straight", "premium", "hourly", "pct", "salaries", "burden", "loaded", "loadedPct"] as const;
 export type FigureTerm = (typeof FIGURE_TERMS)[number];
-/** Where each figure term lives in the access table (`never` = no viewer ever receives it as a figure). */
-export const TERM_GROUP: Record<FigureTerm, "hourlyCost" | "loaded" | "never"> = {
-  straight: "never", premium: "hourlyCost", hourly: "hourlyCost", pct: "hourlyCost", salaries: "loaded", burden: "loaded", loaded: "loaded", loadedPct: "loaded",
+export type ModelGroups = { hourlyCost: boolean; loaded: boolean; personCost: boolean; quarterCost: boolean };
+/** Where each figure term lives in the access table. `straight` (the straight-time total) is what the labor dollars
+ * per 15 minutes add up to, so it is seen with `quarterCost`. */
+export const TERM_GROUP: Record<FigureTerm, keyof ModelGroups> = {
+  straight: "quarterCost", premium: "hourlyCost", hourly: "hourlyCost", pct: "hourlyCost", salaries: "loaded", burden: "loaded", loaded: "loaded", loadedPct: "loaded",
 };
+/** The figures that hold a salaried amount when somebody is salaried. */
+export const SALARIED_TERMS: readonly string[] = ["salaries", "burden", "loaded", "loadedPct"];
 export const rateTerm = (i: number) => `rate[${i}]`;
 export const shareTerm = (j: number) => `share[${j}]`;
+/** One hourly person's straight-time cost (the report's cost per person; seen with `personCost`). */
+export const personTerm = (i: number) => `personStraight[${i}]`;
 export const isPayInput = (term: string) => term.startsWith("rate[") || term.startsWith("share[");
 
 /** Every term's exact value for this shop at this pay. */
@@ -53,7 +61,7 @@ export function evaluate(f: Fixture, pay: Pay): Record<string, Q> {
   const burden = mul(r, add(hourly, salaries));
   const loaded = add(add(hourly, salaries), burden);
   const out: Record<string, Q> = { straight, premium, hourly, salaries, burden, loaded, pct: div(mul(q(100), hourly), net), loadedPct: div(mul(q(100), loaded), net) };
-  f.hourly.forEach((_, i) => { out[rateTerm(i)] = pay.rates[i]!; });
+  f.hourly.forEach((p, i) => { out[rateTerm(i)] = pay.rates[i]!; out[personTerm(i)] = mul(q(p.minutes), pay.rates[i]!); });
   for (let j = 0; j < f.salaried; j++) out[shareTerm(j)] = pay.shares[j]!;
   return out;
 }
@@ -67,6 +75,7 @@ export function relations(f: Fixture, extra: Relation[] = []): Relation[] {
   return [
     { name: "H1 straight = sum(minutes x rate)", terms: { straight: ONE, ...sum((i) => [rateTerm(i), neg(q(f.hourly[i]!.minutes))], f.hourly.length) } },
     { name: "H2 premium = 0.5 x sum(overtime minutes x rate)", terms: { premium: ONE, ...sum((i) => [rateTerm(i), neg(q(f.hourly[i]!.ot, 2))], f.hourly.length) } },
+    ...f.hourly.map((p, i) => ({ name: `P${i} personStraight = minutes x rate`, terms: { [personTerm(i)]: ONE, [rateTerm(i)]: neg(q(p.minutes)) } })),
     { name: "I1 hourly = straight + premium", terms: { hourly: ONE, straight: neg(ONE), premium: neg(ONE) } },
     { name: "H3 salaries = sum(share)", terms: { salaries: ONE, ...sum((j) => [shareTerm(j), neg(ONE)], f.salaried) } },
     { name: "I3 loaded = hourly + salaries + burden", terms: { loaded: ONE, hourly: neg(ONE), salaries: neg(ONE), burden: neg(ONE) } },
@@ -76,11 +85,11 @@ export function relations(f: Fixture, extra: Relation[] = []): Relation[] {
     ...extra,
   ];
 }
-/** A probe for the negative controls: one person's straight-time cost as its own (visible) term. */
-export function personStraight(f: Fixture, i: number): { relation: Relation; term: string; value: (pay: Pay) => Q } {
-  const term = `personStraight[${i}]`;
-  return { term, relation: { name: `${term} = minutes x rate`, terms: { [term]: ONE, [rateTerm(i)]: sub(ZERO, q(f.hourly[i]!.minutes)) } },
-    value: (pay) => mul(q(f.hourly[i]!.minutes), pay.rates[i]!) };
+/** A probe for the negative controls: one SALARIED person's amount as its own (visible) term: what a people row
+ * that priced a salaried person would show. */
+export function personSalaried(j: number): { relation: Relation; term: string; value: (pay: Pay) => Q } {
+  const term = `personSalaried[${j}]`;
+  return { term, relation: { name: `${term} = share`, terms: { [term]: ONE, [shareTerm(j)]: sub(ZERO, ONE) } }, value: (pay) => pay.shares[j]! };
 }
 
 /**
@@ -124,9 +133,10 @@ export function determined(f: Fixture, pay: Pay, visible: ReadonlySet<string>, e
   return out;
 }
 
-/** The figure terms a viewer with these groups sees (`straight` never). */
-export function visibleTerms(groups: { hourlyCost: boolean; loaded: boolean }): Set<string> {
-  return new Set(FIGURE_TERMS.filter((t) => { const g = TERM_GROUP[t]; return g !== "never" && groups[g]; }));
+/** The terms a viewer with these groups sees at this shop: the figures of each group that is on, and each hourly
+ * person's cost with `personCost`. Never a share: the report lists no salaried amount per person. */
+export function visibleTerms(groups: ModelGroups, f: Fixture): Set<string> {
+  return new Set([...FIGURE_TERMS.filter((t) => groups[TERM_GROUP[t]]), ...(groups.personCost ? f.hourly.map((_, i) => personTerm(i)) : [])]);
 }
 
 // ── Fixtures (plan r5 test 3). Positive burden rate and positive net sales in every one (Astra r5 P3). ──
@@ -136,11 +146,13 @@ export const F2: Fixture = { name: "F2 two hourly at 45 h / 5 h overtime each, n
 export const F3: Fixture = { name: "F3 zero overtime: two hourly + one salaried", hourly: [{ minutes: 40 * HOUR, ot: 0 }, { minutes: 30 * HOUR, ot: 0 }], salaried: 1, netCents: 1_000_000, burdenPct: 12 };
 export const F4: Fixture = { name: "F4 zero hours, nobody salaried", hourly: [], salaried: 0, netCents: 1_000_000, burdenPct: 12 };
 export const F5: Fixture = { name: "F5 one hourly person alone, with overtime, nobody salaried", hourly: [{ minutes: 45 * HOUR, ot: 5 * HOUR }], salaried: 0, netCents: 1_000_000, burdenPct: 12 };
-export const FIXTURES = [F1, F2, F3, F4, F5] as const;
+/** A payroll that carries more than one salary (the P Street case: an owner's and a director's beside the shop's own). */
+export const F6: Fixture = { name: "F6 two hourly, zero overtime + TWO salaried", hourly: [{ minutes: 40 * HOUR, ot: 0 }, { minutes: 30 * HOUR, ot: 0 }], salaried: 2, netCents: 1_000_000, burdenPct: 12 };
+export const FIXTURES = [F1, F2, F3, F4, F5, F6] as const;
 /** Three pay vectors (cents per minute: 100/3 = $20/h, 50 = $30/h, 40 = $24/h ...; shares in cents). Every figure
  * they produce is whole cents (asserted). The first prices F2 at the reviewer's $2,375 / $125. */
 export const PAYS: readonly Pay[] = [
-  { rates: [q(100, 3), q(50)], shares: [q(100_000)] },
-  { rates: [q(40), q(30)], shares: [q(150_000)] },
-  { rates: [q(35), q(45)], shares: [q(82_500)] },
+  { rates: [q(100, 3), q(50)], shares: [q(100_000), q(250_000)] },
+  { rates: [q(40), q(30)], shares: [q(150_000), q(200_000)] },
+  { rates: [q(35), q(45)], shares: [q(82_500), q(300_000)] },
 ];

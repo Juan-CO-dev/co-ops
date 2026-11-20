@@ -48,7 +48,8 @@ vi.mock("@/components/reports-business/HourDisclosure", async () => {
 import BusinessReportPage from "@/app/(authed)/reports/business/page";
 import en from "@/lib/i18n/en.json";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { A, GM_ALL_ON, VISIBILITY_TABLE, type FakeOpts } from "./helpers/business-report-fake";
+import type { GmVisibilityKey } from "@/lib/business-access-shared";
+import { A, GM_ALL_ON, VISIBILITY_TABLE, gmOff, type FakeOpts } from "./helpers/business-report-fake";
 import { DAY, figuresOf, pricedFake } from "./helpers/business-access-fixture";
 
 const EN = en as Record<string, string>;
@@ -71,7 +72,7 @@ const redirected = async (params: Record<string, string> = {}) => (await open(pa
 /** The tabs the strip offers (the labels of its links). */
 const strip = (html: string) => TABS.filter((t) => new RegExp(`<a[^>]*href="[^"]*tab=${t}[^"]*"[^>]*>${tabLabel(t)}</a>`).test(html));
 const text = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
-const off = (k: string) => ({ ...GM_ALL_ON, [k]: false, ...(k === "hourly_cost" ? { loaded: false } : {}) });
+const off = (k: string) => gmOff(k as GmVisibilityKey);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -117,7 +118,7 @@ describe("gates, in order", () => {
   });
   it("the report switched off for GMs: the hub, with only the settings read", async () => {
     as("gm", 7);
-    const f = wire({ visibility: [{ ...GM_ALL_ON, report: false, hourly_cost: false, loaded: false, quarters: false, channels: false, people: false, servers: false, compare: false, export: false }] });
+    const f = wire({ visibility: [gmOff("report")] });
     expect(await redirected()).toBe("REDIRECT /reports");
     expect(f.tables).toEqual([VISIBILITY_TABLE]);
     expect(f.calls).toHaveLength(0);
@@ -157,19 +158,50 @@ describe("what a GM's page holds follows the setting", () => {
     expect(t).toContain(EN["reports.business.card.hours"]!);
     expect(t).toContain("125");
   });
-  it("everything on: fully loaded labor is on the page; cost per person and labor dollars per 15 minutes never are", async () => {
+  const dollars = (n: number) => (n / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
+  it("everything on: fully loaded labor, each hourly person's cost and the labor dollars per 15 minutes are on the page", async () => {
     as("gm", 7); wire({ visibility: [GM_ALL_ON] });
     const overview = text(await open());
     for (const w of ["$1,000.00", "$343.20", "$3,203.20", "32%"]) expect(overview, w).toContain(w);
     wire({ visibility: [GM_ALL_ON] });
     const people = text(await open({ tab: "people" }));
     const f = figuresOf();
-    for (const n of f.people) expect(people).not.toContain((n / 100).toLocaleString("en-US", { minimumFractionDigits: 2 }));
-    expect(people).toContain(EN["reports.business.people.cost_note"]!);
+    for (const n of f.people) expect(people).toContain(dollars(n));
+    expect(people).not.toContain(EN["reports.business.people.cost_note"]!);
+    // The salaried person has no amount: the sentence, never a number.
+    expect(people).toContain(EN["reports.business.people.salaried_cost"]!);
+    expect(people).not.toContain("$1,000.00");
     wire({ visibility: [GM_ALL_ON] });
     const hours = text(await open({ tab: "hours" }));
-    for (const n of f.quarters) expect(hours).not.toContain((n / 100).toLocaleString("en-US", { minimumFractionDigits: 2 }));
+    for (const n of f.quarters) expect(hours).toContain(dollars(n));
+    expect(hours).not.toContain(EN["reports.business.hours.gm_note"]!);
+  });
+  it("the defaults (no row): each hourly person's cost and the dollars per 15 minutes are on the page; no salary figure is", async () => {
+    as("gm", 7); wire({});
+    const people = text(await open({ tab: "people" }));
+    const f = figuresOf();
+    for (const n of f.people) expect(people).toContain(dollars(n));
+    wire({});
+    const hours = text(await open({ tab: "hours" }));
+    for (const n of f.quarters) expect(hours).toContain(dollars(n));
+    wire({});
+    const overview = text(await open());
+    for (const w of ["$1,000.00", "$343.20", "$3,203.20"]) expect(overview, w).not.toContain(w);
+  });
+  it("cost per person off / dollars per 15 minutes off (each on its own): that part is gone and the page says it is not included", async () => {
+    as("gm", 7); wire({ visibility: [gmOff("person_cost")] });
+    const f = figuresOf();
+    const people = text(await open({ tab: "people" }));
+    for (const n of f.people) expect(people).not.toContain(dollars(n));
+    expect(people).toContain(EN["reports.business.people.cost_note"]!);
+    wire({ visibility: [gmOff("person_cost")] });
+    for (const n of f.quarters) expect(text(await open({ tab: "hours" }))).toContain(dollars(n));
+    wire({ visibility: [gmOff("quarter_cost")] });
+    const hours = text(await open({ tab: "hours" }));
+    for (const n of f.quarters) expect(hours).not.toContain(dollars(n));
     expect(hours).toContain(EN["reports.business.hours.gm_note"]!);
+    wire({ visibility: [gmOff("quarter_cost")] });
+    for (const n of f.people) expect(text(await open({ tab: "people" }))).toContain(dollars(n));
   });
   it("a tab that is off is not in the strip, and asking for it by URL gives the Overview", async () => {
     as("gm", 7);
@@ -192,7 +224,7 @@ describe("what a GM's page holds follows the setting", () => {
     html = await open({ tab: "people" });
     expect(text(html)).toContain("Cy");
     expect(text(html)).not.toContain(EN["reports.business.people.servers"]!);
-    wire({ visibility: [{ ...GM_ALL_ON, people: false, servers: false }] });
+    wire({ visibility: [gmOff("people", "servers")] });
     html = await open({ tab: "people" });
     expect(strip(html)).not.toContain("people");
     expect(html).toContain(`aria-label="${tabLabel("overview")}"`);

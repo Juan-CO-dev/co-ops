@@ -1,10 +1,11 @@
-// Business report access (item 9, plan r5): the pure rules. What a GM may see is nine switches a MoO+ saves; cost
-// per person and labor dollars per 15 minutes are NOT switches (the two labor constants decide, MoO+).
+// Business report access (item 9, plan r6): the pure rules. What a GM may see is twelve switches a MoO+ saves.
+// Juan 2026-11-19: each hourly person's cost and labor dollars per 15 minutes are switches (ON by default); a
+// salary per person is its own switch (OFF by default).
 import { describe, expect, it } from "vitest";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import {
   BUSINESS_ACCESS_GROUPS, BUSINESS_VISIBILITY_ERROR_CODES, BUSINESS_VISIBILITY_ROLES, GM_VISIBILITY_DEFAULTS, GM_VISIBILITY_KEYS, GM_VISIBILITY_NEEDS,
-  businessAccessFor, businessAllShopsAllowed, businessShopAllowed, businessTabAllowed, businessTabsFor, canManageBusinessVisibility, coherentGmVisibility,
+  PERSON_NON_MONEY_KEYS, redactBusinessDto, businessAccessFor, businessAllShopsAllowed, businessShopAllowed, businessTabAllowed, businessTabsFor, canManageBusinessVisibility, coherentGmVisibility,
   gmVisibilityCombinations, parseGmVisibility, parseGmVisibilitySave, sameBusinessAccess, type GmVisibility,
 } from "@/lib/business-access-shared";
 
@@ -13,20 +14,23 @@ const ALL_OFF = Object.fromEntries(GM_VISIBILITY_KEYS.map((k) => [k, false])) as
 const FULL: RoleCode[] = ["moo", "owner", "cgs"];
 const OTHERS = (Object.keys(ROLES) as RoleCode[]).filter((r) => r !== "gm" && !FULL.includes(r));
 
-describe("the nine switches and their defaults (plan r5 section 2: for Juan)", () => {
+describe("the twelve switches and their defaults (plan r6 section 2: Juan's ruling of 2026-11-19)", () => {
   it("exactly these keys, in this order", () => {
-    expect(GM_VISIBILITY_KEYS).toEqual(["report", "hourly_cost", "loaded", "quarters", "channels", "people", "servers", "compare", "export"]);
+    expect(GM_VISIBILITY_KEYS).toEqual(["report", "hourly_cost", "loaded", "quarters", "quarter_cost", "channels", "people", "person_cost", "person_salary",
+      "servers", "compare", "export"]);
   });
-  it("defaults: everything a GM has today except fully loaded labor (salaries, burden)", () => {
-    expect(GM_VISIBILITY_DEFAULTS).toEqual({ report: true, hourly_cost: true, loaded: false, quarters: true, channels: true, people: true, servers: true,
-      compare: true, export: true });
+  it("defaults: everything ON, cost per hourly person and dollars per 15 minutes included, except the salaried side", () => {
+    expect(GM_VISIBILITY_DEFAULTS).toEqual({ report: true, hourly_cost: true, loaded: false, quarters: true, quarter_cost: true, channels: true, people: true,
+      person_cost: true, person_salary: false, servers: true, compare: true, export: true });
+    expect(Object.entries(GM_VISIBILITY_DEFAULTS).filter(([, v]) => !v).map(([k]) => k)).toEqual(["loaded", "person_salary"]);
   });
-  it("needs: hourly cost and every tab need the report; fully loaded needs hourly cost", () => {
-    expect(GM_VISIBILITY_NEEDS).toEqual({ report: [], hourly_cost: ["report"], loaded: ["hourly_cost"], quarters: ["report"], channels: ["report"],
-      people: ["report"], servers: ["report"], compare: ["report"], export: ["report"] });
+  it("needs: a per-person or per-15-minute money switch needs its list AND the shop-level money it is a part of", () => {
+    expect(GM_VISIBILITY_NEEDS).toEqual({ report: [], hourly_cost: ["report"], loaded: ["hourly_cost"], quarters: ["report"], quarter_cost: ["quarters", "hourly_cost"],
+      channels: ["report"], people: ["report"], person_cost: ["people", "hourly_cost"], person_salary: ["people", "loaded"], servers: ["report"], compare: ["report"],
+      export: ["report"] });
   });
-  it("there is no switch for cost per person, labor dollars per 15 minutes or the overtime premium", () => {
-    for (const k of ["person_cost", "quarter_cost", "ot_premium"]) expect(GM_VISIBILITY_KEYS as readonly string[]).not.toContain(k);
+  it("there is no switch for the overtime premium (it is shown and hidden with hourly cost)", () => {
+    expect(GM_VISIBILITY_KEYS as readonly string[]).not.toContain("ot_premium");
   });
   it("coherent = no child on under a parent that is off; the defaults are coherent", () => {
     expect(coherentGmVisibility(GM_VISIBILITY_DEFAULTS)).toBe(true);
@@ -35,22 +39,24 @@ describe("the nine switches and their defaults (plan r5 section 2: for Juan)", (
     expect(coherentGmVisibility({ ...ALL_ON, hourly_cost: false })).toBe(false); // loaded on under hourly off
     expect(coherentGmVisibility({ ...ALL_OFF, export: true })).toBe(false);
   });
-  it("every coherent combination is enumerated from the needs graph: 1 (report off) + 2^6 tabs x 3 labor states", () => {
+  it("every coherent combination is enumerated from the needs graph: 1 (report off) + 2^4 free tabs x 28 states of the money and its two lists", () => {
     const all = gmVisibilityCombinations();
-    expect(all).toHaveLength(1 + 64 * 3);
+    // hourly off: 4 (hours section x people list). hourly on, loaded off: 3 x 3. hourly on, loaded on: 3 x 5.
+    expect(all).toHaveLength(1 + 16 * (4 + 9 + 15));
     expect(all.every(coherentGmVisibility)).toBe(true);
     expect(new Set(all.map((c) => JSON.stringify(c))).size).toBe(all.length);
   });
 });
 
 describe("parseGmVisibility: the stored row's reader and the route's settings", () => {
-  it("accepts exactly the nine booleans, coherent", () => {
+  it("accepts exactly the twelve booleans, coherent", () => {
     expect(parseGmVisibility(GM_VISIBILITY_DEFAULTS)).toEqual(GM_VISIBILITY_DEFAULTS);
     expect(parseGmVisibility(ALL_OFF)).toEqual(ALL_OFF);
   });
   it("anything else is null", () => {
     const { export: _drop, ...missing } = ALL_ON;
-    for (const bad of [null, undefined, 1, "x", [], [ALL_ON], missing, { ...ALL_ON, extra: true }, { ...ALL_ON, person_cost: false }, { ...ALL_ON, report: 1 },
+    for (const bad of [null, undefined, 1, "x", [], [ALL_ON], missing, { ...ALL_ON, extra: true }, { ...ALL_ON, ot_premium: false }, { ...ALL_ON, report: 1 }, { ...ALL_ON, loaded: false },
+      { ...ALL_ON, people: false }, { ...ALL_ON, quarters: false },
       { ...ALL_ON, loaded: "true" }, { ...ALL_ON, people: null }, { ...ALL_ON, hourly_cost: false }, { ...ALL_OFF, compare: true }]) {
       expect(parseGmVisibility(bad), JSON.stringify(bad)).toBeNull();
     }
@@ -78,22 +84,27 @@ describe("businessAccessFor(role, settings)", () => {
   });
   it("GM: no row yet = the defaults", () => {
     expect(businessAccessFor("gm", null)).toEqual({ report: true, hourlyCost: true, loaded: false, quarters: true, channels: true, people: true, servers: true,
-      compare: true, export: true, personCost: false, quarterCost: false });
+      compare: true, export: true, personCost: true, quarterCost: true, personSalary: false });
   });
   it("GM: the settings, key by key", () => {
     for (const s of gmVisibilityCombinations()) {
       const a = businessAccessFor("gm", s);
-      expect([a.report, a.hourlyCost, a.loaded, a.quarters, a.channels, a.people, a.servers, a.compare, a.export], JSON.stringify(s))
-        .toEqual([s.report, s.hourly_cost, s.loaded, s.quarters, s.channels, s.people, s.servers, s.compare, s.export]);
+      expect([a.report, a.hourlyCost, a.loaded, a.quarters, a.channels, a.people, a.servers, a.compare, a.export, a.personCost, a.quarterCost, a.personSalary], JSON.stringify(s))
+        .toEqual([s.report, s.hourly_cost, s.loaded, s.quarters, s.channels, s.people, s.servers, s.compare, s.export, s.person_cost, s.quarter_cost, s.person_salary]);
     }
   });
-  it("GM: cost per person and labor dollars per 15 minutes are false under EVERY combination, and a forged key cannot open them", () => {
-    for (const s of gmVisibilityCombinations()) {
-      const a = businessAccessFor("gm", s);
-      expect([a.personCost, a.quarterCost]).toEqual([false, false]);
-    }
-    const forged = businessAccessFor("gm", { ...ALL_ON, person_cost: true, quarter_cost: true, personCost: true, quarterCost: true });
-    expect([forged.personCost, forged.quarterCost]).toEqual([false, false]);
+  it("GM: cost per person, dollars per 15 minutes and a salary per person are never on without everything they need (a row the validator would refuse included)", () => {
+    const acc = (s: Partial<GmVisibility>) => businessAccessFor("gm", { ...ALL_ON, ...s });
+    expect(acc({ people: false }).personCost).toBe(false);
+    expect(acc({ hourly_cost: false }).personCost).toBe(false);
+    expect(acc({ quarters: false }).quarterCost).toBe(false);
+    expect(acc({ hourly_cost: false }).quarterCost).toBe(false);
+    expect(acc({ people: false }).personSalary).toBe(false);
+    expect(acc({ loaded: false }).personSalary).toBe(false);
+    expect(acc({ hourly_cost: false }).personSalary).toBe(false); // through fully loaded
+    // camelCase is the access, not a setting: it opens nothing.
+    const forged = businessAccessFor("gm", { ...ALL_OFF, report: true, personCost: true, quarterCost: true, personSalary: true });
+    expect([forged.personCost, forged.quarterCost, forged.personSalary]).toEqual([false, false, false]);
   });
   it("GM: fails closed on a row the validator would refuse (a missing or non-boolean key is off; a child under an off parent is off)", () => {
     const { people: _drop, ...missing } = ALL_ON;
@@ -167,5 +178,44 @@ describe("the group table: every DTO leaf path is in the base or in exactly one 
     expect(leaf("loaded")).toEqual(["burdenCents", "burdenEstimated", "fullyLoadedCents", "loadedPct", "loadedState", "loadedTone", "salariedCents", "salaryEstimated", "salaryGaps"]);
     expect(BUSINESS_ACCESS_GROUPS.personCost.paths).toEqual(["people[].straightCostCents"]);
     expect(BUSINESS_ACCESS_GROUPS.quarterCost.paths).toEqual(["quarters[].straightCents", "quarters[].pct"]);
+  });
+});
+
+describe("a salaried person's row carries no amount without `personSalary` (the redactor, whatever the loader sent)", () => {
+  // The loader prices hourly people only. These rows are what a LATER read could send: a salaried row that is priced.
+  const report = () => ({ quarters: [], quartersUnassigned: [], quartersReason: null, people: [
+    { personKey: "u:1", label: "Ana", source: "7shifts", payClass: "hourly", minutes: 600, otMinutes: 0, weeksSuppressed: 0, straightCostCents: 18_000 },
+    { personKey: "u:2", label: "Pat", source: "7shifts", payClass: "salaried", minutes: 2_400, otMinutes: 0, weeksSuppressed: 0, straightCostCents: 250_000, salaryCents: 250_000,
+      weeklyPay: "2500.00" },
+    { personKey: "u:3", label: "Sam", source: "toast", payClass: "exempt", minutes: 60, otMinutes: 0, weeksSuppressed: 0, straightCostCents: 99_000 },
+  ] });
+  const amounts = (dto: ReturnType<typeof report>) => dto.people.map((p) => Object.fromEntries(Object.entries(p).filter(([k]) => !PERSON_NON_MONEY_KEYS.includes(k))));
+  it("a GM with everything on EXCEPT the salary per person: the hourly cost stays, every amount on a non-hourly row is null", () => {
+    const access = businessAccessFor("gm", { ...ALL_ON, person_salary: false });
+    expect([access.personCost, access.loaded, access.personSalary]).toEqual([true, true, false]);
+    const dto = redactBusinessDto(report(), access);
+    expect(amounts(dto)).toEqual([{ straightCostCents: 18_000 }, { straightCostCents: null, salaryCents: null, weeklyPay: null }, { straightCostCents: null }]);
+    expect(JSON.stringify(dto)).not.toMatch(/250000|250_000|2500\.00|99000/);
+    // ... and what is not money is untouched.
+    expect(dto.people.map((p) => [p.label, p.payClass, p.minutes])).toEqual([["Ana", "hourly", 600], ["Pat", "salaried", 2_400], ["Sam", "exempt", 60]]);
+  });
+  it("the GM defaults (salary per person off): the same", () => {
+    const dto = redactBusinessDto(report(), businessAccessFor("gm", null));
+    expect(amounts(dto)[1]).toEqual({ straightCostCents: null, salaryCents: null, weeklyPay: null });
+  });
+  it("under EVERY coherent setting without the salary per person, no amount of a non-hourly row survives", () => {
+    for (const s of gmVisibilityCombinations().filter((x) => x.report && !x.person_salary)) {
+      const dto = redactBusinessDto(report(), businessAccessFor("gm", s)) as unknown as { people?: Array<Record<string, unknown>> };
+      for (const p of dto.people ?? []) if (p.payClass !== "hourly") for (const [k, v] of Object.entries(p)) if (!PERSON_NON_MONEY_KEYS.includes(k)) expect(v, `${k} under ${JSON.stringify(s)}`).toBeNull();
+    }
+  });
+  it("with the salary per person on (a GM by the setting, MoO / Owner / CGS always) the row is left as the loader sent it", () => {
+    for (const access of [businessAccessFor("gm", ALL_ON), businessAccessFor("moo", null), businessAccessFor("owner", null), businessAccessFor("cgs", null)]) {
+      expect(access.personSalary).toBe(true);
+      expect(amounts(redactBusinessDto(report(), access))[1]).toEqual({ straightCostCents: 250_000, salaryCents: 250_000, weeklyPay: "2500.00" });
+    }
+  });
+  it("the non-money keys are exactly the people group's paths (a new key on a people row is money until it is listed)", () => {
+    expect(BUSINESS_ACCESS_GROUPS.people.paths.map((p) => p.replace("people[].", "")).sort()).toEqual([...PERSON_NON_MONEY_KEYS].sort());
   });
 });

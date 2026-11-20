@@ -4,12 +4,13 @@
  * (business report access, Juan 2026-11-19; owner / CGS / MoO only, decided on the server before anything is read;
  * shown only with BUSINESS_REPORT and the two fact switches).
  *
- * Nine switches (lib/business-access-shared.ts), in four groups. A switch that needs another one is disabled, with
+ * Twelve switches (lib/business-access-shared.ts), in four groups. A switch that needs another one is disabled, with
  * the sentence "Turn on ... first", while that one is off; turning a parent off turns its children off in the DRAFT.
  * Nothing is sent until Save: ONE save, of the whole set, bound to the head this card showed (another save in
  * between is refused, never overwritten), behind a password every time (Tier B: it changes who sees the labor
- * money, in both directions). Cost per person and labor dollars per 15 minutes are not switches: two fixed lines
- * say they stay MoO and up.
+ * money, in both directions). Juan 2026-11-19: each hourly person's cost and labor dollars per 15 minutes are
+ * switches (ON by default: a GM hires and knows the shop's hourly pay); the salaried side (fully loaded labor, a
+ * salary per person) is OFF by default, and the fully loaded switch says whose salaries a shop's total can hold.
  *
  * Disclosure doctrine: a default-collapsed CollapsibleSection with the "N of 9 on" count on its header; every
  * switch is a full-row 44px toggle. The section is CONTROLLED and stays open while the draft is unsaved, so a
@@ -44,7 +45,7 @@ export interface BusinessVisibilityCardData { settings: GmVisibility; headId: st
 const GROUPS: ReadonlyArray<{ title: TranslationKey; keys: readonly GmVisibilityKey[] }> = [
   { title: "business.visibility.group.access", keys: ["report"] },
   { title: "business.visibility.group.money", keys: ["hourly_cost", "loaded"] },
-  { title: "business.visibility.group.tabs", keys: ["quarters", "channels", "people", "servers", "compare"] },
+  { title: "business.visibility.group.tabs", keys: ["quarters", "quarter_cost", "channels", "people", "person_cost", "person_salary", "servers", "compare"] },
   { title: "business.visibility.group.downloads", keys: ["export"] },
 ];
 function errorKey(code: string | undefined): TranslationKey {
@@ -149,7 +150,7 @@ function BusinessVisibilityForm({ data }: { data: BusinessVisibilityCardData }) 
               <span className="min-w-0 flex-1 basis-[14rem]">
                 <span className="block font-bold text-co-text">{label(k)}</span>
                 <span className="block text-sm text-co-text-dim">{t(`business.visibility.hint.${k}` as TranslationKey)}</span>
-                {k === "hourly_cost" && <span className="block text-sm font-bold text-co-warning-text">{t("business.visibility.pay_note")}</span>}
+                {k === "loaded" && <span className="block text-sm font-bold text-co-warning-text">{t("business.visibility.salary_note")}</span>}
                 {parent !== undefined && <span className="block text-sm text-co-text-muted">{t("business.visibility.needs", { parent: label(parent) })}</span>}
               </span>
               <span className={draft[k] ? ON_CHIP : OFF_CHIP}>{state}</span>
@@ -157,11 +158,6 @@ function BusinessVisibilityForm({ data }: { data: BusinessVisibilityCardData }) 
           </li>;
         })}</ul>
       </div>)}
-      <div className="space-y-1 rounded-lg bg-co-surface-inset p-3">
-        <h4 className="text-xs font-bold tracking-wide text-co-text-muted">{t("business.visibility.fixed.title")}</h4>
-        <p className="text-sm text-co-text">{t("business.visibility.fixed.person_cost")}</p>
-        <p className="text-sm text-co-text">{t("business.visibility.fixed.quarter_cost")}</p>
-      </div>
       <p className="text-sm text-co-text-dim">{data.headId === null || data.savedAt === null ? t("business.visibility.never_saved")
         : t("business.visibility.last_saved", { who: data.savedBy ?? "-", date: formatDateLabelWithYear(etDisplayDate(data.savedAt), language) })}</p>
       {!dirty && !saved && !error && <p className="text-sm text-co-text-muted">{t("business.visibility.no_changes")}</p>}

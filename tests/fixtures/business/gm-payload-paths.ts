@@ -12,7 +12,7 @@ export const BASE = [
   "range.range", "range.from", "range.to", "range.days", "range.shortened", "range.empty", "range.previous.from", "range.previous.to",
   "range.lastYear", "range.lastYear.from", "range.lastYear.to", "range.lastYearReason",
   "access.report", "access.hourlyCost", "access.loaded", "access.quarters", "access.channels", "access.people", "access.servers", "access.compare",
-  "access.export", "access.personCost", "access.quarterCost",
+  "access.export", "access.personCost", "access.quarterCost", "access.personSalary",
   "days[].date", "days[].cuts",
   ...under(["days[].sales"], ["date", "coverage", "checks", "toastChecksCents", "toastAmountMissing", "toastNetCents", "ezcaterCents", "ezcaterOrders", "ezcaterMissing",
     "refundCents", "totalCents", "giftCardCents", "ezcaterLinkedCents"]),
@@ -30,7 +30,7 @@ export const BASE = [
   ...under(["rushRule"], ["multiplier", "historyWeeks", "minHistory", "minChecks", "minBaselineChecks", "minRunQuarters"]),
 ];
 
-/** The switch (snake_case, as saved) that puts each group in a GM's report. `null` = never a GM's, whatever is saved. */
+/** The switch (snake_case, as saved) that puts each group in a GM's report (a saved switch is ON only with what it needs). */
 export const GROUPS: Record<string, { switch: string | null; paths: string[] }> = {
   hourlyCost: { switch: "hourly_cost", paths: under(LABOR, ["pureHourlyCents", "otPremiumCents", "pct", "tone", "wageEstimated"]) },
   loaded: { switch: "loaded", paths: under(LABOR, ["loadedState", "salariedCents", "burdenCents", "fullyLoadedCents", "loadedPct", "loadedTone", "burdenEstimated",
@@ -41,9 +41,9 @@ export const GROUPS: Record<string, { switch: string | null; paths: string[] }> 
   channels: { switch: "channels", paths: [...under(["channels.included[]"], CUT), ...under(["channels.excluded[]"], CUT)] },
   people: { switch: "people", paths: under(["people[]"], ["personKey", "label", "source", "payClass", "minutes", "otMinutes", "weeksSuppressed"]) },
   servers: { switch: "servers", paths: under(["servers[]"], CUT) },
-  // MoO / Owner / CGS only (PERSON_COST_MIN, QUARTER_COST_MIN): no setting opens these for a GM.
-  personCost: { switch: null, paths: ["people[].straightCostCents"] },
-  quarterCost: { switch: null, paths: ["quarters[].straightCents", "quarters[].pct"] },
+  // Juan 2026-11-19: hourly pay is known to a shop's GM, so these two are switches (ON by default).
+  personCost: { switch: "person_cost", paths: ["people[].straightCostCents"] },
+  quarterCost: { switch: "quarter_cost", paths: ["quarters[].straightCents", "quarters[].pct"] },
 };
 /** The top-level keys a group's lists live under: absent (channels, people, servers) or null (the grid) when off. */
 export const LIST_KEYS: Record<string, string[]> = { channels: ["channels"], people: ["people"], servers: ["servers"], quarters: ["quarters", "quartersUnassigned"] };

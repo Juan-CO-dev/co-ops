@@ -104,8 +104,26 @@ describe("the row's shape: SQL validator = TS parser, case by case", () => {
       expect((await q<{ ok: boolean }>("select valid_business_report_gm_visibility($1::jsonb) ok", [JSON.stringify(broken)]))[0]!.ok, `${k} under ${parent}`).toBe(false);
     }
   });
-  it("the SQL defaults are the TS defaults", async () => {
-    expect((await q<{ d: unknown }>("select business_report_gm_visibility_defaults() d"))[0]!.d).toEqual(GM_VISIBILITY_DEFAULTS);
+  it("the SQL defaults are the TS defaults: everything on but the salaried side (Juan 2026-11-19)", async () => {
+    const d = (await q<{ d: Record<string, boolean> }>("select business_report_gm_visibility_defaults() d"))[0]!.d;
+    expect(d).toEqual(GM_VISIBILITY_DEFAULTS);
+    expect(Object.keys(d).filter((k) => !d[k]).sort()).toEqual(["loaded", "person_salary"]);
+    expect([d.person_cost, d.quarter_cost]).toEqual([true, true]);
+  });
+  it("the needs in the SQL validator are the TS needs, edge for edge", () => {
+    const body = M0349.slice(M0349.indexOf("create function public.valid_business_report_gm_visibility"), M0349.indexOf("create function public.business_report_gm_visibility_defaults"));
+    const sql = [...body.matchAll(/\('([a-z_]+)', '([a-z_]+)'\)/g)].map((m) => `${m[1]}<${m[2]}`).sort();
+    const ts = GM_VISIBILITY_KEYS.flatMap((k) => GM_VISIBILITY_NEEDS[k].map((p) => `${k}<${p}`)).sort();
+    expect(sql).toEqual(ts);
+    // ... and both key lists in the file are the twelve, in the TS order (the validator's, and the audit row's).
+    const lists = [...M0349.matchAll(/array\[('report',[^\]]*)\]/g)].map((m) => m[1]!.split(",").map((x) => x.trim().replace(/'/g, "")));
+    expect(lists).toHaveLength(2);
+    for (const l of lists) expect(l).toEqual([...GM_VISIBILITY_KEYS]);
+  });
+  it("the header documents the sim re-apply of the amended file, and that prod never had the nine-switch one", () => {
+    expect(M0349).toMatch(/AMENDED 2026-11-19 \(nine switches -> twelve\)\. PROD never had the nine-switch file/);
+    expect(M0349).toMatch(/SIM RE-APPLY/);
+    expect(M0349).toContain("delete from supabase_migrations.schema_migrations where version = '20261119230203'");
   });
   it("the table's CHECK is the validator: a bad row cannot be stored even by the owner", async () => {
     await refuses(q(`insert into ${T}(settings, created_by) values ($1::jsonb, $2)`, [JSON.stringify({ ...ALL_ON, extra: true }), MOO]), "check");
@@ -118,7 +136,7 @@ describe("the writer", () => {
     expect(await count()).toBe(0);
     expect(await audits()).toHaveLength(0);
   });
-  it("refuses settings that are not the exact coherent nine, by name", async () => {
+  it("refuses settings that are not the exact coherent twelve, by name", async () => {
     for (const c of GM_VISIBILITY_CASES.filter((x) => !x.valid)) await refuses(save(MOO, c.value, null), "business_visibility_invalid");
     await refuses(q("select save_business_report_gm_visibility($1, null, null)", [MOO]), "business_visibility_invalid");
     expect(await count()).toBe(0);
@@ -136,7 +154,7 @@ describe("the writer", () => {
     const a = await audits();
     expect(a).toHaveLength(1);
     expect(a[0]).toMatchObject({ actor_id: MOO, actor_role: "moo", action: "business_report_visibility.save", resource_table: T, resource_id: id,
-      destructive: true, before_state: GM_VISIBILITY_DEFAULTS, after_state: ALL_ON, metadata: { turned_on: ["loaded"], turned_off: [], first_save: true } });
+      destructive: true, before_state: GM_VISIBILITY_DEFAULTS, after_state: ALL_ON, metadata: { turned_on: ["loaded", "person_salary"], turned_off: [], first_save: true } });
   });
   it("the next save is bound to the head the person saw: a stale or missing head is 'moved', the same settings 'unchanged'", async () => {
     const first = await head();
@@ -147,14 +165,14 @@ describe("the writer", () => {
     expect(await audits()).toHaveLength(1);
   });
   it("owner and CGS save too; the audit row names what went on and off, in the switches' own order", async () => {
-    const hoursOnly = { ...ALL_ON, hourly_cost: false, loaded: false, export: false };
+    const hoursOnly = { ...ALL_ON, hourly_cost: false, loaded: false, quarter_cost: false, person_cost: false, person_salary: false, export: false };
     const second = await save(OWNER, hoursOnly);
     const third = await save(CGS, { ...hoursOnly, hourly_cost: true, compare: false });
     expect(await head()).toBe(third);
     const a = await audits();
     expect(a).toHaveLength(3);
     expect(a[1]).toMatchObject({ actor_id: OWNER, actor_role: "owner", resource_id: second, before_state: ALL_ON, after_state: hoursOnly,
-      metadata: { turned_on: [], turned_off: ["hourly_cost", "loaded", "export"], first_save: false } });
+      metadata: { turned_on: [], turned_off: ["hourly_cost", "loaded", "quarter_cost", "person_cost", "person_salary", "export"], first_save: false } });
     expect(a[2]).toMatchObject({ actor_id: CGS, actor_role: "cgs", resource_id: third, before_state: hoursOnly,
       metadata: { turned_on: ["hourly_cost"], turned_off: ["compare"], first_save: false } });
     expect(Object.keys(a[2]!.metadata as object).sort()).toEqual(["first_save", "turned_off", "turned_on"]);

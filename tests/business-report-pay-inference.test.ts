@@ -1,16 +1,23 @@
-// Business report access, plan r5: THE MODEL CHECK of what the grouping of the switches protects.
+// Business report access, plan r6: THE MODEL CHECK of what the grouping of the switches protects.
+//
+// JUAN'S RULING 2026-11-19: "the GMs at each shop are doing the hiring and onboarding. So they inherently know and
+// see the pay of everyone at the shop." HOURLY pay is therefore not guarded: each hourly person's cost and the labor
+// dollars per 15 minutes are switches that are ON by default, and section (e) asserts, so nobody reads this file
+// otherwise, that the hourly rates CAN be worked out. What is guarded is SALARIED amounts: a shop's payroll can carry
+// an owner's or a director's salary.
 //
 // DOMAIN (this is a design check, not a proof about every report): the relations of tests/helpers/pay-inference-model.ts
-// (H1-H3, I1-I5), the fixtures F1-F5 at three pay vectors, one rate per hourly person, and a viewer who knows every
+// (H1-H3, P, I1-I5), the fixtures F1-F6 at three pay vectors, one rate per hourly person, and a viewer who knows every
 // visible term exactly plus net sales, the burden rate and everyone's minutes.
 //
-// THE TWO STATEMENTS (contract point 2):
-//   2a  hourly_cost OFF  =>  no pay input (no rate, no salaried share) can be worked out;
-//   2b  loaded OFF       =>  no salaried share can be worked out.
-// NOT PROMISED (point 3): a hidden FIGURE may be computable from visible ones (a $0 premium when nobody worked
-// overtime; burden = hourly cost x the rate setting when nobody is salaried). Each such case is asserted BY NAME below.
-// THE RESIDUAL (point 4): with hourly labor dollars ON, rates can be worked out. Asserted, so nobody reads this file
-// as a claim that they cannot.
+// THE STATEMENT (the contract, plan r6 section 2):
+//   S   fully loaded OFF  =>  no salaried share can be worked out, and at a shop where somebody is salaried none of
+//       the salaried figures (salaries, burden, fully loaded, loaded %) can, WHATEVER hourly switch is on
+//       (hourly cost, cost per hourly person, labor dollars per 15 minutes).
+// NOT PROMISED: a hidden FIGURE may be computable from visible ones when it holds no salaried amount (a $0 premium
+// when nobody worked overtime; burden = hourly cost x the rate setting when NOBODY is salaried). Asserted BY NAME.
+// THE RESIDUAL, said on the card: with fully loaded ON a GM sees the shop's salaried TOTAL. With one salaried person
+// on the payroll that total is their amount (F1); with two it is only their sum (F6).
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn(() => { throw new Error("no database in unit tests"); }) }));
@@ -20,17 +27,23 @@ import { loadBusinessReport } from "@/lib/business-report";
 import { resolveBusinessRange } from "@/lib/business-report-shared";
 import { A, fakeClient } from "./helpers/business-report-fake";
 import {
-  F1, F2, F3, F4, F5, FIGURE_TERMS, FIXTURES, PAYS, TERM_GROUP, determined, div, eq, evaluate, isPayInput, isWhole, isZero, mul, num, personStraight, q,
-  relations, visibleTerms, type Fixture, type Pay, type Q,
+  F1, F2, F3, F4, F5, F6, FIGURE_TERMS, FIXTURES, PAYS, SALARIED_TERMS, TERM_GROUP, determined, div, eq, evaluate, isWhole, isZero, mul, num, personSalaried, personTerm, q,
+  relations, visibleTerms, type Fixture, type ModelGroups, type Pay, type Q,
 } from "./helpers/pay-inference-model";
 
-const HOURLY_OFF = { hourlyCost: false, loaded: false }, LOADED_OFF = { hourlyCost: true, loaded: false }, ALL_ON = { hourlyCost: true, loaded: true };
-/** What breaks statement 2a or 2b when a viewer of `groups` sees `visible`. */
-function violations(f: Fixture, pay: Pay, groups: { hourlyCost: boolean; loaded: boolean }, visible: ReadonlySet<string>, extra: Parameters<typeof determined>[3] = []): string[] {
+const HOURLY_OFF: ModelGroups = { hourlyCost: false, loaded: false, personCost: false, quarterCost: false };
+/** A GM's defaults: every hourly figure, per person and per 15 minutes; nothing salaried. */
+const LOADED_OFF: ModelGroups = { hourlyCost: true, loaded: false, personCost: true, quarterCost: true };
+/** Shop totals only: the hourly total and its %, no person's cost, no 15-minute dollars, nothing salaried. */
+const TOTALS_ONLY: ModelGroups = { hourlyCost: true, loaded: false, personCost: false, quarterCost: false };
+const ALL_ON: ModelGroups = { hourlyCost: true, loaded: true, personCost: true, quarterCost: true };
+/** What breaks statement S when a viewer of `groups` sees `visible`. */
+function violations(f: Fixture, pay: Pay, groups: ModelGroups, visible: ReadonlySet<string>, extra: Parameters<typeof determined>[3] = []): string[] {
+  if (groups.loaded) return [];
   const found = [...determined(f, pay, visible, extra).keys()];
   return [
-    ...(groups.hourlyCost ? [] : found.filter(isPayInput).map((t) => `2a: ${t} worked out with hourly cost off`)),
-    ...(groups.loaded ? [] : found.filter((t) => t.startsWith("share[")).map((t) => `2b: ${t} worked out with fully loaded off`)),
+    ...found.filter((t) => t.startsWith("share[")).map((t) => `S: ${t} worked out with fully loaded off`),
+    ...(f.salaried > 0 ? found.filter((t) => SALARIED_TERMS.includes(t)).map((t) => `S: ${t} worked out with fully loaded off`) : []),
   ];
 }
 const names = (m: Map<string, Q>) => [...m.keys()].sort();
@@ -44,6 +57,8 @@ describe("(a) the model describes the fixtures", () => {
         expect(Math.abs(total), `${f.name}: ${r.name}`).toBeLessThan(1e-6);
       }
       for (const t of ["straight", "premium", "hourly", "salaries", "burden", "loaded"]) expect(isWhole(v[t]!), `${f.name}: ${t}`).toBe(true);
+      // The people's costs add up to the straight-time total (what the 15-minute dollars add up to as well).
+      expect(f.hourly.reduce((sum, _, i) => sum + num(v[personTerm(i)]!), 0), f.name).toBeCloseTo(num(v.straight!), 6);
       expect(f.burdenPct).toBeGreaterThan(0);
       expect(f.netCents).toBeGreaterThan(0);
     }
@@ -53,36 +68,55 @@ describe("(a) the model describes the fixtures", () => {
     expect([num(v.hourly!), num(v.premium!)]).toEqual([237_500, 12_500]);
     for (const pay of PAYS) { const x = evaluate(F2, pay); expect(eq(mul(q(19), x.premium!), x.hourly!)).toBe(true); }
   });
-});
-
-describe("(b) the two statements, for every coherent combination of the switches", () => {
-  it("2a and 2b hold on F1-F5 at every pay vector", () => {
-    const states = new Map(gmVisibilityCombinations().map((s) => { const a = businessAccessFor("gm", s); return [`${a.hourlyCost}|${a.loaded}`, { hourlyCost: a.hourlyCost, loaded: a.loaded }]; }));
-    expect([...states.keys()].sort()).toEqual(["false|false", "true|false", "true|true"]);
-    for (const groups of states.values()) for (const f of FIXTURES) for (const pay of PAYS) {
-      expect(violations(f, pay, groups, visibleTerms(groups)), `${f.name} ${JSON.stringify(groups)}`).toEqual([]);
+  it("F6 carries two salaries: the total is their sum, and the two amounts differ", () => {
+    for (const pay of PAYS) {
+      const v = evaluate(F6, pay);
+      expect(num(v.salaries!)).toBe(num(pay.shares[0]!) + num(pay.shares[1]!));
+      expect(eq(pay.shares[0]!, pay.shares[1]!)).toBe(false);
     }
   });
 });
 
-describe("(c) contract point 3: hidden figures that CAN be computed, by name (none of them reveals a pay input)", () => {
-  it("F3 (no overtime), hourly cost off: the premium is known to be $0, and nothing else of that group", () => {
+describe("(b) statement S, for every coherent combination of the switches", () => {
+  it("S holds on F1-F6 at every pay vector, under each of the nine money states the switches allow", () => {
+    const states = new Map(gmVisibilityCombinations().map((s) => {
+      const a = businessAccessFor("gm", s);
+      const g: ModelGroups = { hourlyCost: a.hourlyCost, loaded: a.loaded, personCost: a.personCost, quarterCost: a.quarterCost };
+      return [`${g.hourlyCost}|${g.loaded}|${g.personCost}|${g.quarterCost}`, g];
+    }));
+    // hourly off: nothing. hourly on: fully loaded off / on x cost per person off / on x 15-minute dollars off / on.
+    expect([...states.keys()].sort()).toEqual(["false|false|false|false",
+      "true|false|false|false", "true|false|false|true", "true|false|true|false", "true|false|true|true",
+      "true|true|false|false", "true|true|false|true", "true|true|true|false", "true|true|true|true"].sort());
+    for (const groups of states.values()) for (const f of FIXTURES) for (const pay of PAYS) {
+      expect(violations(f, pay, groups, visibleTerms(groups, f)), `${f.name} ${JSON.stringify(groups)}`).toEqual([]);
+    }
+  });
+  it("a GM's DEFAULTS are one of those states: every hourly figure on, per person and per 15 minutes; nothing salaried", () => {
+    const a = businessAccessFor("gm", null);
+    expect({ hourlyCost: a.hourlyCost, loaded: a.loaded, personCost: a.personCost, quarterCost: a.quarterCost }).toEqual(LOADED_OFF);
+    expect(a.personSalary).toBe(false);
+  });
+});
+
+describe("(c) hidden figures that CAN be computed, by name (none of them holds a salaried amount)", () => {
+  it("F3 (no overtime), hourly cost off: the premium is known to be $0, and nothing else", () => {
     for (const pay of PAYS) {
-      const d = determined(F3, pay, visibleTerms(HOURLY_OFF));
+      const d = determined(F3, pay, visibleTerms(HOURLY_OFF, F3));
       expect(names(d)).toEqual(["premium"]);
       expect(isZero(d.get("premium")!)).toBe(true);
     }
   });
   it("F4 (no hours, nobody salaried), hourly cost off: every figure is known to be 0; there is no pay input at all", () => {
     for (const pay of PAYS) {
-      const d = determined(F4, pay, visibleTerms(HOURLY_OFF));
+      const d = determined(F4, pay, visibleTerms(HOURLY_OFF, F4));
       expect(names(d)).toEqual([...FIGURE_TERMS].sort());
       expect([...d.values()].every(isZero)).toBe(true);
     }
   });
-  it("F2 and F5 (nobody salaried), hourly on and fully loaded off: salaries $0, and burden / fully loaded follow from the visible hourly total", () => {
-    for (const f of [F2, F5]) for (const pay of PAYS) {
-      const v = evaluate(f, pay), d = determined(f, pay, visibleTerms(LOADED_OFF));
+  it("F2 and F5 (NOBODY salaried), hourly on and fully loaded off: salaries $0, and burden / fully loaded follow from the visible hourly total", () => {
+    for (const f of [F2, F5]) for (const groups of [LOADED_OFF, TOTALS_ONLY]) for (const pay of PAYS) {
+      const v = evaluate(f, pay), d = determined(f, pay, visibleTerms(groups, f));
       expect(names(d).filter((t) => TERM_GROUP[t as keyof typeof TERM_GROUP] === "loaded")).toEqual(["burden", "loaded", "loadedPct", "salaries"]);
       expect(isZero(d.get("salaries")!)).toBe(true);
       expect(eq(d.get("burden")!, mul(q(f.burdenPct, 100), v.hourly!))).toBe(true);
@@ -90,15 +124,15 @@ describe("(c) contract point 3: hidden figures that CAN be computed, by name (no
       expect(eq(d.get("loadedPct")!, div(mul(q(100), d.get("loaded")!), q(f.netCents)))).toBe(true);
     }
   });
-  it("F1 and F3 (someone salaried), hourly on and fully loaded off: NONE of salaries, burden, fully loaded, loaded % can be computed", () => {
-    for (const f of [F1, F3]) for (const pay of PAYS) {
-      const d = determined(f, pay, visibleTerms(LOADED_OFF));
-      for (const t of ["salaries", "burden", "loaded", "loadedPct", "share[0]"]) expect(d.has(t), `${f.name}: ${t}`).toBe(false);
+  it("F1, F3 and F6 (someone salaried), fully loaded off: NONE of salaries, burden, fully loaded, loaded % or a share can be computed, with every hourly switch on", () => {
+    for (const f of [F1, F3, F6]) for (const groups of [LOADED_OFF, TOTALS_ONLY]) for (const pay of PAYS) {
+      const d = determined(f, pay, visibleTerms(groups, f));
+      for (const t of [...SALARIED_TERMS, "share[0]", "share[1]"]) expect(d.has(t), `${f.name}: ${t}`).toBe(false);
     }
   });
   it("F1, F2, F5 (people worked), hourly cost off: no figure of the hourly group can be computed", () => {
     for (const f of [F1, F2, F5]) for (const pay of PAYS) {
-      const d = determined(f, pay, visibleTerms(HOURLY_OFF));
+      const d = determined(f, pay, visibleTerms(HOURLY_OFF, f));
       for (const t of ["hourly", "premium", "pct", "straight"]) expect(d.has(t), `${f.name}: ${t}`).toBe(false);
     }
   });
@@ -112,30 +146,43 @@ describe("(d) the checker goes RED on a wrong grouping (negative controls)", () 
       expect(eq(d.get("premium")!, evaluate(F2, pay).premium!)).toBe(true);
     }
   });
-  it("the premium shown while hourly cost is off, on F5: the person's rate is worked out (2a fails)", () => {
-    expect(violations(F5, PAYS[0]!, HOURLY_OFF, new Set(["premium"]))).toEqual(["2a: rate[0] worked out with hourly cost off"]);
+  it("salaries shown while fully loaded is off, on F1: the salaried share is worked out (S fails)", () => {
+    expect(violations(F1, PAYS[0]!, LOADED_OFF, new Set([...visibleTerms(LOADED_OFF, F1), "salaries"]))).toContain("S: share[0] worked out with fully loaded off");
   });
-  it("salaries shown while fully loaded is off, on F1: the salaried share is worked out (2b fails)", () => {
-    expect(violations(F1, PAYS[0]!, LOADED_OFF, new Set(["hourly", "premium", "pct", "salaries"]))).toEqual(["2b: share[0] worked out with fully loaded off"]);
+  it("burden alone shown while fully loaded is off, on F6: the salaried total is worked out through the hourly total (S fails)", () => {
+    expect(violations(F6, PAYS[0]!, LOADED_OFF, new Set([...visibleTerms(LOADED_OFF, F6), "burden"]))).toContain("S: salaries worked out with fully loaded off");
   });
-  it("one person's straight-time cost shown while hourly cost is off, on F1: that person's rate is worked out (2a fails)", () => {
-    const probe = personStraight(F1, 0);
-    expect(violations(F1, PAYS[0]!, HOURLY_OFF, new Set([probe.term]), [probe])).toEqual(["2a: rate[0] worked out with hourly cost off"]);
+  it("a SALARIED person's amount on their people row (what the redactor blanks) while fully loaded is off, on F6: that share is worked out (S fails)", () => {
+    const probe = personSalaried(1);
+    expect(violations(F6, PAYS[0]!, LOADED_OFF, new Set([...visibleTerms(LOADED_OFF, F6), probe.term]), [probe])).toEqual(["S: share[1] worked out with fully loaded off"]);
   });
 });
 
-describe("(e) contract point 4, the residual: with hourly labor dollars ON, rates can be worked out", () => {
-  it("F5 (one person): their rate. F1 (two people, different overtime ratios): both rates", () => {
-    for (const pay of PAYS) {
-      for (const groups of [LOADED_OFF, ALL_ON]) {
-        expect(eq(determined(F5, pay, visibleTerms(groups)).get("rate[0]")!, pay.rates[0]!)).toBe(true);
-        const d = determined(F1, pay, visibleTerms(groups));
-        expect([eq(d.get("rate[0]")!, pay.rates[0]!), eq(d.get("rate[1]")!, pay.rates[1]!)]).toEqual([true, true]);
-      }
+describe("(e) NOT guarded, and the residual", () => {
+  it("hourly pay (Juan 2026-11-19: a GM knows it): with cost per person on, every hourly rate is the cost over the minutes", () => {
+    for (const f of [F1, F5, F6]) for (const pay of PAYS) {
+      const d = determined(f, pay, visibleTerms(LOADED_OFF, f));
+      f.hourly.forEach((_, i) => expect(eq(d.get(`rate[${i}]`)!, pay.rates[i]!), `${f.name} rate[${i}]`).toBe(true));
     }
   });
-  it("and with everything on at a shop with one salaried person, that person's share (the salaried total IS the share)", () => {
-    expect(eq(determined(F1, PAYS[0]!, visibleTerms(ALL_ON)).get("share[0]")!, PAYS[0]!.shares[0]!)).toBe(true);
+  it("... and with shop totals only, F5 (one person) and F1 (two people, different overtime ratios) still give the rates", () => {
+    for (const pay of PAYS) {
+      expect(eq(determined(F5, pay, visibleTerms(TOTALS_ONLY, F5)).get("rate[0]")!, pay.rates[0]!)).toBe(true);
+      const d = determined(F1, pay, visibleTerms(TOTALS_ONLY, F1));
+      expect([eq(d.get("rate[0]")!, pay.rates[0]!), eq(d.get("rate[1]")!, pay.rates[1]!)]).toEqual([true, true]);
+    }
+  });
+  it("the residual of fully loaded ON: at a shop with ONE salaried person the salaried total IS their amount (F1)", () => {
+    for (const pay of PAYS) expect(eq(determined(F1, pay, visibleTerms(ALL_ON, F1)).get("share[0]")!, pay.shares[0]!)).toBe(true);
+  });
+  it("... and with TWO salaries on the payroll (F6) the total is seen and NEITHER amount can be worked out: what a salary per person, kept off, would add", () => {
+    for (const pay of PAYS) {
+      const d = determined(F6, pay, visibleTerms(ALL_ON, F6));
+      expect([d.has("share[0]"), d.has("share[1]")]).toEqual([false, false]);
+      const probe = personSalaried(0);
+      const leaked = determined(F6, pay, new Set([...visibleTerms(ALL_ON, F6), probe.term]), [probe]);
+      expect([eq(leaked.get("share[0]")!, pay.shares[0]!), eq(leaked.get("share[1]")!, pay.shares[1]!)]).toEqual([true, true]);
+    }
   });
 });
 

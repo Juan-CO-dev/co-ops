@@ -37,7 +37,7 @@ export async function loadBusinessVisibilityCard(sb: SupabaseClient, actor: Visi
   const row = (data ?? [])[0] as { id: string; settings: unknown; created_by: string | null; created_at: string } | undefined;
   if (!row) return { state: "ready", settings: { ...GM_VISIBILITY_DEFAULTS }, headId: null, savedBy: null, savedAt: null };
   const settings = parseGmVisibility(row.settings);
-  // The table's CHECK makes this unreachable; a row that is not the exact nine is not shown as if it were settings
+  // The table's CHECK makes this unreachable; a row that is not the exact twelve is not shown as if it were settings
   // (and a GM's report is refused while it stands: lib/business-report.ts).
   if (!settings) return { state: "unavailable" };
   let savedBy: string | null = null;

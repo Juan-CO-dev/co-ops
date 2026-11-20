@@ -51,14 +51,22 @@ const save = async () => { await act(async () => { fireEvent.click(saveButton())
 const openCard = () => fireEvent.click(header());
 
 describe("disclosure and the draft", () => {
-  it("collapsed by default with the count on its header; opening shows nine switches in the saved state", () => {
+  it("collapsed by default with the count on its header; opening shows twelve switches in the saved state", () => {
     render(el(data(GM_VISIBILITY_DEFAULTS, null)));
     expect(header().getAttribute("aria-expanded")).toBe("false");
-    expect(header().textContent).toContain(T("count").replace("{on}", "8").replace("{total}", "9"));
+    expect(header().textContent).toContain(T("count").replace("{on}", "10").replace("{total}", "12"));
     expect(screen.queryAllByRole("switch")).toHaveLength(0);
     openCard();
-    expect(screen.getAllByRole("switch")).toHaveLength(9);
+    expect(screen.getAllByRole("switch")).toHaveLength(12);
     expect(GM_VISIBILITY_KEYS.filter(isOn)).toEqual(GM_VISIBILITY_KEYS.filter((k) => GM_VISIBILITY_DEFAULTS[k]));
+    // Juan 2026-11-19: hourly cost per person and labor dollars per 15 minutes start ON; the salaried side starts OFF.
+    expect([isOn("person_cost"), isOn("quarter_cost"), isOn("loaded"), isOn("person_salary")]).toEqual([true, true, false, false]);
+    // A salary per person waits for fully loaded labor; the fully loaded switch says whose salaries a shop's total can hold.
+    expect(sw("person_salary").disabled).toBe(true);
+    expect(sw("person_salary").textContent).toContain(T("needs").replace("{parent}", T("switch.loaded")));
+    expect(sw("loaded").textContent).toContain(T("salary_note"));
+    // The old fixed lines are gone: nothing on the card says these two are always MoO and up.
+    expect(document.body.textContent).not.toMatch(/Always MoO and up/);
     expect(screen.getByText(T("never_saved"))).toBeTruthy();
     expect(saveButton().disabled).toBe(true); // nothing changed yet
   });
@@ -85,6 +93,25 @@ describe("disclosure and the draft", () => {
     flip("report");
     expect(GM_VISIBILITY_KEYS.filter(isOn)).toEqual(["report"]);
   });
+  it("a switch with TWO needs is disabled while either is off, and goes off with either", () => {
+    render(el(data(ALL_ON, HEAD_1)));
+    openCard();
+    flip("people");
+    expect([isOn("person_cost"), isOn("person_salary")]).toEqual([false, false]);
+    expect(sw("person_cost").disabled).toBe(true);
+    expect(sw("person_cost").textContent).toContain(T("needs").replace("{parent}", T("switch.people")));
+    flip("people");
+    expect(sw("person_cost").disabled).toBe(false);
+    flip("person_cost"); flip("person_salary");
+    expect([isOn("person_cost"), isOn("person_salary")]).toEqual([true, true]);
+    flip("loaded"); // the salary per person goes; the hourly cost per person stays
+    expect([isOn("person_cost"), isOn("person_salary"), sw("person_salary").disabled]).toEqual([true, false, true]);
+    flip("hourly_cost"); // everything that is labor money goes
+    expect([isOn("person_cost"), isOn("quarter_cost"), isOn("loaded")]).toEqual([false, false, false]);
+    expect(sw("quarter_cost").textContent).toContain(T("needs").replace("{parent}", T("switch.hourly_cost")));
+    flip("hourly_cost"); flip("quarters");
+    expect(sw("quarter_cost").textContent).toContain(T("needs").replace("{parent}", T("switch.quarters")));
+  });
   it("the section cannot be closed over an unsaved draft", () => {
     render(el(data(ALL_ON, HEAD_1)));
     openCard();
@@ -105,7 +132,7 @@ describe("saving", () => {
     flip("loaded"); flip("compare");
     await save();
     expect(h.stepUp).toHaveBeenCalledWith("B");
-    expect(calls).toEqual([{ url: "/api/admin/reports/business-visibility", body: { settings: { ...ALL_ON, loaded: false, compare: false }, expectedId: HEAD_1 } }]);
+    expect(calls).toEqual([{ url: "/api/admin/reports/business-visibility", body: { settings: { ...ALL_ON, loaded: false, person_salary: false, compare: false }, expectedId: HEAD_1 } }]);
     expect(h.refresh).toHaveBeenCalledTimes(1);
     expect(screen.getByText(T("success"))).toBeTruthy();
   });
@@ -114,7 +141,7 @@ describe("saving", () => {
     openCard();
     flip("loaded");
     await save();
-    expect(calls[0]!.body).toEqual({ settings: ALL_ON, expectedId: null });
+    expect(calls[0]!.body).toEqual({ settings: { ...GM_VISIBILITY_DEFAULTS, loaded: true }, expectedId: null });
   });
   it("a cancelled password posts nothing, keeps the draft and keeps the section open", async () => {
     h.stepUp.mockResolvedValue("cancelled");
@@ -160,14 +187,14 @@ describe("an edit is never lost silently (BRACCESS-r1 P2)", () => {
     expect([isOn("export"), isOn("compare"), isOn("loaded")]).toEqual([true, true, false]);
     expect(calls).toHaveLength(1);
     // The refresh arrives: the saved row, a new head.
-    view.rerender(el(data({ ...ALL_ON, loaded: false }, HEAD_2)));
+    view.rerender(el(data({ ...ALL_ON, loaded: false, person_salary: false }, HEAD_2)));
     expect([isOn("export"), isOn("compare"), isOn("loaded")]).toEqual([true, true, false]);
-    for (const k of GM_VISIBILITY_KEYS.filter((x) => x !== "loaded")) expect(sw(k).disabled, k).toBe(false);
+    for (const k of GM_VISIBILITY_KEYS.filter((x) => x !== "person_salary")) expect(sw(k).disabled, k).toBe(false);
     expect(screen.getByText(T("success"))).toBeTruthy(); // not remounted: the confirmation is still there
     // ... and the next edit is bound to the NEW head.
     flip("export");
     await save();
-    expect(calls[1]!.body).toEqual({ settings: { ...ALL_ON, loaded: false, export: false }, expectedId: HEAD_2 });
+    expect(calls[1]!.body).toEqual({ settings: { ...ALL_ON, loaded: false, person_salary: false, export: false }, expectedId: HEAD_2 });
   });
   it("a refresh that brings the SAME head (another card on the page refreshed) keeps the wait, and keeps an unsaved draft", async () => {
     const view = render(el(data(ALL_ON, HEAD_1)));
