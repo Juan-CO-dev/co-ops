@@ -80,6 +80,17 @@ Every mark writes one `demand_source_events` row and one audit row (`demand_sour
 2. Set `DEMAND_SIGNALS=1`. Redeploy.
 3. The cron runs at 03:50, 09:50, 15:50 and 21:50 UTC. Or call it once by hand with the cron secret.
 
+## The pages (PR 5; no migration)
+
+With `DEMAND_SIGNALS=1` two pages exist; without it both are 404 and the hub shows no tile.
+
+- `/admin/demand-signals` (GM for their own shops, MoO / Owner / CGS for any): the next two weeks day by day (the forecast held and the events in force), the events entered by hand, and how each feed last ran for the shop. GM+ add, correct and take back events there. It shows names only; it suggests no quantity.
+- `/admin/demand-signals/sources` (MoO / Owner / CGS): every registered source with its terms page, the quoted sentence and its conditions; Mark verified / Revoke (password asked every time).
+
+So the order above can also be: set `DEMAND_SIGNALS=1` first (the cron answers `source_unverified` and reads nothing), then a MoO+ marks `nws` verified on the sources page. All four keys are still needed.
+
+What the page says when something is missing: "No forecast: the weather source is not verified" (mark it) · "No forecast received yet" (look at Feeds: "no run is recorded for this shop" usually means the shop has no point, see Shop points) · "No forecast this far ahead" (normal past seven days) · "could not be read" (a read failed; nothing partial is shown; reload).
+
 ## What a healthy run looks like
 
 - One audit row `cron.success`, `metadata.job = 'demand-signals'`, `status: "ran"`, `failed: 0`, and per shop `weather {seen, written}` and `alerts {seen, written}`.

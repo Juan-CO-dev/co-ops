@@ -27,7 +27,7 @@ import { nwsGetJson } from "./nws-client";
 import { NWS_DEFINITION, NWS_SOURCE_ID } from "./nws-shared";
 import { pickShopPoints, type ShopNodeRow } from "./shop-points-shared";
 import {
-  collectDecision, keepUsable, type DemandEventInput, type SourceGate, type SourceMarkInput, type SourceState,
+  collectDecision, keepUsable, parseDefinitionText, type DemandEventInput, type SourceDefinitionView, type SourceGate, type SourceMarkInput, type SourceState,
 } from "./sources-shared";
 
 /** Every function of 0343 this layer may call. */
@@ -101,6 +101,71 @@ export async function readSourceStates(sb: SupabaseClient, signal?: AbortSignal)
   const rows = await call<StateRow[] | null>(sb, "demand_source_states", {}, signal);
   return (rows ?? []).map((r) => ({ sourceId: r.source_id, definitionHash: r.definition_hash, gate: r.gate as SourceGate, adapter: r.adapter,
     status: r.status === "verified" || r.status === "revoked" ? r.status : "unverified" }));
+}
+
+/** One source as the pages show it: its state NOW plus what the register says about it. */
+export interface SourceRow extends SourceState {
+  sourceSeq: number; name: string; category: string; termsStatus: string; termsUrl: string | null; markedAt: string | null; markedBy: string | null;
+}
+interface FullStateRow extends StateRow { source_seq: number | string; name: string; category: string; terms_status: string; terms_url: string | null; marked_at: string | null; marked_by: string | null }
+
+/**
+ * The register for the pages (PR 5): every source at its current definition, by name. ONE unpaged call of a set
+ * that is one row per source; a set at the response cap could be a cut one, so it is refused by name.
+ */
+export async function loadSourceRows(sb: SupabaseClient, signal?: AbortSignal): Promise<SourceRow[]> {
+  const rows = (await call<FullStateRow[] | null>(sb, "demand_source_states", {}, signal)) ?? [];
+  if (!Array.isArray(rows) || rows.length >= SIGNAL_READ_PAGE) throw new DemandSignalError(503, "signal_reads_incomplete");
+  return rows.map((r) => ({ sourceId: r.source_id, definitionHash: r.definition_hash, gate: r.gate as SourceGate, adapter: r.adapter,
+    status: r.status === "verified" || r.status === "revoked" ? r.status as "verified" | "revoked" : "unverified" as const,
+    sourceSeq: Number(r.source_seq), name: r.name, category: r.category, termsStatus: r.terms_status, termsUrl: r.terms_url, markedAt: r.marked_at, markedBy: r.marked_by }))
+    .sort((a, b) => (a.name.toLowerCase() < b.name.toLowerCase() ? -1 : a.name.toLowerCase() > b.name.toLowerCase() ? 1 : a.sourceId < b.sourceId ? -1 : 1));
+}
+
+export interface SourceRegisterEntry extends SourceRow { definition: SourceDefinitionView | null; registeredAt: string | null }
+const DEFINITION_CHUNK = 50;
+/**
+ * The register WITH each current definition's stored text (the verification page, MoO+). The definitions are read
+ * by their exact row ids, in chunks, and every id must come back: a short answer is `signal_reads_incomplete`,
+ * never a page that shows some sources as having no definition.
+ */
+export async function loadSourceRegister(sb: SupabaseClient, signal?: AbortSignal): Promise<SourceRegisterEntry[]> {
+  const rows = await loadSourceRows(sb, signal);
+  const client = signal ? withAbort(sb, signal) : sb;
+  const bySeq = new Map<number, { definition: string; registered_at: string | null }>();
+  const seqs = rows.map((r) => r.sourceSeq);
+  for (let i = 0; i < seqs.length; i += DEFINITION_CHUNK) {
+    const chunk = seqs.slice(i, i + DEFINITION_CHUNK);
+    const { data, error } = await client.from("demand_sources").select("seq, definition, registered_at").in("seq", chunk).order("seq")
+      .returns<Array<{ seq: number | string; definition: string; registered_at: string | null }>>();
+    if (error) throw toError(error);
+    if (!data || data.length !== chunk.length) throw new DemandSignalError(503, "signal_reads_incomplete");
+    for (const d of data) bySeq.set(Number(d.seq), d);
+  }
+  return rows.map((r) => {
+    const d = bySeq.get(r.sourceSeq);
+    if (!d) throw new DemandSignalError(503, "signal_reads_incomplete");
+    return { ...r, definition: parseDefinitionText(d.definition), registeredAt: d.registered_at };
+  });
+}
+
+export type SignalFeed = "weather_hourly" | "day_events";
+export interface SignalRun { feed: SignalFeed; outcome: "written" | "unchanged" | "failed"; errorCode: string | null; rowsSeen: number; rowsWritten: number; rowsWithdrawn: number; finishedAt: string }
+/**
+ * The run ledger's newest row for one source, feed and shop (`goodOnly` = the newest that did not fail): the
+ * freshness line of the page. One row by a total order, so there is no set to cut. null = no such run recorded.
+ */
+export async function loadLatestRun(sb: SupabaseClient, args: { sourceId: string; locationId: string; feed: SignalFeed; goodOnly: boolean }, signal?: AbortSignal): Promise<SignalRun | null> {
+  const client = signal ? withAbort(sb, signal) : sb;
+  let q = client.from("demand_signal_runs").select("id, feed, outcome, error_code, rows_seen, rows_written, rows_withdrawn, finished_at")
+    .eq("source_id", args.sourceId).eq("feed", args.feed).eq("location_id", args.locationId);
+  if (args.goodOnly) q = q.neq("outcome", "failed");
+  const { data, error } = await q.order("finished_at", { ascending: false }).order("id", { ascending: false }).limit(1)
+    .returns<Array<{ feed: SignalFeed; outcome: SignalRun["outcome"]; error_code: string | null; rows_seen: number; rows_written: number; rows_withdrawn: number; finished_at: string }>>();
+  if (error) throw toError(error);
+  const r = data?.[0];
+  return r ? { feed: r.feed, outcome: r.outcome, errorCode: r.error_code, rowsSeen: Number(r.rows_seen), rowsWritten: Number(r.rows_written),
+    rowsWithdrawn: Number(r.rows_withdrawn), finishedAt: r.finished_at } : null;
 }
 
 /** May the NWS adapter collect now? Asked by the cron BEFORE it claims its lease. Unreadable = closed. */

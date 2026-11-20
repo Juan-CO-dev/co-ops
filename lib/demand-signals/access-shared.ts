@@ -20,3 +20,15 @@ export function demandEventShopAllowed(role: string, memberLocationIds: Readonly
   if (role !== "gm") return false;
   return locationId !== null && memberLocationIds.includes(locationId);
 }
+
+/**
+ * PR 5: who may OPEN the signals page: a GM for a shop they belong to, MoO / Owner / CGS for any shop. Level-6
+ * roles (the social media manager among them) are refused by ROLE, never by level.
+ */
+export const canViewDemandSignals = (role: string): boolean => GM_PLUS.includes(role);
+/** The shops this person may see signals for, out of the active shops. */
+export function demandSignalShops<T extends { id: string }>(role: string, memberLocationIds: ReadonlyArray<string>, shops: ReadonlyArray<T>): T[] {
+  if (MOO_PLUS.includes(role)) return [...shops];
+  if (role !== "gm") return [];
+  return shops.filter((s) => memberLocationIds.includes(s.id));
+}
