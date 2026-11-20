@@ -9815,7 +9815,7 @@
   "signals.ai.asked_at": "Asked {when}.",
   "signals.ai.facts_changed": "The page has changed since then.",
   "signals.ai.rejected": "{n} things the model returned did not match a fact on this page and are not shown.",
-  "signals.ai.spend": "This month: {spent} of at most {cap}, all shops.",
+  "signals.ai.spend": "This month: {spent} spent or set aside, of at most {cap}, all shops.",
   "signals.ai.blocked.asked_today": "Today's one request for this shop has been made.",
   "signals.ai.blocked.cap_reached": "This month's spending limit for AI insights is reached. Nothing more is sent until next month.",
   "signals.ai.blocked.facts_incomplete": "The events could not be read whole just now, so nothing can be asked. Reload the page.",
@@ -9843,5 +9843,7 @@
   "signals.ai.error.demand_ai_not_recorded": "The answer could not be recorded, so it is not shown. Today's one request for this shop is used.",
   "signals.ai.error.demand_signals_off": "Demand signals are turned off.",
   "signals.ai.error.demand_signals_unavailable": "Demand signals are not set up in this system yet.",
-  "signals.ai.error.generic": "Could not ask. Try again later."
+  "signals.ai.error.generic": "Could not ask. Try again later.",
+  "signals.event.when_until": "{day}, until {to}",
+  "signals.ai.status.unreadable": "AI insights could not be read just now. Reload the page in a minute."
 }

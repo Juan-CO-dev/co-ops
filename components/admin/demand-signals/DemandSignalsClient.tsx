@@ -51,6 +51,8 @@ function eventWhen(t: T, e: SignalsEvent, language: Language): string {
     : t("signals.event.range", { from: formatDateLabelWithYear(e.validFrom, language), to: formatDateLabelWithYear(e.validTo, language) });
   if (e.startLocal && e.endLocal) return t("signals.event.when_between", { day, from: formatClockTimeShort(e.startLocal, language), to: formatClockTimeShort(e.endLocal, language) });
   if (e.startLocal) return t("signals.event.when_from", { day, from: formatClockTimeShort(e.startLocal, language) });
+  // An end with no start is a real entry (a closure "until 3 PM"): it is shown, never dropped (review DEMAND4-r2 P3).
+  if (e.endLocal) return t("signals.event.when_until", { day, to: formatClockTimeShort(e.endLocal, language) });
   return day;
 }
 

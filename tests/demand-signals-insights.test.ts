@@ -252,6 +252,8 @@ describe("what the page says about it", () => {
     expect(insightsView({ config: { ...READY, status: "not_configured" }, today: "unavailable", facts, todayEt: TODAY })).toEqual({ status: "not_configured" });
     expect(insightsView({ config: { ...READY, status: "model_unpriced" }, today: today(attempt()), facts, todayEt: TODAY })).toEqual({ status: "model_unpriced" });
     expect(insightsView({ config: READY, today: "unavailable", facts, todayEt: TODAY })).toEqual({ status: "unavailable" });
+    // A ledger that could not be read is its own state: never "nothing asked today", never a month of $0.
+    expect(insightsView({ config: READY, today: "unreadable", facts, todayEt: TODAY })).toEqual({ status: "unreadable" });
   });
   it("ready with nothing asked: the button is offered unless the facts, the cap or the size say no", () => {
     expect(insightsView({ config: READY, today: today(), facts, todayEt: TODAY })).toMatchObject({ status: "ready", blocked: null, attempt: null, capMicro: 5_000_000 });
@@ -337,6 +339,15 @@ describe("NEVER AUTO-ACTS: what the insights modules can reach, and who can reac
     expect(envReaders).toEqual(["app/admin/demand-signals/page.tsx", "app/api/admin/demand-signals/insights/route.ts"]);
     for (const p of [...AI, ...envReaders]) expect(read(p), p).not.toMatch(/ANTHROPIC_API_KEY/);
     for (const p of AI) expect(read(p), p).not.toMatch(/console\.|\.insert\(|\.upsert\(|\.delete\(|\.update\(/);
+  });
+  it("the audit name is in the closed vocabulary, not destructive, and written by 0352 itself", async () => {
+    const { NON_DESTRUCTIVE_ACTIONS } = await import("@/lib/audit-actions");
+    const { DESTRUCTIVE_ACTIONS } = await import("@/lib/destructive-actions");
+    expect((NON_DESTRUCTIVE_ACTIONS as readonly string[]).includes("demand_ai.request")).toBe(true);
+    expect((DESTRUCTIVE_ACTIONS as readonly string[]).includes("demand_ai.request")).toBe(false);
+    const sql = read("supabase/migrations/0352_demand_ai_insights.sql");
+    expect(sql.slice(sql.indexOf("'demand_ai.request'")).match(/[\s,](true|false)\);/)![1]).toBe("false");
+    for (const p of AI) expect(read(p), p).not.toMatch(/audit\(/);   // no TypeScript writes it
   });
   it("the store calls 0352's functions and nothing else", () => {
     const store = read("lib/demand-signals/ai-store.ts");

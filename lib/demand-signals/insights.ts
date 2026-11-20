@@ -94,6 +94,8 @@ export async function requestInsights(deps: InsightDeps, args: {
 export type InsightsView =
   | { status: Exclude<AiStatus, "ready" | "off"> }
   | { status: "unavailable" }
+  /** The ledger could not be read just now. Nothing is offered, and nothing is claimed about today or the month. */
+  | { status: "unreadable" }
   | {
     status: "ready";
     /** Why a request cannot be made now, if it cannot: the facts, or the day already used. null = it can. */
@@ -105,11 +107,11 @@ export type InsightsView =
   };
 
 /** The insights section's state, from the configuration, the stored row for today and the facts as they are now. */
-export function insightsView(args: { config: AiConfig; today: AiToday | "unavailable"; facts: InsightFactsResult; todayEt: string }): InsightsView | null {
+export function insightsView(args: { config: AiConfig; today: AiToday | "unavailable" | "unreadable"; facts: InsightFactsResult; todayEt: string }): InsightsView | null {
   const { config } = args;
   if (config.status === "off") return null;
   if (config.status !== "ready") return { status: config.status };
-  if (args.today === "unavailable") return { status: "unavailable" };
+  if (args.today === "unavailable" || args.today === "unreadable") return { status: args.today };
   const a = args.today.attempt;
   const currentHash = args.facts.ok ? insightInputHash({ today: args.todayEt, facts: args.facts.facts, model: config.model }) : null;
   const user = args.facts.ok ? insightUserMessage({ today: args.todayEt, facts: args.facts.facts }) : null;

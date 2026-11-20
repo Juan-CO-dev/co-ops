@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DemandSignalsClient } from "@/components/admin/demand-signals/DemandSignalsClient";
 import { canViewDemandSignals, demandSignalShops } from "@/lib/demand-signals/access-shared";
-import { loadAiToday, type AiToday } from "@/lib/demand-signals/ai-store";
+import { DemandAiError, loadAiToday, type AiToday } from "@/lib/demand-signals/ai-store";
 import { demandSignalsEnabled } from "@/lib/demand-signals/config-shared";
 import { insightsView, type InsightsView } from "@/lib/demand-signals/insights";
 import { aiConfig, buildInsightFacts } from "@/lib/demand-signals/insights-shared";
@@ -39,8 +39,11 @@ export default async function DemandSignalsPage({ searchParams }: { searchParams
     monthlyCapCents: process.env.DEMAND_AI_MONTHLY_CAP_CENTS });
   let insights: InsightsView | null = null;
   if (page.state === "ok" && ai.status !== "off") {
-    let today: AiToday | "unavailable" = "unavailable";
-    if (ai.status === "ready") { try { today = await loadAiToday(sb, shop.id); } catch { today = "unavailable"; } }
+    let today: AiToday | "unavailable" | "unreadable" = "unavailable";
+    if (ai.status === "ready") {
+      // 0352 not applied = "not set up"; any other failure = "could not be read" (never shown as "nothing asked today").
+      try { today = await loadAiToday(sb, shop.id); } catch (e) { today = e instanceof DemandAiError && e.code === "demand_ai_unavailable" ? "unavailable" : "unreadable"; }
+    }
     insights = insightsView({ config: ai, today, facts: buildInsightFacts({ today: page.today, days: page.days, events: page.events }), todayEt: page.today });
   }
   return <div className="space-y-4">
