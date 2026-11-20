@@ -1,6 +1,6 @@
 # Portal catering ↔ Toast cross-check (item 21)
 
-Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md` (Juan's 8 answers at its top override its defaults). Built so far: PRs 0, 1, 2 and 3. Migration **0344** is APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118185441), after sim. Migration **0347** (PR 3, the link step) is authored, NOT applied. Every shop stays off until Juan's word.
+Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/item-21-PORTAL-CATERING-TOAST-PLAN-r3.md` (Juan's 8 answers at its top override its defaults). Built so far: PRs 0, 1, 2 and 3. Migration **0344** is APPLIED TO PROD 2026-11-18 (schema_migrations version 20261118185441), after sim. Migration **0347** (PR 3, the link step) is APPLIED TO PROD 2026-11-19 (schema_migrations version 20261119041752), after sim. Every shop stays off until Juan's word.
 
 ## What ships, and what it changes
 
@@ -23,6 +23,8 @@ Nothing in PRs 0–2 writes a link. PR 3 writes links only when a person decides
 Before 0344 is applied the readers treat the missing tables as "not installed": the ezCater not-rung list is unchanged and no house row appears.
 
 ## Applying 0347 (CC, after 0344)
+
+Done: 0347 was APPLIED to prod 2026-11-19 (20261119041752), after sim. The steps are kept as the record of the order.
 
 1. Sim first: apply `supabase/migrations/0347_catering_toast_link_step.sql`. Its pre-flight refuses unless 0344 is in place AND the live `plan_ezcater_toast` is still the 0231 body (a later definer must be re-emitted from 0347).
 2. Run the verify block at the end of the file: 4 policies on `catering_toast_conflicts`, 2 triggers.
