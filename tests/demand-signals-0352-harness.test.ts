@@ -59,6 +59,9 @@ describe("0352: ship state and ceilings", () => {
     expect(files.filter((f) => f.includes("demand_ai"))).toEqual(["0352_demand_ai_insights.sql"]);
     expect(files.filter((f) => f.startsWith("0352_"))).toEqual(["0352_demand_ai_insights.sql"]);
     expect(M0352).toMatch(/^-- AUTHORED 2026-11-19 .* NOT YET APPLIED/m);
+    expect(M0352.split(/\r?\n/)[2]).toBe(
+      "-- APPLIED TO PROD 2026-11-20 UTC (schema_migrations version 20261120033423, name '0352_demand_ai_insights'), after sim. The line above is the authoring-time gate note, kept as history.",
+    );
     expect(M0352.replace(/^--.*$/gm, "")).not.toMatch(/delete from|update public\.|drop /i);
   });
   it("refuses a second apply by name", async () => {
