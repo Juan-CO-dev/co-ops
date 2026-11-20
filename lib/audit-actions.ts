@@ -71,6 +71,7 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "customer.catering_link", // level 9+ linked catering/ezCater orders to profiles (observation).
   "ezcater.location_reassigned", // Provider shop observation, including a manual-location conflict.
   "ezcater.toast_reconciled", // SQL-only provider cross-check observation; non-destructive.
+  "catering.toast_reconciled", // 0348 SQL: the house reconciler added automatic Toast links (run-level; ids and counts only).
   "ezcater.order_synced", // Provider observation; metadata contains identities/codes only.
   "vendor.import_staged", // Vendor evidence only; staging does not change the catalog.
 

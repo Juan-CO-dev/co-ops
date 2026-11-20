@@ -104,6 +104,13 @@ describe("the link panel, en + es", () => {
     expect(en).toContain("A Toast ring is expected after all");
     expect(en).not.toContain("Link this check");
   });
+
+  it("item 21 PR 4: the order's ring code is shown with where to type it, never for a no-ring order, never when there is none", () => {
+    expect(render(panel({ ringCode: "CO-ACD34" }), "en")).toContain("Ring code: CO-ACD34. Type it on the Toast check (as an item name or a special request)");
+    expect(render(panel({ ringCode: "CO-ACD34" }), "es")).toContain("Código para Toast: CO-ACD34. Escríbelo en la cuenta de Toast");
+    expect(render(panel(), "en")).not.toContain("Ring code:");
+    expect(render(panel({ ringCode: "CO-ACD34", status: "no_ring_expected", leadHead: { id: "h", kind: "no_ring_expected", reasonCode: "comped" } }), "en")).not.toContain("Ring code:");
+  });
 });
 
 describe("where the panel is mounted", () => {

@@ -252,6 +252,7 @@
   "catering.toast_link.confirm_unlink": "Unlink this check? The order goes back on the Not in Toast yet list, and this check will not be linked to it again unless someone relinks it.",
   "catering.toast_link.no_ring_reason": "Why no Toast ring?",
   "catering.toast_link.no_ring_marked": "Marked: no Toast ring expected ({reason}).",
+  "catering.toast_link.ring_code": "Ring code: {code}. Type it on the Toast check (as an item name or a special request) so the check can be matched to this order.",
   "catering.toast_link.not_installed": "Linking Toast checks is not installed yet. You can see the checks here; linking opens after the next update.",
   "catering.toast_link.ended_heading": "Links that ended",
   "catering.toast_link.ended.lead_moved": "This check was linked to this order until the order moved to another shop.",
