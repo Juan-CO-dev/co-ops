@@ -9797,5 +9797,6 @@
   "ordering.signals.nudge.no_term_for_date": "La señal no tiene número para este día.",
   "ordering.signals.nudge.no_effect": "La señal probada dice que este día es como uno normal.",
   "ordering.signals.nudge.number_up": "Señal probada: planea cerca de {pct}% más que un día normal. Cambia tú las líneas.",
-  "ordering.signals.nudge.number_down": "Señal probada: planea cerca de {pct}% menos que un día normal. Cambia tú las líneas."
+  "ordering.signals.nudge.number_down": "Señal probada: planea cerca de {pct}% menos que un día normal. Cambia tú las líneas.",
+  "signals.weather.line_rain_partial": "{temps}, lluvia hasta {rain}% (dato de {known} de {hours} horas)"
 }

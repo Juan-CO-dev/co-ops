@@ -13,12 +13,14 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { postJson } from "@/components/admin/vendors/shared";
+import { WeatherSummary } from "@/components/admin/demand-signals/WeatherSummary";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import {
   DEMAND_EVENT_CATEGORIES, DEMAND_EVENT_IMPACTS, DEMAND_EVENT_MAX_SPAN_DAYS, DEMAND_EVENT_TITLE_MAX, parseDemandEvent,
 } from "@/lib/demand-signals/input-shared";
 import type { AdapterHealth, SignalsEvent, SignalsPageData } from "@/lib/demand-signals/signals-page";
 import type { SignalsDay } from "@/lib/demand-signals/signals-view-shared";
+import { rainLineOf, weatherIsOld } from "@/lib/demand-signals/weather-line-shared";
 import { formatClockTimeShort, formatDateLabel, formatDateLabelWithYear, formatTime, formatWeekday } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
@@ -97,13 +99,6 @@ export function DemandSignalsClient({ data }: { data: OkData }) {
   </div>;
 }
 
-function weatherLine(t: T, day: SignalsDay): string {
-  const w = day.weather;
-  if (!w) return t(`signals.weather.gap.${day.weatherGap ?? "not_collected"}` as TranslationKey);
-  const temps = t("signals.weather.temps", { high: Math.round(w.highF), low: Math.round(w.lowF) });
-  return w.precipMaxPct === null ? t("signals.weather.line_no_rain", { temps }) : t("signals.weather.line", { temps, rain: w.precipMaxPct });
-}
-
 function DayRow({ day, events, today, feeds }: { day: SignalsDay; events: Map<string, SignalsEvent>; today: string; feeds: OkData["weatherFeeds"] }) {
   const { t, language } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -112,15 +107,16 @@ function DayRow({ day, events, today, feeds }: { day: SignalsDay; events: Map<st
   const list = day.eventIds === null ? null : day.eventIds.map((id) => events.get(id)).filter((e): e is SignalsEvent => e !== undefined);
   const w = day.weather;
   // A forecast is only as current as its feed's last run (the run ledger), never the row's own time.
-  const old = w !== null && w.sourceIds.some((id) => feeds[id] !== "fresh");
+  const old = w !== null && weatherIsOld(w.sourceIds, feeds);
+  const rain = w === null ? null : rainLineOf(w);
   return <div className="rounded-lg border-2 border-co-border">
     <button type="button" aria-expanded={open} aria-controls={panelId} aria-label={t("signals.days.aria.row", { day: label })} onClick={() => setOpen((o) => !o)}
       className="flex min-h-[44px] w-full flex-wrap items-center gap-2 px-3 py-2 text-left">
       <span className="font-bold text-co-text">{label}</span>
       {day.date === today && <span className={CHIP}>{t("signals.days.today")}</span>}
-      <span className={w ? "text-co-text" : "text-co-text-dim"}>{weatherLine(t, day)}</span>
-      {w?.partial && <span className={WARN_CHIP}>{t("signals.weather.partial_badge")}</span>}
-      {old && <span className={WARN_CHIP}>{t("signals.weather.old_badge")}</span>}
+      {/* The line and its qualifications come from ONE component (the walk uses the same one). */}
+      {w ? <WeatherSummary weather={w} feeds={feeds} className="text-co-text" />
+        : <span className="text-co-text-dim">{t(`signals.weather.gap.${day.weatherGap ?? "not_collected"}` as TranslationKey)}</span>}
       {list === null ? <span className={WARN_CHIP}>{t("signals.events.unreadable_badge")}</span>
         : list.length > 0 ? <span className={WARN_CHIP}>{t("signals.days.events", { n: list.length })}</span> : null}
     </button>
@@ -130,9 +126,9 @@ function DayRow({ day, events, today, feeds }: { day: SignalsDay; events: Map<st
         {!w && <p className="text-co-text-muted">{t(`signals.weather.gap_detail.${day.weatherGap ?? "not_collected"}` as TranslationKey)}</p>}
         {w && <ul className="space-y-1">
           <li>{t("signals.weather.detail_temps", { high: Math.round(w.highF), low: Math.round(w.lowF) })}</li>
-          <li>{w.precipMaxPct === null ? t("signals.weather.detail_rain_unknown")
-            : w.precipHours < w.hours ? t("signals.weather.detail_rain_partial", { rain: w.precipMaxPct, known: w.precipHours, hours: w.hours })
-              : t("signals.weather.detail_rain", { rain: w.precipMaxPct })}</li>
+          <li>{rain === null || rain.kind === "not_given" ? t("signals.weather.detail_rain_unknown")
+            : rain.kind === "partial" ? t("signals.weather.detail_rain_partial", { rain: rain.pct, known: rain.known, hours: rain.hours })
+              : t("signals.weather.detail_rain", { rain: rain.pct })}</li>
           <li>{t("signals.weather.detail_condition", { condition: w.condition })}</li>
           <li className={w.partial ? "font-bold text-co-warning-text" : "text-co-text-muted"}>{t(w.partial ? "signals.weather.detail_hours_partial" : "signals.weather.detail_hours", { hours: w.hours })}</li>
           <li className="text-co-text-muted">{t("signals.weather.detail_received", { when: dateTime(w.latestAvailableAt, language) })}</li>

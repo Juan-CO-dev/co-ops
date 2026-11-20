@@ -40,6 +40,7 @@ const CENSUS: Record<string, { contract: "none" | "revocation" | "ai"; why: stri
   // PR 6, first half (signals on the order walk, by name; no number, no writer).
   "lib/demand-signals/order-signals-shared.ts": { contract: "revocation", why: "render: the gate a tested number must pass asks usableNow with the register read for that render" },
   "lib/demand-signals/order-signals.ts": { contract: "none", why: "composes signals-page.ts (gated at render) and the gate in order-signals-shared.ts; it reads nothing itself" },
+  "lib/demand-signals/weather-line-shared.ts": { contract: "none", why: "pure, import-free: what a one-line forecast must say (rain coverage, a feed that stopped); it reads no source" },
   "lib/demand-signals/input-shared.ts": { contract: "none", why: "pure, import-free: what a person sends (the mark, a manual event)" },
   "lib/demand-signals/signals-page.ts": { contract: "revocation", why: "render: the gated readers at the render use point, and usableNow over the register read for this render" },
   "lib/demand-signals/signals-view-shared.ts": { contract: "revocation", why: "render: weatherSourceStatus asks usableNow, so a revoked source reads 'not verified', never a forecast" },
@@ -79,7 +80,7 @@ describe("dark by default", () => {
     expect(importers.sort()).toEqual(["app/admin/demand-signals/page.tsx", "app/admin/demand-signals/sources/page.tsx", "app/admin/page.tsx",
       "app/api/admin/demand-signals/events/route.ts", "app/api/admin/demand-signals/sources/mark/route.ts", "app/api/cron/demand-signals/route.ts",
       "app/ordering/page.tsx", "components/admin/demand-signals/DemandSignalsClient.tsx", "components/admin/demand-signals/SourcesClient.tsx",
-      "components/ordering/OrderSignalsPanel.tsx", "lib/toast-sales-pull-run.ts"]);
+      "components/admin/demand-signals/WeatherSummary.tsx", "components/ordering/OrderSignalsPanel.tsx", "lib/toast-sales-pull-run.ts"]);
     // PR 6 (first half): the order walk's page reaches the layer only inside its DEMAND_SIGNALS branch (tests/demand-signals-order.test.ts).
     // The hub reaches only the two import-free rule files (who may see the tile, and the switch).
     expect([...read("app/admin/page.tsx").matchAll(/from "@\/lib\/demand-signals\/([\w-]+)"/g)].map((m) => m[1]).sort()).toEqual(["access-shared", "config-shared"]);
