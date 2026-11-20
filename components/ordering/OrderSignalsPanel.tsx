@@ -10,10 +10,11 @@
  * renders that reason. It never changes a par. Rendered only when DEMAND_SIGNALS is on (the page decides).
  */
 import Link from "next/link";
+import { WeatherSummary } from "@/components/admin/demand-signals/WeatherSummary";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { DEMAND_EVENT_CATEGORIES, DEMAND_EVENT_IMPACTS } from "@/lib/demand-signals/input-shared";
 import type { OrderSignalsData } from "@/lib/demand-signals/order-signals";
-import type { OrderNudge, OrderSignalDay } from "@/lib/demand-signals/order-signals-shared";
+import type { OrderNudge } from "@/lib/demand-signals/order-signals-shared";
 import { formatDateLabel, formatWeekday } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -36,12 +37,6 @@ export function OrderSignalsPanel({ data, locationId }: { data: Exclude<OrderSig
     const pct = Math.round(Math.abs(nudge.multiplier - 1) * 100);
     return t(nudge.multiplier > 1 ? "ordering.signals.nudge.number_up" : "ordering.signals.nudge.number_down", { pct });
   }
-  function weatherLine(day: OrderSignalDay): string | null {
-    const w = day.weather;
-    if (!w) return null;
-    const temps = t("signals.weather.temps", { high: Math.round(w.highF), low: Math.round(w.lowF) });
-    return w.precipMaxPct === null ? t("signals.weather.line_no_rain", { temps }) : t("signals.weather.line", { temps, rain: w.precipMaxPct });
-  }
   // One sentence when every listed day has the same answer (today: always), else one per day.
   const lines = [...new Set(view.days.map((d) => nudgeLine(d.nudge)))];
 
@@ -51,13 +46,10 @@ export function OrderSignalsPanel({ data, locationId }: { data: Exclude<OrderSig
       <div className="space-y-3 text-sm text-co-text">
         {view.days.length === 0 && <p className="text-co-text-muted">{t("ordering.signals.none", { days: data.horizonDays })}</p>}
         {view.days.length > 0 && <ul className="space-y-3">{view.days.map((day) => {
-          const weather = weatherLine(day);
-          const old = day.weather !== null && day.weather.sourceIds.some((id) => data.weatherFeeds[id] !== "fresh");
           return <li key={day.date} className="rounded-lg border-2 border-co-border p-3">
             <p className="flex flex-wrap items-center gap-2"><span className="font-bold">{formatWeekday(day.date, language)}, {formatDateLabel(day.date, language)}</span>
-              {weather && <span className="text-co-text-muted">{weather}</span>}
-              {day.weather?.partial && <span className={WARN_CHIP}>{t("signals.weather.partial_badge")}</span>}
-              {old && <span className={WARN_CHIP}>{t("signals.weather.old_badge")}</span>}</p>
+              {/* The same one-line forecast as the signals page, with the same qualifications (review r1 P2). */}
+              {day.weather && <WeatherSummary weather={day.weather} feeds={data.weatherFeeds} className="text-co-text-muted" />}</p>
             <ul className="mt-1 space-y-1">{day.eventIds.map((id) => byId.get(id)).filter((e) => e !== undefined).map((e) => <li key={e.id}>
               <span className="font-bold">{e.title}</span>{" "}
               <span className="text-co-text-muted">{t("signals.event.summary", {

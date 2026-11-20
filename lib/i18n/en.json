@@ -9798,6 +9798,7 @@
   "ordering.signals.nudge.no_effect": "The tested signal says this day is like a usual one.",
   "ordering.signals.nudge.number_up": "Tested signal: plan for about {pct}% more than a usual day. Change the lines yourself.",
   "ordering.signals.nudge.number_down": "Tested signal: plan for about {pct}% less than a usual day. Change the lines yourself.",
+  "signals.weather.line_rain_partial": "{temps}, rain up to {rain}% (given for {known} of {hours} hours)",
   "signals.ai.title": "AI insights",
   "signals.ai.count.off": "Not available",
   "signals.ai.count.none": "None today",

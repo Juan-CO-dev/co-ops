@@ -142,11 +142,12 @@ describe("the two pages are dark and role-gated before anything is read", () => 
     for (const p of ["components/admin/demand-signals/DemandSignalsClient.tsx", "components/admin/demand-signals/SourcesClient.tsx"]) {
       const src = read(p);
       const valueImports = [...src.matchAll(/^import (?!type )[^;]*from "@\/lib\/demand-signals\/([\w-]+)";/gm)].map((m) => m[1]);
-      // PR 7 adds the sentence-key helper from the contract file, which is import-free too.
-      expect(valueImports, p).toEqual(p.endsWith("DemandSignalsClient.tsx") ? ["input-shared", "contracts-shared"] : ["input-shared"]);
+      // The page's client also takes the one-line forecast's rules and (PR 7) the sentence-key helper of the contract file: both import-free.
+      expect(valueImports, p).toEqual(p.endsWith("DemandSignalsClient.tsx") ? ["input-shared", "contracts-shared", "weather-line-shared"] : ["input-shared"]);
       expect(src, p).not.toMatch(/toLocale|\.slice\(0, 10\)/);
     }
     expect(read("lib/demand-signals/input-shared.ts")).not.toMatch(/^import /m);
+    expect(read("lib/demand-signals/weather-line-shared.ts")).not.toMatch(/^import /m);
     expect(read("lib/demand-signals/contracts-shared.ts")).not.toMatch(/^import /m);
   });
   it("every key the clients build from a value exists in en AND es", () => {
