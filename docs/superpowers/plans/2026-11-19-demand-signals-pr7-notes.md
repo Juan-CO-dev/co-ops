@@ -19,7 +19,7 @@ A section on the signals page. Once a day per shop a manager may ask an AI model
 | A crashed call keeps its reservation | Nothing releases a reservation. No settlement row = counted in full. |
 | The env var can only lower the code cap | `aiConfig`: `min(code cap, env)`; unreadable = 0. 0352 refuses a cap above its own ceiling. |
 | A model with no entry in the price table refuses | `model_unpriced`: no call, the page says so. |
-| Token limits, a 20-second timeout, one retry, one call per shop per night | 2,000 output tokens, 16 KB in, 20 s, one retry, one attempt per shop per ET day. |
+| Token limits, a 20-second timeout, one retry, one call per shop per night | 2,000 output tokens, 16 KB in, 20 s, one attempt per shop per ET day. **No retry** (see decision 10). |
 | Cache key | The stored row for the shop and day carries the input hash (facts, model, prompt version, schema, system text, audience policy). The page says when the facts have changed since. Language is not in the key: a claim has no language, the template does. |
 | Never auto-acts; an import-closure test | `tests/demand-signals-insights.test.ts`. |
 | Ships OFF until Juan sets the key and the cap | `DEMAND_AI` unset by default; without the key it is "not configured". |
@@ -35,12 +35,14 @@ A section on the signals page. Once a day per shop a manager may ask an AI model
 7. **A failed attempt uses the day.** Simple and safe; it also means a bad key costs at most one attempt per shop per day.
 8. **Asking takes no password.** One capped request a day by a GM or above, writing only its own ledger rows.
 9. **GM and above see the month's AI spend** (cents). It is not labor or sales money.
+10. **No automatic retry** (review r1). The plan allowed one. A retried request's first attempt may be billed without its usage reaching us, so the ledger could not account for it and the cap would leak. One press is one request; a lost answer is a failed attempt that keeps its whole set-aside.
+11. **A stored answer shows only facts still on the page** (review r1). If a source is revoked or an event is taken back after the answer was stored, that line disappears and the page says how many were dropped.
 
 ## What is NOT verified
 
 - **No request has ever been made.** No key exists. The request shape (`output_config.format` with a JSON schema, `effort: "low"`) is taken from the SDK's own types (1.11.0) and the structured-outputs documentation, not from a live answer. The first real request is the canary: if the API refuses the shape, the page says "the model did not accept the request" and one attempt is used.
 - **The cost of a real request is an estimate.** The worst case is computed; the typical case is not measured.
-- **"One token is never shorter than one byte"** is the assumption behind the worst case. It is conservative for every tokenizer we know of, and the reservation adds a margin and counts a retry.
+- **"One token is never shorter than one byte"** is the assumption behind the worst case. It is conservative for every tokenizer we know of, and the reservation adds a margin.
 - Not rendered in a browser.
 
 ## Later

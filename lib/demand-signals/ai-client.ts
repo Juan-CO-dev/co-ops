@@ -7,11 +7,16 @@
  * It asks for JSON of ONE schema and returns the raw text of the first text block for `parseModelClaims` to
  * accept or refuse. It never logs, stores or returns anything else the model wrote, and an error is a fixed
  * code, never a message.
+ * ONE ATTEMPT, NEVER A RETRY (review DEMAND5-r1 P2 #1): the SDK retries by itself unless told not to. A first
+ * attempt whose answer was lost may still have been billed, and its usage is never reported to us; a retry that
+ * then succeeds would settle only ITS cost and the month's cap would admit more than it holds. So `maxRetries`
+ * is the literal 0 here: one reservation covers exactly one request, and a request whose answer we did not get
+ * keeps its whole reservation.
  */
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 
-export interface AskArgs { apiKey: string; model: string; system: string; user: string; schema: Record<string, unknown>; maxTokens: number; timeoutMs: number; maxRetries: number }
+export interface AskArgs { apiKey: string; model: string; system: string; user: string; schema: Record<string, unknown>; maxTokens: number; timeoutMs: number }
 export type AskResult =
   | { ok: true; text: string | null; stopReason: string | null; inputTokens: number; outputTokens: number }
   | { ok: false; code: "ai_timeout" | "ai_auth" | "ai_rate_limited" | "ai_refused_request" | "ai_unavailable" };
@@ -20,7 +25,7 @@ const count = (n: unknown): number => (typeof n === "number" && Number.isFinite(
 
 export async function askForClaims(args: AskArgs): Promise<AskResult> {
   if (typeof args.apiKey !== "string" || args.apiKey.trim() === "") throw new Error("ai_key_missing");
-  const client = new Anthropic({ apiKey: args.apiKey, timeout: args.timeoutMs, maxRetries: args.maxRetries });
+  const client = new Anthropic({ apiKey: args.apiKey, timeout: args.timeoutMs, maxRetries: 0 });
   try {
     const message = await client.messages.create({
       model: args.model, max_tokens: args.maxTokens, system: args.system,

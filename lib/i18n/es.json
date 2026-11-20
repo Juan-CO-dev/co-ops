@@ -9845,5 +9845,6 @@
   "signals.ai.error.demand_signals_unavailable": "Las señales de demanda todavía no están instaladas en este sistema.",
   "signals.ai.error.generic": "No se pudo preguntar. Vuelve a intentarlo más tarde.",
   "signals.event.when_until": "{day}, hasta {to}",
-  "signals.ai.status.unreadable": "No se pudieron leer las sugerencias de IA en este momento. Recarga la página en un minuto."
+  "signals.ai.status.unreadable": "No se pudieron leer las sugerencias de IA en este momento. Recarga la página en un minuto.",
+  "signals.ai.dropped": "{n} cosas elegidas antes ya no están en esta página (se retiró un evento, se revocó una fuente o llegó un pronóstico), así que no se muestran."
 }

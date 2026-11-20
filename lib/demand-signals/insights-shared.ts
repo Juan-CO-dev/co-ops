@@ -41,7 +41,9 @@ export const OFFERED_CLAIM_TYPES: ReadonlyArray<InsightClaimType> = (Object.keys
   .filter((type) => (INSIGHT_CLAIMS[type] as ReadonlyArray<InsightEvidenceKind>).every((kind) => PRODUCIBLE_EVIDENCE.includes(kind)));
 
 export const INSIGHT_MAX_EVENT_FACTS = 40;
+/** At most this many claims, each citing at most this many facts. 0352's `demand_ai_claims_valid` holds the SAME two numbers (pinned). */
 export const INSIGHT_MAX_CLAIMS = 5;
+export const INSIGHT_MAX_FACTS_PER_CLAIM = 10;
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const pick = <T extends string>(list: ReadonlyArray<T>, v: unknown, fallback: T): T => (typeof v === "string" && (list as ReadonlyArray<string>).includes(v) ? (v as T) : fallback);
 
@@ -140,13 +142,35 @@ export interface StoredInsightClaim { type: InsightClaimType; facts: InsightFact
  */
 export function acceptClaims(parsed: { claims: InsightClaim[]; overLimit: number }, facts: ReadonlyArray<InsightFact>): { accepted: StoredInsightClaim[]; rejected: number } {
   if (MODEL_FREE_TEXT_RENDERED) throw new Error("model_free_text_must_stay_off");
-  const offered = parsed.claims.filter((c) => (OFFERED_CLAIM_TYPES as ReadonlyArray<string>).includes(c.type));
+  // What we accept is exactly what 0352 will store (review DEMAND5-r1 P2 #2): a claim citing more facts than the
+  // ledger allows is refused HERE and counted, never accepted and then refused by the settlement.
+  const offered = parsed.claims.filter((c) => (OFFERED_CLAIM_TYPES as ReadonlyArray<string>).includes(c.type) && c.evidenceIds.length <= INSIGHT_MAX_FACTS_PER_CLAIM);
   const { valid, rejected } = validateInsightClaims(offered, facts.map((f) => ({ id: f.id, kind: f.kind })));
   const byId = new Map(facts.map((f) => [f.id, f]));
   return {
     accepted: valid.map((c) => ({ type: c.type, facts: c.evidenceIds.map((id) => byId.get(id)!).filter((f) => f !== undefined) })).filter((c) => c.facts.length > 0),
     rejected: rejected.length + (parsed.claims.length - offered.length) + parsed.overLimit,
   };
+}
+
+/** The content of a fact, without its id (ids are positional: the same event is e1 today and e2 tomorrow). */
+function factKey(f: InsightFact): string {
+  return f.kind === "named_event" ? [f.kind, f.date, f.endDate, f.category, f.impact, f.origin, f.scope].join("|") : [f.kind, f.date, f.endDate, f.reason].join("|");
+}
+/**
+ * WHAT A STORED ANSWER MAY STILL SHOW (review DEMAND5-r1 P2 #3). A stored claim cites facts as they were when it
+ * was asked. The page renders a cited fact ONLY while that same fact is among the facts the page holds NOW, which
+ * were read through the gated readers for THIS render. So a feed alert whose source was revoked a minute ago, an
+ * event that was taken back or corrected, and a forecast gap that closed all leave the answer the moment they
+ * leave the page: a stored answer is never a way around the source gate. A claim with no fact left is dropped.
+ * `current` null = the page's facts are not whole right now: nothing can be confirmed, so nothing is shown.
+ */
+export function supportedNow(stored: ReadonlyArray<StoredInsightClaim>, current: ReadonlyArray<InsightFact> | null): { claims: StoredInsightClaim[]; dropped: number } {
+  const total = stored.reduce((n, c) => n + c.facts.length, 0);
+  if (current === null) return { claims: [], dropped: total };
+  const now = new Set(current.map(factKey));
+  const claims = stored.map((c) => ({ type: c.type, facts: c.facts.filter((f) => now.has(factKey(f))) })).filter((c) => c.facts.length > 0);
+  return { claims, dropped: total - claims.reduce((n, c) => n + c.facts.length, 0) };
 }
 
 /**
@@ -162,7 +186,7 @@ export function readStoredClaims(value: unknown): StoredInsightClaim[] {
     if (typeof c.type !== "string" || !(OFFERED_CLAIM_TYPES as ReadonlyArray<string>).includes(c.type) || !Array.isArray(c.facts)) continue;
     const allowed: ReadonlyArray<InsightEvidenceKind> = INSIGHT_CLAIMS[c.type as InsightClaimType];
     const facts: InsightFact[] = [];
-    for (const f of c.facts as Array<Record<string, unknown>>) {
+    for (const f of (c.facts as Array<Record<string, unknown>>).slice(0, INSIGHT_MAX_FACTS_PER_CLAIM)) {
       if (typeof f !== "object" || f === null || typeof f.id !== "string" || typeof f.date !== "string" || typeof f.endDate !== "string"
         || !YMD.test(f.date) || !YMD.test(f.endDate) || !allowed.includes(f.kind as InsightEvidenceKind)) continue;
       if (f.kind === "named_event" && (CATEGORIES as ReadonlyArray<string>).includes(String(f.category)) && (IMPACTS as ReadonlyArray<string>).includes(String(f.impact))) {
@@ -193,7 +217,12 @@ export const DEMAND_AI_CODE_CAP_MICRO = 5_000_000;
 /** Everything the model may write, thinking included, is bounded by this. */
 export const DEMAND_AI_MAX_OUTPUT_TOKENS = 2_000;
 export const DEMAND_AI_TIMEOUT_MS = 20_000;
-export const DEMAND_AI_MAX_RETRIES = 1;
+/**
+ * ONE request per reservation, never a retry (review DEMAND5-r1 P2 #1). A retried request's first attempt may have
+ * been billed without its usage ever reaching us, so its cost could not be settled. This is 0 and must stay 0;
+ * the model client passes the literal, not this constant.
+ */
+export const DEMAND_AI_MAX_RETRIES = 0;
 /** The largest request body (system + schema + facts) we will send, in bytes. */
 export const DEMAND_AI_MAX_INPUT_BYTES = 16_000;
 /** Tokens the API may add around our text (roles, the schema's framing). A margin, counted as input. */
@@ -206,8 +235,8 @@ export function insightInputBytes(user: string): number {
 }
 /**
  * The WORST a call can cost, reserved before it is made: one token per input byte (a token is never shorter than
- * a byte) plus the margin, at the input price, plus the whole output limit at the output price, times every
- * attempt the client may make. null = the model has no price here.
+ * a byte) plus the margin, at the input price, plus the whole output limit at the output price. There is exactly
+ * one attempt (no retry), so this bounds the one request a reservation covers. null = the model has no price here.
  */
 export function worstCaseMicro(model: string, inputBytes: number): number | null {
   const price = AI_PRICES[model];

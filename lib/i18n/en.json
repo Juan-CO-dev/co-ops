@@ -9845,5 +9845,6 @@
   "signals.ai.error.demand_signals_unavailable": "Demand signals are not set up in this system yet.",
   "signals.ai.error.generic": "Could not ask. Try again later.",
   "signals.event.when_until": "{day}, until {to}",
-  "signals.ai.status.unreadable": "AI insights could not be read just now. Reload the page in a minute."
+  "signals.ai.status.unreadable": "AI insights could not be read just now. Reload the page in a minute.",
+  "signals.ai.dropped": "{n} things picked earlier are no longer on this page (an event was taken back, a source was revoked, or a forecast arrived), so they are not shown."
 }

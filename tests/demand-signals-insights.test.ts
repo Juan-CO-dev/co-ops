@@ -18,9 +18,9 @@ import type { AskArgs, AskResult } from "@/lib/demand-signals/ai-client";
 import type { AiSettlement, AiToday } from "@/lib/demand-signals/ai-store";
 import { insightInputHash, insightsView, requestInsights, type InsightDeps } from "@/lib/demand-signals/insights";
 import {
-  AI_PRICES, DEMAND_AI_CODE_CAP_MICRO, DEMAND_AI_DEFAULT_MODEL, DEMAND_AI_MAX_OUTPUT_TOKENS, DEMAND_AI_MAX_RETRIES, DEMAND_AI_TIMEOUT_MS, INSIGHT_MAX_CLAIMS, INSIGHT_OUTPUT_SCHEMA,
-  INSIGHT_SYSTEM, OFFERED_CLAIM_TYPES, acceptClaims, actualMicro, aiConfig, buildInsightFacts, insightInputBytes, insightUserMessage, parseModelClaims, readStoredClaims,
-  worstCaseMicro, type AiConfig, type InsightFact, type InsightSourceEvent,
+  AI_PRICES, DEMAND_AI_CODE_CAP_MICRO, DEMAND_AI_DEFAULT_MODEL, DEMAND_AI_MAX_OUTPUT_TOKENS, DEMAND_AI_MAX_RETRIES, DEMAND_AI_TIMEOUT_MS, INSIGHT_MAX_CLAIMS,
+  INSIGHT_MAX_FACTS_PER_CLAIM, INSIGHT_OUTPUT_SCHEMA, INSIGHT_SYSTEM, OFFERED_CLAIM_TYPES, acceptClaims, actualMicro, aiConfig, buildInsightFacts, insightInputBytes,
+  insightUserMessage, parseModelClaims, readStoredClaims, supportedNow, worstCaseMicro, type AiConfig, type InsightFact, type InsightSourceEvent,
 } from "@/lib/demand-signals/insights-shared";
 
 const TODAY = "2026-11-19";
@@ -55,9 +55,10 @@ describe("the switch, the key and the cap", () => {
     expect(env({ monthlyCapCents: "0" }).capMicro).toBe(0);
     for (const bad of ["-1", "5.5", "$5", "five", "1e3"]) expect(env({ monthlyCapCents: bad }).capMicro, bad).toBe(0);
   });
-  it("the worst case counts every byte as a token, the whole output limit, and every attempt", () => {
+  it("the worst case counts every byte as a token and the whole output limit, for the ONE attempt a reservation covers", () => {
     const one = (1_000 + 1_024) * 4 + DEMAND_AI_MAX_OUTPUT_TOKENS * 20;
-    expect(worstCaseMicro("claude-opus-5-5", 1_000)).toBe(one * (1 + DEMAND_AI_MAX_RETRIES));
+    expect(worstCaseMicro("claude-opus-5-5", 1_000)).toBe(one);
+    expect(DEMAND_AI_MAX_RETRIES).toBe(0);
     expect(actualMicro("claude-opus-5-5", { inputTokens: 900, outputTokens: 300 })).toBe(900 * 4 + 300 * 20);
     expect(actualMicro("claude-opus-5-5", { inputTokens: 1.5, outputTokens: 3 })).toBeNull();
     // Two shops, every day of a 31-day month, at the largest request we send, fits the code cap.
@@ -136,6 +137,39 @@ describe("what may come back: a claim type and fact ids, or nothing", () => {
     expect(rejected).toBe(4);
     expect(MODEL_FREE_TEXT_RENDERED).toBe(false);
   });
+  it("what the app accepts is what the ledger stores: a claim citing more than ten facts is refused HERE, ten is accepted (review r1 P2 #2)", () => {
+    const many: InsightFact[] = Array.from({ length: 12 }, (_, i) => ({ ...FACTS[0]!, id: `e${i + 1}`, date: `2026-11-${String(20 + (i % 9)).padStart(2, "0")}`, endDate: "2026-11-29" }));
+    const ids = many.map((f) => f.id);
+    const eleven = acceptClaims({ claims: [{ type: "event_on_date", evidenceIds: ids.slice(0, 11) }], overLimit: 0 }, many);
+    expect(eleven).toEqual({ accepted: [], rejected: 1 });
+    const ten = acceptClaims({ claims: [{ type: "event_on_date", evidenceIds: ids.slice(0, 10) }], overLimit: 0 }, many);
+    expect(ten.accepted[0]!.facts).toHaveLength(INSIGHT_MAX_FACTS_PER_CLAIM);
+    // The two numbers are 0352's own (demand_ai_claims_valid), read from the file.
+    const sql = read("supabase/migrations/0352_demand_ai_insights.sql");
+    expect(sql).toContain(`jsonb_array_length(p_claims) > ${INSIGHT_MAX_CLAIMS} `);
+    expect(sql).toContain(`jsonb_array_length(c->'facts') not between 1 and ${INSIGHT_MAX_FACTS_PER_CLAIM} `);
+    // Stored claims read back for display are cut to the same bound.
+    expect(readStoredClaims([{ type: "event_on_date", facts: many }])[0]!.facts).toHaveLength(INSIGHT_MAX_FACTS_PER_CLAIM);
+  });
+  it("A STORED ANSWER NEVER OUTLIVES ITS FACTS (review r1 P2 #3): only facts still on the page are shown", () => {
+    const alert: InsightFact = { id: "e2", kind: "named_event", date: "2026-11-22", endDate: "2026-11-22", category: "weather_alert", impact: "unknown", origin: "feed", scope: "shop" };
+    const stored = [{ type: "event_on_date" as const, facts: [FACTS[0]!, alert] }, { type: "data_missing" as const, facts: [FACTS[1]!] }];
+    // Nothing changed: everything is shown.
+    expect(supportedNow(stored, [...FACTS, alert])).toEqual({ claims: stored, dropped: 0 });
+    // The alert's source was revoked: the gated reader no longer returns it, so it is not among the current facts.
+    const afterRevoke = supportedNow(stored, FACTS);
+    expect(afterRevoke.dropped).toBe(1);
+    expect(JSON.stringify(afterRevoke.claims)).not.toContain("weather_alert");
+    expect(afterRevoke.claims.map((c) => c.facts.length)).toEqual([1, 1]);
+    // Ids are positional and shift when a fact leaves: the match is on the fact itself, never on its id.
+    const renumbered = supportedNow(stored, [{ ...alert, id: "e1" }, { ...FACTS[0]!, id: "e2" }, { ...FACTS[1]!, id: "g7" }]);
+    expect(renumbered.dropped).toBe(0);
+    // A corrected event (another day) is another fact; a claim with no fact left is dropped whole.
+    expect(supportedNow(stored, [{ ...FACTS[0]!, date: "2026-11-23", endDate: "2026-11-23" }])).toEqual({ claims: [], dropped: 3 });
+    // The page's facts are not whole right now: nothing can be confirmed, so nothing is shown.
+    expect(supportedNow(stored, null)).toEqual({ claims: [], dropped: 3 });
+    expect(supportedNow([], FACTS)).toEqual({ claims: [], dropped: 0 });
+  });
   it("stored claims are re-checked for display: anything we could not have stored renders nothing", () => {
     expect(readStoredClaims([{ type: "event_on_date", facts: [FACTS[0]] }, { type: "data_missing", facts: [FACTS[1]] }])).toHaveLength(2);
     expect(readStoredClaims([{ type: "event_on_date", facts: [{ ...FACTS[0], category: "<b>party</b>" }] }])).toEqual([]);
@@ -198,7 +232,8 @@ describe("one request: reserve, ask, validate, settle", () => {
     const bytes = insightInputBytes(insightUserMessage({ today: TODAY, facts: FACTS }));
     expect(reserved[0]).toMatchObject({ actorId: "user-1", locationId: "shop-1", model: "claude-opus-5-5", promptVersion: 1, capMicro: DEMAND_AI_CODE_CAP_MICRO,
       reserveMicro: worstCaseMicro("claude-opus-5-5", bytes), inputHash: insightInputHash({ today: TODAY, facts: FACTS, model: "claude-opus-5-5" }) });
-    expect(asked[0]).toMatchObject({ apiKey: "k-test", model: "claude-opus-5-5", maxTokens: 2_000, timeoutMs: 20_000, maxRetries: 1, system: INSIGHT_SYSTEM });
+    expect(asked[0]).toMatchObject({ apiKey: "k-test", model: "claude-opus-5-5", maxTokens: 2_000, timeoutMs: 20_000, system: INSIGHT_SYSTEM });
+    expect(Object.keys(asked[0]!)).not.toContain("maxRetries");   // the caller cannot ask for a retry: the client's literal is 0
     expect(asked[0]!.user).toBe(insightUserMessage({ today: TODAY, facts: FACTS }));
     expect(settled).toEqual([{ outcome: "ok", inputTokens: 700, outputTokens: 120, actualMicro: 700 * 4 + 120 * 20, stopReason: "end_turn",
       claims: [{ type: "event_on_date", facts: [FACTS[0]] }, { type: "data_missing", facts: [FACTS[1]] }], rejected: 0 }]);
@@ -264,9 +299,15 @@ describe("what the page says about it", () => {
   });
   it("today's stored answer is rendered from the row; a failed or unrecorded attempt shows no claim and still uses the day", () => {
     const ok = insightsView({ config: READY, today: today(attempt()), facts, todayEt: TODAY });
-    expect(ok).toMatchObject({ blocked: "asked_today", attempt: { state: "ok", claims: [{ type: "event_on_date", facts: [FACTS[0]] }], factsChanged: false } });
+    expect(ok).toMatchObject({ blocked: "asked_today", attempt: { state: "ok", claims: [{ type: "event_on_date", facts: [FACTS[0]] }], dropped: 0, factsChanged: false } });
     const changed = insightsView({ config: READY, today: today(attempt()), facts: { ok: true, facts: [FACTS[0]!] }, todayEt: TODAY });
-    expect(changed).toMatchObject({ attempt: { factsChanged: true } });
+    expect(changed).toMatchObject({ attempt: { factsChanged: true, dropped: 0 } });
+    // REVOKED BETWEEN ASK AND RENDER: the cited event is no longer among the page's facts, so the stored claim is not shown.
+    const revoked = insightsView({ config: READY, today: today(attempt()), facts: { ok: true, facts: [FACTS[1]!] }, todayEt: TODAY });
+    expect(revoked).toMatchObject({ attempt: { state: "ok", claims: [], dropped: 1, factsChanged: true } });
+    // The page's facts could not be read whole: the stored answer cannot be confirmed and is not shown.
+    const unread = insightsView({ config: READY, today: today(attempt()), facts: { ok: false, code: "facts_incomplete" }, todayEt: TODAY });
+    expect(unread).toMatchObject({ attempt: { state: "ok", claims: [], dropped: 1 } });
     for (const [over, state] of [[{ outcome: "failed", errorCode: "ai_timeout" }, "failed"], [{ stopReason: "answer_unreadable", claims: [] }, "failed"], [{ settled: false, outcome: null }, "pending"]] as const) {
       const v = insightsView({ config: READY, today: today(attempt({ ...over, claims: [{ type: "event_on_date", facts: [FACTS[0]] }] } as never)), facts, todayEt: TODAY });
       expect(v).toMatchObject({ blocked: "asked_today", attempt: { state } });
@@ -332,7 +373,9 @@ describe("NEVER AUTO-ACTS: what the insights modules can reach, and who can reac
     const client = read("lib/demand-signals/ai-client.ts");
     expect(client).not.toMatch(/process\.env|console\./);
     expect(client).toContain('if (typeof args.apiKey !== "string" || args.apiKey.trim() === "") throw new Error("ai_key_missing");');
-    expect(client).toContain("new Anthropic({ apiKey: args.apiKey, timeout: args.timeoutMs, maxRetries: args.maxRetries })");
+    // ONE attempt, never a retry (review r1 P2 #1): the literal 0, which no caller can change.
+    expect(client).toContain("new Anthropic({ apiKey: args.apiKey, timeout: args.timeoutMs, maxRetries: 0 })");
+    expect(client).not.toMatch(/maxRetries: (?!0 \})/);
     expect(client.match(/new Anthropic\(/g)!.length).toBe(1);
     // The environment is read in the route and the page only, and never the key another feature uses.
     const envReaders = all().filter((p) => /process\.env\.DEMAND_AI/.test(text(p))).sort();

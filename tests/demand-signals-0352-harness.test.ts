@@ -11,11 +11,12 @@ import { readFileSync, readdirSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
 import { freshLaborParents } from "./helpers/fact-0338-parents";
+import { INSIGHT_MAX_CLAIMS, INSIGHT_MAX_FACTS_PER_CLAIM, acceptClaims, type InsightFact } from "@/lib/demand-signals/insights-shared";
 
 const M0342 = readFileSync("supabase/migrations/0342_demand_signals_replay.sql", "utf8");
 const M0343 = readFileSync("supabase/migrations/0343_demand_signal_sources.sql", "utf8");
 const M0352 = readFileSync("supabase/migrations/0352_demand_ai_insights.sql", "utf8");
-const SHOP_A = randomUUID(), SHOP_B = randomUUID(), SHOP_C = randomUUID(), SHOP_D = randomUUID(), CLOSED = randomUUID();
+const SHOP_A = randomUUID(), SHOP_B = randomUUID(), SHOP_C = randomUUID(), SHOP_D = randomUUID(), SHOP_E = randomUUID(), CLOSED = randomUUID();
 const MOO = randomUUID(), OWNER = randomUUID(), CGS = randomUUID(), GM_A = randomUUID(), AGM = randomUUID(), SMM = randomUUID(), GONE = randomUUID();
 const HASH = "a".repeat(64), MODEL = "claude-opus-5-5", CEILING = 5_000_000;
 
@@ -173,6 +174,24 @@ describe("0352: one attempt a shop a day, the cap, and settlement", () => {
     const d = await reserve(MOO, SHOP_D, 50_000, soFar + 50_000);   // exactly at the cap fits
     expect(Number(d.month_spent_before_micro)).toBe(soFar);
     expect(await spent()).toBe(soFar + 50_000);
+  });
+  it("THE ACCEPTANCE-TO-SETTLEMENT BOUNDARY (review r1 P2 #2): the largest answer the app accepts is stored; one fact more is refused by the app, not here", async () => {
+    await db.query("insert into locations(id, name, active) values ($1,'Shop E',true)", [SHOP_E]);
+    const facts: InsightFact[] = Array.from({ length: 12 }, (_, i) => ({ id: `e${i + 1}`, kind: "named_event", date: "2026-11-21", endDate: `2026-11-${String(21 + (i % 9)).padStart(2, "0")}`,
+      category: "festival_parade", impact: "unknown", origin: "manual", scope: "shop" }));
+    const ids = facts.map((f) => f.id);
+    const full = acceptClaims({ claims: Array.from({ length: INSIGHT_MAX_CLAIMS }, () => ({ type: "event_on_date", evidenceIds: ids.slice(0, INSIGHT_MAX_FACTS_PER_CLAIM) })), overLimit: 0 }, facts);
+    expect(full.accepted).toHaveLength(INSIGHT_MAX_CLAIMS);
+    expect(full.accepted.every((c) => c.facts.length === INSIGHT_MAX_FACTS_PER_CLAIM)).toBe(true);
+    const e = await reserve(MOO, SHOP_E, 1_000);
+    await settle(e.id, { claims: full.accepted });                    // the ledger takes exactly what the app accepted
+    expect((await todayOf(SHOP_E)).attempt!.claims).toEqual(full.accepted);
+    // Eleven facts in one claim: the APP refuses it (so it never reaches settlement and never burns the day on a refusal).
+    const over = acceptClaims({ claims: [{ type: "event_on_date", evidenceIds: ids.slice(0, INSIGHT_MAX_FACTS_PER_CLAIM + 1) }], overLimit: 0 }, facts);
+    expect(over).toEqual({ accepted: [], rejected: 1 });
+    // And SQL holds the same bound if anything ever sent one.
+    expect(await one("select demand_ai_claims_valid($1::jsonb)", [JSON.stringify([{ type: "event_on_date", facts: facts.slice(0, 11) }])])).toBe(false);
+    expect(await one("select demand_ai_claims_valid($1::jsonb)", [JSON.stringify(Array.from({ length: 6 }, () => full.accepted[0]))])).toBe(false);
   });
   it("only THIS ET month counts toward the cap", async () => {
     expect(Number(await one("select demand_ai_month_spent_micro((date_trunc('month', demand_today_et()) - interval '1 day')::date)"))).toBe(0);

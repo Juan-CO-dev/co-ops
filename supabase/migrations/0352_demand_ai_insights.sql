@@ -139,6 +139,8 @@ end $$;
 -- p_claims = the claims that passed validation in the app, each with the facts it cites. The shape is checked
 -- again here, totally: an array of at most 5 objects {type, facts}, type from the closed list, facts an array of
 -- 1 to 10 objects each with a string id and a kind from the closed list. Anything else is demand_ai_invalid.
+-- THE APP HOLDS THE SAME TWO NUMBERS (INSIGHT_MAX_CLAIMS = 5, INSIGHT_MAX_FACTS_PER_CLAIM = 10, pinned by a test) and
+-- refuses a larger claim itself, so what the app accepts is exactly what this stores.
 create function public.demand_ai_claims_valid(p_claims jsonb) returns boolean language plpgsql immutable set search_path = pg_catalog, public as $$
 declare c jsonb; f jsonb;
 begin

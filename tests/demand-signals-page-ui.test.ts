@@ -102,7 +102,7 @@ describe("AI insights on the page", () => {
     }
   });
   it("a stored answer is OUR sentence over the cited facts (en and es); a failed attempt shows no claim", () => {
-    const attempt = { state: "ok" as const, claims: [{ type: "event_on_date" as const, facts: [FACT] }, { type: "data_missing" as const, facts: [GAP] }], rejected: 2, askedAt: "2026-11-19T15:00:00Z", factsChanged: true };
+    const attempt = { state: "ok" as const, claims: [{ type: "event_on_date" as const, facts: [FACT] }, { type: "data_missing" as const, facts: [GAP] }], dropped: 0, rejected: 2, askedAt: "2026-11-19T15:00:00Z", factsChanged: true };
     for (const [lang, dict] of [["en", en], ["es", es]] as const) {
       mount(data(), ready({ blocked: "asked_today", attempt }), lang);
       fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${dict["signals.ai.title"]}`) }));
@@ -119,6 +119,13 @@ describe("AI insights on the page", () => {
     openAi();
     expect(screen.getByText(en["signals.ai.attempt.failed"])).toBeTruthy();
     expect(screen.queryByText(new RegExp(en["signals.category.sports_game"]))).toBeNull();
+    cleanup();
+    // A cited fact that is no longer on the page (a revoked source, an event taken back) is NOT shown, and the page says so.
+    mount(data(), ready({ blocked: "asked_today", attempt: { ...attempt, claims: [{ type: "data_missing", facts: [GAP] }], dropped: 1, rejected: 0 } }));
+    openAi();
+    expect(screen.getByText(fill(en["signals.ai.dropped"], { n: 1 }))).toBeTruthy();
+    expect(within(document.getElementById("signals-ai")!).queryByText(new RegExp(en["signals.category.sports_game"]))).toBeNull();
+    expect(screen.queryByText(en["signals.ai.nothing_picked"])).toBeNull();
   });
   it("the month's spend is shown in whole cents, rounded up, with the cap", () => {
     mount(data(), ready({ monthSpentMicro: 12_001, capMicro: 5_000_000 }));

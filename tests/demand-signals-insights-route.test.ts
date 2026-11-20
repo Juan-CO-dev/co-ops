@@ -143,7 +143,7 @@ describe("one request", () => {
     expect(h.calls.map((c) => c[0])).toEqual(["demand_ai_reserve", "demand_ai_settle"]);
     expect(h.calls[0]![1]).toMatchObject({ p_actor: "user-1", p_location_id: LOC, p_model: "claude-opus-5-5", p_prompt_version: 1, p_cap_micro: 5_000_000 });
     expect(h.calls[0]![1].p_input_hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(h.built).toEqual([{ apiKey: "k-test-not-a-real-key", timeout: 20_000, maxRetries: 1 }]);
+    expect(h.built).toEqual([{ apiKey: "k-test-not-a-real-key", timeout: 20_000, maxRetries: 0 }]);   // one attempt, never a retry
     expect(h.asked).toHaveLength(1);
     expect(h.asked[0]).toEqual({ model: "claude-opus-5-5", max_tokens: 2_000, system: INSIGHT_SYSTEM, messages: [{ role: "user", content: expect.any(String) }],
       output_config: { effort: "low", format: { type: "json_schema", schema: INSIGHT_OUTPUT_SCHEMA } } });
@@ -193,7 +193,7 @@ describe("one request", () => {
 });
 
 describe("the model client", () => {
-  const args = { apiKey: "k-test-not-a-real-key", model: "claude-opus-5-5", system: "s", user: "u", schema: { type: "object" }, maxTokens: 10, timeoutMs: 5, maxRetries: 0 };
+  const args = { apiKey: "k-test-not-a-real-key", model: "claude-opus-5-5", system: "s", user: "u", schema: { type: "object" }, maxTokens: 10, timeoutMs: 5 };
   beforeEach(() => { h.built = []; h.asked = []; });
   it("refuses to build a client without a key (the SDK would otherwise read another key from the environment)", async () => {
     for (const apiKey of ["", "  ", undefined as unknown as string]) await expect(askForClaims({ ...args, apiKey })).rejects.toThrow("ai_key_missing");
@@ -205,6 +205,22 @@ describe("the model client", () => {
     expect(await askForClaims(args)).toEqual({ ok: true, text: "{}", stopReason: "end_turn", inputTokens: 16, outputTokens: 3 });
     h.answer = { content: [], stop_reason: "max_tokens", usage: { input_tokens: 10, output_tokens: 10 } };
     expect(await askForClaims(args)).toEqual({ ok: true, text: null, stopReason: "max_tokens", inputTokens: 10, outputTokens: 10 });
+  });
+  it("A LOST ANSWER IS NEVER RETRIED (review r1 P2 #1): one request, one failure, and the whole reservation stands", async () => {
+    // The fake SDK would retry only if asked to: the client asks for zero retries, so a timeout is ONE request.
+    h.answer = new (Anthropic as unknown as { APIConnectionTimeoutError: new () => Error }).APIConnectionTimeoutError();
+    expect(await askForClaims(args)).toEqual({ ok: false, code: "ai_timeout" });
+    expect(h.asked).toHaveLength(1);
+    expect(h.built).toEqual([{ apiKey: "k-test-not-a-real-key", timeout: 5, maxRetries: 0 }]);
+    // Through the route: the failed request is settled 'failed' with NO cost, so the month counts its full reservation
+    // (0352: demand_ai_month_spent_micro; proved in the harness). A cheaper retry can never replace it.
+    seed("gm");
+    h.answer = new (Anthropic as unknown as { APIConnectionTimeoutError: new () => Error }).APIConnectionTimeoutError();
+    const res = await POST(post({ locationId: LOC }));
+    expect(res.status).toBe(502);
+    expect(h.asked).toHaveLength(1);
+    expect(h.calls.map((c) => c[0])).toEqual(["demand_ai_reserve", "demand_ai_settle"]);
+    expect(h.calls[1]![1]).toMatchObject({ p_outcome: "failed", p_actual_micro: null, p_input_tokens: null, p_output_tokens: null, p_error_code: "ai_timeout" });
   });
   it("an error is a fixed code, never a message", async () => {
     const A = Anthropic as unknown as { APIError: new (status: number) => Error; APIConnectionTimeoutError: new () => Error };

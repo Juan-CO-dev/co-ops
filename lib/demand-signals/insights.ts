@@ -8,7 +8,8 @@
  *   3. the cap leaves room for the worst case (a cap of 0 never reaches the database);
  *   4. RESERVE the worst case (0352: one attempt per shop per ET day, the month's cap under one lock, the actor
  *      re-read on the row). A refusal ends here: no request was made;
- *   5. ONE call, bounded (output limit, timeout, one retry);
+ *   5. ONE call, bounded (output limit, timeout) and NEVER retried: a retry's first attempt could be billed and
+ *      never accounted, so one reservation covers exactly one request;
  *   6. the answer goes through `parseModelClaims` then `acceptClaims` (which ends in `validateInsightClaims`):
  *      only a claim type and fact ids survive. `MODEL_FREE_TEXT_RENDERED` is false: no text the model wrote is
  *      returned, stored or logged;
@@ -22,8 +23,8 @@ import type { AskArgs, AskResult } from "./ai-client";
 import type { AiReservation, AiSettlement, AiToday } from "./ai-store";
 import { addressOf } from "./hash";
 import {
-  DEMAND_AI_MAX_INPUT_BYTES, DEMAND_AI_MAX_OUTPUT_TOKENS, DEMAND_AI_MAX_RETRIES, DEMAND_AI_TIMEOUT_MS, INSIGHT_AUDIENCE_POLICY, INSIGHT_OUTPUT_SCHEMA,
-  INSIGHT_PROMPT_VERSION, INSIGHT_SYSTEM, acceptClaims, actualMicro, insightInputBytes, insightUserMessage, parseModelClaims, readStoredClaims, worstCaseMicro,
+  DEMAND_AI_MAX_INPUT_BYTES, DEMAND_AI_MAX_OUTPUT_TOKENS, DEMAND_AI_TIMEOUT_MS, INSIGHT_AUDIENCE_POLICY, INSIGHT_OUTPUT_SCHEMA,
+  INSIGHT_PROMPT_VERSION, INSIGHT_SYSTEM, acceptClaims, actualMicro, insightInputBytes, insightUserMessage, parseModelClaims, readStoredClaims, supportedNow, worstCaseMicro,
   type AiConfig, type AiStatus, type InsightFact, type InsightFactsResult, type StoredInsightClaim,
 } from "./insights-shared";
 
@@ -67,7 +68,7 @@ export async function requestInsights(deps: InsightDeps, args: {
   let answer: AskResult;
   try {
     answer = await deps.ask({ apiKey: args.apiKey, model: config.model, system: INSIGHT_SYSTEM, user, schema: INSIGHT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
-      maxTokens: DEMAND_AI_MAX_OUTPUT_TOKENS, timeoutMs: DEMAND_AI_TIMEOUT_MS, maxRetries: DEMAND_AI_MAX_RETRIES });
+      maxTokens: DEMAND_AI_MAX_OUTPUT_TOKENS, timeoutMs: DEMAND_AI_TIMEOUT_MS });
   } catch {
     answer = { ok: false, code: "ai_unavailable" };
   }
@@ -101,7 +102,11 @@ export type InsightsView =
     /** Why a request cannot be made now, if it cannot: the facts, or the day already used. null = it can. */
     blocked: "facts_incomplete" | "nothing_to_say" | "input_too_large" | "asked_today" | "cap_reached" | null;
     /** Today's stored answer, rendered from the row. null = none asked today. */
-    attempt: { state: "ok" | "failed" | "pending"; claims: StoredInsightClaim[]; rejected: number; askedAt: string; factsChanged: boolean } | null;
+    /**
+     * `claims` = the stored claims' facts that are STILL among the page's facts now (`supportedNow`); `dropped` = how
+     * many cited facts are no longer on the page (a revoked source, an event taken back) and so are not shown.
+     */
+    attempt: { state: "ok" | "failed" | "pending"; claims: StoredInsightClaim[]; dropped: number; rejected: number; askedAt: string; factsChanged: boolean } | null;
     monthSpentMicro: number;
     capMicro: number;
   };
@@ -122,13 +127,15 @@ export function insightsView(args: { config: AiConfig; today: AiToday | "unavail
         : args.today.monthSpentMicro + worst > config.capMicro ? "cap_reached" as const : null;
   return {
     status: "ready", blocked, monthSpentMicro: args.today.monthSpentMicro, capMicro: config.capMicro,
-    attempt: a === null ? null : attemptView(a, currentHash),
+    attempt: a === null ? null : attemptView(a, currentHash, args.facts.ok ? args.facts.facts : null),
   };
 }
 
-function attemptView(a: NonNullable<AiToday["attempt"]>, currentHash: string | null): NonNullable<Extract<InsightsView, { status: "ready" }>["attempt"]> {
+function attemptView(a: NonNullable<AiToday["attempt"]>, currentHash: string | null, current: ReadonlyArray<InsightFact> | null): NonNullable<Extract<InsightsView, { status: "ready" }>["attempt"]> {
   const state = !a.settled ? "pending" as const : a.outcome === "ok" && a.stopReason !== "answer_unreadable" ? "ok" as const : "failed" as const;
-  // Claims are shown for an answer that was read and recorded, and for nothing else.
-  return { state, claims: state === "ok" ? readStoredClaims(a.claims) : [], rejected: a.rejectedCount, askedAt: a.reservedAt,
+  // Claims are shown for an answer that was read and recorded, and ONLY the facts the page still holds now: a stored
+  // answer never outlives the facts it cites (a revoked source, an event taken back).
+  const shown = state === "ok" ? supportedNow(readStoredClaims(a.claims), current) : { claims: [], dropped: 0 };
+  return { state, claims: shown.claims, dropped: shown.dropped, rejected: a.rejectedCount, askedAt: a.reservedAt,
     factsChanged: currentHash === null || currentHash !== a.inputHash };
 }

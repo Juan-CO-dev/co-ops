@@ -335,7 +335,8 @@ function InsightsSection({ view, locationId }: { view: InsightsView; locationId:
       {view.status !== "ready" && <p className="text-co-text-muted">{t(`signals.ai.status.${view.status}` as TranslationKey)}</p>}
       {view.status === "ready" && <>
         <p className="text-co-text-muted">{t("signals.ai.intro")}</p>
-        {view.attempt?.state === "ok" && view.attempt.claims.length === 0 && <p>{t("signals.ai.nothing_picked")}</p>}
+        {view.attempt?.state === "ok" && view.attempt.claims.length === 0 && view.attempt.dropped === 0 && <p>{t("signals.ai.nothing_picked")}</p>}
+        {view.attempt?.state === "ok" && view.attempt.dropped > 0 && <p className="font-bold text-co-warning-text">{t("signals.ai.dropped", { n: view.attempt.dropped })}</p>}
         {view.attempt?.state === "ok" && view.attempt.claims.length > 0 && <ul className="list-disc space-y-1 pl-5">{view.attempt.claims.flatMap((claim, i) => claim.facts.map((fact) =>
           <li key={`${i}-${fact.id}`}>{fact.kind === "named_event"
             ? t(insightSentenceKey(claim.type) as TranslationKey, { when: when(fact), category: categoryLabel(t, fact.category), impact: impactLabel(t, fact.impact) })

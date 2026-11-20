@@ -32,7 +32,8 @@ Optional:
 ## What a request costs
 
 - At most one request per shop per ET day, whatever happens to it.
-- Before the call, the WORST case is set aside (every byte sent counted as a token, the full 2,000-token answer, and one retry). With today's prices that is about 10 to 15 cents set aside per request on `claude-opus-5-5`.
+- Before the call, the WORST case is set aside (every byte sent counted as a token, plus the full 2,000-token answer). With today's prices that is about 5 to 7 cents set aside per request on `claude-opus-5-5`.
+- There is exactly one request per press. It is never retried: a request whose answer did not arrive is recorded as failed and keeps its full set-aside.
 - After the call, the real cost replaces it. A typical request is small: on the order of one cent. That is an estimate from the size of what is sent; no request has ever been made, so it is not measured.
 - A call that failed or crashed keeps its full set-aside for the month. Nothing ever releases one.
 - When the month's total would pass the limit, the request is refused before anything is sent.
@@ -63,6 +64,7 @@ A row in `demand_ai_reservations` with no row in `demand_ai_settlements` is a ca
 | Today's one request for this shop has been made | One a day. Tomorrow (ET) it can be asked again. |
 | This month's spending limit is reached | The month's total plus the worst case of one more request would pass the limit. |
 | The model refused the key | The key is wrong or revoked. Juan checks it. The day's request is used. |
+| N things picked earlier are no longer on this page | A fact the answer cited has left the page since (an event was taken back, a source was revoked, a forecast arrived). It is not shown any more. |
 | The model's answer was not in the form we accept | The model returned something other than the list we asked for. None of it is shown. The cost is recorded. |
 
 ## Turning it off
