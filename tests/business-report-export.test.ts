@@ -15,7 +15,7 @@ import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { BUSINESS_EXPORT_COLUMNS, BUSINESS_EXPORT_TABS, EXPORT_COLUMNS, EXPORT_FAMILIES, assertBusinessRowCap } from "@/lib/report-export-shared";
 import { SALES_EXPORT_MAX_ROWS } from "@/lib/sales-reports-shared";
-import { A, fakeClient } from "./helpers/business-report-fake";
+import { A, GM_ALL_ON, fakeClient, gmOff } from "./helpers/business-report-fake";
 
 const B = "bbbbbbbb-0000-4000-8000-00000000000b";
 
@@ -25,8 +25,8 @@ function session(role: string, level: number, locations: string[]) {
   } as never);
 }
 let reads = 0;
-function wire() {
-  const biz = fakeClient();
+function wire(o: Parameters<typeof fakeClient>[0] = {}) {
+  const biz = fakeClient(o);
   const shopQ = { select: () => shopQ, eq: () => shopQ, maybeSingle: async () => ({ data: { id: A, code: "MEP", name: "Capitol Hill" }, error: null }) };
   vi.mocked(getServiceRoleClient).mockImplementation(() => ({
     rpc: (...a: unknown[]) => { reads++; return (biz.client as { rpc: (...x: unknown[]) => unknown }).rpc(...a); },
@@ -95,7 +95,9 @@ describe("gates run before any read", () => {
 
 describe("the files", () => {
   it("overview CSV: day, week and total rows; fully loaded empty with its reason; audited", async () => {
-    session("gm", 7, [A]); wire();
+    // Fully loaded labor is in a GM's file only with the MoO+ switch on (tests/business-report-export-access.test.ts
+    // covers every setting); here it is on, so the file is the one a GM had before the settings existed.
+    session("gm", 7, [A]); wire({ visibility: [GM_ALL_ON] });
     const r = await get(`location=${A}&format=csv&${RANGE}`);
     expect(r.status).toBe(200);
     expect(r.headers.get("content-disposition")).toContain("business_MEP_2026-10-01_2026-10-07.csv");
@@ -107,22 +109,26 @@ describe("the files", () => {
     expect(col(rows, "labor_hours")[0]).toBe("0.5");
     expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "report.export", metadata: expect.objectContaining({ family: "business", format: "csv" }) }));
   });
-  it("hours CSV: a GM gets minutes only; the MoO gets the 15-minute dollars", async () => {
-    session("gm", 7, [A]); wire();
+  it("hours CSV: with the switch off a GM gets minutes only; a GM by default and the MoO get the 15-minute dollars", async () => {
+    session("gm", 7, [A]); wire({ visibility: [gmOff("quarter_cost")] });
     const g = await csv(await get(`location=${A}&format=csv&tab=hours&${RANGE}`));
     expect(col(g, "labor_hours").some((c) => c === "0.5")).toBe(true);
     expect(col(g, "straight_time_cost").every((c) => c === "")).toBe(true);
     expect(col(g, "straight_time_pct").every((c) => c === "")).toBe(true);
+    session("gm", 7, [A]); wire();
+    expect(col(await csv(await get(`location=${A}&format=csv&tab=hours&${RANGE}`)), "straight_time_cost")).toContain("9.00");
     session("moo", 8, []); wire();
     const m = await csv(await get(`location=${A}&format=csv&tab=hours&${RANGE}`));
     expect(col(m, "straight_time_cost")).toContain("9.00");
   });
-  it("people CSV: hours per person and sales per server for the GM; cost per person only for MoO+", async () => {
-    session("gm", 7, [A]); wire();
+  it("people CSV: hours per person and sales per server; cost per hourly person for a GM by default and MoO+, empty with the switch off", async () => {
+    session("gm", 7, [A]); wire({ visibility: [gmOff("person_cost")] });
     const g = await csv(await get(`location=${A}&format=csv&tab=people&${RANGE}`));
     expect(col(g, "row_type")).toContain("person");
     expect(col(g, "row_type")).toContain("server");
     expect(col(g, "straight_time_cost").every((c) => c === "")).toBe(true);
+    session("gm", 7, [A]); wire();
+    expect(col(await csv(await get(`location=${A}&format=csv&tab=people&${RANGE}`)), "straight_time_cost")).toContain("180.00");
     session("owner", 9, []); wire();
     const o = await csv(await get(`location=${A}&format=csv&tab=people&${RANGE}`));
     expect(col(o, "straight_time_cost")).toContain("180.00");

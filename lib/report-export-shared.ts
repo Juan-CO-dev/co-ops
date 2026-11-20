@@ -203,7 +203,10 @@ export const SALES_EXPORT_COLUMNS: Record<SalesExportView, readonly ExportColumn
  * export never shows more than the screen. Every unknown is an EMPTY cell, never a 0, and every figure that is
  * not plainly known (unknown, estimated, "so far", covered days only, a floor) is named with its reason in the
  * row's `figure_notes` cell (`column=kind(codes)`), beside the `*_state` / `status` columns. Labor DOLLARS per person and per 15 minutes are filled only where the DTO
- * carries them (PERSON_COST_MIN / QUARTER_COST_MIN, MoO+); a GM's file has those cells empty.
+ * carries them (access `personCost` / `quarterCost`: MoO+ always, a GM by the settings); otherwise those cells are empty.
+ * Business report access (2026-11-19): the same holds for every group a GM may not see (hourly labor money, fully
+ * loaded labor): the view has no figure, so the cell is EMPTY, the row's `figure_notes` names nothing for it, and
+ * its state / flag columns are empty too. The columns themselves never vary by viewer.
  */
 /** The page's own tab list (one table per tab). */
 export const BUSINESS_EXPORT_TABS = BUSINESS_REPORT_TABS;
@@ -499,11 +502,12 @@ const laborFigures = (l: LaborView) => ({
   net_sales_for_labor: l.net, labor_hours: l.hours, pure_hourly_cost: l.pureCost, overtime_premium: l.otPremium, overtime_hours: l.otHours,
   pure_hourly_pct: l.purePct, salaried_cost: l.salaried, burden_cost: l.burden, fully_loaded_cost: l.loadedCost, fully_loaded_pct: l.loadedPct,
 });
-/** The state columns beside the labor figures: why, and which estimates are behind the SHOWN figures. */
+/** The state columns beside the labor figures: why, and which estimates are behind the SHOWN figures. A group the
+ * view does not hold leaves its target, state and flags EMPTY (the view carries null for them). */
 const laborStates = (l: LaborView, target: Target, loadedTarget: Target): ExportRow => ({
-  net_sales_state: l.netState, pure_hourly_target_pct: target, labor_state: l.state, burden_estimated: l.burdenEstimated,
+  net_sales_state: l.netState, pure_hourly_target_pct: l.shown.hourlyCost ? target : null, labor_state: l.state, burden_estimated: l.burdenEstimated,
   salary_estimated: l.salaryEstimated, wage_estimated: l.wageEstimated, hours_unverified: l.hoursUnverified, salary_gaps: l.salaryGaps,
-  fully_loaded_target_pct: loadedTarget, fully_loaded_state: l.loadedState,
+  fully_loaded_target_pct: l.shown.loaded ? loadedTarget : null, fully_loaded_state: l.loadedState,
 });
 function businessTotalRow(view: BusinessReportView, period: string, shop: ShopRef): ExportRow {
   const head = { row_type: "total", period, ...periodCells(view.range), ...shopCells(shop) };
@@ -621,7 +625,7 @@ export function businessChannelRows(view: BusinessReportView, shop: ShopRef): Ex
   ];
 }
 
-/** People: hours per person (cost only where the view carries it, MoO+), then sales per server (the order's server). */
+/** People: hours per person (cost only where the view carries it), then sales per server (the order's server). */
 export function businessPeopleRows(view: BusinessReportView, shop: ShopRef): ExportRow[] {
   const base = { ...periodCells(view.range), ...shopCells(shop) };
   return [
