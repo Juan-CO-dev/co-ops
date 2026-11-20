@@ -45,17 +45,23 @@
 --   * the SURVIVOR of each class: the registry row of a deleted snapshot holds a FOREIGN KEY to its survivor in
 --     toast_orders, so a survivor can never be deleted later; a later manifest never lists one (class R), and the
 --     apply refuses candidate_now_survivor.
--- A REFERENCE NOT YET COMMITTED (plan r5, Astra r4 P1). Some writers persist a snapshot id with no FK
--- (decide_catering_toast 0347, fact_replace_order_day 0337). Each takes the id from the LATEST POINTER inside its own
--- transaction, so it can only name a snapshot that was a pointer target at some instant of that transaction. The apply
--- proves there is no such instant for any candidate: (1) candidate_order_recently_captured -- no run holding a
--- membership for a candidate's order started, finished or is running at or after the manifest's begun_at, and pointers
--- move only when such a run finishes, so the order has had ONE pointer target since begun_at and it is not the
--- candidate; (2) open_transaction_older_than_manifest / prepared_transaction_open -- every other transaction alive
--- at the apply began after begun_at. Guard (2) runs BEFORE the reference scans and the function refuses any isolation
--- level but READ COMMITTED, so a reference committed by a transaction that ended just before the guard is seen by the
--- scans that follow it. So build and apply belong to ONE quiet window; a capture of an old order in between makes that
--- batch refuse, and the manifest is abandoned and rebuilt.
+-- A REFERENCE NOT YET COMMITTED (plan r5, Astra r4 P1; reviews TOASTDUP-r1 and -r2). Some writers persist a snapshot id
+-- with no FK (decide_catering_toast 0347, fact_replace_order_day 0337). Each takes the id from the LATEST POINTER
+-- inside its own transaction, so it can only name a snapshot that was a VISIBLE pointer target at some instant of that
+-- transaction. The apply proves there is no such instant for any candidate, and it does so WITHOUT trusting any
+-- timestamp stored in a row (a row's timestamp says when it was written, never when it became visible):
+--   (1) candidate_order_pointer_moved -- each item records, at build, its order's pointer row (snapshot id + run id).
+--       A pointer row is only ever replaced by one with a strictly greater (modified_at, run start, run id), so it can
+--       never return to an earlier run id: if the row the apply reads equals the recorded one, no pointer move for
+--       that order became visible between the build's read and the apply's. The recorded target is not the candidate
+--       (a pointer target is never listed).
+--   (2) open_transaction_older_than_manifest / prepared_transaction_open -- every other transaction alive at the apply
+--       began after the manifest was BUILT (built_at, after every build read). An older one has ended, so whatever it
+--       committed is visible to the scans; a newer one lived only while the pointer row was the recorded one.
+-- Guard (2) runs BEFORE the reference scans, every scan is unfiltered (no "rows newer than"), and the function refuses
+-- any isolation level but READ COMMITTED, so the scans see everything committed before they started. So build and
+-- apply belong to ONE quiet window; a capture of a listed order in between makes that batch refuse, and the manifest
+-- is abandoned and rebuilt.
 -- KNOWN LIMIT: a snapshot id stored in a text column, or in a jsonb column of a table outside those name prefixes,
 -- is not seen. None exists on main at e9e29073.
 --
@@ -211,6 +217,10 @@ create table public.toast_snapshot_dedup_items (
   content_md5 text not null check (content_md5 ~ '^[0-9a-f]{32}$'),
   location_id uuid not null,
   business_date date not null,
+  -- The order's latest-pointer row as the build read it (both null: the order had no pointer). The apply requires the
+  -- same row (candidate_order_pointer_moved).
+  pointer_snapshot_id uuid,
+  pointer_run_id uuid,
   checks integer not null check (checks >= 0),
   discounts integer not null check (discounts >= 0),
   service_charges integer not null check (service_charges >= 0),
@@ -218,7 +228,9 @@ create table public.toast_snapshot_dedup_items (
   batch integer check (batch > 0),
   applied_at timestamptz,
   primary key (manifest_id, snapshot_id),
-  check (survivor_id <> snapshot_id)
+  check (survivor_id <> snapshot_id),
+  check ((pointer_snapshot_id is null) = (pointer_run_id is null)),
+  check (pointer_snapshot_id is distinct from snapshot_id)
 );
 create index toast_snapshot_dedup_items_batch on public.toast_snapshot_dedup_items (manifest_id, batch);
 create table public.toast_snapshot_dedup_batches (
@@ -308,17 +320,15 @@ begin
     || ' from public.toast_snapshot_registry where survivor_id is not null';
 end $$;
 
--- Snapshot ids written inside jsonb. p_since narrows audit_log only (append-only by law, rows are never updated);
--- every other column is read whole.
-create function public.toast_snapshot_evidence_ids(p_since timestamptz) returns table (snapshot_id uuid, reason text)
+-- Snapshot ids written inside jsonb. Every column is read WHOLE on every call: there is no "rows newer than" filter,
+-- because a row's timestamp does not say when it became visible (review TOASTDUP-r2).
+create function public.toast_snapshot_evidence_ids() returns table (snapshot_id uuid, reason text)
 language plpgsql stable security definer set search_path = pg_catalog, public as $$
 declare v_sql text;
 begin
   select string_agg(format(
-           'select (regexp_matches(%I::text, %L, ''gi''))[1]::uuid as snapshot_id, %L::text as reason from public.%I%s',
-           c.column_name, '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', c.table_name || '.' || c.column_name, c.table_name,
-           case when c.table_name = 'audit_log' and p_since is not null
-                then format(' where occurred_at is null or occurred_at >= %L::timestamptz', p_since) else '' end),
+           'select (regexp_matches(%I::text, %L, ''gi''))[1]::uuid as snapshot_id, %L::text as reason from public.%I',
+           c.column_name, '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', c.table_name || '.' || c.column_name, c.table_name),
          ' union all ' order by c.table_name, c.column_name)
     into v_sql
     from information_schema.columns c
@@ -356,7 +366,7 @@ begin
                                            where x.manifest_id = v_id and r.status = 'completed' and r.orders <> x.memberships)
    where m.id = v_id;
   insert into public.toast_snapshot_dedup_retained (manifest_id, snapshot_id, reason)
-  select v_id, e.snapshot_id, e.reason from public.toast_snapshot_evidence_ids(null) e;
+  select v_id, e.snapshot_id, e.reason from public.toast_snapshot_evidence_ids() e;
   get diagnostics v_evidence = row_count;
   return jsonb_build_object('manifest_id', v_id, 'version', p_version, 'cutoff_date', p_cutoff, 'evidence_rows', v_evidence);
 end $$;
@@ -393,19 +403,21 @@ begin
      group by ro.snapshot_id
   ), ranked as (
     -- The survivor: a retained member (the pointer target first), else the earliest first-seen member; ties by id.
-    select k.id, k.location_id, k.business_date, k.md5, (r.snapshot_id is not null) as retained,
+    select k.id, k.location_id, k.order_guid, k.business_date, k.md5, (r.snapshot_id is not null) as retained,
            first_value(k.id) over (partition by k.location_id, k.order_guid, k.business_date, k.md5
              order by coalesce(r.is_pointer, false) desc, (r.snapshot_id is not null) desc, f.first_seen asc nulls last, k.id asc) as survivor
       from multi k left join refs r on r.snapshot_id = k.id left join first_seen f on f.snapshot_id = k.id
   )
   insert into public.toast_snapshot_dedup_items (manifest_id, snapshot_id, survivor_id, content_md5, location_id, business_date,
-                                                 checks, discounts, service_charges, payments)
-  select m.id, k.id, k.survivor, k.md5, k.location_id, k.business_date,
+                                                 pointer_snapshot_id, pointer_run_id, checks, discounts, service_charges, payments)
+  select m.id, k.id, k.survivor, k.md5, k.location_id, k.business_date, p.snapshot_id, p.run_id,
          (select count(*) from public.toast_order_checks c where c.snapshot_id = k.id),
          (select count(*) from public.toast_check_discounts c where c.snapshot_id = k.id),
          (select count(*) from public.toast_check_service_charges c where c.snapshot_id = k.id),
          (select count(*) from public.toast_payments c where c.snapshot_id = k.id)
-    from ranked k where not k.retained and k.id <> k.survivor;
+    from ranked k
+    left join public.toast_order_latest_pointers p on p.location_id = k.location_id and p.order_guid = k.order_guid
+   where not k.retained and k.id <> k.survivor;
   get diagnostics v_items = row_count;
 
   insert into public.toast_snapshot_dedup_days (manifest_id, business_date, snapshots, items)
@@ -484,7 +496,7 @@ begin
   end;
   select * into m from public.toast_snapshot_dedup_manifests where version = p_version for update;
   if not found then raise exception 'manifest_not_found'; end if;
-  if m.status not in ('built','applying') then raise exception 'manifest_not_built'; end if;
+  if m.status not in ('built','applying') or m.built_at is null then raise exception 'manifest_not_built'; end if;
   if p_digest is null or p_digest is distinct from m.digest then raise exception 'digest_mismatch'; end if;
   select * into b from public.toast_snapshot_dedup_batches where manifest_id = m.id and batch = p_batch;
   if not found then raise exception 'batch_not_found'; end if;
@@ -511,7 +523,7 @@ begin
     raise exception 'cannot_see_transactions'; end if;
   perform pg_stat_clear_snapshot();
   if exists (select 1 from pg_stat_activity a where a.pid <> pg_backend_pid() and a.datname = current_database()
-               and a.xact_start is not null and a.xact_start < m.begun_at) then
+               and a.xact_start is not null and a.xact_start < m.built_at) then
     raise exception 'open_transaction_older_than_manifest'; end if;
   if exists (select 1 from pg_prepared_xacts x where x.database = current_database()) then
     raise exception 'prepared_transaction_open'; end if;
@@ -530,19 +542,20 @@ begin
     from public.toast_snapshot_reference_ids() f
    where f.snapshot_id in (select t.snapshot_id from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch);
   if v_reason is not null then raise exception '%', substr(v_reason, 3); end if;
-  if exists (select 1 from public.toast_snapshot_evidence_ids(m.begun_at - interval '1 hour') e
+  if exists (select 1 from public.toast_snapshot_evidence_ids() e
               where e.snapshot_id in (select t.snapshot_id from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch)) then
     raise exception 'candidate_now_evidence'; end if;
   if exists (select 1 from public.toast_capture_run_orders ro join public.toast_capture_runs r on r.id = ro.run_id
               where r.status = 'running' and ro.snapshot_id in (select t.snapshot_id from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch)) then
     raise exception 'candidate_in_running_run'; end if;
-  -- The other half of the quiescence proof (header: A REFERENCE NOT YET COMMITTED): one pointer target since begun_at.
-  if exists (select 1 from public.toast_capture_run_orders ro join public.toast_capture_runs r on r.id = ro.run_id
-              where (r.status = 'running' or r.started_at >= m.begun_at or r.finished_at >= m.begun_at)
-                and (ro.location_id, ro.order_guid) in (
-                  select g.location_id, g.order_guid from public.toast_snapshot_registry g
-                   where g.id in (select t.snapshot_id from public.toast_snapshot_dedup_items t where t.manifest_id = m.id and t.batch = p_batch))) then
-    raise exception 'candidate_order_recently_captured'; end if;
+  -- The other half of the quiescence proof (header: A REFERENCE NOT YET COMMITTED): each candidate's order still has
+  -- the very pointer row the build read (same snapshot, same run), so no pointer move for it became visible since.
+  if exists (select 1 from public.toast_snapshot_dedup_items t
+               join public.toast_snapshot_registry g on g.id = t.snapshot_id
+               left join public.toast_order_latest_pointers p on p.location_id = g.location_id and p.order_guid = g.order_guid
+              where t.manifest_id = m.id and t.batch = p_batch
+                and (p.snapshot_id, p.run_id) is distinct from (t.pointer_snapshot_id, t.pointer_run_id)) then
+    raise exception 'candidate_order_pointer_moved'; end if;
   -- The manifest's digest binds each candidate's content: it must still be what was listed, and FULLY equal to its
   -- survivor's (jsonb equality, never the md5). One pass: each content is computed once.
   select coalesce(bool_or(md5(x.candidate::text) is distinct from t.content_md5), false),
@@ -688,7 +701,7 @@ begin
     execute format('grant select on public.%I to service_role', t);
   end loop;
   foreach f in array array['toast_snapshot_register()','toast_snapshot_content(uuid)','toast_snapshot_content_md5(uuid)',
-      'toast_snapshot_dedup_census()','toast_snapshot_reference_ids()','toast_snapshot_evidence_ids(timestamptz)',
+      'toast_snapshot_dedup_census()','toast_snapshot_reference_ids()','toast_snapshot_evidence_ids()',
       'toast_snapshot_dedup_begin(integer,date)','toast_snapshot_dedup_build_range(integer,date,date)',
       'toast_snapshot_dedup_finish(integer,integer)','toast_snapshot_dedup_abandon(integer)',
       'toast_snapshot_dedup_apply(integer,text,integer,jsonb)','toast_snapshot_dedup_verify(integer)'] loop

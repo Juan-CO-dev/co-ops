@@ -189,7 +189,7 @@ describe("0351 header and shape", () => {
 
   it("the transaction guard is written against pg_stat_activity and prepared transactions (proven live on sim)", () => {
     const body = fn("toast_snapshot_dedup_apply");
-    expect(body).toMatch(/a\.pid <> pg_backend_pid\(\) and a\.datname = current_database\(\)\s+and a\.xact_start is not null and a\.xact_start < m\.begun_at/);
+    expect(body).toMatch(/a\.pid <> pg_backend_pid\(\) and a\.datname = current_database\(\)\s+and a\.xact_start is not null and a\.xact_start < m\.built_at/);
     expect(body).toContain("raise exception 'open_transaction_older_than_manifest'");
     expect(body).toContain("raise exception 'prepared_transaction_open'");
     expect(body).toContain("raise exception 'cannot_see_transactions'");
@@ -205,11 +205,27 @@ describe("0351 header and shape", () => {
       at("from pg_stat_activity a"), at("from pg_prepared_xacts x")];
     expect([...guard].sort((a, b) => a - b)).toEqual(guard);
     const scans = [at("raise exception 'candidate_missing'"), at("from public.toast_snapshot_reference_ids() f"), at("from public.toast_snapshot_evidence_ids("),
-      at("raise exception 'candidate_in_running_run'"), at("raise exception 'candidate_order_recently_captured'"), at("raise exception 'content_changed'"),
+      at("raise exception 'candidate_in_running_run'"), at("raise exception 'candidate_order_pointer_moved'"), at("raise exception 'content_changed'"),
       at("update public.toast_snapshot_registry g"), at("delete from public.toast_check_discounts")];
     for (const scan of scans) expect(scan).toBeGreaterThan(Math.max(...guard));
     expect(body.match(/from pg_stat_activity/g)).toHaveLength(1);
     expect(body.match(/from pg_prepared_xacts/g)).toHaveLength(1);
+  });
+
+  it("no guard trusts a timestamp stored in a row: visibility is proven by row identity and transaction quiescence (review TOASTDUP-r2)", () => {
+    // A row's timestamp says when it was written, not when it became visible. The apply compares exactly ONE pair of
+    // instants, both facts about transactions: another backend's xact_start against the manifest's own built_at.
+    const body = fn("toast_snapshot_dedup_apply").replace(/--[^\n]*/g, "");
+    expect(body.match(/\b(occurred_at|created_at|started_at|finished_at|begun_at|registered_at|modified_at|last_seen_at|updated_at)\b/g)).toBeNull();
+    expect(body.match(/\b\w+_at\b/g)!.filter((w) => !["applied_at", "payload_deleted_at", "ended_at"].includes(w)).sort()).toEqual(["built_at", "built_at"]);
+    expect(body).toMatch(/a\.xact_start is not null and a\.xact_start < m\.built_at/);
+    // Evidence in jsonb is read whole: the function takes no "since".
+    expect(sql).toContain("create function public.toast_snapshot_evidence_ids() returns table");
+    expect(fn("toast_snapshot_evidence_ids")).not.toMatch(/\bwhere\b[^']*occurred_at|p_since/);
+    expect(body).toContain("from public.toast_snapshot_evidence_ids() e");
+    // The pointer guard is row identity: the snapshot AND the run the build read.
+    expect(body).toMatch(/\(p\.snapshot_id, p\.run_id\) is distinct from \(t\.pointer_snapshot_id, t\.pointer_run_id\)/);
+    expect(fn("toast_snapshot_dedup_build_range")).toMatch(/left join public\.toast_order_latest_pointers p on p\.location_id = k\.location_id and p\.order_guid = k\.order_guid/);
   });
 });
 
@@ -361,6 +377,15 @@ describe("the manifest: who is listed, who is retained, who survives", () => {
     expect(built.digest).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("each item records its order's pointer row as the build read it (snapshot and run), never the item itself", async () => {
+    const rows = (await db.query<{ ok: boolean; has_pointer: boolean }>(`select (i.pointer_snapshot_id is not distinct from p.snapshot_id and i.pointer_run_id is not distinct from p.run_id) ok,
+        p.snapshot_id is not null has_pointer
+      from public.toast_snapshot_dedup_items i join public.toast_snapshot_registry g on g.id = i.snapshot_id
+      left join public.toast_order_latest_pointers p on p.location_id = g.location_id and p.order_guid = g.order_guid`)).rows;
+    expect(rows).toHaveLength(8);
+    expect(rows.every((r) => r.ok && r.has_pointer)).toBe(true);
+  });
+
   it("never lists a pointer target, a link target, a snapshot named in a uuid column or in jsonb, an enrichment pair or an older version", async () => {
     const items = await itemsOf(db, 1);
     for (const tag of ["dup4", "lnk1", "lnk3", "np1", "np4", "ev1", "ev2", "ev3", "ev4", "ev5", "ev7", "enr1", "enr2", "edit1", "edit2", "oth2"]) expect(items[id[tag]!], tag).toBeUndefined();
@@ -441,6 +466,8 @@ describe("the apply: exactly the manifest, and every refusal leaves the database
   const tagOf = (snapshot: string) => Object.keys(id).find((k) => id[k] === snapshot)!;
   const survivorOf = (snapshot: string) => expectedItems(id)[snapshot]!;
   const guidOf = (snapshot: string) => one<string>(db, "select order_guid v from public.toast_snapshot_registry where id = $1", [snapshot]);
+  const pointerTagOf = async (snapshot: string) => tagOf(await one<string>(db, `select p.snapshot_id v from public.toast_order_latest_pointers p
+    join public.toast_snapshot_registry g on g.location_id = p.location_id and g.order_guid = p.order_guid where g.id = $1`, [snapshot]));
   const dateOf = (snapshot: string) => one<string>(db, "select business_date::text v from public.toast_snapshot_registry where id = $1", [snapshot]);
 
   /** Runs `mutate`, expects the apply of batch 1 to refuse with `name`, proves nothing was deleted, then rolls back. */
@@ -477,8 +504,17 @@ describe("the apply: exactly the manifest, and every refusal leaves the database
     ["candidate_now_evidence", (c) => db.query("update public.ezcater_toast_links set reconciliation_details = $1::jsonb", [JSON.stringify({ old: c })])],
     ["candidate_now_evidence", (c) => db.query("insert into public.toast_capture_reconciliations(location_id, business_date, run_id, status, mismatched_items) values ($1, $2, $3, 'skipped', $4::jsonb)", [SHOP, DAY, runs[0], JSON.stringify([{ snapshot: c }])])],
     ["candidate_in_running_run", async (c) => capture(db, [{ ...dup(await guidOf(c), tagOf(c), 0), date: await dateOf(c) }], { finish: false, date: await dateOf(c) })],
-    ["candidate_order_recently_captured", async (c) => capture(db, [{ ...dup(await guidOf(c), tagOf(survivorOf(c)), 1), date: await dateOf(c) }], { date: await dateOf(c) })],
-    ["candidate_order_recently_captured", (c) => db.query("update public.toast_capture_runs set finished_at = clock_timestamp() where id in (select run_id from public.toast_capture_run_orders where snapshot_id = $1)", [c])],
+    // The order's pointer row is not the one the build read: a later run recaptured the pointer's own hash (same snapshot,
+    // another run id), the row names another run, or the row is gone. Each means a pointer move may have been visible.
+    ["candidate_order_pointer_moved", async (c) => capture(db, [{ ...dup(await guidOf(c), await pointerTagOf(c), 1), date: await dateOf(c) }], { date: await dateOf(c) })
+      .then(async () => expect(await one(db, "select count(*)::int v from public.toast_order_latest_pointers p join public.toast_snapshot_registry g on g.location_id = p.location_id and g.order_guid = p.order_guid where g.id = $1 and p.run_id = any($2::uuid[])", [c, runs])).toBe(0))],
+    ["candidate_order_pointer_moved", (c) => db.query(`update public.toast_order_latest_pointers p set run_id = (select r.id from public.toast_capture_runs r where r.id <> p.run_id order by r.id limit 1)
+      from public.toast_snapshot_registry g where g.id = $1 and p.location_id = g.location_id and p.order_guid = g.order_guid`, [c])],
+    ["candidate_order_pointer_moved", (c) => db.query(`delete from public.toast_order_latest_pointers p using public.toast_snapshot_registry g
+      where g.id = $1 and p.location_id = g.location_id and p.order_guid = g.order_guid`, [c])],
+    // Evidence is scanned WHOLE at apply: a row with an old timestamp, or none, that became visible after the build counts.
+    ["candidate_now_evidence", (c) => db.query("insert into public.audit_log(occurred_at, action, resource_table, metadata) values ('2020-01-01T00:00:00Z', 'ezcater.toast_reconciled', 'ezcater_toast_links', $1::jsonb)", [JSON.stringify({ old: c })])],
+    ["candidate_now_evidence", (c) => db.query("insert into public.audit_log(occurred_at, action, resource_table, metadata) values (null, 'ezcater.toast_reconciled', 'ezcater_toast_links', $1::jsonb)", [JSON.stringify({ undated: c })])],
     ["content_changed", (c) => db.query("update public.toast_order_checks set amount_cents = 1 where snapshot_id = $1", [c])],
     ["content_changed", (c) => db.query("update public.toast_orders set selection_units = '[]'::jsonb where id = $1", [c])],
     ["content_not_equal", (c) => db.query("update public.toast_payments set payment_status = 'AUTHORIZED' where snapshot_id = $1", [survivorOf(c)])],

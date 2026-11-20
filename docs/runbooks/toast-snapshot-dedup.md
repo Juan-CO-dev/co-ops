@@ -43,10 +43,10 @@ Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/toast-churn-cleanu
 ## Why one window
 
 A few writers save a snapshot id with no foreign key (the house catering link, the fact rows). Each takes the id from the latest pointer inside its own transaction. The apply proves no such transaction can be holding a candidate's id:
-- no run touched a candidate's order since the manifest began (`candidate_order_recently_captured`);
-- no other transaction is older than the manifest (`open_transaction_older_than_manifest`).
+- each listed order still has the very pointer row the build read, same snapshot and same run (`candidate_order_pointer_moved`);
+- no other transaction is older than the manifest's build (`open_transaction_older_than_manifest`).
 
-The apply checks this **before** it scans for references, and each scan is a later statement, so a reference committed by a transaction that ended just before the check is seen by the scans.
+The apply checks this **before** it scans for references, each scan is a later statement, and no scan is limited to "recent" rows. So a reference committed by a transaction that ended just before the check is seen by the scans, whatever timestamp its row carries.
 
 So if the intraday capture or a backfill runs between `begin` and a batch and touches an old order, that batch refuses. Then: `select public.toast_snapshot_dedup_abandon(1);` and build version 2. Batches already applied stay applied and recorded.
 
@@ -59,7 +59,7 @@ So if the intraday capture or a backfill runs between `begin` and a batch and to
 | `batch_out_of_order`, `batch_already_applied`, `batch_not_found` | Batches go lowest first, once | Apply the lowest unapplied batch |
 | `manifest_not_built`, `manifest_not_found` | No built manifest with that version | Finish the build |
 | `candidate_now_target`, `candidate_now_linked`, `candidate_now_survivor`, `candidate_now_evidence` | Something names a listed snapshot now | Abandon, build the next version |
-| `candidate_in_running_run`, `candidate_order_recently_captured` | A capture touched a listed order after the manifest began | Wait for the quiet window; abandon, build the next version |
+| `candidate_in_running_run`, `candidate_order_pointer_moved` | A capture touched a listed order after the manifest was built | Wait for the quiet window; abandon, build the next version |
 | `open_transaction_older_than_manifest`, `prepared_transaction_open` | A transaction older than the manifest is still open | Find it in `pg_stat_activity`; when it ends, run the batch again |
 | `cannot_see_transactions` | The function's owner cannot read `pg_stat_activity` in full | Stop and report |
 | `isolation_not_read_committed` | The apply was called inside a REPEATABLE READ or SERIALIZABLE transaction | Call it on its own, as the prepared script does |
