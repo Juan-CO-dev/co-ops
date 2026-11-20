@@ -338,6 +338,8 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/customers/CustomerSuggestions.tsx": ["A", "B"],
   "components/admin/customers/RevokeLinkButton.tsx": ["A"], // POST /api/admin/customers revoke_link.
   "components/admin/customers/customer-download.ts": ["B"], // Both download controls -> export route.
+  // Item 4 PR 5: the source verification screen asks B before the mark route (Tier B) and retries on a refusal.
+  "components/admin/demand-signals/SourcesClient.tsx": ["B"],
   "components/admin/report-recipients/ReportRecipientsAdmin.tsx": ["B"],
   "app/admin/catering/rate-rules/rate-rules-client.tsx": ["B"],
   // The provider itself — the parameter, not a call site.

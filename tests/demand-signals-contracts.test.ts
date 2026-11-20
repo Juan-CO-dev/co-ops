@@ -33,6 +33,13 @@ function walk(dir: string, out: string[] = []): string[] {
 const CENSUS: Record<string, { contract: "none" | "revocation" | "ai"; why: string }> = {
   // PR 2 (sources). A route is listed by its path too.
   "app/api/admin/demand-signals/sources/mark/route.ts": { contract: "none", why: "writes the register's own status (MoO+, Tier B); it uses no signal" },
+  // PR 5 (the pages). A page is listed by its path too.
+  "app/admin/demand-signals/page.tsx": { contract: "none", why: "renders what signals-page.ts returns; every sourced row there came through the gated readers at render" },
+  "app/admin/demand-signals/sources/page.tsx": { contract: "none", why: "shows the register itself (MoO+); it uses no signal" },
+  "app/api/admin/demand-signals/events/route.ts": { contract: "none", why: "a manual event has no source, so no revocation applies; GM+ by role, behind the switch" },
+  "lib/demand-signals/input-shared.ts": { contract: "none", why: "pure, import-free: what a person sends (the mark, a manual event)" },
+  "lib/demand-signals/signals-page.ts": { contract: "revocation", why: "render: the gated readers at the render use point, and usableNow over the register read for this render" },
+  "lib/demand-signals/signals-view-shared.ts": { contract: "revocation", why: "render: weatherSourceStatus asks usableNow, so a revoked source reads 'not verified', never a forecast" },
   "app/api/cron/demand-signals/route.ts": { contract: "revocation", why: "collect: asks collectionPrecheck (the register NOW) before its lease and before any request" },
   "lib/demand-signals/access-shared.ts": { contract: "none", why: "role rules only; no source and no signal" },
   "lib/demand-signals/collect.ts": { contract: "revocation", why: "collect: collectDecision before anything, again before each shop; the writer asks again in SQL" },
@@ -64,8 +71,14 @@ describe("dark by default", () => {
   it("no app, component or lib module outside this layer imports it, except the nightly's guarded hook", () => {
     const importers = [...walk("lib"), ...walk("app"), ...walk("components")]
       .filter((p) => !p.startsWith("lib/demand-signals/") && /(from|import\()\s*"@\/lib\/demand-signals/.test(read(p)));
-    // PR 2 adds exactly two doors: the collection cron (OFF, and gated by the register) and the source mark route.
-    expect(importers).toEqual(["lib/toast-sales-pull-run.ts", "app/api/admin/demand-signals/sources/mark/route.ts", "app/api/cron/demand-signals/route.ts"]);
+    // PR 2 added two doors: the collection cron (OFF, and gated by the register) and the source mark route.
+    // PR 5 adds the pages (dark behind DEMAND_SIGNALS), the manual-event route, the hub tile and the two clients.
+    expect(importers.sort()).toEqual(["app/admin/demand-signals/page.tsx", "app/admin/demand-signals/sources/page.tsx", "app/admin/page.tsx",
+      "app/api/admin/demand-signals/events/route.ts", "app/api/admin/demand-signals/sources/mark/route.ts", "app/api/cron/demand-signals/route.ts",
+      "components/admin/demand-signals/DemandSignalsClient.tsx", "components/admin/demand-signals/SourcesClient.tsx", "lib/toast-sales-pull-run.ts"]);
+    // The hub reaches only the two import-free rule files (who may see the tile, and the switch).
+    expect([...read("app/admin/page.tsx").matchAll(/from "@\/lib\/demand-signals\/([\w-]+)"/g)].map((m) => m[1]).sort()).toEqual(["access-shared", "config-shared"]);
+    expect(read("lib/demand-signals/access-shared.ts")).not.toMatch(/^import /m);
   });
   it("the nightly statically imports only the import-free switch, and reaches the ledger only inside the ON branch", () => {
     const src = read("lib/toast-sales-pull-run.ts");
@@ -107,9 +120,10 @@ describe("dark by default", () => {
     // The NWS client is wired in exactly one place, behind the collection pass's gate.
     const users = walk("lib").concat(walk("app")).filter((p) => /nws-client"/.test(read(p)) && !p.endsWith("nws-client.ts"));
     expect(users).toEqual(["lib/demand-signals/signal-store.ts"]);
-    // The store: two table reads (a shop's coordinates), 0343's functions and nothing else; one env value.
+    // The store: a shop's coordinates (two tables), and for the pages (PR 5) the register's own definitions and the
+    // run ledger; 0343's functions and nothing else; one env value. No SIGNAL table is read here or anywhere.
     const store = strip("lib/demand-signals/signal-store.ts");
-    expect([...store.matchAll(/\.from\("(\w+)"\)/g)].map((m) => m[1]).sort()).toEqual(["catering_fulfillment_nodes", "locations"]);
+    expect([...store.matchAll(/\.from\("(\w+)"\)/g)].map((m) => m[1]).sort()).toEqual(["catering_fulfillment_nodes", "demand_signal_runs", "demand_sources", "locations"]);
     expect([...store.matchAll(/process\.env\.(\w+)/g)].map((m) => m[1])).toEqual(["NWS_USER_AGENT"]);
     const M0343 = read("supabase/migrations/0343_demand_signal_sources.sql");
     for (const name of DEMAND_SIGNAL_RPCS) expect(M0343, name).toContain(`create function public.${name}(`);
@@ -127,7 +141,10 @@ describe("dark by default", () => {
   });
   it("STORED SIGNALS HAVE ONE READER: no module anywhere reads a signal table directly (it would skip the register)", () => {
     for (const p of [...walk("lib"), ...walk("app"), ...walk("components")]) {
-      expect(read(p), p).not.toMatch(/from\("demand_(weather_hourly|day_events|signal_runs|sources|source_events)"\)/);
+      // The signal tables: nobody, the store included (their readers are 0343's gated functions).
+      expect(read(p), p).not.toMatch(/from\("demand_(weather_hourly|day_events|source_events)"\)/);
+      // The register's definitions and the run ledger hold no signal; PR 5 reads them for the pages, in the store only.
+      if (p !== "lib/demand-signals/signal-store.ts") expect(read(p), p).not.toMatch(/from\("demand_(signal_runs|sources)"\)/);
     }
     const callers = [...walk("lib"), ...walk("app"), ...walk("components")].filter((p) => /"demand_(usable_weather|usable_day_events|weather_ingest|events_ingest)"/.test(read(p)));
     expect(callers).toEqual(["lib/demand-signals/signal-store.ts"]);
@@ -150,11 +167,14 @@ describe("dark by default", () => {
 describe("the module census (PR 2 and PR 7 must come through here)", () => {
   it("every module of the layer AND every signal route is listed, and nothing listed is gone", () => {
     const routes = [...walk("app")].filter((p) => /\/(signals|demand-signals)\//.test(p));
-    expect(routes.sort()).toEqual(["app/api/admin/demand-signals/sources/mark/route.ts", "app/api/cron/demand-signals/route.ts"]);
+    expect(routes.sort()).toEqual(["app/admin/demand-signals/page.tsx", "app/admin/demand-signals/sources/page.tsx", "app/api/admin/demand-signals/events/route.ts",
+      "app/api/admin/demand-signals/sources/mark/route.ts", "app/api/cron/demand-signals/route.ts"]);
     expect([...walk("lib/demand-signals"), ...routes].sort()).toEqual(Object.keys(CENSUS).sort());
   });
-  it("no page, no chip and no accept route yet (PR 5 / PR 6 add them to this census under 'revocation')", () => {
-    expect([...walk("app")].filter((p) => /\/(signals|demand-signals)\//.test(p) && /page\.tsx$|accept/.test(p))).toEqual([]);
+  it("PR 5 added the two pages; there is still no chip and no accept route (PR 6 adds them under 'revocation')", () => {
+    expect([...walk("app")].filter((p) => /\/(signals|demand-signals)\//.test(p) && /page\.tsx$/.test(p)).sort())
+      .toEqual(["app/admin/demand-signals/page.tsx", "app/admin/demand-signals/sources/page.tsx"]);
+    expect([...walk("app")].filter((p) => /\/(signals|demand-signals)\//.test(p) && /accept/.test(p))).toEqual([]);
   });
   it("a module under a contract calls the contract's one check", () => {
     for (const [path, entry] of Object.entries(CENSUS)) {

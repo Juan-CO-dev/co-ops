@@ -35,6 +35,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { marketingTileVisible } from "@/lib/marketing/access-shared";
+import { canViewDemandSignals } from "@/lib/demand-signals/access-shared";
+import { demandSignalsEnabled } from "@/lib/demand-signals/config-shared";
 import { etDisplayDate } from "@/lib/operational-day";
 
 const DENIED_KEYS = {
@@ -112,6 +114,8 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
 
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {marketingTileVisible(auth.role, process.env.MARKETING_SCORECARD) && <a href="/admin/marketing" className="co-card co-card-interactive flex min-h-[44px] items-center p-4 text-base font-bold text-co-text">{serverT(lang, "marketing.title")}</a>}
+        {/* Item 4 PR 5: the demand signals page. Hidden unless DEMAND_SIGNALS=1; GM and MoO+ by trusted role. */}
+        {demandSignalsEnabled(process.env.DEMAND_SIGNALS) && canViewDemandSignals(auth.role) && <a href="/admin/demand-signals" className="co-card co-card-interactive flex min-h-[44px] items-center p-4 text-base font-bold text-co-text">{serverT(lang, "signals.title")}</a>}
         {sections.map((s) =>
           s.comingSoon ? (
             // Honest muted card — the section is a live PlaceholderCard stub, so
