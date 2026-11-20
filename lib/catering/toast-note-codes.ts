@@ -69,6 +69,8 @@ export interface DayNoteLookup {
   /** The captured, live, catering-channel orders of the day: the scope and version fence of the lookup. */
   captured: readonly Captured[];
   deadlineAt?: number; signal?: AbortSignal;
+  /** Counts the captures this call RECORDED as examined (item 21 PR 5: the backfill's measure of progress). */
+  stats?: { examined: number };
 }
 
 /**
@@ -98,7 +100,8 @@ export async function lookupDayNoteCodes(sb: Sb, house: HouseNoteContext, args: 
     found = await loadKnownToastOrderCodes(args.restaurantGuid, args.date, known,
       { deadlineAt: args.deadlineAt, signal: args.signal, expectedVersions: versions, examined });
   }
-  if (houseOn) await recordNoteLookup(sb, args, examined, found);
+  const recorded = houseOn ? await recordNoteLookup(sb, args, examined, found) : 0;
+  if (args.stats) args.stats.examined += recorded;
   for (const [selection, codes] of found) {
     const kept = codes.filter((code) => ez.has(code));
     if (kept.length) out.set(selection, kept);
@@ -106,7 +109,8 @@ export async function lookupDayNoteCodes(sb: Sb, house: HouseNoteContext, args: 
   return out;
 }
 
-async function recordNoteLookup(sb: Sb, args: DayNoteLookup, examined: ReadonlySet<string>, found: Map<string, string[]>): Promise<void> {
+/** Returns how many captures it recorded as examined (0 when there was nothing to record, or 0348 is not applied). */
+async function recordNoteLookup(sb: Sb, args: DayNoteLookup, examined: ReadonlySet<string>, found: Map<string, string[]>): Promise<number> {
   const snapshot = new Map(args.captured.map((r) => [r.orderGuid, r.snapshotId]));
   const covered = [...examined].flatMap((orderGuid) => {
     const snapshotId = snapshot.get(orderGuid);
@@ -120,11 +124,11 @@ async function recordNoteLookup(sb: Sb, args: DayNoteLookup, examined: ReadonlyS
     if (!snapshotId || !examined.has(orderGuid)) continue;
     for (const code of list) codes.push({ location_id: args.locationId, order_guid: orderGuid, check_guid: checkGuid, toast_snapshot_id: snapshotId, code });
   }
-  if (covered.length === 0) return;
+  if (covered.length === 0) return 0;
   const { error } = await sb.rpc("record_catering_toast_note_lookup", { p_examined: covered, p_codes: codes }).abortSignal(args.signal ?? never);
-  if (!error) return;
+  if (!error) return covered.length;
   // 0348 not applied yet: no reader of these rows exists either. Anything else is a failure of the house side.
-  if (error.code && NOT_INSTALLED.has(error.code)) return;
+  if (error.code && NOT_INSTALLED.has(error.code)) return 0;
   throw new Error("catering_toast_note_lookup_failed");
 }
 
@@ -132,26 +136,29 @@ const live = (r: CapturedToastOrder) => r.salesChannel?.toLowerCase() === "cater
 /** The scope pass 2 always used: the day's live catering-channel orders (0348's `catering_toast_note_scope` in SQL). */
 export const cateringCaptured = (orders: readonly CapturedToastOrder[]): CapturedToastOrder[] => orders.filter(live);
 
-export interface CoverResult { lookups: number; failed: number; skipped?: "not_installed" }
+/** `examined` = captures recorded as examined: zero means a call made no progress (what is left cannot be read now). */
+export interface CoverResult { lookups: number; examined: number; failed: number; skipped?: "not_installed" }
 
 /**
  * Examine the captures nobody has examined yet (`catering_toast_uncovered_orders`, 0348: live orders in the lookup's
  * scope whose current capture has no coverage), for every enabled shop that can use the answer (a ring code exists, or
  * an automatic switch is on). Newest days first, at most `maxDays` days per shop and call. Same function, same union.
  * Every read and the Toast calls carry `signal`. A shop that fails is counted and the next one still runs; whatever
- * stays unexamined simply keeps both sources waiting.
+ * stays unexamined simply keeps both sources waiting. `onlyLocationId` narrows it to one shop (the backfill).
  */
-export async function coverUncoveredNotes(sb: Sb, args: { from: string; to: string; maxDays: number; deadlineAt: number; signal?: AbortSignal }): Promise<CoverResult> {
+export async function coverUncoveredNotes(sb: Sb, args: { from: string; to: string; maxDays: number; deadlineAt: number; signal?: AbortSignal; onlyLocationId?: string }): Promise<CoverResult> {
   const signal = args.signal ?? never;
   const house = await loadHouseNoteContext(sb, signal);
-  const out: CoverResult = { lookups: 0, failed: 0 };
+  const out: CoverResult = { lookups: 0, examined: 0, failed: 0 };
+  const stats = { examined: 0 };
   for (const [locationId, switches] of house.shops) {
+    if (args.onlyLocationId && locationId !== args.onlyLocationId) continue;
     if (!(house.ringCodes.get(locationId)?.length) && !switches.autoLink && !switches.originAutoLink) continue;
     if (Date.now() >= args.deadlineAt || signal.aborted) break;
     try {
       const uncovered = await sb.rpc("catering_toast_uncovered_orders", { p_location_id: locationId, p_from: args.from, p_to: args.to }).abortSignal(signal);
       if (uncovered.error) {
-        if (uncovered.error.code && NOT_INSTALLED.has(uncovered.error.code)) return { lookups: 0, failed: 0, skipped: "not_installed" };
+        if (uncovered.error.code && NOT_INSTALLED.has(uncovered.error.code)) return { lookups: 0, examined: 0, failed: 0, skipped: "not_installed" };
         throw new Error("catering_toast_read_failed");
       }
       type Row = { order_guid: string; toast_snapshot_id: string; business_date: string; modified_at: string | null };
@@ -173,10 +180,11 @@ export async function coverUncoveredNotes(sb: Sb, args: { from: string; to: stri
       const ezcaterCodes = numbers.flatMap((n) => n.order_number ? [n.order_number] : []);
       for (const date of [...byDay.keys()].sort().reverse().slice(0, args.maxDays)) {
         if (Date.now() >= args.deadlineAt || signal.aborted) break;
-        await lookupDayNoteCodes(sb, house, { locationId, restaurantGuid, date, ezcaterCodes, captured: byDay.get(date)!, deadlineAt: args.deadlineAt, signal: args.signal });
+        await lookupDayNoteCodes(sb, house, { locationId, restaurantGuid, date, ezcaterCodes, captured: byDay.get(date)!, deadlineAt: args.deadlineAt, signal: args.signal, stats });
         out.lookups += 1;
       }
     } catch { out.failed += 1; }
   }
+  out.examined = stats.examined;
   return out;
 }
