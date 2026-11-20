@@ -9780,6 +9780,7 @@
   "signals.sources.error.generic": "No se pudo guardar. Vuelve a intentarlo.",
   "signals.weather.old_badge": "Puede estar viejo",
   "signals.weather.detail_old": "La fuente del pronóstico no ha corrido bien en las últimas 13 horas para esta tienda, así que este pronóstico puede estar viejo. Mira Fuentes más abajo.",
+  "signals.sources.form.moved": "Los detalles de esta fuente cambiaron mientras este formulario estaba abierto. No se guardó nada. Cierra el formulario, vuelve a leer los detalles y después márcala.",
   "ordering.signals.title": "Lo que viene",
   "ordering.signals.count": "{n} eventos en los próximos {days} días",
   "ordering.signals.badge": "{n} para revisar",

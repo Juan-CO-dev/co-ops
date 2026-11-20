@@ -9780,6 +9780,7 @@
   "signals.sources.error.generic": "Could not save. Try again.",
   "signals.weather.old_badge": "May be old",
   "signals.weather.detail_old": "The forecast feed has not run cleanly in the last 13 hours for this shop, so this may be an old forecast. See Feeds below.",
+  "signals.sources.form.moved": "This source's details changed while this form was open. Nothing was saved. Close the form, read the details again, then mark it.",
   "ordering.signals.title": "Coming up",
   "ordering.signals.count": "{n} events in the next {days} days",
   "ordering.signals.badge": "{n} to look at",
