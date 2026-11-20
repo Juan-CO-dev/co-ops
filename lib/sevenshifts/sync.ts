@@ -91,6 +91,12 @@ export interface ResourceResult {
    * WHICH rule fired and, for a date, HOW the value was spelled.
    */
   reasons?: normalizers.RejectionReasons;
+  /**
+   * Present only when LANDED rows carried a week that is not a calendar day (availabilities; read as no
+   * date, stored NULL): `{ no_date: n, date_shapes: { date field: [kind token] } }`. Built by `dateNotes`
+   * ONLY: a count and fixed tokens, never a value or a spelling. It is not an error: the run stays `ok`.
+   */
+  notes?: normalizers.DateNotes;
 }
 export type SyncStatus = "ok" | "partial" | "failed";
 export type PersistenceErrorCode = "state_write_failed" | "ledger_write_failed";
@@ -240,6 +246,8 @@ export async function runSevenShiftsSync(
           const error_code = pageError ?? (out.rejected.length > 0 ? "rejected_rows" : null);
           const result: ResourceResult = { rows: rows.length, skipped: out.rejected.length, pages, error_code };
           if (out.rejected.length > 0) result.reasons = normalizers.rejectionReasons(out);
+          const notes = normalizers.dateNotes(out);
+          if (notes) result.notes = notes;
           return result;
         } catch (e) {
           return { rows: 0, skipped: 0, pages: 0, error_code: codeOf(e) };
