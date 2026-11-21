@@ -49,7 +49,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: "vendor-mail", i18nKey: "vendorMail.title", href: "/operations/vendor-mail", minLevel: 7, onlyRoles: ["gm", "moo", "owner", "cgs"] },
   { id: "new-item", i18nKey: "catalog.jobs.new_item.title", href: "/admin/catalog/new/item", minLevel: 7, onlyRoles: ["gm", "moo", "owner", "cgs"] },
   { id: "new-sandwich", i18nKey: "catalog.jobs.sandwich.title", href: "/admin/catalog/new/sandwich", minLevel: 7, onlyRoles: ["gm", "moo", "owner", "cgs"] },
-  { id: "stations", i18nKey: "assignments.stations", href: "/admin/stations", minLevel: 7 },
+  { id: "stations", i18nKey: "admin.section.stations", href: "/admin/stations", minLevel: 7 },
   // 0233: Toast employee -> CO-OPS user links (GM own shop, level 8+ every shop).
   { id: "toast-employees", i18nKey: "toastLinks.title", href: "/admin/toast-employees", minLevel: 7 },
   // Scheduling Phase 1 (0268–0269): the 7shifts connection, shop links (8+) and person links (GM own shop,

@@ -34,7 +34,7 @@ export function TrendsWidget({
           href={`/reports/trends?location=${locationId}`}
           className="text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted underline-offset-2 hover:text-co-text hover:underline"
         >
-          {serverT(language, "reports.trends.nav_label")}
+          {serverT(language, "nav.trends")}
         </Link>
       </div>
 

@@ -145,13 +145,13 @@ it("same-label report links show the stored submission time in the operational t
   for(const [id,time] of [["first","18:15"],["second","20:30"]]) data.checklist_instances!.push({id,template_id:"mid",location_id:"shop",date:args.date,status:"phase2_complete",confirmed_at:`2026-09-06T${time}:00Z`});
   const relations=await loadReportRelations(fake(data).client,{...args,viewer:{...args.viewer,level:4}});
   const html=renderToStaticMarkup(createElement(RelatedReports,{relations,language:"en"}));
-  expect(html).toContain("Mid-Day Prep 2:15 PM");
-  expect(html).toContain("Mid-Day Prep 4:30 PM");
+  expect(html).toContain("Mid-day prep 2:15 PM");
+  expect(html).toContain("Mid-day prep 4:30 PM");
 });
 
 it("historical references without submission times remain distinguishable", () => {
   const sameDay = ["first","second"].map(id=>({type:"mid_day" as const,id,date:args.date,href:`/reports/mid_day/${id}`}));
   const html=renderToStaticMarkup(createElement(RelatedReports,{relations:{sameDay,previous:[],next:[],baselineHrefs:{}},language:"en"}));
-  expect(html).toContain("Mid-Day Prep (1)");
-  expect(html).toContain("Mid-Day Prep (2)");
+  expect(html).toContain("Mid-day prep (1)");
+  expect(html).toContain("Mid-day prep (2)");
 });

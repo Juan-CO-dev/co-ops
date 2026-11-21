@@ -30,7 +30,7 @@ export default async function StaffStationsPage({ searchParams }: { searchParams
   }) : null;
   return <main className="mx-auto w-full max-w-5xl min-w-0 space-y-4 px-4 pb-10 pt-2">
     <BackLink search={location ? `?location=${encodeURIComponent(location.id)}` : undefined} />
-    <h1 className="text-2xl font-bold">{serverT(auth.user.language, "assignments.stations")}</h1>
+    <h1 className="text-2xl font-bold">{serverT(auth.user.language, "stations.page.title")}</h1>
     <nav aria-label={serverT(auth.user.language, "assignments.locations")} className="flex flex-wrap gap-2">
       {locations.map((row) => <Link key={row.id} href={`/stations?loc=${row.id}`}
         aria-current={row.id === location?.id ? "page" : undefined}
