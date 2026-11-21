@@ -130,3 +130,25 @@ describe("every fact failed together", () => {
     }
   });
 });
+
+// Nav PR 6, ruling B5 (plan r3, 8.1 item 13): `counts` is a constant with no read (always ok), so the all-failed predicate
+// leaves it out; otherwise a real outage could never reach day.fail.all.
+describe("every fact failed but counts (the loader's real shape)", () => {
+  it.each(TIMES)("%s: counts ok({ inProgress: false }) and every other fact failed → day.fail.all and the fixed order", (t) => {
+    const facts: ShopFacts = { ...withFailed(pStreet(hm(t)), FACT_FIELDS), counts: { kind: "ok", value: { inProgress: false } } };
+    const kh = planDay({ planDate: PLAN_DATE, nowMin: hm(t), viewer: ANA, facts }) as DayPlan;
+    expect(kh.notes.map((n) => n.reason.key)).toEqual(["day.fail.all"]);
+    expect(kh.items.map((i) => i.id)).toEqual(["opening", "closing", "mid_day_prep", "catering_today", "ordering", "receiving", "am_prep", "cash", "pm_report", "counts"]);
+    for (const i of kh.items) expect(i.state, i.id).toBe("unknown");
+    for (const k of EMPTY_KEYS) expect(allKeys(kh)).not.toContain(k);
+  });
+
+  it("one fact other than counts ok → no day.fail.all", () => {
+    const base: ShopFacts = { ...withFailed(pStreet(hm("13:45")), FACT_FIELDS), counts: { kind: "ok", value: { inProgress: false } } };
+    for (const keep of ["hours", "opening", "closing", "cash", "yesterdayClosing", "flaggedLines"] as const) {
+      const facts = { ...base, [keep]: pStreet(hm("13:45"))[keep] } as ShopFacts;
+      const p = planDay({ planDate: PLAN_DATE, nowMin: hm("13:45"), viewer: ANA, facts }) as DayPlan;
+      expect(p.notes.map((n) => n.reason.key), keep).not.toContain("day.fail.all");
+    }
+  });
+});
