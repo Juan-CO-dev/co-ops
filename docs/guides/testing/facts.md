@@ -402,10 +402,10 @@ How to read it:
 - Mid-Shift Pulse v2: behind `PULSE_V2=1`. The caller reports it is on; code cannot prove it — `lib/pulse/flag.ts:1-7`
 - Toast labor pull / station-lifecycle reconcile from Toast clock-outs: `TOAST_LABOR_PULL=1`, `STATION_LIFECYCLE=1` (off unless set) — `lib/toast/labor.ts:28-35`
 - Toast order capture: `TOAST_ORDER_CAPTURE=1` (off unless set). ezCater stock depletion: `EZCATER_DEPLETION_ENABLED=1` (off unless set) — `lib/toast/capture.ts:16`, `lib/toast-sales-pull-run.ts:18`
-- Placeholder pages ("coming soon" cards): `/recipes`, `/announcements`, `/tips`, `/ai`, `/rollups`, `/deep-cleaning`, `/feedback`, `/comms` — `app/recipes/page.tsx:1`, `app/announcements/page.tsx:1`, `app/tips/page.tsx:1`, `app/ai/page.tsx:1`, `app/rollups/page.tsx:1`, `app/deep-cleaning/page.tsx:1`, `app/feedback/page.tsx:1`, `app/comms/page.tsx:1`
-- More placeholders: `/operations/prep`, `/operations/overlay`, `/operations/synthesis` — `app/(authed)/operations/prep/page.tsx:1`, `app/(authed)/operations/overlay/page.tsx:1`, `app/(authed)/operations/synthesis/page.tsx:1`
-- None of the placeholders appear in the menu — `tests/nav-links.test.ts:19-21`
-- Admin "coming soon" tiles: Audit only; Locations went live for MoO+ (read at origin/main 344742a2) — `lib/admin/sections.ts:107-108`
+- Planned pages (nav PR 2, 2026-11-21): `/recipes`, `/announcements`, `/tips`, `/deep-cleaning`, `/feedback`, `/comms`, `/admin/audit` (level 9) each show the feature name and one sentence, "This page is planned. It is not built yet." — `components/PlannedPage.tsx`, `tests/nav-planned-pages.test.ts`
+- Deleted for good (nav PR 2, Juan 2026-11-20): `/ai`, `/rollups`, `/operations/prep`, `/operations/overlay`, `/operations/synthesis`, and the stubs `/api/ai`, `/api/checklist/prep/generate`. Reasons: the PR #619 description.
+- None of the planned pages appear in the menu — `tests/nav-links.test.ts:19-21`
+- Admin "Planned" tiles: Audit only; Locations went live for MoO+ (read at origin/main 344742a2) — `lib/admin/sections.ts:107-108`
 - **Correction to the brief:** `/ordering` is NOT a placeholder. It is the live Ordering walk, only left out of the menu — `app/ordering/page.tsx:1-22`, `tests/nav-links.test.ts:19`
 - Dead text: the opening's "Hand to a key holder" button and the mid-day "key-holder task" message describe rules the code no longer has (see Opening and Mid-day sections) — `app/(authed)/operations/opening/opening-client.tsx:2098`, `lib/i18n/en.json:2123`
 
