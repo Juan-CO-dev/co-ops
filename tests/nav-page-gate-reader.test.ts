@@ -20,7 +20,7 @@ import type { Facts, SwitchName, Switches } from "@/lib/nav/types";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import {
   CONSTANTS, LAYOUT_FILE, MEMBERSHIP, PULSE_HOME_FILE, PageGateError, ROLE_PREDICATES, S, SWITCH_CALLS, SWITCH_COMBOS, admitMatrix,
-  entryKey, loadReviewedEntries, runCensus, type ForceArm, type ReviewedEntry,
+  entryKey, loadReviewedEntries, runCensus, type ForceArm, type ReaderOptions, type ReviewedEntry,
 } from "./helpers/page-gate";
 import { censusFiles, destinationPages, newReader } from "./helpers/page-gate-census";
 
@@ -421,7 +421,9 @@ describe("Astra r3: a read result keeps provenance only while it is const and us
     ["a let { error } that gets reassigned", `let { data, error } = await query;\n  error = ${forge};`],
   ])("%s: no provenance, the session-built error fails", (_name, read) => {
     expect(real.includes(READ)).toBe(true);
-    expect(loadError(real.replace(READ, read))?.code).toBe("OPERATIONAL_MENTIONS_SESSION");
+    // Since Astra r5 the file-wide ban also fires on the write / Object.assign / delete forms; either code fails it.
+    const err = loadError(real.replace(READ, read));
+    expect(err?.problems.some((p) => p.code === "OPERATIONAL_MENTIONS_SESSION" || p.code === "FORBIDDEN_MUTATION_PRIMITIVE"), read).toBe(true);
   });
   it.each([
     ["a const result destructured", `const result = await query;\n  const { data, error } = result;`],
@@ -474,7 +476,7 @@ describe("Astra r4: a mutated dependency of an operational guard is fatal (MUTAT
   });
 
   it("a mutation after the guard cannot change it and is not a dependency", () => {
-    const src = real.replace("if (error) throw error;", "if (error) throw error;\n  Object.assign(query, {});");
+    const src = real.replace("if (error) throw error;", "if (error) throw error;\n  (query as unknown as { note: string }).note = \"after\";");
     expect(problemsOf(src)).toEqual([]);
   });
 
@@ -483,6 +485,77 @@ describe("Astra r4: a mutated dependency of an operational guard is fatal (MUTAT
     const arg = Object.freeze({ range: "custom", from: "2026-11-01", to: "2026-11-07", location: "shop-S" });
     expect(() => parseReportRange(arg, "2026-11-18")).not.toThrow();
     expect(arg).toEqual({ range: "custom", from: "2026-11-01", to: "2026-11-07", location: "shop-S" });
+  });
+});
+
+describe("Astra r5 and the lead's backstop: FORBIDDEN_MUTATION_PRIMITIVE anywhere in a census file", () => {
+  const ASSIGN = "app/(authed)/assignments/page.tsx";
+  const READ = "const { data, error } = await query;";
+  const real = readFileSync(ASSIGN, "utf8");
+  const PLAIN = `await sb.from("locations").select("id,name")`;
+  const forged = `auth.level < 7 ? { message: "forbidden", details: "", hint: "", code: "403", name: "PostgrestError" } : null`;
+  const codesOf = (src: string, file = ASSIGN, extra: ReaderOptions = {}) => {
+    try { newReader({ sources: { [file]: src }, ...extra }).load(file); return []; } catch (e) { return (e as PageGateError).problems.map((p) => p.code); }
+  };
+
+  it.each([
+    ["r5 (a): a member alias of a read result written", `const box = { result: ${PLAIN} };\n  const alias = box.result;\n  alias.error = ${forged};\n  const { data, error } = alias;`],
+    ["r5 (b): [result].map(r => Object.assign(r, ...))", `const result = ${PLAIN};\n  [result].map((r) => Object.assign(r, { error: ${forged} }));\n  const { data, error } = result;`],
+    ["r5 (b): [result].some(r => { r.error = ... })", `const result = ${PLAIN};\n  [result].some((r) => { r.error = ${forged}; return false; });\n  const { data, error } = result;`],
+  ])("%s fails", (_name, read) => {
+    expect(real.includes(READ)).toBe(true);
+    expect(codesOf(real.replace(READ, read))).toContain("FORBIDDEN_MUTATION_PRIMITIVE");
+  });
+
+  it("exemption (3) is gone: an array holding a read result, even only as a read-only receiver, is an escape", () => {
+    const src = real.replace(READ, `const result = ${PLAIN};\n  const hit = [result].some((r) => r.data === null);\n  void hit;\n  const { data, error } = result;`);
+    const codes = codesOf(src);
+    expect(codes).toContain("MUTATED_DEPENDENCY");
+    expect(codes).not.toContain("FORBIDDEN_MUTATION_PRIMITIVE");
+  });
+
+  it("an array of primitives by construction stays a read (Vendor mail's `[from, to].some(...)`, `from` from a typeof-narrowed helper)", () => {
+    expect(codesOf(readFileSync("app/(authed)/operations/vendor-mail/page.tsx", "utf8"), "app/(authed)/operations/vendor-mail/page.tsx")).toEqual([]);
+  });
+
+  const anywhere = (line: string) => page(`  const target: Record<string, unknown> = { a: 1 };\n  void target;\n  ${line}`);
+  it.each([
+    ["Object.assign", "Object.assign(target, { b: 2 });"],
+    ["Object.defineProperty", `Object.defineProperty(target, "b", { value: 2 });`],
+    ["Object.defineProperties", `Object.defineProperties(target, { b: { value: 2 } });`],
+    ["Object.setPrototypeOf", "Object.setPrototypeOf(target, null);"],
+    ["Reflect.set", `Reflect.set(target, "b", 2);`],
+    ["Reflect.defineProperty", `Reflect.defineProperty(target, "b", { value: 2 });`],
+    ["Reflect.deleteProperty", `Reflect.deleteProperty(target, "a");`],
+    ["Object[\"assign\"] by element access", `Object["assign"](target, { b: 2 });`],
+  ])("(1) a call of %s anywhere in the file", (_name, line) => {
+    expect(codesOf(anywhere(line), FIXTURE_FILE, { pages: [FIXTURE_PAGE] })).toContain("FORBIDDEN_MUTATION_PRIMITIVE");
+  });
+
+  it.each([
+    ["error =", "target.error = null;"],
+    ["data ??=", "target.data ??= [];"],
+    ["count +=", "(target as { count: number }).count += 1;"],
+    ["status ||=", "target.status ||= 200;"],
+    ["statusText &&=", "target.statusText &&= \"ok\";"],
+    ["count++", "(target as { count: number }).count++;"],
+    ["--count", "--(target as { count: number }).count;"],
+    ["delete error", "delete target.error;"],
+    ["[\"error\"] =", "target[\"error\"] = null;"],
+    ["delete [\"data\"]", "delete target[\"data\"];"],
+  ])("(2) a write to a result-member name: %s", (_name, line) => {
+    expect(codesOf(anywhere(line), FIXTURE_FILE, { pages: [FIXTURE_PAGE] })).toContain("FORBIDDEN_MUTATION_PRIMITIVE");
+  });
+
+  it("(2) an element-access write with a computed key, on anything but a fresh accumulator", () => {
+    expect(codesOf(page(`  const key = String(auth.level);\n  const target = await loadTarget();\n  target[key] = 1;`, `import { loadTarget } from "@/lib/x";`), FIXTURE_FILE, { pages: [FIXTURE_PAGE] }))
+      .toContain("FORBIDDEN_MUTATION_PRIMITIVE");
+    // A fresh accumulator (`const m: Record<string, T> = {}`, never reassigned) is the one allowed target: no read result.
+    expect(codesOf(page(`  const key = String(auth.level);\n  const byId: Record<string, number> = {};\n  byId[key] = 1;`), FIXTURE_FILE, { pages: [FIXTURE_PAGE] })).toEqual([]);
+  });
+
+  it("controls: plain writes to other names, and literal-key writes, are not banned", () => {
+    expect(codesOf(anywhere(`target.note = "x";\n  target["note"] = "y";\n  target[0] = 1;`), FIXTURE_FILE, { pages: [FIXTURE_PAGE] })).toEqual([]);
   });
 });
 

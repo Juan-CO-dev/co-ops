@@ -18,6 +18,14 @@
  * mode never writes or changes one.
  *
  * The atoms are matched by MODULE SPECIFIER AND EXPORT NAME through the file's imports, never by local name.
+ *
+ * Threat model and known limits. The reader checks the repository's own, non-adversarial page code for NAVIGATION
+ * CONSISTENCY: that the destination list never offers a page its gate refuses, and that every construct that can end
+ * a page has been read by a person. It is not a security boundary; the pages' own gates are. It fails closed on the
+ * shapes it knows (closed atom tables, a closed read grammar, direct-call-only exit bindings, a mutated-dependency
+ * check, and a file-wide syntactic ban on mutation primitives and on writes to read-result members), but taint
+ * tracking through general JavaScript aliasing is not complete. A known limit: a read result mutated inside a helper
+ * function in another module is invisible here; code review is the backstop for that.
  */
 import { existsSync, readFileSync } from "node:fs";
 import ts from "typescript";
@@ -82,7 +90,7 @@ import type { Facts, SwitchName, Switches } from "@/lib/nav/types";
 
 export type PageGateCode =
   | "UNREVIEWED_CONSTRUCT" | "ENTRY_TEXT_MISMATCH" | "STALE_ENTRY" | "AMBIGUOUS_ENTRY" | "UNCLASSIFIED_ENTRY"
-  | "OPERATIONAL_MENTIONS_SESSION" | "MUTATED_DEPENDENCY" | "UNKNOWN_CONDITION" | "BAD_REDIRECT_TARGET" | "REDIRECT_LOOP" | "UNSUPPORTED"
+  | "OPERATIONAL_MENTIONS_SESSION" | "MUTATED_DEPENDENCY" | "FORBIDDEN_MUTATION_PRIMITIVE" | "UNKNOWN_CONDITION" | "BAD_REDIRECT_TARGET" | "REDIRECT_LOOP" | "UNSUPPORTED"
   | "NOT_A_CENSUS_PAGE";
 
 export interface Problem { code: PageGateCode; file: string; line?: number; detail: string }
@@ -1048,13 +1056,15 @@ function classifyUse(use: ts.Identifier, declFn: FnLike | undefined, info: FileI
     return pureCallee(p, info) ? { kind: "read" } : { kind: "mutation", why: "passed to a call" };
   }
   if (ts.isObjectLiteralExpression(p) || ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) || ts.isArrayLiteralExpression(p)) {
-    // A temporary literal that is only the receiver of a read-only method (`[from, to].some(...)`) does not escape.
-    let lit: ts.Node = p;
-    while (!ts.isObjectLiteralExpression(lit) && !ts.isArrayLiteralExpression(lit)) lit = lit.parent;
-    let r: ts.Node = lit;
-    while (ts.isParenthesizedExpression(r.parent)) r = r.parent;
-    const callee = r.parent;
-    if (ts.isPropertyAccessExpression(callee) && callee.expression === r && READONLY_METHODS.has(callee.name.text) && ts.isCallExpression(callee.parent) && callee.parent.expression === callee) return { kind: "read" };
+    // Astra r5: a literal is an escape, except an ARRAY whose every element is a primitive by construction (it can
+    // hold no object to mutate), as the receiver of a read-only method: `[from, to].some(...)` with `from` and `to`
+    // const strings.
+    if (ts.isArrayLiteralExpression(p) && p.elements.every((el) => primitiveByConstruction(el, info, 0))) {
+      let r: ts.Node = p;
+      while (ts.isParenthesizedExpression(r.parent)) r = r.parent;
+      const callee = r.parent;
+      if (ts.isPropertyAccessExpression(callee) && callee.expression === r && READONLY_METHODS.has(callee.name.text) && ts.isCallExpression(callee.parent) && callee.parent.expression === callee) return { kind: "read" };
+    }
     return { kind: "mutation", why: "put in an object or array" };
   }
   if ((ts.isReturnStatement(p) && fnOf(p) !== declFn) || (ts.isArrowFunction(p) && p.body === m)) return { kind: "mutation", why: "returned from a nested function" };
@@ -1098,6 +1108,118 @@ function mayRunBefore(use: ts.Node, guard: ts.Node): boolean {
     if (ts.isIterationStatement(p, false) && use.getStart() >= p.getStart() && use.getEnd() <= p.getEnd()) return true;
   }
   return false;
+}
+
+/**
+ * A primitive by construction (syntax only): a string, number or template literal, true / false / null / undefined;
+ * `typeof E === "string" ? E : <primitive>` (the narrowed arm is the operand itself); a conditional or `??` / `||` /
+ * `&&` of primitives; a const binding, never reassigned, whose initializer is one; a call of a same-file function
+ * whose every returned expression is one.
+ */
+function primitiveByConstruction(expr: ts.Expression, info: FileInfo, depth: number): boolean {
+  if (depth > 8) return false;
+  const e = strip(expr);
+  if (ts.isStringLiteral(e) || ts.isNumericLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e) || ts.isTemplateExpression(e)) return true;
+  if ([ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(e.kind)) return true;
+  if (ts.isIdentifier(e)) {
+    if (e.text === "undefined") return true;
+    const d = declarationOf(e.text, e);
+    if (!d || "forOf" in d || d.element || !d.decl.initializer || !(d.decl.parent.flags & ts.NodeFlags.Const) || assignmentsTo(e.text, d.decl).length) return false;
+    return primitiveByConstruction(d.decl.initializer, info, depth + 1);
+  }
+  if (ts.isConditionalExpression(e)) {
+    const c = strip(e.condition);
+    const arm = (x: ts.Expression, narrowed: string | undefined) => (narrowed !== undefined && norm(strip(x).getText()) === narrowed) || primitiveByConstruction(x, info, depth + 1);
+    let whenTrue: string | undefined;
+    let whenFalse: string | undefined;
+    if (ts.isBinaryExpression(c) && ts.isTypeOfExpression(strip(c.left)) && ts.isStringLiteral(strip(c.right)) && ["string", "number", "boolean", "bigint"].includes((strip(c.right) as ts.StringLiteral).text)) {
+      const operand = norm((strip(c.left) as ts.TypeOfExpression).expression.getText());
+      if (c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken) whenTrue = operand;
+      if (c.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken) whenFalse = operand;
+    }
+    return arm(e.whenTrue, whenTrue) && arm(e.whenFalse, whenFalse);
+  }
+  if (ts.isBinaryExpression(e) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.AmpersandAmpersandToken].includes(e.operatorToken.kind)) {
+    return primitiveByConstruction(e.left, info, depth + 1) && primitiveByConstruction(e.right, info, depth + 1);
+  }
+  if (ts.isCallExpression(e) && ts.isIdentifier(e.expression)) {
+    // The callee: a const arrow / function expression in scope, or a same-file top-level function.
+    const local = declarationOf(e.expression.text, e.expression);
+    let fn: FnLike | undefined;
+    if (local && !("forOf" in local) && !local.element && local.decl.initializer && (local.decl.parent.flags & ts.NodeFlags.Const)
+      && isFnExpr(strip(local.decl.initializer)) && assignmentsTo(e.expression.text, local.decl).length === 0) fn = strip(local.decl.initializer) as FnLike;
+    else if (!local && resolveName(e.expression.text, e.expression, newEnv(info, undefined, new Map())).kind === "top") fn = info.fns.get(e.expression.text);
+    if (!fn?.body) return false;
+    if (!ts.isBlock(fn.body)) return primitiveByConstruction(fn.body, info, depth + 1);
+    const returns: ts.ReturnStatement[] = [];
+    const visit = (n: ts.Node) => { if (ts.isReturnStatement(n)) returns.push(n); if (!ts.isFunctionLike(n)) ts.forEachChild(n, visit); };
+    ts.forEachChild(fn.body, visit);
+    return returns.length > 0 && returns.every((r) => !!r.expression && primitiveByConstruction(r.expression, info, depth + 1));
+  }
+  return false;
+}
+
+/**
+ * The file-wide syntactic backstop (Astra r5, lead ruling): decidable, and fatal anywhere in a census file
+ * (FORBIDDEN_MUTATION_PRIMITIVE; no reviewed entry clears it). (1) Any call of Object.assign, Object.defineProperty,
+ * Object.defineProperties, Object.setPrototypeOf, Reflect.set, Reflect.defineProperty or Reflect.deleteProperty (by
+ * dot or string-literal element access). (2) Any write (assignment, compound or logical assignment, ++ / --, delete)
+ * to a property NAMED error, data, count, status or statusText, by dot or by string-literal element access, and any
+ * element-access write whose key is not a string or number literal.
+ */
+const BANNED_CALLS: Readonly<Record<string, readonly string[]>> = {
+  Object: ["assign", "defineProperty", "defineProperties", "setPrototypeOf"],
+  Reflect: ["set", "defineProperty", "deleteProperty"],
+};
+const RESULT_MEMBER_NAMES = new Set(["error", "data", "count", "status", "statusText"]);
+
+/**
+ * The one computed-key write the ban allows: into a FRESH ACCUMULATOR by construction, a const binding, never
+ * reassigned, whose initializer is an object literal (`const byId: Record<string, T> = {}`). Such an object is never
+ * a read result, and if it ever flows into an operational guard, MUTATED_DEPENDENCY makes that write fatal there.
+ * Census pages fill such maps (closing, am-prep, SKUs, demand-signals sources).
+ */
+function freshAccumulator(target: ts.Expression): boolean {
+  const t = strip(target);
+  if (!ts.isIdentifier(t)) return false;
+  const d = declarationOf(t.text, t);
+  return !!d && !("forOf" in d) && !d.element && !!d.decl.initializer && (d.decl.parent.flags & ts.NodeFlags.Const) !== 0
+    && ts.isObjectLiteralExpression(strip(d.decl.initializer)) && assignmentsTo(t.text, d.decl).length === 0;
+}
+
+function forbiddenMutationPrimitives(info: FileInfo): Problem[] {
+  const sf = info.sf;
+  const out: Problem[] = [];
+  const at = (n: ts.Node, what: string) => out.push({
+    code: "FORBIDDEN_MUTATION_PRIMITIVE", file: info.file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
+    detail: `${what}: ${norm(n.getText(sf)).slice(0, 160)}`,
+  });
+  const memberName = (m: ts.Node): string | undefined => {
+    if (ts.isPropertyAccessExpression(m)) return m.name.text;
+    if (ts.isElementAccessExpression(m)) {
+      const k = strip(m.argumentExpression);
+      return ts.isStringLiteral(k) || ts.isNoSubstitutionTemplateLiteral(k) || ts.isNumericLiteral(k) ? k.text : undefined;
+    }
+    return undefined;
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isCallExpression(n)) {
+      const c = strip(n.expression);
+      if ((ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c)) && ts.isIdentifier(strip(c.expression))) {
+        const obj = (strip(c.expression) as ts.Identifier).text;
+        const name = memberName(c);
+        if (name !== undefined && BANNED_CALLS[obj]?.includes(name)) at(n, `a call of ${obj}.${name}`);
+      }
+    }
+    if ((ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && isWriteTarget(n)) {
+      const name = memberName(n);
+      if (ts.isElementAccessExpression(n) && name === undefined && !freshAccumulator(n.expression)) at(n.parent, "an element-access write with a computed key");
+      else if (name !== undefined && RESULT_MEMBER_NAMES.has(name)) at(n.parent, `a write to a property named ${name}`);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
 }
 
 /** The first mutated binding a guard depends on (name and why), or undefined. */
@@ -1636,7 +1758,7 @@ function analyze(file: string, src: string, switchCalls?: Readonly<Record<string
       add(x, ENCLOSING_KIND(x)!);
     }
   }
-  return { info, walked, roots, envs, constructs, coreExits, bindingProblems: exitBindingProblems(info) };
+  return { info, walked, roots, envs, constructs, coreExits, bindingProblems: [...exitBindingProblems(info), ...forbiddenMutationPrimitives(info)] };
 }
 
 /** A component's environment when it is analyzed on its own (its props are bound at the call site when walked). */
