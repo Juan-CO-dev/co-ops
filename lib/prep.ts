@@ -870,6 +870,8 @@ export async function loadAmPrepState(
           .eq("template_id", tmplRow.id)
           .eq("location_id", args.locationId)
           .eq("date", args.date)
+          // Opt out of Next's render memoization of identical GETs (see getOrCreatePmReport's race re-read).
+          .abortSignal(new AbortController().signal)
           .maybeSingle<InstanceRow>();
         if (raceErr || !race) {
           throw new Error(
