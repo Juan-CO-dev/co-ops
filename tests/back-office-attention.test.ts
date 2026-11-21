@@ -142,7 +142,9 @@ describe("the line", () => {
     expect(summarize([today], today)).toEqual({ kind: "ok", lastSalesPullAt: TODAY_RUN });
     expect(attentionLine(summarize([today], today), NOW, "en", T("en"))).toBe("All systems OK. Last sales pull 6:02 AM.");
     // es-US's day period ("a.m." here; some ICU builds space it, "a. m.") is the formatter's; the time and the words are pinned.
-    expect(attentionLine(summarize([today], today), NOW, "es", T("es"))).toMatch(/^Todo está en orden\. Última descarga de ventas: 6:02\sa\.\s?m\.\.$/u);
+    expect(attentionLine(summarize([today], today), NOW, "es", T("es"))).toMatch(/^Todo está en orden\. Última descarga de ventas: 6:02\sa\.\s?m\.$/u);
+    // The day period already ends in a period; the sentence must not add a second one (Spanish "a.m..").
+    expect(attentionLine(summarize([today], today), NOW, "es", T("es"))).not.toMatch(/\.\.$/);
     const yesterday = salesPullCheck(ok(cron({ lastSuccessAt: YESTERDAY_RUN })));
     expect(summarize([yesterday], yesterday)).toEqual({ kind: "ok", lastSalesPullAt: YESTERDAY_RUN });
     expect(attentionLine(summarize([yesterday], yesterday), NOW, "en", T("en"))).toBe("All systems OK. Last sales pull Thu, Nov 19, 6:02 AM.");
