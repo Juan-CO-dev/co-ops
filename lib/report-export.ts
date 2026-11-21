@@ -34,6 +34,7 @@ import type { RoleCode } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { BusinessReportError, assertBusinessSurface, loadBusinessReport, resolveBusinessAccess, resolveBusinessRange } from "@/lib/business-report";
 import { businessReportEnabled, businessReportRefusal, parseBusinessRangeRequest } from "@/lib/business-report-shared";
+import { reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { businessView } from "@/lib/business-view-shared";
 import { businessPdf, type BusinessPdf } from "@/lib/business-report-pdf";
 import {
@@ -261,6 +262,9 @@ export function assertExportShop(auth: AuthContext, family: ExportFamily, locati
 
 /** The family's own role floor (mirrors each page's redirect), checked before any database work. */
 export function assertFamilyFloor(auth: AuthContext, family: ExportFamily, env: Record<string, string | undefined> = process.env): void {
+  // Nav spec PR S1: the whole report family refuses the social media manager by ROLE (the route refuses first;
+  // this keeps the loader closed to any other caller).
+  if (!reportsRoleAllowed(auth.role)) throw new ExportError(403, "forbidden");
   // Item 9c: the business family is dark until its three switches agree, then GM / MoO / Owner / CGS by ROLE.
   if (family === "business") {
     if (!businessReportEnabled(env)) throw new ExportError(503, "business_report_unavailable");

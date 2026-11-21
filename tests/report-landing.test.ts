@@ -9,6 +9,7 @@ import { composeLastClose, composeReportSummary, reportIsFinalized } from "@/lib
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import type { RoleCode } from "@/lib/roles";
 import { businessReportEnabled, businessReportRefusal } from "@/lib/business-report-shared";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 
 /** lib/business-report.ts businessReportOffered: for a GM, whether the MoO+ setting offers the report (one read). */
 const businessReportOffered = vi.fn(async (_viewer: unknown) => true);
@@ -33,6 +34,7 @@ async function render(level: number, role: RoleCode, location = "mine", assigned
     Link: "link", ReportPageNav: "back", ReportShopTabs: "tabs", ReportRangeControls: "range", ExportLinks: "export",
     requireSessionFromHeaders: async () => ({ role, level, locations: ["mine"], user: { id: "viewer", language: "en" } }),
     redirect: () => { throw new Error("redirect"); }, canReadReportLocation, lockLocationContext, REPORT_ALL_LOCATIONS_LEVEL: 8,
+    reportsRoleAllowed, REPORTS_DENIED_HREF, // nav spec PR S1: the report family's role rule
     canViewPeople, peopleActorFromAuth, // Task 13: the hub's Team link is canViewPeople per shop
     getServiceRoleClient: () => ({ from: () => query }), serverT: (_language: string, key: string) => key,
     operationalNow: () => ({ date: "2026-10-07" }), formatDateLabel: (date: string) => date,
@@ -117,7 +119,8 @@ describe("actual reports landing card gates", () => {
       expect(businessReportOffered).toHaveBeenCalledWith({ userId: "viewer", level: 7, locations: ["mine"], role: "gm" });
       businessReportOffered.mockClear();
       expect(tile(await render(6, "agm"))).toBe(false);
-      expect(tile(await render(6, "social_media_mgr"))).toBe(false);
+      // Nav spec PR S1: the hub itself now refuses the social media manager before any read.
+      await expect(render(6, "social_media_mgr")).rejects.toThrow("redirect");
       expect(businessReportOffered).not.toHaveBeenCalled(); // a refused role is judged before any read
       // Business report access: the MoO switched the report off for GMs (or the settings cannot be read): no tile.
       businessReportOffered.mockResolvedValueOnce(false);

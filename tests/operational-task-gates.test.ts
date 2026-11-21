@@ -8,6 +8,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { ROLES, getRoleLevel, type RoleCode } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import type { AuthContext } from "@/lib/session";
+import { reportsRoleAllowed } from "@/lib/reports-access-shared";
 
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
@@ -158,6 +159,7 @@ async function countPage(role: RoleCode, mayCount: boolean) {
     createCountsReadRefs: () => ({}), withDeadline: <T,>(p: Promise<T>) => p, ON_HAND_DEADLINE_MS: 1,
     Suspense: "Suspense", OnHandBoundary: "OnHandBoundary", OnHandSection: "OnHandSection",
     CountForm: "CountForm", OnHandPanel: "OnHandPanel", DashboardBackLink: "DashboardBackLink", ExportLinks: "ExportLinks",
+    reportsRoleAllowed, // nav spec PR S1: the export link is not offered to the social media manager
     React: { createElement: (type: unknown, props: unknown, ...children: unknown[]) => ({ type, props, children }) },
   };
   const page = new Function(...Object.keys(deps), `${js}; return CountsPage;`)(...Object.values(deps));

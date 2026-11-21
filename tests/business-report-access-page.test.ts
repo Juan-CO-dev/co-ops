@@ -94,7 +94,8 @@ describe("gates, in order", () => {
     for (const [role, level] of [["agm", 6], ["social_media_mgr", 6], ["catering_mgr", 6], ["shift_lead", 5]] as const) {
       as(role, level);
       f = wire({ visibility: ["throw"] });
-      expect(await redirected(), role).toBe("REDIRECT /reports");
+      // Nav spec PR S1: the social media manager is refused by the report family's role rule first (the denial notice).
+      expect(await redirected(), role).toBe(role === "social_media_mgr" ? "REDIRECT /dashboard?denied=reports" : "REDIRECT /reports");
       expect(f.tables.length + f.calls.length, role).toBe(0);
     }
   });

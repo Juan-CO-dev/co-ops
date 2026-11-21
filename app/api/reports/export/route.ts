@@ -10,12 +10,15 @@ import { EXPORT_TITLE_KEY, ExportError, loadExportTable } from "@/lib/report-exp
 import { exportFilename, isExportFamily, isExportFormat, toCsv } from "@/lib/report-export-shared";
 import { pdfHeaderLines, renderReportPdf } from "@/lib/report-pdf";
 import { requireSession } from "@/lib/session";
+import { reportsRoleAllowed } from "@/lib/reports-access-shared";
 
 export const maxDuration = 120;
 
 export async function GET(req: NextRequest) {
   const ctx = await requireSession(req, "/api/reports/export");
   if (ctx instanceof Response) return ctx;
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read or write.
+  if (!reportsRoleAllowed(ctx.role)) return jsonError(403, "forbidden");
   const params = Object.fromEntries(req.nextUrl.searchParams.entries());
   const { family, format } = params;
   if (!isExportFamily(family)) return jsonError(400, "invalid_family");

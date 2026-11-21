@@ -2720,6 +2720,7 @@
   "auth.pin_modal.error_cash_required": "Envía el depósito de efectivo antes de finalizar.",
   "auth.pin_modal.error_hard_gate": "Termina los ítems bloqueados obligatorios antes de enviar.",
   "dashboard.header.label": "Panel",
+  "dashboard.denied.reports": "Los reportes no están disponibles para tu rol.",
   "dashboard.header.greeting": "Hola, {name}.",
   "dashboard.location.all": "Todas las ubicaciones",
   "dashboard.location.none": "Sin ubicaciones",

@@ -29,6 +29,7 @@ import {
   loadSalesLatestCapture, loadSalesSummary, pageRows, resolveSalesRange, salesDayParams, salesRangeParams, type BreakdownRow, type SalesView,
 } from "@/lib/sales-reports";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveReportShopId } from "@/lib/shop-context";
 
@@ -37,6 +38,8 @@ type Params = Record<string, string | undefined>;
 export default async function SalesPage({ searchParams }: { searchParams: Promise<Params> }): Promise<ReactNode> {
   const params = await searchParams;
   const auth = await requireSessionFromHeaders("/reports/sales");
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read.
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
   if (auth.level < SALES_READ_MIN) redirect("/reports");
   const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
   // B2: an explicit ?location= (a shop or "all") passes through to the read gate below unchanged;

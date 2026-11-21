@@ -9,6 +9,7 @@ import { canOpenPeopleViews, peopleActorFromAuth } from "@/lib/people/access-sha
 import { canReadReportLocation, lockLocationContext } from "@/lib/locations";
 import { listWrittenReports, loadWrittenReport } from "@/lib/written-reports";
 import type { RoleCode } from "@/lib/roles";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 
 describe("report read scope is independent of task/write scope", () => {
   it.each<RoleCode>(["gm", "key_holder", "trainer", "shift_lead", "agm", "catering_mgr", "prep_mgr", "social_media_mgr"])("%s reads only their shops", (role) => {
@@ -104,6 +105,7 @@ describe("per-person team report location boundary", () => {
         TEAM_VIEW_LEVEL: 6, REPORT_ALL_LOCATIONS_LEVEL: 8, canReadReportLocation, resolveTrendRange, reportRangeParams,
         canOpenPeopleViews, peopleActorFromAuth,
         redirect: () => { throw new Error("redirect"); },
+        reportsRoleAllowed, REPORTS_DENIED_HREF, // nav spec PR S1: the report family's role rule
         parseGranularity: () => "day", operationalNow: () => ({ date: "2026-10-07" }),
         parseReportRange: () => ({ range: "last7", from: "2026-10-01", to: "2026-10-07", compare: false, previous: { from: "2026-09-24", to: "2026-09-30" } }),
         getServiceRoleClient: () => ({}), loadPersonDetail,

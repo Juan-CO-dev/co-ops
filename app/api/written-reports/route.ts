@@ -16,6 +16,7 @@ import { type NextRequest } from "next/server";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
 import { requireSession } from "@/lib/session";
+import { reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { resolveChecklistWriteActor, ChecklistActorNotAuthorizedError, ChecklistActorTransientError } from "@/lib/checklist-write-actor";
 import { createWrittenReport, validateWrittenReportDraft } from "@/lib/written-reports";
 import { WRITTEN_REPORT_WRITE_MIN_LEVEL } from "@/lib/written-reports-shared";
@@ -28,6 +29,8 @@ export async function POST(req: NextRequest) {
 
   const ctx = await requireSession(req, "/api/written-reports");
   if (ctx instanceof Response) return ctx;
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read or write.
+  if (!reportsRoleAllowed(ctx.role)) return jsonError(403, "forbidden");
 
   let actor;
   try {

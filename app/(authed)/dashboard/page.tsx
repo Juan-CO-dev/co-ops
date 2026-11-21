@@ -42,6 +42,7 @@ import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { loadUnreadForUser, notificationLocationContext } from "@/lib/notifications";
+import { notificationBellRoleAllowed } from "@/lib/notification-bell-shared";
 import { etCalendarDate } from "@/lib/operational-day";
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
@@ -308,7 +309,7 @@ function statusCopyFor(state: OperationalState, language: Language): StatusCopy 
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface DashboardPageProps {
-  searchParams: Promise<{ loc?: string }>;
+  searchParams: Promise<{ loc?: string; denied?: string }>;
 }
 
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
@@ -529,10 +530,16 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   // location filter); sub-9 (and level 9+ with explicit user_locations)
   // sees their accessible locations + global (location_id IS NULL).
   // ONE rule, shared with "Mark all read" (W26-5 b).
-  const locationContextForNotifications = notificationLocationContext(auth);
-  const unreadNotifications = await widget("notifications.sheet.heading", () => loadUnreadForUser(sb, auth.user.id, {
-    locationContext: locationContextForNotifications,
-  }));
+  //
+  // Nav spec PR S1 (section 8.1, "Bell: none"): the social media manager gets NO notification read and NO
+  // bell, by the REAL role (auth.role, never a "works as" role). The read picks rows by recipient, never
+  // by role, so notices stored under an earlier role would otherwise be served to it.
+  const bellAllowed = notificationBellRoleAllowed(auth.role);
+  const unreadNotifications = bellAllowed
+    ? await widget("notifications.sheet.heading", () => loadUnreadForUser(sb, auth.user.id, {
+        locationContext: notificationLocationContext(auth),
+      }))
+    : null;
   // Build a location-id → code map for card rendering. For all-locations-
   // override users the `locations` list already covers every active
   // location; for sub-7 users it's their accessible set. A notification
@@ -546,6 +553,13 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   return (
     <AuthShell width="wide">
       <div className="mt-2 flex flex-col gap-6">
+        {/* Nav spec PR S1: a refused report page sends the person here with ?denied=reports. A fixed line,
+            no parameters (only this one value is recognised; anything else shows nothing). */}
+        {sp.denied === "reports" ? (
+          <p role="status" className="rounded-lg border-2 border-co-border bg-co-surface-inset px-3 py-2 text-sm text-co-text">
+            {serverT(language, "dashboard.denied.reports")}
+          </p>
+        ) : null}
         {/* HEADER ZONE (recomposition arc PR 1): phone keeps today's exact stack
             (source order = greeting → nav → identity → location, flex-col gap-6);
             lg+ composes it as a two-column grid — greeting + nav LEFT, identity +
@@ -601,7 +615,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               {roleLabel}
             </span>
           </div>
-          {unreadNotifications && <NotificationBell
+          {bellAllowed && unreadNotifications && <NotificationBell
             notifications={unreadNotifications}
             locationCodes={locationCodes}
           />}
