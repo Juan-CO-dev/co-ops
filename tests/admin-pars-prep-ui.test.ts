@@ -69,7 +69,7 @@ it("renders a shared item once with both list chips and sends one PATCH per save
     items: [{ ...view.items[0]!, id: "line-mid" }], parContext: { "line-mid": view.parContext["line-a"]! } };
   render(jsx(TranslationProvider, { initialLanguage: "en", children: jsx(PrepParsClient, { views: [view, midday], canEdit: true }) }));
   expect(screen.getAllByText("Prep item")).toHaveLength(1);
-  expect(screen.getByText("AM Prep")).toBeTruthy(); expect(screen.getByText("Mid-day Prep")).toBeTruthy();
+  expect(screen.getByText("AM prep list")).toBeTruthy(); expect(screen.getByText("Mid-day prep")).toBeTruthy();
   fireEvent.click(screen.getByRole("button"));
   fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]!);
   await waitFor(() => expect(h.refresh).toHaveBeenCalledTimes(1));

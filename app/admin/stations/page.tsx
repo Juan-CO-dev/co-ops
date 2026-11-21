@@ -38,7 +38,7 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
   const translatedNames = closingStations(closingItems?.data ?? []).filter((station) => station.nameEs).map((station) => station.name);
   const language = auth.user.language;
   return <div className="space-y-4">
-    <h1 className="text-2xl font-bold text-co-text">{serverT(language, "assignments.stations")}</h1>
+    <h1 className="text-2xl font-bold text-co-text">{serverT(language, "admin.section.stations")}</h1>
     <p>{serverT(language, "assignments.stationsFromClosing")} <Link className="underline" href="/admin/checklist-templates/closing">{serverT(language, "assignments.editClosing")}</Link></p>
     <nav aria-label={serverT(language, "assignments.locations")} className="flex flex-wrap gap-2">{locations.map((location) => <Link key={location.id} href={`/admin/stations?loc=${location.id}`} aria-current={location.id === selected?.id ? "page" : undefined} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border px-3 font-bold text-co-text aria-[current=page]:border-co-text">{location.name}</Link>)}</nav>
     {board ? <StationsAdmin key={board.locationId} locationId={board.locationId} stations={board.stations} translatedNames={translatedNames} canEdit={auth.level >= 7} canEditTiming={auth.level >= 7} /> : <p>{serverT(language, "assignments.noLocation")}</p>}

@@ -65,7 +65,7 @@ export function StationsSection({ data, mode, locationId }: { data: StationsData
             </div>
           )}
           <div className="flex flex-wrap gap-2">
-            <Link href={`/assignments?loc=${encodeURIComponent(locationId)}`} className={tapLink}>{t("assignments.stations")}</Link>
+            <Link href={`/assignments?loc=${encodeURIComponent(locationId)}`} className={tapLink}>{t("nav.assignments")}</Link>
             <Link href={`/operations/closing?location=${encodeURIComponent(locationId)}`} className={tapLink}>{t("pulse.drawer.go_close")}</Link>
           </div>
         </>

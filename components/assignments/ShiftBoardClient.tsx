@@ -186,7 +186,7 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
   return <section className="co-card min-w-0 max-w-full space-y-4 break-words p-4 [&_a]:max-w-full [&_a]:whitespace-normal [&_button]:max-w-full [&_button]:whitespace-normal" aria-busy={disabled}>
     <h2 className="text-xl font-bold text-co-text">{t(compact ? "assignments.myShift" : "assignments.team")}</h2>
     <StationNudges key={`${board.locationId}:${board.stationDate ?? board.date}`} board={board} disabled={disabled} release={payload => requestMutation(payload, stationOverrideLevel(payload.userId))} />
-    {!compact && <ActionLink variant="secondary" href={`/stations?loc=${board.locationId}`}>{t("assignments.stations")}</ActionLink>}
+    {!compact && <ActionLink variant="secondary" href={`/stations?loc=${board.locationId}`}>{t("stations.page.title")}</ActionLink>}
     {!compact && board.viewerLevel >= 4 && <p className="text-sm text-co-text-muted">{t("assignments.rosterHint")}</p>}
     {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
     {!compact && section("stations", board.viewerLevel >= 4 ? "assignments.takeAssignStations" : "assignments.stations", filledStations, positions.length, <div className="space-y-3">{board.stations.filter(isFloorStation).map((station) => {
