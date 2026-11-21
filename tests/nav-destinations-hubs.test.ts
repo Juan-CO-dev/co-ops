@@ -1,7 +1,8 @@
 /**
  * Nav PR 3 (plan r5, 4.10; lead decision 1): the hand-written hub links are CHECKED against the destination list.
  * They are not generated from it in PR 3 (three tests pin the Reports hub's source; PR 13 rewrites that page, PR 10
- * the catering workspace, PR 4 the Back office tiles). Every link names a destination route, and its label key is
+ * the catering workspace). The Back office's hand tiles are gone: since nav PR 4 its rows come from the list
+ * (lib/nav/back-office.ts, tests/back-office-parity.test.ts). Every link names a destination route, and its label key is
  * that destination's name key or one of its surface labels (which guard (b) proves read the same name).
  */
 import { readFileSync } from "node:fs";
@@ -49,7 +50,6 @@ function cardLiterals(file: string): { route: string; key: string }[] {
 const SURFACES: { name: string; file: string; read: (f: string) => { route: string; key: string }[]; atLeast: number }[] = [
   { name: "Reports hub links", file: "app/(authed)/reports/page.tsx", read: links, atLeast: 12 },
   { name: "catering workspace cards", file: "app/(authed)/catering/page.tsx", read: cardLiterals, atLeast: 6 },
-  { name: "Back office hand-written tiles", file: "app/admin/page.tsx", read: links, atLeast: 2 },
   { name: "catering setup hand-written cards", file: "app/admin/catering/page.tsx", read: links, atLeast: 2 },
 ];
 

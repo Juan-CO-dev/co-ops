@@ -178,6 +178,8 @@ describe("chunk C review (Astra P3): the admin hub card is role-aware", () => {
   });
 
   it("the hub passes the session's trusted role", () => {
-    expect(readFileSync("app/admin/page.tsx", "utf8")).toContain("adminSectionsFor(auth.level, auth.role)");
+    // Nav PR 4: the hub's rows come from lib/nav/back-office.ts for the session's own role and level (never "works as");
+    // tests/back-office-parity.test.ts binds them to adminSectionsFor.
+    expect(readFileSync("app/admin/page.tsx", "utf8")).toContain("backOfficeFor({ role: auth.role, level: auth.level, switches })");
   });
 });

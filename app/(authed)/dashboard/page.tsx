@@ -587,6 +587,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             language={language}
             actorLevel={auth.level}
             selectedLocationId={selectedLocation?.id ?? null}
+            actorRole={auth.role}
           />
         </div>
 

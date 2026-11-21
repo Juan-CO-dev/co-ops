@@ -106,6 +106,9 @@ const JOB_LABELS = new Set<string>([
   "assignments.editClosing", // "Edit closing checklist" → the closing template
   "dashboard.yesterday.cta", // finish yesterday's close
   "reports.business.hub_open", // "Open the business report"
+  "admin.backoffice.job.add_person", // "Add a person" → Staff accounts (nav PR 4, the Back office jobs row)
+  "admin.backoffice.job.change_par", // "Change a par" → Par levels
+  "admin.backoffice.job.edit_checklist", // "Edit a checklist" → Checklists and prep lists
 ]);
 
 /**

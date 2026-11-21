@@ -6,6 +6,11 @@ import type { RoleCode } from "@/lib/roles";
  * Admin section registry: the /admin hub's cards. The one source of truth is the destination list
  * (lib/nav/destinations.ts, nav PR 3); ADMIN_SECTIONS below is derived from it, field for field as before.
  *
+ * Since nav PR 4 the /admin page no longer renders these cards: it reads its jobs and grouped rows from
+ * lib/nav/back-office.ts. ADMIN_SECTIONS and adminSectionsFor stay as PR 3's derived adapter (the tests that read
+ * them, and the legacy snapshot), and tests/back-office-parity.test.ts binds the grouped rows to them: every role
+ * sees exactly the pages it saw as cards.
+ *
  * minLevel derives from the canonical permission key in lib/permissions.ts
  * where one models the section (admin.users 8, checklist.template.write 7,
  * vendor.items.write 6, par_levels.write 7, admin.locations 9). `audit` has

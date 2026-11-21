@@ -4,6 +4,7 @@
  * nested admin, catering sub-hub, dynamic segments, unknown → /dashboard,
  * /admin root → /dashboard, query-agnostic matching.
  */
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 
 import { parentFor, DEFAULT_PARENT } from "@/lib/nav-parents";
@@ -141,5 +142,38 @@ describe("parentFor — scheduling and stations (links audit)", () => {
     expect(parentFor("/schedule")).toEqual({ href: "/admin", labelKey: "admin.back_to_hub" });
     expect(parentFor("/schedule/settings")).toEqual({ href: "/schedule", labelKey: "schedule.page.title" });
     expect(parentFor("/stations")).toEqual({ href: "/assignments", labelKey: "nav.assignments" });
+  });
+});
+
+describe("parentFor — nav PR 4: the sub-pages with two back links (spec section 9, lead decision 8)", () => {
+  it("each sub-page goes back to its own parent, named by the parent's one name", () => {
+    expect(parentFor("/admin/customers/consent")).toEqual({ href: "/admin/customers", labelKey: "customers.title" });
+    expect(parentFor("/admin/marketing/ad-codes")).toEqual({ href: "/admin/marketing", labelKey: "marketing.title" });
+    expect(parentFor("/admin/demand-signals/sources")).toEqual({ href: "/admin/demand-signals", labelKey: "signals.title" });
+  });
+
+  it("the other two Customers sub-pages (Catering accounts, a customer's detail) go back to Customers too", () => {
+    expect(parentFor("/admin/customers/catering")).toEqual({ href: "/admin/customers", labelKey: "customers.title" });
+    expect(parentFor("/admin/customers/6f1d2c3e-0000-4000-8000-00000000000a")).toEqual({ href: "/admin/customers", labelKey: "customers.title" });
+  });
+
+  it("the three parents themselves still go one level up, to the Back office", () => {
+    for (const p of ["/admin/customers", "/admin/marketing", "/admin/demand-signals"]) expect(parentFor(p).href, p).toBe("/admin");
+  });
+
+  it("the pages draw no hand-made link to their parent; the admin layout still draws the registry's", () => {
+    const read = (f: string) => readFileSync(f, "utf8");
+    for (const f of ["app/admin/customers/consent/page.tsx", "app/admin/customers/catering/page.tsx", "app/admin/customers/[id]/page.tsx"]) {
+      expect(read(f), f).not.toMatch(/href="\/admin\/customers"/);
+      expect(read(f), f).not.toContain("customers.back");
+    }
+    expect(read("app/admin/marketing/ad-codes/page.tsx")).not.toMatch(/copy\.back|href="\/admin\/marketing"/);
+    expect(read("lib/marketing/ad-code-copy.ts")).not.toContain("marketing.adcodes.back");
+    expect(read("app/admin/demand-signals/sources/page.tsx")).not.toMatch(/signals\.sources\.back|href="\/admin\/demand-signals"/);
+    expect(read("app/admin/layout.tsx")).toContain("<BackLink />");
+    for (const dict of ["lib/i18n/en.json", "lib/i18n/es.json"]) {
+      const keys = Object.keys(JSON.parse(read(dict)) as Record<string, string>);
+      for (const k of ["customers.back", "marketing.adcodes.back", "signals.sources.back"]) expect(keys, `${dict} ${k}`).not.toContain(k);
+    }
   });
 });

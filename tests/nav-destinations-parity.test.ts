@@ -4,9 +4,9 @@
  *    their order lists name real destinations, and the resolver agrees with each legacy filter where both apply.
  *
  * 4.9: the list mirrors the two registries it does not own yet.
- *  - Parent: every destination's `parent` is today's back link (lib/nav-parents.ts). No exceptions; the known
- *    back-link bugs (spec section 9: Marketing consent and Demand signals' Sources point at the hub) are mirrored as
- *    they are, and PR 4 fixes the registry and the list together.
+ *  - Parent: every destination's `parent` is today's back link (lib/nav-parents.ts). No exceptions. (Nav PR 4 fixed
+ *    the spec section 9 back links in the registry and the list together: Marketing consent, Catering accounts and
+ *    Demand signals' Sources now go back to their own parent.)
  *  - Shop: every route in the shop-parameter contract (lib/shop-context-shared.ts) is a destination that takes a
  *    shop; a destination that takes a shop is in the contract or its page reads `location` itself. The chips'
  *    `legacy.chipScoped` is not compared: /catering, /lto and /reports/trends carry ?location= today without
@@ -88,9 +88,10 @@ describe("4.9 parity with the back-link registry", () => {
     expect(DESTINATIONS.filter((d) => d.parent === undefined).map((d) => d.id)).toEqual(["dashboard"]);
   });
 
-  it("the spec section 9 back-link bugs are mirrored, not fixed (PR 4)", () => {
-    expect(byId("customers-consent").parent).toBe("admin");
-    expect(byId("demand-signals-sources").parent).toBe("admin");
+  it("nav PR 4: the spec section 9 sub-pages point at their own parent (the bugs are fixed, not mirrored)", () => {
+    expect(byId("customers-consent").parent).toBe("customers");
+    expect(byId("customers-catering").parent).toBe("customers");
+    expect(byId("demand-signals-sources").parent).toBe("demand-signals");
   });
 });
 

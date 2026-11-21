@@ -21,7 +21,9 @@ const FIXED_SITES = [
   "lib/maintenance.ts",
   "app/admin/customers/consent/page.tsx",
   "app/admin/customers/page.tsx",
-  "app/admin/page.tsx",
+  // Nav PR 4: the hub's cron dates moved to the Back office component; its "today" comparison to the checks module.
+  "components/admin/back-office/BackOfficeHub.tsx",
+  "lib/admin/back-office-shared.ts",
   "components/admin/skus/SkuLocationOverlay.tsx",
   "components/admin/weights/WeightBoardClient.tsx",
   "components/catering/InsightsClient.tsx",

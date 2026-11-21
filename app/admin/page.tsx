@@ -1,43 +1,28 @@
 /**
- * /admin hub (C.44 Module 1) — card grid of admin sections the viewer can
- * reach. Renders inside app/admin/layout.tsx (auth + role gate + chrome).
- * Re-calls requireSessionFromHeaders for typed auth access (the C.39 pattern;
- * ~5ms duplicate cost is accepted vs prop-drilling from the layout).
+ * /admin, the Back office (C.44 Module 1; grouped by nav PR 4, nav spec r5 section 5). Renders inside
+ * app/admin/layout.tsx (auth + role gate + chrome). Re-calls requireSessionFromHeaders for typed auth access (the C.39
+ * pattern; ~5ms duplicate cost is accepted vs prop-drilling from the layout).
+ *
+ * This page reads; BackOfficeHub (components/admin/back-office) draws. It reads the session, the `?denied=` notice,
+ * the two switches the Back office needs and today's health loaders, each only for a viewer allowed its check. The
+ * loaders run side by side and each fails SOFT: a rejected read is `failed` (shown as Unavailable, never as a zero),
+ * so no loader can take the page down. Rows and jobs come from lib/nav/back-office.ts, by each destination's own rule,
+ * for the session's trusted role.
  */
 
 import { listVendorMail } from "@/lib/vendor-mail";
 import { vendorMailRoleAllowed } from "@/lib/vendor-mail-shared";
 import { countNotReady } from "@/lib/admin/readiness-load";
-import { readinessWhereEntries, type ReadinessByScope } from "@/lib/admin/readiness-scope-shared";
-import { loadCronHealth, loadInboundHealth, type InboundHealth, type CronHealth } from "@/lib/admin/ops-health";
-import { InboundHealthPanel } from "@/components/admin/InboundSettings";
+import { loadCronHealth, loadInboundHealth } from "@/lib/admin/ops-health";
 import { canManageInboundAliases } from "@/lib/admin/inbound-settings-shared";
-import { cronRunFailureTotal } from "@/lib/admin/ops-health-shared";
 import { loadWeekCard } from "@/lib/admin/week-card";
 import {
-  cellIsZero,
-  ranAllWeek,
-  WEEK_DETAIL_AREAS,
-  WEEK_SUMMARY_AREAS,
-  weekHasJobAlert,
-  weekHasPeopleActivity,
-  type ShopWeek,
-  type WeekArea,
-  type WeekCard,
-  type WeekCell,
-} from "@/lib/admin/week-card-shared";
-import { adminSectionsFor } from "@/lib/admin/sections";
-import { serverT } from "@/lib/i18n/server";
-import { formatDateLabel, formatQuantity } from "@/lib/i18n/format";
+  READINESS_SECTIONS, inboxCheck, notReadyChecks, salesPullCheck, vendorMailCheck, type Read,
+} from "@/lib/admin/back-office-shared";
+import { backOfficeFor } from "@/lib/nav/back-office";
 import { requireSessionFromHeaders } from "@/lib/session";
-import type { Language } from "@/lib/i18n/types";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { AlertPill } from "@/components/ui/AlertPill";
-import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
-import { marketingTileVisible } from "@/lib/marketing/access-shared";
-import { canViewDemandSignals } from "@/lib/demand-signals/access-shared";
 import { demandSignalsEnabled } from "@/lib/demand-signals/config-shared";
-import { etDisplayDate } from "@/lib/operational-day";
+import { BackOfficeHub } from "@/components/admin/back-office/BackOfficeHub";
 
 const DENIED_KEYS = {
   users: "admin.hub.denied.users",
@@ -45,357 +30,52 @@ const DENIED_KEYS = {
   rate_rules: "admin.hub.denied.rate_rules",
 } as const;
 
+/** A loader as a Read that never rejects: a rejection is logged and becomes `failed`, never a value. */
+function settle<T>(p: Promise<T>, what: string): Promise<Read<T>> {
+  return p.then(
+    (value): Read<T> => ({ state: "ok", value }),
+    (e: unknown): Read<T> => {
+      console.error(`hub ${what} failed (rendering it as Unavailable)`, e);
+      return { state: "failed" };
+    },
+  );
+}
+
 export default async function AdminHubPage({ searchParams }: { searchParams: Promise<{ denied?: string }> }) {
   const auth = await requireSessionFromHeaders("/admin");
   // A level-8 page (users · pricing · rate rules) sends a GM here with ?denied= instead of
   // bouncing to the dashboard with no message (guide-walk finding, 2026-09-08).
   const { denied } = await searchParams;
   const deniedKey = denied && denied in DENIED_KEYS ? DENIED_KEYS[denied as keyof typeof DENIED_KEYS] : null;
-  const lang = auth.user.language;
-  const sections = adminSectionsFor(auth.level, auth.role);
+  // The switches the rows need (BACK_OFFICE_SWITCHES). MARKETING_SCORECARD === "1" is the old hand tile's own test.
+  const switches = { demandSignals: demandSignalsEnabled(process.env.DEMAND_SIGNALS), marketingScorecard: process.env.MARKETING_SCORECARD === "1" };
+  const office = backOfficeFor({ role: auth.role, level: auth.level, switches });
 
-  const wantsCounts = sections.some(
-    (s) => s.id === "skus" || s.id === "recipes" || s.id === "items",
-  );
-  let counts: Record<string, number> = {};
-  let byScope: ReadinessByScope[] = [];
-  if (wantsCounts) {
-    try {
-      const c = await countNotReady(auth);
-      counts = { skus: c.skus, recipes: c.recipes, items: c.items };
-      byScope = c.byScope;
-    } catch (e) {
-      console.error("hub readiness counts failed (rendering without pills)", e);
-    }
-  }
+  // Each check is read only for a viewer shown it (today's panels' rules): readiness for a viewer with a SKU, recipe or
+  // prep item row; vendor mail for GM and MoO+; inbound mail for MoO+.
+  const shown = new Set(office.groups.flatMap((g) => g.rows.map((r) => r.id)));
+  const readiness = new Set(READINESS_SECTIONS.filter((s) => shown.has(s)));
+  const [counts, vendorMail, inbound, cron, week] = await Promise.all([
+    readiness.size > 0 ? settle(countNotReady(auth), "readiness counts") : null,
+    vendorMailRoleAllowed(auth.user.role)
+      ? settle(listVendorMail(auth, { stale: true }).then((v) => v.reconciliation.stale_count), "vendor mail") : null,
+    canManageInboundAliases(auth.user.role) ? settle(loadInboundHealth(auth), "inbound health") : null,
+    settle(loadCronHealth(), "cron health"),
+    // "This week in CO-OPS": the shops side by side, bound to the shops this viewer may read.
+    settle(loadWeekCard({ role: auth.role, locations: auth.locations, level: auth.level }), "week card"),
+  ]);
 
-  // Ops-health cards (derive-on-read over audit_log). Each fails SOFT — an ops signal
-  // must never take down the admin hub (mirrors the readiness-counts posture above).
-  let cronHealth: CronHealth | null = null;
-  let inboundHealth: InboundHealth | null = null;
-  let vendorMailStale: number | null = null;
-  if (vendorMailRoleAllowed(auth.user.role)) {
-    try { vendorMailStale = (await listVendorMail(auth, { stale: true })).reconciliation.stale_count; }
-    catch { /* Unknown is shown explicitly, never as a green zero. */ }
-  }
-  if (canManageInboundAliases(auth.user.role)) {
-    try { inboundHealth = await loadInboundHealth(auth); }
-    catch { console.error("hub inbound health failed (rendering without card)"); }
-  }
-  try {
-    cronHealth = await loadCronHealth();
-  } catch (e) {
-    console.error("hub cron health failed (rendering without card)", e);
-  }
-  // "This week in CO-OPS" — the shops side by side, bound to the shops this viewer may read.
-  let week: WeekCard | null = null;
-  try {
-    week = await loadWeekCard({ role: auth.role, locations: auth.locations, level: auth.level });
-  } catch (e) {
-    console.error("hub week card failed (rendering without card)", e);
-  }
+  const sales = salesPullCheck(cron);
+  const checks = [
+    sales,
+    ...(inbound ? [inboxCheck(inbound)] : []),
+    ...(vendorMail ? [vendorMailCheck(vendorMail)] : []),
+    ...(counts ? notReadyChecks(counts, readiness) : []),
+  ];
 
   return (
-    <div>
-      <PageHeader
-        title={serverT(lang, "admin.hub.heading")}
-        subtitle={serverT(lang, "admin.hub.subtitle")}
-      />
-      {deniedKey ? (
-        <p role="status" className="mt-3 rounded-lg border-2 border-co-border bg-co-surface-inset px-3 py-2 text-sm text-co-text">
-          {serverT(lang, deniedKey)}
-        </p>
-      ) : null}
-
-      <CronHealthCard health={cronHealth} lang={lang} />
-      {vendorMailRoleAllowed(auth.user.role) && <a href="/operations/vendor-mail?stale=1" className="co-card mt-4 flex min-h-[44px] flex-wrap items-center gap-2 p-4">{serverT(lang, "vendorMail.health")} <strong className={vendorMailStale ? "text-red-700" : ""}>{vendorMailStale === null ? serverT(lang, "vendorMail.unknown") : vendorMailStale}</strong></a>}
-      {inboundHealth ? <InboundHealthPanel health={inboundHealth} /> : null}
-      <WeekInCoopsCard card={week} lang={lang} />
-
-      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {marketingTileVisible(auth.role, process.env.MARKETING_SCORECARD) && <a href="/admin/marketing" className="co-card co-card-interactive flex min-h-[44px] items-center p-4 text-base font-bold text-co-text">{serverT(lang, "marketing.title")}</a>}
-        {/* Item 4 PR 5: the demand signals page. Hidden unless DEMAND_SIGNALS=1; GM and MoO+ by trusted role. */}
-        {demandSignalsEnabled(process.env.DEMAND_SIGNALS) && canViewDemandSignals(auth.role) && <a href="/admin/demand-signals" className="co-card co-card-interactive flex min-h-[44px] items-center p-4 text-base font-bold text-co-text">{serverT(lang, "signals.title")}</a>}
-        {sections.map((s) =>
-          s.comingSoon ? (
-            // Honest muted card — the section is planned and not built (its route
-            // holds a one-sentence planned page), so the hub does not pretend it
-            // links anywhere (council convergence 4; mirrors checklist-templates
-            // deep_cleaning). No <a>, aria-disabled.
-            <div
-              key={s.id}
-              aria-disabled="true"
-              className="co-card flex cursor-default items-center justify-between p-4 opacity-60"
-            >
-              <span className="text-base font-bold text-co-text-muted">
-                {serverT(lang, s.i18nKey)}
-              </span>
-              <span className="text-sm text-co-text-muted">
-                {serverT(lang, "planned.label")}
-              </span>
-            </div>
-          ) : (
-            <div key={s.id} className="flex flex-col gap-1">
-              <a
-                href={s.href}
-                className="co-card co-card-interactive p-4 text-base font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
-              >
-                {serverT(lang, s.i18nKey)}
-                {s.id === "sandwiches" && <span className="mt-1 block text-sm font-normal text-co-text-muted">{serverT(lang, "admin.sandwiches.subtitle")}</span>}
-                {(counts[s.id] ?? 0) > 0 ? (
-                  <AlertPill tone="danger" uppercase={false} className="ml-2">
-                    {serverT(lang, "readiness.hub.count", { count: counts[s.id]! })}
-                  </AlertPill>
-                ) : null}
-              </a>
-              {(s.id === "skus" || s.id === "recipes" || s.id === "items") && (counts[s.id] ?? 0) > 0 && byScope.length > 0 ? (
-                // "1 in the default · 2 at P Street" (catalog Phase 3b lead decision): each shop by NAME, each entry
-                // linking to that scope's list; the row wraps at 375px.
-                <ul className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-sm" aria-label={serverT(lang, "readiness.hub.where")}>
-                  {readinessWhereEntries(s.id, s.href, byScope).map((e, i) => (
-                    <li key={e.scope ?? "global"} className="flex items-center gap-x-2">
-                      {i > 0 ? <span aria-hidden="true" className="text-co-text-muted">·</span> : null}
-                      <a href={e.href}
-                        className="inline-flex min-h-[44px] items-center font-bold text-co-text underline">
-                        {serverT(lang, e.key, e.params)}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          ),
-        )}
-      </div>
-    </div>
+    <BackOfficeHub view={{
+      lang: auth.user.language, now: new Date().toISOString(), deniedKey, office, checks, sales, cron, vendorMail, inbound, week,
+    }} />
   );
-}
-
-/**
- * Cron-failure visibility (Ops guardrails NOW #3). Renders ONLY when there is something
- * to say: a recent (≤48h) toast-sales-pull failure → a danger AlertPill line; else, if
- * the last run swallowed a per-location failure → a warn line naming how many steps
- * failed; else, if the cron has ever succeeded, a quiet "last run OK <date>" heartbeat.
- * DORMANT (never run) → renders nothing (no false alarm before Toast creds land).
- *
- * THE MIDDLE STATE IS THE POINT (wiring audit 2026-08-29). The cron writes one
- * `cron.success` row per run whatever happened to the individual locations, so a night
- * where a shop's whole sales pull died — no depletion ledger, no par run, a frozen
- * watermark — used to land in the quiet OK line below, indefinitely. Three states, not
- * two: failed · ran-with-failures · OK.
- */
-function CronHealthCard({ health, lang }: { health: CronHealth | null; lang: Language }) {
-  if (!health) return null;
-  if (health.hasRecentFailure) {
-    const dateLabel = health.lastFailureAt ? formatDateLabel(etDisplayDate(health.lastFailureAt), lang) : "";
-    return (
-      <div className="co-card mt-5 flex flex-col gap-1 border-2 border-co-danger-surface p-4">
-        <div className="flex items-center gap-2">
-          <AlertPill tone="danger" uppercase={false}>
-            {serverT(lang, "admin.hub.cron.failed")}
-          </AlertPill>
-          <span className="text-sm font-bold text-co-text">
-            {serverT(lang, "admin.hub.cron.failed_line", { date: dateLabel })}
-          </span>
-        </div>
-        {health.lastFailureError ? (
-          <p className="text-xs text-co-text-muted break-words">{health.lastFailureError}</p>
-        ) : null}
-      </div>
-    );
-  }
-  if (health.lastSuccessAt && health.lastRunDegraded) {
-    return (
-      <div className="co-card mt-5 flex flex-col gap-1 border-2 border-co-warning-surface p-4">
-        <div className="flex items-center gap-2">
-          <AlertPill tone="warn" uppercase={false}>
-            {serverT(lang, "admin.hub.cron.degraded")}
-          </AlertPill>
-          <span className="text-sm font-bold text-co-text">
-            {serverT(lang, "admin.hub.cron.degraded_line", {
-              date: formatDateLabel(etDisplayDate(health.lastSuccessAt), lang),
-              count: cronRunFailureTotal(health.lastRunFailures),
-            })}
-          </span>
-        </div>
-      </div>
-    );
-  }
-  if (health.lastSuccessAt) {
-    return (
-      <p className="mt-4 text-xs text-co-text-dim">
-        {serverT(lang, "admin.hub.cron.ok_line", { date: formatDateLabel(etDisplayDate(health.lastSuccessAt), lang) })}
-      </p>
-    );
-  }
-  return null;
-}
-
-
-/**
- * "This week in CO-OPS" (B11a-admin; replaced "Used this week"). One column per shop the
- * viewer may read, rows grouped by area. Where every number comes from is documented in
- * lib/admin/week-card.ts; what each one means is decided (and tested) in week-card-shared.ts.
- *
- * Disclosure (docs/DISCLOSURE_DOCTRINE.md): the summary rows are always visible; the
- * breakdown (role bands, checklist types, where automatic catering came from) is a
- * default-collapsed CollapsibleSection with an i18n'd count (D3, D5). A failed automatic
- * job is an alert: it renders in the danger TEXT role on the summary and never hides (D2).
- * A week where no PERSON did anything collapses the whole card, as the old card did,
- * unless a job failed.
- *
- * Phone: the table scrolls inside its own container when the shops outgrow the width — the
- * page body never scrolls sideways.
- */
-function WeekInCoopsCard({ card, lang }: { card: WeekCard | null; lang: Language }) {
-  if (!card) return null;
-  const peopleInShops = card.shops.reduce((n, s) => n + s.people.total, 0);
-  const checklistsStarted = card.shops.reduce((n, s) => n + s.checklistsTotal.started, 0);
-  const body = (
-    <>
-      <p className="text-xs text-co-text-dim">{serverT(lang, "admin.hub.week.window")}</p>
-      <p className="mt-1 text-sm font-bold text-co-text">
-        {serverT(lang, "admin.hub.week.people_line", { n: formatQuantity(card.overallPeople, lang) })}
-      </p>
-      <div className="mt-2">
-        <WeekTable areas={WEEK_SUMMARY_AREAS} shops={card.shops} lang={lang} />
-      </div>
-      {card.shops.length > 1 ? (
-        <p className="mt-2 text-xs text-co-text-dim">{serverT(lang, "admin.hub.week.people_note")}</p>
-      ) : null}
-      <div className="mt-3">
-        <CollapsibleSection
-          idBase="admin-hub-week-details"
-          title={serverT(lang, "admin.hub.week.details")}
-          count={serverT(lang, "admin.hub.week.details_count", {
-            people: formatQuantity(peopleInShops, lang),
-            checklists: formatQuantity(checklistsStarted, lang),
-          })}
-          defaultOpen={false}
-        >
-          <WeekTable areas={WEEK_DETAIL_AREAS} shops={card.shops} lang={lang} />
-        </CollapsibleSection>
-      </div>
-    </>
-  );
-
-  if (!weekHasPeopleActivity(card) && !weekHasJobAlert(card)) {
-    return (
-      <div className="mt-4">
-        <CollapsibleSection
-          idBase="admin-hub-week"
-          title={serverT(lang, "admin.hub.week.title")}
-          count={serverT(lang, "admin.hub.week.all_quiet")}
-          defaultOpen={false}
-        >
-          {body}
-        </CollapsibleSection>
-      </div>
-    );
-  }
-
-  return (
-    <section className="co-card mt-4 p-4" aria-labelledby="admin-hub-week-title">
-      <h2 id="admin-hub-week-title" className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">
-        {serverT(lang, "admin.hub.week.title")}
-      </h2>
-      <div className="mt-2">{body}</div>
-    </section>
-  );
-}
-
-/**
- * Label column + one column per shop. The rem min-width keeps each shop column readable;
- * past the card's width the wrapper scrolls (inside the card, never the page).
- */
-function WeekTable({ areas, shops, lang }: { areas: readonly WeekArea[]; shops: ShopWeek[]; lang: Language }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full table-fixed border-collapse text-sm" style={{ minWidth: `${9 + shops.length * 6}rem` }}>
-        <caption className="sr-only">{serverT(lang, "admin.hub.week.caption")}</caption>
-        <colgroup>
-          <col />
-          {shops.map((s) => (
-            <col key={s.shopId} className="w-24 sm:w-32" />
-          ))}
-        </colgroup>
-        <thead>
-          <tr>
-            <th scope="col" className="text-left">
-              <span className="sr-only">{serverT(lang, "admin.hub.week.activity")}</span>
-            </th>
-            {shops.map((s) => (
-              <th
-                key={s.shopId}
-                scope="col"
-                className="pb-1 pl-2 text-right align-bottom text-xs font-bold break-words text-co-text"
-              >
-                {s.shopName}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        {areas.map((area) => (
-          <tbody key={area.id}>
-            <tr>
-              <th
-                scope="colgroup"
-                colSpan={shops.length + 1}
-                className="pt-3 pb-1 text-left text-xs font-bold tracking-wide text-co-text-muted"
-              >
-                {serverT(lang, area.labelKey)}
-              </th>
-            </tr>
-            {area.rows.map((row) => (
-              <tr key={row.id} className="border-t border-co-border">
-                <th
-                  scope="row"
-                  className={`py-1.5 pr-2 text-left font-normal ${area.automatic ? "text-co-text-muted" : "text-co-text"}`}
-                >
-                  {serverT(lang, row.labelKey)}
-                </th>
-                {shops.map((s) => (
-                  <td key={s.shopId} className="py-1.5 pl-2 text-right">
-                    <WeekValue cell={row.cell(s)} lang={lang} />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        ))}
-      </table>
-    </div>
-  );
-}
-
-/** Zero renders "0" muted (as the old card did); an alert renders in the danger TEXT role. */
-function WeekValue({ cell, lang }: { cell: WeekCell; lang: Language }) {
-  if (cell.kind === "days") {
-    // A job's health line: "Ran all week" / "Ran 6 of 7 days", plus "· N failed" (danger text).
-    const ran = ranAllWeek(cell)
-      ? serverT(lang, "admin.hub.week.ran_all")
-      : serverT(lang, "admin.hub.week.ran_days", { ran: formatQuantity(cell.ran, lang), of: formatQuantity(cell.of, lang) });
-    return (
-      <span className="font-bold tabular-nums">
-        <span className={ranAllWeek(cell) ? "text-co-text" : "text-co-warning-text"}>{ran}</span>
-        {cell.failed > 0 ? (
-          <span className="block text-co-cta-text">
-            {serverT(lang, "admin.hub.week.failed_suffix", { n: formatQuantity(cell.failed, lang) })}
-          </span>
-        ) : null}
-      </span>
-    );
-  }
-  const tone =
-    cell.kind === "count" && cell.alert ? "text-co-cta-text" : cellIsZero(cell) ? "text-co-text-dim" : "text-co-text";
-  const text =
-    cell.kind === "count"
-      ? formatQuantity(cell.n, lang)
-      : cell.total === 0
-        ? formatQuantity(0, lang)
-        : serverT(lang, "admin.hub.week.of", {
-            done: formatQuantity(cell.done, lang),
-            total: formatQuantity(cell.total, lang),
-          });
-  return <span className={`font-bold tabular-nums ${tone}`}>{text}</span>;
 }

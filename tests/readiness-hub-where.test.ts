@@ -32,10 +32,13 @@ describe("hub readiness, attributed per shop", () => {
       .toEqual([`/admin/items?view=registry&location=${LOC}`, `/admin/items?view=registry&location=${LOC2}`]);
   });
   it("the hub renders the entries with a dot between them, every link 44px", () => {
-    const src = readFileSync("app/admin/page.tsx", "utf8");
-    expect(src).toContain("readinessWhereEntries(s.id, s.href, byScope)");
+    // Nav PR 4: the entries are worded in the Needs attention module and drawn by the Back office component.
+    expect(readFileSync("lib/admin/back-office-shared.ts", "utf8")).toContain("readinessWhereEntries(s, d.route, r.value.byScope)");
+    const src = readFileSync("components/admin/back-office/BackOfficeHub.tsx", "utf8");
     expect(src).toMatch(/<span aria-hidden="true"[^>]*>·<\/span>/);
     expect(src).toContain("inline-flex min-h-[44px] items-center font-bold text-co-text underline");
-    expect(src).not.toMatch(/["'](EM|MEP)["']/);
+    for (const f of ["app/admin/page.tsx", "lib/admin/back-office-shared.ts", "components/admin/back-office/BackOfficeHub.tsx"]) {
+      expect(readFileSync(f, "utf8"), f).not.toMatch(/["'](EM|MEP)["']/);
+    }
   });
 });

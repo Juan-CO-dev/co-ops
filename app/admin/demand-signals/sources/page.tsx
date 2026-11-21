@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SourcesClient, type SourcesView } from "@/components/admin/demand-signals/SourcesClient";
 import { canMarkSource } from "@/lib/demand-signals/access-shared";
@@ -40,7 +39,6 @@ export default async function DemandSourcesPage() {
   return <div className="space-y-4">
     <h1 className="text-2xl font-bold text-co-text">{serverT(language, "signals.sources.title")}</h1>
     <p className="text-co-text-muted">{serverT(language, "signals.sources.intro")}</p>
-    <Link href="/admin/demand-signals" className="inline-flex min-h-[44px] items-center font-bold text-co-text underline">{serverT(language, "signals.sources.back")}</Link>
     {view === "unavailable" && <p className="co-card p-4 text-co-text-muted">{serverT(language, "signals.state.unavailable")}</p>}
     {view === "unreadable" && <p role="alert" className="co-card p-4 font-bold text-co-cta-text">{serverT(language, "signals.state.unreadable")}</p>}
     {typeof view === "object" && <SourcesClient view={view} />}
