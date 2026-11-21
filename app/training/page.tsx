@@ -17,6 +17,7 @@
 
 import Link from "next/link";
 
+import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { BackLink } from "@/components/nav/BackLink";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { GuideReader, type GuideTab } from "@/components/training/GuideReader";
@@ -25,7 +26,7 @@ import { loadGuide } from "@/lib/guides/content";
 import type { GuideSlug } from "@/lib/guides/markdown-shared";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { requireSessionFromHeaders } from "@/lib/session";
+import { requireSessionFromHeaders, sessionIdleMinutes } from "@/lib/session";
 import { BUILD_DEFS, learnTheBuildHref } from "@/lib/training/build-card-shared";
 import type { Language } from "@/lib/i18n/types";
 
@@ -91,6 +92,8 @@ export default async function TrainingPage({
   if (!initialGuide) {
     return (
       <TranslationProvider initialLanguage={lang}>
+        {/* Outside both layouts that mount the idle guard, so the page mounts it itself (nav spec r5 §9). */}
+        <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} />
         <div className="mx-auto w-full max-w-3xl p-3 pb-8">
           <BackLink hrefOverride="/dashboard" labelKey="nav.dashboard" />
           <h1 className="m-0 mb-2 text-base font-bold text-co-text">{title}</h1>
@@ -117,6 +120,8 @@ export default async function TrainingPage({
     // BackLink is a client component and reads the translation context; the
     // reader itself takes pre-translated props and needs none of it.
     <TranslationProvider initialLanguage={lang}>
+      {/* Outside both layouts that mount the idle guard, so the page mounts it itself (nav spec r5 §9). */}
+      <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} />
       <div className="mx-auto w-full max-w-3xl px-3 pt-3">
         <BackLink hrefOverride="/dashboard" labelKey="nav.dashboard" />
         <LearnTheBuildEntry lang={lang} />
