@@ -9,9 +9,12 @@
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it, vi } from "vitest";
 import { AssignmentError, loadStationDayFlags, saveStationNotPhase } from "@/lib/assignments";
+import { notPhaseSections, pickEffectiveClosingTemplate, type ClassificationItem, type ClosingTemplateRow } from "@/lib/day-plan-load-shared";
 import { fakeSupabase } from "./helpers/fake-supabase";
 import { pgliteClient } from "./helpers/pglite-postgrest";
-import { CLOSING_MANAGER, id, LIVE_SECTIONS, liveShop, merge, readMigration, SCHEMA, seed, SHOP_C, SHOP_P } from "../scripts/sql-harness-0353-lib.mjs";
+import {
+  CLOSING_MANAGER, id, LIVE_SECTIONS, liveShop, merge, readMigration, SCHEMA, seed, SHOP_C, SHOP_P, twinShapes, versionShop,
+} from "../scripts/sql-harness-0353-lib.mjs";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 
@@ -77,4 +80,60 @@ describe("the writers before the apply", () => {
     expect(err).toBeInstanceOf(AssignmentError);
     expect(err).toMatchObject({ code: "station_flags_unavailable", status: 503 });
   });
+});
+
+// ── The twin test: the code rule (S3a + notPhaseSections) = the 0353 backfill, on the same rows ─────────────────────
+
+const TODAY = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+
+/** The code rule over the database's rows: the effective closing template's ACTIVE items → the not-phase names. */
+async function codeRule(db: PGlite, shop: string): Promise<Set<string>> {
+  const templates = (await db.query<ClosingTemplateRow>("select id, type, active, effective_from::text as effective_from, created_at::text as created_at from checklist_templates where location_id = $1 and type = 'closing' and active", [shop])).rows;
+  const effective = pickEffectiveClosingTemplate(templates, TODAY);
+  if (effective === null) return new Set();
+  const items = (await db.query<ClassificationItem>("select station, active, report_reference_type from checklist_template_items where template_id = $1 and active", [effective])).rows;
+  const sections = notPhaseSections(items);
+  const names = (await db.query<{ name: string }>("select name from stations where location_id = $1", [shop])).rows.map((r) => r.name);
+  return new Set(names.filter((n) => sections.has(n)));
+}
+const backfilled = async (db: PGlite, shop: string) =>
+  new Set((await db.query<{ name: string }>("select name from stations where location_id = $1 and not_phase_station", [shop])).rows.map((r) => r.name));
+
+describe("twin: the code fallback equals the 0353 backfill", () => {
+  it("over every section shape (0 refs; 1 of 1; 1 of 7; 5 of 7; inactive only; retired only; future only; other shop only; spaced name; a ref-less Closing Manager)", async () => {
+    const { shapes, spec } = twinShapes();
+    const db = new PGlite();
+    try {
+      await db.exec(SCHEMA);
+      await seed(db, spec);
+      const before = { p: await codeRule(db, SHOP_P), c: await codeRule(db, SHOP_C) };
+      expect([...before.p].sort()).toEqual(shapes.filter((s) => s.expected).map((s) => s.name).sort());
+      await db.exec(M0353);
+      expect(await backfilled(db, SHOP_P)).toEqual(before.p);
+      expect(await backfilled(db, SHOP_C)).toEqual(before.c);
+      expect(before.c).toEqual(new Set(["Other shop ref only"]));
+    } finally { await db.close(); }
+  }, 60_000);
+
+  it("the live shape: Closing Manager at both shops, nothing else, before and after", async () => {
+    const db = await liveDb();
+    try {
+      const before = { p: await codeRule(db, SHOP_P), c: await codeRule(db, SHOP_C) };
+      expect(before).toEqual({ p: new Set([CLOSING_MANAGER]), c: new Set([CLOSING_MANAGER]) });
+      await db.exec(M0353);
+      expect({ p: await backfilled(db, SHOP_P), c: await backfilled(db, SHOP_C) }).toEqual(before);
+    } finally { await db.close(); }
+  }, 60_000);
+
+  it.each([["a", ["Closing Manager", "Expo Station"]], ["b", []]] as const)("ruling B1, V1 instance / V2 effective (%s): classified by V2, before and after", async (variant, want) => {
+    const db = new PGlite();
+    try {
+      await db.exec(SCHEMA);
+      await seed(db, versionShop(variant, { today: TODAY }));
+      const before = await codeRule(db, SHOP_P);
+      expect([...before].sort()).toEqual([...want].sort());
+      await db.exec(M0353);
+      expect(await backfilled(db, SHOP_P)).toEqual(before);
+    } finally { await db.close(); }
+  }, 60_000);
 });
