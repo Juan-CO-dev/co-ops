@@ -63,13 +63,17 @@ function StatePill({ state, lang }: { state: CheckState; lang: Language }) {
   return <AlertPill tone={TONE[state]} uppercase={false}>{serverT(lang, STATE_KEYS[state])}</AlertPill>;
 }
 
-/** A row's badge: "N not ready" on a readiness row, the state word on Vendor mail, "Unavailable" on a failed read. */
+/** A row's badge: "N not ready" on a readiness row, "N waiting" on Vendor mail, "Unavailable" on a failed read. */
 function rowBadge(rowId: string, checks: readonly AttentionCheck[], lang: Language): ReactNode {
   const id = ROW_CHECK[rowId];
   const c = id ? checks.find((x) => x.id === id) : undefined;
   if (!c || !needsAttention(c)) return null;
   if (c.state === "issue" && c.id.startsWith("not_ready_")) {
     return <AlertPill tone="danger" uppercase={false}>{serverT(lang, "readiness.hub.count", { count: c.count ?? 0 })}</AlertPill>;
+  }
+  if (c.state === "issue" && c.id === "vendor_mail" && typeof c.count === "number") {
+    const n = c.count;
+    return <AlertPill tone="danger" uppercase={false}>{serverT(lang, n === 1 ? "admin.backoffice.row.vendor_mail_waiting_one" : "admin.backoffice.row.vendor_mail_waiting_other", { n })}</AlertPill>;
   }
   return <StatePill state={c.state} lang={lang} />;
 }

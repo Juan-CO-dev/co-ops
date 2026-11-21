@@ -846,6 +846,8 @@
   "admin.backoffice.row.pm_criteria": "What managers grade on the PM report.",
   "admin.backoffice.row.shop_changes": "Recipes and menu settings a shop changed for itself.",
   "admin.backoffice.row.vendor_mail": "Invoices and order mail from vendors.",
+  "admin.backoffice.row.vendor_mail_waiting_one": "{n} waiting",
+  "admin.backoffice.row.vendor_mail_waiting_other": "{n} waiting",
   "admin.backoffice.row.locations": "The addresses each shop receives mail at.",
   "admin.backoffice.row.report_recipients": "Who gets the daily digests and reports.",
   "admin.backoffice.row.customers": "Who orders from us, and how often.",

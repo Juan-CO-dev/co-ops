@@ -12,7 +12,7 @@ import { byId } from "@/lib/nav/destinations";
 const EN = en as Record<string, string>;
 const ES = es as Record<string, string>;
 
-/** The 66 keys PR 4 adds (plan r2, 3.2), by block. */
+/** The 68 keys PR 4 adds (plan r2, 3.2, plus the Vendor mail count badge after Astra r1), by block. */
 const NEW_KEYS = {
   states: ["admin.backoffice.state.issue", "admin.backoffice.state.healthy", "admin.backoffice.state.unavailable", "admin.backoffice.state.not_enabled"],
   attention: [
@@ -40,6 +40,7 @@ const NEW_KEYS = {
   rows: [
     "admin.backoffice.row.schedule", "admin.backoffice.row.stations", "admin.backoffice.row.toast_employees", "admin.backoffice.row.sevenshifts",
     "admin.backoffice.row.people_reconcile", "admin.backoffice.row.pm_criteria", "admin.backoffice.row.shop_changes", "admin.backoffice.row.vendor_mail",
+    "admin.backoffice.row.vendor_mail_waiting_one", "admin.backoffice.row.vendor_mail_waiting_other",
     "admin.backoffice.row.locations", "admin.backoffice.row.report_recipients", "admin.backoffice.row.customers", "admin.backoffice.row.marketing",
     "admin.backoffice.row.audit",
   ],
@@ -49,9 +50,9 @@ const ALL = Object.values(NEW_KEYS).flat();
 const params = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
 
 describe("Back office keys, en and es", () => {
-  it("66 new keys, and they are every admin.backoffice.* key", () => {
-    expect(ALL).toHaveLength(66);
-    expect(new Set(ALL).size).toBe(66);
+  it("68 new keys, and they are every admin.backoffice.* key", () => {
+    expect(ALL).toHaveLength(68);
+    expect(new Set(ALL).size).toBe(68);
     expect(Object.keys(EN).filter((k) => k.startsWith("admin.backoffice.")).sort()).toEqual([...ALL].sort());
   });
 

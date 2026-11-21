@@ -846,6 +846,8 @@
   "admin.backoffice.row.pm_criteria": "Lo que los gerentes califican en el reporte PM.",
   "admin.backoffice.row.shop_changes": "Recetas y ajustes del menú que una tienda cambió para sí.",
   "admin.backoffice.row.vendor_mail": "Facturas y correos de pedidos de los proveedores.",
+  "admin.backoffice.row.vendor_mail_waiting_one": "{n} en espera",
+  "admin.backoffice.row.vendor_mail_waiting_other": "{n} en espera",
   "admin.backoffice.row.locations": "Las direcciones donde cada tienda recibe correo.",
   "admin.backoffice.row.report_recipients": "Quién recibe los resúmenes y reportes diarios.",
   "admin.backoffice.row.customers": "Quién nos compra y cada cuánto.",

@@ -23,7 +23,7 @@ const cron = (over: Partial<CronHealth> = {}): CronHealth => ({
 });
 const QUIET_WEEK: WeekCard = { shops: [], overallPeople: 0 } as unknown as WeekCard;
 
-function view(role: RoleCode, lang: Language, opts: {
+export function view(role: RoleCode, lang: Language, opts: {
   cron?: Read<CronHealth>; counts?: Read<NotReadyCounts>; vendorMail?: Read<number> | null; inbound?: Read<{ count: number; rows: [] }> | null;
   switches?: { demandSignals?: boolean; marketingScorecard?: boolean };
 }): BackOfficeHubView {

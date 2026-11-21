@@ -14,7 +14,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackOfficeHub } from "@/components/admin/back-office/BackOfficeHub";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
-import { FIXTURES } from "./fixtures/back-office-hub";
+import { FIXTURES, view } from "./fixtures/back-office-hub";
 
 // The retry panel needs the admin layout's providers (translation, step-up, router); it has its own tests.
 vi.mock("@/components/admin/InboundSettings", () => ({ InboundHealthPanel: () => null }));
@@ -115,5 +115,29 @@ describe("CollapsibleSection's description", () => {
     // eslint-disable-next-line react/no-children-prop -- a .ts test: the typed props require children
     const html = renderToStaticMarkup(createElement(CollapsibleSection, { idBase: "x", title: "T", count: "3", children: "b" }));
     expect(html).toBe('<section class="co-card p-0"><button type="button" aria-expanded="false" aria-controls="x" id="«R0»" class="flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-3 text-left"><span class="flex flex-wrap items-center gap-2"><span class="text-sm font-bold text-co-text">T</span><span class="text-xs text-co-text-muted">3</span></span><span aria-hidden="true" class="text-xs text-co-text-dim">▸</span></button></section>'.replace("«R0»", html.match(/id="([^"]+)"/)![1]!));
+  });
+});
+
+describe("Vendor mail row badge (Astra r1 P3)", () => {
+  const row = (n: number, lang: "en" | "es" = "en") => {
+    render(createElement(BackOfficeHub, { view: view("gm", lang, { vendorMail: { state: "ok", value: n } }) }));
+    // Ordering and stock is closed by default (only the first two visible groups open); open it to see its rows.
+    fireEvent.click(header(lang === "es" ? /^Pedidos e inventario/ : /^Ordering and stock/));
+    const el = document.querySelector('[data-backoffice-row="vendor-mail"]');
+    expect(el).not.toBeNull();
+    return el!.textContent ?? "";
+  };
+  it("shows the stale count, so 1 and 27 read differently", () => {
+    expect(row(1)).toContain("1 waiting");
+    cleanup();
+    const t27 = row(27);
+    expect(t27).toContain("27 waiting");
+    expect(t27).not.toContain("1 waiting");
+  });
+  it("in Spanish too", () => {
+    expect(row(27, "es")).toContain("27 en espera");
+  });
+  it("no badge when nothing waits", () => {
+    expect(row(0)).not.toMatch(/waiting/);
   });
 });
