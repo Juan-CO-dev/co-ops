@@ -12,7 +12,7 @@
  * which guides this role may read, parses only those, and hands the trees to the
  * client reader. /training sits outside the (authed) group, so there is no
  * TranslationProvider above it — every string crosses the boundary already
- * translated, as PlaceholderCard does for the remaining stubs.
+ * translated (the planned pages do the same: components/PlannedPage.tsx).
  */
 
 import Link from "next/link";

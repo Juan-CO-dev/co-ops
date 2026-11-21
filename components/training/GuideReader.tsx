@@ -6,8 +6,7 @@
  * DISPLAY-STRING CONTRACT (the CollapsibleSection contract, for the same
  * reason): every visible string arrives ALREADY TRANSLATED. /training sits
  * outside the (authed) route group, so there is no TranslationProvider above it
- * — the page runs serverT and hands the results down, exactly as PlaceholderCard
- * does for the stubs.
+ * — the page runs serverT and hands the results down.
  *
  * IT RENDERS NODES, NEVER MARKUP. The tree comes from lib/guides/markdown-shared
  * and every node becomes a React element here. There is no HTML string anywhere

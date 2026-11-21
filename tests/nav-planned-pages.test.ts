@@ -12,8 +12,11 @@ import es from "@/lib/i18n/es.json";
 import { ADMIN_SECTIONS } from "@/lib/admin/sections";
 import type { RoleCode } from "@/lib/roles";
 
-const h = vi.hoisted(() => ({ auth: vi.fn() }));
-vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); } }));
+const h = vi.hoisted(() => ({ auth: vi.fn(), path: "/" }));
+vi.mock("next/navigation", () => ({
+  redirect: (url: string) => { throw new Error(`redirect:${url}`); },
+  usePathname: () => h.path,
+}));
 vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: h.auth }));
 
 import AuditPage from "@/app/admin/audit/page";
@@ -90,6 +93,7 @@ describe("the seven planned pages are the feature's name and one honest sentence
     expect(src).toContain(`titleKey="${titleKey}"`);
     expect(src).not.toMatch(/\.ph\.|PlaceholderCard|features|shippingIn/);
 
+    h.path = route;
     for (const lang of ["en", "es"] as const) {
       h.auth.mockResolvedValue(session("cgs", 10, lang));
       const dict: Record<string, string> = lang === "en" ? en : es;
@@ -98,6 +102,9 @@ describe("the seven planned pages are the feature's name and one honest sentence
       expect(html).toContain(dict[titleKey]);
       expect(html).toContain(dict["planned.body"]);
       expect(html).not.toMatch(/Phase|Fase|Module|Módulo|<li/);
+      // Outside the admin shell the page draws the registry back link to the dashboard; inside it, the shell does.
+      if (route.startsWith("/admin/")) expect(html).not.toContain("href=");
+      else expect(html).toContain(`href="/dashboard"`);
     }
   });
 
@@ -109,5 +116,40 @@ describe("the seven planned pages are the feature's name and one honest sentence
     }
     // The one hub card naming a planned route is the muted, non-link audit card.
     expect(ADMIN_SECTIONS.filter((s) => PLANNED.some((p) => p.route === s.href)).map((s) => [s.id, s.comingSoon])).toEqual([["audit", true]]);
+  });
+});
+
+describe("the placeholder leftovers are gone (spec r5 §7.3)", () => {
+  const REMOVED_NAV = ["nav.announcements", "nav.tips", "nav.comms", "nav.ai", "nav.rollups", "nav.deep_cleaning", "nav.feedback"];
+
+  it("no *.ph.* key, no placeholder.coming_in and none of the seven orphan nav keys, in either language", () => {
+    for (const dict of [en, es] as Record<string, string>[]) {
+      expect(Object.keys(dict).filter((k) => k.includes(".ph."))).toEqual([]);
+      expect(Object.keys(dict).filter((k) => k === "placeholder.coming_in" || REMOVED_NAV.includes(k))).toEqual([]);
+    }
+  });
+
+  it("en and es carry exactly the same keys, and the planned keys the same {params}", () => {
+    expect(Object.keys(es).sort()).toEqual(Object.keys(en).sort());
+    const params = (v: string) => [...v.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+    for (const key of Object.keys(en).filter((k) => k.startsWith("planned."))) {
+      expect(params((es as Record<string, string>)[key]!), key).toEqual(params((en as Record<string, string>)[key]!));
+    }
+  });
+
+  it("the dead components are deleted and nothing names them or builds a .ph. key", async () => {
+    const { existsSync, readdirSync, statSync } = await import("node:fs");
+    expect(existsSync(join(ROOT, "components/PlaceholderCard.tsx"))).toBe(false);
+    expect(existsSync(join(ROOT, "components/trends/TrendsWidget.tsx"))).toBe(false);
+    const walk = (dir: string): string[] => readdirSync(join(ROOT, dir)).flatMap((name) => {
+      const path = `${dir}/${name}`;
+      return statSync(join(ROOT, path)).isDirectory() ? walk(path) : /\.(tsx?|mjs)$/.test(name) ? [path] : [];
+    });
+    const hits = ["app", "components", "lib"].flatMap(walk).filter((path) => {
+      const src = readFileSync(join(ROOT, path), "utf8");
+      return /<PlaceholderCard|from "@\/components\/PlaceholderCard"|TrendsWidget|\.ph\.|placeholder\.coming_in/.test(src)
+        || REMOVED_NAV.some((k) => src.includes(`"${k}"`));
+    });
+    expect(hits).toEqual([]);
   });
 });
