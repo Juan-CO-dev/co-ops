@@ -13,6 +13,7 @@ import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import { isAllLocationsAccess, lockLocationContext, type LocationActor } from "@/lib/locations";
 import { resolveShopId } from "@/lib/shop-context";
+import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import {
   MAINTENANCE_BASE_LEVEL,
   loadEquipment,
@@ -52,7 +53,9 @@ interface PageProps {
 
 export default async function MaintenancePage({ searchParams }: PageProps) {
   const auth = await requireSessionFromHeaders("/maintenance");
-  const { location: requested, equipment: equipmentParam } = await searchParams;
+  const sp = await searchParams;
+  const requested = shopParamFor("/maintenance", searchParamValues(sp));
+  const equipmentParam = sp.equipment;
 
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
   // No hard ?location redirect (the production page's D-64 rule): without one, the B2 resolver picks among the
