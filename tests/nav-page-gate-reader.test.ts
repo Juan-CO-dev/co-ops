@@ -401,7 +401,43 @@ describe("Astra r2 red team: read provenance is a closed grammar (client root, b
   });
 });
 
+describe("Astra r3: a read result keeps provenance only while it is const and used read-only", () => {
+  const ASSIGN = "app/(authed)/assignments/page.tsx";
+  const READ = "const { data, error } = await query;";
+  const real = readFileSync(ASSIGN, "utf8");
+  const loadError = (src: string) => {
+    try { newReader({ sources: { [ASSIGN]: src } }).load(ASSIGN); return undefined; } catch (e) { return e as PageGateError; }
+  };
+  const forge = `auth.level < 7 ? new Error("forbidden") : null`;
+  it.each([
+    ["the r3 repro: a member assignment on the result", `const result = await query;\n  result.error = auth.level < 7 ? new Error("forbidden") : result.error;\n  const { data, error } = result;`],
+    ["Object.assign on the result", `const result = await query;\n  Object.assign(result, { error: ${forge} });\n  const { data, error } = result;`],
+    ["an element-access assignment", `const result = await query;\n  (result as Record<string, unknown>)["error"] = ${forge};\n  const { data, error } = result;`],
+    ["a compound assignment", `const result = await query;\n  result.error ??= ${forge};\n  const { data, error } = result;`],
+    ["a delete", `const result = await query;\n  delete (result as { error?: unknown }).error;\n  const { data, error } = result;`],
+    ["the result passed to a helper", `const result = await query;\n  forgeError(result, auth);\n  const { data, error } = result;`],
+    ["the result spread and re-wrapped", `const result = await query;\n  const { data, error } = { ...result, error: ${forge} };`],
+    ["a let result reassigned", `let result = await query;\n  result = { ...result, error: ${forge} };\n  const { data, error } = result;`],
+    ["a let { error } that gets reassigned", `let { data, error } = await query;\n  error = ${forge};`],
+  ])("%s: no provenance, the session-built error fails", (_name, read) => {
+    expect(real.includes(READ)).toBe(true);
+    expect(loadError(real.replace(READ, read))?.code).toBe("OPERATIONAL_MENTIONS_SESSION");
+  });
+  it.each([
+    ["a const result destructured", `const result = await query;\n  const { data, error } = result;`],
+    ["a const result read through .error / .data", `const result = await query;\n  const data = result.data;\n  const error = result.error;`],
+  ])("control: %s keeps provenance", (_name, read) => {
+    expect(loadError(real.replace(READ, read))).toBeUndefined();
+  });
+});
+
 describe("Astra r2 red team: a next/navigation exit binding may only be called directly", () => {
+  it("Astra r3 P3: every namespace import is tracked (two namespaces, the first aliased)", () => {
+    const e = readerError(page(`  const go = nav1.redirect;\n  if (auth.level < 7) go("/dashboard");`, `import * as nav1 from "next/navigation";\nimport * as nav2 from "next/navigation";\nvoid nav2;`));
+    expect(e?.code).toBe("UNREVIEWED_CONSTRUCT");
+    expect(e?.problems.some((p) => /namespace nav1/.test(p.detail))).toBe(true);
+  });
+
   const fails = (body: string, imports = "") => {
     const e = readerError(page(body, imports));
     expect(e?.code, body).toBe("UNREVIEWED_CONSTRUCT");

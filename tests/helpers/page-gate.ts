@@ -973,7 +973,65 @@ function isReadResult(expr: ts.Expression, env: Env, depth: number): boolean {
     const arm = (x: ts.Expression) => strip(x).kind === ts.SyntaxKind.NullKeyword || isReadResult(x, env, depth + 1);
     return arm(e.whenTrue) && arm(e.whenFalse);
   }
-  if (ts.isIdentifier(e)) return builderAlias(e, env, depth, isReadResult);
+  if (ts.isIdentifier(e)) return isResultBinding(e, env, depth);
+  return false;
+}
+
+/** The read-only members of a read result. */
+const RESULT_MEMBERS = new Set(["error", "data", "count", "status", "statusText"]);
+
+/**
+ * A binding that holds a read result keeps its provenance only if it is `const`, its initializer is a read result, and
+ * EVERY use of it is read-only (Astra r3 P2): a destructuring (`const { data, error } = result`) or a plain read of
+ * one of RESULT_MEMBERS that is not itself written (`result.error = ...`, `result["x"] = ...`, `result.error += ...`,
+ * `delete result.error`, `result.error++`). Any other use (passed to a function such as Object.assign, spread,
+ * re-wrapped, returned, element access, a call on it) revokes provenance and the normal walk follows it.
+ */
+function isResultBinding(id: ts.Identifier, env: Env, depth: number): boolean {
+  const found = declarationOf(id.text, id);
+  if (!found || "forOf" in found || found.element || !found.decl.initializer) return false;
+  const decl = found.decl;
+  if (!(decl.parent.flags & ts.NodeFlags.Const) || assignmentsTo(id.text, decl).length > 0) return false;
+  if (!isReadResult(decl.initializer!, env, depth + 1)) return false;
+  return usesOf(id.text, decl).every((use) => readOnlyUse(use));
+}
+
+/** Every reference to `name` in the function that declares it, other than the declaration itself. */
+function usesOf(name: string, decl: ts.VariableDeclaration): ts.Identifier[] {
+  const out: ts.Identifier[] = [];
+  const root = fnOf(decl)?.body ?? decl.getSourceFile();
+  const visit = (n: ts.Node) => {
+    if (ts.isIdentifier(n) && n.text === name && n !== decl.name) {
+      const p = n.parent;
+      const notAReference = (ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n)
+        || (ts.isBindingElement(p) && p.propertyName === n) || (ts.isPropertySignature(p) && p.name === n);
+      if (!notAReference) out.push(n);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(root);
+  return out;
+}
+
+const isWriteTarget = (n: ts.Node): boolean => {
+  const p = n.parent;
+  if (ts.isBinaryExpression(p) && p.left === n && p.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && p.operatorToken.kind <= ts.SyntaxKind.LastAssignment) return true;
+  if ((ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) && (p.operator === ts.SyntaxKind.PlusPlusToken || p.operator === ts.SyntaxKind.MinusMinusToken)) return true;
+  if (ts.isDeleteExpression(p)) return true;
+  if (ts.isParenthesizedExpression(p) || ts.isNonNullExpression(p)) return isWriteTarget(p);
+  return false;
+};
+
+function readOnlyUse(use: ts.Identifier): boolean {
+  const p = use.parent;
+  // `const { data, error } = result;`
+  if (ts.isVariableDeclaration(p) && p.initializer === use && ts.isObjectBindingPattern(p.name) && (p.parent.flags & ts.NodeFlags.Const) !== 0) return true;
+  // `result.error`, `result?.data`: read, never written, never called.
+  if (ts.isPropertyAccessExpression(p) && p.expression === use && RESULT_MEMBERS.has(p.name.text)) {
+    if (isWriteTarget(p)) return false;
+    if (ts.isCallExpression(p.parent) && p.parent.expression === p) return false;
+    return true;
+  }
   return false;
 }
 
@@ -1000,8 +1058,8 @@ function isReadError(n: ts.Node, env: Env): boolean {
     const found = declarationOf(n.text, n);
     if (!found || "forOf" in found || !found.element || !found.decl.initializer) return false;
     const prop = (found.element.propertyName ?? found.element.name).getText(env.file.sf);
-    return prop === "error" && !found.element.initializer && assignmentsTo(n.text, found.decl).length === 0
-      && isReadResult(found.decl.initializer, env, 0);
+    return prop === "error" && !found.element.initializer && (found.decl.parent.flags & ts.NodeFlags.Const) !== 0
+      && assignmentsTo(n.text, found.decl).length === 0 && isReadResult(found.decl.initializer, env, 0);
   }
   return false;
 }
@@ -1241,12 +1299,12 @@ function exitBindingProblems(info: FileInfo): Problem[] {
     detail: `${what}: ${norm(n.getText(sf)).slice(0, 160)}`,
   });
   const exits = new Set<string>();
-  let ns: string | undefined;
+  const namespaces = new Set<string>();
   for (const st of sf.statements) {
     if (ts.isImportDeclaration(st) && ts.isStringLiteral(st.moduleSpecifier) && st.moduleSpecifier.text === "next/navigation" && st.importClause) {
       if (st.importClause.name) at(st, "a default import of next/navigation");
       const nb = st.importClause.namedBindings;
-      if (nb && ts.isNamespaceImport(nb)) ns = nb.name.text;
+      if (nb && ts.isNamespaceImport(nb)) namespaces.add(nb.name.text);
       if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) if (NAV_EXITS[(el.propertyName ?? el.name).text]) exits.add(el.name.text);
     }
     if (ts.isExportDeclaration(st) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier) && st.moduleSpecifier.text === "next/navigation") at(st, "a re-export of next/navigation");
@@ -1257,7 +1315,7 @@ function exitBindingProblems(info: FileInfo): Problem[] {
     if (ts.isCallExpression(n) && ((ts.isIdentifier(n.expression) && n.expression.text === "require") || n.expression.kind === ts.SyntaxKind.ImportKeyword) && isNav(n.arguments[0])) {
       at(n, "a require / dynamic import of next/navigation");
     }
-    if (ts.isIdentifier(n) && (exits.has(n.text) || n.text === ns)) {
+    if (ts.isIdentifier(n) && (exits.has(n.text) || namespaces.has(n.text))) {
       const p = n.parent;
       const notAReference = (ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n)
         || (ts.isPropertySignature(p) && p.name === n) || ts.isJsxAttribute(p) || (ts.isMethodDeclaration(p) && p.name === n)
