@@ -12,7 +12,7 @@ import { byId } from "@/lib/nav/destinations";
 const EN = en as Record<string, string>;
 const ES = es as Record<string, string>;
 
-/** The keys PR 4 adds (plan r2, 3.2), by block, as they land. */
+/** The 66 keys PR 4 adds (plan r2, 3.2), by block. */
 const NEW_KEYS = {
   states: ["admin.backoffice.state.issue", "admin.backoffice.state.healthy", "admin.backoffice.state.unavailable", "admin.backoffice.state.not_enabled"],
   attention: [
@@ -43,14 +43,15 @@ const NEW_KEYS = {
     "admin.backoffice.row.locations", "admin.backoffice.row.report_recipients", "admin.backoffice.row.customers", "admin.backoffice.row.marketing",
     "admin.backoffice.row.audit",
   ],
+  system: ["admin.backoffice.system_status.title", "admin.backoffice.system_status.line", "admin.backoffice.checks_one", "admin.backoffice.checks_other", "admin.backoffice.week.line"],
 };
 const ALL = Object.values(NEW_KEYS).flat();
 const params = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
 
 describe("Back office keys, en and es", () => {
-  it("61 new keys so far, and they are every admin.backoffice.* key", () => {
-    expect(ALL).toHaveLength(61);
-    expect(new Set(ALL).size).toBe(61);
+  it("66 new keys, and they are every admin.backoffice.* key", () => {
+    expect(ALL).toHaveLength(66);
+    expect(new Set(ALL).size).toBe(66);
     expect(Object.keys(EN).filter((k) => k.startsWith("admin.backoffice.")).sort()).toEqual([...ALL].sort());
   });
 
@@ -64,6 +65,10 @@ describe("Back office keys, en and es", () => {
     for (const k of ALL.filter((x) => x.endsWith("_one"))) expect(ALL, k).toContain(k.replace(/_one$/, "_other"));
   });
 
+  it("the subtitle's value changed (spec 5.1.1), in both languages", () => {
+    expect(EN["admin.hub.subtitle"]).toBe("Set up how the shops run.");
+    expect(ES["admin.hub.subtitle"]).toBe("Configura cómo funcionan las tiendas.");
+  });
 
   it("the Catering setup group's name is the destination's name, in both languages", () => {
     expect(EN["admin.backoffice.group.catering_setup.name"]).toBe(EN["admin.section.catering"]);
@@ -81,7 +86,7 @@ describe("Back office keys, en and es", () => {
   });
 
   it("Spanish speaks tú, never usted", () => {
-    for (const k of ALL) expect(ES[k], k).not.toMatch(/\busted\b|\b(Configure|Agregue|Edite|Cambie|Vincule|Conecte|Revise)\b/i);
+    for (const k of [...ALL, "admin.hub.subtitle"]) expect(ES[k], k).not.toMatch(/\busted\b|\b(Configure|Agregue|Edite|Cambie|Vincule|Conecte|Revise)\b/i);
   });
 
   it("the job labels are infinitives, like the two jobs already on the row", () => {

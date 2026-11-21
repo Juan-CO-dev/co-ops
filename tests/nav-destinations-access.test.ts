@@ -41,7 +41,7 @@ const EXCEPTIONS: { id: string; destination: string; roles: readonly RoleCode[];
   { id: "E2", destination: "categories", roles: ["agm", "catering_mgr", "prep_mgr", "gm"], when: () => true, why: "card 8, page 6", settledBy: "the access work (spec 5.2)" },
   { id: "E3", destination: "stations", roles: ["agm", "catering_mgr", "prep_mgr"], when: () => true, why: "card 7, page 6 through the admin shell only", settledBy: "the access work (spec 5.2)" },
   { id: "E4", destination: "lto", roles: below(6), when: () => true, why: "chip 6, the page has no gate (its reads are gated inside at SURPLUS_READ_MIN 6)", settledBy: "lead decision 4" },
-  { id: "SW1", destination: "marketing", roles: ["moo", "owner", "cgs"], when: (s) => !s.marketingScorecard, why: "the tile needs MARKETING_SCORECARD; the page reads no switch", settledBy: "the Back office PR (4), or the marketing owner" },
+  { id: "SW1", destination: "marketing", roles: ["moo", "owner", "cgs"], when: (s) => !s.marketingScorecard, why: "the tile needs MARKETING_SCORECARD; the page reads no switch", settledBy: "the marketing owner (the Back office row keeps the tile's switch, nav PR 4; settling it changes the page gate)" },
 ];
 
 interface Mismatch { destination: string; role: RoleCode; switches: Switches; facts: string; menu: boolean; page: boolean; exception?: string }

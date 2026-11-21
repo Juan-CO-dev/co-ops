@@ -70,7 +70,7 @@ describe("/admin/audit is owner level (9) and up", () => {
   it("the hub card agrees with the page gate and reads Planned", () => {
     const card = ADMIN_SECTIONS.find((s) => s.id === "audit");
     expect(card).toMatchObject({ href: "/admin/audit", minLevel: 9, comingSoon: true });
-    const hub = readFileSync(join(ROOT, "app/admin/page.tsx"), "utf8");
+    const hub = readFileSync(join(ROOT, "components/admin/back-office/BackOfficeHub.tsx"), "utf8"); // nav PR 4 moved the markup
     const templates = readFileSync(join(ROOT, "app/admin/checklist-templates/page.tsx"), "utf8");
     for (const src of [hub, templates]) {
       expect(src).toContain('serverT(lang, "planned.label")');

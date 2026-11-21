@@ -135,8 +135,16 @@ describe("the two pages are dark and role-gated before anything is read", () => 
     expect(gate).toBeGreaterThan(src.indexOf('requireSessionFromHeaders("/admin/demand-signals/sources")'));
     expect(gate).toBeLessThan(src.indexOf("getServiceRoleClient()"));
   });
-  it("the hub tile is hidden unless the switch is on and the role may open the page", () => {
-    expect(read("app/admin/page.tsx")).toContain('{demandSignalsEnabled(process.env.DEMAND_SIGNALS) && canViewDemandSignals(auth.role) && <a href="/admin/demand-signals"');
+  it("the hub row is hidden unless the switch is on and the role may open the page", async () => {
+    // Nav PR 4: the row comes from the destination list, which needs the switch and exactly canViewDemandSignals's roles
+    // (PR 3's guard d proves the rule equal to the page's); the hub reads the switch and passes it.
+    expect(read("app/admin/page.tsx")).toContain("demandSignals: demandSignalsEnabled(process.env.DEMAND_SIGNALS)");
+    const { byId } = await import("@/lib/nav/destinations");
+    const { backOfficeFor } = await import("@/lib/nav/back-office");
+    expect(byId("demand-signals").access).toMatchObject({ requires: "demandSignals", onlyRoles: ["gm", "moo", "owner", "cgs"] });
+    const has = (switches: { demandSignals?: boolean }) => backOfficeFor({ role: "moo", level: 8, switches }).groups.some((g) => g.rows.some((r) => r.id === "demand-signals"));
+    expect(has({ demandSignals: true })).toBe(true);
+    expect(has({})).toBe(false);
   });
   it("the clients import nothing that reaches the server: values only from the import-free input rules", () => {
     for (const p of ["components/admin/demand-signals/DemandSignalsClient.tsx", "components/admin/demand-signals/SourcesClient.tsx"]) {

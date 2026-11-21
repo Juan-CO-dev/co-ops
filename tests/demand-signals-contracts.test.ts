@@ -88,8 +88,8 @@ describe("dark by default", () => {
       "app/api/cron/demand-signals/route.ts", "app/ordering/page.tsx", "components/admin/demand-signals/DemandSignalsClient.tsx", "components/admin/demand-signals/SourcesClient.tsx",
       "components/admin/demand-signals/WeatherSummary.tsx", "components/ordering/OrderSignalsPanel.tsx", "lib/toast-sales-pull-run.ts"]);
     // PR 6 (first half): the order walk's page reaches the layer only inside its DEMAND_SIGNALS branch (tests/demand-signals-order.test.ts).
-    // The hub reaches only the two import-free rule files (who may see the tile, and the switch).
-    expect([...read("app/admin/page.tsx").matchAll(/from "@\/lib\/demand-signals\/([\w-]+)"/g)].map((m) => m[1]).sort()).toEqual(["access-shared", "config-shared"]);
+    // The hub reaches only the import-free switch (nav PR 4: who may see the row is the destination list's rule).
+    expect([...read("app/admin/page.tsx").matchAll(/from "@\/lib\/demand-signals\/([\w-]+)"/g)].map((m) => m[1]).sort()).toEqual(["config-shared"]);
     expect(read("lib/demand-signals/access-shared.ts")).not.toMatch(/^import /m);
   });
   it("the nightly statically imports only the import-free switch, and reaches the ledger only inside the ON branch", () => {
