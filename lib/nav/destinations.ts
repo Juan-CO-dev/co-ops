@@ -349,7 +349,7 @@ export const DESTINATIONS: readonly Destination[] = [
   },
   {
     id: "demand-signals-sources", route: "/admin/demand-signals/sources", nameKey: "signals.sources.title", room: "back-office",
-    group: "ordering-and-stock", tabFamily: "demand-signals", parent: "admin", takesShop: false,
+    group: "ordering-and-stock", tabFamily: "demand-signals", parent: "demand-signals", takesShop: false,
     access: { minLevel: 8, onlyRoles: MOO_PLUS, requires: "demandSignals" }, numbers: false, kind: "place",
   },
   {
@@ -378,13 +378,12 @@ export const DESTINATIONS: readonly Destination[] = [
   },
   {
     id: "customers-catering", route: "/admin/customers/catering", nameKey: "customers.catering.title", room: "back-office",
-    group: "customers-and-marketing", tabFamily: "customers", parent: "admin", takesShop: false,
+    group: "customers-and-marketing", tabFamily: "customers", parent: "customers", takesShop: false,
     access: { minLevel: 7, requires: "customerProfiles" }, numbers: true, kind: "place",
   },
   {
-    // Its back link points at the hub today (spec section 9, mirrored as it is; PR 4 fixes the registry and this row).
     id: "customers-consent", route: "/admin/customers/consent", nameKey: "customers.consent.title", room: "back-office",
-    group: "customers-and-marketing", tabFamily: "customers", parent: "admin", takesShop: false,
+    group: "customers-and-marketing", tabFamily: "customers", parent: "customers", takesShop: false,
     access: { minLevel: 9, requires: "customerProfiles" }, numbers: false, kind: "place",
   },
   {

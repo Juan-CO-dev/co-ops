@@ -77,6 +77,11 @@ const RULES: ParentRule[] = [
   { pattern: "/admin/recipes/new", parent: { href: "/admin/recipes", labelKey: "admin.section.recipes" } },
   { pattern: "/admin/recipes/[id]", parent: { href: "/admin/recipes", labelKey: "admin.section.recipes" } },
   { pattern: "/admin/vendors/[id]", parent: { href: "/admin/vendors", labelKey: "admin.section.vendors" } },
+  // Nav PR 4 (spec 9): each sub-page goes back to its own parent, not past it to the Back office. A customer's detail,
+  // Catering accounts and Marketing consent all go back to Customers (spec 6.3: the Customers tab family).
+  { pattern: "/admin/customers/[section]", parent: { href: "/admin/customers", labelKey: "customers.title" } },
+  { pattern: "/admin/marketing/ad-codes", parent: { href: "/admin/marketing", labelKey: "marketing.title" } },
+  { pattern: "/admin/demand-signals/sources", parent: { href: "/admin/demand-signals", labelKey: "signals.title" } },
 
   // ─── Admin: template-builder pages → the templates hub ─────────────────
   { pattern: "/admin/checklist-templates/[subtype]", parent: { href: "/admin/checklist-templates", labelKey: "admin.section.checklist-templates" } },

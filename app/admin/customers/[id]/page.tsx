@@ -22,7 +22,6 @@ export default async function CustomerProfilePage({ params, searchParams }: { pa
     throw error;
   }
   return <div className="min-w-0 space-y-4">
-    <Link href="/admin/customers" className="inline-flex min-h-[44px] items-center font-bold text-co-text underline">{serverT(language, "customers.back")}</Link>
     <ProfileDetail detail={detail} language={language} canRevoke={auth.level >= CUSTOMER_CONTACT_MIN} />
     {auth.level >= CUSTOMER_CONTACT_MIN && <CustomerContactPanel customerId={detail.profile.id} />}
   </div>;

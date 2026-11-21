@@ -23,7 +23,6 @@ export default async function ConsentPage() {
   const overview = await loadConsentOverview(viewer);
   const today = operationalNow(new Date()).date;
   return <div className="min-w-0 space-y-4">
-    <Link href="/admin/customers" className="inline-flex min-h-[44px] items-center font-bold text-co-text underline">{t("customers.back")}</Link>
     <h1 className="text-2xl font-bold text-co-text">{t("customers.consent.title")}</h1>
     <p className="text-co-text-muted">{t("customers.consent.intro", { count: overview.optedIn })}</p>
     <ConsentTools metaEnabled={overview.metaEnabled} today={today} />
