@@ -1049,7 +1049,8 @@ function classifyUse(use: ts.Identifier, declFn: FnLike | undefined, info: FileI
     return { kind: "read" };
   }
   if (isWriteTarget(m)) {
-    return ts.isBinaryExpression(p) && p.operatorToken.kind === ASSIGN_PLAIN ? { kind: "read" } : { kind: "mutation", why: "a compound / logical assignment, ++ / -- or delete" };
+    return ts.isBinaryExpression(p) && p.left === m && p.operatorToken.kind === ASSIGN_PLAIN ? { kind: "read" }
+      : { kind: "mutation", why: "a compound / logical / destructuring assignment, ++ / -- or delete" };
   }
   if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression !== m && (p.arguments ?? []).some((x) => x === m)) {
     if (ts.isCallExpression(p) && isMutatorCall(p)) return { kind: "mutation", why: "Object.assign / defineProperty" };
@@ -1150,6 +1151,8 @@ function primitiveByConstruction(expr: ts.Expression, info: FileInfo, depth: num
       && isFnExpr(strip(local.decl.initializer)) && assignmentsTo(e.expression.text, local.decl).length === 0) fn = strip(local.decl.initializer) as FnLike;
     else if (!local && resolveName(e.expression.text, e.expression, newEnv(info, undefined, new Map())).kind === "top") fn = info.fns.get(e.expression.text);
     if (!fn?.body) return false;
+    // An async function, a generator or an async generator returns a promise or an iterator, never a primitive.
+    if (fn.asteriskToken || (ts.canHaveModifiers(fn) && ts.getModifiers(fn)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword))) return false;
     if (!ts.isBlock(fn.body)) return primitiveByConstruction(fn.body, info, depth + 1);
     const returns: ts.ReturnStatement[] = [];
     const visit = (n: ts.Node) => { if (ts.isReturnStatement(n)) returns.push(n); if (!ts.isFunctionLike(n)) ts.forEachChild(n, visit); };
@@ -1301,14 +1304,57 @@ function usesOf(name: string, decl: ts.VariableDeclaration): ts.Identifier[] {
   return out;
 }
 
-const isWriteTarget = (n: ts.Node): boolean => {
-  const p = n.parent;
-  if (ts.isBinaryExpression(p) && p.left === n && p.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && p.operatorToken.kind <= ts.SyntaxKind.LastAssignment) return true;
-  if ((ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) && (p.operator === ts.SyntaxKind.PlusPlusToken || p.operator === ts.SyntaxKind.MinusMinusToken)) return true;
-  if (ts.isDeleteExpression(p)) return true;
-  if (ts.isParenthesizedExpression(p) || ts.isNonNullExpression(p)) return isWriteTarget(p);
-  return false;
-};
+/** TS and grouping wrappers a write target can sit in: `(x)`, `x as T`, `x satisfies T`, `<T>x`, `x!`. */
+const isWrapper = (n: ts.Node): n is ts.ParenthesizedExpression | ts.AsExpression | ts.SatisfiesExpression | ts.TypeAssertion | ts.NonNullExpression =>
+  ts.isParenthesizedExpression(n) || ts.isAsExpression(n) || ts.isSatisfiesExpression(n) || ts.isTypeAssertionExpression(n) || ts.isNonNullExpression(n);
+const unwrap = (n: ts.Node): ts.Node => (isWrapper(n) ? unwrap(n.expression) : n);
+
+/**
+ * Every leaf write target of a file (Astra r6 P2), collected by ONE recursive function from EVERY write site: `=` and
+ * the compound and logical assignments, `++` / `--`, `delete`, and a for-in / for-of head that is an expression. It
+ * recurses through object and array assignment patterns (property values, shorthand, defaults `x = d`, rest `...t`,
+ * nested patterns) and through the wrappers above. Each leaf (an identifier, a member or an element access) then goes
+ * through the same rules everywhere: the banned property names, computed keys, and MUTATED_DEPENDENCY.
+ */
+const writeTargetCache = new WeakMap<ts.SourceFile, Set<ts.Node>>();
+function writeTargetsOf(sf: ts.SourceFile): Set<ts.Node> {
+  const hit = writeTargetCache.get(sf);
+  if (hit) return hit;
+  const out = new Set<ts.Node>();
+  const collect = (t: ts.Node): void => {
+    const e = unwrap(t);
+    if (ts.isObjectLiteralExpression(e)) {
+      for (const prop of e.properties) {
+        if (ts.isPropertyAssignment(prop)) collect(prop.initializer);
+        else if (ts.isShorthandPropertyAssignment(prop)) out.add(prop.name);
+        else if (ts.isSpreadAssignment(prop)) collect(prop.expression);
+      }
+      return;
+    }
+    if (ts.isArrayLiteralExpression(e)) {
+      for (const el of e.elements) {
+        if (ts.isOmittedExpression(el)) continue;
+        collect(ts.isSpreadElement(el) ? el.expression : el);
+      }
+      return;
+    }
+    if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken) { collect(e.left); return; } // a default `x = d`
+    out.add(e);
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment) collect(n.left);
+    if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) collect(n.operand);
+    if (ts.isDeleteExpression(n)) collect(n.expression);
+    if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) collect(n.initializer);
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  writeTargetCache.set(sf, out);
+  return out;
+}
+
+/** Is this node (or the node it wraps) a leaf write target? */
+const isWriteTarget = (n: ts.Node): boolean => writeTargetsOf(n.getSourceFile()).has(unwrap(n));
 
 function readOnlyUse(use: ts.Identifier): boolean {
   const p = use.parent;

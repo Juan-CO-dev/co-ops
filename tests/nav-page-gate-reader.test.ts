@@ -559,6 +559,78 @@ describe("Astra r5 and the lead's backstop: FORBIDDEN_MUTATION_PRIMITIVE anywher
   });
 });
 
+describe("Astra r6: every write site's targets are collected by one recursive function", () => {
+  const ASSIGN = "app/(authed)/assignments/page.tsx";
+  const READ = "const { data, error } = await query;";
+  const real = readFileSync(ASSIGN, "utf8");
+  const PLAIN = `const result = await sb.from("locations").select("id,name");`; // session-independent
+  const forged = `{ message: "forbidden", details: "", hint: "", code: "403", name: "PostgrestError" }`;
+  const codesOf = (src: string) => {
+    try { newReader({ sources: { [ASSIGN]: src } }).load(ASSIGN); return []; } catch (e) { return (e as PageGateError).problems.map((p) => p.code); }
+  };
+  it.each([
+    ["an object pattern", `({ error: result.error } = { error: ${forged} });`],
+    ["an array pattern", `[result.error] = [${forged}];`],
+    ["a nested pattern", `({ a: { b: [result.error] } } = { a: { b: [${forged}] } });`],
+    ["a default value", `({ e: result.error = ${forged} } = {});`],
+    ["an object rest", `({ ...result.data } = { a: 1 });`],
+    ["an array rest", `[...result.data] = [1];`],
+    ["an `as` wrapper", `(result.error as unknown) = ${forged};`],
+    ["a `satisfies` wrapper", `(result.error satisfies unknown) = ${forged};`],
+    ["a `!` wrapper", `result.error! = ${forged};`],
+    ["a for-of head", `for (result.error of [${forged}]) break;`],
+    ["a for-in head", `for (result.error in { k: 1 }) break;`],
+  ])("%s writing into a read result fails", (_name, write) => {
+    expect(real.includes(READ)).toBe(true);
+    const codes = codesOf(real.replace(READ, `${PLAIN}\n  ${write}\n  const { data, error } = result;`));
+    expect(codes).toContain("FORBIDDEN_MUTATION_PRIMITIVE");
+    expect(codes).toContain("MUTATED_DEPENDENCY");
+  });
+  it("a destructuring write to another member of a dependency fails MUTATED_DEPENDENCY on its own", () => {
+    const codes = codesOf(real.replace(READ, `${PLAIN}\n  ({ x: (result as unknown as { note: unknown }).note } = { x: 1 });\n  const { data, error } = result;`));
+    expect(codes).toEqual(["MUTATED_DEPENDENCY"]);
+  });
+  it("control: a destructuring declaration (not an assignment) of a read result passes", () => {
+    expect(codesOf(real.replace(READ, `${PLAIN}\n  const { data, error } = result;`))).toEqual([]);
+  });
+});
+
+describe("Astra r6 P3: an async function or a generator is never a primitive by construction", () => {
+  const src = (helper: string) => `import { requireSessionFromHeaders } from "@/lib/session";
+${helper}
+export default async function FixturePage() {
+  const auth = await requireSessionFromHeaders("/fixture");
+  void auth;
+  const v = pick("x");
+  const hit = [v].some((x) => x === "y");
+  void hit;
+  if (!v) throw new Error("x");
+  return null;
+}
+`;
+  const entry: ReviewedEntry = { file: FIXTURE_FILE, fn: "FixturePage", anchor: "fn:FixturePage", kind: "throw", text: `if (!v) throw new Error("x");`, meaning: { kind: "operational-error", why: "a fixture guard" } };
+  const codesOf = (helper: string) => {
+    try { newReader({ sources: { [FIXTURE_FILE]: src(helper) }, pages: [FIXTURE_PAGE], entries: [...ENTRIES, entry] }).load(FIXTURE_FILE); return []; } catch (e) { return (e as PageGateError).problems.map((p) => p.code); }
+  };
+  it.each([
+    ["an async function declaration", `async function pick(key: string) { return key === "a" ? "a" : "b"; }`],
+    ["a generator declaration", `function* pick(key: string) { return key === "a" ? "a" : "b"; }`],
+    ["an async generator declaration", `async function* pick(key: string) { return key === "a" ? "a" : "b"; }`],
+    ["an async arrow", `const pick = async (key: string) => (key === "a" ? "a" : "b");`],
+    ["an async function expression", `const pick = async function (key: string) { return key === "a" ? "a" : "b"; };`],
+    ["a generator expression", `const pick = function* (key: string) { return key === "a" ? "a" : "b"; };`],
+    ["an async generator expression", `const pick = async function* (key: string) { return key === "a" ? "a" : "b"; };`],
+  ])("%s: its result in an array is an escape", (_name, helper) => {
+    expect(codesOf(helper)).toContain("MUTATED_DEPENDENCY");
+  });
+  it.each([
+    ["a plain function declaration", `function pick(key: string) { return key === "a" ? "a" : "b"; }`],
+    ["a plain arrow", `const pick = (key: string) => (key === "a" ? "a" : "b");`],
+  ])("control: %s returning primitives is a primitive by construction", (_name, helper) => {
+    expect(codesOf(helper)).toEqual([]);
+  });
+});
+
 describe("Astra r2 red team: a next/navigation exit binding may only be called directly", () => {
   it("Astra r3 P3: every namespace import is tracked (two namespaces, the first aliased)", () => {
     const e = readerError(page(`  const go = nav1.redirect;\n  if (auth.level < 7) go("/dashboard");`, `import * as nav1 from "next/navigation";\nimport * as nav2 from "next/navigation";\nvoid nav2;`));
