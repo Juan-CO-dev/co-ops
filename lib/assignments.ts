@@ -14,7 +14,8 @@ import { loadPresenceFacts, loadSignedInAt, whosHereEnabled } from "./whos-here"
 import { coopsShiftEnded, personPresence } from "./presence-shared";
 import { validStationTrims, type StationTrim } from "./station-schedule-shared";
 import {
-  canManageAssignee, isTaskType, TASK_TYPES, TASK_MIN_LEVEL, type ShiftBoard, type Station,
+  canManageAssignee, isFloorStation, isStationFlagsMissing, isTaskType, TASK_TYPES, TASK_MIN_LEVEL, type ShiftBoard, type Station,
+  type StationDayFlags,
   validOverrideReason, type OverrideReason, type OverrideReasonCode, type AssignmentChange,
   type StationEvent, type TaskAssignment, type TaskType,
 } from "./assignments-shared";
@@ -398,6 +399,88 @@ export async function saveStationConfig(service: SupabaseClient, args: {
       staffed: args.operation === "staffed" ? args.staffed : station.data.staffed,
       position_id: id, ...changedFields }, ipAddress: null, userAgent: null });
   return { id };
+}
+
+// ── Nav PR 6: the two station day flags (0353) ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Both flags in ONE read (they arrive in one migration). Missing columns (0353 not applied) → `{ installed: false }`,
+ * never a failure; any other error throws. The read SELECTS the columns and never filters on them (a filter on a
+ * missing column can fail silently, lib/admin/needs-link.ts). Nothing is memoized: the answer flips on the first read
+ * after the apply. More than one marked station (impossible under the index) throws.
+ */
+export async function loadStationDayFlags(service: SupabaseClient, locationId: string): Promise<StationDayFlags> {
+  const { data, error } = await service.from("stations").select("id, starts_mid_day, not_phase_station").eq("location_id", locationId);
+  if (error) {
+    if (isStationFlagsMissing(error)) return { installed: false };
+    throw new Error(`loadStationDayFlags: ${error.code ?? "unknown"}`);
+  }
+  const rows = (data ?? []) as Array<{ id: string; starts_mid_day: boolean | null; not_phase_station: boolean | null }>;
+  const marked = rows.filter((r) => r.starts_mid_day === true);
+  if (marked.length > 1) throw new Error("loadStationDayFlags: more than one mid-day station");
+  return { installed: true, midDayStationId: marked[0]?.id ?? null, notPhaseIds: new Set(rows.filter((r) => r.not_phase_station === true).map((r) => r.id)) };
+}
+
+type StationFlagWriter = "set_station_mid_day_trigger" | "set_station_not_phase";
+
+/**
+ * The two flag writers' shared body. GM+ (level 8+ any shop). Ruling B3: the shop-bound station and its positions are
+ * read and `isFloorStation` enforced BEFORE the RPC: a direct request for a non-floor station (unstaffed, or no active
+ * position) is 409 `station_not_floor` with no mutation and no audit row. The SQL function still checks `active`.
+ */
+async function saveStationFlag(service: SupabaseClient, fn: StationFlagWriter, args: {
+  actor: AssignmentActor; locationId: string; stationId: string; on: boolean;
+}): Promise<Record<string, unknown> & { changed: boolean }> {
+  if (isPulseReadActor(args.actor)) throw new AssignmentError("read_only_actor");
+  requireUuid(args.locationId);
+  requireUuid(args.stationId);
+  if (typeof args.on !== "boolean") throw new AssignmentError("invalid_payload", 400);
+  if (args.actor.level < 7) throw new AssignmentError("role_insufficient");
+  if (args.actor.level < 8) requireLocation(args.actor, args.locationId);
+  const station = await service.from("stations").select("id, active, staffed")
+    .eq("id", args.stationId).eq("location_id", args.locationId).maybeSingle<{ id: string; active: boolean; staffed: boolean }>();
+  if (station.error) dbError(station.error);
+  if (!station.data) throw new AssignmentError("station_unavailable", 404);
+  const positions = await selectAllRows<{ active: boolean }>((from, to) => service.from("station_positions").select("active")
+    .eq("station_id", args.stationId).eq("location_id", args.locationId).order("id").range(from, to));
+  if (!isFloorStation({ active: station.data.active, staffed: station.data.staffed, positions: positions.map((p) => ({ active: p.active })) as Station["positions"] })) {
+    throw new AssignmentError("station_not_floor", 409);
+  }
+  const { data, error } = await service.rpc(fn, {
+    p_actor_id: args.actor.userId, p_location_id: args.locationId, p_station_id: args.stationId, p_on: args.on,
+  });
+  if (error) {
+    // The repo's "function not installed" rule (lib/admin/users.ts): 0353 is not applied yet.
+    if (error.code === "PGRST202" || error.code === "42883") throw new AssignmentError("station_flags_unavailable", 503);
+    if (error.message === "mid_day_trigger_conflict" || error.message === "station_not_phase") throw new AssignmentError(error.message, 409);
+    if (error.message === "location_not_found") throw new AssignmentError("location_not_found", 404);
+    dbError(error);
+  }
+  return data as Record<string, unknown> & { changed: boolean };
+}
+
+/** "Closing this station starts mid-day prep" (0353 set_station_mid_day_trigger). Audited only when it changed. */
+export async function saveStationMidDayTrigger(service: SupabaseClient, args: {
+  actor: AssignmentActor; locationId: string; stationId: string; on: boolean;
+}): Promise<{ changed: boolean; previousStationId: string | null }> {
+  const result = await saveStationFlag(service, "set_station_mid_day_trigger", args);
+  const previous = typeof result.previous_station_id === "string" ? result.previous_station_id : null;
+  if (result.changed) await audit({ actorId: args.actor.userId, actorRole: args.actor.role, action: "station.mid_day_trigger",
+    resourceTable: "stations", resourceId: args.stationId,
+    metadata: { location_id: args.locationId, on: args.on, previous_station_id: previous }, ipAddress: null, userAgent: null });
+  return { changed: result.changed === true, previousStationId: previous };
+}
+
+/** "Not a phase station" (0353 set_station_not_phase). Audited only when it changed. */
+export async function saveStationNotPhase(service: SupabaseClient, args: {
+  actor: AssignmentActor; locationId: string; stationId: string; on: boolean;
+}): Promise<{ changed: boolean; clearedMidDay: boolean }> {
+  const result = await saveStationFlag(service, "set_station_not_phase", args);
+  const cleared = result.cleared_mid_day === true;
+  if (result.changed) await audit({ actorId: args.actor.userId, actorRole: args.actor.role, action: "station.not_phase_station",
+    resourceTable: "stations", resourceId: args.stationId,
+    metadata: { location_id: args.locationId, on: args.on, cleared_mid_day: cleared }, ipAddress: null, userAgent: null });
+  return { changed: result.changed === true, clearedMidDay: cleared };
 }
 
 /** A station-widget failure must not erase the actor's independently assigned task tiles. */

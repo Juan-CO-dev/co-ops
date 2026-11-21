@@ -4,12 +4,17 @@ import { useRouter } from "next/navigation";
 import { formatClockTime, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import type { Station } from "@/lib/assignments-shared";
+import { isFloorStation, type Station, type StationDayFlagsView } from "@/lib/assignments-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { StationScheduleEditor } from "./StationScheduleEditor";
 
-export function StationsAdmin({ locationId, stations, translatedNames, canEdit, canEditTiming = canEdit }: {
+/** Nav PR 6 (0353): the 409s a station flag save can answer; each shows the conflict line, then the page refreshes. */
+const FLAG_CONFLICTS = new Set(["mid_day_trigger_conflict", "station_not_phase", "station_not_floor"]);
+
+export function StationsAdmin({ locationId, stations, translatedNames, canEdit, canEditTiming = canEdit, flags }: {
   locationId: string; stations: Station[]; translatedNames: string[]; canEdit: boolean; canEditTiming?: boolean;
+  /** Nav PR 6: the two station day flags (0353). Absent = this page shows neither toggle. */
+  flags?: StationDayFlagsView;
 }) {
   const { t, language } = useTranslation();
   const { requestStepUp } = useStepUp();
@@ -33,6 +38,7 @@ export function StationsAdmin({ locationId, stations, translatedNames, canEdit, 
       }
       if (!response.ok || response.redirected) {
         if (body.code === "position_name_taken") { setError("assignments.positionNameTaken"); return; }
+        if (body.code && FLAG_CONFLICTS.has(body.code)) { setError("assignments.midDayTrigger.conflict"); startTransition(() => router.refresh()); return; }
         throw new Error("station_save_failed");
       }
       startTransition(() => router.refresh());
@@ -51,13 +57,42 @@ export function StationsAdmin({ locationId, stations, translatedNames, canEdit, 
     </form>
     : value ? <p className="text-sm text-co-text-muted">{t(positionId ? "assignments.lifecycle.usuallyTrims" : "assignments.lifecycle.usuallyCloses", { time: formatClockTime(value, language) })}</p> : null;
   const save = (id: string, nameEs: string) => savePayload({ id, nameEs });
+  // Nav PR 6 (0353): both toggles, on FLOOR stations only (ruling 6 / 1a), directly under the schedule editor.
+  const firstFloorId = stations.find((station) => isFloorStation(station) && !(flags?.installed && flags.notPhaseIds.includes(station.id)))?.id ?? null;
+  const flagControls = (station: Station) => {
+    if (!flags || !flags.installed || !isFloorStation(station)) return null;
+    const notPhase = flags.notPhaseIds.includes(station.id);
+    const midDay = flags.midDayStationId === station.id;
+    if (!canEdit) {
+      return <>
+        {midDay && <p className="text-sm text-co-text-muted">{t("assignments.midDayTrigger.marked")}</p>}
+        {notPhase && <p className="text-sm text-co-text-muted">{t("assignments.notPhaseStation.marked")}</p>}
+      </>;
+    }
+    return <div className="space-y-1">
+      {!notPhase && <label className="flex min-h-[44px] items-center gap-2 font-bold text-co-text">
+        <input type="checkbox" checked={midDay} disabled={busy || refreshing} data-flag="mid_day_trigger"
+          onChange={(e) => void savePayload({ operation: "mid_day_trigger", stationId: station.id, on: e.target.checked })} />
+        {t("assignments.midDayTrigger.label")}
+      </label>}
+      {!notPhase && station.id === firstFloorId && <p className="text-sm text-co-text-muted">{t("assignments.midDayTrigger.hint")}</p>}
+      <label className="flex min-h-[44px] items-center gap-2 font-bold text-co-text">
+        <input type="checkbox" checked={notPhase} disabled={busy || refreshing} data-flag="not_phase_station"
+          onChange={(e) => void savePayload({ operation: "not_phase_station", stationId: station.id, on: e.target.checked })} />
+        {t("assignments.notPhaseStation.label")}
+      </label>
+      <p className="text-sm text-co-text-muted">{t("assignments.notPhaseStation.hint")}</p>
+    </div>;
+  };
   return <div className="space-y-3" aria-busy={busy || refreshing}>
     {error && <p role="alert" className="text-co-cta-text">{t(error)}</p>}
+    {canEdit && flags && !flags.installed && <p className="text-sm text-co-text-muted">{t("assignments.stationFlags.unavailable")}</p>}
     {stations.filter((station) => station.active).map((station) =>
       <div key={station.id} className="co-card space-y-2 p-4">
         <h2 className="font-bold text-co-text">{language === "es" ? station.nameEs || station.name : station.name}</h2>
         {station.closedAt && <p className="font-bold text-co-text-muted">{t("assignments.lifecycle.closed", { time: formatTime(station.closedAt, language) })}</p>}
         <StationScheduleEditor station={station} canEdit={canEditTiming} disabled={busy || refreshing} save={savePayload} />
+        {flagControls(station)}
         {canEditTiming && <p className="text-sm text-co-text-muted">{t("assignments.lifecycle.timingHint")}</p>}
         {canEdit ? <label className="flex min-h-[44px] items-center gap-2 font-bold text-co-text">
           <input type="checkbox" checked={station.staffed} disabled={busy || refreshing}
