@@ -4,6 +4,7 @@ import { resolveShop } from "@/lib/shop-context";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { accessibleLocations } from "@/lib/locations";
+import { BackLink } from "@/components/nav/BackLink";
 import { StationsAdmin } from "@/components/assignments/StationsAdmin";
 import { StepUpProvider } from "@/components/admin/StepUpProvider";
 import { loadShiftBoard } from "@/lib/assignments";
@@ -27,7 +28,8 @@ export default async function StaffStationsPage({ searchParams }: { searchParams
       locations: auth.level >= 8 ? [...auth.locations, location.id] : auth.locations },
     locationId: location.id, date: etCalendarDate(new Date().toISOString()),
   }) : null;
-  return <main className="space-y-4">
+  return <main className="mx-auto w-full max-w-5xl min-w-0 space-y-4 px-4 pb-10 pt-2">
+    <BackLink search={location ? `?location=${encodeURIComponent(location.id)}` : undefined} />
     <h1 className="text-2xl font-bold">{serverT(auth.user.language, "assignments.stations")}</h1>
     <nav aria-label={serverT(auth.user.language, "assignments.locations")} className="flex flex-wrap gap-2">
       {locations.map((row) => <Link key={row.id} href={`/stations?loc=${row.id}`}

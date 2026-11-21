@@ -61,6 +61,11 @@ const RULES: ParentRule[] = [
   // Mid-shift Pulse v2: a section's own page goes back to the pulse (the shop rides in `search`).
   { pattern: "/mid-shift/[section]", parent: { href: "/mid-shift", labelKey: "pulse.page.back" } },
   { pattern: "/my-feedback", parent: { href: "/reports", labelKey: "reports.page.title" } },
+  // Scheduling: the board is entered from the admin hub card (GM / AGM / MoO+ all clear the /admin floor of 6),
+  // its settings from the board; the staff stations view is entered from the Assignments page.
+  { pattern: "/schedule", parent: { href: "/admin", labelKey: "admin.back_to_hub" } },
+  { pattern: "/schedule/settings", parent: { href: "/schedule", labelKey: "schedule.page.title" } },
+  { pattern: "/stations", parent: { href: "/assignments", labelKey: "nav.assignments" } },
   { pattern: "/reports/operations", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/reports/written", parent: { href: "/reports", labelKey: "reports.page.title" } },
   { pattern: "/reports/sales", parent: { href: "/reports", labelKey: "reports.page.title" } },

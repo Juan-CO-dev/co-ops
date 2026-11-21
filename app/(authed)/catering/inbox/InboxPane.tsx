@@ -184,7 +184,7 @@ export function InboxPane({ initial }: { initial: InboxList }) {
         <div className="flex flex-wrap items-center gap-2">
           {detail.catering_customer_id && <Link className={control} href={`/catering/customers#customer-${detail.catering_customer_id}`}>{t("catering.inbox.customer")}</Link>}
           {detail.lead_id && <Link className={control} href={`/catering/pipeline#lead-${detail.lead_id}`}>{t("catering.inbox.lead")}</Link>}
-          {detail.quote_id && <Link className={control} href={`/catering/quotes/${detail.quote_id}`}>{t("catering.inbox.quote")}</Link>}
+          {detail.quote_id && <Link className={control} href={`/catering/quotes?quote=${encodeURIComponent(detail.quote_id)}`}>{t("catering.inbox.quote")}</Link>}
         </div>
         {detail.delivery && <p className="my-2 flex flex-wrap items-center gap-2 text-sm">{deliveryChip(detail.delivery.state)}
           {detail.delivery.attempt > 0 && <span>{t("catering.inbox.delivery.attempts", { n: detail.delivery.attempt })}</span>}

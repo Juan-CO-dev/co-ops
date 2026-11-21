@@ -60,3 +60,16 @@ export function navDestinationsFor(level: number, opts?: { vault?: boolean; puls
 export function chipHref(href: string, scoped: boolean, locationId: string | null): string {
   return scoped && locationId ? `${href}?location=${locationId}` : href;
 }
+
+/** The scoped destinations whose pages read `?location=all` (the report hub's "all shops" scope). */
+const ALL_SHOPS_DESTINATIONS: ReadonlySet<string> = new Set(["/reports", "/reports/trends", "/reports/written"]);
+
+/**
+ * `chipHref` for a surface whose scope can be the report hub's "all" (the unified search on
+ * /reports/operations). "all" is a hub scope, not a shop: a page that does not read it would be handed
+ * `?location=all` as if it were a shop id (a bounce or a failed query), so those destinations get no shop
+ * and resolve their own (remembered, else first).
+ */
+export function chipHrefForScope(href: string, scoped: boolean, locationId: string | null): string {
+  return chipHref(href, scoped, locationId === "all" && !ALL_SHOPS_DESTINATIONS.has(href) ? null : locationId);
+}

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { MIDSHIFT_BASE_LEVEL } from "@/lib/midshift-shared";
-import { navDestinationsFor, chipHref } from "@/lib/nav-links";
+import { navDestinationsFor, chipHref, chipHrefForScope } from "@/lib/nav-links";
 import { PRODUCE_MIN } from "@/lib/production";
 import { MAINTENANCE_LINK_LEVEL, PULSE_V2_BASE_LEVEL, canOpenMaintenance, pulsePageAccess } from "@/lib/pulse/scope-shared";
 import { matchPages } from "@/lib/unified-search";
@@ -145,5 +145,18 @@ describe("chipHref", () => {
     expect(chipHref("/assignments", true, "shop-1")).toBe("/assignments?location=shop-1");
     expect(chipHref("/profile", false, "shop-1")).toBe("/profile");
     expect(chipHref("/reports", true, null)).toBe("/reports");
+  });
+});
+
+describe("chipHrefForScope (the unified search's scope can be the hub's \"all\")", () => {
+  it("passes a real shop through exactly like chipHref", () => {
+    expect(chipHrefForScope("/maintenance", true, "shop-1")).toBe("/maintenance?location=shop-1");
+    expect(chipHrefForScope("/profile", false, "shop-1")).toBe("/profile");
+  });
+  it("keeps \"all\" only for the pages that read it", () => {
+    for (const href of ["/reports", "/reports/trends", "/reports/written"]) expect(chipHrefForScope(href, true, "all")).toBe(`${href}?location=all`);
+  });
+  it("never hands \"all\" to a page that would take it for a shop id", () => {
+    for (const href of ["/maintenance", "/mid-shift", "/assignments", "/operations/production", "/lto", "/catering"]) expect(chipHrefForScope(href, true, "all")).toBe(href);
   });
 });

@@ -29,6 +29,7 @@ import {
 } from "@/lib/midshift";
 import { timeWindowMinutes } from "@/lib/midshift-shared";
 import { readNotInToast } from "@/lib/catering/not-in-toast";
+import { PIPELINE_READ_MIN } from "@/lib/catering/pipeline";
 import { notRungSource, toastReadyAt, toastRingTiming, type NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
 import { loadRecentDeliveries, type DeliveryView } from "@/lib/receiving";
 import { loadOrderingAttention, type OrderingCutoffAttention } from "@/lib/ordering";
@@ -340,7 +341,10 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
     for (const o of notRung) {
       const timing = toastRingTiming(o, ctx.now, null);
       if (timing === "upcoming") continue;
-      rows.push({ key: `catering_not_rung:${o.order_id}`, kind: "catering_not_rung", severity: severityOf("catering_not_rung"), params: { order: o.order_number ?? "", source: notRungSource(o), time: toastReadyAt(o) ?? "" }, href: `/catering/pipeline`, action: "ring" });
+      rows.push({ key: `catering_not_rung:${o.order_id}`, kind: "catering_not_rung", severity: severityOf("catering_not_rung"), params: { order: o.order_number ?? "", source: notRungSource(o), time: toastReadyAt(o) ?? "" },
+        // /catering/pipeline refuses below PIPELINE_READ_MIN (5) and a key holder (4) reads this row: they get the
+        // pulse's own catering section, which lists the same orders, instead of a bounce to the dashboard.
+        ...(ctx.auth.level >= PIPELINE_READ_MIN ? { href: `/catering/pipeline`, action: "ring" as const } : { href: `/mid-shift/catering?location=${loc}`, action: "open" as const }) });
     }
   }
   const cateringToday = got("cateringToday");
@@ -349,9 +353,13 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
   // No AM prep list at this shop (null) → nothing to flag; a failed read is already in `partial`.
   if (cateringToday && prior && prior.progress !== "done") {
     // The AM prep form cannot submit a past day, so the button opens last night's report (or that day's list).
-    const priorHref = prior.reportId
-      ? `/reports/am_prep/${encodeURIComponent(prior.reportId)}?location=${loc}`
-      : `/reports/operations?location=${loc}&type=am_prep&from=${prior.date}&to=${prior.date}`;
+    // Crew (below key holder) read only reports they completed themselves, so last night's list is not theirs to
+    // open: the pulse's catering section (shop-level timing, which they can read) is their destination.
+    const priorHref = crew
+      ? `/mid-shift/catering?location=${loc}`
+      : prior.reportId
+        ? `/reports/am_prep/${encodeURIComponent(prior.reportId)}?location=${loc}`
+        : `/reports/operations?location=${loc}&type=am_prep&from=${prior.date}&to=${prior.date}`;
     for (const e of cateringToday) {
       if (e.stage !== "confirmed") continue;
       const due = timeWindowMinutes(e.timeWindow);
@@ -361,7 +369,11 @@ async function attention(deps: PulseDeps, ctx: PulseCtx): Promise<AttentionData>
     }
   }
   const unlinked = got("unlinked");
-  if (unlinked && unlinked.count > 0) rows.push({ key: "clockin_unlinked", kind: "clockin_unlinked", severity: severityOf("clockin_unlinked"), params: { count: unlinked.count, names: unlinked.entries.map((e) => e.firstName).filter(Boolean).join(", ") }, href: `/admin/toast-employees?loc=${loc}`, action: "link" });
+  if (unlinked && unlinked.count > 0) rows.push({ key: "clockin_unlinked", kind: "clockin_unlinked", severity: severityOf("clockin_unlinked"), params: { count: unlinked.count, names: unlinked.entries.map((e) => e.firstName).filter(Boolean).join(", ") }, ...(ctx.auth.level >= LINK_ADMIN_MIN_LEVEL
+    // Linking is a GM-and-up task (/admin/toast-employees is gated at LINK_ADMIN_MIN_LEVEL, and /admin itself at 6);
+    // everyone else reads the same list on the pulse's own People section instead of a bounce.
+    ? { href: `/admin/toast-employees?loc=${loc}`, action: "link" as const }
+    : { href: `/mid-shift/people?location=${loc}`, action: "open" as const }) });
 
   const ranked = rankAttention(crew ? crewAttention(rows, ctx.auth.user.id) : rows);
   const evidence = attentionEvidence(names.length, partial.length);

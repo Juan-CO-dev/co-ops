@@ -124,7 +124,7 @@ describe("inbox interactive drawer",()=>{
   mockFetch();mount();const dialog=await openDrawer();
   expect(within(dialog).getByText("Plain message body")).toBeTruthy();expect(within(dialog).getByText("Proposed reply only")).toBeTruthy();
   expect(within(dialog).getByText(/Message classified/)).toBeTruthy();
-  expect(within(dialog).getByRole("link",{name:"Quote"}).getAttribute("href")).toBe("/catering/quotes/quote");
+  expect(within(dialog).getByRole("link",{name:"Quote"}).getAttribute("href")).toBe("/catering/quotes?quote=quote"); // quote detail is a client view of /catering/quotes, never a /catering/quotes/<id> route
   fireEvent.click(within(dialog).getByRole("button",{name:"Close message"}));await waitFor(()=>expect(screen.queryByRole("dialog")).toBeNull());
  });
  it("posts expected revision and a request ID for handle and reassign, never a send",async()=>{
