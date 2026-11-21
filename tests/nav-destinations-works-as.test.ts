@@ -45,10 +45,12 @@ describe("guard (g): the module never reads works-as", () => {
     expectTypeOf<keyof Facts>().toEqualTypeOf<"assignedTasks" | "businessReportOffered">();
   });
 
-  it("a CGS viewer object carrying an extra worksAs resolves to exactly the plain CGS list", () => {
+  it("a CGS viewer object, or a facts object, carrying an extra worksAs resolves to exactly the plain CGS list", () => {
     const plain: Viewer = { role: "cgs", level: 10, switches: {} };
     const smuggled = { ...plain, worksAs: "key_holder" } as unknown as Viewer;
+    const smuggledFacts = { worksAs: "key_holder" } as unknown as Facts;
     expect(destinationsFor(smuggled).map((d) => d.id)).toEqual(destinationsFor(plain).map((d) => d.id));
+    expect(destinationsFor(plain, smuggledFacts).map((d) => d.id)).toEqual(destinationsFor(plain).map((d) => d.id));
     expect(destinationsFor(plain).length).toBeGreaterThan(DESTINATIONS.length / 2);
   });
 });

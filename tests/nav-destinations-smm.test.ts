@@ -11,17 +11,18 @@
 import { describe, expect, it } from "vitest";
 import { DESTINATIONS, byId } from "@/lib/nav/destinations";
 import { ROLE_MENUS, destinationsFor } from "@/lib/nav/resolve";
-import type { SwitchName, Switches } from "@/lib/nav/types";
+import type { Facts, SwitchName, Switches, TaskType } from "@/lib/nav/types";
 
 const SWITCH_NAMES: SwitchName[] = ["pulseV2", "vault", "businessReport", "demandSignals", "marketingScorecard", "customerProfiles"];
 const SWITCH_COMBOS: Switches[] = Array.from({ length: 64 }, (_, n) => Object.fromEntries(SWITCH_NAMES.map((s, i) => [s, ((n >> i) & 1) === 1])));
 const FOUR = ["dashboard", "me", "my-feedback", "training"];
 
 describe("guard (f): the social media manager's list", () => {
-  it("exactly the four, at every level 0..10 and every one of the 64 switch combinations", () => {
-    for (let level = 0; level <= 10; level++) for (const switches of SWITCH_COMBOS) {
-      const ids = destinationsFor({ role: "social_media_mgr", level, switches }).map((d) => d.id).sort();
-      expect(ids, `level ${level} ${JSON.stringify(switches)}`).toEqual(FOUR);
+  it("exactly the four, at every level 0..10, every one of the 64 switch combinations, with or without every fact", () => {
+    const everything: Facts = { assignedTasks: new Set<TaskType>(["am_prep", "mid_day_prep", "opening_report", "cash_report", "receiving", "counts", "ordering", "pm_report"]), businessReportOffered: true };
+    for (const facts of [undefined, everything]) for (let level = 0; level <= 10; level++) for (const switches of SWITCH_COMBOS) {
+      const ids = destinationsFor({ role: "social_media_mgr", level, switches }, facts).map((d) => d.id).sort();
+      expect(ids, `level ${level} ${JSON.stringify(switches)} ${facts ? "every fact" : "no facts"}`).toEqual(FOUR);
     }
   });
 
@@ -36,13 +37,13 @@ describe("guard (f): the social media manager's list", () => {
 
   it("the numbers line holds on its own: a menu widened to Reports and Cash still yields the four", () => {
     const menus = { social_media_mgr: [...FOUR, "reports", "cash"] };
-    const ids = destinationsFor({ role: "social_media_mgr", level: 10, switches: {} }, DESTINATIONS, menus).map((d) => d.id).sort();
+    const ids = destinationsFor({ role: "social_media_mgr", level: 10, switches: {} }, undefined, DESTINATIONS, menus).map((d) => d.id).sort();
     expect(ids).toEqual(FOUR);
   });
 
   it("and a list where Training is retagged numbers drops Training", () => {
     const list = DESTINATIONS.map((d) => (d.id === "training" ? { ...d, numbers: true } : d));
-    const ids = destinationsFor({ role: "social_media_mgr", level: 6, switches: {} }, list).map((d) => d.id).sort();
+    const ids = destinationsFor({ role: "social_media_mgr", level: 6, switches: {} }, undefined, list).map((d) => d.id).sort();
     expect(ids).toEqual(["dashboard", "me", "my-feedback"]);
   });
 

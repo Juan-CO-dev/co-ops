@@ -355,6 +355,8 @@ interface FileInfo {
   topConsts: Map<string, ts.VariableDeclaration>;
   /** Per function: the names it reassigns. */
   locals: Map<FnLike | undefined, Set<string>>;
+  /** The switch table this file is read with (a copy in mutation case M2). */
+  switchCalls: Readonly<Record<string, TableEntry<SwitchName>>>;
 }
 
 function importedAs(file: FileInfo, local: string, table: Readonly<Record<string, { modules: readonly string[] }>> | Readonly<Record<string, readonly string[]>>): string | undefined {
@@ -668,12 +670,13 @@ function callValue(call: ts.CallExpression, env: Env, depth: number): Val | null
 
 /** A role predicate / membership / switch / task call as a value (its concrete result), or OPAQUE. */
 function predicateCall(call: ts.CallExpression, env: Env, depth: number): Val | null {
-  const sw = resolveCallee(call, env, SWITCH_CALLS);
+  const table = env.file.switchCalls;
+  const sw = resolveCallee(call, env, table);
   if (sw) {
     const want = SWITCH_ARGS[sw] ?? "";
     const got = call.arguments.map((a) => norm(a.getText(env.file.sf))).join(", ");
     if (got !== want) return OPAQUE;
-    const name = SWITCH_CALLS[sw]!.value;
+    const name = table[sw]!.value;
     return { cls: "switch", get: (c) => { const v = c.switches[name] === true; c.readSwitches.set(name, v); return v; } };
   }
   const role = resolveCallee(call, env, ROLE_PREDICATES);
@@ -898,7 +901,7 @@ function isFnExpr(n: ts.Node): n is ts.ArrowFunction | ts.FunctionExpression {
   return ts.isArrowFunction(n) || ts.isFunctionExpression(n);
 }
 
-function fileInfo(file: string, src: string): FileInfo {
+function fileInfo(file: string, src: string, switchCalls: Readonly<Record<string, TableEntry<SwitchName>>> = SWITCH_CALLS): FileInfo {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const imports = new Map<string, { module: string; name: string }>();
   const fns = new Map<string, FnLike>();
@@ -919,7 +922,7 @@ function fileInfo(file: string, src: string): FileInfo {
       }
     }
   }
-  return { file, sf, imports, fns, topConsts, locals: new Map() };
+  return { file, sf, imports, fns, topConsts, locals: new Map(), switchCalls };
 }
 
 function fnOf(n: ts.Node): FnLike | undefined {
@@ -1012,8 +1015,8 @@ const ENCLOSING_KIND = (p: ts.Node): ConstructKind | undefined => {
   return undefined;
 };
 
-function analyze(file: string, src: string): Analysis {
-  const info = fileInfo(file, src);
+function analyze(file: string, src: string, switchCalls?: Readonly<Record<string, TableEntry<SwitchName>>>): Analysis {
+  const info = fileInfo(file, src, switchCalls);
   const sf = info.sf;
   const line = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
 
@@ -1287,7 +1290,7 @@ export class Reader {
   load(file: string): Loaded {
     const hit = this.loaded.get(file);
     if (hit) return hit;
-    const a = analyze(file, this.read(file));
+    const a = analyze(file, this.read(file), this.opts.switchCalls);
     const { bound, problems } = bindFile(a, this.entries, this.read);
     for (const b of bound.values()) problems.push(...validateMeaning(b, a, this.pages, this.allRoutes));
     if (problems.length) {
@@ -1301,7 +1304,7 @@ export class Reader {
 
   /** The census of one file (constructs, with the records that bind them); never throws on binding problems. */
   census(file: string): { constructs: Construct[]; problems: Problem[]; bound: Map<ts.Node, Bound> } {
-    const a = analyze(file, this.read(file));
+    const a = analyze(file, this.read(file), this.opts.switchCalls);
     const { bound, problems } = bindFile(a, this.entries, this.read);
     for (const b of bound.values()) problems.push(...validateMeaning(b, a, this.pages, this.allRoutes));
     return { constructs: a.constructs, problems, bound };
