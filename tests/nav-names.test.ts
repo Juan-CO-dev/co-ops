@@ -72,8 +72,28 @@ const NAMES: Record<string, Name> = {
 
 /** Opening's two steps (2.2): named inside the Opening page, never as a destination of their own. */
 const OPENING_STEPS: Name[] = [
-  { en: "Opening check", es: "Verificación de apertura", keys: ["opening.page.title", "opening.phase.tab_phase1"] },
-  { en: "Morning prep", es: "Prep de la mañana", keys: ["opening.phase.tab_phase2"] },
+  { en: "Opening check", es: "Verificación de apertura", keys: ["opening.page.title", "opening.phase.tab_phase1", "admin.templates.builder.preview.phase1"] },
+  { en: "Morning prep", es: "Prep de la mañana", keys: ["opening.phase.tab_phase2", "admin.templates.builder.preview.phase2"] },
+];
+
+/**
+ * Section 2 names this PR deliberately does NOT apply, because the thing they name does not exist yet. Each keeps
+ * its pre-rename value here, so the table is complete and the PR that applies it must flip this entry on purpose
+ * (move it into NAMES, or into a step list, in the same change).
+ */
+const DEFERRED: { what: string; target: { en: string; es: string }; current: Name; appliedBy: string }[] = [
+  {
+    what: "/settings → Me",
+    target: { en: "Me", es: "Yo" },
+    current: { en: "Settings", es: "Configuración", keys: ["nav.settings", "settings.page.title"] },
+    appliedBy: "nav PR 10, merge M4 (/settings retitled Me when it holds the Me rows)",
+  },
+  {
+    what: "the global button → Go to",
+    target: { en: "Go to", es: "Ir a" },
+    current: { en: "User menu", es: "Menú de usuario", keys: ["user_menu.aria_label"] },
+    appliedBy: "nav PR 9 (the Go to sheet; today's user menu is not that sheet)",
+  },
 ];
 
 /**
@@ -119,6 +139,17 @@ describe("nav names: one canonical name per destination (spec section 2)", () =>
       expect(enDict[key], `en ${key}`).toBe(enName);
       expect(esDict[key], `es ${key}`).toBe(esName);
     }
+  });
+
+  it.each(DEFERRED)("DEFERRED: $what is not applied yet (by $appliedBy) and still reads its pre-rename value", ({ target, current }) => {
+    for (const key of current.keys) {
+      expect(enDict[key], `en ${key}`).toBe(current.en);
+      expect(esDict[key], `es ${key}`).toBe(current.es);
+      expect(routeFor.has(key), `${key} is deferred, not a named surface`).toBe(false);
+    }
+    // The target name is not already in use for another destination.
+    expect(Object.values(NAMES).map((n) => n.en)).not.toContain(target.en);
+    expect(Object.values(NAMES).map((n) => n.es)).not.toContain(target.es);
   });
 
   it("no two destinations share a name in either language", () => {
