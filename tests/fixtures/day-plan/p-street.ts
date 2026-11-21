@@ -3,10 +3,10 @@
  * timeline. `pStreet(min, opts)` returns the facts as they stand at that minute (events after it are not yet true), so a
  * test sweeps the clock by calling it. Illustrative values (the live ones are in p-street-late-close.ts).
  */
-import type { CateringOrder, DayStation, ShopFacts } from "@/lib/day-plan-shared";
+import { planDay, type CateringOrder, type DayPlan, type DayStation, type DayViewer, type ShopFacts } from "@/lib/day-plan-shared";
 import type { PoFact, VendorCutoff, VendorFact } from "@/lib/report-digests-v2-shared";
 import type { RhythmRow } from "@/lib/vendor-rhythm-shared";
-import { assignment, checklist, hm, iso, ok, order, PLAN_DATE, report, station } from "./build";
+import { assignment, checklist, forViewer, hm, iso, ok, order, PLAN_DATE, report, station } from "./build";
 
 export const P_SHOP = { id: "shop-p", code: "P" } as const;
 
@@ -149,4 +149,12 @@ export function pStreet(min: number, opts: PStreetOptions = {}): ShopFacts {
     yesterdayClosing: ok(checklist(yesterday, { status: "confirmed" })),
     holdsStationOnStationDay: false,
   };
+}
+
+/** The plan for one viewer at one minute (their own station filled as PR 6 would). */
+export function pStreetPlan(v: DayViewer, min: number, opts: PStreetOptions = {}): DayPlan {
+  const facts = forViewer(pStreet(min, opts), P_STATION_BY_USER, v.userId);
+  const plan = planDay({ planDate: opts.planDate ?? (opts.nightBefore ? "2026-11-17" : PLAN_DATE), nowMin: min, viewer: v, facts });
+  if (plan.kind !== "shop") throw new Error("expected a shop plan");
+  return plan;
 }

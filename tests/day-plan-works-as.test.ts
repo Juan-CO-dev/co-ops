@@ -7,7 +7,10 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type { DayViewer } from "@/lib/day-plan-shared";
+import { planDay, type DayViewer } from "@/lib/day-plan-shared";
+import { CGS, hm, PLAN_DATE } from "./fixtures/day-plan/build";
+import { capitolHill } from "./fixtures/day-plan/capitol-hill";
+import { pStreet } from "./fixtures/day-plan/p-street";
 
 const FILES = ["lib/day-plan-shared.ts", "lib/scheduling/catering-day-shared.ts"];
 
@@ -32,5 +35,17 @@ describe("the day engine never reads works-as", () => {
 
   it("DayViewer is closed: userId, role, level, surfaces, switches", () => {
     expectTypeOf<keyof DayViewer>().toEqualTypeOf<"userId" | "role" | "level" | "surfaces" | "switches">();
+  });
+
+  it("a CGS viewer with a smuggled worksAs: key_holder at shop A, none at shop B, sees exactly the plain CGS view at both", () => {
+    const smuggled = { ...CGS, worksAs: "key_holder" } as unknown as DayViewer;
+    for (const t of ["07:00", "13:35", "20:30"]) {
+      const a = pStreet(hm(t));
+      const b = capitolHill(hm(t));
+      expect(planDay({ planDate: PLAN_DATE, nowMin: hm(t), viewer: smuggled, facts: a })).toEqual(planDay({ planDate: PLAN_DATE, nowMin: hm(t), viewer: CGS, facts: a }));
+      const plainB = planDay({ planDate: PLAN_DATE, nowMin: hm(t), viewer: CGS, facts: b });
+      expect(plainB.kind).toBe("shop");
+      expect(planDay({ planDate: PLAN_DATE, nowMin: hm(t), viewer: smuggled, facts: b })).toEqual(plainB);
+    }
   });
 });

@@ -6,9 +6,14 @@
  * and render in each language through the reference renderer.
  */
 import { describe, expect, it } from "vitest";
-import { EMITTED_KEYS } from "@/lib/day-plan-shared";
+import { applyLens, buildDay, EMITTED_KEYS, type DayPlan, type Reason } from "@/lib/day-plan-shared";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
+import { ALL_VIEWERS, forViewer, hm, PLAN_DATE } from "./fixtures/day-plan/build";
+import { capitolHill } from "./fixtures/day-plan/capitol-hill";
+import { NO_EVENTS, P_STATION_BY_USER, pStreet } from "./fixtures/day-plan/p-street";
+import { lateClose } from "./fixtures/day-plan/p-street-late-close";
+import { renderReason } from "./fixtures/day-plan/render";
 
 const EN = en as Record<string, string>;
 const ES = es as Record<string, string>;
@@ -130,4 +135,53 @@ describe("what the engine emits", () => {
     }
   });
 
+  it("over every fixture, viewer and quarter hour, each emitted reason is a listed key whose params equal its placeholders", () => {
+    const seen = new Set<string>();
+    const emitted = Object.keys(EMITTED_KEYS);
+    const check = (r: Reason | null) => {
+      if (r === null) return;
+      seen.add(r.key);
+      expect(emitted, r.key).toContain(r.key);
+      expect(Object.keys(r.params).sort(), r.key).toEqual(placeholders(EN[r.key]!));
+    };
+    const fixtures = [
+      (m: number) => pStreet(m), (m: number) => pStreet(m, { timeline: NO_EVENTS }), (m: number) => pStreet(m, { heavy: true }),
+      (m: number) => pStreet(m, { nightBefore: true }), (m: number) => capitolHill(m), (m: number) => capitolHill(m, { events: false }),
+      (m: number) => lateClose(m, { midDaySubmitted: false }),
+    ];
+    for (const facts of fixtures) {
+      for (let m = 0; m < 1440; m += 15) {
+        const f = facts(m);
+        const day = buildDay(f.opening.kind === "ok" ? f.opening.value.forDate : PLAN_DATE, m, f);
+        for (const v of Object.values(ALL_VIEWERS)) {
+          const p: DayPlan = applyLens(day, v, forViewer(f, P_STATION_BY_USER, v.userId));
+          check(p.phase.since);
+          check(p.headsUp);
+          check(p.empty);
+          for (const n of p.notes) check(n.reason);
+          for (const i of p.items) for (const r of i.reasons) check(r);
+        }
+      }
+    }
+    expect(seen.size).toBeGreaterThan(40);
+  });
+});
+
+describe("(r3, D7) bilingual station names", () => {
+  it("two past-due stations with different translations render each language's own names; es null falls back to en", () => {
+    const day = buildDay(PLAN_DATE, hm("15:45"), pStreet(hm("15:45"), { timeline: NO_EVENTS }));
+    const pastDue = day.closing.reasons.find((r) => r.key === "day.reason.closing.past_due_other")!;
+    expect(renderReason(pastDue, "en", EN)).toBe("2 stations are past their usual close: Crunchy Boi Station, 3rd Party Station.");
+    expect(renderReason(pastDue, "es", ES)).toBe("2 estaciones pasaron su hora normal de cierre: Estación Crunchy Boi, Estación de terceros.");
+    const next = day.closing.reasons.find((r) => r.key === "day.reason.closing.next")!;
+    expect(renderReason(next, "en", EN)).toBe("Next: Walk Ins Station (usually around 8:00 PM).");
+    expect(renderReason(next, "es", ES)).toMatch(/^Sigue: Walk Ins Station \(normalmente a eso de las 8:00/);
+  });
+
+  it("the usual time renders through formatClockTime, display only", () => {
+    const f = forViewer(pStreet(hm("13:35")), P_STATION_BY_USER, ALL_VIEWERS.ROSA.userId);
+    const card = applyLens(buildDay(PLAN_DATE, hm("13:35"), f), ALL_VIEWERS.ROSA, f).items.find((i) => i.id === "station")!;
+    expect(renderReason(card.reasons[0]!, "en", EN)).toBe("Crunchy Boi Station usually closes by 1:30 PM. Mark it closed when it's done.");
+    expect(renderReason(card.reasons[0]!, "es", ES)).toMatch(/^Estación Crunchy Boi normalmente cierra a las 1:30/);
+  });
 });

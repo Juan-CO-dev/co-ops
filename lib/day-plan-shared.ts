@@ -15,12 +15,13 @@
  * The clock moves the phase, Mid-day prep and the past-due prompts. It never makes the closing checklist, the AM prep list,
  * the cash deposit or the PM report urgent (S2 sizing Q4).
  */
-import { closedStationFor, currentFloorStation, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
+import { closedStationFor, currentFloorStation, taskVisible, type ShiftBoard, type TaskAssignment, type TaskType } from "@/lib/assignments-shared";
 import { deriveCloseState } from "@/lib/dashboard-status-shared";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { operationalNow } from "@/lib/midshift-shared";
 import { byId } from "@/lib/nav/destinations";
+import { canSee } from "@/lib/nav/resolve";
 import type { Destination, Switches } from "@/lib/nav/types";
 import { cutoffsTomorrow, etDayOf, type PoFact, type VendorCutoff, type VendorFact } from "@/lib/report-digests-v2-shared";
 import type { RoleCode } from "@/lib/roles";
@@ -1041,3 +1042,161 @@ function cateringItem(
   return makeItem("catering_today", { band: "upcoming", state: "not_started", at: next.from, heavy: load.heavy, reasons: [primary, ...untrackedLine, ...extras] });
 }
 
+// ═══ 6. The role lens ═════════════════════════════════════════════════════════════════════════════════════════════════
+
+const TASK_ITEMS: ReadonlySet<ItemId> = new Set<ItemId>(["opening", "mid_day_prep", "am_prep", "cash", "pm_report", "ordering", "receiving", "counts"]);
+const HOLDER_ITEMS: ReadonlySet<ItemId> = new Set<ItemId>(["opening", "mid_day_prep", "am_prep", "cash", "pm_report", "ordering", "receiving"]);
+const isHeavyReason = (r: Reason) => r.key.startsWith("day.reason.heavy.");
+const isPastDueReason = (r: Reason) => r.key === "day.reason.closing.past_due_one" || r.key === "day.reason.closing.past_due_other";
+
+/**
+ * The role lens (3.3.6): filters by surface + level floor + assignment, sets mine / holder / actions, places the pin,
+ * picks Next up. The clock is not an input to which items show (a test sweeps it). It reads the real role, never "works as".
+ */
+export function applyLens(
+  day: DayModel, viewer: DayViewer,
+  facts: Pick<ShopFacts, "assignments" | "myStation" | "holdsStationOnStationDay">,
+): DayPlan {
+  const kh = viewer.level >= 4;
+  const holds = (s: Surface) => viewer.surfaces.has(s);
+  const a = facts.assignments.kind === "not_shown" ? "not_shown" as const : dayValue(facts.assignments, day.planDate);
+  const rows = a !== null && a !== "not_shown" ? a.rows.filter((r) => r.available) : [];
+  const own = rows.filter((r) => r.assigneeId === viewer.userId);
+  const ownAsBoard: TaskAssignment[] = own.map((r) => ({ id: r.id, task: r.task, assigneeId: r.assigneeId, assignerId: "", assignerName: null, note: null,
+    ...(r.source ? { source: r.source } : {}), available: true }));
+  const assignedTasks = new Set(tasksOf(own).filter((t) => taskVisible(viewer.level, t, ownAsBoard)));
+  const navViewer = { role: viewer.role, level: viewer.level, switches: viewer.switches };
+
+  const decorate = (item: DayItem): DayItem | null => {
+    if (!holds(item.surface)) return null;
+    if (item.id === "catering_today") {
+      if (!kh) return null;
+      const pipeline = viewer.level >= 5;
+      return { ...item, destId: pipeline ? "catering-workspace" : "mid-shift", ...(pipeline ? {} : { section: "catering" }),
+        placement: viewer.role === "catering_mgr" ? "block" : "list", actions: ["do"] };
+    }
+    if (TASK_ITEMS.has(item.id) && item.task) {
+      if (!canSee(byId(item.destId), navViewer, { assignedTasks })) return null;
+      const mine = own.some((r) => r.task === item.task);
+      const reasons = holds("catering") ? item.reasons : item.reasons.filter((r) => !isHeavyReason(r));
+      if (!HOLDER_ITEMS.has(item.id)) return { ...item, reasons, mine, holder: mine ? { kind: "mine" } : { kind: "none" }, actions: ["do"] };
+      let holder: Holder;
+      let actions: DayItem["actions"];
+      if (a === "not_shown") { holder = { kind: "not_shown" }; actions = ["do"]; }
+      else if (a === null) { holder = { kind: "unknown" }; actions = kh ? ["do"] : []; }
+      else if (mine) { holder = { kind: "mine" }; actions = ["do"]; }
+      else {
+        const other = rows.find((r) => r.task === item.task);
+        const inScope = a.scope === "all_tasks" || (CHECKLIST_TASKS as readonly TaskType[]).includes(item.task);
+        if (other) { holder = { kind: "named", firstName: other.firstName ?? "" }; actions = []; }
+        else if (inScope) { holder = { kind: "nobody" }; actions = holds("ops") ? ["do", "assign"] : ["do"]; }
+        else { holder = { kind: "not_shown" }; actions = ["do"]; }
+      }
+      return { ...item, reasons, mine, holder, actions };
+    }
+    return { ...item, actions: ["do"] };
+  };
+
+  const listed: DayItem[] = [];
+  for (const item of day.items) {
+    const d = decorate(item);
+    if (d) listed.push(d);
+  }
+  // The station card: the viewer's own floor station.
+  const my = okValue(facts.myStation);
+  if (my && holds("tasks")) {
+    const card = day.stationCards[my.stationId]
+      ?? (day.stationsUnknown ? makeItem("station", { band: "now", state: "unknown", at: null, reasons: [reason("day.reason.station.open", {})] }) : null);
+    if (card) listed.push({ ...card, actions: ["do"] });
+  }
+  const sorted = sortItems(listed, day.heavy.today?.heavy ?? false, day.planDate);
+
+  // The closing checklist pin (5.4).
+  let items: DayItem[] = sorted;
+  if (holds("tasks")) {
+    const reasons = kh ? day.closing.reasons : day.closing.reasons.filter((r) => !isPastDueReason(r));
+    const closing: DayItem = { ...day.closing, reasons, actions: ["do"] };
+    if (closing.band === "done") items = sortItems([...sorted, closing], day.heavy.today?.heavy ?? false, day.planDate);
+    else if (day.triggered) items = [{ ...closing, pin: "full" }, ...sorted];
+    else items = sorted.length === 0 ? [{ ...closing, pin: "compact" }] : [sorted[0]!, { ...closing, pin: "compact" }, ...sorted.slice(1)];
+  }
+
+  // Next up: the first item that is not the full-size pin.
+  const isOpen = (i: DayItem) => i.band === "urgent" || i.band === "now" || i.band === "upcoming";
+  const firstIdx = items.findIndex((i) => i.pin !== "full");
+  const first = firstIdx >= 0 ? items[firstIdx]! : null;
+  let nextUp: DayPlan["nextUp"];
+  if (day.phase.id === "closed" && !items.some(isOpen)) nextUp = { kind: "closed" };
+  else if (first && (first.band === "urgent" || first.band === "now")) nextUp = { kind: "item", index: firstIdx };
+  else {
+    const up = items.findIndex((i) => i.pin !== "full" && i.band === "upcoming");
+    nextUp = { kind: "nothing_due", nextIndex: up >= 0 ? up : null };
+  }
+
+  const notes: DayNote[] = day.notes.filter((n) => (n.minLevel ?? 0) <= viewer.level);
+  if (!kh && a === null && !notes.some((n) => n.reason.key === "day.fail.all")) notes.push({ reason: reason("day.fail.assignments", {}) });
+  const onlyClosing = items.every((i) => i.id === "closing");
+  const empty = !kh && a !== null && a !== "not_shown" && my === null && facts.myStation.kind === "ok" && onlyClosing ? reason("day.empty.crew", {}) : null;
+
+  return {
+    kind: "shop", planDate: day.planDate, phase: day.phase, stations: day.stations, items, nextUp,
+    headsUp: kh && holds("catering") ? day.headsUp : null, notes,
+    alerts: kh || facts.holdsStationOnStationDay ? day.alerts : [], empty,
+  };
+}
+
+function tasksOf(rows: readonly DayAssignment[]): TaskType[] {
+  return [...new Set(rows.map((r) => r.task))];
+}
+
+// ═══ 6.4 The social media manager ═════════════════════════════════════════════════════════════════════════════════════
+
+const SMM_DEST: Record<(typeof CHECKLIST_TASKS)[number], { readonly destId: string; readonly order: number }> = {
+  opening_report: { destId: "opening", order: DAY_ORDER.indexOf("opening") },
+  mid_day_prep: { destId: "mid-day", order: DAY_ORDER.indexOf("mid_day_prep") },
+  am_prep: { destId: "am-prep", order: DAY_ORDER.indexOf("am_prep") },
+};
+const isChecklistTask = (t: TaskType): t is (typeof CHECKLIST_TASKS)[number] => (CHECKLIST_TASKS as readonly TaskType[]).includes(t);
+
+/** The social media manager's page. Reads ONLY SmmFacts: own checklist tasks, own station, the closing link. */
+export function smmPlan(planDate: string, viewer: DayViewer, facts: SmmFacts): SmmPlan {
+  void viewer;
+  const notes: SmmPlan["notes"][number][] = [];
+  let tasks: SmmPlan["tasks"];
+  if (facts.ownTasks.kind === "failed") { tasks = "unavailable"; notes.push("day.fail.assignments"); }
+  else {
+    const seen = new Set<TaskType>();
+    tasks = facts.ownTasks.value
+      .filter((t): t is typeof t & { task: (typeof CHECKLIST_TASKS)[number] } => isChecklistTask(t.task))
+      .filter((t) => (seen.has(t.task) ? false : (seen.add(t.task), true)))
+      .sort((a, b) => SMM_DEST[a.task].order - SMM_DEST[b.task].order)
+      .map((t) => ({ task: t.task, destId: SMM_DEST[t.task].destId, state: t.status, reason: reason("day.reason.own.assigned", {}) }));
+  }
+  let station: SmmPlan["station"];
+  if (facts.ownStation.kind === "failed") { station = "unavailable"; notes.push("day.fail.own_station"); }
+  else station = facts.ownStation.value === null ? null : { name: facts.ownStation.value.name, nameEs: facts.ownStation.value.nameEs };
+  return { kind: "smm", planDate, tasks, station, closingDestId: "closing", notes };
+}
+
+const SMM_WRONG_FACTS: SmmFacts = { kind: "smm", ownTasks: { kind: "failed" }, ownStation: { kind: "failed" } };
+const ALL_FAILED_SHOP: ShopFacts = {
+  kind: "shop", shop: { id: "", code: "" }, hours: { kind: "failed" }, stations: { kind: "failed" }, opening: { kind: "failed" },
+  closing: { kind: "failed" }, amPrep: { kind: "failed" }, midDay: { kind: "failed" }, cash: { kind: "failed" }, pm: { kind: "failed" },
+  ordering: { kind: "failed" }, rhythm: { kind: "failed" }, receiving: { kind: "failed" }, cateringToday: { kind: "failed" },
+  cateringTomorrow: { kind: "failed" }, flaggedLines: { kind: "failed" }, assignments: { kind: "failed" }, myStation: { kind: "failed" },
+  counts: { kind: "failed" }, yesterdayClosing: { kind: "failed" }, holdsStationOnStationDay: false,
+};
+
+/**
+ * The one entry PR 7 calls. The social media manager → smmPlan, whatever facts arrive (only `facts.kind` is read; shop
+ * facts are never read). Any other role given SmmFacts → a plan with every item unknown (a loader bug fails safe).
+ */
+export function planDay(input: DayPlanInput): DayPlan | SmmPlan {
+  const { planDate, nowMin, viewer } = input;
+  if (lensFor(viewer.role) === "smm") {
+    const facts = input.facts;
+    return smmPlan(planDate, viewer, facts.kind === "smm" ? facts : SMM_WRONG_FACTS);
+  }
+  const facts = input.facts.kind === "shop" ? input.facts : ALL_FAILED_SHOP;
+  return applyLens(buildDay(planDate, nowMin, facts), viewer, facts);
+}
