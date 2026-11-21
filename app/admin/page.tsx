@@ -118,9 +118,10 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
         {demandSignalsEnabled(process.env.DEMAND_SIGNALS) && canViewDemandSignals(auth.role) && <a href="/admin/demand-signals" className="co-card co-card-interactive flex min-h-[44px] items-center p-4 text-base font-bold text-co-text">{serverT(lang, "signals.title")}</a>}
         {sections.map((s) =>
           s.comingSoon ? (
-            // Honest muted card — the section is a live PlaceholderCard stub, so
-            // the hub does not pretend it links anywhere (council convergence 4;
-            // mirrors checklist-templates deep_cleaning). No <a>, aria-disabled.
+            // Honest muted card — the section is planned and not built (its route
+            // holds a one-sentence planned page), so the hub does not pretend it
+            // links anywhere (council convergence 4; mirrors checklist-templates
+            // deep_cleaning). No <a>, aria-disabled.
             <div
               key={s.id}
               aria-disabled="true"
@@ -130,7 +131,7 @@ export default async function AdminHubPage({ searchParams }: { searchParams: Pro
                 {serverT(lang, s.i18nKey)}
               </span>
               <span className="text-sm text-co-text-muted">
-                {serverT(lang, "admin.hub.arrives")}
+                {serverT(lang, "planned.label")}
               </span>
             </div>
           ) : (

@@ -22,11 +22,11 @@ export interface AdminSection {
   href: string;
   minLevel: number;
   /**
-   * When true, the section is a live PlaceholderCard stub (no real surface yet).
-   * The hub renders it HONESTLY — muted, no link, "arrives" copy — instead of a
+   * When true, the section is planned and not built (its route holds a one-sentence
+   * planned page). The hub renders it HONESTLY — muted, no link, "Planned" — instead of a
    * normal card that dead-ends (council convergence 4; mirrors the
-   * checklist-templates deep_cleaning idiom). The stub page stays reachable by
-   * direct URL for anyone who bookmarks it.
+   * checklist-templates deep_cleaning idiom). The planned page stays reachable by
+   * direct URL, behind its own gate.
    */
   comingSoon?: boolean;
   /**
