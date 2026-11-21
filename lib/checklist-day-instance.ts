@@ -45,22 +45,28 @@ export function pickDayInstance<T extends DayInstanceCandidate>(rows: readonly T
  * The day's one-per-day instance of `type` at the shop, on any version of the shop's lists of
  * that type (active or retired). Two reads (the template read paged at 1000, the instance read chunked by 100 ids), no embed. `columns` must include
  * id, template_id, status, created_at.
+ *
+ * `fresh`: the re-read after a lost create race (`checklist_instance_lineage_taken`). Inside a server render Next
+ * memoizes identical GET fetches, so the same lookup repeated in one render replays the FIRST answer (empty) and never
+ * sees the winner; `fresh` gives every read its own AbortController signal, the documented opt-out.
  */
 export async function findDayInstance<T extends DayInstanceCandidate>(
   sb: SupabaseClient,
-  args: { locationId: string; type: "opening" | "closing"; date: string; columns: string },
+  args: { locationId: string; type: "opening" | "closing"; date: string; columns: string; fresh?: boolean },
 ): Promise<T | null> {
+  // Only the race re-read opts out; every ordinary lookup stays exactly as it was.
+  const fresh = <Q extends { abortSignal(signal: AbortSignal): Q }>(q: Q): Q => (args.fresh ? q.abortSignal(new AbortController().signal) : q);
   // W15 round 1: every version, paged in a stable order — a shop past 1000 versions of a list would
   // otherwise lose the newest (or any) version's instance behind the response cap.
   const ids: string[] = [];
   for (let from = 0; ; from += TEMPLATE_PAGE) {
-    const { data: tpls, error: tErr } = await sb
+    const { data: tpls, error: tErr } = await fresh(sb
       .from("checklist_templates")
       .select("id")
       .eq("location_id", args.locationId)
       .eq("type", args.type)
       .order("id", { ascending: true })
-      .range(from, from + TEMPLATE_PAGE - 1)
+      .range(from, from + TEMPLATE_PAGE - 1))
       .returns<Array<{ id: string }>>();
     if (tErr) throw new Error(`findDayInstance templates: ${tErr.message}`);
     const page = tpls ?? [];
@@ -71,13 +77,13 @@ export async function findDayInstance<T extends DayInstanceCandidate>(
   // Versions accumulate over the years: chunk the id list so the request line stays bounded.
   const rows: T[] = [];
   for (let i = 0; i < ids.length; i += 100) {
-    const { data, error: iErr } = await sb
+    const { data, error: iErr } = await fresh(sb
       .from("checklist_instances")
       .select(args.columns)
       .in("template_id", ids.slice(i, i + 100))
       .eq("location_id", args.locationId)
       .eq("date", args.date)
-      .eq("allows_multiple_per_day", false)
+      .eq("allows_multiple_per_day", false))
       .returns<T[]>();
     if (iErr) throw new Error(`findDayInstance instances: ${iErr.message}`);
     rows.push(...(data ?? []));

@@ -303,8 +303,9 @@ export default async function ClosingPage({ searchParams }: PageProps) {
           });
     } catch (error) {
       if (!(error instanceof ChecklistLineageTakenError)) throw error;
+      // fresh: the same lookup already ran in this render and found nothing (Next memoizes identical GETs).
       const taken = await findDayInstance<InstanceRow>(sb, {
-        locationId: locationParam, type: "closing", date: today, columns: INSTANCE_COLUMNS,
+        locationId: locationParam, type: "closing", date: today, columns: INSTANCE_COLUMNS, fresh: true,
       });
       if (!taken) throw error;
       result = { instance: rowToInstance(taken), created: false };

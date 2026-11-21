@@ -11,7 +11,8 @@
 import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { isAllLocationsAccess, lockLocationContext, type LocationActor } from "@/lib/locations";
+import { resolveShopId } from "@/lib/shop-context";
 import {
   MAINTENANCE_BASE_LEVEL,
   loadEquipment,
@@ -38,17 +39,29 @@ function nyDateString(d: Date): string {
   }).format(d);
 }
 
+async function activeLocationIds(): Promise<string[]> {
+  const { data, error } = await getServiceRoleClient().from("locations").select("id").eq("active", true).order("name").returns<Array<{ id: string }>>();
+  // A failed lookup is a fault, not "no shop": throw so the error boundary shows it instead of a silent bounce.
+  if (error) throw new Error(`maintenance: default shop lookup failed: ${error.message}`);
+  return (data ?? []).map((row) => row.id);
+}
+
 interface PageProps {
   searchParams: Promise<{ equipment?: string; location?: string }>;
 }
 
 export default async function MaintenancePage({ searchParams }: PageProps) {
   const auth = await requireSessionFromHeaders("/maintenance");
-  const { location: locationParam, equipment: equipmentParam } = await searchParams;
-
-  if (!locationParam) redirect("/dashboard");
+  const { location: requested, equipment: equipmentParam } = await searchParams;
 
   const locActor: LocationActor = { role: auth.role, locations: auth.locations };
+  // No hard ?location redirect (the production page's D-64 rule): without one, the B2 resolver picks among the
+  // shops this page's bind admits (memberships, plus every active shop after them for the 9+ all-shop grant), the
+  // remembered shop first. The report hub's "all shops" search links here with no shop.
+  const locationParam = requested ?? (await resolveShopId(isAllLocationsAccess(locActor)
+    ? [...auth.locations, ...(await activeLocationIds()).filter((id) => !auth.locations.includes(id))]
+    : auth.locations));
+  if (!locationParam) redirect("/dashboard");
   if (!lockLocationContext(locActor, locationParam)) redirect("/dashboard");
 
   const lang = auth.user.language;
