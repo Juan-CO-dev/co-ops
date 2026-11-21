@@ -100,11 +100,11 @@ describe("the census of the 86 census files is the committed reviewed-entry list
     expect(result.records.map(strip)).toEqual(ENTRIES.map(strip));
   });
 
-  it("196 entries: refuse 24, admit 77, success-redirect 2, operational error 93, in 47 of the 86 files", () => {
+  it("196 entries: refuse 25, admit 78, success-redirect 2, operational error 91, in 47 of the 86 files", () => {
     const by = (k: string) => ENTRIES.filter((e) => e.meaning?.kind === k).length;
     expect(ENTRIES).toHaveLength(196);
     expect({ refuse: by("refuse"), admit: by("admit"), "success-redirect": by("success-redirect"), "operational-error": by("operational-error") })
-      .toEqual({ refuse: 24, admit: 77, "success-redirect": 2, "operational-error": 93 });
+      .toEqual({ refuse: 25, admit: 78, "success-redirect": 2, "operational-error": 91 });
     expect(new Set(ENTRIES.map((e) => e.file)).size).toBe(47);
   });
 
@@ -325,6 +325,91 @@ describe("negative fixtures: the reader fails closed", () => {
   });
 });
 
+describe("Astra r1: a read's `error` stops the alias walk only with verified read provenance", () => {
+  const ASSIGN = "app/(authed)/assignments/page.tsx";
+  const READ = "const { data, error } = await query;";
+  const load = (src: string) => {
+    const reader = newReader({ sources: { [ASSIGN]: src } });
+    try { reader.load(ASSIGN); return { reader, err: undefined }; } catch (e) { return { reader, err: e as PageGateError }; }
+  };
+  const real = readFileSync(ASSIGN, "utf8");
+
+  it("the repro: an `error` built from the session, behind the reviewed `if (error) throw error;`, fails", () => {
+    expect(real.includes(READ)).toBe(true);
+    const forged = real.replace(READ, `const { data } = await query;
+  const { error } = { error: auth.level < 7 ? new Error("forbidden") : null };`);
+    const { err } = load(forged);
+    expect(err?.code).toBe("OPERATIONAL_MENTIONS_SESSION");
+  });
+
+  it("the same through a property access on a non-read value fails too", () => {
+    const forged = real.replace(READ, `const { data } = await query;
+  const result = { error: auth.level < 7 ? new Error("forbidden") : null };`).replace("if (error) throw error;", "if (result.error) throw result.error;");
+    const entries = ENTRIES.map((e) => (e.file === ASSIGN && e.kind === "throw" ? { ...e, text: "if (result.error) throw result.error;" } : e));
+    const reader = newReader({ sources: { [ASSIGN]: forged }, entries });
+    expect(() => reader.load(ASSIGN)).toThrow(/OPERATIONAL_MENTIONS_SESSION/);
+  });
+
+  it("a `let` alias is walked: `let blocked = auth.level < 7; if (blocked) throw ...` filed operational fails", () => {
+    const src = page(`  let blocked = false;
+  blocked = auth.level < 7;
+  if (blocked) throw new Error("x");`);
+    const e = readerError(src, { entries: [{ file: FIXTURE_FILE, fn: "FixturePage", anchor: "fn:FixturePage", kind: "throw", text: `if (blocked) throw new Error("x");`, meaning: { kind: "operational-error", why: "mislabelled on purpose" } }] });
+    expect(e?.code).toBe("OPERATIONAL_MENTIONS_SESSION");
+  });
+
+  it("a real read's error passes in the destructured form (the page as it is, a let builder narrowed by the session)", () => {
+    expect(load(real).err).toBeUndefined();
+  });
+
+  it("a real read's error passes in the property-access form", () => {
+    const prop = real.replace(READ, `const result = await query;
+  const data = result.data;`).replace("if (error) throw error;", "if (result.error) throw result.error;");
+    const entries = ENTRIES.map((e) => (e.file === ASSIGN && e.kind === "throw" ? { ...e, text: "if (result.error) throw result.error;" } : e));
+    const reader = newReader({ sources: { [ASSIGN]: prop }, entries });
+    expect(() => reader.load(ASSIGN)).not.toThrow();
+    expect(reader.admits("/assignments", { role: "employee", switches: {} }).admitted).toBe(true);
+  });
+});
+
+describe("Astra r1: exits through namespace and renamed imports are never skipped", () => {
+  const NS = `import * as navigation from "next/navigation";`;
+  const employeeAdmitted = (src: string) => newReader({ sources: { [FIXTURE_FILE]: src }, pages: [FIXTURE_PAGE] }).admits("/fixture", { role: "employee", switches: {} }).admitted;
+
+  it("a namespace redirect under a core condition is a core exit: it refuses", () => {
+    const src = page(`  if (auth.level < 7) navigation.redirect("/dashboard");`, NS);
+    expect(employeeAdmitted(src)).toBe(false);
+    expect(newReader({ sources: { [FIXTURE_FILE]: src }, pages: [FIXTURE_PAGE] }).admits("/fixture", { role: "gm", switches: {} }).admitted).toBe(true);
+  });
+
+  it("a namespace redirect under a non-core condition fails the reader", () => {
+    expect(readerError(page(`  if (await gate(auth)) navigation.redirect("/dashboard");`, `${NS}
+import { gate } from "@/lib/x";`))?.code).toBe("UNREVIEWED_CONSTRUCT");
+  });
+
+  it("a namespace notFound: core under a core condition, unreviewed otherwise", () => {
+    expect(employeeAdmitted(page(`  if (auth.level < 7) navigation.notFound();`, NS))).toBe(false);
+    expect(readerError(page(`  if (await gate(auth)) navigation.notFound();`, `${NS}
+import { gate } from "@/lib/x";`))?.code).toBe("UNREVIEWED_CONSTRUCT");
+  });
+
+  it("an element-access call on a namespace import fails, even under a core condition", () => {
+    expect(readerError(page(`  if (auth.level < 7) navigation["redirect"]("/dashboard");`, NS))?.code).toBe("UNREVIEWED_CONSTRUCT");
+  });
+
+  it("a renamed redirect, and permanentRedirect / forbidden, are exits", () => {
+    expect(employeeAdmitted(page(`  if (auth.level < 7) go("/dashboard");`, `import { redirect as go } from "next/navigation";`))).toBe(false);
+    expect(readerError(page(`  if (await gate(auth)) go("/dashboard");`, `import { redirect as go } from "next/navigation";
+import { gate } from "@/lib/x";`))?.code).toBe("UNREVIEWED_CONSTRUCT");
+    expect(employeeAdmitted(page(`  if (auth.level < 7) permanentRedirect("/dashboard");`, `import { permanentRedirect } from "next/navigation";`))).toBe(false);
+    expect(employeeAdmitted(page(`  if (auth.level < 7) forbidden();`, `import { forbidden } from "next/navigation";`))).toBe(false);
+  });
+
+  it("a standalone call through a namespace import is a construct", () => {
+    expect(readerError(page(`  gates.assertCanOpen(auth);`, `import * as gates from "@/lib/x";`))?.code).toBe("UNREVIEWED_CONSTRUCT");
+  });
+});
+
 describe("positive controls: the closure recognizes its core", () => {
   const admitted = (src: string, roles = ALL_ROLES) => {
     const reader = newReader({ sources: { [FIXTURE_FILE]: src }, pages: [FIXTURE_PAGE] });
@@ -394,7 +479,7 @@ const RULES: Record<string, PageRule> = {
   "/operations/counts": { min: 4, task: ["counts", 4], entries: "" },
   "/operations/production": { min: 3, entries: "O1" },
   "/maintenance": { min: 3, entries: "R1 A1 O1" },
-  "/operations/vendor-mail": { min: 7, only: GM_PLUS, entries: "A2 O4" },
+  "/operations/vendor-mail": { min: 7, only: GM_PLUS, entries: "A3 O3" },
   "/catering": { min: 5, entries: "" },
   "/catering/insights": { min: 5, entries: "" },
   "/catering/pipeline": { min: 5, entries: "" },
@@ -416,7 +501,7 @@ const RULES: Record<string, PageRule> = {
   "/admin/catering/fulfillment": { min: 7, entries: "" },
   "/admin/catering/ezcater-review": { min: 8, also: ["catering_mgr"], entries: "" },
   "/admin/catering/toast": { min: 8, only: MOO_PLUS, entries: "" },
-  "/reports": { min: 2, not: SMM, entries: "O2" },
+  "/reports": { min: 2, not: SMM, entries: "R1 O1" },
   "/reports/operations": { min: 2, not: SMM, entries: "A1" },
   "/reports/written": { min: 2, not: SMM, entries: "O1" },
   "/reports/trends": { min: 4, not: SMM, entries: "A1" },

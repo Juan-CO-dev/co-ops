@@ -1140,8 +1140,8 @@
   "line": 27,
   "text": "if (explicit && explicit !== \"all\" && explicit !== \"unassigned\" && !shop) throw new VendorMailError(400, \"invalid_payload\");",
   "meaning": {
-   "kind": "operational-error",
-   "why": "database error or rethrow of an unexpected error"
+   "kind": "admit",
+   "why": "an explicit shop outside the viewer's vendor-mail shops throws VendorMailError(400), which the page's own reviewed catch turns into the invalid-payload alert: the page renders, it never refuses navigation (and S is among a member's shops). Appendix A filed it as operational; its guard reads the session through vendorMailOptions(auth), which the operational rule forbids (Astra r1 P2-1 fix)"
   }
  },
  {
@@ -1283,9 +1283,20 @@
   "line": 50,
   "text": "if (selected.length === 0) redirect(\"/dashboard\");",
   "meaning": {
-   "kind": "operational-error",
-   "why": "S is an active shop the viewer may read"
-  }
+   "kind": "refuse",
+   "when": "!canReadReportLocation(actor, S)",
+   "why": "the shop list is the active shops, limited to the viewer's memberships below REPORT_ALL_LOCATIONS_LEVEL (pinned), filtered to S: it is empty exactly when the viewer may not read S. Appendix A filed it as operational (\"S is an active shop the viewer may read\"); its guard reads the session through the list's query, which the operational rule forbids (Astra r1 P2-1 fix)"
+  },
+  "pins": [
+   {
+    "file": "app/(authed)/reports/page.tsx",
+    "text": "if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) locationsQuery = locationsQuery.in(\"id\", auth.locations);"
+   },
+   {
+    "file": "app/(authed)/reports/page.tsx",
+    "text": "const selected = locations.filter((shop) => locationId === \"all\" || shop.id === locationId);"
+   }
+  ]
  },
  {
   "file": "app/(authed)/reports/operations/page.tsx",

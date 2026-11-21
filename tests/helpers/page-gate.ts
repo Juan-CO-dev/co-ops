@@ -817,22 +817,138 @@ function condOfUncached(e: ts.Expression, env: Env, depth: number): Cond | null 
   return OPAQUE;
 }
 
-/** Does this expression (after alias resolution) mention a session, switch or fact value? */
+/** A name's declaration at a use site, whatever its kind (const, let, destructured), or undefined. */
+function declarationOf(name: string, at: ts.Node): { decl: ts.VariableDeclaration; element?: ts.BindingElement } | { forOf: ts.ForOfStatement } | undefined {
+  for (let p: ts.Node | undefined = at.parent; p; p = p.parent) {
+    if (ts.isBlock(p) || ts.isCaseClause(p) || ts.isDefaultClause(p) || ts.isSourceFile(p)) {
+      for (const st of p.statements) {
+        if (!ts.isVariableStatement(st)) continue;
+        for (const d of st.declarationList.declarations) {
+          if (!bindsName(d.name, name)) continue;
+          if (ts.isIdentifier(d.name)) return { decl: d };
+          const el = ts.isObjectBindingPattern(d.name) ? d.name.elements.find((x) => ts.isIdentifier(x.name) && x.name.text === name) : undefined;
+          return { decl: d, element: el };
+        }
+      }
+    }
+    if (ts.isForOfStatement(p) && ts.isVariableDeclarationList(p.initializer) && p.initializer.declarations.some((d) => bindsName(d.name, name))) return { forOf: p };
+    if (ts.isFunctionLike(p) && p.parameters.some((x) => bindsName(x.name, name))) return undefined;
+  }
+  return undefined;
+}
+
+/** Every right-hand side assigned to `name` inside the function that declares it. */
+function assignmentsTo(name: string, decl: ts.Node): ts.Expression[] {
+  const out: ts.Expression[] = [];
+  const root = fnOf(decl)?.body ?? decl.getSourceFile();
+  const visit = (n: ts.Node) => {
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      && ts.isIdentifier(n.left) && n.left.text === name) out.push(n.right);
+    ts.forEachChild(n, visit);
+  };
+  visit(root);
+  return out;
+}
+
+/**
+ * Read-result provenance (Astra r1 P2-1). The ONE thing an operational guard may read without its alias being walked
+ * is the `error` of a database read: `const { error } = await <read>` or `<result>.error` where `<result>` is the
+ * awaited result of a read. A read is a Supabase query builder: a call chain rooted at `<client>.from("<table>")` or
+ * `<client>.rpc("<fn>")`, through local aliases (a `let` builder qualifies only when every value assigned to it is a
+ * read chain too), or a closed wrapper that returns a builder it is given. Anything else is walked as usual, so an
+ * `error` built from the session fails OPERATIONAL_MENTIONS_SESSION.
+ */
+const READ_WRAPPERS: Readonly<Record<string, readonly string[]>> = {
+  applyEffectiveResolution: ["@/lib/admin/template-builder-shared"],
+};
+
+function isReadChain(expr: ts.Expression, env: Env, depth: number): boolean {
+  if (depth > 12) return false;
+  const e = strip(expr);
+  if (ts.isAwaitExpression(e)) return isReadChain(e.expression, env, depth + 1);
+  if (ts.isCallExpression(e)) {
+    const callee = strip(e.expression);
+    if (ts.isPropertyAccessExpression(callee)) {
+      const m = callee.name.text;
+      const first = e.arguments[0] ? strip(e.arguments[0]) : undefined;
+      if ((m === "from" || m === "rpc") && first && ts.isStringLiteral(first)) return true;
+      return isReadChain(callee.expression, env, depth + 1);
+    }
+    if (ts.isIdentifier(callee) && !shadowed(callee.text, callee, env) && importedAs(env.file, callee.text, READ_WRAPPERS)) {
+      return e.arguments[0] !== undefined && isReadChain(e.arguments[0], env, depth + 1);
+    }
+    return false;
+  }
+  if (ts.isIdentifier(e)) return builderAlias(e, env, depth, isReadChain);
+  return false;
+}
+
+/** The awaited result of a read (or `cond ? <read result> : null`). */
+function isReadResult(expr: ts.Expression, env: Env, depth: number): boolean {
+  if (depth > 12) return false;
+  const e = strip(expr);
+  if (ts.isAwaitExpression(e)) return isReadChain(e.expression, env, depth + 1);
+  if (ts.isConditionalExpression(e)) {
+    const arm = (x: ts.Expression) => strip(x).kind === ts.SyntaxKind.NullKeyword || isReadResult(x, env, depth + 1);
+    return arm(e.whenTrue) && arm(e.whenFalse);
+  }
+  if (ts.isIdentifier(e)) return builderAlias(e, env, depth, isReadResult);
+  return false;
+}
+
+/** A local alias whose initializer, and every value later assigned to it, satisfies `test`. A value built from the
+ *  alias itself (`query = query.in(...)`) is judged with the alias assumed to qualify (an inductive builder). */
+const aliasInProgress = new Set<ts.VariableDeclaration>();
+function builderAlias(id: ts.Identifier, env: Env, depth: number, test: (x: ts.Expression, env: Env, depth: number) => boolean): boolean {
+  const found = declarationOf(id.text, id);
+  if (!found || "forOf" in found || found.element || !found.decl.initializer) return false;
+  if (aliasInProgress.has(found.decl)) return true;
+  aliasInProgress.add(found.decl);
+  try {
+    const values = [found.decl.initializer, ...assignmentsTo(id.text, found.decl)];
+    return values.every((v) => test(v, env, depth + 1));
+  } finally {
+    aliasInProgress.delete(found.decl);
+  }
+}
+
+/** Is this node the `error` of a read (destructured, or a property of an awaited read result)? */
+function isReadError(n: ts.Node, env: Env): boolean {
+  if (ts.isPropertyAccessExpression(n) && n.name.text === "error") return isReadResult(n.expression, env, 0);
+  if (ts.isIdentifier(n)) {
+    const found = declarationOf(n.text, n);
+    if (!found || "forOf" in found || !found.element || !found.decl.initializer) return false;
+    const prop = (found.element.propertyName ?? found.element.name).getText(env.file.sf);
+    return prop === "error" && !found.element.initializer && assignmentsTo(n.text, found.decl).length === 0
+      && isReadResult(found.decl.initializer, env, 0);
+  }
+  return false;
+}
+
+/**
+ * Does this expression (after alias resolution) mention a session, switch or fact value? Aliases are walked whatever
+ * their kind: a `const`, a `let` (its initializer and every value assigned to it), a destructured binding (its
+ * initializer), a `for...of` variable (its iterable), a bound parameter (its argument). The one stop is a read's
+ * `error` with verified provenance (isReadError).
+ */
 function mentionsViewer(expr: ts.Node, env: Env, depth = 0): boolean {
   if (depth > 12) return false;
   let found = false;
   const visit = (n: ts.Node) => {
     if (found) return;
     if (ts.isExpression(n)) {
+      if (isReadError(n, env)) return; // a read's failure is data, not a decision
       const v = valueOf(n, env, 0);
       if (v && VIEWER_CLASSES.has(v.cls)) { found = true; return; }
       if (ts.isCallExpression(n) && predicateCall(n, env, 0)) { found = true; return; }
-      if (ts.isPropertyAccessExpression(n) && n.name.text === "error") return; // a read's failure is data, not a decision
       if (ts.isIdentifier(n)) {
         const r = resolveName(n.text, n, env);
-        const errorOfRead = r.kind === "decl" && r.element && (r.element.propertyName ?? r.element.name).getText(env.file.sf) === "error";
-        if (r.kind === "decl" && !errorOfRead && mentionsViewer(r.decl.initializer!, r.env, depth + 1)) { found = true; return; }
         if (r.kind === "param" && r.binding.kind === "expr" && mentionsViewer(r.binding.expr, r.binding.env, depth + 1)) { found = true; return; }
+        const d = r.kind === "decl" || r.kind === "opaque" ? declarationOf(n.text, n) : undefined;
+        if (d) {
+          const sources = "forOf" in d ? [d.forOf.expression] : [...(d.decl.initializer ? [d.decl.initializer] : []), ...assignmentsTo(n.text, d.decl)];
+          if (sources.some((x) => x !== n && mentionsViewer(x, env, depth + 1))) { found = true; return; }
+        }
       }
     }
     if (ts.isFunctionLike(n)) return;
@@ -912,6 +1028,7 @@ function fileInfo(file: string, src: string, switchCalls: Readonly<Record<string
       if (st.importClause.name) imports.set(st.importClause.name.text, { module: spec, name: "default" });
       const nb = st.importClause.namedBindings;
       if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) imports.set(el.name.text, { module: spec, name: (el.propertyName ?? el.name).text });
+      if (nb && ts.isNamespaceImport(nb)) imports.set(nb.name.text, { module: spec, name: "*" });
     }
     if (ts.isFunctionDeclaration(st) && st.name) fns.set(st.name.text, st);
     if (ts.isVariableStatement(st)) {
@@ -1015,6 +1132,46 @@ const ENCLOSING_KIND = (p: ts.Node): ConstructKind | undefined => {
   return undefined;
 };
 
+/** The try statement whose try block holds this node (within its function), if any. */
+function enclosingTry(n: ts.Node): ts.TryStatement | undefined {
+  for (let p: ts.Node | undefined = n.parent; p && !ts.isFunctionLike(p); p = p.parent) {
+    if (ts.isTryStatement(p) && n.pos >= p.tryBlock.pos && n.end <= p.tryBlock.end) return p;
+  }
+  return undefined;
+}
+const caughtOnPage = (n: ts.Node) => enclosingTry(n)?.catchClause !== undefined;
+
+/** next/navigation's page-ending calls, by export: the redirects, and the refusals that render an error page. */
+const NAV_EXITS: Readonly<Record<string, "redirect" | "notFound">> = {
+  redirect: "redirect", permanentRedirect: "redirect", notFound: "notFound", forbidden: "notFound", unauthorized: "notFound",
+};
+
+/**
+ * What a call's callee is (Astra r1 P2-2): a next/navigation exit (a bare `redirect` / `notFound`, a renamed import
+ * `import { redirect as go }`, or a namespace member `navigation.redirect`), an imported or same-file function (a
+ * standalone call when it is a statement), a call through a namespace import the reader cannot resolve, or other
+ * (a method on a local value, a global).
+ */
+function classifyCallee(call: ts.CallExpression, info: FileInfo): "redirect" | "notFound" | "imported" | "unresolved" | "other" {
+  const callee = strip(call.expression);
+  if (ts.isIdentifier(callee)) {
+    const imp = info.imports.get(callee.text);
+    if (imp?.module === "next/navigation" && NAV_EXITS[imp.name]) return NAV_EXITS[imp.name]!;
+    if (!imp && (callee.text === "redirect" || callee.text === "notFound")) return callee.text; // a local of the same name: still an exit
+    return imp || info.fns.has(callee.text) ? "imported" : "other";
+  }
+  // The root of a member chain: `ns.f(...)`, `ns["f"](...)`, `ns.a.b(...)`.
+  let root: ts.Expression = callee;
+  while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) root = strip(root.expression);
+  const imp = ts.isIdentifier(root) ? info.imports.get(root.text) : undefined;
+  if (imp?.name !== "*") return "other";
+  if (ts.isPropertyAccessExpression(callee) && callee.expression === root) {
+    if (imp.module === "next/navigation" && NAV_EXITS[callee.name.text]) return NAV_EXITS[callee.name.text]!;
+    return "imported";
+  }
+  return "unresolved";
+}
+
 function analyze(file: string, src: string, switchCalls?: Readonly<Record<string, TableEntry<SwitchName>>>): Analysis {
   const info = fileInfo(file, src, switchCalls);
   const sf = info.sf;
@@ -1048,13 +1205,18 @@ function analyze(file: string, src: string, switchCalls?: Readonly<Record<string
   // Exits.
   const exits: { n: ts.Node; kind: ConstructKind }[] = [];
   const visit = (n: ts.Node) => {
-    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && (n.expression.text === "redirect" || n.expression.text === "notFound")) exits.push({ n, kind: n.expression.text });
+    if (ts.isCallExpression(n)) {
+      const c = classifyCallee(n, info);
+      if (c === "redirect" || c === "notFound") exits.push({ n, kind: c });
+      // A call through a namespace import the reader cannot resolve (`ns["redirect"](...)`, `ns.a.b(...)`) is never
+      // skipped: it is an exit construct wherever it sits, so it needs a reviewed entry or the reader throws.
+      else if (c === "unresolved") exits.push({ n: ts.isExpressionStatement(n.parent) ? n.parent : n, kind: "standalone" });
+    }
     if (ts.isThrowStatement(n)) exits.push({ n, kind: "throw" });
     if (ts.isExpressionStatement(n)) {
       let e = strip(n.expression);
       if (ts.isAwaitExpression(e)) e = strip(e.expression);
-      if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text !== "redirect" && e.expression.text !== "notFound"
-        && (info.imports.has(e.expression.text) || info.fns.has(e.expression.text))) exits.push({ n, kind: "standalone" });
+      if (ts.isCallExpression(e) && classifyCallee(e, info) === "imported") exits.push({ n, kind: "standalone" });
     }
     if (ts.isReturnStatement(n)) {
       const fn = fnOf(n);
@@ -1066,7 +1228,8 @@ function analyze(file: string, src: string, switchCalls?: Readonly<Record<string
         // even as the last statement ("anything else that delegates is a reviewed entry").
         let r = n.expression ? strip(n.expression) : undefined;
         if (r && ts.isAwaitExpression(r)) r = strip(r.expression);
-        const importedDelegate = !!r && ts.isCallExpression(r) && ts.isIdentifier(r.expression) && info.imports.has(r.expression.text);
+        const cls = r && ts.isCallExpression(r) ? classifyCallee(r, info) : "other";
+        const importedDelegate = cls === "unresolved" || (cls === "imported" && !d);
         if ((n !== last && !(d && n.parent === body)) || importedDelegate) exits.push({ n, kind: "early-return" });
       }
     }
@@ -1210,6 +1373,9 @@ function validateMeaning(b: Bound, a: Analysis, pages: Map<string, CensusPage>, 
   if (m.kind === "success-redirect") {
     const route = m.target.split("?")[0]!;
     if (!allRoutes.has(route) && !pages.has(route)) out.push({ code: "BAD_REDIRECT_TARGET", file: e.file, line: c.line, detail: `target resolves to no page: ${m.target}` });
+  }
+  if (m.kind === "admit" && c.kind === "throw" && !(c.exit && caughtOnPage(c.exit) && a.constructs.some((x) => x.kind === "enclosing-catch" && x.node === enclosingTry(c.exit!)?.catchClause))) {
+    out.push({ code: "UNSUPPORTED", file: e.file, line: c.line, detail: "admit on a throw needs the throw inside a try whose catch is a reviewed construct" });
   }
   if (m.kind === "admit" && m.enters && !Object.values(COMPONENTS).some((x) => x.file === m.enters!.file && x.fn === m.enters!.fn)) {
     out.push({ code: "UNSUPPORTED", file: e.file, line: c.line, detail: `admit.enters names a component outside the closed list: ${m.enters.file}#${m.enters.fn}` });
@@ -1522,6 +1688,12 @@ export class Reader {
       if (m.enters) return this.enterComponent(exit, m.enters, k, ctx);
       ctx.trace.push(`${c.file}:${c.line} admit: renders`);
       return this.walk(k.ret, ctx);
+    }
+    if (c.kind === "throw" && caughtOnPage(exit)) {
+      // A throw the page's own reviewed catch handles: when it fires, the caught arm is that catch's to judge (it is
+      // walked on its own, must-admit), so this path adds nothing.
+      ctx.trace.push(`${c.file}:${c.line} admit: caught by the page's reviewed catch`);
+      return true;
     }
     if (c.kind === "standalone") {
       // A standalone call that never refuses: it runs and the page goes on.
