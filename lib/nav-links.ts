@@ -1,4 +1,6 @@
 import type { TranslationKey } from "@/lib/i18n/types";
+import { byId } from "@/lib/nav/destinations";
+import { chipLinks } from "@/lib/nav/legacy";
 
 /** A primary navigation destination. */
 export interface NavLink {
@@ -15,30 +17,19 @@ export interface NavLink {
   minLevel?: number;
 }
 
-/** Built destinations and their navigation role floors, in display order. */
-export const NAV_LINKS: NavLink[] = [
-  { key: "nav.reports_hub", href: "/reports", scoped: true, minLevel: 2 },
-  { key: "nav.assignments", href: "/assignments", scoped: true },
-  { key: "nav.trends", href: "/reports/trends", scoped: true, minLevel: 4 },
-  { key: "nav.lto", href: "/lto", scoped: true, minLevel: 6 },
-  { key: "nav.written_reports", href: "/reports/written", scoped: true, minLevel: 2 },
-  { key: "nav.catering", href: "/catering", scoped: true, minLevel: 5 },
-  { key: "maintenance.nav_label", href: "/maintenance", scoped: true, minLevel: 3 }, // MAINTENANCE_BASE_LEVEL
-  // Production capture (Juan D-64, 2026-10-13: employee and up). Mirrors PRODUCE_MIN in
-  // lib/production.ts (kept literal: that module is server-only; tests pin the match).
-  { key: "production.page.title", href: "/operations/production", scoped: true, minLevel: 3 }, // PRODUCE_MIN
-  { key: "nav.training", href: "/training", scoped: false },
-  { key: "nav.recipes", href: "/admin/recipes", scoped: false, minLevel: 6 },
-  { key: "nav.profile", href: "/profile", scoped: false },
-  { key: "nav.settings", href: "/settings", scoped: false },
-  { key: "nav.my_feedback", href: "/my-feedback", scoped: false },
-];
+/**
+ * Built destinations and their navigation role floors, in display order. Derived from the one destination list
+ * (lib/nav/destinations.ts: each chip's key, route, floor and scope; lib/nav/legacy.ts: the order). Production's
+ * floor is PRODUCE_MIN, Maintenance's MAINTENANCE_BASE_LEVEL (tests/nav-destinations-access.test.ts pins both).
+ */
+export const NAV_LINKS: NavLink[] = chipLinks();
 
 /**
  * Destinations the given role level may reach, in display order:
  * mid-shift first, then eligible destinations, then admin (>=6) last.
  * Single source of truth for DashboardNav AND unified search — so a `minLevel`
- * filtered out here stops being both a nav chip AND a search hit.
+ * filtered out here stops being both a nav chip AND a search hit. Every entry comes from the one
+ * destination list (lib/nav/destinations.ts); this function keeps only today's level filter and order.
  *
  * Mid-shift's floor follows the page it opens: with Pulse v2 on (PULSE_V2=1) the page serves
  * trainee and up, with crew getting the server-stripped view (PULSE_V2_BASE_LEVEL = 2); with it off,
@@ -46,13 +37,17 @@ export const NAV_LINKS: NavLink[] = [
  */
 export function navDestinationsFor(level: number, opts?: { vault?: boolean; pulseV2?: boolean }): NavLink[] {
   const out: NavLink[] = [];
-  const midShiftFloor = opts?.pulseV2 ? 2 : 4; // PULSE_V2_BASE_LEVEL : MIDSHIFT_BASE_LEVEL
-  if (level >= midShiftFloor) out.push({ key: "nav.mid_shift", href: "/mid-shift", scoped: true, minLevel: midShiftFloor });
+  const midShift = byId("mid-shift");
+  // PULSE_V2_BASE_LEVEL : MIDSHIFT_BASE_LEVEL (the destination's floorWhenOn and minLevel)
+  const midShiftFloor = opts?.pulseV2 ? midShift.access.floorWhenOn!.minLevel : midShift.access.minLevel;
+  if (level >= midShiftFloor) out.push({ key: midShift.nameKey, href: midShift.route, scoped: true, minLevel: midShiftFloor });
   out.push(...NAV_LINKS.filter((l) => level >= (l.minLevel ?? 0)));
   // The password vault (0235) is a switched surface: the chip exists only while VAULT_ENABLED=1
   // (the caller reads the flag; this module stays pure). Every level has "My logins".
-  if (opts?.vault) out.push({ key: "nav.vault", href: "/vault", scoped: false });
-  if (level >= 6) out.push({ key: "nav.admin", href: "/admin", scoped: false, minLevel: 6 });
+  const vault = byId("vault");
+  if (opts?.vault) out.push({ key: vault.nameKey, href: vault.route, scoped: false });
+  const admin = byId("admin");
+  if (level >= admin.access.minLevel) out.push({ key: admin.nameKey, href: admin.route, scoped: false, minLevel: admin.access.minLevel });
   return out;
 }
 

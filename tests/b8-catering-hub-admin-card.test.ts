@@ -2,13 +2,14 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
+import { CATERING_EDITORS } from "@/lib/nav/legacy";
 
 // B8 #7 (sim walk 2026-10-14): the /catering "Admin & setup" card promised "pricing … & rate
 // rules" to a GM who cannot open either. The card now names only what the viewer can open.
 
 const hub = readFileSync("app/(authed)/catering/page.tsx", "utf8");
-const admin = readFileSync("app/admin/catering/page.tsx", "utf8");
-const floor = (id: string) => Number(new RegExp(`id: "${id}",[^}]*minLevel: ([0-9]+)`).exec(admin)?.[1]);
+// Nav PR 3 (lead decision 2): the admin hub's editors derive from the destination list; read their floors there.
+const floor = (id: string) => CATERING_EDITORS.find((e) => e.id === id)?.minLevel;
 
 describe("B8 #7 catering hub admin card", () => {
   it("picks the description by the viewer's level", () => {
