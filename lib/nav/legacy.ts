@@ -9,6 +9,7 @@
 import { byId } from "@/lib/nav/destinations";
 import type { AdminSection } from "@/lib/admin/sections";
 import type { NavLink } from "@/lib/nav-links";
+import type { TranslationKey } from "@/lib/i18n/types";
 import type { Destination } from "@/lib/nav/types";
 
 /** The Dashboard "Explore" chips, in today's display order (mid-shift, vault and admin are added by navDestinationsFor). */
@@ -55,3 +56,30 @@ export function adminSectionOf(d: Destination): AdminSection {
 export function adminCards(): AdminSection[] {
   return CARD_ORDER.map((id) => adminSectionOf(byId(id)));
 }
+
+/** A card of the catering setup hub (app/admin/catering/page.tsx), today's shape. */
+export interface CateringEditor { id: string; i18nKey: TranslationKey; href: string; minLevel: number }
+
+/** The catering setup hub's ten editors, in today's display order (each carries its legacy editor id). */
+export const EDITOR_ORDER: readonly string[] = [
+  "catering-packages", "catering-menu", "catering-pricing", "catering-rate-rules", "catering-capacity", "catering-zones",
+  "catering-faq", "catering-prep-demand", "catering-lto", "catering-fulfillment",
+];
+
+/** An editor card: { id, i18nKey, href, minLevel }, with today's short id. */
+export function editorOf(d: Destination): CateringEditor {
+  const id = d.legacy?.editorId;
+  if (id === undefined) throw new Error(`${d.id} is not a catering editor (no legacy.editorId)`);
+  return { id, i18nKey: d.labels?.editor ?? d.nameKey, href: d.route, minLevel: d.access.minLevel };
+}
+
+/**
+ * The cross-link from the catering setup hub to the catering workspace (the two hubs were siloed: council E finding).
+ * A shortcut FROM this hub to another destination, so it stays a literal: its floor is this hub's own (6, not the
+ * workspace's 5) and its label is the future view name "Catering workspace", the one named exception to "one route,
+ * one name" (tests/nav-destinations-names.test.ts), settled by PR 10 (merge M2).
+ */
+export const WORKSPACE_CROSS_LINK: CateringEditor = { id: "workspace", i18nKey: "admin.catering.hub.staff_workspace", href: "/catering", minLevel: 6 };
+
+/** The catering hub's EDITORS, derived. */
+export const CATERING_EDITORS: CateringEditor[] = [...EDITOR_ORDER.map((id) => editorOf(byId(id))), WORKSPACE_CROSS_LINK];

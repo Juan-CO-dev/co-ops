@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import { DESTINATIONS, GROUPS, ROOMS, TAB_FAMILIES, byId, byRoute } from "@/lib/nav/destinations";
+import { CATERING_EDITORS, WORKSPACE_CROSS_LINK } from "@/lib/nav/legacy";
 import type { TabFamilyId } from "@/lib/nav/types";
 import { NAMED_PAGES } from "./helpers/nav-pages";
 
@@ -39,6 +40,16 @@ describe("guard (b): one route, one name key", () => {
       for (const lang of LANGS) for (const key of labelKeys(d)) expect(DICT[lang][key], `${lang} ${key}`).toBe(DICT[lang][d.nameKey]);
     },
   );
+
+  it("the one named exception: the catering setup hub's cross-link labels /catering \"Catering workspace\" (settled by PR 10, M2)", () => {
+    expect(WORKSPACE_CROSS_LINK.href).toBe(byId("catering-workspace").route);
+    expect(WORKSPACE_CROSS_LINK.i18nKey).toBe("admin.catering.hub.staff_workspace");
+    expect(DICT.en[WORKSPACE_CROSS_LINK.i18nKey]).not.toBe(DICT.en[byId("catering-workspace").nameKey]);
+    // Every other editor card is labelled with its destination's name.
+    for (const e of CATERING_EDITORS.filter((x) => x !== WORKSPACE_CROSS_LINK)) {
+      expect(DESTINATIONS.find((d) => d.route === e.href && (d.labels?.editor ?? d.nameKey) === e.i18nKey), e.id).toBeDefined();
+    }
+  });
 
   it("no two destinations share a name in either language", () => {
     for (const lang of LANGS) {
@@ -93,6 +104,10 @@ describe("guard (e): every key exists in both languages", () => {
       expect(name, `${lang} ${d.nameKey} is a name, not a template`).not.toMatch(/\{\w+\}/);
       for (const key of [d.descriptionKey, ...labelKeys(d)]) if (key) expect(DICT[lang][key], `${lang} ${key}`).toBeTruthy();
     }
+  });
+
+  it("the cross-link's label exists in both languages", () => {
+    for (const lang of LANGS) expect(DICT[lang][WORKSPACE_CROSS_LINK.i18nKey], lang).toBeTruthy();
   });
 
   it("aliases are non-empty and never equal a current name (theirs or another destination's), case-insensitively", () => {

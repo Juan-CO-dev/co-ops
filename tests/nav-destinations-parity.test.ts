@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 import { DESTINATIONS, byId, byRoute } from "@/lib/nav/destinations";
 import { navDestinationsFor } from "@/lib/nav-links";
 import { parentFor } from "@/lib/nav-parents";
-import { CARD_ORDER, CHIP_ORDER } from "@/lib/nav/legacy";
+import { CARD_ORDER, CATERING_EDITORS, CHIP_ORDER, EDITOR_ORDER } from "@/lib/nav/legacy";
 import { adminSectionsFor } from "@/lib/admin/sections";
 import { canSee } from "@/lib/nav/resolve";
 import { ROLES, type RoleCode } from "@/lib/roles";
@@ -33,6 +33,12 @@ describe("4.8 the adapters' order lists and the resolver's agreement with the le
     for (const id of CHIP_ORDER) expect(() => byId(id), id).not.toThrow();
     expect(new Set(CHIP_ORDER).size).toBe(CHIP_ORDER.length);
     expect(DESTINATIONS.filter((d) => d.legacy?.chipScoped !== undefined).map((d) => d.id).sort()).toEqual([...CHIP_ORDER].sort());
+  });
+
+  it("EDITOR_ORDER names the ten catering editors, each once, and CATERING_EDITORS ends with the workspace cross-link", () => {
+    for (const id of EDITOR_ORDER) expect(byId(id).legacy?.editorId, id).toBeDefined();
+    expect(DESTINATIONS.filter((d) => d.legacy?.editorId !== undefined).map((d) => d.id).sort()).toEqual([...EDITOR_ORDER].sort());
+    expect(CATERING_EDITORS.map((e) => e.id)).toEqual(["packages", "menu", "pricing", "rate-rules", "capacity", "zones", "faq", "prep-demand", "lto", "fulfillment", "workspace"]);
   });
 
   it("CARD_ORDER names the 27 Back office cards, each once", () => {

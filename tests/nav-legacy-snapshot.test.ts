@@ -16,12 +16,12 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { ADMIN_SECTIONS, adminSectionsFor } from "@/lib/admin/sections";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { NAV_LINKS, navDestinationsFor } from "@/lib/nav-links";
+import { CATERING_EDITORS } from "@/lib/nav/legacy";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import { matchPages } from "@/lib/unified-search";
 
@@ -32,20 +32,10 @@ const LANGS: Language[] = ["en", "es"];
 
 type Editor = { id: string; i18nKey: TranslationKey; href: string; minLevel: number };
 
-/** The catering hub's EDITORS, read from the page source (the page is a server component and is not imported). */
+/** The catering hub's EDITORS. Commit 1 read the literal from the page source; since the editors derive
+ *  (commit 6) the page uses CATERING_EDITORS, which is what this reads. The fixture is unchanged. */
 function cateringEditors(): Editor[] {
-  const source = readFileSync("app/admin/catering/page.tsx", "utf8");
-  const ast = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  let literal: ts.Expression | undefined;
-  for (const statement of ast.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    for (const d of statement.declarationList.declarations) {
-      if (ts.isIdentifier(d.name) && d.name.text === "EDITORS") literal = d.initializer;
-    }
-  }
-  if (!literal) throw new Error("EDITORS not found in app/admin/catering/page.tsx");
-  const js = ts.transpile(`return (${literal.getText(ast)});`, { target: ts.ScriptTarget.ES2022 });
-  return new Function(js)() as Editor[];
+  return CATERING_EDITORS;
 }
 
 const NAV_OPTS: { name: string; opts: { vault?: boolean; pulseV2?: boolean } | undefined }[] = [
