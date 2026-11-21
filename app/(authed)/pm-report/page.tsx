@@ -199,8 +199,23 @@ async function renderV2(auth: Awaited<ReturnType<typeof requireSessionFromHeader
     } catch (err) {
       console.error("pm v2 presence roster failed", err instanceof Error ? err.message : "unknown");
     }
-    await openMyCopy(sb, { actor, locationId, date });
-    const view = await loadMyCopy(sb, { actor, locationId, date, presenceRoster });
+    // Opening a copy is a stricter bind than this page's own (the 0271 RPC wants an ACTIVE MEMBERSHIP of the shop, which
+    // even the all-shops grant at level 9+ does not supply, and the social media manager is refused outright), so a
+    // refusal here is a plain "no access" with a way back, never the app-wide error page.
+    let view: Awaited<ReturnType<typeof loadMyCopy>>;
+    try {
+      await openMyCopy(sb, { actor, locationId, date });
+      view = await loadMyCopy(sb, { actor, locationId, date, presenceRoster });
+    } catch (e) {
+      if (e instanceof PmReportError && e.code === "forbidden") {
+        return (
+          <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+            <AccessDeniedBanner language={lang} />
+          </main>
+        );
+      }
+      throw e;
+    }
     body = view ? <PmCopyForm view={view} prefillFrom={prefillFrom} /> : <p className="co-card p-4 text-sm text-co-text">{serverT(lang, "pmv2.error.pm_v2_unavailable")}</p>;
   }
   return (

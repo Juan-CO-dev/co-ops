@@ -1043,6 +1043,9 @@ export async function getOrCreateInstance(
       .eq("template_id", templateId)
       .eq("location_id", locationId)
       .eq("date", date)
+      // Opt out of Next's render memoization of identical GETs, so the re-read sees the winner's row
+      // (the same failure class as getOrCreatePmReport's race re-read).
+      .abortSignal(new AbortController().signal)
       .maybeSingle<InstanceRow>();
     if (raceErr) throw new Error(`getOrCreateInstance race re-read: ${raceErr.message}`);
     if (!race) {

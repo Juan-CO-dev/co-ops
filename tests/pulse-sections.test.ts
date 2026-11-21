@@ -431,6 +431,31 @@ describe("Here now includes unlinked Toast employees", () => {
     const { data } = await loadPulseSection(deps(), ctx(7), "attention") as { data: AttentionData };
     expect(data.items.find((r) => r.kind === "clockin_unlinked")?.href).toBe(`/admin/toast-employees?loc=${LOC}`);
   });
+  it("never links the attention rows to a page the viewer's level refuses (links audit)", async () => {
+    const hrefOf = async (level: number, kind: string) => {
+      const { data } = await loadPulseSection(deps(), ctx(level), "attention") as { data: AttentionData };
+      return data.items.find((r) => r.kind === kind);
+    };
+    // Linking Toast clock-ins is GM and up: /admin/toast-employees refuses below 7 (and /admin itself below 6).
+    for (const level of [4, 5, 6]) {
+      const row = await hrefOf(level, "clockin_unlinked");
+      expect(row?.href).toBe(`/mid-shift/people?location=${LOC}`);
+      expect(row?.action).toBe("open");
+    }
+    expect((await hrefOf(7, "clockin_unlinked"))?.action).toBe("link");
+    // /catering/pipeline refuses below 5: a key holder reads the pulse's catering section instead.
+    const kh = await hrefOf(4, "catering_not_rung");
+    expect(kh?.href).toBe(`/mid-shift/catering?location=${LOC}`);
+    expect(kh?.action).toBe("open");
+    expect((await hrefOf(5, "catering_not_rung"))?.href).toBe("/catering/pipeline");
+    expect((await hrefOf(5, "catering_not_rung"))?.action).toBe("ring");
+  });
+  it("crew's catering_unprepped row opens the pulse catering section, not a report they cannot read", async () => {
+    const { data } = await loadPulseSection(deps(), ctx(3), "attention") as { data: AttentionData };
+    for (const row of data.items.filter((r) => r.kind === "catering_unprepped")) expect(row.href).toBe(`/mid-shift/catering?location=${LOC}`);
+    const kh = await loadPulseSection(deps(), ctx(5), "attention") as { data: AttentionData };
+    for (const row of kh.data.items.filter((r) => r.kind === "catering_unprepped")) expect(row.href).toMatch(/^\/reports\//);
+  });
   it("deduplicates the bounded, scoped read by GUID, keeping the earliest entry and null names", async () => {
     const query = {
       select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(),

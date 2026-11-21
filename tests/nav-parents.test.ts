@@ -137,3 +137,11 @@ describe("parentFor — normalization", () => {
     expect(parentFor("/admin/catering/menu/").href).toBe("/admin/catering");
   });
 });
+
+describe("parentFor — scheduling and stations (links audit)", () => {
+  it("the schedule board is entered from the admin hub; its settings go back to the board; the staff stations view to Assignments", () => {
+    expect(parentFor("/schedule")).toEqual({ href: "/admin", labelKey: "admin.back_to_hub" });
+    expect(parentFor("/schedule/settings")).toEqual({ href: "/schedule", labelKey: "schedule.page.title" });
+    expect(parentFor("/stations")).toEqual({ href: "/assignments", labelKey: "nav.assignments" });
+  });
+});

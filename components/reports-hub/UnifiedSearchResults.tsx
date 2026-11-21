@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { serverT } from "@/lib/i18n/server";
-import { chipHref } from "@/lib/nav-links";
+import { chipHrefForScope } from "@/lib/nav-links";
 import { ROLES } from "@/lib/roles";
 import type { PageResult, PersonResult } from "@/lib/unified-search";
 
@@ -62,7 +62,7 @@ export function UnifiedSearchResults({
             {pages.map((pg) => (
               <a
                 key={pg.href}
-                href={chipHref(pg.href, pg.scoped, locationId)}
+                href={chipHrefForScope(pg.href, pg.scoped, locationId)}
                 className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-3 py-1.5 text-sm font-semibold text-co-text transition hover:border-co-text"
               >
                 {pg.label}

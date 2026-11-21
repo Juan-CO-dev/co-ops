@@ -23,8 +23,14 @@ import { loadCateringMenuItems, loadCateringPackagesForQuote } from "@/lib/cater
 import { QuotesClient } from "@/components/catering/quotes/QuotesClient";
 import { BackLink } from "@/components/nav/BackLink";
 
-export default async function CateringQuotesPage() {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export default async function CateringQuotesPage({ searchParams }: { searchParams: Promise<{ quote?: string | string[] }> }) {
   const auth = await requireSessionFromHeaders("/catering/quotes");
+  // Deep link (the catering inbox's "Quote" button): ?quote=<id> opens that quote's detail panel.
+  // The quote detail is a client view of this page, not a route of its own, so there is no /catering/quotes/<id>.
+  const { quote: quoteParam } = await searchParams;
+  const initialQuoteId = typeof quoteParam === "string" && UUID_RE.test(quoteParam) ? quoteParam : null;
   const level = getRoleLevel(auth.user.role);
   if (level < QUOTE_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
@@ -109,6 +115,7 @@ export default async function CateringQuotesPage() {
         menuItems={menuItems}
         packagesByLocation={packagesByLocation}
         actorLevel={level}
+        initialQuoteId={initialQuoteId}
       />
     </main>
   );

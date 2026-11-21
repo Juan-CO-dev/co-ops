@@ -283,12 +283,16 @@ export async function getOrCreatePmReport(
     .single<{ id: string }>();
   // Another caller created this live day after our initial read.
   if (error?.code === "23505") {
+    // The re-read is the SAME GET as the initial read, and inside a server render Next memoizes identical GET
+    // fetches: without its own AbortController signal it is answered with the initial read's empty result and the
+    // page falls into the error screen (prod 2026-11-18/19, closing → PM report). The signal opts it out.
     const { data: winner, error: raceError } = await service
       .from("pm_reports")
       .select("*")
       .eq("location_id", args.locationId)
       .eq("report_date", args.date)
       .is("superseded_at", null)
+      .abortSignal(new AbortController().signal)
       .maybeSingle<{ id: string; format?: string | null }>();
     if (raceError) throw new Error(`getOrCreatePmReport race re-read: ${raceError.message}`);
     if (!winner) throw new Error("getOrCreatePmReport race: 23505 raised but no row visible on re-read");
