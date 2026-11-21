@@ -1,5 +1,9 @@
 /**
- * Nav PR 3 (plan r5, 4.8 and 4.9): the list mirrors the two registries it does not own yet.
+ * Nav PR 3 (plan r5, 4.8 and 4.9).
+ *  - 4.8: the legacy adapters reproduce today (the field-by-field proof is tests/nav-legacy-snapshot.test.ts); here,
+ *    their order lists name real destinations, and the resolver agrees with each legacy filter where both apply.
+ *
+ * 4.9: the list mirrors the two registries it does not own yet.
  *  - Parent: every destination's `parent` is today's back link (lib/nav-parents.ts). No exceptions; the known
  *    back-link bugs (spec section 9: Marketing consent and Demand signals' Sources point at the hub) are mirrored as
  *    they are, and PR 4 fixes the registry and the list together.
@@ -11,11 +15,36 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { DESTINATIONS, byId, byRoute } from "@/lib/nav/destinations";
+import { navDestinationsFor } from "@/lib/nav-links";
 import { parentFor } from "@/lib/nav-parents";
+import { CHIP_ORDER } from "@/lib/nav/legacy";
+import { canSee } from "@/lib/nav/resolve";
+import type { RoleCode } from "@/lib/roles";
 import { declaredShopRoutes } from "@/lib/shop-context-shared";
 import { pageFiles } from "./helpers/nav-pages";
 
 const pages = pageFiles();
+/** One role per level, 0..10 (navDestinationsFor reads the level only). */
+const ROLE_AT: Record<number, RoleCode> = { 0: "prospect", 1: "hired_not_yet_worked", 2: "trainee", 3: "employee", 4: "key_holder", 5: "shift_lead", 6: "agm", 7: "gm", 8: "moo", 9: "owner", 10: "cgs" };
+
+describe("4.8 the adapters' order lists and the resolver's agreement with the legacy filters", () => {
+  it("CHIP_ORDER names only existing destinations, each a chip, once", () => {
+    for (const id of CHIP_ORDER) expect(() => byId(id), id).not.toThrow();
+    expect(new Set(CHIP_ORDER).size).toBe(CHIP_ORDER.length);
+    expect(DESTINATIONS.filter((d) => d.legacy?.chipScoped !== undefined).map((d) => d.id).sort()).toEqual([...CHIP_ORDER].sort());
+  });
+
+  it("canSee (no facts) agrees with navDestinationsFor on every chip, at every level, for the four vault / pulseV2 combinations", () => {
+    const chips = [...CHIP_ORDER, "mid-shift", "vault", "admin"];
+    for (let level = 0; level <= 10; level++) for (const vault of [false, true]) for (const pulseV2 of [false, true]) {
+      const shown = new Set(navDestinationsFor(level, { vault, pulseV2 }).map((l) => l.href));
+      for (const id of chips) {
+        const d = byId(id);
+        expect(canSee(d, { role: ROLE_AT[level]!, level, switches: { vault, pulseV2 } }), `${id} level ${level} vault ${vault} pulseV2 ${pulseV2}`).toBe(shown.has(d.route));
+      }
+    }
+  });
+});
 
 describe("4.9 parity with the back-link registry", () => {
   it.each(DESTINATIONS.filter((d) => d.parent !== undefined).map((d) => [d.id, d] as const))("%s: parent is today's back link", (_id, d) => {
