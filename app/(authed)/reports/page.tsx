@@ -19,12 +19,15 @@ import { SALES_READ_MIN } from "@/lib/sales-reports-shared";
 import { businessReportEnabled, businessReportRefusal } from "@/lib/business-report-shared";
 import { businessReportOffered } from "@/lib/business-report";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveReportShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const auth = await requireSessionFromHeaders("/reports");
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read.
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
   if (auth.level < 2) redirect("/dashboard");
   const raw = await searchParams;
   const params = reportLandingContext(raw);

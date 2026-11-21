@@ -18,6 +18,7 @@ import { loadTrendSeries } from "@/lib/reports-trends";
 import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
 import { canViewPeople, peopleActorFromAuth } from "@/lib/people/access-shared";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadYieldVariance, YIELD_STATS_READ_MIN } from "@/lib/yield-stats";
 
@@ -35,6 +36,8 @@ export default async function TrendsLandingPage({ searchParams }: PageProps): Pr
 
 async function renderPage(paramsRange: Record<string, string | undefined>, allShops = false): Promise<ReactNode> {
   const auth = await requireSessionFromHeaders("/reports/trends");
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read.
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
   const { location: locationParam } = paramsRange;
   if (auth.level < 4) redirect("/reports");
   if (!locationParam) redirect("/dashboard");

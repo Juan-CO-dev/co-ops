@@ -20,6 +20,7 @@ import { REPORT_ALL_LOCATIONS_LEVEL, canReadReportLocation, type LocationActor }
 import { operationalNow } from "@/lib/midshift";
 import { REPORTS_HUB_CASH_LEVEL, listReportsPage, type ReportTypeKey, type SignalFilters, type Viewer } from "@/lib/reports-hub";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadProfileDirectory } from "@/lib/profiles";
 import { matchPeople, matchPages, type PageResult, type PersonResult } from "@/lib/unified-search";
@@ -63,6 +64,8 @@ export default async function ReportsPage({ searchParams }: PageProps): Promise<
 
 async function renderReportsPage(params: Awaited<PageProps["searchParams"]>, allShops = false): Promise<ReactNode> {
   const auth = await requireSessionFromHeaders("/reports");
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read.
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
   if (auth.level < 2) redirect("/dashboard");
   const {
     location: locationParam,

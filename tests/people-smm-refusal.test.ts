@@ -55,7 +55,8 @@ describe("the trends landing: canSeeTeam is canViewPeople for the selected shop"
 
   it("the social media manager (level 6) does not — no team read at all", async () => {
     mocks.auth.mockResolvedValue(session("social_media_mgr"));
-    await Trends({ searchParams: Promise.resolve({ location: SHOP }) } as never);
+    // Nav spec PR S1: the whole trends page now refuses the role (the denial notice), before any read.
+    await expect(Trends({ searchParams: Promise.resolve({ location: SHOP }) } as never)).rejects.toThrow("redirect:/dashboard?denied=reports");
     expect(mocks.team).not.toHaveBeenCalled();
   });
 });
@@ -100,8 +101,10 @@ describe("the export's team family", () => {
     let err: unknown = null;
     try { assertFamilyFloor(session("social_media_mgr") as never, "team") } catch (e) { err = e; }
     expect(err).toBeInstanceOf(ExportError);
-    expect(err).toMatchObject({ status: 403, code: "role_insufficient" });
-    expect(() => assertFamilyFloor(session("social_media_mgr") as never, "trends_ops")).not.toThrow();
+    // Nav spec PR S1: the whole report family now refuses the SMM by role, every export family included.
+    expect(err).toMatchObject({ status: 403, code: "forbidden" });
+    expect(() => assertFamilyFloor(session("social_media_mgr") as never, "trends_ops")).toThrow(ExportError);
+    expect(() => assertFamilyFloor(session("agm") as never, "trends_ops")).not.toThrow();
   });
 
   it("the team case binds the shop through canViewPeople, never a level-only check", () => {

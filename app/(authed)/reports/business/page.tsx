@@ -36,6 +36,7 @@ import { operationalNow } from "@/lib/midshift";
 import { reportNavigationHref } from "@/lib/report-navigation";
 import { SALES_READ_MIN } from "@/lib/sales-reports-shared";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveReportShopId } from "@/lib/shop-context";
 
@@ -44,6 +45,8 @@ type Params = Record<string, string | undefined>;
 export default async function BusinessReportPage({ searchParams }: { searchParams: Promise<Params> }): Promise<ReactNode> {
   const params = await searchParams;
   const auth = await requireSessionFromHeaders("/reports/business");
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read.
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
   // Dark behind its switch; GM / MoO / Owner / CGS by ROLE. Both before any read.
   if (!businessReportEnabled(process.env) || auth.level < SALES_READ_MIN || businessReportRefusal(auth.role)) redirect("/reports");
   const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations, role: auth.role };

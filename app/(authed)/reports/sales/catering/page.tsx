@@ -28,6 +28,7 @@ import { reportNavigationHref } from "@/lib/report-navigation";
 import { canReadScopedReport } from "@/lib/report-scope";
 import { SALES_EMPTY_KEY, SALES_GRAINS, SALES_RANGES, SALES_RANGE_LABELS, SALES_READ_MIN, SalesReportError, loadSalesLatestCapture, loadSalesCatering, resolveSalesRange, salesRangeParams } from "@/lib/sales-reports";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { loadSalesPipelineToastLabel } from "@/lib/catering/catering-toast";
 import { PIPELINE_PARTS, type PipelineReconciliation } from "@/lib/catering/catering-toast-shared";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
@@ -39,6 +40,8 @@ const STATUSES = ["matched", "not_rung_in_toast", "amount_mismatch"] as const;
 export default async function SalesCateringPage({ searchParams }: { searchParams: Promise<Params> }): Promise<ReactNode> {
   const params = await searchParams;
   const auth = await requireSessionFromHeaders("/reports/sales/catering");
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read.
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
   if (auth.level < SALES_READ_MIN) redirect("/reports");
   const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
   // B2: an explicit ?location= (a shop or "all") passes through to the read gate below unchanged;

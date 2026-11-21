@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ graph: vi.fn(), customer: vi.fn(), manager: vi.fn(), db: vi.fn(), continuation: vi.fn(), company: vi.fn() }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: mocks.db }));
 vi.mock("@/lib/portal/magic-link", () => ({ resolveOrCreatePortalCustomer: mocks.customer }));
@@ -83,6 +83,10 @@ it("unclaimed replay does no business work", async () => {
   expect(await processMetaLead("11", db.sb)).toBe("busy"); expect(mocks.graph).not.toHaveBeenCalled();
 });
 it("creates only through the RPC with resolved manager, label-resolved shop, source attribution and key-only ledger diagnostics", async () => {
+  // The fixture answers "Nov 20", which the parser resolves to the NEXT Nov 20 on or after today (ET). Pin the clock
+  // before it, so the expected 2026-11-20 never rolls to the following year as real dates pass (broke 2026-11-21).
+  vi.useFakeTimers({ now: Date.parse("2026-11-15T12:00:00.000Z"), toFake: ["Date"] });
+  onTestFinished(() => { vi.useRealTimers(); });
   const db = database(); expect(await processMetaLead("11", db.sb)).toBe("created");
   expect(db.ops("locations")[0]).toEqual(expect.arrayContaining([["eq", ["code", "MEP"]], ["eq", ["active", true]]]));
   expect(mocks.customer).toHaveBeenCalledWith("guest@example.test", "Example Guest", "meta_lead_form");

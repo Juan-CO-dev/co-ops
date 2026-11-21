@@ -304,7 +304,7 @@ describe("settings that MOVE during the request: the file follows the access the
 
 describe("who may download at all (unchanged, and still before any read)", () => {
   it("AGM, the social media manager and below: 403; a GM at another shop: 403; 'all': 400", async () => {
-    for (const [who, location, want] of [[auth("agm", 6), A, [403, "role_insufficient"]], [auth("social_media_mgr", 6), A, [403, "role_insufficient"]],
+    for (const [who, location, want] of [[auth("agm", 6), A, [403, "role_insufficient"]], [auth("social_media_mgr", 6), A, [403, "forbidden"]] /* nav spec PR S1: the report family's role rule, first */,
       [auth("shift_lead", 5), A, [403, "role_insufficient"]], [GM, B, [403, "location_forbidden"]], [auth("moo", 8, []), "all", [400, "one_shop_at_a_time"]]] as const) {
       const f = wire();
       expect(await refusal(loadExportTable(who, "business", { location, tab: "overview", ...RANGE }, NOW))).toEqual(want);
