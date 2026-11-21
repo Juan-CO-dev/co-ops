@@ -14,6 +14,7 @@
  * creating today's instance. Server-only by use (takes the caller's client); the pick is pure.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { selectAllRows } from "@/lib/supabase-paginate";
 
 export interface DayInstanceCandidate {
   id: string;
@@ -89,4 +90,37 @@ export async function findDayInstance<T extends DayInstanceCandidate>(
     rows.push(...(data ?? []));
   }
   return pickDayInstance(rows);
+}
+
+/** The prep subtypes a day reads instance first (nav PR 6). */
+export type PrepDaySubtype = "am_prep" | "mid_day_prep";
+
+/**
+ * Every instance of the shop's `subtype` prep list on `date`, on ANY version (active or retired), INSTANCE FIRST
+ * (nav PR 6, plan r3 3.2 K6 / K7). The same `!inner` embed and filters as `loadPriorAmPrepStatus`
+ * (lib/midshift.ts: template type `prep`, the subtype, the shop, in the join), so no version list is read or sent;
+ * without its `limit(1)`, paged, ordered by `created_at, id`. Mid-day prep may hold several instances a day; the AM
+ * prep list picks its one with `pickDayInstance`. `columns` must include id, template_id, status, created_at. A read
+ * error throws.
+ */
+export async function findPrepDayInstances<T extends DayInstanceCandidate>(
+  sb: SupabaseClient,
+  args: { locationId: string; subtype: PrepDaySubtype; date: string; columns: string },
+): Promise<T[]> {
+  try {
+    return await selectAllRows<T>((from, to) => sb
+      .from("checklist_instances")
+      .select(`${args.columns}, checklist_templates!inner(type, prep_subtype, location_id)`)
+      .eq("location_id", args.locationId)
+      .eq("date", args.date)
+      .eq("checklist_templates.type", "prep")
+      .eq("checklist_templates.prep_subtype", args.subtype)
+      .eq("checklist_templates.location_id", args.locationId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<T[]>());
+  } catch (e) {
+    throw new Error(`findPrepDayInstances ${args.subtype}: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
