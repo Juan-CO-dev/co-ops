@@ -29,7 +29,8 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.resolve(__dirname, "..");
 const REPORTS_TREE = "app/(authed)/reports/";
 const API_DIRS = ["app/api/reports/", "app/api/written-reports/"];
-const REPORT_LOADER_IMPORT = /from "@\/lib\/(report-export|reports-hub|reports-trends|written-reports|sales-reports|business-report|business-report-pdf|report-summary|report-package|report-related|reports-search|report-pdf)"/;
+/** A report loader module, however it is spelled: `@/lib/x`, a relative `../../lib/x`, with or without an extension. */
+const REPORT_LOADER_SPEC = /(?:^|\/)lib\/(report-export|reports-hub|reports-trends|written-reports|sales-reports|business-report|business-report-pdf|report-summary|report-package|report-related|reports-search|report-pdf)(?:\.[cm]?[jt]sx?)?$/;
 const NEXT_ENTRY_FILE = /^(page|layout|template|loading|not-found|default|route|opengraph-image|twitter-image|icon|apple-icon|sitemap|manifest)\.(tsx?|jsx?)$/;
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 /** Pure request parsing a gate may follow: nothing here reads data. */
@@ -71,6 +72,41 @@ function impureParts(node: ts.Node, sf: ts.SourceFile): string[] {
   return found;
 }
 
+/**
+ * Does this file reach a report loader? Read from the AST, never from text: static imports and
+ * `import x = require()` in any quote style, `export ... from`, `import()` and `require()` calls. A dynamic
+ * import or require whose argument is not a plain string cannot be proven harmless, so it counts as a loader.
+ */
+export function reachesReportLoader(sf: ts.SourceFile): boolean {
+  let found = false;
+  const spec = (node: ts.Node | undefined) => {
+    if (node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))) { if (REPORT_LOADER_SPEC.test(node.text)) found = true; }
+    else found = true; // not a static string: unprovable
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isImportDeclaration(n) || (ts.isExportDeclaration(n) && n.moduleSpecifier)) spec(n.moduleSpecifier);
+    else if (ts.isImportEqualsDeclaration(n) && ts.isExternalModuleReference(n.moduleReference)) spec(n.moduleReference.expression);
+    else if (ts.isCallExpression(n) && (n.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(n.expression) && n.expression.text === "require"))) spec(n.arguments[0]);
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+/** Every function in the file carrying its own "use server" directive (an inline server action). */
+function inlineActions(sf: ts.SourceFile): ts.FunctionLikeDeclaration[] {
+  const out: ts.FunctionLikeDeclaration[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isFunctionLike(n)) {
+      const body = (n as ts.FunctionLikeDeclaration).body;
+      if (body && ts.isBlock(body) && hasDirective(body.statements, "use server")) out.push(n as ts.FunctionLikeDeclaration);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
 /** Every violation in one source file. `file` is the repo-relative path (it decides the scope). */
 export function entryViolations(file: string, src: string): string[] {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
@@ -79,9 +115,13 @@ export function entryViolations(file: string, src: string): string[] {
   const inApi = API_DIRS.some((dir) => file.startsWith(dir));
   const baseName = file.slice(file.lastIndexOf("/") + 1);
   const moduleUseServer = hasDirective(sf.statements, "use server");
-  const importsLoader = REPORT_LOADER_IMPORT.test(src);
+  // Both found BEFORE any file is excluded: the scope depends on them.
+  const actions = inlineActions(sf);
+  const importsLoader = reachesReportLoader(sf);
   const isRoute = /^route\.(tsx?|jsx?)$/.test(baseName) && file.startsWith("app/api/");
-  const scope: Scope | null = inReports ? "page" : inApi || (isRoute && importsLoader) ? "api" : moduleUseServer && importsLoader ? "page" : null;
+  const scope: Scope | null = inReports ? "page"
+    : inApi || (isRoute && importsLoader) ? "api"
+    : (moduleUseServer || actions.length > 0) && importsLoader ? "page" : null;
   if (!scope) return [];
   const entryFile = (inReports && NEXT_ENTRY_FILE.test(baseName)) || isRoute || moduleUseServer;
   const violations: string[] = [];
@@ -104,6 +144,11 @@ export function entryViolations(file: string, src: string): string[] {
   const gated = (fn: ts.FunctionLikeDeclaration, label: string, seen: Set<ts.Node>): string | null => {
     if (seen.has(fn)) return null;
     seen.add(fn);
+    // Parameter defaults (destructuring defaults included) run before the body, so before any gate.
+    for (const parameter of fn.parameters) {
+      const impure = impureParts(parameter, sf);
+      if (impure.length) return `${label}: a parameter default reads before the role rule (${impure.join(", ")})`;
+    }
     const body = fn.body;
     if (!body) return `${label}: no body to check`;
     if (!ts.isBlock(body)) {
@@ -119,6 +164,9 @@ export function entryViolations(file: string, src: string): string[] {
       const session = text.match(sessionRe);
       if (session) {
         const v = session[1]!;
+        // The session call's own arguments run before the gate too.
+        const sessionArgs = impureParts(statements[i]!, sf).filter((part) => !/^requireSession(FromHeaders)?\(\)$/.test(part));
+        if (sessionArgs.length) return `${label}: the session call's arguments read before the role rule (${sessionArgs.join(", ")})`;
         const next = statements[i + 1]?.getText(sf).trim();
         if (scope === "page") {
           return next === `if (!reportsRoleAllowed(${v}.role)) redirect(REPORTS_DENIED_HREF);` ? null
@@ -170,6 +218,9 @@ export function entryViolations(file: string, src: string): string[] {
           else if (ts.isIdentifier(d.initializer) && literalConsts.has(d.initializer.text)) continue;
           else if (impureParts(d.initializer, sf).length || HTTP_METHODS.has(name)) check(name, undefined);
         }
+      } else if ((ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement) || ts.isModuleDeclaration(statement)) && exported(statement)) {
+        // Conservative: only functions and pure constants are provable here.
+        violations.push(`${file} ${statement.name?.getText(sf) ?? "default"}: exported ${ts.SyntaxKind[statement.kind]} cannot be proven gated`);
       } else if (ts.isExportAssignment(statement)) {
         check("default", resolve(statement.expression));
       } else if (ts.isExportDeclaration(statement)) {
@@ -186,16 +237,10 @@ export function entryViolations(file: string, src: string): string[] {
   }
 
   // Any function anywhere in scope with its own "use server" directive is a server action.
-  const visit = (n: ts.Node) => {
-    if (ts.isFunctionLike(n) && (n as ts.FunctionLikeDeclaration).body && ts.isBlock((n as ts.FunctionLikeDeclaration).body!)
-      && hasDirective(((n as ts.FunctionLikeDeclaration).body as ts.Block).statements, "use server")) {
-      const name = (n as ts.FunctionLikeDeclaration).name?.getText(sf) ?? "inline action";
-      const problem = gated(n as ts.FunctionLikeDeclaration, `${file} "use server" ${name}`, new Set());
-      if (problem) violations.push(problem);
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
+  for (const action of actions) {
+    const problem = gated(action, `${file} "use server" ${action.name?.getText(sf) ?? "inline action"}`, new Set());
+    if (problem) violations.push(problem);
+  }
 
   // Module-level code in an entry file runs on import: it may not read data.
   if (entryFile) {
@@ -224,10 +269,10 @@ const src = (file: string) => readFileSync(path.join(ROOT, file), "utf8");
 describe("the entry census over the real tree", () => {
   it("covers the report tree, the report API and every report-loading route or server action", () => {
     const inScope = ALL_APP_FILES.filter((file) => {
-      const s = src(file);
+      const sf = ts.createSourceFile(file, src(file), ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
       return file.startsWith(REPORTS_TREE) || API_DIRS.some((d) => file.startsWith(d))
-        || (/\/route\.(tsx?|jsx?)$/.test(file) && file.startsWith("app/api/") && REPORT_LOADER_IMPORT.test(s))
-        || (/^\s*["']use server["']/m.test(s) && REPORT_LOADER_IMPORT.test(s));
+        || (/\/route\.(tsx?|jsx?)$/.test(file) && file.startsWith("app/api/") && reachesReportLoader(sf))
+        || ((hasDirective(sf.statements, "use server") || inlineActions(sf).length > 0) && reachesReportLoader(sf));
     });
     expect(inScope.filter((f) => f.startsWith(REPORTS_TREE)).length).toBeGreaterThanOrEqual(13);
     expect(inScope).toEqual(expect.arrayContaining(["app/api/reports/export/route.ts", "app/api/written-reports/route.ts", "app/api/written-reports/[id]/route.ts"]));
@@ -355,6 +400,86 @@ export async function generateMetadata() {
       const stripped = src(file).replace('if (!reportsRoleAllowed(ctx.role)) return jsonError(403, "forbidden");', "");
       expect(entryViolations(file, stripped).length, file).toBeGreaterThan(0);
     }
+  });
+
+  // ── Round 2 (Astra r2): scope found from the AST, parameter defaults, conservative by default ──
+
+  it("an API route outside the named dirs that reaches a loader: single quotes, dynamic import, require, relative path, re-export", () => {
+    const file = "app/api/peek/route.ts";
+    const body = "export async function GET() { return Response.json(await listReports()); }\n";
+    expect(entryViolations(file, `import { listReports } from '@/lib/reports-hub';\n${body}`)).toEqual([expect.stringContaining("GET: reads before the role rule")]);
+    expect(entryViolations(file, `import { listReports } from "../../../lib/reports-hub.ts";\n${body}`)).toEqual([expect.stringContaining("GET: reads before the role rule")]);
+    expect(entryViolations(file, "export async function GET() {\n  const { listReports } = await import(\"@/lib/reports-hub\");\n  return Response.json(await listReports());\n}\n"))
+      .toEqual([expect.stringContaining("GET: reads before the role rule (import()")]);
+    expect(entryViolations(file, "export async function GET() {\n  const { listReports } = require('@/lib/reports-hub');\n  return Response.json(await listReports());\n}\n"))
+      .toEqual([expect.stringContaining("GET: reads before the role rule (require()")]);
+    expect(entryViolations(file, "export async function GET(req: Request) {\n  const mod = await import(new URL(req.url).searchParams.get(\"m\")!);\n  return Response.json(await mod.load());\n}\n"))
+      .toEqual([expect.stringContaining("GET: reads before the role rule")]); // a non-literal import cannot be proven harmless
+    expect(entryViolations(file, `export { GET } from '@/lib/reports-hub';\n`)).toEqual([expect.stringContaining("re-exports from another module")]);
+    // A route that reaches no loader is not in scope (the census does not swallow the whole API).
+    expect(entryViolations(file, `import { thing } from "@/lib/other";\n${body.replace("listReports", "thing")}`)).toEqual([]);
+  });
+
+  it("an inline \"use server\" action outside the report tree, in a file with no module-level directive", () => {
+    const file = "app/(authed)/dashboard/peek/page.tsx";
+    const page = (imp: string) => `${imp}
+export default async function Page() {
+  async function peek() {
+    "use server";
+    return listReports(getServiceRoleClient(), {});
+  }
+  return <form action={peek} />;
+}
+`;
+    expect(entryViolations(file, page(`import { listReports } from '@/lib/reports-hub';`)))
+      .toEqual([expect.stringContaining('"use server" peek: reads before the role rule (listReports()')]);
+    expect(entryViolations(file, page(`const { listReports } = await import("@/lib/reports-hub");`)))
+      .toEqual([expect.stringContaining('"use server" peek: reads before the role rule (listReports()')]);
+    // The same action gated passes; the page itself is not a report page and is not judged here.
+    expect(entryViolations(file, page(`import { listReports } from '@/lib/reports-hub';`).replace('    "use server";\n',
+      '    "use server";\n    const auth = await requireSessionFromHeaders("/dashboard");\n    if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);\n'))).toEqual([]);
+  });
+
+  it("parameter defaults run before the gate: plain, destructured, nested, on a gated function and on a delegate", () => {
+    const actions = "app/(authed)/reports/actions.ts";
+    expect(entryViolations(actions, `"use server";\nexport async function peek(report = listReports()) { return report; }\n`))
+      .toEqual([expect.stringContaining("peek: a parameter default reads before the role rule (listReports()")]);
+    expect(entryViolations(actions, `"use server";\nexport async function peek({ report = listReports() } = {}) { return report; }\n`))
+      .toEqual([expect.stringContaining("peek: a parameter default reads")]);
+    expect(entryViolations(actions, `"use server";\nexport async function peek([{ r: { deep = loadReportDetail() } }] = [{ r: {} }]) { return deep; }\n`))
+      .toEqual([expect.stringContaining("peek: a parameter default reads")]);
+    expect(entryViolations(actions, `"use server";
+export async function peek(report = listReports()) {
+  const auth = await requireSessionFromHeaders("/reports");
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
+  return report;
+}
+`)).toEqual([expect.stringContaining("peek: a parameter default reads")]);
+    const page = "app/(authed)/reports/trends/page.tsx";
+    const viaDelegate = src(page).replace("async function renderPage(paramsRange: Record<string, string | undefined>, allShops = false)",
+      "async function renderPage(paramsRange: Record<string, string | undefined>, allShops = false, warm = listReports())");
+    expect(viaDelegate).not.toBe(src(page));
+    expect(entryViolations(page, viaDelegate)).toEqual([expect.stringContaining("a parameter default reads")]);
+    expect(entryViolations("app/api/written-reports/route.ts", src("app/api/written-reports/route.ts")
+      .replace("export async function POST(req: NextRequest)", "export async function POST(req: NextRequest, peek = listWrittenReports())")))
+      .toEqual([expect.stringContaining("POST: a parameter default reads")]);
+  });
+
+  it("conservative by default: what cannot be proven is a violation", () => {
+    const actions = "app/(authed)/reports/actions.ts";
+    // The session call's own arguments run before the gate.
+    expect(entryViolations(actions, `"use server";
+export async function peek() {
+  const auth = await requireSessionFromHeaders(String(await listReports()));
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
+}
+`)).toEqual([expect.stringContaining("the session call's arguments read")]);
+    // Exported classes / enums / namespaces, a non-function value, an IIFE, a getter-ish call: not provable.
+    expect(entryViolations(actions, `"use server";\nexport class Peek { static data = listReports(); }\n`)).toEqual(expect.arrayContaining([expect.stringContaining("cannot be proven gated")]));
+    expect(entryViolations(HUB_PAGE, `${src(HUB_PAGE)}\nexport const GET = listReports;\n`)).toEqual([expect.stringContaining("GET: exported but not a function defined in this file")]);
+    expect(entryViolations(actions, `"use server";\nexport const peek = (() => async () => listReports())();\n`)).toEqual(expect.arrayContaining([expect.stringContaining("peek")]));
+    expect(entryViolations(actions, `"use server";\nexport async function peek() { return (async () => listReports())(); }\n`))
+      .toEqual([expect.stringContaining("peek: reads before the role rule")]);
   });
 
   it("a read hidden in a page's delegation or at module level", () => {
