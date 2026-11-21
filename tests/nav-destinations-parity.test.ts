@@ -17,9 +17,10 @@ import { describe, expect, it } from "vitest";
 import { DESTINATIONS, byId, byRoute } from "@/lib/nav/destinations";
 import { navDestinationsFor } from "@/lib/nav-links";
 import { parentFor } from "@/lib/nav-parents";
-import { CHIP_ORDER } from "@/lib/nav/legacy";
+import { CARD_ORDER, CHIP_ORDER } from "@/lib/nav/legacy";
+import { adminSectionsFor } from "@/lib/admin/sections";
 import { canSee } from "@/lib/nav/resolve";
-import type { RoleCode } from "@/lib/roles";
+import { ROLES, type RoleCode } from "@/lib/roles";
 import { declaredShopRoutes } from "@/lib/shop-context-shared";
 import { pageFiles } from "./helpers/nav-pages";
 
@@ -32,6 +33,23 @@ describe("4.8 the adapters' order lists and the resolver's agreement with the le
     for (const id of CHIP_ORDER) expect(() => byId(id), id).not.toThrow();
     expect(new Set(CHIP_ORDER).size).toBe(CHIP_ORDER.length);
     expect(DESTINATIONS.filter((d) => d.legacy?.chipScoped !== undefined).map((d) => d.id).sort()).toEqual([...CHIP_ORDER].sort());
+  });
+
+  it("CARD_ORDER names the 27 Back office cards, each once", () => {
+    for (const id of CARD_ORDER) expect(() => byId(id), id).not.toThrow();
+    expect(new Set(CARD_ORDER).size).toBe(27);
+    expect(CARD_ORDER.length).toBe(27);
+  });
+
+  it("canSee (no facts) agrees with adminSectionsFor on the 27 cards for every level 0..10 x every role (the planned audit card compared as built)", () => {
+    for (let level = 0; level <= 10; level++) for (const role of Object.keys(ROLES) as RoleCode[]) {
+      const shown = new Set(adminSectionsFor(level, role).map((s) => s.id));
+      for (const id of CARD_ORDER) {
+        const d = byId(id);
+        expect(canSee(d.planned ? { ...d, planned: undefined } : d, { role, level, switches: {} }), `${id} level ${level} ${role}`).toBe(shown.has(id));
+      }
+    }
+    expect(canSee(byId("audit"), { role: "cgs", level: 10, switches: {} })).toBe(false); // never through the resolver
   });
 
   it("canSee (no facts) agrees with navDestinationsFor on every chip, at every level, for the four vault / pulseV2 combinations", () => {

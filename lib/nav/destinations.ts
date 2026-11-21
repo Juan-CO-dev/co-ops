@@ -221,6 +221,8 @@ export const DESTINATIONS: readonly Destination[] = [
     takesShop: false, access: { minLevel: 6 }, numbers: true, kind: "place", aliases: { en: ["Admin"], es: ["Admin", "Administración"] },
   },
   // People and schedule
+  // Scheduling Phase 2: the schedule board. GM own shop, MoO+ any, and the AGM at their own shop (read; edit when the
+  // shop grants it). Role-aware like canViewSchedule: never the social media, catering or prep managers.
   {
     id: "schedule", route: "/schedule", nameKey: "schedule.page.title", room: "back-office", group: "people-and-schedule", tabFamily: "schedule",
     parent: "admin", takesShop: true, access: { minLevel: 7, alsoRoles: ["agm"] }, surface: "schedule", numbers: true, kind: "place",
@@ -230,6 +232,7 @@ export const DESTINATIONS: readonly Destination[] = [
     group: "people-and-schedule", tabFamily: "schedule", parent: "schedule", takesShop: true, access: { minLevel: 7, alsoRoles: ["agm"] },
     surface: "schedule", numbers: true, kind: "place",
   },
+  // GM and up (staff separations addendum, 2026-10-20): a GM manages their own shops' people.
   {
     id: "users", route: "/admin/users", nameKey: "admin.section.users", descriptionKey: "admin.users.subtitle", room: "back-office",
     group: "people-and-schedule", parent: "admin", takesShop: false, access: { minLevel: 7 }, numbers: false, kind: "place",
@@ -240,25 +243,33 @@ export const DESTINATIONS: readonly Destination[] = [
     parent: "admin", takesShop: true, access: { minLevel: 7 }, surface: "ops", numbers: false, kind: "place",
     aliases: { en: ["Stations"], es: ["Estaciones"] },
   },
+  // 0233: Toast employee → CO-OPS user links (GM own shop, level 8+ every shop).
   {
     id: "toast-employees", route: "/admin/toast-employees", nameKey: "toastLinks.title", room: "back-office", group: "people-and-schedule",
     tabFamily: "staff-links", parent: "admin", takesShop: true, access: { minLevel: 7 }, numbers: false, kind: "place",
   },
+  // Scheduling Phase 1 (0268–0269): the 7shifts connection and links. From GM up AND the operational level-6 managers,
+  // who may view the status (canViewSevenShiftsStatus); never the social media manager (by role, not level).
   {
     id: "sevenshifts", route: "/admin/sevenshifts", nameKey: "sevenshifts.title", room: "back-office", group: "people-and-schedule",
     tabFamily: "staff-links", parent: "admin", takesShop: true, access: { minLevel: 7, alsoRoles: OPERATIONAL_LEVEL6_ROLES }, numbers: true,
     kind: "place",
   },
+  // Scheduling Phase 2 (Task 25): the three-way reconciliation. GM own shop, MoO+ any; never the AGM or a level-6 role
+  // (canViewReconciliation).
   {
     id: "people-reconcile", route: "/admin/people-reconcile", nameKey: "schedule.reconcile.title", room: "back-office",
     group: "people-and-schedule", tabFamily: "staff-links", parent: "admin", takesShop: true,
     access: { minLevel: 7, onlyRoles: PM_CRITERIA_EDITOR_ROLES }, numbers: false, kind: "place",
   },
+  // Scheduling Phase 1 (0271): the PM v2 criteria editor. The GM and MoO+ roles only (chunk F ruling (a)); the page
+  // binds a GM to their own shops (canEditPmCriteria).
   {
     id: "pm-criteria", route: "/admin/pm-criteria", nameKey: "pmCriteria.title", room: "back-office", group: "people-and-schedule",
     parent: "admin", takesShop: true, access: { minLevel: 7, onlyRoles: PM_CRITERIA_EDITOR_ROLES }, numbers: false, kind: "place",
   },
   // Menu and recipes
+  // What the menu costs, at 6 because it is a cost READ (lib/admin/cost.ts COST_READ_MIN).
   {
     id: "sandwiches", route: "/admin/sandwiches", nameKey: "admin.sandwiches.title", descriptionKey: "admin.sandwiches.subtitle",
     room: "back-office", group: "menu-and-recipes", tabFamily: "menu", parent: "admin", children: ["/admin/catalog/menu-item/[id]"],
@@ -275,11 +286,13 @@ export const DESTINATIONS: readonly Destination[] = [
     group: "menu-and-recipes", tabFamily: "menu", parent: "admin", takesShop: true, access: { minLevel: 6 }, surface: "ops", numbers: true,
     kind: "place", aliases: { en: ["Items", "Items Catalog", "Item Registry"], es: ["Artículos", "Catálogo de artículos"] },
   },
+  // Catalog Phase 3b: a GM's read-time notices (another shop changed a recipe this shop copied; a new default).
   {
     id: "recipe-notices", route: "/admin/catalog/notices", nameKey: "admin.section.recipe-notices", descriptionKey: "catalog.notices.intro",
     room: "back-office", group: "menu-and-recipes", tabFamily: "recipe-changes", parent: "admin", takesShop: true, access: { minLevel: 7 },
     surface: "ops", numbers: false, kind: "place",
   },
+  // Catalog Phase 3b: every shop's own recipes and menu settings, with Promote / Leave (the Director of Operations).
   {
     id: "shop-changes", route: "/admin/catalog/shop-changes", nameKey: "admin.section.shop-changes", room: "back-office",
     group: "menu-and-recipes", tabFamily: "recipe-changes", parent: "admin", takesShop: false, access: { minLevel: 8 }, surface: "ops",
@@ -301,6 +314,8 @@ export const DESTINATIONS: readonly Destination[] = [
     group: "ordering-and-stock", tabFamily: "supplies", parent: "admin", children: ["/admin/catalog/sku/[id]", "/admin/catalog/sku/[id]/swap"],
     takesShop: true, access: { minLevel: 6 }, surface: "ops", numbers: true, kind: "place",
   },
+  // A product sits ABOVE SKUs in the derivation order: the raw thing a recipe means; its member SKUs are the vendors'
+  // versions of it (migration 0179).
   {
     id: "products", route: "/admin/products", nameKey: "admin.section.products", descriptionKey: "admin.products.subtitle", room: "back-office",
     group: "ordering-and-stock", tabFamily: "supplies", parent: "admin", takesShop: false, access: { minLevel: 6 }, surface: "ops",
@@ -311,6 +326,7 @@ export const DESTINATIONS: readonly Destination[] = [
     group: "ordering-and-stock", tabFamily: "supplies", parent: "admin", takesShop: true, access: { minLevel: 6, onlyRoles: PARS_VIEW_ROLES },
     surface: "ops", numbers: true, kind: "place", aliases: { en: ["Pars"], es: [] },
   },
+  // An on-demand tool beside the costing board, so its card carries no AlertPill (a count would turn a tool into a nag).
   {
     id: "weights", route: "/admin/weights", nameKey: "admin.section.weights", room: "back-office", group: "ordering-and-stock",
     tabFamily: "supplies", parent: "admin", takesShop: false, access: { minLevel: 6 }, surface: "ops", numbers: true, kind: "place",
@@ -348,11 +364,13 @@ export const DESTINATIONS: readonly Destination[] = [
     takesShop: false, access: { minLevel: 7 }, numbers: false, kind: "place",
     aliases: { en: ["Checklist Templates", "Lists & Reports"], es: ["Plantillas de Listas", "Listas y Reportes"] },
   },
+  // 0220: who gets the closing / all-shops / catering digests. GM views (7); level 9+ manages (lib/report-recipients.ts).
   {
     id: "report-recipients", route: "/admin/report-recipients", nameKey: "admin.section.report-recipients", room: "back-office",
     group: "checklists-and-reports", parent: "admin", takesShop: false, access: { minLevel: 7 }, numbers: false, kind: "place",
   },
   // Customers and marketing
+  // 0234: customer profiles (stats GM+ own shop / 8+ every shop; contact and the consent desk 9+).
   {
     id: "customers", route: "/admin/customers", nameKey: "customers.title", room: "back-office", group: "customers-and-marketing",
     tabFamily: "customers", parent: "admin", children: ["/admin/customers/[id]"], takesShop: false, access: { minLevel: 7 }, numbers: true,
