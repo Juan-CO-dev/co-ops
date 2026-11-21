@@ -64,8 +64,8 @@ function closureFindings(read: Reader = diskReader): string[] {
 describe("1-3: the import closure is pure", () => {
   it("walks the real closure (not vacuous) and finds nothing", () => {
     const c = importClosure(ENTRIES);
-    expect(c.files.size).toBeGreaterThan(5);
-    for (const f of ["lib/vendor-rhythm-shared.ts", "lib/midshift-shared.ts"]) {
+    expect(c.files.size).toBeGreaterThan(20);
+    for (const f of ["lib/vendor-rhythm-shared.ts", "lib/operational-day.ts", "lib/nav/destinations.ts", "lib/scheduling/structure-shared.ts"]) {
       expect([...c.files].map(norm)).toContain(f);
     }
     expect([...c.packages.keys()]).toEqual(PACKAGE_ALLOWLIST);
@@ -74,7 +74,7 @@ describe("1-3: the import closure is pure", () => {
 
   it("the only raw clock hit in the closure is the known comment in lib/operational-day.ts, which stripping removes", () => {
     const raw = [...importClosure(ENTRIES).files].filter((f) => CLOCK.some((re) => re.test(diskReader(f)!))).map(norm);
-    expect(raw.filter((f) => f !== "lib/operational-day.ts")).toEqual([]);
+    expect(raw).toEqual(["lib/operational-day.ts"]);
   });
 
   it("5. source-agnostic: the engine names no station-close table", () => {
@@ -99,9 +99,9 @@ describe("7 (closure mutations): each turns its rule red", () => {
       "3 I/O, timer or environment /\\bfetch\\s*\\(/ in lib/vendor-rhythm-shared.ts",
     ]);
   });
-  it("lib/midshift-shared.ts gains setTimeout(() => 0) → rule 3", () => {
-    expect(closureFindings(overlay(withLine("lib/midshift-shared.ts", "setTimeout(() => 0);")))).toEqual([
-      "3 I/O, timer or environment /\\bsetTimeout\\b/ in lib/midshift-shared.ts",
+  it("lib/operational-day.ts gains setTimeout(() => 0) → rule 3", () => {
+    expect(closureFindings(overlay(withLine("lib/operational-day.ts", "setTimeout(() => 0);")))).toEqual([
+      "3 I/O, timer or environment /\\bsetTimeout\\b/ in lib/operational-day.ts",
     ]);
   });
   it("a package import, a toLocale call and a t( call in the engine → rules 1 and 3", () => {

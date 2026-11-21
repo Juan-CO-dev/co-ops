@@ -16,14 +16,17 @@
  * the cash deposit or the PM report urgent (S2 sizing Q4).
  */
 import { closedStationFor, currentFloorStation, type ShiftBoard, type TaskType } from "@/lib/assignments-shared";
+import { deriveCloseState } from "@/lib/dashboard-status-shared";
+import { etDayFromDate } from "@/lib/et-day-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { operationalNow } from "@/lib/midshift-shared";
+import { byId } from "@/lib/nav/destinations";
 import type { Destination, Switches } from "@/lib/nav/types";
-import type { PoFact, VendorCutoff, VendorFact } from "@/lib/report-digests-v2-shared";
+import { cutoffsTomorrow, etDayOf, type PoFact, type VendorCutoff, type VendorFact } from "@/lib/report-digests-v2-shared";
 import type { RoleCode } from "@/lib/roles";
-import type { CateringDayLoad } from "@/lib/scheduling/catering-day-shared";
-import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
-import { cutoffMinutes, type RhythmRow, type RhythmSkip } from "@/lib/vendor-rhythm-shared";
+import { cateringDayLoad, cateringPrepWindowQ, type CateringDayLoad } from "@/lib/scheduling/catering-day-shared";
+import { SCHEDULE_STRUCTURE_DEFAULTS, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
+import { addDaysEt, cutoffMinutes, type RhythmRow, type RhythmSkip } from "@/lib/vendor-rhythm-shared";
 
 // ═══ 2.1 Input: what PR 6's loader supplies ═══════════════════════════════════════════════════════════════════════════
 
@@ -413,6 +416,22 @@ export const EMITTED_KEYS = {
   "day.note.no_floor_stations": [],
   "day.note.default_hours": [],
 } as const satisfies { readonly [K in TranslationKey]?: readonly string[] };
+type EmittedKey = keyof typeof EMITTED_KEYS;
+type ParamsOf<K extends EmittedKey> = { readonly [P in (typeof EMITTED_KEYS)[K][number]]: ReasonParam };
+
+function reason<K extends EmittedKey>(key: K, params: ParamsOf<K>): Reason {
+  return { key, params };
+}
+
+// ── parameter builders ──
+const nameOf = (s: { readonly name: string; readonly nameEs: string | null }): ReasonParam => ({ t: "name", en: s.name, es: s.nameEs });
+const vendorParam = (name: string): ReasonParam => ({ t: "name", en: name, es: null });
+const usualParam = (u: UsualClose): ReasonParam => ({ t: "usual", v: u });
+const countParam = (v: number): ReasonParam => ({ t: "count", v });
+const wallParam = (min: number): ReasonParam => ({ t: "wall", min });
+const instantParam = (iso: string): ReasonParam => ({ t: "instant", iso });
+const dayParam = (ymd: string): ReasonParam => ({ t: "day", ymd });
+
 // ═══ 2.3 Functions ════════════════════════════════════════════════════════════════════════════════════════════════════
 
 /** Decided by the REAL role before any shop fact is loaded (PR 6 calls this first). */
@@ -469,5 +488,556 @@ export function resolveMyStation(board: Pick<ShiftBoard, "events" | "stations" |
   if (current) return { stationId: current };
   const closed = closedStationFor(board, userId);
   return closed ? { stationId: closed.station.id } : null;
+}
+
+// ═══ helpers over facts ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+function okValue<T>(f: Fact<T>): T | null {
+  return f.kind === "ok" ? f.value : null;
+}
+/** A day-keyed fact is usable only for the day it says it describes (8.3). */
+function dayValue<T extends ForDate>(f: Fact<T>, date: string): T | null {
+  return f.kind === "ok" && f.value.forDate === date ? f.value : null;
+}
+const isFinished = (status: string | null): boolean => {
+  const s = deriveCloseState(status).status;
+  return s === "closed" || s === "auto_finalized";
+};
+const checklistState = (c: ChecklistDay | null): ItemState =>
+  c === null ? "unknown" : isFinished(c.status) ? "done" : c.status === null ? "not_started" : "in_progress";
+const reportState = (r: ReportDay | null): ItemState =>
+  r === null ? "unknown" : r.state === "submitted" ? "done" : r.state === "draft" ? "in_progress" : "not_started";
+
+/** The one boundary convention: urgent when the deadline is URGENT_MIN away or passed, now when SOON_MIN away. */
+function deadlineBand(deadline: number, nowMin: number): "urgent" | "now" | "upcoming" {
+  const left = deadline - nowMin;
+  return left <= URGENT_MIN ? "urgent" : left <= SOON_MIN ? "now" : "upcoming";
+}
+
+const ITEM_DEST: Record<ItemId, { readonly destId: string; readonly task?: TaskType }> = {
+  station: { destId: "closing" },
+  opening: { destId: "opening", task: "opening_report" },
+  mid_day_prep: { destId: "mid-day", task: "mid_day_prep" },
+  catering_today: { destId: "catering-workspace" },
+  ordering: { destId: "ordering", task: "ordering" },
+  receiving: { destId: "receiving", task: "receiving" },
+  am_prep: { destId: "am-prep", task: "am_prep" },
+  cash: { destId: "cash", task: "cash_report" },
+  pm_report: { destId: "pm-report", task: "pm_report" },
+  closing: { destId: "closing" },
+  counts: { destId: "counts", task: "counts" },
+};
+
+type ItemCore = Pick<DayItem, "band" | "state" | "at" | "reasons"> & Partial<Pick<DayItem, "done" | "heavy" | "section">>;
+function makeItem(id: ItemId, core: ItemCore): DayItem {
+  const dest = ITEM_DEST[id];
+  const surface: Surface = id === "catering_today" ? "catering" : (byId(dest.destId).surface ?? "tasks");
+  return {
+    id, destId: dest.destId, ...(dest.task ? { task: dest.task } : {}), ...(core.section ? { section: core.section } : {}),
+    surface, band: core.band, state: core.state, at: core.at, mine: false, holder: { kind: "none" }, actions: [],
+    reasons: core.reasons, ...(core.done ? { done: core.done } : {}), heavy: core.heavy ?? false, placement: "list",
+  };
+}
+
+/** "Empty" rows (nothing due) sit at the bottom of their band. (Plain comparisons: a Set typed by the whole key union
+ *  sends the type checker into a quadratic inference over ~10k keys.) */
+const isBottomKey = (k: TranslationKey): boolean =>
+  k === "day.reason.ordering.none" || k === "day.reason.receiving.none" || k === "day.reason.catering.none";
+
+/** 5.4: bands; inside a band by time (done by finish time), untimed after timed; the empty rows last; then DAY_ORDER;
+ *  "mine" only as the final tie-break. On a heavy day Opening is first in its band until both steps are in. */
+function sortItems(items: readonly DayItem[], heavyOpeningFirst: boolean, planDate: string): DayItem[] {
+  const timeOf = (i: DayItem): number | null => (i.band === "done" ? (i.done?.at ? minutesOn(planDate, i.done.at) : i.at) : i.at);
+  const key = (i: DayItem) => ({
+    band: BAND_ORDER.indexOf(i.band),
+    first: heavyOpeningFirst && i.id === "opening" && i.state !== "done" ? 0 : 1,
+    bottom: i.reasons[0] && isBottomKey(i.reasons[0].key) ? 1 : 0,
+    time: timeOf(i),
+    order: DAY_ORDER.indexOf(i.id),
+    mine: i.mine ? 0 : 1,
+  });
+  return items.map((item) => ({ item, k: key(item) })).sort(({ k: x }, { k: y }) => {
+    if (x.band !== y.band) return x.band - y.band;
+    if (x.first !== y.first) return x.first - y.first;
+    if (x.bottom !== y.bottom) return x.bottom - y.bottom;
+    if (x.time !== y.time) return x.time === null ? 1 : y.time === null ? -1 : x.time - y.time;
+    if (x.order !== y.order) return x.order - y.order;
+    return x.mine - y.mine;
+  }).map(({ item }) => item);
+}
+
+// ═══ 5. Engine rules (buildDay) ═══════════════════════════════════════════════════════════════════════════════════════
+
+interface StationView {
+  readonly ok: boolean;
+  readonly stations: readonly NormalStation[];
+  readonly closes: ReadonlyMap<string, EffectiveClose | null>;
+  readonly floor: readonly NormalStation[];
+  readonly trigger: NormalStation | null;
+  readonly triggerClose: EffectiveClose | null;
+}
+
+function stationView(facts: ShopFacts, planDate: string, nowMin: number): StationView {
+  const f = facts.stations;
+  if (f.kind !== "ok" || f.value.stationDate !== planDate) {
+    return { ok: false, stations: [], closes: new Map(), floor: [], trigger: null, triggerClose: null };
+  }
+  const stations = normalizeStations(f.value.stations);
+  const closes = new Map(stations.map((s) => [s.id, effectiveClose(s, nowMin, planDate)] as const));
+  const floor = stations.filter((s) => s.floor).sort((a, b) => a.sort - b.sort);
+  // The trigger (rulings B8): the marked station; else the earliest usual time (rank ties by sort); else the first floor
+  // station to close by event.
+  const marked = floor.find((s) => s.startsMidDay) ?? null;
+  const ranked = floor.filter((s) => s.usualRank !== null).sort((a, b) => a.usualRank! - b.usualRank!)[0] ?? null;
+  const firstEvent = floor.filter((s) => closes.get(s.id)?.by === "event")
+    .sort((a, b) => closes.get(a.id)!.min - closes.get(b.id)!.min || a.sort - b.sort)[0] ?? null;
+  const trigger = marked ?? ranked ?? firstEvent;
+  return { ok: true, stations, closes, floor, trigger, triggerClose: trigger ? closes.get(trigger.id) ?? null : null };
+}
+
+/** The reason line that names a station's close: the event's instant, or its usual time. */
+const closeTimeParam = (s: NormalStation, c: EffectiveClose): ReasonParam =>
+  c.by === "event" && c.iso !== null ? instantParam(c.iso) : s.usual !== null ? usualParam(s.usual) : wallParam(c.min);
+
+/** The waiting line that names the trigger (Mid-day prep before the trigger, and the compact closing pin). */
+function waitingReason(sv: StationView): Reason {
+  const t = sv.ok ? sv.trigger : null;
+  if (t === null) return reason("day.reason.midday.waiting_first", {});
+  return t.usual !== null
+    ? reason("day.reason.midday.waiting", { station: nameOf(t), time: usualParam(t.usual) })
+    : reason("day.reason.midday.waiting_no_time", { station: nameOf(t) });
+}
+
+function phaseOf(args: {
+  facts: ShopFacts; planDate: string; nowMin: number; sv: StationView; clockKind: "clock" | "default";
+  dayStart: number; serviceStart: number; heavy: boolean;
+}): DayPhase {
+  const { facts, planDate, nowMin, sv, clockKind, dayStart, serviceStart, heavy } = args;
+  const closing = dayValue(facts.closing, planDate);
+  const opening = dayValue(facts.opening, planDate);
+  const p = (id: PhaseId, decidedBy: DayPhase["decidedBy"], since: Reason | null): DayPhase => ({ id, decidedBy, since, heavy });
+
+  if (closing !== null && isFinished(closing.status)) {
+    return p("closed", "event", closing.finishedAt ? reason("day.phase.since.closing_done", { time: instantParam(closing.finishedAt) }) : null);
+  }
+  if (sv.ok && sv.floor.length > 0 && sv.floor.every((s) => sv.closes.get(s.id))) {
+    const closed = sv.floor.map((s) => ({ s, c: sv.closes.get(s.id)! }));
+    const byClock = closed.filter((x) => x.c.by === "clock").length;
+    const last = [...closed].sort((a, b) => a.c.min - b.c.min || a.s.sort - b.s.sort).at(-1)!;
+    let since: Reason;
+    if (byClock === 0) since = reason("day.phase.since.last_station", { time: closeTimeParam(last.s, last.c) });
+    else if (byClock === closed.length) since = reason("day.phase.since.last_station_usual", { station: nameOf(last.s), time: closeTimeParam(last.s, last.c) });
+    else if (byClock === 1) since = reason("day.phase.since.last_station_mixed_one", { time: closeTimeParam(last.s, last.c) });
+    else since = reason("day.phase.since.last_station_mixed_other", { n: countParam(byClock), time: closeTimeParam(last.s, last.c) });
+    return p("night", byClock > 0 ? "clock" : "event", since);
+  }
+  if (sv.ok && sv.trigger !== null && sv.triggerClose !== null) {
+    const c = sv.triggerClose;
+    return c.by === "event"
+      ? p("midday", "event", reason("day.phase.since.station_closed", { station: nameOf(sv.trigger), time: closeTimeParam(sv.trigger, c) }))
+      : p("midday", "clock", reason("day.phase.since.station_usual", { station: nameOf(sv.trigger), time: closeTimeParam(sv.trigger, c) }));
+  }
+  if (opening !== null && isFinished(opening.status)) {
+    return p("service", "event", opening.finishedAt ? reason("day.phase.since.opening_done", { time: instantParam(opening.finishedAt) }) : null);
+  }
+  if (nowMin >= serviceStart) return p("service", clockKind, reason("day.phase.since.service_start", { time: wallParam(serviceStart) }));
+  if (opening !== null && opening.status === "phase1_complete") {
+    return p("morning_prep", "event", opening.phase1At ? reason("day.phase.since.check_done", { time: instantParam(opening.phase1At) }) : null);
+  }
+  if (nowMin >= dayStart) return p("opening_check", clockKind, reason("day.phase.since.day_start", { time: wallParam(dayStart) }));
+  return p("before_opening", clockKind, null);
+}
+
+function flaggedReason(n: number): Reason {
+  return n === 1 ? reason("day.reason.heavy.flagged_one", {}) : reason("day.reason.heavy.flagged_other", { n: countParam(n) });
+}
+
+/** The day engine: viewer-independent phase, items, order, notes. Pure. */
+export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): DayModel {
+  const yesterday = addDaysEt(planDate, -1);
+  const tomorrow = addDaysEt(planDate, 1);
+  const hours = okValue(facts.hours);
+  const shopDay = hours?.shopDay ?? SCHEDULE_STRUCTURE_DEFAULTS.shopDay;
+  const cateringSetting = hours?.catering ?? SCHEDULE_STRUCTURE_DEFAULTS.catering;
+  const clockKind: "clock" | "default" = hours !== null && hours.source === "saved" ? "clock" : "default";
+  const serviceStart = shopDay.serviceStartQ * 15;
+
+  // ── Catering today / tomorrow and the heavy day (5.5) ──
+  const cateringToday = dayValue(facts.cateringToday, planDate);
+  const todayOrders = cateringToday?.orders.filter((o) => o.state !== "cancelled") ?? [];
+  const todayLoad = cateringToday ? cateringDayLoad(todayOrders, cateringSetting) : null;
+  const heavy = todayLoad?.heavy ?? false;
+  const windowStart = (orders: readonly CateringOrder[]) =>
+    Math.min(shopDay.prepStartQ, ...orders.map((o) => cateringPrepWindowQ(o.eventQ, cateringSetting)[0])) * 15;
+  const dayStart = heavy ? windowStart(todayOrders) : shopDay.prepStartQ * 15;
+  const timedToday = todayOrders.filter((o) => o.eventQ !== null);
+  const firstOrderMin = heavy && timedToday.length > 0 ? Math.min(...timedToday.map((o) => o.eventQ!)) * 15 : null;
+  const morningDeadline = firstOrderMin !== null ? Math.min(serviceStart, firstOrderMin) : serviceStart;
+  const heavyDeadline = firstOrderMin !== null && firstOrderMin < serviceStart;
+  const cateringTomorrow = dayValue(facts.cateringTomorrow, tomorrow);
+  const tomorrowOrders = cateringTomorrow?.orders.filter((o) => o.state !== "cancelled") ?? [];
+  const tomorrowLoad = cateringTomorrow ? cateringDayLoad(tomorrowOrders, cateringSetting) : null;
+  const flagged = okValue(facts.flaggedLines);
+
+  // ── Stations and the phase ──
+  const sv = stationView(facts, planDate, nowMin);
+  const phase = phaseOf({ facts, planDate, nowMin, sv, clockKind, dayStart, serviceStart, heavy });
+  const atNight = phase.id === "night" || phase.id === "closed";
+  const triggered = phase.id === "midday" || phase.id === "night";
+
+  const stationStates: StationState[] = sv.stations.map((s) => {
+    const close = sv.closes.get(s.id) ?? null;
+    return { id: s.id, name: s.name, nameEs: s.nameEs, floor: s.floor, close, pastDue: s.floor && close?.by === "clock" };
+  });
+  const pastDue = sv.floor.filter((s) => sv.closes.get(s.id)?.by === "clock");
+
+  const items: DayItem[] = [];
+
+  // ── Opening ──
+  {
+    const o = dayValue(facts.opening, planDate);
+    const state = checklistState(o);
+    const extras: Reason[] = [];
+    if (heavy && todayLoad) {
+      extras.push(firstOrderMin !== null
+        ? reason("day.reason.heavy.today", { guests: countParam(todayLoad.guests), time: wallParam(firstOrderMin), start: wallParam(dayStart) })
+        : reason("day.reason.heavy.today_no_time", { guests: countParam(todayLoad.guests), start: wallParam(dayStart) }));
+      if (flagged !== null) extras.push(flaggedReason(flagged.today));
+    }
+    if (state === "done") {
+      items.push(makeItem("opening", { band: "done", state, at: morningDeadline, reasons: [],
+        done: { at: o!.finishedAt, byName: o!.finishedByName, autoFinalized: o!.status === "auto_finalized" }, heavy }));
+    } else if (nowMin < dayStart) {
+      items.push(makeItem("opening", { band: "upcoming", state, at: dayStart, reasons: [reason("day.reason.opening.upcoming", { time: wallParam(dayStart) }), ...extras], heavy }));
+    } else {
+      const band = deadlineBand(morningDeadline, nowMin) === "urgent" ? "urgent" : "now";
+      const late = nowMin >= morningDeadline;
+      const primary = band === "now"
+        ? (o?.status === "phase1_complete" ? reason("day.reason.opening.step2", {}) : reason("day.reason.opening.start", {}))
+        : heavyDeadline
+          ? reason(late ? "day.reason.opening.late_heavy" : "day.reason.opening.urgent_heavy", { time: wallParam(morningDeadline) })
+          : reason(late ? "day.reason.opening.late" : "day.reason.opening.urgent", { time: wallParam(serviceStart) });
+      items.push(makeItem("opening", { band, state, at: morningDeadline, reasons: [primary, ...extras], heavy }));
+    }
+  }
+
+  // ── Mid-day prep ──
+  {
+    const m = dayValue(facts.midDay, planDate);
+    const finished = m?.instances.find((i) => isFinished(i.status)) ?? null;
+    const state: ItemState = m === null ? "unknown" : finished ? "done" : m.instances.length > 0 ? "in_progress" : "not_started";
+    const c = sv.ok ? sv.triggerClose : null;
+    if (finished) {
+      items.push(makeItem("mid_day_prep", { band: "done", state, at: null, reasons: [],
+        done: { at: finished.finishedAt, byName: finished.finishedByName, autoFinalized: finished.status === "auto_finalized" } }));
+    } else if (c === null || sv.trigger === null) {
+      items.push(makeItem("mid_day_prep", { band: "upcoming", state, at: null, reasons: [waitingReason(sv)] }));
+    } else {
+      const deadline = c.min + MIDDAY_WINDOW_MIN;
+      const params = { station: nameOf(sv.trigger), time: closeTimeParam(sv.trigger, c) };
+      const r = nowMin >= deadline
+        ? reason(c.by === "event" ? "day.reason.midday.late" : "day.reason.midday.late_usual", params)
+        : reason(c.by === "event" ? "day.reason.midday.event" : "day.reason.midday.clock", params);
+      items.push(makeItem("mid_day_prep", { band: nowMin >= deadline ? "urgent" : "now", state, at: deadline, reasons: [r] }));
+    }
+  }
+
+  // ── Closing checklist (held out of the sort; pinned by the lens) ──
+  const closingItem = ((): DayItem => {
+    const c = dayValue(facts.closing, planDate);
+    const state = checklistState(c);
+    if (state === "done") {
+      return makeItem("closing", { band: "done", state, at: null, reasons: [],
+        done: { at: c!.finishedAt, byName: c!.finishedByName, autoFinalized: c!.status === "auto_finalized" } });
+    }
+    const reasons: Reason[] = [];
+    if (phase.id === "night") {
+      const left = c?.sectionsLeft ?? null;
+      if (left !== null) {
+        reasons.push(left === 0 ? reason("day.reason.closing.wrap_up", {})
+          : left === 1 ? reason("day.reason.closing.sections_one", {}) : reason("day.reason.closing.sections_other", { n: countParam(left) }));
+      }
+    } else if (phase.id === "midday") {
+      const next = sv.floor.filter((s) => !sv.closes.get(s.id))
+        .sort((a, b) => (a.usualRank ?? Infinity) - (b.usualRank ?? Infinity) || a.sort - b.sort)[0];
+      if (next) {
+        reasons.push(next.usual !== null
+          ? reason("day.reason.closing.next", { station: nameOf(next), time: usualParam(next.usual) })
+          : reason("day.reason.closing.next_no_time", { station: nameOf(next) }));
+      }
+    } else {
+      reasons.push(waitingReason(sv));
+    }
+    if (pastDue.length > 0) {
+      const names: ReasonParam = { t: "names", v: pastDue.map((s) => ({ en: s.name, es: s.nameEs })) };
+      reasons.push(pastDue.length === 1
+        ? reason("day.reason.closing.past_due_one", { names })
+        : reason("day.reason.closing.past_due_other", { n: countParam(pastDue.length), names }));
+    }
+    return makeItem("closing", { band: "upcoming", state, at: null, reasons });
+  })();
+
+  // ── AM prep list, cash deposit, PM report: upcoming until Night, now in Night, never urgent ──
+  {
+    const a = dayValue(facts.amPrep, planDate);
+    const state = checklistState(a);
+    const heavyTomorrow = atNight && (tomorrowLoad?.heavy ?? false);
+    if (state === "done") {
+      items.push(makeItem("am_prep", { band: "done", state, at: null, reasons: [],
+        done: { at: a!.finishedAt, byName: a!.finishedByName, autoFinalized: a!.status === "auto_finalized" } }));
+    } else {
+      const extras: Reason[] = [];
+      if (heavyTomorrow && tomorrowLoad) {
+        extras.push(tomorrowReason(tomorrowLoad, windowStart(tomorrowOrders)));
+        if (flagged !== null) extras.push(flaggedReason(flagged.tomorrow));
+      }
+      items.push(makeItem("am_prep", { band: atNight ? "now" : "upcoming", state, at: null,
+        reasons: [atNight ? reason("day.reason.amprep.now", {}) : reason("day.reason.night.waiting", {}), ...extras], heavy: heavyTomorrow }));
+    }
+    for (const [id, fact, nowKey] of [["cash", facts.cash, "day.reason.cash.now"], ["pm_report", facts.pm, "day.reason.pm.now"]] as const) {
+      const r = dayValue(fact, planDate);
+      const st = reportState(r);
+      items.push(st === "done"
+        ? makeItem(id, { band: "done", state: st, at: null, reasons: [], done: { at: r!.at, byName: r!.byName, autoFinalized: false } })
+        : makeItem(id, { band: atNight ? "now" : "upcoming", state: st, at: null, reasons: [atNight ? reason(nowKey, {}) : reason("day.reason.night.waiting", {})] }));
+    }
+  }
+
+  items.push(orderingItem(facts, planDate, nowMin, shopDay.prepStartQ, atNight));
+  items.push(receivingItem(facts, planDate));
+  items.push(cateringItem(cateringToday, todayOrders, todayLoad, cateringSetting, nowMin));
+
+  // ── Inventory count: an audit tool; now only while a count is in progress ──
+  {
+    const c = okValue(facts.counts);
+    items.push(c === null
+      ? makeItem("counts", { band: "tool", state: "unknown", at: null, reasons: [reason("day.reason.count.tool", {})] })
+      : c.inProgress
+        ? makeItem("counts", { band: "now", state: "in_progress", at: null, reasons: [reason("day.reason.count.in_progress", {})] })
+        : makeItem("counts", { band: "tool", state: "not_started", at: null, reasons: [reason("day.reason.count.tool", {})] }));
+  }
+
+  // ── Station cards (one per floor station; the lens picks the viewer's) ──
+  const stationCards: Record<string, DayItem> = {};
+  for (const s of sv.floor) {
+    const c = sv.closes.get(s.id) ?? null;
+    stationCards[s.id] = c?.by === "event" && c.iso !== null
+      ? makeItem("station", { band: "done", state: "done", at: null, section: s.name,
+        reasons: [reason("day.reason.station.closed", { station: nameOf(s), time: instantParam(c.iso) })],
+        done: { at: c.iso, byName: null, autoFinalized: false } })
+      : makeItem("station", { band: "now", state: "not_started", at: null, section: s.name,
+        reasons: [c?.by === "clock" ? reason("day.reason.station.past_due", { station: nameOf(s), time: closeTimeParam(s, c) }) : reason("day.reason.station.open", {})] });
+  }
+
+  // ── Every fact failed: every item listed, unknown, in DAY_ORDER (7) ──
+  const allFailed = [facts.hours, facts.opening, facts.closing, facts.amPrep, facts.midDay, facts.cash, facts.pm, facts.ordering,
+    facts.rhythm, facts.receiving, facts.cateringToday, facts.cateringTomorrow, facts.flaggedLines, facts.counts, facts.yesterdayClosing]
+    .every((f) => f.kind === "failed") && facts.stations.kind === "failed";
+  const finalItems = allFailed
+    ? items.map((i): DayItem => ({ ...i, band: i.id === "counts" ? "tool" : "upcoming", state: "unknown", at: null }))
+    : items;
+
+  // ── Notes (7) ──
+  const notes: DayNote[] = [];
+  if (allFailed) notes.push({ reason: reason("day.fail.all", {}) });
+  else {
+    if (hours === null) notes.push({ reason: reason("day.fail.shop_day", {}) });
+    else if (hours.source === "defaults") notes.push({ reason: reason("day.note.default_hours", {}), minLevel: 7 });
+    if (facts.stations.kind === "failed") notes.push({ reason: reason("day.fail.stations", {}) });
+    else if (facts.stations.kind === "not_shown") notes.push({ reason: reason("day.note.stations_not_shown", {}) });
+    else if (sv.ok && sv.floor.length === 0) notes.push({ reason: reason("day.note.no_floor_stations", {}) });
+  }
+
+  // ── The late-close alert (8.2) ──
+  const y = dayValue(facts.yesterdayClosing, yesterday);
+  const alerts: LateCloseAlert[] = y !== null && y.status === "open" ? [{ kind: "late_close", date: yesterday, shopCode: facts.shop.code }] : [];
+
+  // ── The night-before heads-up (3.3.11): a fact about tomorrow, from service start ──
+  const headsUp = tomorrowLoad?.heavy && nowMin >= serviceStart ? tomorrowReason(tomorrowLoad, windowStart(tomorrowOrders)) : null;
+
+  return {
+    planDate, phase, items: sortItems(finalItems, heavy, planDate), headsUp, notes, alerts,
+    heavy: { today: todayLoad, tomorrow: tomorrowLoad }, stations: stationStates, stationCards,
+    stationsUnknown: !sv.ok, closing: allFailed ? { ...closingItem, state: "unknown" } : closingItem, triggered,
+  };
+}
+
+function tomorrowReason(load: CateringDayLoad, start: number): Reason {
+  return load.orders === 1
+    ? reason("day.reason.heavy.tomorrow_one", { guests: countParam(load.guests), start: wallParam(start) })
+    : reason("day.reason.heavy.tomorrow_other", { orders: countParam(load.orders), guests: countParam(load.guests), start: wallParam(start) });
+}
+
+/** Ordering (5.3): the digest's one rule for today's and tomorrow's cutoffs (`cutoffsTomorrow`). */
+function orderingItem(facts: ShopFacts, planDate: string, nowMin: number, prepStartQ: number, atNight: boolean): DayItem {
+  const o = dayValue(facts.ordering, planDate);
+  if (o === null) return makeItem("ordering", { band: "upcoming", state: "unknown", at: null, reasons: [] });
+  const base = { locationId: facts.shop.id, pos: o.pos, vendors: o.vendors, cutoffs: o.cutoffs };
+  const today = cutoffsTomorrow({ ...base, day: addDaysEt(planDate, -1) })
+    .map((c) => ({ ...c, min: cutoffMinutes(c.cutoffTime) }))
+    .filter((c): c is typeof c & { min: number } => c.min !== null);
+  const earlyAll = cutoffsTomorrow({ ...base, day: planDate })
+    .map((c) => ({ ...c, min: cutoffMinutes(c.cutoffTime) }))
+    .filter((c): c is typeof c & { min: number } => c.min !== null && c.min < prepStartQ * 15 + EARLY_CUTOFF_GRACE_MIN);
+  const early = earlyAll.filter((c) => !c.ordered);
+  const open = today.filter((c) => !c.ordered).sort((a, b) => a.min - b.min);
+  const missed = open.filter((c) => nowMin > c.min);
+  const pending = open.filter((c) => nowMin <= c.min);
+  const tonight: Reason | null = early.length === 0 ? null : early.length === 1
+    ? reason("day.reason.ordering.tonight_one", { vendor: vendorParam(early[0]!.vendorName), time: wallParam(early[0]!.min) })
+    : reason("day.reason.ordering.tonight_other", { n: countParam(early.length), vendor: vendorParam(early[0]!.vendorName), time: wallParam(early[0]!.min) });
+  const tonightBand: Band = atNight ? "now" : "upcoming";
+
+  if (today.length === 0 && earlyAll.length === 0) {
+    return makeItem("ordering", { band: "upcoming", state: "not_started", at: null, reasons: [reason("day.reason.ordering.none", {})] });
+  }
+  const withTonight = (primary: Reason[]) => (tonight ? [...primary, tonight] : primary);
+  const rank = (b: Band) => BAND_ORDER.indexOf(b);
+  const higher = (a: Band, b: Band): Band => (rank(a) <= rank(b) ? a : b);
+  if (missed.length > 0) {
+    const m = missed[0]!;
+    return makeItem("ordering", { band: "urgent", state: "not_started", at: m.min,
+      reasons: withTonight([reason("day.reason.ordering.missed", { vendor: vendorParam(m.vendorName), time: wallParam(m.min) })]) });
+  }
+  if (pending.length > 0) {
+    const first = pending[0]!;
+    const band = deadlineBand(first.min, nowMin);
+    const vendor = vendorParam(first.vendorName);
+    const time = wallParam(first.min);
+    let primary: Reason;
+    if (band === "urgent") {
+      const left = first.min - nowMin;
+      primary = left === 1 ? reason("day.reason.ordering.urgent_one", { vendor, time })
+        : reason("day.reason.ordering.urgent_other", { vendor, time, minutes: countParam(left) });
+    } else if (band === "now") {
+      const truck = truckDay(facts, planDate, first.vendorId);
+      primary = truck !== null ? reason("day.reason.ordering.soon", { vendor, time, day: dayParam(truck) })
+        : reason("day.reason.ordering.soon_no_day", { vendor, time });
+    } else {
+      const left = today.length > pending.length;
+      const n = pending.length;
+      primary = left
+        ? (n === 1 ? reason("day.reason.ordering.left_one", { vendor, time }) : reason("day.reason.ordering.left_other", { n: countParam(n), vendor, time }))
+        : (n === 1 ? reason("day.reason.ordering.upcoming_one", { vendor, time }) : reason("day.reason.ordering.upcoming_other", { n: countParam(n), vendor, time }));
+    }
+    return makeItem("ordering", { band: tonight ? higher(band, tonightBand) : band, state: "not_started", at: first.min, reasons: withTonight([primary]) });
+  }
+  if (tonight) return makeItem("ordering", { band: tonightBand, state: "not_started", at: null, reasons: [tonight] });
+  return makeItem("ordering", { band: "done", state: "done", at: null, reasons: [reason("day.reason.ordering.done", {})] });
+}
+
+/** `{day}'s truck`: the plan date + the lead of the vendor's pair for today's dow; null without a pair or inside a skip. */
+function truckDay(facts: ShopFacts, planDate: string, vendorId: string): string | null {
+  const rhythm = okValue(facts.rhythm);
+  if (rhythm === null) return null;
+  const dow = etDayFromDate(planDate).dow;
+  const pair = rhythm.rows.find((r) => r.vendorId === vendorId && r.locationId === facts.shop.id && r.orderDow === dow);
+  if (!pair) return null;
+  const day = addDaysEt(planDate, pair.leadDays);
+  return rhythm.skips.some((s) => s.vendorId === vendorId && day >= s.skipFrom && day <= s.skipThrough) ? null : day;
+}
+
+/** Receiving (5.3): the engine's own selection over the three complete reads. */
+function receivingItem(facts: ShopFacts, planDate: string): DayItem {
+  const r = dayValue(facts.receiving, planDate);
+  const rhythm = okValue(facts.rhythm);
+  if (r === null || rhythm === null) return makeItem("receiving", { band: "upcoming", state: "unknown", at: null, reasons: [] });
+  const vendorName = (id: string) => r.vendors.find((v) => v.id === id)?.name ?? "—";
+  const due: PoFact[] = [];
+  const overdue: { po: PoFact; day: string }[] = [];
+  const undated: PoFact[] = [];
+  for (const po of r.openOrders) {
+    const orderDay = etDayOf(po.placedAt ?? po.confirmedAt ?? po.createdAt);
+    const pair = rhythm.rows.find((x) => x.vendorId === po.vendorId && x.locationId === facts.shop.id && x.orderDow === etDayFromDate(orderDay).dow);
+    if (!pair) { undated.push(po); continue; }
+    const deliveryDay = addDaysEt(orderDay, pair.leadDays);
+    if (rhythm.skips.some((s) => s.vendorId === po.vendorId && deliveryDay >= s.skipFrom && deliveryDay <= s.skipThrough)) continue;
+    if (deliveryDay === planDate) due.push(po);
+    else if (deliveryDay < planDate) overdue.push({ po, day: deliveryDay });
+  }
+  overdue.sort((a, b) => a.day.localeCompare(b.day) || vendorName(a.po.vendorId).localeCompare(vendorName(b.po.vendorId)));
+  due.sort((a, b) => vendorName(a.vendorId).localeCompare(vendorName(b.vendorId)));
+  const reasons: Reason[] = [];
+  if (overdue.length > 0) reasons.push(reason("day.reason.receiving.overdue", { vendor: vendorParam(vendorName(overdue[0]!.po.vendorId)), day: dayParam(overdue[0]!.day) }));
+  if (due.length > 0) {
+    const vendors: ReasonParam = { t: "names", v: due.map((po) => ({ en: vendorName(po.vendorId), es: null })) };
+    reasons.push(due.length === 1 ? reason("day.reason.receiving.expected_one", { vendors })
+      : reason("day.reason.receiving.expected_other", { n: countParam(due.length), vendors }));
+  }
+  if (r.halfLogged.length > 0) {
+    const oldest = [...r.halfLogged].sort((a, b) => a.startedAt.localeCompare(b.startedAt))[0]!;
+    reasons.push(reason("day.reason.receiving.half_logged", { vendor: vendorParam(vendorName(oldest.vendorId)) }));
+  }
+  if (undated.length > 0) reasons.push(reason("day.reason.receiving.undated", { vendor: vendorParam(vendorName(undated[0]!.vendorId)) }));
+  if (overdue.length > 0) return makeItem("receiving", { band: "urgent", state: "not_started", at: null, reasons });
+  if (due.length > 0 || r.halfLogged.length > 0) return makeItem("receiving", { band: "now", state: "not_started", at: null, reasons });
+  if (undated.length > 0) return makeItem("receiving", { band: "upcoming", state: "not_started", at: null, reasons });
+  const n = r.completedToday.length;
+  if (n > 0) {
+    const last = [...r.completedToday].sort((a, b) => a.at.localeCompare(b.at)).at(-1)!;
+    return makeItem("receiving", { band: "done", state: "done", at: null,
+      reasons: [n === 1 ? reason("day.reason.receiving.done_one", {}) : reason("day.reason.receiving.done_other", { n: countParam(n) })],
+      done: { at: last.at, byName: null, autoFinalized: false } });
+  }
+  return makeItem("receiving", { band: "upcoming", state: "not_started", at: null, reasons: [reason("day.reason.receiving.none", {})] });
+}
+
+/** Catering today (5.3, 3.3.4): windows from the schedule's rule; an untracked order is never urgent and never "out". */
+function cateringItem(
+  day: CateringDay | null, orders: readonly CateringOrder[], load: CateringDayLoad | null,
+  setting: Pick<ScheduleStructure["catering"], "leadMinutes" | "defaultStartQ" | "defaultEndQ">, nowMin: number,
+): DayItem {
+  if (day === null || load === null) {
+    return makeItem("catering_today", { band: "upcoming", state: "unknown", at: null, reasons: [reason("day.reason.catering.unavailable", {})] });
+  }
+  if (orders.length === 0) {
+    return makeItem("catering_today", { band: "upcoming", state: "not_started", at: null, reasons: [reason("day.reason.catering.none", {})] });
+  }
+  const rows = orders.map((o) => {
+    const [fromQ, toQ] = cateringPrepWindowQ(o.eventQ, setting);
+    const time = o.eventQ !== null ? o.eventQ * 15 : toQ * 15;
+    const tracked = o.state !== "not_tracked";
+    const out = o.state === "out" || o.state === "completed";
+    const open = tracked ? !out : nowMin < time;
+    return { o, from: fromQ * 15, time, tracked, out, open };
+  }).sort((a, b) => a.time - b.time || a.from - b.from);
+  const untracked = rows.filter((r) => !r.tracked).length;
+  const guests = (r: (typeof rows)[number]) => countParam(r.o.headcount ?? 0);
+  const extras: Reason[] = [];
+  if (load.missingCounts > 0) {
+    extras.push(load.missingCounts === 1 ? reason("day.reason.catering.no_count_one", { guests: countParam(load.guests) })
+      : reason("day.reason.catering.no_count_other", { guests: countParam(load.guests), n: countParam(load.missingCounts) }));
+  }
+  const untimed = orders.filter((o) => o.eventQ === null).length;
+  if (untimed > 0) extras.push(untimed === 1 ? reason("day.reason.catering.no_time_one", {}) : reason("day.reason.catering.no_time_other", { n: countParam(untimed) }));
+  const untrackedLine = untracked === 0 ? [] : [untracked === 1 ? reason("day.reason.catering.untracked_one", {}) : reason("day.reason.catering.untracked_other", { n: countParam(untracked) })];
+
+  const urgent = rows.find((r) => r.tracked && !r.out && r.o.eventQ !== null && deadlineBand(r.time, nowMin) === "urgent");
+  if (urgent) {
+    return makeItem("catering_today", { band: "urgent", state: "not_started", at: urgent.time, heavy: load.heavy,
+      reasons: [reason(nowMin >= urgent.time ? "day.reason.catering.late" : "day.reason.catering.urgent", { time: wallParam(urgent.time), guests: guests(urgent) }), ...untrackedLine, ...extras] });
+  }
+  const inside = rows.find((r) => r.open && r.from <= nowMin && nowMin < r.time);
+  if (inside) {
+    return makeItem("catering_today", { band: "now", state: "in_progress", at: inside.time, heavy: load.heavy,
+      reasons: [reason("day.reason.catering.prep_now", { time: wallParam(inside.time), guests: guests(inside) }), ...untrackedLine, ...extras] });
+  }
+  const open = rows.filter((r) => r.open);
+  if (open.length === 0) {
+    const tracked = rows.length - untracked;
+    const primary = untracked === 0 ? reason("day.reason.catering.done", {})
+      : tracked > 0
+        ? (untracked === 1 ? reason("day.reason.catering.done_mixed_one", {}) : reason("day.reason.catering.done_mixed_other", { n: countParam(untracked) }))
+        : (untracked === 1 ? reason("day.reason.catering.done_untracked_one", {}) : reason("day.reason.catering.done_untracked_other", { n: countParam(untracked) }));
+    const outAts = rows.map((r) => r.o.outAt).filter((x): x is string => x !== null).sort();
+    return makeItem("catering_today", { band: "done", state: "done", at: null, heavy: load.heavy, reasons: [primary, ...extras],
+      done: { at: outAts.at(-1) ?? null, byName: null, autoFinalized: false } });
+  }
+  const next = [...open].sort((a, b) => a.from - b.from || a.time - b.time)[0]!;
+  const first = open[0]!;
+  const primary = open.length === 1
+    ? reason("day.reason.catering.upcoming_one", { guests: countParam(load.guests), time: wallParam(first.time), start: wallParam(next.from) })
+    : reason("day.reason.catering.upcoming_other", { n: countParam(open.length), guests: countParam(load.guests), time: wallParam(first.time), start: wallParam(next.from) });
+  return makeItem("catering_today", { band: "upcoming", state: "not_started", at: next.from, heavy: load.heavy, reasons: [primary, ...untrackedLine, ...extras] });
 }
 

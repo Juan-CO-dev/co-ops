@@ -1,12 +1,16 @@
 /**
  * Nav PR 5, group 11 (plan r4, 4 and 12): the heavy catering day is the DAY's total guests through one shared rule, and
- * one order's prep window is the schedule's own. (The engine side lands with buildDay. The "schedule and Dashboard call
- * the same function" twin lands with SCH.)
+ * one order's prep window is the schedule's own. The engine side (day start, morning deadline, the night-before line and
+ * the urgency boundaries) is asserted on the heavy fixture. The "schedule and Dashboard call the same function" twin
+ * lands with SCH.
  */
 import { describe, expect, it } from "vitest";
+import { buildDay, type DayModel } from "@/lib/day-plan-shared";
 import { cateringDayLoad, cateringPrepWindowQ, isHeavyCateringDay } from "@/lib/scheduling/catering-day-shared";
 import { cateringWindows } from "@/lib/scheduling/people-rules-shared";
 import { SCHEDULE_STRUCTURE_DEFAULTS } from "@/lib/scheduling/structure-shared";
+import { hm, PLAN_DATE } from "./fixtures/day-plan/build";
+import { pStreet } from "./fixtures/day-plan/p-street";
 
 const S = { minHeadcount: 30 };
 const n = (...counts: (number | null)[]) => counts.map((headcount) => ({ headcount }));
@@ -43,3 +47,49 @@ describe("the shared heavy-day function", () => {
   });
 });
 
+const opening = (d: DayModel) => d.items.find((i) => i.id === "opening")!;
+
+describe("the heavy day in the engine", () => {
+  it("moves the day start 7:00 → 5:30 and the morning deadline 10:30 → 9:00", () => {
+    const normal = buildDay(PLAN_DATE, hm("06:00"), pStreet(hm("06:00")));
+    const heavy = buildDay(PLAN_DATE, hm("06:00"), pStreet(hm("06:00"), { heavy: true }));
+    expect(normal.phase.id).toBe("before_opening");
+    expect(opening(normal)).toMatchObject({ band: "upcoming", at: hm("07:00") });
+    expect(heavy.phase).toMatchObject({ id: "opening_check", heavy: true });
+    expect(opening(heavy)).toMatchObject({ band: "now", at: hm("09:00"), heavy: true });
+    expect(heavy.heavy.today).toEqual({ heavy: true, guests: 145, orders: 2, missingCounts: 0 });
+  });
+
+  it("a heavy day with no timed order uses the default window and leaves the deadline", () => {
+    const f = pStreet(hm("08:00"));
+    const untimed = { ...f, cateringToday: { kind: "ok" as const, value: { forDate: PLAN_DATE, orders: [
+      { id: "x", source: "ezcater" as const, eventQ: null, headcount: 60, state: "not_tracked" as const, outAt: null },
+    ] } } };
+    const d = buildDay(PLAN_DATE, hm("08:00"), untimed);
+    expect(d.phase.heavy).toBe(true);
+    expect(opening(d).at).toBe(hm("10:30"));
+    expect(opening(d).reasons.map((r) => r.key)).toContain("day.reason.heavy.today_no_time");
+  });
+
+  it("the night-before heads-up shows from service start only", () => {
+    const before = buildDay("2026-11-17", hm("10:29"), pStreet(hm("10:29"), { nightBefore: true }));
+    const after = buildDay("2026-11-17", hm("10:30"), pStreet(hm("10:30"), { nightBefore: true }));
+    expect(before.headsUp).toBeNull();
+    expect(after.headsUp?.key).toBe("day.reason.heavy.tomorrow_other");
+  });
+
+  it.each([
+    ["heavy", true, "08:29", "now"], ["heavy", true, "08:30", "urgent"], ["heavy", true, "09:00", "urgent"], ["heavy", true, "09:30", "urgent"],
+    ["normal", false, "09:59", "now"], ["normal", false, "10:00", "urgent"],
+  ])("%s day: Opening at %s… is %s", (_l, heavy, t, band) => {
+    const min = hm(t as string);
+    const f = pStreet(min, { heavy: heavy as boolean, timeline: { ...pStreetTimelineNoMorning() } });
+    expect(opening(buildDay(PLAN_DATE, min, f)).band).toBe(band);
+  });
+});
+
+/** The normal timeline with morning prep never submitted, so Opening stays open across the boundaries. */
+function pStreetTimelineNoMorning() {
+  return { checkIn: "07:35", morningPrep: null, vendorCLogged: "10:15", cateringOut: "11:40", vendorAOrdered: "13:55",
+    midDayPrep: "14:50", closingFinished: "21:40", closingStarted: "13:00", stationClose: { crunchy: "13:40", third: "15:55", walk: "19:58", expo: "20:05" } };
+}
