@@ -17,6 +17,8 @@ const FILES = [
   "lib/admin/sections.ts",
   // Nav PR 4: the Dashboard chip row passes the real role.
   "components/DashboardNav.tsx",
+  // Nav PR 4: the Back office's checks (lib/nav/back-office.ts is in lib/nav, read above).
+  "lib/admin/back-office-shared.ts",
 ];
 
 /** Identifiers and string literals of a file, comments stripped (the TypeScript scanner skips trivia). */

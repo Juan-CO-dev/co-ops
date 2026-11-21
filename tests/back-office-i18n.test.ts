@@ -14,6 +14,14 @@ const ES = es as Record<string, string>;
 
 /** The keys PR 4 adds (plan r2, 3.2), by block, as they land. */
 const NEW_KEYS = {
+  states: ["admin.backoffice.state.issue", "admin.backoffice.state.healthy", "admin.backoffice.state.unavailable", "admin.backoffice.state.not_enabled"],
+  attention: [
+    "admin.backoffice.attention.title", "admin.backoffice.attention.summary", "admin.backoffice.attention.ok",
+    "admin.backoffice.attention.ok_sales_today", "admin.backoffice.attention.ok_sales_date", "admin.backoffice.check.sales_pull",
+    "admin.backoffice.check.inbox", "admin.backoffice.attention.sales_failed", "admin.backoffice.attention.sales_degraded",
+    "admin.backoffice.attention.inbox_one", "admin.backoffice.attention.inbox_other", "admin.backoffice.attention.vendor_mail_one",
+    "admin.backoffice.attention.vendor_mail_other", "admin.backoffice.attention.not_ready", "admin.backoffice.attention.unavailable",
+  ],
   jobs: ["admin.backoffice.jobs.label", "admin.backoffice.job.add_person", "admin.backoffice.job.change_par", "admin.backoffice.job.edit_checklist"],
   groups: [
     "admin.backoffice.group.people_and_schedule.name", "admin.backoffice.group.people_and_schedule.line",
@@ -40,9 +48,9 @@ const ALL = Object.values(NEW_KEYS).flat();
 const params = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
 
 describe("Back office keys, en and es", () => {
-  it("42 new keys so far, and they are every admin.backoffice.* key", () => {
-    expect(ALL).toHaveLength(42);
-    expect(new Set(ALL).size).toBe(42);
+  it("61 new keys so far, and they are every admin.backoffice.* key", () => {
+    expect(ALL).toHaveLength(61);
+    expect(new Set(ALL).size).toBe(61);
     expect(Object.keys(EN).filter((k) => k.startsWith("admin.backoffice.")).sort()).toEqual([...ALL].sort());
   });
 
