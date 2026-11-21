@@ -80,6 +80,23 @@ describe("each fact failed alone", () => {
     expect(luis.empty).toBeNull();
   });
 
+  it("(review r1) myStation failed: crew and KH+ get day.fail.own_station; never with day.fail.all; none when it loaded", () => {
+    for (const v of [LUIS, ANA]) {
+      for (const t of ["07:00", "13:45", "20:30"]) {
+        const facts = { ...forViewer(pStreet(hm(t)), P_STATION_BY_USER, v.userId), myStation: failed<{ stationId: string } | null>() };
+        const p = planDay({ planDate: PLAN_DATE, nowMin: hm(t), viewer: v, facts }) as DayPlan;
+        expect(p.notes.map((n) => n.reason.key), `${v.userId} ${t}`).toContain("day.fail.own_station");
+        expect(p.items.map((i) => i.id)).not.toContain("station");
+      }
+    }
+    // Control: loaded, with a station (Luis) or with none (Ana): no note.
+    expect(plan(LUIS, "13:45", pStreet(hm("13:45"))).notes.map((n) => n.reason.key)).not.toContain("day.fail.own_station");
+    expect(plan(ANA, "13:45", pStreet(hm("13:45"))).notes.map((n) => n.reason.key)).not.toContain("day.fail.own_station");
+    // Everything failed: day.fail.all alone covers it.
+    const all = planDay({ planDate: PLAN_DATE, nowMin: hm("13:45"), viewer: LUIS, facts: withFailed(pStreet(hm("13:45")), FACT_FIELDS) }) as DayPlan;
+    expect(all.notes.map((n) => n.reason.key)).toEqual(["day.fail.all"]);
+  });
+
   it("flaggedLines failed: the flagged line is omitted (never '0 lines'); cateringTomorrow failed: no heads-up", () => {
     const heavy = plan(ANA, "08:00", withFailed(pStreet(hm("08:00"), { heavy: true }), ["flaggedLines"]));
     expect(item(heavy, "opening").reasons.map((r) => r.key)).toEqual(["day.reason.opening.step2", "day.reason.heavy.today"]);

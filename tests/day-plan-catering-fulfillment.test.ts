@@ -75,6 +75,28 @@ describe("catering fulfillment states", () => {
     ]);
   });
 
+  it("(review r1) a tracked order with no time stays active after its default window (8:30-13:00), untimed, never urgent", () => {
+    const untimed = [order({ id: "t", eventQ: null, headcount: 25 })];
+    expect(catering("08:29", untimed).band).toBe("upcoming");
+    expect(catering("11:59", untimed)).toMatchObject({ band: "now", state: "in_progress", at: hm("13:00") });
+    expect(catering("13:00", untimed)).toMatchObject({ band: "now", state: "in_progress", at: null });
+    expect(catering("15:00", untimed)).toMatchObject({ band: "now", state: "in_progress", at: null });
+    expect(reasonText(catering("15:00", untimed).reasons[0]!)).toBe("catering.prep_now{time=13:00,guests=25}");
+    // Group 10's invariant for this case: with no new event, no band moves backward along urgent > now > upcoming.
+    const RANK = { urgent: 0, now: 1, upcoming: 2 } as const;
+    let last = Infinity;
+    for (let m = 0; m < 1440; m += 5) {
+      const t = `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+      const band = catering(t, untimed).band;
+      expect(band, t).not.toBe("urgent");
+      const r = RANK[band as keyof typeof RANK];
+      expect(r, t).toBeLessThanOrEqual(last);
+      last = r;
+    }
+    // Marked out, it is done.
+    expect(catering("15:00", [order({ id: "t", eventQ: null, headcount: 25, state: "out", outAt: iso(PLAN_DATE, "14:00") })]).band).toBe("done");
+  });
+
   it("in both languages, no done line says the untracked orders went out", () => {
     const lines = [
       catering("15:30", [tracked("t", 48, 25, "11:40"), untracked("u", 60, 20)]),

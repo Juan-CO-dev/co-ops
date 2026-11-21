@@ -1023,6 +1023,13 @@ function cateringItem(
     return makeItem("catering_today", { band: "now", state: "in_progress", at: inside.time, heavy: load.heavy,
       reasons: [reason("day.reason.catering.prep_now", { time: wallParam(inside.time), guests: guests(inside) }), ...untrackedLine, ...extras] });
   }
+  // A tracked order with no time that is still not out stays active after its default window ends: untimed, never urgent
+  // (there is no deadline to invent), and never back to upcoming (no band moves backward without an event).
+  const stillOpen = rows.find((r) => r.open && r.tracked && r.o.eventQ === null && nowMin >= r.from);
+  if (stillOpen) {
+    return makeItem("catering_today", { band: "now", state: "in_progress", at: null, heavy: load.heavy,
+      reasons: [reason("day.reason.catering.prep_now", { time: wallParam(stillOpen.time), guests: guests(stillOpen) }), ...untrackedLine, ...extras] });
+  }
   const open = rows.filter((r) => r.open);
   if (open.length === 0) {
     const tracked = rows.length - untracked;
@@ -1134,7 +1141,10 @@ export function applyLens(
   }
 
   const notes: DayNote[] = day.notes.filter((n) => (n.minLevel ?? 0) <= viewer.level);
-  if (!kh && a === null && !notes.some((n) => n.reason.key === "day.fail.all")) notes.push({ reason: reason("day.fail.assignments", {}) });
+  const allFailed = notes.some((n) => n.reason.key === "day.fail.all");
+  if (!kh && a === null && !allFailed) notes.push({ reason: reason("day.fail.assignments", {}) });
+  // A failed own-station read cannot name the viewer's station, so the card cannot be drawn: say so, never silently.
+  if (facts.myStation.kind === "failed" && holds("tasks") && !allFailed) notes.push({ reason: reason("day.fail.own_station", {}) });
   const onlyClosing = items.every((i) => i.id === "closing");
   const empty = !kh && a !== null && a !== "not_shown" && my === null && facts.myStation.kind === "ok" && onlyClosing ? reason("day.empty.crew", {}) : null;
 

@@ -208,7 +208,11 @@ function uRules(file: string, text: string): Finding[] {
       const callee = n.expression;
       if (ts.isIdentifier(callee) && ["cutoffMinutes", "clockToMinutes", "Number", "parseInt", "parseFloat"].includes(callee.text)) add("U6", n, callee.text);
       if (ts.isPropertyAccessExpression(callee) && ["split", "exec", "match"].includes(callee.name.text)) add("U6", n, callee.name.text);
+      if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "Number"
+        && ["parseInt", "parseFloat"].includes(callee.name.text)) add("U6", n, `Number.${callee.name.text}`);
     }
+    // U6: no unary + (a numeric coercion) inside normalizeStations either. (A unary + on `.wall` anywhere else is U3′.)
+    if (ts.isPrefixUnaryExpression(n) && n.operator === ts.SyntaxKind.PlusToken && insideFn(n, "normalizeStations")) add("U6", n, "unary +");
     // U5′: no function but effectiveClose both mentions nowMin and (a) reads `.wall` of a UsualClose or (b) calls usualMinutes.
     if (isFn(n) && fnName(n) !== "effectiveClose") {
       let now = false;
@@ -261,6 +265,10 @@ describe("7 (U-rule mutations on the positive fixture): each produces exactly it
     ["a function that mentions nowMin and reads .wall verbatim", add("export function line(s: NormalStation, nowMin: number) { return { at: s.usual!.wall, now: nowMin }; }"), ["U5′a"]],
     ["a helper returning unbranded minutes from .wall", add("export function hhmm(u: UsualClose) { return Number(u.wall.slice(0, 2)) * 60; }"), ["U3′"]],
     ["a forged UsualClose", add('export const forged = ({ wall: "13:30" } as unknown as UsualClose);'), ["U4"]],
+    ["normalizeStations ranking by Number.parseInt", base.replace("const rank = new Map(timed.map((s, i) => [s.id, i]));", "const rank = new Map(timed.map((s) => [s.id, Number.parseInt(s.usuallyClosesAt!, 10)]));"), ["U6"]],
+    ["normalizeStations ranking by Number.parseFloat", base.replace("const rank = new Map(timed.map((s, i) => [s.id, i]));", "const rank = new Map(timed.map((s) => [s.id, Number.parseFloat(s.usuallyClosesAt!)]));"), ["U6"]],
+    ["normalizeStations ranking by unary +", base.replace("const rank = new Map(timed.map((s, i) => [s.id, i]));", "const rank = new Map(timed.map((s) => [s.id, +s.usuallyClosesAt!.slice(0, 2)]));"), ["U6"]],
+    ["a unary + on .wall outside the boundary", add("export function hours(u: UsualClose) { return +u.wall; }"), ["U3′"]],
     ["normalizeStations ranking by cutoffMinutes", base.replace("const rank = new Map(timed.map((s, i) => [s.id, i]));", "const rank = new Map(timed.map((s) => [s.id, cutoffMinutes(s.usuallyClosesAt!) ?? 0]));"), ["U6"]],
   ];
 
