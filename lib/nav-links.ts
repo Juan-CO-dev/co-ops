@@ -1,4 +1,5 @@
 import type { TranslationKey } from "@/lib/i18n/types";
+import type { RoleCode } from "@/lib/roles";
 import { byId } from "@/lib/nav/destinations";
 import { chipLinks } from "@/lib/nav/legacy";
 
@@ -35,7 +36,7 @@ export const NAV_LINKS: NavLink[] = chipLinks();
  * trainee and up, with crew getting the server-stripped view (PULSE_V2_BASE_LEVEL = 2); with it off,
  * the v1 page is key holder and up (MIDSHIFT_BASE_LEVEL = 4). The caller reads the flag.
  */
-export function navDestinationsFor(level: number, opts?: { vault?: boolean; pulseV2?: boolean }): NavLink[] {
+export function navDestinationsFor(level: number, opts?: { vault?: boolean; pulseV2?: boolean; role?: RoleCode }): NavLink[] {
   const out: NavLink[] = [];
   const midShift = byId("mid-shift");
   // PULSE_V2_BASE_LEVEL : MIDSHIFT_BASE_LEVEL (the destination's floorWhenOn and minLevel)

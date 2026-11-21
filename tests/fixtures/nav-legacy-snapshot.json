@@ -5188,6 +5188,7427 @@
       }
     ]
   },
+  "navDestinationsForRole": {
+    "cgs omitted": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "cgs {}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "cgs {vault:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "cgs {vault:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "cgs {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "cgs {pulseV2:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "cgs {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "owner omitted": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "owner {}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "owner {vault:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "owner {vault:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "owner {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "owner {pulseV2:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "owner {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "moo omitted": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "moo {}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "moo {vault:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "moo {vault:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "moo {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "moo {pulseV2:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "moo {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "gm omitted": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "gm {}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "gm {vault:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "gm {vault:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "gm {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "gm {pulseV2:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "gm {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "agm omitted": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "agm {}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "agm {vault:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "agm {vault:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "agm {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "agm {pulseV2:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "agm {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "catering_mgr omitted": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "catering_mgr {}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "catering_mgr {vault:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "catering_mgr {vault:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "catering_mgr {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "catering_mgr {pulseV2:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "catering_mgr {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "prep_mgr omitted": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "prep_mgr {}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "prep_mgr {vault:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "prep_mgr {vault:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "prep_mgr {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "prep_mgr {pulseV2:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "prep_mgr {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "social_media_mgr omitted": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "social_media_mgr {}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "social_media_mgr {vault:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "social_media_mgr {vault:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "social_media_mgr {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "social_media_mgr {pulseV2:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "social_media_mgr {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.lto",
+        "href": "/lto",
+        "scoped": true,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.recipes",
+        "href": "/admin/recipes",
+        "scoped": false,
+        "minLevel": 6
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      },
+      {
+        "key": "nav.admin",
+        "href": "/admin",
+        "scoped": false,
+        "minLevel": 6
+      }
+    ],
+    "shift_lead omitted": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "shift_lead {}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "shift_lead {vault:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "shift_lead {vault:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "shift_lead {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "shift_lead {pulseV2:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "shift_lead {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.catering",
+        "href": "/catering",
+        "scoped": true,
+        "minLevel": 5
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "key_holder omitted": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "key_holder {}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "key_holder {vault:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "key_holder {vault:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "key_holder {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "key_holder {pulseV2:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "key_holder {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "trainer omitted": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "trainer {}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "trainer {vault:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "trainer {vault:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "trainer {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "trainer {pulseV2:false}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "trainer {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.trends",
+        "href": "/reports/trends",
+        "scoped": true,
+        "minLevel": 4
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "employee omitted": [
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "employee {}": [
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "employee {vault:true}": [
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "employee {vault:false}": [
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "employee {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "employee {pulseV2:false}": [
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "employee {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "maintenance.nav_label",
+        "href": "/maintenance",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "production.page.title",
+        "href": "/operations/production",
+        "scoped": true,
+        "minLevel": 3
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "trainee omitted": [
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "trainee {}": [
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "trainee {vault:true}": [
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "trainee {vault:false}": [
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "trainee {pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "trainee {pulseV2:false}": [
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "trainee {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.mid_shift",
+        "href": "/mid-shift",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.reports_hub",
+        "href": "/reports",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.written_reports",
+        "href": "/reports/written",
+        "scoped": true,
+        "minLevel": 2
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "hired_not_yet_worked omitted": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "hired_not_yet_worked {}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "hired_not_yet_worked {vault:true}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "hired_not_yet_worked {vault:false}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "hired_not_yet_worked {pulseV2:true}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "hired_not_yet_worked {pulseV2:false}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "hired_not_yet_worked {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "prospect omitted": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "prospect {}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "prospect {vault:true}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ],
+    "prospect {vault:false}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "prospect {pulseV2:true}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "prospect {pulseV2:false}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      }
+    ],
+    "prospect {vault:true,pulseV2:true}": [
+      {
+        "key": "nav.assignments",
+        "href": "/assignments",
+        "scoped": true
+      },
+      {
+        "key": "nav.training",
+        "href": "/training",
+        "scoped": false
+      },
+      {
+        "key": "nav.profile",
+        "href": "/profile",
+        "scoped": false
+      },
+      {
+        "key": "nav.settings",
+        "href": "/settings",
+        "scoped": false
+      },
+      {
+        "key": "nav.my_feedback",
+        "href": "/my-feedback",
+        "scoped": false
+      },
+      {
+        "key": "nav.vault",
+        "href": "/vault",
+        "scoped": false
+      }
+    ]
+  },
   "matchPages": {
     "en 0 pulseV2=false \" di\"": [
       {
