@@ -1957,9 +1957,20 @@
   "line": 32,
   "text": "if (explicit && explicit !== \"global\" && !shops.some(shop => shop.id === explicit)) redirect(\"/dashboard\");",
   "meaning": {
-   "kind": "operational-error",
-   "why": "S is an active shop"
-  }
+   "kind": "refuse",
+   "when": "!canReadReportLocation(actor, S)",
+   "why": "the shop list is filtered by canReadReportLocation: an explicit S outside it is refused; a member's S is in it. Appendix A filed it as operational (\"S is an active shop\"); the list is filtered by a session predicate inside a callback, which the operational rule now reads (Astra r2: callbacks are walked), so it is a refusal tied to that predicate (pinned)"
+  },
+  "pins": [
+   {
+    "file": "app/admin/sandwiches/page.tsx",
+    "text": "const shops = (data ?? []).filter(shop => canReadReportLocation(actor, shop.id));"
+   },
+   {
+    "file": "app/admin/sandwiches/page.tsx",
+    "text": "const actor = { role: auth.user.role, locations: auth.locations };"
+   }
+  ]
  },
  {
   "file": "app/admin/items/page.tsx",
@@ -1969,9 +1980,16 @@
   "line": 43,
   "text": "if (explicit && explicit !== \"global\" && !shops.some(shop => shop.id === explicit)) notFound();",
   "meaning": {
-   "kind": "operational-error",
-   "why": "S is an active shop"
-  }
+   "kind": "refuse",
+   "when": "!catalogShopAllowed(auth, S)",
+   "why": "the shop list is filtered by catalogShopAllowed: an explicit S outside it is refused; a member's S is in it. Appendix A filed it as operational (\"S is an active shop\"); the list is filtered by a session predicate inside a callback, which the operational rule now reads (Astra r2: callbacks are walked), so it is a refusal tied to that predicate (pinned)"
+  },
+  "pins": [
+   {
+    "file": "app/admin/items/page.tsx",
+    "text": "const shops = (await loadActiveShopsForReadiness()).filter(shop => catalogShopAllowed({ level, locations: auth.locations }, shop.id));"
+   }
+  ]
  },
  {
   "file": "app/admin/catalog/notices/page.tsx",
@@ -2188,9 +2206,20 @@
   "line": 35,
   "text": "if (explicit && !locations.some((l) => l.id === explicit)) redirect(\"/dashboard\");",
   "meaning": {
-   "kind": "operational-error",
-   "why": "S is an active shop"
-  }
+   "kind": "refuse",
+   "when": "!lockLocationContext(actor, S)",
+   "why": "the shop list is filtered by lockLocationContext: an explicit S outside it is refused; a member's S is in it. Appendix A filed it as operational (\"S is an active shop\"); the list is filtered by a session predicate inside a callback, which the operational rule now reads (Astra r2: callbacks are walked), so it is a refusal tied to that predicate (pinned)"
+  },
+  "pins": [
+   {
+    "file": "app/admin/pars/page.tsx",
+    "text": "const locations = (data ?? []).filter((l) => lockLocationContext(actor, l.id));"
+   },
+   {
+    "file": "app/admin/pars/page.tsx",
+    "text": "const actor = { role: auth.user.role, locations: auth.locations };"
+   }
+  ]
  },
  {
   "file": "app/admin/pars/page.tsx",

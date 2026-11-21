@@ -100,11 +100,11 @@ describe("the census of the 86 census files is the committed reviewed-entry list
     expect(result.records.map(strip)).toEqual(ENTRIES.map(strip));
   });
 
-  it("196 entries: refuse 25, admit 78, success-redirect 2, operational error 91, in 47 of the 86 files", () => {
+  it("196 entries: refuse 28, admit 78, success-redirect 2, operational error 88, in 47 of the 86 files", () => {
     const by = (k: string) => ENTRIES.filter((e) => e.meaning?.kind === k).length;
     expect(ENTRIES).toHaveLength(196);
     expect({ refuse: by("refuse"), admit: by("admit"), "success-redirect": by("success-redirect"), "operational-error": by("operational-error") })
-      .toEqual({ refuse: 25, admit: 78, "success-redirect": 2, "operational-error": 91 });
+      .toEqual({ refuse: 28, admit: 78, "success-redirect": 2, "operational-error": 88 });
     expect(new Set(ENTRIES.map((e) => e.file)).size).toBe(47);
   });
 
@@ -372,6 +372,92 @@ describe("Astra r1: a read's `error` stops the alias walk only with verified rea
   });
 });
 
+describe("Astra r2 red team: read provenance is a closed grammar (client root, builder methods, awaited directly)", () => {
+  const ASSIGN = "app/(authed)/assignments/page.tsx";
+  const READ = "const { data, error } = await query;";
+  const real = readFileSync(ASSIGN, "utf8");
+  const loadError = (src: string) => {
+    try { newReader({ sources: { [ASSIGN]: src } }).load(ASSIGN); return undefined; } catch (e) { return e as PageGateError; }
+  };
+  it.each([
+    ["the r2 repro: a .then() that forges the error", `const { data, error } = await query.then((r) => ({ ...r, error: auth.level < 7 ? new Error("forbidden") : r.error }));`],
+    ["a .catch() that forges it", `const { data, error } = await query.catch(() => ({ data: null, error: auth.level < 7 ? new Error("x") : null }));`],
+    ["a .finally()", `const { data, error } = await query.finally(() => undefined);`],
+    ["an unknown builder method", `const { data, error } = await query.order("name").transform((r) => r);`],
+    ["an allowed method given a callback", `const { data, error } = await query.filter(() => auth.level < 7);`],
+    ["an optional link", `const { data, error } = await query?.order("name");`],
+    ["not awaited directly (Promise.resolve)", `const { data, error } = await Promise.resolve(query);`],
+    ["a forged client", `const fake = { from: (_t: string) => ({ select: () => Promise.resolve({ data: [], error: auth.level < 7 ? new Error("x") : null }) }) };\n  const { data, error } = await fake.from("locations").select("id");`],
+    ["a mutated client (sb.from re-assigned)", `(sb as unknown as { from: unknown }).from = () => ({ select: () => Promise.resolve({ data: [], error: auth.level < 7 ? new Error("x") : null }) });
+  const { data, error } = await query;`],
+    ["a conditional between a read and a forgery", `const { data, error } = await (auth.level < 7 ? Promise.resolve({ data: [], error: new Error("x") }) : query);`],
+    ["a let builder later re-pointed through .then()", `query = query.then((r) => ({ ...r, error: auth.level < 7 ? new Error("x") : r.error }));\n  const { data, error } = await query;`],
+  ])("%s: no provenance, so the session-built error fails", (_name, read) => {
+    expect(real.includes(READ)).toBe(true);
+    expect(loadError(real.replace(READ, read))?.code).toBe("OPERATIONAL_MENTIONS_SESSION");
+  });
+  it("the real read keeps its provenance (control)", () => {
+    expect(loadError(real)).toBeUndefined();
+  });
+});
+
+describe("Astra r2 red team: a next/navigation exit binding may only be called directly", () => {
+  const fails = (body: string, imports = "") => {
+    const e = readerError(page(body, imports));
+    expect(e?.code, body).toBe("UNREVIEWED_CONSTRUCT");
+    // Failed by the binding rule itself, not only by some other unreviewed construct nearby.
+    expect(e?.problems.some((p) => /next\/navigation/.test(p.detail)), JSON.stringify(e?.problems)).toBe(true);
+    return e;
+  };
+  const NS = `import * as navigation from "next/navigation";`;
+  it.each([
+    ["the r2 repro: aliased to a const", `  const go = redirect;\n  if (auth.level < 7) go("/dashboard");`],
+    ["the r2 repro: .call", `  if (auth.level < 7) redirect.call(null, "/dashboard");`],
+    [".apply", `  if (auth.level < 7) redirect.apply(null, ["/dashboard"]);`],
+    [".bind", `  const go = redirect.bind(null, "/dashboard");\n  if (auth.level < 7) go();`],
+    ["passed as an argument", `  run(redirect);`],
+    ["returned from a function", `  const pick = () => redirect;\n  if (auth.level < 7) pick()("/dashboard");`],
+    ["put in an object (shorthand)", `  const o = { redirect };\n  if (auth.level < 7) o.redirect("/dashboard");`],
+    ["put in an object (value)", `  const o = { go: notFound };\n  if (auth.level < 7) o.go();`],
+    ["put in an array", `  const [go] = [redirect];\n  if (auth.level < 7) go("/dashboard");`],
+    ["spread", `  const fns = [...[redirect]];\n  if (auth.level < 7) fns[0]!("/dashboard");`],
+    ["an optional call", `  if (auth.level < 7) redirect?.("/dashboard");`],
+    ["a tagged template", "  if (auth.level < 7) redirect`/dashboard`;"],
+    ["exported", `  void 0;\n}\nexport { redirect };\nfunction unused() {`],
+  ])("%s", (_name, body) => { fails(body, `import { run } from "@/lib/x";`); });
+
+  it.each([
+    ["a destructured namespace", `  const { redirect: r } = navigation;\n  if (auth.level < 7) r("/dashboard");`],
+    ["element access on the namespace", `  if (auth.level < 7) navigation["redirect"]("/dashboard");`],
+    ["the namespace as a value", `  const n = navigation;\n  if (auth.level < 7) n.redirect("/dashboard");`],
+    ["a namespace member not called", `  const r = navigation.redirect;\n  if (auth.level < 7) r("/dashboard");`],
+    ["a namespace member through .call", `  if (auth.level < 7) navigation.redirect.call(null, "/dashboard");`],
+    ["an optional namespace call", `  if (auth.level < 7) navigation.redirect?.("/dashboard");`],
+  ])("%s", (_name, body) => { fails(body, NS); });
+
+  it("a renamed exit aliased again", () => {
+    fails(`  const g = go;\n  if (auth.level < 7) g("/dashboard");`, `import { redirect as go } from "next/navigation";`);
+  });
+
+  it.each([
+    ["a re-export", `export { redirect } from "next/navigation";`],
+    ["an export *", `export * from "next/navigation";`],
+    ["a default import", `import nav from "next/navigation";`],
+  ])("%s of next/navigation", (_name, line) => { fails(`  void 0;`, line); });
+
+  it.each([
+    ["require", `  const nav = require("next/navigation");\n  if (auth.level < 7) nav.redirect("/dashboard");`],
+    ["a dynamic import", `  const nav = await import("next/navigation");\n  if (auth.level < 7) nav.redirect("/dashboard");`],
+  ])("%s of next/navigation", (_name, body) => { fails(body); });
+
+  it("the direct forms still read as core exits (controls)", () => {
+    const admitsEmployee = (src: string) => newReader({ sources: { [FIXTURE_FILE]: src }, pages: [FIXTURE_PAGE] }).admits("/fixture", { role: "employee", switches: {} }).admitted;
+    expect(admitsEmployee(page(`  if (auth.level < 7) redirect("/dashboard");`))).toBe(false);
+    expect(admitsEmployee(page(`  if (auth.level < 7) navigation.redirect("/dashboard");`, NS))).toBe(false);
+    expect(admitsEmployee(page(`  if (auth.level < 2) redirect("/dashboard");`))).toBe(true);
+  });
+});
+
 describe("Astra r1: exits through namespace and renamed imports are never skipped", () => {
   const NS = `import * as navigation from "next/navigation";`;
   const employeeAdmitted = (src: string) => newReader({ sources: { [FIXTURE_FILE]: src }, pages: [FIXTURE_PAGE] }).admits("/fixture", { role: "employee", switches: {} }).admitted;
@@ -520,16 +606,16 @@ const RULES: Record<string, PageRule> = {
   "/admin/sevenshifts": { min: 7, also: OP6, entries: "R1 O1" },
   "/admin/people-reconcile": { min: 7, only: GM_PLUS, entries: "R2 A1 O2" },
   "/admin/pm-criteria": { min: 7, only: GM_PLUS, entries: "R1 A1 O2" },
-  "/admin/sandwiches": { min: 6, only: [...OP6, ...GM_PLUS], entries: "O2" },
+  "/admin/sandwiches": { min: 6, only: [...OP6, ...GM_PLUS], entries: "R1 O1" },
   "/admin/recipes": { min: 6, entries: "" },
-  "/admin/items": { min: 6, entries: "O1" },
+  "/admin/items": { min: 6, entries: "R1" },
   "/admin/catalog/notices": { min: 7, entries: "R1 A2 O2" },
   "/admin/catalog/shop-changes": { min: 8, entries: "R1 A1 O1" },
   "/admin/catalog/new/sandwich": { min: 7, only: GM_PLUS, entries: "R1 A1 O2" },
   "/admin/vendors": { min: 6, entries: "" },
   "/admin/skus": { min: 6, entries: "A1 O1" },
   "/admin/products": { min: 6, entries: "A1 O1" },
-  "/admin/pars": { min: 6, only: [...OP6, ...GM_PLUS], entries: "R1 A1 O3" },
+  "/admin/pars": { min: 6, only: [...OP6, ...GM_PLUS], entries: "R2 A1 O2" },
   "/admin/weights": { min: 6, entries: "" },
   "/admin/categories": { min: 6, entries: "" }, // E2: the page admits from 6
   "/admin/locations": { min: 8, only: MOO_PLUS, entries: "" },

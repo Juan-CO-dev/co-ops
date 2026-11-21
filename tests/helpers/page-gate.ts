@@ -851,27 +851,108 @@ function assignmentsTo(name: string, decl: ts.Node): ts.Expression[] {
 }
 
 /**
- * Read-result provenance (Astra r1 P2-1). The ONE thing an operational guard may read without its alias being walked
- * is the `error` of a database read: `const { error } = await <read>` or `<result>.error` where `<result>` is the
- * awaited result of a read. A read is a Supabase query builder: a call chain rooted at `<client>.from("<table>")` or
- * `<client>.rpc("<fn>")`, through local aliases (a `let` builder qualifies only when every value assigned to it is a
- * read chain too), or a closed wrapper that returns a builder it is given. Anything else is walked as usual, so an
- * `error` built from the session fails OPERATIONAL_MENTIONS_SESSION.
+ * Read-result provenance (Astra r1 P2-1, r2 P2-1). The ONE thing an operational guard may read without its alias
+ * being walked is the `error` of a database read: `const { error } = await <read>` or `<result>.error` where
+ * `<result>` is `await <read>`. A read is built BY CONSTRUCTION from a closed grammar:
+ *   - its root is `<client>.from("<table>")` or `<client>.rpc("<fn>")` on a RECOGNISED client: a direct call of
+ *     getServiceRoleClient(), a const alias of one, or a parameter (or a parameter's property) whose declared type is
+ *     the client type (`ReturnType<typeof getServiceRoleClient>`, `SupabaseClient`): the compiler enforces it;
+ *   - every later link is a call of a method in the closed BUILDER_METHODS list, none of them taking a callback (no
+ *     `then`, `catch`, `finally`, `map`, nothing unknown), or the closed wrapper applyEffectiveResolution(<read>);
+ *   - the result is awaited DIRECTLY (`await <read>`, through const aliases and `let` builders whose every assigned
+ *     value is a read).
+ * Anything else has no provenance and is walked as usual, so an `error` built from the session fails
+ * OPERATIONAL_MENTIONS_SESSION.
  */
 const READ_WRAPPERS: Readonly<Record<string, readonly string[]>> = {
   applyEffectiveResolution: ["@/lib/admin/template-builder-shared"],
 };
+/** The Supabase query-builder methods the census files use, plus their plain siblings. None takes a callback. */
+const BUILDER_METHODS = new Set([
+  "select", "eq", "neq", "in", "is", "gt", "gte", "lt", "lte", "like", "ilike", "order", "limit", "range", "single",
+  "maybeSingle", "match", "filter", "not", "or", "contains", "containedBy", "overlaps", "abortSignal", "returns", "csv",
+]);
+const CLIENT_FACTORIES: Readonly<Record<string, readonly string[]>> = { getServiceRoleClient: ["@/lib/supabase-server"] };
 
-function isReadChain(expr: ts.Expression, env: Env, depth: number): boolean {
+/** Is a type node the database client type? */
+function isClientType(t: ts.TypeNode | undefined, env: Env): boolean {
+  if (!t || !ts.isTypeReferenceNode(t) || !ts.isIdentifier(t.typeName)) return false;
+  const name = t.typeName.text;
+  if (importedAs(env.file, name, { SupabaseClient: ["@supabase/supabase-js"] })) return true;
+  if (name === "ReturnType" && t.typeArguments?.length === 1) {
+    const q = t.typeArguments[0]!;
+    return ts.isTypeQueryNode(q) && ts.isIdentifier(q.exprName) && !!importedAs(env.file, q.exprName.text, CLIENT_FACTORIES);
+  }
+  return false;
+}
+
+/** The declared parameter that binds `name` at a use site, if any. */
+function parameterOf(name: string, at: ts.Node): ts.ParameterDeclaration | undefined {
+  for (let p: ts.Node | undefined = at.parent; p; p = p.parent) {
+    if (ts.isFunctionLike(p)) {
+      const hit = p.parameters.find((x) => ts.isIdentifier(x.name) && x.name.text === name);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+/** Is a member of `name` ever assigned (`sb.from = ...`, `sb["from"] = ...`) in the function that declares it? */
+function memberAssigned(name: string, decl: ts.Node): boolean {
+  let hit = false;
+  const root = fnOf(decl)?.body ?? decl.getSourceFile();
+  const visit = (n: ts.Node) => {
+    if (hit) return;
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
+      let l: ts.Expression = n.left;
+      while (ts.isPropertyAccessExpression(l) || ts.isElementAccessExpression(l) || ts.isParenthesizedExpression(l) || ts.isAsExpression(l) || ts.isNonNullExpression(l)) l = l.expression;
+      if (l !== n.left && ts.isIdentifier(l) && l.text === name) hit = true;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(root);
+  return hit;
+}
+
+/** Is this expression a recognised database client? */
+function isClient(expr: ts.Expression, env: Env, depth: number): boolean {
   if (depth > 12) return false;
   const e = strip(expr);
-  if (ts.isAwaitExpression(e)) return isReadChain(e.expression, env, depth + 1);
   if (ts.isCallExpression(e)) {
+    return e.arguments.length === 0 && ts.isIdentifier(e.expression) && !shadowed(e.expression.text, e.expression, env)
+      && !!importedAs(env.file, e.expression.text, CLIENT_FACTORIES);
+  }
+  if (ts.isIdentifier(e)) {
+    const d = declarationOf(e.text, e);
+    if (d && !("forOf" in d)) {
+      return !d.element && !!d.decl.initializer && (d.decl.parent.flags & ts.NodeFlags.Const) !== 0
+        && assignmentsTo(e.text, d.decl).length === 0 && !memberAssigned(e.text, d.decl) && isClient(d.decl.initializer, env, depth + 1);
+    }
+    return isClientType(parameterOf(e.text, e)?.type, env);
+  }
+  if (ts.isPropertyAccessExpression(e) && ts.isIdentifier(e.expression)) {
+    // `args.sb`, where `args` is a parameter typed with a type literal whose `sb` member is the client type.
+    if (declarationOf(e.expression.text, e.expression)) return false;
+    const t = parameterOf(e.expression.text, e.expression)?.type;
+    if (!t || !ts.isTypeLiteralNode(t)) return false;
+    const member = t.members.find((m) => ts.isPropertySignature(m) && m.name.getText(env.file.sf) === e.name.text) as ts.PropertySignature | undefined;
+    return isClientType(member?.type, env);
+  }
+  return false;
+}
+
+function isReadChain(expr: ts.Expression, env: Env, depth: number): boolean {
+  if (depth > 24) return false;
+  const e = strip(expr);
+  if (ts.isCallExpression(e)) {
+    if (e.questionDotToken) return false;
     const callee = strip(e.expression);
     if (ts.isPropertyAccessExpression(callee)) {
+      if (callee.questionDotToken) return false;
       const m = callee.name.text;
       const first = e.arguments[0] ? strip(e.arguments[0]) : undefined;
-      if ((m === "from" || m === "rpc") && first && ts.isStringLiteral(first)) return true;
+      if (m === "from" || m === "rpc") return e.arguments.length >= 1 && !!first && ts.isStringLiteral(first) && isClient(callee.expression, env, depth + 1);
+      if (!BUILDER_METHODS.has(m) || e.arguments.some((x) => ts.isFunctionLike(strip(x)))) return false;
       return isReadChain(callee.expression, env, depth + 1);
     }
     if (ts.isIdentifier(callee) && !shadowed(callee.text, callee, env) && importedAs(env.file, callee.text, READ_WRAPPERS)) {
@@ -951,7 +1032,7 @@ function mentionsViewer(expr: ts.Node, env: Env, depth = 0): boolean {
         }
       }
     }
-    if (ts.isFunctionLike(n)) return;
+    // Callbacks are walked too: a value computed inside `.then(...)` or `.map(...)` is the value.
     ts.forEachChild(n, visit);
   };
   visit(expr);
@@ -1011,6 +1092,8 @@ interface Analysis {
   envs: Map<FnLike, Env>;
   constructs: Construct[];
   coreExits: Set<ts.Node>;
+  /** Uses of an exit binding other than a direct call (never reviewable). */
+  bindingProblems: Problem[];
 }
 
 function isFnExpr(n: ts.Node): n is ts.ArrowFunction | ts.FunctionExpression {
@@ -1140,6 +1223,56 @@ function enclosingTry(n: ts.Node): ts.TryStatement | undefined {
   return undefined;
 }
 const caughtOnPage = (n: ts.Node) => enclosingTry(n)?.catchClause !== undefined;
+
+/**
+ * Exit bindings (Astra r2 P2-2), closed by construction. Every binding that resolves to a next/navigation exit (a
+ * named or renamed import) may be used ONLY as the direct callee of a plain call: `redirect(...)`. The namespace
+ * binding (`import * as navigation`) may be used only as `navigation.<member>(...)`. Any other reference (assigned,
+ * passed, returned, spread, put in an object or array, `.call` / `.apply` / `.bind`, an optional call `redirect?.()`,
+ * a tagged template, element access, a destructured namespace, an export or re-export, a default import, a
+ * `require` / dynamic `import()` of next/navigation) fails UNREVIEWED_CONSTRUCT wherever it is in a census file. It
+ * cannot be reviewed away: there is no entry that makes an aliased exit readable.
+ */
+function exitBindingProblems(info: FileInfo): Problem[] {
+  const sf = info.sf;
+  const out: Problem[] = [];
+  const at = (n: ts.Node, what: string) => out.push({
+    code: "UNREVIEWED_CONSTRUCT", file: info.file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1,
+    detail: `${what}: ${norm(n.getText(sf)).slice(0, 160)}`,
+  });
+  const exits = new Set<string>();
+  let ns: string | undefined;
+  for (const st of sf.statements) {
+    if (ts.isImportDeclaration(st) && ts.isStringLiteral(st.moduleSpecifier) && st.moduleSpecifier.text === "next/navigation" && st.importClause) {
+      if (st.importClause.name) at(st, "a default import of next/navigation");
+      const nb = st.importClause.namedBindings;
+      if (nb && ts.isNamespaceImport(nb)) ns = nb.name.text;
+      if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) if (NAV_EXITS[(el.propertyName ?? el.name).text]) exits.add(el.name.text);
+    }
+    if (ts.isExportDeclaration(st) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier) && st.moduleSpecifier.text === "next/navigation") at(st, "a re-export of next/navigation");
+  }
+  const isNav = (x: ts.Expression | undefined) => !!x && ts.isStringLiteral(x) && x.text === "next/navigation";
+  const visit = (n: ts.Node) => {
+    if (ts.isImportDeclaration(n)) return;
+    if (ts.isCallExpression(n) && ((ts.isIdentifier(n.expression) && n.expression.text === "require") || n.expression.kind === ts.SyntaxKind.ImportKeyword) && isNav(n.arguments[0])) {
+      at(n, "a require / dynamic import of next/navigation");
+    }
+    if (ts.isIdentifier(n) && (exits.has(n.text) || n.text === ns)) {
+      const p = n.parent;
+      const notAReference = (ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n)
+        || (ts.isPropertySignature(p) && p.name === n) || ts.isJsxAttribute(p) || (ts.isMethodDeclaration(p) && p.name === n)
+        || (ts.isPropertyDeclaration(p) && p.name === n) || (ts.isBindingElement(p) && p.propertyName === n);
+      const directCall = (c: ts.Node, callee: ts.Node) => ts.isCallExpression(c) && c.expression === callee && !c.questionDotToken;
+      const allowed = exits.has(n.text)
+        ? directCall(p, n)
+        : ts.isPropertyAccessExpression(p) && p.expression === n && !p.questionDotToken && directCall(p.parent, p);
+      if (!notAReference && !allowed) at(p, exits.has(n.text) ? `the next/navigation exit ${n.text} used other than as a direct call` : `the next/navigation namespace ${n.text} used other than as ${n.text}.<member>(...)`);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
 
 /** next/navigation's page-ending calls, by export: the redirects, and the refusals that render an error page. */
 const NAV_EXITS: Readonly<Record<string, "redirect" | "notFound">> = {
@@ -1277,7 +1410,7 @@ function analyze(file: string, src: string, switchCalls?: Readonly<Record<string
       add(x, ENCLOSING_KIND(x)!);
     }
   }
-  return { info, walked, roots, envs, constructs, coreExits };
+  return { info, walked, roots, envs, constructs, coreExits, bindingProblems: exitBindingProblems(info) };
 }
 
 /** A component's environment when it is analyzed on its own (its props are bound at the call site when walked). */
@@ -1458,6 +1591,7 @@ export class Reader {
     if (hit) return hit;
     const a = analyze(file, this.read(file), this.opts.switchCalls);
     const { bound, problems } = bindFile(a, this.entries, this.read);
+    problems.unshift(...a.bindingProblems);
     for (const b of bound.values()) problems.push(...validateMeaning(b, a, this.pages, this.allRoutes));
     if (problems.length) {
       this.problems.set(file, problems);
@@ -1472,6 +1606,7 @@ export class Reader {
   census(file: string): { constructs: Construct[]; problems: Problem[]; bound: Map<ts.Node, Bound> } {
     const a = analyze(file, this.read(file), this.opts.switchCalls);
     const { bound, problems } = bindFile(a, this.entries, this.read);
+    problems.unshift(...a.bindingProblems);
     for (const b of bound.values()) problems.push(...validateMeaning(b, a, this.pages, this.allRoutes));
     return { constructs: a.constructs, problems, bound };
   }
