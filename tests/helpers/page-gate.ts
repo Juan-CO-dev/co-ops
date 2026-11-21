@@ -82,7 +82,7 @@ import type { Facts, SwitchName, Switches } from "@/lib/nav/types";
 
 export type PageGateCode =
   | "UNREVIEWED_CONSTRUCT" | "ENTRY_TEXT_MISMATCH" | "STALE_ENTRY" | "AMBIGUOUS_ENTRY" | "UNCLASSIFIED_ENTRY"
-  | "OPERATIONAL_MENTIONS_SESSION" | "UNKNOWN_CONDITION" | "BAD_REDIRECT_TARGET" | "REDIRECT_LOOP" | "UNSUPPORTED"
+  | "OPERATIONAL_MENTIONS_SESSION" | "MUTATED_DEPENDENCY" | "UNKNOWN_CONDITION" | "BAD_REDIRECT_TARGET" | "REDIRECT_LOOP" | "UNSUPPORTED"
   | "NOT_A_CENSUS_PAGE";
 
 export interface Problem { code: PageGateCode; file: string; line?: number; detail: string }
@@ -977,6 +977,172 @@ function isReadResult(expr: ts.Expression, env: Env, depth: number): boolean {
   return false;
 }
 
+/**
+ * Mutated dependencies (Astra r4, lead: fail closed). Every binding an operational-error guard depends on (the guard's
+ * names, then, transitively, the names in their initializers and assigned values, and every binding that aliases one
+ * of them as a whole value) must never be MUTATED in its scope. Mutated means: a member or element-access write; a
+ * compound or logical assignment (`+=`, `??=`, `||=`, `&&=`) or `++` / `--` on it or a member; `delete` of a member;
+ * Object.assign / defineProperty / defineProperties / setPrototypeOf on it or a member; a method call on it outside
+ * the read-only list; passing it (the binding itself) to any call or `new` other than the closed pure tables; putting
+ * it in an object or array literal; returning it from a nested function. The reader never traces what a mutation
+ * writes: any one is fatal for the construct (MUTATED_DEPENDENCY), and no reviewed entry makes it go away. A plain
+ * reassignment of a `let` is not a mutation: the alias walk already follows the assigned value.
+ */
+const READONLY_METHODS = new Set([
+  "some", "every", "filter", "map", "flatMap", "find", "findIndex", "findLast", "findLastIndex", "includes", "indexOf",
+  "lastIndexOf", "slice", "concat", "join", "reduce", "at", "keys", "values", "entries", "toString", "trim", "startsWith",
+  "endsWith", "toLowerCase", "toUpperCase", "split", "has", "get", "localeCompare", "toISOString", "getTime", "test",
+]);
+const MUTATORS: Readonly<Record<string, readonly string[]>> = { Object: ["assign", "defineProperty", "defineProperties", "setPrototypeOf"], Reflect: ["set", "defineProperty", "deleteProperty", "setPrototypeOf"] };
+const PURE_TABLES = [CONSTANTS, ROLE_PREDICATES, MEMBERSHIP, SWITCH_CALLS] as const;
+/** Functions that only READ an object argument, beyond the atom and value tables (a census page passes a guard's
+ *  dependency to each). tests/nav-page-gate-reader.test.ts calls each with a frozen argument. */
+const READONLY_ARG_FUNCTIONS: Readonly<Record<string, readonly string[]>> = {
+  parseReportRange: ["@/lib/report-range"],
+  // These take date strings (immutable values): nothing they do can change the caller's binding.
+  etWallClockToUtcIso: ["@/lib/operational-day"],
+  etYmdMinusDays: ["@/lib/operational-day"],
+};
+
+function isMutatorCall(call: ts.CallExpression): boolean {
+  const c = strip(call.expression);
+  return ts.isPropertyAccessExpression(c) && ts.isIdentifier(c.expression) && (MUTATORS[c.expression.text]?.includes(c.name.text) ?? false);
+}
+
+/** A callee the reader trusts not to mutate its arguments: a function in the closed atom or value tables. */
+function pureCallee(call: ts.CallExpression | ts.NewExpression, info: FileInfo): boolean {
+  if (!ts.isCallExpression(call)) return false;
+  const c = strip(call.expression);
+  if (!ts.isIdentifier(c)) return false;
+  return PURE_TABLES.some((t) => !!importedAs(info, c.text, t)) || !!importedAs(info, c.text, VALUE_HELPERS) || !!importedAs(info, c.text, TASK_CALLS)
+    || !!importedAs(info, c.text, READONLY_ARG_FUNCTIONS);
+}
+
+const ASSIGN_PLAIN = ts.SyntaxKind.EqualsToken;
+
+/** How one reference to a dependency is used: a read, a whole-value alias (another binding to check), or a mutation. */
+function classifyUse(use: ts.Identifier, declFn: FnLike | undefined, info: FileInfo): { kind: "read" } | { kind: "alias"; decl: ts.VariableDeclaration } | { kind: "mutation"; why: string } {
+  let m: ts.Node = use;
+  while (ts.isParenthesizedExpression(m.parent) || ts.isNonNullExpression(m.parent) || ts.isAsExpression(m.parent) || ts.isSatisfiesExpression(m.parent)) m = m.parent;
+  const p = m.parent;
+  // A member chain rooted at the binding: `x.a`, `x["a"]`, `x?.a.b`.
+  if ((ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === m) {
+    let top: ts.Node = p;
+    while ((ts.isPropertyAccessExpression(top.parent) || ts.isElementAccessExpression(top.parent)) && top.parent.expression === top) top = top.parent;
+    if (isWriteTarget(top)) return { kind: "mutation", why: "a member write" };
+    if (ts.isCallExpression(top.parent) && top.parent.expression === top) {
+      const name = ts.isPropertyAccessExpression(top) ? top.name.text : "";
+      if (READONLY_METHODS.has(name)) return { kind: "read" };
+      // Building a verified read (`query = query.in(...)`) is the read grammar, not a mutation of a value.
+      if (top === p && (BUILDER_METHODS.has(name) || name === "from" || name === "rpc") && isReadChain(use, newEnv(info, declFn, new Map()), 0)) return { kind: "read" };
+      return { kind: "mutation", why: `a call of .${name || "[...]"}()` };
+    }
+    if (ts.isCallExpression(top.parent) && isMutatorCall(top.parent) && top.parent.arguments[0] === top) return { kind: "mutation", why: "Object.assign / defineProperty on a member" };
+    return { kind: "read" };
+  }
+  if (isWriteTarget(m)) {
+    return ts.isBinaryExpression(p) && p.operatorToken.kind === ASSIGN_PLAIN ? { kind: "read" } : { kind: "mutation", why: "a compound / logical assignment, ++ / -- or delete" };
+  }
+  if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.expression !== m && (p.arguments ?? []).some((x) => x === m)) {
+    if (ts.isCallExpression(p) && isMutatorCall(p)) return { kind: "mutation", why: "Object.assign / defineProperty" };
+    return pureCallee(p, info) ? { kind: "read" } : { kind: "mutation", why: "passed to a call" };
+  }
+  if (ts.isObjectLiteralExpression(p) || ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) || ts.isArrayLiteralExpression(p)) {
+    // A temporary literal that is only the receiver of a read-only method (`[from, to].some(...)`) does not escape.
+    let lit: ts.Node = p;
+    while (!ts.isObjectLiteralExpression(lit) && !ts.isArrayLiteralExpression(lit)) lit = lit.parent;
+    let r: ts.Node = lit;
+    while (ts.isParenthesizedExpression(r.parent)) r = r.parent;
+    const callee = r.parent;
+    if (ts.isPropertyAccessExpression(callee) && callee.expression === r && READONLY_METHODS.has(callee.name.text) && ts.isCallExpression(callee.parent) && callee.parent.expression === callee) return { kind: "read" };
+    return { kind: "mutation", why: "put in an object or array" };
+  }
+  if ((ts.isReturnStatement(p) && fnOf(p) !== declFn) || (ts.isArrowFunction(p) && p.body === m)) return { kind: "mutation", why: "returned from a nested function" };
+  // A whole-value alias: `const y = x`, `const y = x ?? []`, `cond ? x : z`.
+  let q: ts.Node = m;
+  while (ts.isBinaryExpression(q.parent) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.AmpersandAmpersandToken].includes(q.parent.operatorToken.kind)
+    || (ts.isConditionalExpression(q.parent) && q.parent.condition !== q) || ts.isParenthesizedExpression(q.parent) || ts.isAsExpression(q.parent) || ts.isNonNullExpression(q.parent)) q = q.parent;
+  if (ts.isVariableDeclaration(q.parent) && q.parent.initializer === q && ts.isIdentifier(q.parent.name)) return { kind: "alias", decl: q.parent };
+  if (ts.isBinaryExpression(q.parent) && q.parent.right === q && q.parent.operatorToken.kind === ASSIGN_PLAIN && ts.isIdentifier(q.parent.left)) {
+    const d = declarationOf(q.parent.left.text, q.parent.left);
+    if (d && !("forOf" in d)) return { kind: "alias", decl: d.decl };
+    return { kind: "mutation", why: "assigned to a binding the reader cannot see" };
+  }
+  return { kind: "read" };
+}
+
+/**
+ * The identifiers whose OBJECT IDENTITY flows into an expression's value: `x`, `x.a.b`, `x[k]`, `await x`,
+ * `x ?? y`, `x || y`, `c ? x : y`. A call, `new`, literal or object literal makes a new value and ends the edge (what
+ * its arguments mention is the session walk's business, mentionsViewer).
+ */
+function valueRoots(expr: ts.Expression): ts.Identifier[] {
+  const e = strip(expr);
+  if (ts.isIdentifier(e)) return [e];
+  if (ts.isAwaitExpression(e)) return valueRoots(e.expression);
+  if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) return valueRoots(e.expression);
+  if (ts.isBinaryExpression(e) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.AmpersandAmpersandToken].includes(e.operatorToken.kind)) {
+    return [...valueRoots(e.left), ...valueRoots(e.right)];
+  }
+  if (ts.isConditionalExpression(e)) return [...valueRoots(e.whenTrue), ...valueRoots(e.whenFalse)];
+  return [];
+}
+
+/** Can this use run before the guard is evaluated? Uses textually before it; any use when the guard sits in a loop
+ *  that also holds the use; any use inside a nested function declaration (hoisted). */
+function mayRunBefore(use: ts.Node, guard: ts.Node): boolean {
+  if (use.getStart() < guard.getStart()) return true;
+  const inside = (outer: ts.Node, n: ts.Node) => n.getStart() >= outer.getStart() && n.getEnd() <= outer.getEnd();
+  for (let p: ts.Node | undefined = use.parent; p; p = p.parent) if (ts.isFunctionDeclaration(p) && !inside(p, guard)) return true;
+  for (let p: ts.Node | undefined = guard.parent; p && !ts.isFunctionLike(p); p = p.parent) {
+    if (ts.isIterationStatement(p, false) && use.getStart() >= p.getStart() && use.getEnd() <= p.getEnd()) return true;
+  }
+  return false;
+}
+
+/** The first mutated binding a guard depends on (name and why), or undefined. */
+function mutatedDependency(guard: ts.Expression): string | undefined {
+  const seen = new Set<string>();
+  const queue: { decl: ts.VariableDeclaration; name: string }[] = [];
+  const enqueue = (id: ts.Identifier) => {
+    const d = declarationOf(id.text, id);
+    if (!d) return;
+    if ("forOf" in d) { valueRoots(d.forOf.expression).forEach(enqueue); return; }
+    const key = `${d.decl.pos}:${id.text}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    queue.push({ decl: d.decl, name: id.text });
+  };
+  const visit = (n: ts.Node) => {
+    if (ts.isIdentifier(n) && !(ts.isPropertyAccessExpression(n.parent) && n.parent.name === n)) enqueue(n);
+    if (!ts.isFunctionLike(n)) ts.forEachChild(n, visit);
+  };
+  visit(guard);
+  while (queue.length) {
+    const { decl, name } = queue.shift()!;
+    // The value's own edges: a whole-value or destructured initializer, and every value assigned to it.
+    if (decl.initializer) valueRoots(decl.initializer).forEach(enqueue);
+    for (const rhs of assignmentsTo(name, decl)) valueRoots(rhs).forEach(enqueue);
+    const declFn = fnOf(decl);
+    const info = fileInfoOf(decl);
+    for (const use of usesOf(name, decl)) {
+      if (!mayRunBefore(use, guard)) continue;
+      const u = classifyUse(use, declFn, info);
+      if (u.kind === "mutation") return `${name} (${u.why}: ${norm(use.parent.getText()).slice(0, 120)})`;
+      if (u.kind === "alias" && ts.isIdentifier(u.decl.name)) enqueue(u.decl.name);
+    }
+  }
+  return undefined;
+}
+
+/** The FileInfo a node belongs to (registered by analyze). */
+const fileInfos = new WeakMap<ts.SourceFile, FileInfo>();
+function fileInfoOf(n: ts.Node): FileInfo {
+  const info = fileInfos.get(n.getSourceFile());
+  if (!info) throw new PageGateError("UNSUPPORTED", "a node outside an analyzed file");
+  return info;
+}
+
 /** The read-only members of a read result. */
 const RESULT_MEMBERS = new Set(["error", "data", "count", "status", "statusText"]);
 
@@ -1001,7 +1167,7 @@ function usesOf(name: string, decl: ts.VariableDeclaration): ts.Identifier[] {
   const out: ts.Identifier[] = [];
   const root = fnOf(decl)?.body ?? decl.getSourceFile();
   const visit = (n: ts.Node) => {
-    if (ts.isIdentifier(n) && n.text === name && n !== decl.name) {
+    if (ts.isIdentifier(n) && n.text === name && n !== decl.name && !(ts.isBindingElement(n.parent) && n.parent.name === n && n.parent.parent.parent === decl)) {
       const p = n.parent;
       const notAReference = (ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n)
         || (ts.isBindingElement(p) && p.propertyName === n) || (ts.isPropertySignature(p) && p.name === n);
@@ -1180,7 +1346,9 @@ function fileInfo(file: string, src: string, switchCalls: Readonly<Record<string
       }
     }
   }
-  return { file, sf, imports, fns, topConsts, locals: new Map(), switchCalls };
+  const info: FileInfo = { file, sf, imports, fns, topConsts, locals: new Map(), switchCalls };
+  fileInfos.set(sf, info);
+  return info;
 }
 
 function fnOf(n: ts.Node): FnLike | undefined {
@@ -1560,6 +1728,8 @@ function validateMeaning(b: Bound, a: Analysis, pages: Map<string, CensusPage>, 
     const env = a.envs.get(c.fnNode!) ?? newEnv(a.info, c.fnNode, new Map());
     const guard = c.ownIf?.expression ?? (ts.isIfStatement(c.node) ? c.node.expression : undefined);
     if (guard && mentionsViewer(guard, env)) out.push({ code: "OPERATIONAL_MENTIONS_SESSION", file: e.file, line: c.line, detail: `an operational-error guard reads the session, a switch or a fact: ${norm(guard.getText(a.info.sf))}` });
+    const mutated = guard ? mutatedDependency(guard) : undefined;
+    if (mutated) out.push({ code: "MUTATED_DEPENDENCY", file: e.file, line: c.line, detail: `an operational-error guard depends on ${mutated}` });
   }
   if (m.kind === "success-redirect") {
     const route = m.target.split("?")[0]!;

@@ -431,6 +431,61 @@ describe("Astra r3: a read result keeps provenance only while it is const and us
   });
 });
 
+describe("Astra r4: a mutated dependency of an operational guard is fatal (MUTATED_DEPENDENCY), with a session-independent read", () => {
+  const ASSIGN = "app/(authed)/assignments/page.tsx";
+  const READ = "const { data, error } = await query;";
+  const real = readFileSync(ASSIGN, "utf8");
+  // A read that does NOT mention the session, so nothing but the mutation rule can fail these.
+  const PLAIN = `const result = await sb.from("locations").select("id,name");`;
+  const forged = `{ message: "forbidden", details: "", hint: "", code: "403", name: "PostgrestError" }`;
+  const problemsOf = (src: string) => {
+    try { newReader({ sources: { [ASSIGN]: src } }).load(ASSIGN); return []; } catch (e) { return (e as PageGateError).problems.map((p) => p.code); }
+  };
+  it.each([
+    ["Astra's repro: a member write", `result.error = auth.level < 7 ? ${forged} : result.error;`],
+    ["Object.assign", `Object.assign(result, { error: auth.level < 7 ? ${forged} : null });`],
+    ["??=", `result.error ??= (auth.level < 7 ? ${forged} : null);`],
+    ["||=", `result.error ||= (auth.level < 7 ? ${forged} : null);`],
+    ["&&=", `result.data &&= null;`],
+    ["an element-access write", `(result as Record<string, unknown>)["error"] = auth.level < 7 ? ${forged} : null;`],
+    ["Object.defineProperty", `Object.defineProperty(result, "error", { value: auth.level < 7 ? ${forged} : null });`],
+    ["Reflect.set", `Reflect.set(result, "error", auth.level < 7 ? ${forged} : null);`],
+    ["delete", `delete (result as { error?: unknown }).error;`],
+    ["++ on a member", `(result as unknown as { count: number }).count++;`],
+    ["passed to a helper", `forgeError(result, auth);`],
+    ["aliased, then the alias written", `const alias = result;\n  alias.error = auth.level < 7 ? ${forged} : null;`],
+    ["put in an object", `const box = { result };\n  box.result.error = auth.level < 7 ? ${forged} : null;`],
+  ])("%s: fails MUTATED_DEPENDENCY", (_name, mutation) => {
+    expect(real.includes(READ)).toBe(true);
+    const src = real.replace(READ, `${PLAIN}\n  ${mutation}\n  const { data, error } = result;`);
+    const codes = problemsOf(src);
+    expect(codes).toContain("MUTATED_DEPENDENCY");
+    expect(codes).not.toContain("OPERATIONAL_MENTIONS_SESSION"); // the read is session-independent: only the mutation rule fires
+  });
+
+  it("a destructured error itself written by a compound assignment is fatal too", () => {
+    const src = real.replace(READ, `const { data, error } = await sb.from("locations").select("id,name");\n  const blocked = { level: auth.level };\n  void blocked;\n  (error as unknown as { code: string }).code += "";`);
+    expect(problemsOf(src)).toContain("MUTATED_DEPENDENCY");
+  });
+
+  it("control: the same session-independent read, const and read-only, passes", () => {
+    expect(problemsOf(real.replace(READ, `${PLAIN}\n  const { data, error } = result;`))).toEqual([]);
+    expect(problemsOf(real)).toEqual([]);
+  });
+
+  it("a mutation after the guard cannot change it and is not a dependency", () => {
+    const src = real.replace("if (error) throw error;", "if (error) throw error;\n  Object.assign(query, {});");
+    expect(problemsOf(src)).toEqual([]);
+  });
+
+  it("the read-only argument allowlist really only reads: parseReportRange on a frozen argument", async () => {
+    const { parseReportRange } = await import("@/lib/report-range");
+    const arg = Object.freeze({ range: "custom", from: "2026-11-01", to: "2026-11-07", location: "shop-S" });
+    expect(() => parseReportRange(arg, "2026-11-18")).not.toThrow();
+    expect(arg).toEqual({ range: "custom", from: "2026-11-01", to: "2026-11-07", location: "shop-S" });
+  });
+});
+
 describe("Astra r2 red team: a next/navigation exit binding may only be called directly", () => {
   it("Astra r3 P3: every namespace import is tracked (two namespaces, the first aliased)", () => {
     const e = readerError(page(`  const go = nav1.redirect;\n  if (auth.level < 7) go("/dashboard");`, `import * as nav1 from "next/navigation";\nimport * as nav2 from "next/navigation";\nvoid nav2;`));
