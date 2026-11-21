@@ -1,5 +1,6 @@
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
+import { reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { byId } from "@/lib/nav/destinations";
 import { chipLinks } from "@/lib/nav/legacy";
 
@@ -35,6 +36,12 @@ export const NAV_LINKS: NavLink[] = chipLinks();
  * Mid-shift's floor follows the page it opens: with Pulse v2 on (PULSE_V2=1) the page serves
  * trainee and up, with crew getting the server-stripped view (PULSE_V2_BASE_LEVEL = 2); with it off,
  * the v1 page is key holder and up (MIDSHIFT_BASE_LEVEL = 4). The caller reads the flag.
+ *
+ * `role` (nav PR 4; PR 3 lead decision 5): when given, a role the report family refuses (S1, `reportsRoleAllowed`)
+ * gets no chip under /reports, the exact scope S1 refuses (app/(authed)/reports/**), so the social media manager is
+ * no longer shown Reports, Trends and Written reports chips that bounce to /dashboard?denied=reports. My performance
+ * (/my-feedback) is not in that family and stays. Without `role` the output is today's, byte for byte (unified search
+ * and every other caller pass none).
  */
 export function navDestinationsFor(level: number, opts?: { vault?: boolean; pulseV2?: boolean; role?: RoleCode }): NavLink[] {
   const out: NavLink[] = [];
@@ -49,6 +56,7 @@ export function navDestinationsFor(level: number, opts?: { vault?: boolean; puls
   if (opts?.vault) out.push({ key: vault.nameKey, href: vault.route, scoped: false });
   const admin = byId("admin");
   if (level >= admin.access.minLevel) out.push({ key: admin.nameKey, href: admin.route, scoped: false, minLevel: admin.access.minLevel });
+  if (opts?.role !== undefined && !reportsRoleAllowed(opts.role)) return out.filter((l) => l.href !== "/reports" && !l.href.startsWith("/reports/"));
   return out;
 }
 

@@ -15,6 +15,8 @@ const FILES = [
   ...readdirSync("lib/nav").filter((f) => f.endsWith(".ts")).map((f) => join("lib/nav", f).split("\\").join("/")),
   "lib/nav-links.ts",
   "lib/admin/sections.ts",
+  // Nav PR 4: the Dashboard chip row passes the real role.
+  "components/DashboardNav.tsx",
 ];
 
 /** Identifiers and string literals of a file, comments stripped (the TypeScript scanner skips trivia). */

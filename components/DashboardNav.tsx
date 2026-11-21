@@ -18,6 +18,7 @@
 
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
+import type { RoleCode } from "@/lib/roles";
 import { navDestinationsFor, chipHref } from "@/lib/nav-links";
 import { vaultEnabled } from "@/lib/vault-flag";
 import { pulseV2Enabled } from "@/lib/pulse/flag";
@@ -27,20 +28,22 @@ interface DashboardNavProps {
   actorLevel: number;
   /** The dashboard's active location id (from the LocationSwitcher / ?loc=). */
   selectedLocationId: string | null;
+  /** The session's REAL role (never "works as"): a role the report family refuses gets no report chip (nav PR 4). */
+  actorRole: RoleCode;
 }
 
 const CHIP_CLASS =
   "inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-3 py-1.5 text-sm font-semibold text-co-text " +
   "transition-[opacity,border-color,background-color] duration-150 hover:opacity-90 active:opacity-80";
 
-export function DashboardNav({ language, actorLevel, selectedLocationId }: DashboardNavProps) {
+export function DashboardNav({ language, actorLevel, selectedLocationId, actorRole }: DashboardNavProps) {
   return (
     <nav aria-label={serverT(language, "nav.aria_label")}>
       <p className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
         {serverT(language, "nav.section_label")}
       </p>
       <div className="flex flex-wrap gap-2">
-        {navDestinationsFor(actorLevel, { vault: vaultEnabled(), pulseV2: pulseV2Enabled() }).map(({ key, href, scoped }) => (
+        {navDestinationsFor(actorLevel, { vault: vaultEnabled(), pulseV2: pulseV2Enabled(), role: actorRole }).map(({ key, href, scoped }) => (
           <a key={href} href={chipHref(href, scoped, selectedLocationId)} className={CHIP_CLASS}>
             {serverT(language, key)}
           </a>
