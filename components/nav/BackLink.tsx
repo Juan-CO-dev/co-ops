@@ -4,7 +4,8 @@
  * BackLink — THE single back affordance for the whole app.
  *
  * Replaces the five bespoke back components (AdminBackLink, CateringBackLink,
- * DashboardBackLink, BackToTrendsLink, and PlaceholderCard's inline anchor).
+ * DashboardBackLink, BackToTrendsLink, and the old placeholder card's inline
+ * anchor; the planned pages that replaced that card render this one).
  * The target is derived from the route→parent registry (lib/nav-parents.ts)
  * via longest-prefix match on the current pathname, so a page never hardcodes
  * where "back" goes — it just renders <BackLink/> and the registry resolves

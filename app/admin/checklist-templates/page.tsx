@@ -21,11 +21,11 @@ import { PageHeader } from "@/components/ui/PageHeader";
  * ghost card is gone (Template Builder §0 lie 2 — the checklist template IS the
  * report template).
  *
- * deep_cleaning is NOT a pending EDITOR — /deep-cleaning is a placeholder surface
- * (Module #15, unbuilt: no templates in prod, no operator surface). Its card is
- * kept (the type is planned) but rendered HONESTLY (spec §0 lie 1): muted, no
- * link, "Arrives with Deep Cleaning (Module #15)" — not the misleading "editor
- * coming soon" (which implies an editor is the only thing missing).
+ * deep_cleaning is NOT a pending EDITOR — deep cleaning is a planned feature of
+ * its own (periodic, not daily; unbuilt: no templates in prod, no operator
+ * surface). Its card is kept (the type is planned) but rendered HONESTLY (spec
+ * §0 lie 1): muted, no link, "Planned" — not the misleading "editor coming
+ * soon" (which implies an editor is the only thing missing).
  */
 
 /** Prep subtypes have a live per-list editor at /[subtype]. */
@@ -33,7 +33,7 @@ const PREP_SUBTYPES = ["am_prep", "mid_day_prep"] as const;
 /** Types with a LIVE builder page (static segment). PR-1: closing. PR-2: opening. */
 const LIVE_BUILDER_TYPES = ["closing", "opening"] as const;
 /** Types with a planned card but no editor + no operator surface yet. Rendered
- *  muted, no link, module-honest (deep_cleaning = Module #15, unbuilt). */
+ *  muted, no link, "Planned" (deep_cleaning: unbuilt). */
 const MODULE_PENDING_TYPES = ["deep_cleaning"] as const;
 
 export default async function AdminListsReportsPage() {
@@ -91,7 +91,7 @@ export default async function AdminListsReportsPage() {
                   {serverT(lang, `admin.templates.type.${type}` as TranslationKey)}
                 </span>
                 <span className="text-sm text-co-text-muted">
-                  {serverT(lang, "admin.templates.arrives_with_module")}
+                  {serverT(lang, "planned.label")}
                 </span>
               </div>
             </li>

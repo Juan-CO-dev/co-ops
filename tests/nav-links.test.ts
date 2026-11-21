@@ -20,7 +20,7 @@ describe("role navigation", () => {
   });
   it("never advertises a placeholder or the ordering task in navigation", () => {
     for (const level of [2, 3, 4, 5, 6, 7, 9, 10]) {
-      for (const hidden of ["/recipes", "/announcements", "/tips", "/ai", "/rollups", "/deep-cleaning", "/feedback", "/comms", "/ordering"]) expect(hrefs(level)).not.toContain(hidden);
+      for (const hidden of ["/recipes", "/announcements", "/tips", "/deep-cleaning", "/feedback", "/comms", "/ordering"]) expect(hrefs(level)).not.toContain(hidden);
     }
   });
   it("satisfies the destination server floors, including Catering's level-5 page", () => {

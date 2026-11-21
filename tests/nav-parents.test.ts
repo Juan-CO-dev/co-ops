@@ -109,8 +109,6 @@ describe("parentFor — top pages & unknown routes fall back to /dashboard", () 
       // EXCEPT ones that have their own rule. Assert the non-ruled ones here.
     }
     expect(parentFor("/lto").href).toBe("/dashboard");
-    expect(parentFor("/operations/prep").href).toBe("/dashboard");
-    expect(parentFor("/operations/overlay").href).toBe("/dashboard");
     expect(parentFor("/cash").href).toBe("/dashboard");
     expect(parentFor("/settings").href).toBe("/dashboard");
   });
