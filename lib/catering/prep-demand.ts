@@ -10,12 +10,17 @@ import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { PORTION_FRACTION, type Portion } from "@/lib/catering/pricing-derivation";
-import { loadItemDefns, loadItemOverrides, pickOverride, operationalDayOfWeek } from "@/lib/items";
+import { loadItemDefns, loadItemOverrides } from "@/lib/items";
 import { loadCateringReader } from "@/lib/catering/ezcater-detail";
 import { canReadCateringContact } from "@/lib/catering/ezcater-detail-shared";
 import { leadContactLabel } from "@/lib/catering/pipeline-shared";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import {
+  groupPrepDemand,
   isBarePackageLine,
+  isPrepLineFlagged,
+  prepLinePar,
+  type PrepDemandRow,
   isQuoteLineKind,
   resolveDemandFromLines,
   resyncWouldDropPicks,
@@ -435,35 +440,24 @@ export async function loadCateringPrepDemand(
 ): Promise<PrepDemandDay[]> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
   const sb = getServiceRoleClient();
-  const { data: rows, error } = await sb
-    .from("catering_prep_demand")
-    .select("pipeline_id, need_date, item_id, menu_item_id, choice_package_item_id, portion, qty")
-    .eq("location_id", args.locationId)
-    .eq("status", "reserved")
-    .gte("need_date", args.from)
-    .lte("need_date", args.to)
-    .returns<Array<{ pipeline_id: string; need_date: string; item_id: string | null; menu_item_id: string | null; choice_package_item_id: string | null; portion: Portion | null; qty: number | string }>>();
-  if (error) throw new Error(`loadCateringPrepDemand: ${error.message}`);
-  const demandRows = rows ?? [];
-
-  // Aggregate by (need_date, ref, portion).
-  const groups = new Map<string, { needDate: string; refKind: "item" | "menu_item" | "choice"; refId: string; portion: Portion | null; qty: number; byLead: Map<string, number> }>();
-  const itemIds = new Set<string>();
-  const menuIds = new Set<string>();
-  const choiceIds = new Set<string>();
-  for (const r of demandRows) {
-    const qty = typeof r.qty === "string" ? Number(r.qty) : r.qty;
-    const refKind = r.item_id ? ("item" as const) : r.menu_item_id ? ("menu_item" as const) : ("choice" as const);
-    const refId = (r.item_id ?? r.menu_item_id ?? r.choice_package_item_id)!;
-    if (refKind === "item") itemIds.add(refId);
-    else if (refKind === "menu_item") menuIds.add(refId);
-    else choiceIds.add(refId);
-    const key = `${r.need_date}|${refKind}:${refId}|${r.portion ?? ""}`;
-    const g = groups.get(key) ?? { needDate: r.need_date, refKind, refId, portion: r.portion, qty: 0, byLead: new Map<string, number>() };
-    g.qty += qty;
-    g.byLead.set(r.pipeline_id, (g.byLead.get(r.pipeline_id) ?? 0) + qty);
-    groups.set(key, g);
+  // Paged (nav PR 6, ruling 9): a range past 1,000 reserved rows used to stop at the response cap.
+  let demandRows: PrepDemandRow[];
+  try {
+    demandRows = await selectAllRows<PrepDemandRow>((from, to) => sb
+      .from("catering_prep_demand")
+      .select("pipeline_id, need_date, item_id, menu_item_id, choice_package_item_id, portion, qty")
+      .eq("location_id", args.locationId)
+      .eq("status", "reserved")
+      .gte("need_date", args.from)
+      .lte("need_date", args.to)
+      .order("id", { ascending: true })
+      .range(from, to));
+  } catch (e) {
+    throw new Error(`loadCateringPrepDemand: ${e instanceof Error ? e.message : String(e)}`);
   }
+
+  // Aggregate by (need_date, ref, portion): the shared flag rule (prep-demand-shared), so the Dashboard counts the same lines.
+  const { groups, itemIds, menuIds, choiceIds } = groupPrepDemand(demandRows);
 
   const refs = await resolveRefs(sb, itemIds, menuIds, choiceIds);
   const leadLabels = await loadDemandLeadLabels(actor, sb, new Set(demandRows.map((r) => r.pipeline_id)));
@@ -472,13 +466,8 @@ export async function loadCateringPrepDemand(
 
   const byDate = new Map<string, PrepDemandDay>();
   for (const g of groups.values()) {
-    let parValue: number | null = null;
-    if (g.refKind === "item") {
-      const ov = pickOverride(overrides.get(g.refId) ?? [], operationalDayOfWeek(g.needDate));
-      parValue = ov && ov.parMode === "manual" ? ov.parValue : (refs.itemDefns.get(g.refId)?.defaultPar ?? null);
-    }
-    const wholeEquiv = g.portion ? g.qty * PORTION_FRACTION[g.portion] : g.qty;
-    const overPar = g.refKind === "item" && (parValue == null || wholeEquiv >= parValue);
+    const parValue = prepLinePar(g, { defaults: refs.itemDefns, overrides });
+    const { wholeEquiv, overPar } = isPrepLineFlagged(g, parValue);
     const line: PrepDemandLine = {
       key: `${g.refKind}:${g.refId}:${g.portion ?? ""}`,
       refKind: g.refKind,
