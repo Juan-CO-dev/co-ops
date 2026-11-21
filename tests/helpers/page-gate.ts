@@ -97,12 +97,12 @@ export class PageGateError extends Error {
 // The reviewed-entry list (4.4.4)
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-export type ConstructKind =
+type ConstructKind =
   | "redirect" | "notFound" | "throw" | "standalone" | "early-return"
   | "enclosing-if" | "enclosing-catch" | "enclosing-.catch" | "enclosing-loop" | "enclosing-ternary"
   | "enclosing-logical" | "enclosing-switch";
 
-export type Meaning =
+type Meaning =
   /** At this construct the page refuses exactly when `when` holds (a core condition; `fact.*` allowed). */
   | { kind: "refuse"; when: string; why: string }
   /** Never refuses. Ends the page (it renders), or a branch walked on both arms, must-admit. `enters` names the one
@@ -113,7 +113,7 @@ export type Meaning =
   /** Fires only on a broken dependency or a missing / invalid row for a valid entry URL; treated as not firing. */
   | { kind: "operational-error"; why: string };
 
-export interface Pin { file: string; text: string }
+interface Pin { file: string; text: string }
 
 export interface ReviewedEntry {
   file: string;
@@ -533,7 +533,7 @@ function cached<T>(cache: WeakMap<ts.Node, Map<number, T | null>>, node: ts.Node
 }
 
 /** Classify a value expression, or OPAQUE. */
-export function valueOf(expr: ts.Expression, env: Env, depth = 0): Val | null {
+function valueOf(expr: ts.Expression, env: Env, depth = 0): Val | null {
   return cached(valCache, expr, env, () => valueOfUncached(strip(expr), env, depth));
 }
 
@@ -757,7 +757,7 @@ const COMPARABLE = new Set<Cls>(["level", "role", "param", "shop", "shopListLeng
 const TRUTHY = new Set<Cls>(["param", "shop", "shopRow", "switch", "rolepred", "membership", "task", "fact"]);
 
 /** Classify a condition: a tree of !, &&, ||, parentheses and ?: over atoms in the closed tables, or OPAQUE. */
-export function condOf(expr: ts.Expression, env: Env, depth = 0): Cond | null {
+function condOf(expr: ts.Expression, env: Env, depth = 0): Cond | null {
   return cached(condCache, expr, env, () => condOfUncached(strip(expr), env, depth));
 }
 
@@ -1664,7 +1664,7 @@ export const LAYOUT_FILE = "app/admin/layout.tsx";
 export const PULSE_HOME_FILE = "components/pulse/PulseHome.tsx";
 
 /** The six switches, and all 64 combinations of them (bit i of the index = SWITCH_NAMES[i]). */
-export const SWITCH_NAMES: readonly SwitchName[] = ["pulseV2", "vault", "businessReport", "demandSignals", "marketingScorecard", "customerProfiles"];
+const SWITCH_NAMES: readonly SwitchName[] = ["pulseV2", "vault", "businessReport", "demandSignals", "marketingScorecard", "customerProfiles"];
 export const SWITCH_COMBOS: readonly Switches[] = Array.from({ length: 64 }, (_, n) => Object.fromEntries(SWITCH_NAMES.map((s, i) => [s, ((n >> i) & 1) === 1])));
 
 /**

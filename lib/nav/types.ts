@@ -20,13 +20,13 @@ export type TabFamilyId =
   | "catering-prices" | "lto" | "catering-customers" | "marketing" | "demand-signals" | "stock-loop";
 /** The access plan's surfaces (r15 `ShopSurface` plus its PR 8 `schedule`). Swap for the import from
  *  lib/shop-access-shared.ts when access plan PR 1 lands; a test pins the two equal then. */
-export type Surface = "tasks" | "ops" | "catering" | "schedule" | "report_read";
+type Surface = "tasks" | "ops" | "catering" | "schedule" | "report_read";
 /** Server switches. The module stays pure: the caller reads the environment and passes booleans. */
 export type SwitchName = "pulseV2" | "vault" | "businessReport" | "demandSignals" | "marketingScorecard" | "customerProfiles";
 export type Switches = Readonly<Partial<Record<SwitchName, boolean>>>;
 
 /** Who may see it: the AdminSection vocabulary plus a switch. Read by canSee(), never by a page gate. */
-export interface Access {
+interface Access {
   readonly minLevel: number;
   /** Roles below minLevel that also see it, by trusted role. */
   readonly alsoRoles?: readonly RoleCode[];

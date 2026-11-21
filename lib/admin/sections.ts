@@ -3,7 +3,8 @@ import { adminCards } from "@/lib/nav/legacy";
 import type { RoleCode } from "@/lib/roles";
 
 /**
- * Admin section registry — single source of truth for the /admin hub.
+ * Admin section registry: the /admin hub's cards. The one source of truth is the destination list
+ * (lib/nav/destinations.ts, nav PR 3); ADMIN_SECTIONS below is derived from it, field for field as before.
  *
  * minLevel derives from the canonical permission key in lib/permissions.ts
  * where one models the section (admin.users 8, checklist.template.write 7,

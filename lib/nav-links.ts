@@ -28,7 +28,8 @@ export const NAV_LINKS: NavLink[] = chipLinks();
  * Destinations the given role level may reach, in display order:
  * mid-shift first, then eligible destinations, then admin (>=6) last.
  * Single source of truth for DashboardNav AND unified search — so a `minLevel`
- * filtered out here stops being both a nav chip AND a search hit.
+ * filtered out here stops being both a nav chip AND a search hit. Every entry comes from the one
+ * destination list (lib/nav/destinations.ts); this function keeps only today's level filter and order.
  *
  * Mid-shift's floor follows the page it opens: with Pulse v2 on (PULSE_V2=1) the page serves
  * trainee and up, with crew getting the server-stripped view (PULSE_V2_BASE_LEVEL = 2); with it off,

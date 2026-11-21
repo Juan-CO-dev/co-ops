@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 import { DESTINATIONS, byId, byRoute } from "@/lib/nav/destinations";
 import { navDestinationsFor } from "@/lib/nav-links";
 import { parentFor } from "@/lib/nav-parents";
-import { CARD_ORDER, CATERING_EDITORS, CHIP_ORDER, EDITOR_ORDER } from "@/lib/nav/legacy";
+import { CARD_ORDER, CATERING_EDITORS, CHIP_ORDER, EDITOR_ORDER, adminSectionOf, editorOf, navLinkOf } from "@/lib/nav/legacy";
 import { adminSectionsFor } from "@/lib/admin/sections";
 import { canSee } from "@/lib/nav/resolve";
 import { ROLES, type RoleCode } from "@/lib/roles";
@@ -39,6 +39,15 @@ describe("4.8 the adapters' order lists and the resolver's agreement with the le
     for (const id of EDITOR_ORDER) expect(byId(id).legacy?.editorId, id).toBeDefined();
     expect(DESTINATIONS.filter((d) => d.legacy?.editorId !== undefined).map((d) => d.id).sort()).toEqual([...EDITOR_ORDER].sort());
     expect(CATERING_EDITORS.map((e) => e.id)).toEqual(["packages", "menu", "pricing", "rate-rules", "capacity", "zones", "faq", "prep-demand", "lto", "fulfillment", "workspace"]);
+  });
+
+  it("the three mappers refuse a destination that is not on their surface, or a card with two role rules", () => {
+    expect(() => navLinkOf(byId("dashboard"))).toThrow(/not a chip/);
+    expect(() => editorOf(byId("catering"))).toThrow(/not a catering editor/);
+    const two = { ...byId("schedule"), access: { ...byId("schedule").access, onlyRoles: ["gm" as const] } };
+    expect(() => adminSectionOf(two)).toThrow(/at most one/);
+    expect(navLinkOf(byId("assignments"))).toEqual({ key: "nav.assignments", href: "/assignments", scoped: true });
+    expect("minLevel" in navLinkOf(byId("assignments"))).toBe(false); // omitted, not undefined
   });
 
   it("CARD_ORDER names the 27 Back office cards, each once", () => {
