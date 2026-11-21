@@ -26,14 +26,12 @@ const exceptions: Record<string, { kind: string; reason: string }> = {
   'app/api/webhooks/resend-inbound/route.ts POST': { kind: 'webhook', reason: 'Svix signature verifies inbound mail before payload processing.' },
   'app/api/webhooks/twilio-inbound/route.ts POST': { kind: 'webhook', reason: 'Twilio URL/form signature verifies external SMS.' },
   'app/api/auth/logout/route.ts POST': { kind: 'logout', reason: 'Unconditional session termination (revoke-only, never a Set-Cookie); auth-pin-source-throttle.test.ts pins the ruling.' },
-  'app/api/ai/route.ts POST': { kind: 'stub', reason: 'Inert 501 only; implementing requires reclassification.' },
   'app/api/notifications/route.ts POST': { kind: 'stub', reason: 'Alias to inert GET 501; full AST pinned.' },
   'app/api/shifts/route.ts POST': { kind: 'stub', reason: 'Alias to inert GET 501; full AST pinned.' },
   'app/api/toast/route.ts POST': { kind: 'stub', reason: 'Alias to inert GET 501, NOT a webhook.' },
   'app/api/sms/process-queue/route.ts POST': { kind: 'stub', reason: 'Inert 501; no implemented secret-auth lane.' },
   'app/api/views/mark-read/route.ts POST': { kind: 'stub', reason: 'Inert 501 only.' },
   'app/api/checklist/instances/[id]/route.ts PATCH': { kind: 'stub', reason: 'Inert 501 only.' },
-  'app/api/checklist/prep/generate/route.ts POST': { kind: 'stub', reason: 'Inert 501 only.' },
 };
 const http = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/;
 const writes = /^(POST|PUT|PATCH|DELETE)$/;
@@ -149,7 +147,7 @@ it('classifies every route and runtime HTTP export, including aliases and re-exp
     expect(mutations.some(e => `${e.path} ${e.method}` === key), key).toBe(true);
     expect(entry.reason.length).toBeGreaterThanOrEqual(15);
   }
-  expect(mutations.length).toBe(117); // +1 item 21 PR 3: POST toast-links; +1 W26: POST /api/notifications/mark-all-read; +2 W23: reopen + portal logout
+  expect(mutations.length).toBe(115); // +1 item 21 PR 3: POST toast-links; +1 W26: POST /api/notifications/mark-all-read; +2 W23: reopen + portal logout; -2 nav PR 2: the /api/ai and prep/generate stubs deleted
   expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(94);
 }, 120_000);
 

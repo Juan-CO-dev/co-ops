@@ -1,5 +1,4 @@
 {
-  "app/api/ai/route.ts": "POST",
   "app/api/assignments/route.ts": "POST",
   "app/api/auth/heartbeat/route.ts": "POST",
   "app/api/auth/logout/route.ts": "POST",
@@ -40,7 +39,6 @@
   "app/api/checklist/confirm/route.ts": "POST",
   "app/api/checklist/instances/[id]/route.ts": "GET PATCH",
   "app/api/checklist/instances/route.ts": "GET POST",
-  "app/api/checklist/prep/generate/route.ts": "POST",
   "app/api/checklist/submissions/route.ts": "POST",
   "app/api/cron/catering-inbox-delivery/route.ts": "GET",
   "app/api/cron/demand-signals/route.ts": "GET",
