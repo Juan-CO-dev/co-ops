@@ -7,6 +7,7 @@
  */
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
+import type { ShopSurface } from "@/lib/shop-access-shared";
 
 /** Spec section 1. */
 export type RoomId = "today" | "catering" | "reports" | "back-office" | "me";
@@ -18,9 +19,9 @@ export type GroupId =
 export type TabFamilyId =
   | "sales" | "staff-links" | "menu" | "supplies" | "recipe-changes" | "customers" | "schedule"
   | "catering-prices" | "lto" | "catering-customers" | "marketing" | "demand-signals" | "stock-loop";
-/** The access plan's surfaces (r15 `ShopSurface` plus its PR 8 `schedule`). Swap for the import from
- *  lib/shop-access-shared.ts when access plan PR 1 lands; a test pins the two equal then. */
-type Surface = "tasks" | "ops" | "catering" | "schedule" | "report_read";
+/** The access plan's surfaces: `ShopSurface` (lib/shop-access-shared.ts, access PR 1) plus `schedule`, which joins
+ *  `ShopSurface` in access PR 8 (then this is `ShopSurface` alone). Pinned in tests/shop-access-twin.test.ts. */
+type Surface = ShopSurface | "schedule";
 /** Server switches. The module stays pure: the caller reads the environment and passes booleans. */
 export type SwitchName = "pulseV2" | "vault" | "businessReport" | "demandSignals" | "marketingScorecard" | "customerProfiles";
 export type Switches = Readonly<Partial<Record<SwitchName, boolean>>>;
