@@ -115,6 +115,40 @@ describe("PR 1: every live gate equals its frozen copy (total equality)", () => 
   });
 });
 
+describe("PR 1 re-points: every task / report-read gate reads the role set, none a literal level", () => {
+  const bodyOf = (src: string, decl: string) => {
+    const start = src.indexOf(decl);
+    expect(start, decl).toBeGreaterThan(-1);
+    return src.slice(start, src.indexOf("\n}\n", start) + 2);
+  };
+  const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+  it("lib/locations.ts: canWorkShopTasks / shopTaskLocations / canReadReportLocation go through the module", () => {
+    const src = code(readFileSync("lib/locations.ts", "utf8"));
+    expect(bodyOf(src, "export function canWorkShopTasks(")).toContain('canActAtShop(actor, locationId, "tasks")');
+    expect(bodyOf(src, "export function shopTaskLocations(")).toContain('actingShops(actor, "tasks")');
+    expect(bodyOf(src, "export function canReadReportLocation(")).toContain('canActAtShop(actor, locationId, "report_read")');
+    expect(src).not.toContain("SHOP_TASK_ALL_LOCATIONS_LEVEL");
+    for (const fn of ["canWorkShopTasks", "shopTaskLocations", "canReadReportLocation"]) {
+      expect(bodyOf(src, `export function ${fn}(`), fn).not.toMatch(/isRoleAtOrAbove|LEVEL|>=\s*\d/);
+    }
+  });
+
+  it("lib/checklist-write-guard-shared.ts: worksShopTasks reads holdsAllShops(role, \"tasks\"), not the level", () => {
+    const body = bodyOf(code(readFileSync("lib/checklist-write-guard-shared.ts", "utf8")), "export function worksShopTasks(");
+    expect(body).toContain('holdsAllShops(actor.role, "tasks")');
+    expect(body).not.toMatch(/actor\.level|LEVEL/);
+  });
+
+  it("lib/checklists.ts: requireCorrectionShop and tagActualCompleter bind through worksShopTasks; no literal 8 is left", () => {
+    const src = code(readFileSync("lib/checklists.ts", "utf8"));
+    expect(bodyOf(src, "async function requireCorrectionShop(")).toContain("if (worksShopTasks(actor, instance.location_id)) return bindShopTask(instance);");
+    const tag = bodyOf(src, "export async function tagActualCompleter(");
+    expect(tag).toContain("if (!worksShopTasks(actor, instance.location_id)) {");
+    expect(src).not.toMatch(/actor\.level\s*(>=|<)\s*8\b/);
+  });
+});
+
 /** Today's gate for each surface, from the frozen oracle: what the module's surface must reproduce once it is wired. */
 const TODAY: Record<ShopSurface, { can: (a: frozen.LocationActor, id: string) => boolean; list: (a: frozen.LocationActor) => string[] | "all" }> = {
   ops: { can: frozen.lockLocationContext, list: frozen.accessibleLocations },

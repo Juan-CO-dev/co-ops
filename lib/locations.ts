@@ -5,10 +5,13 @@
  * the role and the list of assigned location IDs (extracted from the JWT).
  *
  * Level 9+ has implicit operational access to every location regardless of
- * user_locations. Report reads separately grant all-location access at level 8.
+ * user_locations (until the all-shops access plan's PR 3 moves it to the `ops` surface). Shop tasks
+ * and report reads read lib/shop-access-shared.ts by ROLE: MoO, owner and CGS hold every shop there
+ * (plan r15 PR 1; the same people as "level 8+" today, so no answer changed).
  */
 
 import { type RoleCode, isRoleAtOrAbove } from "./roles";
+import { actingShops, canActAtShop } from "./shop-access-shared";
 
 const ALL_LOCATIONS_THRESHOLD = 9;
 export const REPORT_ALL_LOCATIONS_LEVEL = 8;
@@ -45,25 +48,29 @@ export function lockLocationContext(actor: LocationActor, locationId: string): b
 
 /**
  * Shop TASKS (checklists: opening, closing, AM / mid-day prep) — Juan's ruling 2026-11-15: "we
- * routinely do tasks at the shops depending on what's needed and who is available". Level 8+ (MoO,
- * owner, CGS) may mark tasks done, submit and confirm at ANY shop without a membership row; below
- * level 8 the actor's (active) membership is required, exactly as lockLocationContext requires it.
- * The same rule the checklist correction writers and tagActualCompleter use (audit W05) and the
- * SQL writers enforce (checklist_actor_level, 0318). Task surfaces only: every other operational
- * write keeps lockLocationContext (all shops at 9+).
+ * routinely do tasks at the shops depending on what's needed and who is available". The roles that
+ * hold the `tasks` surface (lib/shop-access-shared.ts: MoO, owner, CGS) may mark tasks done, submit
+ * and confirm at ANY shop without a membership row; everyone else needs their (active) membership,
+ * exactly as lockLocationContext requires it. The same rule the checklist correction writers and
+ * tagActualCompleter use (worksShopTasks, audit W05) and the SQL writers enforce
+ * (checklist_actor_level, 0318: level >= 8, the same three roles). Task surfaces only: every other
+ * operational write keeps lockLocationContext (all shops at 9+).
  */
-export const SHOP_TASK_ALL_LOCATIONS_LEVEL = 8;
-
 export function canWorkShopTasks(actor: LocationActor, locationId: string): boolean {
-  return isRoleAtOrAbove(actor.role, SHOP_TASK_ALL_LOCATIONS_LEVEL) || actor.locations.includes(locationId);
+  return canActAtShop(actor, locationId, "tasks");
 }
 
-/** The shops whose task pages the actor may work: "all" at level 8+, else their memberships. */
+/** The shops whose task pages the actor may work: "all" for a role that holds `tasks`, else their memberships. */
 export function shopTaskLocations(actor: LocationActor): string[] | "all" {
-  return isRoleAtOrAbove(actor.role, SHOP_TASK_ALL_LOCATIONS_LEVEL) ? "all" : [...actor.locations];
+  return actingShops(actor, "tasks");
 }
 
-/** Report navigation grant only. Operational writes retain lockLocationContext. */
+/**
+ * Report navigation grant only: a role that holds `report_read` (MoO, owner, CGS) reads every shop,
+ * anyone else where they may work (lockLocationContext). Operational writes retain lockLocationContext.
+ * `REPORT_ALL_LOCATIONS_LEVEL` above still offers the "All shops" scope at the same level 8 until
+ * the plan's PR 3 moves its readers to `holdsAllShops(role, "report_read")`.
+ */
 export function canReadReportLocation(actor: LocationActor, locationId: string): boolean {
-  return isRoleAtOrAbove(actor.role, REPORT_ALL_LOCATIONS_LEVEL) || lockLocationContext(actor, locationId);
+  return canActAtShop(actor, locationId, "report_read") || lockLocationContext(actor, locationId);
 }
