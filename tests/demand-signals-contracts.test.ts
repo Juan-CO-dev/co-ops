@@ -86,10 +86,12 @@ describe("dark by default", () => {
     expect(importers.sort()).toEqual(["app/admin/demand-signals/page.tsx", "app/admin/demand-signals/sources/page.tsx", "app/admin/page.tsx",
       "app/api/admin/demand-signals/events/route.ts", "app/api/admin/demand-signals/insights/route.ts", "app/api/admin/demand-signals/sources/mark/route.ts",
       "app/api/cron/demand-signals/route.ts", "app/ordering/page.tsx", "components/admin/demand-signals/DemandSignalsClient.tsx", "components/admin/demand-signals/SourcesClient.tsx",
-      "components/admin/demand-signals/WeatherSummary.tsx", "components/ordering/OrderSignalsPanel.tsx", "lib/toast-sales-pull-run.ts"]);
+      "components/admin/demand-signals/WeatherSummary.tsx", "components/ordering/OrderSignalsPanel.tsx", "lib/nav-switches.ts", "lib/toast-sales-pull-run.ts"]);
     // PR 6 (first half): the order walk's page reaches the layer only inside its DEMAND_SIGNALS branch (tests/demand-signals-order.test.ts).
     // The hub reaches only the import-free switch (nav PR 4: who may see the row is the destination list's rule).
     expect([...read("app/admin/page.tsx").matchAll(/from "@\/lib\/demand-signals\/([\w-]+)"/g)].map((m) => m[1]).sort()).toEqual(["config-shared"]);
+    // Nav PR 7: the navigation switches read the same import-free switch, and nothing else of the layer.
+    expect([...read("lib/nav-switches.ts").matchAll(/from "@\/lib\/demand-signals\/([\w-]+)"/g)].map((m) => m[1]).sort()).toEqual(["config-shared"]);
     expect(read("lib/demand-signals/access-shared.ts")).not.toMatch(/^import /m);
   });
   it("the nightly statically imports only the import-free switch, and reaches the ledger only inside the ON branch", () => {
