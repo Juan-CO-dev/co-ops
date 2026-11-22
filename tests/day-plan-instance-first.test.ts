@@ -22,7 +22,7 @@ const tagMidDay = (f: ShopFacts, templateId: string, active: boolean): ShopFacts
 
 describe("instance first, engine side", () => {
   it("ChecklistDay has no template field", () => {
-    expectTypeOf<keyof ChecklistDay>().toEqualTypeOf<"forDate" | "status" | "phase1At" | "finishedAt" | "finishedByName" | "sectionsLeft">();
+    expectTypeOf<keyof ChecklistDay>().toEqualTypeOf<"forDate" | "status" | "phase1At" | "finishedAt" | "finishedByName" | "sectionsLeft" | "finishedById">();
   });
 
   it.each([
