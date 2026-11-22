@@ -18,6 +18,7 @@
  * primary of a pair with Prep); and the catering prep rule's extra Prep/Dishwasher heads. Every number
  * traces to a source run (the provenance the r4 snapshot persists).
  */
+import { cateringPrepWindowQ, isHeavyCateringDay } from "./catering-day-shared";
 import type { DayNeed, NeedRun, NeedSource, ShapeNote } from "./context-shared";
 import {
   isLineRole, isSecondary, lineBounds, positionIds, positionLimit, walkClosers, waveProfile, type CrewType, type ScheduleStructure,
@@ -186,13 +187,14 @@ export function needGrid(input: NeedGridInput): DayNeed {
     }
   }
 
-  // The catering prep rule: extra Prep/Dishwasher heads in [event − lead, event), or the default window.
+  // The catering prep rule (PR SCH, site A): on a HEAVY day — the day's TOTAL guests reach the setting (PR 5's one rule) —
+  // extra Prep/Dishwasher heads inside EVERY booked order's prep window, clipped to the day's start; none on a day that is
+  // not heavy. (On a heavy stations day the per-day structure raised the head limit, so the extra is really added.)
   const dish = ids.find((id) => s.positions[id]!.role === "prep_dish");
-  if (dish) {
+  if (dish && s.catering.extraPrepDishHeads > 0 && isHeavyCateringDay(input.catering, s.catering)) {
     for (const ev of [...input.catering].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
-      if (ev.headcount < s.catering.minHeadcount || s.catering.extraPrepDishHeads <= 0) continue;
-      const from = ev.eventQ === null ? s.catering.defaultStartQ : Math.max(0, ev.eventQ - s.catering.leadMinutes / 15);
-      const to = ev.eventQ === null ? s.catering.defaultEndQ : ev.eventQ;
+      const [w0, to] = cateringPrepWindowQ(ev.eventQ, s.catering);
+      const from = Math.max(w0, prepStartQ);
       for (let q = from; q < to; q++) {
         const used = (["boh_crew", "closing_crew", "catering"] as const).reduce((n, src) => n + part(dish, src)[q]!, 0);
         part(dish, "catering")[q]! += Math.max(0, Math.min(s.catering.extraPrepDishHeads, limitAt(dish, q) - used));
