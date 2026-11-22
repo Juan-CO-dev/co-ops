@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 import type { RuleContext } from "@/lib/scheduling/context-shared";
 import { crewOpenItems, crewRequired } from "@/lib/scheduling/crew-gap-verifier-shared";
-import { applyEdit } from "@/lib/scheduling/edit-shared";
+import { applyEdit, revalidateDay } from "@/lib/scheduling/edit-shared";
 import { generateWeek } from "@/lib/scheduling/generator/dispatch-shared";
 import { generatorInputFor, type SchedulingInputs } from "@/lib/scheduling/inputs-shared";
 import { legalHoldPath } from "@/lib/scheduling/people-rules-shared";
@@ -112,4 +112,31 @@ describe("(iii) the same opening on the REAL fixture (frozen from the implementa
     expect(gapsOn(real, TUE).filter((x) => x.code === "mod_missing").map((x) => [x.fromQ, x.toQ, x.cause])).toEqual([[22, 26, "structure"]]);
     expect(approvalRefusal(week(real), real.problems)).toBeNull();
   }, 60000);
+});
+
+describe("D2 flow on both P Street fixtures: accept before regenerating → Approve → regenerate → an ordinary edit on the date → Approve", () => {
+  for (const [name, inputs, lead] of [["early-available variant", crewPStreetEarly, "J"], ["real fixture", acceptanceInputs, "Islam"]] as const) {
+    it(`${name}: the declared pieces follow the partition at every step; Approve succeeds exactly when every piece is proven`, () => {
+      // 1. The week as built with the normal opening; then the opening is accepted WITHOUT moving shifts (setDayOpening's tail).
+      const built = run(inputs());
+      const liveCtx = run(inputs(), OPEN_530).context; // the date's live context with the decision (what setDayOpening builds)
+      const ctx = { ...liveCtx, days: { [TUE]: { ...liveCtx.days[TUE]!, crew: structuredClone(built.context.days[TUE]!.crew!) } } } as RuleContext;
+      const accepted = revalidateDay(week(built), built.shifts.map((s) => ({ ...s, segments: s.segments.map((g) => ({ ...g })) })), TUE, ctx, { newRevisionId: "rev-open" });
+      const mod1 = accepted.schedule.gaps.filter((g) => g.date === TUE && g.code === "mod_missing").map((g) => [g.fromQ, g.toQ, g.cause]);
+      expect(mod1).toEqual([[22, 26, "structure"]]);
+      // The 6:30–7:00 remainder has no proof (a lead COULD be there): left undeclared, so Approve is refused honestly.
+      expect(accepted.problems.some((p) => p.code === "undeclared_gap" && p.params.gap === "mod_missing" && Number(p.params.fromQ) === 26)).toBe(true);
+      expect(approvalRefusal(accepted.schedule, accepted.problems)).toBe("rules_failing");
+      // 2. Regenerate with the decision: the lead's typed shift flexes to 6:30; every piece is proven.
+      const regenerated = run(inputs(), OPEN_530);
+      expect(regenerated.shifts.find((s) => s.date === TUE && s.userId === personId(lead))).toMatchObject({ startQ: 26 });
+      expect(approvalRefusal(week(regenerated), regenerated.problems)).toBeNull();
+      // 3. An ordinary edit on that date (a PM shift ends 15 minutes earlier): the same pieces, still approvable.
+      const pm = regenerated.shifts.find((s) => s.date === TUE && s.startQ >= 60)!;
+      const edited = applyEdit(week(regenerated), { kind: "end", shift: { date: TUE, userId: pm.userId, startQ: pm.startQ }, toQ: pm.endQ - 1 }, structuredClone(regenerated.context) as RuleContext, { today: WEEK, newRevisionId: "rev-edit" });
+      expect(edited.schedule.gaps.filter((g) => g.date === TUE && g.code === "mod_missing").map((g) => [g.fromQ, g.toQ, g.cause])).toEqual([[22, 26, "structure"]]);
+      expect(edited.schedule.gaps.filter((g) => g.cause === "unresolved_search")).toEqual([]);
+      expect(approvalRefusal(edited.schedule, [...edited.problems, ...regenerated.problems.filter((p) => p.day !== TUE)])).toBeNull();
+    }, 60000);
+  }
 });

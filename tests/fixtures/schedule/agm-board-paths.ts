@@ -8,6 +8,12 @@
  * until it is reviewed and added (Astra chunk F P2-1, CC: an allowlist, unknown fields fail). */
 export const AGM_BOARD_PATHS: readonly string[] = [
   ".generate.engine", ".generate.historicalEditedDates[]", ".days[].notes[].params.peopleIds",
+  // PR SCH: a date's stored opening — its status, start quarters, the trigger names, the day's catering guests and the engine;
+  // no cent, rate or labor figure (pinned on an opened board by tests/schedule-opening-action.test.ts).
+  ".days[].opening.status", ".days[].opening.startQ", ".days[].opening.normalStartQ", ".days[].opening.triggers[]", ".days[].opening.guests", ".days[].opening.engine",
+  // PR SCH (reviewed with the opened board): an undeclared gap's rule line names its gap code; an inherited gap line its cause and
+  // quarters — codes and clock quarters only (the generator fixtures never produced these lines before).
+  ".rules.fresh[].line.params.gap", ".rules.inherited[].line.params.cause", ".rules.inherited[].line.params.fromQ", ".rules.inherited[].line.params.toQ",
   ".days[].rows[].shifts[].crewType.open[].fromQ", ".days[].rows[].shifts[].crewType.open[].toQ",
   // Crew cards carry type names, clock quarters, headcounts and named explanations only.
   ".days[].crew.openShifts[].typeId", ".days[].crew.openShifts[].name", ".days[].crew.openShifts[].fromQ", ".days[].crew.openShifts[].toQ",

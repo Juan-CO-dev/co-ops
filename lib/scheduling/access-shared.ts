@@ -19,6 +19,9 @@ import type { ScheduleErrorCode } from "./errors-shared";
 export const SCHEDULE_ACTS = [
   "view", "reconciliation", "generate", "edit", "regenerate", "budget", "presence", "day_type", "person_settings",
   "approve", "structure", "shop_switch", "wage_estimates", "tunables",
+  // PR SCH: a per-date earlier opening (open earlier / accept / decline / clear) — GM own, MoO+ any; never an AGM (it is
+  // not in AGM_EDIT_ACTS, so `agm_access = 'edit'` does not reach it), never the catering / prep / social media manager.
+  "opening",
 ] as const;
 export type ScheduleAct = (typeof SCHEDULE_ACTS)[number];
 
@@ -131,7 +134,7 @@ export function canViewReconciliation(actor: PeopleActor, locationId: string): b
  * only `confirmed_overwrite` (J12).
  */
 export function stepUpFor(act: ScheduleAct, ctx: { confirmedEditedWeeks: number }): null | "B" | "E" {
-  if (act === "approve") return "B";
+  if (act === "approve" || act === "opening") return "B";
   if (act === "regenerate") return ctx.confirmedEditedWeeks > 0 ? "B" : null;
   if (act === "structure" || MOO_ONLY_ACTS.includes(act)) return "E";
   return null;

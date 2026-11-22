@@ -34,6 +34,7 @@ import { regenerateBody, runRegenerate } from "./horizon-flow-shared";
 import { LaborTargetCard } from "./LaborTargetCard";
 import { LaborDayCard, LaborViewsStrip } from "./LaborViews";
 import { BudgetLineItem, MoneyStrip } from "./MoneyStrip";
+import { OpeningPanel } from "./OpeningPanel";
 import { EditNotice, PersonRow, barKeyOf, rowEditProps, shiftKeyOf, useFocusMemo } from "./PersonRow";
 import { ReasonPanel } from "./ReasonPanel";
 import { RulesBadge } from "./RulesBadge";
@@ -212,6 +213,9 @@ function ReadyBoard({ view, initialDate, initialSelected }: { view: BoardView; i
         <section className="grid min-w-0 gap-2" aria-label={formatDateLabel(day.date, language)} data-day={day.date}>
           {day.crew ? <OpenShiftList items={day.crew.openShifts} /> : null}
           {day.notes.map((n, i) => <p key={i} className="text-sm text-co-text-muted">{line(n)}</p>)}
+          {/* PR SCH: the date's earlier opening. Deciding it is the Approve rule (GM own shop, MoO+ any; never an AGM), Tier B. */}
+          <OpeningPanel key={`${day.date}|${view.week?.headRevisionId ?? ""}`} day={day} locationId={view.locationId} weekStart={view.weekStart}
+            expectedHead={view.week?.headRevisionId ?? null} canDecide={view.perms.canApprove} />
           <EditNotice state={edit} />
           {day.crew ? <>
             <CrewDayCards day={day} names={view.names} positions={view.positions} onSelect={onSelect} />

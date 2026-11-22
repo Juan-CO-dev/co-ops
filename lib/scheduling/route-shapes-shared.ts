@@ -18,6 +18,9 @@ export const SCHEDULE_ACTIONS: Readonly<Record<string, readonly string[]>> = {
   person: ["action", "locationId", "settings", "expectedId"],
   // Juan 2026-10-20 / Astra BC-007: the user screen's pickers send ONLY what changed; the server merges onto the latest row.
   person_positions: ["action", "locationId", "userId", "changes", "expectedId"],
+  // PR SCH (D4): the per-date earlier opening; `decision` is one of opening-shared's four exact shapes (an accept never
+  // carries a start: the server takes it from the proposal on the expected head).
+  opening: ["action", "locationId", "weekStart", "expectedHead", "date", "decision"],
 };
 
 export const SCHEDULE_SETTINGS_ACTIONS: Readonly<Record<string, readonly string[]>> = {
