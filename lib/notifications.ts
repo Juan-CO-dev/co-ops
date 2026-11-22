@@ -410,6 +410,22 @@ export async function loadUnreadForUser(
   return result;
 }
 
+/**
+ * The shop codes for the bell's cards (nav PR 9, plan r2 3.3, F3): exactly the distinct non-null `location_id`s of the
+ * given notices (at most the reader's limit), read fresh, so a shop new to the viewer still gets its code; a shop row
+ * that no longer exists is simply absent. No notice with a shop → `{}` and NO query. A read error throws.
+ */
+export async function loadNoticeLocationCodes(
+  service: SupabaseClient,
+  notices: readonly NotificationWithRecipient[],
+): Promise<Record<string, string>> {
+  const ids = [...new Set(notices.map((n) => n.notification.locationId).filter((id): id is string => typeof id === "string" && id.length > 0))];
+  if (ids.length === 0) return {};
+  const { data, error } = await service.from("locations").select("id, code").in("id", ids);
+  if (error) throw new Error(`loadNoticeLocationCodes: locations query failed: ${error.message}`);
+  return Object.fromEntries(((data ?? []) as Array<{ id: string; code: string }>).map((l) => [l.id, l.code]));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // markAllNotificationsRead — "Mark all read" (owner decision W26-5 b)
 // ─────────────────────────────────────────────────────────────────────────────

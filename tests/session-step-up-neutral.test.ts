@@ -176,8 +176,10 @@ describe("S1 (f): no neutral route imports the unlock", () => {
     "app/api/auth/heartbeat/route.ts",
     "app/api/nav/people/route.ts",
     "app/api/notifications/mark-all-read/route.ts",
+    "app/api/notifications/unread/route.ts",
     "app/api/users/me/language/route.ts",
     "app/api/users/me/profile-blurb/route.ts",
+    "components/nav/notification-actions.ts",
   ];
   it("none of them names unlockStepUp", () => {
     for (const f of FILES) {

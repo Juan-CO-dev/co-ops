@@ -30,9 +30,10 @@ export interface RecordingDb {
   hang: (q: RecordedQuery) => boolean;
 }
 
-/** A query's calls, as a compact string: `eq(active,true) in(role,[…]) order(id) range(0,999)`. */
+/** A query's calls, as a compact string: `eq(active,true) in(role,[…]) order(id) range(0,999)`. The `abortSignal` calls
+ *  a `withAbort` client appends are left out (`q.signal` holds the signal). */
 export function describeCalls(q: RecordedQuery): string {
-  return q.calls.map(([name, ...args]) => `${name}(${args.map((a) => JSON.stringify(a)).join(",")})`).join(" ");
+  return q.calls.filter(([n]) => n !== "abortSignal").map(([name, ...args]) => `${name}(${args.map((a) => JSON.stringify(a)).join(",")})`).join(" ");
 }
 export const has = (q: RecordedQuery, name: string, ...args: unknown[]) =>
   q.calls.some(([n, ...a]) => n === name && args.every((x, i) => JSON.stringify(x) === JSON.stringify(a[i])));

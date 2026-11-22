@@ -50,7 +50,9 @@ import {
   type NotificationWithRecipient,
 } from "@/lib/notifications";
 
-import { markNotificationReadAction } from "@/app/(authed)/dashboard/actions";
+// Nav PR 9 (step 5): the action moved out of the Dashboard tree; this component is replaced by the top bar's bell
+// (components/nav/NotificationPanel.tsx) and deleted with the Dashboard's bell (step 11).
+import { markNotificationReadAction } from "@/components/nav/notification-actions";
 
 const OPERATIONAL_TZ = "America/New_York";
 
@@ -147,6 +149,8 @@ export function NotificationList({
             return next;
           });
         }
+        // The moved action no longer revalidates /dashboard (nav PR 9): re-run the page's read here instead.
+        else router.refresh();
         // On success, revalidatePath('/dashboard') from the Server Action
         // re-renders the dashboard with fresh loadUnreadForUser results;
         // the now-read item is gone from the props naturally. We leave
@@ -154,7 +158,7 @@ export function NotificationList({
         // a list that no longer contains it.
       });
     },
-    [],
+    [router],
   );
 
   return (
