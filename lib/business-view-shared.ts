@@ -188,6 +188,10 @@ function laborView(dto: BusinessLaborDto, access: Pick<BusinessAccess, "hourlyCo
     : { loadedState: null, loadedTone: "none" as const, burdenEstimated: null, salaryEstimated: null, salaryGaps: null };
   return { ...base, ...hourly, ...loaded };
 }
+/** Nav PR 8 (plan r2 2.12): the SAME labor view for the Dashboard's numbers strip, which reads one day's labor from
+ * `loadBusinessLaborDays`. Only `lib/dashboard-blocks.ts` calls it; no surface imports it. */
+export const businessLaborView = laborView;
+
 /** "Not included in this view": the claim of a list the access does not hold (never "none"). */
 const NOT_SHARED = "reports.business.access.not_shared" as const;
 /** Why a day's breakdown (15 minutes, unplaced checks) is not shown: a day with no sales captured says THAT, never

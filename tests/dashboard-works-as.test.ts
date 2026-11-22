@@ -89,6 +89,9 @@ describe("token scan: no Dashboard module names works-as", () => {
     "app/(authed)/dashboard/page.tsx", "lib/dashboard-day-shared.ts", "lib/dashboard-day.ts", "lib/day-plan-render.ts", "lib/nav-switches.ts",
     "components/dashboard/PhaseLine.tsx", "components/dashboard/DayRow.tsx", "components/dashboard/NextUpCard.tsx",
     "components/dashboard/DayList.tsx", "components/dashboard/Shortcuts.tsx", "components/dashboard/SmmDashboard.tsx",
+    // Nav PR 8 (group 12): the role blocks.
+    "lib/dashboard-blocks-shared.ts", "lib/dashboard-blocks.ts", "components/dashboard/NumbersStrip.tsx", "components/dashboard/StripLaborCell.tsx", "components/dashboard/StripLaborStream.tsx",
+    "components/dashboard/CateringBlock.tsx", "components/dashboard/NeedsYou.tsx", "components/dashboard/MyShiftPulseToggle.tsx",
   ];
   function tokens(file: string): { identifiers: string[]; strings: string[] } {
     const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.JSX, readFileSync(file, "utf8"));

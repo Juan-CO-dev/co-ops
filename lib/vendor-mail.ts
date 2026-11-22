@@ -1,4 +1,6 @@
 import "server-only";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { withAbortStrict } from "./pulse/abort";
 import type { AuthContext } from "./session";
 import { getServiceRoleClient } from "./supabase-server";
 import { selectAllRows } from "./supabase-paginate";
@@ -16,9 +18,12 @@ function checked<T extends { error?: unknown }>(result: T): T {
   }
   return result;
 }
-async function reader(ctx: AuthContext): Promise<VendorMailReader> {
+/** The fresh role and membership re-read. `client` (nav PR 8, A3): the Dashboard passes its abortable client so these
+ *  authorization reads stop at the page deadline too; every other caller passes nothing (the plain client). Either way
+ *  the client is made only AFTER the session role check (a refused role creates no service client). */
+async function reader(ctx: AuthContext, client: () => SupabaseClient = getServiceRoleClient): Promise<VendorMailReader> {
   if (!ctx.user.active || !vendorMailRoleAllowed(ctx.user.role)) throw new VendorMailError(403, "forbidden");
-  const db = getServiceRoleClient();
+  const db = client();
   const { data: user } = checked(await db.from("users").select("role,active").eq("id", ctx.user.id).maybeSingle());
   if (!user?.active || !vendorMailRoleAllowed(user.role)) throw new VendorMailError(403, "forbidden");
   const memberships = await selectAllRows<{ location_id: string }>(async (from, to) => checked(await db.from("user_locations").select("location_id").eq("user_id", ctx.user.id).eq("active", true).order("location_id").range(from, to)));
@@ -61,11 +66,9 @@ export function validateVendorMailFilters(filters: VendorMailFilters): void {
     (filters.search !== undefined && (filters.search.length > 200 || /[\u0000-\u001f]/.test(filters.search))) ||
     (filters.receivedFrom && filters.receivedTo && Date.parse(filters.receivedFrom) > Date.parse(filters.receivedTo))) throw new VendorMailError(400, "invalid_payload");
 }
-export async function listVendorMail(ctx: AuthContext, filters: VendorMailFilters = {}) {
-  const actor = await reader(ctx);
-  validateVendorMailFilters(filters);
-  const db = getServiceRoleClient();
-  const load = (header: boolean) => selectAllRows<Row>(async (from, to) => {
+/** The list read (every page), as `listVendorMail` filters it. `header` = the unfiltered header load. */
+function loadRows(db: SupabaseClient, actor: VendorMailReader, filters: VendorMailFilters, header: boolean): Promise<Row[]> {
+  return selectAllRows<Row>(async (from, to) => {
     let query = db.from("vendor_mail_read").select(COLUMNS);
     if (actor.role === "gm") query = query.in("effective_location_id", actor.locations);
     if (filters.locationId === "unassigned") query = query.is("effective_location_id", null);
@@ -78,6 +81,12 @@ export async function listVendorMail(ctx: AuthContext, filters: VendorMailFilter
     if (filters.receivedTo) query = query.lte("received_at", filters.receivedTo);
     return checked(await query.order("id").range(from, to));
   });
+}
+export async function listVendorMail(ctx: AuthContext, filters: VendorMailFilters = {}) {
+  const actor = await reader(ctx);
+  validateVendorMailFilters(filters);
+  const db = getServiceRoleClient();
+  const load = (header: boolean) => loadRows(db, actor, filters, header);
   const rows = await load(false);
   const now = Date.now();
   const scoped = rows.filter(row => canReadVendorMail(actor, row.effective_location_id));
@@ -89,6 +98,25 @@ export async function listVendorMail(ctx: AuthContext, filters: VendorMailFilter
     content_states: Object.fromEntries(VENDOR_MAIL_CONTENT_STATES.map(state => [state, header.filter(row => row.content_state === state).length])),
     provider_comparison: "not_performed" as const } };
 }
+/**
+ * Nav PR 8 (plan r2 2.13, Q7): how many messages the stale list `/operations/vendor-mail?location=<shop>&stale=1` shows,
+ * for the Dashboard's "Needs you" line. The same reader (a fresh role and membership re-read), the same list read with
+ * `{ stale: true, locationId }`, the same `canReadVendorMail` and `vendorMailStale` filters; WITHOUT the unfiltered header
+ * load. (The Back office counts `stale_count` over the header load instead: tests/vendor-mail-stale-count.test.ts pins
+ * this count to the list's length.) Every read, the authorization reads included, carries `opts.signal`.
+ */
+export async function staleVendorMailCount(ctx: AuthContext, args: { locationId: string }, opts: { signal?: AbortSignal } = {}): Promise<number> {
+  let made: SupabaseClient | null = null;
+  const client = () => (made ??= withAbortStrict(getServiceRoleClient(), opts.signal));
+  const actor = await reader(ctx, client);
+  const db = client();
+  const filters: VendorMailFilters = { stale: true, locationId: args.locationId };
+  validateVendorMailFilters(filters);
+  const rows = await loadRows(db, actor, filters, false);
+  const now = Date.now();
+  return rows.filter((row) => canReadVendorMail(actor, row.effective_location_id) && summarize(row, now).stale).length;
+}
+
 /** Shared bound read for detail and signing; no asset I/O occurs before this check. */
 export async function readVendorMailRow(ctx: AuthContext, id: string): Promise<Row> {
   const actor = await reader(ctx);

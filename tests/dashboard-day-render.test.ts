@@ -107,11 +107,16 @@ describe("T1: P Street at six times, for Ana (KH), the GM and Luis (crew)", () =
     expect(text(luis)).not.toContain("past its usual close");
   });
 
-  it("parity (groups 2, 9): every viewer, 05:00-23:00 hourly: the rendered rows are exactly plan.items", () => {
+  it("parity (groups 2, 9): every viewer, 05:00-23:00 hourly: the rendered rows are exactly plan.items, less the one block item", () => {
+    // Nav PR 8 (Q9, group 2): {rows drawn} ∪ {the block item} = plan.items; the block item is the catering block, never a row.
     for (const v of Object.values(ALL_VIEWERS)) {
       for (let h = 5; h <= 23; h++) {
         const p = plan(v, `${String(h).padStart(2, "0")}:00`);
-        expect(rows(renderDay(p, { shopId: SHOP, language: "en" })).map((r) => r.id), `${v.userId} ${h}`).toEqual(p.items.map((i) => i.id));
+        const blocks = p.items.filter((i) => i.placement === "block");
+        expect(blocks.length).toBeLessThanOrEqual(1);
+        const drawn = rows(renderDay(p, { shopId: SHOP, language: "en" })).map((r) => r.id);
+        expect(drawn, `${v.userId} ${h}`).toEqual(p.items.filter((i) => i.placement !== "block").map((i) => i.id));
+        expect([...drawn, ...blocks.map((b) => b.id)].sort()).toEqual(p.items.map((i) => i.id).sort());
       }
     }
   });
@@ -291,7 +296,9 @@ describe("T10 (render half): surfaces", () => {
     const facts: ShopFacts = { ...pStreet(hm("13:45")), assignments: { kind: "not_shown" }, stations: { kind: "not_shown" } };
     const html = renderDay(plan(CATERING_NON_MEMBER, "13:45", facts), { shopId: SHOP, language: "en" });
     const ids = rows(html).map((r) => r.id);
-    expect(ids.sort()).toEqual(["am_prep", "catering_today", "closing", "mid_day_prep", "opening"].sort());
+    // Nav PR 8 (Q9): the catering item is the catering manager's block, not a row.
+    expect(ids.sort()).toEqual(["am_prep", "closing", "mid_day_prep", "opening"].sort());
+    expect(plan(CATERING_NON_MEMBER, "13:45", facts).items.find((i) => i.id === "catering_today")?.placement).toBe("block");
     expect(text(html)).toContain("Who has it is not shown here.");
     expect(text(html)).not.toContain("Nobody yet");
     expect(html).not.toContain('data-action="assign"');
@@ -299,10 +306,10 @@ describe("T10 (render half): surfaces", () => {
     expect(html).toContain('data-note="day.note.stations_not_shown"');
   });
 
-  it("CATERING_MEMBER: the AGM list, the catering item drawn as a row (Q9); MoO: everything at both fixture shops", () => {
+  it("CATERING_MEMBER: the AGM list, the catering item NOT drawn as a row (nav PR 8, Q9: it is the block); MoO: everything at both fixture shops", () => {
     const p = plan(CATERING_MEMBER, "13:45");
     expect(item(p, "catering_today").placement).toBe("block");
-    expect(rows(renderDay(p, { shopId: SHOP, language: "en" })).map((r) => r.id)).toContain("catering_today");
+    expect(rows(renderDay(p, { shopId: SHOP, language: "en" })).map((r) => r.id)).not.toContain("catering_today");
     const agmIds = plan({ ...CATERING_MEMBER, role: "agm" }, "13:45").items.map((i) => i.id).sort();
     expect(p.items.map((i) => i.id).sort()).toEqual(agmIds);
     for (const facts of [pStreet(hm("13:45")), capitolHill(hm("13:45"))]) {

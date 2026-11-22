@@ -11,12 +11,19 @@
  * whole pulse via ?location=. This also fixes the all-locations dead page —
  * a level-9+ (owner/CGS) actor with the all-locations override previously
  * resolved NO default location and got a broken body with the wrong i18n key.
+ *
+ * Nav PR 8 (Q9): both versions carry the "My shift | Shop pulse" toggle at the top (v2 inside PulseHome, at the shop it
+ * shows), for anyone who can open the pulse at the shop (`pulseToggleFor`), never the social media manager (by role;
+ * refusing the SMM the page itself is S2b's).
  */
 
 import { after } from "next/server";
 import Link from "next/link";
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { MyShiftPulseToggle } from "@/components/dashboard/MyShiftPulseToggle";
+import { dayViewerFor } from "@/lib/dashboard-day-shared";
+import { navSwitches } from "@/lib/nav-switches";
 import { AccessDeniedBanner } from "@/components/ui/AccessDeniedBanner";
 import { AttentionBanner } from "@/components/midshift/AttentionBanner";
 import { CateringToday } from "@/components/midshift/CateringToday";
@@ -198,6 +205,7 @@ export default async function MidShiftPage({
 
   return (
     <main className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl flex-col gap-5 px-4 pb-32 pt-4 sm:px-6">
+      <MyShiftPulseToggle viewer={dayViewerFor(auth, locationId, navSwitches())} shopId={locationId} current="pulse" language={language} />
       <div className="mb-3">
         <DashboardBackLink />
       </div>

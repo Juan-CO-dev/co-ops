@@ -8,7 +8,8 @@
  *  3. every other urgent / now / upcoming item, in order (the compact pin keeps its index);
  *  4. "Done today" and the done items;
  *  5. "Audit tools" and the tool items;
- *  then the empty line. An item placed as a "block" (the catering manager's catering) is a row until PR 8 (Q9).
+ *  then the empty line. An item placed as a "block" (the catering manager's catering) is never a row: the page draws it
+ *  as the catering block (nav PR 8, Q9). Indices are kept; nothing is re-sorted.
  */
 import type { ReactNode } from "react";
 import { aggregateFailure } from "@/lib/dashboard-day-shared";
@@ -37,7 +38,8 @@ export function DayList({ plan, shopId, language, editHref, bodies }: {
     </DayRow>
   );
   const fullPin = plan.items[0]?.pin === "full" ? plan.items[0] : null;
-  const rest = plan.items.map((item, index) => ({ item, index })).filter(({ index }) => !(fullPin && index === 0) && index !== nextIndex);
+  const rest = plan.items.map((item, index) => ({ item, index }))
+    .filter(({ item, index }) => !(fullPin && index === 0) && index !== nextIndex && item.placement !== "block");
   const active = rest.filter(({ item }) => open(item));
   const done = rest.filter(({ item }) => item.band === "done");
   const tools = rest.filter(({ item }) => item.band === "tool");

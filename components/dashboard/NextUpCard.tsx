@@ -2,9 +2,11 @@
  * Next up (nav PR 7, plan r2 2.3; spec 3.3.5 item 5). Server component.
  *
  * Under the aggregate failure it draws NOTHING (Astra F2): no heading, no "Nothing is due", no "Closed for the day". A day
- * nobody could load makes no claim about what is due.
+ * nobody could load makes no claim about what is due. When Next up is the catering block's item it draws nothing either:
+ * the block carries the "Next up" badge (nav PR 8, Q4).
  */
 import type { ReactNode } from "react";
+import { nextUpInBlock } from "@/lib/dashboard-blocks-shared";
 import { aggregateFailure } from "@/lib/dashboard-day-shared";
 import type { DayPlan, StationState } from "@/lib/day-plan-shared";
 import { serverT } from "@/lib/i18n/server";
@@ -18,7 +20,7 @@ export function NextUpCard({ plan, shopId, language, editHref, bodies }: {
   editHref?: string;
   bodies?: Readonly<Partial<Record<string, ReactNode>>>;
 }) {
-  if (aggregateFailure(plan)) return null;
+  if (aggregateFailure(plan) || nextUpInBlock(plan)) return null;
   const n = plan.nextUp;
   const stations: readonly StationState[] = plan.stations;
   let body: ReactNode;

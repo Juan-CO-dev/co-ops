@@ -315,6 +315,71 @@ function targetsForWeek(structures: readonly StructureRow[], weekStart: string):
   return laborTargetsFor(s?.structure?.labor ? { labor: s.structure.labor } : null);
 }
 
+/** Nav PR 8: at most this many days per narrow labor read (the Dashboard asks for three). */
+export const BUSINESS_LABOR_DAYS_MAX = 7;
+
+/**
+ * Nav PR 8 (plan r2 2.12, Q3): the LABOR HALF of `loadBusinessReport`, for the Dashboard's numbers strip. MoO / Owner /
+ * CGS only, by role. `days`: 1 to 7 business days, ascending and contiguous (the caller builds them before the plan date;
+ * this loader reads no clock).
+ *
+ * The same gates in the same order (`assertBusinessScope`, then the all-shops role or a 403 before any read; access is
+ * everything for these roles, so no settings read), then EXACTLY the report's labor reads, in its order: coverage before;
+ * in parallel `sales_report_daily`, `fact_labor_cost` per day and `schedule_structures`; coverage after; the current
+ * week fingerprints (read last); then `currentWeekCoverage`, the week targets and `laborDayFigures` per day. It skips the
+ * check cuts and their history, `fact_day_coverage`, quarters, people and the weekly costs. No new pricer: per day,
+ * `labor` deep-equals the full report's (tests/business-labor-days.test.ts, the raw-reader twins).
+ */
+export async function loadBusinessLaborDays(viewer: BusinessViewer, args: { locationId: string; days: readonly string[] }, deps: BusinessDeps = {}):
+  Promise<{ access: BusinessAccess; days: Array<{ date: string; labor: LaborFigures }> }> {
+  const env = deps.env ?? (process.env as BusinessDeps["env"] & object);
+  assertBusinessScope(viewer, args.locationId, env);
+  if (!businessAllShopsAllowed(viewer.role)) throw new BusinessReportError(403, "role_insufficient");
+  const days = [...args.days];
+  const contiguous = days.every((d, i) => validDay(d) && (i === 0 || shiftReportDate(days[i - 1]!, 1) === d));
+  if (days.length < 1 || days.length > BUSINESS_LABOR_DAYS_MAX || !contiguous) throw new RangeError("business_labor_days_invalid"); // a caller bug, never a page state
+  const access = businessAccessFor(viewer.role, null);
+  const sb = deps.client ?? getServiceRoleClient();
+  const { locationId } = args;
+  const from = days[0]!, to = days[days.length - 1]!;
+  const wf = deps.wageFallback ?? laborWageFallback(env.LABOR_WAGE_FALLBACK);
+  const win = (w: { from: string; to: string }) => ({ p_location_id: locationId, p_from: w.from, p_to: w.to });
+  const laborDays = days.filter((d) => d >= LABOR_HISTORY_FLOOR_DAY);
+  const weekStarts = [...new Set(days.map(payrollWeekStart))];
+
+  const readWeekCoverage = () => rows<LaborWeekGenerationRow>(() => sb.from("labor_week_coverage")
+    .select("week_start,ot_scope,builder_version,built_at,source_fingerprint", { count: "exact" })
+    .gte("week_start", payrollWeekStart(from)).lte("week_start", to).order("week_start", { ascending: true }));
+  const coverageBefore = await readWeekCoverage();
+  const [dailyRaws, structures, dayCosts] = await Promise.all([
+    mapBounded(salesWindows(from, to), SALES_WINDOW_CONCURRENCY, (w) => call<DailyRaw>(sb, "sales_report_daily", win(w))),
+    rows<StructureRow>(() => sb.from("schedule_structures").select("structure,created_at", { count: "exact" }).eq("location_id", locationId)
+      .order("created_at", { ascending: true }).order("id", { ascending: true })),
+    mapBounded(laborDays, SALES_WINDOW_CONCURRENCY, async (d) => {
+      const r = await rpcAll<Record<string, unknown>>(sb, "fact_labor_cost", { p_location_id: locationId, p_from: d, p_to: d, p_wage_fallback: wf });
+      return r?.[0] ? toLaborCostRow(r[0]) : null;
+    }),
+  ]);
+  const coverageAfter = await readWeekCoverage();
+  const currentFingerprints = await readCurrentWeekFingerprints(sb, coverageAfter.map((r) => ymd(r.week_start)));
+  const weekMap: ReadonlyMap<string, LaborWeekCoverageRow> = currentWeekCoverage(coverageBefore, coverageAfter, currentFingerprints);
+  const weekTargets = new Map(weekStarts.map((ws) => [ws, targetsForWeek(structures, ws)]));
+  const costByDay = new Map(laborDays.map((d, i) => [d, dayCosts[i] ?? null]));
+  const sales = daySalesFrom(dailyRaws, from, to);
+  return {
+    access,
+    days: sales.map((s) => {
+      const wt = weekTargets.get(payrollWeekStart(s.date));
+      return { date: s.date, labor: laborDayFigures(s, costByDay.get(s.date) ?? null, weekMap.get(payrollWeekStart(s.date)), wt?.hourly.pct, wt?.loaded.pct) };
+    }),
+  };
+}
+
+const validDay = (d: string): boolean => {
+  const t = Date.parse(`${d}T00:00:00Z`);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === d;
+};
+
 /** The report with NOTHING cut: what MoO / Owner / CGS always receive (every labor key, every list). */
 export type WholeBusinessReportDto = Omit<BusinessReportDto, "days" | "weeks" | "total" | "channels" | "servers" | "people"> & {
   days: Array<BusinessDayDto & { labor: LaborFigures }>; weeks: Array<BusinessWeekDto & { labor: LaborFigures }>;

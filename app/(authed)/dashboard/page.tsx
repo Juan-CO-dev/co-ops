@@ -12,6 +12,11 @@
  *
  * The social media manager gets its own small page from SmmPlan: no board, no bell, no notification read, no retrain,
  * no auto-release trigger, and no shop-fact read (the loader's SMM branch). Decided by the REAL role, never "works as".
+ *
+ * Nav PR 8, the role blocks (spec 3.6), each by the REAL role and each read through the page's `settle` (the SAME
+ * deadline, one cell per read): the numbers strip for MoO / Owner / CGS, "Needs you" for GM and up, the catering block
+ * from the engine's `placement: "block"` item, and the "My shift | Shop pulse" toggle. The social media manager starts
+ * none of their reads and sees none of them.
  */
 
 import { after } from "next/server";
@@ -25,7 +30,11 @@ import { AuthShell } from "@/components/auth/AuthShell";
 import { BrandMark } from "@/components/BrandMark";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { NotificationBell } from "@/components/dashboard/NotificationBell";
+import { CateringBlock } from "@/components/dashboard/CateringBlock";
 import { DayList } from "@/components/dashboard/DayList";
+import { MyShiftPulseToggle } from "@/components/dashboard/MyShiftPulseToggle";
+import { NeedsYou } from "@/components/dashboard/NeedsYou";
+import { NumbersStrip } from "@/components/dashboard/NumbersStrip";
 import { PhaseLine } from "@/components/dashboard/PhaseLine";
 import { Shortcuts } from "@/components/dashboard/Shortcuts";
 import { SmmDashboard } from "@/components/dashboard/SmmDashboard";
@@ -43,8 +52,10 @@ import { notificationBellRoleAllowed } from "@/lib/notification-bell-shared";
 import { loadRecentDeliveries } from "@/lib/receiving";
 import { loadCountsTileState } from "@/lib/counts";
 import { deriveMissingEmailIds, type ReceivingDeliveryFacts } from "@/lib/dashboard-status-shared";
-import { amPrepEditFor, dayViewerFor, greetingKey, myShiftKey } from "@/lib/dashboard-day-shared";
-import { loadDayFactsSafe, richBodies, settleBy, startPageDeadline, unwrapSettled, type Widget } from "@/lib/dashboard-day";
+import { aggregateFailure, amPrepEditFor, dayViewerFor, greetingKey, myShiftKey } from "@/lib/dashboard-day-shared";
+import { loadDayFactsSafe, richBodies, settleBy, startPageDeadline, unwrapSettled, type Settle, type Widget } from "@/lib/dashboard-day";
+import { loadCateringBlockExtras, loadNeedsYou, loadStrip } from "@/lib/dashboard-blocks";
+import { assignmentsKnown, cateringBlockIndex, needsYouFor, nextUpInBlock, numbersStripFor } from "@/lib/dashboard-blocks-shared";
 import { lensFor, planDay, type DayPlan, type SmmPlan } from "@/lib/day-plan-shared";
 import { firstName } from "@/lib/day-plan-load-shared";
 import { renderDayReason } from "@/lib/day-plan-render";
@@ -158,6 +169,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     failedWidgets.add(label);
     return null;
   });
+  // Nav PR 8: the role blocks' cells, bound to the SAME deadline; a cell says "Couldn't load" itself (no failedWidgets line).
+  const settle: Settle = (area, run) => settleBy(run, deadlineAt, area);
   const planDate = operationalNow(now).date;
   const assignmentActor = { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations };
   // ONE board promise, page-owned, never rejects; the loader, My shift and the rich bodies all read it.
@@ -173,13 +186,23 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const richP = boardSettled && shop
     ? richBodies(boardSettled, { userId: auth.user.id, receiving: (signal) => loadRecentDeliveries(auth, shop.id, 20, { signal }), counts: (signal) => loadCountsTileState(auth, shop.id, { signal }) }, widget)
     : null;
+  // Nav PR 8: started before anything is awaited, each only for its real role (never a level), never for the SMM.
+  const stripP = !smm && shop && numbersStripFor(auth.role) ? loadStrip(sb, auth, locations, planDate, switches, settle) : null;
+  const needsP = !smm && shop && needsYouFor(auth.role) ? loadNeedsYou(auth, shop.id, settle) : null;
+  const blockP = !smm && shop && auth.role === "catering_mgr" && viewer.surfaces.has("catering")
+    ? loadCateringBlockExtras(sb, auth, shop.id, planDate, settle) : null;
   const input = !smm && shop
     ? await loadDayFactsSafe(sb, { viewer, shop, now, locations: auth.locations, deadlineAt, board: boardSettled ? () => boardSettled.then(unwrapSettled) : null })
     : null;
   const plan = input ? (planDay(input) as DayPlan) : null;
   const board = boardSettled ? await boardSettled : null; // already settled: never hangs
   if (board && board.kind !== "ok") failedWidgets.add("nav.assignments");
-  const [retrainTasks, unreadNotifications, rich] = await Promise.all([retrainP, unreadP, richP]);
+  const [retrainTasks, unreadNotifications, rich, strip, needs, blockExtras] = await Promise.all([retrainP, unreadP, richP, stripP, needsP, blockP]);
+  // The catering block: the engine's one `placement: "block"` item. It draws the night-before line, so PhaseLine leaves it
+  // out ONLY when the block is drawn and has that line to draw (Q5).
+  const blockIndex = plan ? cateringBlockIndex(plan) : -1;
+  const blockItem = plan && blockIndex >= 0 ? plan.items[blockIndex] : undefined;
+  const blockDrawsHeadsUp = blockItem !== undefined && plan!.cateringBlock !== null && plan!.headsUp !== null;
   const amPrepEditHref = input && shop ? amPrepEditFor(input, auth.user.id, shop.id) : undefined;
 
   // The own Receiving body: the loader rows projected for the tile, at the request's one instant.
@@ -311,11 +334,13 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         </div>
         </div>
 
+        {!smm ? <MyShiftPulseToggle viewer={viewer} shopId={shop?.id ?? null} current="my_shift" language={language} /> : null}
+
         {smmPlan && shop ? (
           <SmmDashboard plan={smmPlan} shopId={shop.id} language={language} actorRole={auth.role} actorLevel={auth.level} surfaces={viewer.surfaces} switches={switches} />
         ) : null}
 
-        {plan ? <PhaseLine plan={plan} language={language} /> : null}
+        {plan ? <PhaseLine plan={plan} language={language} omitHeadsUp={blockDrawsHeadsUp} /> : null}
         {plan && selectedLocation ? plan.alerts.map((alert) => (
           <YesterdayUnconfirmedAlert key={alert.date} location={selectedLocation} yesterdayDate={alert.date} language={language} />
         )) : null}
@@ -327,6 +352,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             {serverT(language, label)}: {serverT(language, "dashboard.tile.unavailable")}
           </p>
         ))}
+        {strip ? <NumbersStrip rows={strip} language={language} /> : null}
+        {needs && plan && shop && input ? (
+          <NeedsYou cells={needs} plan={plan} tasksKnown={assignmentsKnown(input) && !aggregateFailure(plan)} shopId={shop.id} language={language} />
+        ) : null}
+        {plan && shop && blockItem && plan.cateringBlock ? (
+          <CateringBlock item={blockItem} block={plan.cateringBlock} heavyToday={plan.heavyToday} headsUp={plan.headsUp} extras={blockExtras}
+            nextUp={nextUpInBlock(plan)} shopId={shop.id} language={language} />
+        ) : null}
         {plan && shop ? <DayList plan={plan} shopId={shop.id} language={language} editHref={amPrepEditHref} bodies={bodies} /> : null}
 
         {board?.kind === "ok" ? (
