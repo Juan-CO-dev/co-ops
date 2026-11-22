@@ -14,7 +14,7 @@ import { generatorInputFor } from "@/lib/scheduling/inputs-shared";
 import { WEEK as CREW_WEEK } from "./fixtures/schedule/crew-p-street-2026-10-19";
 import { schCrewInputs, schSlices, schStationsWeek, schTightWeek, type WeekSlices } from "./fixtures/schedule/sch-fixtures";
 
-const BEFORE = path.resolve(__dirname, "fixtures/schedule/golden-SCH-before.json");
+const BEFORE = path.resolve(__dirname, "fixtures/schedule/sch-before.json");
 const write = (file: string, v: unknown) => writeFileSync(file, JSON.stringify(JSON.parse(canonicalJson(v)), null, 1) + "\n");
 
 function outputs(): { stations: WeekSlices; tight: WeekSlices; crew: WeekSlices } {

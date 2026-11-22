@@ -1,6 +1,6 @@
 /**
  * PR SCH (plan r5, sections 12.4 and 12.5; r1 8.4): the fixture weeks whose "before" outputs are frozen on main's code
- * (`golden-SCH-before.json`, commit 1, no lib change) so every later commit can prove which dates changed and which did not.
+ * (`sch-before.json`, commit 1, no lib change) so every later commit can prove which dates changed and which did not.
  *
  *  - `schStationsWeek`: a stations week from the v17 roster (ample, so weekly caps do not bind), no budget, the r1 8.4 order
  *    table (Mon 25 @ 12:00; Tue 20 @ 9:00 + 20 @ 11:00 + 20 @ 12:30; Wed 120 @ 9:00; Thu 40 @ 13:00; Fri 0 @ 10:00 + 20 @ 12:00;
