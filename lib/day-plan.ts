@@ -321,24 +321,37 @@ function logArea(area: string, e: unknown): void {
   console.error(`day-plan: ${area} failed (${e instanceof DayFactTimeout ? "deadline" : e instanceof Error ? e.name : "error"})`);
 }
 
-interface Deadline { race<T>(p: Promise<T>): Promise<T>; clear(): void }
+interface Deadline {
+  race<T>(p: Promise<T>): Promise<T>;
+  clear(): void;
+  /** Nav PR 7 (H1): the load is over. Clears the timer, then aborts every lane's queries still in flight (an eager lane
+   *  whose answer was not needed, e.g. the own-assignment read on a board that loaded). Their rejections are expected. */
+  finish(): void;
+  readonly finished: boolean;
+}
 /** ONE deadline for the load: a rejecting race every lane runs against, and the abort of every lane's queries. */
 function startDeadline(ms: number, controller: AbortController): Deadline {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let finished = false;
   const fired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => { controller.abort(); reject(new DayFactTimeout()); }, ms);
   });
   fired.catch(() => undefined);
+  const clear = () => { if (timer !== undefined) clearTimeout(timer); timer = undefined; };
   return {
     race: <T>(p: Promise<T>) => Promise.race([p, fired]),
-    clear: () => { if (timer !== undefined) clearTimeout(timer); timer = undefined; },
+    clear,
+    finish: () => { finished = true; clear(); controller.abort(); },
+    get finished() { return finished; },
   };
 }
 
-/** Run one lane: a value, or (thrown or timed out) the area logged and the error rethrown for `fact()`. */
+/** Run one lane: a value, or (thrown or timed out) the area logged and the error rethrown for `fact()`. Every lane's
+ *  rejection is handled here, so the abort at the end of the load never surfaces as an unhandled rejection; a lane cut off
+ *  by that abort is not a failure and is not logged. */
 function lane<T>(d: Deadline, area: string, run: () => Promise<T>): Promise<T> {
   const p = d.race(Promise.resolve().then(run));
-  p.catch((e: unknown) => logArea(area, e));
+  p.catch((e: unknown) => { if (!d.finished) logArea(area, e); });
   return p;
 }
 async function fact<T>(p: Promise<T>): Promise<Fact<T>> {
@@ -377,7 +390,7 @@ export async function loadDayFacts(service: SupabaseClient, args: DayFactsArgs, 
   try {
     return { planDate, nowMin, viewer: args.viewer, facts: await loadShopFacts(service, withAbort(service, controller.signal), args, planDate, deps, deadline) };
   } finally {
-    deadline.clear();
+    deadline.finish();
   }
 }
 
@@ -595,6 +608,6 @@ async function loadSmmFacts(service: SupabaseClient, args: DayFactsArgs, planDat
     });
     return { kind: "smm", ownTasks: await fact(tasksP), ownStation: await fact(stationP) };
   } finally {
-    d.clear();
+    d.finish();
   }
 }

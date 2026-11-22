@@ -749,6 +749,31 @@ describe("nav PR 7 E2: the own-assignment lane", () => {
     expect(f.assignments).toEqual({ kind: "not_shown" });
   });
 
+  // Lead ruling r3, H1 (Astra code r1 P2): the load aborts its controller when it is over, so the eager own read whose
+  // answer was not needed (the board loaded) is cancelled at its query, with no unhandled rejection and no timer left.
+  it("H1: the board and every fact load while the own read hangs: the load returns and the own query's signal is aborted", async () => {
+    let seen: AbortSignal | null = null;
+    const builder: Record<string, unknown> = {};
+    builder.select = () => builder;
+    builder.abortSignal = (s: AbortSignal) => { seen = s; return builder; };
+    const client = { from: () => builder } as never;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => { unhandled.push(e); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const deps = withDeps({ ownTasks: async (sb) => {
+        (sb as unknown as { from: (t: string) => { select: (c: string) => unknown } }).from("report_assignments").select("id");
+        return new Promise<TaskAssignment[]>((_, reject) => { seen!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))); });
+      } });
+      const f = shop(await loadDayFacts(client, args(ANA), deps));
+      expect(f.assignments).toMatchObject({ kind: "ok", value: { scope: "all_tasks" } });
+      expect(seen).not.toBeNull();
+      expect(seen!.aborted).toBe(true);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(unhandled).toEqual([]);
+    } finally { process.off("unhandledRejection", onUnhandled); }
+  });
+
   describe("with fake timers", () => {
     beforeEach(() => { vi.useFakeTimers(); });
     afterEach(() => { vi.useRealTimers(); });
