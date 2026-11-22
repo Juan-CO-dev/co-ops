@@ -16,7 +16,12 @@ const SELF = "  if p_subject = p_actor then raise exception 'subject_is_author';
 
 describe("0309_pm_reviews_self_and_atomic_eval", () => {
   it("house header and gate line — a later APPLIED stamp under it never breaks the pin", () => {
-    const lines = src.split("\n");
+    // The apply stamps (2026-11-15) sit under the gate line; the pin reads the authored header around them.
+    expect(src.split("\n").slice(2, 4)).toEqual([
+      "-- APPLIED TO SIM 2026-11-15 (schema_migrations version 20261115204850, name '0309_pm_reviews_self_and_atomic_eval')",
+      "-- APPLIED TO PROD 2026-11-15 (schema_migrations version 20261115205216, name '0309_pm_reviews_self_and_atomic_eval')",
+    ]);
+    const lines = src.split("\n").filter((l) => !/^-- APPLIED TO (SIM|PROD) /.test(l));
     expect(lines[0]).toBe("-- Migration 0309_pm_reviews_self_and_atomic_eval");
     expect(lines[1]).toMatch(/^-- AUTHORED 2026-11-15\. NOT YET APPLIED — apply via MCP after review \(sim first, prod on Juan's word, AFTER 0271; BEFORE the W09 PR merges\)\.$/);
     expect(lines[2]).toBe("-- ROLLOUT (enforced order, W09 fix round 2): apply 0309 -> merge + deploy the W09 PR -> older deployments drain -> apply 0310.");

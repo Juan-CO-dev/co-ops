@@ -1,5 +1,7 @@
 -- Migration 0315_opening_counts_batch_prep
 -- AUTHORED 2026-11-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0215, 0255, 0287 and 0305).
+-- APPLIED TO SIM 2026-11-16 (schema_migrations version 20261116004437, name '0315_opening_counts_batch_prep')
+-- APPLIED TO PROD 2026-11-16 (schema_migrations version 20261116004957, name '0315_opening_counts_batch_prep')
 -- Provenance: bug-audit wave W14 "Opening counts and batch prep" (found at 7494f738, re-confirmed on main 0a6e3246 and re-based on 3c32f330):
 --   B020 (a blank AM-prep BACK UP made the batch row unsaveable, so the opening could never be finalized),
 --   B078 (an older Phase 1 autosave or beacon could overwrite a newer draft),

@@ -1,5 +1,7 @@
 -- Migration 0305_rls_membership_and_read_floors
 -- AUTHORED 2026-11-14. NOT YET APPLIED — FILE ONLY. Apply via MCP after review (sim first, prod on Juan's word).
+-- APPLIED TO SIM 2026-11-15 (schema_migrations version 20261115183519, name '0305_rls_membership_and_read_floors')
+-- APPLIED TO PROD 2026-11-15 (schema_migrations version 20261115184323, name '0305_rls_membership_and_read_floors')
 -- Provenance: the 2026-11-14 bug audit (found at commit 7494f738), fix wave W05 "Database access rules and
 --   shop binding". One file for the wave's SQL; each section names its bug id.
 --
