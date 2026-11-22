@@ -5,7 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, unlinkSync, writeFileSync, existsSync } from "node:fs";
 import { acquire, assertHeld, release } from "./lease.mjs";
-import { SIM_APP_ORIGIN } from "../../../lib/sim-isolation-shared";
+import { SIM_APP_ORIGIN, takeNodeOnlyControls } from "../../../lib/sim-isolation-shared";
 
 type Env = Record<string, string | undefined>;
 // Pure helpers live in build-identity.ts (no import.meta) so Playwright specs can import them.
@@ -51,6 +51,7 @@ export function startProduction({ env, receiptPath }: { env: Env; receiptPath: s
 }
 
 export async function main(args = process.argv.slice(2)): Promise<number> {
+  takeNodeOnlyControls(process.env); // build and start need no parent-only control; no child (git, next, taskkill) inherits one
   const [command, root] = args;
   if (command === "start") { console.error("use run.ts"); return 2; }
   if (command === "build" && args.length === 1) {

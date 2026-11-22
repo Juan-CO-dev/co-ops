@@ -6,6 +6,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { navDestinationsFor } from "@/lib/nav-links";
+import { goToEntries } from "@/lib/nav/go-to";
+import { allEntries } from "@/lib/nav/go-to-shared";
 import { VAULT_AUTO_HIDE_SECONDS } from "@/lib/vault-shared";
 
 const files = {
@@ -105,8 +107,13 @@ describe("i18n and the switch", () => {
       expect(navDestinationsFor(level, { vault: false }).some((d) => d.href === "/vault")).toBe(false);
       expect(navDestinationsFor(level, { vault: true }).find((d) => d.href === "/vault")).toMatchObject({ key: "nav.vault", scoped: false });
     }
-    // Nav PR 7: the switch is read once per request (lib/nav-switches.ts) and passed to the "All pages" list.
-    expect(readFileSync("components/DashboardNav.tsx", "utf8")).toMatch(/navDestinationsFor\(actorLevel, \{[^}]*vault: switches\.vault/);
+    // Nav PR 9: "All pages" is the top bar's Go to, whose server-built list holds the vault ONLY with the switch on.
+    for (const [role, level] of [["key_holder", 4], ["agm", 6], ["gm", 7], ["owner", 9]] as const) {
+      const ids = (vault: boolean) => allEntries(goToEntries({ role, level, language: "en" }, { vault })).map((e) => e.id);
+      expect(ids(false), `${role} off`).not.toContain("vault");
+      expect(ids(true), `${role} on`).toContain("vault");
+    }
+    expect(readFileSync("components/nav/NavFrame.tsx", "utf8")).toContain("const switches = navSwitches();");
     expect(readFileSync("lib/nav-switches.ts", "utf8")).toContain("vault: vaultEnabled()");
     expect(src.page).toContain('if (!vaultEnabled()) redirect("/dashboard");');
   });

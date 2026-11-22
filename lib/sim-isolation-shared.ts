@@ -97,6 +97,29 @@ const OPTIONAL_KEYS = ["AUTH_JWT_SECRET", "SIM_LEGACY_JWT_SECRET", "NEXT_PUBLIC_
  * so the file validates, but NEVER passed to the app child — the F4 runner lifts them into its
  * private process env for the real-UI login specs. */
 export const RUNNER_PRIVATE_KEYS = ["SIM_PIN_MARCUS", "SIM_PIN_ROSA", "SIM_PIN_ANGEL", "SIM_PIN_MAYA", "SIM_PIN_LUIS"] as const;
+/** Parent-only controls that never reach an app, build or contender child, matched case-insensitively (Windows
+ * environment names). A suite that needs one injects it explicitly into its own Playwright child only (nav PR 9:
+ * SIM_NAV_PASSWORD_MARCUS). */
+export const NODE_ONLY_PRIVATE_CONTROLS = ["SIM_CATALOG_PASSWORD", "SIM_NAV_PASSWORD_MARCUS"] as const;
+const nodeOnlyPrivate = new Set<string>(NODE_ONLY_PRIVATE_CONTROLS);
+export function isNodeOnlyPrivateControl(key: string): boolean { return nodeOnlyPrivate.has(key.toUpperCase()); }
+/** Removes every Node-only private control from `env` IN PLACE (any letter case) and returns the values it held, by
+ * canonical name. The runner calls it on process.env first thing, so no subprocess started without an explicit env
+ * (git, netstat, PowerShell, taskkill) can inherit one (Astra code r2). */
+export function takeNodeOnlyControls(env: Record<string, string | undefined>): Partial<Record<(typeof NODE_ONLY_PRIVATE_CONTROLS)[number], string>> {
+  const taken: Partial<Record<(typeof NODE_ONLY_PRIVATE_CONTROLS)[number], string>> = {};
+  for (const key of Object.keys(env)) {
+    if (!isNodeOnlyPrivateControl(key)) continue;
+    const value = env[key];
+    if (value !== undefined) taken[key.toUpperCase() as (typeof NODE_ONLY_PRIVATE_CONTROLS)[number]] = value;
+    delete env[key];
+  }
+  return taken;
+}
+/** A copy of `env` without any Node-only private control, in any letter case. */
+export function withoutNodeOnlyControls(env: Record<string, string | undefined>): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !isNodeOnlyPrivateControl(key))) as NodeJS.ProcessEnv;
+}
 const knownKeys = new Set<string>([...REQUIRED_SIM_KEYS, ...ALLOWED_PREFERENCE_KEYS, ...PROVIDER_KEYS_CLOSED_INVENTORY, ...OPTIONAL_KEYS, ...RUNNER_PRIVATE_KEYS]);
 
 function legacyHex(value: string): string {
@@ -133,7 +156,7 @@ export function buildChildEnv(parentEnv: Env, simFile: Record<string, string>): 
   const providers = new Set<string>(PROVIDER_KEYS_CLOSED_INVENTORY);
   for (const [key, value] of Object.entries(parentEnv)) {
     if (value === undefined) continue;
-    if (key.toUpperCase() === "SIM_CATALOG_PASSWORD") continue; // Node-only F4 step-up control, including build children.
+    if (isNodeOnlyPrivateControl(key)) continue; // Node-only private controls (F4 step-up, nav P3), including build children.
     // Case-insensitive to cover Windows environment names as well.
     // `STRIPE_` is a PREFIX match, unlike the exact-name provider list: per-location
     // credentials are named from the tenant's own location codes and can never be listed.

@@ -202,3 +202,19 @@ export function resolveBackLink(
     labelKey: loops ? parent.labelKey : options.labelKey ?? parent.labelKey,
   };
 }
+
+/** True for /admin and every page under it (path part only; a query or hash is ignored). */
+export function isAdminHref(href: string): boolean {
+  const path = href.split(/[?#]/, 1)[0] ?? "";
+  return path === "/admin" || path.startsWith("/admin/");
+}
+
+/**
+ * Nav PR 9 step 15 (plan r2 6.4, R4; lead amendment): a back link that LEAVES /admin never prefetches. Prefetching a
+ * non-admin page renders the (authed) layout, whose session check passes "/dashboard" and clears the step-up unlock,
+ * so the admin hub's link to the Dashboard could clear Tier A just by being in view. `false` = no prefetch,
+ * `undefined` = Next's default.
+ */
+export function backLinkPrefetch(pathname: string, href: string): false | undefined {
+  return isAdminHref(pathname) && !isAdminHref(href) ? false : undefined;
+}

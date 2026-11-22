@@ -5,5 +5,5 @@ import { requireSessionFromHeaders } from "@/lib/session";
 // Crew recipe cards — NOT the live /admin/recipes recipe builder.
 export default async function RecipesPage() {
   const auth = await requireSessionFromHeaders("/recipes");
-  return <PlannedPage lang={auth.user.language} titleKey="planned.name.recipes" />;
+  return <PlannedPage lang={auth.user.language} titleKey="planned.name.recipes" frame={auth} />;
 }

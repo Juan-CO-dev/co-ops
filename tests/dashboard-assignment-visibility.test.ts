@@ -47,8 +47,9 @@ vi.mock("@/lib/day-plan", async (orig) => {
   return { ...m, loadDayFacts: (sb: Parameters<typeof m.loadDayFacts>[0], a: Parameters<typeof m.loadDayFacts>[1]) => m.loadDayFacts(sb, a, { ...okDeps(), ...state.depsOver } as DayFactDeps) };
 });
 vi.mock("@/lib/checklists", () => ({ evaluateAutoReleaseForUserLocations: vi.fn() }));
+const unread = vi.hoisted(() => ({ calls: 0 }));
 vi.mock("@/lib/notifications", () => ({
-  loadUnreadForUser: async () => { if (state.failure === "notifications") throw new Error("offline"); return []; },
+  loadUnreadForUser: async () => { unread.calls++; if (state.failure === "notifications") throw new Error("offline"); return []; },
   notificationLocationContext: (a: { level: number; locations: string[] }) => (a.level >= 9 && a.locations.length === 0 ? undefined : a.locations),
 }));
 vi.mock("@/lib/yield-stats", () => ({ loadMyRetrainTasks: async () => [] }));
@@ -57,7 +58,6 @@ vi.mock("@/lib/counts", () => ({ loadCountsTileState: state.counts }));
 vi.mock("@/components/auth/AuthShell", () => ({ AuthShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock("@/components/BrandMark", () => ({ BrandMark: () => null }));
 vi.mock("@/components/auth/LogoutButton", () => ({ LogoutButton: (props: unknown) => { state.logoutProps.push(props); return null; } }));
-vi.mock("@/components/dashboard/NotificationBell", () => ({ NotificationBell: () => null }));
 vi.mock("@/components/DashboardNav", () => ({ DashboardNav: () => null }));
 vi.mock("@/components/receiving/ReceivingTile", () => ({ ReceivingTile: () => createElement("i", { "data-task-tile": "receiving" }) }));
 vi.mock("@/components/counts/CountsTile", () => ({ CountsTile: () => createElement("i", { "data-task-tile": "counts" }) }));
@@ -169,11 +169,13 @@ describe("F3: the board fails, the viewer's own assignments keep their work visi
 });
 
 describe("dashboard loader resilience and the closing alert", () => {
-  it("a failed bell read is its own line; the rest renders", async () => {
+  it("nav PR 9 (D2): the page makes no notification read, so it draws no notifications line (the bar's bell bounds and reports its own read: tests/top-bar-bell.test.ts)", async () => {
     state.failure = "notifications";
+    unread.calls = 0;
     const h = decoded(await html(4, true));
     expect(h).toContain("Viewer");
-    expect(h).toMatch(/: Couldn't load right now/);
+    expect(unread.calls).toBe(0);
+    expect(h).not.toMatch(/Notifications: Couldn't load right now/);
     expect(shape(h).rows.length).toBeGreaterThan(1);
   });
 

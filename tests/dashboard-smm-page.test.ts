@@ -2,7 +2,8 @@
  * Nav PR 7 (plan r2 T3; spec 3.3.6, 8.1; PR 5 group 13): the social media manager's Dashboard page.
  *
  * Its page is built from SmmPlan alone: own checklist tasks ("Assigned to you."), own station, the closing link, two
- * shortcuts and "All pages" (Me, My performance, Training). It never calls the board, the bell's read, retrain, the rich
+ * shortcuts and "All pages" (nav PR 9: a button opening the top bar's Go to, whose list for this role is exactly its four
+ * entries: tests/go-to-entries.test.ts Q4, tests/nav-top-bar-payload.test.ts G13). It never calls the board, the bell's read, retrain, the rich
  * bodies or the auto-release trigger, and the real loader reads only the SMM allowlist (+ locations). Even handed the
  * busiest day's SHOP facts (a loader bug), nothing of the shop reaches the page.
  */
@@ -54,7 +55,6 @@ vi.mock("@/lib/day-plan", async (orig) => {
 vi.mock("@/components/auth/AuthShell", () => ({ AuthShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock("@/components/BrandMark", () => ({ BrandMark: () => null }));
 vi.mock("@/components/auth/LogoutButton", () => ({ LogoutButton: () => null }));
-vi.mock("@/components/dashboard/NotificationBell", () => ({ NotificationBell: () => createElement("i", { "data-bell": "1" }) }));
 
 import DashboardPage from "@/app/(authed)/dashboard/page";
 import { hm } from "./fixtures/day-plan/build";
@@ -163,14 +163,15 @@ describe("(e) the real loader on the recording client: only the SMM allowlist an
 });
 
 describe("(f) what the page never shows the social media manager", () => {
-  it("no phase line, no Nobody yet, no link to the pulse, Team today, admin, catering or reports; two shortcuts; All pages = Me, My performance, Training; no bell", async () => {
+  it("no phase line, no Nobody yet, no link to the pulse, Team today, admin, catering or reports; two shortcuts; All pages opens Go to; no bell", async () => {
     const h = await render(SMM_OK);
     expect(h).not.toContain("data-phase");
     expect(text(h)).not.toContain("Nobody yet");
     for (const prefix of ["/mid-shift", "/assignments", "/admin", "/catering", "/reports"]) expect(hrefs(h).some((x) => x.startsWith(prefix)), prefix).toBe(false);
     expect([...h.matchAll(/data-shortcut="([^"]+)"/g)].map((m) => m[1])).toEqual(["training", "my-feedback"]);
-    const allPages = h.slice(h.indexOf("<details"), h.indexOf("</details>"));
-    expect(hrefs(allPages)).toEqual(["/settings", "/my-feedback", "/training"]);
+    // Nav PR 9: "All pages" is one button that opens the top bar's Go to sheet; the page itself lists no chips.
+    expect(h).not.toContain("<details");
+    expect(h.match(/<button[^>]*data-dashboard-all-pages=""[^>]*>([^<]*)<\/button>/)?.[1]).toBe("All pages");
     expect(h).not.toContain("data-bell");
   });
 });

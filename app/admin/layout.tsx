@@ -8,9 +8,13 @@
  * layout's hardcoded requireSessionFromHeaders("/dashboard") would clear
  * step-up on every admin page load.
  *
- * Owns: auth boundary, role gate (level >= 6), TranslationProvider, floating
- * UserMenu (parity with (authed)), StepUpProvider (seeds the two-tier step-up
- * client state), and admin chrome (context-aware back link + container).
+ * Owns: auth boundary, role gate (level >= 6), TranslationProvider, NavFrame
+ * (nav PR 9: the in-flow top bar, the idle-logout warning and Go to, the same
+ * chrome as (authed); the floating user menu is gone), StepUpProvider (seeds the
+ * two-tier step-up client state), and admin chrome (context-aware back link +
+ * container). The bar renders BEFORE and OUTSIDE StepUpProvider; its background
+ * requests are step-up NEUTRAL by exact path and its links never prefetch, so
+ * the bar neither keeps nor clears an unlock (lib/session.ts STEP_UP_NEUTRAL_PATHS).
  */
 
 import { Suspense, type ReactNode } from "react";
@@ -20,13 +24,11 @@ import { BackLink } from "@/components/nav/BackLink";
 import { ShopContextSync } from "@/components/ShopContextSync";
 import { StepUpProvider } from "@/components/admin/StepUpProvider";
 import { stepUpEditWindowMs } from "@/lib/admin/step-up";
-import { UserMenu } from "@/components/UserMenu";
 import { CanvasWatermark } from "@/components/layout/CanvasWatermark";
-import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
+import { NavFrame } from "@/components/nav/NavFrame";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { accessibleLocations } from "@/lib/locations";
-import { ROLES } from "@/lib/roles";
-import { requireSessionFromHeaders, sessionIdleMinutes } from "@/lib/session";
+import { requireSessionFromHeaders } from "@/lib/session";
 
 const ADMIN_MIN_LEVEL = 6;
 
@@ -40,35 +42,26 @@ export default async function AdminLayout({ children }: { children: ReactNode })
 
   return (
     <TranslationProvider initialLanguage={lang}>
-      <div className="fixed top-4 right-4 z-30">
-        <UserMenu
-          userName={auth.user.name}
-          userEmail={auth.user.email}
-          actorLevel={ROLES[auth.user.role].level}
-          initialBlurb={auth.user.profileBlurb}
-          sessionId={auth.session.id}
-        />
-      </div>
-      <CanvasWatermark />
-      {/* Idle-timeout guard also covers the admin section (its own top-level
-          route group, not under (authed)). */}
-      <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} />
-      {/* B2: an explicit ?location= / ?loc= pick becomes the remembered shop (lib/shop-context-shared.ts). */}
-      <Suspense fallback={null}>
-        <ShopContextSync allowed={accessibleLocations({ role: auth.role, locations: auth.locations })} />
-      </Suspense>
-      <StepUpProvider
-        unlocked={auth.session.stepUpUnlocked}
-        unlockedAt={auth.session.stepUpUnlockedAt}
-        catalogUnlockedAt={auth.session.catalogEditUnlockedAt ?? null}
-        catalogWindow
-        editWindowMs={stepUpEditWindowMs()}
-      >
-        <div className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 py-6">
-          <BackLink />
-          {children}
-        </div>
-      </StepUpProvider>
+      {/* The top bar, the idle-logout warning and Go to, around the admin shell (nav PR 9). */}
+      <NavFrame auth={auth} language={lang}>
+        <CanvasWatermark />
+        {/* B2: an explicit ?location= / ?loc= pick becomes the remembered shop (lib/shop-context-shared.ts). */}
+        <Suspense fallback={null}>
+          <ShopContextSync allowed={accessibleLocations({ role: auth.role, locations: auth.locations })} />
+        </Suspense>
+        <StepUpProvider
+          unlocked={auth.session.stepUpUnlocked}
+          unlockedAt={auth.session.stepUpUnlockedAt}
+          catalogUnlockedAt={auth.session.catalogEditUnlockedAt ?? null}
+          catalogWindow
+          editWindowMs={stepUpEditWindowMs()}
+        >
+          <div className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 py-6">
+            <BackLink />
+            {children}
+          </div>
+        </StepUpProvider>
+      </NavFrame>
     </TranslationProvider>
   );
 }

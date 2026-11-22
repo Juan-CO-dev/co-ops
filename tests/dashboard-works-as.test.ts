@@ -52,7 +52,6 @@ vi.mock("@/lib/counts", () => ({ loadCountsTileState: async () => null }));
 vi.mock("@/components/auth/AuthShell", () => ({ AuthShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock("@/components/BrandMark", () => ({ BrandMark: () => null }));
 vi.mock("@/components/auth/LogoutButton", () => ({ LogoutButton: () => null }));
-vi.mock("@/components/dashboard/NotificationBell", () => ({ NotificationBell: () => null }));
 
 import DashboardPage from "@/app/(authed)/dashboard/page";
 

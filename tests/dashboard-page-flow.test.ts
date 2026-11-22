@@ -2,10 +2,11 @@
  * Nav PR 7: the Dashboard page's flow (plan r2 T11, T12, T18, T7 page half; Astra F1, F2; lead ruling r2 G1).
  *
  * - T11: one instant; the ONE board promise started before the loader resolves, on an abortable client, shared by the
- *   loader and My shift (identity); the board only with `ops`; `locations: auth.locations`; planDay once; the bell,
- *   retrain and loader calls all started before anything is awaited.
- * - T12: no template-first read and no tile loader left on the page.
- * - T18: ONE absolute page deadline. A board / bell / retrain that never settles, all three together, a board that
+ *   loader and My shift (identity); the board only with `ops`; `locations: auth.locations`; planDay once; the retrain
+ *   and loader calls all started before anything is awaited. Nav PR 9: the bell left the page for the top bar (its own
+ *   bound: tests/top-bar-bell.test.ts), so the page makes no notification read at all.
+ * - T12: no template-first read and no tile loader left on the page; nav PR 9: no notification import and no bell.
+ * - T18: ONE absolute page deadline. A board / retrain that never settles, both together, a board that
  *   rejects fast, and (G1) a board that succeeds at 5,900 ms followed by hanging rich reads: the page resolves by 6,000 ms,
  *   the board's queries are aborted, no read that depends on a failed board starts, and no timer is left.
  * - T7 page half (F2): the loader throws, or never settles (the 7 s belt): every fact failed, no phase line, no Next up.
@@ -138,7 +139,6 @@ vi.mock("@/lib/counts", () => ({ loadCountsTileState: state.counts }));
 vi.mock("@/components/auth/AuthShell", () => ({ AuthShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock("@/components/BrandMark", () => ({ BrandMark: () => null }));
 vi.mock("@/components/auth/LogoutButton", () => ({ LogoutButton: () => null }));
-vi.mock("@/components/dashboard/NotificationBell", () => ({ NotificationBell: () => createElement("i", { "data-bell": "1" }) }));
 vi.mock("@/components/assignments/ShiftBoardClient", () => ({
   ShiftBoardClient: (p: { board: unknown }) => { state.myShiftBoards.push(p.board); return createElement("i", { "data-my-shift": "1" }); },
 }));
@@ -196,8 +196,8 @@ describe("T11: the page's call shape (real timers)", () => {
       for (let i = 0; i < 50 && !state.deferred; i++) await Promise.resolve();
       expect(state.deferred).not.toBeNull();
       callsAtLoader = [...state.calls];
-      // The bell, retrain, board and loader calls all started before the first await of any of them.
-      expect(callsAtLoader.sort()).toEqual(["board", "loader", "retrain", "unread"]);
+      // The retrain, board and loader calls all started before the first await of any of them; no notification read.
+      expect(callsAtLoader.sort()).toEqual(["board", "loader", "retrain"]);
       expect(state.signals.length).toBeGreaterThan(0); // the board's client carries the page's abort signal
       state.deferred!.resolve(undefined);
       const html = render(await p);
@@ -249,6 +249,11 @@ describe("T12: no template-first read and no tile loader on the page", () => {
     expect(src).not.toContain("checklist_");
     expect(src).not.toContain("Date.now()");
   });
+  it("nav PR 9: imports no @/lib/notifications and no bell component (the bell is the top bar's)", () => {
+    const src = readFileSync("app/(authed)/dashboard/page.tsx", "utf8");
+    expect(src).not.toContain("@/lib/notifications");
+    expect(src).not.toMatch(/NotificationBell|notification-bell-shared|loadUnreadForUser|TopBarBell|BellIsland/);
+  });
 });
 
 describe("T18: one absolute page deadline (fake timers)", () => {
@@ -274,16 +279,7 @@ describe("T18: one absolute page deadline (fake timers)", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("(b) the bell read never settles: resolved at 6 s with its line and no bell", async () => {
-    state.unread = () => never();
-    const { seen, page } = await timed([5_999, 6_000]);
-    expect(seen).toEqual([false, true]);
-    const html = render(page);
-    expect(html).toContain("Notifications: Couldn't load right now");
-    expect(html).not.toContain("data-bell");
-    expect(html).toContain("data-my-shift");
-    expect(vi.getTimerCount()).toBe(0);
-  });
+  // (b) "the bell read never settles" moved to the bar's own bound (tests/top-bar-bell.test.ts, B1): nav PR 9.
 
   it("(c) retrain never settles: resolved at 6 s with its line", async () => {
     state.retrain = () => never();
@@ -293,9 +289,8 @@ describe("T18: one absolute page deadline (fake timers)", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("(d) all three never settle together: still 6 s (parallel, not 18 s)", async () => {
+  it("(d) both never settle together: still 6 s (parallel, not 12 s)", async () => {
     state.board = boardThat(() => never());
-    state.unread = () => never();
     state.retrain = () => never();
     const { seen } = await timed([5_999, 6_000]);
     expect(seen).toEqual([false, true]);

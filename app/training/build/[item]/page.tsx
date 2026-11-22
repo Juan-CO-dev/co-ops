@@ -13,6 +13,7 @@
 import { notFound } from "next/navigation";
 
 import { BackLink } from "@/components/nav/BackLink";
+import { NavFrame } from "@/components/nav/NavFrame";
 import { LearnTheBuild } from "@/components/training/LearnTheBuild";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { buildCardForSlug } from "@/lib/training/build-cards";
@@ -30,10 +31,13 @@ export default async function LearnTheBuildPage({ params }: { params: Promise<{ 
 
   return (
     <TranslationProvider initialLanguage={auth.user.language}>
-      <div className="mx-auto w-full max-w-3xl px-3 pt-3">
-        <BackLink />
-      </div>
-      <LearnTheBuild item={def.item} steps={steps} />
+      {/* Outside both layouts: the page mounts the top bar, and with it the idle guard it lacked (nav PR 9, A1). */}
+      <NavFrame auth={auth} language={auth.user.language}>
+        <div className="mx-auto w-full max-w-3xl px-3 pt-3">
+          <BackLink />
+        </div>
+        <LearnTheBuild item={def.item} steps={steps} />
+      </NavFrame>
     </TranslationProvider>
   );
 }

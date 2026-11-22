@@ -7,11 +7,14 @@
  * The page composes no tiles of its own: ONE clock instant per request; ONE page-owned board promise, bounded by the ONE
  * absolute page deadline and never rejecting; ONE loadDayFacts call (PR 6) started with that board; ONE planDay call
  * (PR 5); the components render the plan. It reads no checklist state itself (no template-first read, no tile loader).
- * Every optional read (board, bell, retrain, the own Receiving / Counts bodies) is bounded by what is left of the page
+ * Every optional read (board, retrain, the own Receiving / Counts bodies) is bounded by what is left of the page
  * deadline (lib/dashboard-day.ts), so the page resolves about 6 s after the optional reads start, whatever hangs.
  *
- * The social media manager gets its own small page from SmmPlan: no board, no bell, no notification read, no retrain,
- * no auto-release trigger, and no shop-fact read (the loader's SMM branch). Decided by the REAL role, never "works as".
+ * Nav PR 9: the bell moved into the top bar (components/nav/NavFrame, on every signed-in page, with its own 6 s bound),
+ * so this page makes NO notification read and draws no bell; "All pages" opens the bar's Go to sheet.
+ *
+ * The social media manager gets its own small page from SmmPlan: no board, no retrain, no auto-release trigger, and no
+ * shop-fact read (the loader's SMM branch); the bar gives it no bell either. Decided by the REAL role, never "works as".
  *
  * Nav PR 8, the role blocks (spec 3.6), each by the REAL role and each read through the page's `settle` (the SAME
  * deadline, one cell per read): the numbers strip for MoO / Owner / CGS, "Needs you" for GM and up, the catering block
@@ -29,7 +32,6 @@ import { loadMyRetrainTasks } from "@/lib/yield-stats";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { BrandMark } from "@/components/BrandMark";
 import { LogoutButton } from "@/components/auth/LogoutButton";
-import { NotificationBell } from "@/components/dashboard/NotificationBell";
 import { CateringBlock } from "@/components/dashboard/CateringBlock";
 import { DayList } from "@/components/dashboard/DayList";
 import { MyShiftPulseToggle } from "@/components/dashboard/MyShiftPulseToggle";
@@ -47,8 +49,6 @@ import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import { loadUnreadForUser, notificationLocationContext } from "@/lib/notifications";
-import { notificationBellRoleAllowed } from "@/lib/notification-bell-shared";
 import { loadRecentDeliveries } from "@/lib/receiving";
 import { loadCountsTileState } from "@/lib/counts";
 import { deriveMissingEmailIds, type ReceivingDeliveryFacts } from "@/lib/dashboard-status-shared";
@@ -61,7 +61,7 @@ import { firstName } from "@/lib/day-plan-load-shared";
 import { renderDayReason } from "@/lib/day-plan-render";
 import { operationalNow } from "@/lib/midshift-shared";
 import { navSwitches } from "@/lib/nav-switches";
-import { withAbort, withAbortStrict } from "@/lib/pulse/abort";
+import { withAbort } from "@/lib/pulse/abort";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { resolveShop } from "@/lib/shop-context";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
@@ -152,9 +152,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const switches = navSwitches(); // ONE read: the engine's viewer, the shortcuts and "All pages" share it
   const viewer = dayViewerFor(auth, selectedLocation?.id ?? "", switches);
   const shop = selectedLocation ? { id: selectedLocation.id, code: selectedLocation.code } : null;
-  const bellAllowed = notificationBellRoleAllowed(auth.role);
 
-  // ── The social media manager: own rows only. NO board, retrain, bell, rich body, or shop-fact read. ──
+  // ── The social media manager: own rows only. NO board, retrain, rich body, or shop-fact read. ──
   let smmPlan: SmmPlan | null = null;
   if (smm && shop) {
     const smmInput = await loadDayFactsSafe(sb, { viewer, shop, now, board: null, locations: auth.locations });
@@ -178,11 +177,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     ? settleBy((signal) => loadShiftBoard(withAbort(sb, signal), { actor: assignmentActor, locationId: shop.id, date: planDate }), deadlineAt, "board")
     : null;
   const retrainP = !smm && shop && auth.level >= 4 ? widget("yield.task.heading", (signal) => loadMyRetrainTasks(auth, shop.id, { signal })) : null;
-  // Nav spec PR S1 (8.1, "Bell: none"): the social media manager gets NO notification read and NO bell, by the REAL role.
-  // ONE rule, shared with "Mark all read" (W26-5 b). Started in parallel now; bounded by the page deadline.
-  const unreadP = bellAllowed
-    ? widget("notifications.sheet.heading", (signal) => loadUnreadForUser(withAbortStrict(sb, signal), auth.user.id, { locationContext: notificationLocationContext(auth) }))
-    : null;
   const richP = boardSettled && shop
     ? richBodies(boardSettled, { userId: auth.user.id, receiving: (signal) => loadRecentDeliveries(auth, shop.id, 20, { signal }), counts: (signal) => loadCountsTileState(auth, shop.id, { signal }) }, widget)
     : null;
@@ -197,7 +191,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const plan = input ? (planDay(input) as DayPlan) : null;
   const board = boardSettled ? await boardSettled : null; // already settled: never hangs
   if (board && board.kind !== "ok") failedWidgets.add("nav.assignments");
-  const [retrainTasks, unreadNotifications, rich, strip, needs, blockExtras] = await Promise.all([retrainP, unreadP, richP, stripP, needsP, blockP]);
+  const [retrainTasks, rich, strip, needs, blockExtras] = await Promise.all([retrainP, richP, stripP, needsP, blockP]);
   // The catering block: the engine's one `placement: "block"` item. It draws the night-before line, so PhaseLine leaves it
   // out ONLY when the block is drawn and has that line to draw (Q5).
   const blockIndex = plan ? cateringBlockIndex(plan) : -1;
@@ -225,10 +219,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   } : undefined;
 
   const allLocationsBadge = auth.level >= 9 && auth.locations.length === 0;
-  // A location-id → code map for the notification cards.
-  const locationCodes: Record<string, string> = Object.fromEntries(
-    locations.map((l) => [l.id, l.code]),
-  );
   const nowMin = input?.nowMin ?? operationalNow(now).minutesOfDay;
   const greeting = serverT(language, greetingKey(nowMin), { name: firstName(auth.user.name) ?? auth.user.name });
 
@@ -256,7 +246,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           </div>
         </div>
 
-        {/* Role badge and the bell (top-right of the header row; Build #3 PR 3 Step 7 lock). */}
+        {/* The role badge (top-right of the header row). Nav PR 9: the bell moved into the top bar. */}
         <div className="flex items-center justify-between gap-3 lg:col-start-2 lg:row-start-1 lg:justify-end lg:gap-4">
           <div className="flex flex-wrap gap-2">
             <span
@@ -277,10 +267,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               {roleLabel}
             </span>
           </div>
-          {bellAllowed && unreadNotifications && <NotificationBell
-            notifications={unreadNotifications}
-            locationCodes={locationCodes}
-          />}
         </div>
 
         {/* Location chrome — single non-interactive chip for single-location
