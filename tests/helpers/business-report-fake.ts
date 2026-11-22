@@ -25,6 +25,9 @@ export type FakeOpts = {
    *  saved yet; "missing" = the table is not there (42P01); "error" = any other error; "throw" = the read throws.
    *  Default: no row (the defaults). Only a GM's load reads it. */
   visibility?: ReadonlyArray<VisibilityAnswer>;
+  /** Nav PR 8 (A5): fields merged into every fact_labor_cost row (per call args), so a case can set `open_punches`,
+   *  `days_pending`, `salary_basis`, `salary_unplaced_people` and the like per day. */
+  laborCostRow?: (args: Record<string, unknown>) => Record<string, unknown>;
 };
 export type VisibilityAnswer = Record<string, unknown> | null | "missing" | "error" | "throw" | { raw: unknown };
 /** Every switch on: what a GM received before the settings existed (fully loaded labor included). */
@@ -42,6 +45,8 @@ const FP = "f".repeat(32);
 export function fakeClient(o: FakeOpts = {}) {
   const calls: Call[] = [];
   const tables: string[] = [];
+  /** Nav PR 8 (A5): one entry per request (`rpc:<name>` / `table:<name>`, every page included), in ISSUE order. */
+  const log: string[] = [];
   let rebuilt = false;
   let visibilityReads = 0;
   const visibilityAnswer = (): { data: unknown; error: unknown } => {
@@ -65,6 +70,7 @@ export function fakeClient(o: FakeOpts = {}) {
   const client = {
     rpc: (fn: string, args: Record<string, unknown>, opts?: { count?: string }) => {
       calls.push({ fn, args });
+      log.push(`rpc:${fn}`);
       let lo = 0, hi = Number.POSITIVE_INFINITY;
       const answer = () => {
         const r = produce(fn, args) as { data: unknown; error: unknown };
@@ -117,7 +123,8 @@ export function fakeClient(o: FakeOpts = {}) {
       } else if (fn === "fact_labor_cost") {
         data = [{ week_start: "2026-09-27", location_id: A, hourly_straight_cents: 900, ot_premium_cents: 0, salaried_cents: null, salary_basis: "unknown",
           burden_pct: 12, burden_basis: "estimated", estimated_rate_minutes: 0, hourly_minutes: 30, ot_minutes: 0, salaried_minutes: 0, ot_state: "assessed",
-          range_days: dates(from, to).length, days_covered: dates(from, to).length, days_pending: 0, days_fallback: 0, days_incomplete: 0, days_missing: 0, open_punches: 0 }];
+          range_days: dates(from, to).length, days_covered: dates(from, to).length, days_pending: 0, days_fallback: 0, days_incomplete: 0, days_missing: 0, open_punches: 0,
+          ...(o.laborCostRow?.(args) ?? {}) }];
       }
       return { data, error: null };
     }
@@ -125,6 +132,7 @@ export function fakeClient(o: FakeOpts = {}) {
   Object.assign(client, {
     from: (table: string) => {
       tables.push(table);
+      log.push(`table:${table}`);
       if (table === VISIBILITY_TABLE) {
         const v: Record<string, unknown> = {};
         for (const k of ["select", "order", "limit"]) v[k] = () => v;
@@ -146,5 +154,5 @@ export function fakeClient(o: FakeOpts = {}) {
       return q;
     },
   });
-  return { client: client as never, calls, tables, visibilityReads: () => visibilityReads };
+  return { client: client as never, calls, tables, log, visibilityReads: () => visibilityReads };
 }
