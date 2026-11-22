@@ -8331,7 +8331,7 @@
   "schedule.settings.limits.closing_measured": "Closing checklist: measured ~{minutes} min from {samples} finalized closes · override (wins when set)",
   "schedule.settings.limits.closing_unmeasured": "Closing checklist: not enough finalized closes yet · override (wins when set)",
   "schedule.settings.limits.flex_phase3": "Flex days arrive with availability sync (a later update).",
-  "schedule.settings.catering.min_headcount": "Catering prep from (guests)",
+  "schedule.settings.catering.min_headcount": "Catering prep from (total guests that day)",
   "schedule.settings.catering.extra_heads": "Extra Prep/Dishwasher people",
   "schedule.settings.catering.start": "Prep starts",
   "schedule.settings.catering.end": "Prep ends",

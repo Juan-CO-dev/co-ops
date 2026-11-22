@@ -8331,7 +8331,7 @@
   "schedule.settings.limits.closing_measured": "Checklist de cierre: medido ~{minutes} min de {samples} cierres finalizados · ajuste manual (manda si lo pones)",
   "schedule.settings.limits.closing_unmeasured": "Checklist de cierre: todavía no hay suficientes cierres finalizados · ajuste manual (manda si lo pones)",
   "schedule.settings.limits.flex_phase3": "Los días flexibles llegan con la sincronización de disponibilidad (una actualización posterior).",
-  "schedule.settings.catering.min_headcount": "Preparación de catering desde (invitados)",
+  "schedule.settings.catering.min_headcount": "Preparación de catering desde (invitados en total ese día)",
   "schedule.settings.catering.extra_heads": "Personas extra en Prep/Lavaplatos",
   "schedule.settings.catering.start": "La preparación empieza",
   "schedule.settings.catering.end": "La preparación termina",
