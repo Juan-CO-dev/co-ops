@@ -17,6 +17,7 @@ import { operationalNow } from "@/lib/midshift-shared";
 import type { PeopleActor } from "@/lib/people/access-shared";
 import { summarizeSales, type DailyRaw } from "@/lib/sales-reports-shared";
 import { canEditHourlyTarget, canManageShopSwitch } from "./access-shared";
+import { earlyOpenReady } from "./schedule-features";
 import { scheduleLaborViewsEnabled, type ScheduleLaborViewsEnv } from "./labor-projection-shared";
 import {
   acceptSuggestion, apportion, budgetForDates, entryDates, minCrewHours, referenceStructureOf, structureDeltaHours, suggestBudget, type BudgetEntry, type BudgetSuggestion,
@@ -61,6 +62,12 @@ export async function saveStructure(deps: ScheduleDeps, args: { actor: PeopleAct
   await gate(deps.service, args.actor, args.locationId, "structure");
   const v = validScheduleStructure(args.structure);
   if (!v.ok) throw new ScheduleError("structure_invalid", { key: v.key });
+  // PR SCH-2 (plan r5 20.7, ruling D7): the earlier-opening mode needs 0354. Until its sentinel answers, a structure
+  // carrying catering.earlyOpenMode (ANY value, manual included) is refused here, before any write; a structure
+  // without the key takes today's path unchanged.
+  if (Object.hasOwn((args.structure as ScheduleStructure).catering, "earlyOpenMode") && !(await earlyOpenReady(deps.service))) {
+    throw new ScheduleError("feature_not_ready", { key: "catering.earlyOpenMode" });
+  }
   // 0346 / board two labor views PR 2: the pure-hourly target is MoO+ (Juan 2026-11-18) and dark behind
   // SCHEDULE_LABOR_VIEWS. Anyone who may not set it may still save the structure AROUND it: only a CHANGE of the key
   // (set, moved or removed against the live head) is refused. The head compared is the one the writer re-checks

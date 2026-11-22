@@ -20,7 +20,7 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import { useStepUpPost } from "@/components/admin/useStepUpPost";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RoleCode } from "@/lib/roles";
-import { structureBody, structureProblemLine, structureSaveRefusal, type HourlyTargetAccess } from "@/lib/scheduling/settings-view-shared";
+import { structureBody, structureProblemLine, structureSaveRefusal, type EarlyOpenAccess, type HourlyTargetAccess } from "@/lib/scheduling/settings-view-shared";
 import { LABOR_TARGET_HOURLY_PCT, LABOR_TARGET_LOADED_PCT } from "@/lib/facts/labor-config-shared";
 import {
   CREW_TYPES, LEADER_SETTINGS, POSITION_ROLES, applyRoleChange, effectiveLineFloorLimit, isLineRole, isSecondary, positionIds, reconcileLineFloors, reconcilePriorityPairs, type PositionRole, type PositionTimeProvenance, type ScheduleStructure,
@@ -30,7 +30,7 @@ import { scheduleErrorKey } from "./schedule-errors";
 import { BUTTON, Check, Fields, GHOST, NumField, SelectField, TimeField } from "./settings-fields";
 import { useBoardLine } from "./use-board-line";
 import { ShiftTypesEditor } from "./ShiftTypesEditor";
-import { CREW_CATERING_DEFAULTS, scheduleEngine, backupCoverPerDay, backupCoverPerPersonWeek } from "@/lib/scheduling/structure-shared";
+import { CREW_CATERING_DEFAULTS, EARLY_OPEN_MODES, scheduleEngine, backupCoverPerDay, backupCoverPerPersonWeek, type EarlyOpenMode } from "@/lib/scheduling/structure-shared";
 
 export const CREW_ENGINE_SELECTABLE = true;
 
@@ -60,7 +60,14 @@ function Section({ id, title, children }: { id: string; title: string; children:
   );
 }
 
-export function StructureEditor({ locationId, structure, closing, positions, names, timeProvenance = {}, hourlyTarget = "hidden", onDirty, initialError = null, initialSaved = false }: {
+const EARLY_OPEN_MODE_LABEL: Record<EarlyOpenMode, TranslationKey> = {
+  manual: "schedule.settings.catering.early_open_mode_manual", semi: "schedule.settings.catering.early_open_mode_semi", auto: "schedule.settings.catering.early_open_mode_auto",
+};
+const EARLY_OPEN_MODE_HELP: Record<EarlyOpenMode, TranslationKey> = {
+  manual: "schedule.settings.catering.early_open_mode_manual_help", semi: "schedule.settings.catering.early_open_mode_semi_help", auto: "schedule.settings.catering.early_open_mode_auto_help",
+};
+
+export function StructureEditor({ locationId, structure, closing, positions, names, timeProvenance = {}, hourlyTarget = "hidden", earlyOpen = "hidden", onDirty, initialError = null, initialSaved = false }: {
   locationId: string;
   structure: { id: string | null; source: "saved" | "defaults"; value: ScheduleStructure };
   closing: { measuredMinutes: number | null; samples: number };
@@ -69,6 +76,8 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
   timeProvenance?: Record<string, PositionTimeProvenance>;
   /** The pure-hourly target (0346): MoO+ edits it, others read it, hidden while the labor views are dark. */
   hourlyTarget?: HourlyTargetAccess;
+  /** PR SCH-2: the earlier-opening mode (0354): shown only once the migration is applied, to who may edit the structure. */
+  earlyOpen?: EarlyOpenAccess;
   onDirty?: (dirty: boolean) => void;
   /** SSR tests only. */
   initialError?: string | null;
@@ -322,7 +331,12 @@ export function StructureEditor({ locationId, structure, closing, positions, nam
           <TimeField name="catering.defaultStartQ" label={t("schedule.settings.catering.start")} q={d.catering.defaultStartQ} onChange={(q) => edit((s) => { s.catering.defaultStartQ = q; })} />
           <TimeField name="catering.defaultEndQ" label={t("schedule.settings.catering.end")} q={d.catering.defaultEndQ} onChange={(q) => edit((s) => { s.catering.defaultEndQ = q; })} />
           <NumField name="catering.leadMinutes" label={t("schedule.settings.catering.lead")} value={d.catering.leadMinutes} step={15} onChange={(v) => edit((s) => { s.catering.leadMinutes = num(v); })} />
+          {earlyOpen === "edit" && <SelectField name="catering.earlyOpenMode" label={t("schedule.settings.catering.early_open_mode")} value={d.catering.earlyOpenMode ?? "manual"}
+            options={EARLY_OPEN_MODES.map((m) => ({ value: m, label: t(EARLY_OPEN_MODE_LABEL[m]) }))}
+            /* Manual is what ABSENT means: choosing it removes the key (the rollback first step, plan section 17). */
+            onChange={(v) => edit((s) => { if (v === "semi" || v === "auto") s.catering.earlyOpenMode = v; else delete s.catering.earlyOpenMode; })} />}
         </Fields>
+        {earlyOpen === "edit" && <p className="text-sm text-co-text-muted">{t(EARLY_OPEN_MODE_HELP[d.catering.earlyOpenMode ?? "manual"])}</p>}
       </Section>
 
       <Section id="labor" title={t("schedule.settings.section.labor")}>
