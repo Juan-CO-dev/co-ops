@@ -1,6 +1,8 @@
 /**
  * Nav PR 8: the numbers strip (plan r2 2.1, 2.4, 7.1; lead rulings r1 A1, A2, Q2; r2 B2).
  *
+ * Rendered half (NumbersStrip, StripLaborCell): T-R2, T-R3a / T-R3b, T-R7, T-R8, T-R9, T-B3 labels, links, T-B2's source pin.
+ *
  * Pure half:
  *   - T-R3a: `salesStripCell` keeps a covered zero apart from "not captured" (A1);
  *   - T-R9: `cateringStripCell` classifies each order accepted / estimated / missing, values the pipeline only, counts
@@ -9,9 +11,21 @@
  *     views built by the real narrow loader; with the newer days in a rebuilding payroll week it picks the newest READY
  *     day, with its own date (B2).
  */
+import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
+
+import { NumbersStrip } from "@/components/dashboard/NumbersStrip";
+import type { StripShop } from "@/lib/dashboard-blocks";
+import type { CateringStripCell } from "@/lib/dashboard-blocks-shared";
+import en from "@/lib/i18n/en.json";
+import es from "@/lib/i18n/es.json";
+import { summarizeSales, type SalesTotals } from "@/lib/sales-reports-shared";
+import { links, text } from "./helpers/day-render";
+import { sightedText, visibleText } from "./helpers/business-report-states";
 
 import { loadBusinessLaborDays } from "@/lib/business-report";
 import { figureComparable, figureReasonOf } from "@/lib/business-figure-shared";
@@ -129,5 +143,169 @@ describe("T-B3 (Q2, B2): newestLaborDay", () => {
   });
   it("no days: null", () => {
     expect(newestLaborDay([])).toBeNull();
+  });
+});
+
+// ── Rendered (commit 8): NumbersStrip + StripLaborCell ──────────────────────────────────────────────────────────────
+
+const EN = en as Record<string, string>;
+const ES = es as Record<string, string>;
+const SHOP1 = { id: "11111111-1111-4111-8111-111111111111", code: "P", name: "P Street" };
+const SHOP2 = { id: "22222222-2222-4222-8222-222222222222", code: "CH", name: "Capitol Hill" };
+const totals = (o: Partial<SalesTotals>): SalesTotals => ({ ...summarizeSales([], D, D, "day").totals, ...o });
+const salesOk = (o: Partial<SalesTotals>, capturedAt: string | null = "2026-11-18T18:42:00Z"): StripShop["sales"] => ({ kind: "ok", value: { totals: totals(o), capturedAt } });
+const cateringOk = (o: Partial<CateringStripCell> = {}): StripShop["catering"] => ({ kind: "ok", value: { orders: 1, pipeline: 1, unlinkedEzcater: 0, valuedCents: 50_000, estimated: 0, missing: 0, ...o } });
+async function stripRow(o: Partial<StripShop> = {}): Promise<StripShop> {
+  const labor = (await laborSelectionCases()).yesterdayPending;
+  return { shop: SHOP1, sales: salesOk({ checks: 3, toastChecksCents: 4_500, coverage: "complete", coveredDays: 1 }), labor: { kind: "ok", value: labor }, catering: cateringOk(), ...o };
+}
+const render = (rows: StripShop[], language: "en" | "es" = "en") => renderToStaticMarkup(createElement(NumbersStrip, { rows, language }));
+const cell = (html: string, kind: string, shop = "P") => {
+  const block = html.split(`data-strip-shop="${shop}"`)[1] ?? "";
+  const m = block.match(new RegExp(`<a[^>]*data-strip-cell="${kind}"[\\s\\S]*?</a>`));
+  return m ? m[0] : "";
+};
+const plain = (h: string) => text(h);
+
+describe("T-R3a rendered (A1), both languages", () => {
+  it.each(["en", "es"] as const)("%s", async (lang) => {
+    const L = lang === "en" ? EN : ES;
+    // A successful RPC with nothing captured and no checks.
+    const none = plain(cell(render([await stripRow({ sales: salesOk({}, null) })], lang), "sales"));
+    expect(none).toContain(L["dashboard.strip.sales_not_captured"]);
+    expect(none).toContain(L["pulse.sales.synced_none"]);
+    expect(none).not.toContain(L["dashboard.strip.sales_none"]);
+    expect(none).not.toMatch(/\$0\.00|0,00/);
+    // Captured, 0 checks: a covered zero + the synced time.
+    const zero = plain(cell(render([await stripRow({ sales: salesOk({ coverage: "complete", coveredDays: 1 }) })], lang), "sales"));
+    expect(zero).toContain(L["dashboard.strip.sales_none"]);
+    expect(zero).toContain(L["pulse.sales.synced"]!.split(" {time}")[0]!);
+    // Checks with an unknown amount: "At least".
+    const partial = plain(cell(render([await stripRow({ sales: salesOk({ checks: 3, toastChecksCents: 4_500, amountMissing: 1, coverage: "complete", coveredDays: 1 }) })], lang), "sales"));
+    expect(partial).toContain(L["dashboard.strip.sales_at_least"]!.split(" {amount}")[0]!);
+    // The RPC rejects / is not installed: the cell fails, never $0.
+    for (const kind of ["failed", "timed_out"] as const) {
+      const failed = plain(cell(render([await stripRow({ sales: { kind } })], lang), "sales"));
+      expect(failed).toContain(L["dashboard.tile.unavailable"]);
+      expect(failed).not.toMatch(/\$|0,00/);
+    }
+  });
+});
+
+describe("T-R3b: a failed number reads Couldn't load; the other cells are unchanged", () => {
+  it("each cell alone, then all together", async () => {
+    const ok = render([await stripRow()]);
+    for (const [kind, patch] of [["sales", { sales: { kind: "failed" } }], ["labor", { labor: { kind: "timed_out" } }], ["catering", { catering: { kind: "failed" } }]] as const) {
+      const html = render([await stripRow(patch as Partial<StripShop>)]);
+      expect(plain(cell(html, kind))).toContain(EN["dashboard.tile.unavailable"]);
+      for (const other of ["sales", "labor", "catering"].filter((k) => k !== kind)) expect(cell(html, other)).toBe(cell(ok, other));
+    }
+    const all = render([await stripRow({ sales: { kind: "failed" }, labor: { kind: "failed" }, catering: { kind: "timed_out" } })]);
+    for (const kind of ["sales", "labor", "catering"]) expect(plain(cell(all, kind))).toContain(EN["dashboard.tile.unavailable"]);
+    expect(plain(all)).not.toMatch(/\$/);
+  });
+  it("the business reads timing out (business_reads_timeout) is a failed labor cell, the others stand", async () => {
+    const html = render([await stripRow({ labor: { kind: "failed" } })]);
+    expect(plain(cell(html, "labor"))).toBe(`${EN["dashboard.tile.unavailable"]}`);
+    expect(plain(cell(html, "sales"))).toContain("$45.00");
+  });
+});
+
+describe("T-R2: an estimated figure keeps its label", () => {
+  it("the 12% burden default: fully loaded carries its mark and the legend says burden estimated", async () => {
+    const html = render([await stripRow()]);
+    const labor = cell(html, "labor");
+    expect(labor).toMatch(/data-marks="a"/);
+    expect(visibleText(labor)).toContain(EN["reports.business.burden_estimated"]);
+    expect(sightedText(labor)).toContain(EN["reports.business.burden_estimated"]);
+  });
+  it("a first-known wage adds wage estimated", async () => {
+    const r = await loadBusinessLaborDays(MOO, { locationId: A, days: DAYS }, { client: fakeClient({ weeks: [W("2026-09-27"), W("2026-10-04")], laborCostRow: () => ({ ...RICH, estimated_rate_minutes: 30 }) }).client, env: ON });
+    const days = r.days.map((d) => ({ date: d.date, view: businessLaborView(d.labor, r.access) }));
+    const html = render([await stripRow({ labor: { kind: "ok", value: days } })]);
+    expect(visibleText(cell(html, "labor"))).toContain(EN["reports.business.wage_estimated"]);
+  });
+  it("a rebuilding week: a dash with its reason, under that day's own label", async () => {
+    const days = (await laborSelectionCases()).boundary.slice(1); // Sun / Mon of the rebuilding week only
+    const html = render([await stripRow({ labor: { kind: "ok", value: days } })]);
+    const labor = plain(cell(html, "labor"));
+    expect(labor).toContain("—");
+    expect(labor).toContain(EN["reports.business.labor.state.rebuilding"]);
+    expect(labor).toContain("Monday");
+  });
+});
+
+describe("T-R7: labor absent while the switch is off", () => {
+  it("no labor cell, sales and catering still shown", async () => {
+    const html = render([await stripRow({ labor: "off" })]);
+    expect(cell(html, "labor")).toBe("");
+    expect(html).not.toContain("data-labor-day");
+    expect(cell(html, "sales")).not.toBe("");
+    expect(cell(html, "catering")).not.toBe("");
+  });
+});
+
+describe("T-R8: never blended", () => {
+  it("two shops, two rows, each with its own figures, no total", async () => {
+    const html = render([await stripRow(), await stripRow({ shop: SHOP2, sales: salesOk({ checks: 1, toastChecksCents: 1_000, coverage: "complete", coveredDays: 1 }), catering: cateringOk({ valuedCents: 7_000 }) })]);
+    expect([...html.matchAll(/data-strip-shop="([^"]+)"/g)].map((m) => m[1])).toEqual(["P", "CH"]);
+    expect(plain(cell(html, "sales", "P"))).toContain("$45.00");
+    expect(plain(cell(html, "sales", "CH"))).toContain("$10.00");
+    expect(plain(html)).not.toContain("$55.00");
+    expect(plain(cell(html, "catering", "CH"))).toContain("$70.00");
+  });
+});
+
+describe("T-R9 rendered (A2)", () => {
+  it("accepted only: the value, no qualifier", async () => {
+    const c = plain(cell(render([await stripRow()]), "catering"));
+    expect(c).toContain(EN["dashboard.strip.catering_booked"]!.replace("{amount}", "$500.00"));
+    expect(c).not.toMatch(/estimate|without a price|not valued/);
+  });
+  it("estimate only: the value + 1 valued from an estimate", async () => {
+    const c = plain(cell(render([await stripRow({ catering: cateringOk({ estimated: 1, valuedCents: 40_000 }) })]), "catering"));
+    expect(c).toContain("$400.00");
+    expect(c).toContain(EN["dashboard.strip.catering_estimated"]!.replace("{n}", "1"));
+  });
+  it("no quote and no estimate: NO value, 1 without a price, never $0.00 booked", async () => {
+    const c = plain(cell(render([await stripRow({ catering: cateringOk({ valuedCents: null, missing: 1 }) })]), "catering"));
+    expect(c).not.toContain("$0.00");
+    expect(c).not.toContain(EN["dashboard.strip.catering_booked"]!.replace(" {amount}", "").replace("{amount} ", ""));
+    expect(c).toContain(EN["dashboard.strip.catering_no_price"]!.replace("{n}", "1"));
+  });
+  it("an unlinked ezCater order: counted and named not valued; zero orders: the engine's none line", async () => {
+    const c = plain(cell(render([await stripRow({ catering: cateringOk({ orders: 2, unlinkedEzcater: 1 }) })]), "catering"));
+    expect(c).toContain(EN["dashboard.strip.catering_count_other"]!.replace("{n}", "2"));
+    expect(c).toContain(EN["dashboard.strip.catering_ezcater_unvalued"]!.replace("{n}", "1"));
+    const none = plain(cell(render([await stripRow({ catering: cateringOk({ orders: 0, pipeline: 0, valuedCents: null }) })]), "catering"));
+    expect(none).toContain(EN["day.reason.catering.none"]);
+    expect(none).not.toContain("$");
+  });
+});
+
+describe("T-B3 rendered: the labor day's own label, both languages", () => {
+  it.each([["en", "Tuesday"], ["es", "martes"]] as const)("%s", async (lang, day) => {
+    const html = render([await stripRow()], lang);
+    expect(plain(cell(html, "labor"))).toContain((lang === "en" ? EN : ES)["dashboard.strip.labor_day"]!.replace("{day}", day));
+    expect(cell(html, "labor")).toContain('data-labor-day="2026-10-06"');
+  });
+});
+
+describe("links and sizes", () => {
+  it("each cell is a full-row link to its page, at least 44 px with items-center, with its ARIA label", async () => {
+    const html = render([await stripRow()]);
+    const hrefs = links(html).map((l) => l.href);
+    expect(hrefs).toEqual([`/reports/sales?location=${SHOP1.id}&range=today`,
+      `/reports/business?location=${SHOP1.id}&range=custom&from=2026-10-06&to=2026-10-06`, "/catering/insights"]);
+    for (const kind of ["sales", "labor", "catering"]) expect(cell(html, kind)).toMatch(/min-h-\[44px\][^"]*items-center/);
+    expect(links(html).map((l) => l.aria)).toEqual([`Open Sales so far for P · P Street`, `Open Business report for P · P Street`, `Open Catering today for P · P Street`]);
+  });
+});
+
+describe("T-B2 (A8): NumbersStrip holds no business-report figure", () => {
+  it("imports no @/lib/business-* module and no Figure", () => {
+    const src = readFileSync("components/dashboard/NumbersStrip.tsx", "utf8");
+    expect(src).not.toMatch(/from "@\/lib\/business-/);
+    expect(src).not.toMatch(/\bFigure\b/);
   });
 });
