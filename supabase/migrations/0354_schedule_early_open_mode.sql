@@ -1,5 +1,7 @@
 -- Migration 0354_schedule_early_open_mode
 -- AUTHORED 2026-11-21 (PR SCH-2, CO Claude, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO SIM 2026-11-22 (schema_migrations version 20261122063424, name '0354_schedule_early_open_mode')
+-- APPLIED TO PROD 2026-11-22 (schema_migrations version 20261122063457, name '0354_schedule_early_open_mode')
 -- Plan: CHIEF nav-SCH-PLAN-r5.md sections 4, 6, 9, 17, 20.6 and 20.7 (the plan named this file 0353; nav PR 6 took 0353,
 --   so it is 0354), nav-SCH-LEAD-RULINGS-r1.md (A2, C4, D6, D7), Juan's words in nav-DECISIONS-2026-11-20.md: an earlier
 --   opening is the extreme case of a heavy catering day, chosen per shop by GM and up: manual (the default), semi (the

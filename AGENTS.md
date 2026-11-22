@@ -528,7 +528,7 @@ Plan: CHIEF `nav-SCH-PLAN-r5.md` with `nav-SCH-LEAD-RULINGS-r1.md` (A–G). SCH-
 - **Rollback:** a plain revert is safe only while no shop has `crewShift` enabled (the old per-order `crewRequired` re-judges a day heavy only by total: `scripts/sch-old-reader-check.mjs`). Every new context carries `cateringRule: "day_total_v1"`.
 - Proofs: `tests/schedule-sch-goldens.test.ts` (before-cut frozen on main), `schedule-opening*.test.ts`, `schedule-gap-partition.test.ts`, `schedule-dashboard-heavy-twin.test.ts`, `day-plan-load.test.ts` (22.3 / 23.2), `schedule-crew-no-opt-in-invariance.test.ts` (all 705 crew fixtures equal dc022f26 in their pre-SCH view).
 
-### PR SCH-2: the per-shop earlier-opening mode (0354 authored 2026-11-21, NOT applied; inert until it is)
+### PR SCH-2: the per-shop earlier-opening mode (0354 authored 2026-11-21, APPLIED to sim and prod 2026-11-22; live validator md5 af789193d1daa3c70cf38115d5c9ccbc)
 
 Plan: CHIEF `nav-SCH-PLAN-r5.md` sections 4, 6, 9, 13 (SCH-2), 17, 20.6, 20.7 with the lead rulings (A2, C3, C4, C6, D6, D7, H1). The plan's 0353 is 0354 (nav PR 6 took 0353); 0354 does NOT depend on 0353. Sends nothing.
 
