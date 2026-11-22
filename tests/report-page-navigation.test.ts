@@ -107,7 +107,9 @@ describe("actual report pages expose consistent navigation", () => {
       const html = renderToStaticMarkup(React.createElement(TranslationProvider, { initialLanguage: "en", children: await navigation(tree) }));
       const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map(match => match[1]!);
       expect(hrefs[0]!.split("?")[0]).not.toBe(path);
-      expect(hrefs.some(href => href.startsWith("/dashboard?"))).toBe(true);
+      // Nav PR 9 (Q6): no extra Dashboard link beside the back link; /dashboard appears only when it IS the parent.
+      const parentIsDashboard = hrefs[0]!.split("?")[0] === "/dashboard";
+      expect(hrefs.filter(href => href.split("?")[0] === "/dashboard")).toHaveLength(parentIsDashboard ? 1 : 0);
       const landingParent = new URL(hrefs[0]!.replaceAll("&amp;", "&"), "https://local").pathname === "/reports";
       expect(hrefs[0]!.includes("cursor=saved")).toBe(!landingParent && path !== "/reports");
       if (level < 8) expect(new URL(hrefs[0]!.replaceAll("&amp;", "&"), "https://local").searchParams.get("location")).not.toBe("all");
@@ -126,7 +128,7 @@ describe("actual report pages expose consistent navigation", () => {
       expect(active.length).toBe(1);
       expect(active.every(link => link.includes("All shops"))).toBe(true);
       const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map(match => new URL(match[1]!.replaceAll("&amp;","&"),"https://local"));
-      expect(hrefs.filter(href => href.pathname === "/dashboard")).toHaveLength(1);
+      expect(hrefs.filter(href => href.pathname === "/dashboard")).toHaveLength(hrefs[0]!.pathname === "/dashboard" ? 1 : 0);
       if (!["/reports/trends/team/person", "/reports/written"].includes(path)) expect(html.match(/<h1/g)).toHaveLength(1);
     });
   }
