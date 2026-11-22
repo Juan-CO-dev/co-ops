@@ -23,6 +23,7 @@ import { cateringBlockIndex, nextUpInBlock } from "@/lib/dashboard-blocks-shared
 import type { Settled } from "@/lib/dashboard-day";
 import { planDay, type CateringOrder, type DayPlan, type DayViewer, type ShopFacts } from "@/lib/day-plan-shared";
 import { readNotInToastScoped } from "@/lib/catering/not-in-toast";
+import { renderDayReason } from "@/lib/day-plan-render";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 import { ANA, CATERING_MEMBER, CATERING_NON_MEMBER, GM, MOO, hm, iso, ok, order, PLAN_DATE, viewer, withFailed } from "./fixtures/day-plan/build";
@@ -223,3 +224,22 @@ describe("T-G11 (group 11): the heavy-day lines in the block", () => {
     expect(renderBlock(p)).toContain(`data-heavy-line="${p.headsUp!.key}"`);
   });
 });
+
+describe("T-G11 (Q5): PhaseLine leaves the night-before line out only when told", () => {
+  it("omitHeadsUp drops it; without it (a key holder, or no block) it stays; with headsUp null nothing changes", async () => {
+    const { PhaseLine } = await import("@/components/dashboard/PhaseLine");
+    const p = plan(CATERING_MEMBER, "20:30", pStreet(hm("20:30"), { nightBefore: true }), "2026-11-17");
+    const line = renderDayReasonText(p);
+    expect(renderToStaticMarkup(createElement(PhaseLine, { plan: p, language: "en" }))).toContain(line);
+    expect(renderToStaticMarkup(createElement(PhaseLine, { plan: p, language: "en", omitHeadsUp: true }))).not.toContain(line);
+    const kh = plan(ANA, "20:30", pStreet(hm("20:30"), { nightBefore: true }), "2026-11-17");
+    expect(renderToStaticMarkup(createElement(PhaseLine, { plan: kh, language: "en" }))).toContain(line);
+    const quiet = plan(CATERING_MEMBER, "13:00", pStreet(hm("13:00")));
+    expect(quiet.headsUp).toBeNull();
+    expect(renderToStaticMarkup(createElement(PhaseLine, { plan: quiet, language: "en", omitHeadsUp: true })))
+      .toBe(renderToStaticMarkup(createElement(PhaseLine, { plan: quiet, language: "en" })));
+  });
+});
+function renderDayReasonText(p: DayPlan): string {
+  return renderDayReason(p.headsUp!, "en").replace(/&/g, "&amp;");
+}

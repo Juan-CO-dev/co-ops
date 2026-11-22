@@ -4,15 +4,21 @@
  * shows a failing section in its own error state) and hands the result to the client shell, which
  * takes over the 60 s refresh. The same-day Toast freshness trigger from v1 stays (after the
  * response, debounced in the lib).
+ *
+ * Nav PR 8 (Q9): the "My shift | Shop pulse" toggle at the top, gated at the shop on show (`pulseToggleFor`, never the
+ * social media manager); with both shops on show its links carry no shop.
  */
 import Link from "next/link";
 import { after } from "next/server";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { MyShiftPulseToggle } from "@/components/dashboard/MyShiftPulseToggle";
 import { AccessDeniedBanner } from "@/components/ui/AccessDeniedBanner";
 import { PulseClient, type PulsePanel } from "@/components/pulse/PulseClient";
 import { maybeRefreshTodaySales } from "@/lib/catering/toast-sales";
 import { formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
+import { dayViewerFor } from "@/lib/dashboard-day-shared";
+import { navSwitches } from "@/lib/nav-switches";
 import { operationalNow } from "@/lib/midshift-shared";
 import { loadAccessibleLocations } from "@/lib/pulse/page";
 import { BOTH, resolvePulsePanels } from "@/lib/pulse/page-shared";
@@ -62,6 +68,7 @@ export async function PulseHome({ auth, requested }: { auth: AuthContext; reques
   const showTabs = accessible.length > 1;
   return (
     <main className={shell}>
+      <MyShiftPulseToggle viewer={dayViewerFor(auth, shops[0]!.id, navSwitches())} shopId={both ? null : shops[0]!.id} current="pulse" language={language} />
       <div className="mb-1"><DashboardBackLink /></div>
       <div>
         <h1 className="flex flex-wrap items-baseline gap-2 text-lg font-bold text-co-text">

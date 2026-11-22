@@ -6,6 +6,7 @@
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { MyShiftPulseToggle } from "@/components/dashboard/MyShiftPulseToggle";
 import { pulseToggleFor, toggleHrefs } from "@/lib/dashboard-blocks-shared";
@@ -49,5 +50,21 @@ describe("T-T1: the links", () => {
     const current_ = [...html.matchAll(/<a[^>]*aria-current="page"[^>]*data-toggle="([^"]+)"|<a[^>]*data-toggle="([^"]+)"[^>]*aria-current="page"/g)].map((m) => m[1] ?? m[2]);
     expect(current_).toEqual([current]);
     for (const a of html.match(/<a\b[^>]*>/g)!) expect(a).toMatch(/min-h-\[44px\][^"]*items-center/);
+  });
+});
+
+describe("T-T1: mounted on /mid-shift, both versions (source pins)", () => {
+  const code = (f: string) => readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  it("v2: PulseHome draws it first in its page, gated at the shop on show, current = pulse", () => {
+    const src = code("components/pulse/PulseHome.tsx");
+    expect(src).toMatch(/<main className=\{shell\}>\s*<MyShiftPulseToggle viewer=\{dayViewerFor\(auth, shops\[0\]!\.id, navSwitches\(\)\)\} shopId=\{both \? null : shops\[0\]!\.id\} current="pulse"/);
+  });
+  it("v1: the first child of the page's main, after the level check, at the resolved shop", () => {
+    const src = code("app/(authed)/mid-shift/page.tsx");
+    const level = src.indexOf("auth.level < MIDSHIFT_BASE_LEVEL");
+    const toggle = src.indexOf("<MyShiftPulseToggle viewer={dayViewerFor(auth, locationId, navSwitches())} shopId={locationId} current=\"pulse\"");
+    expect(level).toBeGreaterThan(-1);
+    expect(toggle).toBeGreaterThan(level);
+    expect(src.slice(src.lastIndexOf("<main", toggle), toggle)).toMatch(/^<main[^>]*>\s*$/);
   });
 });
