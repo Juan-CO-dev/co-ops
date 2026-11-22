@@ -24,7 +24,7 @@ describe("the constants (rulings C5)", () => {
   it("are named and pinned: 60 minutes, 2×, 16 heads", () => {
     expect([EARLY_OPEN_FIT_MIN, EARLY_OPEN_HUGE_FACTOR, RUNTIME_HEADS_MAX]).toEqual([60, 2, 16]);
   });
-  it("SCH-1 pins the mode to manual", () => {
+  it("absent, the mode is manual (SCH-2: schedule-sch2-modes.test.ts reads each stored mode)", () => {
     expect(earlyOpenModeOf(S())).toBe("manual");
     expect(resolveOpening(S(), [ev(120, 36)], null)).toBeNull();
   });
