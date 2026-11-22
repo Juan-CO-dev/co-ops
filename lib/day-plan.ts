@@ -43,7 +43,7 @@ import { addDaysEt } from "@/lib/vendor-rhythm-shared";
 /** Per fact; under the 8 s statement timeout (ruling 11). */
 export const DAY_FACT_DEADLINE_MS = 6_000;
 
-export class DayFactTimeout extends Error {
+class DayFactTimeout extends Error {
   constructor() { super("day fact deadline"); this.name = "DayFactTimeout"; }
 }
 
@@ -333,7 +333,8 @@ async function loadShopFacts(sb: Sb, args: DayFactsArgs, planDate: string, deps:
   const hoursP = L("hours", () => deps.shopDay(sb, shopId));
   // The board: the page's promise, raced, never aborted (ruling B2).
   const boardP: Promise<ShiftBoard> | null = need.board && args.board ? L("board", () => args.board!()) : null;
-  const classificationP: Promise<{ flags: StationDayFlags; notPhase: NotPhaseRule }> | null = need.board ? L("stations", async () => {
+  // The stations' classification (S2, and S3a while 0353 is not applied): only when there is a board to classify.
+  const classificationP: Promise<{ flags: StationDayFlags; notPhase: NotPhaseRule }> | null = boardP ? L("stations", async () => {
     const flags = await deps.stationFlags(sb, shopId);
     if (flags.installed) return { flags, notPhase: { installed: true, ids: flags.notPhaseIds } };
     return { flags, notPhase: { installed: false, sections: notPhaseSections(await deps.closingClassification(sb, shopId, planDate)) } };

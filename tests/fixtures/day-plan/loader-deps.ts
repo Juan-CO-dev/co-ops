@@ -40,12 +40,12 @@ export function board(p: Partial<ShiftBoard> = {}): ShiftBoard {
     people: [{ id: ANA.userId, name: "Ana Ruiz", level: 4, hasWork: true }], events: [ev("1", { stationId: "crunchy" })], tasks: TASKS, ...p };
 }
 
-export const CLOSING: InstanceRow = { id: "close-1", template_id: "tpl-close-v1", status: "open", created_at: "2026-11-18T22:00:00.000Z", confirmed_at: null, confirmed_by: null };
+const CLOSING: InstanceRow = { id: "close-1", template_id: "tpl-close-v1", status: "open", created_at: "2026-11-18T22:00:00.000Z", confirmed_at: null, confirmed_by: null };
 export const OPENING: InstanceRow = { id: "open-1", template_id: "tpl-open", status: "confirmed", created_at: "2026-11-18T11:00:00.000Z", confirmed_at: "2026-11-18T15:10:00.000Z", confirmed_by: "u-ana" };
-export const YESTERDAY_CLOSING: InstanceRow = { id: "close-0", template_id: "tpl-close-v1", status: "confirmed", created_at: "2026-11-17T22:00:00.000Z", confirmed_at: "2026-11-18T03:00:00.000Z", confirmed_by: "u-mia" };
-export const AM_PREP: InstanceRow[] = [{ id: "am-1", template_id: "tpl-am", status: "open", created_at: "2026-11-17T23:00:00.000Z", confirmed_at: null, confirmed_by: null }];
+const YESTERDAY_CLOSING: InstanceRow = { id: "close-0", template_id: "tpl-close-v1", status: "confirmed", created_at: "2026-11-17T22:00:00.000Z", confirmed_at: "2026-11-18T03:00:00.000Z", confirmed_by: "u-mia" };
+const AM_PREP: InstanceRow[] = [{ id: "am-1", template_id: "tpl-am", status: "open", created_at: "2026-11-17T23:00:00.000Z", confirmed_at: null, confirmed_by: null }];
 export const MID_DAY: InstanceRow[] = [{ id: "md-1", template_id: "tpl-md", status: "confirmed", created_at: "2026-11-18T19:00:00.000Z", confirmed_at: "2026-11-18T20:00:00.000Z", confirmed_by: "u-luis" }];
-export const CLOSING_ITEMS = [
+const CLOSING_ITEMS = [
   { id: "i1", station: "Crunchy Boi Station", active: true }, { id: "i2", station: "Expo Station", active: true },
   { id: "i3", station: "Closing Manager", active: true }, { id: "i4", station: null, active: true },
 ];

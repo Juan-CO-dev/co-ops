@@ -231,7 +231,7 @@ export type StationDayFlags =
 export type StationDayFlagsView =
   | { readonly installed: false }
   | { readonly installed: true; readonly midDayStationId: string | null; readonly notPhaseIds: readonly string[] };
-export const STATION_FLAG_COLUMNS = ["starts_mid_day", "not_phase_station"] as const;
+const STATION_FLAG_COLUMNS = ["starts_mid_day", "not_phase_station"] as const;
 /**
  * A read error that means "0353 is not applied": PostgreSQL's undefined column (42703), PostgREST's unknown column
  * (PGRST204), or a message naming either column (the measured precedent of lib/admin/needs-link.ts: a select naming a

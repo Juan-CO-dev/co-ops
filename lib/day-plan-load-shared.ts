@@ -211,7 +211,7 @@ export function outTimes(events: readonly { pipeline_id: string; to_stage: strin
 // ── Which facts a viewer needs (section 6) ──────────────────────────────────────────────────────────────────────────
 
 /** The facts a viewer may be spared; each is sent as `{ kind: "failed" }` (ruling 2), which the lens never shows. */
-export type SkippableFact = "cash" | "pm" | "ordering" | "rhythm" | "receiving" | "flaggedLines";
+type SkippableFact = "cash" | "pm" | "ordering" | "rhythm" | "receiving" | "flaggedLines";
 export interface FactsNeeded {
   /** cash, pm, ordering, rhythm, receiving: `ops` held and level 4+ (every one has floor 4, TASK_MIN_LEVEL). */
   readonly ops: boolean;

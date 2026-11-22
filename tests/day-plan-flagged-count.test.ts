@@ -7,10 +7,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { loadCateringPrepDemand, type PrepDemandDay } from "@/lib/catering/prep-demand";
-import { flaggedLineCounts, type PrepDemandRow } from "@/lib/catering/prep-demand-shared";
-import { loadItemDefns, loadItemOverrides } from "@/lib/items";
+import { defaultDayFactDeps } from "@/lib/day-plan";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { selectAllRows } from "@/lib/supabase-paginate";
 import type { AuthContext } from "@/lib/session";
 import { itemId, prepDemandClient, PREP_SHOP, smallDb, type PrepDemandDb, type Row } from "./fixtures/day-plan/prep-demand-rows";
 
@@ -28,15 +26,12 @@ async function page(db: PrepDemandDb): Promise<PrepDemandDay[]> {
 }
 const pageCounts = (days: PrepDemandDay[]) => Object.fromEntries(days.map((d) => [d.needDate, d.lines.filter((l) => l.overPar).length]).filter(([, n]) => n !== 0));
 
-/** The Dashboard's side: the same reserved rows (paged), the bounded item readers, then the shared rule. */
+/** The Dashboard's side: the day loader's own F1 read (lib/day-plan.ts), on the same rows. */
 async function dashboardCounts(db: PrepDemandDb): Promise<Record<string, number>> {
-  const { client } = prepDemandClient(db);
-  const sb = client as never as Parameters<typeof loadItemDefns>[0];
-  const rows = await selectAllRows<PrepDemandRow>((from, to) => sb.from("catering_prep_demand")
-    .select("pipeline_id, need_date, item_id, menu_item_id, choice_package_item_id, portion, qty")
-    .eq("location_id", PREP_SHOP).eq("status", "reserved").in("need_date", [TODAY, TOMORROW]).order("id", { ascending: true }).range(from, to));
-  const ids = [...new Set(rows.flatMap((r) => (r.item_id ? [r.item_id] : [])))];
-  return flaggedLineCounts(rows, { defaults: await loadItemDefns(sb, ids), overrides: await loadItemOverrides(sb, ids, PREP_SHOP) });
+  const { client, calls } = prepDemandClient(db);
+  const counts = await defaultDayFactDeps.flaggedLines(client as never, PREP_SHOP, [TODAY, TOMORROW]);
+  expect(calls.filter((c) => c.table === "catering_prep_demand").every((c) => c.has("in", "need_date", [TODAY, TOMORROW]) && c.has("eq", "status", "reserved"))).toBe(true);
+  return counts;
 }
 
 describe("the flag rule, one function", () => {
