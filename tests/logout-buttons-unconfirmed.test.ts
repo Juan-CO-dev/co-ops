@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Audit W06/B012 fix round 6 — the Log out buttons (components/auth/LogoutButton.tsx, components/UserMenu.tsx) treat a
+ * Audit W06/B012 fix round 6 — the Log out buttons (components/auth/LogoutButton.tsx, components/nav/MeControls.tsx) treat a
  * 503 logout_unconfirmed as NOT YET ENDED: an opaque "Signing out…" cover goes up at once (nothing authenticated is
  * shown again), the request is retried with short bounded backoff naming the page's session, and the page still goes
  * to the login surface — after a confirmed end, and after the last retry when none came.
@@ -11,7 +11,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { LOGOUT_ATTEMPT_TIMEOUT_MS, LOGOUT_RETRY_DELAYS_MS } from "@/lib/logout-client";
-import { UserMenu } from "@/components/UserMenu";
+import { MeControls } from "@/components/nav/MeControls";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import en from "@/lib/i18n/en.json";
 
@@ -48,12 +48,11 @@ const surfaces = [
     click: () => fireEvent.click(screen.getByRole("button", { name: T["auth.logout.label"]! })),
   },
   {
-    name: "UserMenu → Sign out",
+    name: "Go to's Me (MeControls) → Sign out",
     mount: () =>
-      wrap(jsx(UserMenu, { userName: "GM", userEmail: null, actorLevel: 7, initialBlurb: null, sessionId: "session-1" })),
+      wrap(jsx(MeControls, { userName: "GM", userEmail: null, actorLevel: 7, initialBlurb: null, sessionId: "session-1" })),
     click: () => {
-      fireEvent.click(screen.getByRole("button", { name: T["user_menu.aria_label"]! }));
-      fireEvent.click(screen.getByRole("menuitem", { name: T["user_menu.sign_out"]! }));
+      fireEvent.click(screen.getByRole("button", { name: T["user_menu.sign_out"]! }));
     },
   },
 ];

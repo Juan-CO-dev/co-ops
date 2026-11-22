@@ -6,8 +6,8 @@
  * three more calls in the same components with no deadline, each holding a guard while in flight:
  *   - PasswordModal POST /api/auth/step-up (the dead-session path's own request): `submitting` disables Confirm AND
  *     Cancel (and Esc), so one stalled request locked the person inside the modal for good;
- *   - UserMenu PATCH /api/users/me/language: `updating` disables both language buttons;
- *   - UserMenu PATCH /api/users/me/profile-blurb: `blurbSaving` disables Save.
+ *   - MeControls (nav PR 9; was the UserMenu) PATCH /api/users/me/language: `updating` disables both language buttons;
+ *   - MeControls (nav PR 9; was the UserMenu) PATCH /api/users/me/profile-blurb: `blurbSaving` disables Save.
  * Each now runs under one deadline (lib/bounded-fetch.ts withDeadline) covering the request AND the body it reads: at
  * the deadline the request is aborted, the guard is released and the existing network-error message shows. What
  * happens AFTER the request (the step-up's onConfirm) is not under the deadline.
@@ -17,7 +17,7 @@ import { jsx } from "react/jsx-runtime";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PasswordModal } from "@/components/auth/PasswordModal";
-import { UserMenu } from "@/components/UserMenu";
+import { MeControls } from "@/components/nav/MeControls";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import en from "@/lib/i18n/en.json";
 
@@ -28,7 +28,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const T = en as Record<string, string>;
-/** The components' own deadlines (components/auth/PasswordModal.tsx, components/UserMenu.tsx). */
+/** The components' own deadlines (components/auth/PasswordModal.tsx, components/nav/MeControls.tsx). */
 const STEP_UP_TIMEOUT_MS = 15_000;
 const USER_MENU_SAVE_TIMEOUT_MS = 10_000;
 
@@ -99,10 +99,9 @@ describe("PasswordModal — the step-up request has a deadline", () => {
   });
 });
 
-describe("UserMenu — the language and blurb saves have a deadline", () => {
+describe("MeControls (Go to's Me; was the UserMenu) — the language and blurb saves have a deadline", () => {
   const mountMenu = () =>
-    wrap(jsx(UserMenu, { userName: "GM", userEmail: null, actorLevel: 7, initialBlurb: null, sessionId: "session-1" }));
-  const openMenu = () => fireEvent.click(screen.getByRole("button", { name: T["user_menu.aria_label"]! }));
+    wrap(jsx(MeControls, { userName: "GM", userEmail: null, actorLevel: 7, initialBlurb: null, sessionId: "session-1" }));
   const esButton = () =>
     screen.getByRole("radio", {
       name: T["user_menu.language.aria_select"]!.replace("{language}", T["user_menu.language.es"]!),
@@ -116,14 +115,13 @@ describe("UserMenu — the language and blurb saves have a deadline", () => {
         return variant === "headers never arrive" ? pendingUntilAbort(init) : stalledBody(500);
       });
       mountMenu();
-      openMenu();
       fireEvent.click(esButton());
       expect(h.fetch.mock.calls[0]![0]).toBe("/api/users/me/language");
       await advance(USER_MENU_SAVE_TIMEOUT_MS - 1);
       expect(esButton().disabled).toBe(true);
       await advance(1);
       expect(signals[0]!.aborted).toBe(true);
-      expect(screen.getByText("Network error.")).toBeTruthy();
+      expect(screen.getByText(T["user_menu.language.network_error"]!)).toBeTruthy(); // was a hard-coded English "Network error."
       expect(esButton().disabled).toBe(false);
       expect(h.refresh).not.toHaveBeenCalled();
     });
@@ -132,7 +130,6 @@ describe("UserMenu — the language and blurb saves have a deadline", () => {
   it("a language save that answers in time still switches", async () => {
     h.fetch.mockResolvedValue(res(200, { ok: true }));
     mountMenu();
-    openMenu();
     fireEvent.click(esButton());
     await advance(1);
     expect(h.refresh).toHaveBeenCalledTimes(1);
@@ -146,7 +143,6 @@ describe("UserMenu — the language and blurb saves have a deadline", () => {
         return variant === "headers never arrive" ? pendingUntilAbort(init) : stalledBody(200);
       });
       mountMenu();
-      openMenu();
       fireEvent.change(screen.getByPlaceholderText(T["user_menu.blurb.placeholder"]!), { target: { value: "Hi" } });
       fireEvent.click(screen.getByRole("button", { name: T["user_menu.blurb.save"]! }));
       expect(h.fetch.mock.calls[0]![0]).toBe("/api/users/me/profile-blurb");

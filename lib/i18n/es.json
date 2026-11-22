@@ -846,7 +846,6 @@
   "common.saving": "Guardando…",
   "common.loading": "Cargando…",
   "common.you": "tú",
-  "user_menu.aria_label": "Menú de usuario",
   "user_menu.signed_in_as": "Conectado como",
   "user_menu.language": "Idioma",
   "user_menu.language.en": "English",

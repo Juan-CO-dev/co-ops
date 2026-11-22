@@ -846,7 +846,6 @@
   "common.saving": "Saving…",
   "common.loading": "Loading…",
   "common.you": "you",
-  "user_menu.aria_label": "User menu",
   "user_menu.signed_in_as": "Signed in as",
   "user_menu.language": "Language",
   "user_menu.language.en": "English",

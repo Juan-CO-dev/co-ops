@@ -3,7 +3,7 @@
  * Audit W06/B012 fix round 9 (review W06-r9 P2) — EVERY sign-out surface tells the other tabs.
  *
  * The idle sign-out and the warning's "Log out now" published the session-qualified `co_ops_signed_out` signal once
- * their logout request settled; the ordinary Log out buttons (components/auth/LogoutButton.tsx and the UserMenu's
+ * their logout request settled; the ordinary Log out buttons (components/auth/LogoutButton.tsx and Go to's Me controls'
  * Sign out) did not. A second tab of the same session kept the signed-out person's page on screen, and once someone
  * else signed in its heartbeat ran on THEIR cookie. Now every surface signs out through the one shared
  * signOutAndBroadcast (lib/logout-client.ts): the signal goes out only after the request settles, names the session
@@ -15,7 +15,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { LogoutButton } from "@/components/auth/LogoutButton";
-import { UserMenu } from "@/components/UserMenu";
+import { MeControls } from "@/components/nav/MeControls";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import en from "@/lib/i18n/en.json";
 
@@ -101,14 +101,13 @@ const surfaces = [
     click: () => fireEvent.click(screen.getByRole("button", { name: T["auth.logout.label"]! })),
   },
   {
-    name: "UserMenu → Sign out",
+    name: "Go to's Me (MeControls) → Sign out",
     mount: (sessionId: string) => {
       h.tab = "A";
-      return wrap(jsx(UserMenu, { userName: "GM", userEmail: null, actorLevel: 7, initialBlurb: null, sessionId }));
+      return wrap(jsx(MeControls, { userName: "GM", userEmail: null, actorLevel: 7, initialBlurb: null, sessionId }));
     },
     click: () => {
-      fireEvent.click(screen.getByRole("button", { name: T["user_menu.aria_label"]! }));
-      fireEvent.click(screen.getByRole("menuitem", { name: T["user_menu.sign_out"]! }));
+      fireEvent.click(screen.getByRole("button", { name: T["user_menu.sign_out"]! }));
     },
   },
 ];

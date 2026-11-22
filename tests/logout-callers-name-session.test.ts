@@ -38,9 +38,9 @@ describe("round 7 — every sign-out caller names its session", () => {
     const calls = SOURCES.flatMap(({ path, text }) =>
       [...text.matchAll(/signOutAndBroadcast\(([^)]*)\)/g)].map((m) => ({ path, args: m[1]!.split(",").map((a) => a.trim()) })),
     );
-    expect(calls.length).toBeGreaterThanOrEqual(4); // LogoutButton, UserMenu, the idle sign-out, Log out now
+    expect(calls.length).toBeGreaterThanOrEqual(4); // LogoutButton, Go to's Me (MeControls), the idle sign-out, Log out now
     expect(calls.map((c) => c.path)).toEqual(
-      expect.arrayContaining(["components/auth/LogoutButton.tsx", "components/UserMenu.tsx", "components/auth/IdleTimeoutWarning.tsx"]),
+      expect.arrayContaining(["components/auth/LogoutButton.tsx", "components/nav/MeControls.tsx", "components/auth/IdleTimeoutWarning.tsx"]),
     );
     for (const call of calls) {
       expect(call.args, call.path).toHaveLength(2);
