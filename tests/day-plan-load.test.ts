@@ -707,7 +707,7 @@ describe("nav PR 7 E2: the own-assignment lane", () => {
   const stray: TaskAssignment = { ...mine, id: "stray", task: "cash_report", assigneeId: "u-someone-else" };
 
   it("board rejects + own read ok: own_tasks with the viewer's rows only (a stray row is filtered); stations and my station fail", async () => {
-    const own = vi.fn(async (..._seen: unknown[]) => [mine, stray]);
+    const own = vi.fn(async (...seen: unknown[]) => { void seen; return [mine, stray]; });
     const f = shop(await loadDayFacts(NO_CLIENT, args(ANA, { board: boom }), withDeps({ ownTasks: own })));
     expect(f.assignments).toEqual({ kind: "ok", value: { forDate: PLAN, scope: "own_tasks", rows: dayAssignments([mine]) } });
     expect([f.stations, f.myStation]).toEqual([{ kind: "failed" }, { kind: "failed" }]);
