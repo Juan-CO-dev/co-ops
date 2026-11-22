@@ -9,7 +9,7 @@ import type { ShiftBoard, Station, StationEvent, TaskAssignment } from "@/lib/as
 import { DAY_FACT_DEADLINE_MS, DAY_OPEN_ORDER, defaultDayFactDeps, loadDayFacts, type DayFactDeps, type DayFactsArgs } from "@/lib/day-plan";
 import { planDay, type DayPlan, type DayPlanInput, type ShopFacts } from "@/lib/day-plan-shared";
 import {
-  cashDay, cateringOrders, checklistDay, dayAssignments, dayStations, factsNeeded, firstName, midDayDay, notPhaseSections, outTimes,
+  cashDay, cateringOrders, checklistDay, dayAssignments, dayPrepStarts, dayStations, factsNeeded, firstName, midDayDay, notPhaseSections, outTimes,
   pickEffectiveClosingTemplate, pmDay, sectionsLeft, shopHoursFrom, smmChecklistTasks, smmStationRef, smmTaskState,
 } from "@/lib/day-plan-load-shared";
 import { etWallQ, eventQFromWindow, ezcaterCancelled } from "@/lib/scheduling/inputs-shared";
@@ -36,9 +36,10 @@ describe("pure companion: names and the shop day", () => {
     expect(firstName("   ")).toBeNull();
   });
 
-  it("hours: the structure's values; no per-date schedule start yet (SCH commit 6: no date has one); a non-finite value throws", () => {
+  it("hours: the structure's values (the base read; the per-date starts are the schedule read's, SCH 22.3); a non-finite value throws", () => {
     const saved = shopHoursFrom({ structure: { ...SCHEDULE_STRUCTURE_DEFAULTS, shopDay: { ...SCHEDULE_STRUCTURE_DEFAULTS.shopDay, prepStartQ: 26 } }, source: "saved" });
-    expect(saved).toMatchObject({ source: "saved", shopDay: { prepStartQ: 26 }, dayPrepStartQ: {} });
+    expect(saved).toMatchObject({ source: "saved", shopDay: { prepStartQ: 26 } });
+    expect(saved).not.toHaveProperty("dayPrepStartQ");
     const defaults = shopHoursFrom({ structure: SCHEDULE_STRUCTURE_DEFAULTS, source: "defaults" });
     expect(defaults.shopDay.prepStartQ).toBe(SCHEDULE_STRUCTURE_DEFAULTS.shopDay.prepStartQ);
     expect(() => shopHoursFrom({ structure: { ...SCHEDULE_STRUCTURE_DEFAULTS, shopDay: { ...SCHEDULE_STRUCTURE_DEFAULTS.shopDay, serviceStartQ: Number.NaN } }, source: "saved" })).toThrow();
@@ -482,5 +483,187 @@ describe("loadDayFacts: source guards (8.1 item 9)", () => {
   it("the engine never reads the PoFact money fields the loader fills null / 0 / null", () => {
     const engine = stripComments(readFileSync("lib/day-plan-shared.ts", "utf8"));
     for (const k of ["totalCents", "unpricedLines", "placedByName"]) expect(engine).not.toContain(k);
+  });
+});
+
+// ══ PR SCH (plan r5 22.3, 23.1, 23.2; rulings D5, F3, G): the day's start, from the schedule, through the real loader ══
+
+describe("SCH: the schedule's start per date, on the REAL loader output through buildDay (22.3)", () => {
+  const WEEK_OF_PLAN = "2026-11-16";
+  type Rows = Awaited<ReturnType<DayFactDeps["scheduleStarts"]>>;
+  const rows = (head: string | null, days: Array<[string, string | null]>, starts: Record<string, Record<string, unknown>>): Rows =>
+    ({ weeks: [{ week_start: WEEK_OF_PLAN, head_revision_id: head }], days: days.map(([d, origin]) => ({ revision_id: head ?? "none", business_date: d, origin_revision_id: origin })), starts });
+  const savedAt = (q: number): Partial<DayFactDeps> => ({ shopDay: async () => ({ source: "saved", shopDay: { prepStartQ: q, serviceStartQ: 42 },
+    catering: { minHeadcount: 30, leadMinutes: 210, defaultStartQ: 34, defaultEndQ: 52, extraPrepDishHeads: 1 } }) });
+  const noOpening: Partial<DayFactDeps> = { dayInstance: async (sb, a) => (a.type === "opening" ? null : okDeps().dayInstance(sb, a)) };
+  const load = async (t: string, over: Partial<DayFactDeps>) => {
+    const input = await loadDayFacts(NO_CLIENT, args(ANA, { now: at(t) }), withDeps({ ...noOpening, ...over }));
+    return { f: shop(input), day: planDay(input) as DayPlan };
+  };
+  const opening = (p: DayPlan) => p.items.find((i) => i.id === "opening")!;
+
+  it("no schedule (no week row): absent → the saved start (7:00)", async () => {
+    const { f, day } = await load("06:00", {});
+    expect(f.hours).toMatchObject({ kind: "ok", value: { dayPrepStartQ: {} } });
+    expect(opening(day)).toMatchObject({ band: "upcoming", at: 7 * 60 });
+  });
+
+  it("scheduled: the head's own day at q28 → 7:00, for today and tomorrow", async () => {
+    const { f, day } = await load("06:00", { scheduleStarts: async () => rows("h1", [[PLAN, "h1"], [TOMORROW, "h1"]], { h1: { [PLAN]: 28, [TOMORROW]: 28 } }) });
+    expect(f.hours.kind === "ok" && f.hours.value.dayPrepStartQ).toEqual({ [PLAN]: { kind: "scheduled", q: 28 }, [TOMORROW]: { kind: "scheduled", q: 28 } });
+    expect(opening(day)).toMatchObject({ band: "upcoming", at: 7 * 60 });
+  });
+
+  it("settings drift: the schedule's context says 7:00, the saved structure now 6:00 → the day starts at 7:00, never 6:00", async () => {
+    const { day } = await load("06:15", { ...savedAt(24), scheduleStarts: async () => rows("h1", [[PLAN, "h1"]], { h1: { [PLAN]: 28 } }) });
+    expect(day.phase.id).toBe("before_opening");
+    expect(opening(day)).toMatchObject({ band: "upcoming", at: 7 * 60 });
+  });
+
+  it("an inherited origin: the date's origin revision's value is used, not the head's", async () => {
+    const { day } = await load("05:45", { scheduleStarts: async () => rows("h2", [[PLAN, "h1"]], { h1: { [PLAN]: 22 }, h2: { [PLAN]: 28 } }) });
+    expect(day.phase).toMatchObject({ id: "opening_check", decidedBy: "clock" });
+    expect(day.phase.since?.params.time).toEqual({ t: "wall", min: 5 * 60 + 30 });
+  });
+
+  it("an accepted opening at 5:30: the day starts at 5:30, and the heavy lines carry it", async () => {
+    const booked: Partial<DayFactDeps> = { booked: async () => [{ id: "big", eventDate: PLAN, timeWindow: "9:00 AM", headcount: 120, stage: "confirmed" }] };
+    const { day } = await load("05:45", { ...booked, scheduleStarts: async () => rows("h1", [[PLAN, "h1"]], { h1: { [PLAN]: 22 } }) });
+    expect(day.phase.id).toBe("opening_check");
+    const heavy = opening(day).reasons.find((r) => r.key === "day.reason.heavy.today")!;
+    expect(heavy.params.start).toEqual({ t: "wall", min: 5 * 60 + 30 });
+  });
+
+  it("a failed context read, a missing day row, no stored start: unknown → no clock rise, day.fail.day_start, and hours still ok with the saved day", async () => {
+    for (const over of [
+      { scheduleStarts: async (): Promise<Rows> => { throw new Error("contexts down"); } },
+      { scheduleStarts: async () => rows("h1", [], {}) },
+      { scheduleStarts: async () => rows("h1", [[PLAN, "h1"]], { h1: { [PLAN]: null } }) },
+    ] as Array<Partial<DayFactDeps>>) {
+      const { f, day } = await load("07:30", { ...savedAt(26), ...over });
+      expect(f.hours).toMatchObject({ kind: "ok", value: { shopDay: { prepStartQ: 26 }, dayPrepStartQ: { [PLAN]: { kind: "unknown" } } } });
+      expect(day.phase.id).toBe("before_opening");
+      expect(opening(day)).toMatchObject({ band: "upcoming", at: null });
+      expect(day.notes.map((n) => n.reason.key)).toContain("day.fail.day_start");
+    }
+  });
+
+  it("tomorrow: the night-before heads-up uses tomorrow's state — tomorrow unknown → the no-start key", async () => {
+    const { day } = await load("20:30", { scheduleStarts: async () => rows("h1", [[PLAN, "h1"]], { h1: { [PLAN]: 28 } }) });
+    expect(day.headsUp).toEqual({ key: "day.reason.heavy.tomorrow_one_unknown_start", params: { guests: { t: "count", v: 40 } } });
+    const known = await load("20:30", { scheduleStarts: async () => rows("h1", [[PLAN, "h1"], [TOMORROW, "h1"]], { h1: { [PLAN]: 28, [TOMORROW]: 22 } }) });
+    expect(known.day.headsUp).toEqual({ key: "day.reason.heavy.tomorrow_one", params: { guests: { t: "count", v: 40 }, start: { t: "wall", min: 5 * 60 + 30 } } });
+  });
+
+  it("everything down still says day.fail.all, whatever the schedule-start read does (PR 6's outage test, 8.1 item 2)", async () => {
+    const all = Object.fromEntries(Object.keys(okDeps()).map((k) => [k, boom])) as unknown as DayFactDeps;
+    for (const starts of [boom, async () => rows("h1", [[PLAN, "h1"]], { h1: { [PLAN]: 28 } })]) {
+      const input = await loadDayFacts(NO_CLIENT, args(ANA, { board: boom }), { ...all, scheduleStarts: starts as DayFactDeps["scheduleStarts"] });
+      expect(shop(input).hours).toEqual({ kind: "failed" });
+      expect((planDay(input) as DayPlan).notes.map((n) => n.reason.key)).toEqual(["day.fail.all"]);
+    }
+  });
+});
+
+describe("SCH (ruling G, 23.2): the base hours and the schedule start are bounded INDEPENDENTLY", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+  const base = { source: "saved" as const, shopDay: { prepStartQ: 26, serviceStartQ: 42 }, catering: { minHeadcount: 30, leadMinutes: 210, defaultStartQ: 34, defaultEndQ: 52, extraPrepDishHeads: 1 } };
+  const after = (ms: number) => () => new Promise<typeof base>((r) => { setTimeout(() => r(base), ms); });
+  const neverSettles = () => new Promise<never>(() => undefined);
+  const ignoresAbort = () => new Promise<Awaited<ReturnType<DayFactDeps["scheduleStarts"]>>>((r) => {
+    setTimeout(() => r({ weeks: [{ week_start: "2026-11-16", head_revision_id: "h" }], days: [], starts: {} }), 20_000);
+  });
+  it.each([
+    ["immediate (100 ms)", 100, "never settles", neverSettles],
+    ["immediate (100 ms)", 100, "ignores its abort (would answer at 20 s)", ignoresAbort],
+    ["late (5,900 ms)", 5_900, "never settles", neverSettles],
+    ["late (5,900 ms)", 5_900, "ignores its abort (would answer at 20 s)", ignoresAbort],
+  ] as const)("base hours %s, schedule start %s: on time, the saved hours kept, both dates unknown, no clock rise", async (_b, baseMs, _s, starts) => {
+    const deps = withDeps({ shopDay: after(baseMs), scheduleStarts: starts as DayFactDeps["scheduleStarts"], dayInstance: async (sb, a) => (a.type === "opening" ? null : okDeps().dayInstance(sb, a)) });
+    let done = false;
+    const p = loadDayFacts(NO_CLIENT, args(ANA, { now: at("06:45") }), deps).then((r) => { done = true; return r; });
+    await vi.advanceTimersByTimeAsync(DAY_FACT_DEADLINE_MS - 1);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done).toBe(true);
+    const input = await p;
+    const f = shop(input);
+    expect(f.hours).toEqual({ kind: "ok", value: { ...base, dayPrepStartQ: { [PLAN]: { kind: "unknown" }, [TOMORROW]: { kind: "unknown" } } } });
+    const day = planDay(input) as DayPlan;
+    expect(day.notes.map((n) => n.reason.key)).toContain("day.fail.day_start");
+    expect(day.phase.id).toBe("before_opening"); // 6:45 is after the saved 6:30 start, but an unknown start has no clock rise
+    expect(day.items.find((i) => i.id === "opening")).toMatchObject({ band: "upcoming", at: null });
+  });
+  it("the base hours failing still fails hours (PR 6), whatever the schedule start says; no timer is left once both settle", async () => {
+    const failed = withDeps({ shopDay: neverSettles as DayFactDeps["shopDay"], scheduleStarts: async () => ({ weeks: [], days: [], starts: {} }) });
+    const p = loadDayFacts(NO_CLIENT, args(ANA), failed);
+    await vi.advanceTimersByTimeAsync(DAY_FACT_DEADLINE_MS);
+    expect(shop(await p).hours).toEqual({ kind: "failed" });
+    vi.clearAllTimers();
+    const quick = loadDayFacts(NO_CLIENT, args(ANA), withDeps({}));
+    await vi.advanceTimersByTimeAsync(0);
+    await quick;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("SCH: the source shape of the two bounded reads (23.1)", () => {
+  it("each read has its own bound; the schedule-start read is not inside H1's failure wrapper", () => {
+    const code = stripComments(readFileSync("lib/day-plan.ts", "utf8"));
+    expect(code).toContain('boundedRead(service, "hours", (abortable) => deps.shopDay(abortable, shopId))');
+    expect(code).toMatch(/boundedRead\(service, "hours\.schedule_start", async \(abortable\) => dayPrepStarts\(await deps\.scheduleStarts\(abortable/);
+    expect(code).not.toMatch(/L\("hours"/);
+    expect(code.match(/deps\.scheduleStarts\(/g)).toHaveLength(1);
+    expect(code.replace(/\r\n/g, "\n")).toContain("const controller = new AbortController();\n  const d = startDeadline(DAY_FACT_DEADLINE_MS, controller);");
+  });
+});
+
+describe("SCH: the schedule-start read's real queries (22.3)", () => {
+  const dates = [PLAN, TOMORROW];
+  it("no week row: ONE read (schedule_weeks, the shop, the dates' weeks)", async () => {
+    const f = fakeSupabase(() => ({ data: [] }));
+    expect(await defaultDayFactDeps.scheduleStarts(f.client as never, SHOP.id, dates)).toEqual({ weeks: [], days: [], starts: {} });
+    expect(f.calls.map((c) => c.table)).toEqual(["schedule_weeks"]);
+    expect(f.calls[0]!.has("eq", "location_id", SHOP.id) && f.calls[0]!.has("in", "week_start", ["2026-11-16"])).toBe(true);
+  });
+  it("a schedule: three batched reads, each bound to the shop; the contexts read selects ONLY each date's start", async () => {
+    const f = fakeSupabase((c) => {
+      if (c.table === "schedule_weeks") return { data: [{ week_start: "2026-11-16", head_revision_id: "h2" }] };
+      if (c.table === "schedule_revision_days") return { data: [{ revision_id: "h2", business_date: PLAN, origin_revision_id: "h1" }, { revision_id: "h2", business_date: TOMORROW, origin_revision_id: null }] };
+      return { data: [{ revision_id: "h1", t0: 22, t1: null }, { revision_id: "h2", t0: 28, t1: 28 }] };
+    });
+    const r = await defaultDayFactDeps.scheduleStarts(f.client as never, SHOP.id, dates);
+    expect(f.calls.map((c) => c.table)).toEqual(["schedule_weeks", "schedule_revision_days", "schedule_revision_contexts"]);
+    for (const c of f.calls) expect(c.has("eq", "location_id", SHOP.id), c.table).toBe(true);
+    expect(f.calls[1]!.has("in", "revision_id", ["h2"]) && f.calls[1]!.has("in", "business_date", dates)).toBe(true);
+    expect(f.calls[2]!.arg("select")).toBe(`revision_id, t0:context->days->"${PLAN}"->structure->shopDay->prepStartQ, t1:context->days->"${TOMORROW}"->structure->shopDay->prepStartQ`);
+    expect(f.calls[2]!.has("in", "revision_id", ["h1", "h2"])).toBe(true);
+    expect(r.starts).toEqual({ h1: { [PLAN]: 22, [TOMORROW]: null }, h2: { [PLAN]: 28, [TOMORROW]: 28 } });
+    expect(dayPrepStarts(r, dates, () => "2026-11-16")).toEqual({ [PLAN]: { kind: "scheduled", q: 22 }, [TOMORROW]: { kind: "scheduled", q: 28 } });
+  });
+  it("a PostgREST that cannot parse the JSON path (PGRST100) → one fallback read of the whole context; any other error throws", async () => {
+    let n = 0;
+    const ctx = { days: { [PLAN]: { structure: { shopDay: { prepStartQ: 24 } } } } };
+    const f = fakeSupabase((c) => {
+      if (c.table === "schedule_weeks") return { data: [{ week_start: "2026-11-16", head_revision_id: "h1" }] };
+      if (c.table === "schedule_revision_days") return { data: [{ revision_id: "h1", business_date: PLAN, origin_revision_id: "h1" }] };
+      return n++ === 0 ? { error: { code: "PGRST100", message: "failed to parse select parameter" } } : { data: [{ revision_id: "h1", context: ctx }] };
+    });
+    const r = await defaultDayFactDeps.scheduleStarts(f.client as never, SHOP.id, dates);
+    expect(f.calls.map((c) => String(c.arg("select")))).toContain("revision_id, context");
+    expect(r.starts).toEqual({ h1: { [PLAN]: 24, [TOMORROW]: undefined } });
+    const bad = fakeSupabase((c) => (c.table === "schedule_weeks" ? { data: [{ week_start: "2026-11-16", head_revision_id: "h1" }] }
+      : c.table === "schedule_revision_days" ? { data: [{ revision_id: "h1", business_date: PLAN, origin_revision_id: null }] } : { error: { code: "57014", message: "timeout" } }));
+    await expect(defaultDayFactDeps.scheduleStarts(bad.client as never, SHOP.id, dates)).rejects.toThrow(/schedule_revision_contexts/);
+  });
+  it("the pure mapping (dayPrepStartFor): no week / no head → absent; a missing row or start → unknown; else scheduled", () => {
+    const wk = () => "2026-11-16";
+    expect(dayPrepStarts({ weeks: [], days: [], starts: {} }, dates, wk)).toEqual({});
+    expect(dayPrepStarts({ weeks: [{ week_start: "2026-11-16", head_revision_id: null }], days: [], starts: {} }, dates, wk)).toEqual({});
+    expect(dayPrepStarts({ weeks: [{ week_start: "2026-11-16", head_revision_id: "h" }], days: [], starts: {} }, dates, wk))
+      .toEqual({ [PLAN]: { kind: "unknown" }, [TOMORROW]: { kind: "unknown" } });
+    expect(dayPrepStarts({ weeks: [{ week_start: "2026-11-16", head_revision_id: "h" }], days: [{ revision_id: "h", business_date: PLAN, origin_revision_id: null }],
+      starts: { h: { [PLAN]: 7.5 } } }, [PLAN], wk)).toEqual({ [PLAN]: { kind: "unknown" } });
   });
 });
