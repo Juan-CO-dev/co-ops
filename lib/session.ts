@@ -393,6 +393,31 @@ export function isHeartbeatPath(currentPath: string): boolean {
 }
 
 /**
+ * Step-up NEUTRAL paths (nav PR 9, plan r2 3.4 and 6.2): the heartbeat's precedent widened to the top bar's background
+ * requests. On an admin page the bar searches people, refreshes the bell, marks notices read and saves the language or
+ * the profile note; each of those calls `requireSession` with its own path, and as ordinary non-surface paths they
+ * would clear a password unlock on every keystroke. A neutral request neither keeps the flag for a gate (none of these
+ * routes asserts a tier, so the list can never authorize anything) nor clears it: the flag is left exactly as it
+ * stands. Its only `sessions` write is the ordinary `last_activity_at` touch; it never calls `unlockStepUp` or
+ * `clearStepUp`, so it never unlocks, never stamps either clock, never extends Tier B or Tier E and never restores a
+ * flag that navigation cleared. EXACT strings, set membership: never a prefix (`/api/nav/people/x` clears).
+ * `/api/notifications/mark-read` is the label the per-item mark-read server action passes (it has no URL of its own).
+ */
+export const STEP_UP_NEUTRAL_PATHS: ReadonlySet<string> = new Set([
+  "/api/auth/heartbeat",
+  "/api/nav/people",
+  "/api/notifications/unread",
+  "/api/notifications/mark-all-read",
+  "/api/notifications/mark-read",
+  "/api/users/me/language",
+  "/api/users/me/profile-blurb",
+]);
+
+export function isStepUpNeutralPath(currentPath: string): boolean {
+  return STEP_UP_NEUTRAL_PATHS.has(currentPath);
+}
+
+/**
  * Core session validation — pure function over (rawJwt, ipAddress, userAgent,
  * currentPath). Used by both the NextRequest-shaped route-handler wrapper
  * (`requireSession`) and the next/headers-shaped server-component wrapper
@@ -511,7 +536,8 @@ async function requireSessionCore(
   // retries on the next request; the context below therefore reports the row as
   // it actually stands rather than asserting a clear that did not land.
   let stepUpCleared = false;
-  if (row.step_up_unlocked && !isStepUpSurface(currentPath) && !isHeartbeatPath(currentPath)) {
+  // A step-up NEUTRAL request (the heartbeat and the top bar's background requests, exact paths) leaves it as it stands.
+  if (row.step_up_unlocked && !isStepUpSurface(currentPath) && !isStepUpNeutralPath(currentPath)) {
     try {
       await clearStepUp(row.id);
       stepUpCleared = true;
