@@ -82,6 +82,8 @@ export const DESTINATIONS: readonly Destination[] = [
     id: "receiving", route: "/operations/receiving", nameKey: "receiving.page.title", room: "today", tabFamily: "stock-loop", parent: "dashboard",
     children: ["/operations/receiving/[id]"], takesShop: true, access: { minLevel: 4, assignedFrom: 4 }, task: "receiving", surface: "ops",
     numbers: true, kind: "place",
+    // A job Go to must find (spec 4.2 "Jobs"; nav PR 9).
+    aliases: { en: ["Log a delivery"], es: ["Registrar una entrega"] },
   },
   {
     id: "counts", route: "/operations/counts", nameKey: "counts.page.title", room: "today", tabFamily: "stock-loop", parent: "dashboard",
@@ -324,7 +326,7 @@ export const DESTINATIONS: readonly Destination[] = [
   {
     id: "pars", route: "/admin/pars", nameKey: "admin.section.pars", descriptionKey: "admin.pars.subtitle", room: "back-office",
     group: "ordering-and-stock", tabFamily: "supplies", parent: "admin", takesShop: true, access: { minLevel: 6, onlyRoles: PARS_VIEW_ROLES },
-    surface: "ops", numbers: true, kind: "place", aliases: { en: ["Pars"], es: [] },
+    surface: "ops", numbers: true, kind: "place", aliases: { en: ["Pars", "Change a par"], es: ["Cambiar un par"] }, // "Change a par": a job (nav PR 9)
   },
   // An on-demand tool beside the costing board, so its card carries no AlertPill (a count would turn a tool into a nag).
   {
