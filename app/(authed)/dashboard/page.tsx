@@ -174,7 +174,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     ? richBodies(boardSettled, { userId: auth.user.id, receiving: (signal) => loadRecentDeliveries(auth, shop.id, 20, { signal }), counts: (signal) => loadCountsTileState(auth, shop.id, { signal }) }, widget)
     : null;
   const input = !smm && shop
-    ? await loadDayFactsSafe(sb, { viewer, shop, now, locations: auth.locations, board: boardSettled ? () => boardSettled.then(unwrapSettled) : null })
+    ? await loadDayFactsSafe(sb, { viewer, shop, now, locations: auth.locations, deadlineAt, board: boardSettled ? () => boardSettled.then(unwrapSettled) : null })
     : null;
   const plan = input ? (planDay(input) as DayPlan) : null;
   const board = boardSettled ? await boardSettled : null; // already settled: never hangs

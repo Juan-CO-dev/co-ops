@@ -382,7 +382,12 @@ describe("loadDayFacts: the clock, the board, the raw time, another day (C2, C3,
   it("C2: one operationalNow, no clock read in lib/day-plan.ts; a fixed now gives the exact plan date and minutes", async () => {
     const code = stripComments(readFileSync("lib/day-plan.ts", "utf8"));
     expect(code.match(/operationalNow\(/g)).toHaveLength(1);
-    expect(code).not.toMatch(/new Date\(|Date\.now\(/);
+    expect(code).not.toMatch(/new Date\(/);
+    // Nav PR 7 (lead ruling r3, H3): ONE clock read, for the WAIT only: the time left to the caller's absolute deadline
+    // (deadlineMs). The plan date and minutes still come from `args.now` alone (below).
+    expect(code.match(/Date\.now\(/g)).toHaveLength(1);
+    const deadlineFn = code.slice(code.indexOf("function deadlineMs("), code.indexOf("function lane<T>("));
+    expect(deadlineFn).toContain("deadlineAt - Date.now()");
     const input = await loadDayFacts(NO_CLIENT, args(ANA, { now: at("00:30", "2026-11-19") }), okDeps());
     expect([input.planDate, input.nowMin]).toEqual(["2026-11-19", 30]);
   });
@@ -615,11 +620,13 @@ describe("SCH (ruling G, 23.2): the base hours and the schedule start are bounde
 describe("SCH: the source shape of the two bounded reads (23.1)", () => {
   it("each read has its own bound; the schedule-start read is not inside H1's failure wrapper", () => {
     const code = stripComments(readFileSync("lib/day-plan.ts", "utf8"));
-    expect(code).toContain('boundedRead(service, "hours", (abortable) => deps.shopDay(abortable, shopId))');
+    expect(code).toContain('boundedRead(service, "hours", (abortable) => deps.shopDay(abortable, shopId), ms)');
     expect(code).toMatch(/boundedRead\(service, "hours\.schedule_start", async \(abortable\) => dayPrepStarts\(await deps\.scheduleStarts\(abortable/);
     expect(code).not.toMatch(/L\("hours"/);
     expect(code.match(/deps\.scheduleStarts\(/g)).toHaveLength(1);
-    expect(code.replace(/\r\n/g, "\n")).toContain("const controller = new AbortController();\n  const d = startDeadline(DAY_FACT_DEADLINE_MS, controller);");
+    // Lead ruling r3, H3: each bound is the load's deadline (6 s, or less when the page's absolute deadline comes first).
+    expect(code.replace(/\r\n/g, "\n")).toContain("const controller = new AbortController();\n  const d = startDeadline(ms, controller);");
+    expect(code).toContain("ms: number = DAY_FACT_DEADLINE_MS");
   });
 });
 
@@ -777,6 +784,50 @@ describe("nav PR 7 E2: the own-assignment lane", () => {
   describe("with fake timers", () => {
     beforeEach(() => { vi.useFakeTimers(); });
     afterEach(() => { vi.useRealTimers(); });
+    // Lead ruling r3, H3 (Astra code r1 P3): the own lane shares the page's ABSOLUTE deadline. A loader started late (the
+    // page deadline already partly spent) ends every lane at that deadline, not at its own start + 6 s.
+    it("H3: started with 2 s of the page deadline left, the board failed and the own read hanging: settled at 2 s, not 6", async () => {
+      let ownSignal: AbortSignal | null = null;
+      const builder: Record<string, unknown> = {};
+      builder.select = () => builder;
+      builder.abortSignal = (s: AbortSignal) => { ownSignal = s; return builder; };
+      const client = { from: () => builder } as never;
+      let done = false;
+      const p = loadDayFacts(client, args(ANA, { board: boom, deadlineAt: Date.now() + 2_000 }), withDeps({ ownTasks: async (sb) => {
+        (sb as unknown as { from: (t: string) => { select: (c: string) => unknown } }).from("report_assignments").select("id");
+        return never();
+      } })).then((r) => { done = true; return r; });
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const f = shop(await p);
+      expect(f.assignments).toEqual({ kind: "failed" });
+      expect(f.hours.kind).toBe("ok"); // the lanes that answered keep their facts
+      expect(ownSignal!.aborted).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("H3: a page deadline later than 6 s away never extends the load (min of the two)", async () => {
+      let done = false;
+      const p = loadDayFacts(NO_CLIENT, args(ANA, { board: never, deadlineAt: Date.now() + 60_000 }), withDeps({ ownTasks: () => never() }))
+        .then((r) => { done = true; return r; });
+      await vi.advanceTimersByTimeAsync(DAY_FACT_DEADLINE_MS - 1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(shop(await p).assignments).toEqual({ kind: "failed" });
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("H3: a deadline already passed fails every lane at once (no fresh 6 s)", async () => {
+      let done = false;
+      const p = loadDayFacts(NO_CLIENT, args(ANA, { board: never, deadlineAt: Date.now() - 1 }), withDeps({ ownTasks: () => never(), cutoffs: () => never() }))
+        .then((r) => { done = true; return r; });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(done).toBe(true);
+      const f = shop(await p);
+      expect([f.assignments, f.ordering]).toEqual([{ kind: "failed" }, { kind: "failed" }]);
+    });
+
     it("a board that never settles + own ok: own_tasks at 6 s", async () => {
       let done = false;
       const p = loadDayFacts(NO_CLIENT, args(ANA, { board: never }), withDeps({ ownTasks: async () => [mine] })).then((r) => { done = true; return r; });

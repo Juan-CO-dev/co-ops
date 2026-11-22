@@ -151,6 +151,8 @@ describe("T11: the page's call shape (real timers)", () => {
       const html = render(await p);
       const args = state.loaderArgs[0] as DayFactsArgs;
       expect(args.now.getTime()).toBe(NOW.getTime());
+      // Lead ruling r3, H3: the loader shares the page's ONE absolute deadline (no time passed: the instant + 6 s).
+      expect(args.deadlineAt).toBe(NOW.getTime() + 6_000);
       expect(args.locations).toEqual([SHOP]);
       expect(args.board).not.toBeNull();
       expect(state.loaderBoards).toHaveLength(1);
