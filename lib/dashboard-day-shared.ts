@@ -6,7 +6,7 @@
  *
  * It reads the REAL role only and never "works as" (tests/dashboard-works-as.test.ts scans it).
  */
-import { taskHref } from "@/lib/assignments-shared";
+import { currentFloorStation, taskHref, type ShiftBoard } from "@/lib/assignments-shared";
 import { closingStationAnchor } from "@/lib/assignment-sections";
 import { deriveCloseState } from "@/lib/dashboard-status-shared";
 import { lensFor, type DayItem, type DayPlan, type DayPlanInput, type DayViewer, type Surface } from "@/lib/day-plan-shared";
@@ -149,4 +149,12 @@ export function amPrepEditFor(input: Pick<DayPlanInput, "planDate" | "facts">, u
   if (am.forDate !== input.planDate || !am.finishedById || am.finishedById !== userId) return undefined;
   const s = deriveCloseState(am.status).status;
   return s === "closed" || s === "auto_finalized" ? AM_PREP_EDIT_HREF(shopId) : undefined;
+}
+
+// ── My shift ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** The compact board's React key: it re-mounts (fresh section defaults) when the viewer's own work or station changes. */
+export function myShiftKey(board: ShiftBoard, userId: string): string {
+  const own = board.tasks.filter((t) => t.assigneeId === userId && t.available !== false).length;
+  return `${board.locationId}:${own}:${currentFloorStation(board, userId)?.stationId ?? "none"}`;
 }

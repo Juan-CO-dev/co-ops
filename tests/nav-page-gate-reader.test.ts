@@ -100,11 +100,11 @@ describe("the census of the 86 census files is the committed reviewed-entry list
     expect(result.records.map(strip)).toEqual(ENTRIES.map(strip));
   });
 
-  it("196 entries: refuse 28, admit 78, success-redirect 2, operational error 88, in 47 of the 86 files", () => {
+  it("185 entries (nav PR 7: the Dashboard 14 → 3): refuse 28, admit 75, success-redirect 2, operational error 80, in 47 of the 86 files", () => {
     const by = (k: string) => ENTRIES.filter((e) => e.meaning?.kind === k).length;
-    expect(ENTRIES).toHaveLength(196);
+    expect(ENTRIES).toHaveLength(185);
     expect({ refuse: by("refuse"), admit: by("admit"), "success-redirect": by("success-redirect"), "operational-error": by("operational-error") })
-      .toEqual({ refuse: 28, admit: 78, "success-redirect": 2, "operational-error": 88 });
+      .toEqual({ refuse: 28, admit: 75, "success-redirect": 2, "operational-error": 80 });
     expect(new Set(ENTRIES.map((e) => e.file)).size).toBe(47);
   });
 
@@ -785,7 +785,7 @@ const MOO_PLUS: RoleCode[] = ["moo", "owner", "cgs"];
 const OP6: RoleCode[] = ["agm", "catering_mgr", "prep_mgr"];
 
 const RULES: Record<string, PageRule> = {
-  "/dashboard": { min: 0, entries: "A4 O10" },
+  "/dashboard": { min: 0, entries: "A1 O2" },
   "/mid-shift": { min: 4, floorOn: ["pulseV2", 2], entries: "R2 A4 O2" },
   "/assignments": { min: 0, entries: "O1" },
   "/profile": { min: 0, entries: "" },
