@@ -76,17 +76,34 @@
 -- would hold the capture path's write lock for the whole delete. A batch size >= the item count makes it ONE
 -- transaction and ONE audit row; CC chooses from the measured timing.
 --
--- LOCKS OF THIS FILE (the apply script injects `set local lock_timeout`).
---   1. toast_orders SHARE ROW EXCLUSIVE, first. Every snapshot writer's first payload write is the toast_orders insert
---      in toast_capture_page (the modified sweep calls the same function), so from here no snapshot, child row or
---      membership can be written; a page transaction already past that insert is waited for. Reads go on.
+-- LOCKS OF THIS FILE (the apply script injects `set local lock_timeout`; the two lock steps below use their own).
+--   1. toast_orders SHARE ROW EXCLUSIVE, then toast_capture_run_orders SHARE ROW EXCLUSIVE, taken TOGETHER by one
+--      bounded attempt loop (step 1). Every snapshot writer's first payload write is the toast_orders insert in
+--      toast_capture_page (the modified sweep calls the same function), so from here no snapshot, child row or
+--      membership can be written; a page transaction already past that insert is waited out. Reads go on.
 --   2. the registry copy, the trigger (same lock), the functions and the ceilings.
---   3. the new membership FK: SHARE ROW EXCLUSIVE on toast_capture_run_orders (its writers are already held at 1).
---   4. LAST: dropping the 0221 membership FK takes ACCESS EXCLUSIVE on toast_capture_run_orders and toast_orders (the
---      RI triggers on both sides), held from there to COMMIT (only assertions follow). It is a lock upgrade: a
---      multi-statement transaction that read one of the two tables and is waiting for the other could form a cycle.
---      That cannot corrupt anything -- Postgres aborts one side after deadlock_timeout, or lock_timeout fires, and
---      this whole file rolls back -- and in the quiet window no capture, reconcile or fact job runs.
+--   3. the new membership FK (its SHARE ROW EXCLUSIVE on toast_capture_run_orders is already held from step 1).
+--   4. LAST: dropping the 0221 membership FK needs ACCESS EXCLUSIVE on toast_capture_run_orders and toast_orders (the
+--      RI triggers on both sides), held from there to COMMIT (only assertions follow). This is a lock UPGRADE, and an
+--      upgrade can close a cycle with a transaction that read one of the two tables and then asks for the other
+--      (proven on sim with the old file: 40P01). So the upgrade is taken by the same bounded attempt loop (step 11),
+--      in the DROP's own order (memberships, then snapshots).
+--   THE ATTEMPT LOOP (CC 2026-11-22, the open deadlock risk): every wait this file does for a lock on an existing
+--      table while it holds another is ONE attempt of at most 100 ms (a lock_timeout far below deadlock_timeout,
+--      asserted >= 500 ms), and a failed attempt rolls back its subtransaction, which RELEASES what that attempt took
+--      (a lock taken after a savepoint is released when it is rolled back to). Postgres runs a session's deadlock
+--      check once, deadlock_timeout after it began waiting, and aborts the session that finds the cycle. So:
+--      (a) this file is never aborted by a deadlock (no wait of its own reaches deadlock_timeout);
+--      (b) a session that waits on a lock an ATTEMPT took (any reader, toast_capture_finish) waits at most one
+--          attempt, never reaches its own check, and proceeds;
+--      (c) the only sessions that could still see 40P01 are ones that hold a lock on one of the two tables and then
+--          try to WRITE one of them while this file holds its SHARE ROW EXCLUSIVE, if their one check falls inside
+--          an attempt. No live writer has that shape (toast_capture_page writes toast_orders before touching either;
+--          toast_capture_finish and the fact functions only read and FK-check). Otherwise the loop gives way until it
+--          is bounded out.
+--      The loop is bounded (30 s per step); when it runs out the file refuses `0351: lock_busy (...)` and rolls back
+--      whole, and the operator runs it again. A waiting attempt keeps Postgres's queue rule: a capture writer queued
+--      behind the SHARE ROW EXCLUSIVE this file holds does not make the upgrade wait for it.
 -- LOCKS OF THE APPLY: ONE table lock, toast_orders SHARE ROW EXCLUSIVE, taken first (plan r3 section 2, answering
 -- Astra r2 P2 #3). No lock on runs, pointers, links or cursors, and no row lock on them (pinned). The cleanup holds
 -- nothing a writer needs before its toast_orders insert, so there is no cycle; toast_modified_save (1 s lock_timeout)
@@ -136,8 +153,26 @@ begin
     raise exception '0351: snapshot_fk_census_changed (toast_order_checks: %)', v; end if;
 end $$;
 
--- 1. The one lock every snapshot writer must pass (see LOCKS above).
-lock table public.toast_orders in share row exclusive mode;
+-- 1. The one lock every snapshot writer must pass, with the memberships' (see LOCKS above): one bounded attempt loop.
+do $$
+declare v_prev text := current_setting('lock_timeout'); v_until timestamptz := clock_timestamp() + interval '30 seconds'; v_tries integer := 0;
+begin
+  if current_setting('deadlock_timeout')::interval < interval '500 milliseconds' then
+    raise exception '0351: deadlock_timeout % is below the 500 ms the lock attempts rely on', current_setting('deadlock_timeout'); end if;
+  perform set_config('lock_timeout', '100ms', true);
+  loop
+    v_tries := v_tries + 1;
+    begin
+      lock table public.toast_orders in share row exclusive mode;
+      lock table public.toast_capture_run_orders in share row exclusive mode;
+      exit;
+    exception when lock_not_available then
+      if clock_timestamp() >= v_until then raise exception '0351: lock_busy (step 1, % attempts)', v_tries; end if;
+      perform pg_sleep(0.05 + random() * 0.1);
+    end;
+  end loop;
+  perform set_config('lock_timeout', v_prev, true);
+end $$;
 
 -- 2. The manifest tables.
 create table public.toast_snapshot_dedup_manifests (
@@ -714,7 +749,25 @@ alter table public.toast_capture_run_orders
   add constraint toast_capture_run_orders_snapshot_registry_fkey
   foreign key (snapshot_id, location_id, business_date) references public.toast_snapshot_registry (id, location_id, business_date);
 
--- 11. LAST lock: drop the 0221 membership FK to toast_orders (ACCESS EXCLUSIVE on both tables until COMMIT).
+-- 11. LAST lock: drop the 0221 membership FK to toast_orders (ACCESS EXCLUSIVE on both tables until COMMIT). The upgrade
+--     is taken first by the bounded attempt loop (see LOCKS above), so the DROP itself never waits.
+do $$
+declare v_prev text := current_setting('lock_timeout'); v_until timestamptz := clock_timestamp() + interval '30 seconds'; v_tries integer := 0;
+begin
+  perform set_config('lock_timeout', '100ms', true);
+  loop
+    v_tries := v_tries + 1;
+    begin
+      lock table public.toast_capture_run_orders in access exclusive mode;
+      lock table public.toast_orders in access exclusive mode;
+      exit;
+    exception when lock_not_available then
+      if clock_timestamp() >= v_until then raise exception '0351: lock_busy (step 11, % attempts)', v_tries; end if;
+      perform pg_sleep(0.05 + random() * 0.1);
+    end;
+  end loop;
+  perform set_config('lock_timeout', v_prev, true);
+end $$;
 do $$
 declare v_name text; v_count integer;
 begin

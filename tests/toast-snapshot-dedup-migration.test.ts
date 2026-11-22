@@ -129,10 +129,36 @@ describe("0351 header and shape", () => {
     expect(fn("toast_snapshot_dedup_apply")).toMatch(/set lock_timeout = '5s'/);
     // The migration's own cutover: the same first lock, and the FK drop is the last statement that takes one.
     expect(code.indexOf("lock table public.toast_orders in share row exclusive mode;")).toBeLessThan(code.indexOf("create table"));
-    expect(code.match(/^lock table [^\n]*$/gm)).toEqual(["lock table public.toast_orders in share row exclusive mode;"]);
     const drop = code.indexOf("alter table public.toast_capture_run_orders drop constraint");
     expect(drop).toBeGreaterThan(code.indexOf("add constraint toast_capture_run_orders_snapshot_registry_fkey"));
     expect(code.slice(drop + 10)).not.toMatch(/\b(create table|create index|create trigger|lock table|alter table|insert into|update public|delete from)\b/i);
+  });
+
+  it("the cutover takes every table lock through the bounded attempt loop: 100 ms attempts, released on failure (CC 2026-11-22)", () => {
+    // Outside the functions, the ONLY table locks are the two loops': step 1 (both SHARE ROW EXCLUSIVE, snapshots first)
+    // and step 11 (both ACCESS EXCLUSIVE, the DROP's own order), each attempt in its own subtransaction.
+    const outside = code.replace(/create function [\s\S]*?\nend \$\$;/g, "");
+    expect(outside.match(/lock table [^;]*;/g)).toEqual([
+      "lock table public.toast_orders in share row exclusive mode;",
+      "lock table public.toast_capture_run_orders in share row exclusive mode;",
+      "lock table public.toast_capture_run_orders in access exclusive mode;",
+      "lock table public.toast_orders in access exclusive mode;",
+    ]);
+    const loops = outside.split("\ndo $$").filter((b) => b.includes("lock table"));
+    expect(loops).toHaveLength(2);
+    for (const loop of loops) {
+      expect(loop).toMatch(/perform set_config\('lock_timeout', '100ms', true\);\n  loop\n/);
+      expect(loop).toMatch(/begin\n      lock table [^\n]*\n      lock table [^\n]*\n      exit;\n    exception when lock_not_available then\n/);
+      expect(loop).toMatch(/raise exception '0351: lock_busy \(step (1|11), % attempts\)'/);
+      expect(loop).toMatch(/interval '30 seconds'/);
+      expect(loop).toMatch(/perform set_config\('lock_timeout', v_prev, true\);\nend \$\$;/);
+    }
+    expect(loops[0]).toMatch(/current_setting\('deadlock_timeout'\)::interval < interval '500 milliseconds'/);
+    // Step 1 precedes every object; step 11 is immediately before the DROP and after the new FK.
+    expect(code.indexOf("lock_busy (step 1,")).toBeLessThan(code.indexOf("create table"));
+    const step11 = code.indexOf("lock_busy (step 11,");
+    expect(step11).toBeGreaterThan(code.indexOf("add constraint toast_capture_run_orders_snapshot_registry_fkey"));
+    expect(step11).toBeLessThan(code.indexOf("alter table public.toast_capture_run_orders drop constraint"));
   });
 
   it("stored content is PR 1's expression, line for line (scripts/toast-hash-acceptance.sql)", () => {
