@@ -11,6 +11,7 @@
  * The full chain (0270 → 0274 with its table CHECK → 0346's validator → 0354), every case list and the broken variants
  * are scripts/sql-harness-0354.mjs.
  */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
@@ -105,4 +106,20 @@ describe("0354 early open mode: offline apply (PGlite)", () => {
     expect(await refusal(db, M0354)).toContain("0354: already applied");
     await db.close();
   }, 60_000);
+});
+
+describe("0354 early open mode: the full offline chain (scripts/sql-harness-0354.mjs)", () => {
+  it("runs the real 0270 → 0274 → 0346 validator → 0354 and catches every broken variant", () => {
+    const output = execFileSync(process.execPath, ["scripts/sql-harness-0354.mjs"], { encoding: "utf8", timeout: 240_000 });
+    expect(output).not.toMatch(/^FAIL /m);
+    for (const line of [
+      "ok   S1 before the apply save_schedule_structure refuses a mode: structure_invalid",
+      "ok   S3 early list (63 cases, 12 valid): function and table CHECK agree",
+      "ok   S5 the live head is valid under 0346's validator (the SQL twin of the TS validator an older deployment runs)",
+      "EXPECTED FAIL 0354 broken variant: without the value check, catering.earlyOpenMode \"Auto\" is accepted",
+      "EXPECTED FAIL 0354 broken variant: without the exact-keys change, catering.earlyOpenMode \"semi\" is refused",
+      "EXPECTED FAIL 0354 broken variant: a sentinel granted to authenticated is refused by the file's own ceiling (0354: RPC escape)",
+    ]) expect(output).toContain(line);
+    expect(output).toMatch(/PASS 0354: \d+ checks/);
+  }, 250_000);
 });

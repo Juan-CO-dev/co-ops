@@ -24,7 +24,7 @@
 import type { DayContext } from "./context-shared";
 import { cateringDayLoad, cateringPrepWindowQ } from "./catering-day-shared";
 import { ScheduleError } from "./errors-shared";
-import { positionIds, scheduleEngine, type ScheduleStructure, type StructurePosition } from "./structure-shared";
+import { positionIds, scheduleEngine, type EarlyOpenMode, type ScheduleStructure, type StructurePosition } from "./structure-shared";
 
 /** T1: the earliest prep window starts MORE than this many minutes before the normal prep start. */
 export const EARLY_OPEN_FIT_MIN = 60;
@@ -33,7 +33,7 @@ export const EARLY_OPEN_HUGE_FACTOR = 2;
 /** The derived runtime head limit (saved ≤ 8 + the heavy-day extra ≤ 8). */
 export const RUNTIME_HEADS_MAX = 16;
 
-export type EarlyOpenMode = "manual" | "semi" | "auto";
+export type { EarlyOpenMode } from "./structure-shared";
 export type OpeningTrigger = "prep_fit" | "huge_day";
 export type OpeningStatus = "proposed" | "accepted" | "manual" | "auto" | "declined";
 /** A persistent per-date decision (the generator input). `proposed` and `auto` are never decisions: they are recomputed. */

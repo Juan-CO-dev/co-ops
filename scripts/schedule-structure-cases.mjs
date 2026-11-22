@@ -167,3 +167,34 @@ export function crewStructureCases() {
   cases.push({ name: "disabled catering", value: disabled, key: null });
   return cases;
 }
+
+/**
+ * PR SCH-2 (0354, plan r5 20.6 / ruling D6): the optional catering.earlyOpenMode. A SEPARATE, versioned list: the shared
+ * case file and every historical harness (0274, 0283, 0285, 0286, the 0346 test) keep their inputs and verdicts. Run
+ * against the current TS validator (tests/schedule-structure.test.ts) and against 0354's valid_schedule_structure and the
+ * schedule_structures table CHECK (scripts/sql-harness-0354.mjs). `key` = the TS validator's failing key, null when valid.
+ */
+export const EARLY_OPEN_CASES_SINCE = "0354";
+export function earlyOpenStructureCases() {
+  const crew = crewStructureCases().find((c) => c.name === "crew").value;
+  const bases = [["legacy stations", shopBase()], ["current defaults", structuredClone(CASE_DEFAULTS)], ["crew", crew]];
+  const cases = [];
+  for (const [label, base] of bases) {
+    cases.push({ name: `${label}: absent`, value: structuredClone(base), key: null });
+    for (const mode of ["manual", "semi", "auto"]) {
+      const v = structuredClone(base); v.catering.earlyOpenMode = mode;
+      cases.push({ name: `${label}: ${mode}`, value: v, key: null });
+    }
+    for (const bad of ["Auto", "SEMI", "", " semi", "semi ", "automatic", null, 1, 0, true, false, {}, ["auto"], { mode: "auto" }]) {
+      const v = structuredClone(base); v.catering.earlyOpenMode = bad;
+      cases.push({ name: `${label}: ${JSON.stringify(bad)}`, value: v, key: "catering.earlyOpenMode" });
+    }
+    const typo = structuredClone(base); typo.catering.earlyOpenModes = "auto";
+    cases.push({ name: `${label}: a misspelt sibling key`, value: typo, key: "catering.earlyOpenModes" });
+    const nested = structuredClone(base); nested.earlyOpenMode = "auto";
+    cases.push({ name: `${label}: the key at the top level`, value: nested, key: "earlyOpenMode" });
+    const other = structuredClone(base); other.catering.earlyOpenMode = "semi"; other.catering.leadMinutes = 211;
+    cases.push({ name: `${label}: a valid mode never hides another catering error`, value: other, key: "catering.leadMinutes" });
+  }
+  return cases;
+}
