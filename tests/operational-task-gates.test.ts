@@ -5,6 +5,7 @@ import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { withAbortStrict } from "@/lib/pulse/abort";
 import { ROLES, getRoleLevel, type RoleCode } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import type { AuthContext } from "@/lib/session";
@@ -46,6 +47,8 @@ function boundary(file: string, name: string) {
   const js = ts.transpile(fn.getText(ast).replace(/^export /, ""), { target: ts.ScriptTarget.ES2022 });
   const dependencies = {
     canDoOperationalTask, getServiceRoleClient, getRoleLevel,
+    // Nav PR 7 (lead ruling r3, H2): the tile reader wraps its client for the Dashboard's optional cancellation signal.
+    withAbortStrict,
     selectAllRows: async () => [],
     requireLevel: (a: AuthContext, min: number) => { if (getRoleLevel(a.user.role) < min) throw new DomainError(403, "forbidden"); },
     requireReceiver: (a: AuthContext) => { if (getRoleLevel(a.user.role) < 4) throw new DomainError(403, "forbidden"); },

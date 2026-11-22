@@ -106,7 +106,7 @@ export interface RichBodies {
  */
 export async function richBodies(
   boardSettled: Promise<Settled<ShiftBoard>>,
-  own: { readonly userId: string; readonly receiving: () => Promise<DeliveryView[]>; readonly counts: () => Promise<CountsTileState> },
+  own: { readonly userId: string; readonly receiving: (signal: AbortSignal) => Promise<DeliveryView[]>; readonly counts: (signal: AbortSignal) => Promise<CountsTileState> },
   widget: Widget,
 ): Promise<RichBodies | null> {
   const b = await boardSettled;
@@ -115,8 +115,8 @@ export async function richBodies(
   const ownReceiving = mine.has("receiving");
   const ownCounts = mine.has("counts");
   const [deliveries, counts] = await Promise.all([
-    ownReceiving ? widget("receiving.page.title", () => own.receiving()) : Promise.resolve(null),
-    ownCounts ? widget("counts.page.title", () => own.counts()) : Promise.resolve(null),
+    ownReceiving ? widget("receiving.page.title", (signal) => own.receiving(signal)) : Promise.resolve(null),
+    ownCounts ? widget("counts.page.title", (signal) => own.counts(signal)) : Promise.resolve(null),
   ]);
   return { ownReceiving, ownCounts, deliveries, counts };
 }

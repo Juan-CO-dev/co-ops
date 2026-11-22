@@ -50,7 +50,7 @@ import { firstName } from "@/lib/day-plan-load-shared";
 import { renderDayReason } from "@/lib/day-plan-render";
 import { operationalNow } from "@/lib/midshift-shared";
 import { navSwitches } from "@/lib/nav-switches";
-import { withAbort } from "@/lib/pulse/abort";
+import { withAbort, withAbortStrict } from "@/lib/pulse/abort";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { resolveShop } from "@/lib/shop-context";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
@@ -164,14 +164,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const boardSettled = !smm && shop && viewer.surfaces.has("ops")
     ? settleBy((signal) => loadShiftBoard(withAbort(sb, signal), { actor: assignmentActor, locationId: shop.id, date: planDate }), deadlineAt, "board")
     : null;
-  const retrainP = !smm && shop && auth.level >= 4 ? widget("yield.task.heading", () => loadMyRetrainTasks(auth, shop.id)) : null;
+  const retrainP = !smm && shop && auth.level >= 4 ? widget("yield.task.heading", (signal) => loadMyRetrainTasks(auth, shop.id, { signal })) : null;
   // Nav spec PR S1 (8.1, "Bell: none"): the social media manager gets NO notification read and NO bell, by the REAL role.
   // ONE rule, shared with "Mark all read" (W26-5 b). Started in parallel now; bounded by the page deadline.
   const unreadP = bellAllowed
-    ? widget("notifications.sheet.heading", () => loadUnreadForUser(sb, auth.user.id, { locationContext: notificationLocationContext(auth) }))
+    ? widget("notifications.sheet.heading", (signal) => loadUnreadForUser(withAbortStrict(sb, signal), auth.user.id, { locationContext: notificationLocationContext(auth) }))
     : null;
   const richP = boardSettled && shop
-    ? richBodies(boardSettled, { userId: auth.user.id, receiving: () => loadRecentDeliveries(auth, shop.id, 20), counts: () => loadCountsTileState(auth, shop.id) }, widget)
+    ? richBodies(boardSettled, { userId: auth.user.id, receiving: (signal) => loadRecentDeliveries(auth, shop.id, 20, { signal }), counts: (signal) => loadCountsTileState(auth, shop.id, { signal }) }, widget)
     : null;
   const input = !smm && shop
     ? await loadDayFactsSafe(sb, { viewer, shop, now, locations: auth.locations, board: boardSettled ? () => boardSettled.then(unwrapSettled) : null })

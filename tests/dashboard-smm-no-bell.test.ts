@@ -177,7 +177,8 @@ describe("census: every caller of the notification read or the bell applies the 
       expect(src).toContain("notificationBellRoleAllowed(auth.role)");
       // The read only runs behind the rule, and the bell only draws behind it. Nav PR 7: the read starts in parallel
       // (bounded by the page deadline), so it is no longer awaited inline.
-      expect(src).toMatch(/bellAllowed\s*\n?\s*\?\s*widget\("notifications\.sheet\.heading", \(\) => loadUnreadForUser\(/);
+      // Lead ruling r3 (H2): the read carries the page deadline's cancellation signal.
+      expect(src).toMatch(/bellAllowed\s*\n?\s*\?\s*widget\("notifications\.sheet\.heading", \(signal\) => loadUnreadForUser\(withAbortStrict\(sb, signal\),/);
       expect(src).toContain("{bellAllowed && unreadNotifications && <NotificationBell");
     }
   });
