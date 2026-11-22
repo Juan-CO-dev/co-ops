@@ -160,6 +160,28 @@ export function scheduledDayStartQ(day: Pick<DayContext, "structure"> | null | u
   return day?.structure.shopDay.prepStartQ ?? saved.shopDay.prepStartQ;
 }
 
+/** A date's actual start as the Dashboard reads it: the schedule's start, or "a schedule holds the date but its start did
+ *  not load". A date with NO schedule has no entry at all (the engine then uses the saved start). */
+export type DayPrepStart = { readonly kind: "scheduled"; readonly q: number } | { readonly kind: "unknown" };
+export const UNKNOWN_DAY_START: DayPrepStart = Object.freeze({ kind: "unknown" });
+
+/**
+ * D5 / F3: what the schedule says a date's start is. No week row (or no head) → null (no schedule: the saved start applies).
+ * A week with a head whose date row is missing, whose context read failed, or whose context has no start for the date →
+ * UNKNOWN — never the saved start, which can be later than the schedule's (an opening) or earlier (settings drift).
+ * Otherwise the stored start of the date's context (its origin revision's, else the head's).
+ */
+export function dayPrepStartFor(read: {
+  week: "none" | "present";
+  dayRow: "none" | { originRevisionId: string | null };
+  context: { kind: "ok"; prepStartQ: unknown } | { kind: "failed" };
+}): DayPrepStart | null {
+  if (read.week === "none") return null;
+  if (read.dayRow === "none" || read.context.kind === "failed") return UNKNOWN_DAY_START;
+  const q = read.context.prepStartQ;
+  return typeof q === "number" && Number.isInteger(q) && q >= 0 && q < 96 ? { kind: "scheduled", q } : UNKNOWN_DAY_START;
+}
+
 /** A stored opening as the generator's persistent decision (F1): proposed / auto / absent → null (recomputed). */
 export function toDecision(o: DayOpening | null | undefined): OpeningDecision | null {
   if (!o) return null;

@@ -47,7 +47,7 @@ export function capitolHill(min: number, opts: CapitolOptions = {}): ShopFacts {
   return {
     kind: "shop", shop: C_SHOP,
     hours: ok({ source: "defaults", shopDay: SCHEDULE_STRUCTURE_DEFAULTS.shopDay, catering: SCHEDULE_STRUCTURE_DEFAULTS.catering,
-      dayPrepStartQ: SCHEDULE_STRUCTURE_DEFAULTS.shopDay.prepStartQ }),
+      dayPrepStartQ: {} }),
     stations: ok({ stationDate: date, stations: [
       s("crunchy", "Crunchy Boi Station", 1, true, "14:00:00"),
       s("third", "3rd Party Station", 2, true, "15:30:00"),

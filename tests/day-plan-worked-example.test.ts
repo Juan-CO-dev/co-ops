@@ -168,11 +168,11 @@ describe("crew", () => {
   });
 });
 
-describe("the heavy day", () => {
-  const heavy = (t: string, v = ANA) => pStreetPlan(v, hm(t), { heavy: true });
+describe("the heavy day, with an accepted 5:30 opening on the schedule (PR SCH: the schedule's start)", () => {
+  const heavy = (t: string, v = ANA) => pStreetPlan(v, hm(t), { heavy: true, opening: true });
 
   it("the night before at 8:30 PM: the heads-up, and the AM prep list first among the night reports with the heavy lines", () => {
-    const p = pStreetPlan(ANA, hm("20:30"), { nightBefore: true });
+    const p = pStreetPlan(ANA, hm("20:30"), { nightBefore: true, opening: true });
     expect(reasonText(p.headsUp)).toBe("heavy.tomorrow_other{orders=2,guests=145,start=05:30}");
     const night = itemsText(p).filter((x) => /^(am_prep|cash|pm_report) /.test(x));
     expect(night).toEqual(["am_prep now", "cash now", "pm_report now"]);
@@ -210,5 +210,26 @@ describe("the heavy day", () => {
   it("usual close times are not shifted on the heavy day", () => {
     expect(phaseText(heavy("13:35"))).toBe(phaseText(at("13:35")));
     expect(reasons(heavy("13:35"), "closing")).toEqual(reasons(at("13:35"), "closing"));
+  });
+});
+
+describe("the heavy day with NO opening (PR SCH, Juan: more people early inside the normal morning)", () => {
+  const heavy = (t: string, v = ANA) => pStreetPlan(v, hm(t), { heavy: true });
+
+  it("the night before: the heads-up names the 7:00 start", () => {
+    const p = pStreetPlan(ANA, hm("20:30"), { nightBefore: true });
+    expect(reasonText(p.headsUp)).toBe("heavy.tomorrow_other{orders=2,guests=145,start=07:00}");
+  });
+
+  it("5:45 AM: still before opening; 7:00 the opening check by the clock, with the heavy line at 7:00", () => {
+    expect(phaseText(heavy("05:45"))).toBe("before_opening (clock)");
+    const p = heavy("07:00");
+    expect(phaseText(p)).toBe("opening_check (clock) since.day_start{time=07:00}");
+    expect(reasons(p, "opening")).toEqual(["opening.start{}", "heavy.today{guests=145,time=09:00,start=07:00}", "heavy.flagged_other{n=4}"]);
+  });
+
+  it("the 9:00 deadline is unchanged: now at 8:29, urgent from 8:30", () => {
+    expect(item(heavy("08:29"), "opening").band).toBe("now");
+    expect(reasons(heavy("08:30"), "opening")[0]).toBe("opening.urgent_heavy{time=09:00}");
   });
 });

@@ -33,8 +33,8 @@ export function shopHoursFrom(live: { structure: ScheduleStructure; source: "sav
     shopDay: { prepStartQ: shopDay.prepStartQ, serviceStartQ: shopDay.serviceStartQ },
     catering: { minHeadcount: catering.minHeadcount, leadMinutes: catering.leadMinutes, defaultStartQ: catering.defaultStartQ,
       defaultEndQ: catering.defaultEndQ, extraPrepDishHeads: catering.extraPrepDishHeads },
-    // SCH (nav-SCH-LEAD-RULINGS-r1 A4): the day's EFFECTIVE prep start; today the normal one. SCH changes only its source.
-    dayPrepStartQ: shopDay.prepStartQ,
+    // SCH (rulings A4, D5): the per-date schedule starts; until the loader reads the schedule (commit 6a), no date has one.
+    dayPrepStartQ: {},
   };
 }
 

@@ -36,11 +36,11 @@ describe("pure companion: names and the shop day", () => {
     expect(firstName("   ")).toBeNull();
   });
 
-  it("hours: the structure's values; dayPrepStartQ = prepStartQ (SCH); a non-finite value throws", () => {
+  it("hours: the structure's values; no per-date schedule start yet (SCH commit 6: no date has one); a non-finite value throws", () => {
     const saved = shopHoursFrom({ structure: { ...SCHEDULE_STRUCTURE_DEFAULTS, shopDay: { ...SCHEDULE_STRUCTURE_DEFAULTS.shopDay, prepStartQ: 26 } }, source: "saved" });
-    expect(saved).toMatchObject({ source: "saved", shopDay: { prepStartQ: 26 }, dayPrepStartQ: 26 });
+    expect(saved).toMatchObject({ source: "saved", shopDay: { prepStartQ: 26 }, dayPrepStartQ: {} });
     const defaults = shopHoursFrom({ structure: SCHEDULE_STRUCTURE_DEFAULTS, source: "defaults" });
-    expect(defaults.dayPrepStartQ).toBe(SCHEDULE_STRUCTURE_DEFAULTS.shopDay.prepStartQ);
+    expect(defaults.shopDay.prepStartQ).toBe(SCHEDULE_STRUCTURE_DEFAULTS.shopDay.prepStartQ);
     expect(() => shopHoursFrom({ structure: { ...SCHEDULE_STRUCTURE_DEFAULTS, shopDay: { ...SCHEDULE_STRUCTURE_DEFAULTS.shopDay, serviceStartQ: Number.NaN } }, source: "saved" })).toThrow();
   });
 });
@@ -194,7 +194,7 @@ describe("loadDayFacts: the all-ok baseline", () => {
     expect(input.planDate).toBe(PLAN);
     expect(input.nowMin).toBe(13 * 60 + 45);
     const f = shop(input);
-    expect(f.hours).toMatchObject({ kind: "ok", value: { dayPrepStartQ: 28 } });
+    expect(f.hours).toMatchObject({ kind: "ok", value: { shopDay: { prepStartQ: 28 }, dayPrepStartQ: {} } });
     expect(f.closing).toEqual({ kind: "ok", value: { forDate: PLAN, status: "open", phase1At: null, finishedAt: null, finishedByName: null, sectionsLeft: 3 } });
     expect(f.opening).toEqual({ kind: "ok", value: { forDate: PLAN, status: "confirmed", phase1At: "2026-11-18T12:40:00.000Z", finishedAt: OPENING.confirmed_at, finishedByName: "Ana", sectionsLeft: null } });
     expect(f.yesterdayClosing).toMatchObject({ kind: "ok", value: { forDate: YESTERDAY, status: "confirmed", finishedByName: "Mia" } });
@@ -449,12 +449,12 @@ describe("loadDayFacts: ruling 7 and SCH through the loader (8.1 items 10, 11)",
     expect(plan.items.find((i) => i.id === "cash")?.done?.autoFinalized).toBe(false);
   });
 
-  it("hours.dayPrepStartQ = the shop day's prepStartQ, for a saved structure and for the defaults (the real H1 read)", async () => {
+  it("hours: the shop day's prepStartQ for a saved structure and for the defaults (the real H1 read)", async () => {
     const saved = { ...SCHEDULE_STRUCTURE_DEFAULTS, shopDay: { ...SCHEDULE_STRUCTURE_DEFAULTS.shopDay, prepStartQ: 27 } };
     const savedClient = fakeSupabase((c) => (c.table === "schedule_structures" ? { data: [{ id: "s1", structure: saved, created_at: "x" }] } : { data: [] }));
-    expect(await defaultDayFactDeps.shopDay(savedClient.client as never, SHOP.id)).toMatchObject({ source: "saved", dayPrepStartQ: 27 });
+    expect(await defaultDayFactDeps.shopDay(savedClient.client as never, SHOP.id)).toMatchObject({ source: "saved", shopDay: { prepStartQ: 27 } });
     const none = fakeSupabase(() => ({ data: [] }));
-    expect(await defaultDayFactDeps.shopDay(none.client as never, SHOP.id)).toMatchObject({ source: "defaults", dayPrepStartQ: SCHEDULE_STRUCTURE_DEFAULTS.shopDay.prepStartQ });
+    expect(await defaultDayFactDeps.shopDay(none.client as never, SHOP.id)).toMatchObject({ source: "defaults", shopDay: { prepStartQ: SCHEDULE_STRUCTURE_DEFAULTS.shopDay.prepStartQ } });
   });
 });
 

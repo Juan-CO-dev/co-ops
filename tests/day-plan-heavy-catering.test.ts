@@ -9,7 +9,7 @@ import { buildDay, type DayModel } from "@/lib/day-plan-shared";
 import { cateringDayLoad, cateringPrepWindowQ, isHeavyCateringDay } from "@/lib/scheduling/catering-day-shared";
 import { cateringWindows } from "@/lib/scheduling/people-rules-shared";
 import { SCHEDULE_STRUCTURE_DEFAULTS } from "@/lib/scheduling/structure-shared";
-import { hm, PLAN_DATE } from "./fixtures/day-plan/build";
+import { checklist, hm, PLAN_DATE } from "./fixtures/day-plan/build";
 import { pStreet } from "./fixtures/day-plan/p-street";
 
 const S = { minHeadcount: 30 };
@@ -50,14 +50,25 @@ describe("the shared heavy-day function", () => {
 const opening = (d: DayModel) => d.items.find((i) => i.id === "opening")!;
 
 describe("the heavy day in the engine", () => {
-  it("moves the day start 7:00 → 5:30 and the morning deadline 10:30 → 9:00", () => {
-    const normal = buildDay(PLAN_DATE, hm("06:00"), pStreet(hm("06:00")));
-    const heavy = buildDay(PLAN_DATE, hm("06:00"), pStreet(hm("06:00"), { heavy: true }));
-    expect(normal.phase.id).toBe("before_opening");
-    expect(opening(normal)).toMatchObject({ band: "upcoming", at: hm("07:00") });
-    expect(heavy.phase).toMatchObject({ id: "opening_check", heavy: true });
+  // PR SCH (rulings A4, F3): the day's start is the SCHEDULE's — a heavy day no longer moves it by itself.
+  it("heavy with an accepted 5:30 opening: the day starts at 5:30 (the schedule's start) and the morning deadline is 9:00", () => {
+    const heavy = buildDay(PLAN_DATE, hm("06:00"), pStreet(hm("06:00"), { heavy: true, opening: true }));
+    expect(heavy.phase).toMatchObject({ id: "opening_check", heavy: true, since: { key: "day.phase.since.day_start", params: { time: { t: "wall", min: hm("05:30") } } } });
     expect(opening(heavy)).toMatchObject({ band: "now", at: hm("09:00"), heavy: true });
     expect(heavy.heavy.today).toEqual({ heavy: true, guests: 145, orders: 2, missingCounts: 0 });
+  });
+
+  it("heavy with no opening: the day starts at 7:00 (more people come in inside the normal morning); Opening upcoming at 6:00, urgent from 8:30", () => {
+    const normal = buildDay(PLAN_DATE, hm("06:00"), pStreet(hm("06:00")));
+    expect(normal.phase.id).toBe("before_opening");
+    expect(opening(normal)).toMatchObject({ band: "upcoming", at: hm("07:00") });
+    const at = (t: string) => buildDay(PLAN_DATE, hm(t), pStreet(hm(t), { heavy: true }));
+    expect(at("06:00").phase.id).toBe("before_opening");
+    expect(opening(at("06:00"))).toMatchObject({ band: "upcoming", at: hm("07:00"), heavy: true });
+    expect(opening(at("06:00")).reasons.map((r) => r.key)).toContain("day.reason.heavy.today");
+    expect(opening(at("06:00")).reasons.find((r) => r.key === "day.reason.heavy.today")!.params.start).toEqual({ t: "wall", min: hm("07:00") });
+    expect(opening(at("08:29")).band).toBe("now");
+    expect(opening(at("08:30"))).toMatchObject({ band: "urgent", at: hm("09:00") });
   });
 
   it("a heavy day with no timed order uses the default window and leaves the deadline", () => {
@@ -93,3 +104,73 @@ function pStreetTimelineNoMorning() {
   return { checkIn: "07:35", morningPrep: null, vendorCLogged: "10:15", cateringOut: "11:40", vendorAOrdered: "13:55",
     midDayPrep: "14:50", closingFinished: "21:40", closingStarted: "13:00", stationClose: { crunchy: "13:40", third: "15:55", walk: "19:58", expo: "20:05" } };
 }
+
+// ─── PR SCH (rulings D5, E2, E3, F4): the schedule's start is UNKNOWN ───────────────────────────────────────────────────
+
+describe("an unknown start (a schedule holds the date but its start did not load)", () => {
+  const UNKNOWN = { [PLAN_DATE]: { kind: "unknown" as const } };
+  /** P Street at `t` with the start unknown; the day's Opening instance: none, open, or finished. */
+  const day = (t: string, o: { heavy?: boolean; instance: "none" | "open" | "done" }) => {
+    const min = hm(t);
+    const f = pStreet(min, { heavy: o.heavy ?? false, dayStarts: UNKNOWN, timeline: pStreetTimelineNoMorning() });
+    const status = o.instance === "none" ? null : o.instance === "open" ? "open" : "confirmed";
+    return buildDay(PLAN_DATE, min, { ...f, opening: { kind: "ok", value: checklist(PLAN_DATE, { status, ...(o.instance === "done" ? { finishedAt: "2026-11-18T13:00:00.000Z" } : {}) }) } });
+  };
+  const notStart = (d: DayModel) => {
+    expect(d.notes.map((n) => n.reason.key)).toContain("day.fail.day_start");
+    // No phase or item ever uses the saved start (7:00) as the day start.
+    expect(d.phase.since?.key).not.toBe("day.phase.since.day_start");
+    expect(opening(d).at).not.toBe(hm("07:00"));
+  };
+
+  it("6:00 with no instance: before opening (no clock rise), Opening upcoming with no time, day.fail.day_start; an instance moves it to the opening check by EVENT", () => {
+    const none = day("06:00", { instance: "none" });
+    expect(none.phase).toMatchObject({ id: "before_opening" });
+    expect(opening(none)).toMatchObject({ band: "upcoming", at: null });
+    expect(opening(none).reasons[0]!.key).toBe("day.reason.opening.start");
+    notStart(none);
+    const later = day("07:30", { instance: "none" });
+    expect(later.phase.id).toBe("before_opening");
+    notStart(later);
+    expect(day("07:30", { instance: "open" }).phase).toMatchObject({ id: "opening_check", decidedBy: "event", since: null });
+  });
+
+  it.each([
+    // heavy day, first order 9:00 (deadline 9:00, the warning from 8:30)
+    ["heavy", "08:29", "none", { band: "upcoming", at: null }],
+    ["heavy", "08:29", "open", { band: "now", at: hm("09:00") }],
+    ["heavy", "08:30", "none", { band: "urgent", at: hm("09:00"), first: "day.reason.opening.urgent_heavy" }],
+    ["heavy", "08:30", "open", { band: "urgent", at: hm("09:00"), first: "day.reason.opening.urgent_heavy" }],
+    ["heavy", "09:05", "none", { band: "urgent", at: hm("09:00"), first: "day.reason.opening.late_heavy" }],
+    ["heavy", "09:05", "open", { band: "urgent", at: hm("09:00"), first: "day.reason.opening.late_heavy" }],
+    // normal day (deadline = service start, 10:30)
+    ["normal", "09:59", "none", { band: "upcoming", at: null }],
+    ["normal", "09:59", "open", { band: "now", at: hm("10:30") }],
+    ["normal", "10:00", "none", { band: "urgent", at: hm("10:30"), first: "day.reason.opening.urgent" }],
+    ["normal", "10:00", "open", { band: "urgent", at: hm("10:30"), first: "day.reason.opening.urgent" }],
+    ["normal", "10:35", "none", { band: "urgent", at: hm("10:30"), first: "day.reason.opening.late" }],
+    ["normal", "10:35", "open", { band: "urgent", at: hm("10:30"), first: "day.reason.opening.late" }],
+  ] as const)("%s day at %s, instance %s: the known deadline urgency wins; only the clock rise is gone", (kind, t, instance, want) => {
+    const d = day(t, { heavy: kind === "heavy", instance });
+    const o = opening(d);
+    expect({ band: o.band, at: o.at }).toEqual({ band: want.band, at: want.at });
+    if ("first" in want) expect(o.reasons[0]!.key).toBe(want.first);
+    if (kind === "heavy") expect(o.reasons.map((r) => r.key)).toContain("day.reason.heavy.today_unknown_start");
+    notStart(d);
+  });
+
+  it("completed: Opening finished is done at every one of those times", () => {
+    for (const t of ["08:29", "08:30", "09:05", "09:59", "10:00", "10:35"]) {
+      const d = day(t, { heavy: true, instance: "done" });
+      expect(opening(d).band, t).toBe("done");
+      expect(d.notes.map((n) => n.reason.key)).toContain("day.fail.day_start");
+    }
+  });
+
+  it("tomorrow unknown: the night-before line has no start (the no-start key)", () => {
+    const f = pStreet(hm("20:30"), { nightBefore: true, dayStarts: { "2026-11-18": { kind: "unknown" } } });
+    const d = buildDay("2026-11-17", hm("20:30"), f);
+    expect(d.headsUp).toEqual({ key: "day.reason.heavy.tomorrow_other_unknown_start", params: { orders: { t: "count", v: 2 }, guests: { t: "count", v: 145 } } });
+    expect(d.notes.map((n) => n.reason.key)).not.toContain("day.fail.day_start");
+  });
+});

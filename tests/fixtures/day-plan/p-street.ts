@@ -3,7 +3,7 @@
  * timeline. `pStreet(min, opts)` returns the facts as they stand at that minute (events after it are not yet true), so a
  * test sweeps the clock by calling it. Illustrative values (the live ones are in p-street-late-close.ts).
  */
-import { planDay, type CateringOrder, type DayPlan, type DayStation, type DayViewer, type ShopFacts } from "@/lib/day-plan-shared";
+import { planDay, type CateringOrder, type DayPlan, type DayPrepStart, type DayStation, type DayViewer, type ShopFacts } from "@/lib/day-plan-shared";
 import type { PoFact, VendorCutoff, VendorFact } from "@/lib/report-digests-v2-shared";
 import type { RhythmRow } from "@/lib/vendor-rhythm-shared";
 import { assignment, checklist, forViewer, hm, iso, ok, order, PLAN_DATE, report, station } from "./build";
@@ -65,6 +65,13 @@ export interface PStreetOptions {
   heavy?: boolean;
   /** The plan date is the evening BEFORE the heavy day: tomorrow's catering is the heavy day's orders. */
   nightBefore?: boolean;
+  /**
+   * PR SCH (rulings A4, F3): the heavy day's schedule carries an ACCEPTED earlier opening at 5:30 (q22) — the day's start the
+   * loader reads from the schedule. Without it a heavy day keeps the normal 7:00 start (more people inside the morning).
+   */
+  opening?: boolean;
+  /** PR SCH: the per-date starts as the loader would supply them (overrides `opening`). */
+  dayStarts?: Readonly<Record<string, DayPrepStart>>;
   planDate?: string;
 }
 
@@ -117,7 +124,8 @@ export function pStreet(min: number, opts: PStreetOptions = {}): ShopFacts {
   const closingDone = has(tl.closingFinished);
   return {
     kind: "shop", shop: P_SHOP,
-    hours: ok({ source: "saved", shopDay: { prepStartQ: 28, serviceStartQ: 42 }, dayPrepStartQ: 28,
+    hours: ok({ source: "saved", shopDay: { prepStartQ: 28, serviceStartQ: 42 },
+      dayPrepStartQ: opts.dayStarts ?? (opts.opening ? { [opts.nightBefore ? tomorrow : date]: { kind: "scheduled", q: 22 } } : {}),
       catering: { minHeadcount: 30, leadMinutes: 210, defaultStartQ: 34, defaultEndQ: 52, extraPrepDishHeads: 1 } }),
     stations: ok({ stationDate: date, stations: pStreetStations(closeAt, opts.usual) }),
     opening: ok(opening),
