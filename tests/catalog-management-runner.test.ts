@@ -53,7 +53,7 @@ describe('catalog SIM Management API transport', () => {
     expect(catalogBranch).toContain('await startServer()');
     expect(catalogBranch).not.toContain('await restore(');
     expect(catalogBranch).toContain('restore: "not-required"');
-    expect(runner).toContain('delete childEnv.SIM_CATALOG_PASSWORD');
+    expect(runner).toContain('withoutNodeOnlyControls(env)'); // launch() strips every Node-only control (sim-nav-suite tests the built env)
   });
   it('only admits isolated catalog fixtures in production mode', async () => {
     const { parseArgs } = await import('../scripts/sim/launch-readiness/run');
