@@ -87,6 +87,9 @@ export interface ChecklistDay extends ForDate {
   readonly finishedAt: string | null;
   readonly finishedByName: string | null;
   readonly sectionsLeft: number | null;
+  /** The instance's `confirmed_by` (nav PR 7, E3): the AM prep submitter's "Edit" on the Dashboard (C.46 A2). The ENGINE
+   *  never reads it (a source test pins that); optional, so every fixture without it still compiles. */
+  readonly finishedById?: string | null;
 }
 export interface MidDayDay extends ForDate {
   readonly instances: readonly { readonly status: string; readonly finishedAt: string | null; readonly finishedByName: string | null }[];
@@ -132,8 +135,10 @@ export interface DayAssignment {
   readonly source: "assigned" | "taken" | null;
 }
 export interface AssignmentFacts extends ForDate {
-  /** "all_tasks": the shift board. "checklist_tasks": the task-day reader (Opening, AM prep, Mid-day prep only). */
-  readonly scope: "all_tasks" | "checklist_tasks";
+  /** "all_tasks": the shift board. "checklist_tasks": the task-day reader (Opening, AM prep, Mid-day prep only).
+   *  "own_tasks": the viewer's OWN assignments only, sent when the board failed (nav PR 7, F3). Never a roster: nobody
+   *  else's holding is known. */
+  readonly scope: "all_tasks" | "checklist_tasks" | "own_tasks";
   readonly rows: readonly DayAssignment[];
 }
 
@@ -1142,6 +1147,7 @@ export function applyLens(
       if (a === "not_shown") { holder = { kind: "not_shown" }; actions = ["do"]; }
       else if (a === null) { holder = { kind: "unknown" }; actions = kh ? ["do"] : []; }
       else if (mine) { holder = { kind: "mine" }; actions = ["do"]; }
+      else if (a.scope === "own_tasks") { holder = { kind: "unknown" }; actions = kh ? ["do"] : []; }
       else {
         const other = rows.find((r) => r.task === item.task);
         const inScope = a.scope === "all_tasks" || (CHECKLIST_TASKS as readonly TaskType[]).includes(item.task);

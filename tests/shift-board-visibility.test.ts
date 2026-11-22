@@ -34,7 +34,9 @@ describe("My shift and assignments board", () => {
       // The compact dashboard card lists only the viewer, so its stations section is "My station"
       // (B4 #21); the full board keeps the permission-accurate roster title.
       const stationsTitle = compact ? (language === "en" ? en["assignments.myStation"] : es["assignments.myStation"]) : stations;
-      expect(html).toContain(`<span class="min-w-0 truncate text-sm font-bold text-co-text">${tasks}</span>`);
+      // Nav PR 7 (plan r2 2.8): the compact (Dashboard) board has no tasks section; the day list carries the tasks.
+      if (compact) expect(html).not.toContain(`<span class="min-w-0 truncate text-sm font-bold text-co-text">${tasks}</span>`);
+      else expect(html).toContain(`<span class="min-w-0 truncate text-sm font-bold text-co-text">${tasks}</span>`);
       expect(html).toContain(`<span class="min-w-0 truncate text-sm font-bold text-co-text">${stationsTitle}</span>`);
       if (level < 4) expect(html).not.toContain(language === "en" ? "Take or assign" : "Tomar o asignar");
     }
@@ -43,10 +45,12 @@ describe("My shift and assignments board", () => {
     expect([en["assignments.tasks"], en["assignments.stations"]]).toEqual(["Tasks", "Stations"]);
     expect([es["assignments.tasks"], es["assignments.stations"]]).toEqual(["Tareas", "Estaciones"]);
   });
-  it.each([2, 3, 4, 5, 6, 7, 9])("shows the unassigned safety line only to KH+ at level %s", (level) => {
+  // Nav PR 7 (plan r2 2.8): the compact board's "Take / assign tasks" section (and its "Unassigned: ..." safety line) is
+  // gone at every level; on the Dashboard the day list carries each task, "Nobody yet" opening the task itself.
+  it.each([2, 3, 4, 5, 6, 7, 9])("the compact board has no unassigned safety line at level %s; Team today stays linked", (level) => {
     const html = render(board(level));
     expect(html).toContain("My shift");
-    expect(html.includes("Unassigned:")).toBe(level >= 4);
+    expect(html).not.toContain("Unassigned:");
     expect(html).toContain("/assignments?location=shop-a");
     for (const task of TASK_TYPES) expect(html).not.toContain(`href="${taskHref(task, "shop-a")}"`);
   });

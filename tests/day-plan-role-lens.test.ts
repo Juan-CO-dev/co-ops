@@ -104,3 +104,52 @@ describe("the release-shaped board (r3, D4)", () => {
     expect(rosaAt("14:05", b).items.map((i) => i.id)).toEqual(["closing"]);
   });
 });
+
+// Nav PR 7, E1 (plan r2 2.12, T19 engine half; Astra F3): when the board failed, the loader sends the viewer's OWN
+// assignments under scope "own_tasks". It is never a roster: the viewer's own task reads "Yours"; every other holder is
+// unknown ("Couldn't load who has it."), never "Nobody yet", never "Assign"; crew never see another person's task.
+describe("own_tasks: the board failed, the viewer's own assignments loaded", () => {
+  const ownOnly = (f: ShopFacts, rows: ReturnType<typeof assignment>[]): ShopFacts => ({
+    ...f, assignments: ok({ forDate: PLAN_DATE, scope: "own_tasks", rows }), myStation: { kind: "failed" }, stations: { kind: "failed" },
+  });
+  const run = (v: typeof ANA, t: string, f: ShopFacts) => planDay({ planDate: PLAN_DATE, nowMin: hm(t), viewer: v, facts: f }) as DayPlan;
+
+  it("crew: their own Opening is listed as theirs; another person's task stays absent", () => {
+    for (const t of ["07:00", "13:45", "20:30"]) {
+      const p = run(LUIS, t, ownOnly(pStreet(hm(t)), [assignment("o1", "opening_report", "u-luis", "Luis")]));
+      expect(p.items.map((i) => i.id).sort(), t).toEqual(["closing", "opening"]);
+      expect(item(p, "opening")).toMatchObject({ mine: true, holder: { kind: "mine" }, actions: ["do"] });
+      expect(p.items.some((i) => i.holder.kind === "named")).toBe(false);
+      expect(p.notes.map((n) => n.reason.key)).not.toContain("day.fail.assignments");
+      expect(p.empty).toBeNull();
+    }
+  });
+
+  it("KH: own task \"Yours\"; every other holder item unknown with Do it only; no nobody, no assign anywhere", () => {
+    for (const t of ["07:00", "13:45", "20:30"]) {
+      const p = run(ANA, t, ownOnly(pStreet(hm(t)), [assignment("o1", "opening_report", "u-ana", "Ana")]));
+      expect(item(p, "opening")).toMatchObject({ mine: true, holder: { kind: "mine" }, actions: ["do"] });
+      for (const id of ["mid_day_prep", "am_prep", "cash", "pm_report", "ordering", "receiving"] as const) {
+        expect(item(p, id), `${t} ${id}`).toMatchObject({ mine: false, holder: { kind: "unknown" }, actions: ["do"] });
+      }
+      expect(p.items.some((i) => i.holder.kind === "nobody")).toBe(false);
+      expect(p.items.some((i) => i.actions.includes("assign"))).toBe(false);
+      expect(p.notes.map((n) => n.reason.key)).not.toContain("day.fail.assignments");
+    }
+  });
+
+  it("a GM with nothing of their own: every holder unknown, never named or nobody", () => {
+    const p = run(GM, "13:45", ownOnly(pStreet(hm("13:45")), []));
+    for (const i of p.items.filter((x) => ["opening", "mid_day_prep", "am_prep", "cash", "pm_report", "ordering", "receiving"].includes(x.id))) {
+      expect(i.holder, i.id).toEqual({ kind: "unknown" });
+      expect(i.actions, i.id).toEqual(["do"]);
+    }
+  });
+
+  it("the all_tasks and checklist_tasks scopes are unchanged (control)", () => {
+    expect(item(plan(GM, "13:45"), "ordering")).toMatchObject({ holder: { kind: "nobody" }, actions: ["do", "assign"] });
+    const checklistScope: ShopFacts = { ...pStreet(hm("13:45")), assignments: ok({ forDate: PLAN_DATE, scope: "checklist_tasks", rows: [] }) };
+    expect(item(plan(GM, "13:45", checklistScope), "ordering").holder).toEqual({ kind: "not_shown" });
+    expect(item(plan(GM, "13:45", checklistScope), "am_prep").holder).toEqual({ kind: "nobody" });
+  });
+});

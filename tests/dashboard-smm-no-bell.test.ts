@@ -43,23 +43,22 @@ vi.mock("@/lib/assignments", () => ({
   loadShiftBoard: async () => ({ locationId: "shop-a", date: "2026-10-07", viewerId: "viewer", viewerLevel: state.boardLevel,
     people: [{ id: "viewer", name: "Viewer", level: state.boardLevel, hasWork: false }], stations: [], events: [], tasks: [] }),
   loadOwnTaskAssignments: async () => [],
+  loadStationDayFlags: async () => ({ installed: false }),
 }));
-vi.mock("@/lib/checklists", () => ({ canEditReport: () => ({ canEdit: false }), evaluateAutoReleaseForUserLocations: vi.fn() }));
-vi.mock("@/lib/admin/template-builder-shared", () => ({ applyEffectiveResolution: (query: unknown) => query }));
+vi.mock("@/lib/checklists", () => ({ evaluateAutoReleaseForUserLocations: vi.fn() }));
+// Nav PR 7: the Dashboard renders the day engine; the real loader runs on PR 6's fake reads (no database).
+vi.mock("@/lib/day-plan", async (orig) => {
+  const m = await orig<typeof import("@/lib/day-plan")>();
+  const { okDeps } = await import("./fixtures/day-plan/loader-deps");
+  return { ...m, loadDayFacts: (sb: Parameters<typeof m.loadDayFacts>[0], a: Parameters<typeof m.loadDayFacts>[1]) => m.loadDayFacts(sb, a, okDeps()) };
+});
 vi.mock("@/lib/notifications", () => ({
   loadUnreadForUser: state.unread,
   notificationLocationContext: (a: { level: number; locations: string[] }) => (a.level >= 9 && a.locations.length === 0 ? undefined : a.locations),
 }));
-vi.mock("@/lib/prep", () => ({
-  loadAmPrepDashboardState: async () => ({ isVisibleToActor: true, hasTemplate: false }),
-  loadMidDayPrepDashboardState: async () => ({ isVisibleToActor: true }),
-}));
-vi.mock("@/lib/cash", () => ({ loadCashDashboardState: async () => ({ isVisibleToActor: true, report: null }) }));
-vi.mock("@/lib/pm-report", () => ({ loadPmDashboardState: async () => ({ isVisibleToActor: true }) }));
 vi.mock("@/lib/receiving", () => ({ loadRecentDeliveries: async () => [] }));
-vi.mock("@/lib/purchase-orders", () => ({ loadTodaysOrders: async () => [] }));
-vi.mock("@/lib/ordering", () => ({ loadOrderingAttention: async () => ({ vendors: [] }) }));
 vi.mock("@/lib/counts", () => ({ loadCountsTileState: async () => null }));
+vi.mock("@/lib/yield-stats", () => ({ loadMyRetrainTasks: async () => [] }));
 vi.mock("@/components/auth/AuthShell", () => ({ AuthShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock("@/components/BrandMark", () => ({ BrandMark: () => null }));
 vi.mock("@/components/auth/LogoutButton", () => ({ LogoutButton: () => null }));
@@ -68,6 +67,7 @@ vi.mock("@/components/dashboard/NotificationBell", () => ({
   NotificationBell: (props: unknown) => createElement("i", { "data-bell": JSON.stringify(props) }),
 }));
 vi.mock("@/components/DashboardNav", () => ({ DashboardNav: () => null }));
+vi.mock("@/components/production/RetrainTaskList", () => ({ RetrainTaskList: () => null }));
 
 import DashboardPage from "@/app/(authed)/dashboard/page";
 
@@ -175,8 +175,10 @@ describe("census: every caller of the notification read or the bell applies the 
     for (const file of callers) {
       const src = readFileSync(file, "utf8");
       expect(src).toContain("notificationBellRoleAllowed(auth.role)");
-      // The read only runs behind the rule, and the bell only draws behind it.
-      expect(src).toMatch(/bellAllowed\s*\n?\s*\?\s*await widget\("notifications\.sheet\.heading", \(\) => loadUnreadForUser\(/);
+      // The read only runs behind the rule, and the bell only draws behind it. Nav PR 7: the read starts in parallel
+      // (bounded by the page deadline), so it is no longer awaited inline.
+      // Lead ruling r3 (H2): the read carries the page deadline's cancellation signal.
+      expect(src).toMatch(/bellAllowed\s*\n?\s*\?\s*widget\("notifications\.sheet\.heading", \(signal\) => loadUnreadForUser\(withAbortStrict\(sb, signal\),/);
       expect(src).toContain("{bellAllowed && unreadNotifications && <NotificationBell");
     }
   });

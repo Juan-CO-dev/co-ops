@@ -41,41 +41,6 @@ export interface ShiftWrapUpRow {
   reportsSubmitted: number;
 }
 
-export interface PmDashboardState {
-  isVisibleToActor: boolean;
-  status: string | null; // null = not started today
-  submittedAt: string | null;
-  submittedByName: string | null;
-}
-
-/** Tile state — KH+ only; mirrors loadCashDashboardState's slim shape. */
-export async function loadPmDashboardState(
-  service: SupabaseClient,
-  args: { locationId: string; date: string; actor: PmActor },
-): Promise<PmDashboardState> {
-  if (args.actor.level < PM_REPORT_BASE_LEVEL) {
-    return { isVisibleToActor: false, status: null, submittedAt: null, submittedByName: null };
-  }
-  const { data: row } = await service
-    .from("pm_reports")
-    .select("status, submitted_at, submitted_by")
-    .eq("location_id", args.locationId)
-    .eq("report_date", args.date)
-    .is("superseded_at", null)
-    .maybeSingle<{ status: string; submitted_at: string | null; submitted_by: string | null }>();
-  let submittedByName: string | null = null;
-  if (row?.submitted_by) {
-    const { data: u } = await service.from("users").select("name").eq("id", row.submitted_by).maybeSingle<{ name: string }>();
-    submittedByName = u?.name ?? null;
-  }
-  return {
-    isVisibleToActor: true,
-    status: row?.status ?? null,
-    submittedAt: row?.submitted_at ?? null,
-    submittedByName,
-  };
-}
-
 /** Per-employee activity for the auto wrap-up: items completed today + reports submitted. */
 export async function loadShiftWrapUp(
   service: SupabaseClient,

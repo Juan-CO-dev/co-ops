@@ -61,6 +61,9 @@ export interface DayFactsArgs {
   /** The session's explicit shop memberships: the social media manager's own-task read binds the shop with them
    *  (loadOwnTaskAssignments → lockLocationContext). */
   readonly locations: readonly string[];
+  /** Nav PR 7 (lead ruling r3, H3): the caller's ABSOLUTE deadline (epoch ms). Every lane, the own-assignment lane
+   *  included, ends at the earlier of it and DAY_FACT_DEADLINE_MS from the start of the load. Absent = 6 s, as before. */
+  readonly deadlineAt?: number;
 }
 
 const INSTANCE_COLUMNS = "id, template_id, status, created_at, confirmed_at, confirmed_by";
@@ -321,24 +324,43 @@ function logArea(area: string, e: unknown): void {
   console.error(`day-plan: ${area} failed (${e instanceof DayFactTimeout ? "deadline" : e instanceof Error ? e.name : "error"})`);
 }
 
-interface Deadline { race<T>(p: Promise<T>): Promise<T>; clear(): void }
+interface Deadline {
+  race<T>(p: Promise<T>): Promise<T>;
+  clear(): void;
+  /** Nav PR 7 (H1): the load is over. Clears the timer, then aborts every lane's queries still in flight (an eager lane
+   *  whose answer was not needed, e.g. the own-assignment read on a board that loaded). Their rejections are expected. */
+  finish(): void;
+  readonly finished: boolean;
+}
 /** ONE deadline for the load: a rejecting race every lane runs against, and the abort of every lane's queries. */
 function startDeadline(ms: number, controller: AbortController): Deadline {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let finished = false;
   const fired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => { controller.abort(); reject(new DayFactTimeout()); }, ms);
   });
   fired.catch(() => undefined);
+  const clear = () => { if (timer !== undefined) clearTimeout(timer); timer = undefined; };
   return {
     race: <T>(p: Promise<T>) => Promise.race([p, fired]),
-    clear: () => { if (timer !== undefined) clearTimeout(timer); timer = undefined; },
+    clear,
+    finish: () => { finished = true; clear(); controller.abort(); },
+    get finished() { return finished; },
   };
 }
 
-/** Run one lane: a value, or (thrown or timed out) the area logged and the error rethrown for `fact()`. */
+/** The load's deadline in ms: 6 s, or less when the caller's absolute deadline comes first (never below 0). A deadline is a
+ *  bound on waiting, not a plan input: the plan date and minutes still come from `args.now` alone. */
+function deadlineMs(deadlineAt: number | undefined): number {
+  return deadlineAt === undefined ? DAY_FACT_DEADLINE_MS : Math.max(0, Math.min(DAY_FACT_DEADLINE_MS, deadlineAt - Date.now()));
+}
+
+/** Run one lane: a value, or (thrown or timed out) the area logged and the error rethrown for `fact()`. Every lane's
+ *  rejection is handled here, so the abort at the end of the load never surfaces as an unhandled rejection; a lane cut off
+ *  by that abort is not a failure and is not logged. */
 function lane<T>(d: Deadline, area: string, run: () => Promise<T>): Promise<T> {
   const p = d.race(Promise.resolve().then(run));
-  p.catch((e: unknown) => logArea(area, e));
+  p.catch((e: unknown) => { if (!d.finished) logArea(area, e); });
   return p;
 }
 async function fact<T>(p: Promise<T>): Promise<Fact<T>> {
@@ -350,9 +372,9 @@ async function fact<T>(p: Promise<T>): Promise<Fact<T>> {
  * rejecting 6 s race, started by the caller — that never rejects: a value, or `{ ok: false }` (the area logged). The
  * shop day's two reads use it side by side so neither can cancel the other.
  */
-async function boundedRead<T>(service: SupabaseClient, area: string, read: (sb: Sb) => Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> {
+async function boundedRead<T>(service: SupabaseClient, area: string, read: (sb: Sb) => Promise<T>, ms: number = DAY_FACT_DEADLINE_MS): Promise<{ ok: true; value: T } | { ok: false }> {
   const controller = new AbortController();
-  const d = startDeadline(DAY_FACT_DEADLINE_MS, controller);
+  const d = startDeadline(ms, controller);
   try {
     return { ok: true, value: await d.race(Promise.resolve().then(() => read(withAbort(service, controller.signal)))) };
   } catch (e) {
@@ -373,11 +395,11 @@ export async function loadDayFacts(service: SupabaseClient, args: DayFactsArgs, 
   const { date: planDate, minutesOfDay: nowMin } = operationalNow(args.now);
   if (lensFor(args.viewer.role) === "smm") return { planDate, nowMin, viewer: args.viewer, facts: await loadSmmFacts(service, args, planDate, deps) };
   const controller = new AbortController();
-  const deadline = startDeadline(DAY_FACT_DEADLINE_MS, controller);
+  const deadline = startDeadline(deadlineMs(args.deadlineAt), controller);
   try {
     return { planDate, nowMin, viewer: args.viewer, facts: await loadShopFacts(service, withAbort(service, controller.signal), args, planDate, deps, deadline) };
   } finally {
-    deadline.clear();
+    deadline.finish();
   }
 }
 
@@ -392,10 +414,17 @@ async function loadShopFacts(service: SupabaseClient, sb: Sb, args: DayFactsArgs
   // PR SCH (ruling G): the shop day is TWO reads, started together and bounded INDEPENDENTLY (each its own abort and 6 s
   // race): the base hours (H1, its failure fails `hours`) and the schedule's start for today and tomorrow (its failure or
   // timeout makes both dates unknown and keeps the hours that loaded). Composed below, outside H1's failure.
-  const baseHoursP = boundedRead(service, "hours", (abortable) => deps.shopDay(abortable, shopId));
-  const startsP = boundedRead(service, "hours.schedule_start", async (abortable) => dayPrepStarts(await deps.scheduleStarts(abortable, shopId, [planDate, tomorrow]), [planDate, tomorrow], isoWeekStart));
+  const ms = deadlineMs(args.deadlineAt);
+  const baseHoursP = boundedRead(service, "hours", (abortable) => deps.shopDay(abortable, shopId), ms);
+  const startsP = boundedRead(service, "hours.schedule_start", async (abortable) => dayPrepStarts(await deps.scheduleStarts(abortable, shopId, [planDate, tomorrow]), [planDate, tomorrow], isoWeekStart), ms);
   // The board: the page's promise, raced, never aborted (ruling B2).
   const boardP: Promise<ShiftBoard> | null = need.board && args.board ? L("board", () => args.board!()) : null;
+  // Nav PR 7, E2 (Astra F3): the viewer's OWN assignments, started at once beside the board and inside the same deadline.
+  // Used only when the board failed or timed out (a hanging board settles at the deadline, so a read started after it
+  // would have no time left): the viewer's own tasks then feed the engine as OWN holdings only (scope "own_tasks").
+  const ownP: Promise<TaskAssignment[]> | null = need.board
+    ? L("ownAssignments", () => deps.ownTasks(sb, { viewer: args.viewer, shopId, locations: args.locations, date: planDate }))
+    : null;
   // The stations' classification (S2, and S3a while 0353 is not applied): only when there is a board to classify.
   const classificationP: Promise<{ flags: StationDayFlags; notPhase: NotPhaseRule }> | null = boardP ? L("stations", async () => {
     const flags = await deps.stationFlags(sb, shopId);
@@ -484,7 +513,8 @@ async function loadShopFacts(service: SupabaseClient, sb: Sb, args: DayFactsArgs
     : ok({ forDate: date, orders: cateringOrders(date, catering.value.booked, catering.value.ez, outAt, rules) }));
 
   const board = boardP ? await fact(boardP) : null;
-  const boardFacts = await buildBoardFacts(args, planDate, need.board, board, classificationP ? await fact(classificationP) : null);
+  const boardFacts = await buildBoardFacts(args, planDate, need.board, board, classificationP ? await fact(classificationP) : null,
+    () => (ownP ? fact(ownP) : Promise.resolve(FAILED)));
 
   return {
     kind: "shop",
@@ -526,12 +556,22 @@ function composeHours(base: { ok: true; value: BaseShopHours } | { ok: false }, 
 async function buildBoardFacts(
   args: DayFactsArgs, planDate: string, needBoard: boolean, board: Fact<ShiftBoard> | null,
   classification: Fact<{ flags: StationDayFlags; notPhase: NotPhaseRule }> | null,
+  /** E2: the own-assignment lane, read only when the board failed (when the board loaded, the board's assignments win). */
+  own: () => Promise<Fact<TaskAssignment[]>>,
 ): Promise<Pick<ShopFacts, "stations" | "assignments" | "myStation" | "holdsStationOnStationDay">> {
   if (!needBoard) {
     // The tasks-only viewer (section 6): the task-day reader has not shipped, so nothing station-shaped is shown.
     return { stations: { kind: "not_shown" }, assignments: { kind: "not_shown" }, myStation: ok(null), holdsStationOnStationDay: false };
   }
-  if (!board || board.kind === "failed") return { stations: FAILED, assignments: FAILED, myStation: FAILED, holdsStationOnStationDay: false };
+  if (!board || board.kind === "failed") {
+    // E2: the board's three facts fail as before; the viewer's own assignments (when that read loaded) keep their own work
+    // visible, never as a roster: only rows whose assignee is the viewer.
+    const o = await own();
+    const assignments: Fact<AssignmentFacts> = o.kind === "ok"
+      ? ok({ forDate: planDate, scope: "own_tasks", rows: dayAssignments(o.value.filter((t) => t.assigneeId === args.viewer.userId)) })
+      : FAILED;
+    return { stations: FAILED, assignments, myStation: FAILED, holdsStationOnStationDay: false };
+  }
   const b = board.value;
   const userId = args.viewer.userId;
   let stations: StationsFact;
@@ -555,7 +595,7 @@ async function buildBoardFacts(
 
 async function loadSmmFacts(service: SupabaseClient, args: DayFactsArgs, planDate: string, deps: DayFactDeps): Promise<SmmFacts> {
   const controller = new AbortController();
-  const d = startDeadline(DAY_FACT_DEADLINE_MS, controller);
+  const d = startDeadline(deadlineMs(args.deadlineAt), controller);
   const sb = withAbort(service, controller.signal);
   const shopId = args.shop.id;
   const userId = args.viewer.userId;
@@ -578,6 +618,6 @@ async function loadSmmFacts(service: SupabaseClient, args: DayFactsArgs, planDat
     });
     return { kind: "smm", ownTasks: await fact(tasksP), ownStation: await fact(stationP) };
   } finally {
-    d.clear();
+    d.finish();
   }
 }

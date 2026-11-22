@@ -18,8 +18,11 @@ import { canSelfClaim, closedStationFor, currentFloorStation, fillFirstPositionI
 const control = "flex min-h-[44px] w-full max-w-full min-w-0 items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-base font-normal tracking-normal text-co-text";
 
 /** retrainTasks: the viewer's OWN open yield retrains at this shop (batch vs bottle Phase B) —
- *  they persist until marked done, so they ride beside the daily tasks, not inside them. */
-export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: { board: ShiftBoard; compact?: boolean; retrainTasks?: RetrainTaskView[] }) {
+ *  they persist until marked done, so they ride beside the daily tasks, not inside them.
+ *  refreshEvery (nav PR 7, Q3): the interval refresh in ms, or null for none. The Dashboard passes null (nothing re-sorts
+ *  under a thumb); Team today keeps the 60 s default. The focus / visibility refresh and the after-mutation refresh stay.
+ *  The compact (Dashboard) board has no "Take / assign tasks" section: the day list carries the tasks (nav PR 7). */
+export function ShiftBoardClient({ board, compact = false, retrainTasks = [], refreshEvery = 60_000 }: { board: ShiftBoard; compact?: boolean; retrainTasks?: RetrainTaskView[]; refreshEvery?: number | null }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -38,13 +41,13 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
     const refresh = () => { if (document.visibilityState === "visible") startTransition(() => router.refresh()); };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
-    const interval = window.setInterval(refresh, 60_000);
+    const interval = refreshEvery === null ? null : window.setInterval(refresh, refreshEvery);
     return () => {
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
-      window.clearInterval(interval);
+      if (interval !== null) window.clearInterval(interval);
     };
-  }, [router]);
+  }, [router, refreshEvery]);
   const changeLine = (change?: AssignmentChange) => change && <p className="text-sm text-co-text-muted">{t(change.reasonCode || change.reasonNote ? "assignments.attribution.changed" : "assignments.attribution.changedWithoutReason", {
     name: change.actorName ?? t("assignments.teamLead"),
     reason: change.reasonCode ? t(`assignments.reason.${change.reasonCode}`) : change.reasonNote ?? "",
@@ -222,9 +225,6 @@ export function ShiftBoardClient({ board, compact = false, retrainTasks = [] }: 
       </div>;
     })}</div>)}
     {compact && retrainTasks.length > 0 && <RetrainTaskList tasks={retrainTasks} />}
-    {compact && section("tasks", board.viewerLevel >= 4 ? "assignments.takeAssignTasks" : "assignments.tasks", ownTasks.length, TASK_TYPES.length, <div className="space-y-3"><ul className="space-y-2">{board.viewerLevel >= 4 && unassigned.filter((task) => board.viewerLevel >= TASK_MIN_LEVEL[task] && board.people.find((person) => person.id === board.viewerId)?.available !== false).map((task) => <li key={task}>
-      <ActionLink variant="secondary" className="max-w-full whitespace-normal text-left" href={board.viewerLevel >= 4 ? `/assignments?location=${board.locationId}` : taskHref(task, board.locationId)}>{t("assignments.unassignedAction", { task: t(`assignments.task.${task}`) })}</ActionLink>
-    </li>)}</ul>{ownTasks.filter((task) => board.viewerLevel >= TASK_MIN_LEVEL[task.task]).map((task) => <div key={task.id}>{board.viewerLevel >= 4 || task.source !== "taken" ? <ActionLink variant="secondary" href={taskHref(task.task, board.locationId)}>{t(`assignments.task.${task.task}`)}</ActionLink> : <span>{t(`assignments.task.${task.task}`)}</span>}{taskLine(task)}</div>)}</div>)}
     {!compact && section("tasks", board.viewerLevel >= 4 ? "assignments.takeAssignTasks" : "assignments.tasks", TASK_TYPES.length - unassigned.length, TASK_TYPES.length, <div className="space-y-3">
       {board.viewerLevel >= 4 && <p className="text-sm text-co-text-muted">{t("assignments.takeHint")}</p>}
       <ul className="space-y-3">

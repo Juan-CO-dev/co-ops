@@ -105,7 +105,9 @@ describe("i18n and the switch", () => {
       expect(navDestinationsFor(level, { vault: false }).some((d) => d.href === "/vault")).toBe(false);
       expect(navDestinationsFor(level, { vault: true }).find((d) => d.href === "/vault")).toMatchObject({ key: "nav.vault", scoped: false });
     }
-    expect(readFileSync("components/DashboardNav.tsx", "utf8")).toMatch(/navDestinationsFor\(actorLevel, \{[^}]*vault: vaultEnabled\(\)/);
+    // Nav PR 7: the switch is read once per request (lib/nav-switches.ts) and passed to the "All pages" list.
+    expect(readFileSync("components/DashboardNav.tsx", "utf8")).toMatch(/navDestinationsFor\(actorLevel, \{[^}]*vault: switches\.vault/);
+    expect(readFileSync("lib/nav-switches.ts", "utf8")).toContain("vault: vaultEnabled()");
     expect(src.page).toContain('if (!vaultEnabled()) redirect("/dashboard");');
   });
 });

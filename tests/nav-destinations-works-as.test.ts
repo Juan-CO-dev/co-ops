@@ -19,11 +19,17 @@ const FILES = [
   "components/DashboardNav.tsx",
   // Nav PR 4: the Back office's checks (lib/nav/back-office.ts is in lib/nav, read above).
   "lib/admin/back-office-shared.ts",
+  // Nav PR 7 (spec 3.7 group 12): the Dashboard and the day-plan trees.
+  "app/(authed)/dashboard/page.tsx",
+  ...readdirSync("components/dashboard").filter((f) => /\.tsx?$/.test(f)).map((f) => join("components/dashboard", f).split("\\").join("/")),
+  ...readdirSync("lib").filter((f) => /^(dashboard-day|day-plan)[^/]*\.ts$/.test(f)).map((f) => `lib/${f}`),
+  "lib/nav-switches.ts",
 ];
 
 /** Identifiers and string literals of a file, comments stripped (the TypeScript scanner skips trivia). */
 function tokens(file: string): { identifiers: string[]; strings: string[] } {
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, readFileSync(file, "utf8"));
+  const variant = file.endsWith(".tsx") ? ts.LanguageVariant.JSX : ts.LanguageVariant.Standard;
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, variant, readFileSync(file, "utf8"));
   const identifiers: string[] = [];
   const strings: string[] = [];
   for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
@@ -36,6 +42,11 @@ function tokens(file: string): { identifiers: string[]; strings: string[] } {
 describe("guard (g): the module never reads works-as", () => {
   it("covers the module files", () => {
     expect(FILES).toEqual(expect.arrayContaining(["lib/nav/types.ts", "lib/nav/destinations.ts", "lib/nav/resolve.ts"]));
+    // Nav PR 7: the Dashboard and the day-plan trees are scanned too.
+    expect(FILES).toEqual(expect.arrayContaining([
+      "app/(authed)/dashboard/page.tsx", "components/dashboard/DayList.tsx", "components/dashboard/DayRow.tsx", "components/dashboard/SmmDashboard.tsx",
+      "lib/dashboard-day.ts", "lib/dashboard-day-shared.ts", "lib/day-plan.ts", "lib/day-plan-shared.ts", "lib/day-plan-load-shared.ts", "lib/day-plan-render.ts",
+    ]));
   });
 
   it.each(FILES)("%s: no works-as import and no works-as identifier (comments stripped)", (file) => {

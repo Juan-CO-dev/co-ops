@@ -98,9 +98,9 @@ describe("pure companion: the B1 rule and the effective template", () => {
 describe("pure companion: checklists, reports, catering", () => {
   const names = new Map([["u-ana", "Ana Ruiz"], ["u-mia", "Mia Lopez"]]);
   it("checklistDay and midDayDay: status, finish, the first name; no instance = status null", () => {
-    expect(checklistDay("2026-11-18", null)).toEqual({ forDate: "2026-11-18", status: null, phase1At: null, finishedAt: null, finishedByName: null, sectionsLeft: null });
+    expect(checklistDay("2026-11-18", null)).toEqual({ forDate: "2026-11-18", status: null, phase1At: null, finishedAt: null, finishedByName: null, sectionsLeft: null, finishedById: null });
     expect(checklistDay("2026-11-18", { id: "i", template_id: "t", status: "confirmed", created_at: null, confirmed_at: "x", confirmed_by: "u-ana" }, { finishedByName: "Ana", sectionsLeft: 0, phase1At: "p" }))
-      .toEqual({ forDate: "2026-11-18", status: "confirmed", phase1At: "p", finishedAt: "x", finishedByName: "Ana", sectionsLeft: 0 });
+      .toEqual({ forDate: "2026-11-18", status: "confirmed", phase1At: "p", finishedAt: "x", finishedByName: "Ana", sectionsLeft: 0, finishedById: "u-ana" });
     expect(midDayDay("d", [{ id: "i", template_id: "t", status: "confirmed", created_at: null, confirmed_at: "x", confirmed_by: "u-mia" }], names).instances)
       .toEqual([{ status: "confirmed", finishedAt: "x", finishedByName: "Mia" }]);
   });
@@ -196,8 +196,8 @@ describe("loadDayFacts: the all-ok baseline", () => {
     expect(input.nowMin).toBe(13 * 60 + 45);
     const f = shop(input);
     expect(f.hours).toMatchObject({ kind: "ok", value: { shopDay: { prepStartQ: 28 }, dayPrepStartQ: {} } });
-    expect(f.closing).toEqual({ kind: "ok", value: { forDate: PLAN, status: "open", phase1At: null, finishedAt: null, finishedByName: null, sectionsLeft: 3 } });
-    expect(f.opening).toEqual({ kind: "ok", value: { forDate: PLAN, status: "confirmed", phase1At: "2026-11-18T12:40:00.000Z", finishedAt: OPENING.confirmed_at, finishedByName: "Ana", sectionsLeft: null } });
+    expect(f.closing).toEqual({ kind: "ok", value: { forDate: PLAN, status: "open", phase1At: null, finishedAt: null, finishedByName: null, sectionsLeft: 3, finishedById: null } });
+    expect(f.opening).toEqual({ kind: "ok", value: { forDate: PLAN, status: "confirmed", phase1At: "2026-11-18T12:40:00.000Z", finishedAt: OPENING.confirmed_at, finishedByName: "Ana", sectionsLeft: null, finishedById: "u-ana" } });
     expect(f.yesterdayClosing).toMatchObject({ kind: "ok", value: { forDate: YESTERDAY, status: "confirmed", finishedByName: "Mia" } });
     expect(f.midDay).toEqual({ kind: "ok", value: { forDate: PLAN, instances: [{ status: "confirmed", finishedAt: MID_DAY[0]!.confirmed_at, finishedByName: "Luis" }] } });
     expect(f.pm).toEqual({ kind: "ok", value: { forDate: PLAN, state: "draft", at: null, byName: null } });
@@ -252,7 +252,10 @@ describe("loadDayFacts: each source failing alone fails exactly its facts (8.1 i
     ({ prepInstances: async (sb, a) => (a.subtype === subtype ? boom() : okDeps().prepInstances(sb, a)) });
   const CASES: Case[] = [
     ["H1", { shopDay: boom }, ["hours"]],
-    ["S1 (the board)", (a) => ({ ...a, board: boom }), ["stations", "assignments", "myStation"]],
+    // Nav PR 7, E2: with the own-assignment lane loaded, a failed board keeps the viewer's own work (own_tasks, below).
+    ["S1 (the board)", (a) => ({ ...a, board: boom }), ["stations", "myStation"]],
+    // E2: the own-assignment lane failing alone changes nothing while the board loads (the board's assignments win).
+    ["E2 (own assignments)", { ownTasks: boom }, []],
     ["S2", { stationFlags: boom }, ["stations"]],
     ["S3a", { closingClassification: boom }, ["stations"]],
     ["K1", failInstance("closing", PLAN), ["closing"]],
@@ -280,6 +283,7 @@ describe("loadDayFacts: each source failing alone fails exactly its facts (8.1 i
     const got = shop(await loadDayFacts(NO_CLIENT, a, deps));
     for (const field of FIELDS) {
       if (failedFields.includes(field)) expect(got[field], field).toEqual({ kind: "failed" });
+      else if (_name.startsWith("S1") && field === "assignments") expect(got[field], field).toEqual({ kind: "ok", value: { forDate: PLAN, scope: "own_tasks", rows: [] } });
       else expect(got[field], field).toEqual(base[field]);
     }
     if (failedFields.includes("myStation")) expect(got.holdsStationOnStationDay).toBe(false);
@@ -319,7 +323,7 @@ describe("loadDayFacts: the deadline race (ruling B2; 8.1 items 1 and 12)", () =
     let resolvePage: (b: ShiftBoard) => void = () => undefined;
     const pageBoard = new Promise<ShiftBoard>((r) => { resolvePage = r; });
     const boardFn = vi.fn((...seen: unknown[]) => { void seen; return pageBoard; });
-    const { before, input } = await run(args(ANA, { board: boardFn }), okDeps());
+    const { before, input } = await run(args(ANA, { board: boardFn }), withDeps({ ownTasks: boom }));
     expect(before).toBe(false);
     const f = shop(input);
     expect([f.stations, f.assignments, f.myStation]).toEqual([{ kind: "failed" }, { kind: "failed" }, { kind: "failed" }]);
@@ -378,7 +382,12 @@ describe("loadDayFacts: the clock, the board, the raw time, another day (C2, C3,
   it("C2: one operationalNow, no clock read in lib/day-plan.ts; a fixed now gives the exact plan date and minutes", async () => {
     const code = stripComments(readFileSync("lib/day-plan.ts", "utf8"));
     expect(code.match(/operationalNow\(/g)).toHaveLength(1);
-    expect(code).not.toMatch(/new Date\(|Date\.now\(/);
+    expect(code).not.toMatch(/new Date\(/);
+    // Nav PR 7 (lead ruling r3, H3): ONE clock read, for the WAIT only: the time left to the caller's absolute deadline
+    // (deadlineMs). The plan date and minutes still come from `args.now` alone (below).
+    expect(code.match(/Date\.now\(/g)).toHaveLength(1);
+    const deadlineFn = code.slice(code.indexOf("function deadlineMs("), code.indexOf("function lane<T>("));
+    expect(deadlineFn).toContain("deadlineAt - Date.now()");
     const input = await loadDayFacts(NO_CLIENT, args(ANA, { now: at("00:30", "2026-11-19") }), okDeps());
     expect([input.planDate, input.nowMin]).toEqual(["2026-11-19", 30]);
   });
@@ -611,11 +620,13 @@ describe("SCH (ruling G, 23.2): the base hours and the schedule start are bounde
 describe("SCH: the source shape of the two bounded reads (23.1)", () => {
   it("each read has its own bound; the schedule-start read is not inside H1's failure wrapper", () => {
     const code = stripComments(readFileSync("lib/day-plan.ts", "utf8"));
-    expect(code).toContain('boundedRead(service, "hours", (abortable) => deps.shopDay(abortable, shopId))');
+    expect(code).toContain('boundedRead(service, "hours", (abortable) => deps.shopDay(abortable, shopId), ms)');
     expect(code).toMatch(/boundedRead\(service, "hours\.schedule_start", async \(abortable\) => dayPrepStarts\(await deps\.scheduleStarts\(abortable/);
     expect(code).not.toMatch(/L\("hours"/);
     expect(code.match(/deps\.scheduleStarts\(/g)).toHaveLength(1);
-    expect(code.replace(/\r\n/g, "\n")).toContain("const controller = new AbortController();\n  const d = startDeadline(DAY_FACT_DEADLINE_MS, controller);");
+    // Lead ruling r3, H3: each bound is the load's deadline (6 s, or less when the page's absolute deadline comes first).
+    expect(code.replace(/\r\n/g, "\n")).toContain("const controller = new AbortController();\n  const d = startDeadline(ms, controller);");
+    expect(code).toContain("ms: number = DAY_FACT_DEADLINE_MS");
   });
 });
 
@@ -665,5 +676,167 @@ describe("SCH: the schedule-start read's real queries (22.3)", () => {
       .toEqual({ [PLAN]: { kind: "unknown" }, [TOMORROW]: { kind: "unknown" } });
     expect(dayPrepStarts({ weeks: [{ week_start: "2026-11-16", head_revision_id: "h" }], days: [{ revision_id: "h", business_date: PLAN, origin_revision_id: null }],
       starts: { h: { [PLAN]: 7.5 } } }, [PLAN], wk)).toEqual({ [PLAN]: { kind: "unknown" } });
+  });
+});
+
+// Nav PR 7, E3 (plan r2 2.12, T20 loader half): the AM prep submitter's id rides on the instance-first K6 read, for the
+// Dashboard's "Edit" (C.46 A2). No new read; the engine never reads it.
+describe("nav PR 7 E3: ChecklistDay.finishedById", () => {
+  it("checklistDay maps confirmed_by; no instance (or no confirmer) is null", () => {
+    expect(checklistDay(PLAN, null).finishedById).toBeNull();
+    expect(checklistDay(PLAN, { id: "i", template_id: "t", status: "open", created_at: null, confirmed_at: null, confirmed_by: null }).finishedById).toBeNull();
+    expect(checklistDay(PLAN, { id: "i", template_id: "t", status: "confirmed", created_at: null, confirmed_at: "x", confirmed_by: "u-ana" }).finishedById).toBe("u-ana");
+  });
+
+  it("the loader carries the K6 AM prep instance's confirmer, and null when the day has no AM prep instance", async () => {
+    const amDone = [{ id: "am-9", template_id: "tpl-am", status: "confirmed", created_at: "2026-11-17T23:00:00.000Z", confirmed_at: "2026-11-18T03:00:00.000Z", confirmed_by: "u-luis" }];
+    const withAm = shop(await loadDayFacts(NO_CLIENT, args(ANA), withDeps({ prepInstances: async (_sb, a) => (a.subtype === "am_prep" ? amDone : MID_DAY) })));
+    expect(withAm.amPrep).toMatchObject({ kind: "ok", value: { status: "confirmed", finishedById: "u-luis" } });
+    const none = shop(await loadDayFacts(NO_CLIENT, args(ANA), withDeps({ prepInstances: async (_sb, a) => (a.subtype === "am_prep" ? [] : MID_DAY) })));
+    expect(none.amPrep).toMatchObject({ kind: "ok", value: { status: null, finishedById: null } });
+  });
+
+  it("source pin: the engine names finishedById only in the ChecklistDay type", () => {
+    const src = readFileSync("lib/day-plan-shared.ts", "utf8");
+    const lines = src.split(/\r?\n/).filter((l) => l.includes("finishedById"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\s*readonly finishedById\?: string \| null;$/);
+    expect(src.indexOf("finishedById")).toBeLessThan(src.indexOf("export interface MidDayDay"));
+    expect(src.indexOf("finishedById")).toBeGreaterThan(src.indexOf("export interface ChecklistDay"));
+  });
+});
+
+// Nav PR 7, E2 (plan r2 2.12, T19 loader half; Astra F3): the own-assignment lane. Eager, beside the board, inside the
+// same deadline; used only when the board failed; the viewer's own rows only; never issued for the social media manager
+// (its own branch) or a tasks-only viewer.
+describe("nav PR 7 E2: the own-assignment lane", () => {
+  const mine: TaskAssignment = { id: "own-1", task: "opening_report", assigneeId: ANA.userId, assignerId: "u-gm", assignerName: null, note: null, available: true };
+  const stray: TaskAssignment = { ...mine, id: "stray", task: "cash_report", assigneeId: "u-someone-else" };
+
+  it("board rejects + own read ok: own_tasks with the viewer's rows only (a stray row is filtered); stations and my station fail", async () => {
+    const own = vi.fn(async (...seen: unknown[]) => { void seen; return [mine, stray]; });
+    const f = shop(await loadDayFacts(NO_CLIENT, args(ANA, { board: boom }), withDeps({ ownTasks: own })));
+    expect(f.assignments).toEqual({ kind: "ok", value: { forDate: PLAN, scope: "own_tasks", rows: dayAssignments([mine]) } });
+    expect([f.stations, f.myStation]).toEqual([{ kind: "failed" }, { kind: "failed" }]);
+    expect(own).toHaveBeenCalledTimes(1);
+    expect(own.mock.calls[0]![1]).toEqual({ viewer: ANA, shopId: SHOP.id, locations: [SHOP.id], date: PLAN });
+  });
+
+  it("board ok: the board's all_tasks assignments; the own result is ignored", async () => {
+    const f = shop(await loadDayFacts(NO_CLIENT, args(ANA), withDeps({ ownTasks: async () => [mine, stray] })));
+    expect(f.assignments).toMatchObject({ kind: "ok", value: { scope: "all_tasks" } });
+    expect(f.assignments.kind === "ok" && f.assignments.value.rows.map((r) => r.id)).toEqual(["t1", "t2"]);
+  });
+
+  it("board fails and the own read fails: assignments failed, as before E2", async () => {
+    const f = shop(await loadDayFacts(NO_CLIENT, args(ANA, { board: boom }), withDeps({ ownTasks: boom })));
+    expect([f.stations, f.assignments, f.myStation]).toEqual([{ kind: "failed" }, { kind: "failed" }, { kind: "failed" }]);
+  });
+
+  it("the lane starts at once, before the board settles (eager)", async () => {
+    const started: string[] = [];
+    let release: (b: ShiftBoard) => void = () => undefined;
+    const boardP = new Promise<ShiftBoard>((r) => { release = r; });
+    const p = loadDayFacts(NO_CLIENT, args(ANA, { board: () => { started.push("board"); return boardP; } }),
+      withDeps({ ownTasks: async () => { started.push("own"); return [mine]; } }));
+    await Promise.resolve(); await Promise.resolve();
+    expect(started).toEqual(["board", "own"]);
+    release(board());
+    await p;
+  });
+
+  it("is not issued for the social media manager (only its own SMM lane reads) or for a tasks-only viewer", async () => {
+    const smmOwn = vi.fn(async () => []);
+    const SMM_V = { ...ANA, userId: "u-smm", role: "social_media_mgr" as const, level: 6 };
+    await loadDayFacts(NO_CLIENT, args(SMM_V, { board: null }), withDeps({ ownTasks: smmOwn }));
+    expect(smmOwn).toHaveBeenCalledTimes(1); // the SMM branch's own read, never a second (E2) lane
+    const tasksOnly = vi.fn(async () => []);
+    const f = shop(await loadDayFacts(NO_CLIENT, args({ ...ANA, surfaces: new Set(["tasks"] as const) }, { board: null }), withDeps({ ownTasks: tasksOnly })));
+    expect(tasksOnly).not.toHaveBeenCalled();
+    expect(f.assignments).toEqual({ kind: "not_shown" });
+  });
+
+  // Lead ruling r3, H1 (Astra code r1 P2): the load aborts its controller when it is over, so the eager own read whose
+  // answer was not needed (the board loaded) is cancelled at its query, with no unhandled rejection and no timer left.
+  it("H1: the board and every fact load while the own read hangs: the load returns and the own query's signal is aborted", async () => {
+    let seen: AbortSignal | null = null;
+    const builder: Record<string, unknown> = {};
+    builder.select = () => builder;
+    builder.abortSignal = (s: AbortSignal) => { seen = s; return builder; };
+    const client = { from: () => builder } as never;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => { unhandled.push(e); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const deps = withDeps({ ownTasks: async (sb) => {
+        (sb as unknown as { from: (t: string) => { select: (c: string) => unknown } }).from("report_assignments").select("id");
+        return new Promise<TaskAssignment[]>((_, reject) => { seen!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))); });
+      } });
+      const f = shop(await loadDayFacts(client, args(ANA), deps));
+      expect(f.assignments).toMatchObject({ kind: "ok", value: { scope: "all_tasks" } });
+      expect(seen).not.toBeNull();
+      expect(seen!.aborted).toBe(true);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(unhandled).toEqual([]);
+    } finally { process.off("unhandledRejection", onUnhandled); }
+  });
+
+  describe("with fake timers", () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+    // Lead ruling r3, H3 (Astra code r1 P3): the own lane shares the page's ABSOLUTE deadline. A loader started late (the
+    // page deadline already partly spent) ends every lane at that deadline, not at its own start + 6 s.
+    it("H3: started with 2 s of the page deadline left, the board failed and the own read hanging: settled at 2 s, not 6", async () => {
+      let ownSignal: AbortSignal | null = null;
+      const builder: Record<string, unknown> = {};
+      builder.select = () => builder;
+      builder.abortSignal = (s: AbortSignal) => { ownSignal = s; return builder; };
+      const client = { from: () => builder } as never;
+      let done = false;
+      const p = loadDayFacts(client, args(ANA, { board: boom, deadlineAt: Date.now() + 2_000 }), withDeps({ ownTasks: async (sb) => {
+        (sb as unknown as { from: (t: string) => { select: (c: string) => unknown } }).from("report_assignments").select("id");
+        return never();
+      } })).then((r) => { done = true; return r; });
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const f = shop(await p);
+      expect(f.assignments).toEqual({ kind: "failed" });
+      expect(f.hours.kind).toBe("ok"); // the lanes that answered keep their facts
+      expect(ownSignal!.aborted).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("H3: a page deadline later than 6 s away never extends the load (min of the two)", async () => {
+      let done = false;
+      const p = loadDayFacts(NO_CLIENT, args(ANA, { board: never, deadlineAt: Date.now() + 60_000 }), withDeps({ ownTasks: () => never() }))
+        .then((r) => { done = true; return r; });
+      await vi.advanceTimersByTimeAsync(DAY_FACT_DEADLINE_MS - 1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(shop(await p).assignments).toEqual({ kind: "failed" });
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("H3: a deadline already passed fails every lane at once (no fresh 6 s)", async () => {
+      let done = false;
+      const p = loadDayFacts(NO_CLIENT, args(ANA, { board: never, deadlineAt: Date.now() - 1 }), withDeps({ ownTasks: () => never(), cutoffs: () => never() }))
+        .then((r) => { done = true; return r; });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(done).toBe(true);
+      const f = shop(await p);
+      expect([f.assignments, f.ordering]).toEqual([{ kind: "failed" }, { kind: "failed" }]);
+    });
+
+    it("a board that never settles + own ok: own_tasks at 6 s", async () => {
+      let done = false;
+      const p = loadDayFacts(NO_CLIENT, args(ANA, { board: never }), withDeps({ ownTasks: async () => [mine] })).then((r) => { done = true; return r; });
+      await vi.advanceTimersByTimeAsync(DAY_FACT_DEADLINE_MS - 1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const f = shop(await p);
+      expect(f.assignments).toEqual({ kind: "ok", value: { forDate: PLAN, scope: "own_tasks", rows: dayAssignments([mine]) } });
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 });
