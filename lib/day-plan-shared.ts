@@ -282,9 +282,35 @@ export interface DayPlan {
     | { readonly kind: "nothing_due"; readonly nextIndex: number | null }
     | { readonly kind: "closed" };
   readonly headsUp: Reason | null;
+  /** Nav PR 8, E4: today's heavy-day lines, computed ONCE in buildDay (Opening and the catering block read the same
+   *  object). Gated by the lens exactly like `headsUp`. */
+  readonly heavyToday: HeavyTodayLines | null;
+  /** Nav PR 8, E4: the catering manager's block. Set ONLY when the kept catering item is `placement: "block"`. */
+  readonly cateringBlock: CateringBlockPlan | null;
   readonly notes: readonly DayNote[];
   readonly alerts: readonly LateCloseAlert[];
   readonly empty: Reason | null;
+}
+
+/** Nav PR 8 (E4, A7): the heavy line and the flagged-lines line of a heavy day. Never an untyped array. */
+export interface HeavyTodayLines { readonly heavy: Reason; readonly flagged: Reason | null }
+
+/** One order of the catering block (no name, contact, order number or money: the facts carry none). */
+export interface CateringBlockOrder {
+  readonly id: string;
+  readonly eventQ: number | null;
+  readonly guests: number | null;
+  readonly state: Exclude<FulfillmentState, "cancelled">;
+  readonly outAt: string | null;
+  readonly open: boolean;
+}
+export interface CateringBlockPlan {
+  /** The block's OWN order: timed by event time, untimed last (a sorted copy; the catering row's order is untouched). */
+  readonly today: readonly CateringBlockOrder[] | "unknown";
+  /** The earliest OPEN order with a time. */
+  readonly next: { readonly atMin: number } | null;
+  readonly untracked: number;
+  readonly tomorrow: CateringDayLoad | "unknown";
 }
 
 export interface SmmPlan {
@@ -305,6 +331,10 @@ export interface DayModel {
   /** Unpinned, sorted, holders unset. The closing checklist and the station cards are held out. */
   readonly items: readonly DayItem[];
   readonly headsUp: Reason | null;
+  /** E4: computed once; Opening's heavy reasons are built from it. */
+  readonly heavyToday: HeavyTodayLines | null;
+  /** E4: the viewer-independent catering block; the lens hands it on only for a `block` item. */
+  readonly cateringBlock: CateringBlockPlan;
   readonly notes: readonly DayNote[];
   readonly alerts: readonly LateCloseAlert[];
   readonly heavy: { readonly today: CateringDayLoad | null; readonly tomorrow: CateringDayLoad | null };
@@ -724,20 +754,25 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
 
   const items: DayItem[] = [];
 
+  // ── The heavy-day lines (E4): computed ONCE; Opening and the catering block read the same object ──
+  let heavyToday: HeavyTodayLines | null = null;
+  if (heavy && todayLoad) {
+    const guests = countParam(todayLoad.guests);
+    heavyToday = {
+      heavy: dayStart === null
+        ? (firstOrderMin !== null ? reason("day.reason.heavy.today_unknown_start", { guests, time: wallParam(firstOrderMin) }) : reason("day.reason.heavy.today_no_time_unknown_start", { guests }))
+        : firstOrderMin !== null
+          ? reason("day.reason.heavy.today", { guests, time: wallParam(firstOrderMin), start: wallParam(dayStart) })
+          : reason("day.reason.heavy.today_no_time", { guests, start: wallParam(dayStart) }),
+      flagged: flagged !== null ? flaggedReason(flagged.today) : null,
+    };
+  }
+
   // ── Opening ──
   {
     const o = dayValue(facts.opening, planDate);
     const state = checklistState(o);
-    const extras: Reason[] = [];
-    if (heavy && todayLoad) {
-      const guests = countParam(todayLoad.guests);
-      extras.push(dayStart === null
-        ? (firstOrderMin !== null ? reason("day.reason.heavy.today_unknown_start", { guests, time: wallParam(firstOrderMin) }) : reason("day.reason.heavy.today_no_time_unknown_start", { guests }))
-        : firstOrderMin !== null
-          ? reason("day.reason.heavy.today", { guests, time: wallParam(firstOrderMin), start: wallParam(dayStart) })
-          : reason("day.reason.heavy.today_no_time", { guests, start: wallParam(dayStart) }));
-      if (flagged !== null) extras.push(flaggedReason(flagged.today));
-    }
+    const extras: Reason[] = heavyToday ? [heavyToday.heavy, ...(heavyToday.flagged ? [heavyToday.flagged] : [])] : [];
     const urgentReason = (late: boolean) => (heavyDeadline
       ? reason(late ? "day.reason.opening.late_heavy" : "day.reason.opening.urgent_heavy", { time: wallParam(morningDeadline) })
       : reason(late ? "day.reason.opening.late" : "day.reason.opening.urgent", { time: wallParam(serviceStart) }));
@@ -905,8 +940,11 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
   // ── The night-before heads-up (3.3.11): a fact about tomorrow, from service start ──
   const headsUp = tomorrowLoad?.heavy && nowMin >= serviceStart ? tomorrowReason(tomorrowLoad, startOf(tomorrow)) : null;
 
+  // ── The catering block (E4): the same rows as the catering item, in the block's own order ──
+  const cateringBlock = cateringBlockOf(cateringToday, todayOrders, cateringSetting, nowMin, tomorrowLoad);
+
   return {
-    planDate, phase, items: sortItems(finalItems, heavy, planDate), headsUp, notes, alerts,
+    planDate, phase, items: sortItems(finalItems, heavy, planDate), headsUp, heavyToday, cateringBlock, notes, alerts,
     heavy: { today: todayLoad, tomorrow: tomorrowLoad }, stations: stationStates, stationCards,
     stationsUnknown: !sv.ok, closing: allFailed ? { ...closingItem, state: "unknown" } : closingItem, triggered,
   };
@@ -1038,6 +1076,63 @@ function receivingItem(facts: ShopFacts, planDate: string): DayItem {
   return makeItem("receiving", { band: "upcoming", state: "not_started", at: null, reasons: [reason("day.reason.receiving.none", {})] });
 }
 
+/** One catering order as the day reads it: its prep window, its time, tracked / out / open. */
+export interface CateringOrderRow {
+  readonly o: CateringOrder;
+  readonly from: number;
+  readonly time: number;
+  readonly tracked: boolean;
+  readonly out: boolean;
+  readonly open: boolean;
+}
+
+/**
+ * THE one rule for an order's row (E4): the window from the schedule's rule, the time (the event, else the default
+ * window's end), tracked / out / open. Sorted by time, then window start: the catering item's order. The catering item
+ * and the block both call it; the block sorts its own copy.
+ */
+export function cateringOrderRows(
+  orders: readonly CateringOrder[],
+  setting: Pick<ScheduleStructure["catering"], "leadMinutes" | "defaultStartQ" | "defaultEndQ">, nowMin: number,
+): CateringOrderRow[] {
+  return orders.map((o) => {
+    const [fromQ, toQ] = cateringPrepWindowQ(o.eventQ, setting);
+    const time = o.eventQ !== null ? o.eventQ * 15 : toQ * 15;
+    const tracked = o.state !== "not_tracked";
+    const out = o.state === "out" || o.state === "completed";
+    const open = tracked ? !out : nowMin < time;
+    return { o, from: fromQ * 15, time, tracked, out, open };
+  }).sort((a, b) => a.time - b.time || a.from - b.from);
+}
+
+const notCancelled = (s: FulfillmentState): s is Exclude<FulfillmentState, "cancelled"> => s !== "cancelled";
+
+/** The block's plan (E4). `today` is "unknown" when the fact failed or describes another day. */
+function cateringBlockOf(
+  day: CateringDay | null, orders: readonly CateringOrder[],
+  setting: Pick<ScheduleStructure["catering"], "leadMinutes" | "defaultStartQ" | "defaultEndQ">, nowMin: number,
+  tomorrow: CateringDayLoad | null,
+): CateringBlockPlan {
+  const tomorrowOut: CateringBlockPlan["tomorrow"] = tomorrow ?? "unknown";
+  if (day === null) return { today: "unknown", next: null, untracked: 0, tomorrow: tomorrowOut };
+  const rows = cateringOrderRows(orders, setting, nowMin);
+  const today: CateringBlockOrder[] = [];
+  for (const r of rows) {
+    const state = r.o.state;
+    if (!notCancelled(state)) continue;
+    today.push({ id: r.o.id, eventQ: r.o.eventQ, guests: r.o.headcount, state, outAt: r.o.outAt, open: r.open });
+  }
+  // Timed by event time, untimed last. A stable sort on a copy: equal keys keep the rows' order.
+  today.sort((a, b) => (a.eventQ === null ? 1 : 0) - (b.eventQ === null ? 1 : 0) || (a.eventQ ?? 0) - (b.eventQ ?? 0));
+  const timedOpen = rows.filter((r) => r.open && r.o.eventQ !== null).map((r) => r.o.eventQ! * 15);
+  return {
+    today,
+    next: timedOpen.length > 0 ? { atMin: Math.min(...timedOpen) } : null,
+    untracked: rows.filter((r) => !r.tracked).length,
+    tomorrow: tomorrowOut,
+  };
+}
+
 /** Catering today (5.3, 3.3.4): windows from the schedule's rule; an untracked order is never urgent and never "out". */
 function cateringItem(
   day: CateringDay | null, orders: readonly CateringOrder[], load: CateringDayLoad | null,
@@ -1049,14 +1144,7 @@ function cateringItem(
   if (orders.length === 0) {
     return makeItem("catering_today", { band: "upcoming", state: "not_started", at: null, reasons: [reason("day.reason.catering.none", {})] });
   }
-  const rows = orders.map((o) => {
-    const [fromQ, toQ] = cateringPrepWindowQ(o.eventQ, setting);
-    const time = o.eventQ !== null ? o.eventQ * 15 : toQ * 15;
-    const tracked = o.state !== "not_tracked";
-    const out = o.state === "out" || o.state === "completed";
-    const open = tracked ? !out : nowMin < time;
-    return { o, from: fromQ * 15, time, tracked, out, open };
-  }).sort((a, b) => a.time - b.time || a.from - b.from);
+  const rows = cateringOrderRows(orders, setting, nowMin);
   const untracked = rows.filter((r) => !r.tracked).length;
   const guests = (r: (typeof rows)[number]) => countParam(r.o.headcount ?? 0);
   const extras: Reason[] = [];
@@ -1206,7 +1294,10 @@ export function applyLens(
 
   return {
     kind: "shop", planDate: day.planDate, phase: day.phase, stations: day.stations, items, nextUp,
-    headsUp: kh && holds("catering") ? day.headsUp : null, notes,
+    headsUp: kh && holds("catering") ? day.headsUp : null,
+    heavyToday: kh && holds("catering") ? day.heavyToday : null,
+    cateringBlock: items.some((i) => i.id === "catering_today" && i.placement === "block") ? day.cateringBlock : null,
+    notes,
     alerts: kh || facts.holdsStationOnStationDay ? day.alerts : [], empty,
   };
 }
