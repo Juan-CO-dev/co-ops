@@ -29,7 +29,7 @@ export const SCH_ORDERS: ReadonlyArray<ReadonlyArray<readonly [number, number | 
   [[12, 36], [25, 44]],
 ];
 
-export function schCatering(i: number): BuildDayInput["catering"] {
+function schCatering(i: number): BuildDayInput["catering"] {
   return (SCH_ORDERS[i] ?? []).map(([headcount, eventQ], k) => ({ id: `ev-${i}-${k}`, headcount, eventQ }));
 }
 
@@ -55,7 +55,7 @@ export function schCrewInputs(): SchedulingInputs {
   return inputs;
 }
 
-export interface DateSlice { shifts: unknown[]; gaps: unknown[]; reasons: Record<string, unknown>; notes: unknown[]; day: unknown; context: string | null }
+interface DateSlice { shifts: unknown[]; gaps: unknown[]; reasons: Record<string, unknown>; notes: unknown[]; day: unknown; context: string | null }
 export interface WeekSlices { byDate: Record<string, DateSlice>; weekNotes: unknown[]; stats: unknown; people: string }
 
 export function schSlices(out: GeneratorOutput): WeekSlices {

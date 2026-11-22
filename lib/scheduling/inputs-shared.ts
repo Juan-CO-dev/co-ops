@@ -308,16 +308,16 @@ export function headSnapshotFor(week: StoredWeek | undefined): HeadSnapshot | nu
 // ─── The week's generator input ──────────────────────────────────────────────
 
 /**
- * One week's `GeneratorInput`. `buildDays` = the dates to (re)build; every other date of the week is carried from the
- * head. `today` is the ET business date. Refuses `demand_unavailable` when demand did not load (never a flat curve).
- */
-/**
  * PR SCH (F1): a date's stored opening on a head — its own day first, else the inherited origin's — of any status.
  */
 export function headOpeningOf(head: Pick<StoredHead, "context" | "inheritedOpenings"> | null | undefined, date: string): DayOpening | undefined {
   return head?.context.days[date]?.opening ?? head?.inheritedOpenings?.[date];
 }
 
+/**
+ * One week's `GeneratorInput`. `buildDays` = the dates to (re)build; every other date of the week is carried from the
+ * head. `today` is the ET business date. Refuses `demand_unavailable` when demand did not load (never a flat curve).
+ */
 export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, opts: {
   today: string; buildDays?: readonly string[]; confirmEdited?: boolean;
   /** PR SCH: `setDayOpening`'s new decision for one date (null = cleared), in place of the head's. */
