@@ -7,7 +7,9 @@
  * pure (client-safe, no I/O) because both the server gates and client pages read it.
  */
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import { MEMBER_SURFACES } from "@/lib/dashboard-day-shared";
+import type { Surface } from "@/lib/day-plan-shared";
 import { ROLES, getRoleLevel, type RoleCode } from "@/lib/roles";
 import {
   ALL_SHOP_ROLES,
@@ -15,6 +17,7 @@ import {
   SHOP_SURFACES,
   holdsAllShops,
   orderActingShops,
+  type ShopSurface,
 } from "@/lib/shop-access-shared";
 import { reportShopCandidates } from "@/lib/shop-context-shared";
 import { ALL_SHOPS_TWIN_TABLE } from "./fixtures/shop-access-twin-table";
@@ -64,6 +67,13 @@ describe("why PR 1 is a no-op: by ROLE equals level 8+ today", () => {
       const held = SHOP_SURFACES.filter((surface) => holdsAllShops(role, surface));
       expect(held, role).toEqual(role === "catering_mgr" ? ["catering"] : []);
     }
+  });
+});
+
+describe("the navigation's surfaces derive from this module (nav PR 7's interim type, replaced here)", () => {
+  it("nav Surface = ShopSurface + `schedule` (PR 8 moves `schedule` into ShopSurface)", () => {
+    expectTypeOf<Surface>().toEqualTypeOf<ShopSurface | "schedule">();
+    expect([...MEMBER_SURFACES].sort()).toEqual([...SHOP_SURFACES, "schedule"].sort());
   });
 });
 
