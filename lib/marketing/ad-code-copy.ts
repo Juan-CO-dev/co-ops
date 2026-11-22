@@ -5,7 +5,6 @@ import es from "@/lib/i18n/es.json";
 function copy(messages: typeof en) {
   return {
     title: messages["marketing.adcodes.title"],
-    back: messages["marketing.adcodes.back"],
     add: messages["marketing.adcodes.add"],
     code: messages["marketing.adcodes.code"],
     hint: messages["marketing.adcodes.hint"],

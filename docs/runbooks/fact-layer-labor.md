@@ -126,7 +126,7 @@ Rollback: unset `SCHEDULE_LABOR_VIEWS`. The functions can stay (the public one a
 
 ### 1e. The burden card and the pure-hourly target (0346, board two labor views PR 2)
 
-`0346_labor_burden_follow_company` is AUTHORED, NOT APPLIED. It writes no row. Two parts:
+`0346_labor_burden_follow_company` was APPLIED to prod 2026-11-19 (20261119035123). It writes no row. Two parts:
 
 - **Burden.** `labor_burden_settings` gains `follows_company` (a shop row with no % and no source: "follow the company from <date>"); `fact_labor_burden_for` is replaced (same signature; with no follow row every answer is 0338's); 0338's six-argument `save_labor_burden` is DROPPED and the new eight-argument one created (section 3).
 - **Structure.** `valid_schedule_structure` is re-emitted from 0286 with the optional `labor.hourlyTargetPct`.

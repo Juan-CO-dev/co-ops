@@ -51,7 +51,9 @@ it.each([7, 6, 4])("a non-member level %s cannot create (below 8 the shop member
 });
 
 it.each([8, 9, 10])("a non-member level %s reads an existing instance and passes the shop gate to create", async level => {
-  const actor = checklistActor({ level, locations: [] });
+  // The verified actor's level is derived from its role (resolveChecklistWriteActor), and the shop rule reads the role.
+  const role = ({ 8: "moo", 9: "owner", 10: "cgs" } as const)[level as 8 | 9 | 10];
+  const actor = checklistActor({ role, level, locations: [] });
   const query = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
     maybeSingle: vi.fn().mockResolvedValue({ data: { id: "existing" }, error: null }) };
   const reader = { from: vi.fn(() => query) } as unknown as SupabaseClient;

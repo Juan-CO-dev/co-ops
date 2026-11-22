@@ -24,6 +24,7 @@
  * `yield_unavailable` (503) — the view renders an explicit "unavailable" state with no actions.
  * Verdicts are NEVER computed against an empty note list, which would fabricate unsnoozed nudges.
  */
+import { withAbortStrict } from "@/lib/pulse/abort";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel, isRoleCode } from "@/lib/roles";
@@ -499,10 +500,11 @@ export interface RetrainTaskView {
  * until marked done — they are not daily report_assignments. A missing 0218 reads as no tasks
  * (a dashboard widget must not fail the dashboard; the yield page itself says "unavailable").
  */
-export async function loadMyRetrainTasks(actor: AuthContext, locationId: string): Promise<RetrainTaskView[]> {
+export async function loadMyRetrainTasks(actor: AuthContext, locationId: string, opts?: { signal?: AbortSignal }): Promise<RetrainTaskView[]> {
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new YieldStatsError(404, "not_found");
   if (actorLevel(actor) < RETRAIN_ASSIGNEE_MIN) return [];
-  const sb = getServiceRoleClient();
+  // Nav PR 7 (H2): the Dashboard's deadline cancels these reads; no signal = the plain client, as before.
+  const sb = withAbortStrict(getServiceRoleClient(), opts?.signal);
   const { data, error } = await sb.from("recipe_yield_retrain_notes").select(NOTE_COLUMNS)
     .eq("location_id", locationId).eq("assigned_to", actor.user.id).eq("status", "open")
     .order("created_at", { ascending: false }).range(0, 199);

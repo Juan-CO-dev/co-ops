@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { StepUpProvider } from "@/components/admin/StepUpProvider";
+import { BackLink } from "@/components/nav/BackLink";
 import { ScheduleBoard } from "@/components/schedule/ScheduleBoard";
 import { serverT } from "@/lib/i18n/server";
 import { operationalNow } from "@/lib/midshift-shared";
@@ -40,6 +41,7 @@ export default async function SchedulePage({ searchParams }: { searchParams: Pro
   });
   return (
     <main className="mx-auto grid w-full max-w-5xl min-w-0 gap-4 px-4 pb-10 pt-2">
+      <BackLink />
       <header className="grid gap-1">
         <h1 className="text-2xl font-bold text-co-text">{serverT(language, "schedule.page.title")} · {selected.name}</h1>
         <p className="text-sm text-co-text-muted">{serverT(language, "schedule.page.intro")}</p>

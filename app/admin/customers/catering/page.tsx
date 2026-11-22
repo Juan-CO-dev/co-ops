@@ -27,7 +27,6 @@ export default async function CateringAccountsPage({ searchParams }: { searchPar
     r.sources.map((s) => t(`customers.source.${s}`)).join(" · "), r.shops.map((id) => names.get(id) ?? t("customers.list.unknownShop")).join(" · ")];
   const control = "min-h-[44px] min-w-0 max-w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text";
   return <div className="min-w-0 space-y-4 text-co-text [overflow-wrap:anywhere]">
-    <Link href="/admin/customers" className={customerPill}>{t("customers.back")}</Link>
     <h1 className="text-2xl font-bold">{t("customers.catering.title")}</h1>
     <nav aria-label={t("customers.catering.summary")} className="flex flex-wrap gap-2">
       <Link className={customerPill} href={href({ quiet: null, sort: "spend" })}>{t("customers.catering.accounts", { count: list.summary.accounts })}</Link>

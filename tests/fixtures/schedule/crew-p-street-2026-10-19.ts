@@ -840,3 +840,20 @@ export function acceptanceInputs(): SchedulingInputs {
     wages: { byUserCents: {}, source: "none" }, overtimeH: null, keptBudgetDigests: [],
   };
 }
+
+/**
+ * PR SCH (plan r5 20.3, ruling D3): the EARLY-AVAILABLE variant. The real fixture has nobody available before 7:00 (q28 on
+ * every date: its estimated availability is clipped at the saved prep start and its manager-set windows default to it), so
+ * the flex and hand-fill tests use this variant: manager-set availability from 5:00 (q20) on every working day of the
+ * Opener-usual people (Henry, Tio, Santos, Veronica) and of the lead who counts as the manager on duty (J, the GM). J's
+ * usual Opener keeps the type's own start (7:30, not 8:00), so its 4-quarter flex can reach 6:30, the earliest typed start.
+ */
+export function crewPStreetEarly(): SchedulingInputs {
+  const inputs = acceptanceInputs();
+  inputs.personSettings.find((p) => p.userId === personId("J"))!.usualShift = { typeId: "opener" };
+  for (const name of ["J", "Henry", "Tio", "Santos", "Veronica"]) {
+    const days = inputs.personSettings.find((p) => p.userId === personId(name))!.availability!;
+    for (const dow of [1, 2, 3, 4, 5, 6, 7] as const) if (days[dow].mode !== "off") days[dow] = { ...days[dow], fromQ: 20 };
+  }
+  return inputs;
+}

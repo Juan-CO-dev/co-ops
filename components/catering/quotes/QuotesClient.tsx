@@ -56,6 +56,8 @@ export interface QuotesClientProps {
   menuItems: CateringMenuItem[];
   packagesByLocation: Record<string, CateringPackage[]>;
   actorLevel: number;
+  /** Deep link (?quote=<id>): open this quote's detail panel first. Null/absent = the list. */
+  initialQuoteId?: string | null;
 }
 
 type View = { mode: "list" } | { mode: "build"; reviseOf: QuoteDetail | null } | { mode: "detail"; id: string };
@@ -78,10 +80,10 @@ function dollarsToCents(v: string): number | null {
   return Math.round(n * 100);
 }
 
-export function QuotesClient({ quotes, locations, defaultLocationId, customers, leads, pricingByLocation, menuItems, packagesByLocation, actorLevel }: QuotesClientProps) {
+export function QuotesClient({ quotes, locations, defaultLocationId, customers, leads, pricingByLocation, menuItems, packagesByLocation, actorLevel, initialQuoteId = null }: QuotesClientProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
-  const [view, setView] = useState<View>({ mode: "list" });
+  const [view, setView] = useState<View>(initialQuoteId ? { mode: "detail", id: initialQuoteId } : { mode: "list" });
   const canWrite = actorLevel >= WRITE_MIN;
   const money = useCallback((c: number) => formatCents(c, language), [language]);
 

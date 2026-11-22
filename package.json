@@ -20,6 +20,7 @@
     "assets:check": "node scripts/assets/inventory.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.11.0",
     "@supabase/supabase-js": "^2.105.1",
     "@types/three": "^0.182.0",
     "@vercel/firewall": "1.2.6",

@@ -41,41 +41,6 @@ export interface ShiftWrapUpRow {
   reportsSubmitted: number;
 }
 
-export interface PmDashboardState {
-  isVisibleToActor: boolean;
-  status: string | null; // null = not started today
-  submittedAt: string | null;
-  submittedByName: string | null;
-}
-
-/** Tile state — KH+ only; mirrors loadCashDashboardState's slim shape. */
-export async function loadPmDashboardState(
-  service: SupabaseClient,
-  args: { locationId: string; date: string; actor: PmActor },
-): Promise<PmDashboardState> {
-  if (args.actor.level < PM_REPORT_BASE_LEVEL) {
-    return { isVisibleToActor: false, status: null, submittedAt: null, submittedByName: null };
-  }
-  const { data: row } = await service
-    .from("pm_reports")
-    .select("status, submitted_at, submitted_by")
-    .eq("location_id", args.locationId)
-    .eq("report_date", args.date)
-    .is("superseded_at", null)
-    .maybeSingle<{ status: string; submitted_at: string | null; submitted_by: string | null }>();
-  let submittedByName: string | null = null;
-  if (row?.submitted_by) {
-    const { data: u } = await service.from("users").select("name").eq("id", row.submitted_by).maybeSingle<{ name: string }>();
-    submittedByName = u?.name ?? null;
-  }
-  return {
-    isVisibleToActor: true,
-    status: row?.status ?? null,
-    submittedAt: row?.submitted_at ?? null,
-    submittedByName,
-  };
-}
-
 /** Per-employee activity for the auto wrap-up: items completed today + reports submitted. */
 export async function loadShiftWrapUp(
   service: SupabaseClient,
@@ -283,12 +248,16 @@ export async function getOrCreatePmReport(
     .single<{ id: string }>();
   // Another caller created this live day after our initial read.
   if (error?.code === "23505") {
+    // The re-read is the SAME GET as the initial read, and inside a server render Next memoizes identical GET
+    // fetches: without its own AbortController signal it is answered with the initial read's empty result and the
+    // page falls into the error screen (prod 2026-11-18/19, closing → PM report). The signal opts it out.
     const { data: winner, error: raceError } = await service
       .from("pm_reports")
       .select("*")
       .eq("location_id", args.locationId)
       .eq("report_date", args.date)
       .is("superseded_at", null)
+      .abortSignal(new AbortController().signal)
       .maybeSingle<{ id: string; format?: string | null }>();
     if (raceError) throw new Error(`getOrCreatePmReport race re-read: ${raceError.message}`);
     if (!winner) throw new Error("getOrCreatePmReport race: 23505 raised but no row visible on re-read");

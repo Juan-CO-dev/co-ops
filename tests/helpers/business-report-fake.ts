@@ -1,6 +1,7 @@
 // Item 9: the fake PostgREST client the business-report tests share (loader, export). Extracted from
 // tests/business-report-loader.test.ts unchanged.
 import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
+import { GM_VISIBILITY_KEYS, GM_VISIBILITY_NEEDS, type GmVisibility, type GmVisibilityKey } from "@/lib/business-access-shared";
 
 export const A = "aaaaaaaa-0000-4000-8000-00000000000a";
 
@@ -19,12 +20,45 @@ export type FakeOpts = {
   /** Board two views PR 1: what fact_labor_week_fingerprint answers for a week (default: the stored row's own
    *  fingerprint = nothing moved). "error" = the RPC fails; null = it answers nothing. */
   currentFingerprint?: (week: string) => string | null | "error" | undefined;
+  /** Business report access: what each read of 0349 business_report_gm_visibility answers, in order (the last one
+   *  repeats). An object = the newest row's settings (well-formed or not: the loader must judge it); null = no row
+   *  saved yet; "missing" = the table is not there (42P01); "error" = any other error; "throw" = the read throws.
+   *  Default: no row (the defaults). Only a GM's load reads it. */
+  visibility?: ReadonlyArray<VisibilityAnswer>;
+  /** Nav PR 8 (A5): fields merged into every fact_labor_cost row (per call args), so a case can set `open_punches`,
+   *  `days_pending`, `salary_basis`, `salary_unplaced_people` and the like per day. */
+  laborCostRow?: (args: Record<string, unknown>) => Record<string, unknown>;
 };
+export type VisibilityAnswer = Record<string, unknown> | null | "missing" | "error" | "throw" | { raw: unknown };
+/** Every switch on: what a GM received before the settings existed (fully loaded labor included). */
+export const GM_ALL_ON = { report: true, hourly_cost: true, loaded: true, quarters: true, quarter_cost: true, channels: true, people: true, person_cost: true,
+  person_salary: true, servers: true, compare: true, export: true };
+/** Every switch on EXCEPT `keys` and every switch that needs one of them (so the row is always a coherent one). */
+export function gmOff(...keys: GmVisibilityKey[]): GmVisibility {
+  const out: GmVisibility = { ...GM_ALL_ON };
+  const drop = (k: GmVisibilityKey) => { if (!out[k]) return; out[k] = false; for (const c of GM_VISIBILITY_KEYS) if (GM_VISIBILITY_NEEDS[c].includes(k)) drop(c); };
+  for (const k of keys) drop(k);
+  return out;
+}
+export const VISIBILITY_TABLE = "business_report_gm_visibility";
 const FP = "f".repeat(32);
 export function fakeClient(o: FakeOpts = {}) {
   const calls: Call[] = [];
   const tables: string[] = [];
+  /** Nav PR 8 (A5): one entry per request (`rpc:<name>` / `table:<name>`, every page included), in ISSUE order. */
+  const log: string[] = [];
   let rebuilt = false;
+  let visibilityReads = 0;
+  const visibilityAnswer = (): { data: unknown; error: unknown } => {
+    const list = o.visibility ?? [null];
+    const a = list[Math.min(visibilityReads, list.length - 1)]!;
+    visibilityReads++;
+    if (a === "throw") throw new Error("network");
+    if (a === "missing") return { data: null, error: { code: "42P01", message: "relation does not exist" } };
+    if (a === "error") return { data: null, error: { code: "57014", message: "x" } };
+    if (a === null) return { data: [], error: null };
+    return { data: [{ id: "00000000-0000-4000-8000-0000000000f1", settings: "raw" in a ? (a as { raw: unknown }).raw : a }], error: null };
+  };
   const day = (d: string) => ({ classes: [{ business_date: d, sale_class: "sale", checks: 2, amount_cents: 3_000, tax_cents: 0, amount_missing: 0, tax_missing: 0,
     gross_cents: 3_000, discounts_comps_cents: 0, voids_cents: 0, service_charges_cents: 0, accounting_missing: 0 }],
     tips: [], discounts: [], refunds: [], captured_days: [d], ezcater: [{ business_date: d, orders: 1, subtotal_cents: 2_000, amount_missing: 0 }] });
@@ -36,6 +70,7 @@ export function fakeClient(o: FakeOpts = {}) {
   const client = {
     rpc: (fn: string, args: Record<string, unknown>, opts?: { count?: string }) => {
       calls.push({ fn, args });
+      log.push(`rpc:${fn}`);
       let lo = 0, hi = Number.POSITIVE_INFINITY;
       const answer = () => {
         const r = produce(fn, args) as { data: unknown; error: unknown };
@@ -88,7 +123,8 @@ export function fakeClient(o: FakeOpts = {}) {
       } else if (fn === "fact_labor_cost") {
         data = [{ week_start: "2026-09-27", location_id: A, hourly_straight_cents: 900, ot_premium_cents: 0, salaried_cents: null, salary_basis: "unknown",
           burden_pct: 12, burden_basis: "estimated", estimated_rate_minutes: 0, hourly_minutes: 30, ot_minutes: 0, salaried_minutes: 0, ot_state: "assessed",
-          range_days: dates(from, to).length, days_covered: dates(from, to).length, days_pending: 0, days_fallback: 0, days_incomplete: 0, days_missing: 0, open_punches: 0 }];
+          range_days: dates(from, to).length, days_covered: dates(from, to).length, days_pending: 0, days_fallback: 0, days_incomplete: 0, days_missing: 0, open_punches: 0,
+          ...(o.laborCostRow?.(args) ?? {}) }];
       }
       return { data, error: null };
     }
@@ -96,6 +132,13 @@ export function fakeClient(o: FakeOpts = {}) {
   Object.assign(client, {
     from: (table: string) => {
       tables.push(table);
+      log.push(`table:${table}`);
+      if (table === VISIBILITY_TABLE) {
+        const v: Record<string, unknown> = {};
+        for (const k of ["select", "order", "limit"]) v[k] = () => v;
+        v.then = (res: (x: unknown) => unknown, rej?: (e: unknown) => unknown) => new Promise((r) => r(visibilityAnswer())).then(res, rej);
+        return v;
+      }
       const rowsNow = () => table === "labor_week_coverage" ? coverageRows()
         : table === "fact_day_coverage" ? (o.facts ?? dates("2026-08-01", "2026-10-07")).map((d) => ({ business_date: d, state: "covered" }))
         : table === "schedule_structures" ? [] : [];
@@ -111,5 +154,5 @@ export function fakeClient(o: FakeOpts = {}) {
       return q;
     },
   });
-  return { client: client as never, calls, tables };
+  return { client: client as never, calls, tables, log, visibilityReads: () => visibilityReads };
 }

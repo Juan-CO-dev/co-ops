@@ -1,0 +1,2406 @@
+[
+ {
+  "file": "app/(authed)/dashboard/page.tsx",
+  "fn": "loadAccessibleLocations",
+  "anchor": "fn:loadAccessibleLocations",
+  "kind": "throw",
+  "line": 86,
+  "text": "if (error) throw new Error(`load locations: ${error.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/dashboard/page.tsx",
+  "fn": "DashboardPage",
+  "anchor": "fn:DashboardPage",
+  "kind": "standalone",
+  "line": 129,
+  "text": "if (!smm) { after(async () => { const scope = auth.level >= 9 && auth.locations.length === 0 ? (\"all\" as const) : auth.locations; await evaluateAutoReleaseForUserLocations(sb, { locationIds: scope }); }); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "branch on the real role for a side effect only (nav PR 7, Q4: no auto-release trigger for the social media manager); both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/dashboard/page.tsx",
+  "fn": "callback of after",
+  "anchor": "fn:callback of after",
+  "kind": "standalone",
+  "line": 134,
+  "text": "await evaluateAutoReleaseForUserLocations(sb, { locationIds: scope });",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "not a gate (side effect); its failure is an error"
+  }
+ },
+ {
+  "file": "app/(authed)/mid-shift/page.tsx",
+  "fn": "MidShiftPage",
+  "anchor": "if (pulseV2Enabled())",
+  "kind": "early-return",
+  "line": 63,
+  "text": "return <PulseHome auth={auth} requested={requested} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "the page is PulseHome; PulseHome's entries apply",
+   "enters": {
+    "file": "components/pulse/PulseHome.tsx",
+    "fn": "PulseHome"
+   }
+  }
+ },
+ {
+  "file": "app/(authed)/mid-shift/page.tsx",
+  "fn": "MidShiftPage",
+  "anchor": "fn:MidShiftPage",
+  "kind": "early-return",
+  "line": 66,
+  "text": "if (auth.level < MIDSHIFT_BASE_LEVEL) { return ( <main className=\"mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6\"> <AccessDeniedBanner language={language} /> </main> ); }",
+  "meaning": {
+   "kind": "refuse",
+   "when": "auth.level < MIDSHIFT_BASE_LEVEL",
+   "why": "the v1 page's refusal view below key holder"
+  }
+ },
+ {
+  "file": "app/(authed)/mid-shift/page.tsx",
+  "fn": "MidShiftPage",
+  "anchor": "fn:MidShiftPage",
+  "kind": "early-return",
+  "line": 102,
+  "text": "if (!locationId) { return ( <main className=\"mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6\"> <div className=\"mb-3\"> <DashboardBackLink /> </div> <h1 className=\"mt-4 text-lg font-bold text-co-text\"> {serverT(language, \"midshift.page.title\")} </h1> <p className=\"mt-2 text-sm text-co-text-muted\"> {serverT(language, \"midshift.page.no_location\")} </p> </main> ); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/mid-shift/page.tsx",
+  "fn": "MidShiftPage",
+  "anchor": "fn:MidShiftPage",
+  "kind": "standalone",
+  "line": 197,
+  "text": "after(() => maybeRefreshTodaySales(locationId, date));",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "not a gate (side effect); its failure is an error"
+  }
+ },
+ {
+  "file": "app/(authed)/assignments/page.tsx",
+  "fn": "AssignmentsPage",
+  "anchor": "fn:AssignmentsPage",
+  "kind": "throw",
+  "line": 22,
+  "text": "if (error) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/stations/page.tsx",
+  "fn": "StaffStationsPage",
+  "anchor": "fn:StaffStationsPage",
+  "kind": "throw",
+  "line": 22,
+  "text": "if (locationsResult.error) throw locationsResult.error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/opening/page.tsx",
+  "fn": "loadAccessibleLocations",
+  "anchor": "fn:loadAccessibleLocations",
+  "kind": "throw",
+  "line": 83,
+  "text": "if (error) throw new Error(`load locations: ${error.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/opening/page.tsx",
+  "fn": "loadPriorClosingState",
+  "anchor": "fn:loadPriorClosingState",
+  "kind": "throw",
+  "line": 128,
+  "text": "if (tmplErr) throw new Error(`prior closing template: ${tmplErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/opening/page.tsx",
+  "fn": "loadPriorClosingState",
+  "anchor": "fn:loadPriorClosingState",
+  "kind": "throw",
+  "line": 138,
+  "text": "if (instErr) throw new Error(`prior closing instance: ${instErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/opening/page.tsx",
+  "fn": "OpeningPage",
+  "anchor": "fn:OpeningPage",
+  "kind": "early-return",
+  "line": 162,
+  "text": "if (!selectedLocation) { return ( <AuthShell width=\"wide\"> <ScaffoldHeader language={language} /> <NoLocationView language={language} /> <FooterActions sessionId={auth.session.id} /> </AuthShell> ); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/opening/page.tsx",
+  "fn": "OpeningPage",
+  "anchor": "fn:OpeningPage",
+  "kind": "early-return",
+  "line": 185,
+  "text": "if (gateBlocked) { return ( <AuthShell width=\"wide\"> <ScaffoldHeader language={language} /> <GateBlockedBanner location={selectedLocation} yesterdayDate={yesterday} language={language} /> <FooterActions sessionId={auth.session.id} /> </AuthShell> ); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/opening/page.tsx",
+  "fn": "OpeningPage",
+  "anchor": "fn:OpeningPage",
+  "kind": "early-return",
+  "line": 206,
+  "text": "if (!state) { return ( <AuthShell width=\"wide\"> <ScaffoldHeader language={language} /> <NoTemplateView location={selectedLocation} language={language} /> <FooterActions sessionId={auth.session.id} /> </AuthShell> ); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/opening/page.tsx",
+  "fn": "OpeningPage",
+  "anchor": "if (state.instance.status === \"confirmed\" || state.instance.status === \"auto_finalized\")",
+  "kind": "early-return",
+  "line": 222,
+  "text": "return ( <AuthShell width=\"wide\"> <ScaffoldHeader language={language} /> <ReadOnlyBanner location={selectedLocation} submitterName={submitter} confirmedAt={state.instance.confirmedAt} language={language} /> <FooterActions sessionId={auth.session.id} /> </AuthShell> );",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/opening/page.tsx",
+  "fn": "OpeningPage",
+  "anchor": "fn:OpeningPage",
+  "kind": "enclosing-if",
+  "line": 217,
+  "text": "if (state.instance.status === \"confirmed\" || state.instance.status === \"auto_finalized\") { const submitter = state.instance.confirmedBy && state.authors[state.instance.confirmedBy] ? state.authors[state.instance.confirmedBy]! : \"—\"; return ( <AuthShell width=\"wide\"> <ScaffoldHeader language={language} /> <ReadOnlyBanner location={selectedLocation} submitterName={submitter} confirmedAt={state.instance.confirmedAt} language={language} /> <FooterActions sessionId={auth.session.id} /> </AuthShell> ); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/opening/page.tsx",
+  "fn": "loadAgmPlusManagers",
+  "anchor": "fn:loadAgmPlusManagers",
+  "kind": "throw",
+  "line": 324,
+  "text": "if (locErr) throw new Error(`load location-scoped manager ids: ${locErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/opening/page.tsx",
+  "fn": "loadAgmPlusManagers",
+  "anchor": "fn:loadAgmPlusManagers",
+  "kind": "throw",
+  "line": 340,
+  "text": "if (usersErr) throw new Error(`load AGM+ users: ${usersErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/am-prep/page.tsx",
+  "fn": "AmPrepPage",
+  "anchor": "fn:AmPrepPage",
+  "kind": "throw",
+  "line": 93,
+  "text": "if (locErr) throw new Error(`load location: ${locErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/am-prep/page.tsx",
+  "fn": "AmPrepPage",
+  "anchor": "fn:AmPrepPage",
+  "kind": "redirect",
+  "line": 94,
+  "text": "if (!locationRow) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "S's row exists"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/am-prep/page.tsx",
+  "fn": "AmPrepPage",
+  "anchor": "fn:AmPrepPage",
+  "kind": "early-return",
+  "line": 114,
+  "text": "if (state === null) { return ( <NoTemplateView locationLabel={`${locationRow.code} · ${locationRow.name}`} language={auth.user.language} /> ); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/am-prep/page.tsx",
+  "fn": "AmPrepPage",
+  "anchor": "fn:AmPrepPage",
+  "kind": "redirect",
+  "line": 174,
+  "text": "if (editRequested && !access.canEdit) { redirect(`/operations/am-prep?location=${locationParam}`); }",
+  "meaning": {
+   "kind": "success-redirect",
+   "target": "/operations/am-prep?location=<S>",
+   "why": "edit mode only: an ?edit=true request by someone who may not edit goes to the view mode, which is the entry request itself; not reached by the entry request"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/am-prep/page.tsx",
+  "fn": "loadChainStateForPage",
+  "anchor": "fn:loadChainStateForPage",
+  "kind": "throw",
+  "line": 262,
+  "text": "if (headErr) { throw new Error(`am-prep page: load chain head: ${headErr.message}`); }",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/am-prep/page.tsx",
+  "fn": "loadChainStateForPage",
+  "anchor": "fn:loadChainStateForPage",
+  "kind": "throw",
+  "line": 290,
+  "text": "if (cTmplErr) { throw new Error(`am-prep page: load closing templates: ${cTmplErr.message}`); }",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/am-prep/page.tsx",
+  "fn": "loadChainStateForPage",
+  "anchor": "if (closingTemplateIds.length > 0)",
+  "kind": "throw",
+  "line": 307,
+  "text": "if (cInstErr) { throw new Error(`am-prep page: load closing instance: ${cInstErr.message}`); }",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/am-prep/page.tsx",
+  "fn": "loadChainStateForPage",
+  "anchor": "fn:loadChainStateForPage",
+  "kind": "enclosing-if",
+  "line": 298,
+  "text": "if (closingTemplateIds.length > 0) { const { data: closingInst, error: cInstErr } = await args.sb .from(\"checklist_instances\") .select(\"status\") .in(\"template_id\", closingTemplateIds) .eq(\"date\", args.date) .order(\"created_at\", { ascending: false }) .limit(1) .maybeSingle<{ status: ChecklistInstance[\"status\"] }>(); if (cInstErr) { throw new Error(`am-prep page: load closing instance: ${cInstErr.message}`); } closingStatus = closingInst?.status ?? null; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/mid-day/page.tsx",
+  "fn": "loadAgmPlusManagers",
+  "anchor": "fn:loadAgmPlusManagers",
+  "kind": "throw",
+  "line": 58,
+  "text": "if (locErr) throw new Error(`loadAgmPlusManagers: location ids: ${locErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/mid-day/page.tsx",
+  "fn": "loadAgmPlusManagers",
+  "anchor": "fn:loadAgmPlusManagers",
+  "kind": "throw",
+  "line": 66,
+  "text": "if (usersErr) throw new Error(`loadAgmPlusManagers: users: ${usersErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/mid-day/page.tsx",
+  "fn": "MidDayPrepPage",
+  "anchor": "if (!instanceId)",
+  "kind": "redirect",
+  "line": 97,
+  "text": "if (!dashState.isVisibleToActor) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!taskAccess(\"mid_day_prep\")",
+   "why": "the dashboard state's visibility flag is hasTaskAccess for mid_day_prep at the shop"
+  },
+  "pins": [
+   {
+    "file": "lib/prep.ts",
+    "text": "const isVisibleToActor = await hasTaskAccess(service, { ...args.actor, locationId: args.locationId, date: args.date, task: \"mid_day_prep\" });"
+   }
+  ]
+ },
+ {
+  "file": "app/(authed)/operations/mid-day/page.tsx",
+  "fn": "MidDayPrepPage",
+  "anchor": "if (!instanceId)",
+  "kind": "redirect",
+  "line": 99,
+  "text": "if (dashState.instances.length === 1) { redirect(`/operations/mid-day?instance=${dashState.instances[0]!.instanceId}`); }",
+  "meaning": {
+   "kind": "success-redirect",
+   "target": "/operations/mid-day?instance=<id>",
+   "why": "the only instance; evaluated as the instance branch"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/mid-day/page.tsx",
+  "fn": "MidDayPrepPage",
+  "anchor": "if (!instanceId)",
+  "kind": "early-return",
+  "line": 103,
+  "text": "return ( <main className=\"mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6\"> <div className=\"mb-3\"> <DashboardBackLink /> </div> <h1 className=\"mb-4 text-lg font-bold text-co-text\"> {serverT(lang, \"mid_day_prep.page.title\")} </h1> <MidDayPrepTile state={dashState} language={lang} locationId={locationParam} date={today} /> </main> );",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/mid-day/page.tsx",
+  "fn": "MidDayPrepPage",
+  "anchor": "fn:MidDayPrepPage",
+  "kind": "redirect",
+  "line": 125,
+  "text": "if (!state) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "the instance exists"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/mid-day/page.tsx",
+  "fn": "MidDayPrepPage",
+  "anchor": "fn:MidDayPrepPage",
+  "kind": "redirect",
+  "line": 128,
+  "text": "if (!canWorkShopTasks(locActor, state.instance.locationId)) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canWorkShopTasks(actor, S)",
+   "why": "the instance branch: the instance is at S"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/mid-day/page.tsx",
+  "fn": "MidDayPrepPage",
+  "anchor": "fn:MidDayPrepPage",
+  "kind": "redirect",
+  "line": 130,
+  "text": "if (!(await hasTaskAccess(sb, { userId: auth.user.id, level: auth.level, locationId: state.instance.locationId, date: state.instance.date, task: \"mid_day_prep\" }))) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!taskAccess(\"mid_day_prep\")",
+   "why": "the instance branch's task gate at S"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "throw",
+  "line": 204,
+  "text": "if (locErr) throw new Error(`load location: ${locErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "redirect",
+  "line": 205,
+  "text": "if (!locationRow) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "S's row exists"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (!templateRow)",
+  "kind": "throw",
+  "line": 243,
+  "text": "if (tmplErr) throw new Error(`load template: ${tmplErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "enclosing-if",
+  "line": 233,
+  "text": "if (!templateRow) { const closingBase = sb .from(\"checklist_templates\") .select(\"id\") .eq(\"location_id\", locationParam) .eq(\"type\", \"closing\") as unknown as EffectiveResolvableBuilder; const { data: effectiveRow, error: tmplErr } = await applyEffectiveResolution( closingBase, targetDate, ).maybeSingle<{ id: string }>(); if (tmplErr) throw new Error(`load template: ${tmplErr.message}`); templateRow = effectiveRow; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "early-return",
+  "line": 246,
+  "text": "if (!templateRow) { return ( <NoTemplateView locationLabel={`${locationRow.code} · ${locationRow.name}`} language={auth.user.language} /> ); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "catch of try { writeActor = await resolveChecklistWriteActor(auth); }",
+  "kind": "throw",
+  "line": 266,
+  "text": "if (!(error instanceof ChecklistActorNotAuthorizedError)) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (!isHistorical && auth.level >= 3)",
+  "kind": "enclosing-catch",
+  "line": 265,
+  "text": "catch (error) { if (!(error instanceof ChecklistActorNotAuthorizedError)) throw error; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "enclosing-if",
+  "line": 262,
+  "text": "if (!isHistorical && auth.level >= 3) { try { writeActor = await resolveChecklistWriteActor(auth); } catch (error) { if (!(error instanceof ChecklistActorNotAuthorizedError)) throw error; } }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (isHistorical || auth.level < 3 || writeUnavailable)",
+  "kind": "early-return",
+  "line": 279,
+  "text": "if (!instanceRow) { return ( <NoInstanceView locationLabel={`${locationRow.code} · ${locationRow.name}`} dateLabel={formatDateLabel(targetDate, auth.user.language)} language={auth.user.language} /> ); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "enclosing-if",
+  "line": 275,
+  "text": "if (isHistorical || auth.level < 3 || writeUnavailable) { // Trainees can work an existing close, but cannot create its instance. // W15/B086: the day's instance was found above on any version (retired included). instanceRow = dayInstance; if (!instanceRow) { return ( <NoInstanceView locationLabel={`${locationRow.code} · ${locationRow.name}`} dateLabel={formatDateLabel(targetDate, auth.user.language)} language={auth.user.language} /> ); } } else { // Today — get-or-create. Service-role bypasses RLS at INSERT; the audit // row records actor metadata correctly via the actor parameter. // W15/B084: today's instance already found on any version wins; only a day with none // creates one. If another version's instance lands in between (0320's guard refuses // the second), read the day's instance again instead of failing. let result: Awaited<ReturnType<typeof getOrCreateInstance>>; try { result = dayInstance ? { instance: rowToInstance(dayInstance), created: false } : await getOrCreateInstance(sb, { templateId: templateRow.id, locationId: locationParam, date: today, actor: writeActor!, }); } catch (error) { if (!(error instanceof ChecklistLineageTakenError)) throw error; // fresh: the same lookup already ran in this render and found nothing (Next memoizes identical GETs). const taken = await findDayInstance<InstanceRow>(sb, { locationId: locationParam, type: \"closing\", date: today, columns: INSTANCE_COLUMNS, fresh: true, }); if (!taken) throw error; result = { instance: rowToInstance(taken), created: false }; } instanceRow = { id: result.instance.id, template_id: result.instance.templateId, location_id: result.instance.locationId, date: result.instance.date, shift_start_at: result.instance.shiftStartAt, status: result.instance.status, confirmed_at: result.instance.confirmedAt, confirmed_by: result.instance.confirmedBy, created_at: result.instance.createdAt, triggered_by_user_id: result.instance.triggeredByUserId, triggered_at: result.instance.triggeredAt, // Build #3 PR 1 — finalize + assignment/drop fields (mirror lib/checklists.ts). finalized_at_actor_type: result.instance.finalizedAtActorType, assigned_to: result.instance.assignedTo, assignment_locked: result.instance.assignmentLocked, dropped_at: result.instance.droppedAt, dropped_by: result.instance.droppedBy, dropped_reason: result.instance.droppedReason, }; // Reconcile the closing's report-reference ticks against today's finalized // reports (opening / AM prep / mid-day). Pull-based + order-independent: // the finalize-time push silently no-ops when the closing instance doesn't // exist yet — which is the natural EOD flow (closing opened last). This // catches up the ticks at the moment the closing checklist loads. AWAITED // (not fire-and-forget) so the freshly-ticked rows are visible to the // completions query below in this same render. Graceful: a reconcile hiccup // must never block the closing surface. try { await reconcileClosingReportRefs(sb, { locationId: locationParam, date: today, closingInstanceId: instanceRow.id, actor: { userId: auth.user.id, role: auth.role, level: auth.level }, }); } catch (e) { console.error(\"reconcileClosingReportRefs failed:\", e); } }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "catch of try { result = dayInstance ? { instance: rowToInstance(dayInstance), created: false } : await getOrCreateInstance(sb, { templateId: templateRow.id, locationId: locationParam, date: today, actor: writeActor!, }); }",
+  "kind": "throw",
+  "line": 305,
+  "text": "if (!(error instanceof ChecklistLineageTakenError)) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (isHistorical || auth.level < 3 || writeUnavailable)",
+  "kind": "enclosing-catch",
+  "line": 304,
+  "text": "catch (error) { if (!(error instanceof ChecklistLineageTakenError)) throw error; // fresh: the same lookup already ran in this render and found nothing (Next memoizes identical GETs). const taken = await findDayInstance<InstanceRow>(sb, { locationId: locationParam, type: \"closing\", date: today, columns: INSTANCE_COLUMNS, fresh: true, }); if (!taken) throw error; result = { instance: rowToInstance(taken), created: false }; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "catch of try { result = dayInstance ? { instance: rowToInstance(dayInstance), created: false } : await getOrCreateInstance(sb, { templateId: templateRow.id, locationId: locationParam, date: today, actor: writeActor!, }); }",
+  "kind": "throw",
+  "line": 310,
+  "text": "if (!taken) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "throw",
+  "line": 361,
+  "text": "if (itemsErr) throw new Error(`load items: ${itemsErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "throw",
+  "line": 374,
+  "text": "if (compErr) throw new Error(`load completions: ${compErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (authorIds.size > 0)",
+  "kind": "throw",
+  "line": 400,
+  "text": "if (userErr) throw new Error(`load authors: ${userErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "enclosing-if",
+  "line": 395,
+  "text": "if (authorIds.size > 0) { const { data: userRows, error: userErr } = await sb .from(\"users\") .select(\"id, name, role\") .in(\"id\", Array.from(authorIds)); if (userErr) throw new Error(`load authors: ${userErr.message}`); for (const u of (userRows ?? []) as Array<{ id: string; name: string; role: RoleCode }>) { authors[u.id] = u.name; completerLevels[u.id] = getRoleLevel(u.role); } }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (prepInstanceIds.length > 0)",
+  "kind": "throw",
+  "line": 441,
+  "text": "if (headErr) throw new Error(`load chain heads: ${headErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (amPrepAutoCompleteRows.length > 0)",
+  "kind": "enclosing-if",
+  "line": 434,
+  "text": "if (prepInstanceIds.length > 0) { // Batch lookup chain heads (original_submission_id IS NULL for heads). const { data: headSubs, error: headErr } = await sb .from(\"checklist_submissions\") .select(\"id, instance_id, submitted_by\") .in(\"instance_id\", prepInstanceIds) .is(\"original_submission_id\", null); if (headErr) throw new Error(`load chain heads: ${headErr.message}`); const headByPrepInstance = new Map< string, { id: string; submittedBy: string } >(); for (const h of (headSubs ?? []) as Array<{ id: string; instance_id: string; submitted_by: string; }>) { headByPrepInstance.set(h.instance_id, { id: h.id, submittedBy: h.submitted_by }); } // Load each chain in parallel + compute canEdit per the closing's status. const chainResults = await Promise.all( amPrepAutoCompleteRows.map(async (c) => { const meta = c.autoCompleteMeta as { reportInstanceId?: string } | null; const prepInstanceId = meta?.reportInstanceId; if (!prepInstanceId) return { templateItemId: c.templateItemId, chain: [], canEdit: false }; const head = headByPrepInstance.get(prepInstanceId); if (!head) return { templateItemId: c.templateItemId, chain: [], canEdit: false }; const chain = await loadChecklistChainAttribution(sb, { originalSubmissionId: head.id, }); const maxEditCount = chain.reduce( (max, e) => (e.editCount > max ? e.editCount : max), 0, ); const access = canEditReport({ actor: { userId: auth.user.id, level: auth.level }, originalSubmitterId: head.submittedBy, closingStatus: instanceRow.status, currentEditCount: maxEditCount, }); return { templateItemId: c.templateItemId, chain, canEdit: access.canEdit, }; }), ); for (const r of chainResults) { reportRefChains[r.templateItemId] = r.chain; reportRefCanEdit[r.templateItemId] = r.canEdit; } // Add chain submitter ids to authors-to-resolve (for display in chain). const chainAuthorIds = new Set<string>(); for (const r of chainResults) { for (const e of r.chain) chainAuthorIds.add(e.submitterId); } // loadChecklistChainAttribution already resolves names, so authors map // doesn't need additional lookups for chain entries — they carry // submitterName directly. void chainAuthorIds; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "enclosing-if",
+  "line": 426,
+  "text": "if (amPrepAutoCompleteRows.length > 0) { const prepInstanceIds = amPrepAutoCompleteRows .map((c) => { const meta = c.autoCompleteMeta as { reportInstanceId?: string } | null; return meta?.reportInstanceId ?? null; }) .filter((x): x is string => x !== null); if (prepInstanceIds.length > 0) { // Batch lookup chain heads (original_submission_id IS NULL for heads). const { data: headSubs, error: headErr } = await sb .from(\"checklist_submissions\") .select(\"id, instance_id, submitted_by\") .in(\"instance_id\", prepInstanceIds) .is(\"original_submission_id\", null); if (headErr) throw new Error(`load chain heads: ${headErr.message}`); const headByPrepInstance = new Map< string, { id: string; submittedBy: string } >(); for (const h of (headSubs ?? []) as Array<{ id: string; instance_id: string; submitted_by: string; }>) { headByPrepInstance.set(h.instance_id, { id: h.id, submittedBy: h.submitted_by }); } // Load each chain in parallel + compute canEdit per the closing's status. const chainResults = await Promise.all( amPrepAutoCompleteRows.map(async (c) => { const meta = c.autoCompleteMeta as { reportInstanceId?: string } | null; const prepInstanceId = meta?.reportInstanceId; if (!prepInstanceId) return { templateItemId: c.templateItemId, chain: [], canEdit: false }; const head = headByPrepInstance.get(prepInstanceId); if (!head) return { templateItemId: c.templateItemId, chain: [], canEdit: false }; const chain = await loadChecklistChainAttribution(sb, { originalSubmissionId: head.id, }); const maxEditCount = chain.reduce( (max, e) => (e.editCount > max ? e.editCount : max), 0, ); const access = canEditReport({ actor: { userId: auth.user.id, level: auth.level }, originalSubmitterId: head.submittedBy, closingStatus: instanceRow.status, currentEditCount: maxEditCount, }); return { templateItemId: c.templateItemId, chain, canEdit: access.canEdit, }; }), ); for (const r of chainResults) { reportRefChains[r.templateItemId] = r.chain; reportRefCanEdit[r.templateItemId] = r.canEdit; } // Add chain submitter ids to authors-to-resolve (for display in chain). const chainAuthorIds = new Set<string>(); for (const r of chainResults) { for (const e of r.chain) chainAuthorIds.add(e.submitterId); } // loadChecklistChainAttribution already resolves names, so authors map // doesn't need additional lookups for chain entries — they carry // submitterName directly. void chainAuthorIds; } }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (!isHistorical && amPrepGapNoteDue(new Date().toISOString(), targetDate))",
+  "kind": "throw",
+  "line": 535,
+  "text": "if (atErr) throw new Error(`am-prep gap template lookup: ${atErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "enclosing-if",
+  "line": 527,
+  "text": "if (!isHistorical && amPrepGapNoteDue(new Date().toISOString(), targetDate)) { const { data: amTmpls, error: atErr } = await sb .from(\"checklist_templates\") .select(\"id\") .eq(\"type\", \"prep\") .eq(\"prep_subtype\", \"am_prep\") .eq(\"location_id\", locationParam) .returns<Array<{ id: string }>>(); if (atErr) throw new Error(`am-prep gap template lookup: ${atErr.message}`); const amTmplIds = (amTmpls ?? []).map((t) => t.id); if (amTmplIds.length > 0) { const { data: amInstances, error: aiErr } = await sb .from(\"checklist_instances\") .select(\"id\") .in(\"template_id\", amTmplIds) .eq(\"location_id\", locationParam) .eq(\"date\", targetDate) .returns<Array<{ id: string }>>(); if (aiErr) throw new Error(`am-prep gap instance lookup: ${aiErr.message}`); const amInstanceIds = (amInstances ?? []).map((i) => i.id); if (amInstanceIds.length === 0) { amPrepGap = true; // never opened } else { const { count, error: acErr } = await sb .from(\"checklist_completions\") .select(\"id\", { count: \"exact\", head: true }) .in(\"instance_id\", amInstanceIds) .is(\"superseded_at\", null) .is(\"revoked_at\", null); if (acErr) throw new Error(`am-prep gap completion count: ${acErr.message}`); amPrepGap = (count ?? 0) === 0; } } }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (amTmplIds.length > 0)",
+  "kind": "throw",
+  "line": 545,
+  "text": "if (aiErr) throw new Error(`am-prep gap instance lookup: ${aiErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (!isHistorical && amPrepGapNoteDue(new Date().toISOString(), targetDate))",
+  "kind": "enclosing-if",
+  "line": 537,
+  "text": "if (amTmplIds.length > 0) { const { data: amInstances, error: aiErr } = await sb .from(\"checklist_instances\") .select(\"id\") .in(\"template_id\", amTmplIds) .eq(\"location_id\", locationParam) .eq(\"date\", targetDate) .returns<Array<{ id: string }>>(); if (aiErr) throw new Error(`am-prep gap instance lookup: ${aiErr.message}`); const amInstanceIds = (amInstances ?? []).map((i) => i.id); if (amInstanceIds.length === 0) { amPrepGap = true; // never opened } else { const { count, error: acErr } = await sb .from(\"checklist_completions\") .select(\"id\", { count: \"exact\", head: true }) .in(\"instance_id\", amInstanceIds) .is(\"superseded_at\", null) .is(\"revoked_at\", null); if (acErr) throw new Error(`am-prep gap completion count: ${acErr.message}`); amPrepGap = (count ?? 0) === 0; } }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (amInstanceIds.length === 0)",
+  "kind": "throw",
+  "line": 556,
+  "text": "if (acErr) throw new Error(`am-prep gap completion count: ${acErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (amTmplIds.length > 0)",
+  "kind": "enclosing-if",
+  "line": 547,
+  "text": "if (amInstanceIds.length === 0) { amPrepGap = true; // never opened } else { const { count, error: acErr } = await sb .from(\"checklist_completions\") .select(\"id\", { count: \"exact\", head: true }) .in(\"instance_id\", amInstanceIds) .is(\"superseded_at\", null) .is(\"revoked_at\", null); if (acErr) throw new Error(`am-prep gap completion count: ${acErr.message}`); amPrepGap = (count ?? 0) === 0; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "if (instanceRow.status === \"confirmed\" || instanceRow.status === \"incomplete_confirmed\")",
+  "kind": "throw",
+  "line": 575,
+  "text": "if (rErr) throw new Error(`load incomplete reasons: ${rErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/closing/page.tsx",
+  "fn": "ClosingPage",
+  "anchor": "fn:ClosingPage",
+  "kind": "enclosing-if",
+  "line": 568,
+  "text": "if (instanceRow.status === \"confirmed\" || instanceRow.status === \"incomplete_confirmed\") { const { data: reasonRows, error: rErr } = await sb .from(\"checklist_incomplete_reasons\") .select(\"template_item_id, reason, reported_by, reported_at\") .eq(\"instance_id\", instanceRow.id) .order(\"reported_at\", { ascending: true }) .returns<Array<{ template_item_id: string; reason: string; reported_by: string | null; reported_at: string }>>(); if (rErr) throw new Error(`load incomplete reasons: ${rErr.message}`); const rows = reasonRows ?? []; const missingIds = [...new Set(rows.map((r) => r.reported_by).filter((v): v is string => !!v && !(v in authors)))]; const extraNames = new Map<string, string>(); if (missingIds.length > 0) { const { data: us } = await sb.from(\"users\").select(\"id, name\").in(\"id\", missingIds); for (const u of (us ?? []) as Array<{ id: string; name: string }>) extraNames.set(u.id, u.name); } // newest per item wins (append-only table; a retried confirm reuses rows) const byItem = new Map<string, { templateItemId: string; reason: string; byName: string | null }>(); for (const r of rows) { byItem.set(r.template_item_id, { templateItemId: r.template_item_id, reason: r.reason, byName: r.reported_by ? (authors[r.reported_by] ?? extraNames.get(r.reported_by) ?? null) : null, }); } incompleteReasons = [...byItem.values()]; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/cash/page.tsx",
+  "fn": "CashPage",
+  "anchor": "if (!report && !closingFinalized)",
+  "kind": "throw",
+  "line": 89,
+  "text": "if (locErr) throw new Error(`CashPage: user_locations: ${locErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/cash/page.tsx",
+  "fn": "CashPage",
+  "anchor": "fn:CashPage",
+  "kind": "enclosing-if",
+  "line": 83,
+  "text": "if (!report && !closingFinalized) { const { data: locScoped, error: locErr } = await sb .from(\"user_locations\") .select(\"user_id\") .eq(\"location_id\", locationParam) .eq(\"active\", true); if (locErr) throw new Error(`CashPage: user_locations: ${locErr.message}`); const locIds = ((locScoped ?? []) as Array<{ user_id: string }>).map((r) => r.user_id); if (locIds.length > 0) { const { data: candidates, error: usersErr } = await sb .from(\"users\") .select(\"id, name\") .eq(\"active\", true) .in(\"id\", locIds) .order(\"name\", { ascending: true }); if (usersErr) throw new Error(`CashPage: users: ${usersErr.message}`); users = (candidates ?? []) as { id: string; name: string }[]; } }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/cash/page.tsx",
+  "fn": "CashPage",
+  "anchor": "if (locIds.length > 0)",
+  "kind": "throw",
+  "line": 99,
+  "text": "if (usersErr) throw new Error(`CashPage: users: ${usersErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/cash/page.tsx",
+  "fn": "CashPage",
+  "anchor": "if (!report && !closingFinalized)",
+  "kind": "enclosing-if",
+  "line": 92,
+  "text": "if (locIds.length > 0) { const { data: candidates, error: usersErr } = await sb .from(\"users\") .select(\"id, name\") .eq(\"active\", true) .in(\"id\", locIds) .order(\"name\", { ascending: true }); if (usersErr) throw new Error(`CashPage: users: ${usersErr.message}`); users = (candidates ?? []) as { id: string; name: string }[]; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/pm-report/page.tsx",
+  "fn": "PmReportPage",
+  "anchor": "fn:PmReportPage",
+  "kind": "early-return",
+  "line": 61,
+  "text": "if (auth.level < PM_REPORT_BASE_LEVEL) { return ( <main className=\"mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6\"> <AccessDeniedBanner language={auth.user.language} /> </main> ); }",
+  "meaning": {
+   "kind": "refuse",
+   "when": "auth.level < PM_REPORT_BASE_LEVEL",
+   "why": "the v1 refusal view below key holder"
+  }
+ },
+ {
+  "file": "app/(authed)/pm-report/page.tsx",
+  "fn": "PmReportPage",
+  "anchor": "fn:PmReportPage",
+  "kind": "early-return",
+  "line": 94,
+  "text": "if (day.format === \"v2\") return renderV2(auth, locationId, date);",
+  "meaning": {
+   "kind": "admit",
+   "why": "format fork (v1 vs v2); both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/pm-report/page.tsx",
+  "fn": "callback of loadDayResults(sb, { actor, locationId, date }).catch",
+  "anchor": "fn:callback of loadDayResults(sb, { actor, locationId, date }).catch",
+  "kind": "throw",
+  "line": 185,
+  "text": "throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/pm-report/page.tsx",
+  "fn": "renderV2",
+  "anchor": "if (state && state.status !== \"open\")",
+  "kind": "enclosing-.catch",
+  "line": 183,
+  "text": "loadDayResults(sb, { actor, locationId, date }).catch((e: unknown) => { if (e instanceof PmReportError && e.code === \"forbidden\") return null; throw e; })",
+  "meaning": {
+   "kind": "admit",
+   "why": "PER-RECORD RESTRICTION VIEW (lead ruling): a submitted day's results refused by authorship (`forbidden` -> null) render `pmv2.results.noAccess`; the page is reached and explains itself"
+  }
+ },
+ {
+  "file": "app/(authed)/pm-report/page.tsx",
+  "fn": "renderV2",
+  "anchor": "catch of try { await openMyCopy(sb, { actor, locationId, date }); }",
+  "kind": "early-return",
+  "line": 210,
+  "text": "if (e instanceof PmReportError && e.code === \"forbidden\") { return ( <main className=\"mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6\"> <AccessDeniedBanner language={lang} /> </main> ); }",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canSubmitPmDay(actor)",
+   "why": "PM report v2's open-copy refusal: requireManagerAt refuses `forbidden` exactly when canSubmitPmDay fails or the actor is not bound to the shop; the entry shop is a member shop, so only canSubmitPmDay decides (refusal view)"
+  },
+  "pins": [
+   {
+    "file": "lib/pm-report-v2.ts",
+    "text": "if (!canSubmitPmDay(actor) || !bound(actor, locationId)) refuse(\"forbidden\");"
+   },
+   {
+    "file": "lib/pm-report-v2.ts",
+    "text": "return actor.level >= 9 || actor.locations.includes(locationId);"
+   }
+  ]
+ },
+ {
+  "file": "app/(authed)/pm-report/page.tsx",
+  "fn": "renderV2",
+  "anchor": "if (state && state.status !== \"open\")",
+  "kind": "enclosing-catch",
+  "line": 209,
+  "text": "catch (e) { if (e instanceof PmReportError && e.code === \"forbidden\") { return ( <main className=\"mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6\"> <AccessDeniedBanner language={lang} /> </main> ); } throw e; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "the open-copy catch; its refusal and rethrow are their own entries"
+  }
+ },
+ {
+  "file": "app/(authed)/pm-report/page.tsx",
+  "fn": "renderV2",
+  "anchor": "fn:renderV2",
+  "kind": "enclosing-if",
+  "line": 182,
+  "text": "if (state && state.status !== \"open\") { const results = await loadDayResults(sb, { actor, locationId, date }).catch((e: unknown) => { if (e instanceof PmReportError && e.code === \"forbidden\") return null; throw e; }); body = results ? <PmDayResults results={results} /> : <p className=\"co-card p-4 text-sm text-co-text\">{serverT(lang, \"pmv2.results.noAccess\")}</p>; } else { // The presence roster (D-28), the same source as v1; only people the shop's roster holds. let presenceRoster: { id: string; name: string }[] = []; let prefillFrom: string | null = null; try { const { data: locScoped } = await sb.from(\"user_locations\").select(\"user_id\").eq(\"location_id\", locationId).eq(\"active\", true); const ids = ((locScoped ?? []) as Array<{ user_id: string }>).map((r) => r.user_id); const { data: users } = ids.length ? await sb.from(\"users\").select(\"id, name\").eq(\"active\", true).in(\"id\", ids) : { data: [] }; const board = await loadShiftBoard(sb, { actor: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations }, locationId, date }); presenceRoster = pmPresenceRoster(board, new Set(((users ?? []) as Array<{ id: string }>).map((u) => u.id))); prefillFrom = board.people.find((p) => p.id === auth.user.id)?.presence?.since ?? null; } catch (err) { console.error(\"pm v2 presence roster failed\", err instanceof Error ? err.message : \"unknown\"); } // Opening a copy is a stricter bind than this page's own (the 0271 RPC wants an ACTIVE MEMBERSHIP of the shop, which // even the all-shops grant at level 9+ does not supply, and the social media manager is refused outright), so a // refusal here is a plain \"no access\" with a way back, never the app-wide error page. let view: Awaited<ReturnType<typeof loadMyCopy>>; try { await openMyCopy(sb, { actor, locationId, date }); view = await loadMyCopy(sb, { actor, locationId, date, presenceRoster }); } catch (e) { if (e instanceof PmReportError && e.code === \"forbidden\") { return ( <main className=\"mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6\"> <AccessDeniedBanner language={lang} /> </main> ); } throw e; } body = view ? <PmCopyForm view={view} prefillFrom={prefillFrom} /> : <p className=\"co-card p-4 text-sm text-co-text\">{serverT(lang, \"pmv2.error.pm_v2_unavailable\")}</p>; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "branch on the day's state (submitted vs open); both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/pm-report/page.tsx",
+  "fn": "renderV2",
+  "anchor": "catch of try { await openMyCopy(sb, { actor, locationId, date }); }",
+  "kind": "throw",
+  "line": 217,
+  "text": "throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/ordering/page.tsx",
+  "fn": "OrderingPage",
+  "anchor": "fn:OrderingPage",
+  "kind": "throw",
+  "line": 77,
+  "text": "if (locErr) throw new Error(`ordering locations: ${locErr.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/ordering/page.tsx",
+  "fn": "OrderingPage",
+  "anchor": "fn:OrderingPage",
+  "kind": "early-return",
+  "line": 92,
+  "text": "if (!locationId) { return ( <TranslationProvider initialLanguage={language}> {/* Outside both layouts that mount the idle guard, so the page mounts it itself (nav spec r5 §9). */} <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} /> <main className=\"mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6\"> <div className=\"mb-3\"> <DashboardBackLink /> </div> <h1 className=\"mt-4 text-lg font-bold text-co-text\">{serverT(language, \"ordering.page.title_bare\")}</h1> <p className=\"mt-2 text-sm text-co-text-muted\">{serverT(language, \"ordering.page.no_location\")}</p> </main> </TranslationProvider> ); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/production/page.tsx",
+  "fn": "activeLocationIds",
+  "anchor": "fn:activeLocationIds",
+  "kind": "throw",
+  "line": 21,
+  "text": "if (error) throw new Error(`production: default shop lookup failed: ${error.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/maintenance/page.tsx",
+  "fn": "activeLocationIds",
+  "anchor": "fn:activeLocationIds",
+  "kind": "throw",
+  "line": 46,
+  "text": "if (error) throw new Error(`maintenance: default shop lookup failed: ${error.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/maintenance/page.tsx",
+  "fn": "MaintenancePage",
+  "anchor": "fn:MaintenancePage",
+  "kind": "early-return",
+  "line": 72,
+  "text": "if (auth.level < MAINTENANCE_BASE_LEVEL) { return ( <main className=\"mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6\"> <div className=\"mb-3\"> <DashboardBackLink /> </div> <p className=\"rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text\"> {serverT(lang, \"maintenance.not_available\")} </p> </main> ); }",
+  "meaning": {
+   "kind": "refuse",
+   "when": "auth.level < MAINTENANCE_BASE_LEVEL",
+   "why": "the refusal view below the maintenance floor"
+  }
+ },
+ {
+  "file": "app/(authed)/maintenance/page.tsx",
+  "fn": "MaintenancePage",
+  "anchor": "if (equipmentParam)",
+  "kind": "early-return",
+  "line": 103,
+  "text": "return ( <main className=\"mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6\"> <div className=\"mb-3\"> <DashboardBackLink /> </div> <div className=\"mb-4\"> <a href={`/maintenance?location=${locationId}`} className=\"text-sm font-semibold text-co-text-muted hover:text-co-text\" > ← {serverT(lang, \"maintenance.page.title\")} </a> </div> {detail === null ? ( <p className=\"rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text\"> {serverT(lang, \"maintenance.not_found\")} </p> ) : ( <EquipmentDetail detail={detail} language={lang} /> )} <div className=\"mt-8\"> <AddMaintenanceNote locationId={locationId} equipment={allEquipment.map((e) => ({ id: e.id, name: e.name }))} language={lang} defaultEquipmentId={equipmentParam} /> </div> </main> );",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/vendor-mail/page.tsx",
+  "fn": "VendorMailPage",
+  "anchor": "fn:VendorMailPage",
+  "kind": "throw",
+  "line": 27,
+  "text": "if (explicit && explicit !== \"all\" && explicit !== \"unassigned\" && !shop) throw new VendorMailError(400, \"invalid_payload\");",
+  "meaning": {
+   "kind": "admit",
+   "why": "an explicit shop outside the viewer's vendor-mail shops throws VendorMailError(400), which the page's own reviewed catch turns into the invalid-payload alert: the page renders, it never refuses navigation (and S is among a member's shops). Appendix A filed it as operational; its guard reads the session through vendorMailOptions(auth), which the operational rule forbids (Astra r1 P2-1 fix)"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/vendor-mail/page.tsx",
+  "fn": "VendorMailPage",
+  "anchor": "fn:VendorMailPage",
+  "kind": "throw",
+  "line": 28,
+  "text": "if ([from, to].some(value => value && (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value) || !Number.isFinite(Date.parse(`${value}T00:00:00Z`)) || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value))) throw new VendorMailError(400, \"invalid_payload\");",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/vendor-mail/page.tsx",
+  "fn": "VendorMailPage",
+  "anchor": "fn:VendorMailPage",
+  "kind": "throw",
+  "line": 31,
+  "text": "if ((from && !fromIso) || (to && !toIso)) throw new VendorMailError(400, \"invalid_payload\");",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/vendor-mail/page.tsx",
+  "fn": "VendorMailPage",
+  "anchor": "catch of try { options = await vendorMailOptions(auth); }",
+  "kind": "throw",
+  "line": 35,
+  "text": "if (!(error instanceof VendorMailError)) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/vendor-mail/page.tsx",
+  "fn": "VendorMailPage",
+  "anchor": "fn:VendorMailPage",
+  "kind": "enclosing-catch",
+  "line": 34,
+  "text": "catch (error) { if (!(error instanceof VendorMailError)) throw error; loadError = error.code; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/operations/vendor-mail/page.tsx",
+  "fn": "VendorMailPage",
+  "anchor": "fn:VendorMailPage",
+  "kind": "early-return",
+  "line": 38,
+  "text": "if (!initial || !options) return <main className=\"p-4\"><DashboardBackLink /><h1>{serverT(auth.user.language, \"vendorMail.title\")}</h1><p role=\"alert\">{serverT(auth.user.language, loadError === \"invalid_payload\" ? \"vendorMail.error.invalid_payload\" : \"vendorMail.error.vendor_mail_unavailable\")}</p></main>;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/catering/inbox/page.tsx",
+  "fn": "CateringInboxPage",
+  "anchor": "catch of try { initial = await listCateringInbox(ctx); }",
+  "kind": "redirect",
+  "line": 15,
+  "text": "if (error instanceof CateringInboxError && error.status === 403) redirect(\"/catering\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!(auth.role === \"gm\" || auth.role === \"catering_mgr\" || auth.level >= 8)",
+   "why": "the inbox reader's 403 is its private role rule (the session's user is active)"
+  },
+  "pins": [
+   {
+    "file": "lib/catering/inbox.ts",
+    "text": "function roleAllowed(role: RoleCode) { return isRoleCode(role) && ( role === \"gm\" || role === \"catering_mgr\" || getRoleLevel(role) >= 8); }"
+   },
+   {
+    "file": "lib/catering/inbox.ts",
+    "text": "if (!ctx.user.active || !roleAllowed(ctx.user.role)) throw new CateringInboxError(403, \"forbidden\");"
+   }
+  ]
+ },
+ {
+  "file": "app/(authed)/catering/inbox/page.tsx",
+  "fn": "CateringInboxPage",
+  "anchor": "fn:CateringInboxPage",
+  "kind": "enclosing-catch",
+  "line": 14,
+  "text": "catch (error) { if (error instanceof CateringInboxError && error.status === 403) redirect(\"/catering\"); if (error instanceof CateringInboxError && error.code === \"inbox_unavailable\") return <main className=\"mx-auto max-w-5xl px-4 py-4\"> <Link href=\"/catering\" className=\"inline-flex min-h-11 items-center\">{serverT(ctx.user.language, \"catering.inbox.back\")}</Link> <h1 className=\"text-xl font-bold\">{serverT(ctx.user.language, \"catering.inbox.title\")}</h1> <p role=\"status\">{serverT(ctx.user.language, \"catering.inbox.unavailable\")}</p> </main>; throw error; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/catering/inbox/page.tsx",
+  "fn": "CateringInboxPage",
+  "anchor": "catch of try { initial = await listCateringInbox(ctx); }",
+  "kind": "early-return",
+  "line": 16,
+  "text": "if (error instanceof CateringInboxError && error.code === \"inbox_unavailable\") return <main className=\"mx-auto max-w-5xl px-4 py-4\"> <Link href=\"/catering\" className=\"inline-flex min-h-11 items-center\">{serverT(ctx.user.language, \"catering.inbox.back\")}</Link> <h1 className=\"text-xl font-bold\">{serverT(ctx.user.language, \"catering.inbox.title\")}</h1> <p role=\"status\">{serverT(ctx.user.language, \"catering.inbox.unavailable\")}</p> </main>;",
+  "meaning": {
+   "kind": "admit",
+   "why": "inbox not configured: the unavailable view"
+  }
+ },
+ {
+  "file": "app/(authed)/catering/inbox/page.tsx",
+  "fn": "CateringInboxPage",
+  "anchor": "catch of try { initial = await listCateringInbox(ctx); }",
+  "kind": "throw",
+  "line": 21,
+  "text": "throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/page.tsx",
+  "fn": "ReportsPage",
+  "anchor": "fn:ReportsPage",
+  "kind": "throw",
+  "line": 47,
+  "text": "if (error) throw new Error(`report locations: ${error.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/page.tsx",
+  "fn": "ReportsPage",
+  "anchor": "fn:ReportsPage",
+  "kind": "redirect",
+  "line": 50,
+  "text": "if (selected.length === 0) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canReadReportLocation(actor, S)",
+   "why": "the shop list is the active shops, limited to the viewer's memberships below REPORT_ALL_LOCATIONS_LEVEL (pinned), filtered to S: it is empty exactly when the viewer may not read S. Appendix A filed it as operational (\"S is an active shop the viewer may read\"); its guard reads the session through the list's query, which the operational rule forbids (Astra r1 P2-1 fix)"
+  },
+  "pins": [
+   {
+    "file": "app/(authed)/reports/page.tsx",
+    "text": "if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) locationsQuery = locationsQuery.in(\"id\", auth.locations);"
+   },
+   {
+    "file": "app/(authed)/reports/page.tsx",
+    "text": "const selected = locations.filter((shop) => locationId === \"all\" || shop.id === locationId);"
+   }
+  ]
+ },
+ {
+  "file": "app/(authed)/reports/operations/page.tsx",
+  "fn": "renderReportsPage",
+  "anchor": "if (locationParam === \"all\")",
+  "kind": "early-return",
+  "line": 172,
+  "text": "return <TrendShopPanels header={header} render={(id) => renderReportsPage({ ...params, location: id }, true)} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/written/page.tsx",
+  "fn": "ReportsWrittenPage",
+  "anchor": "fn:ReportsWrittenPage",
+  "kind": "redirect",
+  "line": 38,
+  "text": "if (raw.location && !/^[a-zA-Z0-9_-]+$/.test(raw.location)) redirect(\"/reports/written\");",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "malformed location parameter"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/trends/page.tsx",
+  "fn": "renderPage",
+  "anchor": "if (locationParam === \"all\")",
+  "kind": "early-return",
+  "line": 68,
+  "text": "return <TrendShopPanels header={header} render={(id) => renderPage({ ...paramsRange, location: id }, true)} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/trends/ops/page.tsx",
+  "fn": "renderPage",
+  "anchor": "if (locationParam === \"all\")",
+  "kind": "early-return",
+  "line": 110,
+  "text": "return <TrendShopPanels header={header} render={(id) => renderPage({ ...paramsRange, location: id }, true)} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/trends/team/page.tsx",
+  "fn": "renderPage",
+  "anchor": "if (locationParam === \"all\")",
+  "kind": "early-return",
+  "line": 69,
+  "text": "return <TrendShopPanels header={header} render={(id) => renderPage({ ...paramsRange, location: id }, true)} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/sales/page.tsx",
+  "fn": "const panel",
+  "anchor": "catch of try { if (view === \"summary\") { const summary = await loadSalesSummary(viewer, { locationId: shopId, range }); body = <> <RangeCaption from={range.from} to={range.to} language={language} todaySoFar={range.todaySoFar} capturedAt={summary.capturedAt} /> <SalesSummary summary={summary} language={language} checksHref={checksHref} /> </>; } else { const rows = await loadSalesBreakdown(viewer, { locationId: shopId, range, dimension: VIEW_DIMENSION[view] }); const capturedAt = range.todaySoFar ? await loadSalesLatestCapture(viewer, { locationId: shopId, businessDate: range.to }) : null; const caption = <RangeCaption from={range.from} to={range.to} language={language} todaySoFar={range.todaySoFar} capturedAt={capturedAt} />; if (view === \"heatmap\") { body = <>{caption}<SalesHeatmap rows={rows} language={language} cellHref={(dow, hour) => shopHref(\"/reports/sales/checks\", { ...(dow ? { dow: String(dow) } : {}), hour: String(hour) })} /></>; } else { const offsetKey = locationId === \"all\" ? `offset_${shopId}` : \"offset\"; const offset = Number(params[offsetKey] ?? 0); const page = pageRows(rows, Number.isSafeInteger(offset) ? offset : 0); const drill = (r: BreakdownRow): string | null => { const key = r.key === \"\" ? SALES_EMPTY_KEY : r.key; if (view === \"discounts\") return shopHref(\"/reports/sales/checks\", { discount: key }); if (view === \"servers\") return shopHref(\"/reports/sales/checks\", { server: key }); if (view === \"channels\" && r.saleClass === \"sale\") { return shopHref(\"/reports/sales/checks\", { channel: r.channel, provider: r.provider ?? SALES_EMPTY_KEY }); } return null; // units-only rows and excluded/ezCater rows have no check list behind them }; // Per-shop panels page independently: keep every other panel's offset. const offsets = Object.fromEntries(Object.entries(params).filter(([k]) => k.startsWith(\"offset_\"))); const nextHref = page.nextOffset !== null ? reportNavigationHref(\"/reports/sales\", { ...context, ...offsets, [offsetKey]: String(page.nextOffset) }) : null; body = <>{caption}<SalesBreakdown view={view as BreakdownView} rows={view === \"channels\" ? rows : page.rows} offset={view === \"channels\" ? 0 : Math.max(0, offset)} total={rows.length} language={language} drillHref={drill} nextHref={view === \"channels\" ? null : nextHref} /></>; } } }",
+  "kind": "throw",
+  "line": 115,
+  "text": "if (error instanceof SalesReportError && error.status === 503) body = <SalesUnavailable code={error.code} language={language} />; else throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "the whole `if/else`: the known error renders an unavailable or pending state, anything else is rethrown (unexpected error)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/sales/page.tsx",
+  "fn": "const panel",
+  "anchor": "fn:const panel",
+  "kind": "enclosing-catch",
+  "line": 114,
+  "text": "catch (error) { if (error instanceof SalesReportError && error.status === 503) body = <SalesUnavailable code={error.code} language={language} />; else throw error; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/sales/page.tsx",
+  "fn": "SalesPage",
+  "anchor": "fn:SalesPage",
+  "kind": "early-return",
+  "line": 124,
+  "text": "if (locationId === \"all\") return <TrendShopPanels header={header} render={panel} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/sales/checks/page.tsx",
+  "fn": "const panel",
+  "anchor": "catch of try { const page = await loadSalesCheckPage(viewer, { locationId: shopId, range, filters, cursor: params[cursorKey] }); }",
+  "kind": "throw",
+  "line": 96,
+  "text": "if (error instanceof SalesReportError && error.status === 503) body = <SalesUnavailable code={error.code} language={language} />; else throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "the whole `if/else`: the known error renders an unavailable or pending state, anything else is rethrown (unexpected error)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/sales/checks/page.tsx",
+  "fn": "const panel",
+  "anchor": "fn:const panel",
+  "kind": "enclosing-catch",
+  "line": 95,
+  "text": "catch (error) { if (error instanceof SalesReportError && error.status === 503) body = <SalesUnavailable code={error.code} language={language} />; else throw error; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/sales/checks/page.tsx",
+  "fn": "SalesChecksPage",
+  "anchor": "fn:SalesChecksPage",
+  "kind": "early-return",
+  "line": 111,
+  "text": "if (locationId === \"all\") return <TrendShopPanels header={header} render={panel} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/sales/catering/page.tsx",
+  "fn": "const panel",
+  "anchor": "catch of try { const data = await loadSalesCatering(viewer, { locationId: shopId, range, cursor: params[cursorKey] }); }",
+  "kind": "throw",
+  "line": 136,
+  "text": "if (error instanceof SalesReportError && error.status === 503) body = <SalesUnavailable code={error.code} language={language} />; else throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "the whole `if/else`: the known error renders an unavailable or pending state, anything else is rethrown (unexpected error)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/sales/catering/page.tsx",
+  "fn": "const panel",
+  "anchor": "fn:const panel",
+  "kind": "enclosing-catch",
+  "line": 135,
+  "text": "catch (error) { if (error instanceof SalesReportError && error.status === 503) body = <SalesUnavailable code={error.code} language={language} />; else throw error; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/sales/catering/page.tsx",
+  "fn": "SalesCateringPage",
+  "anchor": "fn:SalesCateringPage",
+  "kind": "early-return",
+  "line": 146,
+  "text": "if (locationId === \"all\") return <TrendShopPanels header={header} render={panel} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/business/page.tsx",
+  "fn": "BusinessReportPage",
+  "anchor": "catch of try { early = await resolveBusinessAccess(viewer); }",
+  "kind": "throw",
+  "line": 67,
+  "text": "if (!(error instanceof BusinessReportError)) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/business/page.tsx",
+  "fn": "BusinessReportPage",
+  "anchor": "fn:BusinessReportPage",
+  "kind": "enclosing-catch",
+  "line": 66,
+  "text": "catch (error) { if (!(error instanceof BusinessReportError)) throw error; if (error.status !== 503) redirect(\"/reports\"); unavailable = error.code; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/business/page.tsx",
+  "fn": "BusinessReportPage",
+  "anchor": "catch of try { early = await resolveBusinessAccess(viewer); }",
+  "kind": "redirect",
+  "line": 68,
+  "text": "if (error.status !== 503) redirect(\"/reports\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "auth.role === \"gm\" && !fact.businessReportOffered",
+   "why": "resolveBusinessAccess's 403 after the page's own role and switch checks: MoO, Owner and CGS pass whatever the setting; a GM only while the MoO+ setting offers the report"
+  },
+  "pins": [
+   {
+    "file": "lib/business-report.ts",
+    "text": "if (businessAllShopsAllowed(viewer.role)) return businessAccessFor(viewer.role, null);"
+   },
+   {
+    "file": "lib/business-report.ts",
+    "text": "if (!access.report) throw new BusinessReportError(403, \"gm_report_off\");"
+   }
+  ]
+ },
+ {
+  "file": "app/(authed)/reports/business/page.tsx",
+  "fn": "BusinessReportPage",
+  "anchor": "fn:BusinessReportPage",
+  "kind": "early-return",
+  "line": 93,
+  "text": "if (early === null) return <main className=\"mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6 md:max-w-3xl lg:max-w-5xl\"> {header(null)} <BusinessUnavailable code={unavailable ?? \"business_access_unavailable\"} language={language} /> </main>;",
+  "meaning": {
+   "kind": "admit",
+   "why": "settings store unreadable: the unavailable view"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/business/page.tsx",
+  "fn": "const panel",
+  "anchor": "catch of try { if (request.kind === \"empty\") body = <p className={`${bizCard} text-sm text-co-text-muted`} role=\"status\">{t(BUSINESS_EMPTY_KEY[request.reason])}</p>; else { const range = request.range; const current = await loadBusinessReport(viewer, { locationId: shopId, range }); loaded = current.access; const earlier = tab === \"compare\" ? await loadBusinessReport(viewer, { locationId: shopId, range: resolveBusinessRange({ range: \"custom\", ...range.previous }, today) }) : null; // The tab is judged on the access the report(s) were BUILT with, before anything is rendered from them. assertBusinessSurface(earlier ? [current, earlier] : [current], tab, { download: false }); // The tabs get the VIEW (lib/business-view-shared.ts: every figure sealed with its state), never the DTO. const view = businessView(current); if (tab === \"hours\") body = <BusinessHours view={view} language={language} />; else if (tab === \"channels\") body = <BusinessChannels view={view} language={language} />; else if (tab === \"people\") body = <BusinessPeople view={view} language={language} />; else if (tab === \"compare\") body = <BusinessCompare view={view} previous={earlier ? businessView(earlier) : null} language={language} />; else body = <BusinessOverview view={view} language={language} />; } }",
+  "kind": "throw",
+  "line": 120,
+  "text": "if (error instanceof BusinessReportError) body = <BusinessUnavailable code={error.code} language={language} />; else throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "the whole `if/else`: the known error renders an unavailable or pending state, anything else is rethrown (unexpected error)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/business/page.tsx",
+  "fn": "const panel",
+  "anchor": "fn:const panel",
+  "kind": "enclosing-catch",
+  "line": 119,
+  "text": "catch (error) { if (error instanceof BusinessReportError) body = <BusinessUnavailable code={error.code} language={language} />; else throw error; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "a tab the loaded access does not allow renders BusinessUnavailable (covers assertBusinessSurface)"
+  }
+ },
+ {
+  "file": "app/(authed)/reports/business/page.tsx",
+  "fn": "BusinessReportPage",
+  "anchor": "fn:BusinessReportPage",
+  "kind": "early-return",
+  "line": 136,
+  "text": "if (locationId === \"all\") return <TrendShopPanels header={header(early)} render={async (shopId) => (await panel(shopId)).node} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/schedule/page.tsx",
+  "fn": "SchedulePage",
+  "anchor": "fn:SchedulePage",
+  "kind": "throw",
+  "line": 31,
+  "text": "if (error) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/schedule/page.tsx",
+  "fn": "SchedulePage",
+  "anchor": "fn:SchedulePage",
+  "kind": "redirect",
+  "line": 33,
+  "text": "if (locations.length === 0) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canViewSchedule(actor, S)",
+   "why": "the shop list is filtered by canViewSchedule (pinned)"
+  },
+  "pins": [
+   {
+    "file": "app/(authed)/schedule/page.tsx",
+    "text": "const locations = ((data ?? []) as Array<{ id: string; name: string }>).filter((l) => canViewSchedule(actor, l.id));"
+   },
+   {
+    "file": "app/(authed)/schedule/page.tsx",
+    "text": "const actor = peopleActorFromAuth(auth);"
+   }
+  ]
+ },
+ {
+  "file": "app/(authed)/schedule/page.tsx",
+  "fn": "callback of loadBoard({ service }, { actor, locationId: selected.id, weekStart }).catch",
+  "anchor": "fn:callback of loadBoard({ service }, { actor, locationId: selected.id, weekStart }).catch",
+  "kind": "redirect",
+  "line": 39,
+  "text": "if (e instanceof ScheduleError && (e.code === \"schedule_forbidden\" || e.code === \"schedule_role_refused\" || e.code === \"shop_not_allowed\")) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canViewSchedule(actor, S)",
+   "why": "loadBoard's schedule_forbidden is canViewSchedule at the shop"
+  }
+ },
+ {
+  "file": "app/(authed)/schedule/page.tsx",
+  "fn": "SchedulePage",
+  "anchor": "fn:SchedulePage",
+  "kind": "enclosing-.catch",
+  "line": 38,
+  "text": "loadBoard({ service }, { actor, locationId: selected.id, weekStart }).catch((e: unknown) => { if (e instanceof ScheduleError && (e.code === \"schedule_forbidden\" || e.code === \"schedule_role_refused\" || e.code === \"shop_not_allowed\")) redirect(\"/dashboard\"); throw e; })",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/schedule/page.tsx",
+  "fn": "callback of loadBoard({ service }, { actor, locationId: selected.id, weekStart }).catch",
+  "anchor": "fn:callback of loadBoard({ service }, { actor, locationId: selected.id, weekStart }).catch",
+  "kind": "throw",
+  "line": 40,
+  "text": "throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/schedule/settings/page.tsx",
+  "fn": "ScheduleSettingsPage",
+  "anchor": "fn:ScheduleSettingsPage",
+  "kind": "throw",
+  "line": 31,
+  "text": "if (error) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/schedule/settings/page.tsx",
+  "fn": "ScheduleSettingsPage",
+  "anchor": "fn:ScheduleSettingsPage",
+  "kind": "redirect",
+  "line": 33,
+  "text": "if (locations.length === 0) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canViewSchedule(actor, S)",
+   "why": "the shop list is filtered by canViewSchedule (pinned)"
+  },
+  "pins": [
+   {
+    "file": "app/(authed)/schedule/settings/page.tsx",
+    "text": "const locations = ((data ?? []) as Array<{ id: string; name: string }>).filter((l) => canViewSchedule(actor, l.id));"
+   },
+   {
+    "file": "app/(authed)/schedule/settings/page.tsx",
+    "text": "const actor = peopleActorFromAuth(auth);"
+   }
+  ]
+ },
+ {
+  "file": "app/(authed)/schedule/settings/page.tsx",
+  "fn": "callback of loadScheduleSettings({ service }, { actor, locationId: selected.id }).catch",
+  "anchor": "fn:callback of loadScheduleSettings({ service }, { actor, locationId: selected.id }).catch",
+  "kind": "redirect",
+  "line": 37,
+  "text": "if (e instanceof ScheduleError && (e.code === \"schedule_forbidden\" || e.code === \"schedule_role_refused\" || e.code === \"shop_not_allowed\")) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canViewSchedule(actor, S)",
+   "why": "loadScheduleSettings's schedule_forbidden is canViewSchedule at the shop"
+  }
+ },
+ {
+  "file": "app/(authed)/schedule/settings/page.tsx",
+  "fn": "ScheduleSettingsPage",
+  "anchor": "fn:ScheduleSettingsPage",
+  "kind": "enclosing-.catch",
+  "line": 36,
+  "text": "loadScheduleSettings({ service }, { actor, locationId: selected.id }).catch((e: unknown) => { if (e instanceof ScheduleError && (e.code === \"schedule_forbidden\" || e.code === \"schedule_role_refused\" || e.code === \"shop_not_allowed\")) redirect(\"/dashboard\"); throw e; })",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/schedule/settings/page.tsx",
+  "fn": "callback of loadScheduleSettings({ service }, { actor, locationId: selected.id }).catch",
+  "anchor": "fn:callback of loadScheduleSettings({ service }, { actor, locationId: selected.id }).catch",
+  "kind": "throw",
+  "line": 38,
+  "text": "throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/stations/page.tsx",
+  "fn": "StationsPage",
+  "anchor": "fn:StationsPage",
+  "kind": "throw",
+  "line": 23,
+  "text": "if (error) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/stations/page.tsx",
+  "fn": "StationsPage",
+  "anchor": "fn:StationsPage",
+  "kind": "standalone",
+  "line": 27,
+  "text": "if (selected && auth.level >= 7) await syncStationsFromClosing(selected.id, actor);",
+  "meaning": {
+   "kind": "admit",
+   "why": "Astra r5 P3: not a gate. The selected shop's station sync runs for level 7+ and the page goes on. Its own rule (pinned) throws only for a non-member below level 8; the entry shop S is a member shop (the comparison's member-shop assumption), so it never refuses navigation there. Any other failure is a database error. Filed as admit, not operational-error: its guard reads the session (auth.level), which the operational rule forbids"
+  },
+  "pins": [
+   {
+    "file": "lib/closing-stations.ts",
+    "text": "if (getRoleLevel(actor.role) < 8 && !lockLocationContext(actor, locationId)) throw new Error(\"location_access_denied\");"
+   }
+  ]
+ },
+ {
+  "file": "app/admin/stations/page.tsx",
+  "fn": "StationsPage",
+  "anchor": "fn:StationsPage",
+  "kind": "throw",
+  "line": 33,
+  "text": "if (closingTemplates?.error) throw closingTemplates.error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/stations/page.tsx",
+  "fn": "StationsPage",
+  "anchor": "fn:StationsPage",
+  "kind": "throw",
+  "line": 38,
+  "text": "if (closingItems?.error) throw closingItems.error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/toast-employees/page.tsx",
+  "fn": "ToastEmployeesPage",
+  "anchor": "fn:ToastEmployeesPage",
+  "kind": "throw",
+  "line": 23,
+  "text": "if (error) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/sevenshifts/page.tsx",
+  "fn": "SevenShiftsPage",
+  "anchor": "fn:SevenShiftsPage",
+  "kind": "throw",
+  "line": 35,
+  "text": "if (error) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/sevenshifts/page.tsx",
+  "fn": "SevenShiftsPage",
+  "anchor": "fn:SevenShiftsPage",
+  "kind": "redirect",
+  "line": 37,
+  "text": "if (locations.length === 0) redirect(\"/admin\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canViewSevenShiftsStatus(actor, S)",
+   "why": "the shop list is filtered by canViewSevenShiftsStatus (pinned)"
+  },
+  "pins": [
+   {
+    "file": "app/admin/sevenshifts/page.tsx",
+    "text": "const locations = ((data ?? []) as { id: string; name: string }[]).filter((l) => canViewSevenShiftsStatus(actor, l.id));"
+   },
+   {
+    "file": "app/admin/sevenshifts/page.tsx",
+    "text": "const actor = peopleActorFromAuth(auth);"
+   }
+  ]
+ },
+ {
+  "file": "app/admin/people-reconcile/page.tsx",
+  "fn": "PeopleReconcilePage",
+  "anchor": "fn:PeopleReconcilePage",
+  "kind": "throw",
+  "line": 26,
+  "text": "if (error) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/people-reconcile/page.tsx",
+  "fn": "PeopleReconcilePage",
+  "anchor": "fn:PeopleReconcilePage",
+  "kind": "redirect",
+  "line": 28,
+  "text": "if (locations.length === 0) redirect(\"/admin\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canViewReconciliation(actor, S)",
+   "why": "the shop list is filtered by canViewReconciliation (pinned)"
+  },
+  "pins": [
+   {
+    "file": "app/admin/people-reconcile/page.tsx",
+    "text": "const locations = ((data ?? []) as Array<{ id: string; name: string }>).filter((l) => canViewReconciliation(actor, l.id));"
+   },
+   {
+    "file": "app/admin/people-reconcile/page.tsx",
+    "text": "const actor = peopleActorFromAuth(auth);"
+   }
+  ]
+ },
+ {
+  "file": "app/admin/people-reconcile/page.tsx",
+  "fn": "callback of loadReconciliation({ service }, { actor, locationId: selected.id }).catch",
+  "anchor": "fn:callback of loadReconciliation({ service }, { actor, locationId: selected.id }).catch",
+  "kind": "redirect",
+  "line": 32,
+  "text": "if (e instanceof ScheduleError && (e.code === \"schedule_forbidden\" || e.code === \"schedule_role_refused\" || e.code === \"shop_not_allowed\")) redirect(\"/admin\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canViewReconciliation(actor, S)",
+   "why": "loadReconciliation's schedule_forbidden is canViewReconciliation at the shop"
+  }
+ },
+ {
+  "file": "app/admin/people-reconcile/page.tsx",
+  "fn": "PeopleReconcilePage",
+  "anchor": "fn:PeopleReconcilePage",
+  "kind": "enclosing-.catch",
+  "line": 31,
+  "text": "loadReconciliation({ service }, { actor, locationId: selected.id }).catch((e: unknown) => { if (e instanceof ScheduleError && (e.code === \"schedule_forbidden\" || e.code === \"schedule_role_refused\" || e.code === \"shop_not_allowed\")) redirect(\"/admin\"); throw e; })",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/admin/people-reconcile/page.tsx",
+  "fn": "callback of loadReconciliation({ service }, { actor, locationId: selected.id }).catch",
+  "anchor": "fn:callback of loadReconciliation({ service }, { actor, locationId: selected.id }).catch",
+  "kind": "throw",
+  "line": 33,
+  "text": "throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/pm-criteria/page.tsx",
+  "fn": "PmCriteriaPage",
+  "anchor": "fn:PmCriteriaPage",
+  "kind": "throw",
+  "line": 29,
+  "text": "if (error) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/pm-criteria/page.tsx",
+  "fn": "PmCriteriaPage",
+  "anchor": "fn:PmCriteriaPage",
+  "kind": "redirect",
+  "line": 31,
+  "text": "if (locations.length === 0) redirect(\"/admin\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canEditPmCriteria(actor, S)",
+   "why": "the shop list is filtered by canEditPmCriteria (pinned)"
+  },
+  "pins": [
+   {
+    "file": "app/admin/pm-criteria/page.tsx",
+    "text": "const locations = ((data ?? []) as { id: string; name: string }[]).filter((l) => canEditPmCriteria(actor, l.id));"
+   },
+   {
+    "file": "app/admin/pm-criteria/page.tsx",
+    "text": "const actor = peopleActorFromAuth(auth);"
+   }
+  ]
+ },
+ {
+  "file": "app/admin/pm-criteria/page.tsx",
+  "fn": "callback of loadCriteriaEditor(sb, { actor, locationId: selected.id }).catch",
+  "anchor": "fn:callback of loadCriteriaEditor(sb, { actor, locationId: selected.id }).catch",
+  "kind": "throw",
+  "line": 36,
+  "text": "throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/pm-criteria/page.tsx",
+  "fn": "PmCriteriaPage",
+  "anchor": "fn:PmCriteriaPage",
+  "kind": "enclosing-.catch",
+  "line": 34,
+  "text": "loadCriteriaEditor(sb, { actor, locationId: selected.id }).catch((e: unknown) => { if (e instanceof PmCriteriaError && e.code === \"pm_v2_unavailable\") return null; throw e; })",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/admin/sandwiches/page.tsx",
+  "fn": "SandwichesPage",
+  "anchor": "fn:SandwichesPage",
+  "kind": "throw",
+  "line": 30,
+  "text": "if (error) throw new Error(`sandwiches locations: ${error.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/sandwiches/page.tsx",
+  "fn": "SandwichesPage",
+  "anchor": "fn:SandwichesPage",
+  "kind": "redirect",
+  "line": 32,
+  "text": "if (explicit && explicit !== \"global\" && !shops.some(shop => shop.id === explicit)) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!canReadReportLocation(actor, S)",
+   "why": "the shop list is filtered by canReadReportLocation: an explicit S outside it is refused; a member's S is in it. Appendix A filed it as operational (\"S is an active shop\"); the list is filtered by a session predicate inside a callback, which the operational rule now reads (Astra r2: callbacks are walked), so it is a refusal tied to that predicate (pinned)"
+  },
+  "pins": [
+   {
+    "file": "app/admin/sandwiches/page.tsx",
+    "text": "const shops = (data ?? []).filter(shop => canReadReportLocation(actor, shop.id));"
+   },
+   {
+    "file": "app/admin/sandwiches/page.tsx",
+    "text": "const actor = { role: auth.user.role, locations: auth.locations };"
+   }
+  ]
+ },
+ {
+  "file": "app/admin/items/page.tsx",
+  "fn": "AdminItemsPage",
+  "anchor": "fn:AdminItemsPage",
+  "kind": "notFound",
+  "line": 43,
+  "text": "if (explicit && explicit !== \"global\" && !shops.some(shop => shop.id === explicit)) notFound();",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!catalogShopAllowed(auth, S)",
+   "why": "the shop list is filtered by catalogShopAllowed: an explicit S outside it is refused; a member's S is in it. Appendix A filed it as operational (\"S is an active shop\"); the list is filtered by a session predicate inside a callback, which the operational rule now reads (Astra r2: callbacks are walked), so it is a refusal tied to that predicate (pinned)"
+  },
+  "pins": [
+   {
+    "file": "app/admin/items/page.tsx",
+    "text": "const shops = (await loadActiveShopsForReadiness()).filter(shop => catalogShopAllowed({ level, locations: auth.locations }, shop.id));"
+   }
+  ]
+ },
+ {
+  "file": "app/admin/catalog/notices/page.tsx",
+  "fn": "RecipeNoticesPage",
+  "anchor": "fn:RecipeNoticesPage",
+  "kind": "throw",
+  "line": 35,
+  "text": "if (error) throw new Error(`notices page locations: ${error.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/catalog/notices/page.tsx",
+  "fn": "RecipeNoticesPage",
+  "anchor": "catch of try { notices = await loadShopNotices(auth, shopId); }",
+  "kind": "redirect",
+  "line": 48,
+  "text": "if (e instanceof RecipeVersionError && e.status === 403) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!catalogShopAllowed(auth, S)",
+   "why": "the lib's own gate refuses a shop the viewer does not work in"
+  }
+ },
+ {
+  "file": "app/admin/catalog/notices/page.tsx",
+  "fn": "RecipeNoticesPage",
+  "anchor": "if (shopId)",
+  "kind": "enclosing-catch",
+  "line": 46,
+  "text": "catch (e) { // The lib's own gate (the role rule, the shop bind) refused: never a crash. if (e instanceof RecipeVersionError && e.status === 403) redirect(\"/dashboard\"); throw e; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/admin/catalog/notices/page.tsx",
+  "fn": "RecipeNoticesPage",
+  "anchor": "fn:RecipeNoticesPage",
+  "kind": "enclosing-if",
+  "line": 43,
+  "text": "if (shopId) { try { notices = await loadShopNotices(auth, shopId); } catch (e) { // The lib's own gate (the role rule, the shop bind) refused: never a crash. if (e instanceof RecipeVersionError && e.status === 403) redirect(\"/dashboard\"); throw e; } }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on the resolved shop (null only when the viewer works in no shop); both arms walked, must-admit. Not in Appendix A: the planning census read `shopId` as the entry shop, but it is `mine.length === 0 ? null : resolveShopId(...)`, which the written H rule does not cover"
+  }
+ },
+ {
+  "file": "app/admin/catalog/notices/page.tsx",
+  "fn": "RecipeNoticesPage",
+  "anchor": "catch of try { notices = await loadShopNotices(auth, shopId); }",
+  "kind": "throw",
+  "line": 49,
+  "text": "throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/catalog/shop-changes/page.tsx",
+  "fn": "ShopChangesPage",
+  "anchor": "catch of try { view = await loadShopChanges(auth); }",
+  "kind": "redirect",
+  "line": 25,
+  "text": "if (e instanceof RecipeVersionError && e.status === 403) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "auth.level < GLOBAL_VERSION_WRITE_MIN",
+   "why": "repeats the page's own level rule"
+  }
+ },
+ {
+  "file": "app/admin/catalog/shop-changes/page.tsx",
+  "fn": "ShopChangesPage",
+  "anchor": "fn:ShopChangesPage",
+  "kind": "enclosing-catch",
+  "line": 24,
+  "text": "catch (e) { if (e instanceof RecipeVersionError && e.status === 403) redirect(\"/dashboard\"); throw e; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/admin/catalog/shop-changes/page.tsx",
+  "fn": "ShopChangesPage",
+  "anchor": "catch of try { view = await loadShopChanges(auth); }",
+  "kind": "throw",
+  "line": 26,
+  "text": "throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/catalog/new/sandwich/page.tsx",
+  "fn": "NewSandwichPage",
+  "anchor": "catch of try { view = await loadNewSandwichJobView(auth, requested === \"global\" ? null : requested); }",
+  "kind": "redirect",
+  "line": 20,
+  "text": "if (error instanceof ShopOwnedError && error.status === 403) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!catalogShopAllowed(auth, S)",
+   "why": "the job loader's shop rule"
+  }
+ },
+ {
+  "file": "app/admin/catalog/new/sandwich/page.tsx",
+  "fn": "NewSandwichPage",
+  "anchor": "fn:NewSandwichPage",
+  "kind": "enclosing-catch",
+  "line": 19,
+  "text": "catch (error) { if (error instanceof ShopOwnedError && error.status === 403) redirect(\"/dashboard\"); if (error instanceof ShopOwnedError && (error.status === 400 || error.status === 404)) notFound(); throw error; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/admin/catalog/new/sandwich/page.tsx",
+  "fn": "NewSandwichPage",
+  "anchor": "catch of try { view = await loadNewSandwichJobView(auth, requested === \"global\" ? null : requested); }",
+  "kind": "notFound",
+  "line": 21,
+  "text": "if (error instanceof ShopOwnedError && (error.status === 400 || error.status === 404)) notFound();",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "invalid shop parameter (400/404)"
+  }
+ },
+ {
+  "file": "app/admin/catalog/new/sandwich/page.tsx",
+  "fn": "NewSandwichPage",
+  "anchor": "catch of try { view = await loadNewSandwichJobView(auth, requested === \"global\" ? null : requested); }",
+  "kind": "throw",
+  "line": 22,
+  "text": "throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/skus/page.tsx",
+  "fn": "AdminSkusPage",
+  "anchor": "catch of try { productList = await listProducts(auth); }",
+  "kind": "throw",
+  "line": 91,
+  "text": "if (!(e instanceof ProductError && e.code === \"products_schema_pending\")) throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/skus/page.tsx",
+  "fn": "AdminSkusPage",
+  "anchor": "fn:AdminSkusPage",
+  "kind": "enclosing-catch",
+  "line": 90,
+  "text": "catch (e) { if (!(e instanceof ProductError && e.code === \"products_schema_pending\")) throw e; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/admin/products/page.tsx",
+  "fn": "AdminProductsPage",
+  "anchor": "catch of try { products = await listProducts(auth); }",
+  "kind": "throw",
+  "line": 42,
+  "text": "if (e instanceof ProductError && e.code === \"products_schema_pending\") schemaPending = true; else throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "the whole `if/else`: the known error renders an unavailable or pending state, anything else is rethrown (unexpected error)"
+  }
+ },
+ {
+  "file": "app/admin/products/page.tsx",
+  "fn": "AdminProductsPage",
+  "anchor": "fn:AdminProductsPage",
+  "kind": "enclosing-catch",
+  "line": 41,
+  "text": "catch (e) { if (e instanceof ProductError && e.code === \"products_schema_pending\") schemaPending = true; else throw e; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/admin/pars/page.tsx",
+  "fn": "AdminParsPage",
+  "anchor": "fn:AdminParsPage",
+  "kind": "throw",
+  "line": 33,
+  "text": "if (error) throw new Error(`pars locations: ${error.message}`);",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/pars/page.tsx",
+  "fn": "AdminParsPage",
+  "anchor": "fn:AdminParsPage",
+  "kind": "redirect",
+  "line": 35,
+  "text": "if (explicit && !locations.some((l) => l.id === explicit)) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!lockLocationContext(actor, S)",
+   "why": "the shop list is filtered by lockLocationContext: an explicit S outside it is refused; a member's S is in it. Appendix A filed it as operational (\"S is an active shop\"); the list is filtered by a session predicate inside a callback, which the operational rule now reads (Astra r2: callbacks are walked), so it is a refusal tied to that predicate (pinned)"
+  },
+  "pins": [
+   {
+    "file": "app/admin/pars/page.tsx",
+    "text": "const locations = (data ?? []).filter((l) => lockLocationContext(actor, l.id));"
+   },
+   {
+    "file": "app/admin/pars/page.tsx",
+    "text": "const actor = { role: auth.user.role, locations: auth.locations };"
+   }
+  ]
+ },
+ {
+  "file": "app/admin/pars/page.tsx",
+  "fn": "AdminParsPage",
+  "anchor": "catch of try { if (tab === \"prep\") { // Prep pars use checklist par authority, not the ordering task permission. const loc = locations.find((l) => l.id === locationId)!; prepViews = await Promise.all(([\"am_prep\", \"mid_day_prep\"] as const).map(async (subtype) => ({ ...await loadChecklistLocationView(auth, loc, subtype), subtype }))); } else view = await loadPars(auth, locationId); }",
+  "kind": "redirect",
+  "line": 48,
+  "text": "if (e instanceof OrderingError && (e.status === 403 || e.status === 404)) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!lockLocationContext(actor, S)",
+   "why": "the ordering loader's shop rule"
+  }
+ },
+ {
+  "file": "app/admin/pars/page.tsx",
+  "fn": "AdminParsPage",
+  "anchor": "if (locationId)",
+  "kind": "enclosing-catch",
+  "line": 47,
+  "text": "catch (e) { if (e instanceof OrderingError && (e.status === 403 || e.status === 404)) redirect(\"/dashboard\"); throw e; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/admin/pars/page.tsx",
+  "fn": "AdminParsPage",
+  "anchor": "catch of try { if (tab === \"prep\") { // Prep pars use checklist par authority, not the ordering task permission. const loc = locations.find((l) => l.id === locationId)!; prepViews = await Promise.all(([\"am_prep\", \"mid_day_prep\"] as const).map(async (subtype) => ({ ...await loadChecklistLocationView(auth, loc, subtype), subtype }))); } else view = await loadPars(auth, locationId); }",
+  "kind": "throw",
+  "line": 49,
+  "text": "throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/demand-signals/page.tsx",
+  "fn": "DemandSignalsPage",
+  "anchor": "fn:DemandSignalsPage",
+  "kind": "throw",
+  "line": 29,
+  "text": "if (error) throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/demand-signals/page.tsx",
+  "fn": "DemandSignalsPage",
+  "anchor": "fn:DemandSignalsPage",
+  "kind": "notFound",
+  "line": 31,
+  "text": "if (shops.length === 0) notFound();",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!(auth.role === \"gm\" || auth.role === \"moo\" || auth.role === \"owner\" || auth.role === \"cgs\")",
+   "why": "the shop list is demandSignalShops(role, memberships, active shops) (pinned): every active shop for MoO, Owner and CGS, a GM's member shops (S among them), nobody else's. Appendix A filed it as operational (\"active shops exist\"); its guard reads the session (auth.role through the alias), which the operational rule forbids"
+  },
+  "pins": [
+   {
+    "file": "app/admin/demand-signals/page.tsx",
+    "text": "const shops = demandSignalShops(auth.role, auth.locations, (data ?? []) as { id: string; name: string }[]);"
+   },
+   {
+    "file": "lib/demand-signals/access-shared.ts",
+    "text": "const MOO_PLUS: ReadonlyArray<string> = [\"moo\", \"owner\", \"cgs\"];"
+   },
+   {
+    "file": "lib/demand-signals/access-shared.ts",
+    "text": "if (MOO_PLUS.includes(role)) return [...shops];"
+   },
+   {
+    "file": "lib/demand-signals/access-shared.ts",
+    "text": "if (role !== \"gm\") return [];"
+   },
+   {
+    "file": "lib/demand-signals/access-shared.ts",
+    "text": "return shops.filter((s) => memberLocationIds.includes(s.id));"
+   }
+  ]
+ },
+ {
+  "file": "app/admin/catalog/new/item/page.tsx",
+  "fn": "NewItemPage",
+  "anchor": "catch of try { view = await loadNewItemJobView(auth, requested === \"global\" ? null : requested); }",
+  "kind": "redirect",
+  "line": 23,
+  "text": "if (error instanceof ShopOwnedError && error.status === 403) redirect(\"/dashboard\");",
+  "meaning": {
+   "kind": "refuse",
+   "when": "!catalogShopAllowed(auth, S)",
+   "why": "the job loader's shop rule (also covers loadSwapVendorJobView in the try)"
+  }
+ },
+ {
+  "file": "app/admin/catalog/new/item/page.tsx",
+  "fn": "NewItemPage",
+  "anchor": "fn:NewItemPage",
+  "kind": "enclosing-catch",
+  "line": 22,
+  "text": "catch (error) { if (error instanceof ShopOwnedError && error.status === 403) redirect(\"/dashboard\"); if (error instanceof ShopOwnedError && (error.status === 400 || error.status === 404)) notFound(); throw error; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/admin/catalog/new/item/page.tsx",
+  "fn": "NewItemPage",
+  "anchor": "catch of try { view = await loadNewItemJobView(auth, requested === \"global\" ? null : requested); }",
+  "kind": "notFound",
+  "line": 24,
+  "text": "if (error instanceof ShopOwnedError && (error.status === 400 || error.status === 404)) notFound();",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "invalid shop parameter (400/404)"
+  }
+ },
+ {
+  "file": "app/admin/catalog/new/item/page.tsx",
+  "fn": "NewItemPage",
+  "anchor": "catch of try { view = await loadNewItemJobView(auth, requested === \"global\" ? null : requested); }",
+  "kind": "throw",
+  "line": 25,
+  "text": "throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/admin/customers/page.tsx",
+  "fn": "CustomersPage",
+  "anchor": "fn:CustomersPage",
+  "kind": "early-return",
+  "line": 22,
+  "text": "if (!customerProfilesEnabled()) { return <div className=\"space-y-4\"><h1 className=\"text-2xl font-bold text-co-text\">{t(\"customers.title\")}</h1> <p className=\"co-card p-4 text-co-text-muted\">{t(\"customers.disabled\")}</p></div>; }",
+  "meaning": {
+   "kind": "admit",
+   "why": "customer profiles switched off: the disabled view"
+  }
+ },
+ {
+  "file": "app/admin/marketing/page.tsx",
+  "fn": "callback of loadMarketingScorecard(auth, !location || location === \"all\" ? null : location).catch",
+  "anchor": "fn:callback of loadMarketingScorecard(auth, !location || location === \"all\" ? null : location).catch",
+  "kind": "notFound",
+  "line": 14,
+  "text": "if (error instanceof Error && error.message === \"invalid_location\") notFound();",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "malformed location parameter"
+  }
+ },
+ {
+  "file": "app/admin/marketing/page.tsx",
+  "fn": "MarketingPage",
+  "anchor": "fn:MarketingPage",
+  "kind": "enclosing-.catch",
+  "line": 13,
+  "text": "loadMarketingScorecard(auth, !location || location === \"all\" ? null : location).catch(error => { if (error instanceof Error && error.message === \"invalid_location\") notFound(); throw error; })",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/admin/marketing/page.tsx",
+  "fn": "callback of loadMarketingScorecard(auth, !location || location === \"all\" ? null : location).catch",
+  "anchor": "fn:callback of loadMarketingScorecard(auth, !location || location === \"all\" ? null : location).catch",
+  "kind": "throw",
+  "line": 15,
+  "text": "throw error;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/my-feedback/page.tsx",
+  "fn": "renderPage",
+  "anchor": "if (access !== \"all\")",
+  "kind": "early-return",
+  "line": 63,
+  "text": "if (access.length === 0) return <EmptyShell language={language} viewerLevel={auth.level} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/my-feedback/page.tsx",
+  "fn": "renderPage",
+  "anchor": "fn:renderPage",
+  "kind": "enclosing-if",
+  "line": 62,
+  "text": "if (access !== \"all\") { if (access.length === 0) return <EmptyShell language={language} viewerLevel={auth.level} />; locQuery = locQuery.in(\"id\", access); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/(authed)/my-feedback/page.tsx",
+  "fn": "renderPage",
+  "anchor": "fn:renderPage",
+  "kind": "early-return",
+  "line": 68,
+  "text": "if (locations.length === 0) return <EmptyShell language={language} viewerLevel={auth.level} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/my-feedback/page.tsx",
+  "fn": "renderPage",
+  "anchor": "if (selectedParam === \"all\")",
+  "kind": "early-return",
+  "line": 91,
+  "text": "return <TrendShopPanels header={header} render={(id) => renderPage({ ...query, location: id, loc: undefined }, true)} />;",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "app/(authed)/my-feedback/page.tsx",
+  "fn": "callback of loadMySkills(sb, { actor: peopleActorFromAuth(auth), locationId: selected.id }).catch",
+  "anchor": "fn:callback of loadMySkills(sb, { actor: peopleActorFromAuth(auth), locationId: selected.id }).catch",
+  "kind": "throw",
+  "line": 105,
+  "text": "throw e;",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "database error or rethrow of an unexpected error"
+  }
+ },
+ {
+  "file": "app/(authed)/my-feedback/page.tsx",
+  "fn": "renderPage",
+  "anchor": "fn:renderPage",
+  "kind": "enclosing-.catch",
+  "line": 103,
+  "text": "loadMySkills(sb, { actor: peopleActorFromAuth(auth), locationId: selected.id }).catch((e: unknown) => { if (e instanceof PeopleSkillError) return null; throw e; })",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ },
+ {
+  "file": "app/training/page.tsx",
+  "fn": "TrainingPage",
+  "anchor": "fn:TrainingPage",
+  "kind": "early-return",
+  "line": 92,
+  "text": "if (!initialGuide) { return ( <TranslationProvider initialLanguage={lang}> {/* Outside both layouts that mount the idle guard, so the page mounts it itself (nav spec r5 §9). */} <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} /> <div className=\"mx-auto w-full max-w-3xl p-3 pb-8\"> <BackLink hrefOverride=\"/dashboard\" labelKey=\"nav.dashboard\" /> <h1 className=\"m-0 mb-2 text-base font-bold text-co-text\">{title}</h1> <LearnTheBuildEntry lang={lang} /> <p className=\"co-card m-0 px-4 py-3 text-sm text-co-text-muted\"> {serverT(lang, \"training.none\")} </p> </div> </TranslationProvider> ); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "components/pulse/PulseHome.tsx",
+  "fn": "PulseHome",
+  "anchor": "fn:PulseHome",
+  "kind": "early-return",
+  "line": 32,
+  "text": "if (mode === \"denied\") return <main className={shell}><AccessDeniedBanner language={language} /></main>;",
+  "meaning": {
+   "kind": "refuse",
+   "when": "pulsePageAccess({ flagOn: true, level: auth.level }) === \"denied\"",
+   "why": "PulseHome's refusal view below the v2 floor"
+  }
+ },
+ {
+  "file": "components/pulse/PulseHome.tsx",
+  "fn": "PulseHome",
+  "anchor": "fn:PulseHome",
+  "kind": "early-return",
+  "line": 38,
+  "text": "if (!shops || shops.length === 0) { return ( <main className={shell}> <div className=\"mb-3\"><DashboardBackLink /></div> <h1 className=\"mt-4 text-lg font-bold text-co-text\">{serverT(language, \"pulse.page.title\")}</h1> <p className=\"mt-2 text-sm text-co-text-muted\">{serverT(language, \"pulse.page.no_location\")}</p> </main> ); }",
+  "meaning": {
+   "kind": "admit",
+   "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
+  }
+ },
+ {
+  "file": "components/pulse/PulseHome.tsx",
+  "fn": "PulseHome",
+  "anchor": "loop",
+  "kind": "standalone",
+  "line": 59,
+  "text": "after(() => maybeRefreshTodaySales(shop.id, date));",
+  "meaning": {
+   "kind": "operational-error",
+   "why": "not a gate (side effect); its failure is an error"
+  }
+ },
+ {
+  "file": "components/pulse/PulseHome.tsx",
+  "fn": "PulseHome",
+  "anchor": "fn:PulseHome",
+  "kind": "enclosing-loop",
+  "line": 59,
+  "text": "for (const shop of shops) after(() => maybeRefreshTodaySales(shop.id, date));",
+  "meaning": {
+   "kind": "admit",
+   "why": "enclosing branch on data; both arms walked, must-admit"
+  }
+ }
+]

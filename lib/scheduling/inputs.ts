@@ -23,7 +23,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadBookedCateringEvents } from "@/lib/catering/booked-events";
 import { CLOSING_MANAGER_STATION } from "@/lib/checklist-constants";
 import { operationalNow } from "@/lib/midshift-shared";
-import { etClockTime } from "@/lib/operational-day";
 import { isMissingTable, loadPeopleFacts, SkillsUnavailableError } from "@/lib/people/facts";
 import { computeSkillMatrixForShop, loadShopTunables } from "@/lib/people/skills";
 import { fetchSalesBaseline } from "@/lib/pulse/sales";
@@ -40,13 +39,13 @@ import { forecastWeek, withCatering, type DayTypeOverride, type SalesBaselineRes
 import { ScheduleError } from "./errors-shared";
 import type { Pin } from "./generator/build-shared";
 import {
-  DEFAULT_SCHEDULE_SHOP_SETTINGS, STRUCTURE_DEFAULTS_ID, closingFacts, datesOfWeeks, memberSinceDate, pickShopWage, toCateringEvents, tsStructureVersion,
+  DEFAULT_SCHEDULE_SHOP_SETTINGS, STRUCTURE_DEFAULTS_ID, closingFacts, datesOfWeeks, etWallQ, memberSinceDate, pickShopWage, toCateringEvents, tsStructureVersion,
   type DayTypeRow, type EzcaterOrderRow, type MemberRow, type ShopWageRow, type ScheduleShopSettings, type SchedulingInputs, type StoredRevision, type StoredWeek,
 } from "./inputs-shared";
+import type { DayOpening } from "./opening-shared";
 import type { ElsewhereShift, PersonSettingsRow } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, RuleProblem, Segment, Shift } from "./rules-shared";
 import { SCHEDULE_STRUCTURE_DEFAULTS, structureFromStations, type ScheduleStructure, type SeedPosition, type SeedStation } from "./structure-shared";
-import { Q_MINUTES } from "./time-shared";
 import { addDays, isoWeekStart } from "./time-shared";
 
 const ID_CHUNK = 100;
@@ -230,18 +229,30 @@ export async function loadWeekHeads(service: SupabaseClient, locationId: string,
     };
     // Edited revisions persist only their changed date. Resolve every inherited date from its
     // original revision, so a second edit cannot erase an earlier day's tombstones or notes.
+    // PR SCH (D1, F1): for EVERY head (both engines) each inherited date's stored opening, of any status, is read from its
+    // origin context (each origin once, at most 7) into `inheritedOpenings`; only crew heads restore the whole day into the
+    // head's context (stations keep `context.days` = the head's own built dates). A missing origin context throws for both
+    // engines (ruling E5: 0 stations weeks were missing one).
     const hasCrewHistory = h.generator_version.startsWith("crew.") || Object.values(sw.head.context.days).some((d) => d.crew);
-    const missingOrigins = hasCrewHistory ? [...new Set(dayRows.filter((d) => !sw.head!.context.days[d.date] && d.originRevisionId).map((d) => d.originRevisionId!))] : [];
+    const ownDates = new Set(Object.keys(sw.head.context.days));
+    const inheritedOpenings: Record<string, DayOpening> = {};
+    const missingOrigins = [...new Set(dayRows.filter((d) => !ownDates.has(d.date) && d.originRevisionId).map((d) => d.originRevisionId!))];
     for (const originId of missingOrigins) {
-      const origin = await firstRow<{ context: unknown }>(service.from("schedule_revision_contexts").select("context").eq("revision_id", originId).limit(1));
+      // A day whose origin IS the head is read from the head's own context (no second read).
+      const origin = originId === h.id ? { context: ctx.context } : await firstRow<{ context: unknown }>(service.from("schedule_revision_contexts").select("context").eq("revision_id", originId).limit(1));
       if (!origin) throw new Error(`loadWeekHeads: origin ${originId} has no context`);
       const original = ruleContextFromSnapshot(origin.context);
-      for (const d of dayRows.filter((d) => d.originRevisionId === originId && !sw.head!.context.days[d.date])) {
+      for (const d of dayRows.filter((d) => d.originRevisionId === originId && !ownDates.has(d.date))) {
         const day = original.days[d.date];
-        if (!day) throw new Error(`loadWeekHeads: origin ${originId} has no day ${d.date}`);
-        sw.head.context.days[d.date] = day;
+        if (!day) {
+          if (hasCrewHistory) throw new Error(`loadWeekHeads: origin ${originId} has no day ${d.date}`);
+          continue; // a stations origin without the day: no stored decision (its board shows the recorded day, as before)
+        }
+        if (day.opening) inheritedOpenings[d.date] = day.opening;
+        if (hasCrewHistory) sw.head.context.days[d.date] = day;
       }
     }
+    sw.head.inheritedOpenings = inheritedOpenings;
     const editedIds = new Set(revs.filter((r) => r.kind === "edited").map((r) => r.id));
     const identified = dayRows.filter((d) => d.originRevisionId && editedIds.has(d.originRevisionId) && !sw.head!.context.days[d.date]?.crew).map((d) => d.date);
     sw.historicalEditedDates = identified.length ? identified : sw.edited && !dayRows.some((d) => sw.head!.context.days[d.date]?.crew)
@@ -260,7 +271,8 @@ export async function loadSchedulingDemand(service: SupabaseClient, locationId: 
   return { baseline: { kind: "ok", raw: { hours: heat, capturedDays: [...new Set(r.raw.captured_days)] } } };
 }
 
-async function loadEzcater(service: SupabaseClient, locationId: string, dates: readonly string[]): Promise<EzcaterOrderRow[]> {
+/** The shop's ezCater orders on the dates that are NOT linked to a pipeline lead (`lead_id` null), paged. */
+export async function loadEzcater(service: SupabaseClient, locationId: string, dates: readonly string[]): Promise<EzcaterOrderRow[]> {
   if (dates.length === 0) return [];
   return selectAllRows<EzcaterOrderRow>((f, t) => service.from("ezcater_orders").select("id, event_date, event_timestamp, handoff_time, headcount, total_cents, status")
     .eq("location_id", locationId).in("event_date", [...dates]).is("lead_id", null).order("id", { ascending: true }).range(f, t));
@@ -397,7 +409,7 @@ export async function loadSchedulingInputs(service: SupabaseClient, args: LoadSc
     const { baseline } = await loadSchedulingDemand(service, locationId, dates, asOf);
     const booked = await loadBookedCateringEvents(service, { locationId, dates });
     const ez = await loadEzcater(service, locationId, dates);
-    const catering = toCateringEvents(booked, ez, (iso) => { const [h, m] = etClockTime(iso).split(":").map(Number); return Math.floor((h! * 60 + m!) / Q_MINUTES); });
+    const catering = toCateringEvents(booked, ez, etWallQ);
     const demand = withCatering(forecastWeek(baseline, dates, asOf), catering);
     const punchFrom = addDays(isoWeekStart(asOf), -56);
     const punches = await loadPunchHistory(service, { locationId, from: punchFrom, to: addDays(isoWeekStart(asOf), -1) });

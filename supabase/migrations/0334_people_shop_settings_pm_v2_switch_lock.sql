@@ -1,5 +1,7 @@
 -- Migration 0334_people_shop_settings_pm_v2_switch_lock
 -- AUTHORED 2026-11-16. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word).
+-- APPLIED TO SIM 2026-11-16 (schema_migrations version 20261116074106, name '0334_people_shop_settings_pm_v2_switch_lock')
+-- APPLIED TO PROD 2026-11-16 (schema_migrations version 20261116094357, name '0334_people_shop_settings_pm_v2_switch_lock')
 -- Provenance: CO-OPS bug audit wave W25 (scheduling and 7shifts labor math), bug B219 (found at 7494f738).
 --   Plan: the W25 build plan, B219.
 --

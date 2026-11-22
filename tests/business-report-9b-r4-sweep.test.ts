@@ -36,7 +36,7 @@ import { loadBusinessReport, type BusinessReportDto } from "@/lib/business-repor
 import { resolveBusinessRange } from "@/lib/business-report-shared";
 import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
 import { BUSINESS_EXPORT_COLUMNS, type ExportRow } from "@/lib/report-export-shared";
-import { A, fakeClient, type FakeOpts } from "./helpers/business-report-fake";
+import { A, fakeClient, gmOff, type FakeOpts } from "./helpers/business-report-fake";
 import { EN, visibleText } from "./helpers/business-report-states";
 import {
   BusinessChannels, BusinessCompare, BusinessHours, BusinessOverview, BusinessPeople,
@@ -349,10 +349,10 @@ describe("sales: not captured, partly captured, a breakdown still rebuilding, an
   });
 });
 
-describe("a GM: no cost per person and no dollars per 15 minutes, on the page or in a file, in any state", () => {
+describe("a GM whose MoO+ turned cost per person and dollars per 15 minutes off: neither is on the page or in a file, in any state", () => {
   for (const [name, opts] of [["clean", { rpcRows: cost({}) }], ["open punch", { rpcRows: cost({ open_punches: 1 }) }], ["estimated wage", { rpcRows: cost({ estimated_rate_minutes: 30 }) }]] as const) {
     it(name, async () => {
-      const dto = await loadWith(opts as FakeOpts, RANGE, "gm");
+      const dto = await loadWith({ ...(opts as FakeOpts), visibility: [gmOff("person_cost", "quarter_cost")] }, RANGE, "gm");
       const p = pages(dto);
       expect(p.people).not.toContain(R("people.cost"));
       expect(p.people).not.toMatch(/\$180/);

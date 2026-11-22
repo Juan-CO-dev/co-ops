@@ -333,7 +333,9 @@ describe("loadSchedulingInputs — the one batch loader", () => {
     const seg = [{ positionId: P_REG, startQ: 44, endQ: 60 }];
     t.schedule_revision_shifts = [{ revision_id: rev2, location_id: A, user_id: EMP, business_date: "2026-10-27", start_q: 44, end_q: 60, segments: seg, closing_manager: false, flex: false, pinned: false, reasons: { shift: [{ key: "catering_prep", params: { hours: 4 } }], segments: [[]], alternates: [] } }];
     t.schedule_revision_days = ["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01"].map((d) => ({ revision_id: rev2, location_id: A, business_date: d, origin_revision_id: d === "2026-10-27" ? rev2 : rev1, structure_version_id: d === "2026-10-27" ? id(90) : null, inherited: d !== "2026-10-27", problems: [] }));
-    t.schedule_revision_contexts = [{ revision_id: rev2, location_id: A, context: { version: 1, locationId: A, weekStart: WEEK, today: "2026-10-21", dates: [], days: {}, budgetByDate: {}, closingWindowByDate: { "2026-10-26": { fromQ: 80, toQ: 83 } }, people: {} }, context_digest: "x" }];
+    // PR SCH (D1, ruling E5): every head now reads its inherited days' ORIGIN contexts (a missing one throws for both engines).
+    t.schedule_revision_contexts = [{ revision_id: rev2, location_id: A, context: { version: 1, locationId: A, weekStart: WEEK, today: "2026-10-21", dates: [], days: {}, budgetByDate: {}, closingWindowByDate: { "2026-10-26": { fromQ: 80, toQ: 83 } }, people: {} }, context_digest: "x" },
+      { revision_id: rev1, location_id: A, context: { version: 1, locationId: A, weekStart: WEEK, today: "2026-10-20", dates: [], days: {}, budgetByDate: {}, closingWindowByDate: {}, people: {} }, context_digest: "y" }];
     const inputs = await loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW });
     expect(inputs.structure).toMatchObject({ id: id(90), source: "saved" });
     const w = inputs.weeks[WEEK]!;
@@ -341,6 +343,10 @@ describe("loadSchedulingInputs — the one batch loader", () => {
     expect(w.head!.reasons).toEqual({ [`2026-10-27|${EMP}|44`]: { shift: [{ key: "catering_prep", params: { hours: 4 } }], segments: [[]], alternates: [] } });
     expect(w.head!.days.find((d) => d.date === "2026-10-26")!.structureVersionId).toBe(STRUCTURE_DEFAULTS_ID); // NULL → the defaults sentinel
     expect(w.head!.context.closingWindowByDate["2026-10-26"]).toEqual({ fromQ: 80, toQ: 83 });
+    expect(w.head!.inheritedOpenings).toEqual({});
+    // A stations head with no origin context for an inherited day throws, as a crew head always did (ruling E5).
+    t.schedule_revision_contexts = t.schedule_revision_contexts!.filter((r) => r.revision_id !== rev1);
+    await expect(loadSchedulingInputs(client(t, emptyHistory), { locationId: A, weekStarts: [WEEK], now: NOW })).rejects.toThrow(/origin .* has no context/);
   });
 });
 

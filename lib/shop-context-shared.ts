@@ -103,6 +103,7 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/reports/written": ["location"],
   "/operations/opening": ["location"],
   "/operations/production": ["location"],
+  "/maintenance": ["location"],
   "/mid-shift": ["location"],
   "/ordering": ["location"],
   "/admin/catering/prep-demand": ["location"],
@@ -110,6 +111,7 @@ const SHOP_PARAMS_BY_PATH: Readonly<Record<string, readonly string[]>> = {
   "/admin/sandwiches": ["location"],
   "/admin/skus": ["location"], // hub SKU readiness scope; editor baselines remain global
   "/admin/catalog/notices": ["location"], // catalog Phase 3b — a GM's recipe updates for one shop
+  "/admin/demand-signals": ["location"], // item 4 PR 5: the demand signals page, per shop
 };
 
 /** Dynamic routes, matched by prefix (`/mid-shift/[section]`). */

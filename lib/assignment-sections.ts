@@ -4,7 +4,8 @@ import { defaultOpenMap, type SectionProgress } from "@/lib/collapsible-sections
 export function assignmentSectionDefaults(board: ShiftBoard, compact: boolean): Record<string, boolean> {
   const ownTaskCount = board.tasks.filter((task) => task.assigneeId === board.viewerId && task.available !== false).length;
   const hasStation = !!currentFloorStation(board, board.viewerId)?.stationId;
-  if (compact) return { tasks: !ownTaskCount && !hasStation, stations: !ownTaskCount && !hasStation, team: false };
+  // Nav PR 7: the compact (Dashboard) board has no tasks section; the day list carries the tasks.
+  if (compact) return { stations: !ownTaskCount && !hasStation, team: false };
   const positions = board.stations.filter((station) => isFloorStation(station) && !station.closedAt).flatMap((station) => station.positions.filter((position) => position.active));
   const assignedStations = positions.filter((position) => board.people.some((person) => currentFloorStation(board, person.id)?.positionId === position.id)).length;
   const progress: SectionProgress[] = [

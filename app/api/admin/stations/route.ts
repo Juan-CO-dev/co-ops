@@ -2,7 +2,7 @@ import { assertSameOrigin } from "@/lib/portal/csrf";
 import type { NextRequest } from "next/server";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { AssignmentError, saveStationSpanish, saveStationConfig, saveStationTiming } from "@/lib/assignments";
+import { AssignmentError, saveStationMidDayTrigger, saveStationNotPhase, saveStationSpanish, saveStationConfig, saveStationTiming } from "@/lib/assignments";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { validStationTrims } from "@/lib/station-schedule-shared";
@@ -40,6 +40,22 @@ export async function POST(req: NextRequest) {
   if (ctx.level < 7) return jsonError(403, "role_insufficient");
   const stepUp = assertStepUp(ctx, "B");
   if (!stepUp.ok) return jsonError(403, stepUp.code);
+  // Nav PR 6 (0353): the two station day flags, behind the same GM gate and step-up B.
+  if (b.operation === "mid_day_trigger" || b.operation === "not_phase_station") {
+    if (Object.keys(b).some((key) => !["operation", "locationId", "stationId", "on"].includes(key)) ||
+      typeof b.locationId !== "string" || typeof b.stationId !== "string" || typeof b.on !== "boolean")
+      return jsonError(400, "invalid_payload");
+    const save = b.operation === "mid_day_trigger" ? saveStationMidDayTrigger : saveStationNotPhase;
+    try {
+      return jsonOk(await save(getServiceRoleClient(), {
+        actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level, locations: ctx.locations },
+        locationId: b.locationId, stationId: b.stationId, on: b.on,
+      }));
+    } catch (error) {
+      if (error instanceof AssignmentError) return jsonError(error.status, error.code);
+      return jsonError(500, "internal_error");
+    }
+  }
   if (b.operation === "staffed" || b.operation === "position_create" || b.operation === "position_update") {
     if (typeof b.locationId !== "string" || typeof b.stationId !== "string" ||
       (b.operation === "staffed" && typeof b.staffed !== "boolean") ||

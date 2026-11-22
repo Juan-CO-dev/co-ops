@@ -1,5 +1,7 @@
 -- Migration 0329_catering_prep_demand_lifecycle
 -- AUTHORED 2026-11-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word).
+-- APPLIED TO SIM 2026-11-16 (schema_migrations version 20261116071434, name '0329_catering_prep_demand_lifecycle')
+-- APPLIED TO PROD 2026-11-16 (schema_migrations version 20261116090840, name '0329_catering_prep_demand_lifecycle')
 -- Provenance: audit wave W22 (catering pipeline, kitchen prep demand and surplus) — B122 (two stage changes at
 --   once could leave a cancelled order still reserved: reserve's release-then-insert was four separate calls with
 --   no lock), B120 (rescheduling a lead left the quote's event date and the reserved prep on the old day), B205

@@ -6,6 +6,7 @@ import { generateWeek } from "@/lib/scheduling/generator/dispatch-shared";
 import { crewOpenItems, verifyCrewGap, shiftCountsAsMod } from "@/lib/scheduling/crew-gap-verifier-shared";
 import { checkScheduleRules } from "@/lib/scheduling/rules-shared";
 import { acceptanceInputs, DATES, WEEK, personId } from "./fixtures/schedule/crew-p-street-2026-10-19";
+import { preSchView } from "./fixtures/schedule/crew-no-opt-in";
 
 const run = (inputs = acceptanceInputs()) => generateWeek(generatorInputFor(inputs, WEEK, { today: WEEK }));
 const clock = (q: number) => `${String(Math.floor(q / 4)).padStart(2, "0")}:${String(q % 4 * 15).padStart(2, "0")}`;
@@ -145,8 +146,10 @@ describe("P Street crew acceptance, 2026-10-19 (snapshot + R14)", () => {
 
 describe("P Street Backup cover acceptance", () => {
   it("preserves the pre-change no-opt-in output byte-for-byte", () => {
-    expect(createHash("sha256").update(JSON.stringify(out)).digest("hex"))
+    // PR SCH: byte-for-byte apart from the version string and the context's `cateringRule` marker (`preSchView`).
+    expect(createHash("sha256").update(JSON.stringify(preSchView(out))).digest("hex"))
       .toBe("da62a198c0372debc3efa1a0f0507988d3d9137d4d8202db47a1fcd474499269");
+    expect([out.version, out.context.cateringRule]).toEqual(["crew.2", "day_total_v1"]);
   });
   it("adds one legal backup person per open date and reports remaining proven gaps", () => {
     const inputs = acceptanceInputs(); inputs.structure.structure.roster.backupCoverPerDay = 1;

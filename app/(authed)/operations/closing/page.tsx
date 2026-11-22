@@ -58,6 +58,7 @@ import {
   rowToInstance,
 } from "@/lib/checklist-rows";
 import { canWorkShopTasks, type LocationActor } from "@/lib/locations";
+import { canDoOperationalTask } from "@/lib/operational-task-access";
 import { reconcileClosingReportRefs } from "@/lib/prep";
 import { loadLocationTempItemIds } from "@/lib/reports-hub";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
@@ -167,6 +168,9 @@ function deriveBanner(ctx: BannerContext, language: Language): StatusBanner | nu
 interface PageProps {
   searchParams: Promise<{ location?: string; date?: string }>;
 }
+
+/** The report tasks whose pages bind the shop with the closing's own shop-task rule; every other task is bound by canDoOperationalTask. */
+const CHECKLIST_SHOP_TASKS: ReadonlySet<string> = new Set(["am_prep", "mid_day_prep", "opening_report"]);
 
 export default async function ClosingPage({ searchParams }: PageProps) {
   const auth = await requireSessionFromHeaders("/operations/closing");
@@ -299,8 +303,9 @@ export default async function ClosingPage({ searchParams }: PageProps) {
           });
     } catch (error) {
       if (!(error instanceof ChecklistLineageTakenError)) throw error;
+      // fresh: the same lookup already ran in this render and found nothing (Next memoizes identical GETs).
       const taken = await findDayInstance<InstanceRow>(sb, {
-        locationId: locationParam, type: "closing", date: today, columns: INSTANCE_COLUMNS,
+        locationId: locationParam, type: "closing", date: today, columns: INSTANCE_COLUMNS, fresh: true,
       });
       if (!taken) throw error;
       result = { instance: rowToInstance(taken), created: false };
@@ -591,10 +596,13 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   await Promise.all(templateItems.map(async (item) => {
     const task = item.reportReferenceType;
     if (!isTaskType(task)) return;
-    reportRefCanOpen[item.id] = await hasTaskAccess(sb, {
-      userId: auth.user.id, level: auth.level, locationId: locationParam,
-      date: targetDate, task,
-    });
+    // Level 8+ may work THIS closing at any shop (canWorkShopTasks above), but only the checklist tasks share that
+    // rule. Cash, receiving, counts, ordering and the PM report bind the shop with lockLocationContext (all shops
+    // only at 9+) and send everyone else straight back to the dashboard, so for those the line asks the SAME
+    // question the target page asks (canDoOperationalTask) and offers no link on a "no".
+    reportRefCanOpen[item.id] = CHECKLIST_SHOP_TASKS.has(task)
+      ? await hasTaskAccess(sb, { userId: auth.user.id, level: auth.level, locationId: locationParam, date: targetDate, task })
+      : await canDoOperationalTask(auth, locationParam, task);
   }));
 
   // #18 — which count items are fridge-temperature readings (the maintenance

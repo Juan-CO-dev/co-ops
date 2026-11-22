@@ -29,10 +29,10 @@ describe("the shop-task rule", () => {
     expect(canWorkShopTasks({ role, locations: [OTHER] }, SHOP)).toBe(level >= 8);
     expect(canWorkShopTasks({ role, locations: [SHOP] }, SHOP)).toBe(true);
     expect(shopTaskLocations({ role, locations: [OTHER] })).toEqual(level >= 8 ? "all" : [OTHER]);
-    expect(worksShopTasks({ userId: "u", level, active: true, locations: [OTHER] }, SHOP)).toBe(level >= 8);
-    expect(worksShopTasks({ userId: "u", level, active: true, locations: [SHOP] }, SHOP)).toBe(true);
+    expect(worksShopTasks({ userId: "u", role, level, active: true, locations: [OTHER] }, SHOP)).toBe(level >= 8);
+    expect(worksShopTasks({ userId: "u", role, level, active: true, locations: [SHOP] }, SHOP)).toBe(true);
     // An inactive actor never works a shop, member or not, whatever their level.
-    expect(worksShopTasks({ userId: "u", level, active: false, locations: [SHOP] }, SHOP)).toBe(false);
+    expect(worksShopTasks({ userId: "u", role, level, active: false, locations: [SHOP] }, SHOP)).toBe(false);
   });
 
   it("names the three level-8+ roles and refuses the social media manager like any level-6 role", () => {

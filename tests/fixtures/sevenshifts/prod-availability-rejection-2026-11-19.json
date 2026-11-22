@@ -1,0 +1,11 @@
+{
+  "_what": "The PII-free record PR #585's shape capture left on PROD for the availabilities resource. Read from public.sevenshifts_sync_runs inside a read-only transaction on 2026-11-20 (UTC); only the result's counts, code and reasons were selected. No value, name or id is in it.",
+  "_runs": "57 consecutive hourly runs carry exactly this record: first 2026-11-17T16:20:16Z, last 2026-11-20T00:20:16Z. The sim ledger has no run.",
+  "resource": "availabilities",
+  "result": {
+    "rows": 0,
+    "skipped": 6,
+    "error_code": "rejected_rows",
+    "reasons": { "bad_date": 6, "date_shapes": { "week": ["9999-99-99"] } }
+  }
+}

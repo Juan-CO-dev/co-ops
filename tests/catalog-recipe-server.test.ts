@@ -485,6 +485,30 @@ describe("the GM's notices", () => {
     // the recipe page shows the same notice for this recipe
     expect((await loadRecipeItemView(gm, "r-italian", LOC))!.notices.map((n) => n.kind)).toEqual(["source_changed"]);
   });
+  it("nav PR 8 (T-D3): with a signal every read carries it and the answer is the same; an aborted signal builds no query", async () => {
+    tables.recipe_versions!.push({ id: "lv-adopted", recipe_id: "r-italian", location_id: LOC, based_on_version_id: "ov-italian",
+      adopted_from_version_id: "ov-italian", promoted_from_version_id: null, adoption_ended_from_version_id: null, active: true,
+      valid_from: "2026-10-11T00:00:00Z", valid_to: null, note: null, created_at: "2026-10-11T00:00:00Z", created_by: null, retired_by: null });
+    const plain = await loadShopNotices(gm, LOC);
+    const db = current!.client as unknown as { from: (t: string) => Record<string, unknown> };
+    const from = db.from;
+    const seen: Array<{ table: string; signal: AbortSignal | null }> = [];
+    db.from = (t: string) => {
+      const q = from(t);
+      const entry = { table: t, signal: null as AbortSignal | null };
+      seen.push(entry);
+      const a = q.abortSignal as (s: AbortSignal) => unknown;
+      q.abortSignal = (s: AbortSignal) => { entry.signal = s; return a(s); };
+      return q;
+    };
+    expect(await loadShopNotices(gm, LOC, { signal: new AbortController().signal })).toEqual(plain);
+    expect(seen.length).toBeGreaterThanOrEqual(5);
+    expect(seen.filter((s) => s.signal === null)).toEqual([]);
+    seen.length = 0;
+    const c = new AbortController(); c.abort();
+    await expect(loadShopNotices(gm, LOC, { signal: c.signal })).rejects.toBeDefined();
+    expect(seen).toEqual([]);
+  });
 });
 
 

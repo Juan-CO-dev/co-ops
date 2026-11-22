@@ -17,6 +17,7 @@ import { loadCateringInsightsV2, INSIGHTS_READ_MIN } from "@/lib/catering/insigh
 import { InsightsClient } from "@/components/catering/InsightsClient";
 import { BackLink } from "@/components/nav/BackLink";
 import { ExportLinks } from "@/components/reports-export/ExportLinks";
+import { reportsRoleAllowed } from "@/lib/reports-access-shared";
 
 export default async function CateringInsightsPage() {
   const auth = await requireSessionFromHeaders("/catering/insights");
@@ -34,7 +35,8 @@ export default async function CateringInsightsPage() {
       <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.insights.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.insights.subtitle")}</p>
       {/* The booked-event calendar as a file (same loader, same shop scope). */}
-      <ExportLinks className="mt-3" family="catering" language={lang} query={{}} />
+      {/* Nav spec PR S1: the export route refuses the social media manager, so the link is not offered to it. */}
+      {reportsRoleAllowed(auth.role) ? <ExportLinks className="mt-3" family="catering" language={lang} query={{}} /> : null}
       <InsightsClient data={data} />
     </main>
   );

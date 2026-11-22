@@ -27,16 +27,20 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { ShopContextSync } from "@/components/ShopContextSync";
 import { ParPassWalker } from "@/components/ordering/ParPassWalker";
 import { OrderingSurfaces } from "@/components/ordering/OrderingSurfaces";
 import { loadWalkerData, loadRecentParPasses, loadOrderingAttention, PAR_PASS_MIN } from "@/lib/ordering";
+import { OrderSignalsPanel } from "@/components/ordering/OrderSignalsPanel";
+import { demandSignalsEnabled } from "@/lib/demand-signals/config-shared";
+import type { OrderSignalsData } from "@/lib/demand-signals/order-signals";
 import { loadTodaysOrders, loadPoHistory } from "@/lib/purchase-orders";
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { accessibleLocations, isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
-import { requireSessionFromHeaders } from "@/lib/session";
+import { requireSessionFromHeaders, sessionIdleMinutes } from "@/lib/session";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -88,6 +92,8 @@ export default async function OrderingPage({
   if (!locationId) {
     return (
       <TranslationProvider initialLanguage={language}>
+        {/* Outside both layouts that mount the idle guard, so the page mounts it itself (nav spec r5 §9). */}
+        <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} />
         <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
           <div className="mb-3">
             <DashboardBackLink />
@@ -103,6 +109,18 @@ export default async function OrderingPage({
 
   const mayReceive = await canDoOperationalTask(auth, locationId, "receiving");
   const loc = accessible.find((l) => l.id === locationId) ?? null;
+  // Item 4 PR 6 (first half): the signals for the days this order looks ahead to, BY NAME. DARK: with
+  // DEMAND_SIGNALS unset nothing of the signal layer is imported, read or rendered, and the walk is untouched.
+  // On: it runs BESIDE the walk's reads under its own deadline and can never fail or hold up the walk.
+  const orderSignalsRead: Promise<OrderSignalsData | null> = demandSignalsEnabled(process.env.DEMAND_SIGNALS) && loc
+    ? (async () => {
+      try {
+        const { loadOrderSignals, ORDER_SIGNALS_DEADLINE_MS } = await import("@/lib/demand-signals/order-signals");
+        return await loadOrderSignals(service, { actor: { role: auth.role, locations: auth.locations }, shop: { id: loc.id, name: loc.name },
+          nowIso: new Date().toISOString(), signal: AbortSignal.timeout(ORDER_SIGNALS_DEADLINE_MS) });
+      } catch { return { state: "unreadable" } as const; }
+    })()
+    : Promise.resolve(null);
   const [walker, recent, todaysOrders, poHistory, cutoffAttention] = await Promise.all([
     loadWalkerData(auth, locationId),
     loadRecentParPasses(auth, locationId),
@@ -113,6 +131,7 @@ export default async function OrderingPage({
 
   // The shop label carried into the mailto body header + the walk header (never a
   // hardcoded location literal — tenant law; code + name from the locations row).
+  const orderSignals = await orderSignalsRead;
   const shopLabel = loc ? `${loc.code} · ${loc.name}` : "";
   const dateLabel = formatDateLabel(walker.walkDate, language);
   // W19/B190: the date that lands in VENDOR text (copied order, mailto subject/body) is English for every viewer,
@@ -121,6 +140,8 @@ export default async function OrderingPage({
 
   return (
     <TranslationProvider initialLanguage={language}>
+      {/* Outside both layouts that mount the idle guard, so the page mounts it itself (nav spec r5 §9). */}
+      <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} />
       {/* /ordering sits outside the (authed) layout, so it mounts the B2 shop sync itself. */}
       <Suspense fallback={null}>
         <ShopContextSync allowed={accessibleLocations({ role: auth.role, locations: auth.locations })} />
@@ -193,6 +214,8 @@ export default async function OrderingPage({
           vendorDateLabel={vendorDateLabel}
           initialPoId={po ?? null}
         />
+
+        {orderSignals && orderSignals.state !== "unavailable" && <OrderSignalsPanel key={`signals-${locationId}`} data={orderSignals} locationId={locationId} />}
 
         {/* Keyed by the shop: the tabs are soft navigations, and an unkeyed island would carry
             shop A's unsubmitted counts into shop B's walk (audit W18/B024). */}

@@ -340,6 +340,7 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/(authed)/schedule/page.tsx": "/schedule", // Scheduling Phase 2, chunk F — the board, per shop
   "app/(authed)/schedule/settings/page.tsx": "/schedule/settings", // Scheduling Phase 2, chunk F — the settings, per shop
   "app/admin/people-reconcile/page.tsx": "/admin/people-reconcile", // Scheduling Phase 2, Task 25 — the reconciliation, per shop
+  "app/admin/demand-signals/page.tsx": "/admin/demand-signals", // item 4 PR 5: the demand signals page, per shop
   "app/(authed)/assignments/page.tsx": "/assignments",
   "app/(authed)/my-feedback/page.tsx": "/my-feedback",
   "app/(authed)/reports/page.tsx": "/reports",
@@ -350,6 +351,7 @@ const PAGE_ROUTES: Record<string, string> = {
   "app/(authed)/reports/written/page.tsx": "/reports/written",
   "app/(authed)/operations/opening/page.tsx": "/operations/opening",
   "app/(authed)/operations/production/page.tsx": "/operations/production",
+  "app/(authed)/maintenance/page.tsx": "/maintenance",
   "app/(authed)/mid-shift/page.tsx": "/mid-shift",
   "app/(authed)/mid-shift/[section]/page.tsx": "/mid-shift/sales",
   "app/ordering/page.tsx": "/ordering",
@@ -477,6 +479,7 @@ const RESOLVER_PAGES: Record<string, RegExp> = {
   "app/(authed)/operations/opening/page.tsx": /await resolveShop\(locations, locParam\)/,
   // B3's Production default (D-64): memberships, then every active shop for the 9+ grant; the bind follows.
   "app/(authed)/operations/production/page.tsx": /const location = requested \?\? \(await resolveShopId\(isAllLocationsAccess\(locActor\)\s*\? \[\.\.\.auth\.locations, \.\.\.\(await activeLocationIds\(\)\)\.filter\(\(id\) => !auth\.locations\.includes\(id\)\)\]\s*: auth\.locations\)\);\s*if \(!location\) redirect\("\/dashboard"\);\s*if \(!lockLocationContext\(locActor, location\)\) redirect\("\/dashboard"\);/,
+  "app/(authed)/maintenance/page.tsx": /const locationParam = requested \?\? \(await resolveShopId\(isAllLocationsAccess\(locActor\)\s*\? \[\.\.\.auth\.locations, \.\.\.\(await activeLocationIds\(\)\)\.filter\(\(id\) => !auth\.locations\.includes\(id\)\)\]\s*: auth\.locations\)\);\s*if \(!locationParam\) redirect\("\/dashboard"\);\s*if \(!lockLocationContext\(locActor, locationParam\)\) redirect\("\/dashboard"\);/,
   "app/(authed)/catering/quotes/page.tsx": /await resolveShop\(locations\)/,
   "app/(authed)/catering/pipeline/page.tsx": /await resolveShop\(createLocations\)/,
   "app/(authed)/mid-shift/page.tsx": /location \?\? \(await resolveShopId\(accessible\.map/,

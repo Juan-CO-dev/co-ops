@@ -89,6 +89,11 @@ function fakeService(tables: Record<string, Row[]>, rpcResult: (name: string, pa
       or: self, // only the AM prep chain lookups use it; each test's tables hold that one chain
       order: self,
       limit: self,
+      // Nav PR 6 (ruling B4): the item readers page their chunks.
+      range: (from: number, to: number) => {
+        rows = rows.slice(from, to + 1);
+        return b;
+      },
       returns: self,
       gt: self,
       gte: self,

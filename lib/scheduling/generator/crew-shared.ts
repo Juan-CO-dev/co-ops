@@ -5,6 +5,7 @@ import { canonicalJson, assertContextFits, type DayContext, type RuleContext, ty
 import type { CrewShiftMeta } from "../crew-contracts-shared";
 import { isCrewCandidate, crewBackupCoverAtCap, crewBackupCoverWeekAtCap, crewCandidateHoursEvidence, crewOpenGroups, crewRequired, crewStationShorts, shiftCountsAsMod } from "../crew-gap-verifier-shared";
 import { ScheduleError } from "../errors-shared";
+import { declareDayGaps } from "../gap-partition-shared";
 import { buildDayNeed } from "../need-shared";
 import { compareCodePoint as cmp } from "../order-shared";
 import { skillOf, type SchedPerson } from "../people-input-shared";
@@ -12,16 +13,16 @@ import { positionRankOf } from "../position-rank-shared";
 import { reason, shiftKey, type BoardNote, type ReasonIndex, type ReasonKey, type ShiftReasons } from "../reasons-shared";
 import {
   MOD, SALARIED_FLEX_REASON, CATERING_MANAGER_COVER, REPAIR_LIMITS,
-  atDayCap, checkScheduleRules, crewEarliestModStart, closingManagerEligible, coversClosingWindow, floorHours,
+  atDayCap, checkScheduleRules, closingManagerEligible, coversClosingWindow, floorHours,
   generatorRefuses, maxDaysPerWeek,
-  neverGenerated, proveGap, salariedWeek, type DeclaredGap, type GapSubject, type Segment, type Shift, type WeekSchedule,
+  neverGenerated, salariedWeek, type Segment, type Shift, type WeekSchedule,
 } from "../rules-shared";
 import { isSecondary, lineOrder, shiftTypesOf, type ShiftType } from "../structure-shared";
 import { teamStrength } from "../strength-shared";
 import { weekDays } from "../time-shared";
 import type { GeneratorInput, GeneratorOutput } from "./build-shared";
 
-export const CREW_GENERATOR_VERSION = "crew.1";
+export const CREW_GENERATOR_VERSION = "crew.2";
 const order = (a: Shift, b: Shift) => cmp(a.date, b.date) || cmp(a.userId, b.userId) || a.startQ - b.startQ;
 const key = (s: Shift) => shiftKey(s.date, s.userId, s.startQ);
 const hours = (s: Shift) => (s.endQ - s.startQ) / 4;
@@ -60,7 +61,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
     };
   }
   const ctx: RuleContext = { version: 1, locationId: input.locationId, weekStart: input.weekStart,
-    today: input.today, dates, days: {}, people, budgetByDate: {}, closingWindowByDate: {} };
+    today: input.today, dates, days: {}, people, budgetByDate: {}, closingWindowByDate: {}, cateringRule: "day_total_v1" };
   const notes: BoardNote[] = [];
   const reasons: ReasonIndex = {};
   const fixed = new Set<string>();
@@ -93,15 +94,16 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
       continue;
     }
     d.catering.sort((a, b) => cmp(a.id, b.id));
-    const { need } = buildDayNeed({ structure: st, ...d });
+    // PR SCH: the date's per-day structure (an applied opening moves its prep start and BOH opens; no limit rise on crew).
+    const { need, structure: ds, base, opening } = buildDayNeed({ structure: st, ...d, decision: d.decision ?? null });
     const overrides = structuredClone(input.crew?.manualOverridesByDate?.[date]
       ?? input.crew?.headContext?.days[date]?.crew?.manualOverrides ?? []);
     overrides.sort((a, b) => cmp(canonicalJson(a), canonicalJson(b)));
-    ctx.days[date] = { structureVersionId: input.structureVersionId, structure: st, dayType: d.dayType,
+    ctx.days[date] = { structureVersionId: input.structureVersionId, structure: ds, dayType: d.dayType,
       closingMinutes: d.closingMinutes, scheduledOutQ: d.scheduledOutQ, need,
       inputs: { demandKind: d.demandKind, hourlyCents: d.hourlyCents, dayCents: d.dayCents,
         dayTypeSource: d.dayTypeSource, overrideId: d.overrideId, cateringEvents: d.catering },
-      crew: { version: 1, shifts: [], manualOverrides: overrides, notes: [] } };
+      crew: { version: 1, shifts: [], manualOverrides: overrides, notes: [] }, ...(base ? { base } : {}), ...(opening ? { opening } : {}) };
     schedule.days.push({ date, originRevisionId: null, structureVersionId: input.structureVersionId, inherited: false, problems: [] });
   }
   const addMeta = (sh: Shift, typeId: string | null, source: Source) => ctx.days[sh.date]!.crew!.shifts.push({ userId: sh.userId, startQ: sh.startQ, typeId, source });
@@ -279,14 +281,16 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
   function modHoles(date: string) {
     const day = ctx.days[date]!;
     if (!st.leadership.modRequired) return [] as number[];
-    return Array.from({ length: day.scheduledOutQ - st.shopDay.prepStartQ }, (_, i) => st.shopDay.prepStartQ + i)
+    // PR SCH: the DATE's prep start (an opened date requires a manager on duty from its opening).
+    const from = day.structure.shopDay.prepStartQ;
+    return Array.from({ length: day.scheduledOutQ - from }, (_, i) => from + i)
       .filter((q) => !schedule.shifts.some((sh) => sh.date === date && sh.startQ <= q && q < sh.endQ
         && roster[sh.userId] && shiftCountsAsMod(sh, roster[sh.userId]!, day, q)));
   }
   // C. Scarce MoD dates first, then highest demand: target exhaustion cannot simply drop Friday.
   const managerDays = [...buildDays].sort((a, b) => {
     const count = (date: string) => input.people.filter((p) => types.some((t) => t.countsTowardMod
-      && modCountsOn(p, ctx.days[date]!, st.shopDay.prepStartQ) && !!candidate(p, t, date, "salaried").block)).length;
+      && modCountsOn(p, ctx.days[date]!, ctx.days[date]!.structure.shopDay.prepStartQ) && !!candidate(p, t, date, "salaried").block)).length;
     return count(a.date) - count(b.date) || (b.dayCents ?? 0) - (a.dayCents ?? 0) || cmp(a.date, b.date);
   });
   for (const d of managerDays) for (const p of input.people.filter((p) => p.salaried && p.workModes?.[d.date] !== "if_needed")) {
@@ -378,23 +382,13 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
       schedule.gaps.push({ code: "coverage_gap", cause: "crew_shortfall", date: d.date, positionId: id, ...run });
     }
   }
-  // The validator identifies real MoD/closing deficits; unresolved is honest when no crew proof exists.
-  for (const p of checkScheduleRules(schedule, ctx)) if (!p.inherited && p.code === "undeclared_gap"
-    && (p.params.gap === "mod_missing" || p.params.gap === "closing_manager_missing")) {
-    const subject: GapSubject = { code: p.params.gap, date: p.day, positionId: null, fromQ: Number(p.params.fromQ), toQ: Number(p.params.toQ) };
-    const earliestQ = crewEarliestModStart(st, input.people);
-    if (subject.code === "mod_missing" && subject.fromQ < earliestQ) {
-      const early = { ...subject, toQ: Math.min(subject.toQ, earliestQ) };
-      const proof = proveGap(early, schedule, ctx);
-      if (proof) {
-        schedule.gaps.push({ ...early, ...proof } as DeclaredGap);
-        notes.push({ code: "crew_mod_start_mismatch", date: subject.date, userId: null, positionId: null, params: { earliestQ } });
-        subject.fromQ = early.toQ;
-        if (subject.fromQ >= subject.toQ) continue;
-      }
-    }
-    const proof = proveGap(subject, schedule, ctx);
-    schedule.gaps.push(proof ? { ...subject, ...proof } as DeclaredGap : { ...subject, cause: "unresolved_search", certificate: unresolved() });
+  // The validator identifies real MoD/closing deficits; unresolved is honest when no crew proof exists. PR SCH (D2): the
+  // shared partition splits a MoD hole at the earliest typed start and proves each piece (one validator run for the week).
+  const tail = checkScheduleRules(schedule, ctx);
+  for (const date of [...new Set(tail.map((p) => p.day))].sort(cmp)) {
+    const declared = declareDayGaps(date, schedule, ctx, { mode: "generate", candidateIds: unresolved().candidateIds, known: [], codes: ["mod_missing", "closing_manager_missing"], problems: tail });
+    schedule.gaps.push(...declared.gaps);
+    notes.push(...declared.notes);
   }
   schedule.gaps.sort((a, b) => cmp(a.date, b.date) || cmp(a.code, b.code) || cmp(a.positionId ?? "", b.positionId ?? "") || a.fromQ - b.fromQ);
   const problems = checkScheduleRules(schedule, ctx);
@@ -448,7 +442,7 @@ function buildCrewWeekAttempt(raw: GeneratorInput, prioritizeUsualBudget: boolea
       if (hourlyCostCents !== null) hourlyCostCents = p.wageCents === null ? null : hourlyCostCents + Math.round(p.wageCents * hours(sh));
     }
   }
-  const strength = Object.fromEntries(buildDays.map((d) => [d.date, teamStrength(schedule.shifts, d.date, ctx.people, st, input.skills, d.dayType, d.scheduledOutQ)]));
+  const strength = Object.fromEntries(buildDays.map((d) => [d.date, teamStrength(schedule.shifts, d.date, ctx.people, ctx.days[d.date]!.structure, input.skills, d.dayType, d.scheduledOutQ)]));
   // Canonical object keys make ordinary JSON.stringify, not just canonicalJson, permutation invariant.
   return JSON.parse(canonicalJson({ version: CREW_GENERATOR_VERSION, shifts: schedule.shifts, days: schedule.days, gaps: schedule.gaps, reasons, notes: uniqueNotes,
     stats: { hourlyHours, hourlyHoursByDate, essentialHours, salariedCoverHours, hourlyCostCents, budgetedDates, budgetHours,

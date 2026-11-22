@@ -1,5 +1,7 @@
 -- Migration 0330_ezcater_catering_records_fixes
 -- AUTHORED 2026-11-15. NOT YET APPLIED - sim first, prod on Juan's word.
+-- APPLIED TO SIM 2026-11-16 (schema_migrations version 20261116071753, name '0330_ezcater_catering_records_fixes')
+-- APPLIED TO PROD 2026-11-16 (schema_migrations version 20261116125516, name '0330_ezcater_catering_records_fixes')
 -- Provenance: bug-audit wave W23 "ezCater orders and catering customer records" (found at 7494f738).
 --   Bugs B126 (owner decision W23-1 a), B127, B129 (owner decision W23-4 b), B209. Reviewed plan:
 --   audit/plans/W23.md. B125, B128, B130, B207, B208 and B210 are TypeScript only (same PR).

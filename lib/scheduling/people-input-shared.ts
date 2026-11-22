@@ -214,6 +214,12 @@ export interface ToSchedPeopleInput {
   excludedUserIds?: readonly string[];
   /** B134: this week's shifts of dual-shop members at OTHER shops (their heads). Absent = none. */
   elsewhere?: ReadonlyArray<ElsewhereShift>;
+  /**
+   * PR SCH (ruling E1 / F2): per OPENED date (an applied earlier opening), the start the ESTIMATED availability window
+   * opens from. Only the estimate widens: a manager-set window, an off day, exclusions, time off and other-shop narrowing
+   * are unchanged. Absent date = the shop day's start.
+   */
+  estimateFromQByDate?: Readonly<Record<string, number>>;
 }
 
 /** B134: one shift a member holds at another shop (that shop's head revision). */
@@ -299,7 +305,7 @@ export function toSchedPeople(input: ToSchedPeopleInput): { people: SchedPerson[
       const explicit = st?.availability?.[isoDowOf(d) as keyof PersonAvailability];
       availability[d] = explicit
         ? explicit.mode === "off" ? null : { fromQ: explicit.fromQ ?? input.shopDay.fromQ, toQ: explicit.toQ ?? input.shopDay.toQ, source: "manager_set" }
-        : assumedAvailability(pattern?.byDow[isoDowOf(d)], input.shopDay);
+        : assumedAvailability(pattern?.byDow[isoDowOf(d)], { fromQ: input.estimateFromQByDate?.[d] ?? input.shopDay.fromQ, toQ: input.shopDay.toQ });
       if (explicit?.mode === "if_needed") offPreferredDates.push(d);
     }
     const mean = pattern?.meanWeeklyHours ?? null;

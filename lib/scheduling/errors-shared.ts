@@ -63,6 +63,17 @@ export const SCHEDULE_ERROR_CODES = [
   // failed read of them refuses Generate / the horizon / Approve (never "free time").
   "other_shop_overlap",
   "other_shop_check_unavailable",
+  // PR SCH (plan r5 20.4, D4): the per-date earlier opening — the date is outside the week; an accept with no proposal on the
+  // expected head; a decline with nothing proposed or automatic; a manual start that is not a quarter before the normal
+  // start; a clear with no stored decision.
+  "opening_date_not_in_week",
+  "opening_no_proposal",
+  "opening_nothing_to_decline",
+  "opening_start_invalid",
+  "opening_nothing_to_clear",
+  // PR SCH-2 (plan r5 20.7, D7): a structure setting whose SQL twin is not installed yet (0354's readiness sentinel is
+  // missing): refused before any write, nothing changed.
+  "feature_not_ready",
 ] as const;
 
 export type ScheduleErrorCode = (typeof SCHEDULE_ERROR_CODES)[number];
@@ -107,6 +118,8 @@ export const SCHEDULE_ERROR_STATUS: Record<ScheduleErrorCode, 400 | 403 | 404 | 
   person_not_at_shop: 404, position_not_at_shop: 404, position_retired: 409,
   inputs_unavailable: 503, demand_unavailable: 503, person_settings_unavailable: 503, other_shop_check_unavailable: 503,
   invalid_payload: 400,
+  opening_date_not_in_week: 422, opening_start_invalid: 422, opening_no_proposal: 409, opening_nothing_to_decline: 409, opening_nothing_to_clear: 409,
+  feature_not_ready: 503,
 };
 
 /** The status of a refusal. */

@@ -32,8 +32,9 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { BusinessReportError, loadBusinessReport, resolveBusinessRange } from "@/lib/business-report";
+import { BusinessReportError, assertBusinessSurface, loadBusinessReport, resolveBusinessAccess, resolveBusinessRange } from "@/lib/business-report";
 import { businessReportEnabled, businessReportRefusal, parseBusinessRangeRequest } from "@/lib/business-report-shared";
+import { reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { businessView } from "@/lib/business-view-shared";
 import { businessPdf, type BusinessPdf } from "@/lib/business-report-pdf";
 import {
@@ -165,6 +166,14 @@ async function salesExportTable(auth: AuthContext, params: Params, shop: ShopRef
  * Compare loads the previous range through the same loader; last year is `no_data_yet` until 2027-07-23.
  * Past the Sales row cap: 413, never a cut file. Like every other family, a DOWNLOAD is not gated by the
  * digest delivery mode (that switch only stops sending); the family has its own switch, checked first.
+ *
+ * WHAT A GM MAY DOWNLOAD (business report access, 2026-11-19) is the MoO+ setting, judged TWICE by the one rule
+ * (`assertBusinessSurface`): (1) on the settings as they are now, before anything is loaded — the early refusal,
+ * and the whole answer for a request that loads nothing (an empty range); (2) on the access each loaded report was
+ * BUILT AND CUT with, after the load(s) and before any row or file is made — THE authority: a download or a tab
+ * switched off between the two is refused here, and Compare's two periods built under different settings are
+ * refused (409 business_access_changed), never mixed into one file. The loader cut the report: the file holds
+ * nothing a GM may not see.
  */
 async function businessExportTable(auth: AuthContext, params: Params, shop: ShopRef, today: string): Promise<Pick<ExportTable, "columns" | "rows" | "from" | "to" | "fileFamily" | "notices" | "pdf">> {
   const tab = isBusinessExportTab(params.tab) ? params.tab : "overview";
@@ -173,6 +182,13 @@ async function businessExportTable(auth: AuthContext, params: Params, shop: Shop
   // is ever assumed); one with no closed day is an explicit file over the ASKED period, and nothing is loaded.
   const request = parseBusinessRangeRequest(params, today);
   const fileFamily = tab === "overview" ? "business" : `business-${tab}`;
+  try {
+    // (1) The settings as they are now: off downloads, an off tab, the report off for GMs, a store we cannot read.
+    assertBusinessSurface([{ access: await resolveBusinessAccess(viewer) }], tab, { download: true });
+  } catch (error) {
+    if (error instanceof BusinessReportError) throw new ExportError(error.status, error.code);
+    throw error;
+  }
   if (request.kind === "empty") {
     const reason = request.reason;
     if (reason === "dates_missing" || request.period === null) throw new ExportError(400, "range_dates_missing");
@@ -184,21 +200,20 @@ async function businessExportTable(auth: AuthContext, params: Params, shop: Shop
   }
   const range = request.range;
   try {
+    const current = await loadBusinessReport(viewer, { locationId: shop.id, range });
+    const earlier = tab === "compare" ? await loadBusinessReport(viewer, { locationId: shop.id, range: resolveBusinessRange({ range: "custom", ...range.previous }, today) }) : null;
+    // (2) THE authority: the access the report(s) were built with. Before any view, row or file.
+    assertBusinessSurface(earlier ? [current, earlier] : [current], tab, { download: true });
     // The file is built from the page's VIEW (every figure sealed with its state), never from the DTO.
-    const dto = businessView(await loadBusinessReport(viewer, { locationId: shop.id, range }));
+    const dto = businessView(current);
+    const previousView = earlier ? businessView(earlier) : null;
     let rows: ExportRow[];
-    let previousView: ReturnType<typeof businessView> | null = null;
     switch (tab) {
       case "overview": rows = businessOverviewRows(dto, shop); break;
       case "hours": rows = businessHoursRows(dto, shop); break;
       case "channels": rows = businessChannelRows(dto, shop); break;
       case "people": rows = businessPeopleRows(dto, shop); break;
-      case "compare": {
-        const previous = businessView(await loadBusinessReport(viewer, { locationId: shop.id, range: resolveBusinessRange({ range: "custom", ...range.previous }, today) }));
-        previousView = previous;
-        rows = businessCompareRows(dto, previous, shop);
-        break;
-      }
+      case "compare": rows = businessCompareRows(dto, previousView, shop); break;
     }
     // Fix round 1: every tab that reads the cuts (all but Compare, whose total row carries breakdown_state) says
     // in the file which days it covers when it leaves any out; never a partial total as the whole period. Polish:
@@ -247,6 +262,9 @@ export function assertExportShop(auth: AuthContext, family: ExportFamily, locati
 
 /** The family's own role floor (mirrors each page's redirect), checked before any database work. */
 export function assertFamilyFloor(auth: AuthContext, family: ExportFamily, env: Record<string, string | undefined> = process.env): void {
+  // Nav spec PR S1: the whole report family refuses the social media manager by ROLE (the route refuses first;
+  // this keeps the loader closed to any other caller).
+  if (!reportsRoleAllowed(auth.role)) throw new ExportError(403, "forbidden");
   // Item 9c: the business family is dark until its three switches agree, then GM / MoO / Owner / CGS by ROLE.
   if (family === "business") {
     if (!businessReportEnabled(env)) throw new ExportError(503, "business_report_unavailable");

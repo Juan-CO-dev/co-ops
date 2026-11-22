@@ -20,22 +20,11 @@ import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { canTransferCatering } from "@/lib/catering/transfers-shared";
+import { canManageCateringToastSettings } from "@/lib/catering/catering-toast-settings-shared";
+import { CATERING_EDITORS } from "@/lib/nav/legacy";
 
-const EDITORS: { id: string; i18nKey: TranslationKey; href: string; minLevel: number }[] = [
-  { id: "packages",    i18nKey: "admin.catering.hub.packages",    href: "/admin/catering/packages",    minLevel: 6 },
-  { id: "menu",        i18nKey: "admin.catering.hub.menu",        href: "/admin/catering/menu",        minLevel: 7 },
-  { id: "pricing",     i18nKey: "admin.catering.hub.pricing",     href: "/admin/catering/pricing",     minLevel: 8 },
-  { id: "rate-rules",  i18nKey: "admin.catering.hub.rate_rules" as TranslationKey, href: "/admin/catering/rate-rules", minLevel: 8 },
-  { id: "capacity",    i18nKey: "admin.catering.hub.capacity",    href: "/admin/catering/capacity",    minLevel: 7 },
-  { id: "zones",       i18nKey: "admin.catering.hub.zones",       href: "/admin/catering/zones",       minLevel: 7 },
-  { id: "faq",         i18nKey: "admin.catering.hub.faq",         href: "/admin/catering/faq",         minLevel: 6 },
-  { id: "prep-demand",  i18nKey: "admin.catering.prep_demand.card" as TranslationKey, href: "/admin/catering/prep-demand",  minLevel: 6 },
-  { id: "lto",         i18nKey: "admin.catering.hub.lto" as TranslationKey,           href: "/admin/catering/lto",         minLevel: 6 },
-  { id: "fulfillment", i18nKey: "admin.catering.hub.fulfillment" as TranslationKey,   href: "/admin/catering/fulfillment", minLevel: 7 },
-  // Cross-link to the operational catering workspace (pipeline/quotes/customers) —
-  // the two hubs were siloed (council E finding). Any admin viewer (>=6) can reach it.
-  { id: "workspace",   i18nKey: "admin.catering.hub.staff_workspace" as TranslationKey, href: "/catering", minLevel: 6 },
-];
+// The editor cards, derived from the destination list (lib/nav/legacy.ts), plus the cross-link to the workspace.
+const EDITORS = CATERING_EDITORS;
 
 export default async function AdminCateringHubPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -72,6 +61,10 @@ export default async function AdminCateringHubPage() {
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {canTransferCatering(auth.user.role) && <Link href="/admin/catering/ezcater-review" className="co-card co-card-interactive p-4 font-semibold text-co-text">
           {serverT(lang, "admin.ezcaterReview.title")}
+        </Link>}
+        {/* Item 21 PR 5: the Toast cross-check settings, Owner / CGS / MoO by role (the page and its routes re-check). */}
+        {canManageCateringToastSettings(auth.user.role) && <Link href="/admin/catering/toast" className="co-card co-card-interactive p-4 font-semibold text-co-text">
+          {serverT(lang, "admin.catering.hub.toast")}
         </Link>}
         {visible.map((e) => (
           <Link key={e.id} href={e.href} className="co-card co-card-interactive flex items-center justify-between gap-2 p-4 text-co-text">

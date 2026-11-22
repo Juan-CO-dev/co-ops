@@ -1,5 +1,6 @@
 /** Stateless people/quarter rules. No runtime or type dependency on the validator. */
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
+import { cateringPrepWindowQ } from "./catering-day-shared";
 import type { DayContext, RulePerson } from "./context-shared";
 import type { LeaderSetting, ScheduleStructure, StructurePosition } from "./structure-shared";
 
@@ -123,9 +124,11 @@ export function legalHoldPath(p: RulePerson, positionId: string, day: Pick<DayCo
  * event with a time, else the structure's default catering window — every booked event, whatever its headcount.
  */
 export function cateringWindows(day: Pick<DayContext, "structure" | "inputs">): Array<[number, number]> {
-  const c = day.structure.catering;
-  return [...day.inputs.cateringEvents].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((ev): [number, number] =>
-    ev.eventQ === null ? [c.defaultStartQ, c.defaultEndQ] : [Math.max(0, ev.eventQ - c.leadMinutes / 15), ev.eventQ]);
+  // PR SCH (site D): the one window formula (`cateringPrepWindowQ`, PR 5); output unchanged.
+  return [...day.inputs.cateringEvents].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((ev): [number, number] => {
+    const [from, to] = cateringPrepWindowQ(ev.eventQ, day.structure.catering);
+    return [from, to];
+  });
 }
 
 /** The leader open / close setting allows a shift spanning [fromQ, toQ)? (opens: ends before service close; closes: starts at or after service start) */

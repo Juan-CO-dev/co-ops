@@ -41,6 +41,7 @@ import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operat
  * that policy lives; the long why is in its comment block.
  */
 import { attemptReceivingAutoLink } from "@/lib/email-receipts";
+import { withAbortStrict } from "@/lib/pulse/abort";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
@@ -1175,14 +1176,15 @@ async function insertMissingExpectedCredits(
 
 type DeliveryListRow = { id: string; vendor_id: string; delivery_date: string; invoice_number: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; receipt_url: string | null; email_receipt_id: string | null; created_at: string; purchase_order_id: string | null };
 
-export async function loadRecentDeliveries(actor: AuthContext | PulseScopedReadActor, locationId: string, limit = 20): Promise<DeliveryView[]> {
+export async function loadRecentDeliveries(actor: AuthContext | PulseScopedReadActor, locationId: string, limit = 20, opts?: { signal?: AbortSignal }): Promise<DeliveryView[]> {
   if (isPulseReadActor(actor)) {
     requirePulseReadScope(actor, locationId, RECEIVE_MIN);
   } else {
     requireReceive(actor);
     if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
   }
-  const sb = getServiceRoleClient();
+  // Nav PR 7 (H2): the Dashboard's deadline cancels the list and its hydration reads; no signal = the plain client.
+  const sb = withAbortStrict(getServiceRoleClient(), opts?.signal);
   const { data: rows, error } = await sb.from("vendor_deliveries")
     .select("id, vendor_id, delivery_date, invoice_number, received_by, match_state, delivery_status, receipt_url, email_receipt_id, created_at, purchase_order_id")
     .eq("location_id", locationId).order("delivery_date", { ascending: false }).order("created_at", { ascending: false }).limit(limit)

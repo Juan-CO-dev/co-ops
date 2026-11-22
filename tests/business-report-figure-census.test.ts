@@ -6,7 +6,8 @@
 //   2. VIEW     the view the surfaces receive (lib/business-view-shared.ts) holds no plain money / percent / hours /
 //               count: every number leaf of a real view is either inside a Figure or on the short allowlist of
 //               configuration and identity (targets, the rush rule, how many days a list covers).
-//   3. SOURCE   the surfaces — every file under components/reports-business, the page, and the business section of
+//   3. SOURCE   the surfaces — every file under components/reports-business, the page, the Dashboard strip's labor cell
+//               (components/dashboard/StripLaborCell.tsx, nav PR 8 T-B2, under the SAME rules), and the business section of
 //               lib/report-export-shared.ts — never name a raw amount, a DTO type, a number formatter or a sum. Each
 //               offence is reported BY NAME (file:line, the rule, the text).
 //   4. ROWS     every export row that carries a number names, in `figure_notes`, each figure that is not plain.
@@ -23,7 +24,7 @@ import { resolveBusinessRange } from "@/lib/business-report-shared";
 import { figureCells, figureKindOf, purePctFigure, type Figure } from "@/lib/business-figure-shared";
 import { businessView, type BusinessReportView } from "@/lib/business-view-shared";
 import { BUSINESS_EXPORT_COLUMNS, businessChannelRows, businessCompareRows, businessHoursRows, businessOverviewRows, businessPeopleRows, type ExportRow } from "@/lib/report-export-shared";
-import { A, fakeClient } from "./helpers/business-report-fake";
+import { A, fakeClient, gmOff, type FakeOpts } from "./helpers/business-report-fake";
 import { PURE_STATES, laborIn, withLabor } from "./helpers/business-report-states";
 import { between, census, code, filesUnder, show, type Offence } from "./helpers/business-figure-census";
 
@@ -32,7 +33,8 @@ const ON = { BUSINESS_REPORT: "1", FACT_LAYER: "1", FACT_LAYER_LABOR: "1" };
 const SHOP = { id: A, code: "MEP", name: "Capitol Hill" };
 const range = resolveBusinessRange({ range: "custom", from: "2026-10-01", to: "2026-10-07" }, "2026-10-08");
 const viewer = (role: "moo" | "gm") => ({ userId: `u-${role}`, level: role === "moo" ? 8 : 7, role, locations: role === "gm" ? [A] : [] as string[] });
-const load = (role: "moo" | "gm" = "moo") => loadBusinessReport(viewer(role), { locationId: A, range }, { client: fakeClient().client, env: ON });
+const load = (role: "moo" | "gm" = "moo", visibility?: FakeOpts["visibility"]) =>
+  loadBusinessReport(viewer(role), { locationId: A, range }, { client: fakeClient({ visibility }).client, env: ON });
 
 // ── 1. Types ────────────────────────────────────────────────────────────────────────────────────
 
@@ -97,12 +99,14 @@ describe("the view: every number is a Figure or named configuration", () => {
     plainNumbers(view, "", found, { n: 0 });
     expect([...found].filter((p) => !PLAIN_NUMBERS.has(p))).toEqual(["total.sales.totalCents"]);
   });
-  it("a GM's view has no cost-per-person and no per-15-minute cost figure at all", async () => {
-    const gm = businessView(await load("gm")), moo = businessView(await load("moo"));
+  it("a view without the two groups has no cost-per-person and no per-15-minute cost figure at all; a GM's default view has both", async () => {
+    const gm = businessView(await load("gm", [gmOff("person_cost", "quarter_cost")])), moo = businessView(await load("moo")), byDefault = businessView(await load("gm"));
     expect(gm.people.every((p) => !("cost" in p))).toBe(true);
     expect(gm.quarters!.every((q) => !("cost" in q) && !("pct" in q))).toBe(true);
-    expect(moo.people.every((p) => "cost" in p)).toBe(true);
-    expect(moo.quarters!.every((q) => "cost" in q && "pct" in q)).toBe(true);
+    for (const v of [moo, byDefault]) {
+      expect(v.people.every((p) => "cost" in p)).toBe(true);
+      expect(v.quarters!.every((q) => "cost" in q && "pct" in q)).toBe(true);
+    }
   });
 });
 
@@ -111,6 +115,8 @@ describe("the view: every number is a Figure or named configuration", () => {
 const COMPONENT_DIR = "components/reports-business";
 const EXPORT_FILE = "lib/report-export-shared.ts";
 const PDF_FILE = "lib/business-report-pdf.ts";
+/** Nav PR 8 (T-B2, A8): the Dashboard strip's labor cell, the only strip file that renders a business-report figure. */
+const STRIP_LABOR_FILE = "components/dashboard/StripLaborCell.tsx";
 const EXPORT_BEGIN = "// ── Business rows (item 9c";
 const EXPORT_END = "/** `{family}_{shop-code}_{from}_{to}.{ext}`";
 
@@ -126,6 +132,8 @@ function surfaceOffences(): Offence[] {
   out.push(...census(EXPORT_FILE, exp, { only: between(exp, EXPORT_BEGIN, EXPORT_END) }));
   // Polish: the readable PDF is a surface too (it prints figures): the page's rules, whole file.
   out.push(...census(PDF_FILE, readFileSync(path.join(ROOT, PDF_FILE), "utf8")));
+  // Nav PR 8 (T-B2): the strip's labor cell, whole file, the unchanged RULES and ALLOWED_IMPORTS.
+  out.push(...census(STRIP_LABOR_FILE, readFileSync(path.join(ROOT, STRIP_LABOR_FILE), "utf8")));
   return out;
 }
 
@@ -173,6 +181,22 @@ describe("the surfaces: no raw amount, no DTO, no number formatter, no sum", () 
       expect(found.every((o) => o.line === 2)).toBe(true);
       expect(show(found).join("\n")).toContain(rule);
       expect(show(found)[0]).toMatch(/^components\/reports-business\/Planted\.tsx:2 {2}/);
+    });
+  }
+  // Nav PR 8 (T-B2): a leak planted in the strip's labor cell fails by name, under the unchanged rules.
+  for (const [line, rule] of [
+    ["<span>{formatCents(1, language)}</span>", "a number formatter"],
+    ["const shown = pick.view.loadedPct.value;", "a figure's number read directly"],
+    ["const n = Number(day.date);", "arithmetic on report values"],
+    ["const x = days.reduce((s, d) => s, 0);", "arithmetic on report values"],
+  ] as const) {
+    it(`StripLaborCell: fails by name on: ${line}`, () => {
+      const src = readFileSync(path.join(ROOT, STRIP_LABOR_FILE), "utf8");
+      const planted = `${src}\n${line}\n`;
+      const found = show(census(STRIP_LABOR_FILE, planted));
+      expect(found.length, line).toBeGreaterThan(0);
+      expect(found.join("\n")).toContain(rule);
+      expect(found[0]).toMatch(/^components\/dashboard\/StripLaborCell\.tsx:\d+ {2}/);
     });
   }
   it("a comment may talk about cents; code may not", () => {

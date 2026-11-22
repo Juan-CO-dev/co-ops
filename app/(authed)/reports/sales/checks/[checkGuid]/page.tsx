@@ -18,6 +18,7 @@ import { canReadScopedReport } from "@/lib/report-scope";
 import { SALES_READ_MIN, SalesReportError, loadSalesCheckDetail, salesDayParams, type SalesCheckDetail } from "@/lib/sales-reports";
 import { operationalNow } from "@/lib/midshift";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 
 type Params = Record<string, string | undefined>;
 /** Toast payment types (system keys) rendered through i18n; anything else reads "Other". */
@@ -27,6 +28,8 @@ export default async function SalesCheckPage({ params, searchParams }: { params:
   const [{ checkGuid: rawGuid }, query] = await Promise.all([params, searchParams]);
   const checkGuid = decodeURIComponent(rawGuid);
   const auth = await requireSessionFromHeaders("/reports/sales/checks");
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read.
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
   if (auth.level < SALES_READ_MIN) redirect("/reports");
   const viewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
   const locationId = query.location;

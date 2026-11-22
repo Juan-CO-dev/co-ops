@@ -29,6 +29,7 @@ import {
   type Viewer,
 } from "@/lib/reports-hub";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { peopleActorFromAuth } from "@/lib/people/access-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -55,6 +56,8 @@ interface PageProps {
 
 export default async function ReportDetailPage({ params, searchParams }: PageProps) {
   const auth = await requireSessionFromHeaders("/reports");
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read.
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
   const { type: typeParam, id } = await params;
   const context = await searchParams;
   const { location: locationParam } = context;

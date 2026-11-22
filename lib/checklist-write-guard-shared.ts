@@ -1,4 +1,5 @@
-import { SHOP_TASK_ALL_LOCATIONS_LEVEL } from "./locations";
+import type { RoleCode } from "./roles";
+import { holdsAllShops } from "./shop-access-shared";
 
 /** R7 policy floor only. Existing assignment, PIN, item validation and hard gates
  * remain additional app requirements; these predicates do not replace them. */
@@ -24,15 +25,20 @@ export interface ChecklistWriteTarget {
 /**
  * Audit W05B (Juan 2026-11-15: "we routinely do tasks at the shops depending on what's needed and
  * who is available"): the shop rule of every checklist task writer — getOrCreateInstance's create
- * branch, completeItem, submitBatch, confirmInstance — and of the closing page's write UI. An ACTIVE
- * actor who is an active member of the shop (`locations` holds active memberships only), or level 8+
- * (MoO, owner, CGS) at any shop with no membership row. Below level 8 the membership stays required.
- * The correction writers (requireCorrectionShop) and tagActualCompleter apply the same rule; SQL
- * repeats it under the instance lock (checklist_actor_level, 0318).
+ * branch, completeItem, submitBatch, confirmInstance — of the closing page's write UI, and of the
+ * correction writers (requireCorrectionShop), tagActualCompleter and its picker. An ACTIVE actor who
+ * is an active member of the shop (`locations` holds active memberships only), or whose ROLE holds
+ * the `tasks` surface (lib/shop-access-shared.ts: MoO, owner, CGS) at any shop with no membership
+ * row. Everyone else needs the membership. SQL repeats it under the instance lock
+ * (checklist_actor_level, 0318: level >= 8, the same three roles; the twin moves to the role set in
+ * the all-shops access plan's PR 2).
  */
-export function worksShopTasks(actor: ChecklistWriteAuthority, locationId: string): boolean {
-  return actor.active && (actor.locations.includes(locationId) || actor.level >= SHOP_TASK_ALL_LOCATIONS_LEVEL);
+export function worksShopTasks(actor: ShopTaskAuthority, locationId: string): boolean {
+  return actor.active && (actor.locations.includes(locationId) || holdsAllShops(actor.role, "tasks"));
 }
+
+/** The shop-task rule reads the ROLE (the verified checklist actor carries it; level is derived from it). */
+export type ShopTaskAuthority = ChecklistWriteAuthority & { readonly role: RoleCode };
 
 /** The R7 parity model of the pre-0277 PostgREST policies (tests only); not the writer gate. */
 function member(actor: ChecklistWriteAuthority | null, target: ChecklistWriteTarget): actor is ChecklistWriteAuthority {

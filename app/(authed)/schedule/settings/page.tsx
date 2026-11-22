@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { StepUpProvider } from "@/components/admin/StepUpProvider";
+import { BackLink } from "@/components/nav/BackLink";
 import { ScheduleSettings } from "@/components/schedule/ScheduleSettings";
 import { stepUpEditWindowMs } from "@/lib/admin/step-up";
 import { serverT } from "@/lib/i18n/server";
@@ -38,6 +39,7 @@ export default async function ScheduleSettingsPage({ searchParams }: { searchPar
   });
   return (
     <main className="mx-auto grid w-full max-w-5xl min-w-0 gap-4 px-4 pb-10 pt-2">
+      <BackLink search={`?loc=${encodeURIComponent(selected.id)}`} />
       <header className="grid gap-1">
         <h1 className="text-2xl font-bold text-co-text">{serverT(language, "schedule.settings.page_title")} · {selected.name}</h1>
         <p className="text-sm text-co-text-muted">{serverT(language, "schedule.settings.page_intro")}</p>

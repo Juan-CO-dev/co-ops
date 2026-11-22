@@ -9,6 +9,7 @@
 import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { withAbortStrict } from "@/lib/pulse/abort";
 import type { AuthContext } from "@/lib/session";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { assertScopeToken, catalogShopAllowed, catalogWriteRoleAllowed, GLOBAL_VERSION_WRITE_MIN } from "@/lib/sku-versions-shared";
@@ -207,9 +208,11 @@ export async function computeShopNotices(sb: Sb, shopId: string, now: string): P
   return computeRecipeNotices({ shopId, versions, dismissals, recipeNames, shopNames, now });
 }
 
-/** The GM's notices page: its own shops (MoO+ any) — the shop write gate (GM floor, role rule, shop bind), in the lib. */
-export async function loadShopNotices(actor: AuthContext, shopId: string): Promise<RecipeNotice[]> {
+/** The GM's notices page: its own shops (MoO+ any) — the shop write gate (GM floor, role rule, shop bind), in the lib.
+ *  `opts.signal` (nav PR 8, the Dashboard's "Needs you"): every read of `computeShopNotices`, its follow-ups and the
+ *  names included, carries it; after an abort no new query is built. No signal = the plain client, as before. */
+export async function loadShopNotices(actor: AuthContext, shopId: string, opts: { signal?: AbortSignal } = {}): Promise<RecipeNotice[]> {
   const gate = recipeVersionWriteGate({ role: actor.user.role, level: actor.level, scope: shopId, scopeAllowed: catalogShopAllowed(actor, shopId) });
   if (!gate.ok) throw new RecipeVersionError(gate.status, gate.code);
-  return computeShopNotices(getServiceRoleClient(), shopId, new Date().toISOString());
+  return computeShopNotices(withAbortStrict(getServiceRoleClient(), opts.signal), shopId, new Date().toISOString());
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { MIDSHIFT_BASE_LEVEL } from "@/lib/midshift-shared";
-import { navDestinationsFor, chipHref } from "@/lib/nav-links";
+import { navDestinationsFor, chipHref, chipHrefForScope } from "@/lib/nav-links";
 import { PRODUCE_MIN } from "@/lib/production";
 import { MAINTENANCE_LINK_LEVEL, PULSE_V2_BASE_LEVEL, canOpenMaintenance, pulsePageAccess } from "@/lib/pulse/scope-shared";
 import { matchPages } from "@/lib/unified-search";
@@ -20,7 +20,7 @@ describe("role navigation", () => {
   });
   it("never advertises a placeholder or the ordering task in navigation", () => {
     for (const level of [2, 3, 4, 5, 6, 7, 9, 10]) {
-      for (const hidden of ["/recipes", "/announcements", "/tips", "/ai", "/rollups", "/deep-cleaning", "/feedback", "/comms", "/ordering"]) expect(hrefs(level)).not.toContain(hidden);
+      for (const hidden of ["/recipes", "/announcements", "/tips", "/deep-cleaning", "/feedback", "/comms", "/ordering"]) expect(hrefs(level)).not.toContain(hidden);
     }
   });
   it("satisfies the destination server floors, including Catering's level-5 page", () => {
@@ -117,7 +117,9 @@ describe("Mid-shift Pulse v2 in navigation (crew get the pulse, Juan 2026-10-12)
   });
   it("every caller passes the v2 switch, and the page lets v2 viewers in before the v1 gate", () => {
     const source = (path: string) => readFileSync(path, "utf8");
-    expect(source("components/DashboardNav.tsx")).toMatch(/navDestinationsFor\(actorLevel, \{[^}]*pulseV2: pulseV2Enabled\(\)/);
+    // Nav PR 7: the Dashboard reads the switches ONCE (lib/nav-switches.ts) and hands them to the "All pages" list.
+    expect(source("components/DashboardNav.tsx")).toMatch(/navDestinationsFor\(actorLevel, \{[^}]*pulseV2: switches\.pulseV2/);
+    expect(source("lib/nav-switches.ts")).toContain("pulseV2: pulseV2Enabled()");
     expect(source("app/(authed)/reports/operations/page.tsx")).toMatch(/matchPages\([^;]*\{ pulseV2: pulseV2Enabled\(\) \}\)/);
     const page = source("app/(authed)/mid-shift/page.tsx");
     expect(page.indexOf("if (pulseV2Enabled())")).toBeGreaterThan(-1);
@@ -145,5 +147,18 @@ describe("chipHref", () => {
     expect(chipHref("/assignments", true, "shop-1")).toBe("/assignments?location=shop-1");
     expect(chipHref("/profile", false, "shop-1")).toBe("/profile");
     expect(chipHref("/reports", true, null)).toBe("/reports");
+  });
+});
+
+describe("chipHrefForScope (the unified search's scope can be the hub's \"all\")", () => {
+  it("passes a real shop through exactly like chipHref", () => {
+    expect(chipHrefForScope("/maintenance", true, "shop-1")).toBe("/maintenance?location=shop-1");
+    expect(chipHrefForScope("/profile", false, "shop-1")).toBe("/profile");
+  });
+  it("keeps \"all\" only for the pages that read it", () => {
+    for (const href of ["/reports", "/reports/trends", "/reports/written"]) expect(chipHrefForScope(href, true, "all")).toBe(`${href}?location=all`);
+  });
+  it("never hands \"all\" to a page that would take it for a shop id", () => {
+    for (const href of ["/maintenance", "/mid-shift", "/assignments", "/operations/production", "/lto", "/catering"]) expect(chipHrefForScope(href, true, "all")).toBe(href);
   });
 });

@@ -69,6 +69,9 @@ class Q {
   or(expr: string) { const p = splitTop(expr).map(parseTerm); this.preds.push((r) => p.some((f) => f(r))); return this; }
   order(c: string, o?: { ascending?: boolean }) { this.sortCol = c; this.sortAsc = o?.ascending ?? true; return this; }
   limit(n: number) { this.max = n; return this; }
+  // Nav PR 6: the Prep demand read pages (ruling 9).
+  range(from: number, to: number) { this.skip = from; this.max = to - from + 1; return this; }
+  private skip = 0;
   returns() { return this; }
   update(patch: Row) { this.mode = "update"; this.patch = patch; return this; }
   insert(rows: Row | Row[]) { this.mode = "insert"; this.toInsert = Array.isArray(rows) ? rows : [rows]; return this; }
@@ -91,7 +94,7 @@ class Q {
       const c = this.sortCol;
       matched = [...matched].sort((a, b) => (String(a[c]) < String(b[c]) ? -1 : String(a[c]) > String(b[c]) ? 1 : 0) * (this.sortAsc ? 1 : -1));
     }
-    if (this.max != null) matched = matched.slice(0, this.max);
+    if (this.max != null) matched = matched.slice(this.skip, this.skip + this.max);
     const out = matched.map((r) => ({ ...r }));
     return { data: out, error: null, count: out.length };
   }

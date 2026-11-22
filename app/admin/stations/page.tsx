@@ -4,7 +4,8 @@ import { resolveShop } from "@/lib/shop-context";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { accessibleLocations } from "@/lib/locations";
-import { loadShiftBoard } from "@/lib/assignments";
+import { loadShiftBoard, loadStationDayFlags } from "@/lib/assignments";
+import type { StationDayFlagsView } from "@/lib/assignments-shared";
 import { syncStationsFromClosing } from "@/lib/closing-stations";
 import { closingStations } from "@/lib/closing-stations-shared";
 import { etCalendarDate } from "@/lib/operational-day";
@@ -36,11 +37,15 @@ export default async function StationsPage({ searchParams }: { searchParams: Pro
     .eq("template_id", latest.id).eq("active", true) : null;
   if (closingItems?.error) throw closingItems.error;
   const translatedNames = closingStations(closingItems?.data ?? []).filter((station) => station.nameEs).map((station) => station.name);
+  // Nav PR 6 (0353): the two station day flags. Before 0353 is applied the read answers "not installed" (no toggle).
+  const flags = selected ? await loadStationDayFlags(sb, selected.id) : null;
+  const flagsView: StationDayFlagsView | undefined = flags === null ? undefined
+    : flags.installed ? { installed: true, midDayStationId: flags.midDayStationId, notPhaseIds: [...flags.notPhaseIds] } : { installed: false };
   const language = auth.user.language;
   return <div className="space-y-4">
-    <h1 className="text-2xl font-bold text-co-text">{serverT(language, "assignments.stations")}</h1>
+    <h1 className="text-2xl font-bold text-co-text">{serverT(language, "admin.section.stations")}</h1>
     <p>{serverT(language, "assignments.stationsFromClosing")} <Link className="underline" href="/admin/checklist-templates/closing">{serverT(language, "assignments.editClosing")}</Link></p>
     <nav aria-label={serverT(language, "assignments.locations")} className="flex flex-wrap gap-2">{locations.map((location) => <Link key={location.id} href={`/admin/stations?loc=${location.id}`} aria-current={location.id === selected?.id ? "page" : undefined} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border px-3 font-bold text-co-text aria-[current=page]:border-co-text">{location.name}</Link>)}</nav>
-    {board ? <StationsAdmin key={board.locationId} locationId={board.locationId} stations={board.stations} translatedNames={translatedNames} canEdit={auth.level >= 7} canEditTiming={auth.level >= 7} /> : <p>{serverT(language, "assignments.noLocation")}</p>}
+    {board ? <StationsAdmin key={board.locationId} locationId={board.locationId} stations={board.stations} translatedNames={translatedNames} canEdit={auth.level >= 7} canEditTiming={auth.level >= 7} flags={flagsView} /> : <p>{serverT(language, "assignments.noLocation")}</p>}
   </div>;
 }

@@ -1,10 +1,12 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { isInboxSchemaMissing } from "./inbox-schema-shared";
+import { withAbortStrict } from "@/lib/pulse/abort";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import type { AuthContext } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { getRoleLevel, isRoleCode, type RoleCode } from "@/lib/roles";
-import { canReadCateringInbox, inboxGroup, type InboxClassification, type InboxDisposition, type InboxIdentity, type InboxReason, type InboxGroup, type InboxReader } from "./inbox-shared";
+import { canReadCateringInbox, inboxGroup, INBOX_NEEDS_REPLY_DISPOSITIONS, type InboxClassification, type InboxDisposition, type InboxIdentity, type InboxReason, type InboxGroup, type InboxReader } from "./inbox-shared";
 import { inboxSendable, type InboxDeliveryErrorCode, type InboxDeliveryState, type InboxMode } from "./inbox-delivery-shared";
 
 export class CateringInboxError extends Error {
@@ -40,10 +42,12 @@ export function canChangeCateringInboxMode(role: RoleCode): boolean { return rol
 const SUMMARY = "id,inbound_message_id,location_id,sender_address,subject,received_at,disposition,classification,identity_status,reason,assigned_to,revision";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function roleAllowed(role: RoleCode) { return isRoleCode(role) && ( role === "gm" || role === "catering_mgr" || getRoleLevel(role) >= 8); }
-/** Reject disallowed session roles before any I/O; then re-read role and active memberships. */
-export async function inboxReader(ctx: AuthContext): Promise<InboxReader> {
+/** Reject disallowed session roles before any I/O; then re-read role and active memberships. `client` (nav PR 8, A3):
+ *  the Dashboard passes its abortable client so these authorization reads stop at the page deadline too; every other
+ *  caller passes nothing (the plain client). The client is made only after the session role check. */
+export async function inboxReader(ctx: AuthContext, client: () => SupabaseClient = getServiceRoleClient): Promise<InboxReader> {
   if (!ctx.user.active || !roleAllowed(ctx.user.role)) throw new CateringInboxError(403, "forbidden");
-  const db = getServiceRoleClient();
+  const db = client();
   const { data: user, error } = await db.from("users").select("role,active").eq("id", ctx.user.id).maybeSingle();
   if (error) throw new CateringInboxError(500, "read_failed");
   if (!user?.active || !roleAllowed(user.role as RoleCode)) throw new CateringInboxError(403, "forbidden");
@@ -101,6 +105,43 @@ export async function listCateringInbox(ctx: AuthContext, assignedTo?: string): 
   }
   return { messages: messages.filter(r => !assignedTo || (assignedTo === "unassigned" ? r.assigned_to === null : r.assigned_to === assignedTo)).sort((a,b) => Number(b.reason === "urgent") - Number(a.reason === "urgent") || a.received_at.localeCompare(b.received_at)),
     mode: settings.mode, assignees: await candidates(actor), settings, canChangeMode: canChangeCateringInboxMode(actor.role) };
+}
+/** Company-wide inbox readers (the catering manager, level 8+) also see the messages not tied to a shop. */
+function readsUnplaced(actor: InboxReader): boolean {
+  return actor.role === "catering_mgr" || getRoleLevel(actor.role) >= 8;
+}
+/**
+ * Nav PR 8 (plan r2 2.15, Q6, Q10): how many catering inbox messages wait for a reply, for the Dashboard. `shop` = the
+ * `needs_reply` rows `listCateringInbox` shows at that shop (the child rows in a needs-reply disposition, plus the
+ * transport rows that have no child yet); `unplaced` = the same with no shop, ONLY for a company-wide reader (a GM gets
+ * null and no line). The reader must be able to read the shop first. Every read, the reader's own included, carries
+ * `opts.signal`. A missing schema is `CateringInboxError(503)`.
+ */
+export async function countCateringInboxWaiting(ctx: AuthContext, shopId: string, opts: { signal?: AbortSignal } = {}): Promise<{ shop: number; unplaced: number | null }> {
+  let made: SupabaseClient | null = null;
+  const client = () => (made ??= withAbortStrict(getServiceRoleClient(), opts.signal));
+  const actor = await inboxReader(ctx, client);
+  const db = client();
+  if (!UUID.test(shopId) || !canReadCateringInbox(actor, shopId)) throw new CateringInboxError(403, "forbidden");
+  const count = async (q: PromiseLike<{ count: number | null; error: unknown }>): Promise<number> => {
+    const r = inboxResult(await q);
+    if (r.error || typeof r.count !== "number") throw new CateringInboxError(500, "read_failed");
+    return r.count;
+  };
+  const waiting = (where: { shop: string } | "unplaced") => {
+    const children = db.from("catering_inbound_messages").select("id", { count: "exact", head: true }).in("disposition", [...INBOX_NEEDS_REPLY_DISPOSITIONS]);
+    const transports = db.from("inbound_messages").select("id,catering_inbound_messages!left(id)", { count: "exact", head: true })
+      .eq("lane", "catering").in("content_state", ["pending", "failed", "blocked_config"]).is("catering_inbound_messages", null);
+    return Promise.all([
+      count(where === "unplaced" ? children.is("location_id", null) : children.eq("location_id", where.shop)),
+      count(where === "unplaced" ? transports.is("location_id", null) : transports.eq("location_id", where.shop)),
+    ]).then(([a, b]) => a + b);
+  };
+  const [shop, unplaced] = await Promise.all([
+    waiting({ shop: shopId }),
+    readsUnplaced(actor) && canReadCateringInbox(actor, null) ? waiting("unplaced") : Promise.resolve(null),
+  ]);
+  return { shop, unplaced };
 }
 export async function getCateringInboxMessage(ctx: AuthContext, id: string): Promise<InboxDetail> {
   const actor = await inboxReader(ctx);

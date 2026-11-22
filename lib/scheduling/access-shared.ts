@@ -19,6 +19,9 @@ import type { ScheduleErrorCode } from "./errors-shared";
 export const SCHEDULE_ACTS = [
   "view", "reconciliation", "generate", "edit", "regenerate", "budget", "presence", "day_type", "person_settings",
   "approve", "structure", "shop_switch", "wage_estimates", "tunables",
+  // PR SCH: a per-date earlier opening (open earlier / accept / decline / clear) — GM own, MoO+ any; never an AGM (it is
+  // not in AGM_EDIT_ACTS, so `agm_access = 'edit'` does not reach it), never the catering / prep / social media manager.
+  "opening",
 ] as const;
 export type ScheduleAct = (typeof SCHEDULE_ACTS)[number];
 
@@ -84,8 +87,7 @@ export function canSeeScheduleMoney(actor: PeopleActor, locationId: string): boo
 /**
  * Board two labor views PR 3 (plan r4, Juan: "GM sees hours per hour plus day and week totals; sub-day $ and % need
  * person_money"): with SCHEDULE_LABOR_VIEWS on, labor $ and % per HOUR (the board's straight-time % by hour and the
- * forecast $ by hour) are for MoO / Owner / CGS only, by trusted ROLE (`canSeeQuarterLaborCost`, the business report's
- * one switch), at a shop they may see money for. A GM keeps the day and week totals and sees hours per hour. Switch off,
+ * forecast $ by hour) are for MoO / Owner / CGS only, by trusted ROLE (`canSeeQuarterLaborCost`), at a shop they may see money for. A GM keeps the day and week totals and sees hours per hour. Switch off,
  * nothing changes (the board's pre-PR 3 per-hour % stays the GM's).
  */
 export function canSeeSubDayLaborMoney(actor: PeopleActor, locationId: string): boolean {
@@ -132,7 +134,7 @@ export function canViewReconciliation(actor: PeopleActor, locationId: string): b
  * only `confirmed_overwrite` (J12).
  */
 export function stepUpFor(act: ScheduleAct, ctx: { confirmedEditedWeeks: number }): null | "B" | "E" {
-  if (act === "approve") return "B";
+  if (act === "approve" || act === "opening") return "B";
   if (act === "regenerate") return ctx.confirmedEditedWeeks > 0 ? "B" : null;
   if (act === "structure" || MOO_ONLY_ACTS.includes(act)) return "E";
   return null;

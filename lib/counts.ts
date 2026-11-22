@@ -66,6 +66,7 @@ import { auditOperationalTaskOverride, canDoOperationalTask } from "@/lib/operat
  * Every UPDATE checks error AND rowcount (AGENTS.md silent-UPDATE law). Audited.
  */
 
+import { withAbortStrict } from "@/lib/pulse/abort";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
@@ -2195,6 +2196,7 @@ export interface CountsTileState {
 export async function loadCountsTileState(
   actor: AuthContext,
   locationId: string,
+  opts?: { signal?: AbortSignal },
 ): Promise<CountsTileState> {
   requireLevel(actor, COUNT_WRITE_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) {
@@ -2205,7 +2207,8 @@ export async function loadCountsTileState(
   if (getRoleLevel(actor.user.role) < COUNT_READ_MIN && !(await canDoOperationalTask(actor, locationId, "counts"))) {
     throw new CountError(403, "forbidden");
   }
-  const sb = getServiceRoleClient();
+  // Nav PR 7 (H2): the Dashboard's deadline cancels the tile's reads (every page); no signal = the plain client.
+  const sb = withAbortStrict(getServiceRoleClient(), opts?.signal);
 
   // (1) All active count events at this location. PAGED (the PR #63 lesson):
   // one row per session accumulates forever, and a truncated page would both

@@ -11,9 +11,16 @@
  * constants, how many days / weeks a list covers. tests/business-report-figure-census.test.ts pins both halves:
  * the surfaces never import the DTO or touch a raw amount, and this type holds no plain figure.
  *
+ * ACCESS (business report access, 2026-11-19; lib/business-access-shared.ts). The DTO this module receives was
+ * already CUT by the loader: a group the viewer may not see is not in it. The view follows `dto.access` (never a
+ * missing key): a figure of a hidden group is ABSENT from the view (an optional field, so a surface that forgets
+ * to skip it does not compile), a hidden list is empty and its `empty.*` claim is UNKNOWN with "not included in
+ * this view" (an absent list can never read "none").
+ *
  * Pure: zero I/O, client-safe (the DTO is a type-only import).
  */
-import type { BusinessReportDto, BusinessDayDto, BusinessQuarterDto } from "@/lib/business-report";
+import type { BusinessAccess } from "@/lib/business-access-shared";
+import type { BusinessReportDto, BusinessDayDto, BusinessLaborDto, BusinessQuarterDto } from "@/lib/business-report";
 import {
   breakdownCoverage, laborHoursComplete, quarterFigures, salesAmountMissing, sumBusinessDays,
   type BreakdownCoverage, type BusinessRange, type CutTotal, type CutsState, type DenominatorState, type LaborFigures, type LaborState, type LoadedState,
@@ -36,13 +43,21 @@ export interface SalesView {
   amountMissing: Figure;
 }
 export interface LaborView {
-  state: LaborState; loadedState: LoadedState; netState: DenominatorState;
+  state: LaborState; netState: DenominatorState;
+  /** Null when fully loaded labor is not in this view. */
+  loadedState: LoadedState | null;
   /** Hours are final (every payroll week behind them built, ready and known). */
   hoursFinal: boolean;
-  net: Figure; hours: Figure; otHours: Figure; pureCost: Figure; otPremium: Figure; purePct: Figure; pureTone: LaborTone;
-  salaried: Figure; burden: Figure; loadedCost: Figure; loadedPct: Figure; loadedTone: LaborTone;
-  /** Provenance flags of the SHOWN figures (null when the figure is not shown); the gap count is named either way. */
-  burdenEstimated: boolean | null; salaryEstimated: boolean | null; wageEstimated: boolean | null; hoursUnverified: boolean | null; salaryGaps: number;
+  /** Which money groups this view holds (the report's access). A group that is not shown has NO figure below. */
+  shown: { hourlyCost: boolean; loaded: boolean };
+  net: Figure; hours: Figure; otHours: Figure;
+  /** Hourly labor money: present ONLY where `shown.hourlyCost`. */
+  pureCost?: Figure; otPremium?: Figure; purePct?: Figure; pureTone: LaborTone;
+  /** Fully loaded labor: present ONLY where `shown.loaded`. */
+  salaried?: Figure; burden?: Figure; loadedCost?: Figure; loadedPct?: Figure; loadedTone: LaborTone;
+  /** Provenance flags of the SHOWN figures (null when the figure is not shown); the gap count is named either way
+   * (null when fully loaded labor is not in this view). */
+  burdenEstimated: boolean | null; salaryEstimated: boolean | null; wageEstimated: boolean | null; hoursUnverified: boolean | null; salaryGaps: number | null;
 }
 export interface QuarterView {
   date: string; quarterStartAt: string; wallQuarter: number; basis: string; laborState: LaborState;
@@ -51,7 +66,7 @@ export interface QuarterView {
   /** Something happened in this quarter (a check or a labor minute): the page lists only these. */
   active: boolean;
   checks: Figure; sales: Figure; amountMissing: Figure; hours: Figure;
-  /** Labor dollars and % per 15 minutes: present ONLY where the DTO carries them (QUARTER_COST_MIN, MoO+). */
+  /** Labor dollars and % per 15 minutes: present ONLY where the DTO carries them (access `quarterCost`). */
   cost?: Figure; pct?: Figure;
 }
 /** Polish: one HOUR of a day's 15-minute list (the page shows hours, each opening its quarters; the PDF prints
@@ -61,7 +76,7 @@ export interface HourView {
   hourStartAt: string;
   checks: Figure; sales: Figure; amountMissing: Figure; hours: Figure;
   /** Labor dollars and % (the quarter rule over the hour's sums): present ONLY where the quarters carry them
-   * (QUARTER_COST_MIN, MoO+). */
+   * (access `quarterCost`). */
   cost?: Figure; pct?: Figure;
   quarters: QuarterView[];
 }
@@ -94,13 +109,14 @@ export interface PersonView {
   key: string; label: string | null; source: string; payClass: string; hours: Figure;
   /** null = overtime withheld (weeks still being recounted). */
   overtime: Figure | null; overtimeAny: boolean; weeksWithheld: number;
-  /** Present ONLY where the DTO carries cost per person (PERSON_COST_MIN, MoO+). */
+  /** Present ONLY where the DTO carries cost per person (access `personCost`). */
   cost?: Figure;
 }
 export interface BusinessReportView {
   locationId: string;
   range: BusinessRange;
-  access: { personCost: boolean; quarterCost: boolean };
+  /** What this report holds (the access the loader built and cut it with). Booleans only. */
+  access: BusinessAccess;
   /** Days with complete sales, of the days in the range. */
   salesDays: { covered: number; expected: number };
   /** Which days the channel / server / large-check breakdown covers. */
@@ -115,9 +131,9 @@ export interface BusinessReportView {
   total: { sales: SalesView; labor: LaborView; target: Target; loadedTarget: Target; largeChecks: { any: boolean; checks: Figure; amount: Figure } };
   weeks: WeekView[];
   days: DayView[];
-  /** Every 15 minutes (<= 31 days), else null with `quartersReason`. */
+  /** Every 15 minutes (<= 31 days), else null with `quartersReason` (`not_shared` = not in this view). */
   quarters: QuarterView[] | null;
-  quartersReason: "range_too_wide" | null;
+  quartersReason: "range_too_wide" | "not_shared" | null;
   unassigned: Array<{ date: string; checks: Figure; sales: Figure; amountMissing: Figure }>;
   channels: { included: CutView[]; excluded: CutView[]; ezcater: { orders: Figure; sales: Figure; amountMissing: Figure } };
   servers: CutView[];
@@ -147,19 +163,37 @@ function salesView(s: SalesIn): SalesView {
     amountMissing: coverageFigure("count", missing, s.coverage),
   };
 }
-function laborView(l: LaborFigures): LaborView {
-  const purePct = purePctFigure(l), loadedPct = loadedPctFigure(l), loadedCost = loadedCentsFigure(l, "fullyLoadedCents");
-  const pureCost = pureCentsFigure(l, "pureHourlyCents"), hours = hoursFigure(l);
-  return {
-    state: l.state, loadedState: l.loadedState, netState: l.denominator.state, hoursFinal: laborHoursComplete(l.state),
-    net: netFigure(l), hours, otHours: otHoursFigure(l), pureCost, otPremium: pureCentsFigure(l, "otPremiumCents"),
-    purePct, pureTone: l.pct === null ? "none" : l.tone,
-    salaried: loadedCentsFigure(l, "salariedCents"), burden: loadedCentsFigure(l, "burdenCents"), loadedCost, loadedPct,
-    loadedTone: l.loadedPct === null ? "none" : l.loadedTone,
-    burdenEstimated: figureHasNote(loadedCost, "burden_estimated"), salaryEstimated: figureHasNote(loadedCost, "salary_estimated"),
-    wageEstimated: figureHasNote(pureCost, "wage_estimated"), hoursUnverified: figureHasNote(hours, "hours_unverified"), salaryGaps: l.salaryGaps,
-  };
+/** The money keys a cut DTO may lack, as "nothing here": what the figure builders read when a group is not shown.
+ * Never rendered: `laborView` builds no figure for a group that is not shown. */
+const NOT_SHOWN = { pureHourlyCents: null, otPremiumCents: null, pct: null, tone: "none" as LaborTone, wageEstimated: false,
+  salariedCents: null, burdenCents: null, fullyLoadedCents: null, loadedPct: null, loadedTone: "none" as LaborTone, burdenEstimated: false, salaryEstimated: false, salaryGaps: 0 };
+/** A cut labor DTO with every key (absent ones as "nothing here"), for the builders that take the whole shape. */
+const wholeLabor = (l: BusinessLaborDto): LaborFigures => ({ ...NOT_SHOWN, loadedState: l.state, ...l });
+function laborView(dto: BusinessLaborDto, access: Pick<BusinessAccess, "hourlyCost" | "loaded">): LaborView {
+  const l = wholeLabor(dto);
+  const shown = { hourlyCost: access.hourlyCost, loaded: access.loaded };
+  const hours = hoursFigure(l);
+  const base = { state: l.state, netState: l.denominator.state, hoursFinal: laborHoursComplete(l.state), shown,
+    net: netFigure(l), hours, otHours: otHoursFigure(l), hoursUnverified: figureHasNote(hours, "hours_unverified") };
+  const pureCost = pureCentsFigure(l, "pureHourlyCents"), loadedCost = loadedCentsFigure(l, "fullyLoadedCents");
+  // A group that is not shown has no figure, no tone and no flag: nothing a surface could print.
+  const hourly = shown.hourlyCost
+    ? { pureCost, otPremium: pureCentsFigure(l, "otPremiumCents"), purePct: purePctFigure(l), pureTone: l.pct === null ? "none" as const : l.tone,
+      wageEstimated: figureHasNote(pureCost, "wage_estimated") }
+    : { pureTone: "none" as const, wageEstimated: null };
+  const loaded = shown.loaded
+    ? { loadedState: l.loadedState, salaried: loadedCentsFigure(l, "salariedCents"), burden: loadedCentsFigure(l, "burdenCents"), loadedCost, loadedPct: loadedPctFigure(l),
+      loadedTone: l.loadedPct === null ? "none" as const : l.loadedTone, burdenEstimated: figureHasNote(loadedCost, "burden_estimated"),
+      salaryEstimated: figureHasNote(loadedCost, "salary_estimated"), salaryGaps: l.salaryGaps as number | null }
+    : { loadedState: null, loadedTone: "none" as const, burdenEstimated: null, salaryEstimated: null, salaryGaps: null };
+  return { ...base, ...hourly, ...loaded };
 }
+/** Nav PR 8 (plan r2 2.12): the SAME labor view for the Dashboard's numbers strip, which reads one day's labor from
+ * `loadBusinessLaborDays`. Only `lib/dashboard-blocks.ts` calls it; no surface imports it. */
+export const businessLaborView = laborView;
+
+/** "Not included in this view": the claim of a list the access does not hold (never "none"). */
+const NOT_SHARED = "reports.business.access.not_shared" as const;
 /** Why a day's breakdown (15 minutes, unplaced checks) is not shown: a day with no sales captured says THAT, never
  * "still being rebuilt" (polish). */
 const notShownReason = (day: Pick<BusinessDayDto, "cuts">): FigureKey =>
@@ -175,8 +209,8 @@ function quarterView(q: BusinessQuarterDto, day: BusinessDayDto): QuarterView {
     hours: quarterHoursFigure(q.laborMinutes, day.labor.state, day.labor.hoursUnverified),
   };
   // A GM's quarter has neither key (lib/business-report.ts): the view has neither figure.
-  if ("straightCents" in q) out.cost = quarterCentsFigure(q.straightCents, q.laborMinutes, day.labor);
-  if ("pct" in q) out.pct = quarterPctFigure(q.pct, day.labor);
+  if ("straightCents" in q) out.cost = quarterCentsFigure(q.straightCents, q.laborMinutes, wholeLabor(day.labor));
+  if ("pct" in q) out.pct = quarterPctFigure(q.pct, wholeLabor(day.labor));
   return out;
 }
 /** One hour of a day from its listed quarters (raw, same DTO rows the quarter figures are built from). */
@@ -205,7 +239,7 @@ function hourViews(rows: ReadonlyArray<{ q: BusinessQuarterDto; v: QuarterView }
       // The hour's dollars are known only when every quarter that carries minutes has its dollars.
       const worked = qs.filter((q) => (q.laborMinutes ?? 0) > 0);
       const cents = worked.some((q) => q.straightCents === null || q.straightCents === undefined) ? null : worked.reduce((s, q) => s + (q.straightCents ?? 0), 0);
-      out.cost = quarterCentsFigure(worked.length === 0 ? null : cents, minutes, day.labor);
+      out.cost = quarterCentsFigure(worked.length === 0 ? null : cents, minutes, wholeLabor(day.labor));
     }
     if (qs.every((q) => "pct" in q)) {
       // Fix round 1 (review POLISH-r1 P2): the hour's labor %, by THE quarter rule (quarterFigures) over the hour's
@@ -214,7 +248,7 @@ function hourViews(rows: ReadonlyArray<{ q: BusinessQuarterDto; v: QuarterView }
       const straight = worked.some((q) => q.straightCents === null || q.straightCents === undefined) ? null : worked.reduce((s, q) => s + (q.straightCents ?? 0), 0);
       const sales = all("toastCents");
       out.pct = quarterPctFigure(quarterFigures({ toastCents: sales ?? 0, checks: all("checks") ?? 0, amountMissing: missing, laborMinutes: minutes, straightCents: straight,
-        salesOk: day.cuts === "ok" && sales !== null, laborOk: day.labor.pureHourlyCents !== null && day.labor.state !== "hours_unknown" }).pct, day.labor);
+        salesOk: day.cuts === "ok" && sales !== null, laborOk: wholeLabor(day.labor).pureHourlyCents !== null && day.labor.state !== "hours_unknown" }).pct, wholeLabor(day.labor));
     }
     return out;
   });
@@ -237,6 +271,12 @@ function breakdownNotice(dto: BusinessReportDto, b: BreakdownCoverage): Business
 
 /** The DTO of lib/business-report.ts as the page and the export may see it: every figure sealed with its state. */
 export function businessView(dto: BusinessReportDto): BusinessReportView {
+  const access = dto.access;
+  // A list the access does not hold: no rows, and its "empty" is NOT KNOWN (never "none").
+  const channelCuts = access.channels && dto.channels ? dto.channels : { included: [], excluded: [] };
+  const serverCuts = access.servers && dto.servers ? dto.servers : [];
+  const peopleRows = access.people && dto.people ? dto.people : [];
+  const notShared = emptyClaim(readyFigure(NOT_SHARED));
   const breakdown = breakdownCoverage(dto.days);
   const inWeek = (date: string) => dto.weeks.find((w) => date >= w.from && date <= w.to);
   const quartersByDate = new Map<string, QuarterView[]>();
@@ -264,7 +304,7 @@ export function businessView(dto: BusinessReportDto): BusinessReportView {
     // time (none found = unknown), and baseline days left out are said beside it. One builder decides.
     const rushCount = rushCountFigure(d.rush, cutsReason);
     const un = unassigned.find((u) => u.date === d.date);
-    const sales = salesView(d.sales), labor = laborView(d.labor);
+    const sales = salesView(d.sales), labor = laborView(d.labor, access);
     const listed = (quartersByDate.get(d.date) ?? []).filter((q) => q.active);
     // The breakdown's own reason (a day with no sales captured is not "rebuilding").
     const notShown: FigureKey | null = ok ? null : d.cuts === "sales_not_covered" ? "reports.business.sales.not_captured" : "reports.business.cuts.rebuilding";
@@ -293,13 +333,13 @@ export function businessView(dto: BusinessReportDto): BusinessReportView {
     toastAmountMissing: sumOf("toastAmountMissing"), ezcaterMissing: sumOf("ezcaterMissing"),
   });
   const largeTotal = { checks: breakdownFigure("count", dto.largeChecks.checks, breakdown), amount: breakdownFigure("cents", dto.largeChecks.cents, breakdown) };
-  const totalLabor = dto.total.labor;
-  const totalLaborView = laborView(totalLabor);
+  const totalLabor = wholeLabor(dto.total.labor);
+  const totalLaborView = laborView(dto.total.labor, access);
   // Fix round 7: an empty list is a claim. The breakdown lists are drawn from the days whose breakdown is ready;
   // the people list from the range's hours.
   const breakdownEmpty = (rows: readonly unknown[]) => (rows.length > 0 ? null : emptyClaim(breakdownFigure("count", 0, breakdown)));
   return {
-    locationId: dto.locationId, range: dto.range, access: dto.access,
+    locationId: dto.locationId, range: dto.range, access,
     salesDays: { covered: dto.days.filter((d) => d.sales.coverage === "complete").length, expected: dto.days.length },
     breakdown, breakdownNotice: breakdownNotice(dto, breakdown),
     breakdownLeftOut: dto.range.empty || breakdown.state === "complete" ? null
@@ -308,23 +348,26 @@ export function businessView(dto: BusinessReportDto): BusinessReportView {
       largeChecks: { any: figureIsPositive(largeTotal.checks), ...largeTotal } },
     weeks: dto.weeks.map((w) => ({
       weekStart: w.weekStart, from: w.from, to: w.to, target: w.target, loadedTarget: w.loadedTarget,
-      sales: salesView(sumBusinessDays(dto.days.filter((d) => d.date >= w.from && d.date <= w.to).map((d) => d.sales))), labor: laborView(w.labor),
+      sales: salesView(sumBusinessDays(dto.days.filter((d) => d.date >= w.from && d.date <= w.to).map((d) => d.sales))), labor: laborView(w.labor, access),
     })),
     days, quarters, quartersReason: dto.quarters === null ? dto.quartersReason ?? "range_too_wide" : null, unassigned,
     channels: {
-      included: dto.channels.included.map((c) => cutView(c, breakdown)), excluded: dto.channels.excluded.map((c) => cutView(c, breakdown)),
+      included: channelCuts.included.map((c) => cutView(c, breakdown)), excluded: channelCuts.excluded.map((c) => cutView(c, breakdown)),
       ezcater: { orders: totalSales.ezcaterOrders, sales: totalSales.ezcater, amountMissing: coverageFigure("count", sumOf("ezcaterMissing"), dto.total.sales.coverage) },
     },
-    servers: dto.servers.map((c) => cutView(c, breakdown)),
-    people: dto.people.map((p): PersonView => {
+    servers: serverCuts.map((c) => cutView(c, breakdown)),
+    people: peopleRows.map((p): PersonView => {
       const overtime = p.otMinutes === null ? null : minutesFigure(p.otMinutes, totalLabor.state, totalLabor.hoursUnverified);
       const out: PersonView = { key: `${p.personKey}|${p.source}|${p.payClass}`, label: p.label, source: p.source, payClass: p.payClass,
         hours: minutesFigure(p.minutes, totalLabor.state, totalLabor.hoursUnverified), overtime, overtimeAny: overtime !== null && figureIsPositive(overtime), weeksWithheld: p.weeksSuppressed };
       if ("straightCostCents" in p) out.cost = personCostFigure(p.straightCostCents, p.payClass, totalLabor);
       return out;
     }),
-    empty: { channels: breakdownEmpty(dto.channels.included), excluded: breakdownEmpty(dto.channels.excluded), servers: breakdownEmpty(dto.servers),
-      people: dto.people.length > 0 ? null : emptyClaim(totalLaborView.hours) },
+    empty: {
+      channels: access.channels ? breakdownEmpty(channelCuts.included) : notShared, excluded: access.channels ? breakdownEmpty(channelCuts.excluded) : notShared,
+      servers: access.servers ? breakdownEmpty(serverCuts) : notShared,
+      people: !access.people ? notShared : peopleRows.length > 0 ? null : emptyClaim(totalLaborView.hours),
+    },
     rushRule: dto.rushRule,
   };
 }

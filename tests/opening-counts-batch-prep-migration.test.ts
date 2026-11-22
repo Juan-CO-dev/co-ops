@@ -330,7 +330,9 @@ describe("0315 — B182: item-tracking ticks refuse generic corrections", () => 
 describe("0315 — the file's conventions", () => {
   it("is authored-only, one transaction, with the house header", () => {
     expect(raw.startsWith("-- Migration 0315_opening_counts_batch_prep\n-- AUTHORED 2026-11-15. NOT YET APPLIED — apply via MCP after review")).toBe(true);
-    expect(raw).not.toMatch(/^-- APPLIED TO (SIM|PROD)/m);
+    // Applied 2026-11-16 (stamped from the live ledger, 2026-11-22).
+    expect(raw).toContain("-- APPLIED TO SIM 2026-11-16 (schema_migrations version 20261116004437, name '0315_opening_counts_batch_prep')");
+    expect(raw).toContain("-- APPLIED TO PROD 2026-11-16 (schema_migrations version 20261116004957, name '0315_opening_counts_batch_prep')");
     for (const section of ["-- Provenance:", "-- WHAT", "-- LOCK ORDER", "-- EXISTING ROWS:", "-- CONSUMERS", "-- APP COMPATIBILITY", "-- DEPENDS ON:", "-- PRE-FLIGHT", "-- VERIFY AFTER APPLY:", "-- ROLLBACK:"]) {
       expect(raw, section).toContain(section);
     }

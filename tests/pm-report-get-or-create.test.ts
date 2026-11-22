@@ -39,6 +39,7 @@ function client(readResults: Result[], insertResults: Result[]) {
       select: (columns: string) => { scope.push(["select", columns]); return query; },
       eq: (column: string, value: unknown) => { scope.push(["eq", column, value]); return query; },
       is: (column: string, value: unknown) => { scope.push(["is", column, value]); return query; },
+      abortSignal: (signal: unknown) => { scope.push(["abortSignal", signal instanceof AbortSignal]); return query; },
       insert: (row: unknown) => { insert(row); return query; },
       maybeSingle: async () => {
         reads.push(scope);
@@ -76,10 +77,20 @@ describe("getOrCreatePmReport race recovery", () => {
     expect(auditTaskOverride).toHaveBeenCalledTimes(1);
     expect(auditTaskOverride).toHaveBeenCalledWith(db.service, expect.objectContaining({ operation: "pm_report.create" }));
     expect(audit).not.toHaveBeenCalled();
-    expect(db.reads).toEqual(Array.from({ length: 3 }, () => [
+    const scope = [
       ["select", "*"], ["eq", "location_id", args.locationId],
       ["eq", "report_date", args.date], ["is", "superseded_at", null],
-    ]));
+    ];
+    // The two initial reads are plain; the race re-read carries its own signal (opts out of render memoization).
+    expect(db.reads).toEqual([scope, scope, [...scope, ["abortSignal", true]]]);
+  });
+
+  it("the race re-read opts out of Next's render fetch memoization (else it replays the initial empty read)", async () => {
+    const winner = { id: "stored-day", format: "v1" };
+    const db = client([miss, { data: winner, error: null }], [conflict]);
+    await expect(getOrCreatePmReport(db.service, args)).resolves.toEqual(winner);
+    expect(db.reads[0]).not.toContainEqual(["abortSignal", true]);
+    expect(db.reads[1]).toContainEqual(["abortSignal", true]);
   });
 
   it.each(["v1", "v2"] as const)("loser returns stored %s despite the opposite shop setting, without auditing", async (format) => {

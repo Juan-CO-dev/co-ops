@@ -42,3 +42,22 @@ export function withAbort<C extends SupabaseClient>(client: C, signal: AbortSign
   signals.set(wrapped, signal);
   return wrapped;
 }
+
+/**
+ * Nav PR 7 (lead ruling r3, H2): `withAbort`, and once the signal is aborted the client builds NO new query: `from()` and
+ * `rpc()` throw the abort reason, so a reader past its deadline issues no page two and no follow-up read. No signal = the
+ * client itself, untouched (a caller that passes nothing behaves byte for byte as before).
+ */
+export function withAbortStrict<C extends SupabaseClient>(client: C, signal: AbortSignal | undefined): C {
+  if (!signal) return client;
+  const wrapped = withAbort(client, signal);
+  return new Proxy(wrapped, {
+    get(target, prop, receiver) {
+      const v = Reflect.get(target, prop, receiver) as unknown;
+      if ((prop === "from" || prop === "rpc") && typeof v === "function") {
+        return (...args: unknown[]) => { signal.throwIfAborted(); return (v as (...a: unknown[]) => unknown)(...args); };
+      }
+      return v;
+    },
+  });
+}

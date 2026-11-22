@@ -79,7 +79,7 @@ export function PeopleSection({ data, mode, locationId }: { data: PeopleData; mo
               </ol>
             )}
           </div>
-          <Link href={`/assignments?loc=${encodeURIComponent(locationId)}`} className={tapLink}>{t("assignments.stations")}</Link>
+          <Link href={`/assignments?loc=${encodeURIComponent(locationId)}`} className={tapLink}>{t("nav.assignments")}</Link>
         </>
       )}
     </div>

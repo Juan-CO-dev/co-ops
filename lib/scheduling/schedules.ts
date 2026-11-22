@@ -33,14 +33,16 @@ import { gapLine } from "./board-view-shared";
 import type { NarrativeLine } from "@/lib/people-narrative";
 import { assertContextFits, canonicalJson, contextAdvisory, digest64, toContextSnapshot, type AdvisoryItem, type RuleContext } from "./context-shared";
 import { diffWeeks, type WeekDiff } from "./diff-shared";
-import { applyEdit, editedShiftRefs, isEditOp, type EditOp } from "./edit-shared";
+import { applyEdit, editedShiftRefs, isEditOp, revalidateDay, type EditOp } from "./edit-shared";
 import { ScheduleError, isScheduleErrorCode, type ScheduleErrorCode } from "./errors-shared";
 import { type GeneratorOutput } from "./generator/build-shared";
 import { generateWeek as generateScheduleWeek } from "./generator/dispatch-shared";
 import { horizonActions, planHorizon, type HorizonRequest } from "./horizon-shared";
 import { loadOtherShopShifts, loadScheduleShopSettings, loadSchedulingInputs, loadWeekHeads } from "./inputs";
 import { scheduleEngine } from "./structure-shared";
-import { generatorInputFor, historicalCrewDates, otherShopOverlaps, sqlStructureVersion, type SchedulingInputs, type StoredWeek } from "./inputs-shared";
+import { generatorInputFor, headOpeningOf, historicalCrewDates, otherShopOverlaps, sqlStructureVersion, type SchedulingInputs, type StoredWeek } from "./inputs-shared";
+import { isOpeningDecisionInput, toDecision, type DayOpening, type OpeningDecision, type OpeningDecisionInput } from "./opening-shared";
+import { isYmd, isoDowOf, weekDays } from "./time-shared";
 import { approveWeekCall, commitRevisionCall } from "./rpc-args-shared";
 import { approvalRefusal, checkScheduleRules, type DayRecord, type DeclaredGap, type RuleProblem, type Shift } from "./rules-shared";
 import type { PeopleActor } from "@/lib/people/access-shared";
@@ -126,8 +128,9 @@ export function assertOtherShopsKnown(inputs: Pick<SchedulingInputs, "elsewhereU
   if (inputs.elsewhereUnavailable) throw new ScheduleError("other_shop_check_unavailable");
 }
 
-async function build(inputs: SchedulingInputs, weekStart: string, today: string, buildDays: readonly string[] | undefined, actor: PeopleActor | null, confirmEdited = false): Promise<{ out: GeneratorOutput; inputsDigest: string }> {
-  const gi = generatorInputFor(inputs, weekStart, { today, buildDays, confirmEdited });
+async function build(inputs: SchedulingInputs, weekStart: string, today: string, buildDays: readonly string[] | undefined, actor: PeopleActor | null, confirmEdited = false,
+  openingOverride?: { date: string; decision: OpeningDecision | null }): Promise<{ out: GeneratorOutput; inputsDigest: string }> {
+  const gi = generatorInputFor(inputs, weekStart, { today, buildDays, confirmEdited, ...(openingOverride ? { openingOverride } : {}) });
   try {
     return { out: generateScheduleWeek(gi), inputsDigest: digest64(canonicalJson(gi)) };
   } catch (e) {
@@ -333,6 +336,87 @@ export async function saveEdit(deps: ScheduleDeps, args: { actor: PeopleActor; l
   });
   await log(args.actor, "schedule.edit", args.locationId, { week_start: args.weekStart, revision_id: revisionId, based_on: args.expectedHead, op: args.op, problems: r.problems.length });
   return { revisionId, problems: r.problems };
+}
+
+// ─── The per-date earlier opening (PR SCH) ───────────────────────────────────
+
+export interface OpeningResult { revisionId: string; opening: DayOpening | null; problems: RuleProblem[] }
+
+/**
+ * PR SCH (plan r5 4.5, 20.4, 22.1; rulings C7, C8, D4, F1): record a GM's per-date opening decision on the expected head —
+ * open earlier by hand (`manual`), accept or decline the date's proposal, or clear the stored decision. The date's live
+ * context is rebuilt with the new decision, the date is re-validated and its gaps re-declared through the edit tail
+ * (`revalidateDay`, the shared partition), and ONE `edited` revision is committed. THE SHIFTS ARE UNCHANGED: the GM
+ * regenerates to staff the new morning (C7). An accept takes its start from the PROPOSAL on the expected head (the client
+ * never sends one); every opening (own day or inherited, any status) is resolved against that head. Nothing is sent.
+ */
+export async function setDayOpening(deps: ScheduleDeps, args: { actor: PeopleActor; locationId: string; weekStart: string; expectedHead: string; date: string; decision: OpeningDecisionInput }): Promise<OpeningResult> {
+  // 1. The exact shape (the route answered 400 already; defence in depth), then 2. the gate, before any I/O.
+  if (!isOpeningDecisionInput(args.decision)) throw new ScheduleError("invalid_payload");
+  await gate(deps.service, args.actor, args.locationId, "opening");
+  // 3. Load; 4. the shop is on; 5. the head exists and is the one the client saw.
+  const inputs = await loader(deps)(deps.service, { locationId: args.locationId, weekStarts: [args.weekStart], now: nowOf(deps) });
+  if (!inputs.shopSettings.enabled) throw new ScheduleError("shop_not_enabled");
+  const w = inputs.weeks[args.weekStart];
+  if (!w?.head) throw new ScheduleError("week_not_found");
+  if (w.headRevisionId !== args.expectedHead) throw new ScheduleError("head_moved");
+  // 6. A Monday week, a real date, inside it; 7. not a past day.
+  if (!isYmd(args.weekStart) || isoDowOf(args.weekStart) !== 1 || !isYmd(args.date) || !weekDays(args.weekStart).includes(args.date)) {
+    throw new ScheduleError("opening_date_not_in_week", { params: { date: String(args.date) } });
+  }
+  const today = todayOf(deps);
+  if (args.date < today) throw new ScheduleError("day_locked", { params: { date: args.date } });
+  // 8. By kind, against the date's stored opening on the EXPECTED head (its own day, else the inherited origin's — F1).
+  const before = headOpeningOf(w.head, args.date) ?? null;
+  const normalQ = inputs.structure.structure.shopDay.prepStartQ;
+  let decision: OpeningDecision | null;
+  switch (args.decision.kind) {
+    case "accept":
+      if (before?.status !== "proposed") throw new ScheduleError("opening_no_proposal", { params: { date: args.date } });
+      decision = { kind: "accepted", startQ: before.startQ };
+      break;
+    case "decline":
+      if (before?.status !== "proposed" && before?.status !== "auto") throw new ScheduleError("opening_nothing_to_decline", { params: { date: args.date } });
+      decision = { kind: "declined" };
+      break;
+    case "manual": {
+      const q = args.decision.startQ;
+      if (!Number.isInteger(q) || q < 0 || q >= normalQ) throw new ScheduleError("opening_start_invalid", { params: { normalQ } });
+      decision = { kind: "manual", startQ: q };
+      break;
+    }
+    case "clear":
+      if (toDecision(before) === null) throw new ScheduleError("opening_nothing_to_clear", { params: { date: args.date } });
+      decision = null;
+      break;
+  }
+  // The date's CURRENT context with the new decision (the snapshot this revision stores); every other day is carried.
+  const editInputs = { ...inputs, weeks: { ...inputs.weeks, [args.weekStart]: { ...w, edited: false, historicalEditedDates: [] } } };
+  const liveBuild = (await build(editInputs, args.weekStart, today, [args.date], args.actor, false, { date: args.date, decision })).out;
+  const live = liveBuild.context;
+  const day = live.days[args.date];
+  if (!day) throw new ScheduleError("day_locked", { params: { date: args.date } });
+  const ctx: RuleContext = { ...live, days: { [args.date]: { ...day, ...(w.head.context.days[args.date]?.crew ? { crew: structuredClone(w.head.context.days[args.date]!.crew) } : {}) } } };
+  const revisionId = newId(deps);
+  const head = { locationId: args.locationId, weekStart: args.weekStart, shifts: w.head.shifts, gaps: w.head.gaps, days: w.head.days };
+  const r = revalidateDay(head, w.head.shifts.map((s) => ({ ...s, segments: s.segments.map((g) => ({ ...g })) })), args.date, ctx, { newRevisionId: revisionId });
+  const days = r.schedule.days.map((d) => (d.date === args.date ? d : { ...d, inherited: true, problems: d.problems.map((p) => ({ ...p, inherited: true })) }));
+  const reasons: Record<string, unknown> = {};
+  for (const sh of r.schedule.shifts) {
+    const k = `${sh.date}|${sh.userId}|${sh.startQ}`;
+    if (w.head.reasons[k] !== undefined) reasons[k] = w.head.reasons[k];
+  }
+  await commit(deps.service, {
+    actor: args.actor, locationId: args.locationId, weekStart: args.weekStart, expectedHead: args.expectedHead, kind: "edited", structureVersionId: inputs.structure.id,
+    generatorVersion: liveBuild.version, shifts: r.schedule.shifts, days, gaps: r.schedule.gaps, context: ctx, reasons,
+    inputsDigest: digest64(canonicalJson({ opening: args.decision, date: args.date, head: args.expectedHead })), problems: r.problems, revisionId,
+  });
+  const after = ctx.days[args.date]!.opening ?? null;
+  await log(args.actor, "schedule.opening_set", args.locationId, {
+    week_start: args.weekStart, date: args.date, decision: args.decision.kind, start_q: decision && decision.kind !== "declined" ? decision.startQ : null,
+    status_before: before?.status ?? null, triggers: [...(after?.triggers ?? before?.triggers ?? [])], revision_id: revisionId, based_on: args.expectedHead,
+  });
+  return { revisionId, opening: after, problems: r.problems };
 }
 
 // ─── Approve ─────────────────────────────────────────────────────────────────

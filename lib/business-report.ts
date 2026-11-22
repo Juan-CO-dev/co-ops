@@ -4,8 +4,14 @@
  * Every load:
  *   1. refuses BEFORE any I/O: the switch (BUSINESS_REPORT, FACT_LAYER and FACT_LAYER_LABOR all "1", else
  *      503 business_report_unavailable), the role (GM / MoO / Owner / CGS; every level-6 role and below,
- *      the AGM and the social media manager included, is 403 with no payload at all), and the concrete shop
- *      through the reports-hub scope (own shop below 8, any shop at 8+; `all` is never a shop);
+ *      the AGM and the social media manager included, is 403 with no payload at all), and the concrete shop BY
+ *      ROLE (a GM: a shop they belong to; MoO / Owner / CGS: any shop; `all` is never a shop);
+ *   1b. resolves WHAT THIS VIEWER MAY SEE (business report access, 2026-11-19; lib/business-access-shared.ts):
+ *      MoO / Owner / CGS everything, with no read; a GM the newest row of 0349 business_report_gm_visibility
+ *      (no row = the defaults; a store that is missing, unreadable or malformed = 503, never the defaults and
+ *      never wider; the report switched off for GMs = 403 gm_report_off). The loader takes no access argument:
+ *      no caller can widen it. Its LAST statement cuts every group that is off out of the DTO
+ *      (redactBusinessDto) and stamps the access it used on it;
  *   2. reads only bounded windows: a range is <= 92 business days, split into <= 31-day windows fetched two
  *      at a time (the Sales contract), plus the 8 prior weeks the rush baseline needs;
  *   3. takes day MONEY from the Sales report's own RPC (sales_report_daily), so the denominator is the Sales
@@ -13,25 +19,32 @@
  *   4. takes LABOR from fact_labor_cost (day and week, the board's own pricer) and 0341's quarter / person
  *      reads, gated per payroll week on labor_week_coverage (0339 ot_scope per_shop + the current builder, an
  *      unchanged generation across the reads, and a stored fingerprint equal to the week's current source).
- * Cost per person is serialized only where PERSON_COST_MIN allows; no wage rate and no contact field ever.
+ * Each hourly person's cost and labor dollars per 15 minutes are serialized only where the viewer's access holds
+ * them (MoO / Owner / CGS always; a GM by the `person_cost` / `quarter_cost` settings, ON by default: Juan
+ * 2026-11-19, a GM knows their shop's hourly pay). A salaried person's row never carries an amount. No wage rate
+ * and no contact field ever.
  */
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { canReadScopedReport, type ReportScopeViewer } from "@/lib/report-scope";
+import type { ReportScopeViewer } from "@/lib/report-scope";
 import { shiftReportDate } from "@/lib/report-range";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { operationalDayUtcRange } from "@/lib/operational-day";
 import { SALES_READ_MIN, SALES_WINDOW_CONCURRENCY, salesWindows, summarizeSales, type DailyRaw } from "@/lib/sales-reports-shared";
-import { canSeeQuarterLaborCost, laborTargetsFor, rangeTargets, toLaborCostRow, type LaborCostRow, type LaborTargets } from "@/lib/facts/labor-cost-shared";
+import { laborTargetsFor, rangeTargets, toLaborCostRow, type LaborCostRow, type LaborTargets } from "@/lib/facts/labor-cost-shared";
 import { LABOR_HISTORY_FLOOR_DAY, laborWageFallback, type WageFallback } from "@/lib/facts/labor-config-shared";
 import { readCurrentWeekFingerprints } from "@/lib/facts/labor-week-gate";
 import type { RoleCode } from "@/lib/roles";
 import {
+  BUSINESS_ACCESS_GROUPS, businessAccessFor, businessAllShopsAllowed, businessShopAllowed, businessTabAllowed, parseGmVisibility, redactBusinessDto,
+  sameBusinessAccess, type BusinessAccess, type LABOR_BASE_KEYS, type LABOR_HOURLY_KEYS, type LABOR_LOADED_KEYS,
+} from "@/lib/business-access-shared";
+import {
   BUSINESS_QUARTER_MAX_DAYS, RUSH_HISTORY_WEEKS, RUSH_MIN_CHECKS, RUSH_MIN_HISTORY, RUSH_MULTIPLIER, RUSH_MIN_BASELINE_CHECKS, RUSH_MIN_RUN_QUARTERS,
-  businessReportEnabled, businessReportRefusal, canSeePersonCost, channelTotals, daySalesFrom, detectRushes, eachDay, largeCheckTotals,
+  businessReportEnabled, businessReportRefusal, channelTotals, daySalesFrom, detectRushes, eachDay, largeCheckTotals,
   currentWeekCoverage, laborDayFigures, laborRangeFigures, laborWeekState, mergeCuts, payrollWeekStart, quarterFigures, recomposeDay, serverTotals, toCutRow,
   type BusinessRange, type BusinessReportEnv, type CutRow, type CutTotal, type CutsState, type DaySales, type LaborFigures,
-  type LaborWeekCoverageRow, type LaborWeekGenerationRow, type QuarterPoint, type RushResult,
+  type BusinessReportTab, type LaborWeekCoverageRow, type LaborWeekGenerationRow, type QuarterPoint, type RushResult,
 } from "@/lib/business-report-shared";
 
 export * from "@/lib/business-report-shared";
@@ -54,7 +67,76 @@ export function assertBusinessScope(viewer: BusinessViewer, locationId: string |
   if (!businessReportEnabled(env)) throw new BusinessReportError(503, "business_report_unavailable");
   if (viewer.level < SALES_READ_MIN || businessReportRefusal(viewer.role)) throw new BusinessReportError(403, "role_insufficient");
   if (!locationId || locationId === "all" || !UUID.test(locationId)) throw new BusinessReportError(400, "invalid_location");
-  if (!canReadScopedReport(viewer, locationId)) throw new BusinessReportError(403, "location_forbidden");
+  if (!businessShopAllowed(viewer, locationId)) throw new BusinessReportError(403, "location_forbidden");
+}
+
+/** 0349 not applied yet (the table is not there). */
+const ACCESS_NOT_INSTALLED = new Set(["42P01", "PGRST205"]);
+/**
+ * WHAT THIS VIEWER MAY SEE in the business report. The switch and the role first (so the page, the hub tile and the
+ * export may call it on its own). MoO / Owner / CGS: everything, and NO read. A GM: ONE read of the newest row of
+ * 0349 business_report_gm_visibility, FAIL CLOSED:
+ *   the table is missing            503 business_access_not_installed  (never the defaults over a store that
+ *   any other error, or a throw     503 business_access_unavailable     could not be read, never wider)
+ *   a row that does not parse       503 business_access_unavailable
+ *   no row                          the defaults
+ *   `report` off                    403 gm_report_off
+ */
+export async function resolveBusinessAccess(viewer: BusinessViewer, deps: BusinessDeps = {}): Promise<BusinessAccess> {
+  const env = deps.env ?? (process.env as BusinessDeps["env"] & object);
+  if (!businessReportEnabled(env)) throw new BusinessReportError(503, "business_report_unavailable");
+  if (viewer.level < SALES_READ_MIN || businessReportRefusal(viewer.role)) throw new BusinessReportError(403, "role_insufficient");
+  if (businessAllShopsAllowed(viewer.role)) return businessAccessFor(viewer.role, null);
+  const sb = deps.client ?? getServiceRoleClient();
+  let res: { data: unknown; error: { code?: string } | null };
+  try {
+    res = await sb.from("business_report_gm_visibility").select("id, settings").order("seq", { ascending: false }).limit(1);
+  } catch {
+    console.error("business_access_unavailable");
+    throw new BusinessReportError(503, "business_access_unavailable");
+  }
+  if (res.error) {
+    if (ACCESS_NOT_INSTALLED.has(res.error.code ?? "")) throw new BusinessReportError(503, "business_access_not_installed");
+    console.error("business_access_unavailable");
+    throw new BusinessReportError(503, "business_access_unavailable");
+  }
+  if (!Array.isArray(res.data)) throw new BusinessReportError(503, "business_access_unavailable");
+  let settings: ReturnType<typeof parseGmVisibility> = null;
+  if (res.data.length > 0) {
+    settings = parseGmVisibility((res.data[0] as { settings?: unknown } | null)?.settings);
+    // A stored row that is not the exact coherent twelve is not read "as far as it goes": the report is unavailable.
+    if (settings === null) throw new BusinessReportError(503, "business_access_unavailable");
+  }
+  const access = businessAccessFor(viewer.role, settings);
+  if (!access.report) throw new BusinessReportError(403, "gm_report_off");
+  return access;
+}
+
+/** Whether the business report is offered to this viewer right now (the hub tile): the switch, the role, and for a
+ * GM the setting. A settings store that cannot be read hides the tile (the page itself says "not available"). */
+export async function businessReportOffered(viewer: BusinessViewer, deps: BusinessDeps = {}): Promise<boolean> {
+  try {
+    return (await resolveBusinessAccess(viewer, deps)).report;
+  } catch (error) {
+    if (error instanceof BusinessReportError) return false;
+    throw error;
+  }
+}
+
+/**
+ * THE check of a tab or a download, on the access each DTO WAS BUILT WITH (never an earlier read of the settings).
+ * Call it after the load(s) and before anything is built from them. Every DTO of the request must allow the tab
+ * (403 business_tab_off) and, for a file, the download (403 business_export_off); two DTOs of one request (the two
+ * periods of Compare) built under different access are refused (409 business_access_changed: the settings moved
+ * between the two loads; ask again), never mixed into one panel or one file.
+ */
+export function assertBusinessSurface(dtos: ReadonlyArray<{ access: BusinessAccess }>, tab: BusinessReportTab, o: { download: boolean }): void {
+  for (const d of dtos) {
+    if (!businessTabAllowed(d.access, tab)) throw new BusinessReportError(403, "business_tab_off");
+    if (o.download && !d.access.export) throw new BusinessReportError(403, "business_export_off");
+  }
+  const first = dtos[0];
+  if (first && dtos.some((d) => !sameBusinessAccess(d.access, first.access))) throw new BusinessReportError(409, "business_access_changed");
 }
 
 /** A JSON-returning read (sales_report_daily): one object, no row cap applies. */
@@ -147,23 +229,28 @@ async function mapBounded<T, R>(items: readonly T[], limit: number, fn: (item: T
 
 // ── DTO ─────────────────────────────────────────────────────────────────────────────────────────
 
+/** Labor of a day / week / range AS SERIALIZED: hours and net sales always; the two money groups only where the
+ * access holds them (lib/business-access-shared.ts: `hourlyCost`, `loaded`). An absent key is NOT a value: the view
+ * (lib/business-view-shared.ts, the only reader) builds no figure from it. */
+export type BusinessLaborDto = Pick<LaborFigures, Exclude<(typeof LABOR_BASE_KEYS)[number], `${string}.${string}`>>
+  & Partial<Pick<LaborFigures, (typeof LABOR_HOURLY_KEYS)[number] | (typeof LABOR_LOADED_KEYS)[number]>>;
 export interface BusinessDayDto {
   date: string;
   sales: DaySales;
   /** `ok` = the day's cuts recompose to its Sales total; otherwise they are withheld. */
   cuts: CutsState;
-  labor: LaborFigures;
+  labor: BusinessLaborDto;
   largeChecks: { checks: number; cents: number };
   /** Null when the day's cuts are not shown. */
   rush: RushResult | null;
 }
-export interface BusinessWeekDto { weekStart: string; from: string; to: string; target: number; loadedTarget: number; labor: LaborFigures }
+export interface BusinessWeekDto { weekStart: string; from: string; to: string; target: number; loadedTarget: number; labor: BusinessLaborDto }
 export interface BusinessQuarterDto {
   date: string; quarterStartAt: string; wallQuarter: number; fold: number;
   /** `amountMissing` = checks of unknown amount in this quarter (> 0 = its sales are partial, so no %). */
   toastCents: number | null; checks: number | null; amountMissing: number | null; laborMinutes: number | null;
-  /** Item 9b: the quarter's labor DOLLARS and % exist only where QUARTER_COST_MIN allows (MoO+); a GM's quarter
-   * has neither key (a % times the shown sales would be the dollars). */
+  /** The quarter's labor DOLLARS and % exist only where the access holds `quarterCost` (MoO+ always; a GM by the
+   * `quarter_cost` setting); without it a quarter has neither key (a % times the shown sales would be the dollars). */
   straightCents?: number | null; pct?: number | null;
   basis: "toast_only_straight_time"; tone: "none";
 }
@@ -175,64 +262,40 @@ export interface BusinessPersonDto {
   minutes: number; otMinutes: number | null;
   /** Payroll weeks in the range whose overtime / cost is withheld (not rebuilt per shop yet). */
   weeksSuppressed: number;
-  /** Straight-time cost; present ONLY where PERSON_COST_MIN allows (MoO+ by default). */
+  /** Straight-time cost of an HOURLY person (null for a salaried one, always); present ONLY where the access holds
+   * `personCost` (MoO+ always; a GM by the `person_cost` setting). */
   straightCostCents?: number | null;
 }
 export interface BusinessReportDto {
   locationId: string;
   range: BusinessRange;
-  access: { personCost: boolean; quarterCost: boolean };
+  /** The access this report was BUILT AND CUT with (the loader's own; tabs and downloads are judged on it). */
+  access: BusinessAccess;
   days: BusinessDayDto[];
   weeks: BusinessWeekDto[];
   total: {
     sales: { totalCents: number; toastChecksCents: number; toastNetCents: number | null; ezcaterCents: number; refundCents: number; coverage: string };
-    labor: LaborFigures;
+    labor: BusinessLaborDto;
     target: number | "target_varies";
     loadedTarget: number | "target_varies";
   };
   quarters: BusinessQuarterDto[] | null;
   /** Per day whose cuts are shown (<= 31-day ranges); null when quarters are. Days with nothing unassigned are omitted. */
   quartersUnassigned: BusinessUnassignedDto[] | null;
-  quartersReason: "range_too_wide" | null;
-  channels: { included: CutTotal[]; excluded: CutTotal[] };
-  servers: CutTotal[];
-  people: BusinessPersonDto[];
+  /** `not_shared` = the 15-minute grid is not in this viewer's report (both lists above are null). */
+  quartersReason: "range_too_wide" | "not_shared" | null;
+  /** Absent where the access does not hold the group (an absent list is never an empty one). */
+  channels?: { included: CutTotal[]; excluded: CutTotal[] };
+  servers?: CutTotal[];
+  people?: BusinessPersonDto[];
   largeChecks: { checks: number; cents: number };
   rushRule: { multiplier: number; historyWeeks: number; minHistory: number; minChecks: number; minBaselineChecks: number; minRunQuarters: number };
 }
 
-// The serialized-payload allowlist (plan finding 4): every leaf path a role may receive. An unknown path
-// fails tests/business-report-loader.test.ts. `x[]` = each element of x.
-const keys = (prefix: string, ks: readonly string[]) => ks.map((k) => `${prefix}.${k}`);
-const SALES_KEYS = ["date", "coverage", "checks", "toastChecksCents", "toastAmountMissing", "toastNetCents", "ezcaterCents", "ezcaterOrders",
-  "ezcaterMissing", "refundCents", "totalCents", "giftCardCents", "ezcaterLinkedCents"] as const;
-const LABOR_KEYS = ["state", "minutes", "pureHourlyCents", "otPremiumCents", "otMinutes", "denominator", "denominator.cents", "denominator.state", "pct", "tone",
-  "loadedState", "salariedCents", "burdenCents", "fullyLoadedCents", "loadedPct", "loadedTone", "burdenEstimated", "salaryEstimated", "salaryGaps", "wageEstimated", "hoursUnverified"] as const;
-const RUSH_KEYS = ["state", "uncompared", "untimed", "baselineUntimed", "windows[].startAt", "windows[].endAt", "windows[].quarters", "windows[].checks", "windows[].cents",
-  "windows[].baselineChecks", "windows[].baselineCents"] as const;
-const CUT_KEYS = ["key", "label", "provider", "cents", "checks", "amountMissing", "unassigned"] as const;
-const PERSON_KEYS = ["personKey", "label", "source", "payClass", "minutes", "otMinutes", "weeksSuppressed"] as const;
-const SHOP_MONEY_PATHS: readonly string[] = [
-  "locationId",
-  ...keys("range", ["range", "from", "to", "days", "shortened", "empty", "previous.from", "previous.to", "lastYear", "lastYear.from", "lastYear.to", "lastYearReason"]),
-  "access.personCost", "access.quarterCost",
-  "days[].date", ...keys("days[].sales", SALES_KEYS), "days[].cuts", ...keys("days[].labor", LABOR_KEYS),
-  "days[].largeChecks.checks", "days[].largeChecks.cents", "days[].rush", ...keys("days[].rush", RUSH_KEYS),
-  "weeks[].weekStart", "weeks[].from", "weeks[].to", "weeks[].target", "weeks[].loadedTarget", ...keys("weeks[].labor", LABOR_KEYS),
-  ...keys("total.sales", ["totalCents", "toastChecksCents", "toastNetCents", "ezcaterCents", "refundCents", "coverage"]),
-  ...keys("total.labor", LABOR_KEYS), "total.target", "total.loadedTarget",
-  "quarters", ...keys("quarters[]", ["date", "quarterStartAt", "wallQuarter", "fold", "toastCents", "checks", "amountMissing", "laborMinutes", "basis", "tone"]),
-  "quartersUnassigned", ...keys("quartersUnassigned[]", ["date", "toastCents", "checks", "amountMissing"]),
-  "quartersReason",
-  ...keys("channels.included[]", CUT_KEYS), ...keys("channels.excluded[]", CUT_KEYS), ...keys("servers[]", CUT_KEYS),
-  ...keys("people[]", PERSON_KEYS),
-  "largeChecks.checks", "largeChecks.cents",
-  ...keys("rushRule", ["multiplier", "historyWeeks", "minHistory", "minChecks", "minBaselineChecks", "minRunQuarters"]),
-];
-export const BUSINESS_REPORT_DTO_PATHS = {
-  shop_money: SHOP_MONEY_PATHS,
-  person_money: [...SHOP_MONEY_PATHS, "people[].straightCostCents", "quarters[].straightCents", "quarters[].pct"],
-} as const;
+// The serialized-payload allowlist: every leaf path, in the base or in exactly one access group, is
+// BUSINESS_ACCESS_GROUPS (lib/business-access-shared.ts); `businessDtoPaths(access)` is what one viewer may receive.
+// tests/business-report-gm-payload.test.ts runs this loader under every coherent setting and fails on an unknown path.
+export { BUSINESS_ACCESS_GROUPS };
 
 // ── Loader ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -252,13 +315,91 @@ function targetsForWeek(structures: readonly StructureRow[], weekStart: string):
   return laborTargetsFor(s?.structure?.labor ? { labor: s.structure.labor } : null);
 }
 
+/** Nav PR 8: at most this many days per narrow labor read (the Dashboard asks for three). */
+export const BUSINESS_LABOR_DAYS_MAX = 7;
+
+/**
+ * Nav PR 8 (plan r2 2.12, Q3): the LABOR HALF of `loadBusinessReport`, for the Dashboard's numbers strip. MoO / Owner /
+ * CGS only, by role. `days`: 1 to 7 business days, ascending and contiguous (the caller builds them before the plan date;
+ * this loader reads no clock).
+ *
+ * The same gates in the same order (`assertBusinessScope`, then the all-shops role or a 403 before any read; access is
+ * everything for these roles, so no settings read), then EXACTLY the report's labor reads, in its order: coverage before;
+ * in parallel `sales_report_daily`, `fact_labor_cost` per day and `schedule_structures`; coverage after; the current
+ * week fingerprints (read last); then `currentWeekCoverage`, the week targets and `laborDayFigures` per day. It skips the
+ * check cuts and their history, `fact_day_coverage`, quarters, people and the weekly costs. No new pricer: per day,
+ * `labor` deep-equals the full report's (tests/business-labor-days.test.ts, the raw-reader twins).
+ */
+export async function loadBusinessLaborDays(viewer: BusinessViewer, args: { locationId: string; days: readonly string[] }, deps: BusinessDeps = {}):
+  Promise<{ access: BusinessAccess; days: Array<{ date: string; labor: LaborFigures }> }> {
+  const env = deps.env ?? (process.env as BusinessDeps["env"] & object);
+  assertBusinessScope(viewer, args.locationId, env);
+  if (!businessAllShopsAllowed(viewer.role)) throw new BusinessReportError(403, "role_insufficient");
+  const days = [...args.days];
+  const contiguous = days.every((d, i) => validDay(d) && (i === 0 || shiftReportDate(days[i - 1]!, 1) === d));
+  if (days.length < 1 || days.length > BUSINESS_LABOR_DAYS_MAX || !contiguous) throw new RangeError("business_labor_days_invalid"); // a caller bug, never a page state
+  const access = businessAccessFor(viewer.role, null);
+  const sb = deps.client ?? getServiceRoleClient();
+  const { locationId } = args;
+  const from = days[0]!, to = days[days.length - 1]!;
+  const wf = deps.wageFallback ?? laborWageFallback(env.LABOR_WAGE_FALLBACK);
+  const win = (w: { from: string; to: string }) => ({ p_location_id: locationId, p_from: w.from, p_to: w.to });
+  const laborDays = days.filter((d) => d >= LABOR_HISTORY_FLOOR_DAY);
+  const weekStarts = [...new Set(days.map(payrollWeekStart))];
+
+  const readWeekCoverage = () => rows<LaborWeekGenerationRow>(() => sb.from("labor_week_coverage")
+    .select("week_start,ot_scope,builder_version,built_at,source_fingerprint", { count: "exact" })
+    .gte("week_start", payrollWeekStart(from)).lte("week_start", to).order("week_start", { ascending: true }));
+  const coverageBefore = await readWeekCoverage();
+  const [dailyRaws, structures, dayCosts] = await Promise.all([
+    mapBounded(salesWindows(from, to), SALES_WINDOW_CONCURRENCY, (w) => call<DailyRaw>(sb, "sales_report_daily", win(w))),
+    rows<StructureRow>(() => sb.from("schedule_structures").select("structure,created_at", { count: "exact" }).eq("location_id", locationId)
+      .order("created_at", { ascending: true }).order("id", { ascending: true })),
+    mapBounded(laborDays, SALES_WINDOW_CONCURRENCY, async (d) => {
+      const r = await rpcAll<Record<string, unknown>>(sb, "fact_labor_cost", { p_location_id: locationId, p_from: d, p_to: d, p_wage_fallback: wf });
+      return r?.[0] ? toLaborCostRow(r[0]) : null;
+    }),
+  ]);
+  const coverageAfter = await readWeekCoverage();
+  const currentFingerprints = await readCurrentWeekFingerprints(sb, coverageAfter.map((r) => ymd(r.week_start)));
+  const weekMap: ReadonlyMap<string, LaborWeekCoverageRow> = currentWeekCoverage(coverageBefore, coverageAfter, currentFingerprints);
+  const weekTargets = new Map(weekStarts.map((ws) => [ws, targetsForWeek(structures, ws)]));
+  const costByDay = new Map(laborDays.map((d, i) => [d, dayCosts[i] ?? null]));
+  const sales = daySalesFrom(dailyRaws, from, to);
+  return {
+    access,
+    days: sales.map((s) => {
+      const wt = weekTargets.get(payrollWeekStart(s.date));
+      return { date: s.date, labor: laborDayFigures(s, costByDay.get(s.date) ?? null, weekMap.get(payrollWeekStart(s.date)), wt?.hourly.pct, wt?.loaded.pct) };
+    }),
+  };
+}
+
+const validDay = (d: string): boolean => {
+  const t = Date.parse(`${d}T00:00:00Z`);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === d;
+};
+
+/** The report with NOTHING cut: what MoO / Owner / CGS always receive (every labor key, every list). */
+export type WholeBusinessReportDto = Omit<BusinessReportDto, "days" | "weeks" | "total" | "channels" | "servers" | "people"> & {
+  days: Array<BusinessDayDto & { labor: LaborFigures }>; weeks: Array<BusinessWeekDto & { labor: LaborFigures }>;
+  total: BusinessReportDto["total"] & { labor: LaborFigures };
+  channels: { included: CutTotal[]; excluded: CutTotal[] }; servers: CutTotal[]; people: BusinessPersonDto[];
+};
+type FullViewer = BusinessViewer & { role: "moo" | "owner" | "cgs" };
+/** MoO / Owner / CGS: the whole report (their access is everything, by role). Anyone else admitted (a GM): the
+ * report as cut for them, in which a group may be absent. */
+export async function loadBusinessReport(viewer: FullViewer, args: { locationId: string; range: BusinessRange }, deps?: BusinessDeps): Promise<WholeBusinessReportDto>;
+export async function loadBusinessReport(viewer: BusinessViewer, args: { locationId: string; range: BusinessRange }, deps?: BusinessDeps): Promise<BusinessReportDto>;
 export async function loadBusinessReport(viewer: BusinessViewer, args: { locationId: string; range: BusinessRange }, deps: BusinessDeps = {}): Promise<BusinessReportDto> {
   const env = deps.env ?? (process.env as BusinessDeps["env"] & object);
   assertBusinessScope(viewer, args.locationId, env);
   const sb = deps.client ?? getServiceRoleClient();
   const { range, locationId } = args;
-  const personCost = canSeePersonCost(viewer.role);
-  const quarterCost = canSeeQuarterLaborCost(viewer.role);
+  // What this viewer may see, resolved HERE (before any report read; a refused GM cost one read). Cost per hourly
+  // person and labor dollars per 15 minutes come from the access like every other group (a GM: the settings).
+  const access = await resolveBusinessAccess(viewer, { client: sb, env });
+  const { personCost, quarterCost } = access;
   const wf = deps.wageFallback ?? laborWageFallback(env.LABOR_WAGE_FALLBACK);
   const win = (w: { from: string; to: string }) => ({ p_location_id: locationId, p_from: w.from, p_to: w.to });
 
@@ -343,7 +484,8 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
     .reduce((t, c) => ({ toastCents: t.toastCents + c.amount_cents, checks: t.checks + c.checks, amountMissing: t.amountMissing + c.amount_missing }),
       { toastCents: 0, checks: 0, amountMissing: 0 });
 
-  const dayDtos: BusinessDayDto[] = sales.map((s) => {
+  // Built WHOLE (every labor key present); the last statement cuts what this viewer may not see.
+  const dayDtos: Array<BusinessDayDto & { labor: LaborFigures }> = sales.map((s) => {
     const dayCuts = cutsByDate.get(s.date) ?? [];
     const rc = recomposeDay(s, dayCuts);
     const wt = weekTargets.get(payrollWeekStart(s.date));
@@ -405,7 +547,7 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
       const f = quarterFigures({ toastCents: c.toastCents ?? 0, checks: c.checks ?? 0, amountMissing: c.amountMissing ?? 0, laborMinutes: c.laborMinutes, straightCents: c.straightCents ?? null,
         salesOk, laborOk: day.labor.pureHourlyCents !== null && day.labor.state !== "hours_unknown" });
       const out: BusinessQuarterDto = { ...c, toastCents: salesOk ? c.toastCents ?? 0 : null, checks: salesOk ? c.checks ?? 0 : null, amountMissing: salesOk ? c.amountMissing ?? 0 : null, ...f };
-      // Item 9b: below QUARTER_COST_MIN the quarter's dollars and % are not serialized at all.
+      // Without `quarterCost` the quarter's dollars and % are not serialized at all.
       if (!quarterCost) { delete out.straightCents; delete out.pct; }
       return out;
     });
@@ -431,8 +573,8 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
     return out;
   });
 
-  return {
-    locationId, range, access: { personCost, quarterCost },
+  const dto: BusinessReportDto = {
+    locationId, range, access,
     days: dayDtos, weeks,
     total: {
       sales: { totalCents: totals.totalCents, toastChecksCents: totals.toastChecksCents, toastNetCents: totals.toastNetCents,
@@ -447,4 +589,6 @@ export async function loadBusinessReport(viewer: BusinessViewer, args: { locatio
     rushRule: { multiplier: RUSH_MULTIPLIER, historyWeeks: RUSH_HISTORY_WEEKS, minHistory: RUSH_MIN_HISTORY, minChecks: RUSH_MIN_CHECKS,
       minBaselineChecks: RUSH_MIN_BASELINE_CHECKS, minRunQuarters: RUSH_MIN_RUN_QUARTERS },
   };
+  // LAST: every group this viewer may not see leaves the payload here, and nowhere else.
+  return redactBusinessDto(dto, access);
 }

@@ -17,6 +17,7 @@ import { decodeCrewContext, encodeCrewContext } from "./crew-snapshot-codec-shar
 import type { RoleCode } from "@/lib/roles";
 import { ScheduleError } from "./errors-shared";
 import type { CrewType, LeaderSetting, ScheduleStructure } from "./structure-shared";
+import { baseStructureOf, type DayBase, type DayOpening } from "./opening-shared";
 
 export type WorkType = "boh" | "foh" | "management";
 export const WORK_TYPES: readonly WorkType[] = ["boh", "foh", "management"];
@@ -98,6 +99,13 @@ export interface DayContext {
   scheduledOutQ: number;
   need: DayNeed;
   inputs: DayInputs;
+  /**
+   * PR SCH: what the per-day structure changed (a heavy stations day's Prep/Dishwasher limit rise, an applied earlier
+   * opening), so the shop's own structure can be restored (`baseStructureOf`). Absent on an ordinary day.
+   */
+  base?: DayBase;
+  /** PR SCH: the date's opening decision or proposal (accepted / manual / auto / proposed / declined). Absent otherwise. */
+  opening?: DayOpening;
 }
 
 export interface RuleContext {
@@ -115,6 +123,12 @@ export interface RuleContext {
   /** The closing window [service close, scheduled out) of all 7 dates (essential hours, inherited days too). */
   closingWindowByDate: Record<string, { fromQ: number; toQ: number }>;
   people: Record<string, RulePerson>;
+  /**
+   * PR SCH (ruling D9): the catering rule that produced this context — `day_total_v1` = heavy by the day's TOTAL guests.
+   * Set on every new context by both generators (so by `saveEdit` and `setDayOpening`, which build through them). Absent
+   * = a pre-SCH, per-order context. No SCH reader branches on it; it exists for later readers and the rollback check.
+   */
+  cateringRule?: "day_total_v1";
 }
 
 // ─── Canonical JSON + digest ────────────────────────────────────────────────
@@ -216,7 +230,8 @@ export function ruleContextFromSnapshot(stored: unknown): RuleContext {
 
 export type AdvisoryCode =
   | "member_removed" | "member_added" | "member_changed" | "availability_changed" | "budget_changed"
-  | "structure_changed" | "closing_minutes_changed" | "day_type_changed" | "demand_changed" | "catering_changed" | "need_changed";
+  | "structure_changed" | "closing_minutes_changed" | "day_type_changed" | "demand_changed" | "catering_changed" | "need_changed"
+  | "opening_changed";
 
 export interface AdvisoryItem { code: AdvisoryCode; date: string | null; userId: string | null; params: Record<string, string | number | null> }
 
@@ -260,7 +275,9 @@ export function contextAdvisory(snapshot: RuleContext, live: RuleContext): Advis
     const wd = snapshot.days[d];
     const nd = live.days[d];
     if (!wd || !nd) continue;
-    if (wd.structureVersionId !== nd.structureVersionId || !sameJson(wd.structure, nd.structure)) {
+    // PR SCH: the shop's OWN structures are compared — a heaviness or opening change reads as catering / need / opening, never a
+    // settings change.
+    if (wd.structureVersionId !== nd.structureVersionId || !sameJson(baseStructureOf(wd), baseStructureOf(nd))) {
       out.push({ code: "structure_changed", date: d, userId: null, params: { from: wd.structureVersionId, to: nd.structureVersionId } });
     }
     if (wd.closingMinutes !== nd.closingMinutes) out.push({ code: "closing_minutes_changed", date: d, userId: null, params: { from: wd.closingMinutes, to: nd.closingMinutes } });
@@ -272,6 +289,9 @@ export function contextAdvisory(snapshot: RuleContext, live: RuleContext): Advis
     }
     if (!sameJson(wd.inputs.cateringEvents, nd.inputs.cateringEvents)) out.push({ code: "catering_changed", date: d, userId: null, params: {} });
     if (!sameJson(wd.need, nd.need)) out.push({ code: "need_changed", date: d, userId: null, params: {} });
+    if ((wd.opening?.status ?? null) !== (nd.opening?.status ?? null) || (wd.opening?.startQ ?? null) !== (nd.opening?.startQ ?? null)) {
+      out.push({ code: "opening_changed", date: d, userId: null, params: { from: wd.opening?.status ?? null, to: nd.opening?.status ?? null } });
+    }
   }
   return out.sort(byKey);
 }

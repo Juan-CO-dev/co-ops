@@ -4,6 +4,7 @@
  * skipped, the exact route bodies, and `runGuarded`: the password FIRST, then the post; a cancelled prompt posts
  * nothing and keeps the preview.
  */
+import type { OpeningDecisionInput } from "@/lib/scheduling/opening-shared";
 import type { HorizonRequest } from "@/lib/scheduling/horizon-shared";
 
 export type HorizonMode = "next_week" | "next_weeks" | "rest_of_month" | "month";
@@ -33,6 +34,9 @@ export const previewBody = (locationId: string, request: HorizonRequest) => ({ a
 export const applyBody = (locationId: string, request: HorizonRequest, token: string, confirmedWeekStarts: readonly string[]) =>
   ({ action: "apply" as const, locationId, request, token, confirmedWeekStarts: [...confirmedWeekStarts] });
 export const approveBody = (locationId: string, weekStart: string, expectedHead: string) => ({ action: "approve" as const, locationId, weekStart, expectedHead });
+/** PR SCH (D4): the per-date opening request, exact keys; an accept never carries a start (the server takes the proposal's). */
+export const openingBody = (locationId: string, weekStart: string, expectedHead: string, date: string, decision: OpeningDecisionInput) =>
+  ({ action: "opening" as const, locationId, weekStart, expectedHead, date, decision });
 
 export type PostOutcome = { ok: true; data: Record<string, unknown> } | { ok: false; code: string };
 export type Guarded = { kind: "cancelled" } | { kind: "ok"; data: Record<string, unknown> } | { kind: "refused"; code: string };

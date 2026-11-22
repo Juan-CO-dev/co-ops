@@ -858,6 +858,9 @@ export async function loadOpeningState(
     type: "opening",
     date: args.date,
     columns: "id, template_id, status, created_at",
+    // The retry after a lost lineage race repeats this lookup in the SAME render: without `fresh` it replays the first
+    // pass's empty answer (Next memoizes identical GETs in a render) and the retry would try to create again.
+    fresh: retry.afterLineageTaken === true,
   });
   let tmplRow: { id: string; name: string } | null = null;
   if (dayInstance) {
@@ -995,8 +998,9 @@ export async function loadOpeningState(
     );
     if (rpcErr) {
       if (!retry.afterLineageTaken && /\bchecklist_instance_lineage_taken\b/.test(rpcErr.message ?? "")) {
+        // fresh: this render already ran the same lookup and got nothing (Next memoizes identical GETs in a render).
         const winner = await findDayInstance(service, {
-          locationId: args.locationId, type: "opening", date: args.date, columns: "id, template_id, status, created_at",
+          locationId: args.locationId, type: "opening", date: args.date, columns: "id, template_id, status, created_at", fresh: true,
         });
         if (winner) return loadOpeningState(service, args, { afterLineageTaken: true });
       }

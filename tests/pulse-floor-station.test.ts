@@ -121,7 +121,7 @@ describe("every pulse reader uses the predicate", () => {
     }
     const crew = await loadPulseSection(deps(b), ctx(3), "stations");
     expect(crew).toMatchObject({ state: "ok", data: { mine: { stationName: null, positionName: null } } });
-    expect(assignmentSectionDefaults(b, true)).toEqual({ tasks: true, stations: true, team: false });
+    expect(assignmentSectionDefaults(b, true)).toEqual({ stations: true, team: false });
     expect(dashboardWorkVisibility(b, "receiving").stationCard).toBe(false);
     // The dashboard "My station" card reads currentFloorStation directly (app/(authed)/dashboard/page.tsx).
     expect(currentFloorStation(b, "me")).toBeNull();

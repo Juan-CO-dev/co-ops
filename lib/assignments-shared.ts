@@ -221,3 +221,24 @@ export function stationTimeline(events: readonly StationEvent[]): StationInterva
   }
   return intervals;
 }
+
+// ── Nav PR 6: the two station day flags (0353; spec 3.3.8) ───────────────────────────────────────────────────────────
+/** The flags as the server reads them. `installed: false` = 0353 is not applied (the columns are missing). */
+export type StationDayFlags =
+  | { readonly installed: false }
+  | { readonly installed: true; readonly midDayStationId: string | null; readonly notPhaseIds: ReadonlySet<string> };
+/** The same, serializable for a client component. */
+export type StationDayFlagsView =
+  | { readonly installed: false }
+  | { readonly installed: true; readonly midDayStationId: string | null; readonly notPhaseIds: readonly string[] };
+const STATION_FLAG_COLUMNS = ["starts_mid_day", "not_phase_station"] as const;
+/**
+ * A read error that means "0353 is not applied": PostgreSQL's undefined column (42703), PostgREST's unknown column
+ * (PGRST204), or a message naming either column (the measured precedent of lib/admin/needs-link.ts: a select naming a
+ * missing column fails loudly). Anything else is a real failure.
+ */
+export function isStationFlagsMissing(error: { code?: string | null; message?: string | null }): boolean {
+  if (error.code === "42703" || error.code === "PGRST204") return true;
+  const message = error.message ?? "";
+  return STATION_FLAG_COLUMNS.some((column) => message.includes(column));
+}

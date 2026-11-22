@@ -49,6 +49,8 @@ export interface StoreOpts {
   failCommitOnWeek?: string;
   /** 0278 not applied: its two writers are unknown functions (PGRST202), so the lib falls back to 0274's writer. */
   no0278?: boolean;
+  /** PR SCH-2: 0354's readiness sentinel. Absent = not applied ("function not found", the default: today's database). */
+  features?: string[];
 }
 
 export function scheduleStore(tables: Tables, opts: StoreOpts = {}) {
@@ -118,6 +120,9 @@ export function scheduleStore(tables: Tables, opts: StoreOpts = {}) {
   async function rpc(fn: string, args: Record<string, unknown>): Promise<Rpc> {
     calls.push({ fn, args });
     switch (fn) {
+      case "schedule_structure_features":
+        return opts.features ? { data: opts.features, error: null }
+          : { data: null, error: { code: "PGRST202", message: "Could not find the function public.schedule_structure_features without parameters in the schema cache" } };
       case "pulse_sales_baseline": return opts.baseline ? await opts.baseline() : { data: { hours: [], captured_days: [] }, error: null };
       case "sales_report_daily": return { data: null, error: null };
       case "commit_schedule_revision": return commit(args);

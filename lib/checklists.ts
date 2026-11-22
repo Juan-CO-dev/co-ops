@@ -1043,6 +1043,9 @@ export async function getOrCreateInstance(
       .eq("template_id", templateId)
       .eq("location_id", locationId)
       .eq("date", date)
+      // Opt out of Next's render memoization of identical GETs, so the re-read sees the winner's row
+      // (the same failure class as getOrCreatePmReport's race re-read).
+      .abortSignal(new AbortController().signal)
       .maybeSingle<InstanceRow>();
     if (raceErr) throw new Error(`getOrCreateInstance race re-read: ${raceErr.message}`);
     if (!race) {
@@ -1872,7 +1875,8 @@ function throwCorrectionError(error: PostgrestError, completionId: string, actor
  * Audit W05 / B150 — bind the correcting actor to the completion's shop BEFORE the RPC.
  *
  * The rule is the correction RPCs' own (0287, tightened by 0305): an ACTIVE member of the
- * instance's shop, or level 8+. `actor.locations` comes from resolveChecklistWriteActor, which
+ * instance's shop, or level 8+ — in the app, worksShopTasks: a role that holds the `tasks` surface
+ * (MoO, owner, CGS; the same three people). `actor.locations` comes from resolveChecklistWriteActor, which
  * reads active memberships fresh, so a person removed from the shop is refused here even where
  * the database copy of the rule still counted an inactive membership row. SQL repeats the check
  * under the parent lock; this is the early, app-side half (the user-context reads above it only
@@ -1890,7 +1894,7 @@ async function requireCorrectionShop(
 ): Promise<BoundShopTask> {
   const instance = await loadInstanceOrThrow(authed, instanceId);
   // The shop rule admitted the actor: the instance's own template may be read service-role (W05B r2).
-  if (actor.active && (actor.locations.includes(instance.location_id) || actor.level >= 8)) return bindShopTask(instance);
+  if (worksShopTasks(actor, instance.location_id)) return bindShopTask(instance);
   if (operation !== "revoke_by_authority") throw new ChecklistError("Completion not found.", "completion_not_found");
   throw new ChecklistRoleViolationError(4, actor.level, "You do not manage that location");
 }
@@ -2171,13 +2175,13 @@ export async function tagActualCompleter(
 
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
   // Audit W05 / B151: the UPDATE below is service-role and the reads above only prove RLS READ
-  // scope, so the shop is bound here: an ACTIVE member of the instance's shop, or level 8+ (MoO,
-  // owner, CGS). The level-8+ override is Juan's ruling 2026-11-15: senior managers routinely work
-  // the shops they are needed at, so they keep tagging anywhere. Below level 8 (GM, SMM, KH, a
-  // person taken off the shop) the active membership is required. Same rule as the correction
-  // writers (requireCorrectionShop).
+  // scope, so the shop is bound here by worksShopTasks: an ACTIVE member of the instance's shop, or a
+  // role that holds the `tasks` surface (MoO, owner, CGS). That override is Juan's ruling 2026-11-15:
+  // senior managers routinely work the shops they are needed at, so they keep tagging anywhere.
+  // Everyone else (GM, SMM, KH, a person taken off the shop) needs the active membership. Same rule
+  // as the correction writers (requireCorrectionShop).
   const instance = await loadInstanceOrThrow(authed, completion.instance_id);
-  if (!actor.active || (!actor.locations.includes(instance.location_id) && actor.level < 8)) {
+  if (!worksShopTasks(actor, instance.location_id)) {
     throw new ChecklistRoleViolationError(4, actor.level, "You do not manage that location");
   }
   // W05B r2: the shop rule admitted the actor, so the instance's own template and the completion's

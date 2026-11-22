@@ -17,13 +17,17 @@ import { composeLastClose, composeReportSummary, reportIsFinalized } from "@/lib
 import { countHotTempReadings, latestFinalizedClosingDate, listReports, listReportSkeleton, type Viewer } from "@/lib/reports-hub";
 import { SALES_READ_MIN } from "@/lib/sales-reports-shared";
 import { businessReportEnabled, businessReportRefusal } from "@/lib/business-report-shared";
+import { businessReportOffered } from "@/lib/business-report";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveReportShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const auth = await requireSessionFromHeaders("/reports");
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read.
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
   if (auth.level < 2) redirect("/dashboard");
   const raw = await searchParams;
   const params = reportLandingContext(raw);
@@ -33,7 +37,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const locationId = shopParamFor("/reports", searchParamValues(raw)) ?? (await resolveReportShopId(auth));
   if (!locationId || (locationId === "all" ? auth.level < REPORT_ALL_LOCATIONS_LEVEL : !canReadReportLocation(actor, locationId))) redirect("/dashboard");
   const service = getServiceRoleClient();
-  let locationsQuery = service.from("locations").select("id,name").eq("active", true).order("name");
+  // The business report tile: the switch and the role (no read), then, for a GM only, whether the MoO+ setting
+  // offers GMs the report at all (one read; MoO / Owner / CGS read nothing; a store that cannot be read hides it).
+  const businessTile = businessReportEnabled(process.env) && !businessReportRefusal(auth.role)
+    && await businessReportOffered({ userId: auth.user.id, level: auth.level, locations: auth.locations, role: auth.role });
+  let locationsQuery =service.from("locations").select("id,name").eq("active", true).order("name");
   if (auth.level < REPORT_ALL_LOCATIONS_LEVEL) locationsQuery = locationsQuery.in("id", auth.locations);
   const { data: shops, error } = await locationsQuery;
   if (error) throw new Error(`report locations: ${error.message}`);
@@ -107,11 +115,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.hub.operations")}</h3><div className="flex flex-wrap gap-2"><Link className={linkClass} href={`/reports/operations?${context(shop.id)}`}>{t("reports.hub.operations")}</Link>{auth.level >= 4 && <Link className={linkClass} href={`/reports/trends/ops?${context(shop.id)}`}>{t("reports.hub.trends")}</Link>}</div></section>
           <Link className={linkClass} href={`/reports/written?${context(shop.id)}`}>{t("reports.hub.written")}</Link>
-          <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.hub.people")}</h3><div className="flex flex-wrap gap-2"><Link className={linkClass} href={`/my-feedback?${context(shop.id)}`}>{t("reports.hub.feedback")}</Link>{canViewPeople(peopleActorFromAuth(auth), shop.id) && <Link className={linkClass} href={`/reports/trends/team?${context(shop.id)}`}>{t("reports.hub.team")}</Link>}</div></section>
+          <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.hub.people")}</h3><div className="flex flex-wrap gap-2"><Link className={linkClass} href={`/my-feedback?${context(shop.id)}`}>{t("nav.my_feedback")}</Link>{canViewPeople(peopleActorFromAuth(auth), shop.id) && <Link className={linkClass} href={`/reports/trends/team?${context(shop.id)}`}>{t("reports.hub.team")}</Link>}</div></section>
           {auth.level >= SALES_READ_MIN && <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.hub.sales")}</h3><div className="flex flex-wrap gap-2"><Link className={linkClass} href={`/reports/sales?${context(shop.id)}`}>{t("reports.hub.sales")}</Link><Link className={linkClass} href={`/reports/sales/checks?${context(shop.id)}`}>{t("reports.sales.checks.title")}</Link><Link className={linkClass} href={`/reports/sales/catering?${context(shop.id)}`}>{t("reports.sales.catering.title")}</Link></div><ExportLinks className="mt-2" family="sales" language={language} query={Object.fromEntries(new URLSearchParams(context(shop.id)))} /></section>}
-          {businessReportEnabled(process.env) && !businessReportRefusal(auth.role) && <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.business.title")}</h3><p className="mb-2 text-xs text-co-text-muted">{t("reports.business.hub_hint")}</p><div className="flex flex-wrap gap-2"><Link className={linkClass} href={`/reports/business?location=${encodeURIComponent(shop.id)}`}>{t("reports.business.hub_open")}</Link></div></section>}
+          {businessTile && <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.business.title")}</h3><p className="mb-2 text-xs text-co-text-muted">{t("reports.business.hub_hint")}</p><div className="flex flex-wrap gap-2"><Link className={linkClass} href={`/reports/business?location=${encodeURIComponent(shop.id)}`}>{t("reports.business.hub_open")}</Link></div></section>}
           {lockLocationContext(actor, shop.id) && (auth.level >= 6 || receiving || ordering) && <section className="rounded-lg border border-co-border p-3"><h3 className="mb-2 font-bold">{t("reports.hub.inventory")}</h3><div className="flex flex-wrap gap-2">{auth.level >= 6 && <Link className={linkClass} href={`/operations/counts?location=${shop.id}`}>{t("reports.hub.counts")}</Link>}{receiving && <Link className={linkClass} href={`/operations/receiving?location=${shop.id}`}>{t("receiving.page.title")}</Link>}{ordering && <Link className={linkClass} href={`/ordering?location=${shop.id}`}>{t("nav.ordering")}</Link>}</div></section>}
-          {auth.level >= 5 && lockLocationContext(actor, shop.id) && <Link className={linkClass} href="/catering/insights">{t("nav.catering")}</Link>}
+          {auth.level >= 5 && lockLocationContext(actor, shop.id) && <Link className={linkClass} href="/catering/insights">{t("catering.insights.title")}</Link>}
           {auth.level >= 6 && auth.user.role !== "social_media_mgr" && <Link className={linkClass} href={`/admin/sandwiches?location=${encodeURIComponent(shop.id)}`}>{t("reports.hub.costing")}</Link>}
         </div>
       </section>;

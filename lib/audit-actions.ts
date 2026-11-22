@@ -71,6 +71,7 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "customer.catering_link", // level 9+ linked catering/ezCater orders to profiles (observation).
   "ezcater.location_reassigned", // Provider shop observation, including a manual-location conflict.
   "ezcater.toast_reconciled", // SQL-only provider cross-check observation; non-destructive.
+  "catering.toast_reconciled", // 0348 SQL: the house reconciler added automatic Toast links (run-level; ids and counts only).
   "ezcater.order_synced", // Provider observation; metadata contains identities/codes only.
   "vendor.import_staged", // Vendor evidence only; staging does not change the catalog.
 
@@ -137,6 +138,9 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "schedule.generate",
   "schedule.regenerate",
   "schedule.edit",
+  // PR SCH: a GM's per-date earlier-opening decision (open earlier / accept / decline / clear) is an EDITED revision of the
+  // proposal with its shifts unchanged — a proposal edit like schedule.edit, never sent anywhere.
+  "schedule.opening_set",
   "schedule.budget_kept",
   "schedule.draft_auto",
   "schedule.draft_skipped",
@@ -359,6 +363,9 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // records a new manual demand event. Both rows are written by the definer function itself.
   "demand_source.register",
   "demand_event.record",
+  // SQL-only (0352, item 4 PR 7): a GM+ asks for AI insights; the row says who, which shop, which model and how
+  // much was set aside, never what was sent. Written by demand_ai_reserve itself.
+  "demand_ai.request",
   "ezcater.set_location_uuid",
   "maintenance.note",
   "photo.upload",
@@ -407,6 +414,9 @@ export const RESERVED_ACTIONS = [
   // SQL-only: 0340 save_labor_payroll_shop INSERTs its own audit row (destructive literally true; before /
   // after the payroll shop in force at valid_from; has_note only) in the same transaction as the row.
   "labor_payroll_shop.save",
+  // SQL-only: 0349 save_business_report_gm_visibility INSERTs its own audit row (destructive literally true; the
+  // settings in force before, the new ones, which switches went on / off) in the same transaction as the row.
+  "business_report_visibility.save",
   // SQL-only: 0343 demand_source_mark and demand_event_save INSERT their own audit rows (destructive literally
   // true) in the same transaction as the status event / the correction. The note never enters the row.
   "demand_source.mark",

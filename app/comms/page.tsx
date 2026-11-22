@@ -1,21 +1,8 @@
-import { PlaceholderCard } from "@/components/PlaceholderCard";
-import { serverT } from "@/lib/i18n/server";
+import { PlannedPage } from "@/components/PlannedPage";
 import { requireSessionFromHeaders } from "@/lib/session";
 
+// Held for a planned feature that is not built yet (nav spec r5 §7.2). Not in any menu or search.
 export default async function InternalCommsPage() {
   const auth = await requireSessionFromHeaders("/comms");
-  const lang = auth.user.language;
-  return (
-    <PlaceholderCard
-      title={serverT(lang, "comms.ph.title")}
-      description={serverT(lang, "comms.ph.description")}
-      features={[
-        serverT(lang, "comms.ph.feature.threads"),
-        serverT(lang, "comms.ph.feature.mentions"),
-        serverT(lang, "comms.ph.feature.receipts"),
-        serverT(lang, "comms.ph.feature.photos"),
-      ]}
-      shippingIn={serverT(lang, "comms.ph.shipping")}
-    />
-  );
+  return <PlannedPage lang={auth.user.language} titleKey="planned.name.comms" />;
 }

@@ -1,3 +1,4 @@
+import { isHeavyCateringDay } from "./catering-day-shared";
 import { legalHoldPath, modCountsOn, neverGenerated } from "./people-rules-shared";
 import { crewBlockAttempts } from "./crew-block-attempts-shared";
 import { compareCodePoint } from "./order-shared";
@@ -119,8 +120,9 @@ export function crewCandidateHoursEvidence(p: RulePerson, type: ShiftType, date:
 
 export function crewRequired(type: ShiftType, day: DayContext): number {
   const extra = day.structure.catering.crewShift;
+  // PR SCH (site C): the catering shift type gains its extra heads on a HEAVY day by the day's TOTAL guests (PR 5's rule).
   return type.headcount[day.dayType] + (extra?.enabled && extra.typeId === type.id
-    && day.inputs.cateringEvents.some((e) => e.headcount >= day.structure.catering.minHeadcount) ? extra.extraHeads : 0);
+    && isHeavyCateringDay(day.inputs.cateringEvents, day.structure.catering) ? extra.extraHeads : 0);
 }
 
 /** Every open type, even one without a provable rejection. The latter MUST stay unresolved. */

@@ -23,8 +23,9 @@ import { ScheduleError } from "./errors-shared";
 import { loadPersonSettingsWithIds, loadScheduleShopSettings, loadSchedulingInputs, loadStationSeedRows } from "./inputs";
 import { gate, type ScheduleDeps } from "./schedules";
 import { loadToastJobHours, toastSuggestions } from "./position-suggest";
-import { hourlyTargetAccess, presenceDates, presenceWeekStarts, stationAdvisory, type ScheduleSettingsView, type SettingsMember } from "./settings-view-shared";
+import { earlyOpenAccess, hourlyTargetAccess, presenceDates, presenceWeekStarts, stationAdvisory, type ScheduleSettingsView, type SettingsMember } from "./settings-view-shared";
 import { scheduleLaborViewsEnabled, type ScheduleLaborViewsEnv } from "./labor-projection-shared";
+import { earlyOpenReady } from "./schedule-features";
 import { canWorkAs, effectiveScheduleRole } from "./works-as-shared";
 import { structureFromStations, type PositionRole } from "./structure-shared";
 
@@ -119,6 +120,8 @@ export async function loadScheduleSettings(deps: ScheduleDeps, args: { actor: Pe
     structure: perms.structure ? { id: inputs.structure.source === "saved" ? inputs.structure.id : null, source: inputs.structure.source, value: live } : null,
     closing: { measuredMinutes: inputs.closing.basis === "measured" ? inputs.closing.minutes : null, samples: inputs.closing.samples },
     hourlyTarget: hourlyTargetAccess(actor, scheduleLaborViewsEnabled(deps.env ?? (process.env as ScheduleLaborViewsEnv))),
+    // PR SCH-2: the readiness read only for someone who can edit the structure (nobody else sees the select).
+    earlyOpen: earlyOpenAccess(perms.structure, perms.structure && await earlyOpenReady(deps.service)),
     stationAdvisory: advisory, positions, livePositionIds: Object.keys(live.positions).sort(), timeProvenance, positionRolesKnown: rolesKnown, names, members, presencePeople,
     pins: perms.presence ? inputs.pins.filter((p) => p.date >= today).map((p) => ({ id: p.id, date: p.date, userId: p.userId, startQ: p.startQ, endQ: p.endQ, positions: [...p.positions], kind: p.kind })) : [],
     shop: perms.shopSwitch ? shopSettings : null,

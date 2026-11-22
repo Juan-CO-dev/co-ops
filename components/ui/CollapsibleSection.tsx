@@ -17,6 +17,9 @@
  * a11y (D10): <button> + aria-expanded + aria-controls={idBase}; the panel it
  * controls carries id={idBase}. The whole header row is the toggle — never icon-only.
  *
+ * `description` (nav PR 4): an optional one-line explanation under the title, inside the header button, so it stays
+ * readable while the section is closed (a Back office group's line). Without it the header renders exactly as before.
+ *
  * Uncontrolled by default (per-session useState, D9 — no localStorage, no URL).
  * Pass BOTH `open` and `onToggle` to lift state (controlled). `defaultOpen` seeds
  * the uncontrolled initial state and is ignored when controlled.
@@ -26,6 +29,7 @@ import { useId, useState, type ReactNode } from "react";
 
 export function CollapsibleSection({
   title,
+  description,
   count,
   badge,
   defaultOpen = false,
@@ -36,6 +40,8 @@ export function CollapsibleSection({
 }: {
   /** Already-translated section title (caller runs t()). */
   title: string;
+  /** Already-translated one line under the title, inside the header (wraps); omit for none. */
+  description?: string;
   /** Already-formatted count for the collapsed header (D5) — pass the result of
    *  t(key, { n }); null/undefined renders no count. */
   count?: ReactNode;
@@ -75,13 +81,26 @@ export function CollapsibleSection({
         id={labelId}
         className="flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-3 text-left"
       >
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-bold text-co-text">{title}</span>
-          {count != null && (
-            <span className="text-xs text-co-text-muted">{count}</span>
-          )}
-          {badge}
-        </span>
+        {description === undefined ? (
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-bold text-co-text">{title}</span>
+            {count != null && (
+              <span className="text-xs text-co-text-muted">{count}</span>
+            )}
+            {badge}
+          </span>
+        ) : (
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-bold text-co-text">{title}</span>
+              {count != null && (
+                <span className="text-xs text-co-text-muted">{count}</span>
+              )}
+              {badge}
+            </span>
+            <span className="text-xs text-co-text-muted">{description}</span>
+          </span>
+        )}
         <span aria-hidden className="text-xs text-co-text-dim">{isOpen ? "▾" : "▸"}</span>
       </button>
 

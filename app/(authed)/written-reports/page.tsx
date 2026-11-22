@@ -1,11 +1,11 @@
 /**
- * /written-reports — the Written Reports surface.
+ * /written-reports — a legacy URL, kept as a redirect.
  *
- * Free-text staff posts ("shift happened, something went wrong, write it down").
- * The list is visibility-gated server-side (listWrittenReports reproduces the
- * live RLS predicates); L3+ may author. Moved into the (authed) route group
- * (mirrors the reports hub migration) so it sits behind the authed layout while
- * keeping the /written-reports URL.
+ * Written reports joined the Reports hub (#392, 2026-10-07) and live at
+ * /reports/written. This page renders nothing: it forwards every query
+ * parameter (repeated ones included) to /reports/written, so bookmarks and old
+ * notification deep links still land. Kept on purpose (nav spec r5 §7.3);
+ * remove it once nothing external points here.
  */
 
 import { redirect } from "next/navigation";

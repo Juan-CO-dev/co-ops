@@ -109,22 +109,22 @@ describe("digest v2 layout", () => {
 
   it("operations: AM prep under/over par is a neutral line, only SKIPPED is an issue (Juan 10-08); who confirmed; late = system-finalized", () => {
     const neutral = facts({ reports: [report("am_prep", "submitted", { ...clean, underPar: 22, overPar: 9 })] });
-    expect(lineIn(neutral, "Operations", "AM Prep")).toMatchObject({ text: "All good · 22 under par, 9 over par · by Maria", tone: "info" });
+    expect(lineIn(neutral, "Operations", "AM prep list")).toMatchObject({ text: "All good · 22 under par, 9 over par · by Maria", tone: "info" });
     const skipped = facts({ reports: [report("am_prep", "submitted", { ...clean, underPar: 22, skipped: 1 })] });
-    expect(lineIn(skipped, "Operations", "AM Prep")).toMatchObject({ text: "1 issue: 1 skipped · 22 under par · by Maria", tone: "issue" });
+    expect(lineIn(skipped, "Operations", "AM prep list")).toMatchObject({ text: "1 issue: 1 skipped · 22 under par · by Maria", tone: "issue" });
     const late = facts({ reports: [report("closing", "auto_finalized", clean, null)] });
     expect(lineIn(late, "Operations", "Closing")).toMatchObject({ text: "Late: finalized by the system, no one confirmed · All good", tone: "issue" });
     const cash = facts({ reports: [report("cash", "ok", { ...clean, cashOverShortCents: 8 })] });
-    expect(lineIn(cash, "Operations", "Cash")).toMatchObject({ text: "1 issue: cash over $0.08 · by Maria", tone: "issue" });
+    expect(lineIn(cash, "Operations", "Cash deposit")).toMatchObject({ text: "1 issue: cash over $0.08 · by Maria", tone: "issue" });
     // v2 moves receiving / tosses / store runs / PM out of Operations.
     const labels = flat(facts()).find((s) => s.title === "Operations")!.lines.map((l) => l.label);
-    expect(labels).toEqual(["Opening", "AM Prep", "Mid-Day Prep", "Closing", "Cash", "Maintenance", "Assigned tasks"]);
+    expect(labels).toEqual(["Opening", "AM prep list", "Mid-day prep", "Closing", "Cash deposit", "Maintenance", "Assigned tasks"]);
   });
 
   it("people: who opened and closed, the PM flags, retrains", () => {
     const lines = flat(facts({ v2: v2Fixture({ people: ok({ retrains: { assignedToday: 1, open: 2 } }) }) })).find((s) => s.title === "People")!.lines;
     expect(lines.map((l) => `${l.tone}|${l.label}|${l.text}`)).toEqual([
-      "info|Opened by|Ana", "info|Closed by|Luis", "ok|PM Report|All good (3 evaluations)", "issue|Retrains|1 assigned today · 2 still open",
+      "info|Opened by|Ana", "info|Closed by|Luis", "ok|PM report|All good (3 evaluations)", "issue|Retrains|1 assigned today · 2 still open",
     ]);
   });
 

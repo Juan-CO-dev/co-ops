@@ -135,6 +135,12 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // Item 2 (0340): the payroll shop re-allocates salaried labor cost (a backdated row re-prices history): Tier B.
   "app/api/admin/labor/payroll-shop/route.ts": ["B"],
   "app/api/admin/labor/burden/route.ts": ["B"],
+  // Item 21 PR 5 (0350): a shop's catering / Toast switches turn automatic linking on: Tier B. Matching the older
+  // orders is many steps that outlast Tier B's two minutes: Tier A (the password once).
+  "app/api/admin/catering/toast-settings/route.ts": ["B"],
+  "app/api/admin/catering/toast-settings/backfill/route.ts": ["A"],
+  // Business report access (0349): what GMs can see in the business report changes who sees the labor money: Tier B.
+  "app/api/admin/reports/business-visibility/route.ts": ["B"],
   // Item 4 PR 2 (0343): marking a demand-signal source verified / revoked opens or closes what may be ingested and used: Tier B.
   "app/api/admin/demand-signals/sources/mark/route.ts": ["B"],
   // Scheduling Phase 1 (Task 16): the people settings (skill tunables MoO+, shop settings) take the Tier E edit
@@ -289,6 +295,7 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
 // ── THE CLIENT HALF: component → the tiers it requests ────────────────────────
 const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/InboundSettings.tsx": ["A"],
+  "components/admin/catering/CateringToastSettings.tsx": ["A", "B"],
   "components/admin/vendors/VendorImportPanel.tsx": ["A", "E"],
   "components/admin/marketing/MarketingWriteForms.tsx": ["A", "B"],
   "app/admin/marketing/ad-codes/AdCodesClient.tsx": ["A", "B"],
@@ -320,6 +327,8 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/schedule/HorizonBuilder.tsx": ["B"],
   // Astra chunk F P2-3: the board's own Regenerate on an edited week asks Tier B after the warning (confirmEdited: true).
   "components/schedule/ScheduleBoard.tsx": ["B"],
+  // PR SCH: a date's earlier opening (accept / decline / open earlier / use the normal opening) — Tier B, like Approve.
+  "components/schedule/OpeningPanel.tsx": ["B"],
   "components/admin/menu-costing/MenuPriceEditor.tsx": ["E"],
   "components/admin/pars/ParEditor.tsx": ["E"],
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.
@@ -332,12 +341,15 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/admin/sevenshifts/SevenShiftsScreen.tsx": ["B"],
   "components/admin/sevenshifts/PayrollShopCard.tsx": ["B"],
   "components/admin/sevenshifts/LaborBurdenCard.tsx": ["B"],
+  "components/admin/sevenshifts/BusinessVisibilityCard.tsx": ["B"],
   "components/admin/customers/CancelImportButton.tsx": ["B"],
   "components/admin/customers/ConsentTools.tsx": ["A", "B"],
   "components/admin/customers/CustomerContactPanel.tsx": ["A", "B"],
   "components/admin/customers/CustomerSuggestions.tsx": ["A", "B"],
   "components/admin/customers/RevokeLinkButton.tsx": ["A"], // POST /api/admin/customers revoke_link.
   "components/admin/customers/customer-download.ts": ["B"], // Both download controls -> export route.
+  // Item 4 PR 5: the source verification screen asks B before the mark route (Tier B) and retries on a refusal.
+  "components/admin/demand-signals/SourcesClient.tsx": ["B"],
   "components/admin/report-recipients/ReportRecipientsAdmin.tsx": ["B"],
   "app/admin/catering/rate-rules/rate-rules-client.tsx": ["B"],
   // The provider itself — the parameter, not a call site.

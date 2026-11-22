@@ -1,5 +1,7 @@
 -- Migration 0309_pm_reviews_self_and_atomic_eval
 -- AUTHORED 2026-11-15. NOT YET APPLIED — apply via MCP after review (sim first, prod on Juan's word, AFTER 0271; BEFORE the W09 PR merges).
+-- APPLIED TO SIM 2026-11-15 (schema_migrations version 20261115204850, name '0309_pm_reviews_self_and_atomic_eval')
+-- APPLIED TO PROD 2026-11-15 (schema_migrations version 20261115205216, name '0309_pm_reviews_self_and_atomic_eval')
 -- ROLLOUT (enforced order, W09 fix round 2): apply 0309 -> merge + deploy the W09 PR -> older deployments drain -> apply 0310.
 --   0309 is safe for the deployed (old) app; the self-evaluation INSERT trigger is NOT here: it is 0310, see CONSUMERS.
 -- Provenance: CO-OPS bug audit wave W09 (manager shift reviews: privacy and fairness) — B059, B060, B164.

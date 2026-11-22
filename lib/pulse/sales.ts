@@ -1,7 +1,8 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { assertSalesScope, loadSalesBreakdown, SalesReportError } from "@/lib/sales-reports";
-import { mergeBreakdown, resolveSalesRange, summarizeSales, type BreakdownRaw, type DailyRaw } from "@/lib/sales-reports-shared";
+import { mergeBreakdown, resolveSalesRange, summarizeSales, type BreakdownRaw, type DailyRaw, type SalesTotals } from "@/lib/sales-reports-shared";
+import type { ReportScopeViewer } from "@/lib/report-scope";
 import { shiftReportDate } from "@/lib/report-range";
 import { withAbort } from "@/lib/pulse/abort";
 import type { PulseCtx, SalesFacts } from "@/lib/pulse/sections";
@@ -95,14 +96,32 @@ export async function loadCaptureStamp(client: SupabaseClient, locationId: strin
   return data?.finished_at ?? null;
 }
 
+/** Today's sales as the pulse card reads them: the COMPLETE totals (nothing narrowed) and the capture stamp. */
+export interface PulseSalesToday { totals: SalesTotals; capturedAt: string | null }
+
+/**
+ * Today's sales for one shop (nav PR 8, plan r2 2.11, A4): the pulse's own `pulse_sales_today` read and summarize step,
+ * extracted from `loadPulseSales` so the Dashboard's strip reads the same figure. The gate runs first (level 7 + the
+ * shop), before any RPC; a missing RPC is `sales_reads_not_installed`. Returns the complete `today`; only the Dashboard
+ * narrows it (`salesStripCell`).
+ */
+export async function loadPulseSalesToday(
+  client: SupabaseClient, args: { viewer: ReportScopeViewer; locationId: string; date: string },
+): Promise<PulseSalesToday> {
+  assertSalesScope(args.viewer, args.locationId);
+  const raw = await rpc<TodayRaw>(client, "pulse_sales_today", { p_location_id: args.locationId, p_from: args.date, p_to: args.date });
+  const today = summarizeSales([{ ...raw, tips: [], ezcater: [] }], args.date, args.date, "day");
+  return { totals: today.totals, capturedAt: raw.captured_at };
+}
+
 /** Seven bounded RPCs on a cold source; no report accounting or coverage-discovery reads. */
 export async function loadPulseSales(client: SupabaseClient, ctx: PulseCtx): Promise<SalesFacts> {
   const viewer = { userId: ctx.auth.user.id, level: ctx.auth.level, locations: ctx.auth.locations };
   assertSalesScope(viewer, ctx.locationId);
   const range = resolveSalesRange({ range: "today" }, ctx.date);
   const one = { locationId: ctx.locationId, range };
-  const [raw, items, channels, discounts, servers, hoursToday, history] = await Promise.all([
-    rpc<TodayRaw>(client, "pulse_sales_today", { p_location_id: ctx.locationId, p_from: ctx.date, p_to: ctx.date }),
+  const [today, items, channels, discounts, servers, hoursToday, history] = await Promise.all([
+    loadPulseSalesToday(client, { viewer, locationId: ctx.locationId, date: ctx.date }),
     loadSalesBreakdown(viewer, { ...one, dimension: "item" }, { client }),
     loadSalesBreakdown(viewer, { ...one, dimension: "channel" }, { client }),
     loadSalesBreakdown(viewer, { ...one, dimension: "discount" }, { client }),
@@ -110,9 +129,8 @@ export async function loadPulseSales(client: SupabaseClient, ctx: PulseCtx): Pro
     loadSalesBreakdown(viewer, { ...one, dimension: "hour_weekday" }, { client }),
     cachedBaseline(client, ctx.locationId, ctx.date),
   ]);
-  const today = summarizeSales([{ ...raw, tips: [], ezcater: [] }], ctx.date, ctx.date, "day");
   return {
-    today: { totals: today.totals, capturedAt: raw.captured_at },
+    today,
     items, channels, discounts, servers, hoursToday,
     heatTrailing: history ? mergeBreakdown("hour_weekday", [history.hours]) : [],
     trailing: history ? { buckets: [...new Set(history.captured_days)].map((from) => ({ from, coveredDays: 1 })) } : null,

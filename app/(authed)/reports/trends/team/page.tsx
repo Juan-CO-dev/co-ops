@@ -12,6 +12,7 @@ import type { TrendGranularity } from "@/lib/reports-trends";
 import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
 import { canOpenPeopleViews, peopleActorFromAuth } from "@/lib/people/access-shared";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { REPORTS_DENIED_HREF, reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
@@ -34,6 +35,8 @@ export default async function TeamRosterPage({ searchParams }: PageProps): Promi
 
 async function renderPage(paramsRange: Record<string, string | undefined>, allShops = false): Promise<ReactNode> {
   const auth = await requireSessionFromHeaders("/reports/trends/team");
+  // Nav spec PR S1: the report family refuses the social media manager by ROLE, before any read.
+  if (!reportsRoleAllowed(auth.role)) redirect(REPORTS_DENIED_HREF);
   // Task 13 (R7): the people views refuse the social media manager by ROLE, before any read.
   if (auth.level < TEAM_VIEW_LEVEL || !canOpenPeopleViews(peopleActorFromAuth(auth))) redirect("/dashboard");
   const { location: locationParam, g } = paramsRange;

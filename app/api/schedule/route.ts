@@ -10,7 +10,8 @@ import { ScheduleError, scheduleErrorStatus } from "@/lib/scheduling/errors-shar
 import { SCHEDULE_ACTIONS, exactShape } from "@/lib/scheduling/route-shapes-shared";
 import { isEditOp } from "@/lib/scheduling/edit-shared";
 import type { HorizonRequest } from "@/lib/scheduling/horizon-shared";
-import { applyHorizon, approveWeek, generateWeek, previewHorizon, saveEdit } from "@/lib/scheduling/schedules";
+import { isOpeningDecisionInput } from "@/lib/scheduling/opening-shared";
+import { applyHorizon, approveWeek, generateWeek, previewHorizon, saveEdit, setDayOpening } from "@/lib/scheduling/schedules";
 import { acceptBudgetSuggestion, keepBudget, recordPersonPositions, recordPersonSettings, setBudget, setDayType, setPin, type PersonSettingsInput } from "@/lib/scheduling/settings";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
   const confirmed = b.action === "apply" && Array.isArray(b.confirmedWeekStarts) ? b.confirmedWeekStarts.length
     : b.action === "generate" && b.confirmEdited === true ? 1 : 0;
   const tier = b.action === "approve" ? stepUpFor("approve", { confirmedEditedWeeks: 0 })
+    : b.action === "opening" ? stepUpFor("opening", { confirmedEditedWeeks: 0 })
     : b.action === "apply" || b.action === "generate" ? stepUpFor("regenerate", { confirmedEditedWeeks: confirmed }) : null;
   if (tier === "B") {
     const s = assertStepUp(ctx, "B");
@@ -71,6 +73,9 @@ export async function POST(req: NextRequest) {
       case "approve":
         if (!isStr(b.weekStart) || !isStr(b.expectedHead)) return jsonError(400, "bad_request");
         return jsonOk({ result: await approveWeek(deps, { actor, locationId, weekStart: b.weekStart, expectedHead: b.expectedHead }) });
+      case "opening":
+        if (!isStr(b.weekStart) || !isStr(b.expectedHead) || !isStr(b.date) || !isOpeningDecisionInput(b.decision)) return jsonError(400, "bad_request");
+        return jsonOk({ result: await setDayOpening(deps, { actor, locationId, weekStart: b.weekStart, expectedHead: b.expectedHead, date: b.date, decision: b.decision }) });
       case "budget":
         if ((b.scope !== "week" && b.scope !== "month") || !strOrNull(b.weekStart) || !strOrNull(b.month) || typeof b.hours !== "number") return jsonError(400, "bad_request");
         return jsonOk({ result: await setBudget(deps, { actor, locationId, scope: b.scope, weekStart: b.weekStart as string | null, month: b.month as string | null, hours: b.hours }) });

@@ -32,6 +32,7 @@ const CENSUS: Record<string, string> = {
   "app/api/catering/pipeline/route.ts": "writer: a manager creates a lead with an estimate",
   "components/catering/pipeline/PipelineClient.tsx": "display: the lead card's estimate",
   "lib/catering/booked-events.ts": "valuation: booked events (0195 rule), shown as catering value",
+  "lib/dashboard-blocks-shared.ts": "valuation: the Dashboard strip's catering cell (nav PR 8, A2): the booked-events rule without its ?? 0, pipeline orders only, estimates and missing prices named; its own cell, never added to a Toast sales figure",
   "lib/catering/catering-toast.ts": "label: reads catering_pipeline_reconciliation, the partition of the unchanged total",
   "lib/catering/insights.ts": "valuation: catering_insights_v2, its own page",
   "lib/catering/pipeline.ts": "writer/reader: the lead row itself",

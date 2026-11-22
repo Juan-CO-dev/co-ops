@@ -17,10 +17,12 @@ import { operationalNow } from "@/lib/midshift-shared";
 import type { PeopleActor } from "@/lib/people/access-shared";
 import { summarizeSales, type DailyRaw } from "@/lib/sales-reports-shared";
 import { canEditHourlyTarget, canManageShopSwitch } from "./access-shared";
+import { earlyOpenReady } from "./schedule-features";
 import { scheduleLaborViewsEnabled, type ScheduleLaborViewsEnv } from "./labor-projection-shared";
 import {
   acceptSuggestion, apportion, budgetForDates, entryDates, minCrewHours, referenceStructureOf, structureDeltaHours, suggestBudget, type BudgetEntry, type BudgetSuggestion,
 } from "./budget-shared";
+import { isHeavyCateringDay } from "@/lib/scheduling/catering-day-shared";
 import { forecastWeek } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
 import { generateWeek } from "./generator/dispatch-shared";
@@ -60,6 +62,12 @@ export async function saveStructure(deps: ScheduleDeps, args: { actor: PeopleAct
   await gate(deps.service, args.actor, args.locationId, "structure");
   const v = validScheduleStructure(args.structure);
   if (!v.ok) throw new ScheduleError("structure_invalid", { key: v.key });
+  // PR SCH-2 (plan r5 20.7, ruling D7): the earlier-opening mode needs 0354. Until its sentinel answers, a structure
+  // carrying catering.earlyOpenMode (ANY value, manual included) is refused here, before any write; a structure
+  // without the key takes today's path unchanged. A write never trusts the display cache (fresh: Astra SCH-2 r1 P2).
+  if (Object.hasOwn((args.structure as ScheduleStructure).catering, "earlyOpenMode") && !(await earlyOpenReady(deps.service, { fresh: true }))) {
+    throw new ScheduleError("feature_not_ready", { key: "catering.earlyOpenMode" });
+  }
   // 0346 / board two labor views PR 2: the pure-hourly target is MoO+ (Juan 2026-11-18) and dark behind
   // SCHEDULE_LABOR_VIEWS. Anyone who may not set it may still save the structure AROUND it: only a CHANGE of the key
   // (set, moved or removed against the live head) is refused. The head compared is the one the writer re-checks
@@ -268,10 +276,11 @@ export async function setBudget(deps: ScheduleDeps, args: { actor: PeopleActor; 
 }
 
 /** The reference revision's hourly hours and catering-rule hours per date, from its STORED snapshot and reasons. */
-function crewCateringHours(s: import("./structure-shared").ScheduleStructure, events: readonly { headcount: number }[]): number {
+export function crewCateringHours(s: import("./structure-shared").ScheduleStructure, events: readonly { headcount: number }[]): number {
   const setting = s.catering.crewShift;
   const type = setting?.enabled ? shiftTypesOf(s).find((t) => t.id === setting.typeId) : undefined;
-  return type && events.some((e) => e.headcount >= s.catering.minHeadcount) ? (type.toQ - type.fromQ) / 4 * setting!.extraHeads : 0;
+  // PR SCH (site B): the day's TOTAL guests decide (PR 5's one rule), never one order alone.
+  return type && isHeavyCateringDay(events, s.catering) ? (type.toQ - type.fromQ) / 4 * setting!.extraHeads : 0;
 }
 
 function referenceFacts(w: NonNullable<Awaited<ReturnType<typeof loadWeekHeads>>[string]["head"]>) {

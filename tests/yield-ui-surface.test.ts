@@ -116,8 +116,10 @@ describe("retrain assignment surfaces (Juan 2026-10-07)", () => {
     expect(component).toMatch(/if \(view\.unavailable\) \{\s+return <p role="status"[^>]*>\{t\("yield\.view\.unavailable"\)\}<\/p>;/);
   });
   it("My shift: the dashboard loads ONLY the viewer's own retrains and the compact board renders them", () => {
-    expect(dashboard).toMatch(/loadMyRetrainTasks\(auth, selectedLocation\.id\)/);
-    expect(dashboard).toMatch(/<ShiftBoardClient key=\{`\$\{shiftBoard\.locationId\}:\$\{ownTasks\.length\}:\$\{heldStationId \?\? "none"\}`\} board=\{shiftBoard\} compact retrainTasks=\{retrainTasks\} \/>/);
+    // Nav PR 7: the read is bounded by the page deadline and cancelled through its signal (lead ruling r3, H2); the compact
+    // board is the page's ONE board promise's value, keyed by the viewer's own work (myShiftKey), with no interval refresh.
+    expect(dashboard).toMatch(/loadMyRetrainTasks\(auth, shop\.id, \{ signal \}\)/);
+    expect(dashboard).toMatch(/<ShiftBoardClient key=\{myShiftKey\(board\.value, auth\.user\.id\)\} board=\{board\.value\} compact refreshEvery=\{null\} retrainTasks=\{retrainTasks \?\? \[\]\} \/>/);
     expect(shiftBoard).toMatch(/\{compact && retrainTasks\.length > 0 && <RetrainTaskList tasks=\{retrainTasks\} \/>\}/);
     expect(taskList).toContain('fetch("/api/operations/production/yield/retrain/done"');
   });

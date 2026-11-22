@@ -57,6 +57,7 @@ export const DESTRUCTIVE_ACTIONS = [
   "labor_burden.save", // 0338 (SQL-only): a person sets the payroll burden %, which re-prices labor history at read time.
   "demand_source.mark", // 0343 (SQL-only): a MoO+ marks a demand-signal source verified or revoked (opens or closes what may be ingested and used).
   "demand_event.correct", // 0343 (SQL-only): a GM+ corrects or retracts a manually entered demand event (the earlier row stays).
+  "business_report_visibility.save", // 0349 (SQL-only): a MoO+ changes what GMs may see in the business report (who sees the labor money).
   "labor_payroll_shop.save", // 0340 (SQL-only): a person sets which shop's payroll a salary belongs to (re-allocates labor history on rebuild).
   "landing_ad_code.create",
   "landing_ad_code.retire",
@@ -78,6 +79,12 @@ export const DESTRUCTIVE_ACTIONS = [
   "catering.toast_not_a_match",
   "catering.toast_no_ring_expected",
   "catering.toast_ring_expected",
+  // Item 21 PR 5 (0350, written in SQL in the save's own transaction): a person changed a shop's catering ↔ Toast
+  // switches (the list, ring codes, automatic linking, its start date, the amount tolerance).
+  "catering.toast_settings_update",
+  // Item 21 PR 5: a person ran the house reconciler over an OLDER stretch of orders (the cron only looks at the last
+  // nine days) and it added links. The links' own record is catering.toast_reconciled; this names who started it.
+  "catering.toast_backfill",
   // W23/B129, owner decision W23-4 b — SQL-only (migration 0330): an EMPTY duplicate catering company
   // (no domain, no contact, a same-name company created after it) is switched off (active = false,
   // reversible). One row per company, destructive literally true, actor_context migration_apply.
@@ -101,6 +108,8 @@ export const DESTRUCTIVE_ACTIONS = [
   "station.event",
   "station.break", // A human changes the shift's availability record.
   "station.timing_update", // Advisory station / position configuration.
+  "station.mid_day_trigger", // Nav PR 6 (0353): which station's close starts mid-day prep (shared config).
+  "station.not_phase_station", // Nav PR 6 (0353): a station whose close does not move the day (shared config).
   "assignment.create",
   "assignment.retract",
   "shift.end", // 0233: a human ends a shift — releases the station and unassigns open tasks.
