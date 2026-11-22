@@ -16,7 +16,7 @@ import { canonicalJson, digest64 } from "@/lib/scheduling/context-shared";
 import type { BuildDayInput, GeneratorInput, GeneratorOutput } from "@/lib/scheduling/generator/build-shared";
 import type { SchedulingInputs } from "@/lib/scheduling/inputs-shared";
 import { acceptanceInputs, DATES as CREW_DATES } from "./crew-p-street-2026-10-19";
-import { DATES, H9_EXTRA, SMALL_SPECS, V17_SPECS, day, fixture, structure, v17Days } from "./fixtures";
+import { DATES, H9_EXTRA, SMALL_SPECS, V17_SPECS, day, fixture, structure, v17Days, type PersonSpec } from "./fixtures";
 
 /** [headcount, eventQ] per order, by weekday index (0 = Monday). */
 export const SCH_ORDERS: ReadonlyArray<ReadonlyArray<readonly [number, number | null]>> = [
@@ -43,6 +43,25 @@ export function schTightWeek(): GeneratorInput {
   const s = structure();
   const days = DATES.map((d, i) => day(d, { catering: schCatering(i) }, s));
   return fixture({ structure: s, specs: [...SMALL_SPECS, ...H9_EXTRA], days, budgetByDate: Object.fromEntries(DATES.map((d) => [d, 40])) });
+}
+
+/**
+ * Lead ruling H1 (b), the ISOLATED SLACK week: the small shop with its own crew for each date — the SMALL roster's hourly people
+ * plus a third BOH person and a closing Shift Lead (so the evening has a manager on duty and no gap is left to the week-wide
+ * repair search, whose step counter is shared by every date), cloned per date (`u-s<weekday>-…`) and available on THAT date only. Nobody can work two dates, so
+ * the week has nothing to couple through: no off-day choice (nobody has more open dates than the cap), no weekly hours or soft
+ * min carried from one date to the next, no budget, no salaried manager. Orders: Mon 25 @ 12:00 (catering, not heavy), Wed 120
+ * @ 9:00 (heavy), Sun 12 @ 9:00 + 25 @ 11:00 (heavy only by the day total). Only Wed and Sun may change.
+ */
+export const SCH_SLACK_ORDERS: ReadonlyArray<ReadonlyArray<readonly [number, number | null]>> = [[[25, 48]], [], [[120, 36]], [], [], [], [[12, 36], [25, 44]]];
+
+export function schSlackWeek(): GeneratorInput {
+  const s = structure();
+  const hal = SMALL_SPECS.find((p) => p.id === "u-h-hal")!;
+  const crew: PersonSpec[] = [...SMALL_SPECS.filter((p) => p.role !== "gm"), H9_EXTRA.find((p) => p.id === "u-o-oz")!, { ...hal, id: "u-q-quin", role: "shift_lead" }];
+  const specs = DATES.flatMap((_, i) => crew.map((p) => ({ ...p, id: `u-s${i + 1}-${p.id.slice(2)}`, off: [1, 2, 3, 4, 5, 6, 7].filter((dow) => dow !== i + 1) })));
+  const days = DATES.map((d, i) => day(d, { catering: (SCH_SLACK_ORDERS[i] ?? []).map(([headcount, eventQ], k) => ({ id: `ev-s${i}-${k}`, headcount, eventQ })) }, s));
+  return fixture({ structure: s, specs, days });
 }
 
 /** The crew orders: 3 × 20 at 9:00 on Tuesday (heavy by total only), 120 at 9:00 on Thursday. */
