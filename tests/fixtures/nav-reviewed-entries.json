@@ -945,7 +945,7 @@
   "anchor": "fn:OrderingPage",
   "kind": "early-return",
   "line": 92,
-  "text": "if (!locationId) { return ( <TranslationProvider initialLanguage={language}> {/* Outside both layouts that mount the idle guard, so the page mounts it itself (nav spec r5 §9). */} <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} /> <main className=\"mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6\"> <div className=\"mb-3\"> <DashboardBackLink /> </div> <h1 className=\"mt-4 text-lg font-bold text-co-text\">{serverT(language, \"ordering.page.title_bare\")}</h1> <p className=\"mt-2 text-sm text-co-text-muted\">{serverT(language, \"ordering.page.no_location\")}</p> </main> </TranslationProvider> ); }",
+  "text": "if (!locationId) { return ( <TranslationProvider initialLanguage={language}> {/* Outside both layouts, so the page mounts the top bar (and with it the idle guard) itself (nav PR 9; spec r5 §9). */} <NavFrame auth={auth} language={language}> <main className=\"mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6\"> <div className=\"mb-3\"> <DashboardBackLink /> </div> <h1 className=\"mt-4 text-lg font-bold text-co-text\">{serverT(language, \"ordering.page.title_bare\")}</h1> <p className=\"mt-2 text-sm text-co-text-muted\">{serverT(language, \"ordering.page.no_location\")}</p> </main> </NavFrame> </TranslationProvider> ); }",
   "meaning": {
    "kind": "admit",
    "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
@@ -2348,7 +2348,7 @@
   "anchor": "fn:TrainingPage",
   "kind": "early-return",
   "line": 92,
-  "text": "if (!initialGuide) { return ( <TranslationProvider initialLanguage={lang}> {/* Outside both layouts that mount the idle guard, so the page mounts it itself (nav spec r5 §9). */} <IdleTimeoutWarning idleMinutes={sessionIdleMinutes()} userId={auth.user.id} sessionId={auth.session.id} /> <div className=\"mx-auto w-full max-w-3xl p-3 pb-8\"> <BackLink hrefOverride=\"/dashboard\" labelKey=\"nav.dashboard\" /> <h1 className=\"m-0 mb-2 text-base font-bold text-co-text\">{title}</h1> <LearnTheBuildEntry lang={lang} /> <p className=\"co-card m-0 px-4 py-3 text-sm text-co-text-muted\"> {serverT(lang, \"training.none\")} </p> </div> </TranslationProvider> ); }",
+  "text": "if (!initialGuide) { return ( <TranslationProvider initialLanguage={lang}> {/* Outside both layouts, so the page mounts the top bar (and with it the idle guard) itself (nav PR 9; spec r5 §9). */} <NavFrame auth={auth} language={lang}> <div className=\"mx-auto w-full max-w-3xl p-3 pb-8\"> <BackLink hrefOverride=\"/dashboard\" labelKey=\"nav.dashboard\" /> <h1 className=\"m-0 mb-2 text-base font-bold text-co-text\">{title}</h1> <LearnTheBuildEntry lang={lang} /> <p className=\"co-card m-0 px-4 py-3 text-sm text-co-text-muted\"> {serverT(lang, \"training.none\")} </p> </div> </NavFrame> </TranslationProvider> ); }",
   "meaning": {
    "kind": "admit",
    "why": "renders the page (empty, no-shop, no-template, read-only, error or all-shops view)"
