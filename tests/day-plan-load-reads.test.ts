@@ -110,6 +110,42 @@ describe("8.1 item 8: the query budget on a quiet day (recomputed in r3)", () =>
   });
 });
 
+describe("8.1 item 8: the query budget on a POPULATED day (Astra r1: a quiet day cannot catch a per-row read)", () => {
+  // Open orders, in-progress and complete deliveries and Prep demand rows, at 3 and at 90 rows each. Rows add exactly
+  // three CONDITIONAL follow-up reads to the quiet key holder's 27 (after 0353): openOrders' read of the orders' complete
+  // deliveries (vendor_deliveries, in chunks of 100 order ids, so one read up to 100 orders), and Prep demand's item
+  // registry reads (items and item_par_levels, in chunks of 100 item ids). 30 at 3 rows AND 30 at 90 rows is what proves
+  // there is no per-row read: one would add 87 more at 90 rows than at 3.
+  const populated = (n: number) => (c: FakeCall): Answer => {
+    const rows = <T,>(f: (i: number) => T) => Array.from({ length: n }, (_, i) => f(i));
+    switch (c.table) {
+      case "purchase_orders": return { data: rows((i) => ({ id: `po${i}`, display_code: `P${i}`, vendor_id: "v", status: "placed",
+        created_at: `${PLAN_DATE}T12:00:00Z`, confirmed_at: null, placed_at: `${PLAN_DATE}T12:00:00Z` })) };
+      case "vendor_deliveries": return { data: rows((i) => ({ id: `d${i}`, vendor_id: "v", created_at: `${PLAN_DATE}T12:00:00Z`, purchase_order_id: `po${i}` })) };
+      case "catering_prep_demand": return { data: rows((i) => ({ pipeline_id: `p${i}`, need_date: PLAN_DATE, item_id: `it${i}`, menu_item_id: null,
+        choice_package_item_id: null, portion: "full", qty: 2 })) };
+      case "items": return { data: rows((i) => ({ id: `it${i}`, name: `Item ${i}`, name_es: null, default_par: 1, default_par_unit: null, active: true })) };
+      default: return quiet({ installed: true, date: PLAN_DATE })(c);
+    }
+  };
+  const run = async (n: number) => {
+    const now = at("13:45", PLAN_DATE);
+    const f = fakeSupabase(populated(n), () => ({ data: PLAN_DATE }));
+    await loadDayFacts(f.client as never, { viewer: { ...ANA, userId: "u-ana" }, shop: { id: SHOP, code: "P" }, now, locations: [SHOP],
+      board: async () => ({ stationDate: PLAN_DATE, locationId: SHOP, date: PLAN_DATE, viewerId: "u-ana", viewerLevel: 4, stations: [], people: [], events: [], tasks: [] }) });
+    return { count: f.calls.length + f.rpcs.length, reads: [...f.calls.map((c) => c.table), ...f.rpcs.map((r) => `rpc:${r.name}`)].sort() };
+  };
+
+  it("key holder after 0353: exactly 30 reads at 3 rows and at 90 rows (27 quiet + the three conditional follow-ups)", async () => {
+    const [few, many] = [await run(3), await run(90)];
+    expect({ few: few.count, many: many.count }, JSON.stringify({ few: few.reads, many: many.reads })).toEqual({ few: 30, many: 30 });
+    expect(many.reads).toEqual(few.reads);
+    // The follow-ups did fire: three vendor_deliveries reads (half-logged, completed today, the open orders' complete ones) and the registry pair.
+    expect(many.reads.filter((t) => t === "vendor_deliveries")).toHaveLength(3);
+    expect(many.reads.filter((t) => t === "items" || t === "item_par_levels")).toEqual(["item_par_levels", "items"]);
+  });
+});
+
 describe("8.2: each read's real query", () => {
   const sb = (respond: (c: FakeCall) => Answer) => fakeSupabase(respond);
   const pages = (n: number, make: (i: number) => Record<string, unknown>) => (c: FakeCall): Answer => {
