@@ -22,7 +22,7 @@ Plan: CHIEF `03-PROJECTS/co-ops/2026-11-15-juan-product-notes/toast-churn-cleanu
 
 1. **Apply 0351** (sim first, then prod). It deletes nothing. It creates the registry, copies every snapshot into it, adds the register trigger, and moves the membership foreign key to the registry.
    - Window: **04:00–08:45 UTC**. No capture, reconcile or fact job runs then.
-   - Locks: `toast_orders` write-blocked for the whole file (capture waits); at the very end, a short ACCESS EXCLUSIVE on `toast_capture_run_orders` and `toast_orders` (readers wait for milliseconds). If it cannot get a lock it fails and nothing changes; run it again.
+   - Locks: `toast_orders` write-blocked for the whole file (capture waits); at the very end, a short ACCESS EXCLUSIVE on `toast_capture_run_orders` and `toast_orders` (readers wait for milliseconds). Both lock steps are bounded loops of 100 ms attempts that release what they took on failure, so the cutover never deadlocks with a reader (the old single upgrade did: `scripts/sim/toast-dedup-cutover-lock-check.mjs`, X1). If a step cannot get its locks in 30 s the file refuses `0351: lock_busy (step N, …)` and nothing changes; run it again.
    - The prepared script does a dry run first (everything rolled back) and prints the locks and the time.
 2. **Build a manifest**, in the same quiet window as the apply of its batches (see "Why one window"):
    ```sql
