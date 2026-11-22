@@ -7,18 +7,24 @@
  */
 import Link from "next/link";
 import { taskHref } from "@/lib/assignments-shared";
-import type { DayViewer, SmmPlan } from "@/lib/day-plan-shared";
+import type { SmmPlan, Surface } from "@/lib/day-plan-shared";
 import { renderDayReason } from "@/lib/day-plan-render";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import { byId } from "@/lib/nav/destinations";
+import type { Switches } from "@/lib/nav/types";
+import type { RoleCode } from "@/lib/roles";
 import { Shortcuts } from "./Shortcuts";
 
-export function SmmDashboard({ plan, shopId, language, viewer }: {
+export function SmmDashboard({ plan, shopId, language, actorRole, actorLevel, surfaces, switches }: {
   plan: SmmPlan;
   shopId: string;
   language: Language;
-  viewer: Pick<DayViewer, "role" | "level" | "surfaces" | "switches">;
+  /** The session's REAL role (the page only reaches here for the social media manager). */
+  actorRole: RoleCode;
+  actorLevel: number;
+  surfaces: ReadonlySet<Surface>;
+  switches: Switches;
 }) {
   const closingHref = `/operations/closing?location=${encodeURIComponent(shopId)}`;
   return (
@@ -50,7 +56,7 @@ export function SmmDashboard({ plan, shopId, language, viewer }: {
           {serverT(language, byId(plan.closingDestId).nameKey)}
         </Link>
       </section>
-      <Shortcuts viewer={viewer} shopId={shopId} language={language} />
+      <Shortcuts actorRole={actorRole} actorLevel={actorLevel} surfaces={surfaces} switches={switches} shopId={shopId} language={language} />
     </div>
   );
 }

@@ -66,6 +66,7 @@ import { ActionLink } from "@/components/ActionButton";
 import { CashDepositTile } from "@/components/CashDepositTile";
 import { PmReportTile } from "@/components/PmReportTile";
 import { DashboardNav } from "@/components/DashboardNav";
+import { navSwitches } from "@/lib/nav-switches";
 import { MidDayPrepTile } from "@/components/MidDayPrepTile";
 import { ReceivingTile } from "@/components/receiving/ReceivingTile";
 import { CountsTile } from "@/components/counts/CountsTile";
@@ -588,6 +589,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             actorLevel={auth.level}
             selectedLocationId={selectedLocation?.id ?? null}
             actorRole={auth.role}
+            switches={navSwitches()}
           />
         </div>
 
