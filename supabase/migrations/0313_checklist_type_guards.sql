@@ -1,5 +1,7 @@
 -- Migration 0313_checklist_type_guards
 -- AUTHORED 2026-11-15. NOT YET APPLIED - sim first, prod on Juan's word.
+-- APPLIED TO SIM 2026-11-15 (schema_migrations version 20261115223820, name '0313_checklist_type_guards')
+-- APPLIED TO PROD 2026-11-15 (schema_migrations version 20261115224327, name '0313_checklist_type_guards')
 -- Provenance: bug audit wave W13 ("Checklist submissions accepting the wrong checklist or
 --   day"), bugs B019, B072, B073, B074. Reviewed plan: audit/plans/W13.md (migration A).
 -- WHAT: every checklist writer refuses an instance of another checklist type, by name, in SQL:

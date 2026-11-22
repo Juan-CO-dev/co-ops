@@ -44,7 +44,9 @@ describe("0320 checklist publish activation", () => {
 
   it("is file-only, in one transaction, and refuses by name", () => {
     expect(sql).toMatch(/^-- Migration 0320_checklist_publish_activation\n-- AUTHORED 2026-11-15\. NOT YET APPLIED/);
-    expect(sql).not.toMatch(/APPLIED TO (SIM|PROD)/);
+    // Applied 2026-11-16 (stamped from the live ledger, 2026-11-22).
+    expect(sql).toContain("-- APPLIED TO SIM 2026-11-16 (schema_migrations version 20261116033003, name '0320_checklist_publish_activation')");
+    expect(sql).toContain("-- APPLIED TO PROD 2026-11-16 (schema_migrations version 20261116055634, name '0320_checklist_publish_activation')");
     expect(sql.match(/^begin;$/gm)).toHaveLength(1);
     expect(sql.match(/^commit;$/gm)).toHaveLength(1);
     expect(sql).toContain("re-base section D onto the live body");

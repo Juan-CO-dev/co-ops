@@ -1,5 +1,7 @@
 -- Migration 0318_checklist_task_writers_any_shop_level8
 -- AUTHORED 2026-11-15. NOT YET APPLIED — FILE ONLY. Apply via MCP after review (sim first, prod on Juan's word).
+-- APPLIED TO SIM 2026-11-16 (schema_migrations version 20261116030149, name '0318_checklist_task_writers_any_shop_level8')
+-- APPLIED TO PROD 2026-11-16 (schema_migrations version 20261116030336, name '0318_checklist_task_writers_any_shop_level8')
 -- Provenance: the 2026-11-14 bug audit, follow-up wave W05B (after W05 / PR #545). Owner ruling, Juan 2026-11-15:
 --   "we routinely do tasks at the shops depending on what's needed and who is available". Level 8+ (MoO, owner,
 --   CGS) may mark checklist tasks done, submit batches and confirm instances at ANY shop without a membership row,

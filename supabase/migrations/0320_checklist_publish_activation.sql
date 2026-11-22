@@ -1,5 +1,7 @@
 -- Migration 0320_checklist_publish_activation
 -- AUTHORED 2026-11-15. NOT YET APPLIED — FILE ONLY. Apply via MCP after review (sim first, prod on Juan's word).
+-- APPLIED TO SIM 2026-11-16 (schema_migrations version 20261116033003, name '0320_checklist_publish_activation')
+-- APPLIED TO PROD 2026-11-16 (schema_migrations version 20261116055634, name '0320_checklist_publish_activation')
 -- Provenance: the 2026-11-14 bug audit (found at commit 7494f738), fix wave W15 "Checklist template publishing
 --   and admin editors". One file for the wave's SQL; each section names its bug id. Owner decision W15-2 (a):
 --   a line switched to opening verification starts with TOMORROW's opening.
