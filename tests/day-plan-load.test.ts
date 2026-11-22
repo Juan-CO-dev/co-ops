@@ -575,11 +575,11 @@ describe("SCH (ruling G, 23.2): the base hours and the schedule start are bounde
     setTimeout(() => r({ weeks: [{ week_start: "2026-11-16", head_revision_id: "h" }], days: [], starts: {} }), 20_000);
   });
   it.each([
-    ["immediate (100 ms)", 100, "never settles", neverSettles],
-    ["immediate (100 ms)", 100, "ignores its abort (would answer at 20 s)", ignoresAbort],
-    ["late (5,900 ms)", 5_900, "never settles", neverSettles],
-    ["late (5,900 ms)", 5_900, "ignores its abort (would answer at 20 s)", ignoresAbort],
-  ] as const)("base hours %s, schedule start %s: on time, the saved hours kept, both dates unknown, no clock rise", async (_b, baseMs, _s, starts) => {
+    ["immediate (100 ms)", "never settles", 100, neverSettles],
+    ["immediate (100 ms)", "ignores its abort (would answer at 20 s)", 100, ignoresAbort],
+    ["late (5,900 ms)", "never settles", 5_900, neverSettles],
+    ["late (5,900 ms)", "ignores its abort (would answer at 20 s)", 5_900, ignoresAbort],
+  ] as const)("base hours %s, schedule start %s: on time, the saved hours kept, both dates unknown, no clock rise", async (_b, _s, baseMs, starts) => {
     const deps = withDeps({ shopDay: after(baseMs), scheduleStarts: starts as DayFactDeps["scheduleStarts"], dayInstance: async (sb, a) => (a.type === "opening" ? null : okDeps().dayInstance(sb, a)) });
     let done = false;
     const p = loadDayFacts(NO_CLIENT, args(ANA, { now: at("06:45") }), deps).then((r) => { done = true; return r; });
