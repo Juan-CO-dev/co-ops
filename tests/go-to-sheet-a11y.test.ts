@@ -135,3 +135,71 @@ describe("U2: Escape", () => {
     expect(document.body.style.overflow).toBe("auto");
   });
 });
+
+// ─── U3 (step 7): every label in both languages ─────────────────────────────────────────────────────────────────────
+import { NavShell } from "@/components/nav/NavShell";
+import { TranslationProvider } from "@/lib/i18n/provider";
+import { goToEntries } from "@/lib/nav/go-to";
+import enDict from "@/lib/i18n/en.json";
+import esDict from "@/lib/i18n/es.json";
+
+const navRouter = vi.hoisted(() => ({ push: () => {}, refresh: () => {} }));
+vi.mock("next/navigation", () => ({ useRouter: () => navRouter, usePathname: () => "/operations/closing" }));
+
+const EN = enDict as Record<string, string>;
+const ES = esDict as Record<string, string>;
+/** The keys nav PR 9 adds (step 7 part: the bar, Go to and Me). */
+export const NAV_PR9_KEYS = [
+  "nav.room.today", "nav.room.catering", "nav.room.reports", "nav.room.back_office", "nav.room.me",
+  "nav.topbar.aria", "nav.goto.open", "nav.goto.open_aria", "nav.goto.close", "nav.goto.heading", "nav.goto.search_label",
+  "nav.goto.search_placeholder", "nav.goto.shortcut_hint", "nav.goto.results_count", "nav.goto.results.pages",
+  "nav.goto.results.people", "nav.goto.job", "nav.goto.no_results", "nav.goto.people_loading", "nav.goto.people_more",
+  "nav.goto.people_none", "nav.goto.people_error", "user_menu.language.error", "user_menu.language.network_error",
+] as const;
+
+describe("U3: the new keys exist in en and es, with the same {params}", () => {
+  it.each(NAV_PR9_KEYS)("%s", (k) => {
+    expect(EN[k], `en ${k}`).toBeTruthy();
+    expect(ES[k], `es ${k}`).toBeTruthy();
+    const params = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+    expect(params(ES[k]!)).toEqual(params(EN[k]!));
+  });
+});
+
+describe("U3: every label of the bar and the open sheet resolves, in en and es", () => {
+  const ME = { userName: "Gina", userEmail: "g@example.test", actorLevel: 7, initialBlurb: null, sessionId: "s1" };
+  function labels(lang: "en" | "es") {
+    const model = goToEntries({ role: "gm", level: 7, language: lang }, {});
+    render(createElement(TranslationProvider, { initialLanguage: lang, children: createElement(NavShell, { model, me: ME, bell: null, children: null }) }));
+    fireEvent.click(document.querySelector("[data-co-goto-button]")!);
+    const all = Array.from(document.querySelectorAll<HTMLElement>("*"));
+    const aria = all.flatMap((el) => [el.getAttribute("aria-label"), el.getAttribute("placeholder")]).filter((v): v is string => v !== null);
+    const described = all.map((el) => el.getAttribute("aria-describedby")).filter((v): v is string => !!v)
+      .map((id) => document.getElementById(id)?.textContent ?? "");
+    const labelled = all.map((el) => el.getAttribute("aria-labelledby")).filter((v): v is string => !!v)
+      .map((id) => document.getElementById(id)?.textContent ?? "");
+    const text = document.body.textContent ?? "";
+    return { aria, described, labelled, text };
+  }
+  it.each(["en", "es"] as const)("%s", (lang) => {
+    const { aria, described, labelled, text } = labels(lang);
+    for (const v of [...aria, ...described, ...labelled]) {
+      expect(v.trim(), v).not.toBe("");
+      expect(v, "a raw key").not.toMatch(/^[a-z_]+(\.[a-z_]+)+$/);
+    }
+    expect(text).not.toMatch(/\b(nav|user_menu)\.[a-z_.]+/);
+    if (lang === "es") {
+      for (const k of NAV_PR9_KEYS) {
+        if (EN[k] === ES[k] || /\{/.test(EN[k]!)) continue;
+        const escaped = EN[k]!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const word = new RegExp(`(^|[^\\p{L}])${escaped}($|[^\\p{L}])`, "u");
+        expect(word.test(text) || aria.includes(EN[k]!), `English "${EN[k]}" in the es render`).toBe(false);
+      }
+      expect(aria).toContain(ES["nav.goto.open_aria"]);
+      expect(text).toContain(ES["nav.goto.shortcut_hint"]);
+    } else {
+      expect(aria).toContain(EN["nav.goto.open_aria"]);
+    }
+    cleanup();
+  });
+});
