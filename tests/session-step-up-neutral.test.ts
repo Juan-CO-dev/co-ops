@@ -174,6 +174,7 @@ describe("S1 (f): no neutral route imports the unlock", () => {
   // Each lands with its own commit; this list is extended in the commit that adds the file.
   const FILES = [
     "app/api/auth/heartbeat/route.ts",
+    "app/api/nav/people/route.ts",
     "app/api/notifications/mark-all-read/route.ts",
     "app/api/users/me/language/route.ts",
     "app/api/users/me/profile-blurb/route.ts",
