@@ -105,3 +105,42 @@ describe("B1: one deadline over the unread read and the code read", () => {
     expect(h.db.queries).toEqual([]);
   });
 });
+
+// ─── Step 8: the streamed component (TopBarBell) hands the island exactly what the unit settled ─────────────────────
+import { isValidElement, type ReactElement } from "react";
+import { TopBarBell } from "@/components/nav/TopBarBell";
+import { BellIsland } from "@/components/nav/BellIsland";
+
+const auth = (role = "key_holder") => ({
+  role, level: 4, locations: ["A"], user: { id: "me" }, session: { id: "sess-1" },
+}) as unknown as Parameters<typeof TopBarBell>[0]["auth"];
+
+describe("B1: TopBarBell", () => {
+  it("(a) both ok: the island receives { notices, locationCodes }, keyed by role and session", async () => {
+    const el = (await TopBarBell({ auth: auth() })) as ReactElement<{ initial: unknown }>;
+    expect(isValidElement(el)).toBe(true);
+    expect(el.type).toBe(BellIsland);
+    expect(el.key).toBe("key_holder:sess-1");
+    const initial = el.props.initial as { notices: Array<{ recipient: { id: string } }>; locationCodes: Record<string, string> };
+    expect(Object.keys(initial).sort()).toEqual(["locationCodes", "notices"]);
+    expect(initial.locationCodes).toEqual({ A: "AAA" });
+  });
+  it("(b) the code read hangs: at 6 s the island is 'unavailable' (initial null), never a 0", async () => {
+    h.db.hang = (q) => q.table === "locations";
+    const p = TopBarBell({ auth: auth() });
+    await vi.advanceTimersByTimeAsync(6_000);
+    const el = (await p) as ReactElement<{ initial: unknown }>;
+    expect(el.type).toBe(BellIsland);
+    expect(el.props.initial).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("(c) the code read rejects: 'unavailable'", async () => {
+    h.db.fail = (q) => (q.table === "locations" ? { message: "boom" } : null);
+    const el = (await TopBarBell({ auth: auth() })) as ReactElement<{ initial: unknown }>;
+    expect(el.props.initial).toBeNull();
+  });
+  it("(g) the social media manager: null, and no query is ever built", async () => {
+    expect(await TopBarBell({ auth: auth("social_media_mgr") })).toBeNull();
+    expect(h.db.queries).toEqual([]);
+  });
+});

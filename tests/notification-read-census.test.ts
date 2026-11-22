@@ -18,6 +18,7 @@ export const CALL_SITES: Readonly<Record<string, readonly string[]>> = {
   "app/api/notifications/mark-all-read/route.ts": ["markAllNotificationsRead"],
   "app/api/notifications/unread/route.ts": ["loadBellUnit"],
   "components/nav/notification-actions.ts": ["markNotificationRead"],
+  "components/nav/TopBarBell.tsx": ["loadBellUnit"],
   "lib/top-bar-bell.ts": ["loadUnreadForUser", "loadNoticeLocationCodes"],
 };
 

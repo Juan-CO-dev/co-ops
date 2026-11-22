@@ -155,6 +155,9 @@ export const NAV_PR9_KEYS = [
   "nav.goto.search_placeholder", "nav.goto.shortcut_hint", "nav.goto.results_count", "nav.goto.results.pages",
   "nav.goto.results.people", "nav.goto.job", "nav.goto.no_results", "nav.goto.people_loading", "nav.goto.people_more",
   "nav.goto.people_none", "nav.goto.people_error", "user_menu.language.error", "user_menu.language.network_error",
+  // step 8: the bell
+  "notifications.bell.loading_aria", "notifications.bell.unavailable_aria", "notifications.bell.stale_aria",
+  "notifications.sheet.unavailable", "notifications.sheet.stale",
 ] as const;
 
 describe("U3: the new keys exist in en and es, with the same {params}", () => {

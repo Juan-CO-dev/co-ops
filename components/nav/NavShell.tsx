@@ -39,12 +39,14 @@ export interface GoToApi {
   /** Opens the bell panel (closing Go to); a no-op under a foreign modal. */
   openBell: (returnTo?: HTMLElement | null) => void;
   model: GoToModel;
+  /** Where focus goes back when the open sheet closes (the trigger, or what had focus before Ctrl+K). */
+  returnTo: HTMLElement | null;
   /** False outside a NavShell (a component rendered without the bar): `open()` does nothing there. */
   available: boolean;
 }
 
 const EMPTY_MODEL: GoToModel = { rooms: [], people: false };
-const NOOP: GoToApi = { open: () => {}, close: () => {}, isOpen: false, panel: null, openBell: () => {}, model: EMPTY_MODEL, available: false };
+const NOOP: GoToApi = { open: () => {}, close: () => {}, isOpen: false, panel: null, openBell: () => {}, model: EMPTY_MODEL, returnTo: null, available: false };
 const GoToContext = createContext<GoToApi>(NOOP);
 
 /** The bar's Go to, from anywhere inside the page (the Dashboard's "All pages"). */
@@ -91,8 +93,8 @@ export function NavShell({ model, me, bell, children }: NavShellProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  const api = useMemo<GoToApi>(() => ({ open, close, isOpen: panel === "goto", panel, openBell, model, available: true }),
-    [open, close, panel, openBell, model]);
+  const api = useMemo<GoToApi>(() => ({ open, close, isOpen: panel === "goto", panel, openBell, model, returnTo, available: true }),
+    [open, close, panel, openBell, model, returnTo]);
 
   return (
     <GoToContext.Provider value={api}>
