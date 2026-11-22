@@ -14,12 +14,14 @@ import es from "../../../lib/i18n/es.json";
 const runId = process.env.LRA_RUN_ID;
 if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error("Use run.ts under a host lease");
 const suite = process.env.LRA_SUITE;
-if (!["runner", "isolation", "personas", "opening", "ordering", "customer"].includes(suite ?? "")) throw new Error("Unknown suite");
-const journeySuite = suite === "opening" || suite === "ordering" || suite === "customer";
-const journeyFile: Record<string, string> = { opening: "opening", ordering: "ordering-receiving", customer: "customer-first-use" };
-const slice = (suite === "ordering" ? process.env.LRA_ORDERING_SLICE : suite === "customer" ? process.env.LRA_CUSTOMER_SLICE : process.env.LRA_OPENING_SLICE) ?? "";
+if (!["runner", "isolation", "personas", "opening", "ordering", "customer", "nav"].includes(suite ?? "")) throw new Error("Unknown suite");
+const journeySuite = suite === "opening" || suite === "ordering" || suite === "customer" || suite === "nav";
+const journeyFile: Record<string, string> = { opening: "opening", ordering: "ordering-receiving", customer: "customer-first-use", nav: "nav-top-bar" };
+const slice = (suite === "ordering" ? process.env.LRA_ORDERING_SLICE : suite === "customer" ? process.env.LRA_CUSTOMER_SLICE : suite === "nav" ? process.env.LRA_NAV_SLICE : process.env.LRA_OPENING_SLICE) ?? "";
 // Slice label = `<project>-<attempt>` plus `-<shop>` for the customer suite, which restores per shop (run.ts).
-if (journeySuite && !/^(phone|tablet)-(en|es)-[1-9]\d*(-(EM|MEP))?$/.test(slice)) throw new Error(`${suite} requires parent-owned cold restores`);
+// Nav PR 9: the nav suite runs ONLY at 375 px (phone375-en / phone375-es); every other suite keeps its four projects.
+if (journeySuite && suite !== "nav" && !/^(phone|tablet)-(en|es)-[1-9]\d*(-(EM|MEP))?$/.test(slice)) throw new Error(`${suite} requires parent-owned cold restores`);
+if (suite === "nav" && !/^phone375-(en|es)-[1-9]\d*$/.test(slice)) throw new Error("nav requires parent-owned cold restores");
 const artifacts = resolve("scripts/sim/launch-readiness/.artifacts", runId);
 const reports = slice ? resolve(artifacts, suite ?? "opening", slice) : artifacts;
 const privateDir = resolve("scripts/sim/launch-readiness/.private", runId);
@@ -28,7 +30,9 @@ export default defineConfig({
   testDir: ".", testMatch: journeySuite ? `**/journeys/${journeyFile[suite!]}.spec.ts` : `**/contracts/${suite}.spec.ts`, workers: 1, fullyParallel: false, retries: 0, timeout: journeySuite ? 300_000 : 90_000,
   outputDir: resolve(privateDir, "pw", slice),
   use: { browserName: "chromium", baseURL: SIM_APP_ORIGIN, serviceWorkers: "block", trace: "retain-on-failure", screenshot: "off", video: "off" },
-  projects: ["phone", "tablet"].flatMap(device => ["en", "es"].map(locale => ({ name: `${device}-${locale}`, metadata: { locale }, use: { viewport: device === "phone" ? { width: 390, height: 844 } : { width: 1280, height: 800 }, locale } }))),
+  projects: suite === "nav"
+    ? ["en", "es"].map(locale => ({ name: `phone375-${locale}`, metadata: { locale }, use: { viewport: { width: 375, height: 812 }, locale } }))
+    : ["phone", "tablet"].flatMap(device => ["en", "es"].map(locale => ({ name: `${device}-${locale}`, metadata: { locale }, use: { viewport: device === "phone" ? { width: 390, height: 844 } : { width: 1280, height: 800 }, locale } }))),
   reporter: [["./evidence.ts"], ["list"], ["json", { outputFile: resolve(reports, "results.json") }], ["html", { outputFolder: resolve(reports, "html"), open: "never" }]],
 });
 type OpeningObservations = { handoff?: { ticksRetained: boolean; temperatureRetained: boolean; commentRetained: boolean; completionRows: number }; race?: { status: number; acknowledged: boolean }[] };

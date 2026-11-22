@@ -49,7 +49,7 @@ describe('catalog SIM Management API transport', () => {
     expect(suite).toContain('runCatalogApiEvidence');
     expect(suite).toContain('assertClean();');
     expect(suite).toContain('markCatalogDirty(prefix)');
-    const catalogBranch = runner.slice(runner.indexOf('} else if (options.suite === "catalog")'), runner.indexOf('} else if (["opening", "ordering", "customer"].includes(options.suite))'));
+    const catalogBranch = runner.slice(runner.indexOf('} else if (options.suite === "catalog")'), runner.indexOf('} else if (["opening", "ordering", "customer", "nav"].includes(options.suite))'));
     expect(catalogBranch).toContain('await startServer()');
     expect(catalogBranch).not.toContain('await restore(');
     expect(catalogBranch).toContain('restore: "not-required"');
