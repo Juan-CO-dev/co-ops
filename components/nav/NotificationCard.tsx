@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * One notification card (Build #3 PR 3 Step 7; moved here from components/dashboard/NotificationList.tsx by nav PR 9 so
- * the top bar's bell panel and, until step 11, the Dashboard's old list render the same card). The card IS the read
+ * One notification card (Build #3 PR 3 Step 7; moved here from the Dashboard's old NotificationList by nav PR 9: the
+ * top bar's bell panel renders it). The card IS the read
  * surface (Option A'): a tap marks it read; no drill-through. Cross-day createdAt adds the date label; times and dates
  * go through the language-aware helpers (lib/i18n/format.ts).
  */

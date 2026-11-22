@@ -24,6 +24,12 @@ const FILES = [
   ...readdirSync("components/dashboard").filter((f) => /\.tsx?$/.test(f)).map((f) => join("components/dashboard", f).split("\\").join("/")),
   ...readdirSync("lib").filter((f) => /^(dashboard-day|day-plan)[^/]*\.ts$/.test(f)).map((f) => `lib/${f}`),
   "lib/nav-switches.ts",
+  // Nav PR 9: the top bar, Go to and the bell decide by the session's real role (lib/nav/go-to*.ts and
+  // lib/nav/people-search.ts are in lib/nav, read above).
+  ...readdirSync("components/nav").filter((f) => /\.tsx?$/.test(f)).map((f) => join("components/nav", f).split("\\").join("/")),
+  "lib/top-bar-bell.ts",
+  "app/api/nav/people/route.ts",
+  "app/api/notifications/unread/route.ts",
 ];
 
 /** Identifiers and string literals of a file, comments stripped (the TypeScript scanner skips trivia). */

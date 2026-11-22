@@ -3,9 +3,10 @@
 /**
  * Nav PR 9, F1-T: the real provider composition (plan r2 3.1; lead ruling r1 F1 and the testing gate).
  *
- * The REAL NavShell (no stand-in) wraps the page children, so a control inside the page that calls `useGoTo().open()`
- * (the Dashboard's "All pages", wired to it in step 11) and the bar's Go to button open THE SAME sheet: one
- * `data-co-nav-sheet` node with the same id, the search box focused. `model` is read from props on every render.
+ * The REAL NavShell (no stand-in) wraps the page children, so the REAL Dashboard "All pages" button (components/
+ * DashboardNav.tsx, a descendant of the children) and the bar's Go to button open THE SAME sheet: one `data-co-nav-sheet`
+ * node with the same id, the search box focused. `model` is read from props on every render. (That every mount wraps
+ * the page INSIDE <NavFrame>, never beside it, is the source census in tests/nav-frame-mounts.test.ts.)
  */
 import { createElement } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -17,6 +18,7 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/operations/closing",
 }));
 
+import { DashboardNav } from "@/components/DashboardNav";
 import { NavShell, useGoTo } from "@/components/nav/NavShell";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { goToEntries } from "@/lib/nav/go-to";
@@ -26,10 +28,15 @@ const ME = { userName: "Kim Holder", userEmail: null, actorLevel: 4, initialBlur
 const KH = goToEntries({ role: "key_holder", level: 4, language: "en" }, {});
 const SMM = goToEntries({ role: "social_media_mgr", level: 6, language: "en" }, {});
 
-/** A control inside the page that opens Go to through the hook (what "All pages" does). */
+/** The real Dashboard "All pages" button, inside the page. */
 function AllPagesStandIn() {
+  return createElement("div", { "data-testid": "page" }, createElement(DashboardNav, { label: "All pages" }));
+}
+const allPages = () => document.querySelector("[data-dashboard-all-pages]") as HTMLButtonElement;
+/** A bare control using the hook directly (outside a NavShell it is a no-op). */
+function HookButton() {
   const { open } = useGoTo();
-  return createElement("button", { type: "button", "data-testid": "all-pages", onClick: (e: { currentTarget: HTMLElement }) => open(e.currentTarget) }, "All pages");
+  return createElement("button", { type: "button", "data-testid": "hook", onClick: (e: { currentTarget: HTMLElement }) => open(e.currentTarget) }, "open");
 }
 function mount(model = KH) {
   return render(createElement(TranslationProvider, {
@@ -47,7 +54,7 @@ describe("F1-T: one provider around the bar and the page", () => {
   it("the page's control and the bar's button open the same sheet", () => {
     mount();
     expect(sheets()).toHaveLength(0);
-    fireEvent.click(screen.getByTestId("all-pages"));
+    fireEvent.click(allPages());
     expect(sheets()).toHaveLength(1);
     const first = sheets()[0] as HTMLElement;
     expect(first.getAttribute("role")).toBe("dialog");
@@ -56,7 +63,7 @@ describe("F1-T: one provider around the bar and the page", () => {
     const id = first.id;
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(sheets()).toHaveLength(0);
-    expect(document.activeElement).toBe(screen.getByTestId("all-pages"));
+    expect(document.activeElement).toBe(allPages());
     fireEvent.click(screen.getByRole("button", { name: GOTO }));
     expect(sheets()).toHaveLength(1);
     expect((sheets()[0] as HTMLElement).id).toBe(id);
@@ -71,7 +78,7 @@ describe("F1-T: one provider around the bar and the page", () => {
   });
   it("lists exactly the model's entries in the rooms view", () => {
     mount();
-    fireEvent.click(screen.getByTestId("all-pages"));
+    fireEvent.click(allPages());
     const listed = Array.from(document.querySelectorAll("[data-co-goto-entry]")).map((a) => a.getAttribute("data-co-goto-entry"));
     expect(listed).toEqual(KH.rooms.flatMap((r) => [...r.entries, ...r.groups.flatMap((g) => g.entries)]).map((e) => e.id));
   });
@@ -87,7 +94,7 @@ describe("F1-T: one provider around the bar and the page", () => {
   });
   it("the model is read from props on every render (a refresh with a narrower model takes effect at once)", () => {
     const { rerender } = mount();
-    fireEvent.click(screen.getByTestId("all-pages"));
+    fireEvent.click(allPages());
     expect(document.querySelectorAll("[data-co-goto-entry]").length).toBeGreaterThan(4);
     rerender(createElement(TranslationProvider, {
       initialLanguage: "en",
@@ -97,8 +104,8 @@ describe("F1-T: one provider around the bar and the page", () => {
     expect(listed).toEqual(["dashboard", "me", "my-feedback", "training"]);
   });
   it("outside a NavShell, useGoTo().open() is a no-op (no sheet)", () => {
-    render(createElement(TranslationProvider, { initialLanguage: "en", children: createElement(AllPagesStandIn) }));
-    fireEvent.click(screen.getByTestId("all-pages"));
+    render(createElement(TranslationProvider, { initialLanguage: "en", children: createElement(HookButton) }));
+    fireEvent.click(screen.getByTestId("hook"));
     expect(sheets()).toHaveLength(0);
   });
 });

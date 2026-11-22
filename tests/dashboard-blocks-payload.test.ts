@@ -61,7 +61,6 @@ vi.mock("@/lib/counts", () => ({ loadCountsTileState: async () => null }));
 vi.mock("@/components/auth/AuthShell", () => ({ AuthShell: ({ children }: { children: ReactNode }) => children }));
 vi.mock("@/components/BrandMark", () => ({ BrandMark: () => null }));
 vi.mock("@/components/auth/LogoutButton", () => ({ LogoutButton: () => null }));
-vi.mock("@/components/dashboard/NotificationBell", () => ({ NotificationBell: () => null }));
 vi.mock("@/components/assignments/ShiftBoardClient", () => ({ ShiftBoardClient: () => null }));
 // The role blocks' leaf readers.
 vi.mock("@/lib/pulse/sales", async (orig) => ({ ...(await orig<typeof import("@/lib/pulse/sales")>()), loadPulseSalesToday: spy("sales") }));

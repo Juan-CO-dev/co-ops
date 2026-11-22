@@ -6,6 +6,9 @@
  * its fallback, so a streamed child such as the bar's bell is rendered if it is in the tree), and stops at STAND-INS:
  * components a test replaced with `standIn(name)`, whose props it records (that is what would cross to the client) and
  * whose element-valued props and children it keeps expanding. Host elements contribute their string props and text.
+ * A function component that cannot be called outside React (a client component using hooks) is rendered with
+ * `fallback(element)` when one is given (e.g. renderToStaticMarkup inside a TranslationProvider), its HTML added to the
+ * text; without a fallback the error propagates.
  */
 import { Fragment, Suspense, isValidElement, type ReactElement, type ReactNode } from "react";
 
@@ -29,7 +32,10 @@ function printable(props: Record<string, unknown>): string {
   try { return JSON.stringify(out); } catch { return ""; }
 }
 
-export async function renderServerTree(node: ReactNode | Promise<ReactNode>): Promise<ServerTree> {
+export async function renderServerTree(
+  node: ReactNode | Promise<ReactNode>,
+  opts: { fallback?: (el: ReactElement) => string } = {},
+): Promise<ServerTree> {
   const standIns: StandInCall[] = [];
   const text: string[] = [];
   async function walk(n: unknown): Promise<void> {
@@ -54,7 +60,15 @@ export async function renderServerTree(node: ReactNode | Promise<ReactNode>): Pr
         for (const [k, v] of Object.entries(props)) if (k === "children" || isValidElement(v) || Array.isArray(v)) await walk(v);
         return;
       }
-      await walk((type as (p: Record<string, unknown>) => unknown)(props));
+      let out: unknown;
+      try {
+        out = (type as (p: Record<string, unknown>) => unknown)(props);
+      } catch (e) {
+        if (!opts.fallback) throw e;
+        text.push(opts.fallback(el));
+        return;
+      }
+      await walk(out);
       return;
     }
     // A context provider or another exotic type: its children.

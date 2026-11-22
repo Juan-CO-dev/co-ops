@@ -14,7 +14,6 @@ const FUNCS = ["loadUnreadForUser", "markAllNotificationsRead", "markNotificatio
 
 /** The reviewed call sites: file → the functions it calls. */
 export const CALL_SITES: Readonly<Record<string, readonly string[]>> = {
-  "app/(authed)/dashboard/page.tsx": ["loadUnreadForUser"],
   "app/api/notifications/mark-all-read/route.ts": ["markAllNotificationsRead"],
   "app/api/notifications/unread/route.ts": ["loadBellUnit"],
   "components/nav/notification-actions.ts": ["markNotificationRead"],

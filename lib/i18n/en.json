@@ -866,7 +866,6 @@
   "user_menu.blurb.too_long": "Blurb must be 500 characters or fewer.",
   "nav.dashboard": "Dashboard",
   "nav.back_to_aria": "Back to {label}",
-  "nav.aria_label": "Site navigation",
   "nav.room.today": "Today",
   "nav.room.catering": "Catering",
   "nav.room.reports": "Reports",

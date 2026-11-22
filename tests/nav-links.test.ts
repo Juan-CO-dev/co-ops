@@ -117,8 +117,11 @@ describe("Mid-shift Pulse v2 in navigation (crew get the pulse, Juan 2026-10-12)
   });
   it("every caller passes the v2 switch, and the page lets v2 viewers in before the v1 gate", () => {
     const source = (path: string) => readFileSync(path, "utf8");
-    // Nav PR 7: the Dashboard reads the switches ONCE (lib/nav-switches.ts) and hands them to the "All pages" list.
-    expect(source("components/DashboardNav.tsx")).toMatch(/navDestinationsFor\(actorLevel, \{[^}]*pulseV2: switches\.pulseV2/);
+    // Nav PR 9: "All pages" is the top bar's Go to. Its list is built on the server from the switches read ONCE per
+    // render (NavFrame → navSwitches() → goToEntries → destinationsFor), so Shop pulse follows PULSE_V2 there.
+    expect(source("components/DashboardNav.tsx")).toMatch(/useGoTo\(\)/);
+    expect(source("components/nav/NavFrame.tsx")).toMatch(/const switches = navSwitches\(\);\s*const model = goToEntries\(\{[^}]*\}, switches\)/);
+    expect(source("lib/nav/go-to.ts")).toMatch(/destinationsFor\(\{ role: viewer\.role, level: viewer\.level, switches \}\)/);
     expect(source("lib/nav-switches.ts")).toContain("pulseV2: pulseV2Enabled()");
     expect(source("app/(authed)/reports/operations/page.tsx")).toMatch(/matchPages\([^;]*\{ pulseV2: pulseV2Enabled\(\) \}\)/);
     const page = source("app/(authed)/mid-shift/page.tsx");

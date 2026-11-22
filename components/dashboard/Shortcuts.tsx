@@ -1,7 +1,7 @@
 /**
  * Shortcuts in place of the 16 "Explore" pills (nav PR 7, plan r2 2.3, 2.5; spec 3.2 item 7, 3.6). Server component.
- * The role's own list (shortcutsFor: real gates, surfaces held, no numbers for the social media manager), then the collapsed
- * "All pages" list (DashboardNav), which until PR 9 is the only route from the Dashboard to the rest of the app.
+ * The role's own list (shortcutsFor: real gates, surfaces held, no numbers for the social media manager), then "All pages"
+ * (DashboardNav), which opens the top bar's Go to sheet (nav PR 9).
  * `actorRole` is the session's REAL role, never "works as".
  */
 import { ActionLink } from "@/components/ActionButton";
@@ -34,7 +34,7 @@ export function Shortcuts({ actorRole, actorLevel, surfaces, switches, shopId, l
           ))}
         </div>
       ) : null}
-      <DashboardNav language={language} actorLevel={actorLevel} selectedLocationId={shopId} actorRole={actorRole} switches={switches} />
+      <DashboardNav label={serverT(language, "dashboard.shortcuts.all_pages")} />
     </section>
   );
 }
