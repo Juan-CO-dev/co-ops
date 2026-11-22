@@ -161,14 +161,14 @@ it("crew actions, Wednesday draft and budget suggestions all invoke crew dispatc
   const store = scheduleStore(shopTables()); const deps = { service: store.client, now, loadInputs };
   const generated = await actions.generateWeek(deps, { actor, locationId: A, weekStart, expectedHead: null });
   expect(generated.revisionId).toBeTruthy();
-  expect(store.calls.find((c) => c.fn === "commit_schedule_revision")!.args.p_meta).toMatchObject({ generator_version: "crew.1" });
+  expect(store.calls.find((c) => c.fn === "commit_schedule_revision")!.args.p_meta).toMatchObject({ generator_version: "crew.2" });
   const draft = scheduleStore(shopTables());
   expect(await runWednesdayDraft({ service: draft.client, now, loadInputs })).toMatchObject({ ran: true, shops: [{ outcome: "built" }] });
-  expect(draft.calls.find((c) => c.fn === "commit_schedule_revision")!.args.p_meta).toMatchObject({ generator_version: "crew.1" });
+  expect(draft.calls.find((c) => c.fn === "commit_schedule_revision")!.args.p_meta).toMatchObject({ generator_version: "crew.2" });
   const spy = vi.spyOn(dispatch, "generateWeek");
   try {
     await budgetSuggestion(deps, { actor, locationId: A, weekStart });
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy.mock.results[0]!.value.version).toBe("crew.1");
+    expect(spy.mock.results[0]!.value.version).toBe("crew.2");
   } finally { spy.mockRestore(); }
 });

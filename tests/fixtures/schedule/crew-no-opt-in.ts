@@ -13,6 +13,8 @@ export function captureCrewInput(raw: GeneratorInput): void {
   for (const p of input.people) p.backupCover = false;
   // The weekly setting cannot affect a no-opt-in build; retain the pre-0286 input identity.
   delete input.structure.roster.backupCoverPerPersonWeek;
+  // PR SCH: a head committed by SCH's code carries the context marker `cateringRule` (D9); the pre-SCH input identity has none.
+  if (input.crew?.headContext) delete input.crew.headContext.cateringRule;
   for (const role of ["moo", "owner"] as const) {
     if (input.people.some((p) => p.role === role)) continue;
     const added = person({ id: `invariance-${role}`, role }, input.days.map((d) => d.date));
@@ -22,9 +24,22 @@ export function captureCrewInput(raw: GeneratorInput): void {
   crewInputs.set(digest(input), input);
 }
 
-/** Exact complete output, or the same named refusal for deliberately invalid fixtures. */
+/**
+ * PR SCH: the output as the pre-SCH code wrote it. SCH changes exactly two things in a no-opening crew output — the version
+ * string (`crew.2`, was `crew.1`) and the new context marker `cateringRule` (ruling D9) — so mapping those two back must
+ * reproduce the pinned bytes; anything else SCH changed would fail the pin.
+ */
+export function preSchView<T extends Pick<GeneratorOutput, "version" | "context">>(output: T): T {
+  const out = structuredClone(output);
+  if (out.version === "crew.2") out.version = "crew.1";
+  else if (out.version === "p2.20") out.version = "p2.19";
+  delete out.context.cateringRule;
+  return out;
+}
+
+/** Exact complete output (in its pre-SCH view, `preSchView`), or the same named refusal for deliberately invalid fixtures. */
 export function resultDigest(build: (input: GeneratorInput) => GeneratorOutput, input: GeneratorInput): string {
-  try { const output = build(input); replayCounts.outputs++; return digest({ output }); }
+  try { const output = build(input); replayCounts.outputs++; return digest({ output: preSchView(output) }); }
   catch (error) {
     if (!(error instanceof Error)) throw error;
     replayCounts.refusals++;

@@ -20,6 +20,7 @@
  */
 import { cateringPrepWindowQ, isHeavyCateringDay } from "./catering-day-shared";
 import type { DayNeed, NeedRun, NeedSource, ShapeNote } from "./context-shared";
+import { assertRuntimeLimits, resolveOpening, structureForDay, type DayBase, type DayOpening, type OpeningDecision } from "./opening-shared";
 import {
   isLineRole, isSecondary, lineBounds, positionIds, positionLimit, walkClosers, waveProfile, type CrewType, type ScheduleStructure,
 } from "./structure-shared";
@@ -114,6 +115,12 @@ export interface NeedGridInput {
   lineHeads: number[];
   shapeNote: ShapeNote;
   catering: readonly NeedCatering[];
+  /**
+   * PR SCH: the shop's NORMAL prep start when the structure is a per-day one with an earlier opening. BOH crew quarters before
+   * it are written to source `catering` (reason `catering_prep`), so the budget suggestion counts them. Absent = the
+   * structure's own start (nothing re-tagged).
+   */
+  normalStartQ?: number;
 }
 
 export function needGrid(input: NeedGridInput): DayNeed {
@@ -171,17 +178,20 @@ export function needGrid(input: NeedGridInput): DayNeed {
     }
   }
 
-  // BOH: Prep until prepUntil; Prep/Dishwasher all day (from prep start when it leads a pair with Prep).
+  // BOH: Prep until prepUntil; Prep/Dishwasher all day (from prep start when it leads a pair with Prep). PR SCH: on an opened
+  // date the quarters before the NORMAL start are the catering morning (source `catering`, reason `catering_prep`).
+  const normal = input.normalStartQ ?? prepStartQ;
+  const boh = (q: number): NeedSource => (q < normal ? "catering" : "boh_crew");
   for (const id of ids) {
     const p = s.positions[id]!;
     if (p.role === "prep") {
-      for (let q = Math.max(prepStartQ, p.openQ); q < Math.min(crew.prepUntilQ, p.closeQ, out); q++) part(id, "boh_crew")[q] = Math.min(crew.prepHeads, limitAt(id, q));
+      for (let q = Math.max(prepStartQ, p.openQ); q < Math.min(crew.prepUntilQ, p.closeQ, out); q++) part(id, boh(q))[q] = Math.min(crew.prepHeads, limitAt(id, q));
     }
     if (p.role === "prep_dish") {
       const leadsPrep = s.priority.some((x) => x.primary === id && x.pair.some((o) => o !== id && s.positions[o]?.role === "prep"));
       const start = Math.max(leadsPrep ? prepStartQ : prepDishArrivalQ, p.openQ);
       for (let q = start; q < Math.min(p.closeQ, out); q++) {
-        if (q < serviceCloseQ) part(id, "boh_crew")[q] = Math.min(crew.prepDishHeads, limitAt(id, q));
+        if (q < serviceCloseQ) part(id, boh(q))[q] = Math.min(crew.prepDishHeads, limitAt(id, q));
         else part(id, "closing_crew")[q] = Math.min(crew.close.prepDishHeads, limitAt(id, q));
       }
     }
@@ -229,16 +239,26 @@ export function serviceLineInputs(s: ScheduleStructure, dayType: CrewType, sched
   return { wave: cut(waveProfile(s, dayType)), minHeads: cut(minHeads), maxHeads: cut(maxHeads) };
 }
 
-/** Shape + grid for one day: what Task 7's builder and the snapshot use. */
+/**
+ * Shape + grid for one day: what Task 7's builder and the snapshot use. PR SCH: the date's opening is resolved from its
+ * persistent `decision` (`resolveOpening`) and the need is computed on the PER-DAY structure (`structureForDay`: a heavy
+ * stations day's Prep/Dishwasher limit rise, an applied opening), checked by its own runtime bound (D8). An ordinary day's
+ * structure is the shop's own object, so its need is byte-identical.
+ */
 export function buildDayNeed(input: {
   structure: ScheduleStructure; dayType: CrewType; scheduledOutQ: number; hourlyCents: number[] | null; demandKind: "ok" | "no_history"; catering: readonly NeedCatering[];
-}): { need: DayNeed; shape: ShapeResult } {
-  const li = serviceLineInputs(input.structure, input.dayType, input.scheduledOutQ);
+  decision?: OpeningDecision | null;
+}): { need: DayNeed; shape: ShapeResult; structure: ScheduleStructure; base: DayBase | null; opening: DayOpening | null } {
+  const opening = resolveOpening(input.structure, input.catering, input.decision ?? null);
+  const { structure: ds, base } = structureForDay(input.structure, input.catering, opening);
+  assertRuntimeLimits(ds);
+  const li = serviceLineInputs(ds, input.dayType, input.scheduledOutQ);
   const shape = shapeFromCurve({
     hourlyCents: input.hourlyCents, demandKind: input.demandKind, ...li,
-    rush: { atQ: input.structure.crews[input.dayType].waves.rush.atQ, maxShiftQ: input.structure.limits.rushShiftMaxQ },
+    rush: { atQ: ds.crews[input.dayType].waves.rush.atQ, maxShiftQ: ds.limits.rushShiftMaxQ },
   });
-  const need = needGrid({ structure: input.structure, dayType: input.dayType, scheduledOutQ: input.scheduledOutQ, lineHeads: shape.heads, shapeNote: shape.note, catering: input.catering });
+  const need = needGrid({ structure: ds, dayType: input.dayType, scheduledOutQ: input.scheduledOutQ, lineHeads: shape.heads, shapeNote: shape.note, catering: input.catering,
+    ...(ds.shopDay.prepStartQ !== input.structure.shopDay.prepStartQ ? { normalStartQ: input.structure.shopDay.prepStartQ } : {}) });
   // The DayNeed's line bounds describe the service period the shape ran over.
-  return { need: { ...need, minHeads: li.minHeads, maxHeads: li.maxHeads }, shape };
+  return { need: { ...need, minHeads: li.minHeads, maxHeads: li.maxHeads }, shape, structure: ds, base, opening };
 }

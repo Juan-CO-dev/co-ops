@@ -24,6 +24,7 @@ import type { RuleContext } from "./context-shared";
 import { dayTypeFor, type CateringEvent, type DayForecast, type DayTypeOverride, type DemandResult } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
 import type { BuildDayInput, GeneratorInput, HeadSnapshot, Pin } from "./generator/build-shared";
+import { openingApplies, resolveOpening, toDecision, type DayOpening, type OpeningDecision } from "./opening-shared";
 import { makeSkillLookup, punchPatterns, toSchedPeople, type ElsewhereShift, type PersonSettingsRow, type PunchEntry } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, Shift } from "./rules-shared";
 import { scheduleEngine, scheduledOut, type ScheduleStructure } from "./structure-shared";
@@ -62,6 +63,13 @@ export interface StoredHead {
   reasons: Record<string, unknown>;
   /** The head revision's OWN validation context snapshot (original validation replays against it, no live read). */
   context: RuleContext;
+  /**
+   * PR SCH (D1, F1): every INHERITED date's stored opening, as its origin revision wrote it, of ANY status (proposed and
+   * auto included), for both engines — read from the origin contexts by `loadWeekHeads`. The action handler resolves
+   * Accept / Decline / Clear against it; the generator input keeps only the persistent decisions. Kept OUT of
+   * `context.days`, whose keys are the head's own built dates (the stations advisory and replay read them). Absent = none.
+   */
+  inheritedOpenings?: Readonly<Record<string, DayOpening>>;
 }
 export interface StoredWeek {
   weekStart: string;
@@ -303,7 +311,18 @@ export function headSnapshotFor(week: StoredWeek | undefined): HeadSnapshot | nu
  * One week's `GeneratorInput`. `buildDays` = the dates to (re)build; every other date of the week is carried from the
  * head. `today` is the ET business date. Refuses `demand_unavailable` when demand did not load (never a flat curve).
  */
-export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, opts: { today: string; buildDays?: readonly string[]; confirmEdited?: boolean }): GeneratorInput {
+/**
+ * PR SCH (F1): a date's stored opening on a head — its own day first, else the inherited origin's — of any status.
+ */
+export function headOpeningOf(head: Pick<StoredHead, "context" | "inheritedOpenings"> | null | undefined, date: string): DayOpening | undefined {
+  return head?.context.days[date]?.opening ?? head?.inheritedOpenings?.[date];
+}
+
+export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, opts: {
+  today: string; buildDays?: readonly string[]; confirmEdited?: boolean;
+  /** PR SCH: `setDayOpening`'s new decision for one date (null = cleared), in place of the head's. */
+  openingOverride?: { date: string; decision: OpeningDecision | null };
+}): GeneratorInput {
   if (inputs.demand.kind === "unavailable") throw new ScheduleError("demand_unavailable", { params: { cause: inputs.demand.cause } });
   // 7shifts' weekly overtime line, once synced, overrides the structure's default (plan "Data reality").
   const s = inputs.overtimeH === null ? inputs.structure.structure
@@ -314,15 +333,25 @@ export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, o
   const forecastOf = (date: string): DayForecast | null => (inputs.demand.kind === "unavailable" ? null : inputs.demand.days.find((d) => d.date === date) ?? null);
   const closing = resolveClosingMinutes({ override: s.limits.closingMinutesOverride, measured: inputs.closing });
   const outQ = scheduledOut(s, closing.minutes);
+  // PR SCH (D1, F1, F2): each build date's PERSISTENT decision (the head's own day, else its inherited origin; proposed and
+  // auto are recomputed), and — resolved BEFORE availability is estimated — the start an applied opening widens the
+  // estimated window to.
+  const head = inputs.weeks[weekStart]?.head ?? null;
+  const decisionOf = (date: string): OpeningDecision | null =>
+    opts.openingOverride?.date === date ? opts.openingOverride.decision : toDecision(headOpeningOf(head, date));
+  const estimateFromQByDate: Record<string, number> = {};
   const days: BuildDayInput[] = buildDays.map((date) => {
     const f = forecastOf(date);
     const dt = dayTypeFor(date, { override: overrideFor(inputs.dayTypes, date), structure: s, forecast: f });
     const ok = f?.kind === "ok";
     const catering = inputs.catering.filter((e) => e.date === date).map((e) => ({ id: e.id, headcount: e.headcount, eventQ: e.eventQ }));
+    const decision = decisionOf(date);
+    const opening = resolveOpening(s, catering, decision);
+    if (openingApplies(opening)) estimateFromQByDate[date] = opening!.startQ;
     return {
       date, dayType: dt.dayType, dayTypeSource: dt.source, overrideId: dt.overrideId, closingMinutes: closing.minutes, scheduledOutQ: outQ,
       demandKind: ok ? "ok" : "no_history", hourlyCents: ok ? (f as Extract<DayForecast, { kind: "ok" }>).hourlyCents : null,
-      dayCents: ok ? (f as Extract<DayForecast, { kind: "ok" }>).dayCents : null, catering,
+      dayCents: ok ? (f as Extract<DayForecast, { kind: "ok" }>).dayCents : null, catering, ...(decision ? { decision } : {}),
     };
   });
   const windowStart = addDays(isoWeekStart(inputs.asOf), -56);
@@ -336,6 +365,7 @@ export function generatorInputFor(inputs: SchedulingInputs, weekStart: string, o
     shopDay: { fromQ: s.shopDay.prepStartQ, toQ: s.shopDay.outLatestQ },
     wages: { byUserCents: inputs.wages.byUserCents, estimateHourlyCents: inputs.shopSettings.estimatedHourlyCents }, skills,
     ...(inputs.elsewhere?.length ? { elsewhere: inputs.elsewhere } : {}),
+    ...(Object.keys(estimateFromQByDate).length ? { estimateFromQByDate } : {}),
   });
   // B134: a pin over time the person already holds at another shop is not placed (that shop planned first).
   const busy = (p: { userId: string; date: string; startQ: number; endQ: number }) =>

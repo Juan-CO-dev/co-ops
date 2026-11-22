@@ -18,7 +18,8 @@ import { isCrewCandidate, crewOpenGroups, crewStationShorts } from "./crew-gap-v
 import { scheduleEngine, shiftTypesOf } from "./structure-shared";
 import type { RuleContext } from "./context-shared";
 import { ScheduleError, type ScheduleErrorCode } from "./errors-shared";
-import { MOD, REPAIR_LIMITS, checkScheduleRules, proveGap, type DayRecord, type DeclaredGap, type GapCode, type RuleProblem, type Segment, type Shift, type WeekSchedule } from "./rules-shared";
+import { declareDayGaps } from "./gap-partition-shared";
+import { MOD, REPAIR_LIMITS, checkScheduleRules, type DayRecord, type DeclaredGap, type RuleProblem, type Segment, type Shift, type WeekSchedule } from "./rules-shared";
 import { Q_PER_DAY } from "./time-shared";
 
 export interface ShiftRef { date: string; userId: string; startQ: number }
@@ -224,6 +225,19 @@ export function applyEdit(schedule: WeekSchedule, op: EditOp, ctx: RuleContext, 
     dayCtx!.crew = { ...prior, shifts: meta, manualOverrides: overrides };
   }
 
+  return revalidateDay(schedule, shifts, date, ctx, opts);
+}
+
+/**
+ * THE EDIT TAIL (exported for `setDayOpening`, PR SCH 4.5): re-validate `date` under the CURRENT context `ctx` (which must
+ * hold it), re-declare its gaps — the crew engine's open shifts and station shorts, then every other undeclared deficit
+ * through the shared partition (`declareDayGaps`, edit mode: an unprovable piece stays undeclared and the validator reports
+ * it) — and give its day record `originRevisionId` = the new revision. Every other day is carried as it is.
+ */
+export function revalidateDay(schedule: WeekSchedule, shifts: Shift[], date: string, ctx: RuleContext, opts: { newRevisionId: string }): EditResult {
+  const dayCtx = ctx.days[date];
+  if (!dayCtx) refuse("week_not_found", { date });
+  const s = dayCtx!.structure;
   // Re-validate the edited day under the CURRENT context; every other day is carried as it is (inherited view).
   const others: DayRecord[] = ctx.dates.filter((d) => d !== date).map((d) => schedule.days.find((r) => r.date === d)
     ?? { date: d, originRevisionId: null, structureVersionId: dayCtx!.structureVersionId, inherited: true, problems: [] }).map((r) => ({ ...r, inherited: true }));
@@ -242,13 +256,12 @@ export function applyEdit(schedule: WeekSchedule, op: EditOp, ctx: RuleContext, 
       gaps.push({ code: "coverage_gap", cause: "crew_shortfall", date, positionId: id, ...run });
     }
   }
-  // CC addendum A: a manager's edit — the station floor (32 h) warns, never blocks.
-  for (const p of checkScheduleRules({ ...probe, gaps: [...keptGaps, ...gaps] }, vctx, { managerEdited: true })) {
-    if (p.code !== "undeclared_gap" || p.day !== date) continue;
-    const subject = { code: p.params.gap as GapCode, date, positionId: p.positionId ?? null, fromQ: Number(p.params.fromQ), toQ: Number(p.params.toQ) };
-    if (gaps.some((g) => g.code === subject.code && g.positionId === subject.positionId && g.fromQ === subject.fromQ && g.toQ === subject.toQ)) continue;
-    const proof = proveGap(subject, probe, vctx);
-    if (proof) gaps.push({ ...subject, cause: proof.cause, certificate: proof.certificate } as DeclaredGap);
+  // CC addendum A: a manager's edit — the station floor (32 h) warns, never blocks. PR SCH (D2): the shared partition.
+  const declared = declareDayGaps(date, { ...probe, gaps: [...keptGaps, ...gaps] }, vctx, { mode: "edit", candidateIds: [], known: gaps, managerEdited: true });
+  gaps.push(...declared.gaps);
+  if (dayCtx!.crew) {
+    const fresh = declared.notes.filter((n) => !dayCtx!.crew!.notes.some((o) => o.code === n.code && o.date === n.date && o.params.earliestQ === n.params.earliestQ));
+    if (fresh.length) dayCtx!.crew = { ...dayCtx!.crew, notes: [...dayCtx!.crew.notes, ...fresh.map((n) => ({ ...n, params: { ...n.params, count: 1, userIds: [] } }))] };
   }
   const allGaps = [...keptGaps, ...gaps].sort((a, b) => cmp(a.date, b.date) || cmp(a.code, b.code) || cmp(a.positionId ?? "", b.positionId ?? "") || a.fromQ - b.fromQ);
   const problems = checkScheduleRules({ ...probe, gaps: allGaps }, vctx, { managerEdited: true }).filter((p) => p.day === date && !p.inherited);

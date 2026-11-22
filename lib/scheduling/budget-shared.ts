@@ -19,6 +19,7 @@ import { canonicalJson, digest64, type DayNeed } from "./context-shared";
 import type { DemandResult } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
 import { buildDayNeed, type NeedCatering } from "./need-shared";
+import { baseStructureOf, type DayBase } from "./opening-shared";
 import { scheduleEngine, shiftTypesOf, type CrewType, type ScheduleStructure } from "./structure-shared";
 import { addDays, isoDowOf, isYmd, weekDays } from "./time-shared";
 
@@ -218,12 +219,13 @@ export interface SuggestBudgetInput {
  * Never the live structure.
  */
 export function referenceStructureOf(
-  head: { revision: { structureVersionId: string }; context: { days: Record<string, { structureVersionId: string; structure: ScheduleStructure }> } },
+  head: { revision: { structureVersionId: string }; context: { days: Record<string, { structureVersionId: string; structure: ScheduleStructure; base?: DayBase }> } },
   structuresById: Readonly<Record<string, ScheduleStructure>>,
 ): ScheduleStructure | null {
   const id = head.revision.structureVersionId;
   const days = head.context?.days ?? {};
-  for (const d of Object.keys(days).sort()) if (days[d]?.structureVersionId === id) return days[d]!.structure;
+  // PR SCH: a heavy or opened day stored its PER-DAY structure; the setting is the base behind it (never the day's own).
+  for (const d of Object.keys(days).sort()) if (days[d]?.structureVersionId === id) return baseStructureOf(days[d]!);
   return Object.hasOwn(structuresById, id) ? structuresById[id]! : null;
 }
 
