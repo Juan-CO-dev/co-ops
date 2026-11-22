@@ -6,20 +6,12 @@
  */
 import { describe, expect, it } from "vitest";
 import { planDay, type DayPlan, type ShopFacts } from "@/lib/day-plan-shared";
-import { addDaysEt } from "@/lib/vendor-rhythm-shared";
-import { ANA, checklist, forViewer, hm, item, LUIS, ok, PLAN_DATE, report } from "./fixtures/day-plan/build";
-import { NO_EVENTS, P_STATION_BY_USER, pStreet, TIMELINE } from "./fixtures/day-plan/p-street";
+import { ANA, checklist, forViewer, hm, item, LUIS, ok, report } from "./fixtures/day-plan/build";
+import { P_STATION_BY_USER, pStreet, TIMELINE } from "./fixtures/day-plan/p-street";
+import { D, D1, earlyNextDay } from "./fixtures/day-plan/plan-date";
 
-const D = PLAN_DATE;
-const D1 = addDaysEt(D, 1);
 const run = (planDate: string, t: string, v: typeof ANA, f: ShopFacts) =>
   planDay({ planDate, nowMin: hm(t), viewer: v, facts: forViewer(f, P_STATION_BY_USER, v.userId) }) as DayPlan;
-
-/** The early hours of D+1 while D's closing is still open (the station day is still D). */
-function earlyNextDay(t: string, yesterdayStatus: "open" | "confirmed", stations: ShopFacts["stations"], holds = false): ShopFacts {
-  const today = pStreet(hm(t), { planDate: D1, timeline: NO_EVENTS });
-  return { ...today, stations, yesterdayClosing: ok(checklist(D, { status: yesterdayStatus })), holdsStationOnStationDay: holds };
-}
 
 describe("one plan date", () => {
   it("23:59 on D: still D's day (Night with every station closed by event)", () => {
