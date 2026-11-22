@@ -149,7 +149,14 @@ describe("override confirmation", () => {
 });
 
 describe("visible board refresh", () => {
-  it("refreshes on visible focus, visibility changes and the minute timer, then cleans up", () => {
+  // Nav PR 7 (Q3): the interval is the `refreshEvery` prop (default 60 s; the Dashboard passes null for none).
+  it("defaults to a 60 s interval: Team today unchanged", () => {
+    expect(readFileSync("components/assignments/ShiftBoardClient.tsx", "utf8")).toContain("refreshEvery = 60_000 }");
+    expect(readFileSync("app/(authed)/assignments/page.tsx", "utf8")).not.toContain("refreshEvery");
+    // The after-mutation refresh stays whatever refreshEvery is (requestMutation's success path).
+    expect(readFileSync("components/assignments/ShiftBoardClient.tsx", "utf8")).toMatch(/setPending\(null\);\s*startTransition\(\(\) => router\.refresh\(\)\);/);
+  });
+  it.each([[60_000, true], [null, false]] as const)("refreshEvery %s: focus and visibility refresh; the interval only for a number; then cleans up", (refreshEvery, interval) => {
     const source = readFileSync("components/assignments/ShiftBoardClient.tsx", "utf8");
     const ast = ts.createSourceFile("board.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     let effect: ts.Node | undefined;
@@ -163,16 +170,18 @@ describe("visible board refresh", () => {
     const window = { addEventListener: vi.fn(), removeEventListener: vi.fn(), setInterval: vi.fn(() => 17), clearInterval: vi.fn() };
     const document = { visibilityState: "hidden", addEventListener: vi.fn(), removeEventListener: vi.fn() };
     const js = ts.transpile(`const effect = ${effect!.getText(ast)};`, { target: ts.ScriptTarget.ES2022 });
-    const cleanup = new Function("window", "document", "router", "startTransition", `${js}; return effect();`)(window, document, { refresh }, (fn: () => void) => fn());
+    const cleanup = new Function("window", "document", "router", "startTransition", "refreshEvery", `${js}; return effect();`)(window, document, { refresh }, (fn: () => void) => fn(), refreshEvery);
     const onFocus = window.addEventListener.mock.calls[0]?.[1] as () => void;
     onFocus(); expect(refresh).not.toHaveBeenCalled();
     document.visibilityState = "visible";
     onFocus(); expect(refresh).toHaveBeenCalledTimes(1);
-    expect(window.setInterval).toHaveBeenCalledWith(onFocus, 60_000);
+    if (interval) expect(window.setInterval).toHaveBeenCalledWith(onFocus, 60_000);
+    else expect(window.setInterval).not.toHaveBeenCalled();
     expect(document.addEventListener).toHaveBeenCalledWith("visibilitychange", onFocus);
     cleanup();
     expect(window.removeEventListener).toHaveBeenCalledWith("focus", onFocus);
     expect(document.removeEventListener).toHaveBeenCalledWith("visibilitychange", onFocus);
-    expect(window.clearInterval).toHaveBeenCalledWith(17);
+    if (interval) expect(window.clearInterval).toHaveBeenCalledWith(17);
+    else expect(window.clearInterval).not.toHaveBeenCalled();
   });
 });

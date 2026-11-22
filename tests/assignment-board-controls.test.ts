@@ -77,12 +77,16 @@ describe("assignment board retract and assign controls", () => {
     expect(html).not.toContain('name="task"');
     expect(html).not.toContain('name="positionId"');
   });
-  it("does not count unavailable assignments as coverage in the safety line", () => {
+  it("does not count unavailable assignments as coverage in the unassigned list", () => {
     const value = board(3, false);
     value.tasks = TASK_TYPES.map((task) => ({ ...value.tasks[0]!, task, id: task, available: task !== "am_prep" }));
-    const html = render(value, true);
-    expect(html).toContain("Unassigned: AM prep");
-    expect(html).not.toContain("Unassigned: Mid-day prep");
+    const html = render(value);
+    expect(html).toContain("1 unassigned");
+    // Nav PR 7: the compact (Dashboard) board has no "Take / assign tasks" section and so no safety line; the day list
+    // carries the tasks ("Nobody yet" opens the task itself).
+    const compact = render(value, true);
+    expect(compact).not.toContain("Unassigned:");
+    expect(compact).not.toContain("Take or assign tasks");
   });
   it("does not give employees links or retract controls for unavailable tasks", () => {
     const value = board(3, false);
