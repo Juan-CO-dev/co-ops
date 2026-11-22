@@ -20,6 +20,7 @@ import type { InboxWaiting, NotRungScoped } from "@/lib/dashboard-blocks";
 import type { Settled } from "@/lib/dashboard-day";
 import { itemHref } from "@/lib/dashboard-day-shared";
 import type { CateringBlockOrder, CateringBlockPlan, DayItem, HeavyTodayLines, Reason } from "@/lib/day-plan-shared";
+import type { CateringDayLoad } from "@/lib/scheduling/catering-day-shared";
 import { renderDayReason } from "@/lib/day-plan-render";
 import { formatClockTime, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
@@ -51,6 +52,20 @@ export function notRungLines(r: NotRungScoped): TranslationKey[] {
 }
 
 const Muted = ({ children, ...rest }: { children: ReactNode } & Record<string, unknown>) => <p className="text-sm text-co-text-muted" {...rest}>{children}</p>;
+
+/**
+ * Tomorrow's line (Astra PR 8 code r1, P2): a guest total is shown as exact only when every order carries a count.
+ * Some counts missing = "at least N" plus how many have no count; none known = no number at all, never "0 guests".
+ */
+export function tomorrowLine(load: CateringDayLoad, t: (k: TranslationKey, v?: Record<string, string | number>) => string): string {
+  if (load.orders === 0) return t("dashboard.catering_block.tomorrow_none");
+  if (load.missingCounts >= load.orders) {
+    return load.orders === 1 ? t("dashboard.catering_block.tomorrow_one_no_count") : t("dashboard.catering_block.tomorrow_other_no_count", { n: load.orders });
+  }
+  if (load.missingCounts > 0) return t("dashboard.catering_block.tomorrow_partial", { n: load.orders, guests: load.guests, missing: load.missingCounts });
+  if (load.orders === 1) return load.guests === 1 ? t("dashboard.catering_block.tomorrow_one_guest") : t("dashboard.catering_block.tomorrow_one", { guests: load.guests });
+  return t("dashboard.catering_block.tomorrow_other", { n: load.orders, guests: load.guests });
+}
 
 export function CateringBlock({ item, block, heavyToday, headsUp, extras, nextUp, shopId, language }: {
   item: DayItem;
@@ -110,10 +125,7 @@ export function CateringBlock({ item, block, heavyToday, headsUp, extras, nextUp
       {block.next ? <p className="text-sm text-co-text" data-next-order>{t("dashboard.catering_block.next", { time: clock(block.next.atMin, language) })}</p> : null}
 
       <Muted data-tomorrow>
-        {block.tomorrow === "unknown" ? unavailable("dashboard.catering_block.tomorrow")
-          : block.tomorrow.orders === 0 ? t("dashboard.catering_block.tomorrow_none")
-            : block.tomorrow.orders === 1 ? t("dashboard.catering_block.tomorrow_one", { guests: block.tomorrow.guests })
-              : t("dashboard.catering_block.tomorrow_other", { n: block.tomorrow.orders, guests: block.tomorrow.guests })}
+        {block.tomorrow === "unknown" ? unavailable("dashboard.catering_block.tomorrow") : tomorrowLine(block.tomorrow, t)}
       </Muted>
 
       {extras ? (

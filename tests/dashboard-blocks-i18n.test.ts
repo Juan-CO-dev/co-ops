@@ -24,6 +24,8 @@ export const DASHBOARD_BLOCK_KEYS = {
   "dashboard.catering_block.state.completed": [], "dashboard.catering_block.state.not_tracked": [], "dashboard.catering_block.no_time": [],
   "dashboard.catering_block.no_count": [], "dashboard.catering_block.next": ["time"], "dashboard.catering_block.tomorrow": [],
   "dashboard.catering_block.tomorrow_one": ["guests"], "dashboard.catering_block.tomorrow_other": ["guests", "n"], "dashboard.catering_block.tomorrow_none": [],
+  "dashboard.catering_block.tomorrow_one_guest": [], "dashboard.catering_block.tomorrow_one_no_count": [], "dashboard.catering_block.tomorrow_other_no_count": ["n"],
+  "dashboard.catering_block.tomorrow_partial": ["guests", "missing", "n"],
   "dashboard.catering_block.inbox_one": [], "dashboard.catering_block.inbox_other": ["n"], "dashboard.catering_block.inbox_unplaced": ["n"],
   "dashboard.catering_block.inbox_none": [], "dashboard.catering_block.not_rung_one": [], "dashboard.catering_block.not_rung_other": ["n"],
   "dashboard.catering_block.not_rung_none": [], "dashboard.catering_block.not_rung_none_ezcater": [], "dashboard.catering_block.house_not_checked": [],

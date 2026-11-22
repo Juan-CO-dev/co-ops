@@ -243,3 +243,37 @@ describe("T-G11 (Q5): PhaseLine leaves the night-before line out only when told"
 function renderDayReasonText(p: DayPlan): string {
   return renderDayReason(p.headsUp!, "en").replace(/&/g, "&amp;");
 }
+
+describe("Astra PR 8 code r1 P2: tomorrow's guest total is exact only when every order has a count", () => {
+  const tomorrowOf = (orders: CateringOrder[]): { en: string; es: string } => {
+    const base = pStreet(hm("10:00"));
+    const tomorrowDate = base.cateringTomorrow.kind === "ok" ? base.cateringTomorrow.value.forDate : "";
+    const html = renderBlockLang(plan(CATERING_MEMBER, "10:00", { ...base, cateringTomorrow: ok({ forDate: tomorrowDate, orders }) }));
+    return html;
+  };
+  const renderBlockLang = (p: DayPlan) => ({ en: renderBlock(p, { language: "en" }), es: renderBlock(p, { language: "es" }) });
+  const line = (html: string) => text(html.match(/<[^>]*data-tomorrow[^>]*>[\s\S]*?<\/p>/)?.[0] ?? html.match(/<[^>]*data-tomorrow[^>]*>[\s\S]*?<\/(?:p|div|span)>/)?.[0] ?? "");
+  const fill = (s: string, v: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (_m, k: string) => String(v[k]));
+  it("one order, no count: no number of guests at all (en + es)", () => {
+    const r = tomorrowOf([order({ id: "a", headcount: null })]);
+    expect(line(r.en)).toBe(EN["dashboard.catering_block.tomorrow_one_no_count"]);
+    expect(line(r.es)).toBe(ES["dashboard.catering_block.tomorrow_one_no_count"]);
+    expect(line(r.en)).not.toMatch(/0 guests/);
+  });
+  it("two orders, one count missing: at least the known total, and how many lack a count (en + es)", () => {
+    const r = tomorrowOf([order({ id: "a", headcount: 20 }), order({ id: "b", headcount: null })]);
+    expect(line(r.en)).toBe(fill(EN["dashboard.catering_block.tomorrow_partial"]!, { n: 2, guests: 20, missing: 1 }));
+    expect(line(r.es)).toBe(fill(ES["dashboard.catering_block.tomorrow_partial"]!, { n: 2, guests: 20, missing: 1 }));
+    expect(line(r.en)).not.toBe(fill(EN["dashboard.catering_block.tomorrow_other"]!, { n: 2, guests: 20 }));
+  });
+  it("two orders, no counts at all", () => {
+    const r = tomorrowOf([order({ id: "a", headcount: null }), order({ id: "b", headcount: null })]);
+    expect(line(r.en)).toBe(fill(EN["dashboard.catering_block.tomorrow_other_no_count"]!, { n: 2 }));
+  });
+  it("every count known: the exact total; one guest is singular", () => {
+    const r1 = tomorrowOf([order({ id: "a", headcount: 1 })]);
+    expect(line(r1.en)).toBe(EN["dashboard.catering_block.tomorrow_one_guest"]);
+    const r2 = tomorrowOf([order({ id: "a", headcount: 12 }), order({ id: "b", headcount: 8 })]);
+    expect(line(r2.en)).toBe(fill(EN["dashboard.catering_block.tomorrow_other"]!, { n: 2, guests: 20 }));
+  });
+});
