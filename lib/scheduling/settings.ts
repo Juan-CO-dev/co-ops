@@ -64,8 +64,8 @@ export async function saveStructure(deps: ScheduleDeps, args: { actor: PeopleAct
   if (!v.ok) throw new ScheduleError("structure_invalid", { key: v.key });
   // PR SCH-2 (plan r5 20.7, ruling D7): the earlier-opening mode needs 0354. Until its sentinel answers, a structure
   // carrying catering.earlyOpenMode (ANY value, manual included) is refused here, before any write; a structure
-  // without the key takes today's path unchanged.
-  if (Object.hasOwn((args.structure as ScheduleStructure).catering, "earlyOpenMode") && !(await earlyOpenReady(deps.service))) {
+  // without the key takes today's path unchanged. A write never trusts the display cache (fresh: Astra SCH-2 r1 P2).
+  if (Object.hasOwn((args.structure as ScheduleStructure).catering, "earlyOpenMode") && !(await earlyOpenReady(deps.service, { fresh: true }))) {
     throw new ScheduleError("feature_not_ready", { key: "catering.earlyOpenMode" });
   }
   // 0346 / board two labor views PR 2: the pure-hourly target is MoO+ (Juan 2026-11-18) and dark behind

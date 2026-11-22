@@ -113,6 +113,26 @@ describe("the sentinel read (scheduleFeatures)", () => {
     expect([await earlyOpenReady(yes), await earlyOpenReady(no), await earlyOpenReady(yes)]).toEqual([true, false, true]);
     expect([yes.reads, no.reads]).toEqual([1, 1]);
   });
+  it("an array with any non-string element is malformed = not ready, with one log line; unknown future STRING names stay fine (Astra SCH-2 r1 P3)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    for (const data of [["early_open_mode", null, {}], ["early_open_mode", 1], [null], ["early_open_mode", ["early_open_mode"]]]) {
+      expect(await earlyOpenReady(sentinelClient(() => ({ data, error: null })))).toBe(false);
+    }
+    expect(warn.mock.calls.length).toBe(4);
+    expect(await earlyOpenReady(sentinelClient(() => ({ data: ["a_future_feature", "early_open_mode"], error: null })))).toBe(true);
+    expect(warn.mock.calls.length).toBe(4);
+  });
+  it("a fresh read bypasses a cached yes and refreshes the cache with what it finds", async () => {
+    let installed = true;
+    const c = sentinelClient(() => (installed ? { data: ["early_open_mode"], error: null } : { data: null, error: { code: "PGRST202", message: "x" } }));
+    const t0 = 2_000_000;
+    expect(await earlyOpenReady(c, { now: t0 })).toBe(true);
+    installed = false;
+    expect(await earlyOpenReady(c, { now: t0 + 1 })).toBe(true); // the display cache still says yes
+    expect(await earlyOpenReady(c, { now: t0 + 2, fresh: true })).toBe(false);
+    expect(await earlyOpenReady(c, { now: t0 + 3 })).toBe(false); // and the cache now holds the no
+    expect(c.reads).toBe(2);
+  });
 });
 
 describe("the save path: no mode is written before 0354", () => {
@@ -169,6 +189,20 @@ describe("the save path: no mode is written before 0354", () => {
         expect((await live(s)).value.catering.earlyOpenMode).toBe(mode);
       }
       expect(saves(s)).toHaveLength(3);
+    }
+  });
+  it("a cached yes never lets a mode write through once the sentinel is gone (0354 rolled back inside the ten minutes): refused before any write (Astra SCH-2 r1 P2)", async () => {
+    for (const who of [gm, moo]) {
+      const opts: { features?: string[] } = { features: ["early_open_mode"] };
+      const st = scheduleStore(shopTables(), opts);
+      const s = { ...st, deps: { service: st.client, now: NOW, newId: st.newId } };
+      expect(await earlyOpenReady(s.client)).toBe(true); // the settings page cached a yes
+      delete opts.features; // the sentinel disappears
+      const l = await live(s);
+      expect(await refusal(settings.saveStructure(s.deps, { actor: who, locationId: A, expectedId: l.id, structure: withMode(l.value, "semi") })))
+        .toEqual(["feature_not_ready", "catering.earlyOpenMode"]);
+      expect(saves(s)).toHaveLength(0);
+      expect(sentinelReads(s)).toHaveLength(2);
     }
   });
 });
