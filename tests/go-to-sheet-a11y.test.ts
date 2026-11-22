@@ -206,3 +206,67 @@ describe("U3: every label of the bar and the open sheet resolves, in en and es",
     cleanup();
   });
 });
+
+// ─── U4 (step 12, with the idle warning's raise: lead ruling r2 G2): the stacking order and the bar's shape ─────────
+import { readFileSync } from "node:fs";
+
+/** Each `<button …>`, `<Link …>` and `<a …>` opening tag (attributes with nested braces and arrows included). */
+function controlTags(src: string): string[] {
+  const out: string[] = [];
+  const re = /<(?:button|Link|a)\b/g;
+  for (let m = re.exec(src); m; m = re.exec(src)) {
+    let depth = 0;
+    let i = m.index + 2;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (c === ">" && depth === 0) break;
+    }
+    out.push(src.slice(m.index, i + 1));
+  }
+  return out;
+}
+
+describe("U4: stacking and controls (source pins)", () => {
+  const src = (f: string) => readFileSync(f, "utf8");
+  const code = (s: string) => s.replace(/\/\*[^]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  it("page ≤ z-[60] < the sheets z-[1000] < the idle warning z-[1050] < the password modal z-[1100] < the sign-out cover z-[2000]", () => {
+    expect(code(src("components/nav/Sheet.tsx"))).toContain('className="fixed inset-0 z-[1000]"');
+    expect(code(src("components/auth/IdleTimeoutWarning.tsx"))).toMatch(/className="fixed inset-0 z-\[1050\] /);
+    expect(code(src("components/auth/IdleTimeoutWarning.tsx"))).not.toMatch(/\bz-50\b/);
+    expect(code(src("components/auth/PasswordModal.tsx"))).toMatch(/fixed inset-0 z-\[1100\]/);
+    expect(src("components/auth/SigningOutOverlay.tsx")).toMatch(/z-\[2000\]/);
+    // The PIN dialog stays at z-50, BELOW the sheet: arbitration (not stacking) protects it.
+    expect(code(src("components/auth/PinConfirmModal.tsx"))).toMatch(/fixed inset-0 z-50 /);
+  });
+  it("the sheet is never a native top-layer <dialog> and is portaled to the body", () => {
+    const s = code(src("components/nav/Sheet.tsx"));
+    expect(s).not.toMatch(/<dialog|showModal/);
+    expect(s).toContain("createPortal(");
+    expect(s).toContain("document.body");
+  });
+  it("the bar row: no fixed, sticky, z-index, transform or filter (no stacking context)", () => {
+    const row = code(src("components/nav/NavShell.tsx")).match(/<nav aria-label=\{t\("nav\.topbar\.aria"\)\}[^>]*className="([^"]+)"/)![1]!;
+    expect(row).not.toMatch(/\b(fixed|sticky)\b|\bz-|transform|filter|backdrop|opacity|isolat/);
+  });
+  it("the search box is focused on open (initialFocus = the search ref)", () => {
+    expect(code(src("components/nav/GoToSheet.tsx"))).toMatch(/initialFocus=\{searchRef\}/);
+  });
+  it("every control of the bar and the sheets is a 44 px control with items-center", () => {
+    for (const f of ["components/nav/GoToButton.tsx", "components/nav/TopBarDashboardLink.tsx", "components/nav/BellIsland.tsx",
+      "components/nav/GoToSheet.tsx", "components/nav/NotificationPanel.tsx", "components/nav/MeControls.tsx", "components/nav/PeopleResults.tsx",
+      "components/DashboardNav.tsx"]) {
+      const s = code(src(f));
+      const classes = controlTags(s).map((tag) => {
+        const m = tag.match(/className=(?:"([^"]+)"|\{\[([\s\S]*?)\]\s*\.)/);
+        return (m?.[1] ?? m?.[2] ?? "").replace(/\s+/g, " ");
+      });
+      expect(classes.length, f).toBeGreaterThan(0);
+      for (const c of classes) {
+        expect(c, `${f}: ${c}`).toMatch(/min-h-\[44px\]|\bh-11\b/);
+        expect(c, `${f}: ${c}`).toMatch(/items-center/);
+      }
+    }
+  });
+});
