@@ -396,6 +396,12 @@ async function loadShopFacts(service: SupabaseClient, sb: Sb, args: DayFactsArgs
   const startsP = boundedRead(service, "hours.schedule_start", async (abortable) => dayPrepStarts(await deps.scheduleStarts(abortable, shopId, [planDate, tomorrow]), [planDate, tomorrow], isoWeekStart));
   // The board: the page's promise, raced, never aborted (ruling B2).
   const boardP: Promise<ShiftBoard> | null = need.board && args.board ? L("board", () => args.board!()) : null;
+  // Nav PR 7, E2 (Astra F3): the viewer's OWN assignments, started at once beside the board and inside the same deadline.
+  // Used only when the board failed or timed out (a hanging board settles at the deadline, so a read started after it
+  // would have no time left): the viewer's own tasks then feed the engine as OWN holdings only (scope "own_tasks").
+  const ownP: Promise<TaskAssignment[]> | null = need.board
+    ? L("ownAssignments", () => deps.ownTasks(sb, { viewer: args.viewer, shopId, locations: args.locations, date: planDate }))
+    : null;
   // The stations' classification (S2, and S3a while 0353 is not applied): only when there is a board to classify.
   const classificationP: Promise<{ flags: StationDayFlags; notPhase: NotPhaseRule }> | null = boardP ? L("stations", async () => {
     const flags = await deps.stationFlags(sb, shopId);
@@ -484,7 +490,8 @@ async function loadShopFacts(service: SupabaseClient, sb: Sb, args: DayFactsArgs
     : ok({ forDate: date, orders: cateringOrders(date, catering.value.booked, catering.value.ez, outAt, rules) }));
 
   const board = boardP ? await fact(boardP) : null;
-  const boardFacts = await buildBoardFacts(args, planDate, need.board, board, classificationP ? await fact(classificationP) : null);
+  const boardFacts = await buildBoardFacts(args, planDate, need.board, board, classificationP ? await fact(classificationP) : null,
+    () => (ownP ? fact(ownP) : Promise.resolve(FAILED)));
 
   return {
     kind: "shop",
@@ -526,12 +533,22 @@ function composeHours(base: { ok: true; value: BaseShopHours } | { ok: false }, 
 async function buildBoardFacts(
   args: DayFactsArgs, planDate: string, needBoard: boolean, board: Fact<ShiftBoard> | null,
   classification: Fact<{ flags: StationDayFlags; notPhase: NotPhaseRule }> | null,
+  /** E2: the own-assignment lane, read only when the board failed (when the board loaded, the board's assignments win). */
+  own: () => Promise<Fact<TaskAssignment[]>>,
 ): Promise<Pick<ShopFacts, "stations" | "assignments" | "myStation" | "holdsStationOnStationDay">> {
   if (!needBoard) {
     // The tasks-only viewer (section 6): the task-day reader has not shipped, so nothing station-shaped is shown.
     return { stations: { kind: "not_shown" }, assignments: { kind: "not_shown" }, myStation: ok(null), holdsStationOnStationDay: false };
   }
-  if (!board || board.kind === "failed") return { stations: FAILED, assignments: FAILED, myStation: FAILED, holdsStationOnStationDay: false };
+  if (!board || board.kind === "failed") {
+    // E2: the board's three facts fail as before; the viewer's own assignments (when that read loaded) keep their own work
+    // visible, never as a roster: only rows whose assignee is the viewer.
+    const o = await own();
+    const assignments: Fact<AssignmentFacts> = o.kind === "ok"
+      ? ok({ forDate: planDate, scope: "own_tasks", rows: dayAssignments(o.value.filter((t) => t.assigneeId === args.viewer.userId)) })
+      : FAILED;
+    return { stations: FAILED, assignments, myStation: FAILED, holdsStationOnStationDay: false };
+  }
   const b = board.value;
   const userId = args.viewer.userId;
   let stations: StationsFact;

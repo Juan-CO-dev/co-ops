@@ -1,7 +1,7 @@
 /**
  * Nav PR 6 (plan r3, 8.2): each read's REAL query, through the recording client (tests/helpers/fake-supabase.ts).
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { findPrepDayInstances } from "@/lib/checklist-day-instance";
 import { defaultDayFactDeps, loadDayFacts } from "@/lib/day-plan";
 import type { DayViewer } from "@/lib/day-plan-shared";
@@ -89,26 +89,48 @@ function quiet(opts: { installed: boolean; role?: string; date?: string }) {
     }
   };
 }
+/**
+ * Nav PR 7 (lead ruling r2, G2): the budget fixtures REALLY reach the own-assignment reads (the eager E2 lane and the social
+ * media manager's lane, both loadOwnTaskAssignments, unmocked). Server time is frozen to the fixture instant so the reader's
+ * "server today" check passes (lib/assignments.ts), the viewers carry valid UUIDs, and the fake users read returns each
+ * viewer's real role. Only Date is faked: the loader's deadline timers stay real.
+ */
+const NOW = at("13:45", PLAN_DATE);
+const KH = { ...ANA, userId: "33333333-3333-4333-8333-333333333333" };
+const CREW = { ...LUIS, userId: "44444444-4444-4444-8444-444444444444" };
+const SMM_V = { ...ANA, userId: "22222222-2222-4222-8222-222222222222", role: "social_media_mgr" as const, level: 6 };
+const freeze = () => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); };
+/** The three own-assignment reads, by table and filter (targetLevel's users + user_locations, then report_assignments). */
+function ownReads(calls: readonly FakeCall[], userId: string) {
+  return {
+    users: calls.filter((c) => c.table === "users" && c.has("eq", "id", userId) && c.has("eq", "active", true) && c.has("maybeSingle")).length,
+    membership: calls.filter((c) => c.table === "user_locations" && c.has("eq", "user_id", userId) && c.has("eq", "location_id", SHOP) && c.has("eq", "active", true)).length,
+    assignments: calls.filter((c) => c.table === "report_assignments" && c.has("eq", "location_id", SHOP) && c.has("eq", "operational_date", PLAN_DATE)
+      && c.has("eq", "assignee_id", userId) && c.has("eq", "active", true)).length,
+  };
+}
 const budget = async (viewer: DayViewer, installed: boolean) => {
-  // The social media manager's own-task read binds the server's today (loadOwnTaskAssignments), so that case runs at the
-  // real instant; every other case at 13:45 ET on the plan date.
-  const now = viewer.role === "social_media_mgr" ? new Date() : at("13:45", PLAN_DATE);
-  const f = fakeSupabase(quiet({ installed, date: operationalNow(now).date }), () => ({ data: PLAN_DATE }));
+  const now = NOW;
+  const f = fakeSupabase(quiet({ installed, role: viewer.role, date: operationalNow(now).date }), () => ({ data: PLAN_DATE }));
   const input = await loadDayFacts(f.client as never, { viewer, shop: { id: SHOP, code: "P" }, now, board: async () => ({ stationDate: operationalNow(now).date,
     locationId: SHOP, date: operationalNow(now).date, viewerId: viewer.userId, viewerLevel: viewer.level, stations: [], people: [], events: [], tasks: [] }), locations: [SHOP] });
-  return { input, count: f.calls.length + f.rpcs.length, reads: [...f.calls.map((c) => c.table), ...f.rpcs.map((r) => `rpc:${r.name}`)].sort() };
+  return { input, count: f.calls.length + f.rpcs.length, reads: [...f.calls.map((c) => c.table), ...f.rpcs.map((r) => `rpc:${r.name}`)].sort(), own: ownReads(f.calls, viewer.userId) };
 };
 
-describe("8.1 item 8: the query budget on a quiet day (recomputed in r3; PR SCH 22.3: + 3 schedule-start reads)", () => {
-  it("key holder 32 before 0353, 30 after; crew 22 / 20; the social media manager 5 (no task, no station)", async () => {
-    const ana = { ...ANA, userId: "u-ana" };
+describe("8.1 item 8: the query budget on a quiet day (recomputed in r3; PR SCH 22.3: + 3 schedule-start reads; nav PR 7 E2: + 3 own-assignment reads)", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  it("key holder 35 before 0353, 33 after; crew 25 / 23; the social media manager 5 (no task, no station)", async () => {
+    freeze();
     const got = {
-      khBefore: await budget(ana, false), khAfter: await budget(ana, true),
-      crewBefore: await budget(LUIS, false), crewAfter: await budget(LUIS, true),
-      smm: await budget({ ...ANA, userId: "22222222-2222-4222-8222-222222222222", role: "social_media_mgr", level: 6 }, false),
+      khBefore: await budget(KH, false), khAfter: await budget(KH, true),
+      crewBefore: await budget(CREW, false), crewAfter: await budget(CREW, true),
+      smm: await budget(SMM_V, false),
     };
     const counts = Object.fromEntries(Object.entries(got).map(([k, v]) => [k, v.count]));
-    expect(counts, JSON.stringify(Object.fromEntries(Object.entries(got).map(([k, v]) => [k, v.reads])))).toEqual({ khBefore: 32, khAfter: 30, crewBefore: 22, crewAfter: 20, smm: 5 });
+    expect(counts, JSON.stringify(Object.fromEntries(Object.entries(got).map(([k, v]) => [k, v.reads])))).toEqual({ khBefore: 35, khAfter: 33, crewBefore: 25, crewAfter: 23, smm: 5 });
+    // G2: the +3 are the own-assignment lane's three queries, observed by table and filter, once each per load.
+    for (const k of ["khBefore", "khAfter", "crewBefore", "crewAfter", "smm"] as const) expect(got[k].own, k).toEqual({ users: 1, membership: 1, assignments: 1 });
+    for (const t of ["report_assignments", "user_locations", "users"]) expect(got.khAfter.reads, t).toContain(t);
     expect(got.khAfter.reads.filter((t) => t.startsWith("schedule_"))).toEqual(["schedule_revision_contexts", "schedule_revision_days", "schedule_structures", "schedule_weeks"]);
     expect(got.smm.reads).toEqual(["report_assignments", "rpc:station_business_date", "station_events", "user_locations", "users"]);
     expect(got.khBefore.input.facts.kind).toBe("shop");
@@ -117,9 +139,9 @@ describe("8.1 item 8: the query budget on a quiet day (recomputed in r3; PR SCH 
 
 describe("8.1 item 8: the query budget on a POPULATED day (Astra r1: a quiet day cannot catch a per-row read)", () => {
   // Open orders, in-progress and complete deliveries and Prep demand rows, at 3 and at 90 rows each. Rows add exactly
-  // three CONDITIONAL follow-up reads to the quiet key holder's 30 (after 0353; 27 before PR SCH's schedule-start reads): openOrders' read of the orders' complete
+  // three CONDITIONAL follow-up reads to the quiet key holder's 33 (after 0353 and nav PR 7's E2; 30 before E2, 27 before PR SCH's schedule-start reads): openOrders' read of the orders' complete
   // deliveries (vendor_deliveries, in chunks of 100 order ids, so one read up to 100 orders), and Prep demand's item
-  // registry reads (items and item_par_levels, in chunks of 100 item ids). 33 at 3 rows AND 33 at 90 rows is what proves
+  // registry reads (items and item_par_levels, in chunks of 100 item ids). 36 at 3 rows AND 36 at 90 rows is what proves
   // there is no per-row read: one would add 87 more at 90 rows than at 3.
   const populated = (n: number) => (c: FakeCall): Answer => {
     const rows = <T,>(f: (i: number) => T) => Array.from({ length: n }, (_, i) => f(i));
@@ -134,16 +156,21 @@ describe("8.1 item 8: the query budget on a POPULATED day (Astra r1: a quiet day
     }
   };
   const run = async (n: number) => {
-    const now = at("13:45", PLAN_DATE);
+    const now = NOW;
     const f = fakeSupabase(populated(n), () => ({ data: PLAN_DATE }));
-    await loadDayFacts(f.client as never, { viewer: { ...ANA, userId: "u-ana" }, shop: { id: SHOP, code: "P" }, now, locations: [SHOP],
-      board: async () => ({ stationDate: PLAN_DATE, locationId: SHOP, date: PLAN_DATE, viewerId: "u-ana", viewerLevel: 4, stations: [], people: [], events: [], tasks: [] }) });
-    return { count: f.calls.length + f.rpcs.length, reads: [...f.calls.map((c) => c.table), ...f.rpcs.map((r) => `rpc:${r.name}`)].sort() };
+    await loadDayFacts(f.client as never, { viewer: KH, shop: { id: SHOP, code: "P" }, now, locations: [SHOP],
+      board: async () => ({ stationDate: PLAN_DATE, locationId: SHOP, date: PLAN_DATE, viewerId: KH.userId, viewerLevel: 4, stations: [], people: [], events: [], tasks: [] }) });
+    return { count: f.calls.length + f.rpcs.length, reads: [...f.calls.map((c) => c.table), ...f.rpcs.map((r) => `rpc:${r.name}`)].sort(), own: ownReads(f.calls, KH.userId) };
   };
+  afterEach(() => { vi.useRealTimers(); });
 
-  it("key holder after 0353: exactly 33 reads at 3 rows and at 90 rows (30 quiet + the three conditional follow-ups)", async () => {
+  it("key holder after 0353: exactly 36 reads at 3 rows and at 90 rows (33 quiet + the three conditional follow-ups)", async () => {
+    freeze();
     const [few, many] = [await run(3), await run(90)];
-    expect({ few: few.count, many: many.count }, JSON.stringify({ few: few.reads, many: many.reads })).toEqual({ few: 33, many: 33 });
+    expect({ few: few.count, many: many.count }, JSON.stringify({ few: few.reads, many: many.reads })).toEqual({ few: 36, many: 36 });
+    // G2: the own-assignment lane's three queries ran (not mocked), once each.
+    expect(few.own).toEqual({ users: 1, membership: 1, assignments: 1 });
+    expect(many.own).toEqual({ users: 1, membership: 1, assignments: 1 });
     expect(many.reads).toEqual(few.reads);
     // The follow-ups did fire: three vendor_deliveries reads (half-logged, completed today, the open orders' complete ones) and the registry pair.
     expect(many.reads.filter((t) => t === "vendor_deliveries")).toHaveLength(3);
