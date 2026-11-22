@@ -13,8 +13,13 @@
  * `referenceStructureOf` returns a heavy or opened day's DERIVED structure, which skews the budget's structure delta (its
  * size is printed).
  *
+ * GATED (lead ruling H3, SCH-1 code review r1), each a FAIL line and counted: per case, (1) the old/new replay verdict above;
+ * (2) the NEW replay equals the problems the generator recorded; (3) the NEW budget reference restores the base (its digest is
+ * the date's `baseStructureOf`). INFO only, never counted: which structure the OLD reference returns, and the two budget
+ * structure deltas (measurements, not expectations).
+ *
  *   node scripts/sch-old-reader-check.mjs [pre-SCH base, default: git merge-base origin/main HEAD]
- * Exit 0 when every expectation holds, 1 otherwise.
+ * Exit 0 when every gated check holds, 1 otherwise (a failed step also exits non-zero).
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -51,20 +56,27 @@ try {
   const news = JSON.parse(readFileSync(snapshots, "utf8"));
   const olds = JSON.parse(readFileSync(result, "utf8"));
   let failed = 0;
+  /** One gated check: a PASS / FAIL line, a FAIL counted. */
+  const gate = (ok, text) => {
+    if (!ok) failed++;
+    console.log(`  ${ok ? "PASS" : "FAIL"}  ${text}`);
+  };
   console.log(`SCH old-reader check — pre-SCH base ${base}\n`);
+  if (olds.length !== news.length) gate(false, `the old replay returned ${olds.length} case(s) for ${news.length} snapshot(s)`);
   news.forEach((n, i) => {
-    const o = olds[i];
+    const o = olds[i] ?? { oldReplay: null, oldRefDigest: null, oldDelta: null };
     const same = canonical(o.oldReplay) === canonical(n.newReplay);
     const expectSame = !n.name.startsWith("(c)");
-    const extra = (a, b) => a.filter((p) => !b.some((q) => canonical(q) === canonical(p))).map((p) => `${p.code}@${p.day}${p.q === undefined ? "" : `:${p.q}`}`);
-    const verdict = same === expectSame ? "as expected" : "UNEXPECTED";
-    if (same !== expectSame) failed++;
+    const extra = (a, b) => (a ?? []).filter((p) => !(b ?? []).some((q) => canonical(q) === canonical(p))).map((p) => `${p.code}@${p.day}${p.q === undefined ? "" : `:${p.q}`}`);
     console.log(n.name);
-    console.log(`  replay: old ${same ? "IDENTICAL to" : "DIFFERS from"} new (${verdict}); new replay = recorded: ${canonical(n.newReplay) === canonical(n.recorded)}`);
-    if (!same) console.log(`    only old: ${extra(o.oldReplay, n.newReplay).join(", ") || "-"} | only new: ${extra(n.newReplay, o.oldReplay).join(", ") || "-"}`);
-    console.log(`  budget reference on ${n.refDate}: new = the base (${n.newRefDigest === n.liveDigest}), delta ${n.newDelta} h; old = ${o.oldRefDigest === n.liveDigest ? "the base" : "the DERIVED day structure"}, delta ${o.oldDelta} h\n`);
+    gate(same === expectSame, `replay: old ${same ? "IDENTICAL to" : "DIFFERS from"} new (expected ${expectSame ? "identical" : "a difference"})`);
+    if (!same) console.log(`        only old: ${extra(o.oldReplay, n.newReplay).join(", ") || "-"} | only new: ${extra(n.newReplay, o.oldReplay).join(", ") || "-"}`);
+    gate(canonical(n.newReplay) === canonical(n.recorded), "new replay = the problems the generator recorded");
+    gate(n.newRefDigest === n.liveDigest, `budget reference on ${n.refDate}: the new reference restores the base (digest ${n.newRefDigest} vs base ${n.liveDigest})`);
+    console.log(`  INFO  old budget reference = ${o.oldRefDigest === n.liveDigest ? "the base" : "the DERIVED day structure"}`);
+    console.log(`  INFO  budget structure delta: new ${n.newDelta} h, old ${o.oldDelta} h\n`);
   });
-  console.log(failed === 0 ? "OK: every expectation holds." : `${failed} UNEXPECTED result(s).`);
+  console.log(failed === 0 ? "OK: every gated check holds." : `${failed} gated check(s) FAILED.`);
   process.exitCode = failed === 0 ? 0 : 1;
 } finally {
   rmSync(tmp, { recursive: true, force: true });
