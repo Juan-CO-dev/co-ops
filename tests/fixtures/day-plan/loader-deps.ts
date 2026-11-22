@@ -54,7 +54,9 @@ const CLOSING_ITEMS = [
 export function okDeps(): DayFactDeps {
   return {
     shopDay: async () => ({ source: "saved", shopDay: { prepStartQ: 28, serviceStartQ: 42 },
-      catering: { minHeadcount: 30, leadMinutes: 210, defaultStartQ: 34, defaultEndQ: 52, extraPrepDishHeads: 1 }, dayPrepStartQ: 28 }),
+      catering: { minHeadcount: 30, leadMinutes: 210, defaultStartQ: 34, defaultEndQ: 52, extraPrepDishHeads: 1 } }),
+    // PR SCH: by default no schedule holds the dates (the saved start applies); tests/day-plan-load.test.ts builds the others.
+    scheduleStarts: async () => ({ weeks: [], days: [], starts: {} }),
     stationFlags: async () => ({ installed: false }),
     closingClassification: async () => [
       ...["opening_report", "am_prep", "mid_day_prep", "cash_report", "pm_report", null, null].map((ref) => ({ station: "Closing Manager", active: true, report_reference_type: ref })),

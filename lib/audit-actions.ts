@@ -138,6 +138,9 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "schedule.generate",
   "schedule.regenerate",
   "schedule.edit",
+  // PR SCH: a GM's per-date earlier-opening decision (open earlier / accept / decline / clear) is an EDITED revision of the
+  // proposal with its shifts unchanged — a proposal edit like schedule.edit, never sent anywhere.
+  "schedule.opening_set",
   "schedule.budget_kept",
   "schedule.draft_auto",
   "schedule.draft_skipped",

@@ -26,6 +26,7 @@ import type { Destination, Switches } from "@/lib/nav/types";
 import { cutoffsTomorrow, etDayOf, type PoFact, type VendorCutoff, type VendorFact } from "@/lib/report-digests-v2-shared";
 import type { RoleCode } from "@/lib/roles";
 import { cateringDayLoad, cateringPrepWindowQ, type CateringDayLoad } from "@/lib/scheduling/catering-day-shared";
+import type { DayPrepStart } from "@/lib/scheduling/opening-shared";
 import { SCHEDULE_STRUCTURE_DEFAULTS, type ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import { addDaysEt, cutoffMinutes, type RhythmRow, type RhythmSkip } from "@/lib/vendor-rhythm-shared";
 
@@ -68,10 +69,15 @@ export interface ShopHours {
   readonly source: "saved" | "defaults";
   readonly shopDay: Pick<ScheduleStructure["shopDay"], "prepStartQ" | "serviceStartQ">;
   readonly catering: Pick<ScheduleStructure["catering"], "minHeadcount" | "leadMinutes" | "defaultStartQ" | "defaultEndQ" | "extraPrepDishHeads">;
-  /** The day's EFFECTIVE prep start (quarter of the day). PR 6 fills it with the normal prep start; SCH reads an accepted
-   *  or applied earlier opening into it (nav-SCH-LEAD-RULINGS-r1 A4). The engine does not read it until SCH. */
-  readonly dayPrepStartQ: number;
+  /**
+   * PR SCH (rulings A4, D5, F3): each date's ACTUAL start as the schedule holds it, for the plan date and tomorrow. A date
+   * with no schedule has no entry (the saved `shopDay.prepStartQ` is the start); `scheduled` = the start the schedule's
+   * own context holds for that date (the normal one, or an accepted / applied earlier opening); `unknown` = a schedule
+   * holds the date but its start did not load — never replaced by the saved start.
+   */
+  readonly dayPrepStartQ: Readonly<Record<string, DayPrepStart>>;
 }
+export type { DayPrepStart };
 
 export interface ChecklistDay extends ForDate {
   /** The raw checklist_instances.status of the day's instance on ANY template version; null = no instance yet.
@@ -409,12 +415,18 @@ export const EMITTED_KEYS = {
   "day.reason.heavy.flagged_other": ["n"],
   "day.reason.heavy.tomorrow_one": ["guests", "start"],
   "day.reason.heavy.tomorrow_other": ["orders", "guests", "start"],
+  // PR SCH (ruling E2): the heavy lines when the day's start did not load (no time is invented).
+  "day.reason.heavy.today_unknown_start": ["guests", "time"],
+  "day.reason.heavy.today_no_time_unknown_start": ["guests"],
+  "day.reason.heavy.tomorrow_one_unknown_start": ["guests"],
+  "day.reason.heavy.tomorrow_other_unknown_start": ["orders", "guests"],
   "day.reason.count.tool": [],
   "day.reason.count.in_progress": [],
   "day.reason.own.assigned": [],
   "day.empty.crew": [],
   "day.fail.stations": [],
   "day.fail.shop_day": [],
+  "day.fail.day_start": [],
   "day.fail.all": [],
   "day.fail.assignments": [],
   "day.fail.own_station": [],
@@ -616,7 +628,8 @@ function waitingReason(sv: StationView): Reason {
 
 function phaseOf(args: {
   facts: ShopFacts; planDate: string; nowMin: number; sv: StationView; clockKind: "clock" | "default";
-  dayStart: number; serviceStart: number; heavy: boolean;
+  /** null = the schedule holds the date but its start did not load (D5): no clock rise to the opening check. */
+  dayStart: number | null; serviceStart: number; heavy: boolean;
 }): DayPhase {
   const { facts, planDate, nowMin, sv, clockKind, dayStart, serviceStart, heavy } = args;
   const closing = dayValue(facts.closing, planDate);
@@ -650,7 +663,9 @@ function phaseOf(args: {
   if (opening !== null && opening.status === "phase1_complete") {
     return p("morning_prep", "event", opening.phase1At ? reason("day.phase.since.check_done", { time: instantParam(opening.phase1At) }) : null);
   }
-  if (nowMin >= dayStart) return p("opening_check", clockKind, reason("day.phase.since.day_start", { time: wallParam(dayStart) }));
+  if (dayStart !== null && nowMin >= dayStart) return p("opening_check", clockKind, reason("day.phase.since.day_start", { time: wallParam(dayStart) }));
+  // PR SCH (D5): with the start unknown, the opening check comes only from the day's own Opening fact (an instance exists).
+  if (dayStart === null && opening !== null && opening.status !== null) return p("opening_check", "event", null);
   return p("before_opening", clockKind, null);
 }
 
@@ -673,9 +688,14 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
   const todayOrders = cateringToday?.orders.filter((o) => o.state !== "cancelled") ?? [];
   const todayLoad = cateringToday ? cateringDayLoad(todayOrders, cateringSetting) : null;
   const heavy = todayLoad?.heavy ?? false;
-  const windowStart = (orders: readonly CateringOrder[]) =>
-    Math.min(shopDay.prepStartQ, ...orders.map((o) => cateringPrepWindowQ(o.eventQ, cateringSetting)[0])) * 15;
-  const dayStart = heavy ? windowStart(todayOrders) : shopDay.prepStartQ * 15;
+  // PR SCH (rulings A4, D5, F3): the day's start is the SCHEDULE's actual start for the date, on every day (not only heavy
+  // ones): no schedule → the saved start; scheduled → its start (an accepted or applied earlier opening included); a
+  // schedule whose start did not load → null (unknown), never the saved start.
+  const startOf = (date: string): number | null => {
+    const d = hours?.dayPrepStartQ[date];
+    return d === undefined ? shopDay.prepStartQ * 15 : d.kind === "scheduled" ? d.q * 15 : null;
+  };
+  const dayStart = startOf(planDate);
   const timedToday = todayOrders.filter((o) => o.eventQ !== null);
   const firstOrderMin = heavy && timedToday.length > 0 ? Math.min(...timedToday.map((o) => o.eventQ!)) * 15 : null;
   const morningDeadline = firstOrderMin !== null ? Math.min(serviceStart, firstOrderMin) : serviceStart;
@@ -705,14 +725,31 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
     const state = checklistState(o);
     const extras: Reason[] = [];
     if (heavy && todayLoad) {
-      extras.push(firstOrderMin !== null
-        ? reason("day.reason.heavy.today", { guests: countParam(todayLoad.guests), time: wallParam(firstOrderMin), start: wallParam(dayStart) })
-        : reason("day.reason.heavy.today_no_time", { guests: countParam(todayLoad.guests), start: wallParam(dayStart) }));
+      const guests = countParam(todayLoad.guests);
+      extras.push(dayStart === null
+        ? (firstOrderMin !== null ? reason("day.reason.heavy.today_unknown_start", { guests, time: wallParam(firstOrderMin) }) : reason("day.reason.heavy.today_no_time_unknown_start", { guests }))
+        : firstOrderMin !== null
+          ? reason("day.reason.heavy.today", { guests, time: wallParam(firstOrderMin), start: wallParam(dayStart) })
+          : reason("day.reason.heavy.today_no_time", { guests, start: wallParam(dayStart) }));
       if (flagged !== null) extras.push(flaggedReason(flagged.today));
     }
+    const urgentReason = (late: boolean) => (heavyDeadline
+      ? reason(late ? "day.reason.opening.late_heavy" : "day.reason.opening.urgent_heavy", { time: wallParam(morningDeadline) })
+      : reason(late ? "day.reason.opening.late" : "day.reason.opening.urgent", { time: wallParam(serviceStart) }));
     if (state === "done") {
       items.push(makeItem("opening", { band: "done", state, at: morningDeadline, reasons: [],
         done: { at: o!.finishedAt, byName: o!.finishedByName, autoFinalized: o!.status === "auto_finalized" }, heavy }));
+    } else if (dayStart === null) {
+      // PR SCH (F4): the start is unknown, so only the opening-time clock rise is gone. A known morning-deadline urgency
+      // wins (with or without an instance); then an instance's own "now"; otherwise upcoming with no time.
+      if (deadlineBand(morningDeadline, nowMin) === "urgent") {
+        items.push(makeItem("opening", { band: "urgent", state, at: morningDeadline, reasons: [urgentReason(nowMin >= morningDeadline), ...extras], heavy }));
+      } else if (o !== null && o.status !== null) {
+        const primary = o.status === "phase1_complete" ? reason("day.reason.opening.step2", {}) : reason("day.reason.opening.start", {});
+        items.push(makeItem("opening", { band: "now", state, at: morningDeadline, reasons: [primary, ...extras], heavy }));
+      } else {
+        items.push(makeItem("opening", { band: "upcoming", state, at: null, reasons: [reason("day.reason.opening.start", {}), ...extras], heavy }));
+      }
     } else if (nowMin < dayStart) {
       items.push(makeItem("opening", { band: "upcoming", state, at: dayStart, reasons: [reason("day.reason.opening.upcoming", { time: wallParam(dayStart) }), ...extras], heavy }));
     } else {
@@ -720,9 +757,7 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
       const late = nowMin >= morningDeadline;
       const primary = band === "now"
         ? (o?.status === "phase1_complete" ? reason("day.reason.opening.step2", {}) : reason("day.reason.opening.start", {}))
-        : heavyDeadline
-          ? reason(late ? "day.reason.opening.late_heavy" : "day.reason.opening.urgent_heavy", { time: wallParam(morningDeadline) })
-          : reason(late ? "day.reason.opening.late" : "day.reason.opening.urgent", { time: wallParam(serviceStart) });
+        : urgentReason(late);
       items.push(makeItem("opening", { band, state, at: morningDeadline, reasons: [primary, ...extras], heavy }));
     }
   }
@@ -794,7 +829,7 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
     } else {
       const extras: Reason[] = [];
       if (heavyTomorrow && tomorrowLoad) {
-        extras.push(tomorrowReason(tomorrowLoad, windowStart(tomorrowOrders)));
+        extras.push(tomorrowReason(tomorrowLoad, startOf(tomorrow)));
         if (flagged !== null) extras.push(flaggedReason(flagged.tomorrow));
       }
       items.push(makeItem("am_prep", { band: atNight ? "now" : "upcoming", state, at: null,
@@ -851,6 +886,8 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
   else {
     if (hours === null) notes.push({ reason: reason("day.fail.shop_day", {}) });
     else if (hours.source === "defaults") notes.push({ reason: reason("day.note.default_hours", {}), minLevel: 7 });
+    // PR SCH (D5): a schedule holds today but its start did not load: say so (the saved start is never shown in its place).
+    if (hours !== null && dayStart === null) notes.push({ reason: reason("day.fail.day_start", {}) });
     if (facts.stations.kind === "failed") notes.push({ reason: reason("day.fail.stations", {}) });
     else if (facts.stations.kind === "not_shown") notes.push({ reason: reason("day.note.stations_not_shown", {}) });
     else if (sv.ok && sv.floor.length === 0) notes.push({ reason: reason("day.note.no_floor_stations", {}) });
@@ -861,7 +898,7 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
   const alerts: LateCloseAlert[] = y !== null && y.status === "open" ? [{ kind: "late_close", date: yesterday, shopCode: facts.shop.code }] : [];
 
   // ── The night-before heads-up (3.3.11): a fact about tomorrow, from service start ──
-  const headsUp = tomorrowLoad?.heavy && nowMin >= serviceStart ? tomorrowReason(tomorrowLoad, windowStart(tomorrowOrders)) : null;
+  const headsUp = tomorrowLoad?.heavy && nowMin >= serviceStart ? tomorrowReason(tomorrowLoad, startOf(tomorrow)) : null;
 
   return {
     planDate, phase, items: sortItems(finalItems, heavy, planDate), headsUp, notes, alerts,
@@ -870,7 +907,13 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
   };
 }
 
-function tomorrowReason(load: CateringDayLoad, start: number): Reason {
+/** Tomorrow's heavy line; `start` null = tomorrow's schedule start did not load (the no-start key, ruling E2). */
+function tomorrowReason(load: CateringDayLoad, start: number | null): Reason {
+  if (start === null) {
+    return load.orders === 1
+      ? reason("day.reason.heavy.tomorrow_one_unknown_start", { guests: countParam(load.guests) })
+      : reason("day.reason.heavy.tomorrow_other_unknown_start", { orders: countParam(load.orders), guests: countParam(load.guests) });
+  }
   return load.orders === 1
     ? reason("day.reason.heavy.tomorrow_one", { guests: countParam(load.guests), start: wallParam(start) })
     : reason("day.reason.heavy.tomorrow_other", { orders: countParam(load.orders), guests: countParam(load.guests), start: wallParam(start) });

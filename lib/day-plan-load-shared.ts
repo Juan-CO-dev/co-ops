@@ -9,6 +9,7 @@ import { CHECKLIST_TASKS, type CateringOrder, type ChecklistDay, type DayAssignm
 import { currentStation, isFloorStation, type Station, type StationDayFlags, type StationEvent, type TaskAssignment, type TaskType } from "@/lib/assignments-shared";
 import { deriveCloseState } from "@/lib/dashboard-status-shared";
 import type { PoFact, VendorCutoff, VendorFact } from "@/lib/report-digests-v2-shared";
+import { dayPrepStartFor, type DayPrepStart } from "@/lib/scheduling/opening-shared";
 import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
 import type { RhythmRow, RhythmSkip } from "@/lib/vendor-rhythm-shared";
 
@@ -22,8 +23,11 @@ export function firstName(name: string | null | undefined): string | null {
 
 // ── Shop day (H1) ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** The `hours` fact from the live structure. A non-finite quarter value throws (the fact fails, never a guess). */
-export function shopHoursFrom(live: { structure: ScheduleStructure; source: "saved" | "defaults" }): ShopHours {
+/** The base-hours read's half of `hours` (the saved shop day and catering setting); the per-date starts come from SCH's own read. */
+export type BaseShopHours = Omit<ShopHours, "dayPrepStartQ">;
+
+/** The `hours` fact's base from the live structure. A non-finite quarter value throws (the fact fails, never a guess). */
+export function shopHoursFrom(live: { structure: ScheduleStructure; source: "saved" | "defaults" }): BaseShopHours {
   const { shopDay, catering } = live.structure;
   const quarters = [shopDay.prepStartQ, shopDay.serviceStartQ, catering.minHeadcount, catering.leadMinutes, catering.defaultStartQ,
     catering.defaultEndQ, catering.extraPrepDishHeads];
@@ -33,9 +37,36 @@ export function shopHoursFrom(live: { structure: ScheduleStructure; source: "sav
     shopDay: { prepStartQ: shopDay.prepStartQ, serviceStartQ: shopDay.serviceStartQ },
     catering: { minHeadcount: catering.minHeadcount, leadMinutes: catering.leadMinutes, defaultStartQ: catering.defaultStartQ,
       defaultEndQ: catering.defaultEndQ, extraPrepDishHeads: catering.extraPrepDishHeads },
-    // SCH (nav-SCH-LEAD-RULINGS-r1 A4): the day's EFFECTIVE prep start; today the normal one. SCH changes only its source.
-    dayPrepStartQ: shopDay.prepStartQ,
   };
+}
+
+// ── The schedule's start per date (PR SCH, plan r5 22.3; rulings D5, F3, G) ─────────────────────────────────────────
+
+/** The three batched schedule reads for the plan date and tomorrow, as rows (lib/day-plan.ts `scheduleStarts`). */
+export interface ScheduleStartRows {
+  /** schedule_weeks of the shop for the dates' weeks. */
+  weeks: ReadonlyArray<{ week_start: string; head_revision_id: string | null }>;
+  /** schedule_revision_days of those heads on the dates. */
+  days: ReadonlyArray<{ revision_id: string; business_date: string; origin_revision_id: string | null }>;
+  /** revision id → date → the stored `days.<date>.structure.shopDay.prepStartQ` of that revision's context (absent = not read). */
+  starts: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+}
+
+/**
+ * The pure mapping: per date, its week's head → the date's row on the head → the context of the row's origin revision (else
+ * the head's) → `dayPrepStartFor` (no week / no head = absent; a missing row or start = unknown; else scheduled).
+ */
+export function dayPrepStarts(rows: ScheduleStartRows, dates: readonly string[], weekOf: (date: string) => string): Record<string, DayPrepStart> {
+  const out: Record<string, DayPrepStart> = {};
+  for (const date of dates) {
+    const head = rows.weeks.find((w) => w.week_start === weekOf(date))?.head_revision_id ?? null;
+    const row = head ? rows.days.find((d) => d.revision_id === head && d.business_date === date) : undefined;
+    const holder = row ? row.origin_revision_id ?? head! : null;
+    const read = holder && Object.hasOwn(rows.starts, holder) ? { kind: "ok" as const, prepStartQ: rows.starts[holder]![date] } : { kind: "failed" as const };
+    const start = dayPrepStartFor({ week: head ? "present" : "none", dayRow: row ? { originRevisionId: row.origin_revision_id } : "none", context: read });
+    if (start) out[date] = start;
+  }
+  return out;
 }
 
 // ── Stations (S1-S3) ─────────────────────────────────────────────────────────────────────────────────────────────────

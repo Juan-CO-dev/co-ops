@@ -175,8 +175,12 @@ describe("the need grid, per position id (mockup structure)", () => {
     expect(untimed.sources.filter((x) => x.source === "catering")).toEqual([{ positionId: I.$DISH, fromQ: 34, toQ: 52, heads: 1, source: "catering" }]);
     const small = flat(two, "normal", [{ id: "c-3", headcount: 10, eventQ: 52 }]).need;
     expect(small.positions[I.$DISH]![40]).toBe(1);
-    // At the default head limit of 1 the extra head cannot be placed: capped, never over the limit.
-    expect(flat(s, "normal", [{ id: "c-4", headcount: 80, eventQ: 52 }]).need.positions[I.$DISH]![40]).toBe(1);
+    // PR SCH (ruling C2): on a HEAVY stations day the per-day structure raises Prep/Dishwasher's limit by the extra, so the
+    // extra head is placed even at the default limit of 1 — exactly the extra, never more.
+    expect(flat(s, "normal", [{ id: "c-4", headcount: 80, eventQ: 52 }]).need.positions[I.$DISH]![40]).toBe(2);
+    // needGrid on the shop's OWN structure (no per-day rise) still caps it: never over the limit.
+    const own = needGrid({ structure: s, dayType: "normal", scheduledOutQ: OUT, lineHeads: new Array<number>(96).fill(0), shapeNote: "normal", catering: [{ id: "c-4", headcount: 80, eventQ: 52 }] });
+    expect(own.positions[I.$DISH]![40]).toBe(1);
   });
 
   it("a line_other position with no crew rule follows its heads only", () => {

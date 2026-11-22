@@ -68,12 +68,16 @@ describe("nav PR 6 engine edits", () => {
     expect(plain.items.find((i) => i.id === "pm_report")!.done?.autoFinalized).toBe(false);
   });
 
-  it("SCH: the engine does not read hours.dayPrepStartQ yet (an identical DayModel when only it changes)", () => {
-    for (const t of ["06:30", "08:00", "13:45", "20:30"]) {
+  it("SCH: the engine reads the day's start from hours.dayPrepStartQ (absent = the saved start; scheduled = the schedule's; unknown = none)", () => {
+    const at = (t: string, starts: Record<string, { kind: "scheduled"; q: number } | { kind: "unknown" }>) => {
       const base = pStreet(hm(t));
       if (base.hours.kind !== "ok") throw new Error("hours");
-      const moved: ShopFacts = { ...base, hours: { kind: "ok", value: { ...base.hours.value, dayPrepStartQ: 4 } } };
-      expect(buildDay(PLAN_DATE, hm(t), moved), t).toEqual(buildDay(PLAN_DATE, hm(t), base));
-    }
+      const moved: ShopFacts = { ...base, hours: { kind: "ok", value: { ...base.hours.value, dayPrepStartQ: starts } } };
+      return buildDay(PLAN_DATE, hm(t), moved);
+    };
+    expect(at("06:30", {})).toEqual(buildDay(PLAN_DATE, hm("06:30"), pStreet(hm("06:30"))));
+    expect(at("06:30", {}).items.find((i) => i.id === "opening")).toMatchObject({ band: "upcoming", at: hm("07:00") });
+    expect(at("06:30", { [PLAN_DATE]: { kind: "scheduled", q: 24 } }).phase.id).toBe("opening_check");
+    expect(at("06:30", { [PLAN_DATE]: { kind: "unknown" } }).notes.map((n) => n.reason.key)).toContain("day.fail.day_start");
   });
 });

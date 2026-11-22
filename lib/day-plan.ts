@@ -25,11 +25,13 @@ import {
   lensFor, resolveMyStation, type AssignmentFacts, type CateringDay, type ChecklistDay, type DayPlanInput, type DayStation, type DayViewer, type Fact,
   type MidDayDay, type OrderingFacts, type ReceivingFacts, type ReportDay, type RhythmFacts, type ShopFacts, type ShopHours, type SmmFacts, type StationsFact,
 } from "@/lib/day-plan-shared";
+import { UNKNOWN_DAY_START } from "@/lib/scheduling/opening-shared";
+import { isoWeekStart } from "@/lib/scheduling/time-shared";
 import {
-  cashDay, cateringOrders, checklistDay, cutoffFact, dayAssignments, dayStations, factsNeeded, firstName, midDayDay, notPhaseSections, outTimes,
+  cashDay, cateringOrders, checklistDay, cutoffFact, dayAssignments, dayPrepStarts, dayStations, factsNeeded, firstName, midDayDay, notPhaseSections, outTimes,
   pickEffectiveClosingTemplate, pmDay, poFact, rhythmRow, rhythmSkip, sectionsLeft, shopHoursFrom, smmChecklistTasks, smmStationRef, smmTaskState,
-  vendorFact, type BookedRow, type ClassificationItem, type ClosingTemplateRow, type CutoffRow, type EzcaterRow, type InstanceRow, type NotPhaseRule,
-  type PoRow, type RhythmDbRow, type SkipDbRow, type SmmTaskStatus, type VendorRow,
+  vendorFact, type BaseShopHours, type BookedRow, type ClassificationItem, type ClosingTemplateRow, type CutoffRow, type EzcaterRow, type InstanceRow, type NotPhaseRule,
+  type PoRow, type RhythmDbRow, type ScheduleStartRows, type SkipDbRow, type SmmTaskStatus, type VendorRow,
 } from "@/lib/day-plan-load-shared";
 import { loadItemDefns, loadItemOverrides } from "@/lib/items";
 import { operationalNow } from "@/lib/midshift-shared";
@@ -68,8 +70,13 @@ type Sb = SupabaseClient;
 
 /** One function per read (plan r3, section 3). Each throws on a failed read; none swallows an error into an empty answer. */
 export interface DayFactDeps {
-  /** H1: the live structure → the shop day. */
-  shopDay(sb: Sb, shopId: string): Promise<ShopHours>;
+  /** H1: the live structure → the shop day (the base hours; the per-date starts are `scheduleStarts`). */
+  shopDay(sb: Sb, shopId: string): Promise<BaseShopHours>;
+  /**
+   * PR SCH (22.3): the schedule's start for the plan date and tomorrow — three batched reads (the dates' weeks → their heads,
+   * the heads' day rows → each date's origin, the origins' contexts → only `days.<date>.structure.shopDay.prepStartQ`).
+   */
+  scheduleStarts(sb: Sb, shopId: string, dates: readonly string[]): Promise<ScheduleStartRows>;
   /** S2: both station flags, or "not installed" before 0353. */
   stationFlags(sb: Sb, shopId: string): Promise<StationDayFlags>;
   /** S3a (only while S2 says not installed): the EFFECTIVE closing template's active items (classification). */
@@ -126,10 +133,44 @@ function must<T>(r: { data: T | null; error: { message: string; code?: string } 
   return r.data;
 }
 
+/**
+ * PR SCH: the JSON-path select of each date's stored start (PostgREST `->`, the date key quoted). If this PostgREST cannot
+ * parse it (PGRST100), the read falls back to the whole `context` once and takes the same value from it.
+ */
+const startPath = (date: string) => `days->"${date}"->structure->shopDay->prepStartQ`;
+function startFromContext(context: unknown, date: string): unknown {
+  const day = (context as { days?: Record<string, { structure?: { shopDay?: { prepStartQ?: unknown } } }> } | null)?.days?.[date];
+  return day?.structure?.shopDay?.prepStartQ;
+}
+
 /** The production reads (section 3). */
 export const defaultDayFactDeps: DayFactDeps = {
   async shopDay(sb, shopId) {
     return shopHoursFrom(await loadLiveStructure(sb, shopId));
+  },
+  async scheduleStarts(sb, shopId, dates) {
+    const weekStarts = [...new Set(dates.map((d) => isoWeekStart(d)))].sort();
+    const weeks = (must(await sb.from("schedule_weeks").select("week_start, head_revision_id").eq("location_id", shopId).in("week_start", weekStarts)
+      .order("week_start", { ascending: true }), "schedule_weeks") ?? []) as ScheduleStartRows["weeks"];
+    const heads = [...new Set(weeks.flatMap((w) => (w.head_revision_id ? [w.head_revision_id] : [])))].sort();
+    if (heads.length === 0) return { weeks, days: [], starts: {} };
+    const days = (must(await sb.from("schedule_revision_days").select("revision_id, business_date, origin_revision_id").eq("location_id", shopId)
+      .in("revision_id", heads).in("business_date", [...dates]).order("business_date", { ascending: true }), "schedule_revision_days") ?? []) as ScheduleStartRows["days"];
+    const holders = [...new Set(days.map((d) => d.origin_revision_id ?? d.revision_id))].sort();
+    if (holders.length === 0) return { weeks, days, starts: {} };
+    const read = (columns: string) => sb.from("schedule_revision_contexts").select(columns).eq("location_id", shopId).in("revision_id", holders);
+    const starts: Record<string, Record<string, unknown>> = {};
+    const narrow = await read(["revision_id", ...dates.map((d, i) => `t${i}:context->${startPath(d)}`)].join(", "));
+    if (narrow.error?.code === "PGRST100") {
+      for (const r of (must(await read("revision_id, context"), "schedule_revision_contexts") ?? []) as unknown as Array<{ revision_id: string; context: unknown }>) {
+        starts[r.revision_id] = Object.fromEntries(dates.map((d) => [d, startFromContext(r.context, d)]));
+      }
+    } else {
+      for (const r of (must(narrow, "schedule_revision_contexts") ?? []) as unknown as Array<Record<string, unknown>>) {
+        starts[String(r.revision_id)] = Object.fromEntries(dates.map((d, i) => [d, r[`t${i}`]]));
+      }
+    }
+    return { weeks, days, starts };
   },
   stationFlags: loadStationDayFlags,
   async closingClassification(sb, shopId, date) {
@@ -303,6 +344,24 @@ function lane<T>(d: Deadline, area: string, run: () => Promise<T>): Promise<T> {
 async function fact<T>(p: Promise<T>): Promise<Fact<T>> {
   try { return ok(await p); } catch { return FAILED; }
 }
+
+/**
+ * PR SCH (plan r5 23.1, ruling G): ONE independently bounded read — its own abort signal on the queries and its own
+ * rejecting 6 s race, started by the caller — that never rejects: a value, or `{ ok: false }` (the area logged). The
+ * shop day's two reads use it side by side so neither can cancel the other.
+ */
+async function boundedRead<T>(service: SupabaseClient, area: string, read: (sb: Sb) => Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> {
+  const controller = new AbortController();
+  const d = startDeadline(DAY_FACT_DEADLINE_MS, controller);
+  try {
+    return { ok: true, value: await d.race(Promise.resolve().then(() => read(withAbort(service, controller.signal)))) };
+  } catch (e) {
+    logArea(area, e);
+    return { ok: false };
+  } finally {
+    d.clear();
+  }
+}
 /** A "Degrades" read: its failure only blanks a display field. */
 async function degrade<T>(p: Promise<T>, fallback: T): Promise<T> {
   try { return await p; } catch { return fallback; }
@@ -316,13 +375,13 @@ export async function loadDayFacts(service: SupabaseClient, args: DayFactsArgs, 
   const controller = new AbortController();
   const deadline = startDeadline(DAY_FACT_DEADLINE_MS, controller);
   try {
-    return { planDate, nowMin, viewer: args.viewer, facts: await loadShopFacts(withAbort(service, controller.signal), args, planDate, deps, deadline) };
+    return { planDate, nowMin, viewer: args.viewer, facts: await loadShopFacts(service, withAbort(service, controller.signal), args, planDate, deps, deadline) };
   } finally {
     deadline.clear();
   }
 }
 
-async function loadShopFacts(sb: Sb, args: DayFactsArgs, planDate: string, deps: DayFactDeps, d: Deadline): Promise<ShopFacts> {
+async function loadShopFacts(service: SupabaseClient, sb: Sb, args: DayFactsArgs, planDate: string, deps: DayFactDeps, d: Deadline): Promise<ShopFacts> {
   const shopId = args.shop.id;
   const yesterday = addDaysEt(planDate, -1);
   const tomorrow = addDaysEt(planDate, 1);
@@ -330,7 +389,11 @@ async function loadShopFacts(sb: Sb, args: DayFactsArgs, planDate: string, deps:
   const L = <T>(area: string, run: () => Promise<T>) => lane(d, area, run);
 
   // ── Start every lane at once ──
-  const hoursP = L("hours", () => deps.shopDay(sb, shopId));
+  // PR SCH (ruling G): the shop day is TWO reads, started together and bounded INDEPENDENTLY (each its own abort and 6 s
+  // race): the base hours (H1, its failure fails `hours`) and the schedule's start for today and tomorrow (its failure or
+  // timeout makes both dates unknown and keeps the hours that loaded). Composed below, outside H1's failure.
+  const baseHoursP = boundedRead(service, "hours", (abortable) => deps.shopDay(abortable, shopId));
+  const startsP = boundedRead(service, "hours.schedule_start", async (abortable) => dayPrepStarts(await deps.scheduleStarts(abortable, shopId, [planDate, tomorrow]), [planDate, tomorrow], isoWeekStart));
   // The board: the page's promise, raced, never aborted (ruling B2).
   const boardP: Promise<ShiftBoard> | null = need.board && args.board ? L("board", () => args.board!()) : null;
   // The stations' classification (S2, and S3a while 0353 is not applied): only when there is a board to classify.
@@ -426,7 +489,7 @@ async function loadShopFacts(sb: Sb, args: DayFactsArgs, planDate: string, deps:
   return {
     kind: "shop",
     shop: { id: args.shop.id, code: args.shop.code },
-    hours: await fact(hoursP),
+    hours: composeHours(await baseHoursP, await startsP, [planDate, tomorrow]),
     stations: boardFacts.stations,
     opening: await instanceDay(openingP, planDate, async () => ({ phase1At: await phase1P })),
     closing: await instanceDay(closingP, planDate, async () => ({ sectionsLeft: await sectionsLeftP })),
@@ -447,6 +510,16 @@ async function loadShopFacts(sb: Sb, args: DayFactsArgs, planDate: string, deps:
     yesterdayClosing: await instanceDay(yesterdayP, yesterday, async () => ({})),
     holdsStationOnStationDay: boardFacts.holdsStationOnStationDay,
   };
+}
+
+/**
+ * PR SCH (23.1): `hours` from its two bounded reads. The base failed → `hours` failed (PR 6's rule; the starts are ignored).
+ * The base loaded → the saved hours with each date's start; a failed or timed-out start read → both dates UNKNOWN (the saved
+ * hours are kept, and the engine never puts the saved start in their place).
+ */
+function composeHours(base: { ok: true; value: BaseShopHours } | { ok: false }, starts: { ok: true; value: ShopHours["dayPrepStartQ"] } | { ok: false }, dates: readonly string[]): Fact<ShopHours> {
+  if (!base.ok) return FAILED;
+  return ok({ ...base.value, dayPrepStartQ: starts.ok ? starts.value : Object.fromEntries(dates.map((d) => [d, UNKNOWN_DAY_START])) });
 }
 
 /** Stations, assignments, my station (C1, C3, C4): from the board, the flags and (before 0353) the classification. */

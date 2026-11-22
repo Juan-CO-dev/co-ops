@@ -81,6 +81,10 @@ function quiet(opts: { installed: boolean; role?: string; date?: string }) {
       case "users": return c.has("maybeSingle") ? { data: { role: opts.role ?? "social_media_mgr" } } : { data: [{ id: "u-ana", name: "Ana Ruiz" }] };
       case "user_locations": return { data: { user_id: "u" } };
       case "cash_reports": case "pm_reports": return { data: null };
+      // PR SCH: the shop has a schedule holding the date (its head's own day): the three schedule-start reads all run.
+      case "schedule_weeks": return { data: [{ week_start: "2026-11-16", head_revision_id: "rev-1" }] };
+      case "schedule_revision_days": return { data: [{ revision_id: "rev-1", business_date: day, origin_revision_id: "rev-1" }] };
+      case "schedule_revision_contexts": return { data: [{ revision_id: "rev-1", t0: 28, t1: null }] };
       default: return { data: [] };
     }
   };
@@ -95,8 +99,8 @@ const budget = async (viewer: DayViewer, installed: boolean) => {
   return { input, count: f.calls.length + f.rpcs.length, reads: [...f.calls.map((c) => c.table), ...f.rpcs.map((r) => `rpc:${r.name}`)].sort() };
 };
 
-describe("8.1 item 8: the query budget on a quiet day (recomputed in r3)", () => {
-  it("key holder 29 before 0353, 27 after; crew 19 / 17; the social media manager 5 (no task, no station)", async () => {
+describe("8.1 item 8: the query budget on a quiet day (recomputed in r3; PR SCH 22.3: + 3 schedule-start reads)", () => {
+  it("key holder 32 before 0353, 30 after; crew 22 / 20; the social media manager 5 (no task, no station)", async () => {
     const ana = { ...ANA, userId: "u-ana" };
     const got = {
       khBefore: await budget(ana, false), khAfter: await budget(ana, true),
@@ -104,7 +108,8 @@ describe("8.1 item 8: the query budget on a quiet day (recomputed in r3)", () =>
       smm: await budget({ ...ANA, userId: "22222222-2222-4222-8222-222222222222", role: "social_media_mgr", level: 6 }, false),
     };
     const counts = Object.fromEntries(Object.entries(got).map(([k, v]) => [k, v.count]));
-    expect(counts, JSON.stringify(Object.fromEntries(Object.entries(got).map(([k, v]) => [k, v.reads])))).toEqual({ khBefore: 29, khAfter: 27, crewBefore: 19, crewAfter: 17, smm: 5 });
+    expect(counts, JSON.stringify(Object.fromEntries(Object.entries(got).map(([k, v]) => [k, v.reads])))).toEqual({ khBefore: 32, khAfter: 30, crewBefore: 22, crewAfter: 20, smm: 5 });
+    expect(got.khAfter.reads.filter((t) => t.startsWith("schedule_"))).toEqual(["schedule_revision_contexts", "schedule_revision_days", "schedule_structures", "schedule_weeks"]);
     expect(got.smm.reads).toEqual(["report_assignments", "rpc:station_business_date", "station_events", "user_locations", "users"]);
     expect(got.khBefore.input.facts.kind).toBe("shop");
   });
@@ -112,9 +117,9 @@ describe("8.1 item 8: the query budget on a quiet day (recomputed in r3)", () =>
 
 describe("8.1 item 8: the query budget on a POPULATED day (Astra r1: a quiet day cannot catch a per-row read)", () => {
   // Open orders, in-progress and complete deliveries and Prep demand rows, at 3 and at 90 rows each. Rows add exactly
-  // three CONDITIONAL follow-up reads to the quiet key holder's 27 (after 0353): openOrders' read of the orders' complete
+  // three CONDITIONAL follow-up reads to the quiet key holder's 30 (after 0353; 27 before PR SCH's schedule-start reads): openOrders' read of the orders' complete
   // deliveries (vendor_deliveries, in chunks of 100 order ids, so one read up to 100 orders), and Prep demand's item
-  // registry reads (items and item_par_levels, in chunks of 100 item ids). 30 at 3 rows AND 30 at 90 rows is what proves
+  // registry reads (items and item_par_levels, in chunks of 100 item ids). 33 at 3 rows AND 33 at 90 rows is what proves
   // there is no per-row read: one would add 87 more at 90 rows than at 3.
   const populated = (n: number) => (c: FakeCall): Answer => {
     const rows = <T,>(f: (i: number) => T) => Array.from({ length: n }, (_, i) => f(i));
@@ -136,9 +141,9 @@ describe("8.1 item 8: the query budget on a POPULATED day (Astra r1: a quiet day
     return { count: f.calls.length + f.rpcs.length, reads: [...f.calls.map((c) => c.table), ...f.rpcs.map((r) => `rpc:${r.name}`)].sort() };
   };
 
-  it("key holder after 0353: exactly 30 reads at 3 rows and at 90 rows (27 quiet + the three conditional follow-ups)", async () => {
+  it("key holder after 0353: exactly 33 reads at 3 rows and at 90 rows (30 quiet + the three conditional follow-ups)", async () => {
     const [few, many] = [await run(3), await run(90)];
-    expect({ few: few.count, many: many.count }, JSON.stringify({ few: few.reads, many: many.reads })).toEqual({ few: 30, many: 30 });
+    expect({ few: few.count, many: many.count }, JSON.stringify({ few: few.reads, many: many.reads })).toEqual({ few: 33, many: 33 });
     expect(many.reads).toEqual(few.reads);
     // The follow-ups did fire: three vendor_deliveries reads (half-logged, completed today, the open orders' complete ones) and the registry pair.
     expect(many.reads.filter((t) => t === "vendor_deliveries")).toHaveLength(3);

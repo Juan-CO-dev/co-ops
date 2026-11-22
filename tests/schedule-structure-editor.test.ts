@@ -387,3 +387,11 @@ describe("backup cover roster editor", () => {
     expect(post.mock.calls[0]![1].structure.roster.backupCoverPerPersonWeek).toBe(0);
   });
 });
+
+describe("PR SCH (plan r5 7, ruling B5): the catering threshold label names the DAY's total", () => {
+  it.each([["en", "Catering prep from (total guests that day)"], ["es", "Preparación de catering desde (invitados en total ese día)"]] as const)("%s", (language, label) => {
+    expect((language === "en" ? en : es)["schedule.settings.catering.min_headcount"]).toBe(label);
+    mount(seededFloors(), vi.fn(), null, language);
+    expect(screen.getByLabelText(label)).toBe(input("catering.minHeadcount"));
+  });
+});

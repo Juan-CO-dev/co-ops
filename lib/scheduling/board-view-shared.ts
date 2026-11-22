@@ -37,6 +37,7 @@ import type { CrewType, PositionRole } from "./structure-shared";
 import { positionIds, scheduleEngine, shiftTypesOf } from "./structure-shared";
 import { Q_PER_HOUR, weekDays } from "./time-shared";
 import { crewOpenItems } from "./crew-gap-verifier-shared";
+import type { DayOpening, OpeningTrigger } from "./opening-shared";
 import { CREW_REJECTION_CODES } from "./crew-contracts-shared";
 
 export interface BoardPerms {
@@ -178,7 +179,11 @@ export interface OpenShiftView {
   typeId: string; name: string; fromQ: number; toQ: number; missing: number; reasons: NarrativeLine[];
 }
 export interface ShortStretchView { positionId: string; fromQ: number; toQ: number; missing: number }
+/** PR SCH: the date's stored opening (status, start, the usual start, the triggers, the day's guests). Absent = none. */
+export interface OpeningView { status: DayOpening["status"]; startQ: number; normalStartQ: number; triggers: OpeningTrigger[]; guests: number; engine: "stations" | "crew" }
 export interface DayView {
+  /** PR SCH: absent on a date with no stored opening (every historical board keeps its serialized contract). */
+  opening?: OpeningView;
   /** Absent on historical station boards, preserving their serialized contract. */
   crew?: { openShifts: OpenShiftView[]; shortStretches: ShortStretchView[] };
   date: string;
@@ -431,6 +436,8 @@ function dayView(src: BoardSource, week: BoardWeekSource, date: string, weekQ: M
         ? [{ positionId: g.positionId, fromQ: g.fromQ, toQ: g.toQ, missing: g.certificate.required - g.certificate.assigned }] : [])
         .sort((a, b) => cmp(a.positionId, b.positionId) || a.fromQ - b.fromQ),
     } } : {}),
+    ...(ctx?.opening ? { opening: { status: ctx.opening.status, startQ: ctx.opening.startQ, normalStartQ: ctx.opening.normalStartQ, triggers: [...ctx.opening.triggers],
+      guests: ctx.opening.guests, engine: scheduleEngine(ctx.structure) } } : {}),
     date, locked: date < src.today, inherited: !!record?.inherited, dayType: ctx?.dayType ?? null, demandKind: ctx?.inputs.demandKind ?? null,
     rows: rowsFor(src, week, date, ctx, weekQ, wages), notes, gaps: gaps.filter((g) => g.date === date),
   };

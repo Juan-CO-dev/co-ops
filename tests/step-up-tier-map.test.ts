@@ -327,6 +327,8 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/schedule/HorizonBuilder.tsx": ["B"],
   // Astra chunk F P2-3: the board's own Regenerate on an edited week asks Tier B after the warning (confirmEdited: true).
   "components/schedule/ScheduleBoard.tsx": ["B"],
+  // PR SCH: a date's earlier opening (accept / decline / open earlier / use the normal opening) — Tier B, like Approve.
+  "components/schedule/OpeningPanel.tsx": ["B"],
   "components/admin/menu-costing/MenuPriceEditor.tsx": ["E"],
   "components/admin/pars/ParEditor.tsx": ["E"],
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.

@@ -21,6 +21,7 @@ import { scheduleLaborViewsEnabled, type ScheduleLaborViewsEnv } from "./labor-p
 import {
   acceptSuggestion, apportion, budgetForDates, entryDates, minCrewHours, referenceStructureOf, structureDeltaHours, suggestBudget, type BudgetEntry, type BudgetSuggestion,
 } from "./budget-shared";
+import { isHeavyCateringDay } from "@/lib/scheduling/catering-day-shared";
 import { forecastWeek } from "./demand-shared";
 import { ScheduleError } from "./errors-shared";
 import { generateWeek } from "./generator/dispatch-shared";
@@ -268,10 +269,11 @@ export async function setBudget(deps: ScheduleDeps, args: { actor: PeopleActor; 
 }
 
 /** The reference revision's hourly hours and catering-rule hours per date, from its STORED snapshot and reasons. */
-function crewCateringHours(s: import("./structure-shared").ScheduleStructure, events: readonly { headcount: number }[]): number {
+export function crewCateringHours(s: import("./structure-shared").ScheduleStructure, events: readonly { headcount: number }[]): number {
   const setting = s.catering.crewShift;
   const type = setting?.enabled ? shiftTypesOf(s).find((t) => t.id === setting.typeId) : undefined;
-  return type && events.some((e) => e.headcount >= s.catering.minHeadcount) ? (type.toQ - type.fromQ) / 4 * setting!.extraHeads : 0;
+  // PR SCH (site B): the day's TOTAL guests decide (PR 5's one rule), never one order alone.
+  return type && isHeavyCateringDay(events, s.catering) ? (type.toQ - type.fromQ) / 4 * setting!.extraHeads : 0;
 }
 
 function referenceFacts(w: NonNullable<Awaited<ReturnType<typeof loadWeekHeads>>[string]["head"]>) {

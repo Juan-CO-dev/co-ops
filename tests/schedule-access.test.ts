@@ -35,7 +35,8 @@ function expected(role: RoleCode, shop: "own" | "other" | "none", act: ScheduleA
   // AGM at their own shop: the board read-only by default (R1); `edit` opens building and editing, never
   // approve, the structure, money, the switch.
   if (act === "view") return null;
-  if (act === "reconciliation" || act === "approve" || act === "structure") return "schedule_forbidden";
+  // PR SCH: the per-date opening is the Approve rule (never an AGM, even with edit access).
+  if (act === "reconciliation" || act === "approve" || act === "structure" || act === "opening") return "schedule_forbidden";
   return access.agmAccess === "edit" && WRITE_ACTS.includes(act) ? null : "schedule_forbidden";
 }
 

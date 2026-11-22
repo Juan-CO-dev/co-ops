@@ -21,6 +21,7 @@
 import { canonicalJson, type DayContext, type DayInputs, type RuleContext, type RulePerson } from "../context-shared";
 import { ScheduleError } from "../errors-shared";
 import { buildDayNeed, type NeedCatering } from "../need-shared";
+import type { OpeningDecision } from "../opening-shared";
 import type { SchedPerson, SkillLookup } from "../people-input-shared";
 import { reason, shiftKey, type BoardNote, type ReasonIndex, type ShiftReasons } from "../reasons-shared";
 import {
@@ -39,7 +40,7 @@ import { deficitsOf, newCounters, repairDay, type RepairCounters } from "./repai
 import { salariedBlocks, templatesFor, templateOrder } from "./templates-shared";
 
 /** Bumped whenever a golden changes; stored on the revision. */
-export const GENERATOR_VERSION = "p2.19";
+export const GENERATOR_VERSION = "p2.20";
 
 // ─── Input / output ──────────────────────────────────────────────────────────
 
@@ -54,6 +55,11 @@ export interface BuildDayInput {
   hourlyCents: number[] | null;
   dayCents: number | null;
   catering: NeedCatering[];
+  /**
+   * PR SCH: the date's PERSISTENT opening decision (accepted / manual / declined), carried from the head's own day or its
+   * inherited origin (`generatorInputFor`). Absent = none: `proposed` and `auto` are recomputed from the current orders.
+   */
+  decision?: OpeningDecision;
 }
 
 export interface Pin { id: string; date: string; userId: string; startQ: number; endQ: number; positions: string[]; kind: "presence" | "added" }
@@ -188,10 +194,12 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
   const days: Record<string, DayContext> = {};
   const closingWindowByDate: Record<string, { fromQ: number; toQ: number }> = {};
   for (const d of buildDays) {
-    const { need, shape } = buildDayNeed({ structure: s, dayType: d.dayType, scheduledOutQ: d.scheduledOutQ, hourlyCents: d.hourlyCents, demandKind: d.demandKind, catering: d.catering });
+    // PR SCH: the date's PER-DAY structure (a heavy day's limit rise, an applied opening) is the one its context stores.
+    const { need, shape, structure: ds, base, opening } = buildDayNeed({ structure: s, dayType: d.dayType, scheduledOutQ: d.scheduledOutQ, hourlyCents: d.hourlyCents, demandKind: d.demandKind, catering: d.catering, decision: d.decision ?? null });
     days[d.date] = {
-      structureVersionId: input.structureVersionId, structure: s, dayType: d.dayType, closingMinutes: d.closingMinutes, scheduledOutQ: d.scheduledOutQ, need,
+      structureVersionId: input.structureVersionId, structure: ds, dayType: d.dayType, closingMinutes: d.closingMinutes, scheduledOutQ: d.scheduledOutQ, need,
       inputs: { demandKind: d.demandKind, hourlyCents: d.hourlyCents, dayCents: d.dayCents, dayTypeSource: d.dayTypeSource, overrideId: d.overrideId, cateringEvents: d.catering.map((c) => ({ id: c.id, headcount: c.headcount, eventQ: c.eventQ })) },
+      ...(base ? { base } : {}), ...(opening ? { opening } : {}),
     };
     closingWindowByDate[d.date] = { fromQ: s.shopDay.serviceCloseQ, toQ: d.scheduledOutQ };
     if (shape.note !== "normal") notes.push({ code: shape.note, date: d.date, userId: null, positionId: null, params: { targetHours: shape.targetHours, lineHours: shape.lineHours } });
@@ -206,7 +214,7 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
   const budgetedDates = dates.filter((d) => budgetByDate[d] !== null);
   for (const d of builtDates) if (budgetByDate[d] === null) notes.push({ code: "unbudgeted_date", date: d, userId: null, positionId: null, params: {} });
   const ctx: RuleContext = {
-    version: 1, locationId: input.locationId, weekStart: input.weekStart, today: input.today, dates, days, budgetByDate, closingWindowByDate,
+    version: 1, locationId: input.locationId, weekStart: input.weekStart, today: input.today, dates, days, budgetByDate, closingWindowByDate, cateringRule: "day_total_v1",
     people: Object.fromEntries(input.people.map((p) => [p.userId, toRulePerson(p, scheduleEngine(input.structure) === "crew")])),
   };
   const busiest: Record<string, Set<number>> = Object.fromEntries(buildDays.map((d) => [d.date, busiestQuarters(d, s)]));
@@ -252,7 +260,8 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
     const targetQ = Math.round(s.limits.salariedTargetWeekH * 4);
     const planned = new Map<string, Array<{ date: string; startQ: number; endQ: number }>>();
     for (const date of builtDates) {
-      for (const blk of salariedBlocks(input.people, s, date, days[date]!.scheduledOutQ).blocks) {
+      // PR SCH: the date's own structure (an opened date's salaried openers start at the opening).
+      for (const blk of salariedBlocks(input.people, days[date]!.structure, date, days[date]!.scheduledOutQ).blocks) {
         if (week.built[date]!.some((x) => x.userId === blk.userId)) continue; // a pin holds that day
         planned.set(blk.userId, [...(planned.get(blk.userId) ?? []), { date, startQ: blk.startQ, endQ: blk.endQ }]);
       }
@@ -261,7 +270,7 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
     const holdsWithout = (userId: string, date: string): boolean => {
       const day = days[date]!;
       if (!s.leadership.modRequired) return true;
-      for (let q = s.shopDay.prepStartQ; q < day.scheduledOutQ; q++) {
+      for (let q = day.structure.shopDay.prepStartQ; q < day.scheduledOutQ; q++) {
         const someone = input.people.some((p) => {
           if (p.userId === userId || !p.activeMember || !modCountsOn(p, day, q)) return false;
           if (week.built[date]!.some((x) => x.userId === p.userId && x.startQ <= q && x.endQ > q)) return true; // pinned there
@@ -290,7 +299,7 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
   for (const date of builtDates) {
     const day = days[date]!;
     // 3. Salaried on the clock.
-    const { blocks, skipped } = salariedBlocks(input.people, s, date, day.scheduledOutQ);
+    const { blocks, skipped } = salariedBlocks(input.people, day.structure, date, day.scheduledOutQ);
     for (const blk of blocks) {
       // Juan 2026-10-16 (decision 4): the BASE plan never takes a salaried manager past the week target (40 h) — the days
       // dropped are chosen above (addendum B1); the running check stays as the invariant.
@@ -477,7 +486,7 @@ export function buildWeek(raw: GeneratorInput): GeneratorOutput {
     if (stored !== undefined && stored !== null) reasons[k] = structuredClone(stored) as ShiftReasons;
   }
   const strength: Record<string, WindowStrength[]> = {};
-  for (const d of buildDays) strength[d.date] = teamStrength(builtShifts, d.date, ctx.people, s, input.skills, d.dayType, d.scheduledOutQ);
+  for (const d of buildDays) strength[d.date] = teamStrength(builtShifts, d.date, ctx.people, days[d.date]!.structure, input.skills, d.dayType, d.scheduledOutQ);
   // CC chunk H9: `overtime_used` names a week that ENDS past the threshold — a later repair move (a donor leaving a block) can take
   // the hours away again, and a note about overtime nobody works would be a false claim.
   const weekHoursOf = (userId: string) => shifts.filter((x) => x.userId === userId).reduce((n, x) => n + (x.endQ - x.startQ), 0) / 4;
