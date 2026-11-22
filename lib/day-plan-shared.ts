@@ -87,6 +87,9 @@ export interface ChecklistDay extends ForDate {
   readonly finishedAt: string | null;
   readonly finishedByName: string | null;
   readonly sectionsLeft: number | null;
+  /** The instance's `confirmed_by` (nav PR 7, E3): the AM prep submitter's "Edit" on the Dashboard (C.46 A2). The ENGINE
+   *  never reads it (a source test pins that); optional, so every fixture without it still compiles. */
+  readonly finishedById?: string | null;
 }
 export interface MidDayDay extends ForDate {
   readonly instances: readonly { readonly status: string; readonly finishedAt: string | null; readonly finishedByName: string | null }[];

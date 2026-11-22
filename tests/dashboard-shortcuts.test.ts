@@ -6,12 +6,14 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { dashboardSurfaces, dayViewerFor, MEMBER_SURFACES, SHORTCUTS, shortcutHref, shortcutsFor } from "@/lib/dashboard-day-shared";
+import { amPrepEditFor, dashboardSurfaces, dayViewerFor, MEMBER_SURFACES, SHORTCUTS, shortcutHref, shortcutsFor } from "@/lib/dashboard-day-shared";
 import type { Surface } from "@/lib/day-plan-shared";
 import { byId, DESTINATIONS } from "@/lib/nav/destinations";
 import type { Switches } from "@/lib/nav/types";
 import { ROLES, type RoleCode } from "@/lib/roles";
-import { CATERING_NON_MEMBER } from "./fixtures/day-plan/build";
+import { CATERING_NON_MEMBER, checklist, hm, ok, PLAN_DATE } from "./fixtures/day-plan/build";
+import { SMM_OK } from "./fixtures/day-plan/busiest";
+import { pStreet } from "./fixtures/day-plan/p-street";
 
 const OFF: Switches = {};
 const ON: Switches = { pulseV2: true, vault: true, businessReport: true, demandSignals: true, customerProfiles: true, marketingScorecard: true };
@@ -128,5 +130,20 @@ describe("the navigation switches (lib/nav-switches.ts)", () => {
     expect(src).toContain('customerProfiles: process.env.CUSTOMER_PROFILES === "1"');
     expect(readFileSync("lib/customers/customers.ts", "utf8")).toContain('return env.CUSTOMER_PROFILES === "1";');
     expect(readFileSync("lib/marketing/write.ts", "utf8")).toContain('process.env.MARKETING_SCORECARD !== "1"');
+  });
+});
+
+describe("the AM prep submitter's Edit (Q2 carve-out, C.46 A2; T20 helper)", () => {
+  const facts = (p: Parameters<typeof checklist>[1]) => ({ ...pStreet(hm("20:30")), amPrep: ok(checklist(PLAN_DATE, p)) });
+  const input = (p: Parameters<typeof checklist>[1]) => ({ planDate: PLAN_DATE, facts: facts(p) });
+  it("only the finisher of today's finished AM prep gets the link, to the page whose own gate decides", () => {
+    expect(amPrepEditFor(input({ status: "confirmed", finishedById: "u-ana" }), "u-ana", "shop-p")).toBe("/operations/am-prep?location=shop-p&edit=true");
+    expect(amPrepEditFor(input({ status: "confirmed", finishedById: "u-ana" }), "u-gm", "shop-p")).toBeUndefined();
+    expect(amPrepEditFor(input({ status: "open", finishedById: "u-ana" }), "u-ana", "shop-p")).toBeUndefined();
+    expect(amPrepEditFor(input({ status: null }), "u-ana", "shop-p")).toBeUndefined();
+    expect(amPrepEditFor(input({ status: "confirmed" }), "u-ana", "shop-p")).toBeUndefined();
+    expect(amPrepEditFor({ planDate: PLAN_DATE, facts: { ...facts({}), amPrep: { kind: "failed" } } }, "u-ana", "shop-p")).toBeUndefined();
+    expect(amPrepEditFor({ planDate: "2026-11-19", facts: facts({ status: "confirmed", finishedById: "u-ana" }) }, "u-ana", "shop-p")).toBeUndefined();
+    expect(amPrepEditFor({ planDate: PLAN_DATE, facts: SMM_OK }, "u-smm", "shop-p")).toBeUndefined();
   });
 });

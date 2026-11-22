@@ -98,9 +98,9 @@ describe("pure companion: the B1 rule and the effective template", () => {
 describe("pure companion: checklists, reports, catering", () => {
   const names = new Map([["u-ana", "Ana Ruiz"], ["u-mia", "Mia Lopez"]]);
   it("checklistDay and midDayDay: status, finish, the first name; no instance = status null", () => {
-    expect(checklistDay("2026-11-18", null)).toEqual({ forDate: "2026-11-18", status: null, phase1At: null, finishedAt: null, finishedByName: null, sectionsLeft: null });
+    expect(checklistDay("2026-11-18", null)).toEqual({ forDate: "2026-11-18", status: null, phase1At: null, finishedAt: null, finishedByName: null, sectionsLeft: null, finishedById: null });
     expect(checklistDay("2026-11-18", { id: "i", template_id: "t", status: "confirmed", created_at: null, confirmed_at: "x", confirmed_by: "u-ana" }, { finishedByName: "Ana", sectionsLeft: 0, phase1At: "p" }))
-      .toEqual({ forDate: "2026-11-18", status: "confirmed", phase1At: "p", finishedAt: "x", finishedByName: "Ana", sectionsLeft: 0 });
+      .toEqual({ forDate: "2026-11-18", status: "confirmed", phase1At: "p", finishedAt: "x", finishedByName: "Ana", sectionsLeft: 0, finishedById: "u-ana" });
     expect(midDayDay("d", [{ id: "i", template_id: "t", status: "confirmed", created_at: null, confirmed_at: "x", confirmed_by: "u-mia" }], names).instances)
       .toEqual([{ status: "confirmed", finishedAt: "x", finishedByName: "Mia" }]);
   });
@@ -196,8 +196,8 @@ describe("loadDayFacts: the all-ok baseline", () => {
     expect(input.nowMin).toBe(13 * 60 + 45);
     const f = shop(input);
     expect(f.hours).toMatchObject({ kind: "ok", value: { shopDay: { prepStartQ: 28 }, dayPrepStartQ: {} } });
-    expect(f.closing).toEqual({ kind: "ok", value: { forDate: PLAN, status: "open", phase1At: null, finishedAt: null, finishedByName: null, sectionsLeft: 3 } });
-    expect(f.opening).toEqual({ kind: "ok", value: { forDate: PLAN, status: "confirmed", phase1At: "2026-11-18T12:40:00.000Z", finishedAt: OPENING.confirmed_at, finishedByName: "Ana", sectionsLeft: null } });
+    expect(f.closing).toEqual({ kind: "ok", value: { forDate: PLAN, status: "open", phase1At: null, finishedAt: null, finishedByName: null, sectionsLeft: 3, finishedById: null } });
+    expect(f.opening).toEqual({ kind: "ok", value: { forDate: PLAN, status: "confirmed", phase1At: "2026-11-18T12:40:00.000Z", finishedAt: OPENING.confirmed_at, finishedByName: "Ana", sectionsLeft: null, finishedById: "u-ana" } });
     expect(f.yesterdayClosing).toMatchObject({ kind: "ok", value: { forDate: YESTERDAY, status: "confirmed", finishedByName: "Mia" } });
     expect(f.midDay).toEqual({ kind: "ok", value: { forDate: PLAN, instances: [{ status: "confirmed", finishedAt: MID_DAY[0]!.confirmed_at, finishedByName: "Luis" }] } });
     expect(f.pm).toEqual({ kind: "ok", value: { forDate: PLAN, state: "draft", at: null, byName: null } });
@@ -665,5 +665,32 @@ describe("SCH: the schedule-start read's real queries (22.3)", () => {
       .toEqual({ [PLAN]: { kind: "unknown" }, [TOMORROW]: { kind: "unknown" } });
     expect(dayPrepStarts({ weeks: [{ week_start: "2026-11-16", head_revision_id: "h" }], days: [{ revision_id: "h", business_date: PLAN, origin_revision_id: null }],
       starts: { h: { [PLAN]: 7.5 } } }, [PLAN], wk)).toEqual({ [PLAN]: { kind: "unknown" } });
+  });
+});
+
+// Nav PR 7, E3 (plan r2 2.12, T20 loader half): the AM prep submitter's id rides on the instance-first K6 read, for the
+// Dashboard's "Edit" (C.46 A2). No new read; the engine never reads it.
+describe("nav PR 7 E3: ChecklistDay.finishedById", () => {
+  it("checklistDay maps confirmed_by; no instance (or no confirmer) is null", () => {
+    expect(checklistDay(PLAN, null).finishedById).toBeNull();
+    expect(checklistDay(PLAN, { id: "i", template_id: "t", status: "open", created_at: null, confirmed_at: null, confirmed_by: null }).finishedById).toBeNull();
+    expect(checklistDay(PLAN, { id: "i", template_id: "t", status: "confirmed", created_at: null, confirmed_at: "x", confirmed_by: "u-ana" }).finishedById).toBe("u-ana");
+  });
+
+  it("the loader carries the K6 AM prep instance's confirmer, and null when the day has no AM prep instance", async () => {
+    const amDone = [{ id: "am-9", template_id: "tpl-am", status: "confirmed", created_at: "2026-11-17T23:00:00.000Z", confirmed_at: "2026-11-18T03:00:00.000Z", confirmed_by: "u-luis" }];
+    const withAm = shop(await loadDayFacts(NO_CLIENT, args(ANA), withDeps({ prepInstances: async (_sb, a) => (a.subtype === "am_prep" ? amDone : MID_DAY) })));
+    expect(withAm.amPrep).toMatchObject({ kind: "ok", value: { status: "confirmed", finishedById: "u-luis" } });
+    const none = shop(await loadDayFacts(NO_CLIENT, args(ANA), withDeps({ prepInstances: async (_sb, a) => (a.subtype === "am_prep" ? [] : MID_DAY) })));
+    expect(none.amPrep).toMatchObject({ kind: "ok", value: { status: null, finishedById: null } });
+  });
+
+  it("source pin: the engine names finishedById only in the ChecklistDay type", () => {
+    const src = readFileSync("lib/day-plan-shared.ts", "utf8");
+    const lines = src.split(/\r?\n/).filter((l) => l.includes("finishedById"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\s*readonly finishedById\?: string \| null;$/);
+    expect(src.indexOf("finishedById")).toBeLessThan(src.indexOf("export interface MidDayDay"));
+    expect(src.indexOf("finishedById")).toBeGreaterThan(src.indexOf("export interface ChecklistDay"));
   });
 });

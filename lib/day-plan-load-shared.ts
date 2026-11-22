@@ -138,6 +138,7 @@ export function checklistDay(forDate: string, row: InstanceRow | null, extra: { 
     finishedAt: row?.confirmed_at ?? null,
     finishedByName: extra.finishedByName ?? null,
     sectionsLeft: extra.sectionsLeft ?? null,
+    finishedById: row?.confirmed_by ?? null,
   };
 }
 

@@ -8,7 +8,8 @@
  */
 import { taskHref } from "@/lib/assignments-shared";
 import { closingStationAnchor } from "@/lib/assignment-sections";
-import { lensFor, type DayItem, type DayPlan, type DayViewer, type Surface } from "@/lib/day-plan-shared";
+import { deriveCloseState } from "@/lib/dashboard-status-shared";
+import { lensFor, type DayItem, type DayPlan, type DayPlanInput, type DayViewer, type Surface } from "@/lib/day-plan-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { byId } from "@/lib/nav/destinations";
@@ -134,4 +135,18 @@ export function shortcutsFor(viewer: Pick<DayViewer, "role" | "level" | "surface
 export function shortcutHref(d: Pick<Destination, "route" | "takesShop" | "legacy">, shopId: string | null): string {
   const param = shopParamNames(d.route)[0];
   return shopId && d.takesShop && param && d.legacy?.chipScoped !== false ? `${d.route}?${param}=${encodeURIComponent(shopId)}` : d.route;
+}
+
+// ── The AM prep submitter's Edit (Q2 carve-out, C.46 A2) ────────────────────────────────────────────────────────────
+
+/**
+ * The "Edit" link for the AM prep row, only for the person who finished today's AM prep (the instance's `confirmed_by`,
+ * read instance-first by the loader, E3). No template-first read. The AM prep page's own `canEditReport` gate still decides.
+ */
+export function amPrepEditFor(input: Pick<DayPlanInput, "planDate" | "facts">, userId: string, shopId: string): string | undefined {
+  if (input.facts.kind !== "shop" || input.facts.amPrep.kind !== "ok") return undefined;
+  const am = input.facts.amPrep.value;
+  if (am.forDate !== input.planDate || !am.finishedById || am.finishedById !== userId) return undefined;
+  const s = deriveCloseState(am.status).status;
+  return s === "closed" || s === "auto_finalized" ? AM_PREP_EDIT_HREF(shopId) : undefined;
 }
