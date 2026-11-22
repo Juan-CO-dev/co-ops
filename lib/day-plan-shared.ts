@@ -135,8 +135,10 @@ export interface DayAssignment {
   readonly source: "assigned" | "taken" | null;
 }
 export interface AssignmentFacts extends ForDate {
-  /** "all_tasks": the shift board. "checklist_tasks": the task-day reader (Opening, AM prep, Mid-day prep only). */
-  readonly scope: "all_tasks" | "checklist_tasks";
+  /** "all_tasks": the shift board. "checklist_tasks": the task-day reader (Opening, AM prep, Mid-day prep only).
+   *  "own_tasks": the viewer's OWN assignments only, sent when the board failed (nav PR 7, F3). Never a roster: nobody
+   *  else's holding is known. */
+  readonly scope: "all_tasks" | "checklist_tasks" | "own_tasks";
   readonly rows: readonly DayAssignment[];
 }
 
@@ -1145,6 +1147,7 @@ export function applyLens(
       if (a === "not_shown") { holder = { kind: "not_shown" }; actions = ["do"]; }
       else if (a === null) { holder = { kind: "unknown" }; actions = kh ? ["do"] : []; }
       else if (mine) { holder = { kind: "mine" }; actions = ["do"]; }
+      else if (a.scope === "own_tasks") { holder = { kind: "unknown" }; actions = kh ? ["do"] : []; }
       else {
         const other = rows.find((r) => r.task === item.task);
         const inScope = a.scope === "all_tasks" || (CHECKLIST_TASKS as readonly TaskType[]).includes(item.task);
