@@ -72,7 +72,7 @@ export function unwrapSettled<T>(r: Settled<T>): T {
 }
 
 /** The social media manager's two notes, and (through planDay's ALL_FAILED_SHOP) every item unknown for anyone else. */
-export const FAILED_SMM_FACTS: SmmFacts = { kind: "smm", ownTasks: { kind: "failed" }, ownStation: { kind: "failed" } };
+const FAILED_SMM_FACTS: SmmFacts = { kind: "smm", ownTasks: { kind: "failed" }, ownStation: { kind: "failed" } };
 
 /**
  * The loader, behind a 7 s belt (the loader never throws and every lane is bounded, so this is a programming-error net):

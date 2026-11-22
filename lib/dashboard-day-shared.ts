@@ -53,7 +53,7 @@ export function dayViewerFor(auth: DashboardAuth, shopId: string, switches: Swit
 // ── Row names and links ──────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Items whose name is not their destination's: catering (a level-4 catering item points at `mid-shift`). */
-export const ITEM_NAME_KEY: Readonly<Partial<Record<DayItem["id"], TranslationKey>>> = {
+const ITEM_NAME_KEY: Readonly<Partial<Record<DayItem["id"], TranslationKey>>> = {
   catering_today: "day.task.catering_today",
 };
 
@@ -79,7 +79,7 @@ export function itemHref(item: Pick<DayItem, "id" | "destId" | "section" | "task
 }
 
 /** The AM prep report in edit mode: exactly the old tile's href (C.46 A2). The page's own gate decides. */
-export const AM_PREP_EDIT_HREF = (shopId: string): string => `/operations/am-prep?location=${encodeURIComponent(shopId)}&edit=true`;
+const AM_PREP_EDIT_HREF = (shopId: string): string => `/operations/am-prep?location=${encodeURIComponent(shopId)}&edit=true`;
 /** "Assign" opens Team today at the shop. */
 export const ASSIGN_HREF = (shopId: string): string => withShop("/assignments", shopId);
 
