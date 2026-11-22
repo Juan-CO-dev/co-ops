@@ -54,3 +54,26 @@ describe("the closing checklist pin", () => {
     expect(closing.pin).toBeUndefined();
   });
 });
+
+// Nav PR 6, the two other declared engine edits (plan r3, 8.1 items 10 and 11, engine halves).
+describe("nav PR 6 engine edits", () => {
+  it("ruling 7: a PM report with autoFinalized renders done.autoFinalized true; without the field, false; cash too", () => {
+    const at = hm("21:30");
+    const base = pStreet(at);
+    const done = { forDate: PLAN_DATE, state: "submitted" as const, at: "2026-11-19T02:00:00.000Z", byName: null };
+    const auto = buildDay(PLAN_DATE, at, { ...base, pm: { kind: "ok", value: { ...done, autoFinalized: true } }, cash: { kind: "ok", value: done } });
+    expect(auto.items.find((i) => i.id === "pm_report")!.done).toEqual({ at: done.at, byName: null, autoFinalized: true });
+    expect(auto.items.find((i) => i.id === "cash")!.done).toEqual({ at: done.at, byName: null, autoFinalized: false });
+    const plain = buildDay(PLAN_DATE, at, { ...base, pm: { kind: "ok", value: done } });
+    expect(plain.items.find((i) => i.id === "pm_report")!.done?.autoFinalized).toBe(false);
+  });
+
+  it("SCH: the engine does not read hours.dayPrepStartQ yet (an identical DayModel when only it changes)", () => {
+    for (const t of ["06:30", "08:00", "13:45", "20:30"]) {
+      const base = pStreet(hm(t));
+      if (base.hours.kind !== "ok") throw new Error("hours");
+      const moved: ShopFacts = { ...base, hours: { kind: "ok", value: { ...base.hours.value, dayPrepStartQ: 4 } } };
+      expect(buildDay(PLAN_DATE, hm(t), moved), t).toEqual(buildDay(PLAN_DATE, hm(t), base));
+    }
+  });
+});

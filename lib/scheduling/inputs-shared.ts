@@ -27,7 +27,8 @@ import type { BuildDayInput, GeneratorInput, HeadSnapshot, Pin } from "./generat
 import { makeSkillLookup, punchPatterns, toSchedPeople, type ElsewhereShift, type PersonSettingsRow, type PunchEntry } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, Shift } from "./rules-shared";
 import { scheduleEngine, scheduledOut, type ScheduleStructure } from "./structure-shared";
-import { addDays, isoWeekStart, weekDays } from "./time-shared";
+import { etClockTime } from "@/lib/operational-day";
+import { addDays, isoWeekStart, Q_MINUTES, weekDays } from "./time-shared";
 
 /** The structure version id of the seeded defaults (no saved structure). SQL stores NULL for it. */
 export const STRUCTURE_DEFAULTS_ID = "defaults";
@@ -209,6 +210,17 @@ export function pickShopWage(rows: readonly ShopWageRow[], opts: { primaryRoleId
 /** The ezCater orders not already in the pipeline, as booked events (named, never summed). */
 export interface EzcaterOrderRow { id: string; event_date: string | null; event_timestamp: string | null; handoff_time: string | null; headcount: number | null; total_cents: number | null; status: string | null }
 
+/** An ezCater order status that means the order is off (the schedule's one rule; the Dashboard reads it too). */
+export function ezcaterCancelled(status: string | null): boolean {
+  return /cancel/i.test(status ?? "");
+}
+
+/** An instant's ET wall-clock quarter of the day (the schedule's rule for an ezCater event timestamp). */
+export function etWallQ(iso: string): number {
+  const [h, m] = etClockTime(iso).split(":").map(Number);
+  return Math.floor((h! * 60 + m!) / Q_MINUTES);
+}
+
 /** Booked catering → the generator's events: the pipeline events plus ezCater orders, id-sorted, one per id. */
 export function toCateringEvents(
   booked: ReadonlyArray<{ id: string; eventDate: string; timeWindow: string | null; headcount: number | null; contactName: string; company: string | null; valueCents: number }>,
@@ -220,7 +232,7 @@ export function toCateringEvents(
     headcount: b.headcount ?? 0, valueCents: b.valueCents, eventQ: eventQFromWindow(b.timeWindow),
   }));
   for (const o of ezcater) {
-    if (!o.event_date || /cancel/i.test(o.status ?? "")) continue;
+    if (!o.event_date || ezcaterCancelled(o.status)) continue;
     out.push({ id: o.id, date: o.event_date, name: "ezCater", headcount: o.headcount ?? 0, valueCents: o.total_cents,
       eventQ: o.event_timestamp ? etWallQ(o.event_timestamp) : eventQFromWindow(o.handoff_time) });
   }

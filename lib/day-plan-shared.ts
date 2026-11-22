@@ -68,6 +68,9 @@ export interface ShopHours {
   readonly source: "saved" | "defaults";
   readonly shopDay: Pick<ScheduleStructure["shopDay"], "prepStartQ" | "serviceStartQ">;
   readonly catering: Pick<ScheduleStructure["catering"], "minHeadcount" | "leadMinutes" | "defaultStartQ" | "defaultEndQ" | "extraPrepDishHeads">;
+  /** The day's EFFECTIVE prep start (quarter of the day). PR 6 fills it with the normal prep start; SCH reads an accepted
+   *  or applied earlier opening into it (nav-SCH-LEAD-RULINGS-r1 A4). The engine does not read it until SCH. */
+  readonly dayPrepStartQ: number;
 }
 
 export interface ChecklistDay extends ForDate {
@@ -85,6 +88,8 @@ export interface MidDayDay extends ForDate {
 export interface ReportDay extends ForDate {
   readonly state: "none" | "draft" | "submitted";
   readonly at: string | null; readonly byName: string | null;
+  /** The report was finalized by the system (PM `auto_finalized`), never "confirmed". Absent = false. */
+  readonly autoFinalized?: boolean;
 }
 
 export interface OrderingFacts extends ForDate {
@@ -799,7 +804,7 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
       const r = dayValue(fact, planDate);
       const st = reportState(r);
       items.push(st === "done"
-        ? makeItem(id, { band: "done", state: st, at: null, reasons: [], done: { at: r!.at, byName: r!.byName, autoFinalized: false } })
+        ? makeItem(id, { band: "done", state: st, at: null, reasons: [], done: { at: r!.at, byName: r!.byName, autoFinalized: r!.autoFinalized ?? false } })
         : makeItem(id, { band: atNight ? "now" : "upcoming", state: st, at: null, reasons: [atNight ? reason(nowKey, {}) : reason("day.reason.night.waiting", {})] }));
     }
   }
@@ -831,8 +836,10 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
   }
 
   // ── Every fact failed: every item listed, unknown, in DAY_ORDER (7) ──
+  // `counts` is not in the list (nav PR 6, ruling B5): it is a constant with no read, so it can never fail, and it must not
+  // keep "everything failed" from firing on a real outage.
   const allFailed = [facts.hours, facts.opening, facts.closing, facts.amPrep, facts.midDay, facts.cash, facts.pm, facts.ordering,
-    facts.rhythm, facts.receiving, facts.cateringToday, facts.cateringTomorrow, facts.flaggedLines, facts.counts, facts.yesterdayClosing]
+    facts.rhythm, facts.receiving, facts.cateringToday, facts.cateringTomorrow, facts.flaggedLines, facts.yesterdayClosing]
     .every((f) => f.kind === "failed") && facts.stations.kind === "failed";
   const finalItems = allFailed
     ? items.map((i): DayItem => ({ ...i, band: i.id === "counts" ? "tool" : "upcoming", state: "unknown", at: null }))

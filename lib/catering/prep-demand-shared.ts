@@ -28,7 +28,8 @@
  *
  * Totals are untouched by any of this: demand is read from the lines; price never moves.
  */
-import type { Portion } from "@/lib/catering/pricing-derivation";
+import { PORTION_FRACTION, type Portion } from "@/lib/catering/pricing-derivation";
+import { operationalDayOfWeek, pickOverride, type ItemParRow } from "@/lib/items";
 
 export const QUOTE_LINE_KINDS = ["package_header", "package_component", "package_pick"] as const;
 export type QuoteLineKind = (typeof QUOTE_LINE_KINDS)[number];
@@ -214,4 +215,80 @@ export function resyncWouldDropPicks(
   const priorSlots = new Set(priorReserved.map((r) => r.choicePackageItemId).filter((id): id is string => id != null));
   const picked = new Set(priorPickedSlots);
   return newDemand.some((d) => d.choicePackageItemId != null && (!priorSlots.has(d.choicePackageItemId) || picked.has(d.choicePackageItemId)));
+}
+
+// ── The Prep demand FLAG RULE (nav PR 6, plan r3 3.4 / C9): one function for the page and the Dashboard ──────────────
+//
+// Moved verbatim out of `loadCateringPrepDemand` (lib/catering/prep-demand.ts): the grouping (need date, ref, portion),
+// the par (the day's MANUAL override, else the item's default), and the flag ("at or over par, or no par", item refs
+// only). The Prep demand page and the Dashboard's flagged-line count both call these, so their counts cannot drift.
+
+/** A reserved catering_prep_demand row as the flag rule reads it. */
+export interface PrepDemandRow {
+  pipeline_id: string;
+  need_date: string;
+  item_id: string | null;
+  menu_item_id: string | null;
+  choice_package_item_id: string | null;
+  portion: Portion | null;
+  qty: number | string;
+}
+export interface PrepDemandGroup {
+  needDate: string;
+  refKind: "item" | "menu_item" | "choice";
+  refId: string;
+  portion: Portion | null;
+  qty: number;
+  byLead: Map<string, number>;
+}
+/** The par inputs: the item's default par, and the shop's day-bearing overrides (pickOverride's rows). */
+export interface PrepParInputs {
+  defaults: ReadonlyMap<string, { readonly defaultPar: number | null }>;
+  overrides: ReadonlyMap<string, readonly ItemParRow[]>;
+}
+
+/** Aggregate rows by (need_date, ref, portion), in row order, and collect the referenced ids by kind. */
+export function groupPrepDemand(rows: readonly PrepDemandRow[]): {
+  groups: Map<string, PrepDemandGroup>; itemIds: Set<string>; menuIds: Set<string>; choiceIds: Set<string>;
+} {
+  const groups = new Map<string, PrepDemandGroup>();
+  const itemIds = new Set<string>();
+  const menuIds = new Set<string>();
+  const choiceIds = new Set<string>();
+  for (const r of rows) {
+    const qty = typeof r.qty === "string" ? Number(r.qty) : r.qty;
+    const refKind = r.item_id ? ("item" as const) : r.menu_item_id ? ("menu_item" as const) : ("choice" as const);
+    const refId = (r.item_id ?? r.menu_item_id ?? r.choice_package_item_id)!;
+    if (refKind === "item") itemIds.add(refId);
+    else if (refKind === "menu_item") menuIds.add(refId);
+    else choiceIds.add(refId);
+    const key = `${r.need_date}|${refKind}:${refId}|${r.portion ?? ""}`;
+    const g = groups.get(key) ?? { needDate: r.need_date, refKind, refId, portion: r.portion, qty: 0, byLead: new Map<string, number>() };
+    g.qty += qty;
+    g.byLead.set(r.pipeline_id, (g.byLead.get(r.pipeline_id) ?? 0) + qty);
+    groups.set(key, g);
+  }
+  return { groups, itemIds, menuIds, choiceIds };
+}
+
+/** Item-grain par for a group: the need date's MANUAL override, else the item default; null for non-item refs. */
+export function prepLinePar(g: Pick<PrepDemandGroup, "refKind" | "refId" | "needDate">, par: PrepParInputs): number | null {
+  if (g.refKind !== "item") return null;
+  const ov = pickOverride([...(par.overrides.get(g.refId) ?? [])], operationalDayOfWeek(g.needDate));
+  return ov && ov.parMode === "manual" ? ov.parValue : (par.defaults.get(g.refId)?.defaultPar ?? null);
+}
+
+/** The whole-equivalent demand and the flag: an item ref at or over its par, or with no par set. */
+export function isPrepLineFlagged(g: Pick<PrepDemandGroup, "refKind" | "portion" | "qty">, parValue: number | null): { wholeEquiv: number; overPar: boolean } {
+  const wholeEquiv = g.portion ? g.qty * PORTION_FRACTION[g.portion] : g.qty;
+  return { wholeEquiv, overPar: g.refKind === "item" && (parValue == null || wholeEquiv >= parValue) };
+}
+
+/** Flagged lines per need date (the Dashboard's count = the page's `lines.filter(l => l.overPar).length`). */
+export function flaggedLineCounts(rows: readonly PrepDemandRow[], par: PrepParInputs): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const g of groupPrepDemand(rows).groups.values()) {
+    if (isPrepLineFlagged(g, prepLinePar(g, par)).overPar) out[g.needDate] = (out[g.needDate] ?? 0) + 1;
+  }
+  return out;
 }

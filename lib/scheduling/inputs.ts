@@ -23,7 +23,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadBookedCateringEvents } from "@/lib/catering/booked-events";
 import { CLOSING_MANAGER_STATION } from "@/lib/checklist-constants";
 import { operationalNow } from "@/lib/midshift-shared";
-import { etClockTime } from "@/lib/operational-day";
 import { isMissingTable, loadPeopleFacts, SkillsUnavailableError } from "@/lib/people/facts";
 import { computeSkillMatrixForShop, loadShopTunables } from "@/lib/people/skills";
 import { fetchSalesBaseline } from "@/lib/pulse/sales";
@@ -40,13 +39,12 @@ import { forecastWeek, withCatering, type DayTypeOverride, type SalesBaselineRes
 import { ScheduleError } from "./errors-shared";
 import type { Pin } from "./generator/build-shared";
 import {
-  DEFAULT_SCHEDULE_SHOP_SETTINGS, STRUCTURE_DEFAULTS_ID, closingFacts, datesOfWeeks, memberSinceDate, pickShopWage, toCateringEvents, tsStructureVersion,
+  DEFAULT_SCHEDULE_SHOP_SETTINGS, STRUCTURE_DEFAULTS_ID, closingFacts, datesOfWeeks, etWallQ, memberSinceDate, pickShopWage, toCateringEvents, tsStructureVersion,
   type DayTypeRow, type EzcaterOrderRow, type MemberRow, type ShopWageRow, type ScheduleShopSettings, type SchedulingInputs, type StoredRevision, type StoredWeek,
 } from "./inputs-shared";
 import type { ElsewhereShift, PersonSettingsRow } from "./people-input-shared";
 import type { DayRecord, DeclaredGap, RuleProblem, Segment, Shift } from "./rules-shared";
 import { SCHEDULE_STRUCTURE_DEFAULTS, structureFromStations, type ScheduleStructure, type SeedPosition, type SeedStation } from "./structure-shared";
-import { Q_MINUTES } from "./time-shared";
 import { addDays, isoWeekStart } from "./time-shared";
 
 const ID_CHUNK = 100;
@@ -260,7 +258,8 @@ export async function loadSchedulingDemand(service: SupabaseClient, locationId: 
   return { baseline: { kind: "ok", raw: { hours: heat, capturedDays: [...new Set(r.raw.captured_days)] } } };
 }
 
-async function loadEzcater(service: SupabaseClient, locationId: string, dates: readonly string[]): Promise<EzcaterOrderRow[]> {
+/** The shop's ezCater orders on the dates that are NOT linked to a pipeline lead (`lead_id` null), paged. */
+export async function loadEzcater(service: SupabaseClient, locationId: string, dates: readonly string[]): Promise<EzcaterOrderRow[]> {
   if (dates.length === 0) return [];
   return selectAllRows<EzcaterOrderRow>((f, t) => service.from("ezcater_orders").select("id, event_date, event_timestamp, handoff_time, headcount, total_cents, status")
     .eq("location_id", locationId).in("event_date", [...dates]).is("lead_id", null).order("id", { ascending: true }).range(f, t));
@@ -397,7 +396,7 @@ export async function loadSchedulingInputs(service: SupabaseClient, args: LoadSc
     const { baseline } = await loadSchedulingDemand(service, locationId, dates, asOf);
     const booked = await loadBookedCateringEvents(service, { locationId, dates });
     const ez = await loadEzcater(service, locationId, dates);
-    const catering = toCateringEvents(booked, ez, (iso) => { const [h, m] = etClockTime(iso).split(":").map(Number); return Math.floor((h! * 60 + m!) / Q_MINUTES); });
+    const catering = toCateringEvents(booked, ez, etWallQ);
     const demand = withCatering(forecastWeek(baseline, dates, asOf), catering);
     const punchFrom = addDays(isoWeekStart(asOf), -56);
     const punches = await loadPunchHistory(service, { locationId, from: punchFrom, to: addDays(isoWeekStart(asOf), -1) });

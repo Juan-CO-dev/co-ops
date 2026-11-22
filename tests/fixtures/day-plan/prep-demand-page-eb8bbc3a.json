@@ -1,0 +1,207 @@
+[
+  {
+    "needDate": "2026-11-18",
+    "lines": [
+      {
+        "key": "item:00000000-0000-4000-8000-000000000004:half",
+        "refKind": "item",
+        "refId": "00000000-0000-4000-8000-000000000004",
+        "name": "Bread",
+        "portion": "half",
+        "qty": 4,
+        "parValue": 3,
+        "wholeEquivDemand": 2,
+        "overPar": false,
+        "needsPick": false,
+        "leads": [
+          {
+            "id": "lead-a",
+            "qty": 4,
+            "label": null
+          }
+        ]
+      },
+      {
+        "key": "item:00000000-0000-4000-8000-000000000004:quarter",
+        "refKind": "item",
+        "refId": "00000000-0000-4000-8000-000000000004",
+        "name": "Bread",
+        "portion": "quarter",
+        "qty": 8,
+        "parValue": 3,
+        "wholeEquivDemand": 2,
+        "overPar": false,
+        "needsPick": false,
+        "leads": [
+          {
+            "id": "lead-b",
+            "qty": 8,
+            "label": null
+          }
+        ]
+      },
+      {
+        "key": "choice:slot-1:",
+        "refKind": "choice",
+        "refId": "slot-1",
+        "name": "Choose a sub",
+        "portion": null,
+        "qty": 2,
+        "parValue": null,
+        "wholeEquivDemand": 2,
+        "overPar": false,
+        "needsPick": true,
+        "leads": [
+          {
+            "id": "lead-a",
+            "qty": 2,
+            "label": null
+          }
+        ]
+      },
+      {
+        "key": "item:00000000-0000-4000-8000-000000000002:",
+        "refKind": "item",
+        "refId": "00000000-0000-4000-8000-000000000002",
+        "name": "Ham",
+        "portion": null,
+        "qty": 10,
+        "parValue": 10,
+        "wholeEquivDemand": 10,
+        "overPar": true,
+        "needsPick": false,
+        "leads": [
+          {
+            "id": "lead-b",
+            "qty": 6,
+            "label": null
+          },
+          {
+            "id": "lead-a",
+            "qty": 4,
+            "label": null
+          }
+        ]
+      },
+      {
+        "key": "menu_item:menu-1:",
+        "refKind": "menu_item",
+        "refId": "menu-1",
+        "name": "Italian sub",
+        "portion": null,
+        "qty": 5,
+        "parValue": null,
+        "wholeEquivDemand": 5,
+        "overPar": false,
+        "needsPick": false,
+        "leads": [
+          {
+            "id": "lead-a",
+            "qty": 5,
+            "label": null
+          }
+        ]
+      },
+      {
+        "key": "item:00000000-0000-4000-8000-000000000001:",
+        "refKind": "item",
+        "refId": "00000000-0000-4000-8000-000000000001",
+        "name": "Pickles",
+        "portion": null,
+        "qty": 2,
+        "parValue": null,
+        "wholeEquivDemand": 2,
+        "overPar": true,
+        "needsPick": false,
+        "leads": [
+          {
+            "id": "lead-a",
+            "qty": 2,
+            "label": null
+          }
+        ]
+      },
+      {
+        "key": "item:00000000-0000-4000-8000-000000000003:",
+        "refKind": "item",
+        "refId": "00000000-0000-4000-8000-000000000003",
+        "name": "Turkey",
+        "portion": null,
+        "qty": 3,
+        "parValue": 10,
+        "wholeEquivDemand": 3,
+        "overPar": false,
+        "needsPick": false,
+        "leads": [
+          {
+            "id": "lead-a",
+            "qty": 3,
+            "label": null
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "needDate": "2026-11-19",
+    "lines": [
+      {
+        "key": "item:00000000-0000-4000-8000-000000000005:",
+        "refKind": "item",
+        "refId": "00000000-0000-4000-8000-000000000005",
+        "name": "Lettuce",
+        "portion": null,
+        "qty": 7,
+        "parValue": 5,
+        "wholeEquivDemand": 7,
+        "overPar": true,
+        "needsPick": false,
+        "leads": [
+          {
+            "id": "lead-a",
+            "qty": 7,
+            "label": null
+          }
+        ]
+      },
+      {
+        "key": "item:00000000-0000-4000-8000-000000000006:",
+        "refKind": "item",
+        "refId": "00000000-0000-4000-8000-000000000006",
+        "name": "Onion",
+        "portion": null,
+        "qty": 7,
+        "parValue": 20,
+        "wholeEquivDemand": 7,
+        "overPar": false,
+        "needsPick": false,
+        "leads": [
+          {
+            "id": "lead-a",
+            "qty": 7,
+            "label": null
+          }
+        ]
+      },
+      {
+        "key": "item:00000000-0000-4000-8000-000000000003:whole",
+        "refKind": "item",
+        "refId": "00000000-0000-4000-8000-000000000003",
+        "name": "Turkey",
+        "portion": "whole",
+        "qty": 12,
+        "parValue": 10,
+        "wholeEquivDemand": 12,
+        "overPar": true,
+        "needsPick": false,
+        "leads": [
+          {
+            "id": "lead-a",
+            "qty": 12,
+            "label": null
+          }
+        ]
+      }
+    ]
+  }
+]

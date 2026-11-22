@@ -108,6 +108,8 @@ export const DESTRUCTIVE_ACTIONS = [
   "station.event",
   "station.break", // A human changes the shift's availability record.
   "station.timing_update", // Advisory station / position configuration.
+  "station.mid_day_trigger", // Nav PR 6 (0353): which station's close starts mid-day prep (shared config).
+  "station.not_phase_station", // Nav PR 6 (0353): a station whose close does not move the day (shared config).
   "assignment.create",
   "assignment.retract",
   "shift.end", // 0233: a human ends a shift — releases the station and unassigns open tasks.

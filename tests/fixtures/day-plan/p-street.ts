@@ -117,7 +117,7 @@ export function pStreet(min: number, opts: PStreetOptions = {}): ShopFacts {
   const closingDone = has(tl.closingFinished);
   return {
     kind: "shop", shop: P_SHOP,
-    hours: ok({ source: "saved", shopDay: { prepStartQ: 28, serviceStartQ: 42 },
+    hours: ok({ source: "saved", shopDay: { prepStartQ: 28, serviceStartQ: 42 }, dayPrepStartQ: 28,
       catering: { minHeadcount: 30, leadMinutes: 210, defaultStartQ: 34, defaultEndQ: 52, extraPrepDishHeads: 1 } }),
     stations: ok({ stationDate: date, stations: pStreetStations(closeAt, opts.usual) }),
     opening: ok(opening),

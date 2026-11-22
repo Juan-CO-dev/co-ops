@@ -26,7 +26,8 @@ import { station } from "./fixtures/day-plan/build";
 import { diskReader, importClosure, importSpecifiers, stripComments, type Reader } from "./fixtures/schedule/no-notify-closure";
 
 const ENGINE = "lib/day-plan-shared.ts";
-const ENTRIES = [ENGINE, "lib/scheduling/catering-day-shared.ts"];
+// Nav PR 6: the loader's pure companion joins the scan (plan r3, 8.1 item 9).
+const ENTRIES = [ENGINE, "lib/scheduling/catering-day-shared.ts", "lib/day-plan-load-shared.ts"];
 const POSITIVE = "tests/fixtures/day-plan/guard-positive.ts";
 const norm = (p: string) => p.split("\\").join("/");
 const overlay = (over: Record<string, string>): Reader => (p) => over[norm(p)] ?? diskReader(p);

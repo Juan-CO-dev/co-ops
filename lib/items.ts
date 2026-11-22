@@ -6,6 +6,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ChecklistTemplateItem, ParMode } from "@/lib/types";
+import { selectAllRows } from "@/lib/supabase-paginate";
 
 /** Minimal item fields needed to resolve a line's name + par. */
 export interface ItemDefn {
@@ -146,21 +147,45 @@ export function resolveLineDefinition(
   return { name: liveItem.name, nameEs: liveItem.nameEs, par, parUnit };
 }
 
-/** Batch-load ItemDefn by id for a set of item_ids (service-role). */
+/** Ids per `.in()` read: the request line stays bounded however many distinct items a caller holds. */
+export const ITEM_READ_CHUNK = 100;
+
+/** The distinct, non-empty ids in `ids`, cut into chunks of ITEM_READ_CHUNK. */
+function idChunks(itemIds: readonly string[]): string[][] {
+  const ids = [...new Set(itemIds.filter((x): x is string => !!x))];
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += ITEM_READ_CHUNK) out.push(ids.slice(i, i + ITEM_READ_CHUNK));
+  return out;
+}
+
+/**
+ * Batch-load ItemDefn by id for a set of item_ids (service-role).
+ *
+ * BOUNDED AND PAGED (nav PR 6, ruling B4): the ids are cut into chunks of 100 and every chunk is paged with
+ * `selectAllRows` in `id` order, so a caller with many distinct items neither overflows the request line nor
+ * reads a truncated response. A failed page throws (never a partial map). Same return shape as before.
+ */
 export async function loadItemDefns(
   service: SupabaseClient,
   itemIds: string[],
 ): Promise<Map<string, ItemDefn>> {
   const map = new Map<string, ItemDefn>();
-  const ids = [...new Set(itemIds.filter((x): x is string => !!x))];
-  if (ids.length === 0) return map;
-  const { data, error } = await service
-    .from("items")
-    .select("id, name, name_es, default_par, default_par_unit, active")
-    .in("id", ids);
-  if (error) throw new Error(`loadItemDefns: ${error.message}`);
-  for (const r of (data ?? []) as Array<{ id: string; name: string; name_es: string | null; default_par: number | null; default_par_unit: string | null; active: boolean }>) {
-    map.set(r.id, { name: r.name, nameEs: r.name_es, defaultPar: r.default_par, defaultParUnit: r.default_par_unit, active: r.active });
+  type Row = { id: string; name: string; name_es: string | null; default_par: number | null; default_par_unit: string | null; active: boolean };
+  for (const chunk of idChunks(itemIds)) {
+    let rows: Row[];
+    try {
+      rows = await selectAllRows<Row>((from, to) => service
+        .from("items")
+        .select("id, name, name_es, default_par, default_par_unit, active")
+        .in("id", chunk)
+        .order("id", { ascending: true })
+        .range(from, to));
+    } catch (e) {
+      throw new Error(`loadItemDefns: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    for (const r of rows) {
+      map.set(r.id, { name: r.name, nameEs: r.name_es, defaultPar: r.default_par, defaultParUnit: r.default_par_unit, active: r.active });
+    }
   }
   return map;
 }
@@ -169,6 +194,9 @@ export async function loadItemDefns(
  * Batch-load active item_par_levels rows for a set of item_ids at one location,
  * grouped by item_id (service-role). Rows are day-bearing; pickOverride picks the
  * day that applies. Mirrors loadItemDefns' dedup + early-return + throw-on-error.
+ *
+ * BOUNDED AND PAGED (nav PR 6, ruling B4): chunks of 100 ids, each paged in `id` order. Before this, one
+ * unpaged response past 1,000 override rows dropped rows, and `pickOverride` then silently chose the wrong par.
  */
 export async function loadItemOverrides(
   service: SupabaseClient,
@@ -176,19 +204,26 @@ export async function loadItemOverrides(
   locationId: string,
 ): Promise<Map<string, ItemParRow[]>> {
   const map = new Map<string, ItemParRow[]>();
-  const ids = [...new Set(itemIds.filter((x): x is string => !!x))];
-  if (ids.length === 0) return map;
-  const { data, error } = await service
-    .from("item_par_levels")
-    .select("item_id, day_of_week, par_value, par_unit, par_mode")
-    .in("item_id", ids)
-    .eq("location_id", locationId)
-    .eq("active", true);
-  if (error) throw new Error(`loadItemOverrides: ${error.message}`);
-  for (const r of (data ?? []) as Array<{ item_id: string; day_of_week: number | null; par_value: number | null; par_unit: string | null; par_mode: ParMode }>) {
-    const rows = map.get(r.item_id) ?? [];
-    rows.push({ dayOfWeek: r.day_of_week, parValue: r.par_value, parUnit: r.par_unit, parMode: r.par_mode });
-    map.set(r.item_id, rows);
+  type Row = { item_id: string; day_of_week: number | null; par_value: number | null; par_unit: string | null; par_mode: ParMode };
+  for (const chunk of idChunks(itemIds)) {
+    let rows: Row[];
+    try {
+      rows = await selectAllRows<Row>((from, to) => service
+        .from("item_par_levels")
+        .select("item_id, day_of_week, par_value, par_unit, par_mode")
+        .in("item_id", chunk)
+        .eq("location_id", locationId)
+        .eq("active", true)
+        .order("id", { ascending: true })
+        .range(from, to));
+    } catch (e) {
+      throw new Error(`loadItemOverrides: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    for (const r of rows) {
+      const list = map.get(r.item_id) ?? [];
+      list.push({ dayOfWeek: r.day_of_week, parValue: r.par_value, parUnit: r.par_unit, parMode: r.par_mode });
+      map.set(r.item_id, list);
+    }
   }
   return map;
 }
