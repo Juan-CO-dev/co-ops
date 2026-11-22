@@ -9,6 +9,7 @@
  * After the apply (the fake store's sentinel answers) the select shows to GM own / MoO+ and a mode saves. The SQL
  * backstop (0346's CHECK and writer refuse the key before the apply) is scripts/sql-harness-0354.mjs S1.
  */
+import { readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -219,6 +220,11 @@ describe("the settings page", () => {
     expect(v.earlyOpen).toBe("hidden");
     expect(sentinelReads(s)).toHaveLength(0);
     expect(render(v)).not.toMatch(select);
+  });
+  it("the rollback's first step (plan section 17): choosing Manual REMOVES the key, it never writes \"manual\"; the select is the editor's only writer of the key", () => {
+    const src = readFileSync("components/schedule/StructureEditor.tsx", "utf8");
+    expect(src).toContain('onChange={(v) => edit((s) => { if (v === "semi" || v === "auto") s.catering.earlyOpenMode = v; else delete s.catering.earlyOpenMode; })} />}');
+    expect(src.match(/s\.catering\.earlyOpenMode\s*=/g)).toHaveLength(1);
   });
   it("the access rule and every string (en + es, distinct)", () => {
     expect([earlyOpenAccess(true, true), earlyOpenAccess(true, false), earlyOpenAccess(false, true), earlyOpenAccess(false, false)]).toEqual(["edit", "hidden", "hidden", "hidden"]);
