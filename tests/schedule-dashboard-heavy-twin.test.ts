@@ -11,7 +11,7 @@
  *     loader in tests/day-plan-load.test.ts (22.3, 23.2) and the engine table in tests/day-plan-heavy-catering.test.ts (22.4).
  */
 import { describe, expect, it } from "vitest";
-import { buildDay, type CateringOrder, type ShopFacts } from "@/lib/day-plan-shared";
+import { buildDay, type CateringOrder, type DayPrepStart, type ShopFacts } from "@/lib/day-plan-shared";
 import { cateringPrepWindowQ, isHeavyCateringDay } from "@/lib/scheduling/catering-day-shared";
 import type { DayContext } from "@/lib/scheduling/context-shared";
 import { crewRequired } from "@/lib/scheduling/crew-gap-verifier-shared";
@@ -56,7 +56,7 @@ function dashboard(orders: Raw[], s: ScheduleStructure, start?: number): ShopFac
   const dash: CateringOrder[] = orders.map((o, i) => ({ id: `o-${i}`, source: "pipeline", eventQ: o.eventQ, headcount: o.headcount, state: "to_go_out", outAt: null }));
   return { ...base, cateringToday: ok({ forDate: PLAN_DATE, orders: dash }),
     hours: ok({ ...base.hours.value, shopDay: { prepStartQ: s.shopDay.prepStartQ, serviceStartQ: s.shopDay.serviceStartQ }, catering: { ...base.hours.value.catering, minHeadcount: s.catering.minHeadcount },
-      dayPrepStartQ: start === undefined ? {} : { [PLAN_DATE]: { kind: "scheduled", q: start } } }) };
+      dayPrepStartQ: start === undefined ? {} : { [PLAN_DATE]: { kind: "scheduled" as const, q: start } } as Record<string, DayPrepStart> }) };
 }
 /** The schedule's built DayContext for a date, at a given opening status. */
 function scheduleDay(s: ScheduleStructure, orders: Raw[], status: OpeningStatus | "none"): DayContext {
