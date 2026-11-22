@@ -41,6 +41,19 @@ export function hourlyTargetAccess(actor: PeopleActor, laborViewsEnabled: boolea
   if (!laborViewsEnabled) return "hidden";
   return canEditHourlyTarget(actor) ? "edit" : "read";
 }
+/**
+ * PR SCH-2: the earlier-opening mode select (`catering.earlyOpenMode`). Shown only to someone who may edit the structure
+ * (GM own / MoO+) AND only once 0354 is applied (`earlyOpenReady`); otherwise not rendered at all.
+ */
+export type EarlyOpenAccess = "edit" | "hidden";
+export function earlyOpenAccess(canEditStructure: boolean, ready: boolean): EarlyOpenAccess {
+  return canEditStructure && ready ? "edit" : "hidden";
+}
+export const EARLY_OPEN_I18N_KEYS = [
+  "schedule.settings.catering.early_open_mode", "schedule.settings.catering.early_open_mode_manual", "schedule.settings.catering.early_open_mode_semi",
+  "schedule.settings.catering.early_open_mode_auto", "schedule.settings.catering.early_open_mode_manual_help", "schedule.settings.catering.early_open_mode_semi_help",
+  "schedule.settings.catering.early_open_mode_auto_help", "schedule.error.feature_not_ready",
+] as const;
 /** The field's strings (en + es, pinned by tests/labor-burden-i18n.test.ts). */
 export const HOURLY_TARGET_I18N_KEYS = [
   "schedule.settings.labor.hourly_target", "schedule.settings.labor.hourly_target_help", "schedule.settings.labor.hourly_target_read",
@@ -83,6 +96,8 @@ export interface ScheduleSettingsView {
   structure: { id: string | null; source: "saved" | "defaults"; value: ScheduleStructure } | null;
   /** The pure-hourly target field in the structure editor (absent = hidden). */
   hourlyTarget?: HourlyTargetAccess;
+  /** PR SCH-2: the earlier-opening mode select in the structure editor (absent = hidden). */
+  earlyOpen?: EarlyOpenAccess;
   closing: { measuredMinutes: number | null; samples: number };
   stationAdvisory: NarrativeLine[];
   positions: Record<string, PositionLabel>;

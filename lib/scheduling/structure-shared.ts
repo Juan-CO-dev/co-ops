@@ -36,6 +36,14 @@ export interface ShiftType {
 }
 export interface CrewCateringSetting { enabled: boolean; typeId: string | null; extraHeads: number }
 export const CREW_CATERING_DEFAULTS: CrewCateringSetting = { enabled: false, typeId: null, extraHeads: 1 };
+/**
+ * PR SCH-2 (0354; Juan 2026-11-21): the per-shop EARLIER-OPENING mode, `catering.earlyOpenMode`. `manual` (the default,
+ * and what ABSENT means): the schedule never proposes or applies an opening; `semi`: it proposes one on a heavy day whose
+ * trigger fires and a GM accepts it; `auto`: it applies it. Optional, like `crewShift`: absent stays absent (no default
+ * is written), so no saved version changes shape. The SQL twin is 0354's valid_schedule_structure.
+ */
+export const EARLY_OPEN_MODES = ["manual", "semi", "auto"] as const;
+export type EarlyOpenMode = (typeof EARLY_OPEN_MODES)[number];
 export const scheduleEngine = (s: ScheduleStructure): ScheduleEngine => s.engine ?? "stations";
 export const shiftTypesOf = (s: ScheduleStructure): readonly ShiftType[] => s.shiftTypes ?? [];
 /** Explicit defaults on new saves; old revision snapshots remain untouched. */
@@ -121,7 +129,7 @@ export interface ScheduleStructure {
      */
     salariedFlexH: number;
   };
-  catering: { minHeadcount: number; extraPrepDishHeads: number; defaultStartQ: number; defaultEndQ: number; leadMinutes: number; crewShift?: CrewCateringSetting };
+  catering: { minHeadcount: number; extraPrepDishHeads: number; defaultStartQ: number; defaultEndQ: number; leadMinutes: number; crewShift?: CrewCateringSetting; earlyOpenMode?: EarlyOpenMode };
   /**
    * `targetPct` is the target of the view `basis` names: `total` = FULLY LOADED (default 28), `hourly` = PURE HOURLY.
    * `hourlyTargetPct` (0346, Juan 2026-11-18: "a setting, tweak up and down") is the PURE-HOURLY target on the total
@@ -597,13 +605,16 @@ function checkLimits(v: unknown, shopDay: ScheduleStructure["shopDay"]): Problem
 
 function checkCatering(v: unknown): Problem {
   if (!isObj(v)) return "catering";
-  const k = exactKeys(v, ["minHeadcount", "extraPrepDishHeads", "defaultStartQ", "defaultEndQ", "leadMinutes", ...("crewShift" in v ? ["crewShift"] : [])], "catering.");
+  const k = exactKeys(v, ["minHeadcount", "extraPrepDishHeads", "defaultStartQ", "defaultEndQ", "leadMinutes",
+    ...["crewShift", "earlyOpenMode"].filter((key) => Object.hasOwn(v, key))], "catering.");
   if (k) return k;
   if (!isInt(v.minHeadcount, 0, 10000)) return "catering.minHeadcount";
   if (!isInt(v.extraPrepDishHeads, 0, 8)) return "catering.extraPrepDishHeads";
   if (!isQuarter(v.defaultStartQ)) return "catering.defaultStartQ";
   if (!isQuarter(v.defaultEndQ) || v.defaultEndQ <= v.defaultStartQ) return "catering.defaultEndQ";
   if (!isInt(v.leadMinutes, 0, 720) || v.leadMinutes % 15 !== 0) return "catering.leadMinutes";
+  // SCH-2 (0354): optional; when present one of the three strings (null, "", "Auto", a number or an object are refused).
+  if (Object.hasOwn(v, "earlyOpenMode") && !(typeof v.earlyOpenMode === "string" && (EARLY_OPEN_MODES as readonly string[]).includes(v.earlyOpenMode))) return "catering.earlyOpenMode";
   return null;
 }
 

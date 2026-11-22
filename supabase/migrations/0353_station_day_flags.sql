@@ -1,5 +1,7 @@
 -- Migration 0353_station_day_flags
 -- AUTHORED 2026-11-21. NOT YET APPLIED - sim first, prod on Juan's word.
+-- APPLIED TO SIM 2026-11-22 (schema_migrations version 20261122050418, name '0353_station_day_flags')
+-- APPLIED TO PROD 2026-11-22 (schema_migrations version 20261122050520, name '0353_station_day_flags')
 -- Provenance: nav PR 6 "Day engine, facts" (CHIEF nav-PR6-PLAN-r3.md section 4; nav-PR6-LEAD-RULINGS-r1.md
 --   rulings 1a-1c, 6 and B1, B3; nav-SPEC-r5.md 3.3.8).
 -- WHAT:

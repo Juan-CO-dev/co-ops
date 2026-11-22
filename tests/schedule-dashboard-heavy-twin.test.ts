@@ -16,6 +16,9 @@
  *     reads the date's start from the stored JSON as the loader's path does (`days-><date>->structure->shopDay->prepStartQ`),
  *     maps it with the loader's own `dayPrepStarts` (-> `dayPrepStartFor`) and feeds `buildDay`. The Dashboard's start must be
  *     the schedule's: the date's applied opening (none / accepted / manual) AND the first quarter its board covers or declares.
+ * (f) PR SCH-2: the same on real generator output with the shop's STORED mode (`catering.earlyOpenMode`): semi stores a
+ *     proposal and the Dashboard keeps the usual start (a proposal never moves either view); auto opens the date and the
+ *     Dashboard's start is the opening, both engines.
  */
 import { describe, expect, it } from "vitest";
 import { dayPrepStarts, type ScheduleStartRows } from "@/lib/day-plan-load-shared";
@@ -79,7 +82,7 @@ function scheduleDay(s: ScheduleStructure, orders: Raw[], status: OpeningStatus 
     ...(persistent[status] ? { decision: persistent[status] } : {}) });
   let { structure: ds, opening } = n;
   if (status === "proposed" || status === "auto") {
-    // SCH-1 pins the mode to manual; the semi / auto openings are resolved with the mode given explicitly (SCH-2's path).
+    // The helper-level proposed / auto cases (the mode given explicitly); (f) below runs them through the stored mode (SCH-2).
     opening = resolveOpening(s, ev, null, status === "auto" ? "auto" : "semi");
     ds = structureForDay(s, ev, opening).structure;
   }
@@ -185,6 +188,33 @@ describe("(e) ruling H2: the twin on real generator output, through the snapshot
         expect(out.context.days[date]!.opening?.startQ ?? s.shopDay.prepStartQ).toBe(expected);
         expect(boardStartQ(out, date)).toBe(expected);
         // The Dashboard: the snapshot as stored -> the loader's path and mapping -> buildDay.
+        const start = loaderStart(toContextSnapshot(out.context).json, week, date);
+        expect(start).toEqual({ kind: "scheduled", q: expected });
+        expect(dashboardStart(dashboard(orders, s, start))).toBe(expected * 15);
+      }, 120000);
+    }
+  }
+});
+
+describe("(f) PR SCH-2: the twin with the stored mode, real generator output, both engines", () => {
+  const run = (engine: "stations" | "crew", mode: "semi" | "auto") => {
+    if (engine === "stations") {
+      const input = schStationsWeek();
+      input.structure = { ...input.structure, catering: { ...input.structure.catering, earlyOpenMode: mode } };
+      return { out: buildWeek(input), date: ST_DATES[2]!, s: input.structure, week: ST_WEEK, orders: [{ headcount: 120, eventQ: 36 }] };
+    }
+    const inputs = schCrewInputs();
+    inputs.structure = { ...inputs.structure, structure: { ...inputs.structure.structure, catering: { ...inputs.structure.structure.catering, earlyOpenMode: mode } } };
+    const g = generatorInputFor(inputs, CREW_WEEK, { today: CREW_WEEK });
+    return { out: generateWeek(g), date: CREW_DATES[1]!, s: g.structure, week: CREW_WEEK, orders: [0, 1, 2].map(() => ({ headcount: 20, eventQ: 36 })) };
+  };
+  for (const engine of ["stations", "crew"] as const) {
+    for (const mode of ["semi", "auto"] as const) {
+      it(`${engine}, ${mode}: the Dashboard's start is the generated schedule's (${mode === "semi" ? "a proposal moves neither" : "the automatic opening"})`, () => {
+        const { out, date, s, week, orders } = run(engine, mode);
+        const expected = mode === "auto" ? 22 : s.shopDay.prepStartQ;
+        expect(out.context.days[date]!.opening).toMatchObject({ status: mode === "auto" ? "auto" : "proposed", startQ: 22 });
+        expect(boardStartQ(out, date)).toBe(expected);
         const start = loaderStart(toContextSnapshot(out.context).json, week, date);
         expect(start).toEqual({ kind: "scheduled", q: expected });
         expect(dashboardStart(dashboard(orders, s, start))).toBe(expected * 15);

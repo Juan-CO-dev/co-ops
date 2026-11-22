@@ -7,11 +7,12 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { FLOOR_POSITION, OTHER_POSITION, seededFloors } from "./fixtures/schedule/structure-floors";
 import {
-  LEGACY_CASE_DEFAULTS, CASE_DEFAULTS, CASE_POSITION_IDS, expectedStructureKey, loadStructureCases, materializeStructureCase, shopBase,
+  LEGACY_CASE_DEFAULTS, CASE_DEFAULTS, CASE_POSITION_IDS, EARLY_OPEN_CASES_SINCE, crewStructureCases, earlyOpenStructureCases, expectedStructureKey, loadStructureCases,
+  materializeStructureCase, shopBase,
 } from "../scripts/schedule-structure-cases.mjs";
 import {
   CREW_TYPES, POSITION_ROLE_DEFAULTS, applyRoleChange, SCHEDULE_STRUCTURE_DEFAULTS, checklistFits, crewFor, lineBounds, lineFloorLimit, reconcileLineFloors, positionLimit, primaryOf, scheduledOut,
-  secondaryOf, structureFromStations, structureProblem, validScheduleStructure, waveProfile, waveSlots, type ScheduleStructure,
+  secondaryOf, structureFromStations, structureProblem, validScheduleStructure, waveProfile, waveSlots, withCrewStructureDefaults, type ScheduleStructure,
 } from "@/lib/scheduling/structure-shared";
 
 import { stationAdvisory } from "@/lib/scheduling/settings-view-shared";
@@ -165,6 +166,29 @@ describe("the shared structure case file against validScheduleStructure", () => 
       expect(() => validScheduleStructure(v)).not.toThrow();
       expect(validScheduleStructure(v).ok).toBe(false);
     }
+  });
+});
+
+describe("PR SCH-2 (0354): the optional catering.earlyOpenMode, its own versioned case list (ruling D6)", () => {
+  const early = earlyOpenStructureCases() as Array<{ name: string; value: unknown; key: string | null }>;
+  it("is a separate list since 0354; the shared case file and the crew list never carry the key (the historical harnesses keep their inputs)", () => {
+    expect(EARLY_OPEN_CASES_SINCE).toBe("0354");
+    const carries = (v: unknown) => JSON.stringify(v).includes("earlyOpenMode");
+    expect(cases.some((c) => carries(materializeStructureCase(c)))).toBe(false);
+    expect((crewStructureCases() as Array<{ value: unknown }>).some((c) => carries(c.value))).toBe(false);
+    expect(readFileSync("tests/fixtures/schedule/structure-cases.json", "utf8")).not.toContain("earlyOpenMode");
+    for (const mode of ["manual", "semi", "auto"]) expect(early.filter((c) => c.name.endsWith(`: ${mode}`) && c.key === null)).toHaveLength(3);
+    expect(early.filter((c) => c.key === "catering.earlyOpenMode").length).toBeGreaterThanOrEqual(3 * 14);
+  });
+  it.each(early)("$name", ({ value, key }) => {
+    expect(structureProblem(value)).toBe(key);
+    expect(validScheduleStructure(value).ok).toBe(key === null);
+  });
+  it("the shipped defaults do not write the key (absent = manual; no saved version changes shape)", () => {
+    expect("earlyOpenMode" in SCHEDULE_STRUCTURE_DEFAULTS.catering).toBe(false);
+    expect("earlyOpenMode" in withCrewStructureDefaults(SCHEDULE_STRUCTURE_DEFAULTS).catering).toBe(false);
+    const semi = { ...SCHEDULE_STRUCTURE_DEFAULTS, catering: { ...SCHEDULE_STRUCTURE_DEFAULTS.catering, earlyOpenMode: "semi" as const } };
+    expect(withCrewStructureDefaults(semi).catering.earlyOpenMode).toBe("semi");
   });
 });
 

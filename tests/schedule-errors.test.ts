@@ -41,6 +41,8 @@ describe("ScheduleErrorCode", () => {
       "works_as_refused",
       // PR SCH (plan r5 20.4): the per-date earlier opening's refusals.
       "opening_date_not_in_week", "opening_no_proposal", "opening_nothing_to_decline", "opening_start_invalid", "opening_nothing_to_clear",
+      // PR SCH-2 (plan r5 20.7): a structure setting before its migration (0354) is applied.
+      "feature_not_ready",
     ].sort());
   });
 

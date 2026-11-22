@@ -10,9 +10,10 @@
  *    open a date earlier by hand ("manual"), accept or decline a proposal, or clear the decision. When an opening applies
  *    (accepted / manual / auto), the date is built from a per-day structure whose prep start and Prep / Prep-Dishwasher
  *    opens move to it, on either engine.
- *  - The MODE (`earlyOpenMode`: manual / semi / auto) is SCH-2's setting and needs a migration. In SCH-1 it is PINNED to
- *    "manual" (`earlyOpenModeOf`): the schedule never proposes or applies an opening by itself; the triggers and the semi /
- *    auto branches exist and are tested through `resolveOpening`'s explicit mode argument.
+ *  - The MODE (`catering.earlyOpenMode`: manual / semi / auto) is SCH-2's per-shop setting (GM and up; migration 0354,
+ *    behind its readiness gate, lib/scheduling/schedule-features.ts). Absent = manual: the schedule never proposes or
+ *    applies an opening by itself. Semi: a firing trigger on a heavy day stores a `proposed` opening and changes nothing
+ *    else until a GM accepts it. Auto: the generator applies it (recomputed on every rebuild; a GM may decline it).
  *
  * "Heavy" is the day's TOTAL guests (`catering-day-shared`, PR 5's one rule); a window is `cateringPrepWindowQ`. There is
  * no second threshold or window formula here.
@@ -24,7 +25,7 @@
 import type { DayContext } from "./context-shared";
 import { cateringDayLoad, cateringPrepWindowQ } from "./catering-day-shared";
 import { ScheduleError } from "./errors-shared";
-import { positionIds, scheduleEngine, type ScheduleStructure, type StructurePosition } from "./structure-shared";
+import { positionIds, scheduleEngine, type EarlyOpenMode, type ScheduleStructure, type StructurePosition } from "./structure-shared";
 
 /** T1: the earliest prep window starts MORE than this many minutes before the normal prep start. */
 export const EARLY_OPEN_FIT_MIN = 60;
@@ -33,7 +34,7 @@ export const EARLY_OPEN_HUGE_FACTOR = 2;
 /** The derived runtime head limit (saved ≤ 8 + the heavy-day extra ≤ 8). */
 export const RUNTIME_HEADS_MAX = 16;
 
-export type EarlyOpenMode = "manual" | "semi" | "auto";
+export type { EarlyOpenMode } from "./structure-shared";
 export type OpeningTrigger = "prep_fit" | "huge_day";
 export type OpeningStatus = "proposed" | "accepted" | "manual" | "auto" | "declined";
 /** A persistent per-date decision (the generator input). `proposed` and `auto` are never decisions: they are recomputed. */
@@ -66,10 +67,13 @@ export function openingApplies(o: Pick<DayOpening, "status"> | null | undefined)
   return !!o && APPLIED.includes(o.status);
 }
 
-/** SCH-1: the mode is pinned to manual (SCH-2 reads `catering.earlyOpenMode`, behind its readiness gate). */
+/**
+ * SCH-2: the shop's mode, `catering.earlyOpenMode`. Absent (every shop until 0354 is applied and a GM chooses) = manual;
+ * any value other than semi / auto (unreachable past both validators) also reads as manual, never as a guess.
+ */
 export function earlyOpenModeOf(s: ScheduleStructure): EarlyOpenMode {
-  void s;
-  return "manual";
+  const m = s.catering.earlyOpenMode;
+  return m === "semi" || m === "auto" ? m : "manual";
 }
 
 /**
@@ -93,7 +97,7 @@ export function openingTriggers(s: ScheduleStructure, catering: Catering): { tri
  * THE one resolution. The first rule that holds: a `manual` decision applies at its start; `accepted` applies at its
  * STORED start (ruling C6: a GM's decision is never silently undone); `declined` is the normal start; otherwise, when a
  * trigger fires and h < normal: `auto` applies h (recomputed every rebuild), `semi` proposes h (the structure is not
- * changed), `manual` gives nothing. `mode` defaults to the structure's (pinned "manual" in SCH-1).
+ * changed), `manual` gives nothing. `mode` defaults to the structure's (`earlyOpenModeOf`).
  */
 export function resolveOpening(s: ScheduleStructure, catering: Catering, decision: OpeningDecision | null, mode: EarlyOpenMode = earlyOpenModeOf(s)): DayOpening | null {
   const normalStartQ = s.shopDay.prepStartQ;

@@ -71,6 +71,9 @@ export const SCHEDULE_ERROR_CODES = [
   "opening_nothing_to_decline",
   "opening_start_invalid",
   "opening_nothing_to_clear",
+  // PR SCH-2 (plan r5 20.7, D7): a structure setting whose SQL twin is not installed yet (0354's readiness sentinel is
+  // missing): refused before any write, nothing changed.
+  "feature_not_ready",
 ] as const;
 
 export type ScheduleErrorCode = (typeof SCHEDULE_ERROR_CODES)[number];
@@ -116,6 +119,7 @@ export const SCHEDULE_ERROR_STATUS: Record<ScheduleErrorCode, 400 | 403 | 404 | 
   inputs_unavailable: 503, demand_unavailable: 503, person_settings_unavailable: 503, other_shop_check_unavailable: 503,
   invalid_payload: 400,
   opening_date_not_in_week: 422, opening_start_invalid: 422, opening_no_proposal: 409, opening_nothing_to_decline: 409, opening_nothing_to_clear: 409,
+  feature_not_ready: 503,
 };
 
 /** The status of a refusal. */
