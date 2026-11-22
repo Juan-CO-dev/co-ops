@@ -36,7 +36,7 @@ describe("the nav suite in the harness", () => {
     expect(run).toContain('const allProjects = suite === "nav" ? ["phone375-en", "phone375-es"]');
     expect(run).toContain('suite === "nav" ? noContracts');
     expect(run).toContain("const contenderEnv = withoutNodeOnlyControls(process.env);");
-    expect(run).toMatch(/const navPassword: Record<string, string> = suite === "nav" && process\.env\.SIM_NAV_PASSWORD_MARCUS/);
+    expect(run).toMatch(/const navPassword: Record<string, string> = suite === "nav" && controls\.SIM_NAV_PASSWORD_MARCUS/);
     expect(run).toMatch(/LRA_NAV_SLICE" : "LRA_CUSTOMER_SLICE"\]: slice \}, navPassword\);/);
   });
   // Astra code r1 P2: the CONSTRUCTED environments, not source text. A parent env carrying the password (any letter
@@ -55,6 +55,26 @@ describe("the nav suite in the harness", () => {
       expect(leaks(launchEnv(parent))).toEqual([]);
       expect(launchEnv(parent).PATH).toBe("synthetic_path");
       expect(parent[key]).toBe(sentinel);
+    },
+  );
+  // Astra code r2: children spawned WITHOUT an explicit env (git, netstat, PowerShell, taskkill) inherit process.env,
+  // so both entry points take the controls out of process.env before anything else, and nothing reads them back from it.
+  it("takeNodeOnlyControls empties process-style env in place, any letter case, and returns the values", async () => {
+    const { takeNodeOnlyControls } = await import("../lib/sim-isolation-shared");
+    const env: Record<string, string | undefined> = { sim_nav_password_marcus: "n", Sim_Catalog_Password: "c", PATH: "p" };
+    expect(takeNodeOnlyControls(env)).toEqual({ SIM_NAV_PASSWORD_MARCUS: "n", SIM_CATALOG_PASSWORD: "c" });
+    expect(env).toEqual({ PATH: "p" });
+    expect(takeNodeOnlyControls(env)).toEqual({});
+  });
+  it.each([["scripts/sim/launch-readiness/run.ts", "export async function main(args = process.argv.slice(2)) {"],
+    ["scripts/sim/launch-readiness/target.ts", "export async function main(args = process.argv.slice(2)): Promise<number> {"]])(
+    "%s: main() takes the controls out of process.env as its first statement and never reads them from it again",
+    (file, head) => {
+      const src = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+      const body = src.slice(src.indexOf(head) + head.length);
+      const first = body.split("\n").map(l => l.trim()).find(l => l && !l.startsWith("//"));
+      expect(first).toMatch(/^(const controls = )?takeNodeOnlyControls\(process\.env\);/);
+      expect(src).not.toMatch(/process\.env(\.|\[")SIM_(NAV_PASSWORD_MARCUS|CATALOG_PASSWORD)/i);
     },
   );
   it("only the nav Playwright child gets the password, through launch's explicit extra", async () => {

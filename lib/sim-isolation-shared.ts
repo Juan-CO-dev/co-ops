@@ -103,6 +103,19 @@ export const RUNNER_PRIVATE_KEYS = ["SIM_PIN_MARCUS", "SIM_PIN_ROSA", "SIM_PIN_A
 export const NODE_ONLY_PRIVATE_CONTROLS = ["SIM_CATALOG_PASSWORD", "SIM_NAV_PASSWORD_MARCUS"] as const;
 const nodeOnlyPrivate = new Set<string>(NODE_ONLY_PRIVATE_CONTROLS);
 export function isNodeOnlyPrivateControl(key: string): boolean { return nodeOnlyPrivate.has(key.toUpperCase()); }
+/** Removes every Node-only private control from `env` IN PLACE (any letter case) and returns the values it held, by
+ * canonical name. The runner calls it on process.env first thing, so no subprocess started without an explicit env
+ * (git, netstat, PowerShell, taskkill) can inherit one (Astra code r2). */
+export function takeNodeOnlyControls(env: Record<string, string | undefined>): Partial<Record<(typeof NODE_ONLY_PRIVATE_CONTROLS)[number], string>> {
+  const taken: Partial<Record<(typeof NODE_ONLY_PRIVATE_CONTROLS)[number], string>> = {};
+  for (const key of Object.keys(env)) {
+    if (!isNodeOnlyPrivateControl(key)) continue;
+    const value = env[key];
+    if (value !== undefined) taken[key.toUpperCase() as (typeof NODE_ONLY_PRIVATE_CONTROLS)[number]] = value;
+    delete env[key];
+  }
+  return taken;
+}
 /** A copy of `env` without any Node-only private control, in any letter case. */
 export function withoutNodeOnlyControls(env: Record<string, string | undefined>): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([key]) => !isNodeOnlyPrivateControl(key))) as NodeJS.ProcessEnv;

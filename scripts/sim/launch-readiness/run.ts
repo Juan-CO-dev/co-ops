@@ -9,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { loadSimEnv } from "./env";
 import { Evidence } from "./evidence";
 import { acquire, assertHeld, release, quarantine } from "./lease.mjs";
-import { SIM_APP_ORIGIN, RUNNER_PRIVATE_KEYS, withoutNodeOnlyControls } from "../../../lib/sim-isolation-shared";
+import { SIM_APP_ORIGIN, RUNNER_PRIVATE_KEYS, takeNodeOnlyControls, withoutNodeOnlyControls } from "../../../lib/sim-isolation-shared";
 import { SIM_LOCATIONS, SIM_PERSONAS } from "../personas-shared";
 import * as driver from "../concurrency/driver.mjs";
 import { resetFixture, assertClean } from "./reset";
@@ -133,6 +133,10 @@ async function verifyDev(html: string, child: ChildProcess, started: number) {
 function requireSeparator() { return process.platform === "win32" ? "\\" : "/"; }
 
 export async function main(args = process.argv.slice(2)) {
+  // Parent-only controls leave process.env before anything is spawned: every child, with or without an explicit env
+  // (git, netstat, PowerShell, taskkill included), inherits none; the catalog contracts and the nav Playwright child
+  // get theirs from here, explicitly (Astra code r2).
+  const controls = takeNodeOnlyControls(process.env);
   const runId = randomUUID();
   let options: ReturnType<typeof parseArgs>;
   try { options = parseArgs(args); } catch { const e = new Evidence(runId, "invalid"); e.manifest.reason = "usage: --suite runner|isolation|personas|fixtures|opening|ordering|customer|catalog|nav --fixture <known-id> [--dev] [--no-restore] [--repeat N] or --restore-only <known-id>; opening, ordering, customer and nav require cold-empty; catalog requires catalog-isolated; customer, catalog and nav require production mode"; e.finalize([]); return 2; }
@@ -152,7 +156,7 @@ export async function main(args = process.argv.slice(2)) {
   try {
     acquire({ runId }); held = true;
     // Exercise the actual CLI while we hold the lease, BEFORE config or DB work.
-    const contenderEnv = withoutNodeOnlyControls(process.env);
+    const contenderEnv = withoutNodeOnlyControls(process.env); // already clean (takeNodeOnlyControls above); a second layer
     delete contenderEnv.SIM_PIN_TOMMY;
     const contender = spawnSync(process.execPath, ["--import", "tsx", resolve("scripts/sim/launch-readiness/run.ts"), "--suite", "runner", "--no-restore", "--dev"], { env: contenderEnv, shell: false, windowsHide: true, encoding: "utf8", timeout: 15_000 });
     if (contender.status !== 2 || !contender.stdout.includes(`owned by ${runId}`)) throw new Error("second runner was not refused by this lease");
@@ -246,7 +250,7 @@ export async function main(args = process.argv.slice(2)) {
         evidence.manifest.identity.locations = true; evidence.manifest.identity.personas = true;
         const catalogReport = await runCatalogContracts({ assertLease: () => assertHeld(runId),
           verifiedServer: evidence.manifest.identity.server, pin: pins.SIM_PIN_MARCUS ?? "",
-          password: process.env.SIM_CATALOG_PASSWORD ?? "" });
+          password: controls.SIM_CATALOG_PASSWORD ?? "" });
         const success = catalogReport.fails.length === 0;
         passed &&= success;
         const file = `catalog-contracts-${attempt}.json`;
@@ -300,7 +304,7 @@ export async function main(args = process.argv.slice(2)) {
           const slice = `${project}-${attempt}${shop ? `-${shop}` : ""}`;
           // Nav PR 9: SIM_NAV_PASSWORD_MARCUS (the P3 / R4 step-up) is a PARENT-ONLY control: never in .env.sim, never in
           // the app or contender environment; it reaches only the nav suite's Playwright child.
-          const navPassword: Record<string, string> = suite === "nav" && process.env.SIM_NAV_PASSWORD_MARCUS ? { SIM_NAV_PASSWORD_MARCUS: process.env.SIM_NAV_PASSWORD_MARCUS } : {};
+          const navPassword: Record<string, string> = suite === "nav" && controls.SIM_NAV_PASSWORD_MARCUS ? { SIM_NAV_PASSWORD_MARCUS: controls.SIM_NAV_PASSWORD_MARCUS } : {};
           playwright = launch(["node_modules/@playwright/test/cli.js", "test", "--config", "scripts/sim/launch-readiness/playwright.config.ts", `--project=${project}`, ...(shop ? ["--grep", ` customer ${shop} `] : [])], { ...loaded.env, ...pins, LRA_DEV: options.dev ? "1" : "0", LRA_RUN_ID: runId, LRA_SUITE: suite, LRA_FIXTURE: "cold-empty", LRA_CONFIG_ROOT: privateDir, LRA_MAIL_DIR: mailDir, [suite === "opening" ? "LRA_OPENING_SLICE" : suite === "ordering" ? "LRA_ORDERING_SLICE" : suite === "nav" ? "LRA_NAV_SLICE" : "LRA_CUSTOMER_SLICE"]: slice }, navPassword);
           const code = await new Promise<number | null>((ok, fail) => { playwright!.once("error", fail); playwright!.once("exit", ok); });
           failed ||= code !== 0;
