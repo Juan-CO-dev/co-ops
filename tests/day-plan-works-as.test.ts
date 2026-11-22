@@ -12,7 +12,8 @@ import { CGS, hm, PLAN_DATE } from "./fixtures/day-plan/build";
 import { capitolHill } from "./fixtures/day-plan/capitol-hill";
 import { pStreet } from "./fixtures/day-plan/p-street";
 
-const FILES = ["lib/day-plan-shared.ts", "lib/scheduling/catering-day-shared.ts"];
+// Nav PR 6: the loader and its pure companion join the scan (plan r3, 8.1 item 9).
+const FILES = ["lib/day-plan-shared.ts", "lib/scheduling/catering-day-shared.ts", "lib/day-plan.ts", "lib/day-plan-load-shared.ts"];
 
 function tokens(file: string): { identifiers: string[]; strings: string[] } {
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, readFileSync(file, "utf8"));

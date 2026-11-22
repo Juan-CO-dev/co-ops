@@ -2,7 +2,7 @@
  * A small chainable fake of the Supabase JS query builder for unit tests (audit W22).
  *
  * Every `from(table)` call records the chain it was built with (method + args) and resolves,
- * when awaited or terminated (`maybeSingle` / `single` / `returns` / `abortSignal` / `then`), to
+ * when awaited or terminated (`maybeSingle` / `single` / `returns` / `then`), to
  * the value `respond(call)` returns. `rpc(name, args)` is recorded the same way. No network, no
  * env: a test that reaches the real client fails on a missing variable, as vitest.config says.
  */
@@ -46,7 +46,8 @@ export function fakeSupabase(respond: Responder, rpc?: (r: FakeRpc) => { data?: 
         if (call.kind === "select" && (op === "insert" || op === "update" || op === "upsert" || op === "delete")) call.kind = op;
         return builder;
       };
-      for (const op of ["select", "insert", "update", "upsert", "delete", "eq", "neq", "in", "is", "not", "gt", "gte", "lt", "lte", "or", "order", "limit", "range", "filter", "match", "like", "ilike"]) {
+      // `abortSignal` chains (as in supabase-js), so a client wrapped by lib/pulse/abort.ts withAbort keeps building.
+      for (const op of ["select", "insert", "update", "upsert", "delete", "eq", "neq", "in", "is", "not", "gt", "gte", "lt", "lte", "or", "order", "limit", "range", "filter", "match", "like", "ilike", "abortSignal"]) {
         builder[op] = chain(op);
       }
       const terminal = (op: string) => async (...args: unknown[]) => {
@@ -56,7 +57,6 @@ export function fakeSupabase(respond: Responder, rpc?: (r: FakeRpc) => { data?: 
       builder.maybeSingle = terminal("maybeSingle");
       builder.single = terminal("single");
       builder.returns = terminal("returns");
-      builder.abortSignal = terminal("abortSignal");
       builder.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => Promise.resolve(settle()).then(resolve, reject);
       return builder;
     },

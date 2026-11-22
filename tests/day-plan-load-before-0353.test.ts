@@ -9,12 +9,17 @@
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it, vi } from "vitest";
 import { AssignmentError, loadStationDayFlags, saveStationNotPhase } from "@/lib/assignments";
+import type { ShiftBoard } from "@/lib/assignments-shared";
+import { defaultDayFactDeps, loadDayFacts, type DayFactDeps } from "@/lib/day-plan";
+import { planDay, type DayPlan, type DayPlanInput } from "@/lib/day-plan-shared";
 import { notPhaseSections, pickEffectiveClosingTemplate, type ClassificationItem, type ClosingTemplateRow } from "@/lib/day-plan-load-shared";
 import { fakeSupabase } from "./helpers/fake-supabase";
 import { pgliteClient } from "./helpers/pglite-postgrest";
 import {
-  CLOSING_MANAGER, id, LIVE_SECTIONS, liveShop, merge, readMigration, SCHEMA, seed, SHOP_C, SHOP_P, twinShapes, versionShop,
+  CLOSING_MANAGER, id, LIVE_SECTIONS, liveShop, merge, readMigration, SCHEMA, seed, SHOP_C, SHOP_P, twinShapes, V1, versionShop,
 } from "../scripts/sql-harness-0353-lib.mjs";
+import { ANA } from "./fixtures/day-plan/build";
+import { args as loaderArgs, at, okDeps, PLAN } from "./fixtures/day-plan/loader-deps";
 
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 
@@ -136,4 +141,71 @@ describe("twin: the code fallback equals the 0353 backfill", () => {
       expect(await backfilled(db, SHOP_P)).toEqual(before);
     } finally { await db.close(); }
   }, 60_000);
+});
+
+// ── The loader end to end before and after 0353 (8.5): the REAL flag read and S3a on PGlite, a board over those stations ──
+
+describe("the loader before and after 0353 (rulings 1c, B1)", () => {
+  const NOW = at("18:00");
+  /** The board over the database's stations: every floor station but Closing Manager closed by 17:30. */
+  async function boardFrom(db: PGlite, shop: string): Promise<ShiftBoard> {
+    const stations = (await db.query<{ id: string; name: string; sort: number; active: boolean; staffed: boolean }>("select id, name, sort, active, staffed from stations where location_id = $1 order by sort", [shop])).rows;
+    const positions = (await db.query<{ id: string; station_id: string; active: boolean }>("select id, station_id, active from station_positions where location_id = $1", [shop])).rows;
+    return { stationDate: PLAN, locationId: shop, date: PLAN, viewerId: ANA.userId, viewerLevel: 4, people: [], events: [], tasks: [],
+      stations: stations.map((s) => ({ id: s.id, name: s.name, nameEs: null, sort: s.sort, active: s.active, staffed: s.staffed, usuallyClosesAt: null,
+        closedAt: s.name !== CLOSING_MANAGER && s.staffed ? at("17:30").toISOString() : null,
+        positions: positions.filter((p) => p.station_id === s.id).map((p) => ({ id: p.id, stationId: s.id, name: s.name, nameEs: null, duty: null, dutyEs: null, sort: 1, active: p.active })) })) };
+  }
+  const realReads = (): DayFactDeps => ({ ...okDeps(), stationFlags: defaultDayFactDeps.stationFlags, closingClassification: defaultDayFactDeps.closingClassification,
+    templateItems: defaultDayFactDeps.templateItems, completedItems: async () => [] });
+  const floorOf = (input: DayPlanInput) => {
+    const s = input.facts.kind === "shop" && input.facts.stations.kind === "ok" ? input.facts.stations.value.stations : [];
+    return Object.fromEntries(s.map((x) => [x.name, x.floor]));
+  };
+
+  it("before: Closing Manager off the floor by the code rule and Night starts; after 0353: the same floor and plan; a GM's clear puts it back", async () => {
+    const db = await liveDb();
+    try {
+      const sb = pgliteClient(db);
+      const a = { ...loaderArgs(ANA), now: NOW, shop: { id: SHOP_P, code: "P" }, board: () => boardFrom(db, SHOP_P) };
+      const before = await loadDayFacts(sb, a, realReads());
+      expect(floorOf(before)).toMatchObject({ [CLOSING_MANAGER]: false, "Crunchy Boi Station": true, "Expo Station": true, "Prep Fridge": false });
+      const planBefore = planDay(before) as DayPlan;
+      expect(planBefore.phase.id).toBe("night");
+      // Every startsMidDay false before the apply (the engine's default trigger decides).
+      expect(before.facts.kind === "shop" && before.facts.stations.kind === "ok" && before.facts.stations.value.stations.some((s) => s.startsMidDay)).toBe(false);
+      await db.exec(M0353);
+      const after = await loadDayFacts(sb, a, realReads());
+      expect(floorOf(after)).toEqual(floorOf(before));
+      expect(planDay(after)).toEqual(planBefore);
+      const cleared = await sb.rpc("set_station_not_phase", { p_actor_id: GM, p_location_id: SHOP_P, p_station_id: P(CLOSING_MANAGER), p_on: false });
+      expect(cleared.error).toBeNull();
+      const back = await loadDayFacts(sb, a, realReads());
+      expect(floorOf(back)[CLOSING_MANAGER]).toBe(true);
+      expect((planDay(back) as DayPlan).phase.id).toBe("midday");
+    } finally { await db.close(); }
+  }, 60_000);
+
+  it.each([["a", { "Expo Station": false, [CLOSING_MANAGER]: false }], ["b", { "Expo Station": true, [CLOSING_MANAGER]: true }]] as const)(
+    "ruling B1, V1 instance / V2 effective (%s): classified by V2, sectionsLeft counted on V1, and the apply moves nothing", async (variant, want) => {
+      const db = new PGlite();
+      try {
+        await db.exec(SCHEMA);
+        await seed(db, versionShop(variant, { today: PLAN }));
+        const sb = pgliteClient(db);
+        const v1Items = (await db.query<{ id: string }>("select id from checklist_template_items where template_id = $1 and active order by id", [V1])).rows.map((r) => r.id);
+        const stationCount = new Set((await db.query<{ station: string }>("select station from checklist_template_items where template_id = $1 and active", [V1])).rows.map((r) => r.station)).size;
+        const deps: DayFactDeps = { ...realReads(),
+          dayInstance: async (_s, x) => (x.type === "closing" && x.date === PLAN ? { id: "inst", template_id: V1, status: "open", created_at: null, confirmed_at: null, confirmed_by: null } : null),
+          completedItems: async () => v1Items.slice(0, 3) };
+        const a = { ...loaderArgs(ANA), now: NOW, shop: { id: SHOP_P, code: "P" }, board: () => boardFrom(db, SHOP_P) };
+        const before = await loadDayFacts(sb, a, deps);
+        expect(floorOf(before)).toMatchObject(want);
+        // Progress on V1's OWN items: the first section's three items are done, every other V1 section is left.
+        const left = before.facts.kind === "shop" && before.facts.closing.kind === "ok" ? before.facts.closing.value.sectionsLeft : null;
+        expect(left).toBe(stationCount - 1);
+        await db.exec(M0353);
+        expect(floorOf(await loadDayFacts(sb, a, deps))).toEqual(floorOf(before));
+      } finally { await db.close(); }
+    }, 60_000);
 });

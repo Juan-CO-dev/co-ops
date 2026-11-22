@@ -3,15 +3,26 @@
  * the mappers, the B1 rule in code, the effective template pick, the sections-left count, which facts a viewer needs,
  * and the social media manager's helpers. The composition (lib/day-plan.ts) follows below.
  */
-import { describe, expect, it } from "vitest";
-import type { Station, StationEvent, TaskAssignment } from "@/lib/assignments-shared";
+import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ShiftBoard, Station, StationEvent, TaskAssignment } from "@/lib/assignments-shared";
+import { DAY_FACT_DEADLINE_MS, DAY_OPEN_ORDER, defaultDayFactDeps, loadDayFacts, type DayFactDeps, type DayFactsArgs } from "@/lib/day-plan";
+import { planDay, type DayPlan, type DayPlanInput, type ShopFacts } from "@/lib/day-plan-shared";
 import {
   cashDay, cateringOrders, checklistDay, dayAssignments, dayStations, factsNeeded, firstName, midDayDay, notPhaseSections, outTimes,
   pickEffectiveClosingTemplate, pmDay, sectionsLeft, shopHoursFrom, smmChecklistTasks, smmStationRef, smmTaskState,
 } from "@/lib/day-plan-load-shared";
 import { etWallQ, eventQFromWindow, ezcaterCancelled } from "@/lib/scheduling/inputs-shared";
 import { SCHEDULE_STRUCTURE_DEFAULTS } from "@/lib/scheduling/structure-shared";
-import { ALL_VIEWERS } from "./fixtures/day-plan/build";
+import { ALL_VIEWERS, ANA } from "./fixtures/day-plan/build";
+import { args, at, board, ev, MID_DAY, NO_CLIENT, okDeps, OPENING, PLAN, SHOP, STATIONS, TOMORROW, withDeps, YESTERDAY } from "./fixtures/day-plan/loader-deps";
+import { stripComments } from "./fixtures/schedule/no-notify-closure";
+import { fakeSupabase } from "./helpers/fake-supabase";
+
+const shop = (input: DayPlanInput): ShopFacts => {
+  if (input.facts.kind !== "shop") throw new Error("shop facts expected");
+  return input.facts;
+};
 
 const RULES = { eventQFromWindow, etWallQ, ezcaterCancelled };
 const pos = (stationId: string, active = true) => ({ id: `${stationId}-p`, stationId, name: "Spot", nameEs: null, duty: null, dutyEs: null, sort: 1, active });
@@ -172,5 +183,304 @@ describe("pure companion: the social media manager", () => {
     expect(smmStationRef([ev("9", { stationId: "a" }), ev("10", { kind: "release", releaseReason: "station_closed", priorPositionId: "p" })], "s")).toEqual({ priorPositionId: "p" });
     expect(smmStationRef([ev("1", { stationId: "a" }), ev("2", { kind: "release", releaseReason: "clocked_out", priorPositionId: "p" })], "s")).toBeNull();
     expect(smmStationRef([], "s")).toBeNull();
+  });
+});
+
+// ══ The composition: lib/day-plan.ts loadDayFacts ══════════════════════════════════════════════════════════════════════
+
+describe("loadDayFacts: the all-ok baseline", () => {
+  it("fills every fact, each with the date its read used (C5)", async () => {
+    const input = await loadDayFacts(NO_CLIENT, args(ANA), okDeps());
+    expect(input.planDate).toBe(PLAN);
+    expect(input.nowMin).toBe(13 * 60 + 45);
+    const f = shop(input);
+    expect(f.hours).toMatchObject({ kind: "ok", value: { dayPrepStartQ: 28 } });
+    expect(f.closing).toEqual({ kind: "ok", value: { forDate: PLAN, status: "open", phase1At: null, finishedAt: null, finishedByName: null, sectionsLeft: 3 } });
+    expect(f.opening).toEqual({ kind: "ok", value: { forDate: PLAN, status: "confirmed", phase1At: "2026-11-18T12:40:00.000Z", finishedAt: OPENING.confirmed_at, finishedByName: "Ana", sectionsLeft: null } });
+    expect(f.yesterdayClosing).toMatchObject({ kind: "ok", value: { forDate: YESTERDAY, status: "confirmed", finishedByName: "Mia" } });
+    expect(f.midDay).toEqual({ kind: "ok", value: { forDate: PLAN, instances: [{ status: "confirmed", finishedAt: MID_DAY[0]!.confirmed_at, finishedByName: "Luis" }] } });
+    expect(f.pm).toEqual({ kind: "ok", value: { forDate: PLAN, state: "draft", at: null, byName: null } });
+    expect(f.cateringToday).toMatchObject({ kind: "ok", value: { forDate: PLAN, orders: [{ id: "lead-1", state: "out", outAt: "2026-11-18T16:20:00.000Z" }, { id: "ez-1", state: "cancelled" }] } });
+    expect(f.cateringTomorrow).toMatchObject({ kind: "ok", value: { forDate: TOMORROW, orders: [{ id: "lead-2", state: "to_go_out" }] } });
+    expect(f.flaggedLines).toEqual({ kind: "ok", value: { today: 2, tomorrow: 1 } });
+    expect(f.assignments).toMatchObject({ kind: "ok", value: { forDate: PLAN, scope: "all_tasks" } });
+    expect(f.myStation).toEqual({ kind: "ok", value: { stationId: "crunchy" } });
+    expect(f.counts).toEqual({ kind: "ok", value: { inProgress: false } });
+    expect(f.holdsStationOnStationDay).toBe(true);
+    expect(f.ordering).toMatchObject({ kind: "ok", value: { forDate: PLAN } });
+    expect(f.receiving).toMatchObject({ kind: "ok", value: { forDate: PLAN, openOrders: [{ id: "po-1", totalCents: null, unpricedLines: 0, placedByName: null }] } });
+    // Stations: active rows only; Closing Manager off the floor by the code rule (not installed); the raw usual time.
+    expect(f.stations).toEqual({ kind: "ok", value: { stationDate: PLAN, stations: [
+      { id: "crunchy", name: "Crunchy Boi Station", nameEs: "Crunchy Boi Station ES", sort: 1, floor: true, startsMidDay: false, usuallyClosesAt: "14:00:00", closedAt: null },
+      { id: "expo", name: "Expo Station", nameEs: "Expo Station ES", sort: 2, floor: true, startsMidDay: false, usuallyClosesAt: null, closedAt: "2026-11-18T18:30:00.000Z" },
+      { id: "fridge", name: "Prep Fridge", nameEs: "Prep Fridge ES", sort: 3, floor: false, startsMidDay: false, usuallyClosesAt: null, closedAt: null },
+      { id: "cm", name: "Closing Manager", nameEs: "Closing Manager ES", sort: 4, floor: false, startsMidDay: false, usuallyClosesAt: null, closedAt: null },
+    ] } });
+  });
+
+  it("C5: every day-keyed fact carries the date its read was called with", async () => {
+    const seen: Array<[string, string]> = [];
+    const deps = withDeps({
+      dayInstance: async (sb, a) => { seen.push([a.type, a.date]); return okDeps().dayInstance(sb, a); },
+      prepInstances: async (sb, a) => { seen.push([a.subtype, a.date]); return okDeps().prepInstances(sb, a); },
+      cashReport: async (_sb, _s, date) => { seen.push(["cash", date]); return null; },
+      pmReport: async (_sb, _s, date) => { seen.push(["pm", date]); return null; },
+      booked: async (sb, s, dates) => { seen.push(["booked", dates.join(",")]); return okDeps().booked(sb, s, dates); },
+    });
+    const f = shop(await loadDayFacts(NO_CLIENT, args(ANA), deps));
+    expect(seen).toEqual(expect.arrayContaining([["closing", PLAN], ["opening", PLAN], ["closing", YESTERDAY], ["am_prep", PLAN], ["mid_day_prep", PLAN],
+      ["cash", PLAN], ["pm", PLAN], ["booked", `${PLAN},${TOMORROW}`]]));
+    const forDate = (x: unknown) => (x as { value?: { forDate?: string } }).value?.forDate;
+    expect([f.closing, f.opening, f.amPrep, f.midDay, f.cash, f.pm, f.ordering, f.receiving, f.cateringToday].map(forDate)).toEqual(Array(9).fill(PLAN));
+    expect(forDate(f.yesterdayClosing)).toBe(YESTERDAY);
+    expect(forDate(f.cateringTomorrow)).toBe(TOMORROW);
+  });
+});
+
+/** Every Fact field the loader fills (assignments / stations / myStation included). */
+const FIELDS = ["hours", "stations", "opening", "closing", "amPrep", "midDay", "cash", "pm", "ordering", "rhythm", "receiving",
+  "cateringToday", "cateringTomorrow", "flaggedLines", "assignments", "myStation", "counts", "yesterdayClosing"] as const;
+const boom = async (): Promise<never> => { throw new Error("read failed"); };
+const never = (): Promise<never> => new Promise<never>(() => undefined);
+
+describe("loadDayFacts: each source failing alone fails exactly its facts (8.1 item 1)", () => {
+  type Case = [string, Partial<DayFactDeps> | ((a: DayFactsArgs) => DayFactsArgs), readonly (typeof FIELDS)[number][]];
+  const failInstance = (type: "opening" | "closing", date: string): Partial<DayFactDeps> =>
+    ({ dayInstance: async (sb, a) => (a.type === type && a.date === date ? boom() : okDeps().dayInstance(sb, a)) });
+  const failPrep = (subtype: string): Partial<DayFactDeps> =>
+    ({ prepInstances: async (sb, a) => (a.subtype === subtype ? boom() : okDeps().prepInstances(sb, a)) });
+  const CASES: Case[] = [
+    ["H1", { shopDay: boom }, ["hours"]],
+    ["S1 (the board)", (a) => ({ ...a, board: boom }), ["stations", "assignments", "myStation"]],
+    ["S2", { stationFlags: boom }, ["stations"]],
+    ["S3a", { closingClassification: boom }, ["stations"]],
+    ["K1", failInstance("closing", PLAN), ["closing"]],
+    ["K3", failInstance("opening", PLAN), ["opening"]],
+    ["K5", failInstance("closing", YESTERDAY), ["yesterdayClosing"]],
+    ["K6", failPrep("am_prep"), ["amPrep"]],
+    ["K7", failPrep("mid_day_prep"), ["midDay"]],
+    ["P1", { cashReport: boom }, ["cash"]],
+    ["P2", { pmReport: boom }, ["pm"]],
+    ["O1", { vendors: boom }, ["ordering", "receiving"]],
+    ["O2", { cutoffs: boom }, ["ordering"]],
+    ["O3", { recentPos: boom }, ["ordering"]],
+    ["Y1", { rhythm: boom }, ["rhythm"]],
+    ["R1", { halfLogged: boom }, ["receiving"]],
+    ["R2", { openOrders: boom }, ["receiving"]],
+    ["R3", { completedOn: boom }, ["receiving"]],
+    ["C1", { booked: boom }, ["cateringToday", "cateringTomorrow"]],
+    ["C2", { ezcater: boom }, ["cateringToday", "cateringTomorrow"]],
+    ["F1", { flaggedLines: boom }, ["flaggedLines"]],
+  ];
+  it.each(CASES)("%s", async (_name, change, failedFields) => {
+    const base = shop(await loadDayFacts(NO_CLIENT, args(ANA), okDeps()));
+    const a = typeof change === "function" ? change(args(ANA)) : args(ANA);
+    const deps = typeof change === "function" ? okDeps() : withDeps(change);
+    const got = shop(await loadDayFacts(NO_CLIENT, a, deps));
+    for (const field of FIELDS) {
+      if (failedFields.includes(field)) expect(got[field], field).toEqual({ kind: "failed" });
+      else expect(got[field], field).toEqual(base[field]);
+    }
+    if (failedFields.includes("myStation")) expect(got.holdsStationOnStationDay).toBe(false);
+    else expect(got.holdsStationOnStationDay).toBe(base.holdsStationOnStationDay);
+  });
+
+  const DEGRADES: Array<[string, Partial<DayFactDeps>, (f: ShopFacts) => void]> = [
+    ["K2", { completedItems: boom }, (f) => expect(f.closing).toMatchObject({ kind: "ok", value: { status: "open", sectionsLeft: null } })],
+    ["S3b", { templateItems: boom }, (f) => { expect(f.closing).toMatchObject({ kind: "ok", value: { sectionsLeft: null } }); expect(f.stations.kind).toBe("ok"); }],
+    ["K4", { phase1At: boom }, (f) => expect(f.opening).toMatchObject({ kind: "ok", value: { status: "confirmed", phase1At: null, finishedByName: "Ana" } })],
+    ["K8", { userNames: boom }, (f) => {
+      expect(f.opening).toMatchObject({ kind: "ok", value: { finishedByName: null } });
+      expect(f.midDay).toMatchObject({ kind: "ok", value: { instances: [{ finishedByName: null }] } });
+    }],
+    ["C3", { outEvents: boom }, (f) => expect(f.cateringToday).toMatchObject({ kind: "ok", value: { orders: [{ id: "lead-1", state: "out", outAt: null }, { id: "ez-1" }] } })],
+  ];
+  it.each(DEGRADES)("degrades %s: every fact stays ok, only its field blanks", async (_name, change, check) => {
+    const f = shop(await loadDayFacts(NO_CLIENT, args(ANA), withDeps(change)));
+    for (const field of FIELDS) expect(f[field].kind, field).not.toBe("failed");
+    check(f);
+  });
+});
+
+describe("loadDayFacts: the deadline race (ruling B2; 8.1 items 1 and 12)", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+  const run = async (a: DayFactsArgs, deps: DayFactDeps) => {
+    let done = false;
+    const p = loadDayFacts(NO_CLIENT, a, deps).then((r) => { done = true; return r; });
+    await vi.advanceTimersByTimeAsync(DAY_FACT_DEADLINE_MS - 1);
+    const before = done;
+    await vi.advanceTimersByTimeAsync(1);
+    return { before, input: await p };
+  };
+
+  it("(a) a board that never settles: the three board facts fail at 6 s, the rest resolve, the board is never aborted", async () => {
+    let resolvePage: (b: ShiftBoard) => void = () => undefined;
+    const pageBoard = new Promise<ShiftBoard>((r) => { resolvePage = r; });
+    const boardFn = vi.fn((...seen: unknown[]) => { void seen; return pageBoard; });
+    const { before, input } = await run(args(ANA, { board: boardFn }), okDeps());
+    expect(before).toBe(false);
+    const f = shop(input);
+    expect([f.stations, f.assignments, f.myStation]).toEqual([{ kind: "failed" }, { kind: "failed" }, { kind: "failed" }]);
+    expect(f.holdsStationOnStationDay).toBe(false);
+    expect(f.closing.kind).toBe("ok");
+    expect(f.hours.kind).toBe("ok");
+    expect(boardFn).toHaveBeenCalledTimes(1);
+    expect(boardFn.mock.calls[0]).toEqual([]); // no signal is ever handed to the page's promise
+    resolvePage(board());
+    await expect(pageBoard).resolves.toMatchObject({ stationDate: PLAN }); // the page can still await it
+  });
+
+  it("(b) a dependency that ignores the abort signal and answers at 9 s: its fact fails at 6 s, the late answer is discarded", async () => {
+    const late = withDeps({ flaggedLines: () => new Promise((r) => { setTimeout(() => r({ [PLAN]: 99 }), 9_000); }) });
+    const { before, input } = await run(args(ANA), late);
+    expect(before).toBe(false);
+    expect(shop(input).flaggedLines).toEqual({ kind: "failed" });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(shop(input).flaggedLines).toEqual({ kind: "failed" });
+  });
+
+  it("(c) three sequential pages of 2.5 s each (7.5 s): the fact fails at 6 s though no single read passed the abort", async () => {
+    const page = () => new Promise<void>((r) => { setTimeout(r, 2_500); });
+    const deps = withDeps({ halfLogged: async () => { await page(); await page(); await page(); return []; } });
+    const { input } = await run(args(ANA), deps);
+    expect(shop(input).receiving).toEqual({ kind: "failed" });
+    expect(shop(input).ordering.kind).toBe("ok");
+  });
+
+  it("a dependency that hangs fails its fact alone; (d) no timer is left once the lanes settle", async () => {
+    const hung = shop((await run(args(ANA), withDeps({ shopDay: never }))).input);
+    expect(hung.hours).toEqual({ kind: "failed" });
+    expect(hung.closing.kind).toBe("ok");
+    vi.clearAllTimers();
+    const quick = loadDayFacts(NO_CLIENT, args(ANA), okDeps());
+    await vi.advanceTimersByTimeAsync(0);
+    await quick;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("the deadline aborts the lanes' query signal", async () => {
+    let signal: AbortSignal | undefined;
+    const builder = { abortSignal: (s: AbortSignal) => { signal = s; return builder; }, then: (res: (v: unknown) => unknown) => never().then(res) };
+    const client = { from: () => ({ select: () => builder }) };
+    const deps = withDeps({ shopDay: async (sb) => { await (sb as unknown as typeof client).from().select(); return never(); } });
+    const p = loadDayFacts(client as never, args(ANA), deps);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(DAY_FACT_DEADLINE_MS);
+    await p;
+    expect(signal?.aborted).toBe(true);
+  });
+});
+
+describe("loadDayFacts: the clock, the board, the raw time, another day (C2, C3, C4)", () => {
+  it("C2: one operationalNow, no clock read in lib/day-plan.ts; a fixed now gives the exact plan date and minutes", async () => {
+    const code = stripComments(readFileSync("lib/day-plan.ts", "utf8"));
+    expect(code.match(/operationalNow\(/g)).toHaveLength(1);
+    expect(code).not.toMatch(/new Date\(|Date\.now\(/);
+    const input = await loadDayFacts(NO_CLIENT, args(ANA, { now: at("00:30", "2026-11-19") }), okDeps());
+    expect([input.planDate, input.nowMin]).toEqual(["2026-11-19", 30]);
+  });
+
+  it("C3: a release-shaped board (station_closed, priorPositionId) gives the card's station, not null", async () => {
+    const released = board({ events: [ev("1", { stationId: "crunchy", positionId: "crunchy-p" }),
+      ev("2", { kind: "release", stationId: null, releaseReason: "station_closed", priorPositionId: "crunchy-p" })],
+      stations: STATIONS.map((s) => (s.id === "crunchy" ? { ...s, closedAt: "2026-11-18T19:00:00.000Z" } : s)) });
+    const f = shop(await loadDayFacts(NO_CLIENT, args(ANA, { board: async () => released }), okDeps()));
+    expect(f.myStation).toEqual({ kind: "ok", value: { stationId: "crunchy" } });
+    expect(f.holdsStationOnStationDay).toBe(false);
+  });
+
+  it("C4: usuallyClosesAt in raw, out raw; the only mention in the loader is the copy; no cutoffMinutes", async () => {
+    const f = shop(await loadDayFacts(NO_CLIENT, args(ANA), okDeps()));
+    expect(f.stations.kind === "ok" && f.stations.value.stations[0]!.usuallyClosesAt).toBe("14:00:00");
+    const loader = stripComments(readFileSync("lib/day-plan.ts", "utf8"));
+    const shared = stripComments(readFileSync("lib/day-plan-load-shared.ts", "utf8"));
+    expect(loader).not.toContain("usuallyClosesAt");
+    expect(shared.match(/usuallyClosesAt/g)).toEqual(["usuallyClosesAt", "usuallyClosesAt"]);
+    expect(shared).toContain("usuallyClosesAt: s.usuallyClosesAt ?? null");
+    for (const src of [loader, shared]) expect(src).not.toContain("cutoffMinutes");
+  });
+
+  it("another_day: at 00:30 ET with the board's stationDate = yesterday; every other fact on the plan date", async () => {
+    const a = args(ANA, { now: at("00:30", TOMORROW), board: async () => board({ stationDate: PLAN, date: TOMORROW }) });
+    const f = shop(await loadDayFacts(NO_CLIENT, a, okDeps()));
+    expect(f.stations).toEqual({ kind: "another_day", stationDate: PLAN });
+    expect(f.closing).toMatchObject({ kind: "ok", value: { forDate: TOMORROW } });
+    expect(f.assignments).toMatchObject({ kind: "ok", value: { forDate: TOMORROW } });
+    const missing = shop(await loadDayFacts(NO_CLIENT, args(ANA, { board: async () => board({ stationDate: undefined }) }), okDeps()));
+    expect(missing.stations).toEqual({ kind: "failed" });
+  });
+});
+
+describe("loadDayFacts: the flags and B1 (rulings 1c, B1)", () => {
+  it("installed: the column decides (not_phase true → off the floor; false → isFloorStation even with references); S3a never issued", async () => {
+    const classification = vi.fn(okDeps().closingClassification);
+    const deps = withDeps({ stationFlags: async () => ({ installed: true, midDayStationId: "expo", notPhaseIds: new Set(["crunchy"]) }), closingClassification: classification });
+    const f = shop(await loadDayFacts(NO_CLIENT, args(ANA), deps));
+    const rows = f.stations.kind === "ok" ? f.stations.value.stations : [];
+    expect(rows.map((s) => [s.id, s.floor, s.startsMidDay])).toEqual([["crunchy", false, false], ["expo", true, true], ["fridge", false, false], ["cm", true, false]]);
+    expect(classification).not.toHaveBeenCalled();
+  });
+
+  it("not installed: planDay picks the earliest-usual-time trigger (the engine's default)", async () => {
+    const open = board({ stations: STATIONS.map((s) => ({ ...s, closedAt: null })) });
+    const p = planDay(await loadDayFacts(NO_CLIENT, args(ANA, { now: at("14:05"), board: async () => open }), okDeps())) as DayPlan;
+    expect(p.phase).toMatchObject({ id: "midday", decidedBy: "clock" });
+    expect(p.phase.since?.params.station).toMatchObject({ en: "Crunchy Boi Station" });
+  });
+
+  it("an inactive marked station is not sent; not installed: every startsMidDay false and the code rule decides", async () => {
+    const marked = shop(await loadDayFacts(NO_CLIENT, args(ANA), withDeps({ stationFlags: async () => ({ installed: true, midDayStationId: "gone", notPhaseIds: new Set<string>() }) })));
+    expect(marked.stations.kind === "ok" && marked.stations.value.stations.some((s) => s.id === "gone" || s.startsMidDay)).toBe(false);
+    const fallback = shop(await loadDayFacts(NO_CLIENT, args(ANA), okDeps()));
+    expect(fallback.stations.kind === "ok" && fallback.stations.value.stations.filter((s) => s.startsMidDay)).toEqual([]);
+  });
+});
+
+describe("loadDayFacts: ruling 7 and SCH through the loader (8.1 items 10, 11)", () => {
+  it("an auto_finalized PM report → submitted + autoFinalized, and planDay's PM item is done with autoFinalized true", async () => {
+    const deps = withDeps({ pmReport: async () => ({ status: "auto_finalized", submitted_at: "2026-11-19T03:00:00.000Z", submitted_by: null }),
+      cashReport: async () => ({ signed_at: "2026-11-19T02:00:00.000Z", signed_by: "u-ana" }) });
+    const input = await loadDayFacts(NO_CLIENT, args(ANA, { now: at("22:30") }), deps);
+    expect(shop(input).pm).toEqual({ kind: "ok", value: { forDate: PLAN, state: "submitted", at: "2026-11-19T03:00:00.000Z", byName: null, autoFinalized: true } });
+    const plan = planDay(input) as DayPlan;
+    expect(plan.items.find((i) => i.id === "pm_report")?.done).toEqual({ at: "2026-11-19T03:00:00.000Z", byName: null, autoFinalized: true });
+    expect(plan.items.find((i) => i.id === "cash")?.done?.autoFinalized).toBe(false);
+  });
+
+  it("hours.dayPrepStartQ = the shop day's prepStartQ, for a saved structure and for the defaults (the real H1 read)", async () => {
+    const saved = { ...SCHEDULE_STRUCTURE_DEFAULTS, shopDay: { ...SCHEDULE_STRUCTURE_DEFAULTS.shopDay, prepStartQ: 27 } };
+    const savedClient = fakeSupabase((c) => (c.table === "schedule_structures" ? { data: [{ id: "s1", structure: saved, created_at: "x" }] } : { data: [] }));
+    expect(await defaultDayFactDeps.shopDay(savedClient.client as never, SHOP.id)).toMatchObject({ source: "saved", dayPrepStartQ: 27 });
+    const none = fakeSupabase(() => ({ data: [] }));
+    expect(await defaultDayFactDeps.shopDay(none.client as never, SHOP.id)).toMatchObject({ source: "defaults", dayPrepStartQ: SCHEDULE_STRUCTURE_DEFAULTS.shopDay.prepStartQ });
+  });
+});
+
+describe("loadDayFacts: everything down (ruling B5; 8.1 item 2), on the REAL loader output", () => {
+  it("every dependency and the board fail: counts stays the constant ok, and planDay says day.fail.all with the fixed order", async () => {
+    const all = Object.fromEntries(Object.keys(okDeps()).map((k) => [k, boom])) as unknown as DayFactDeps;
+    const input = await loadDayFacts(NO_CLIENT, args(ANA, { board: boom }), all);
+    const f = shop(input);
+    expect(f.counts).toEqual({ kind: "ok", value: { inProgress: false } });
+    for (const field of FIELDS) if (field !== "counts") expect(f[field], field).toEqual({ kind: "failed" });
+    const plan = planDay(input) as DayPlan;
+    expect(plan.notes.map((n) => n.reason.key)).toEqual(["day.fail.all"]);
+    expect(plan.items.map((i) => i.id)).toEqual(["opening", "closing", "mid_day_prep", "catering_today", "ordering", "receiving", "am_prep", "cash", "pm_report", "counts"]);
+    for (const i of plan.items) expect(i.state, i.id).toBe("unknown");
+    expect(JSON.stringify(plan)).not.toMatch(/day\.reason\.(ordering|receiving|catering)\.none|day\.empty\.crew/);
+  });
+});
+
+describe("loadDayFacts: source guards (8.1 item 9)", () => {
+  it("lib/day-plan.ts imports server-only first; the open-order list is the digest's", () => {
+    const src = readFileSync("lib/day-plan.ts", "utf8");
+    expect(stripComments(src).trimStart().startsWith('import "server-only";')).toBe(true);
+    expect(readFileSync("lib/report-digests-v2-shared.ts", "utf8")).toContain(`const OPEN_ORDER = new Set(${JSON.stringify([...DAY_OPEN_ORDER]).replace(/,/g, ", ")});`);
+  });
+  it("the engine never reads the PoFact money fields the loader fills null / 0 / null", () => {
+    const engine = stripComments(readFileSync("lib/day-plan-shared.ts", "utf8"));
+    for (const k of ["totalCents", "unpricedLines", "placedByName"]) expect(engine).not.toContain(k);
   });
 });
