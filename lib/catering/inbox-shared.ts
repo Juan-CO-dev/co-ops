@@ -22,6 +22,9 @@ export function canReadCateringInbox(actor: InboxReader, locationId: string | nu
     canReadCateringContact(actor, locationId);
 }
 export const canAssignCateringInbox = canReadCateringInbox;
+/** The dispositions `inboxGroup` puts in `needs_reply` (nav PR 8: the Dashboard counts exactly these; a test pins the
+ *  equality with `inboxGroup`). A transport row with no child is `recorded`, so it is in this group too. */
+export const INBOX_NEEDS_REPLY_DISPOSITIONS = ["recorded", "needs_human"] as const satisfies readonly InboxDisposition[];
 export function inboxGroup(disposition: InboxDisposition): InboxGroup {
   switch (disposition) {
     case "drafted": return "drafted";

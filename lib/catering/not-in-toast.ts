@@ -8,7 +8,7 @@ import { canReadCateringContact } from "./ezcater-detail-shared";
 import { CateringPipelineError, PIPELINE_READ_MIN } from "./pipeline";
 import { etClock } from "@/lib/report-digests-shared";
 import { toastRingTiming, type NotInToastOrder } from "./not-in-toast-shared";
-import { loadHouseSuggestions, readHouseNotInToast } from "./catering-toast";
+import { loadHouseSuggestions, readHouseNotInToast, readHouseNotInToastWithState, type HouseReconciliationState } from "./catering-toast";
 import type { HouseSuggestions } from "./catering-toast-shared";
 
 type Sb = ReturnType<typeof getServiceRoleClient>;
@@ -20,16 +20,32 @@ const COLUMNS = "order_id,lead_id,location_id,event_date,order_number,handoff_ti
  * consumers (pipeline, pulse, both digests) list them; a shop that is off reads exactly what it read before. */
 export async function readNotInToast(sb: Sb, locationIds: readonly string[], dates: { from?: string; through: string }): Promise<NotInToastOrder[]> {
   const rows: NotInToastOrder[] = [];
-  for (const locationId of new Set(locationIds)) {
-    rows.push(...await selectAllRows<NotInToastOrder>((from, to) => {
-      let q = sb.from("ezcater_reconciliation_status").select(COLUMNS)
-        .eq("location_id", locationId).eq("status", "not_rung_in_toast").lte("event_date", dates.through);
-      if (dates.from) q = q.gte("event_date", dates.from);
-      return q.order("event_date").order("order_id").range(from, to);
-    }));
-  }
+  for (const locationId of new Set(locationIds)) rows.push(...await readEzcaterNotInToast(sb, locationId, dates));
   rows.push(...await readHouseNotInToast(sb, locationIds, dates));
   return rows;
+}
+
+/** The ezCater half for one shop: the view's `not_rung_in_toast` rows. */
+function readEzcaterNotInToast(sb: Sb, locationId: string, dates: { from?: string; through: string }): Promise<NotInToastOrder[]> {
+  return selectAllRows<NotInToastOrder>((from, to) => {
+    let q = sb.from("ezcater_reconciliation_status").select(COLUMNS)
+      .eq("location_id", locationId).eq("status", "not_rung_in_toast").lte("event_date", dates.through);
+    if (dates.from) q = q.gte("event_date", dates.from);
+    return q.order("event_date").order("order_id").range(from, to);
+  });
+}
+
+/**
+ * Nav PR 8 (plan r2 2.16, A6; lead rulings r2 B1): one shop's not-rung list for the Dashboard's catering block, WITH
+ * whether its house orders are checked at all. The block may say "no orders are waiting to be rung" only when `house`
+ * is `on`; otherwise it speaks for ezCater only and says house orders are not checked. The list holds only what the
+ * reconciliation lists as not rung: it never proves every order is in Toast.
+ */
+export async function readNotInToastScoped(sb: Sb, locationId: string, dates: { from?: string; through: string }):
+  Promise<{ rows: NotInToastOrder[]; house: HouseReconciliationState }> {
+  const ezcater = await readEzcaterNotInToast(sb, locationId, dates);
+  const house = await readHouseNotInToastWithState(sb, locationId, dates);
+  return { rows: [...ezcater, ...house.rows], house: house.house };
 }
 
 /** `suggestion` exists on house rows only; null = the suggestion read failed (the row stays listed). */

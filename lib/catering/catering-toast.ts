@@ -36,26 +36,44 @@ export async function shopSettings(sb: Sb, locationId: string): Promise<Catering
   return row ? { enabled: row.enabled === true, includeToastOriginLeads: row.include_toast_origin_leads === true } : null;
 }
 
-/** The house half of the not-rung seam. Same date contract as readNotInToast. */
+/** Whether a shop's house orders are checked against Toast at all: `on` (its settings row is enabled), `off` (no
+ *  enabled row: the default) or `not_installed` (0344 is not applied). */
+export type HouseReconciliationState = "on" | "off" | "not_installed";
+
+/**
+ * The house half of the not-rung seam for ONE shop, WITH whether that shop's house orders are checked at all (nav PR 8,
+ * A6): a completeness line may speak for house orders only when this says `on`. Same date contract as readNotInToast.
+ * The rows are only the leads the reconciliation lists as `not_rung_in_toast`; an order it treats as `no_ring_expected`
+ * is not among them, so an empty list never proves every order is in Toast (lead rulings r2, B1).
+ */
+export async function readHouseNotInToastWithState(sb: Sb, locationId: string, dates: { from?: string; through: string }):
+  Promise<{ rows: NotInToastOrder[]; house: HouseReconciliationState }> {
+  try {
+    const settings = await shopSettings(sb, locationId);
+    if (!settings) return { rows: [], house: "off" };
+    const rows = await selectAllRows<HouseStatusRow>(async (from, to) => {
+      let q = sb.from("catering_reconciliation_status").select(HOUSE_STATUS_COLUMNS)
+        .eq("location_id", locationId).eq("status", "not_rung_in_toast").lte("event_date", dates.through);
+      if (dates.from) q = q.gte("event_date", dates.from);
+      const res = await q.order("event_date").order("lead_id").range(from, to);
+      if (res.error) raise(res.error);
+      return res;
+    });
+    return { rows: rows.filter((row) => houseRowListed(row, settings)).map(houseNotInToastOrder), house: "on" };
+  } catch (error) {
+    if (error instanceof CateringToastNotInstalled) return { rows: [], house: "not_installed" };
+    throw error;
+  }
+}
+
+/** The house half of the not-rung seam. Same date contract as readNotInToast. A loop over the per-shop read: 0344 not
+ *  installed = no house rows at all (as before: the first shop that finds it missing ends the read with []). */
 export async function readHouseNotInToast(sb: Sb, locationIds: readonly string[], dates: { from?: string; through: string }): Promise<NotInToastOrder[]> {
   const out: NotInToastOrder[] = [];
-  try {
-    for (const locationId of new Set(locationIds)) {
-      const settings = await shopSettings(sb, locationId);
-      if (!settings) continue;
-      const rows = await selectAllRows<HouseStatusRow>(async (from, to) => {
-        let q = sb.from("catering_reconciliation_status").select(HOUSE_STATUS_COLUMNS)
-          .eq("location_id", locationId).eq("status", "not_rung_in_toast").lte("event_date", dates.through);
-        if (dates.from) q = q.gte("event_date", dates.from);
-        const res = await q.order("event_date").order("lead_id").range(from, to);
-        if (res.error) raise(res.error);
-        return res;
-      });
-      out.push(...rows.filter((row) => houseRowListed(row, settings)).map(houseNotInToastOrder));
-    }
-  } catch (error) {
-    if (error instanceof CateringToastNotInstalled) return [];
-    throw error;
+  for (const locationId of new Set(locationIds)) {
+    const one = await readHouseNotInToastWithState(sb, locationId, dates);
+    if (one.house === "not_installed") return [];
+    out.push(...one.rows);
   }
   return out;
 }
