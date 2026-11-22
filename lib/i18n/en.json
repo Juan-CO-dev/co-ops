@@ -4038,6 +4038,7 @@
   "dashboard.strip.labor_day": "Labor % ({day})",
   "dashboard.strip.labor_loaded": "Fully loaded",
   "dashboard.strip.labor_pure": "Pure hourly",
+  "dashboard.strip.labor_loading": "Loading labor…",
   "dashboard.strip.catering": "Catering today",
   "dashboard.strip.catering_count_one": "1 order",
   "dashboard.strip.catering_count_other": "{n} orders",

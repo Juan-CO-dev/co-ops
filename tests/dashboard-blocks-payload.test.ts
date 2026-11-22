@@ -17,7 +17,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, isValidElement, type ReactNode } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { prerender } from "react-dom/static.edge";
 import { TranslationProvider } from "@/lib/i18n/provider";
 
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -108,10 +108,16 @@ async function installSpies() {
 async function pageTree(loc = A) {
   return DashboardPage({ searchParams: Promise.resolve({ loc }) });
 }
-function render(tree: unknown): string {
+/** The page's markup with every Suspense boundary streamed to completion (lead rulings r3: the labor cell streams), so
+ *  the streamed child is checked too. React's boundary and text-separator comments are dropped. */
+async function render(tree: unknown): Promise<string> {
   // eslint-disable-next-line react/no-children-prop
-  return renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: "en", children: tree as ReactNode })).replace(/&#x27;/g, "'");
+  // prerender waits for every boundary: a boundary that resolved late is written as its fallback plus the resolved
+  // content React swaps in, so both are in the markup and the resolved content is checked.
+  const { prelude } = await prerender(createElement(TranslationProvider, { initialLanguage: "en", children: tree as ReactNode }));
+  return (await new Response(prelude).text()).replace(/<!--\/?\$-->|<!-- -->/g, "").replace(/&#x27;/g, "'");
 }
+const LABOR_CHILD = /data-strip-cell="labor(-loading)?"/;
 /** The element tree with every element's props, functions dropped (what a server tree hands on). */
 function treeJson(tree: unknown): string {
   const seen = new WeakSet<object>();
@@ -144,10 +150,12 @@ describe("T-R4 / 7.3: never for a GM or the social media manager", () => {
     const tree = await pageTree();
     for (const n of ALL_LOADERS) expect(st.spies[n], n).not.toHaveBeenCalled();
     const json = treeJson(tree);
-    const html = render(tree);
+    const html = await render(tree);
     for (const v of STRIP_TREE) expect(json).not.toContain(v);
     for (const v of STRIP_MARKUP) expect(html).not.toContain(v);
     for (const marker of ["data-numbers-strip", "data-needs-you-line", "data-catering-block", "data-pulse-toggle"]) expect(html).not.toContain(marker);
+    expect(html).not.toMatch(LABOR_CHILD); // lead rulings r3: no streamed labor child either
+    expect(json).not.toContain("NumbersStrip");
   });
 
   it("the GM: no strip loader is called and no strip value is in the tree or the markup; Needs you 13 / 17 / 19 is", async () => {
@@ -156,10 +164,12 @@ describe("T-R4 / 7.3: never for a GM or the social media manager", () => {
     for (const n of STRIP_LOADERS) expect(st.spies[n], n).not.toHaveBeenCalled();
     for (const n of ["mail", "notices", "inbox"]) expect(st.spies[n], n).toHaveBeenCalledTimes(1);
     const json = treeJson(tree);
-    const html = render(tree);
+    const html = await render(tree);
     for (const v of STRIP_TREE) expect(json).not.toContain(v);
     for (const v of STRIP_MARKUP) expect(html).not.toContain(v);
     expect(html).not.toContain("data-numbers-strip");
+    expect(html).not.toMatch(LABOR_CHILD); // lead rulings r3: no streamed labor child either
+    expect(json).not.toContain("NumbersStrip");
     expect(html).toContain("13 vendor emails are waiting.");
     expect(html).toContain("17 recipe updates are waiting.");
     expect(html).toContain("19 catering emails are waiting for a reply.");
@@ -171,10 +181,11 @@ describe("T-R4 / 7.3: never for a GM or the social media manager", () => {
     as("moo", 8, [A]);
     const tree = await pageTree();
     const json = treeJson(tree);
-    const html = render(tree);
+    const html = await render(tree);
     for (const v of STRIP_TREE) expect(json).toContain(v);
     for (const v of STRIP_MARKUP) expect(html).toContain(v);
     expect([...html.matchAll(/data-strip-shop="([^"]+)"/g)].map((m) => m[1])).toEqual(["A"]);
+    expect(html).toContain('data-strip-cell="labor"'); // the streamed child, resolved
     expect(html).toContain("Needs you: ");
     expect(html).toContain("23 more not tied to a shop.");
     // No name, address or contact from the booked events reaches the page.
@@ -182,8 +193,8 @@ describe("T-R4 / 7.3: never for a GM or the social media manager", () => {
     expect(json).not.toContain("Hidden St");
   });
 
-  it("no \"use client\" in the five new component files", () => {
-    for (const f of ["NumbersStrip", "StripLaborCell", "CateringBlock", "NeedsYou", "MyShiftPulseToggle"]) {
+  it("no \"use client\" in the six new component files", () => {
+    for (const f of ["NumbersStrip", "StripLaborCell", "StripLaborStream", "CateringBlock", "NeedsYou", "MyShiftPulseToggle"]) {
       expect(readFileSync(`components/dashboard/${f}.tsx`, "utf8"), f).not.toMatch(/^\s*["']use client["']/m);
     }
   });
@@ -194,18 +205,18 @@ describe("T-R1 page half / group 12: the real role, never works-as", () => {
     as("cgs", 10, []);
     st.worksAs = { [A]: "key_holder" };
     for (const loc of [A, B]) {
-      const html = render(await pageTree(loc));
+      const html = await render(await pageTree(loc));
       expect([...html.matchAll(/data-strip-shop="([^"]+)"/g)].map((m) => m[1])).toEqual(["A", "B"]);
       expect(html).toContain("data-needs-you-line");
     }
   });
   it("level never decides: the owner gets the strip; the catering manager (level 6) and the AGM do not", async () => {
     as("owner", 9, []);
-    expect(render(await pageTree())).toContain("data-numbers-strip");
+    expect(await render(await pageTree())).toContain("data-numbers-strip");
     for (const [role, level] of [["catering_mgr", 6], ["agm", 6], ["key_holder", 4]] as const) {
       as(role, level, [A]);
       await installSpies();
-      const html = render(await pageTree());
+      const html = await render(await pageTree());
       expect(html, role).not.toContain("data-numbers-strip");
       expect(html, role).not.toContain("data-needs-you-line");
       for (const n of STRIP_LOADERS) expect(st.spies[n], `${role} ${n}`).not.toHaveBeenCalled();
@@ -216,7 +227,7 @@ describe("T-R1 page half / group 12: the real role, never works-as", () => {
 describe("group 2 / Q9 / Q5 at the page: the catering manager", () => {
   it("the block is drawn, its item is not also a row, and the night-before line is drawn once (in the block)", async () => {
     as("catering_mgr", 6, [A]);
-    const html = render(await pageTree());
+    const html = await render(await pageTree());
     expect(html).toContain("data-catering-block");
     expect(html).not.toContain('data-day-item="catering_today"');
     const nightBefore = /Tomorrow is a heavy catering day/;
@@ -229,7 +240,7 @@ describe("group 2 / Q9 / Q5 at the page: the catering manager", () => {
   });
   it("a key holder's phase line still draws the night-before line; no block", async () => {
     as("key_holder", 4, [A]);
-    const html = render(await pageTree());
+    const html = await render(await pageTree());
     expect(html).not.toContain("data-catering-block");
     expect(html.match(/<section[^>]*data-phase=[\s\S]*?<\/section>/)?.[0] ?? "").toMatch(/Tomorrow is a heavy catering day/);
   });

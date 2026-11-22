@@ -5,18 +5,20 @@
  * One row per shop the page can open, in the page's order, never blended across shops. Three cells, each a full-row link
  * to its page, each failing on its own ("Couldn't load right now", never $0):
  *   - sales so far today: an amount ("At least" when partial), a covered zero, or "not captured from Toast yet";
- *   - labor % (StripLaborCell, the only strip file under the figure census); absent while the switch is off;
+ *   - labor % (StripLaborCell, the only strip file under the figure census); absent while the switch is off. Streamed in
+ *     its own Suspense boundary (StripLaborStream; lead rulings r3, P1): the rest of the page never waits for it, and
+ *     until it settles the cell says "Loading labor…", never a number;
  *   - catering today: the order count, the PIPELINE value, and every gap named (estimates, no price, ezCater not valued).
  * This file holds no business-report figure (it imports no `@/lib/business-*` module).
  */
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import type { StripShop } from "@/lib/dashboard-blocks";
 import { salesStripCell, stripLinks } from "@/lib/dashboard-blocks-shared";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
-import { StripLaborCell } from "./StripLaborCell";
+import { StripLaborStream } from "./StripLaborStream";
 
 const CELL = "flex min-h-[44px] min-w-0 items-center rounded-lg border border-co-border bg-co-surface-inset p-3 text-co-text hover:border-co-text";
 
@@ -93,6 +95,15 @@ function CateringCell({ row, language }: { row: StripShop; language: Language })
   );
 }
 
+/** The labor cell while its read is in flight: the same box, at least 44 px, words only (never a number). */
+function LaborLoading({ language }: { language: Language }) {
+  return (
+    <div data-strip-cell="labor-loading" role="status" className={CELL.replace(" hover:border-co-text", "")}>
+      <span className="text-sm text-co-text-muted">{serverT(language, "dashboard.strip.labor_loading")}</span>
+    </div>
+  );
+}
+
 export function NumbersStrip({ rows, language }: { rows: readonly StripShop[]; language: Language }) {
   if (rows.length === 0) return null;
   return (
@@ -105,7 +116,9 @@ export function NumbersStrip({ rows, language }: { rows: readonly StripShop[]; l
             <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-3">
               <SalesCell row={row} language={language} />
               {row.labor === "off" ? null : (
-                <StripLaborCell days={row.labor.kind === "ok" ? row.labor.value : "failed"} shopId={row.shop.id} shopLabel={shopLabel} language={language} />
+                <Suspense fallback={<LaborLoading language={language} />}>
+                  <StripLaborStream labor={row.labor} shopId={row.shop.id} shopLabel={shopLabel} language={language} />
+                </Suspense>
               )}
               <CateringCell row={row} language={language} />
             </div>

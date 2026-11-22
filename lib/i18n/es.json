@@ -4038,6 +4038,7 @@
   "dashboard.strip.labor_day": "% de mano de obra ({day})",
   "dashboard.strip.labor_loaded": "Total",
   "dashboard.strip.labor_pure": "Solo por hora",
+  "dashboard.strip.labor_loading": "Cargando mano de obra…",
   "dashboard.strip.catering": "Catering de hoy",
   "dashboard.strip.catering_count_one": "1 pedido",
   "dashboard.strip.catering_count_other": "{n} pedidos",

@@ -44,28 +44,33 @@ export const STRIP_LABOR_DAYS = 3;
 export interface StripShop {
   readonly shop: { readonly id: string; readonly code: string; readonly name: string };
   readonly sales: Settled<PulseSalesToday>;
-  /** "off" = the business report's switches are not all on: no read, no cell. */
-  readonly labor: Settled<readonly LaborStripDay[]> | "off";
+  /** "off" = the business report's switches are not all on: no read, no cell. Otherwise the read, STARTED with the
+   *  other cells and bounded by the same page deadline, but NOT awaited by `loadStrip` (lead rulings r3, P1): the page
+   *  streams the labor cell in its own Suspense boundary. The promise never rejects (`settle`). */
+  readonly labor: Promise<Settled<readonly LaborStripDay[]>> | "off";
   readonly catering: Settled<CateringStripCell>;
 }
 
 /**
  * The numbers strip: one row per shop the page can open, three cells each, every cell its own bounded read. The caller
  * starts it only for MoO / Owner / CGS (`numbersStripFor`, by real role); the readers' own gates still run first.
+ * It resolves when sales and catering have settled; the labor read is started at the same moment and handed on
+ * unawaited (its ~1.2 s denominator read must not hold the page; lead rulings r3, P1).
  */
 export function loadStrip(sb: Sb, auth: AuthContext, shops: ReadonlyArray<StripShop["shop"]>, planDate: string, switches: Switches, settle: Settle): Promise<StripShop[]> {
   const salesViewer = { userId: auth.user.id, level: auth.level, locations: auth.locations };
   const businessViewer = { ...salesViewer, role: auth.role };
   const laborDays = Array.from({ length: STRIP_LABOR_DAYS }, (_, i) => shiftReportDate(planDate, i - STRIP_LABOR_DAYS));
   return Promise.all(shops.map(async (shop): Promise<StripShop> => {
-    const [sales, labor, catering] = await Promise.all([
+    // Started now, with the other cells, under the same deadline; streamed, never awaited here.
+    const labor: StripShop["labor"] = switches.businessReport
+      ? settle("dashboard.strip.labor", async (s): Promise<readonly LaborStripDay[]> => {
+        const r = await loadBusinessLaborDays(businessViewer, { locationId: shop.id, days: laborDays }, { client: withAbortStrict(sb, s) });
+        return r.days.map((d) => ({ date: d.date, view: businessLaborView(d.labor, r.access) }));
+      })
+      : "off";
+    const [sales, catering] = await Promise.all([
       settle("dashboard.strip.sales", (s) => loadPulseSalesToday(withAbortStrict(sb, s), { viewer: salesViewer, locationId: shop.id, date: planDate })),
-      switches.businessReport
-        ? settle("dashboard.strip.labor", async (s): Promise<readonly LaborStripDay[]> => {
-          const r = await loadBusinessLaborDays(businessViewer, { locationId: shop.id, days: laborDays }, { client: withAbortStrict(sb, s) });
-          return r.days.map((d) => ({ date: d.date, view: businessLaborView(d.labor, r.access) }));
-        })
-        : Promise.resolve("off" as const),
       // ONE cell, two reads under one signal: a rejected sibling aborts the other (E5).
       settle("dashboard.strip.catering", async (s) => {
         const c = withAbortStrict(sb, s);

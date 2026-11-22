@@ -131,7 +131,10 @@ describe("the read budget, observed (provisional; paging included)", () => {
       parts.needs ? loadNeedsYou(who, S1, settleNow()) : null,
       parts.block ? loadCateringBlockExtras(sb, who, S1, PLAN, settleNow()) : null,
     ]);
-    return { st, out };
+    // Lead rulings r3 (P1): loadStrip resolves without the labor read; the page streams it. Settle it here so the
+    // budget counts every read the strip makes.
+    const strip = out[0] ? await Promise.all(out[0].map(async (r) => ({ ...r, labor: r.labor === "off" ? "off" as const : await r.labor }))) : null;
+    return { st, out: [strip, out[1], out[2]] as const };
   }
   const STRIP_ONE_SHOP = { "rpc:pulse_sales_today": 1, "table:labor_week_coverage": 2, "rpc:sales_report_daily": 1, "rpc:fact_labor_cost": 3,
     "table:schedule_structures": 1, "rpc:fact_labor_week_fingerprint": 1, "table:catering_pipeline": 1, "table:catering_quotes": 1, "table:ezcater_orders": 1 };
@@ -226,8 +229,17 @@ describe("T-D2 / T-D4 / T-D5: cancellation", () => {
     const st = seed();
     st.behave.labor_week_coverage = { hang: true };
     db.state = st;
-    const r = await expire(loadStrip(blocksClient(st) as never, MOO, [SHOPS[0]!], PLAN, SWITCHES_ON, settleNow()), st);
-    expect(r.result[0]!.labor).toEqual({ kind: "timed_out" });
+    const p = loadStrip(blocksClient(st) as never, MOO, [SHOPS[0]!], PLAN, SWITCHES_ON, settleNow());
+    // Lead rulings r3 (P1): the strip itself resolves at once, without the hanging labor read...
+    await vi.advanceTimersByTimeAsync(10);
+    const strip = await p;
+    expect(strip[0]!.sales.kind).toBe("ok");
+    expect(strip[0]!.catering.kind).toBe("ok");
+    // ...and the labor read is still settled by the same deadline, at 6,000 ms, aborted.
+    const r = await expire(strip[0]!.labor as Promise<unknown>, st);
+    expect(r.result).toEqual({ kind: "timed_out" });
+    expect(st.calls.find((c) => c.name === "labor_week_coverage")!.signal!.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
     expect(st.calls.map((c) => c.name)).not.toContain("fact_labor_week_fingerprint");
     expect(st.calls.map((c) => c.name)).not.toContain("fact_labor_cost");
   });

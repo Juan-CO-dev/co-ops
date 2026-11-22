@@ -19,6 +19,10 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 
 import { NumbersStrip } from "@/components/dashboard/NumbersStrip";
+import { StripLaborCell } from "@/components/dashboard/StripLaborCell";
+import { StripLaborStream } from "@/components/dashboard/StripLaborStream";
+import type { Settled } from "@/lib/dashboard-day";
+import { renderToReadableStream } from "react-dom/server.edge";
 import type { StripShop } from "@/lib/dashboard-blocks";
 import type { CateringStripCell } from "@/lib/dashboard-blocks-shared";
 import en from "@/lib/i18n/en.json";
@@ -155,11 +159,20 @@ const SHOP2 = { id: "22222222-2222-4222-8222-222222222222", code: "CH", name: "C
 const totals = (o: Partial<SalesTotals>): SalesTotals => ({ ...summarizeSales([], D, D, "day").totals, ...o });
 const salesOk = (o: Partial<SalesTotals>, capturedAt: string | null = "2026-11-18T18:42:00Z"): StripShop["sales"] => ({ kind: "ok", value: { totals: totals(o), capturedAt } });
 const cateringOk = (o: Partial<CateringStripCell> = {}): StripShop["catering"] => ({ kind: "ok", value: { orders: 1, pipeline: 1, unlinkedEzcater: 0, valuedCents: 50_000, estimated: 0, missing: 0, ...o } });
-async function stripRow(o: Partial<StripShop> = {}): Promise<StripShop> {
-  const labor = (await laborSelectionCases()).yesterdayPending;
-  return { shop: SHOP1, sales: salesOk({ checks: 3, toastChecksCents: 4_500, coverage: "complete", coveredDays: 1 }), labor: { kind: "ok", value: labor }, catering: cateringOk(), ...o };
+/** A strip row; `labor` is given SETTLED (or "off") and handed to the strip as the streamed promise it now is. */
+type LaborIn = Settled<readonly LaborStripDay[]> | "off";
+async function stripRow(o: Omit<Partial<StripShop>, "labor"> & { labor?: LaborIn } = {}): Promise<StripShop> {
+  const labor: LaborIn = o.labor ?? { kind: "ok", value: (await laborSelectionCases()).yesterdayPending };
+  return { shop: SHOP1, sales: salesOk({ checks: 3, toastChecksCents: 4_500, coverage: "complete", coveredDays: 1 }), catering: cateringOk(), ...o,
+    labor: labor === "off" ? "off" : Promise.resolve(labor) };
 }
-const render = (rows: StripShop[], language: "en" | "es" = "en") => renderToStaticMarkup(createElement(NumbersStrip, { rows, language }));
+/** The strip as it streams (lead rulings r3, P1): every Suspense boundary resolved, React's boundary markers removed. */
+async function streamed(node: Parameters<typeof renderToReadableStream>[0]): Promise<string> {
+  const s = await renderToReadableStream(node);
+  await s.allReady;
+  return (await new Response(s).text()).replace(/<!--\/?\$-->/g, "");
+}
+const render = (rows: StripShop[], language: "en" | "es" = "en") => streamed(createElement(NumbersStrip, { rows, language }));
 const cell = (html: string, kind: string, shop = "P") => {
   const block = html.split(`data-strip-shop="${shop}"`)[1] ?? "";
   const m = block.match(new RegExp(`<a[^>]*data-strip-cell="${kind}"[\\s\\S]*?</a>`));
@@ -171,21 +184,21 @@ describe("T-R3a rendered (A1), both languages", () => {
   it.each(["en", "es"] as const)("%s", async (lang) => {
     const L = lang === "en" ? EN : ES;
     // A successful RPC with nothing captured and no checks.
-    const none = plain(cell(render([await stripRow({ sales: salesOk({}, null) })], lang), "sales"));
+    const none = plain(cell(await render([await stripRow({ sales: salesOk({}, null) })], lang), "sales"));
     expect(none).toContain(L["dashboard.strip.sales_not_captured"]);
     expect(none).toContain(L["pulse.sales.synced_none"]);
     expect(none).not.toContain(L["dashboard.strip.sales_none"]);
     expect(none).not.toMatch(/\$0\.00|0,00/);
     // Captured, 0 checks: a covered zero + the synced time.
-    const zero = plain(cell(render([await stripRow({ sales: salesOk({ coverage: "complete", coveredDays: 1 }) })], lang), "sales"));
+    const zero = plain(cell(await render([await stripRow({ sales: salesOk({ coverage: "complete", coveredDays: 1 }) })], lang), "sales"));
     expect(zero).toContain(L["dashboard.strip.sales_none"]);
     expect(zero).toContain(L["pulse.sales.synced"]!.split(" {time}")[0]!);
     // Checks with an unknown amount: "At least".
-    const partial = plain(cell(render([await stripRow({ sales: salesOk({ checks: 3, toastChecksCents: 4_500, amountMissing: 1, coverage: "complete", coveredDays: 1 }) })], lang), "sales"));
+    const partial = plain(cell(await render([await stripRow({ sales: salesOk({ checks: 3, toastChecksCents: 4_500, amountMissing: 1, coverage: "complete", coveredDays: 1 }) })], lang), "sales"));
     expect(partial).toContain(L["dashboard.strip.sales_at_least"]!.split(" {amount}")[0]!);
     // The RPC rejects / is not installed: the cell fails, never $0.
     for (const kind of ["failed", "timed_out"] as const) {
-      const failed = plain(cell(render([await stripRow({ sales: { kind } })], lang), "sales"));
+      const failed = plain(cell(await render([await stripRow({ sales: { kind } })], lang), "sales"));
       expect(failed).toContain(L["dashboard.tile.unavailable"]);
       expect(failed).not.toMatch(/\$|0,00/);
     }
@@ -194,18 +207,18 @@ describe("T-R3a rendered (A1), both languages", () => {
 
 describe("T-R3b: a failed number reads Couldn't load; the other cells are unchanged", () => {
   it("each cell alone, then all together", async () => {
-    const ok = render([await stripRow()]);
+    const ok = await render([await stripRow()]);
     for (const [kind, patch] of [["sales", { sales: { kind: "failed" } }], ["labor", { labor: { kind: "timed_out" } }], ["catering", { catering: { kind: "failed" } }]] as const) {
-      const html = render([await stripRow(patch as Partial<StripShop>)]);
+      const html = await render([await stripRow(patch as Parameters<typeof stripRow>[0])]);
       expect(plain(cell(html, kind))).toContain(EN["dashboard.tile.unavailable"]);
       for (const other of ["sales", "labor", "catering"].filter((k) => k !== kind)) expect(cell(html, other)).toBe(cell(ok, other));
     }
-    const all = render([await stripRow({ sales: { kind: "failed" }, labor: { kind: "failed" }, catering: { kind: "timed_out" } })]);
+    const all = await render([await stripRow({ sales: { kind: "failed" }, labor: { kind: "failed" }, catering: { kind: "timed_out" } })]);
     for (const kind of ["sales", "labor", "catering"]) expect(plain(cell(all, kind))).toContain(EN["dashboard.tile.unavailable"]);
     expect(plain(all)).not.toMatch(/\$/);
   });
   it("the business reads timing out (business_reads_timeout) is a failed labor cell, the others stand", async () => {
-    const html = render([await stripRow({ labor: { kind: "failed" } })]);
+    const html = await render([await stripRow({ labor: { kind: "failed" } })]);
     expect(plain(cell(html, "labor"))).toBe(`${EN["dashboard.tile.unavailable"]}`);
     expect(plain(cell(html, "sales"))).toContain("$45.00");
   });
@@ -213,7 +226,7 @@ describe("T-R3b: a failed number reads Couldn't load; the other cells are unchan
 
 describe("T-R2: an estimated figure keeps its label", () => {
   it("the 12% burden default: fully loaded carries its mark and the legend says burden estimated", async () => {
-    const html = render([await stripRow()]);
+    const html = await render([await stripRow()]);
     const labor = cell(html, "labor");
     expect(labor).toMatch(/data-marks="a"/);
     expect(visibleText(labor)).toContain(EN["reports.business.burden_estimated"]);
@@ -222,12 +235,12 @@ describe("T-R2: an estimated figure keeps its label", () => {
   it("a first-known wage adds wage estimated", async () => {
     const r = await loadBusinessLaborDays(MOO, { locationId: A, days: DAYS }, { client: fakeClient({ weeks: [W("2026-09-27"), W("2026-10-04")], laborCostRow: () => ({ ...RICH, estimated_rate_minutes: 30 }) }).client, env: ON });
     const days = r.days.map((d) => ({ date: d.date, view: businessLaborView(d.labor, r.access) }));
-    const html = render([await stripRow({ labor: { kind: "ok", value: days } })]);
+    const html = await render([await stripRow({ labor: { kind: "ok", value: days } })]);
     expect(visibleText(cell(html, "labor"))).toContain(EN["reports.business.wage_estimated"]);
   });
   it("a rebuilding week: a dash with its reason, under that day's own label", async () => {
     const days = (await laborSelectionCases()).boundary.slice(1); // Sun / Mon of the rebuilding week only
-    const html = render([await stripRow({ labor: { kind: "ok", value: days } })]);
+    const html = await render([await stripRow({ labor: { kind: "ok", value: days } })]);
     const labor = plain(cell(html, "labor"));
     expect(labor).toContain("—");
     expect(labor).toContain(EN["reports.business.labor.state.rebuilding"]);
@@ -237,7 +250,7 @@ describe("T-R2: an estimated figure keeps its label", () => {
 
 describe("T-R7: labor absent while the switch is off", () => {
   it("no labor cell, sales and catering still shown", async () => {
-    const html = render([await stripRow({ labor: "off" })]);
+    const html = await render([await stripRow({ labor: "off" })]);
     expect(cell(html, "labor")).toBe("");
     expect(html).not.toContain("data-labor-day");
     expect(cell(html, "sales")).not.toBe("");
@@ -247,7 +260,7 @@ describe("T-R7: labor absent while the switch is off", () => {
 
 describe("T-R8: never blended", () => {
   it("two shops, two rows, each with its own figures, no total", async () => {
-    const html = render([await stripRow(), await stripRow({ shop: SHOP2, sales: salesOk({ checks: 1, toastChecksCents: 1_000, coverage: "complete", coveredDays: 1 }), catering: cateringOk({ valuedCents: 7_000 }) })]);
+    const html = await render([await stripRow(), await stripRow({ shop: SHOP2, sales: salesOk({ checks: 1, toastChecksCents: 1_000, coverage: "complete", coveredDays: 1 }), catering: cateringOk({ valuedCents: 7_000 }) })]);
     expect([...html.matchAll(/data-strip-shop="([^"]+)"/g)].map((m) => m[1])).toEqual(["P", "CH"]);
     expect(plain(cell(html, "sales", "P"))).toContain("$45.00");
     expect(plain(cell(html, "sales", "CH"))).toContain("$10.00");
@@ -258,26 +271,26 @@ describe("T-R8: never blended", () => {
 
 describe("T-R9 rendered (A2)", () => {
   it("accepted only: the value, no qualifier", async () => {
-    const c = plain(cell(render([await stripRow()]), "catering"));
+    const c = plain(cell(await render([await stripRow()]), "catering"));
     expect(c).toContain(EN["dashboard.strip.catering_booked"]!.replace("{amount}", "$500.00"));
     expect(c).not.toMatch(/estimate|without a price|not valued/);
   });
   it("estimate only: the value + 1 valued from an estimate", async () => {
-    const c = plain(cell(render([await stripRow({ catering: cateringOk({ estimated: 1, valuedCents: 40_000 }) })]), "catering"));
+    const c = plain(cell(await render([await stripRow({ catering: cateringOk({ estimated: 1, valuedCents: 40_000 }) })]), "catering"));
     expect(c).toContain("$400.00");
     expect(c).toContain(EN["dashboard.strip.catering_estimated"]!.replace("{n}", "1"));
   });
   it("no quote and no estimate: NO value, 1 without a price, never $0.00 booked", async () => {
-    const c = plain(cell(render([await stripRow({ catering: cateringOk({ valuedCents: null, missing: 1 }) })]), "catering"));
+    const c = plain(cell(await render([await stripRow({ catering: cateringOk({ valuedCents: null, missing: 1 }) })]), "catering"));
     expect(c).not.toContain("$0.00");
     expect(c).not.toContain(EN["dashboard.strip.catering_booked"]!.replace(" {amount}", "").replace("{amount} ", ""));
     expect(c).toContain(EN["dashboard.strip.catering_no_price"]!.replace("{n}", "1"));
   });
   it("an unlinked ezCater order: counted and named not valued; zero orders: the engine's none line", async () => {
-    const c = plain(cell(render([await stripRow({ catering: cateringOk({ orders: 2, unlinkedEzcater: 1 }) })]), "catering"));
+    const c = plain(cell(await render([await stripRow({ catering: cateringOk({ orders: 2, unlinkedEzcater: 1 }) })]), "catering"));
     expect(c).toContain(EN["dashboard.strip.catering_count_other"]!.replace("{n}", "2"));
     expect(c).toContain(EN["dashboard.strip.catering_ezcater_unvalued"]!.replace("{n}", "1"));
-    const none = plain(cell(render([await stripRow({ catering: cateringOk({ orders: 0, pipeline: 0, valuedCents: null }) })]), "catering"));
+    const none = plain(cell(await render([await stripRow({ catering: cateringOk({ orders: 0, pipeline: 0, valuedCents: null }) })]), "catering"));
     expect(none).toContain(EN["day.reason.catering.none"]);
     expect(none).not.toContain("$");
   });
@@ -285,7 +298,7 @@ describe("T-R9 rendered (A2)", () => {
 
 describe("T-B3 rendered: the labor day's own label, both languages", () => {
   it.each([["en", "Tuesday"], ["es", "martes"]] as const)("%s", async (lang, day) => {
-    const html = render([await stripRow()], lang);
+    const html = await render([await stripRow()], lang);
     expect(plain(cell(html, "labor"))).toContain((lang === "en" ? EN : ES)["dashboard.strip.labor_day"]!.replace("{day}", day));
     expect(cell(html, "labor")).toContain('data-labor-day="2026-10-06"');
   });
@@ -293,7 +306,7 @@ describe("T-B3 rendered: the labor day's own label, both languages", () => {
 
 describe("links and sizes", () => {
   it("each cell is a full-row link to its page, at least 44 px with items-center, with its ARIA label", async () => {
-    const html = render([await stripRow()]);
+    const html = await render([await stripRow()]);
     const hrefs = links(html).map((l) => l.href);
     expect(hrefs).toEqual([`/reports/sales?location=${SHOP1.id}&range=today`,
       `/reports/business?location=${SHOP1.id}&range=custom&from=2026-10-06&to=2026-10-06`, "/catering/insights"]);
@@ -307,5 +320,35 @@ describe("T-B2 (A8): NumbersStrip holds no business-report figure", () => {
     const src = readFileSync("components/dashboard/NumbersStrip.tsx", "utf8");
     expect(src).not.toMatch(/from "@\/lib\/business-/);
     expect(src).not.toMatch(/\bFigure\b/);
+  });
+});
+
+describe("lead rulings r3 (P1): the labor cell streams in its own Suspense boundary", () => {
+  it("the streamed cell renders the same markup as StripLaborCell did, for ok, failed and timed out", async () => {
+    const days = (await laborSelectionCases()).yesterdayPending;
+    const cases: Array<[Settled<readonly LaborStripDay[]>, LaborStripDay[] | "failed"]> = [[{ kind: "ok", value: days }, days], [{ kind: "failed" }, "failed"], [{ kind: "timed_out" }, "failed"]];
+    for (const [settled, before] of cases) {
+      for (const language of ["en", "es"] as const) {
+        const props = { shopId: SHOP1.id, shopLabel: "P · P Street", language };
+        const now = await streamed(createElement(StripLaborStream, { labor: Promise.resolve(settled), ...props }));
+        // The stream separates adjacent text nodes with `<!-- -->` (static markup does not): the only allowed difference.
+        expect(now.replace(/<!-- -->/g, "")).toBe(renderToStaticMarkup(createElement(StripLaborCell, { days: before, ...props })));
+      }
+    }
+    expect(text(await streamed(createElement(StripLaborStream, { labor: Promise.resolve({ kind: "timed_out" as const }), shopId: SHOP1.id, shopLabel: "P", language: "en" }))))
+      .toBe(EN["dashboard.tile.unavailable"]);
+  });
+
+  it.each(["en", "es"] as const)("%s: until it settles the cell is the Loading labor fallback, 44 px with items-center, no number; the other cells are already drawn", async (lang) => {
+    const L = lang === "en" ? EN : ES;
+    const row = await stripRow();
+    const shell = renderToStaticMarkup(createElement(NumbersStrip, { rows: [{ ...row, labor: new Promise<never>(() => undefined) }], language: lang }));
+    const loading = shell.match(/<div[^>]*data-strip-cell="labor-loading"[\s\S]*?<\/div>/)?.[0] ?? "";
+    expect(text(loading)).toBe(L["dashboard.strip.labor_loading"]);
+    expect(loading).toMatch(/min-h-\[44px\][^"]*items-center/);
+    expect(text(loading)).not.toMatch(/\d/);
+    expect(cell(shell, "labor")).toBe("");
+    expect(plain(cell(shell, "sales"))).toContain("$45.00");
+    expect(plain(cell(shell, "catering"))).toContain("$500.00");
   });
 });

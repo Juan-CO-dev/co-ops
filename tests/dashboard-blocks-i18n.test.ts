@@ -13,7 +13,7 @@ const ES = es as Record<string, string>;
 export const DASHBOARD_BLOCK_KEYS = {
   "dashboard.strip.aria": [], "dashboard.strip.link_aria": ["name", "shop"], "dashboard.strip.sales": [], "dashboard.strip.sales_at_least": ["amount"],
   "dashboard.strip.sales_none": [], "dashboard.strip.sales_not_captured": [], "dashboard.strip.labor_day": ["day"], "dashboard.strip.labor_loaded": [],
-  "dashboard.strip.labor_pure": [], "dashboard.strip.catering": [], "dashboard.strip.catering_count_one": [], "dashboard.strip.catering_count_other": ["n"],
+  "dashboard.strip.labor_pure": [], "dashboard.strip.labor_loading": [], "dashboard.strip.catering": [], "dashboard.strip.catering_count_one": [], "dashboard.strip.catering_count_other": ["n"],
   "dashboard.strip.catering_booked": ["amount"], "dashboard.strip.catering_estimated": ["n"], "dashboard.strip.catering_no_price": ["n"],
   "dashboard.strip.catering_ezcater_unvalued": ["n"],
   "dashboard.needs_you.aria": [], "dashboard.needs_you.summary": ["n"], "dashboard.needs_you.summary_at_least": ["n"], "dashboard.needs_you.none": [],

@@ -90,7 +90,7 @@ describe("token scan: no Dashboard module names works-as", () => {
     "components/dashboard/PhaseLine.tsx", "components/dashboard/DayRow.tsx", "components/dashboard/NextUpCard.tsx",
     "components/dashboard/DayList.tsx", "components/dashboard/Shortcuts.tsx", "components/dashboard/SmmDashboard.tsx",
     // Nav PR 8 (group 12): the role blocks.
-    "lib/dashboard-blocks-shared.ts", "lib/dashboard-blocks.ts", "components/dashboard/NumbersStrip.tsx", "components/dashboard/StripLaborCell.tsx",
+    "lib/dashboard-blocks-shared.ts", "lib/dashboard-blocks.ts", "components/dashboard/NumbersStrip.tsx", "components/dashboard/StripLaborCell.tsx", "components/dashboard/StripLaborStream.tsx",
     "components/dashboard/CateringBlock.tsx", "components/dashboard/NeedsYou.tsx", "components/dashboard/MyShiftPulseToggle.tsx",
   ];
   function tokens(file: string): { identifiers: string[]; strings: string[] } {
