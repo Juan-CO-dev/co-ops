@@ -4,8 +4,12 @@
  * ONE absolute page deadline bounds every OPTIONAL page read: the board, the bell, retrain, and the Receiving / Counts
  * bodies (the loader's own lanes, the own-assignment lane included, run inside its own 6 s deadline, started in the same
  * tick). A read never gets a fresh 6 s: it gets the time LEFT to the page deadline, and a read with no time left does not
- * start. `settleBy` never rejects, aborts its read at the deadline, and clears its timer on every outcome. The loader's
- * separate 7 s safety fallback (`loadDayFactsSafe`) stays as it is.
+ * start. `settleBy` never rejects, aborts its read at the deadline AND on rejection (nav PR 8, E5: a cell that runs
+ * several reads under one signal cancels its surviving siblings the moment one rejects), and clears its timer on every
+ * outcome. The loader's separate 7 s safety fallback (`loadDayFactsSafe`) stays as it is.
+ *
+ * Nav PR 8 adds the role blocks' reads (the numbers strip, "Needs you", the catering block's extras): each goes through
+ * the page's `settle` (`Settle` below, bound to the SAME deadline) and fails only its own cell.
  */
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -18,6 +22,9 @@ import { operationalNow } from "@/lib/midshift-shared";
 import type { DeliveryView } from "@/lib/receiving";
 
 export type Settled<T> = { readonly kind: "ok"; readonly value: T } | { readonly kind: "failed" } | { readonly kind: "timed_out" };
+
+/** The page's per-cell bounded read (nav PR 8): `settleBy(run, deadlineAt, area)` with the page's one deadline. */
+export type Settle = <T>(area: string, run: (signal: AbortSignal) => Promise<T>) => Promise<Settled<T>>;
 
 function logOutcome(area: string, kind: "failed" | "timed_out"): void {
   // The area and the outcome kind only: never row content (as lib/day-plan.ts logs a lane).
@@ -32,8 +39,9 @@ export function startPageDeadline(): number {
 /**
  * Run `run` bounded by the ABSOLUTE deadline `deadlineAt` (epoch ms). Never rejects: `ok`, `failed` (it rejected or threw)
  * or `timed_out` (the deadline came first, or no time was left to start it, in which case `run` is never called). At the
- * deadline the read's signal is aborted. The timer is cleared on success and on rejection; a timeout's timer has fired;
- * a read that settles late after a timeout changes nothing and leaves nothing behind.
+ * deadline the read's signal is aborted, and on a rejection too (E5), so the reads still running under that signal stop
+ * (`withAbortStrict` then builds no new query). The timer is cleared on success and on rejection; a timeout's timer has
+ * fired; a read that settles late after a timeout changes nothing and leaves nothing behind.
  */
 export function settleBy<T>(run: (signal: AbortSignal) => Promise<T>, deadlineAt: number, area: string): Promise<Settled<T>> {
   const left = deadlineAt - Date.now();
@@ -55,7 +63,7 @@ export function settleBy<T>(run: (signal: AbortSignal) => Promise<T>, deadlineAt
     try { p = Promise.resolve(run(controller.signal)); } catch (e) { p = Promise.reject(e); }
     p.then(
       (value) => { if (settled) return; settled = true; clearTimeout(timer); resolve({ kind: "ok", value }); },
-      () => { if (settled) return; settled = true; clearTimeout(timer); logOutcome(area, "failed"); resolve({ kind: "failed" }); },
+      () => { if (settled) return; settled = true; clearTimeout(timer); controller.abort(); logOutcome(area, "failed"); resolve({ kind: "failed" }); },
     );
   });
 }
