@@ -420,6 +420,17 @@ export const RESERVED_ACTIONS = [
   // SQL-only: migration 0330 (audit W23 B129, owner decision W23-4 b) switches off empty duplicate
   // catering companies and INSERTs one audit row per company itself. No TypeScript call site.
   "catering.company.deactivate_duplicate",
+  // SQL-only: migration 0356 (catering delivery D1). Each delivery writer (record_manual_delivery_job,
+  // record_delivery_event, record_delivery_cost, keep_delivery_pickup, record_delivery_gratuity_split,
+  // set_delivery_settings) INSERTs its own audit row (destructive literally true; ids, vocabulary and figures, never a
+  // note) in the same transaction as the write. No TypeScript audit() call site: lib/delivery only calls the RPCs.
+  "delivery.record",
+  "delivery.status",
+  "delivery.cost",
+  "delivery.cost_correct",
+  "delivery.pickup_kept",
+  "delivery.gratuity_split",
+  "delivery.settings_update",
   // Emitted from SQL only — migration 0198 rewrote the PostgREST-role grants on public.users
   // (LRA-001 credential columns readable, LRA-214 self-promotion via PATCH) and INSERTs its own
   // audit row with destructive=true literally. Grant changes never go through app code.

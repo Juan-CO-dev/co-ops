@@ -35,12 +35,15 @@ export function orderQuoteOf(candidates: readonly QuoteCandidate[]): OrderQuote 
   return { kind: "pending", quote: newest, isDelivery: newest.isDelivery };
 }
 
+/** The money-free summary of an order quote: what every state rule needs. */
+export interface OrderQuoteSummary { kind: OrderQuoteKind; isDelivery: boolean | null }
+
 /** Rejected = the lead is lost OR its order quote is rejected. The SQL twin is `delivery_order_rejected`. */
-export function orderRejected(stage: DeliveryLeadStage, quote: { kind: OrderQuoteKind }): boolean {
+export function orderRejected(stage: DeliveryLeadStage, quote: Pick<OrderQuoteSummary, "kind"> & Partial<OrderQuoteSummary>): boolean {
   return stage === "lost" || quote.kind === "rejected";
 }
 
 /** A house delivery order = not ezCater and KNOWN to be a delivery (`none` is not known: never "to book"). */
-export function isHouseDeliveryOrder(isEzcater: boolean, quote: { isDelivery: boolean | null }): boolean {
+export function isHouseDeliveryOrder(isEzcater: boolean, quote: Pick<OrderQuoteSummary, "isDelivery"> & Partial<OrderQuoteSummary>): boolean {
   return !isEzcater && quote.isDelivery === true;
 }
