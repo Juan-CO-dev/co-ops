@@ -1,6 +1,7 @@
 -- Migration 0356_delivery_jobs
 -- AUTHORED 2026-11-22 (PR DELIV-1, CO Claude, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
 -- APPLIED TO SIM 2026-11-23 (schema_migrations version 20261123031134, name '0356_delivery_jobs')
+-- APPLIED TO PROD 2026-11-23 UTC (schema_migrations version 20261123054318, name '0356_delivery_jobs')
 -- NUMBER: 0354 is the highest on main; 0355 is reserved for the all-shops access build (co-ops-wt/.mig-claims), so this
 -- file takes 0356 (claimed there by unit deliv).
 -- Plan: catering delivery integration, plan r6 (Astra-approved), section 4. Juan's decisions 2026-11-22.
