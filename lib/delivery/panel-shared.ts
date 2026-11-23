@@ -19,7 +19,7 @@
  */
 import type { PipelineStage } from "@/lib/catering/pipeline-shared";
 import { costHeads, jobCost, type JobCost } from "./cost-shared";
-import { computedSplit, gratuityCorrectionOffer, isDeliveryOrder, orderEconomics, type OrderEconomics, type OrderEconomicsInput } from "./economics-shared";
+import { computedSplit, gratuityCorrectionOffer, isDeliveryOrder, orderEconomics, type GratuityCorrectionOffer, type OrderEconomics, type OrderEconomicsInput } from "./economics-shared";
 import { splitHead } from "./gratuity-shared";
 import { DELIVERY_ERROR_CODES } from "./errors";
 import type { LeadDeliveryView } from "./jobs";
@@ -104,8 +104,11 @@ export interface PanelMoney {
   order: OrderEconomics;
   /** The head of the gratuity chain the person is looking at: what a correction names. Null = they see none. */
   headId: string | null;
-  /** The ONE correction offered to a person who may write: "Recalculate" when the computed split differs from the head, else "Remove" while it allocates. */
-  offer: "recompute" | "void" | null;
+  /**
+   * The ONE correction offered to a person who may write: "Recalculate" when the computed split differs from the head
+   * ("Put the split back" when the head is a void), else "Remove" while it allocates. `restore` posts `recompute`.
+   */
+  offer: GratuityCorrectionOffer | null;
 }
 /**
  * The money line of the panel (D4). Null unless the response carries `cost` (the server sends it only to a person who

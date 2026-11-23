@@ -222,7 +222,7 @@ export function DeliveryPanel({ leadId, stage, eventDate, locations, startOpen =
       </ul>}
 
       {money && <MoneyLine key={`${leadId}:${money.headId ?? "none"}:${money.offer ?? "none"}`} money={money} busy={busy}
-        onCorrect={(mode, reason) => void correctGratuity(mode, money.headId, reason)} />}
+        onCorrect={(offer, reason) => void correctGratuity(offer === "void" ? "void" : "recompute", money.headId, reason)} />}
 
       {write && <p>{t(k("mistap"))}</p>}
     </div>
@@ -233,7 +233,7 @@ export function DeliveryPanel({ leadId, stage, eventDate, locations, startOpen =
  * D4 — the money line: the delivery fee charged vs the courier cost vs the net, and the gratuity split. A missing side
  * is named, never shown as 0. RECORDED ONLY: nothing here pays anyone.
  */
-function MoneyLine({ money, busy, onCorrect }: { money: PanelMoney; busy: boolean; onCorrect: (mode: "recompute" | "void", reason: string) => void }) {
+function MoneyLine({ money, busy, onCorrect }: { money: PanelMoney; busy: boolean; onCorrect: (offer: NonNullable<PanelMoney["offer"]>, reason: string) => void }) {
   const { t, language } = useTranslation();
   const [correcting, setCorrecting] = useState(false);
   const [reason, setReason] = useState("");
@@ -262,8 +262,12 @@ function MoneyLine({ money, busy, onCorrect }: { money: PanelMoney; busy: boolea
       {g.kind === "allocated" && <p className="text-co-text">{t(k("gratuity.allocated"), parts(g))}{g.attemptNo !== null && <> {t(k("gratuity.credited"), { n: g.attemptNo })}</>}</p>}
       {g.kind === "allocated" && g.needsRecalc && <p className={WARN}>{t(k("gratuity.needs_recalc"))}</p>}
       {g.kind === "voided" && <p className="text-co-text">{t(k("gratuity.voided"))}</p>}
-      {g.kind === "nothing_allocated" && !g.needsRecalc && <p className="text-co-text">{t(k("gratuity.none_on_quote"))}</p>}
-      {g.kind === "nothing_allocated" && g.needsRecalc && <p className={WARN}>{t(k("gratuity.not_recorded"))}</p>}
+      {g.kind === "none_on_quote" && <p className="text-co-text">{t(k("gratuity.none_on_quote"))}</p>}
+      {g.kind === "not_recorded" && <p className={WARN}>{t(k("gratuity.not_recorded"))}</p>}
+      {g.kind === "zero_head" && <p className="text-co-text">{t(k("gratuity.zero_head"))}</p>}
+      {g.kind === "zero_head" && g.needsRecalc && <p className={WARN}>{t(k("gratuity.needs_recalc"))}</p>}
+      {g.kind === "source_unknown" && g.reason !== "ambiguous" && <p className={WARN}>{t(k("gratuity.source_unknown"))}</p>}
+      {g.kind === "source_unknown" && g.reason === "ambiguous" && <p className={WARN}>{t(k("gratuity.quote_ambiguous"))}</p>}
       {g.kind === "expected" && <p className="text-co-text">{t(k("gratuity.expected"), parts(g))}</p>}
       {g.kind === "quote_ambiguous" && <p className={WARN}>{t(k("gratuity.quote_ambiguous"))}</p>}
       {ezcaterNote && <p>{t(k("gratuity.ezcater"))}</p>}
@@ -272,6 +276,7 @@ function MoneyLine({ money, busy, onCorrect }: { money: PanelMoney; busy: boolea
       {offer !== null && (correcting
         ? <div className="grid gap-2 rounded-lg border border-co-border bg-co-surface-inset p-3">
           {offer === "recompute" && <p className="text-co-text">{t(k("gratuity.recompute"))}</p>}
+          {offer === "restore" && <p className="text-co-text">{t(k("gratuity.restore"))}</p>}
           {offer === "void" && <p className="text-co-text">{t(k("gratuity.void"))}</p>}
           <label className={LABEL}>{t(k("gratuity.reason"))}
             <input aria-label={t(k("gratuity.reason"))} className={FIELD} value={reason} maxLength={MAX_DELIVERY_NOTE} disabled={busy} onChange={(e) => setReason(e.target.value)} />
@@ -279,12 +284,13 @@ function MoneyLine({ money, busy, onCorrect }: { money: PanelMoney; busy: boolea
           <p>{t(k("cost.password_note"))}</p>
           <div className="flex flex-wrap gap-2">
             <button type="button" className={PRIMARY} disabled={busy || reason.trim() === ""} onClick={() => { setCorrecting(false); onCorrect(offer, reason); }}>
-              {offer === "recompute" ? t(k("gratuity.submit_recompute")) : t(k("gratuity.submit_void"))}</button>
+              {offer === "recompute" && t(k("gratuity.submit_recompute"))}{offer === "restore" && t(k("gratuity.submit_restore"))}{offer === "void" && t(k("gratuity.submit_void"))}</button>
             <button type="button" className={QUIET} disabled={busy} onClick={() => setCorrecting(false)}>{t(k("record.cancel"))}</button>
           </div>
         </div>
         : <div className="flex flex-wrap gap-2">
           {offer === "recompute" && <button type="button" className={PRIMARY} disabled={busy} onClick={() => { setReason(""); setCorrecting(true); }}>{t(k("gratuity.recompute"))}</button>}
+          {offer === "restore" && <button type="button" className={PRIMARY} disabled={busy} onClick={() => { setReason(""); setCorrecting(true); }}>{t(k("gratuity.restore"))}</button>}
           {offer === "void" && <button type="button" className={QUIET} disabled={busy} onClick={() => { setReason(""); setCorrecting(true); }}>{t(k("gratuity.void"))}</button>}
         </div>)}
     </div>}

@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  ECONOMICS_GAPS, computedSplit, deliveryEconomics, gratuityCorrectionOffer, isDeliveryOrder, orderEconomics, recomputeWouldWrite,
+  ECONOMICS_GAPS, computedSplit, deliveryEconomics, deliveryOrderHref, deliveryOrderRef, gratuityCorrectionOffer, isDeliveryOrder, orderEconomics, recomputeWouldWrite,
   type EconomicsJob, type OrderEconomicsInput,
 } from "@/lib/delivery/economics-shared";
 import type { CostFoldRow } from "@/lib/delivery/cost-shared";
@@ -27,6 +27,7 @@ const cost = (jobId: string, amountCents: number, o: Partial<CostFoldRow> = {}):
   ({ id: `${jobId}-c-${amountCents}`, jobId, component: "base", semantics: "snapshot", amountCents, moneyIdentity: `${jobId}:base`, observedAt: "2026-11-22T10:00:00Z", correctsId: null, ...o });
 const split = (id: string, o: Partial<SplitFoldRow> = {}): SplitFoldRow =>
   ({ id, jobId: "job-1", kind: "split", gratuityCents: 10_000, driverBps: 1000, driverCents: 1_000, crewCents: 9_000, supersedesId: null, ...o });
+const ZERO = { orders: 0, gratuityCents: 0, driverCents: 0, crewCents: 0, deliveredNoGratuity: 0, sourceUnknown: 0, zeroHead: 0, voided: 0, needsRecalc: 0, expected: 0 };
 const order = (o: Partial<OrderEconomicsInput> = {}): OrderEconomicsInput =>
   ({ leadId: "lead-1", eventDate: "2026-11-25", stage: "completed", isEzcater: false, candidates: [quote()], jobs: [], costs: [], splits: [], driverBps: 1000, ...o });
 
@@ -162,12 +163,16 @@ describe("which correction is offered (twin of delivery_write_split's no-op chec
     expect(gratuityCorrectionOffer(split("s1"), c({ driverBps: 2_000 }))).toBe("recompute");
     expect(gratuityCorrectionOffer(split("s1"), c({ candidates: [quote({ gratuityCents: 0 })] }))).toBe("recompute"); // to zero: a 0-cent head reverses it
   });
-  it("a 0-cent head that matches, or a void with nothing delivered: nothing to offer; a void with a delivery still on record can be recalculated", () => {
+  it("a 0-cent head that matches, or a void with nothing delivered: nothing to offer; after a void with the delivery still on record the way back is 'restore'", () => {
     const zero = split("s2", { gratuityCents: 0, driverCents: 0, crewCents: 0, supersedesId: "s1" });
     expect(gratuityCorrectionOffer(zero, c({ candidates: [quote({ gratuityCents: 0 })] }))).toBeNull();
     const voided = split("s3", { kind: "void", jobId: null, gratuityCents: 0, driverCents: 0, crewCents: 0, supersedesId: "s1" });
     expect(gratuityCorrectionOffer(voided, computedSplit(order({ jobs: [job(1, "cancelled")] })))).toBeNull();
-    expect(gratuityCorrectionOffer(voided, c())).toBe("recompute");
+    // Ruled 2026-11-23: offered, worded as putting the split back (the same recompute request underneath).
+    expect(gratuityCorrectionOffer(voided, c())).toBe("restore");
+    expect(recomputeWouldWrite(voided, c())).toBe(true);
+    // Only a void head reads "restore": no head, or a live head, stays "recompute".
+    expect([gratuityCorrectionOffer(null, c()), gratuityCorrectionOffer(split("s1"), c({ driverBps: 2_000 }))]).toEqual(["recompute", "recompute"]);
   });
   it("an ambiguous quote is never recalculated; an allocating head can still be removed", () => {
     const ambiguous = c({ candidates: [quote(), quote({ id: "q2" })] });
@@ -199,29 +204,65 @@ describe("the gratuity of an order: the head of its chain", () => {
     expect(deliveryEconomics([revised]).gratuity.needsRecalc).toBe(1);
     // After "Recalculate": a 0-cent split supersedes it.
     const after = { ...revised, splits: [split("s1"), split("s2", { gratuityCents: 0, driverCents: 0, crewCents: 0, supersedesId: "s1" })] };
-    expect(orderEconomics(after).gratuity).toEqual({ kind: "nothing_allocated", headId: "s2", needsRecalc: false });
-    expect(deliveryEconomics([after]).gratuity).toEqual({ orders: 0, gratuityCents: 0, driverCents: 0, crewCents: 0, deliveredNoGratuity: 1, voided: 0, needsRecalc: 0, expected: 0 });
+    expect(orderEconomics(after).gratuity).toEqual({ kind: "zero_head", headId: "s2", needsRecalc: false });
+    // Its OWN count (ruled 2026-11-23): a 0-cent head is not "delivered with no gratuity on the quote".
+    expect(deliveryEconomics([after]).gratuity).toEqual({ ...ZERO, zeroHead: 1 });
+    // The quote gets its gratuity back: the 0-cent head no longer matches, and says so.
+    const again = { ...after, candidates: [quote()] };
+    expect(orderEconomics(again).gratuity).toEqual({ kind: "zero_head", headId: "s2", needsRecalc: true });
+    expect(deliveryEconomics([again]).gratuity).toEqual({ ...ZERO, zeroHead: 1, needsRecalc: 1 });
   });
   it("GOLDEN: void = the head allocates nothing; the totals drop", () => {
     const input = order({ jobs: [job(1, "delivered")], splits: [split("s1"), split("s2", { kind: "void", jobId: null, gratuityCents: 0, driverCents: 0, crewCents: 0, supersedesId: "s1" })] });
     expect(orderEconomics(input).gratuity).toEqual({ kind: "voided", headId: "s2" });
-    expect(deliveryEconomics([input]).gratuity).toEqual({ orders: 0, gratuityCents: 0, driverCents: 0, crewCents: 0, deliveredNoGratuity: 0, voided: 1, needsRecalc: 0, expected: 0 });
+    expect(deliveryEconomics([input]).gratuity).toEqual({ ...ZERO, voided: 1 });
   });
-  it("delivered with no gratuity on the quote: nothing allocated, counted", () => {
+  it("delivered, the ACCEPTED quote has no gratuity: the only true 'no gratuity on the quote', counted", () => {
     const input = order({ jobs: [job(1, "delivered")], candidates: [quote({ gratuityCents: 0 })] });
-    expect(orderEconomics(input).gratuity).toEqual({ kind: "nothing_allocated", headId: null, needsRecalc: false });
-    expect(deliveryEconomics([input]).gratuity.deliveredNoGratuity).toBe(1);
+    expect(orderEconomics(input).gratuity).toEqual({ kind: "none_on_quote" });
+    expect(deliveryEconomics([input]).gratuity).toEqual({ ...ZERO, deliveredNoGratuity: 1 });
   });
   it("delivered, the quote was accepted afterwards: nothing recorded yet, flagged (never counted as 'no gratuity')", () => {
     const input = order({ jobs: [job(1, "delivered")] });
-    expect(orderEconomics(input).gratuity).toEqual({ kind: "nothing_allocated", headId: null, needsRecalc: true });
-    expect(deliveryEconomics([input]).gratuity).toMatchObject({ deliveredNoGratuity: 0, needsRecalc: 1, orders: 0, gratuityCents: 0 });
+    expect(orderEconomics(input).gratuity).toEqual({ kind: "not_recorded" });
+    expect(deliveryEconomics([input]).gratuity).toEqual({ ...ZERO, needsRecalc: 1 });
+  });
+  describe("A MISSING GRATUITY SOURCE IS NOT A ZERO (review DELIV4-r1): delivered with no accepted quote", () => {
+    it.each([
+      ["a pending quote carrying a $100 gratuity", [quote({ status: "sent" })], "pending"],
+      ["a pending draft quote with no gratuity typed yet", [quote({ status: "draft", gratuityCents: 0 })], "pending"],
+      ["no quote at all (a Toast-rung order)", [], "none"],
+      ["two accepted quotes", [quote(), quote({ id: "q2", gratuityCents: 0 })], "ambiguous"],
+      ["every quote declined", [quote({ status: "declined" })], "rejected"],
+    ] as const)("%s: source_unknown, never 'no gratuity on the quote'", (_name, candidates, reason) => {
+      const input = order({ stage: "confirmed", candidates: [...candidates], jobs: [job(1, "delivered")] });
+      expect(orderEconomics(input).gratuity).toEqual({ kind: "source_unknown", reason });
+      // Its own count: out of "delivered with no gratuity", out of the sums, and nothing to recalculate yet.
+      expect(deliveryEconomics([input]).gratuity).toEqual({ ...ZERO, sourceUnknown: 1 });
+      // The allocation rule itself is unchanged: with no accepted quote the database allocates nothing, and no correction is offered.
+      const computed = computedSplit(input);
+      expect(computed.kind === "split" ? computed.gratuityCents : computed.kind).toBe(reason === "ambiguous" ? "ambiguous" : 0);
+      expect(gratuityCorrectionOffer(null, computed)).toBeNull();
+    });
+    it("once the quote is accepted it leaves the unknown state: recorded-to-be (gratuity) or a true zero", () => {
+      const delivered = { stage: "confirmed" as const, jobs: [job(1, "delivered")] };
+      expect(orderEconomics(order({ ...delivered, candidates: [quote({ status: "sent" })] })).gratuity.kind).toBe("source_unknown");
+      expect(orderEconomics(order({ ...delivered, candidates: [quote()] })).gratuity.kind).toBe("not_recorded");
+      expect(orderEconomics(order({ ...delivered, candidates: [quote({ gratuityCents: 0 })] })).gratuity.kind).toBe("none_on_quote");
+    });
+    it("a recorded head still wins: an allocation made while a quote was accepted stays shown after the quote goes back to pending", () => {
+      const input = order({ candidates: [quote({ status: "sent" })], jobs: [job(1, "delivered")], splits: [split("s1")] });
+      expect(orderEconomics(input).gratuity).toMatchObject({ kind: "allocated", gratuityCents: 10_000, needsRecalc: true });
+    });
+    it("the courier ezCater sent is never 'unknown': no split applies at all", () => {
+      expect(orderEconomics(order({ isEzcater: true, candidates: [], jobs: [job(1, "delivered", { bookedVia: "provider_native" })] })).gratuity).toEqual({ kind: "none" });
+    });
   });
   it("not delivered yet: the EXPECTED split from the pure rule, never in a total", () => {
     for (const jobs of [[], [job(1, "accepted")], [job(1, "cancelled"), job(2, "picked_up")]]) {
       const input = order({ stage: "confirmed", jobs });
       expect(orderEconomics(input).gratuity).toEqual({ kind: "expected", gratuityCents: 10_000, driverBps: 1000, driverCents: 1_000, crewCents: 9_000 });
-      expect(deliveryEconomics([input]).gratuity).toEqual({ orders: 0, gratuityCents: 0, driverCents: 0, crewCents: 0, deliveredNoGratuity: 0, voided: 0, needsRecalc: 0, expected: 1 });
+      expect(deliveryEconomics([input]).gratuity).toEqual({ ...ZERO, expected: 1 });
     }
     expect(orderEconomics(order({ stage: "confirmed", driverBps: null })).gratuity).toMatchObject({ kind: "expected", driverBps: 1000 });
   });
@@ -233,8 +274,10 @@ describe("the gratuity of an order: the head of its chain", () => {
     const input = order({ isEzcater: true, candidates: [], jobs: [job(1, "delivered", { bookedVia: "provider_native" })], costs: [cost("job-1", 2_000)] });
     expect(orderEconomics(input)).toMatchObject({ fee: { kind: "gap", reason: "ezcater_fee_unknown" }, cost: { kind: "complete", cents: 2_000 }, netCents: null, gratuity: { kind: "none" } });
   });
-  it("two accepted quotes: no gratuity source", () => {
-    expect(orderEconomics(order({ jobs: [job(1, "delivered")], candidates: [quote(), quote({ id: "q2" })] })).gratuity).toEqual({ kind: "quote_ambiguous" });
+  it("two accepted quotes: no gratuity source — before delivery `quote_ambiguous`, after it `source_unknown`", () => {
+    const candidates = [quote(), quote({ id: "q2" })];
+    expect(orderEconomics(order({ stage: "confirmed", jobs: [job(1, "accepted")], candidates })).gratuity).toEqual({ kind: "quote_ambiguous" });
+    expect(orderEconomics(order({ jobs: [job(1, "delivered")], candidates })).gratuity).toEqual({ kind: "source_unknown", reason: "ambiguous" });
   });
 });
 
@@ -271,6 +314,20 @@ describe("a period: coverage first, totals only over orders with a net", () => {
   });
   it("an empty period is zeros over ZERO orders (the coverage line says so), never a failure", () => {
     expect(deliveryEconomics([])).toEqual({ orders: [], coverage: { orders: 0, withNet: 0 }, totals: { feeCents: 0, costCents: 0, netCents: 0 }, excluded: [],
-      gratuity: { orders: 0, gratuityCents: 0, driverCents: 0, crewCents: 0, deliveredNoGratuity: 0, voided: 0, needsRecalc: 0, expected: 0 } });
+      gratuity: ZERO });
+  });
+});
+
+describe("an order's reference and its link (review DELIV4-r1): told apart without a customer field", () => {
+  it("the first six hex characters of the lead id, upper case", () => {
+    expect(deliveryOrderRef("0a1b2c3d-4e5f-4000-8000-0000000000d1")).toBe("0A1B2C");
+    expect(deliveryOrderRef("ffeeddcc-0000-4000-8000-000000000000")).toBe("FFEEDD");
+  });
+  it("links to the order's card on the pipeline board through the board's own hash", () => {
+    expect(deliveryOrderHref("0a1b2c3d-4e5f-4000-8000-0000000000d1")).toBe("/catering/pipeline#lead-0a1b2c3d-4e5f-4000-8000-0000000000d1");
+    // The board opens a lead from exactly this hash (components/catering/pipeline/PipelineClient.tsx), and takes no shop parameter.
+    const board = readFileSync("components/catering/pipeline/PipelineClient.tsx", "utf8");
+    expect(board).toContain("window.location.hash === `#lead-${lead.id}`");
+    expect(board).toContain("id={`lead-${lead.id}`}");
   });
 });

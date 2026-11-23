@@ -173,6 +173,57 @@ describe("the per-order rows (the pure row, rendered): every missing side is nam
   });
 });
 
+describe("every order row is identified and linked (review DELIV4-r1)", () => {
+  const A1 = "0a1b2c3d-0000-4000-8000-000000000001", A2 = "9f8e7d6c-0000-4000-8000-000000000002";
+  // Two orders on the SAME date with the SAME courier: one complete, one whose split no longer matches its quote.
+  const same = [
+    order(A1, { jobs: [ejob(1, "delivered")], costs: [ecost("job-1", 3_000)], splits: [esplit("s1")] }),
+    order(A2, { jobs: [ejob(1, "delivered")], costs: [ecost("job-1", 3_000)], splits: [esplit("s1")], candidates: [quote({ gratuityCents: 8_000 })] }),
+  ];
+  const render = (language: Lang = "en") => { openAll.on = true; try { return section(ok(same), language); } finally { openAll.on = false; } };
+  it("two same-date, same-courier orders carry different references, each linking to its own card on the pipeline board", () => {
+    const markup = render();
+    const en = text(markup);
+    expect(en).toContain("Order 0A1B2C");
+    expect(en).toContain("Order 9F8E7D");
+    for (const id of [A1, A2]) expect(markup).toContain(`href="/catering/pipeline#lead-${id}"`);
+    // Each order is linked from its row in the order list AND from its row in the gratuity detail.
+    expect(markup.split(`href="/catering/pipeline#lead-${A1}"`).length - 1).toBe(2);
+    expect(markup.split(`href="/catering/pipeline#lead-${A2}"`).length - 1).toBe(2);
+    expect(markup).toContain('aria-label="Open order 0A1B2C in the pipeline"');
+    // A 44 px, vertically centred tap target.
+    expect(markup).toMatch(/<a class="inline-flex min-h-\[44px\] items-center[^"]*"[^>]*href="\/catering\/pipeline#lead-/);
+  });
+  it("the gratuity detail says WHICH order needs recalculating", () => {
+    const markup = render();
+    const detail = markup.slice(markup.indexOf("Split by order"));
+    const rows = detail.split("<li").slice(1).map(text);
+    const stale = rows.find((row) => row.includes("Order 9F8E7D"))!, fine = rows.find((row) => row.includes("Order 0A1B2C"))!;
+    expect(stale).toContain("no longer matches the quote");
+    expect(fine).not.toContain("no longer matches the quote");
+    expect(text(markup)).toContain("Recorded split does not match the current quote, or none is recorded for it yet: 1. Recalculate it on the order.");
+  });
+  it("an order with NO split recorded for an accepted quote is in the detail too, named and linked", () => {
+    const B1 = "abcdef12-0000-4000-8000-000000000003";
+    openAll.on = true;
+    let markup = "";
+    try { markup = section(ok([order(B1, { jobs: [ejob(1, "delivered")] })])); } finally { openAll.on = false; }
+    const detail = markup.slice(markup.indexOf("Split by order"));
+    expect(text(detail)).toContain("Order ABCDEF");
+    expect(text(detail)).toContain("no split recorded for the current quote yet");
+    expect(detail).toContain(`href="/catering/pipeline#lead-${B1}"`);
+  });
+  it("Spanish, and no customer field anywhere in what the section is given", () => {
+    const es = text(render("es"));
+    expect(es).toContain("Pedido 0A1B2C");
+    expect(render("es")).toContain('aria-label="Abrir el pedido 0A1B2C en el flujo de catering"');
+    const keys = new Set<string>();
+    const walk = (v: unknown) => { if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === "object") for (const [key, x] of Object.entries(v)) { keys.add(key); walk(x); } };
+    walk(ok(same));
+    for (const never of ["contactName", "name", "company", "email", "phone", "note", "reason", "externalRef", "address"]) expect([never, keys.has(never)]).toEqual([never, false]);
+  });
+});
+
 describe("the gratuity block: recorded only", () => {
   it("totals over heads only, with the 'not verified' sentence word for word (en + es)", () => {
     const en = text(section(ok()));
@@ -181,7 +232,10 @@ describe("the gratuity block: recorded only", () => {
     expect(en).toContain("Gratuity split $100.00");
     expect(en).toContain("Driver's share $10.00");
     expect(en).toContain("Crew's share $90.00");
-    expect(en).toContain("Delivered with no gratuity on the quote: 2"); // orders b and d; the ezCater order takes no split
+    // Order b: delivered, the ACCEPTED quote has no gratuity. Order d: delivered with NO quote: not known, its own line.
+    expect(en).toContain("Delivered, accepted quote with no gratuity: 1");
+    expect(en).toContain("Delivered with no accepted quote — gratuity not known: 1");
+    expect(en).not.toContain("accepted quote with no gratuity: 2");
     expect(en).toContain(UNVERIFIED_EN);
     const es = text(section(ok(), "es"));
     expect(es).toContain("Reparto de la propina (registrado)");
@@ -204,7 +258,8 @@ describe("the gratuity block: recorded only", () => {
     const en = text(section(ok([voided, zeroed])));
     expect(en).toContain("Orders with a recorded split: 0");
     expect(en).toContain("Removed (the delivery did not happen): 1");
-    expect(en).toContain("Delivered with no gratuity on the quote: 1");
+    expect(en).toContain("Recalculated to no gratuity: 1"); // the 0-cent head has its own count
+    expect(en).not.toContain("accepted quote with no gratuity");
     expect(en).not.toContain("$100.00");
     expect(en).not.toContain("Driver's share");
   });
@@ -212,9 +267,28 @@ describe("the gratuity block: recorded only", () => {
     const stale = order("s", { jobs: [ejob(1, "delivered")], candidates: [quote({ gratuityCents: 8_000 })], splits: [esplit("s1")] });
     const expected = order("e", { stage: "confirmed", jobs: [ejob(1, "accepted")] });
     const en = text(section(ok([stale, expected])));
-    expect(en).toContain("Recorded split no longer matches the quote: 1. Recalculate it on the order.");
+    expect(en).toContain("Recorded split does not match the current quote, or none is recorded for it yet: 1. Recalculate it on the order.");
     expect(en).toContain("Not delivered yet (an expected split, not counted): 1");
     expect(en).toContain("Gratuity split $100.00"); // the recorded head, not the expected $100 on top of it
+  });
+  it("A MISSING SOURCE IS NOT A ZERO: delivered with a pending $100-gratuity quote, with no quote, with two accepted quotes", () => {
+    const delivered = { stage: "confirmed" as const, jobs: [ejob(1, "delivered")] };
+    const pending = order("p", { ...delivered, candidates: [quote({ status: "sent" })] });
+    const absent = order("n", { ...delivered, candidates: [] });
+    const two = order("t", { ...delivered, candidates: [quote(), quote({ id: "q2" })] });
+    for (const [inputs, n] of [[[pending], 1], [[absent], 1], [[two], 1], [[pending, absent, two], 3]] as const) {
+      const en = text(section(ok([...inputs])));
+      expect(en).toContain(`Delivered with no accepted quote — gratuity not known: ${n}`);
+      expect(en).not.toContain("accepted quote with no gratuity");
+      expect(en).not.toContain("Orders with a recorded split: 1");
+      expect(en).toContain(UNVERIFIED_EN);
+    }
+    expect(text(section(ok([pending, absent, two]), "es"))).toContain("Entregados sin cotización aceptada — no se sabe la propina: 3");
+    // Beside a true zero, each is counted under its own name.
+    const zero = order("z", { ...delivered, candidates: [quote({ gratuityCents: 0 })] });
+    const both = text(section(ok([pending, zero])));
+    expect(both).toContain("Delivered, accepted quote with no gratuity: 1");
+    expect(both).toContain("Delivered with no accepted quote — gratuity not known: 1");
   });
   it("no split anywhere (only ezCater couriers): the block is not shown", () => {
     expect(text(section(ok([PERIOD[2]!])))).not.toContain("Gratuity split");
@@ -319,8 +393,42 @@ describe("the panel's money line, as people see it", () => {
       .toContain("Removed: the delivery marked delivered did not happen. Nothing is split.");
     const zero = split("s2", { gratuityCents: 0, driverCents: 0, crewCents: 0, supersedesId: "s1" });
     const en = panel(withMoney(viewOf({ state: "delivered", jobs: [delivered()] }), { splits: [split("s1"), zero], candidates: [quote({ gratuityCents: 0 })] }));
-    expect(en).toContain("Delivered. There is no gratuity on the quote, so nothing is split.");
+    expect(en).toContain("Set to nothing: the split was recalculated from a quote with no gratuity.");
+    expect(en).not.toContain("The accepted quote has no gratuity");
     for (const never of ["Recalculate from the current quote", "Remove — this delivery didn't happen"]) expect(en).not.toContain(never);
+  });
+  it("delivered and the ACCEPTED quote has no gratuity: the one true 'no gratuity' line", () => {
+    const en = panel(withMoney(viewOf({ state: "delivered", jobs: [delivered()] }), { candidates: [quote({ gratuityCents: 0 })] }));
+    expect(en).toContain("Delivered. The accepted quote has no gratuity, so nothing is split.");
+    expect(en).not.toContain("gratuity not known");
+  });
+  it("A MISSING SOURCE IS NOT A ZERO: delivered with a pending $100-gratuity quote, or with no quote, reads 'gratuity not known'", () => {
+    const pending = () => withMoney(viewOf({ state: "delivered", orderQuote: { kind: "pending", isDelivery: true }, jobs: [delivered()] }), { candidates: [quote({ status: "sent" })] });
+    const absent = () => withMoney(viewOf({ state: "delivered", orderQuote: { kind: "none", isDelivery: null }, jobs: [delivered()] }), { candidates: [] });
+    for (const view of [pending, absent]) {
+      const en = panel(view(), "en", "confirmed");
+      expect(en).toContain("Delivered. No accepted quote yet — gratuity not known.");
+      for (const never of ["has no gratuity", "nothing is split", "Recalculate from the current quote", "Remove — this delivery didn't happen", "$0.00"]) expect(en).not.toContain(never);
+      expect(en).toContain(UNVERIFIED_EN);
+      expect(panel(view(), "es", "confirmed")).toContain("Entregado. Aún no hay cotización aceptada — no se sabe la propina.");
+    }
+    expect(panelMoney(pending(), "confirmed")).toMatchObject({ offer: null, headId: null, order: { gratuity: { kind: "source_unknown", reason: "pending" } } });
+    expect(panelMoney(absent(), "confirmed")!.order.gratuity).toEqual({ kind: "source_unknown", reason: "none" });
+  });
+  it("delivered with two accepted quotes: the ambiguity is named, not a zero", () => {
+    const en = panel(withMoney(viewOf({ state: "delivered", orderQuote: { kind: "ambiguous", isDelivery: true }, jobs: [delivered()] }), { candidates: [quote(), quote({ id: "q2" })] }));
+    expect(en).toContain("No split: two quotes are accepted. Settle which one stands first.");
+    expect(en).not.toContain("has no gratuity");
+  });
+  it("after a 'Remove', the way back reads as restoring: 'Put the split back from the current quote' (en + es)", () => {
+    const voided = split("s2", { kind: "void", jobId: null, gratuityCents: 0, driverCents: 0, crewCents: 0, supersedesId: "s1" });
+    const view = () => withMoney(viewOf({ state: "delivered", jobs: [delivered()] }), { splits: [split("s1"), voided] });
+    const en = panel(view());
+    expect(en).toContain("Removed: the delivery marked delivered did not happen. Nothing is split.");
+    expect(en).toContain("Put the split back from the current quote");
+    for (const never of ["Recalculate from the current quote", "Remove — this delivery didn't happen"]) expect(en).not.toContain(never);
+    expect(panel(view(), "es")).toContain("Restablecer el reparto con la cotización actual");
+    expect(panelMoney(view(), "completed")).toMatchObject({ offer: "restore", headId: "s2" });
   });
   it("the named gaps: two accepted quotes; no accepted quote; an ezCater order", () => {
     const two = panel(withMoney(viewOf({ state: "delivered", orderQuote: { kind: "ambiguous", isDelivery: true }, jobs: [delivered()] }), { candidates: [quote(), quote({ id: "q2" })] }));
@@ -346,6 +454,8 @@ describe("the panel's correction: what it posts", () => {
   });
   it("a reason is required before the button works; the rules live in the view-model, not the component", () => {
     expect(src).toContain('disabled={busy || reason.trim() === ""} onClick={() => { setCorrecting(false); onCorrect(offer, reason); }}');
+    // "Put the split back" is the same request as "Recalculate": only "Remove" posts void.
+    expect(src).toContain('onCorrect={(offer, reason) => void correctGratuity(offer === "void" ? "void" : "recompute", money.headId, reason)}');
     expect(src).toContain("const money = panelMoney(view, stage);");
     for (const rule of ["splitGratuity(", "orderCost(", "orderQuoteOf(", "computedSplit(", "recomputeWouldWrite("]) expect([rule, src.includes(rule)]).toEqual([rule, false]);
   });

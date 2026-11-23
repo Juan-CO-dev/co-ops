@@ -16,6 +16,9 @@
  *
  * THE GRATUITY SPLIT IS RECORDED ONLY. One allocation per ORDER: the HEAD of its chain. Totals use heads only; a `void`
  * head or a 0-cent head allocates nothing. Before delivery the split is EXPECTED (the pure rule), and labelled so.
+ * A MISSING GRATUITY SOURCE IS NOT A ZERO (review DELIV4-r1): "no gratuity on the quote" is said ONLY of an ACCEPTED
+ * quote whose gratuity is 0. A delivered order with no accepted quote (pending, none, every one declined, or two
+ * accepted) is `source_unknown` — the database allocates nothing there, and the screen says the gratuity is not known.
  * `computedSplit` is the TS twin of 0356's `delivery_computed_split`, and `recomputeWouldWrite` of the no-op checks in
  * `delivery_write_split`: they only decide which button the panel offers — the database decides what is written.
  * Its payroll and legal treatment is UNVERIFIED: nothing here pays, pools or exports anything.
@@ -77,6 +80,15 @@ export function computedSplit(input: Pick<OrderEconomicsInput, "candidates" | "j
   return { kind: "split", jobId: job.id, attemptNo: job.attemptNo, gratuityCents, driverBps, ...splitGratuity(gratuityCents, driverBps) };
 }
 
+/** A short, non-identifying reference for an order: the first six hex characters of its lead id, upper case. */
+export function deliveryOrderRef(leadId: string): string {
+  return leadId.replace(/-/g, "").slice(0, 6).toUpperCase();
+}
+/** The order's existing detail: its card on the pipeline board, opened by the board's own `#lead-<id>` hash. */
+export function deliveryOrderHref(leadId: string): string {
+  return `/catering/pipeline#lead-${leadId}`;
+}
+
 /** Would "recompute" append a row? (No head and no gratuity = nothing to record; a head that already says it = no change.) */
 export function recomputeWouldWrite(head: SplitFoldRow | null, computed: ComputedSplit): boolean {
   if (computed.kind !== "split") return false;
@@ -85,12 +97,15 @@ export function recomputeWouldWrite(head: SplitFoldRow | null, computed: Compute
     && head.driverCents === computed.driverCents && head.crewCents === computed.crewCents);
 }
 
+/** `restore` is `recompute` after a void: the same act and the same request, worded as putting the split back. */
+export type GratuityCorrectionOffer = "recompute" | "restore" | "void";
 /**
  * The ONE correction the panel offers: "Recalculate from the current quote" when the computed allocation differs from
- * the head; otherwise "Remove — this delivery didn't happen" while the head still allocates something; else none.
+ * the head ("Put the split back from the current quote" when that head is a void — the way back from a mistaken
+ * removal); otherwise "Remove — this delivery didn't happen" while the head still allocates something; else none.
  */
-export function gratuityCorrectionOffer(head: SplitFoldRow | null, computed: ComputedSplit): "recompute" | "void" | null {
-  if (recomputeWouldWrite(head, computed)) return "recompute";
+export function gratuityCorrectionOffer(head: SplitFoldRow | null, computed: ComputedSplit): GratuityCorrectionOffer | null {
+  if (recomputeWouldWrite(head, computed)) return head?.kind === "void" ? "restore" : "recompute";
   return allocationOf(head) ? "void" : null;
 }
 
@@ -100,11 +115,17 @@ export type OrderGratuity =
   | { kind: "allocated"; headId: string; jobId: string; attemptNo: number | null; gratuityCents: number; driverBps: number; driverCents: number; crewCents: number; needsRecalc: boolean }
   /** The head is a `void`: the delivery recorded as delivered did not happen. Allocates nothing. */
   | { kind: "voided"; headId: string }
-  /** Delivered, nothing allocated (no row, or a 0-cent head). `needsRecalc` false = no gratuity on the quote. */
-  | { kind: "nothing_allocated"; headId: string | null; needsRecalc: boolean }
+  /** The head is a 0-cent split: a recalculation from a quote with no gratuity reversed an earlier split. Allocates nothing. */
+  | { kind: "zero_head"; headId: string; needsRecalc: boolean }
+  /** Delivered, no row, and the ACCEPTED quote's gratuity is 0: the only true "no gratuity on the quote". */
+  | { kind: "none_on_quote" }
+  /** Delivered, no row, but the accepted quote HAS gratuity (accepted after delivery): to be recalculated. */
+  | { kind: "not_recorded" }
+  /** Delivered, no row, and NO accepted quote to read a gratuity from: not known — never "no gratuity". */
+  | { kind: "source_unknown"; reason: "pending" | "none" | "rejected" | "ambiguous" }
   /** Not delivered yet: what the pure rule WOULD split. Expected, not recorded. */
   | { kind: "expected"; gratuityCents: number; driverBps: number; driverCents: number; crewCents: number }
-  /** Two quotes are accepted: no gratuity source. */
+  /** Not delivered yet, and two quotes are accepted: no gratuity source. */
   | { kind: "quote_ambiguous" }
   /** No split applies: an ezCater courier (the tip is ezCater's fact), a pickup, an order with no gratuity to expect. */
   | { kind: "none" };
@@ -144,11 +165,16 @@ function orderGratuity(input: OrderEconomicsInput): OrderGratuity {
       driverBps: allocation.driverBps, driverCents: allocation.driverCents, crewCents: allocation.crewCents, needsRecalc: recomputeWouldWrite(head, computed) };
   }
   if (head?.kind === "void") return { kind: "voided", headId: head.id };
-  if (computed.kind === "ambiguous") return { kind: "quote_ambiguous" };
-  if (computed.kind === "split") return { kind: "nothing_allocated", headId: head?.id ?? null, needsRecalc: recomputeWouldWrite(head, computed) };
-  // Nothing delivered by a courier of ours. A 0-cent head with no delivered job left is still "nothing allocated".
-  if (head) return { kind: "nothing_allocated", headId: head.id, needsRecalc: false };
+  // A 0-cent head: its own state, whatever the quote says now.
+  if (head) return { kind: "zero_head", headId: head.id, needsRecalc: recomputeWouldWrite(head, computed) };
   const quote = orderQuoteOf(input.candidates);
+  if (input.jobs.some(creditable)) {
+    // Delivered by a courier of ours, and nothing recorded. WHY decides what may be said:
+    if (quote.kind === "accepted") return quote.quote.gratuityCents === 0 ? { kind: "none_on_quote" } : { kind: "not_recorded" };
+    // No accepted quote = no gratuity SOURCE. The database allocates nothing; that is not "no gratuity".
+    return { kind: "source_unknown", reason: quote.kind };
+  }
+  if (quote.kind === "ambiguous") return { kind: "quote_ambiguous" };
   if (input.isEzcater || orderRejected(input.stage, quote) || quote.kind !== "accepted" || quote.quote.gratuityCents === 0) return { kind: "none" };
   // Expected only where a courier of ours is, or is to be, on the order.
   if (!quote.isDelivery && !input.jobs.some((j) => j.bookedVia !== "provider_native")) return { kind: "none" };
@@ -196,11 +222,15 @@ export interface DeliveryEconomicsReport {
   gratuity: {
     /** Orders whose head allocates, and the sums over those HEADS only. */
     orders: number; gratuityCents: number; driverCents: number; crewCents: number;
-    /** Delivered orders with no gratuity on the quote (nothing allocated, nothing to recalculate). */
+    /** Delivered orders whose ACCEPTED quote has no gratuity (nothing allocated, nothing to recalculate). */
     deliveredNoGratuity: number;
+    /** Delivered orders with NO accepted quote: the gratuity is not known (never counted as "no gratuity"). */
+    sourceUnknown: number;
+    /** Orders whose head is a 0-cent split (recalculated from a quote with no gratuity). */
+    zeroHead: number;
     /** Orders whose head is a void. */
     voided: number;
-    /** Orders whose recorded split no longer matches the current quote (recalculate it on the order). */
+    /** Orders whose recorded split no longer matches the current quote, or that have none recorded for it yet (recalculate it on the order). */
     needsRecalc: number;
     /** Orders not delivered yet with an expected split (never in the sums). */
     expected: number;
@@ -216,7 +246,7 @@ const byEventDateDesc = (a: OrderEconomics, b: OrderEconomics) => {
 export function deliveryEconomics(inputs: readonly OrderEconomicsInput[]): DeliveryEconomicsReport {
   const orders = inputs.map(orderEconomics).sort(byEventDateDesc);
   const totals = { feeCents: 0, costCents: 0, netCents: 0 };
-  const gratuity = { orders: 0, gratuityCents: 0, driverCents: 0, crewCents: 0, deliveredNoGratuity: 0, voided: 0, needsRecalc: 0, expected: 0 };
+  const gratuity = { orders: 0, gratuityCents: 0, driverCents: 0, crewCents: 0, deliveredNoGratuity: 0, sourceUnknown: 0, zeroHead: 0, voided: 0, needsRecalc: 0, expected: 0 };
   const excluded = new Map<EconomicsGap, number>();
   let withNet = 0;
   for (const o of orders) {
@@ -230,7 +260,10 @@ export function deliveryEconomics(inputs: readonly OrderEconomicsInput[]): Deliv
       gratuity.orders += 1; gratuity.gratuityCents += g.gratuityCents; gratuity.driverCents += g.driverCents; gratuity.crewCents += g.crewCents;
       if (g.needsRecalc) gratuity.needsRecalc += 1;
     } else if (g.kind === "voided") gratuity.voided += 1;
-    else if (g.kind === "nothing_allocated") { if (g.needsRecalc) gratuity.needsRecalc += 1; else gratuity.deliveredNoGratuity += 1; }
+    else if (g.kind === "zero_head") { gratuity.zeroHead += 1; if (g.needsRecalc) gratuity.needsRecalc += 1; }
+    else if (g.kind === "none_on_quote") gratuity.deliveredNoGratuity += 1;
+    else if (g.kind === "not_recorded") gratuity.needsRecalc += 1;
+    else if (g.kind === "source_unknown") gratuity.sourceUnknown += 1;
     else if (g.kind === "expected") gratuity.expected += 1;
   }
   return { orders, coverage: { orders: orders.length, withNet }, totals,

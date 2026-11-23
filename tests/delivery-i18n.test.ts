@@ -151,6 +151,17 @@ describe("D4: the economics copy, en + es", () => {
     expect(EN["catering.delivery.gratuity.recompute"]).toBe("Recalculate from the current quote");
     expect(EN["catering.delivery.gratuity.void"]).toBe("Remove — this delivery didn't happen");
     expect([ES["catering.delivery.gratuity.recompute"], ES["catering.delivery.gratuity.void"]]).toEqual(["Recalcular con la cotización actual", "Quitar — esta entrega no ocurrió"]);
+    // Ruled 2026-11-23: after a void the same act reads as restoring.
+    expect([EN["catering.delivery.gratuity.restore"], ES["catering.delivery.gratuity.restore"]]).toEqual(["Put the split back from the current quote", "Restablecer el reparto con la cotización actual"]);
+  });
+  it("a missing gratuity source has its own words, and 'no gratuity' is said only of an ACCEPTED quote (review DELIV4-r1)", () => {
+    expect(EN["catering.delivery.gratuity.source_unknown"]).toBe("Delivered. No accepted quote yet — gratuity not known.");
+    expect(EN["reports.sales.delivery.gratuity.source_unknown"]).toBe("Delivered with no accepted quote — gratuity not known: {n}");
+    for (const key of ["catering.delivery.gratuity.none_on_quote", "reports.sales.delivery.gratuity.no_gratuity"]) {
+      expect(EN[key], key).toMatch(/accepted quote/);
+      expect(ES[key], key).toMatch(/cotización aceptada/);
+    }
+    for (const key of ["catering.delivery.gratuity.source_unknown", "reports.sales.delivery.gratuity.source_unknown"]) expect(ES[key], key).toMatch(/no se sabe la propina/);
   });
 });
 
