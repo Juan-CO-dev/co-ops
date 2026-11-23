@@ -85,6 +85,17 @@ export const DESTRUCTIVE_ACTIONS = [
   // Item 21 PR 5: a person ran the house reconciler over an OLDER stretch of orders (the cron only looks at the last
   // nine days) and it added links. The links' own record is catering.toast_reconciled; this names who started it.
   "catering.toast_backfill",
+  // Catering delivery D1 — SQL-only (migration 0356; each writer inserts its row in its own transaction, destructive
+  // literally true). A person records or changes the delivery record of an order: a booking made outside CO-OPS, a
+  // status, what the courier cost (and a correction of it), "the old shop still sends it" after a transfer, the
+  // recorded driver / crew split of the gratuity (RECORDED ONLY; pays nothing), and a shop's delivery settings.
+  "delivery.record",
+  "delivery.status",
+  "delivery.cost",
+  "delivery.cost_correct",
+  "delivery.pickup_kept",
+  "delivery.gratuity_split",
+  "delivery.settings_update",
   // W23/B129, owner decision W23-4 b — SQL-only (migration 0330): an EMPTY duplicate catering company
   // (no domain, no contact, a same-name company created after it) is switched off (active = false,
   // reversible). One row per company, destructive literally true, actor_context migration_apply.
