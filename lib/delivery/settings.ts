@@ -80,7 +80,11 @@ export interface DeliverySettingsSave {
   expectedUpdatedAt: string | null;
 }
 
-export async function saveDeliverySettings(actor: AuthContext, input: DeliverySettingsSave, deps: { client?: Sb } = {}): Promise<DeliveryShopSettings> {
+/**
+ * `openJobs` = the open delivery jobs of leads now at this shop. OFF MEANS OFF: while a shop is off NO writer accepts
+ * anything for it (not even a cancellation), so those jobs wait until it is turned on again — the card warns with this.
+ */
+export async function saveDeliverySettings(actor: AuthContext, input: DeliverySettingsSave, deps: { client?: Sb } = {}): Promise<DeliveryShopSettings & { openJobs: number }> {
   if (!deliveryTrackingOn()) throw deliveryOff();
   if (!deliverySettingsWriteAllowed(deliveryActorOf(actor))) throw new DeliveryError(403, "forbidden");
   const sb = deps.client ?? getServiceRoleClient();
@@ -90,7 +94,7 @@ export async function saveDeliverySettings(actor: AuthContext, input: DeliverySe
     p_expected_updated_at: input.expectedUpdatedAt,
   });
   if (error) throw deliveryErrorFrom(error);
-  const row = data as DeliverySettingsRow | null;
-  if (!row || typeof row.updated_at !== "string" || typeof row.location_id !== "string") throw new DeliveryError(500, "generic");
-  return fromDeliverySettingsRow(row);
+  const row = data as (DeliverySettingsRow & { open_jobs?: unknown }) | null;
+  if (!row || typeof row.updated_at !== "string" || typeof row.location_id !== "string" || typeof row.open_jobs !== "number") throw new DeliveryError(500, "generic");
+  return { ...fromDeliverySettingsRow(row), openJobs: row.open_jobs };
 }

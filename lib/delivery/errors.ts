@@ -7,6 +7,8 @@
  *  - `delivery_off`: the switch (`DELIVERY_TRACKING`, 503, decided here before any query) or the shop's `enabled` (SQL, 409).
  *  - `delivery_unavailable` (503): 0356 is not on the database (42P01 / 42883 / PGRST202 / PGRST205). Never a 500,
  *    never a silent zero.
+ *  - `delivery_busy` (409, retryable): a read gave up because the lead kept changing shop under it; nothing was
+ *    returned. The lib's own code, never raised by SQL. (D2 owns its en + es message.)
  *  - Anything else is `generic` (500): a failure is never reported as a success.
  */
 export const DELIVERY_SQL_REFUSALS = [
@@ -17,7 +19,7 @@ export const DELIVERY_SQL_REFUSALS = [
 ] as const;
 export type DeliverySqlRefusal = (typeof DELIVERY_SQL_REFUSALS)[number];
 
-export const DELIVERY_ERROR_CODES = [...DELIVERY_SQL_REFUSALS, "delivery_unavailable", "generic"] as const;
+export const DELIVERY_ERROR_CODES = [...DELIVERY_SQL_REFUSALS, "delivery_unavailable", "delivery_busy", "generic"] as const;
 export type DeliveryErrorCode = (typeof DELIVERY_ERROR_CODES)[number];
 
 /** PostgREST / Postgres codes that mean "0356 is not installed". */

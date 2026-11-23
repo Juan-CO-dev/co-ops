@@ -5,7 +5,10 @@
  * EVERY ENTRY POINT, IN THIS ORDER:
  *   1. the switch (`DELIVERY_TRACKING`): off = a loader answers "off" with NO query; a write throws 503 `delivery_off`;
  *   2. the gate, by trusted role, BEFORE ANY I/O;
- *   3. the database.
+ *   3. the database. A write first reads the shop's own switch: OFF MEANS OFF for every writer (409 `delivery_off`).
+ * A VIEWER'S QUERIES NAME ONLY WHAT THEIR TIER MAY SEE (status / detail / cost / history): a hidden column is never
+ * selected and redacted afterwards. And what is returned is bound to the shop the gates were judged for: a lead that
+ * changed shop during the reads is loaded again (`loadLeadDelivery`), then `delivery_busy`.
  * READS. `loadLeadDelivery` decides the view in the lib: a viewer who passes the status gate at the lead's CURRENT shop
  * gets `view: "lead"` (detail and cost added by their own gates — a status-only viewer receives no money, no external
  * reference, no note); a viewer who passes no lead-scoped gate but the JOB-scoped history gate for at least one job
@@ -23,12 +26,12 @@ import type { AuthContext } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import {
-  deliveryActorOf, deliveryCostReadAllowed, deliveryDetailReadAllowed, deliveryJobHistoryReadAllowed, deliveryReadPossible, deliveryStatusReadAllowed,
+  type DeliveryActor, deliveryActorOf, deliveryCostReadAllowed, deliveryDetailReadAllowed, deliveryJobHistoryReadAllowed, deliveryReadPossible, deliveryStatusReadAllowed,
   deliveryWriteAllowed,
 } from "./access-shared";
 import { deliveryTrackingOn } from "./config";
 import { orderCost, type OrderCost } from "./cost-shared";
-import { DeliveryError, deliveryErrorFrom, deliveryOff, type DeliverySqlRefusal } from "./errors";
+import { DeliveryError, deliveryErrorFrom, deliveryErrorStatus, deliveryOff, type DeliverySqlRefusal } from "./errors";
 import { splitHead } from "./gratuity-shared";
 import { orderQuoteOf } from "./quote-shared";
 import { readShopDeliverySettings } from "./settings";
@@ -196,6 +199,25 @@ export function leadDeliveryState(facts: Pick<LeadDeliveryFacts, "stage" | "shop
 }
 
 // ── The gated view ──────────────────────────────────────────────────────────
+//
+// THREE PROJECTIONS, and a query is ISSUED only after its own gate passed (a tier-hidden column is never SELECTed for a
+// viewer who may not see it — redacting a fetched row is not the rule):
+//   status  — the lead, ezCater-ness, the quote candidates WITHOUT money, the jobs WITHOUT reference, the pickup
+//             decisions WITHOUT note, the shop's switch. No event, no cost, no split.
+//   detail  — adds the jobs' external reference, the events (with notes), the decisions' notes, the shop's couriers.
+//   cost    — adds the costs, the gratuity chain, the quotes' gratuity and delivery fee, the shop's driver share.
+//   history — JOB-scoped, for the pickup shop's managers after the order moved away: only jobs whose pickup shop the
+//             viewer is a member of (filtered in the query AND again on the rows), with their events.
+export const STATUS_QUOTE_COLUMNS = "id,root_id,status,is_delivery,created_at,superseded_at";
+export const STATUS_JOB_COLUMNS = "id,pipeline_id,location_id,booked_via,provider_label,attempt_no,pickup_at,dropoff_at,closed_at,status,status_seq,status_at";
+export const STATUS_DECISION_COLUMNS = "id,job_id,lead_location_id";
+export const STATUS_SETTINGS_COLUMNS = "location_id,enabled";
+export const DETAIL_SETTINGS_COLUMNS = "location_id,manual_providers";
+export const COST_SETTINGS_COLUMNS = "location_id,gratuity_driver_bps";
+export const HISTORY_JOB_COLUMNS = "id,pipeline_id,location_id,provider_label,external_ref,attempt_no,pickup_at,dropoff_at,status,status_seq,status_at";
+/** How often a load starts over when the lead changed shop under it, before it answers `delivery_busy`. */
+export const LOAD_ATTEMPTS = 3;
+
 /** What a key holder may see of the job the state is about. No money, no external reference, no note, no customer field. */
 export interface DeliveryStatusDto { attemptNo: number; status: DeliveryStatus; statusAt: string; providerLabel: string; pickupAt: string | null; dropoffAt: string | null }
 /** One job for the pickup shop's managers after the order moved away. No lead state, no other job, no cost. */
@@ -219,12 +241,103 @@ export type LeadDeliveryView =
     }
   | { view: "history"; leadId: string; movedToShopId: string | null; jobs: DeliveryJobHistoryDto[] };
 
-const statusDto = (j: DeliveryJob): DeliveryStatusDto =>
-  ({ attemptNo: j.attemptNo, status: j.status, statusAt: j.statusAt, providerLabel: j.providerLabel, pickupAt: j.pickupAt, dropoffAt: j.dropoffAt });
+interface StatusQuoteRow { id: string; root_id: string | null; status: QuoteCandidate["status"]; is_delivery: boolean; created_at: string; superseded_at: string | null }
+type StatusJobRow = Pick<JobRow, "id" | "pipeline_id" | "location_id" | "booked_via" | "provider_label" | "attempt_no" | "pickup_at" | "dropoff_at" | "closed_at" | "status" | "status_seq" | "status_at">;
+type HistoryJobRow = Pick<JobRow, "id" | "pipeline_id" | "location_id" | "provider_label" | "external_ref" | "attempt_no" | "pickup_at" | "dropoff_at" | "status" | "status_seq" | "status_at">;
+
+async function shopSetting<T>(sb: Sb, columns: string, shopId: string | null): Promise<T | null> {
+  if (!shopId) return null;
+  const { data, error } = await sb.from("delivery_settings").select(columns).eq("location_id", shopId).maybeSingle<T>();
+  if (error) throw deliveryErrorFrom(error);
+  return data ?? null;
+}
+
+/** The lead view for a viewer who PASSED the status gate at `lead.location_id`. Detail and cost queries run only behind their gates. */
+async function leadView(sb: Sb, who: DeliveryActor, lead: LeadRow, soon: boolean): Promise<Extract<LeadDeliveryView, { view: "lead" }>> {
+  const leadId = lead.id, shopId = lead.location_id;
+  // ── status tier ──
+  const [isEzcater, quotes, jobs, setting] = await Promise.all([
+    readIsEzcater(sb, lead),
+    pages<StatusQuoteRow>((from, to) => sb.from("catering_quotes").select(STATUS_QUOTE_COLUMNS).eq("pipeline_id", leadId).is("superseded_at", null)
+      .order("created_at").order("id").range(from, to)),
+    pages<StatusJobRow>((from, to) => sb.from("delivery_job_current").select(STATUS_JOB_COLUMNS).eq("pipeline_id", leadId).order("attempt_no").order("id").range(from, to)),
+    shopSetting<{ location_id: string; enabled: boolean }>(sb, STATUS_SETTINGS_COLUMNS, shopId),
+  ]);
+  const jobIds = jobs.map((j) => j.id);
+  const kept: { jobId: string; leadLocationId: string }[] = [];
+  for (const ids of chunks(jobIds)) {
+    const rows = await pages<{ id: string; job_id: string; lead_location_id: string }>((from, to) => sb.from("delivery_pickup_decisions").select(STATUS_DECISION_COLUMNS)
+      .in("job_id", ids).order("job_id").order("id").range(from, to));
+    kept.push(...rows.map((r) => ({ jobId: r.job_id, leadLocationId: r.lead_location_id })));
+  }
+  const quote = orderQuoteOf(quotes.map((q) => ({ id: q.id, status: q.status, isDelivery: q.is_delivery === true, createdAt: q.created_at })));
+  const derived = deliveryStateOf({
+    stage: lead.stage, currentShopId: shopId, orderQuote: { kind: quote.kind, isDelivery: quote.isDelivery }, isEzcater, soon,
+    jobs: jobs.map((j) => ({ attemptNo: j.attempt_no, status: j.status, open: j.closed_at === null, pickupShopId: j.location_id, keptForCurrentShop: keptForShop(kept, j.id, shopId) })),
+  });
+  const about = jobs.find((j) => j.attempt_no === derived.attemptNo) ?? latestJob(jobs.map((j) => ({ ...j, attemptNo: j.attempt_no })));
+  const view: Extract<LeadDeliveryView, { view: "lead" }> = {
+    view: "lead", leadId, shopId, enabled: setting?.enabled === true, isEzcater, orderQuote: { kind: quote.kind, isDelivery: quote.isDelivery }, state: derived.state,
+    status: about ? { attemptNo: about.attempt_no, status: about.status, statusAt: about.status_at, providerLabel: about.provider_label, pickupAt: about.pickup_at, dropoffAt: about.dropoff_at } : null,
+  };
+  // ── detail tier ──
+  if (deliveryDetailReadAllowed(who, shopId)) {
+    const [full, couriers] = await Promise.all([readJobs(sb, leadId), shopSetting<{ location_id: string; manual_providers: unknown }>(sb, DETAIL_SETTINGS_COLUMNS, shopId)]);
+    const ids = full.map((j) => j.id);
+    const [events, pickupDecisions] = ids.length === 0 ? [[], []] as [DeliveryJobEvent[], DeliveryPickupDecision[]] : await Promise.all([readEvents(sb, ids), readDecisions(sb, ids)]);
+    view.detail = { jobs: full, events, pickupDecisions,
+      manualProviders: Array.isArray(couriers?.manual_providers) ? couriers.manual_providers.filter((p): p is string => typeof p === "string") : [] };
+  }
+  // ── cost tier ──
+  if (deliveryCostReadAllowed(who, shopId)) {
+    const [costs, splits, candidates, share] = await Promise.all([
+      jobIds.length === 0 ? Promise.resolve([] as DeliveryCostRow[]) : readCosts(sb, jobIds), readSplits(sb, leadId), readQuoteCandidates(sb, leadId),
+      shopSetting<{ location_id: string; gratuity_driver_bps: number }>(sb, COST_SETTINGS_COLUMNS, shopId),
+    ]);
+    view.cost = { costs, orderCost: orderCost(jobIds.map((jobId) => ({ jobId, costs }))), splits, splitHead: splitHead(splits), candidates,
+      gratuityDriverBps: share?.gratuity_driver_bps ?? null };
+  }
+  return view;
+}
+
+/**
+ * The pickup shop's AGM / GM after the order moved away: the jobs recorded FOR THEIR SHOP only. Filtered BY
+ * CONSTRUCTION — the query names only the viewer's own shops, and the rows are filtered again — so whatever else exists
+ * on the lead (a replacement booked at the new shop) can never be in the answer.
+ */
+async function historyView(sb: Sb, who: DeliveryActor, lead: LeadRow): Promise<Extract<LeadDeliveryView, { view: "history" }> | null> {
+  const shops = who.locations.filter((shop) => deliveryJobHistoryReadAllowed(who, shop));
+  if (shops.length === 0) return null;
+  const mine: HistoryJobRow[] = [];
+  for (const ids of chunks(shops)) {
+    const rows = await pages<HistoryJobRow>((from, to) => sb.from("delivery_job_current").select(HISTORY_JOB_COLUMNS).eq("pipeline_id", lead.id).in("location_id", ids)
+      .order("attempt_no").order("id").range(from, to));
+    mine.push(...rows.filter((j) => j.pipeline_id === lead.id && shops.includes(j.location_id)));
+  }
+  if (mine.length === 0) return null;
+  mine.sort((a, b) => a.attempt_no - b.attempt_no);
+  const own = new Set(mine.map((j) => j.id));
+  const events = (await readEvents(sb, [...own])).filter((e) => own.has(e.jobId));
+  return { view: "history", leadId: lead.id, movedToShopId: lead.location_id, jobs: mine.map((j) => ({
+    jobId: j.id, attemptNo: j.attempt_no, status: j.status, statusAt: j.status_at, providerLabel: j.provider_label, externalRef: j.external_ref,
+    pickupAt: j.pickup_at, dropoffAt: j.dropoff_at, pickupShopId: j.location_id, events: events.filter((e) => e.jobId === j.id) })) };
+}
 
 /**
  * A lead's delivery for THIS viewer, or null (nothing they may see, or no such lead: a 404 at the route).
  * `soon` = the caller's "inside the shop's catering lead window" (it owns the clock).
+ *
+ * WHAT IS RETURNED IS BOUND TO THE SHOP THE GATES WERE JUDGED FOR (review DELIV1-r1, P1). The reads are separate
+ * requests, so a transfer can commit between them: A's GM starts loading a lead at A (lead-scoped gates pass), the lead
+ * moves to B, B records a replacement job, and the later reads would hand A's GM B's job. So, after ALL reads of an
+ * attempt, the lead's shop is READ AGAIN; if it is not the shop the gates used, everything read is DISCARDED and the
+ * load starts over against the new shop (at most `LOAD_ATTEMPTS` times, then the named, retryable `delivery_busy`).
+ * WHY THAT IS SOUND: a job can be recorded at the destination shop only after the transfer committed (the writer reads
+ * the lead's shop under the lead lock the transfer holds). So any read that saw a destination job ran after the
+ * transfer's commit, and the re-read, which runs after every such read, sees the moved shop. An answer is returned only
+ * when the shop before and after the reads is the same one — the one its gates were judged for. (A lead that left and
+ * came BACK between the two reads is again at the judged shop, where this viewer's lead-scoped gates hold for every
+ * job of the lead.) Independently, the history view filters by construction (`historyView`).
  */
 export async function loadLeadDelivery(actor: AuthContext, leadId: string, deps: { client?: Sb; soon?: boolean } = {}): Promise<LeadDeliveryView | null> {
   if (!deliveryTrackingOn()) return { view: "off" };
@@ -232,35 +345,17 @@ export async function loadLeadDelivery(actor: AuthContext, leadId: string, deps:
   if (!deliveryReadPossible(who)) throw new DeliveryError(403, "forbidden");
   const sb = deps.client ?? getServiceRoleClient();
   try {
-    const lead = await readLead(sb, leadId);
-    if (!lead) return null;
-    const shopId = lead.location_id;
-
-    if (!deliveryStatusReadAllowed(who, shopId)) {
-      // The pickup shop's AGM / GM after the order moved away: THEIR shop's jobs only, read by the job's own shop.
-      const mine = (await readJobs(sb, leadId)).filter((j) => deliveryJobHistoryReadAllowed(who, j.locationId));
-      if (mine.length === 0) return null;
-      const events = await readEvents(sb, mine.map((j) => j.id));
-      return { view: "history", leadId, movedToShopId: shopId, jobs: mine.map((j) => ({
-        jobId: j.id, attemptNo: j.attemptNo, status: j.status, statusAt: j.statusAt, providerLabel: j.providerLabel, externalRef: j.externalRef,
-        pickupAt: j.pickupAt, dropoffAt: j.dropoffAt, pickupShopId: j.locationId, events: events.filter((e) => e.jobId === j.id) })) };
+    for (let attempt = 0; attempt < LOAD_ATTEMPTS; attempt += 1) {
+      const lead = await readLead(sb, leadId);
+      if (!lead) return null;
+      const view = deliveryStatusReadAllowed(who, lead.location_id) ? await leadView(sb, who, lead, deps.soon === true) : await historyView(sb, who, lead);
+      // The lead's shop AFTER every read of this attempt.
+      const after = await readLead(sb, leadId);
+      if (!after) return null;
+      if (after.location_id === lead.location_id) return view;
+      // It moved under the reads: nothing read in this attempt is returned.
     }
-
-    const facts = await factsOf(sb, lead);
-    const derived = leadDeliveryState(facts, deps.soon === true);
-    const about = facts.jobs.find((j) => j.attemptNo === derived.attemptNo) ?? latestJob(facts.jobs);
-    const view: Extract<LeadDeliveryView, { view: "lead" }> = {
-      view: "lead", leadId, shopId: facts.shopId, enabled: facts.settings?.enabled === true, isEzcater: facts.isEzcater,
-      orderQuote: { kind: facts.orderQuote.kind, isDelivery: facts.orderQuote.isDelivery }, state: derived.state, status: about ? statusDto(about) : null,
-    };
-    if (deliveryDetailReadAllowed(who, facts.shopId)) {
-      view.detail = { jobs: facts.jobs, events: facts.events, pickupDecisions: facts.pickupDecisions, manualProviders: facts.settings?.manualProviders ?? [] };
-    }
-    if (deliveryCostReadAllowed(who, facts.shopId)) {
-      view.cost = { costs: facts.costs, orderCost: orderCost(facts.jobs.map((j) => ({ jobId: j.id, costs: facts.costs }))), splits: facts.splits,
-        splitHead: splitHead(facts.splits), candidates: facts.candidates, gratuityDriverBps: facts.settings?.gratuityDriverBps ?? null };
-    }
-    return view;
+    throw new DeliveryError(deliveryErrorStatus("delivery_busy"), "delivery_busy");
   } catch (error) {
     if (error instanceof DeliveryError && error.code === "delivery_unavailable") return { view: "not_installed" };
     if (error instanceof DeliveryError) throw error;
@@ -269,10 +364,18 @@ export async function loadLeadDelivery(actor: AuthContext, leadId: string, deps:
 }
 
 // ── Writes ──────────────────────────────────────────────────────────────────
-/** The switch, then the write gate at the shop the person SAW. Before any I/O. */
-function assertWrite(actor: AuthContext, expectedShopId: string | null): void {
+/**
+ * Before the writer is called, in this order: the switch; the write gate at the shop the person SAW (no I/O yet); then
+ * that shop's own switch — OFF MEANS OFF, for every writer, with no exception (an open job at a shop that is turned off
+ * waits until it is turned on again). SQL refuses the same three under the lead lock; this read only saves the call.
+ */
+async function openWrite(actor: AuthContext, expectedShopId: string | null, client: Sb | undefined): Promise<Sb> {
   if (!deliveryTrackingOn()) throw deliveryOff();
   if (!deliveryWriteAllowed(deliveryActorOf(actor), expectedShopId)) throw new DeliveryError(403, "forbidden");
+  const sb = client ?? getServiceRoleClient();
+  const setting = await shopSetting<{ location_id: string; enabled: boolean }>(sb, STATUS_SETTINGS_COLUMNS, expectedShopId);
+  if (setting?.enabled !== true) throw new DeliveryError(deliveryErrorStatus("delivery_off"), "delivery_off");
+  return sb;
 }
 async function call<T extends Record<string, unknown>>(sb: Sb, fn: string, args: Record<string, unknown>, uniqueViolation?: DeliverySqlRefusal): Promise<T> {
   const { data, error } = await sb.rpc(fn, args);
@@ -297,8 +400,7 @@ export interface RecordDeliveryJobInput {
   note: string | null;
 }
 export async function recordManualDeliveryJob(actor: AuthContext, input: RecordDeliveryJobInput, deps: { client?: Sb } = {}): Promise<{ jobId: string; attemptNo: number }> {
-  assertWrite(actor, input.expectedShopId);
-  const sb = deps.client ?? getServiceRoleClient();
+  const sb = await openWrite(actor, input.expectedShopId, deps.client);
   const out = await call<{ job_id?: unknown; attempt_no?: unknown }>(sb, "record_manual_delivery_job", {
     p_actor_id: actor.user.id, p_lead_id: input.leadId, p_expected_shop: input.expectedShopId, p_provider_label: input.providerLabel,
     p_external_ref: input.externalRef, p_booked_via: input.bookedVia, p_pickup_at: input.pickupAt, p_dropoff_at: input.dropoffAt,
@@ -319,8 +421,7 @@ export interface RecordDeliveryEventInput {
 }
 export async function recordDeliveryEvent(actor: AuthContext, input: RecordDeliveryEventInput, deps: { client?: Sb } = {}):
   Promise<{ jobId: string; status: DeliveryStatus; statusSeq: number; closed: boolean; splitId: string | null }> {
-  assertWrite(actor, input.expectedShopId);
-  const sb = deps.client ?? getServiceRoleClient();
+  const sb = await openWrite(actor, input.expectedShopId, deps.client);
   const out = await call<{ job_id?: unknown; status?: unknown; status_seq?: unknown; closed?: unknown; split_id?: unknown }>(sb, "record_delivery_event", {
     p_actor_id: actor.user.id, p_job_id: input.jobId, p_expected_shop: input.expectedShopId, p_expected_status: input.expectedStatus,
     p_status: input.status, p_occurred_at: input.occurredAt, p_note: input.note,
@@ -338,8 +439,7 @@ export interface RecordDeliveryCostInput {
   note: string | null;
 }
 export async function recordDeliveryCost(actor: AuthContext, input: RecordDeliveryCostInput, deps: { client?: Sb } = {}): Promise<{ costId: string }> {
-  assertWrite(actor, input.expectedShopId);
-  const sb = deps.client ?? getServiceRoleClient();
+  const sb = await openWrite(actor, input.expectedShopId, deps.client);
   const out = await call<{ cost_id?: unknown }>(sb, "record_delivery_cost", {
     p_actor_id: actor.user.id, p_job_id: input.jobId, p_expected_shop: input.expectedShopId, p_component: input.component,
     p_amount_cents: input.amountCents, p_corrects_id: input.correctsId, p_note: input.note,
@@ -350,8 +450,7 @@ export async function recordDeliveryCost(actor: AuthContext, input: RecordDelive
 
 export async function keepDeliveryPickup(actor: AuthContext, input: { jobId: string; expectedShopId: string | null; note: string | null }, deps: { client?: Sb } = {}):
   Promise<{ decisionId: string }> {
-  assertWrite(actor, input.expectedShopId);
-  const sb = deps.client ?? getServiceRoleClient();
+  const sb = await openWrite(actor, input.expectedShopId, deps.client);
   const out = await call<{ decision_id?: unknown }>(sb, "keep_delivery_pickup", {
     p_actor_id: actor.user.id, p_job_id: input.jobId, p_expected_shop: input.expectedShopId, p_note: input.note,
   }, "already_kept");
@@ -370,8 +469,7 @@ export interface RecordGratuitySplitInput {
 /** RECORDED ONLY: this pays nothing. The payroll and legal treatment of the driver's share is UNVERIFIED. */
 export async function recordDeliveryGratuitySplit(actor: AuthContext, input: RecordGratuitySplitInput, deps: { client?: Sb } = {}):
   Promise<{ splitId: string; kind: "split" | "void"; jobId: string | null; gratuityCents: number; driverBps: number; driverCents: number; crewCents: number }> {
-  assertWrite(actor, input.expectedShopId);
-  const sb = deps.client ?? getServiceRoleClient();
+  const sb = await openWrite(actor, input.expectedShopId, deps.client);
   const out = await call<Record<string, unknown>>(sb, "record_delivery_gratuity_split", {
     p_actor_id: actor.user.id, p_lead_id: input.leadId, p_expected_shop: input.expectedShopId, p_mode: input.mode,
     p_expected_head: input.expectedHeadId, p_reason: input.reason,

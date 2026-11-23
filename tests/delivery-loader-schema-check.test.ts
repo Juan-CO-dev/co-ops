@@ -29,7 +29,7 @@ const CANNED: Record<string, unknown> = {
 };
 const RPC_OK: Record<string, unknown> = {
   delivery_ready: { ready: true, version: 1 },
-  set_delivery_settings: CANNED.delivery_settings,
+  set_delivery_settings: { ...(CANNED.delivery_settings as object), open_jobs: 0 },
   record_manual_delivery_job: { job_id: JOB, attempt_no: 1 },
   record_delivery_event: { job_id: JOB, status: "picked_up", status_seq: 2, closed: false, split_id: null },
   record_delivery_cost: { cost_id: "c1" },
@@ -61,6 +61,8 @@ function recordingClient() {
 const actor = (role: string, locations: string[]): AuthContext => ({ user: { id: "user-1", role, active: true }, role, level: 0, locations, session: {} } as unknown as AuthContext);
 
 let db: PGlite;
+/** How many queries the status-only viewer's load issued (they are the first captured). */
+let statusTierQueries = 0;
 const previous = process.env.DELIVERY_TRACKING;
 beforeAll(async () => {
   db = new PGlite();
@@ -71,7 +73,10 @@ beforeAll(async () => {
   const settings = await import("@/lib/delivery/settings");
   const sb = recordingClient();
   const moo = actor("moo", []);
-  // The lead view (every table), the history view (the pickup shop's GM of a lead that sits elsewhere), the raw facts.
+  // Every projection: the status tier alone (a key holder), status + detail + cost (the MoO), the history tier (the
+  // pickup shop's GM of a lead that sits elsewhere), the raw facts.
+  await jobs.loadLeadDelivery(actor("key_holder", [SHOP]), LEAD, { client: sb });
+  statusTierQueries = captured.length;
   await jobs.loadLeadDelivery(moo, LEAD, { client: sb });
   CANNED.catering_pipeline = { id: LEAD, location_id: "00000000-0000-4000-8000-00000000000b", stage: "confirmed", lead_source: "website" };
   await jobs.loadLeadDelivery(actor("gm", [SHOP]), LEAD, { client: sb });
@@ -110,6 +115,22 @@ describe("lib/delivery against the real 0356 schema", () => {
     }
   });
 
+  it("the status tier's own queries name no restricted relation or column (they execute above like every other)", () => {
+    const status = captured.slice(0, statusTierQueries);
+    expect(status.length).toBeGreaterThanOrEqual(6);
+    expect([...new Set(status.map((c) => c.table))].sort()).toEqual(["catering_pipeline", "catering_quotes", "delivery_job_current", "delivery_pickup_decisions", "delivery_settings", "ezcater_orders"]);
+    const columns = status.flatMap((c) => c.select);
+    for (const hidden of ["external_ref", "note", "gratuity_cents", "delivery_fee_cents", "amount_cents", "manual_providers", "gratuity_driver_bps"]) {
+      expect([hidden, columns.includes(hidden)]).toEqual([hidden, false]);
+    }
+    // The projections the three tiers and the history view select all exist on the real relations.
+    const quoteSelects = new Set(captured.filter((c) => c.table === "catering_quotes").map((c) => c.select.join()));
+    expect([...quoteSelects].sort()).toEqual(["id,root_id,status,is_delivery,created_at,superseded_at", "id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at"]);
+    const settingSelects = new Set(captured.filter((c) => c.table === "delivery_settings").map((c) => c.select.join()));
+    expect([...settingSelects].sort()).toEqual(["location_id,enabled", "location_id,enabled,manual_providers,gratuity_driver_bps,updated_at", "location_id,gratuity_driver_bps", "location_id,manual_providers"]);
+    expect(captured.some((c) => c.table === "delivery_job_current" && c.filters.includes("location_id") && c.select.includes("external_ref"))).toBe(true);
+  });
+
   it("every list read is ordered (a paged read needs a stable order)", () => {
     for (const c of captured) {
       const single = (c.table === "catering_pipeline" || c.table === "delivery_settings") && c.filters.length === 1;
@@ -122,9 +143,7 @@ describe("lib/delivery against the real 0356 schema", () => {
     const jobs = captured.find((c) => c.table === "delivery_job_current")!;
     expect(jobs.select).toEqual(expect.arrayContaining(["attempt_no", "status", "status_seq", "status_at", "location_id", "closed_at"]));
     expect(jobs.order[0]).toBe("attempt_no");
-    const quotes = captured.find((c) => c.table === "catering_quotes")!;
-    expect(quotes.filters.sort()).toEqual(["pipeline_id", "superseded_at"]);
-    expect(quotes.select.sort()).toEqual(["created_at", "delivery_fee_cents", "gratuity_cents", "id", "is_delivery", "status"]);
+    for (const quotes of captured.filter((c) => c.table === "catering_quotes")) expect([...quotes.filters].sort()).toEqual(["pipeline_id", "superseded_at"]);
     expect(captured.find((c) => c.table === "ezcater_orders")!.filters).toEqual(["lead_id"]);
   });
 
