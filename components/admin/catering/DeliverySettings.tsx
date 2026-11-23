@@ -127,7 +127,7 @@ function ShopCard({ shop, startOpen }: { shop: DeliveryShopCard; startOpen: bool
           </ul>}
         {couriers.length < MAX_MANUAL_PROVIDERS && <div className="flex flex-wrap items-end gap-2">
           <label className="grid min-w-0 flex-1 basis-[10rem] gap-1 text-sm text-co-text">{t(k("couriers.add_label"))}
-            <input className={FIELD} value={adding} maxLength={MAX_PROVIDER_LABEL} disabled={busy} onChange={(event) => setAdding(event.target.value)} />
+            <input aria-label={t(k("couriers.add_label"))} className={FIELD} value={adding} maxLength={MAX_PROVIDER_LABEL} disabled={busy} onChange={(event) => setAdding(event.target.value)} />
           </label>
           <button type="button" className={QUIET} disabled={busy || !canAdd} onClick={() => { setCouriers([...couriers, name]); setAdding(""); }}>{t(k("couriers.add"))}</button>
         </div>}
@@ -137,7 +137,7 @@ function ShopCard({ shop, startOpen }: { shop: DeliveryShopCard; startOpen: bool
 
       <div className="grid gap-2">
         <label className="grid gap-1 text-sm font-bold text-co-text">{t(k("share.label"))}
-          <input inputMode="decimal" className={FIELD} disabled={busy} value={percent} onChange={(event) => setPercent(event.target.value)} />
+          <input aria-label={t(k("share.label"))} inputMode="decimal" className={FIELD} disabled={busy} value={percent} onChange={(event) => setPercent(event.target.value)} />
         </label>
         {bps === null && <p role="alert" className="text-sm font-bold text-co-cta-text">{t(k("share.invalid"))}</p>}
         <p className="rounded-lg border border-co-warning bg-co-warning-surface p-3 text-sm text-co-text">{t(k("share.unverified"))}</p>

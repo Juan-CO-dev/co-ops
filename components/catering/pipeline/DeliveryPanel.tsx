@@ -233,33 +233,33 @@ function RecordForm({ offer, eventDate, busy, onSubmit, onCancel }: {
     {!native && offer.providers.length === 0 && <p role="status" className="text-co-warning-text">{t(k("record.no_couriers"))}</p>}
     <label className={LABEL}>{t(k("record.courier"))}
       {native
-        ? <input className={FIELD} value={courier} maxLength={MAX_PROVIDER_LABEL} disabled={busy} onChange={(e) => setCourier(e.target.value)} />
+        ? <input aria-label={t(k("record.courier"))} className={FIELD} value={courier} maxLength={MAX_PROVIDER_LABEL} disabled={busy} onChange={(e) => setCourier(e.target.value)} />
         : <select className={FIELD} value={courier} disabled={busy || offer.providers.length === 0} onChange={(e) => setCourier(e.target.value)}>
           {offer.providers.length === 0 && <option value="">{t(k("record.courier_pick"))}</option>}
           {offer.providers.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>}
     </label>
     <label className={LABEL}>{t(k("record.reference"))}
-      <input className={FIELD} value={reference} maxLength={MAX_EXTERNAL_REF} disabled={busy} onChange={(e) => setReference(e.target.value)} />
+      <input aria-label={t(k("record.reference"))} className={FIELD} value={reference} maxLength={MAX_EXTERNAL_REF} disabled={busy} onChange={(e) => setReference(e.target.value)} />
     </label>
     <div className="flex flex-wrap gap-3">
       <label className={`${LABEL} min-w-0 flex-1 basis-[9rem]`}>{t(k("record.day"))}
-        <input type="date" className={FIELD} value={day} disabled={busy} onChange={(e) => setDay(e.target.value)} />
+        <input aria-label={t(k("record.day"))} type="date" className={FIELD} value={day} disabled={busy} onChange={(e) => setDay(e.target.value)} />
       </label>
       <label className={`${LABEL} min-w-0 flex-1 basis-[7rem]`}>{t(k("record.pickup_time"))}
-        <input type="time" className={FIELD} value={pickup} disabled={busy} onChange={(e) => setPickup(e.target.value)} />
+        <input aria-label={t(k("record.pickup_time"))} type="time" className={FIELD} value={pickup} disabled={busy} onChange={(e) => setPickup(e.target.value)} />
       </label>
       <label className={`${LABEL} min-w-0 flex-1 basis-[7rem]`}>{t(k("record.dropoff_time"))}
-        <input type="time" className={FIELD} value={dropoff} disabled={busy} onChange={(e) => setDropoff(e.target.value)} />
+        <input aria-label={t(k("record.dropoff_time"))} type="time" className={FIELD} value={dropoff} disabled={busy} onChange={(e) => setDropoff(e.target.value)} />
       </label>
     </div>
     <label className={LABEL}>{t(k("record.cost"))}
-      <input className={FIELD} inputMode="decimal" value={cost} disabled={busy} onChange={(e) => setCost(e.target.value)} />
+      <input aria-label={t(k("record.cost"))} className={FIELD} inputMode="decimal" value={cost} disabled={busy} onChange={(e) => setCost(e.target.value)} />
       <span>{t(k("record.cost_help"))}</span>
     </label>
     {!costValid && <p role="alert" className="text-co-cta-text">{t(k("cost.invalid"))}</p>}
     <label className={LABEL}>{t(k("record.note"))}
-      <textarea className={`${FIELD} py-2`} rows={2} value={note} maxLength={MAX_DELIVERY_NOTE} disabled={busy} onChange={(e) => setNote(e.target.value)} />
+      <textarea aria-label={t(k("record.note"))} className={`${FIELD} py-2`} rows={2} value={note} maxLength={MAX_DELIVERY_NOTE} disabled={busy} onChange={(e) => setNote(e.target.value)} />
     </label>
     <div className="flex flex-wrap gap-2">
       <button type="submit" className={PRIMARY} disabled={busy || !ready}>{t(k("record.submit"))}</button>
@@ -304,11 +304,11 @@ function JobCard({ job, busy, write, events, costs, onStatus, onAddCost, onCorre
         : <div className="grid gap-2 rounded-lg border border-co-border bg-co-surface-inset p-3">
           <p className="text-co-text">{t(k(isTerminalStatus(pending) ? "tap.confirm_final" : "tap.confirm"), { status: t(k(`status.${pending}`)) })}</p>
           <label className={LABEL}>{t(k("tap.when"))}
-            <input type="time" className={FIELD} value={time} disabled={busy} onChange={(e) => setTime(e.target.value)} />
+            <input aria-label={t(k("tap.when"))} type="time" className={FIELD} value={time} disabled={busy} onChange={(e) => setTime(e.target.value)} />
             <span>{t(k("tap.when_help"))}</span>
           </label>
           <label className={LABEL}>{t(k("record.note"))}
-            <input className={FIELD} value={note} maxLength={MAX_DELIVERY_NOTE} disabled={busy} onChange={(e) => setNote(e.target.value)} />
+            <input aria-label={t(k("record.note"))} className={FIELD} value={note} maxLength={MAX_DELIVERY_NOTE} disabled={busy} onChange={(e) => setNote(e.target.value)} />
           </label>
           <div className="flex flex-wrap gap-2">
             <button type="button" className={PRIMARY} disabled={busy} onClick={() => { const s = pending; setPending(null); onStatus(s, time, note); }}>
@@ -368,10 +368,10 @@ function JobCosts({ job, costs, busy, write, onAddCost, onCorrect }: {
         </div>
         {write && correcting === head.id && <div className="grid gap-2 rounded-lg border border-co-border bg-co-surface-inset p-3">
           <label className={LABEL}>{t(k("cost.amount"))}
-            <input className={FIELD} inputMode="decimal" value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} />
+            <input aria-label={t(k("cost.amount"))} className={FIELD} inputMode="decimal" value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} />
           </label>
           <label className={LABEL}>{t(k("cost.reason"))}
-            <input className={FIELD} value={reason} maxLength={MAX_DELIVERY_NOTE} disabled={busy} onChange={(e) => setReason(e.target.value)} />
+            <input aria-label={t(k("cost.reason"))} className={FIELD} value={reason} maxLength={MAX_DELIVERY_NOTE} disabled={busy} onChange={(e) => setReason(e.target.value)} />
           </label>
           {head.component === "credit" && <p>{t(k("cost.credit_note"))}</p>}
           <p>{t(k("cost.password_note"))}</p>
@@ -386,12 +386,12 @@ function JobCosts({ job, costs, busy, write, onAddCost, onCorrect }: {
     {write && lines.addable.length > 0 && (adding
       ? <div className="grid gap-2 rounded-lg border border-co-border bg-co-surface-inset p-3">
         <label className={LABEL}>{t(k("cost.component"))}
-          <select className={FIELD} value={pick} disabled={busy} onChange={(e) => setComponent(e.target.value as DeliveryCostComponent)}>
+          <select aria-label={t(k("cost.component"))} className={FIELD} value={pick} disabled={busy} onChange={(e) => setComponent(e.target.value as DeliveryCostComponent)}>
             {lines.addable.map((c) => <option key={c} value={c}>{t(k(`component.${c}`))}</option>)}
           </select>
         </label>
         <label className={LABEL}>{t(k("cost.amount"))}
-          <input className={FIELD} inputMode="decimal" value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} />
+          <input aria-label={t(k("cost.amount"))} className={FIELD} inputMode="decimal" value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} />
         </label>
         {pick === "credit" && <p>{t(k("cost.credit_note"))}</p>}
         {amount.trim() !== "" && cents === null && <p role="alert" className="text-co-cta-text">{t(k("cost.invalid"))}</p>}

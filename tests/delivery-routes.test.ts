@@ -89,7 +89,7 @@ const post = (w: Pick<Write, "path">, body: unknown, origin: string | null = ORI
 const get = (path: string) => new NextRequest(`${ORIGIN}${path}`);
 const fresh = () => ({ stepUpUnlocked: true, stepUpUnlockedAt: new Date().toISOString() });
 const as = (role: string, locations: string[] = [], session = {}) => { h.actor = deliveryActor(role, locations, session); };
-const use = (rpcs: FakeRpcs = OK, tables: FakeTables = TABLES) => { h.fake = deliveryFake(tables, rpcs); };
+const withDb = (rpcs: FakeRpcs = OK, tables: FakeTables = TABLES) => { h.fake = deliveryFake(tables, rpcs); };
 const refuse = (name: string, error: { code?: string; message?: string }): FakeRpcs => ({ ...OK, [name]: () => ({ error }) });
 const untouched = () => expect([h.fake.reads, h.fake.calls]).toEqual([[], []]);
 const code = async (res: Response) => ((await res.json()) as { code?: string; error?: string }).code;
@@ -99,7 +99,7 @@ beforeEach(() => {
   h.session.mockReset();
   h.session.mockImplementation(async () => h.actor);
   as("catering_mgr");
-  use();
+  withDb();
 });
 afterEach(() => { vi.unstubAllEnvs(); });
 
@@ -178,7 +178,7 @@ describe("what reaches the database", () => {
     await POST_STATUS(post(WRITES[1]!, { ...STATUS_BODY, occurredAt: { date: "2026-11-22", time: "10:40" }, note: "at the door" }), ctx());
     expect(h.fake.calls[0]!.params).toEqual({ p_actor_id: "00000000-0000-4000-8000-0000000000aa", p_job_id: JOB_B, p_expected_shop: B, p_expected_status: "accepted",
       p_status: "picked_up", p_occurred_at: "2026-11-22T15:40:00.000Z", p_note: "at the door" });
-    use();
+    withDb();
     for (const [handler, w] of [[POST_STATUS, WRITES[1]!], [POST_COST, WRITES[2]!], [POST_KEEP, WRITES[3]!]] as const) {
       const res = await (handler as Handler)(post(w, w.body), ctx(JOB_B, OTHER_LEAD));
       expect([res.status, await code(res)]).toEqual([404, "job_not_found"]);
@@ -199,7 +199,7 @@ describe("every refusal is passed through by name", () => {
   ];
   it.each(cases)("%o → %s", async (w, refusal) => {
     as("moo", [], fresh());
-    use(refuse(w.rpc, { code: "P0001", message: refusal }));
+    withDb(refuse(w.rpc, { code: "P0001", message: refusal }));
     const res = await w.handler(post(w, w.body), ctx());
     expect([res.status, await code(res)]).toEqual([deliveryErrorStatus(refusal as never), refusal]);
   });
@@ -210,22 +210,22 @@ describe("every refusal is passed through by name", () => {
 
   it.each([...WRITES, SETTINGS])("$name: 0356 not on the database is 503 delivery_unavailable with Retry-After, never a 500", async (w) => {
     as("moo", [], fresh());
-    use(refuse(w.rpc, { code: "PGRST202", message: "Could not find the function" }));
+    withDb(refuse(w.rpc, { code: "PGRST202", message: "Could not find the function" }));
     const res = await w.handler(post(w, w.body), ctx());
     expect([res.status, await code(res), res.headers.get("Retry-After")]).toEqual([503, "delivery_unavailable", "60"]);
   });
   it.each([...WRITES, SETTINGS])("$name: an unknown failure is a 500 generic, and a double tap's 23505 is its named 409", async (w) => {
     as("moo", [], fresh());
-    use(refuse(w.rpc, { code: "XX000", message: "boom" }));
+    withDb(refuse(w.rpc, { code: "XX000", message: "boom" }));
     const res = await w.handler(post(w, w.body), ctx());
     expect([res.status, await code(res)]).toEqual([500, "generic"]);
-    use({ ...OK, [w.rpc]: () => ({ data: null }) });
+    withDb({ ...OK, [w.rpc]: () => ({ data: null }) });
     expect((await w.handler(post(w, w.body), ctx())).status).toBe(500); // a writer that answers nothing is never a success
   });
   it("a unique violation that slipped past the writer's own check keeps its name", async () => {
-    use(refuse("record_manual_delivery_job", { code: "23505", message: "duplicate key" }));
+    withDb(refuse("record_manual_delivery_job", { code: "23505", message: "duplicate key" }));
     expect(await code(await POST_JOB(post(WRITES[0]!, JOB_BODY), ctx()))).toBe("delivery_job_open");
-    use(refuse("record_delivery_cost", { code: "23505", message: "duplicate key" }));
+    withDb(refuse("record_delivery_cost", { code: "23505", message: "duplicate key" }));
     expect(await code(await POST_COST(post(WRITES[2]!, COST_BODY), ctx()))).toBe("cost_exists");
   });
 });
@@ -241,7 +241,7 @@ describe("who may write: by trusted ROLE, before any database work", () => {
   });
   it.each(WRITES)("$name: the shop's AGM and GM, the catering manager and MoO and up pass the gate", async (w) => {
     for (const [role, shops] of [["agm", [B]], ["gm", [B]], ["catering_mgr", []], ["moo", []], ["owner", []], ["cgs", []]] as const) {
-      as(role, [...shops]); use();
+      as(role, [...shops]); withDb();
       expect([role, (await w.handler(post(w, w.body), ctx())).status]).toEqual([role, 200]);
     }
   });
@@ -302,7 +302,7 @@ describe("the settings: owner / CGS / MoO by role, Tier B, the row the person sa
   });
   it("a fresh password saves ONE shop's whole row, naming the updated_at the person saw (untouched, microseconds kept)", async () => {
     for (const role of ["moo", "owner", "cgs"]) {
-      as(role, [], fresh()); use();
+      as(role, [], fresh()); withDb();
       const res = await POST_SETTINGS(post(SETTINGS, SETTINGS_BODY));
       expect(res.status).toBe(200);
       expect(h.fake.calls).toEqual([{ name: "set_delivery_settings", params: { p_actor_id: "00000000-0000-4000-8000-0000000000aa", p_location_id: B,
@@ -314,7 +314,7 @@ describe("the settings: owner / CGS / MoO by role, Tier B, the row the person sa
     as("moo", [], fresh());
     expect((await POST_SETTINGS(post(SETTINGS, { ...SETTINGS_BODY, expectedUpdatedAt: null }))).status).toBe(200);
     expect(h.fake.calls[0]!.params.p_expected_updated_at).toBeNull();
-    use();
+    withDb();
     const v = SETTINGS_BODY.values;
     for (const bad of [{ ...SETTINGS_BODY, extra: 1 }, { ...SETTINGS_BODY, values: { ...v, extra: 1 } }, { ...SETTINGS_BODY, values: { ...v, gratuityDriverBps: 10_001 } },
       { ...SETTINGS_BODY, values: { ...v, gratuityDriverBps: 12.5 } }, { ...SETTINGS_BODY, values: { ...v, manualProviders: ["a", "A"] } },
@@ -330,9 +330,9 @@ describe("the settings: owner / CGS / MoO by role, Tier B, the row the person sa
     const ready = (await (await GET_SETTINGS(get(SETTINGS.path))).json()) as { settings: { state: string; shops: Array<{ locationId: string; name: string; enabled: boolean }> } };
     expect(ready.settings.state).toBe("ready");
     expect(ready.settings.shops.map((s) => s.name)).toEqual(["Shop A", "Shop B"]);
-    use(refuse("delivery_ready", { code: "PGRST202", message: "missing" }));
+    withDb(refuse("delivery_ready", { code: "PGRST202", message: "missing" }));
     expect(await (await GET_SETTINGS(get(SETTINGS.path))).json()).toEqual({ settings: { state: "not_installed" } });
-    vi.stubEnv("DELIVERY_TRACKING", ""); use();
+    vi.stubEnv("DELIVERY_TRACKING", ""); withDb();
     expect(await (await GET_SETTINGS(get(SETTINGS.path))).json()).toEqual({ settings: { state: "off" } });
     untouched();
   });
@@ -350,7 +350,7 @@ const STATUS_ONLY_PATHS = ["view", "leadId", "shopId", "enabled", "isEzcater", "
   ...["attemptNo", "status", "statusAt", "providerLabel", "pickupAt", "dropoffAt"].map((key) => `status.${key}`)].sort();
 
 describe("GET: the view is decided in the lib, and each payload is an allow-list", () => {
-  const read = async (role: string, shops: string[]) => { as(role, shops); use(); return GET_LEAD(get(`/api/catering/pipeline/${LEAD}/delivery`), ctx()); };
+  const read = async (role: string, shops: string[]) => { as(role, shops); withDb(); return GET_LEAD(get(`/api/catering/pipeline/${LEAD}/delivery`), ctx()); };
 
   it("the switch off: 200 { view: 'off' } with zero database work — the panel renders nothing", async () => {
     vi.stubEnv("DELIVERY_TRACKING", "");
@@ -361,13 +361,13 @@ describe("GET: the view is decided in the lib, and each payload is an allow-list
   });
   it("0356 not on the database: 200 { view: 'not_installed' }", async () => {
     as("moo");
-    use(OK, { ...TABLES, catering_pipeline: () => ({ error: { code: "42P01", message: "relation does not exist" } }) });
+    withDb(OK, { ...TABLES, catering_pipeline: () => ({ error: { code: "42P01", message: "relation does not exist" } }) });
     const res = await GET_LEAD(get(`/api/catering/pipeline/${LEAD}/delivery`), ctx());
     expect([res.status, await res.json()]).toEqual([200, { view: "not_installed" }]);
   });
   it("a shop that is off answers the lead view with enabled false (the panel renders nothing)", async () => {
     as("moo");
-    use(OK, { ...TABLES, delivery_settings: () => ({ data: null }) });
+    withDb(OK, { ...TABLES, delivery_settings: () => ({ data: null }) });
     expect(((await (await GET_LEAD(get(`/api/catering/pipeline/${LEAD}/delivery`), ctx())).json()) as { view: string; enabled: boolean })).toMatchObject({ view: "lead", enabled: false });
   });
 
@@ -387,9 +387,9 @@ describe("GET: the view is decided in the lib, and each payload is an allow-list
   });
   it("a GM of neither shop gets 404; so does an unknown lead and a lead id that is not a uuid", async () => {
     expect((await read("gm", [C])).status).toBe(404);
-    as("moo"); use();
+    as("moo"); withDb();
     expect((await GET_LEAD(get(`/api/catering/pipeline/${OTHER_LEAD}/delivery`), ctx(JOB_B, OTHER_LEAD))).status).toBe(404);
-    use();
+    withDb();
     expect((await GET_LEAD(get("/api/catering/pipeline/lead/delivery"), ctx(JOB_B, "lead"))).status).toBe(404);
     untouched();
   });
@@ -413,7 +413,7 @@ describe("GET: the view is decided in the lib, and each payload is an allow-list
   });
   it("the social media manager and anyone below key holder are refused before the database; a key holder elsewhere gets 404", async () => {
     for (const role of ["social_media_mgr", "employee", "trainee"]) {
-      as(role, [B]); use();
+      as(role, [B]); withDb();
       expect([role, (await GET_LEAD(get(`/api/catering/pipeline/${LEAD}/delivery`), ctx())).status]).toEqual([role, 403]);
       untouched();
     }

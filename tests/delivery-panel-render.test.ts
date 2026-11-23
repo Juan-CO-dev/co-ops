@@ -28,9 +28,10 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 type Lang = "en" | "es";
 const SHOPS = [{ id: A, name: "Shop A" }, { id: B, name: "Shop B" }];
+/* eslint-disable react/no-children-prop -- both providers require children in their props type. */
 const html = (node: ReactElement, language: Lang) => renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language,
-  // eslint-disable-next-line react/no-children-prop -- both providers require children in their props type.
   children: createElement(StepUpProvider, { unlocked: false, unlockedAt: null, children: node }) }));
+/* eslint-enable react/no-children-prop */
 const text = (markup: string) => markup.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ");
 const panel = (view: LeadDeliveryView | null, language: Lang = "en", stage: PipelineStage = "confirmed", startOpen = true) =>
   html(createElement(DeliveryPanel, { leadId: LEAD, stage, eventDate: "2026-11-25", locations: SHOPS, startOpen, initial: view }), language);
