@@ -1,0 +1,261 @@
+/**
+ * Local Postgres proof of migration 0357 (catering refund requests — the in-app refund step on a rejected / cancelled /
+ * lost order). SYNTHETIC ROWS ONLY — PGlite, in memory. CC owns the Supabase sim/prod gate; this never touches a real
+ * database.
+ *
+ *   node scripts/sql-harness-0357.mjs
+ *
+ * Builds catering_quotes (0120 + 0127's alters) and catering_payments (0127) from the REAL DDL, the REAL 0333
+ * `catering_payment_refund_events` table, minimal users / user_locations / locations / audit_log, then applies the
+ * REAL 0357 file and proves:
+ *   P0  the pre-flight refuses without 0333's table and on a second apply; a refused apply leaves nothing
+ *   P1  the objects and the privilege ceiling: anon / authenticated cannot execute any function; service_role cannot
+ *       INSERT or DELETE a request row, may UPDATE only the outcome columns, and may execute the three functions
+ *   P2  the actor rule: owner / cgs anywhere; moo / catering_mgr only with an active membership; gm, agm, prep_mgr,
+ *       an inactive user and a membership that is not active are refused
+ *   P3  the figures: a Stripe-paid row is refundable in full; a hand-marked row, a due row and a refunded row are 0;
+ *       Stripe's cumulative refunded amount and a smaller charge amount reduce it; own pending / submitted rows count
+ *   P4  the reserve: full and partial; the balance is taken before the deposit; over-refund and nothing-refundable are
+ *       refused by name (over_refundable carries the refundable total); a refusal writes nothing
+ *   P5  the same tap twice (same client_token) returns the same rows and inserts nothing; a different amount under
+ *       the same token is `token_reused`
+ *   P6  the guard trigger: money facts immutable, forward-only statuses, terminal rows frozen, a Stripe id never moves
+ *   P7  one destructive `catering.refund.request` audit row per inserted request, naming who and why
+ *   P8  input refusals: reason, trigger, note required for `other`, note length, a non-positive amount, unknown quote
+ *
+ * WHAT A SINGLE SESSION CANNOT SHOW: two simultaneous reserves queuing on the payment locks. That is a two-session
+ * proof and belongs on the sim (the scratchpad apply script's `--two-sessions` step, run by CC).
+ */
+import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { PGlite } from "@electric-sql/pglite";
+
+const read = (n) => readFileSync(new URL(`../supabase/migrations/${n}`, import.meta.url), "utf8");
+const M0357 = read("0357_catering_refund_requests.sql");
+
+function must(match, what) {
+  if (!match) throw new Error(`harness: could not extract ${what}`);
+  return match[0];
+}
+function table(file, name) {
+  return must(read(file).match(new RegExp(`create table public\\.${name} \\([\\s\\S]*?\\n\\);`, "i")), `${name} from ${file}`);
+}
+const M0127 = read("0127_catering_portal_orders.sql");
+const QUOTES_0120 = table("0120_catering_quotes.sql", "catering_quotes");
+const QUOTES_0127 = must(
+  M0127.match(/ALTER TABLE catering_quotes DROP CONSTRAINT catering_quotes_status_check;[\s\S]*?CHECK \(origin IN \('self_serve','staff'\)\);/i),
+  "0127 catering_quotes alters",
+);
+const PAYMENTS_0127 = must(
+  M0127.match(/CREATE TABLE catering_payments \([\s\S]*?ALTER TABLE catering_payments ENABLE ROW LEVEL SECURITY;/i),
+  "0127 catering_payments",
+);
+const EVENTS_0333 = table("0333_marketing_entry_moves_and_refund_time.sql", "catering_payment_refund_events");
+
+let failures = 0;
+let checks = 0;
+const check = (ok, what) => { checks++; if (!ok) { failures++; console.error(`FAIL ${what}`); } else console.log(`ok   ${what}`); };
+async function refuses(fn, needle, what) {
+  try { await fn(); check(false, `${what} (no error; expected ${needle})`); }
+  catch (e) { const s = `${e.code ?? ""} ${e.message} ${e.detail ?? ""}`; check(s.includes(needle), `${what} → ${needle}${s.includes(needle) ? "" : ` (got: ${s})`}`); }
+}
+
+async function base({ events = true } = {}) {
+  const db = new PGlite();
+  await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
+    grant usage on schema public to anon, authenticated, service_role;
+    create table public.locations (id uuid primary key default gen_random_uuid(), code text, active boolean not null default true);
+    create table public.users (id uuid primary key default gen_random_uuid(), role text not null, active boolean not null default true);
+    create table public.user_locations (user_id uuid not null references public.users(id), location_id uuid not null references public.locations(id),
+      active boolean not null default true, primary key (user_id, location_id));
+    create table public.audit_log (id bigserial primary key, actor_id uuid, actor_role text, action text not null, resource_table text,
+      resource_id uuid, metadata jsonb, destructive boolean not null default false, occurred_at timestamptz not null default now());
+    ${table("0108_catering_scaffold_capture.sql", "catering_customers")}
+    ${table("0108_catering_scaffold_capture.sql", "catering_pipeline")}
+    create table public.catering_delivery_zones (id uuid primary key default gen_random_uuid());
+    ${QUOTES_0120}
+    ${QUOTES_0127}
+    ${PAYMENTS_0127}
+    ${events ? EVENTS_0333 : ""}`);
+  return db;
+}
+
+const one = async (db, sql, params = []) => (await db.query(sql, params)).rows[0];
+const count = async (db, sql, params = []) => Number((await one(db, sql, params)).n);
+
+async function fixtures(db) {
+  const shop = (await one(db, "insert into public.locations (code) values ('S1') returning id")).id;
+  const other = (await one(db, "insert into public.locations (code) values ('S2') returning id")).id;
+  const user = async (role, { member = shop, active = true, memberActive = true } = {}) => {
+    const id = (await one(db, "insert into public.users (role, active) values ($1, $2) returning id", [role, active])).id;
+    if (member) await db.query("insert into public.user_locations (user_id, location_id, active) values ($1, $2, $3)", [id, member, memberActive]);
+    return id;
+  };
+  const quote = async (rootId = null, loc = shop) => (await one(db,
+    "insert into public.catering_quotes (location_id, version, status, root_id) values ($1, $2, 'accepted', $3) returning id",
+    [loc, rootId ? 2 : 1, rootId])).id;
+  let n = 0;
+  const pay = async (quoteId, kind, amount, { status = "paid", provider = "stripe", paidAt = null } = {}) => (await one(db,
+    `insert into public.catering_payments (quote_id, kind, amount_cents, status, provider, provider_ref, paid_at)
+     values ($1, $2, $3, $4, $5, $6, coalesce($7::timestamptz, now())) returning id`,
+    [quoteId, kind, amount, status, provider, provider === "stripe" ? `pi_test_${++n}` : null, paidAt])).id;
+  return { shop, other, user, quote, pay };
+}
+
+const reserve = (db, actor, quote, token, amount, reason = "customer_cancelled", note = null, trigger = "panel") =>
+  db.query("select public.catering_refund_reserve($1, $2, $3, $4, $5, $6, $7) as r", [actor, quote, token, amount, reason, note, trigger])
+    .then((r) => r.rows[0].r);
+const figures = (db, payment) => one(db, "select * from public.catering_refund_figures($1)", [payment]);
+
+let db;
+try {
+  // ── P0 — the pre-flight ──────────────────────────────────────────────────────────────────────
+  {
+    const no0333 = await base({ events: false });
+    await refuses(() => no0333.exec(M0357), "0357: public.catering_payment_refund_events is missing", "P0 refuses without 0333's refund events");
+    await no0333.exec("rollback");
+    check((await one(no0333, "select to_regclass('public.catering_refund_requests') is null as gone")).gone === true, "P0 a refused apply leaves no table");
+    await no0333.close();
+    const again = await base();
+    await again.exec(M0357);
+    await refuses(() => again.exec(M0357), "0357: public.catering_refund_requests already exists", "P0 a second apply is refused");
+    await again.exec("rollback");
+    await again.close();
+  }
+
+  db = await base();
+  const f = await fixtures(db);
+  await db.exec(M0357);
+  check(true, "0357 applied");
+
+  // ── P1 — objects and privileges ──────────────────────────────────────────────────────────────
+  for (const fn of ["catering_refund_actor_ok(uuid,uuid)", "catering_refund_figures(uuid)", "catering_refund_reserve(uuid,uuid,uuid,bigint,text,text,text)"]) {
+    for (const role of ["anon", "authenticated"]) {
+      check((await one(db, `select has_function_privilege('${role}', 'public.${fn}', 'execute') as ok`)).ok === false, `P1 ${role} cannot execute ${fn}`);
+    }
+    check((await one(db, `select has_function_privilege('service_role', 'public.${fn}', 'execute') as ok`)).ok === true, `P1 service_role executes ${fn}`);
+  }
+  for (const priv of ["INSERT", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]) {
+    check((await one(db, `select has_table_privilege('service_role', 'public.catering_refund_requests', '${priv}') as ok`)).ok === false, `P1 service_role has no ${priv}`);
+  }
+  check((await one(db, "select has_table_privilege('service_role', 'public.catering_refund_requests', 'SELECT') as ok")).ok === true, "P1 service_role SELECT");
+  for (const col of ["amount_cents", "payment_id", "client_token", "reason_code", "requested_by"]) {
+    check((await one(db, `select has_column_privilege('service_role', 'public.catering_refund_requests', '${col}', 'UPDATE') as ok`)).ok === false, `P1 service_role cannot UPDATE ${col}`);
+  }
+  check((await one(db, "select has_column_privilege('service_role', 'public.catering_refund_requests', 'status', 'UPDATE') as ok")).ok === true, "P1 service_role may UPDATE status");
+  check((await count(db, "select count(*) n from pg_policies where tablename = 'catering_refund_requests'")) === 0, "P1 deny-all RLS (no policy)");
+  check((await one(db, "select relrowsecurity as on from pg_class where oid = 'public.catering_refund_requests'::regclass")).on === true, "P1 RLS enabled");
+
+  // ── P2 — the actor rule ──────────────────────────────────────────────────────────────────────
+  const owner = await f.user("owner", { member: null });
+  const cgs = await f.user("cgs", { member: null });
+  const moo = await f.user("moo");
+  const ctr = await f.user("catering_mgr");
+  const ctrElsewhere = await f.user("catering_mgr", { member: f.other });
+  const ctrLapsed = await f.user("catering_mgr", { memberActive: false });
+  const gm = await f.user("gm");
+  const agm = await f.user("agm");
+  const prep = await f.user("prep_mgr");
+  const inactive = await f.user("owner", { member: null, active: false });
+  const ok = async (u) => (await one(db, "select public.catering_refund_actor_ok($1, $2) as ok", [u, f.shop])).ok;
+  for (const [u, want, name] of [[owner, true, "owner (no membership)"], [cgs, true, "cgs"], [moo, true, "moo at their shop"], [ctr, true, "catering_mgr at their shop"],
+    [ctrElsewhere, false, "catering_mgr of another shop"], [ctrLapsed, false, "catering_mgr with a lapsed membership"], [gm, false, "gm"], [agm, false, "agm"],
+    [prep, false, "prep_mgr"], [inactive, false, "an inactive owner"]]) {
+    check((await ok(u)) === want, `P2 ${name} → ${want}`);
+  }
+
+  // ── P3 — figures ─────────────────────────────────────────────────────────────────────────────
+  const Q = await f.quote();
+  const dep = await f.pay(Q, "deposit", 30000, { paidAt: "2026-11-01T10:00:00Z" });
+  const bal = await f.pay(Q, "balance", 70000, { paidAt: "2026-11-05T10:00:00Z" });
+  const manual = await f.pay(Q, "full", 5000, { provider: "manual" });
+  const due = await f.pay(Q, "full", 9000, { status: "due", provider: "stripe" });
+  let fig = await figures(db, dep);
+  check(fig.o_eligible === true && Number(fig.o_refundable) === 30000, "P3 a Stripe-paid deposit is refundable in full");
+  check(Number((await figures(db, manual)).o_refundable) === 0 && (await figures(db, manual)).o_eligible === false, "P3 a hand-marked payment is not refundable here");
+  check(Number((await figures(db, due)).o_refundable) === 0, "P3 a due row is not refundable");
+  const Qr = await f.quote();
+  const refunded = await f.pay(Qr, "deposit", 10000, { status: "refunded" });
+  check(Number((await figures(db, refunded)).o_refundable) === 0, "P3 a refunded row is 0");
+  await db.query("insert into public.catering_payment_refund_events (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents, charge_amount_cents) values ('evt_1', $1, now(), 5000, 29000)", [dep]);
+  fig = await figures(db, dep);
+  check(Number(fig.o_captured) === 29000 && Number(fig.o_refunded) === 5000 && Number(fig.o_refundable) === 24000,
+    "P3 a smaller charge amount caps captured; Stripe's cumulative refund is subtracted");
+
+  // ── P4 — reserve ─────────────────────────────────────────────────────────────────────────────
+  const auditBefore = await count(db, "select count(*) n from public.audit_log");
+  await refuses(() => reserve(db, gm, Q, randomUUID(), null), "forbidden", "P4 a GM is refused");
+  await refuses(() => reserve(db, ctr, Q, randomUUID(), 94001), "over_refundable", "P4 asking above the refundable total is refused");
+  await refuses(() => reserve(db, ctr, Q, randomUUID(), 94001), "94000", "P4 …and names the refundable total (24000 + 70000)");
+  check((await count(db, "select count(*) n from public.catering_refund_requests")) === 0 && (await count(db, "select count(*) n from public.audit_log")) === auditBefore,
+    "P4 a refusal writes nothing");
+  const t1 = randomUUID();
+  const r1 = await reserve(db, ctr, Q, t1, 80000, "event_lost", null, "lost");
+  check(r1.replay === false && r1.requests.length === 2, "P4 a partial over both payments makes two rows");
+  const byPay = Object.fromEntries(r1.requests.map((r) => [r.payment_id, Number(r.amount_cents)]));
+  check(byPay[bal] === 70000 && byPay[dep] === 10000, "P4 the balance is taken first, then the deposit");
+  check(r1.requests.every((r) => r.status === "pending"), "P4 the rows start pending");
+  fig = await figures(db, dep);
+  check(Number(fig.o_in_flight) === 10000 && Number(fig.o_refundable) === 14000, "P4 a pending row counts against the refundable figure");
+  await db.query("update public.catering_refund_requests set status = 'succeeded', stripe_refund_id = 're_test_1', stripe_status = 'succeeded' where payment_id = $1", [bal]);
+  check(Number((await figures(db, bal)).o_refundable) === 0, "P4 a succeeded row counts as refunded");
+  await db.query("update public.catering_refund_requests set status = 'failed', stripe_status = 'failed' where payment_id = $1", [dep]);
+  check(Number((await figures(db, dep)).o_refundable) === 24000, "P4 a failed row releases its amount");
+  const r2 = await reserve(db, owner, Q, randomUUID(), null);
+  check(r2.requests.length === 1 && Number(r2.requests[0].amount_cents) === 24000 && r2.requests[0].payment_id === dep, "P4 a full refund takes everything left");
+  await refuses(() => reserve(db, owner, Q, randomUUID(), null), "nothing_refundable", "P4 nothing left: nothing_refundable");
+  // A revision of the quote: the family is one order.
+  const QA = await f.quote();
+  const QB = await f.quote(QA);
+  const famDep = await f.pay(QA, "deposit", 20000);
+  const viaRev = await reserve(db, moo, QB, randomUUID(), 5000);
+  check(viaRev.requests[0].payment_id === famDep, "P4 a payment on an earlier revision is the same order's (family by root_id)");
+
+  // ── P5 — the same tap twice ──────────────────────────────────────────────────────────────────
+  const rowsBefore = await count(db, "select count(*) n from public.catering_refund_requests");
+  const again = await reserve(db, ctr, Q, t1, 80000, "event_lost", null, "lost");
+  check(again.replay === true && again.requests.length === 2 && (await count(db, "select count(*) n from public.catering_refund_requests")) === rowsBefore,
+    "P5 the same token returns the same rows and inserts nothing");
+  const againFull = await reserve(db, ctr, Q, t1, null, "event_lost", null, "lost");
+  check(againFull.replay === true, "P5 the same token with no amount is the same tap too");
+  await refuses(() => reserve(db, ctr, Q, t1, 1000), "token_reused", "P5 a different amount under the same token is refused");
+  await refuses(() => reserve(db, ctr, QA, t1, null), "token_reused", "P5 the same token on another order is refused");
+
+  // ── P6 — the guard trigger ───────────────────────────────────────────────────────────────────
+  const famRow = viaRev.requests[0].id;
+  await refuses(() => db.query("update public.catering_refund_requests set amount_cents = 1 where id = $1", [famRow]), "refund_request_immutable", "P6 the amount never changes");
+  await db.query("update public.catering_refund_requests set status = 'submitted', stripe_refund_id = 're_test_2', stripe_status = 'pending' where id = $1", [famRow]);
+  await refuses(() => db.query("update public.catering_refund_requests set status = 'pending' where id = $1", [famRow]), "refund_request_bad_transition", "P6 submitted never goes back to pending");
+  await refuses(() => db.query("update public.catering_refund_requests set stripe_refund_id = 're_other' where id = $1", [famRow]), "refund_request_immutable", "P6 a Stripe id never moves");
+  await db.query("update public.catering_refund_requests set status = 'succeeded', stripe_status = 'succeeded' where id = $1", [famRow]);
+  await refuses(() => db.query("update public.catering_refund_requests set status = 'failed' where id = $1", [famRow]), "refund_request_bad_transition", "P6 a terminal row is frozen");
+  await refuses(() => db.query("update public.catering_refund_requests set stripe_status = 'failed' where id = $1", [famRow]), "refund_request_immutable", "P6 …its Stripe status too");
+
+  // ── P7 — the audit rows ──────────────────────────────────────────────────────────────────────
+  const audits = (await db.query("select * from public.audit_log where action = 'catering.refund.request' order by id")).rows;
+  const requests = await count(db, "select count(*) n from public.catering_refund_requests");
+  check(audits.length === requests, "P7 one audit row per request row");
+  check(audits.every((a) => a.destructive === true && a.actor_id && a.metadata.reason_code && a.metadata.amount_cents > 0 && a.metadata.trigger), "P7 each names who, why, how much and from where (destructive)");
+  check(audits.some((a) => a.actor_role === "catering_mgr" && a.metadata.reason_code === "event_lost" && a.metadata.trigger === "lost"), "P7 the role and the reason are recorded");
+
+  // ── P8 — input refusals ──────────────────────────────────────────────────────────────────────
+  const QZ = await f.quote();
+  await f.pay(QZ, "deposit", 1000);
+  await refuses(() => reserve(db, owner, QZ, randomUUID(), null, "because"), "invalid_reason", "P8 an unknown reason");
+  await refuses(() => reserve(db, owner, QZ, randomUUID(), null, "other", "  "), "note_required", "P8 `other` needs a note");
+  await refuses(() => reserve(db, owner, QZ, randomUUID(), null, "other", "x".repeat(501)), "note_too_long", "P8 a note over 500");
+  await refuses(() => reserve(db, owner, QZ, randomUUID(), 0), "invalid_amount", "P8 a zero amount");
+  await refuses(() => reserve(db, owner, QZ, randomUUID(), -5), "invalid_amount", "P8 a negative amount");
+  await refuses(() => reserve(db, owner, QZ, randomUUID(), null, "customer_cancelled", null, "whenever"), "invalid_request", "P8 an unknown trigger");
+  await refuses(() => reserve(db, owner, randomUUID(), randomUUID(), null), "quote_not_found", "P8 an unknown quote");
+  const withNote = await reserve(db, owner, QZ, randomUUID(), null, "other", "  card was charged twice  ");
+  check((await one(db, "select reason_note from public.catering_refund_requests where id = $1", [withNote.requests[0].id])).reason_note === "card was charged twice",
+    "P8 the note is trimmed and kept on the row");
+} catch (e) {
+  failures++;
+  console.error(`FAIL 0357 harness: ${e.stack ?? e}`);
+} finally {
+  if (db) await db.close();
+}
+if (failures) { console.error(`${failures} failure(s)`); process.exitCode = 1; }
+else console.log(`PASS 0357: ${checks} checks (single-session PGlite; two simultaneous reserves queuing on the locks need two sessions — sim)`);
