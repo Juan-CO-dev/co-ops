@@ -4,6 +4,8 @@
  * wrappers run against a RECORDING client with canned rows that walk them past every read; PGlite applies the harness's
  * stub of the tables 0356 reads plus the REAL 0356 file; every captured query is EXECUTED with `limit 0`, and every
  * captured RPC's argument names are compared with the function's own. The lib never selects `*`.
+ * D4: the economics loader (`lib/delivery/economics.ts`) runs through the same client, so every query the report builds
+ * is executed against the real relations too.
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
@@ -47,7 +49,7 @@ function recordingClient() {
       const rows = () => { const v = CANNED[table]; return Array.isArray(v) ? v : v ? [v] : []; };
       Object.assign(q, {
         select: (cols: string) => { rec.select = cols.split(",").map((c) => c.trim()).filter(Boolean); return q; },
-        eq: col, is: col, in: col, gte: col,
+        eq: col, is: col, in: col, gte: col, lte: col,
         order: (c: string) => { rec.order.push(c); return q; },
         range: () => q,
         maybeSingle: () => Promise.resolve({ data: rows()[0] ?? null, error: null }),
@@ -63,10 +65,16 @@ const actor = (role: string, locations: string[]): AuthContext => ({ user: { id:
 let db: PGlite;
 /** How many queries the status-only viewer's load issued (they are the first captured). */
 let statusTierQueries = 0;
+/** Where the economics report's queries start in `captured` (D4). */
+let economicsFrom = 0;
+const MOVED_TO = "00000000-0000-4000-8000-00000000000b";
 const previous = process.env.DELIVERY_TRACKING;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(STUB);
+  // The harness stub holds only the columns 0356 itself reads. D4's report also filters leads by their event date, a
+  // real column of catering_pipeline since 0108.
+  await db.exec("alter table catering_pipeline add column event_date date");
   await db.exec(readFileSync("supabase/migrations/0356_delivery_jobs.sql", "utf8").replace(/\r\n/g, "\n"));
   process.env.DELIVERY_TRACKING = "1";
   const jobs = await import("@/lib/delivery/jobs");
@@ -78,7 +86,7 @@ beforeAll(async () => {
   await jobs.loadLeadDelivery(actor("key_holder", [SHOP]), LEAD, { client: sb });
   statusTierQueries = captured.length;
   await jobs.loadLeadDelivery(moo, LEAD, { client: sb });
-  CANNED.catering_pipeline = { id: LEAD, location_id: "00000000-0000-4000-8000-00000000000b", stage: "confirmed", lead_source: "website" };
+  CANNED.catering_pipeline = { id: LEAD, location_id: MOVED_TO, stage: "confirmed", lead_source: "website" };
   await jobs.loadLeadDelivery(actor("gm", [SHOP]), LEAD, { client: sb });
   await jobs.loadLeadDeliveryFacts(sb, LEAD);
   await settings.loadDeliverySettings(moo, { client: sb });
@@ -93,6 +101,11 @@ beforeAll(async () => {
   // D2: the job-of-lead bind (a job-level route names its lead) and the pickup shop's "orders that moved" list.
   await jobs.recordDeliveryEvent(moo, { leadId: LEAD, jobId: JOB, expectedShopId: SHOP, expectedStatus: "accepted", status: "picked_up", occurredAt: null, note: null }, { client: sb });
   expect((await jobs.loadMovedDeliveries(actor("gm", [SHOP]), { client: sb })).map((r) => r.jobId)).toEqual([JOB]);
+  // D4: the economics report of the shop the canned lead now sits at (every relation it reads, then the re-read).
+  economicsFrom = captured.length;
+  const economics = await import("@/lib/delivery/economics");
+  const report = await economics.loadDeliveryEconomics(sb, moo, { locationId: MOVED_TO }, { from: "2026-11-01", to: "2026-11-30" });
+  expect(report.kind === "ok" ? report.report.coverage.orders : report.kind).toBe(1);
 }, 240_000);
 afterAll(async () => {
   if (previous === undefined) delete process.env.DELIVERY_TRACKING; else process.env.DELIVERY_TRACKING = previous;
@@ -128,9 +141,11 @@ describe("lib/delivery against the real 0356 schema", () => {
     }
     // The projections the three tiers and the history view select all exist on the real relations.
     const quoteSelects = new Set(captured.filter((c) => c.table === "catering_quotes").map((c) => c.select.join()));
-    expect([...quoteSelects].sort()).toEqual(["id,root_id,status,is_delivery,created_at,superseded_at", "id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at"]);
+    expect([...quoteSelects].sort()).toEqual(["id,pipeline_id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at", // D4: the report's (many leads, so it names the lead)
+      "id,root_id,status,is_delivery,created_at,superseded_at", "id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at"]);
     const settingSelects = new Set(captured.filter((c) => c.table === "delivery_settings").map((c) => c.select.join()));
-    expect([...settingSelects].sort()).toEqual(["location_id,enabled", "location_id,enabled,manual_providers,gratuity_driver_bps", "location_id,enabled,manual_providers,gratuity_driver_bps,updated_at"]);
+    expect([...settingSelects].sort()).toEqual(["location_id,enabled", "location_id,enabled,gratuity_driver_bps", // D4: the report's (the switch and the driver's share)
+      "location_id,enabled,manual_providers,gratuity_driver_bps", "location_id,enabled,manual_providers,gratuity_driver_bps,updated_at"]);
     expect(captured.some((c) => c.table === "delivery_job_current" && c.filters.includes("location_id") && c.select.includes("external_ref"))).toBe(true);
   });
 
@@ -158,6 +173,20 @@ describe("lib/delivery against the real 0356 schema", () => {
     expect(jobs.order[0]).toBe("attempt_no");
     for (const quotes of captured.filter((c) => c.table === "catering_quotes")) expect([...quotes.filters].sort()).toEqual(["pipeline_id", "superseded_at"]);
     expect(captured.find((c) => c.table === "ezcater_orders")!.filters).toEqual(["lead_id"]);
+  });
+
+  it("D4: the economics report read every relation it needs, each with its own columns, and all of them executed above", () => {
+    const mine = captured.slice(economicsFrom);
+    expect(mine.map((c) => c.table)).toEqual(expect.arrayContaining(["delivery_settings", "catering_pipeline", "ezcater_orders", "catering_quotes", "delivery_job_current",
+      "delivery_gratuity_splits", "delivery_job_costs"]));
+    expect(mine).toHaveLength(8);
+    const leads = mine.filter((c) => c.table === "catering_pipeline");
+    expect(leads.map((c) => [c.select.join(), c.filters.join("+"), c.order.join()])).toEqual([
+      ["id,location_id,stage,lead_source,event_date", "location_id+event_date+event_date", "event_date,id"], ["id,location_id", "id", "id"]]);
+    expect(mine.find((c) => c.table === "delivery_job_current")!.select).toEqual(["id", "pipeline_id", "booked_via", "provider_label", "attempt_no", "status"]);
+    expect(mine.find((c) => c.table === "delivery_job_costs")!.select).toEqual(["id", "job_id", "component", "semantics", "amount_cents", "money_identity", "observed_at", "corrects_id"]);
+    expect(mine.find((c) => c.table === "delivery_gratuity_splits")!.select).toEqual(["id", "pipeline_id", "job_id", "kind", "gratuity_cents", "driver_bps", "driver_cents", "crew_cents", "supersedes_id"]);
+    for (const c of mine) for (const hidden of ["note", "reason", "external_ref", "estimated_revenue_cents"]) expect([c.table, hidden, c.select.includes(hidden)]).toEqual([c.table, hidden, false]);
   });
 
   it("every RPC exists with exactly the argument names the lib sends", async () => {

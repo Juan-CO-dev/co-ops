@@ -6,7 +6,7 @@
 import type { AuthContext } from "@/lib/session";
 
 export type FakeResult = { data?: unknown; error?: { code?: string; message?: string } | null };
-export interface FakeQuery { select: string; eq: Record<string, unknown>; in: Record<string, unknown[]>; is: Record<string, unknown>; gte: Record<string, unknown>; range: [number, number] | null }
+export interface FakeQuery { select: string; eq: Record<string, unknown>; in: Record<string, unknown[]>; is: Record<string, unknown>; gte: Record<string, unknown>; lte: Record<string, unknown>; range: [number, number] | null }
 export type FakeTables = Record<string, (q: FakeQuery) => FakeResult>;
 export type FakeRpcs = Record<string, (params: Record<string, unknown>) => FakeResult>;
 
@@ -14,7 +14,7 @@ export function deliveryFake(tables: FakeTables, rpcs: FakeRpcs = {}) {
   const reads: string[] = [];
   const calls: Array<{ name: string; params: Record<string, unknown> }> = [];
   const chain = (name: string, answer: (q: FakeQuery) => FakeResult) => {
-    const query: FakeQuery = { select: "", eq: {}, in: {}, is: {}, gte: {}, range: null };
+    const query: FakeQuery = { select: "", eq: {}, in: {}, is: {}, gte: {}, lte: {}, range: null };
     const q: Record<string, unknown> = {};
     q.order = () => q;
     q.returns = () => q;
@@ -23,6 +23,7 @@ export function deliveryFake(tables: FakeTables, rpcs: FakeRpcs = {}) {
     q.is = (col: string, value: unknown) => { query.is[col] = value; return q; };
     q.in = (col: string, value: unknown[]) => { query.in[col] = value; return q; };
     q.gte = (col: string, value: unknown) => { query.gte[col] = value; return q; };
+    q.lte = (col: string, value: unknown) => { query.lte[col] = value; return q; };
     q.range = (from: number, to: number) => { query.range = [from, to]; return q; };
     const settle = () => { reads.push(name); return Promise.resolve({ data: null, error: null, ...answer(query) }); };
     q.maybeSingle = () => settle().then((r) => ({ ...r, data: Array.isArray(r.data) ? r.data[0] ?? null : r.data }));
