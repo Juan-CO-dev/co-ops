@@ -7,16 +7,44 @@
  * read) and hands the map to `DeliveryStatesProvider`; a card asks for its own lead by id. No provider, no entry for the
  * lead, or the state `none` = NO chip (delivery tracking off, a shop that is off, a viewer the gate refuses, a pickup
  * order). The words come from the one label rule (`deliveryLabel`); status only — no courier, no reference, no cost.
+ *
+ * THE CHIP AND THE PANEL ALWAYS AGREE (review round 5). The lead's Delivery panel, in the same card, publishes the state
+ * its own GET answered (`usePublishDeliveryState`) after every load — on opening, and after each write — and the chip
+ * shows a published state over the server's. The state is the server's each time (`deliveryStateOf` behind the GET):
+ * nothing is derived in the browser, and the board is not refreshed for a tap. The store and its rules are pure
+ * (`lib/delivery/chip-shared.ts`). A NEW server map (a real reload, a `router.refresh()`) supersedes what was published
+ * before it: adopted during render by comparing with the map the store holds, never in an effect.
  */
-import { createContext, useContext, type ReactNode } from "react";
-import { deliveryLabel, type DeliveryRowState, type DeliveryTone } from "@/lib/delivery/day-shared";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { adoptServer, chipStateOf, chipStore, publishedRowOf, publishState, type ChipStates, type ChipStore, type PanelViewForChip } from "@/lib/delivery/chip-shared";
+import { deliveryLabel, type DeliveryTone } from "@/lib/delivery/day-shared";
 import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 
-const DeliveryStatesContext = createContext<Readonly<Record<string, DeliveryRowState>> | null>(null);
+interface ChipContext { store: ChipStore; publish(leadId: string, view: PanelViewForChip): void }
+const DeliveryStatesContext = createContext<ChipContext | null>(null);
 
-export function DeliveryStatesProvider({ states, children }: { states: Readonly<Record<string, DeliveryRowState>> | null; children: ReactNode }) {
-  return <DeliveryStatesContext.Provider value={states}>{children}</DeliveryStatesContext.Provider>;
+export function DeliveryStatesProvider({ states, children }: { states: ChipStates | null; children: ReactNode }) {
+  const [held, setHeld] = useState<ChipStore>(() => chipStore(states));
+  // A new server map supersedes what was published before it. During render, by comparing with the map the store holds
+  // (router.refresh() does not reset this state; an effect would paint the stale chip first).
+  const store = adoptServer(held, states);
+  if (store !== held) setHeld(store);
+  const publish = useCallback((leadId: string, view: PanelViewForChip) => {
+    const row = publishedRowOf(view);
+    if (row) setHeld((s) => publishState(s, leadId, row));
+  }, []);
+  const value = useMemo(() => ({ store, publish }), [store, publish]);
+  return <DeliveryStatesContext.Provider value={value}>{children}</DeliveryStatesContext.Provider>;
+}
+
+const NO_PUBLISH = (): void => undefined;
+/**
+ * For the Delivery panel: hand it every answer of the panel's own GET. It publishes the lead's state (status only) to the
+ * card's chip; an answer that says nothing about the state publishes nothing. Outside a provider it does nothing.
+ */
+export function usePublishDeliveryState(): (leadId: string, view: PanelViewForChip) => void {
+  return useContext(DeliveryStatesContext)?.publish ?? NO_PUBLISH;
 }
 
 /** Fill and text split the same way every status colour does: a pale surface, the matching TEXT role on it. */
@@ -28,9 +56,9 @@ export const DELIVERY_CHIP_TONE: Record<DeliveryTone, string> = {
 };
 
 export function DeliveryStateChip({ leadId }: { leadId: string }) {
-  const states = useContext(DeliveryStatesContext);
+  const ctx = useContext(DeliveryStatesContext);
   const { t, language } = useTranslation();
-  const row = states?.[leadId];
+  const row = ctx ? chipStateOf(ctx.store, leadId) : undefined;
   const label = deliveryLabel(row);
   if (!row || !label) return null;
   const text = t(label.key, label.time ? { time: formatTime(label.time, language) } : undefined);

@@ -99,11 +99,25 @@ export function deliveryDayLeads(rows: {
 const AT_PICKUP: ReadonlySet<DeliveryState> = new Set<DeliveryState>(["booked", "cancel_needed", "pickup_mismatch"]);
 const AT_STATUS: ReadonlySet<DeliveryState> = new Set<DeliveryState>(["on_the_way", "delivered", "problem"]);
 
+/** The states that are about NO job (`deliveryStateOf` answers `attemptNo: null` for exactly these). */
+const ABOUT_NO_JOB: ReadonlySet<DeliveryState> = new Set<DeliveryState>(["to_book", "to_book_soon", "provider_managed", "none"]);
+
+/**
+ * THE row of a derived state and the job it is about: which instant goes with it, and the job's status. The one place
+ * this is decided — the server's row (`deliveryRowStateOf`) and the row a panel publishes from its GET
+ * (`publishedRowOf`, chip-shared.ts) both come through here. It derives no state: `state` is `deliveryStateOf`'s.
+ * A state that is about no job carries neither an instant nor a status, whatever job is handed in.
+ */
+export function rowStateFor(state: DeliveryState, job: { status: DeliveryStatus; at: string; pickupAt: string | null } | null): DeliveryRowState {
+  const about = ABOUT_NO_JOB.has(state) ? null : job;
+  return { state, at: !about ? null : AT_PICKUP.has(state) ? about.pickupAt : AT_STATUS.has(state) ? about.at : null, status: about ? about.status : null };
+}
+
 /** A lead's row state, from `deliveryStateOf` ONLY. `soon` = the caller's "inside the shop's catering lead window". */
 export function deliveryRowStateOf(lead: DeliveryDayLead, soon = false): DeliveryRowState {
   const { state, attemptNo } = deliveryStateOf({ stage: lead.stage, currentShopId: lead.currentShopId, orderQuote: lead.orderQuote, isEzcater: lead.isEzcater, jobs: lead.jobs, soon });
   const about = attemptNo === null ? null : lead.jobs.find((j) => j.attemptNo === attemptNo) ?? latestJob(lead.jobs);
-  return { state, at: !about ? null : AT_PICKUP.has(state) ? about.pickupAt : AT_STATUS.has(state) ? about.at : null, status: about ? about.status : null };
+  return rowStateFor(state, about);
 }
 /** The same row inside (or outside) the caller's window: only `to_book` changes. */
 export function rowStateSoon(row: DeliveryRowState, soon: boolean): DeliveryRowState {
