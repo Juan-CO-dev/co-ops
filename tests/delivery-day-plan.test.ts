@@ -229,7 +229,7 @@ describe("the engine: no second row rule", () => {
   it("the block carries each order's state (none included) and the alerts; off = neither key", () => {
     const b = plan(CATERING_MEMBER, "10:00", facts("10:00", ORDERS({ ...STATES, c: row("none") }), okAlerts([{ leadId: "gone", state: "cancel_needed", at: null }]))).cateringBlock!;
     expect(b.deliveryAlerts).toEqual([{ leadId: "gone", state: "cancel_needed", at: null }]);
-    expect((b.today as Array<{ id: string; delivery?: DeliveryRowState }>).map((o) => [o.id, o.delivery?.state])).toEqual([["b", "on_the_way"], ["ez", undefined], ["a", "to_book"], ["c", "none"]]);
+    expect((b.today as ReadonlyArray<{ id: string; delivery?: DeliveryRowState }>).map((o) => [o.id, o.delivery?.state])).toEqual([["b", "on_the_way"], ["ez", undefined], ["a", "to_book"], ["c", "none"]]);
     const off = plan(CATERING_MEMBER, "10:00", facts("10:00", ORDERS({}).map(({ delivery: _d, ...o }) => o))).cateringBlock!;
     expect("deliveryAlerts" in off).toBe(false);
     for (const o of off.today as object[]) expect("delivery" in o).toBe(false);
@@ -327,6 +327,11 @@ describe("failed source: the day plan and the block", () => {
     const stale = facts("13:00", [], ok({ forDate: "2026-11-17", alerts: [{ leadId: "x", state: "cancel_needed", at: null }] }));
     expect(plan(CATERING_MEMBER, "13:00", stale).cateringBlock!.deliveryAlerts).toBe("unknown");
     expect(deliveryNeedsOf({ planDate: PLAN_DATE, nowMin: hm("13:00"), facts: stale })).toEqual({ count: null });
+    // Rows that DID load say nothing about the alerts: the block still says the alerts could not load.
+    const mixed = facts("13:00", [order({ id: "a", eventQ: AT_3PM, headcount: 20, delivery: row("booked", { status: "accepted" }) })], failed());
+    const html = renderBlock(plan(CATERING_MEMBER, "13:00", mixed));
+    expect(html).toContain('data-delivery-alerts="unknown"');
+    expect(html).toContain('data-delivery-state="booked"');
   });
 });
 

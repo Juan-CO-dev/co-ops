@@ -23,6 +23,7 @@ const ES = es as Record<string, string>;
 const row = (state: DeliveryRowState["state"], over: Partial<DeliveryRowState> = {}): DeliveryRowState => ({ state, at: null, status: null, ...over });
 function chip(states: Record<string, DeliveryRowState> | null | undefined, leadId = "lead-1", language: "en" | "es" = "en"): string {
   const inner = createElement(DeliveryStateChip, { leadId });
+  // eslint-disable-next-line react/no-children-prop
   const tree: ReactNode = states === undefined ? inner : createElement(DeliveryStatesProvider, { states, children: inner });
   // eslint-disable-next-line react/no-children-prop
   return renderToStaticMarkup(createElement(TranslationProvider, { initialLanguage: language, children: tree }));
@@ -92,8 +93,8 @@ describe("the wiring", () => {
 
   it("mid-shift: the delivery read needs the full AuthContext (the gate reads the real role and memberships), and attaches by lead id", () => {
     const lib = src("lib/midshift.ts");
-    expect(lib).toContain("attachDelivery(cateringDue, args.authContext");
-    expect(lib).toContain("await loadDeliveryDay(service, deliveryActorOf(args.authContext), args.locationId, args.date) : null");
+    expect(lib).toContain("const deliveryP = args.authContext ? loadDeliveryDay(service, deliveryActorOf(args.authContext), args.locationId, args.date) : Promise.resolve(null);");
+    expect(lib).toContain("const cateringToday = attachDelivery(cateringDue, await deliveryP);");
     expect(lib.match(/loadDeliveryDay\(/g)).toHaveLength(1);
   });
 

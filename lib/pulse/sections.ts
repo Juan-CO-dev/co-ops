@@ -586,16 +586,17 @@ async function sales(deps: PulseDeps, ctx: PulseCtx): Promise<SalesData> {
 async function catering(deps: PulseDeps, ctx: PulseCtx): Promise<CateringData> {
   const money = moneyVisible(ctx.auth.level);
   const crew = crewScoped(ctx.auth.level);
+  // Catering delivery D3: the status line, only for a viewer the status gate admits (decided here, BEFORE the read is
+  // started). A rejected or failed read is "Couldn't load delivery" on the rows, never "to book"; off = the rows as they were.
+  const deliveryP: Promise<DeliveryDayResult | null> = deps.cateringDelivery && deliveryStatusReadAllowed(deliveryActorOf(ctx.auth), ctx.locationId)
+    ? Promise.resolve().then(() => deps.cateringDelivery!(ctx)).catch((): DeliveryDayResult => ({ ok: false })) : Promise.resolve(null);
   // Crew (Astra #11): shop-level TIMING only — the not-rung orders (order numbers, money) are not read for them.
   const [today, tomorrow, notRung, reports, prior] = await Promise.all([
     deps.cateringToday(ctx), deps.cateringTomorrow(ctx), crew ? Promise.resolve<NotInToastOrder[]>([]) : deps.notRung(ctx), deps.reports(ctx),
     deps.priorAmPrep(ctx),
   ]);
   const progress = (key: ReportKey): ReportProgress => reports.rows.find((r) => r.key === key)?.progress ?? "not_started";
-  // Catering delivery D3: the status line, only for a viewer the status gate admits (decided here, before the read). A
-  // rejected or failed read is "Couldn't load delivery" on the rows, never "to book"; off = the rows as they were.
-  const delivery = deps.cateringDelivery && deliveryStatusReadAllowed(deliveryActorOf(ctx.auth), ctx.locationId)
-    ? await deps.cateringDelivery(ctx).catch((): DeliveryDayResult => ({ ok: false })) : null;
+  const delivery = await deliveryP;
   return {
     redacted: crew,
     today: attachDelivery(today.map((e) => ({

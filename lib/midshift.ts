@@ -458,6 +458,12 @@ export async function loadMidShiftPulse(
   // council P1). Convert to the day's real UTC instant range.
   const { startIso, endExclusiveIso } = operationalDayUtcRange(args.date);
 
+  // Catering delivery D3: the status line of each event (key holder and up; never the social media manager). The loader
+  // gates by the viewer's real role and answers "off" with NO query while delivery tracking is off; it never rejects (a
+  // failure is "Couldn't load delivery" on the rows, never "to book"). Without the full AuthContext nothing is read.
+  // Started here, beside the other loads; attached to the events by lead id below.
+  const deliveryP = args.authContext ? loadDeliveryDay(service, deliveryActorOf(args.authContext), args.locationId, args.date) : Promise.resolve(null);
+
   // The five top-level loads are independent — one parallel group.
   const [statuses, overview, notesRes, activeToday, cateringDue, cateringTomorrow] = await Promise.all([
     loadReportStatuses(service, { locationId: args.locationId, date: args.date, actor: args.actor }),
@@ -472,11 +478,7 @@ export async function loadMidShiftPulse(
     loadCateringDueToday(service, { locationId: args.locationId, date: args.date }),
     loadCateringTomorrow(service, { locationId: args.locationId, date: args.date }),
   ]);
-  // Catering delivery D3: the status line of each event (key holder and up; never the social media manager). The loader
-  // gates by the viewer's real role and answers "off" with NO query while delivery tracking is off; it never rejects (a
-  // failure is "Couldn't load delivery" on the rows, never "to book"). Without the full AuthContext nothing is read.
-  const cateringToday = attachDelivery(cateringDue, args.authContext
-    ? await loadDeliveryDay(service, deliveryActorOf(args.authContext), args.locationId, args.date) : null);
+  const cateringToday = attachDelivery(cateringDue, await deliveryP);
   const { rows, closingDone, midDayDoneCount } = statuses;
 
   const reports: ReportStatusRow[] = rows.map((r) => ({

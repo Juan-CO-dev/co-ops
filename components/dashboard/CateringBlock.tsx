@@ -125,8 +125,8 @@ export function CateringBlock({ item, block, heavyToday, headsUp, extras, nextUp
       {item.reasons.map((r, i) => <p key={`r:${r.key}:${i}`} className="text-sm text-co-text">{renderDayReason(r, language)}</p>)}
       {heavy.map((r, i) => <p key={`h:${r.key}:${i}`} className="text-sm font-semibold text-co-text" data-heavy-line={r.key}>{renderDayReason(r, language)}</p>)}
 
-      {block.deliveryAlerts === "unknown" && (block.today === "unknown" || !block.today.some((o) => o.delivery)) ? (
-        // The delivery read failed and no row can say so itself.
+      {block.deliveryAlerts === "unknown" && (block.today === "unknown" || !block.today.some((o) => o.delivery?.state === "unknown")) ? (
+        // The delivery read failed and no row says so itself.
         <Muted data-delivery-alerts="unknown">{t("dashboard.catering_block.delivery_unknown")}</Muted>
       ) : Array.isArray(block.deliveryAlerts) && block.deliveryAlerts.length > 0 ? (
         <ul aria-label={t("dashboard.catering_block.delivery_alerts_aria")} data-delivery-alerts="list" className="flex flex-col gap-1">
