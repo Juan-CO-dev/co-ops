@@ -244,3 +244,34 @@ describe("group 2 / Q9 / Q5 at the page: the catering manager", () => {
     expect(html.match(/<section[^>]*data-phase=[\s\S]*?<\/section>/)?.[0] ?? "").toMatch(/Tomorrow is a heavy catering day/);
   });
 });
+
+// Catering delivery D3: the OFF-EQUIVALENCE pin at the page. With delivery tracking off (`DELIVERY_TRACKING` unset), the
+// Dashboard's element tree (every prop, functions dropped) and its markup are byte-identical to what they were before D3,
+// for every role that gets a catering row, the block or "Needs you". The golden
+// (tests/fixtures/delivery/d3-off-page-golden.json) was frozen from the UNCHANGED base (PR #633's head) in its own commit
+// before any D3 code; it is regenerated only with a written reason (`WRITE_D3_OFF_GOLDEN=1`).
+describe("D3 off-equivalence: the Dashboard page with delivery tracking off", () => {
+  it("tree and markup match the golden frozen from the unchanged base", async () => {
+    const { createHash } = await import("node:crypto");
+    const { existsSync, writeFileSync } = await import("node:fs");
+    const GOLDEN = "tests/fixtures/delivery/d3-off-page-golden.json";
+    const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+    vi.stubEnv("DELIVERY_TRACKING", "");
+    const now: Record<string, string> = {};
+    for (const [role, level, locations] of [["key_holder", 4, [A]], ["shift_lead", 5, [A]], ["agm", 6, [A]], ["catering_mgr", 6, [A]], ["gm", 7, [A]], ["moo", 8, [A]],
+      ["owner", 9, []], ["cgs", 10, []], ["social_media_mgr", 6, [A]], ["employee", 3, [A]]] as const) {
+      as(role, level, [...locations]);
+      await installSpies();
+      const tree = await pageTree();
+      now[`${role}/tree`] = sha(treeJson(tree));
+      now[`${role}/markup`] = sha(await render(tree));
+    }
+    if (process.env.WRITE_D3_OFF_GOLDEN === "1" || !existsSync(GOLDEN)) {
+      writeFileSync(GOLDEN, `${JSON.stringify(now, null, 1)}\n`);
+      if (process.env.WRITE_D3_OFF_GOLDEN !== "1") throw new Error("golden was missing: written; re-run");
+    }
+    const golden = JSON.parse(readFileSync(GOLDEN, "utf8")) as Record<string, string>;
+    expect(Object.keys(now).sort()).toEqual(Object.keys(golden).sort());
+    expect(Object.keys(golden).filter((k) => golden[k] !== now[k])).toEqual([]);
+  });
+});
