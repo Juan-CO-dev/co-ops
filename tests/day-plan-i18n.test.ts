@@ -1,7 +1,8 @@
 /**
- * Nav PR 5 (plan r4, 10 and 12): the day engine's words, en and es in the same PR. The 122 keys listed literally (19
- * phases, 2 names, 80 reasons, 1 empty, 11 holder/state/done/next, 9 notes — PR SCH added the four no-start heavy lines and
- * day.fail.day_start, rulings D5 / E2); they are every day.* key; present in both,
+ * Nav PR 5 (plan r4, 10 and 12): the day engine's words, en and es in the same PR. The 126 keys listed literally (19
+ * phases, 2 names, 84 reasons, 1 empty, 11 holder/state/done/next, 9 notes — PR SCH added the four no-start heavy lines and
+ * day.fail.day_start, rulings D5 / E2; catering delivery D3 added the four delivery lines of the catering manager's
+ * block); they are every day.* key; present in both,
  * non-empty, the same {params}; every _one has its _other; Spanish in tú-form; the spec 3.3.10 texts; every key the engine
  * can emit exists with exactly the placeholders the engine passes. (r3, D7) Station names travel as { en, es } per entry
  * and render in each language through the reference renderer.
@@ -54,6 +55,8 @@ const NEW_KEYS = {
     "day.reason.catering.done_untracked_other", "day.reason.catering.none", "day.reason.catering.untracked_one",
     "day.reason.catering.untracked_other", "day.reason.catering.no_count_one", "day.reason.catering.no_count_other",
     "day.reason.catering.no_time_one", "day.reason.catering.no_time_other", "day.reason.catering.unavailable",
+    "day.reason.catering.delivery_to_book", "day.reason.catering.delivery_cancel_needed", "day.reason.catering.delivery_problem",
+    "day.reason.catering.delivery_pickup_mismatch",
     "day.reason.heavy.today", "day.reason.heavy.today_no_time", "day.reason.heavy.flagged_one",
     "day.reason.heavy.flagged_other", "day.reason.heavy.tomorrow_one", "day.reason.heavy.tomorrow_other",
     "day.reason.heavy.today_unknown_start", "day.reason.heavy.today_no_time_unknown_start",
@@ -77,10 +80,10 @@ const ALL: string[] = Object.values(NEW_KEYS).flat();
 const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!).sort();
 
 describe("the day engine's keys", () => {
-  it("122 keys: 19 phases, 2 names, 80 reasons, 1 empty, 11 holder/state/done/next, 9 notes; no duplicate", () => {
-    expect(Object.values(NEW_KEYS).map((v) => v.length)).toEqual([19, 2, 80, 1, 11, 9]);
-    expect(ALL).toHaveLength(122);
-    expect(new Set(ALL).size).toBe(122);
+  it("126 keys: 19 phases, 2 names, 84 reasons, 1 empty, 11 holder/state/done/next, 9 notes; no duplicate", () => {
+    expect(Object.values(NEW_KEYS).map((v) => v.length)).toEqual([19, 2, 84, 1, 11, 9]);
+    expect(ALL).toHaveLength(126);
+    expect(new Set(ALL).size).toBe(126);
   });
 
   it("they are every day.* key in both dictionaries", () => {

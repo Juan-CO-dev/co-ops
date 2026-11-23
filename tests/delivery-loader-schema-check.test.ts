@@ -4,6 +4,9 @@
  * wrappers run against a RECORDING client with canned rows that walk them past every read; PGlite applies the harness's
  * stub of the tables 0356 reads plus the REAL 0356 file; every captured query is EXECUTED with `limit 0`, and every
  * captured RPC's argument names are compared with the function's own. The lib never selects `*`.
+ *
+ * D3: the same for `lib/delivery/day.ts` — every query `loadDeliveryDay` (a shop's day) and `loadDeliveryStates` (the
+ * pipeline cards' read) build, each of its eight query kinds, runs against the real relations too.
  */
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
@@ -19,6 +22,10 @@ const captured: Captured[] = [];
 const rpcs: Array<{ name: string; args: string[] }> = [];
 
 const SHOP = "00000000-0000-4000-8000-00000000000a", LEAD = "00000000-0000-4000-8000-0000000000d1", JOB = "00000000-0000-4000-8000-0000000000e1";
+/** D3: a second lead with an open job that is NOT among the day's leads, so the day loader's "(b) open jobs' leads" read is issued. */
+const LEAD_OPEN = "00000000-0000-4000-8000-0000000000d2";
+/** How many queries had been captured when the D3 day loader started (its queries are the last captured). */
+let dayQueriesFrom = 0;
 const CANNED: Record<string, unknown> = {
   catering_pipeline: { id: LEAD, location_id: SHOP, stage: "confirmed", lead_source: "website" },
   delivery_settings: { location_id: SHOP, enabled: true, manual_providers: ["Courier A"], gratuity_driver_bps: 1000, updated_at: "2026-11-22T10:00:00Z" },
@@ -67,6 +74,9 @@ const previous = process.env.DELIVERY_TRACKING;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(STUB);
+  // The harness stub holds only the columns 0356 itself reads. The D3 day read also filters the lead's `event_date`
+  // (catering_pipeline.event_date, 0108: the column the booked-events reader has always filtered on).
+  await db.exec("alter table public.catering_pipeline add column event_date date");
   await db.exec(readFileSync("supabase/migrations/0356_delivery_jobs.sql", "utf8").replace(/\r\n/g, "\n"));
   process.env.DELIVERY_TRACKING = "1";
   const jobs = await import("@/lib/delivery/jobs");
@@ -90,6 +100,16 @@ beforeAll(async () => {
   await jobs.recordDeliveryCost(moo, { jobId: JOB, expectedShopId: SHOP, component: "base", amountCents: 1, correctsId: null, note: null }, { client: sb });
   await jobs.keepDeliveryPickup(moo, { jobId: JOB, expectedShopId: SHOP, note: null }, { client: sb });
   await jobs.recordDeliveryGratuitySplit(moo, { leadId: LEAD, expectedShopId: SHOP, mode: "recompute", expectedHeadId: null, reason: "x" }, { client: sb });
+  // D3: the money-free day fact and the pipeline cards' read, past every one of their reads.
+  const day = await import("@/lib/delivery/day");
+  CANNED.catering_pipeline = { id: LEAD, location_id: SHOP, stage: "confirmed", lead_source: "website" };
+  CANNED.delivery_job_current = [...(CANNED.delivery_job_current as object[]), { ...(CANNED.delivery_job_current as Array<Record<string, unknown>>)[0], id: "00000000-0000-4000-8000-0000000000e2", pipeline_id: LEAD_OPEN }];
+  dayQueriesFrom = captured.length;
+  const keyHolder = { role: "key_holder" as const, active: true, locations: [SHOP] };
+  const dayFact = await day.loadDeliveryDay(sb, keyHolder, SHOP, "2026-11-22");
+  if (!("ok" in dayFact) || !dayFact.ok) throw new Error(`the day loader did not walk past its reads: ${JSON.stringify(dayFact)}`);
+  const states = await day.loadDeliveryStates(sb, keyHolder, [LEAD]);
+  if (!("ok" in states) || !states.ok) throw new Error(`the states loader did not walk past its reads: ${JSON.stringify(states)}`);
 }, 240_000);
 afterAll(async () => {
   if (previous === undefined) delete process.env.DELIVERY_TRACKING; else process.env.DELIVERY_TRACKING = previous;
@@ -125,7 +145,8 @@ describe("lib/delivery against the real 0356 schema", () => {
     }
     // The projections the three tiers and the history view select all exist on the real relations.
     const quoteSelects = new Set(captured.filter((c) => c.table === "catering_quotes").map((c) => c.select.join()));
-    expect([...quoteSelects].sort()).toEqual(["id,root_id,status,is_delivery,created_at,superseded_at", "id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at"]);
+    expect([...quoteSelects].sort()).toEqual(["id,pipeline_id,status,is_delivery,created_at", "id,root_id,status,is_delivery,created_at,superseded_at",
+      "id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at"]);
     const settingSelects = new Set(captured.filter((c) => c.table === "delivery_settings").map((c) => c.select.join()));
     expect([...settingSelects].sort()).toEqual(["location_id,enabled", "location_id,enabled,manual_providers,gratuity_driver_bps", "location_id,enabled,manual_providers,gratuity_driver_bps,updated_at"]);
     expect(captured.some((c) => c.table === "delivery_job_current" && c.filters.includes("location_id") && c.select.includes("external_ref"))).toBe(true);
@@ -145,6 +166,31 @@ describe("lib/delivery against the real 0356 schema", () => {
     expect(jobs.order[0]).toBe("attempt_no");
     for (const quotes of captured.filter((c) => c.table === "catering_quotes")) expect([...quotes.filters].sort()).toEqual(["pipeline_id", "superseded_at"]);
     expect(captured.find((c) => c.table === "ezcater_orders")!.filters).toEqual(["lead_id"]);
+  });
+
+  it("D3: the day fact and the pipeline states read issued every one of their query kinds, money-free (they execute above like every other)", () => {
+    const day = captured.slice(dayQueriesFrom);
+    const kinds = new Set(day.map((c) => `${c.table}: ${c.select.join()}${c.table === "catering_pipeline" ? ` [${[...c.filters].sort().join()}]` : ""}`));
+    expect([...kinds].sort()).toEqual([
+      // (a) the day's leads at the shop in the booked stages; (b) the open jobs' leads at the shop; the cards' leads by id; the shop re-check.
+      "catering_pipeline: id,location_id [id]",
+      "catering_pipeline: id,location_id,stage,lead_source [event_date,location_id,stage]",
+      "catering_pipeline: id,location_id,stage,lead_source [id,location_id]",
+      "catering_pipeline: id,location_id,stage,lead_source [id]",
+      "catering_quotes: id,pipeline_id,status,is_delivery,created_at",
+      "delivery_job_current: id,pipeline_id",
+      "delivery_job_current: id,pipeline_id,location_id,attempt_no,closed_at,status,status_at,pickup_at",
+      "delivery_pickup_decisions: id,job_id,lead_location_id",
+      "delivery_settings: location_id,enabled",
+      "ezcater_orders: id,lead_id",
+    ]);
+    // Never the bare table, a cost, a split or an event; no restricted column.
+    for (const t of ["delivery_jobs", "delivery_job_costs", "delivery_gratuity_splits", "delivery_job_events"]) expect([t, day.some((c) => c.table === t)]).toEqual([t, false]);
+    const columns = day.flatMap((c) => c.select);
+    for (const hidden of ["external_ref", "note", "provider_label", "gratuity_cents", "delivery_fee_cents", "amount_cents", "manual_providers", "gratuity_driver_bps", "booked_via", "dropoff_at"]) {
+      expect([hidden, columns.includes(hidden)]).toEqual([hidden, false]);
+    }
+    for (const c of day) expect([c.table, c.order.length > 0]).toEqual([c.table, true]);
   });
 
   it("every RPC exists with exactly the argument names the lib sends", async () => {
