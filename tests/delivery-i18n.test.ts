@@ -12,6 +12,7 @@ import es from "@/lib/i18n/es.json";
 import { DELIVERY_ERROR_CODES, DELIVERY_SQL_REFUSALS } from "@/lib/delivery/errors";
 import { DELIVERY_CLIENT_CODES, DELIVERY_MESSAGE_CODES, deliveryErrorKey } from "@/lib/delivery/panel-shared";
 import { DELIVERY_COST_COMPONENTS, DELIVERY_STATES, DELIVERY_STATUSES } from "@/lib/delivery/types-shared";
+import { ECONOMICS_GAPS, type FeeGap } from "@/lib/delivery/economics-shared";
 
 const EN = en as Record<string, string>, ES = es as Record<string, string>;
 const PREFIXES = ["catering.delivery.", "delivery.error.", "admin.catering.delivery."];
@@ -84,7 +85,7 @@ describe("every key a delivery screen asks for exists", () => {
       expect(ES[`${prefix}${key}`], `${file}: ${prefix}${key} (es)`).toBeTruthy();
     }
     // The only computed keys are the closed vocabularies checked above (state.*, status.*, component.*, record.blocked.*).
-    for (const m of src.matchAll(/\bk\(`([^`$]*)\$\{/g)) expect(["state.", "status.", "component.", "record.blocked."]).toContain(m[1]);
+    for (const m of src.matchAll(/\bk\(`([^`$]*)\$\{/g)) expect(["state.", "status.", "component.", "record.blocked.", "money.fee_gap."]).toContain(m[1]);
     expect(EN["catering.delivery.record.blocked.quote_ambiguous"]).toBeTruthy();
   });
   it("the settings page and the hub tile", () => {
@@ -97,9 +98,59 @@ describe("every key a delivery screen asks for exists", () => {
   });
   it("no key is left unused (every delivery key is asked for by a screen, the error resolver or a vocabulary)", () => {
     const sources = [...SCREENS.map(([f]) => f), "app/admin/catering/delivery/page.tsx", "app/admin/catering/page.tsx", "lib/nav/destinations.ts"].map((f) => readFileSync(f, "utf8")).join("\n");
-    const computed = [/^catering\.delivery\.(state|status|component)\./, /^catering\.delivery\.record\.blocked\./, /^delivery\.error\./];
+    const computed = [/^catering\.delivery\.(state|status|component)\./, /^catering\.delivery\.record\.blocked\./, /^catering\.delivery\.money\.fee_gap\./, /^delivery\.error\./];
     const unused = mine(EN).filter((key) => !computed.some((re) => re.test(key)) && !sources.includes(`"${key.replace(/^(catering\.delivery\.|admin\.catering\.delivery\.)/, "")}"`) && !sources.includes(`"${key}"`));
     expect(unused).toEqual([]);
+  });
+});
+
+describe("D4: the economics copy, en + es", () => {
+  const FEE_GAPS: FeeGap[] = ["ezcater_fee_unknown", "order_rejected", "quote_ambiguous", "fee_not_on_quote"];
+  const section = Object.keys(EN).filter((key) => key.startsWith("reports.sales.delivery.")).sort();
+  it("every named gap has its own line: on the panel (fee side), and on the report (the excluded count and the row)", () => {
+    expect(ECONOMICS_GAPS).toEqual([...FEE_GAPS, "cost_not_recorded", "cost_partial"]);
+    for (const gap of FEE_GAPS) for (const dict of [EN, ES]) expect(dict[`catering.delivery.money.fee_gap.${gap}`], gap).toBeTruthy();
+    expect(Object.keys(EN).filter((key) => key.startsWith("catering.delivery.money.fee_gap.")).sort()).toEqual(FEE_GAPS.map((g) => `catering.delivery.money.fee_gap.${g}`).sort());
+    for (const family of ["excluded", "gap"]) {
+      for (const gap of ECONOMICS_GAPS) for (const dict of [EN, ES]) expect(dict[`reports.sales.delivery.${family}.${gap}`], `${family}.${gap}`).toBeTruthy();
+    }
+    expect(section.filter((key) => /\.(excluded|gap)\.[a-z_]+$/.test(key) && !/\.excluded\.(heading|note)$/.test(key)).sort())
+      .toEqual(["excluded", "gap"].flatMap((family) => ECONOMICS_GAPS.map((g) => `reports.sales.delivery.${family}.${g}`)).sort());
+  });
+  it("the report section: the same keys in both languages, same placeholders, Spanish in tú-form, no courier's name", () => {
+    expect(section.length).toBeGreaterThan(40);
+    expect(Object.keys(ES).filter((key) => key.startsWith("reports.sales.delivery.")).sort()).toEqual(section);
+    for (const key of section) {
+      expect(ES[key]!.trim().length, key).toBeGreaterThan(0);
+      expect([key, holes(ES[key]!)]).toEqual([key, holes(EN[key]!)]);
+      expect([key, /\b(Ingrese|Confirme|Revise|Intente|Registre|Escriba|Toque|Elija|Recargue|Cancele|Recalcule)\b/.test(ES[key]!)]).toEqual([key, false]);
+      for (const dict of [EN, ES]) expect([key, /deliver\s?that|dlivrd|doordash|uber\b/i.test(dict[key]!)]).toEqual([key, false]);
+    }
+    const same = section.filter((key) => ES[key] === EN[key]);
+    expect(same).toEqual(["reports.sales.delivery.order.ezcater"]); // a brand name
+  });
+  it("every key the report section asks for exists, and none is left unused", () => {
+    const src = readFileSync("components/reports-hub/DeliveryEconomicsSection.tsx", "utf8");
+    const literal = [...new Set([...src.matchAll(/\bk\("([^"]+)"/g)].map((m) => m[1]!))];
+    expect(literal.length).toBeGreaterThan(30);
+    for (const key of literal) for (const dict of [EN, ES]) expect(dict[`reports.sales.delivery.${key}`], key).toBeTruthy();
+    // The only computed families are the closed gap vocabulary.
+    expect([...new Set([...src.matchAll(/\bk\(`([^`$]*)\$\{/g)].map((m) => m[1]))].sort()).toEqual(["excluded.", "gap."]);
+    const unused = section.map((key) => key.replace("reports.sales.delivery.", "")).filter((key) => !literal.includes(key) && !/^(excluded|gap)\.[a-z_]+$/.test(key));
+    expect(unused).toEqual([]);
+    for (const key of ["excluded.heading", "excluded.note"]) expect(literal).toContain(key);
+  });
+  it("the 'recorded only' sentence on the panel and the report is THE one sentence (one key, word for word)", () => {
+    for (const file of ["components/reports-hub/DeliveryEconomicsSection.tsx", "components/catering/pipeline/DeliveryPanel.tsx"]) {
+      expect(readFileSync(file, "utf8"), file).toContain('t("admin.catering.delivery.share.unverified")');
+    }
+    expect(Object.keys(EN).filter((key) => /Recorded only\./.test(EN[key]!))).toEqual(["admin.catering.delivery.share.unverified"]);
+  });
+  it("the coverage line and the correction's two buttons read exactly as specified", () => {
+    expect(EN["reports.sales.delivery.coverage"]).toBe("{n} of {m} delivery orders have both a fee and a full cost.");
+    expect(EN["catering.delivery.gratuity.recompute"]).toBe("Recalculate from the current quote");
+    expect(EN["catering.delivery.gratuity.void"]).toBe("Remove — this delivery didn't happen");
+    expect([ES["catering.delivery.gratuity.recompute"], ES["catering.delivery.gratuity.void"]]).toEqual(["Recalcular con la cotización actual", "Quitar — esta entrega no ocurrió"]);
   });
 });
 

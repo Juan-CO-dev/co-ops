@@ -14,9 +14,13 @@
  *  - `jobCostLines`: a job's current cost figures (the chain heads) and which figures can still be added.
  *  - `dollarsToCents`: judged on what was TYPED, never on a float product.
  *  - `deliveryErrorKey`: every refusal has its own en + es message (`delivery.error.<code>`).
+ *  - `panelMoney` (D4): the money line — fee vs courier cost vs net with the named gaps, the gratuity split's head (or
+ *    the expected split before delivery) and the ONE correction offered. Only from a response that carries `cost`.
  */
 import type { PipelineStage } from "@/lib/catering/pipeline-shared";
 import { costHeads, jobCost, type JobCost } from "./cost-shared";
+import { computedSplit, gratuityCorrectionOffer, isDeliveryOrder, orderEconomics, type OrderEconomics, type OrderEconomicsInput } from "./economics-shared";
+import { splitHead } from "./gratuity-shared";
 import { DELIVERY_ERROR_CODES } from "./errors";
 import type { LeadDeliveryView } from "./jobs";
 import { latestJob, MANUAL_MOVES, type ManualDeliveryStatus } from "./status-shared";
@@ -93,6 +97,31 @@ export function jobCostLines(jobId: string, costs: readonly DeliveryCostRow[]): 
   const heads = costHeads(mine).sort((a, b) => DELIVERY_COST_COMPONENTS.indexOf(a.component) - DELIVERY_COST_COMPONENTS.indexOf(b.component));
   const have = new Set(heads.map((h) => h.component));
   return { cost: jobCost(mine), heads, addable: DELIVERY_COST_COMPONENTS.filter((c) => !have.has(c)) };
+}
+
+export interface PanelMoney {
+  /** Fee vs courier cost vs net, every missing side named; the gratuity split (the head, or the expected split). */
+  order: OrderEconomics;
+  /** The head of the gratuity chain the person is looking at: what a correction names. Null = they see none. */
+  headId: string | null;
+  /** The ONE correction offered to a person who may write: "Recalculate" when the computed split differs from the head, else "Remove" while it allocates. */
+  offer: "recompute" | "void" | null;
+}
+/**
+ * The money line of the panel (D4). Null unless the response carries `cost` (the server sends it only to a person who
+ * passes the cost gate) and the lead is a delivery order (a delivery recorded, or a confirmed house delivery).
+ * `stage` is the lead's, as the board shows it: a lost order counts no fee.
+ */
+export function panelMoney(view: DeliveryLeadView, stage: PipelineStage): PanelMoney | null {
+  if (!view.cost) return null;
+  const input: OrderEconomicsInput = {
+    leadId: view.leadId, eventDate: null, stage, isEzcater: view.isEzcater, candidates: view.cost.candidates,
+    jobs: (view.detail?.jobs ?? []).map((j) => ({ id: j.id, attemptNo: j.attemptNo, status: j.status, bookedVia: j.bookedVia, providerLabel: j.providerLabel })),
+    costs: view.cost.costs, splits: view.cost.splits, driverBps: view.cost.gratuityDriverBps,
+  };
+  if (!isDeliveryOrder(input)) return null;
+  const head = splitHead(view.cost.splits);
+  return { order: orderEconomics(input), headId: head?.id ?? null, offer: canWriteDelivery(view) ? gratuityCorrectionOffer(head, computedSplit(input)) : null };
 }
 
 /** "$30", "30.5", "30.50" → cents; anything else (a comma, three decimals, a sign) → null. */

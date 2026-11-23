@@ -113,7 +113,8 @@ describe("the parse: exact keys, what the person saw, a reason", () => {
     expect(((await res.json()) as { split: { kind: string; jobId: string | null } }).split).toMatchObject({ kind: "void", jobId: null, gratuityCents: 0 });
   });
   it("a malformed body never reaches the writer (400 invalid_request)", async () => {
-    const { expectedHeadId: _head, ...noHead } = BODY, { expectedShopId: _shop, ...noShop } = BODY, { reason: _reason, ...noReason } = BODY, { mode: _mode, ...noMode } = BODY;
+    const without = (key: string) => Object.fromEntries(Object.entries(BODY).filter(([name]) => name !== key));
+    const noHead = without("expectedHeadId"), noShop = without("expectedShopId"), noReason = without("reason"), noMode = without("mode");
     for (const body of [[], "x", 7, { ...BODY, surprise: 1 }, { ...BODY, expectedShopId: "not-a-uuid" }, { ...BODY, expectedHeadId: "nope" }, { ...BODY, expectedHeadId: 7 }, { ...BODY, mode: "delete" },
       { ...BODY, mode: "delivered" }, { ...BODY, reason: 7 }, { ...BODY, reason: "x".repeat(501) }, { ...BODY, expectedShop: B }, noHead, noShop, noReason, noMode]) {
       const res = await POST(post(body), ctx());
