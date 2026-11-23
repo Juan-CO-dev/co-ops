@@ -4,6 +4,10 @@
  * wrappers run against a RECORDING client with canned rows that walk them past every read; PGlite applies the harness's
  * stub of the tables 0356 reads plus the REAL 0356 file; every captured query is EXECUTED with `limit 0`, and every
  * captured RPC's argument names are compared with the function's own. The lib never selects `*`.
+ *
+ * D3: the same for `lib/delivery/day.ts` — every query `loadDeliveryDay` (a shop's day) and `loadDeliveryStates` (the
+ * pipeline cards' read) build, each of its eight query kinds, runs against the real relations too.
+ *
  * D4: the economics loader (`lib/delivery/economics.ts`) runs through the same client, so every query the report builds
  * is executed against the real relations too.
  */
@@ -21,6 +25,10 @@ const captured: Captured[] = [];
 const rpcs: Array<{ name: string; args: string[] }> = [];
 
 const SHOP = "00000000-0000-4000-8000-00000000000a", LEAD = "00000000-0000-4000-8000-0000000000d1", JOB = "00000000-0000-4000-8000-0000000000e1";
+/** D3: a second lead with an open job that is NOT among the day's leads, so the day loader's "(b) open jobs' leads" read is issued. */
+const LEAD_OPEN = "00000000-0000-4000-8000-0000000000d2";
+/** How many queries had been captured when the D3 day loader started (its queries are the last captured). */
+let dayQueriesFrom = 0;
 const CANNED: Record<string, unknown> = {
   catering_pipeline: { id: LEAD, location_id: SHOP, stage: "confirmed", lead_source: "website" },
   delivery_settings: { location_id: SHOP, enabled: true, manual_providers: ["Courier A"], gratuity_driver_bps: 1000, updated_at: "2026-11-22T10:00:00Z" },
@@ -72,9 +80,9 @@ const previous = process.env.DELIVERY_TRACKING;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(STUB);
-  // The harness stub holds only the columns 0356 itself reads. D4's report also filters leads by their event date, a
-  // real column of catering_pipeline since 0108.
-  await db.exec("alter table catering_pipeline add column event_date date");
+  // The harness stub holds only the columns 0356 itself reads. D3's day read and D4's report both filter leads by their
+  // event date (catering_pipeline.event_date, a real column since 0108). ONE alter, for both.
+  await db.exec("alter table public.catering_pipeline add column event_date date");
   await db.exec(readFileSync("supabase/migrations/0356_delivery_jobs.sql", "utf8").replace(/\r\n/g, "\n"));
   process.env.DELIVERY_TRACKING = "1";
   const jobs = await import("@/lib/delivery/jobs");
@@ -106,6 +114,16 @@ beforeAll(async () => {
   const economics = await import("@/lib/delivery/economics");
   const report = await economics.loadDeliveryEconomics(sb, moo, { locationId: MOVED_TO }, { from: "2026-11-01", to: "2026-11-30" });
   expect(report.kind === "ok" ? report.report.coverage.orders : report.kind).toBe(1);
+  // D3: the money-free day fact and the pipeline cards' read, past every one of their reads.
+  const day = await import("@/lib/delivery/day");
+  CANNED.catering_pipeline = { id: LEAD, location_id: SHOP, stage: "confirmed", lead_source: "website" };
+  CANNED.delivery_job_current = [...(CANNED.delivery_job_current as object[]), { ...(CANNED.delivery_job_current as Array<Record<string, unknown>>)[0], id: "00000000-0000-4000-8000-0000000000e2", pipeline_id: LEAD_OPEN }];
+  dayQueriesFrom = captured.length;
+  const keyHolder = { role: "key_holder" as const, active: true, locations: [SHOP] };
+  const dayFact = await day.loadDeliveryDay(sb, keyHolder, SHOP, "2026-11-22");
+  if (!("ok" in dayFact) || !dayFact.ok) throw new Error(`the day loader did not walk past its reads: ${JSON.stringify(dayFact)}`);
+  const states = await day.loadDeliveryStates(sb, keyHolder, [LEAD]);
+  if (!("ok" in states) || !states.ok) throw new Error(`the states loader did not walk past its reads: ${JSON.stringify(states)}`);
 }, 240_000);
 afterAll(async () => {
   if (previous === undefined) delete process.env.DELIVERY_TRACKING; else process.env.DELIVERY_TRACKING = previous;
@@ -141,7 +159,8 @@ describe("lib/delivery against the real 0356 schema", () => {
     }
     // The projections the three tiers and the history view select all exist on the real relations.
     const quoteSelects = new Set(captured.filter((c) => c.table === "catering_quotes").map((c) => c.select.join()));
-    expect([...quoteSelects].sort()).toEqual(["id,pipeline_id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at", // D4: the report's (many leads, so it names the lead)
+    expect([...quoteSelects].sort()).toEqual(["id,pipeline_id,status,is_delivery,created_at", // D3: the day fact (no money)
+      "id,pipeline_id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at", // D4: the report's (many leads, so it names the lead)
       "id,root_id,status,is_delivery,created_at,superseded_at", "id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at"]);
     const settingSelects = new Set(captured.filter((c) => c.table === "delivery_settings").map((c) => c.select.join()));
     expect([...settingSelects].sort()).toEqual(["location_id,enabled", "location_id,enabled,gratuity_driver_bps", // D4: the report's (the switch and the driver's share)
@@ -164,7 +183,9 @@ describe("lib/delivery against the real 0356 schema", () => {
     // window and names NO reference; the settings card counts the open jobs (two ids, `closed_at is null`).
     const views = captured.filter((c) => c.table === "delivery_job_current");
     expect(views.filter((c) => c.filters.join("+") === "id").map((c) => c.select.join())).toEqual(["id,pipeline_id"]);
-    expect(views.filter((c) => c.filters.join("+") === "closed_at").map((c) => c.select.join())).toEqual(["id,pipeline_id"]);
+    // Two `closed_at is null` reads of the view, the same two ids each: D2's settings card (the open-job count) and D3's
+    // day fact (the open jobs' leads).
+    expect(views.filter((c) => c.filters.join("+") === "closed_at").map((c) => c.select.join())).toEqual(["id,pipeline_id", "id,pipeline_id"]);
     const movedRead = views.filter((c) => c.filters.join("+") === "location_id+created_at");
     expect(movedRead).toHaveLength(1);
     expect(movedRead[0]!.select).toEqual(["id", "pipeline_id", "location_id", "provider_label", "attempt_no", "pickup_at", "dropoff_at", "status", "status_at", "created_at"]);
@@ -175,8 +196,34 @@ describe("lib/delivery against the real 0356 schema", () => {
     expect(captured.find((c) => c.table === "ezcater_orders")!.filters).toEqual(["lead_id"]);
   });
 
+  it("D3: the day fact and the pipeline states read issued every one of their query kinds, money-free (they execute above like every other)", () => {
+    const day = captured.slice(dayQueriesFrom);
+    const kinds = new Set(day.map((c) => `${c.table}: ${c.select.join()}${c.table === "catering_pipeline" ? ` [${[...c.filters].sort().join()}]` : ""}`));
+    expect([...kinds].sort()).toEqual([
+      // (a) the day's leads at the shop in the booked stages; (b) the open jobs' leads at the shop; the cards' leads by id; the shop re-check.
+      "catering_pipeline: id,location_id [id]",
+      "catering_pipeline: id,location_id,stage,lead_source [event_date,location_id,stage]",
+      "catering_pipeline: id,location_id,stage,lead_source [id,location_id]",
+      "catering_pipeline: id,location_id,stage,lead_source [id]",
+      "catering_quotes: id,pipeline_id,status,is_delivery,created_at",
+      "delivery_job_current: id,pipeline_id",
+      "delivery_job_current: id,pipeline_id,location_id,attempt_no,closed_at,status,status_at,pickup_at",
+      "delivery_pickup_decisions: id,job_id,lead_location_id",
+      "delivery_settings: location_id,enabled",
+      "ezcater_orders: id,lead_id",
+    ]);
+    // Never the bare table, a cost, a split or an event; no restricted column.
+    for (const t of ["delivery_jobs", "delivery_job_costs", "delivery_gratuity_splits", "delivery_job_events"]) expect([t, day.some((c) => c.table === t)]).toEqual([t, false]);
+    const columns = day.flatMap((c) => c.select);
+    for (const hidden of ["external_ref", "note", "provider_label", "gratuity_cents", "delivery_fee_cents", "amount_cents", "manual_providers", "gratuity_driver_bps", "booked_via", "dropoff_at"]) {
+      expect([hidden, columns.includes(hidden)]).toEqual([hidden, false]);
+    }
+    for (const c of day) expect([c.table, c.order.length > 0]).toEqual([c.table, true]);
+  });
+
   it("D4: the economics report read every relation it needs, each with its own columns, and all of them executed above", () => {
-    const mine = captured.slice(economicsFrom);
+    // D4's reads end where D3's day fact begins (D3 runs after it in beforeAll).
+    const mine = captured.slice(economicsFrom, dayQueriesFrom);
     expect(mine.map((c) => c.table)).toEqual(expect.arrayContaining(["delivery_settings", "catering_pipeline", "ezcater_orders", "catering_quotes", "delivery_job_current",
       "delivery_gratuity_splits", "delivery_job_costs"]));
     expect(mine).toHaveLength(8);

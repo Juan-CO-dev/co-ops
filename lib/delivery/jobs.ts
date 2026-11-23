@@ -29,6 +29,7 @@ import {
   type DeliveryActor, deliveryActorOf, deliveryCostReadAllowed, deliveryDetailReadAllowed, deliveryJobHistoryReadAllowed, deliveryReadPossible, deliveryStatusReadAllowed,
   deliveryWriteAllowed,
 } from "./access-shared";
+import { boundedDeliveryRead } from "./bounded";
 import { deliveryTrackingOn } from "./config";
 import { orderCost, type OrderCost } from "./cost-shared";
 import { DeliveryError, deliveryErrorFrom, deliveryErrorStatus, deliveryOff, type DeliverySqlRefusal } from "./errors";
@@ -477,9 +478,10 @@ export async function loadMovedDeliveries(actor: AuthContext, deps: { client?: S
 
 /** The pickup shop's result for a page: the rows, or an explicit "couldn't load" (never a silent empty list). */
 export type MovedDeliveries = { ok: true; rows: MovedDeliveryRow[] } | { ok: false };
-export async function loadMovedDeliveriesSafe(actor: AuthContext, deps: { client?: Sb; now?: Date } = {}): Promise<MovedDeliveries> {
-  try { return { ok: true, rows: await loadMovedDeliveries(actor, deps) }; }
-  catch { return { ok: false }; }
+/** Bounded like every delivery read that rides beside other data (`boundedDeliveryRead`): a read that throws OR hangs is
+ *  `{ ok: false }` after `DELIVERY_READ_DEADLINE_MS`, so the pipeline page it sits on always renders. */
+export async function loadMovedDeliveriesSafe(actor: AuthContext, deps: { client?: Sb; now?: Date; deadlineMs?: number } = {}): Promise<MovedDeliveries> {
+  return boundedDeliveryRead(async (): Promise<MovedDeliveries> => ({ ok: true, rows: await loadMovedDeliveries(actor, deps) }), deps.deadlineMs);
 }
 
 // ── Writes ──────────────────────────────────────────────────────────────────

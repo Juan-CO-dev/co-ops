@@ -34,7 +34,20 @@ const PAGE = listFiles(join("app", "admin", "catering", "delivery"));
 const PANEL = join("components", "catering", "pipeline", "DeliveryPanel.tsx");
 const MOVED = join("components", "catering", "pipeline", "DeliveryMovedList.tsx");
 const CARD = join("components", "admin", "catering", "DeliverySettings.tsx");
-const CLIENT = [PANEL, MOVED, CARD, join("components", "catering", "pipeline", "delivery-format.ts")];
+/** D3: the pipeline card's state chip (a client component with no request of its own). */
+const CHIP = join("components", "catering", "pipeline", "DeliveryStateChip.tsx");
+const CLIENT = [PANEL, MOVED, CARD, CHIP, join("components", "catering", "pipeline", "delivery-format.ts")];
+/**
+ * D3: the passive surfaces that READ the delivery fact (the day plan, the Dashboard block and "Needs you", mid-shift, the
+ * pulse, the pipeline page). They are not delivery modules — their own closures are other features' — so they are not
+ * closure entries; what is pinned for them is the delivery code IN them: no request, and only the money-free delivery
+ * modules imported (`lib/delivery/day.ts`, `day-shared.ts`, `bounded.ts`, `access-shared.ts`, all inside LIB above).
+ */
+const D3_READERS = [
+  join("lib", "day-plan.ts"), join("lib", "day-plan-shared.ts"), join("lib", "day-plan-load-shared.ts"), join("lib", "midshift.ts"), join("lib", "midshift-shared.ts"),
+  join("lib", "pulse", "sections.ts"), join("lib", "pulse", "types.ts"), join("components", "dashboard", "CateringBlock.tsx"), join("components", "dashboard", "NeedsYou.tsx"),
+  join("components", "midshift", "CateringToday.tsx"), join("components", "pulse", "sections", "CateringSection.tsx"), join("app", "(authed)", "dashboard", "page.tsx"),
+];
 /** D4: the report section (a server component): server code, no HTTP call at all. */
 const SECTION = join("components", "reports-hub", "DeliveryEconomicsSection.tsx");
 const REPORT_PAGE = join("app", "(authed)", "reports", "sales", "catering", "page.tsx");
@@ -149,6 +162,33 @@ describe("catering delivery: the scope is real", () => {
     const c = importClosure(DELIVERY);
     expect(c.files.size).toBeGreaterThan(DELIVERY.length + 20); // it really walked past the entries
     for (const reached of [join("lib", "session.ts"), join("components", "auth", "PasswordModal.tsx"), join("lib", "supabase-server.ts")]) expect(c.files.has(reached), reached).toBe(true);
+  });
+});
+
+describe("D3: the status wiring is inside the pin", () => {
+  it("the day fact, its bound and the chip are closure entries (lib/delivery/** and the client list)", () => {
+    for (const f of [join("lib", "delivery", "day.ts"), join("lib", "delivery", "day-shared.ts"), join("lib", "delivery", "bounded.ts")]) expect(LIB, f).toContain(f);
+    expect(CLIENT).toContain(CHIP);
+    expect(httpTargets(diskReader(CHIP)!, CHIP)).toEqual([]);
+    expect(absoluteUrls(diskReader(CHIP)!, CHIP)).toEqual([]);
+  });
+  it("the passive readers hold no request, and import from lib/delivery only the money-free modules", () => {
+    const MONEY_FREE = ["@/lib/delivery/day", "@/lib/delivery/day-shared", "@/lib/delivery/bounded", "@/lib/delivery/access-shared"];
+    for (const f of D3_READERS) {
+      const src = diskReader(f);
+      expect(src, f).not.toBeNull();
+      expect([f, httpTargets(src!, f)]).toEqual([f, []]);
+      const delivery = importSpecifiers(src!, f).filter((s) => s.startsWith("@/lib/delivery"));
+      for (const s of delivery) expect(MONEY_FREE, `${f} imports ${s}`).toContain(s);
+      expect(stripComments(src!), f).not.toMatch(/lib\/delivery\/(jobs|cost-shared|gratuity-shared|settings)"/);
+    }
+    // They do read it: the list is not vacuous.
+    expect(D3_READERS.filter((f) => importSpecifiers(diskReader(f)!, f).some((s) => s.startsWith("@/lib/delivery"))).length).toBeGreaterThanOrEqual(8);
+  });
+  it("MUTATION: a request or a cost import in a passive reader turns it red", () => {
+    const f = join("lib", "midshift.ts");
+    expect(httpTargets(`void fetch("https://courier.example.invalid/eta");\n${diskReader(f)!}`, f)).toEqual(["https://courier.example.invalid/eta"]);
+    expect(importSpecifiers(`import { orderCost } from "@/lib/delivery/cost-shared";\n${diskReader(f)!}`, f)).toContain("@/lib/delivery/cost-shared");
   });
 });
 

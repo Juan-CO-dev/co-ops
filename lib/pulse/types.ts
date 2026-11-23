@@ -5,6 +5,7 @@
  * in the client.
  */
 import type { PulseSection } from "@/lib/pulse/scope-shared";
+import type { DeliveryRowState } from "@/lib/delivery/day-shared";
 import type { PulseScore } from "@/lib/midshift-shared";
 import type { ReportKey, ReportProgress } from "@/lib/midshift-shared";
 
@@ -212,6 +213,8 @@ export interface CateringEventRow {
   stage: "confirmed" | "out";
   /** Null in the crew payload. */
   source: string | null;
+  /** Catering delivery D3: the delivery STATUS (no money, courier, reference or note). Absent = nothing to show. */
+  delivery?: DeliveryRowState;
 }
 
 export interface CateringData {

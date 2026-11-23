@@ -36,6 +36,7 @@ import { formatCents, formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { etCalendarDate } from "@/lib/operational-day";
 import { deliveryWhen } from "./delivery-format";
+import { usePublishDeliveryState } from "./DeliveryStateChip";
 import {
   alertJob, bpsToPercent, canWriteDelivery, deliveryChipTone, deliveryErrorKey, dollarsToCents, jobCostLines, jobsNewestFirst, panelMoney, panelShown, recordOffer, signedCents,
   statusTaps, type ChipTone, type DeliveryLeadView, type PanelMoney, type RecordOffer,
@@ -95,9 +96,14 @@ export function DeliveryPanel({ leadId, stage, eventDate, locations, startOpen =
   const [message, setMessage] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
 
+  // D3 (review rounds 5, 6): the OUTCOME of every completed load of this GET is published to the card's chip, so the card
+  // and the panel agree: the lead's state; a FAILED load reads "Couldn't load delivery" (never the old state: after a
+  // courier was recorded the card must not go on saying "to book"); off / not installed / nothing to see shows no chip.
+  // An aborted load (the panel closed) is not an outcome.
+  const publishToChip = usePublishDeliveryState();
   const load = useCallback((signal?: AbortSignal) => fetchDeliveryView(leadId, signal)
-    .then((view) => setState({ leadId, view, failed: false }))
-    .catch(() => { if (!signal?.aborted) setState({ leadId, view: null, failed: true }); }), [leadId]);
+    .then((view) => { setState({ leadId, view, failed: false }); publishToChip(leadId, { loaded: view }); })
+    .catch(() => { if (!signal?.aborted) { setState({ leadId, view: null, failed: true }); publishToChip(leadId, { failed: true }); } }), [leadId, publishToChip]);
 
   useEffect(() => {
     const controller = new AbortController();

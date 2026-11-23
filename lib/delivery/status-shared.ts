@@ -75,6 +75,15 @@ export interface DeliveryStateInput {
   soon?: boolean;
 }
 
+/**
+ * `to_book` inside the caller's window is `to_book_soon`; every other state is returned as it is. THE one place that
+ * spelling is decided: `deliveryStateOf` uses it, and so does a surface that learns "soon" only after the state was
+ * derived (the day engine, which owns the clock and the shop's catering lead window).
+ */
+export function toBookSoon<S extends DeliveryState | "unknown">(state: S, soon: boolean): S | "to_book_soon" {
+  return state === "to_book" && soon ? "to_book_soon" : state;
+}
+
 /** First match wins. `attemptNo` = the job the state is about (null when it is about no job). */
 export function deliveryStateOf(input: DeliveryStateInput): { state: DeliveryState; attemptNo: number | null } {
   const rejected = orderRejected(input.stage, input.orderQuote);
@@ -96,7 +105,7 @@ export function deliveryStateOf(input: DeliveryStateInput): { state: DeliverySta
   if (latest && (latest.status === "failed" || latest.status === "returned") && !rejected && live) return { state: "problem", attemptNo: latest.attemptNo };
   // 6. Nothing booked (none, or the latest was cancelled) on a live house delivery order.
   if ((!latest || latest.status === "cancelled") && !rejected && live && isHouseDeliveryOrder(input.isEzcater, input.orderQuote)) {
-    return { state: input.soon ? "to_book_soon" : "to_book", attemptNo: null };
+    return { state: toBookSoon("to_book", input.soon === true), attemptNo: null };
   }
   // 7. An ezCater order we have no record for: ezCater's courier, never ours to book.
   if (input.isEzcater && !latest && !rejected) return { state: "provider_managed", attemptNo: null };

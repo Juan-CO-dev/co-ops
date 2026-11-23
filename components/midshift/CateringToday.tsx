@@ -11,11 +11,17 @@
  *
  * The raw `time_window` column holds three shapes in prod (Toast "13:15" · ezCater raw ISO
  * instant · portal "11:30 AM–12:00 PM"), so every render goes through `timeWindowLabel`.
+ *
+ * Catering delivery D3: when delivery tracking is on for the shop, an event carries its delivery STATUS line ("Courier
+ * booked · pick-up 10:40", "Picked up", "Delivered") from the one state rule; a failed read is "Couldn't load delivery",
+ * never "to book". Status only: no courier name, no reference, no cost. Nothing is drawn while it is off.
  */
 
 import type { Language } from "@/lib/i18n/types";
 import { serverT } from "@/lib/i18n/server";
 import { leadSourceLabelKey } from "@/lib/catering/intake-shared";
+import { DELIVERY_TONE_TEXT, deliveryLabel } from "@/lib/delivery/day-shared";
+import { formatTime } from "@/lib/i18n/format";
 import { stageChip, timeWindowLabel, type CateringDueItem, type CateringTomorrow } from "@/lib/midshift";
 
 export function CateringToday({
@@ -47,6 +53,7 @@ export function CateringToday({
           {items.map((ev) => {
             const chip = stageChip(ev.stage);
             const src = leadSourceLabelKey(ev.source);
+            const delivery = deliveryLabel(ev.delivery);
             return (
               <li
                 key={ev.id}
@@ -70,6 +77,11 @@ export function CateringToday({
                   {serverT(language, ev.isDelivery ? "midshift.catering.delivery" : "midshift.catering.pickup")}
                 </span>
                 <span className="text-xs text-co-text-dim">{"key" in src ? serverT(language, src.key) : src.verbatim}</span>
+                {delivery && (
+                  <span data-delivery-state={ev.delivery?.state} className={`w-full text-xs ${DELIVERY_TONE_TEXT[delivery.tone]}`}>
+                    {serverT(language, delivery.key, delivery.time ? { time: formatTime(delivery.time, language) } : undefined)}
+                  </span>
+                )}
               </li>
             );
           })}
