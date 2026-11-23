@@ -13,8 +13,12 @@
  *   - a FAILED load          → `unknown`: the chip reads "Couldn't load delivery". A failed read is never read as a state:
  *                              after a courier was recorded and the reload failed, the card must not go on saying
  *                              "To book" (someone would book twice);
- *   - an authoritative "nothing to show here" (off, not installed, no access / nothing to see, the pickup shop's
- *     history-only view)     → SUPPRESSED: the chip renders nothing. Off renders nothing.
+ *   - an authoritative "nothing to show here" (off, not installed, the lead's SHOP turned off — a lead view with
+ *     `enabled: false` —, no access / nothing to see, the pickup shop's history-only view)
+ *                            → SUPPRESSED: the chip renders nothing. Off renders nothing.
+ * THE RULE, for every answer the GET can give (the table is tests/delivery-chip-get-audit.test.ts): whatever makes the
+ * panel render nothing for an AUTHORITATIVE reason suppresses; a FAILURE TO KNOW is `unknown`; only an ABORTED request
+ * publishes nothing. A lead view of a shop that is ON always publishes its state — `none` included, which shows no chip.
  * Unknown and suppressed are ENTRIES in the published store (a suppression is a `null` tombstone), never a deleted entry:
  * a deleted entry would let the stale server value show through again.
  *
@@ -63,7 +67,9 @@ export function chipStateOf(store: ChipStore, leadId: string): DeliveryRowState 
 
 /** The part of the panel's GET this reads. Deliberately narrow: nothing else of the response is touched. */
 export type PanelViewForChip =
-  | { view: "lead"; state: DeliveryState; status: { status: DeliveryStatus; statusAt: string; pickupAt: string | null } | null }
+  // `enabled` = the lead's shop has delivery ON (`delivery_settings.enabled`). With the global switch on and the shop
+  // off the GET still answers a lead view, with `enabled: false`: the panel renders nothing, and so does the chip.
+  | { view: "lead"; enabled: boolean; state: DeliveryState; status: { status: DeliveryStatus; statusAt: string; pickupAt: string | null } | null }
   | { view: "off" | "not_installed" | "history" }
   | null | undefined;
 /** One COMPLETED load of the panel's GET: what it answered, or that it failed (network, 5xx, still busy after its retry). */
@@ -71,12 +77,14 @@ export type PanelLoadOutcome = { loaded: PanelViewForChip } | { failed: true };
 
 /**
  * What a completed load publishes for the lead — always something:
- * a lead view → its row (the SERVER's state, status-only); a failed load → `unknown`; anything else → `null` (suppress).
+ * a lead view of a shop that is ON → its row (the SERVER's state, status-only); a failed load → `unknown`; anything else
+ * (off, not installed, the shop off, history-only, nothing to see) → `null` (suppress).
  */
 export function publishedOutcomeOf(outcome: PanelLoadOutcome): PublishedChip {
   if ("failed" in outcome) return DELIVERY_UNKNOWN;
   const view = outcome.loaded;
-  if (!view || view.view !== "lead") return null;
+  // `enabled !== true`: a shop that is off, and any answer that does not SAY the shop is on, shows nothing.
+  if (!view || view.view !== "lead" || view.enabled !== true) return null;
   const row = rowStateFor(view.state, view.status ? { status: view.status.status, at: view.status.statusAt, pickupAt: view.status.pickupAt } : null);
   return { state: row.state, at: row.at, status: row.status };
 }

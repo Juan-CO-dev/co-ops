@@ -119,6 +119,15 @@ describe("what the panel publishes from its GET", () => {
     for (const view of [null, undefined, { view: "off" }, { view: "not_installed" }, { view: "history" }] as PanelViewForChip[]) expect(publishedOutcomeOf({ loaded: view })).toBeNull();
   });
 
+  it("round 7: a lead view of a shop that is OFF (`enabled: false`) is suppressed whatever its state; only `enabled: true` publishes a state", () => {
+    for (const state of DELIVERY_STATES) {
+      expect(publishedOutcomeOf({ loaded: viewOf({ state, enabled: false, jobs: [jobOf()] }) }), state).toBeNull();
+      expect(publishedOutcomeOf({ loaded: viewOf({ state, enabled: true, jobs: [jobOf()] }) })!.state).toBe(state);
+    }
+    // An answer that does not SAY the shop is on publishes no state either.
+    expect(publishedOutcomeOf({ loaded: { view: "lead", state: "to_book", status: null } as unknown as PanelViewForChip })).toBeNull();
+  });
+
   it("round 6: a FAILED load publishes `unknown` — never nothing, never a state", () => {
     expect(publishedOutcomeOf({ failed: true })).toEqual(DELIVERY_UNKNOWN);
   });
@@ -158,7 +167,7 @@ describe("what the panel publishes from its GET", () => {
       const server = deliveryRowStateOf(l, soon);
       const derived = deliveryStateOf({ ...l, soon });
       const about = l.jobs.find((x) => x.attemptNo === derived.attemptNo) ?? l.jobs.reduce<(typeof l.jobs)[number] | null>((b, x) => (!b || x.attemptNo > b.attemptNo ? x : b), null);
-      const get: PanelViewForChip = { view: "lead", state: derived.state, status: about ? { status: about.status, statusAt: about.at, pickupAt: about.pickupAt } : null };
+      const get: PanelViewForChip = { view: "lead", enabled: true, state: derived.state, status: about ? { status: about.status, statusAt: about.at, pickupAt: about.pickupAt } : null };
       expect(publishedOutcomeOf({ loaded: get }), JSON.stringify(l)).toEqual(server);
       seen.add(server.state);
     }
