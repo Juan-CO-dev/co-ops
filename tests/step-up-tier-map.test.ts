@@ -143,6 +143,8 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // Tier A (the route asserts it only when the body names the row it corrects; a first cost asserts nothing).
   "app/api/admin/catering/delivery/route.ts": ["B"],
   "app/api/catering/pipeline/[id]/delivery/[jobId]/cost/route.ts": ["A"],
+  // Catering delivery D4: recalculating or removing an order's recorded gratuity split is Tier A (always asserted).
+  "app/api/catering/pipeline/[id]/delivery/gratuity/route.ts": ["A"],
   // Business report access (0349): what GMs can see in the business report changes who sees the labor money: Tier B.
   "app/api/admin/reports/business-visibility/route.ts": ["B"],
   // Item 4 PR 2 (0343): marking a demand-signal source verified / revoked opens or closes what may be ingested and used: Tier B.
@@ -340,6 +342,7 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   "components/catering/pipeline/TransferLead.tsx": ["B"],
   // Catering delivery D2: "Correct" on a courier cost asks A before POST .../delivery/[jobId]/cost (and once more if the
   // server dropped the unlock); the settings card asks B before POST /api/admin/catering/delivery. Joined by hand.
+  // D4: the panel's "Recalculate" / "Remove" on the gratuity split asks A before POST .../delivery/gratuity the same way.
   "components/catering/pipeline/DeliveryPanel.tsx": ["A"],
   "components/admin/catering/DeliverySettings.tsx": ["B"],
   // Catering inbox phase 1b: Send draft and the mode switch both ask Tier B (the page hosts the provider).

@@ -21,6 +21,7 @@
   "catering/pipeline/[id]/delivery/[jobId]/cost/route.ts": "POST",
   "catering/pipeline/[id]/delivery/[jobId]/keep-pickup/route.ts": "POST",
   "catering/pipeline/[id]/delivery/[jobId]/status/route.ts": "POST",
+  "catering/pipeline/[id]/delivery/gratuity/route.ts": "POST",
   "catering/pipeline/[id]/delivery/route.ts": "POST",
   "catering/quotes/[id]/payments/route.ts": "POST",
   "catering/quotes/[id]/resend/route.ts": "POST",

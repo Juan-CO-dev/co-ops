@@ -23,15 +23,18 @@ export function splitGratuity(gratuityCents: number, driverBps: number): { drive
   return { driverCents, crewCents: gratuityCents - driverCents };
 }
 
+/** What the head rule and the allocation read of a split row: no reason, no author (D4's report selects exactly these). */
+export type SplitFoldRow = Pick<DeliveryGratuitySplit, "id" | "jobId" | "kind" | "gratuityCents" | "driverBps" | "driverCents" | "crewCents" | "supersedesId">;
+
 /** The head of an order's chain: the row nothing supersedes. Null when the order has no row. */
-export function splitHead(rows: readonly DeliveryGratuitySplit[]): DeliveryGratuitySplit | null {
+export function splitHead<T extends Pick<DeliveryGratuitySplit, "id" | "supersedesId">>(rows: readonly T[]): T | null {
   const superseded = new Set(rows.map((r) => r.supersedesId).filter((id): id is string => id !== null));
   return rows.find((r) => !superseded.has(r.id)) ?? null;
 }
 
 export interface GratuityAllocation { jobId: string; gratuityCents: number; driverBps: number; driverCents: number; crewCents: number }
 /** What the order allocates NOW, from its head. Null = nothing (no row, a void, or a 0-cent split). */
-export function allocationOf(head: DeliveryGratuitySplit | null): GratuityAllocation | null {
+export function allocationOf(head: SplitFoldRow | null): GratuityAllocation | null {
   if (!head || head.kind !== "split" || head.jobId === null || head.gratuityCents === 0) return null;
   return { jobId: head.jobId, gratuityCents: head.gratuityCents, driverBps: head.driverBps, driverCents: head.driverCents, crewCents: head.crewCents };
 }

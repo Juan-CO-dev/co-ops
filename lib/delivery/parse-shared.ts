@@ -8,8 +8,8 @@
  * the route answers 400 `invalid_request` (`invalid_settings` for the settings save) and never reaches the lib.
  *
  * Every write names what the person SAW: `expectedShopId` (the lead's shop on the panel) on every job-level write,
- * `expectedStatus` on a status, `correctsId` (the cost row being corrected) on a correction, `expectedUpdatedAt` on the
- * settings. The database compares them under its locks; these parsers only make sure they are present and well formed.
+ * `expectedStatus` on a status, `correctsId` (the cost row being corrected) on a correction, `expectedHeadId` (the head
+ * of the gratuity chain) on a gratuity correction, `expectedUpdatedAt` on the settings. The database compares them under its locks; these parsers only make sure they are present and well formed.
  */
 import { etWallClockToUtcIso } from "@/lib/operational-day";
 import { isDeliveryStatus, MANUAL_STATUSES, type ManualDeliveryStatus } from "./status-shared";
@@ -120,6 +120,30 @@ export function parseKeepPickup(raw: unknown): { expectedShopId: string | null; 
   const expectedShopId = shop(b.expectedShopId), note = text(b.note, MAX_DELIVERY_NOTE);
   if (expectedShopId === MISSING || note === MISSING) return null;
   return { expectedShopId, note };
+}
+
+export interface GratuityCorrectionBody {
+  expectedShopId: string | null;
+  /** `recompute` = "Recalculate from the current quote"; `void` = "Remove — this delivery didn't happen". */
+  mode: "recompute" | "void";
+  /** The head of the order's gratuity chain as the person saw it; null = they saw none. */
+  expectedHeadId: string | null;
+  reason: string;
+}
+/**
+ * POST …/delivery/gratuity (D4). Every key is required: `expectedHeadId` is an explicit null when the person saw no
+ * split. A well-formed body with an empty reason is the NAMED refusal `reason_required` (the screen says "say why"),
+ * never the writer; anything else malformed is null.
+ */
+export function parseGratuityCorrection(raw: unknown): GratuityCorrectionBody | "reason_required" | null {
+  const b = exact(raw, ["expectedShopId", "mode", "expectedHeadId", "reason"]);
+  if (!b) return null;
+  const expectedShopId = shop(b.expectedShopId), reason = text(b.reason, MAX_DELIVERY_NOTE);
+  const expectedHeadId = b.expectedHeadId === null ? null : parseDeliveryId(b.expectedHeadId) ?? MISSING;
+  if (b.mode !== "recompute" && b.mode !== "void") return null;
+  if (expectedShopId === MISSING || expectedHeadId === MISSING || reason === MISSING) return null;
+  if (reason === null) return "reason_required";
+  return { expectedShopId, mode: b.mode, expectedHeadId, reason };
 }
 
 export interface DeliverySettingsBody {

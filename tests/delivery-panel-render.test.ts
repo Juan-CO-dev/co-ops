@@ -321,12 +321,15 @@ describe("where it is mounted, and what every POST names", () => {
     expect(page).toContain('view.state === "not_installed"');
   });
   it("every POST names the shop the person saw; a status names the status; a correction names the row", () => {
-    expect(count(panelSrc, "expectedShopId: shopId")).toBe(5); // record, status, keep-pickup, a first cost, a correction
+    expect(count(panelSrc, "expectedShopId: shopId")).toBe(6); // record, status, keep-pickup, a first cost, a correction; D4: the gratuity correction
+    expect(panelSrc).toContain("expectedHeadId: headId"); // D4: the head of the gratuity chain the person saw
     expect(panelSrc).toContain("expectedStatus: job.status");
     expect(panelSrc).toContain("correctsId: head.id");
   });
   it("a correction asks Tier A, and once more when the server dropped the unlock; nothing else asks for a password", () => {
-    expect(count(panelSrc, 'requestStepUp("A")')).toBe(2);
+    // Two corrections ask: a courier cost (D2) and the gratuity split (D4), each once and once more on a step-up refusal.
+    expect(count(panelSrc, 'requestStepUp("A")')).toBe(4);
+    expect(count(panelSrc, "if (!result.ok && isStepUpRefusal(result.code)) {")).toBe(2);
     expect(panelSrc).toContain("if (!result.ok && isStepUpRefusal(result.code)) {");
     expect(panelSrc).not.toMatch(/requestStepUp\("[BE]"\)/);
   });
