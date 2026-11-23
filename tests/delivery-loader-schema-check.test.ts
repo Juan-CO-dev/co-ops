@@ -54,7 +54,7 @@ function recordingClient() {
       const rows = () => { const v = CANNED[table]; return Array.isArray(v) ? v : v ? [v] : []; };
       Object.assign(q, {
         select: (cols: string) => { rec.select = cols.split(",").map((c) => c.trim()).filter(Boolean); return q; },
-        eq: col, is: col, in: col,
+        eq: col, is: col, in: col, gte: col,
         order: (c: string) => { rec.order.push(c); return q; },
         range: () => q,
         maybeSingle: () => Promise.resolve({ data: rows()[0] ?? null, error: null }),
@@ -100,6 +100,9 @@ beforeAll(async () => {
   await jobs.recordDeliveryCost(moo, { jobId: JOB, expectedShopId: SHOP, component: "base", amountCents: 1, correctsId: null, note: null }, { client: sb });
   await jobs.keepDeliveryPickup(moo, { jobId: JOB, expectedShopId: SHOP, note: null }, { client: sb });
   await jobs.recordDeliveryGratuitySplit(moo, { leadId: LEAD, expectedShopId: SHOP, mode: "recompute", expectedHeadId: null, reason: "x" }, { client: sb });
+  // D2: the job-of-lead bind (a job-level route names its lead) and the pickup shop's "orders that moved" list.
+  await jobs.recordDeliveryEvent(moo, { leadId: LEAD, jobId: JOB, expectedShopId: SHOP, expectedStatus: "accepted", status: "picked_up", occurredAt: null, note: null }, { client: sb });
+  expect((await jobs.loadMovedDeliveries(actor("gm", [SHOP]), { client: sb })).map((r) => r.jobId)).toEqual([JOB]);
   // D3: the money-free day fact and the pipeline cards' read, past every one of their reads.
   const day = await import("@/lib/delivery/day");
   CANNED.catering_pipeline = { id: LEAD, location_id: SHOP, stage: "confirmed", lead_source: "website" };
@@ -154,13 +157,25 @@ describe("lib/delivery against the real 0356 schema", () => {
 
   it("every list read is ordered (a paged read needs a stable order)", () => {
     for (const c of captured) {
-      const single = (c.table === "catering_pipeline" || c.table === "delivery_settings") && c.filters.length === 1;
+      // One row by its key: the lead, a shop's settings, and D2's job-of-lead bind (`id`, read from the view).
+      const single = (c.table === "catering_pipeline" || c.table === "delivery_settings" || c.table === "delivery_job_current") && c.filters.length === 1
+        && (c.table !== "delivery_job_current" || c.filters[0] === "id");
       if (!single) expect([c.table, c.order.length > 0]).toEqual([c.table, true]);
     }
   });
 
   it("the job read is the VIEW (current status = highest seq), never the bare table; quotes are the live revisions only", () => {
     expect(captured.some((c) => c.table === "delivery_jobs")).toBe(false);
+    // D2: the job-of-lead bind reads two ids of the same view by id; the moved list reads it by pickup shop inside its
+    // window and names NO reference; the settings card counts the open jobs (two ids, `closed_at is null`).
+    const views = captured.filter((c) => c.table === "delivery_job_current");
+    expect(views.filter((c) => c.filters.join("+") === "id").map((c) => c.select.join())).toEqual(["id,pipeline_id"]);
+    // Two `closed_at is null` reads of the view, the same two ids each: D2's settings card (the open-job count) and D3's
+    // day fact (the open jobs' leads).
+    expect(views.filter((c) => c.filters.join("+") === "closed_at").map((c) => c.select.join())).toEqual(["id,pipeline_id", "id,pipeline_id"]);
+    const movedRead = views.filter((c) => c.filters.join("+") === "location_id+created_at");
+    expect(movedRead).toHaveLength(1);
+    expect(movedRead[0]!.select).toEqual(["id", "pipeline_id", "location_id", "provider_label", "attempt_no", "pickup_at", "dropoff_at", "status", "status_at", "created_at"]);
     const jobs = captured.find((c) => c.table === "delivery_job_current")!;
     expect(jobs.select).toEqual(expect.arrayContaining(["attempt_no", "status", "status_seq", "status_at", "location_id", "closed_at"]));
     expect(jobs.order[0]).toBe("attempt_no");

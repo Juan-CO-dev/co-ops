@@ -133,11 +133,16 @@ describe("the pipeline page renders the delivery chip on its cards", () => {
     as("gm", [A]);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const pending = page("hang");
+    // Two delivery reads sit on this page and BOTH hang here: D2's moved-deliveries list, then D3's chip states. Each is
+    // bounded on its own (3 s), one after the other.
+    await vi.advanceTimersByTimeAsync(3_001);
     await vi.advanceTimersByTimeAsync(3_001);
     const p = await pending;
     expect(Object.keys(p.cards)).toHaveLength(5);
     expect(p.html).not.toContain("delivery-state-chip");
     expect(p.html).toContain('data-delivery-states="failed"');
+    // D2's list says its own "couldn't load" (it never silently disappears), and the board is still there.
+    expect(p.html).toContain('role="alert"');
   });
 
   it("the social media manager (the board opens at level 6): no chip, no failure line, ZERO delivery queries", async () => {

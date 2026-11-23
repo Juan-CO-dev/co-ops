@@ -1,13 +1,13 @@
 /**
  * Nav PR 3, guard (d), the reader on its own (plan r5, 4.4.6, 4.4.7, 4.4.10).
  *
- *  - The census: the implemented reader's census of the 86 census files IS the committed reviewed-entry list
+ *  - The census: the implemented reader's census of the 87 census files IS the committed reviewed-entry list
  *    (tests/fixtures/nav-reviewed-entries.json). It fails on any unclassified, stale, ambiguous or unreviewed construct.
  *    NAV_CENSUS_WRITE=1 (CI unset) rewrites the file from the census: a new construct gets meaning null (which then
  *    fails), an existing record keeps its human-written meaning. The census never writes a meaning.
  *  - The negative fixtures (N1-N27): each must make the reader throw, with its code. Positive controls show the
  *    closure is not a reader that rejects everything.
- *  - A real-source fixture for every one of the 84 destination pages: the entries it consumes, and the roles it
+ *  - A real-source fixture for every one of the 85 destination pages: the entries it consumes, and the roles it
  *    admits under every switch combination and the facts it reads, against a hand-written expectation (Appendix B),
  *    independent of the destination list.
  *  - The hard shapes: PM report's submitted day (the per-record restriction view), AM prep in edit mode, Mid-day's
@@ -71,14 +71,14 @@ const codes = (e: PageGateError | undefined) => (e?.problems ?? []).map((p) => p
 // The census IS the list (4.4.10)
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-describe("the census of the 86 census files is the committed reviewed-entry list", () => {
+describe("the census of the 87 census files is the committed reviewed-entry list", () => {
   const reader = newReader();
   const files = censusFiles();
   const result = runCensus(reader, files);
 
-  it("the census files are the 84 destination pages, the admin layout and PulseHome", () => {
-    expect(files).toHaveLength(86);
-    expect(new Set(files).size).toBe(86);
+  it("the census files are the 85 destination pages, the admin layout and PulseHome", () => {
+    expect(files).toHaveLength(87);
+    expect(new Set(files).size).toBe(87);
     expect(files).toEqual(expect.arrayContaining([LAYOUT_FILE, PULSE_HOME_FILE]));
   });
 
@@ -100,7 +100,7 @@ describe("the census of the 86 census files is the committed reviewed-entry list
     expect(result.records.map(strip)).toEqual(ENTRIES.map(strip));
   });
 
-  it("185 entries (nav PR 7: the Dashboard 14 → 3): refuse 28, admit 75, success-redirect 2, operational error 80, in 47 of the 86 files", () => {
+  it("185 entries (nav PR 7: the Dashboard 14 → 3): refuse 28, admit 75, success-redirect 2, operational error 80, in 47 of the 87 files", () => {
     const by = (k: string) => ENTRIES.filter((e) => e.meaning?.kind === k).length;
     expect(ENTRIES).toHaveLength(185);
     expect({ refuse: by("refuse"), admit: by("admit"), "success-redirect": by("success-redirect"), "operational-error": by("operational-error") })
@@ -823,6 +823,7 @@ const RULES: Record<string, PageRule> = {
   "/admin/catering/fulfillment": { min: 7, entries: "" },
   "/admin/catering/ezcater-review": { min: 8, also: ["catering_mgr"], entries: "" },
   "/admin/catering/toast": { min: 8, only: MOO_PLUS, entries: "" },
+  "/admin/catering/delivery": { min: 8, only: MOO_PLUS, entries: "" }, // catering delivery D2: by role; the page reads no switch (it says "off")
   "/reports": { min: 2, not: SMM, entries: "R1 O1" },
   "/reports/operations": { min: 2, not: SMM, entries: "A1" },
   "/reports/written": { min: 2, not: SMM, entries: "O1" },
@@ -888,7 +889,7 @@ describe("a real-source fixture for every destination page", () => {
   const reader = newReader();
   const byKey = new Map(ENTRIES.map((e) => [entryKey(e), e]));
 
-  it("the table covers exactly the 84 destination pages", () => {
+  it("the table covers exactly the 85 destination pages", () => {
     expect(Object.keys(RULES).sort()).toEqual(destinationPages().map((p) => p.route).sort());
   });
 

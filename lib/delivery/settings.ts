@@ -32,7 +32,35 @@ export function defaultDeliverySettings(locationId: string): DeliveryShopSetting
   return { locationId, enabled: false, manualProviders: [], gratuityDriverBps: DEFAULT_GRATUITY_DRIVER_BPS, updatedAt: null };
 }
 
-export interface DeliveryShopCard extends DeliveryShopSettings { name: string }
+/** `openJobs` = the open delivery jobs of leads NOW at the shop (the writer's own count): what turning it off would hide. */
+export interface DeliveryShopCard extends DeliveryShopSettings { name: string; openJobs: number }
+
+/** Open jobs per shop, counted by the LEAD's current shop (as `set_delivery_settings` counts `open_jobs`). Paged; ids chunked. */
+async function readOpenJobCounts(sb: Sb): Promise<Map<string, number>> {
+  const fail = (res: { error: { code?: string; message: string } | null }) => { if (res.error) throw deliveryErrorFrom(res.error); };
+  const open = await selectAllRows<{ id: string; pipeline_id: string }>(async (from, to) => {
+    const res = await sb.from("delivery_job_current").select("id,pipeline_id").is("closed_at", null).order("id").range(from, to);
+    fail(res);
+    return res;
+  });
+  const counts = new Map<string, number>();
+  const leads = [...new Set(open.map((j) => j.pipeline_id))].sort();
+  const shopOf = new Map<string, string | null>();
+  for (let i = 0; i < leads.length; i += 100) {
+    const ids = leads.slice(i, i + 100);
+    const rows = await selectAllRows<{ id: string; location_id: string | null }>(async (from, to) => {
+      const res = await sb.from("catering_pipeline").select("id,location_id").in("id", ids).order("id").range(from, to);
+      fail(res);
+      return res;
+    });
+    for (const r of rows) shopOf.set(r.id, r.location_id);
+  }
+  for (const j of open) {
+    const shop = shopOf.get(j.pipeline_id);
+    if (shop) counts.set(shop, (counts.get(shop) ?? 0) + 1);
+  }
+  return counts;
+}
 export type DeliverySettingsView = { state: "off" } | { state: "not_installed" } | { state: "ready"; shops: DeliveryShopCard[] };
 
 /** Every active shop with its settings (no row = the defaults, off). */
@@ -56,12 +84,13 @@ export async function loadDeliverySettings(actor: AuthContext, deps: { client?: 
       }),
     ]);
     const byShop = new Map(rows.map((r) => [r.location_id, r]));
+    const openJobs = await readOpenJobCounts(sb);
     return { state: "ready", shops: shops.map((s) => {
       const row = byShop.get(s.id);
-      return { ...(row ? fromDeliverySettingsRow(row) : defaultDeliverySettings(s.id)), name: s.name };
+      return { ...(row ? fromDeliverySettingsRow(row) : defaultDeliverySettings(s.id)), name: s.name, openJobs: openJobs.get(s.id) ?? 0 };
     }) };
-  } catch {
-    if (notInstalled) return { state: "not_installed" };
+  } catch (error) {
+    if (notInstalled || (error instanceof DeliveryError && error.code === "delivery_unavailable")) return { state: "not_installed" };
     throw new DeliveryError(500, "generic");
   }
 }

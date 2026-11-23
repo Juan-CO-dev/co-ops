@@ -139,6 +139,10 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // orders is many steps that outlast Tier B's two minutes: Tier A (the password once).
   "app/api/admin/catering/toast-settings/route.ts": ["B"],
   "app/api/admin/catering/toast-settings/backfill/route.ts": ["A"],
+  // Catering delivery D2: the per-shop delivery settings are Tier B (always prompted); a courier-cost CORRECTION is
+  // Tier A (the route asserts it only when the body names the row it corrects; a first cost asserts nothing).
+  "app/api/admin/catering/delivery/route.ts": ["B"],
+  "app/api/catering/pipeline/[id]/delivery/[jobId]/cost/route.ts": ["A"],
   // Business report access (0349): what GMs can see in the business report changes who sees the labor money: Tier B.
   "app/api/admin/reports/business-visibility/route.ts": ["B"],
   // Item 4 PR 2 (0343): marking a demand-signal source verified / revoked opens or closes what may be ingested and used: Tier B.
@@ -334,6 +338,10 @@ const CLIENT_TIER_MAP: Record<string, string[]> = {
   // POST /api/admin/catering/ezcater-review -> decideEzcaterMapping asserts B in lib.
   "app/admin/catering/ezcater-review/review-client.tsx": ["B"],
   "components/catering/pipeline/TransferLead.tsx": ["B"],
+  // Catering delivery D2: "Correct" on a courier cost asks A before POST .../delivery/[jobId]/cost (and once more if the
+  // server dropped the unlock); the settings card asks B before POST /api/admin/catering/delivery. Joined by hand.
+  "components/catering/pipeline/DeliveryPanel.tsx": ["A"],
+  "components/admin/catering/DeliverySettings.tsx": ["B"],
   // Catering inbox phase 1b: Send draft and the mode switch both ask Tier B (the page hosts the provider).
   "app/(authed)/catering/inbox/InboxPane.tsx": ["B"],
   "components/assignments/StationsAdmin.tsx": ["B"],

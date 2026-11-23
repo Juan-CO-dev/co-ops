@@ -13,6 +13,7 @@ import { isBookableSignal } from "@/lib/catering/capacity-shared";
 import { DeliveryStateChip } from "./DeliveryStateChip";
 import { EzcaterReconciliationPanel } from "./EzcaterReconciliationPanel";
 import { HouseToastPanel } from "./HouseToastPanel";
+import { DeliveryPanel } from "./DeliveryPanel";
 import { TransferLead } from "./TransferLead";
 import { EzcaterDetail } from "./EzcaterDetail";
 import { ReopenLead } from "./ReopenLead";
@@ -554,6 +555,9 @@ function LeadDetail({
 
       {/* Item 21 PR 3: a house order's Toast checks (renders nothing unless the server returns a panel). */}
       {lead.leadSource !== "ezcater" && <HouseToastPanel leadId={lead.id} />}
+
+      {/* Catering delivery D2: the order's courier delivery (renders nothing unless delivery is on for the lead's shop). */}
+      <DeliveryPanel leadId={lead.id} stage={lead.stage} eventDate={lead.eventDate} locations={locations} />
 
       {canTransfer && <TransferLead leadId={lead.id} locationId={lead.locationId} locations={locations} onMoved={onClose} />}
 

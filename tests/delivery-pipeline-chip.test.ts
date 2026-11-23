@@ -71,9 +71,12 @@ describe("the delivery chip on a pipeline card", () => {
 describe("the wiring", () => {
   const src = (p: string) => readFileSync(p, "utf8");
 
-  it("PipelineClient.tsx: one import and one JSX line, nothing else of delivery", () => {
-    const lines = src("components/catering/pipeline/PipelineClient.tsx").split("\n").filter((l) => /delivery/i.test(l) && !/deliveryAddress|delivery_address|isDelivery|is_delivery|\.delivery\b|delivery_fee|catering\.pipeline\./i.test(l));
-    expect(lines.map((l) => l.trim())).toEqual(['import { DeliveryStateChip } from "./DeliveryStateChip";', "<DeliveryStateChip leadId={lead.id} />"]);
+  it("PipelineClient.tsx: D3 is one import and one JSX line (the chip); D2's panel is its own import and line beside it", () => {
+    const file = src("components/catering/pipeline/PipelineClient.tsx").split("\n");
+    expect(file.filter((l) => /DeliveryStateChip|DeliveryStates|delivery_state|deliveryLabel|lib\/delivery\/day/.test(l)).map((l) => l.trim()))
+      .toEqual(['import { DeliveryStateChip } from "./DeliveryStateChip";', "<DeliveryStateChip leadId={lead.id} />"]);
+    // Both features are there after the merge with D2 (#634).
+    expect(file.filter((l) => /DeliveryPanel/.test(l))).toHaveLength(2);
   });
 
   it("the pipeline page: ONE batched read for the listed leads, through the gated loader; a failed read is said once; off hands no map", () => {
