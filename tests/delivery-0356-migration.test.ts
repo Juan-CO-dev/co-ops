@@ -37,7 +37,8 @@ describe("0356 header and shape", () => {
     // The gate line is never deleted; the apply is stamped under it.
     expect(lines[1]).toBe("-- AUTHORED 2026-11-22 (PR DELIV-1, CO Claude, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.");
     expect(lines[2]).toBe("-- APPLIED TO SIM 2026-11-23 (schema_migrations version 20261123031134, name '0356_delivery_jobs')");
-    expect(sql).not.toMatch(/APPLIED TO PROD/);
+    expect(lines[3]).toBe("-- APPLIED TO PROD 2026-11-23 UTC (schema_migrations version 20261123054318, name '0356_delivery_jobs')");
+    expect(sql.match(/APPLIED TO PROD/g)).toHaveLength(1);
     expect(sql).toMatch(/0355 is reserved for the all-shops access build/);
     expect(code.match(/^begin;$/gm)).toHaveLength(1);
     expect(code.match(/^commit;$/gm)).toHaveLength(1);
