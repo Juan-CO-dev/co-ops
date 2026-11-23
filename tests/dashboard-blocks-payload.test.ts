@@ -314,8 +314,9 @@ describe("Juan 2026-11-22: the strip is the selected shop's row only", () => {
 // Catering delivery D3: the OFF-EQUIVALENCE pin at the page. With delivery tracking off (`DELIVERY_TRACKING` unset), the
 // Dashboard's element tree (every prop, functions dropped) and its markup are byte-identical to what they were before D3,
 // for every role that gets a catering row, the block or "Needs you". The golden
-// (tests/fixtures/delivery/d3-off-page-golden.json) was frozen from the UNCHANGED base (PR #633's head) in its own commit
-// before any D3 code; it is regenerated only with a written reason (`WRITE_D3_OFF_GOLDEN=1`).
+// (tests/fixtures/delivery/d3-off-page-golden.json) was frozen from the UNCHANGED base in its own commit before any D3
+// code (first PR #633's head; re-frozen from untouched main 035266b3 when #632 changed the strip, commit a7564f03). It is
+// regenerated only with a written reason, and only on a base with no D3 code (`WRITE_D3_OFF_GOLDEN=1`).
 describe("D3 off-equivalence: the Dashboard page with delivery tracking off", () => {
   it("tree and markup match the golden frozen from the unchanged base", async () => {
     const { createHash } = await import("node:crypto");
