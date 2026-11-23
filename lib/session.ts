@@ -343,12 +343,16 @@ export function isAdminPath(currentPath: string): boolean {
  * correction of a recorded courier cost is Tier A, so exactly that path keeps the unlock. A first cost asserts no
  * tier there and only preserves an unlock (the /api/operations/counts posture). The delivery read, the record, status
  * and keep-pickup routes are NOT admitted: they still clear it.
+ *
+ * ...and the delivery GRATUITY correction (POST /api/catering/pipeline/[id]/delivery/gratuity, catering delivery D4):
+ * recalculating or removing the recorded driver / crew split is Tier A, so exactly that path keeps the unlock.
  */
 export function isCateringStepUpPath(currentPath: string): boolean {
   return (currentPath.startsWith("/api/catering/quotes/") && currentPath.endsWith("/send")) ||
     /^\/api\/catering\/quotes\/[^/]+\/resend$/.test(currentPath) ||
     /^\/api\/catering\/pipeline\/[^/]+\/transfer$/.test(currentPath) ||
-    /^\/api\/catering\/pipeline\/[^/]+\/delivery\/[^/]+\/cost$/.test(currentPath);
+    /^\/api\/catering\/pipeline\/[^/]+\/delivery\/[^/]+\/cost$/.test(currentPath) ||
+    /^\/api\/catering\/pipeline\/[^/]+\/delivery\/gratuity$/.test(currentPath);
 }
 
 /** The physical-count surface is Tier-A (council A4) but lives OUTSIDE /admin —
