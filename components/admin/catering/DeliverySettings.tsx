@@ -8,6 +8,8 @@
  *  - The couriers are the SHOP'S OWN list, typed by a person (tenant data: no courier name lives in code).
  *  - The driver's share of the gratuity is RECORDED ONLY. The sentence beside it says so, and that its payroll and legal
  *    treatment is not verified. Nothing here pays, pools or exports anything.
+ *  - OFF MEANS OFF: while a shop is off its open deliveries are hidden and no one can update them (not even to cancel).
+ *    So the card says how many are open BEFORE the person turns the shop off, and how many are waiting after the save.
  *  - Save asks for the password every time (Tier B), then posts the shop's WHOLE row with the `updatedAt` the person
  *    saw. Someone else's change in between is refused ("settings_moved") and the page reloads the row.
  * en + es (tú); 44 px controls with items-center; flex-wrap rows for a 375 px phone; useState only.
@@ -55,6 +57,8 @@ function ShopCard({ shop, startOpen }: { shop: DeliveryShopCard; startOpen: bool
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<TranslationKey | null>(null);
   const [saved, setSaved] = useState(false);
+  // What the save answered: the open deliveries now waiting at a shop that was just turned off.
+  const [waiting, setWaiting] = useState<number | null>(null);
   // The server's row moved (a save, or someone else's): start again from it. During-render prev-compare, not an effect.
   const [seen, setSeen] = useState(shop.updatedAt);
   if (seen !== shop.updatedAt) {
@@ -71,7 +75,7 @@ function ShopCard({ shop, startOpen }: { shop: DeliveryShopCard; startOpen: bool
   }
   async function save() {
     if (bps === null || name !== "") return;
-    setBusy(true); setError(null); setSaved(false);
+    setBusy(true); setError(null); setSaved(false); setWaiting(null);
     try {
       if (await requestStepUp("B") !== "ok") return;
       const r = await post("/api/admin/catering/delivery", {
@@ -83,6 +87,8 @@ function ShopCard({ shop, startOpen }: { shop: DeliveryShopCard; startOpen: bool
         if (r.code === "settings_moved") router.refresh();
         return;
       }
+      const after = (r.data.saved ?? null) as { enabled?: unknown; openJobs?: unknown } | null;
+      if (after && after.enabled === false && typeof after.openJobs === "number" && after.openJobs > 0) setWaiting(after.openJobs);
       setSaved(true); setOpen(false);
       router.refresh();
     } finally { setBusy(false); }
@@ -100,6 +106,9 @@ function ShopCard({ shop, startOpen }: { shop: DeliveryShopCard; startOpen: bool
     </div>
     <p className="text-sm text-co-text-muted">{t(k("summary"), { n: shop.manualProviders.length, pct: bpsToPercent(shop.gratuityDriverBps) })}</p>
     {saved && !open && <p role="status" className="text-sm font-bold text-co-confirm-text">{t(k("saved"))}</p>}
+    {/* Off means off: open deliveries at a shop that is off are hidden and cannot be updated until it is on again. */}
+    {!shop.enabled && (waiting ?? shop.openJobs) > 0
+      && <p role="status" className="rounded-lg border border-co-warning bg-co-warning-surface p-3 text-sm font-bold text-co-warning-text">{t(k("open_jobs.waiting"), { n: waiting ?? shop.openJobs })}</p>}
     {error && <p role="alert" className="text-sm font-bold text-co-cta-text">{t(error)}</p>}
 
     <form id={formId} hidden={!open} className="grid gap-4 border-t border-co-border pt-3" onSubmit={(event) => { event.preventDefault(); void save(); }}>
@@ -113,6 +122,9 @@ function ShopCard({ shop, startOpen }: { shop: DeliveryShopCard; startOpen: bool
           className={`${BUTTON} min-w-[72px] ${enabled ? "border-co-gold-deep bg-co-gold text-co-text" : "border-co-border bg-co-surface text-co-text-muted"}`}
           onClick={() => setEnabled(!enabled)}>{t(k(enabled ? "state.on" : "state.off"))}</button>
       </div>
+      {shop.enabled && !enabled && shop.openJobs > 0
+        && <p role="alert" className="rounded-lg border border-co-warning bg-co-warning-surface p-3 text-sm font-bold text-co-warning-text">{t(k("open_jobs.before_off"), { n: shop.openJobs })}</p>}
+      {shop.enabled && shop.openJobs > 0 && enabled && <p className="text-sm text-co-text-muted">{t(k("open_jobs.now"), { n: shop.openJobs })}</p>}
 
       <fieldset className="grid gap-2">
         <legend className="text-sm font-bold text-co-text">{t(k("couriers.legend"))}</legend>

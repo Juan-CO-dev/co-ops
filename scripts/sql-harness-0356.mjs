@@ -19,7 +19,9 @@
  *   L. the pickup decision is bound to the destination shop (A -> B kept; -> C a mismatch again);
  *   M. lock order (lead FOR NO KEY UPDATE -> job FOR UPDATE -> children), pinned on the function sources;
  *   N. audit: one destructive row per write, the registered names, never a note;
- *   O. every refusal name in the file was raised here.
+ *   O. every refusal name in the file was raised here;
+ *   P. OFF MEANS OFF: with the lead's current shop off, EVERY writer refuses `delivery_off` (a cancellation included)
+ *      and writes nothing; the save answers the shop's open jobs; turned on again, each writer works.
  */
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -219,7 +221,7 @@ async function main() {
   await refuses(db, () => save(db, MOO, CLOSED, SETTINGS), 'location_not_found', 'settings: an inactive shop');
   check((await num(db, `select count(*) n from delivery_settings`)) === 0 && (await num(db, `select count(*) n from audit_log`)) === 0, 'a refused save writes nothing and audits nothing');
   const s1 = await save(db, MOO, A, SETTINGS);
-  check(s1.enabled === true && s1.location_id === A && s1.updated_by === MOO && s1.gratuity_driver_bps === 1000, 'the first save inserts the row');
+  check(s1.enabled === true && s1.location_id === A && s1.updated_by === MOO && s1.gratuity_driver_bps === 1000 && s1.open_jobs === 0, 'the first save inserts the row (and answers the shop\'s open jobs: none)');
   await refuses(db, () => save(db, MOO, A, { ...SETTINGS, gratuity_driver_bps: 500 }), 'settings_moved', 'settings: a save that saw no row, after one exists');
   await refuses(db, () => save(db, MOO, A, { ...SETTINGS, gratuity_driver_bps: 500 }, '2020-01-01T00:00:00Z'), 'settings_moved', 'settings: a save that saw an older row');
   await refuses(db, () => save(db, OWNER, A, SETTINGS, s1.updated_at), 'no_change', 'settings: a save that changes nothing');
@@ -635,6 +637,11 @@ async function main() {
   }
   await transfer(db, t.lid, C);
   check((await mismatch(tj.job_id)) === true, 'another transfer (-> C) raises the mismatch again: no decision exists for C');
+  await refuses(db, () => keep(db, CM, tj.job_id, C), 'delivery_off', 'keep: the destination shop is off (C): off means off');
+  {
+    const c = await one(db, `select updated_at from delivery_settings where location_id = $1`, [C]);
+    await save(db, MOO, C, { enabled: true, manual_providers: [], gratuity_driver_bps: 2500 }, c.updated_at);
+  }
   await refuses(db, () => keep(db, CM, tj.job_id, B), 'shop_moved', 'keep: a tap that raced the second transfer');
   const keptC = await keep(db, CM, tj.job_id, C);
   check(keptC.lead_location_id === C && (await mismatch(tj.job_id)) === false && (await num(db, `select count(*) n from delivery_pickup_decisions where job_id = $1`, [tj.job_id])) === 2, 'keep at C: a second decision, append-only');
@@ -651,10 +658,53 @@ async function main() {
     // The split of a transferred order recomputes at the lead's CURRENT shop's share (C: 25%).
     const r = await gsplit(db, CM, t2.lid, C, 'recompute', t2head.id, 'moved shops');
     check(r.driver_bps === 2500 && r.driver_cents === 750 && r.crew_cents === 2250, 'recompute uses the lead\'s CURRENT shop\'s driver share');
-    // A shop with NO settings row: 1000.
+    // A shop with NO settings row is off: nothing is recomputed there.
     await transfer(db, t2.lid, CLOSED);
-    const r2 = await gsplit(db, CM, t2.lid, CLOSED, 'recompute', r.split_id, 'moved again');
-    check(r2.driver_bps === 1000 && r2.driver_cents === 300, 'no settings row = 1000 bps');
+    await refuses(db, () => gsplit(db, CM, t2.lid, CLOSED, 'recompute', r.split_id, 'moved again'), 'delivery_off', 'a shop with NO settings row is off: no split is recomputed there');
+    await transfer(db, t2.lid, C);
+  }
+
+  // P. OFF MEANS OFF: every writer refuses `delivery_off` while the lead's CURRENT shop is off; open jobs wait.
+  {
+    const o = await houseLead(db, { gratuity: 3000 });
+    const oj = await rec(db, GM_A, o.lid, A, { cost: 1000 });
+    const oCost = (await one(db, `select id::text id from delivery_job_costs where job_id = $1`, [oj.job_id])).id;
+    const o2 = await houseLead(db, { gratuity: 3000 });
+    const o2j = await rec(db, GM_A, o2.lid, A);
+    await ev(db, GM_A, o2j.job_id, A, 'accepted', 'delivered');
+    const o2h = await head(db, o2.lid);
+    const o3 = await houseLead(db);
+    const o3j = await rec(db, GM_A, o3.lid, A);
+    await transfer(db, o3.lid, B);
+    const o4 = await houseLead(db);
+    const row = async shop => one(db, `select enabled, manual_providers mp, gratuity_driver_bps bps, updated_at from delivery_settings where location_id = $1`, [shop]);
+    const flip = async (shop, enabled) => { const r = await row(shop); return save(db, MOO, shop, { enabled, manual_providers: r.mp, gratuity_driver_bps: r.bps }, r.updated_at); };
+    const openAt = async shop => num(db, `select count(*) n from delivery_jobs j join catering_pipeline l on l.id = j.pipeline_id where j.closed_at is null and l.location_id = $1`, [shop]);
+    const offA = await flip(A, false), offB = await flip(B, false);
+    check(offA.enabled === false && offA.open_jobs === (await openAt(A)) && offA.open_jobs >= 1 && offB.open_jobs === (await openAt(B)) && offB.open_jobs >= 1,
+      `turning a shop off answers its open jobs (A ${offA.open_jobs}, B ${offB.open_jobs}): they wait`);
+    const before = await counts();
+    await refuses(db, () => rec(db, GM_A, o4.lid, A), 'delivery_off', 'shop off: record_manual_delivery_job');
+    await refuses(db, () => ev(db, GM_A, oj.job_id, A, 'accepted', 'picked_up'), 'delivery_off', 'shop off: record_delivery_event');
+    await refuses(db, () => ev(db, GM_A, oj.job_id, A, 'accepted', 'cancelled'), 'delivery_off', 'shop off: not even a cancellation (no exception)');
+    await refuses(db, () => cost(db, GM_A, oj.job_id, A, 'wait_time', 100), 'delivery_off', 'shop off: record_delivery_cost (first)');
+    await refuses(db, () => cost(db, GM_A, oj.job_id, A, 'base', 1100, oCost, 'fix'), 'delivery_off', 'shop off: record_delivery_cost (correction)');
+    await refuses(db, () => keep(db, GM_B, o3j.job_id, B), 'delivery_off', 'shop off: keep_delivery_pickup (the lead\'s CURRENT shop, B)');
+    await refuses(db, () => gsplit(db, GM_A, o2.lid, A, 'void', o2h.id, 'x'), 'delivery_off', 'shop off: record_delivery_gratuity_split');
+    // ONE order everywhere: shop_moved, then delivery_off, then the actor rule.
+    await refuses(db, () => ev(db, GM_B, oj.job_id, A, 'accepted', 'picked_up'), 'delivery_off', 'shop off is judged BEFORE the actor rule (job-level)');
+    await refuses(db, () => gsplit(db, PREP, o2.lid, A, 'void', o2h.id, 'x'), 'delivery_off', 'shop off is judged BEFORE the actor rule (lead-level)');
+    await refuses(db, () => ev(db, GM_A, oj.job_id, B, 'accepted', 'picked_up'), 'shop_moved', 'shop_moved is judged BEFORE the switch (job-level)');
+    await refuses(db, () => gsplit(db, GM_A, o2.lid, B, 'void', o2h.id, 'x'), 'shop_moved', 'shop_moved is judged BEFORE the switch (lead-level)');
+    check((await counts()) === before, 'while a shop is off no writer wrote anything');
+    check((await one(db, `select closed_at from delivery_jobs where id = $1`, [oj.job_id])).closed_at === null, 'the open job is still open: it waits');
+    const onA = await flip(A, true); await flip(B, true);
+    check(onA.enabled === true && onA.open_jobs === offA.open_jobs, 'turning the shop on again: the same jobs are still there');
+    check((await ev(db, GM_A, oj.job_id, A, 'accepted', 'picked_up')).status === 'picked_up', 'shop on again: record_delivery_event works');
+    check((await cost(db, GM_A, oj.job_id, A, 'base', 1100, oCost, 'fix')).amount_cents === 1100, 'shop on again: record_delivery_cost works');
+    check((await keep(db, GM_B, o3j.job_id, B)).lead_location_id === B, 'shop on again: keep_delivery_pickup works');
+    check((await gsplit(db, GM_A, o2.lid, A, 'void', o2h.id, 'never delivered')).kind === 'void', 'shop on again: record_delivery_gratuity_split works');
+    check((await rec(db, GM_A, o4.lid, A)).attempt_no === 1, 'shop on again: record_manual_delivery_job works');
   }
 
   // M. Lock order, on the sources.
@@ -663,6 +713,12 @@ async function main() {
     const leadGate = await src('delivery_lead_gate'), jobGate = await src('delivery_job_gate');
     const lg = [leadGate.indexOf('for no key update'), leadGate.indexOf("raise exception 'shop_moved'"), leadGate.indexOf('public.delivery_actor_role(')];
     check(lg[0] > 0 && lg[0] < lg[1] && lg[1] < lg[2] && !/for update/.test(leadGate), 'lead gate: the lead FOR NO KEY UPDATE, then shop_moved, then the actor rule');
+    for (const [name, gate] of [['lead', leadGate], ['job', jobGate]]) {
+      const off = gate.indexOf("raise exception 'delivery_off'");
+      check(off > gate.indexOf("raise exception 'shop_moved'") && off < gate.indexOf('public.delivery_actor_role(')
+        && gate.includes('from public.delivery_settings s where s.location_id = o_shop and s.enabled'),
+        `${name} gate: shop_moved, then delivery_off (the lead's CURRENT shop), then the actor rule`);
+    }
     const jg = [jobGate.indexOf('from public.catering_pipeline l where l.id = o_lead for no key update'), jobGate.indexOf('from public.delivery_jobs j where j.id = p_job_id for update'),
       jobGate.indexOf("raise exception 'shop_moved'"), jobGate.indexOf('public.delivery_actor_role(')];
     check(jg[0] > 0 && jg[0] < jg[1] && jg[1] < jg[2] && jg[2] < jg[3], 'job gate: (1) the lead FOR NO KEY UPDATE -> (2) the job FOR UPDATE, then shop_moved, then the actor rule');

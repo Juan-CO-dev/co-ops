@@ -6,7 +6,7 @@
 import type { AuthContext } from "@/lib/session";
 
 export type FakeResult = { data?: unknown; error?: { code?: string; message?: string } | null };
-export interface FakeQuery { eq: Record<string, unknown>; in: Record<string, unknown[]>; is: Record<string, unknown>; gte: Record<string, unknown>; range: [number, number] | null }
+export interface FakeQuery { select: string; eq: Record<string, unknown>; in: Record<string, unknown[]>; is: Record<string, unknown>; gte: Record<string, unknown>; range: [number, number] | null }
 export type FakeTables = Record<string, (q: FakeQuery) => FakeResult>;
 export type FakeRpcs = Record<string, (params: Record<string, unknown>) => FakeResult>;
 
@@ -14,9 +14,11 @@ export function deliveryFake(tables: FakeTables, rpcs: FakeRpcs = {}) {
   const reads: string[] = [];
   const calls: Array<{ name: string; params: Record<string, unknown> }> = [];
   const chain = (name: string, answer: (q: FakeQuery) => FakeResult) => {
-    const query: FakeQuery = { eq: {}, in: {}, is: {}, gte: {}, range: null };
+    const query: FakeQuery = { select: "", eq: {}, in: {}, is: {}, gte: {}, range: null };
     const q: Record<string, unknown> = {};
-    for (const m of ["select", "order"]) q[m] = () => q;
+    q.order = () => q;
+    q.returns = () => q;
+    q.select = (columns: string) => { query.select = columns; return q; };
     q.eq = (col: string, value: unknown) => { query.eq[col] = value; return q; };
     q.is = (col: string, value: unknown) => { query.is[col] = value; return q; };
     q.in = (col: string, value: unknown[]) => { query.in[col] = value; return q; };

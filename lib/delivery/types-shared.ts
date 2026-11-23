@@ -47,21 +47,25 @@ export type DeliveryLeadStage = PipelineStage;
 /** `catering_quotes.status` (0120). */
 export type DeliveryQuoteStatus = "draft" | "sent" | "accepted" | "declined" | "expired";
 /** A candidate of the order-quote selection: the LIVE revision of one of the lead's quote families. */
-export interface QuoteCandidate {
+export interface QuoteCandidateBase {
   id: string;
   status: DeliveryQuoteStatus;
   isDelivery: boolean;
-  gratuityCents: number;
-  deliveryFeeCents: number;
   createdAt: string;
 }
+/** ... with the money only a cost reader may select. */
+export interface QuoteCandidate extends QuoteCandidateBase {
+  gratuityCents: number;
+  deliveryFeeCents: number;
+}
 /** THE order quote (`orderQuoteOf`; SQL twin `delivery_order_quote`). Only `accepted` is a fee / gratuity source. */
-export type OrderQuote =
-  | { kind: "accepted"; quote: QuoteCandidate; isDelivery: boolean }
+export type OrderQuoteOf<T extends QuoteCandidateBase> =
+  | { kind: "accepted"; quote: T; isDelivery: boolean }
   | { kind: "ambiguous"; isDelivery: boolean }
   | { kind: "rejected"; isDelivery: false }
-  | { kind: "pending"; quote: QuoteCandidate; isDelivery: boolean }
+  | { kind: "pending"; quote: T; isDelivery: boolean }
   | { kind: "none"; isDelivery: null };
+export type OrderQuote = OrderQuoteOf<QuoteCandidate>;
 export type OrderQuoteKind = OrderQuote["kind"];
 
 /** A job with its current status (the view `delivery_job_current`). */

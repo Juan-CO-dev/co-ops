@@ -10347,5 +10347,11 @@
   "admin.catering.delivery.couriers.pending": "Tap Add courier to put this name on the list, or clear the box.",
   "admin.catering.delivery.share.label": "Driver's share of the gratuity (%)",
   "admin.catering.delivery.share.invalid": "Enter a percentage from 0 to 100, with up to two decimals.",
-  "admin.catering.delivery.share.unverified": "Recorded only. The payroll and legal treatment of the driver's share is not verified — the driver works for the courier, not for us. Confirm with payroll before paying anything from this figure."
+  "admin.catering.delivery.share.unverified": "Recorded only. The payroll and legal treatment of the driver's share is not verified — the driver works for the courier, not for us. Confirm with payroll before paying anything from this figure.",
+  "catering.delivery.try_again": "Try again",
+  "catering.delivery.moved.unavailable": "Couldn't load deliveries booked here for orders that moved. Reload to try again.",
+  "delivery.error.delivery_busy": "This order was being moved between shops. Nothing was saved. Try again.",
+  "admin.catering.delivery.open_jobs.now": "Open deliveries at this shop now: {n}.",
+  "admin.catering.delivery.open_jobs.before_off": "Open deliveries at this shop: {n}. If you turn this off, they are hidden and nobody can update or cancel them here until you turn it on again.",
+  "admin.catering.delivery.open_jobs.waiting": "Open deliveries waiting at this shop: {n}. They are hidden and can't be updated until you turn this on again."
 }

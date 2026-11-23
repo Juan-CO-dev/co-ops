@@ -55,6 +55,22 @@ const CHIP: Record<ChipTone, string> = {
 const k = (key: string) => `catering.delivery.${key}` as TranslationKey;
 
 /**
+ * The panel's one read. 403 (a role no gate admits) and 404 (nothing to see) are "nothing here" (null), never an error
+ * on the screen. 409 `delivery_busy` (the order was changing shop while it was read) is "try again": asked once more,
+ * then thrown (the panel says unavailable, with a Try again button).
+ */
+async function fetchDeliveryView(leadId: string, signal?: AbortSignal): Promise<LeadDeliveryView | null> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const r = await fetch(`/api/catering/pipeline/${leadId}/delivery`, { signal, redirect: "error" });
+    if (r.status === 403 || r.status === 404) return null;
+    if (r.status === 409 && attempt === 0) continue;
+    if (!r.ok) break;
+    return (await r.json()) as LeadDeliveryView;
+  }
+  throw new Error("unavailable");
+}
+
+/**
  * `initial` seeds the first render (tests / server render); the panel still reloads from the route on mount.
  * `stage` and `eventDate` are the lead's, as the board shows them; `locations` only names shops in a moved-order alert.
  */
@@ -73,13 +89,7 @@ export function DeliveryPanel({ leadId, stage, eventDate, locations, startOpen =
   const [message, setMessage] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
 
-  // 403 (a role no gate admits) and 404 (nothing to see) are "nothing here", never an error on the screen.
-  const load = useCallback((signal?: AbortSignal) => fetch(`/api/catering/pipeline/${leadId}/delivery`, { signal, redirect: "error" })
-    .then(async (r) => {
-      if (r.status === 403 || r.status === 404) return null;
-      if (!r.ok) throw new Error("unavailable");
-      return (await r.json()) as LeadDeliveryView;
-    })
+  const load = useCallback((signal?: AbortSignal) => fetchDeliveryView(leadId, signal)
     .then((view) => setState({ leadId, view, failed: false }))
     .catch(() => { if (!signal?.aborted) setState({ leadId, view: null, failed: true }); }), [leadId]);
 
@@ -91,7 +101,10 @@ export function DeliveryPanel({ leadId, stage, eventDate, locations, startOpen =
 
   const current = state?.leadId === leadId ? state : null;
   if (!current) return null;
-  if (current.failed) return <p role="status" className="mt-3 text-xs text-co-warning-text">{t(k("unavailable"))}</p>;
+  if (current.failed) return <div role="status" className="mt-3 flex flex-wrap items-center gap-2 text-xs text-co-warning-text">
+    <span>{t(k("unavailable"))}</span>
+    <button type="button" className={QUIET} onClick={() => void load()}>{t(k("try_again"))}</button>
+  </div>;
   if (!panelShown(current.view, stage)) return null;
   const view: DeliveryLeadView = current.view;
   const shopId = view.shopId;

@@ -3,8 +3,8 @@
 /**
  * Catering delivery D2 — "Deliveries booked here for orders that moved": the pickup shop's way in after an order was
  * transferred away (it left that shop's pipeline, so the lead detail cannot be the entry point). AGM / GM only; the
- * rows come from `loadMovedDeliveries` (lib/delivery/jobs.ts) and the list is hidden when there are none or the
- * feature is off.
+ * rows come from `loadMovedDeliveries` (lib/delivery/jobs.ts) and the list is hidden when there are none, the feature
+ * is off or the shop is off. A read that FAILED is not "none": the list says it couldn't load.
  *
  * It never widens access to the moved order: a row is the JOB only (courier, status, times), and opening it asks the
  * same route everyone uses, which answers this viewer the history-only view — that shop's jobs, their events and the
@@ -14,20 +14,23 @@
 import { useId, useState } from "react";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
-import type { DeliveryJobHistoryDto, LeadDeliveryView, MovedDeliveryRow } from "@/lib/delivery/jobs";
+import type { DeliveryJobHistoryDto, LeadDeliveryView, MovedDeliveries, MovedDeliveryRow } from "@/lib/delivery/jobs";
 import { deliveryWhen } from "./delivery-format";
 
 const k = (key: string) => `catering.delivery.${key}` as TranslationKey;
 type Detail = { state: "loading" } | { state: "failed" } | { state: "ready"; jobs: DeliveryJobHistoryDto[] };
 
-export function DeliveryMovedList({ rows, startOpen = false, initialDetail }: {
-  rows: readonly MovedDeliveryRow[]; startOpen?: boolean;
+export function DeliveryMovedList({ result, startOpen = false, initialDetail }: {
+  /** `{ ok: false }` = the read FAILED: say so. An empty list (off, the shop off, not installed, none) renders nothing. */
+  result: MovedDeliveries; startOpen?: boolean;
   /** Tests / server render only: a job whose history starts open. */
   initialDetail?: { jobId: string; jobs: DeliveryJobHistoryDto[] };
 }) {
   const { t } = useTranslation();
   const listId = useId();
   const [open, setOpen] = useState(startOpen);
+  if (!result.ok) return <p role="alert" className="mt-4 co-card p-4 text-sm font-bold text-co-warning-text">{t(k("moved.unavailable"))}</p>;
+  const rows = result.rows;
   if (rows.length === 0) return null;
   return <section className="mt-4 co-card p-0">
     <button type="button" className="flex min-h-[44px] w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-2 text-left text-sm font-bold text-co-text"

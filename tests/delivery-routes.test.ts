@@ -17,7 +17,7 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deliveryActor, deliveryFake, type FakeRpcs, type FakeTables } from "./helpers/delivery-fake";
 
-const h = vi.hoisted(() => ({ actor: null as unknown, fake: null as unknown as ReturnType<typeof import("./helpers/delivery-fake").deliveryFake>, session: vi.fn() }));
+const h = vi.hoisted(() => ({ off: [] as string[], actor: null as unknown, fake: null as unknown as ReturnType<typeof import("./helpers/delivery-fake").deliveryFake>, session: vi.fn() }));
 vi.mock("@/lib/session", async (original) => ({ ...await original<typeof import("@/lib/session")>(), requireSession: h.session }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.fake.sb }));
 
@@ -42,19 +42,25 @@ const jobRow = (id: string, shop: string, attempt: number, status: string, close
 });
 const JOBS = [jobRow(JOB_A, A, 1, "cancelled", "2026-11-22T11:00:00Z"), jobRow(JOB_B, B, 2, "accepted", null)];
 const TABLES: FakeTables = {
-  catering_pipeline: (q) => ({ data: q.eq.id === LEAD ? { id: LEAD, location_id: B, stage: "confirmed", lead_source: "website" } : null }),
+  catering_pipeline: (q) => q.in.id ? { data: (q.in.id as string[]).filter((id) => id === LEAD).map((id) => ({ id, location_id: B })) }
+    : { data: q.eq.id === LEAD ? { id: LEAD, location_id: B, stage: "confirmed", lead_source: "website" } : null },
   ezcater_orders: () => ({ data: [] }),
   catering_quotes: () => ({ data: [{ id: "q1", status: "accepted", is_delivery: true, gratuity_cents: 1000, delivery_fee_cents: 2500, created_at: "2026-11-20T10:00:00Z" }] }),
-  delivery_job_current: (q) => ({ data: q.eq.id !== undefined ? JOBS.filter((j) => j.id === q.eq.id) : JOBS.filter((j) => j.pipeline_id === q.eq.pipeline_id) }),
+  delivery_job_current: (q) => ({ data: q.eq.id !== undefined ? JOBS.filter((j) => j.id === q.eq.id)
+    : q.is.closed_at === null ? JOBS.filter((j) => j.closed_at === null) // the settings card's open-job count
+    : JOBS.filter((j) => j.pipeline_id === q.eq.pipeline_id && (!q.in.location_id || (q.in.location_id as string[]).includes(j.location_id))) }),
   delivery_job_events: (q) => ({ data: (q.in.job_id ?? []).map((id, i) => ({ id: `ev-${i}`, job_id: id, seq: 1, status: "accepted", occurred_at: "2026-11-22T10:00:00Z",
     recorded_at: "2026-11-22T10:00:00Z", source: "manual", actor_id: "u", note: "SECRET-NOTE" })) }),
   delivery_job_costs: () => ({ data: [{ id: COST, job_id: JOB_B, component: "base", semantics: "snapshot", amount_cents: 3175, money_identity: `${JOB_B}:base`, source: "manual",
     provider_ref: null, observed_at: "2026-11-22T10:00:00Z", corrects_id: null, actor_id: "u", note: null }] }),
   delivery_gratuity_splits: () => ({ data: [] }),
   delivery_pickup_decisions: () => ({ data: [] }),
+  // Shops A and B are on; C has no row. One row by shop, a list for `in`, every row for the settings page.
   delivery_settings: (q) => {
-    const row = { location_id: B, enabled: true, manual_providers: ["Courier 2"], gratuity_driver_bps: 1000, updated_at: "2026-11-22T10:00:00.123456+00:00" };
-    return { data: q.eq.location_id === undefined ? [row] : row };
+    const row = (id: string) => ({ location_id: id, enabled: h.off.includes(id) ? false : true, manual_providers: ["Courier 2"], gratuity_driver_bps: 1000, updated_at: "2026-11-22T10:00:00.123456+00:00" });
+    if (q.in.location_id) return { data: (q.in.location_id as string[]).filter((id) => id === A || id === B).map(row) };
+    if (q.eq.location_id !== undefined) return { data: q.eq.location_id === A || q.eq.location_id === B ? row(q.eq.location_id as string) : null };
+    return { data: [row(B)] };
   },
   locations: () => ({ data: [{ id: A, name: "Shop A" }, { id: B, name: "Shop B" }] }),
 };
@@ -64,7 +70,7 @@ const OK: FakeRpcs = {
   record_delivery_event: () => ({ data: { job_id: JOB_B, status: "picked_up", status_seq: 3, closed: false, split_id: null } }),
   record_delivery_cost: () => ({ data: { cost_id: COST } }),
   keep_delivery_pickup: () => ({ data: { decision_id: "d1" } }),
-  set_delivery_settings: () => ({ data: { location_id: B, enabled: true, manual_providers: ["Courier 2"], gratuity_driver_bps: 1000, updated_at: "2026-11-22T12:00:00.654321+00:00" } }),
+  set_delivery_settings: () => ({ data: { location_id: B, enabled: true, manual_providers: ["Courier 2"], gratuity_driver_bps: 1000, updated_at: "2026-11-22T12:00:00.654321+00:00", open_jobs: 2 } }),
 };
 
 type Handler = (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>;
@@ -96,6 +102,7 @@ const code = async (res: Response) => ((await res.json()) as { code?: string; er
 
 beforeEach(() => {
   vi.stubEnv("DELIVERY_TRACKING", "1");
+  h.off = [];
   h.session.mockReset();
   h.session.mockImplementation(async () => h.actor);
   as("catering_mgr");
@@ -230,6 +237,15 @@ describe("every refusal is passed through by name", () => {
   });
 });
 
+describe("off means off: a shop that is turned off refuses every job write by name", () => {
+  it.each(WRITES)("$name: 409 delivery_off, and the writer is never called", async (w) => {
+    h.off = [B];
+    const res = await w.handler(post(w, w.body), ctx());
+    expect([res.status, await code(res)]).toEqual([409, "delivery_off"]);
+    expect(h.fake.calls).toEqual([]);
+  });
+});
+
 describe("who may write: by trusted ROLE, before any database work", () => {
   it.each(WRITES)("$name: the prep manager, the social media manager and a key holder are refused; so is a GM of another shop", async (w) => {
     for (const [role, shops] of [["prep_mgr", [B]], ["social_media_mgr", [B]], ["key_holder", [B]], ["shift_lead", [B]], ["gm", [C]], ["agm", [A]]] as const) {
@@ -307,7 +323,8 @@ describe("the settings: owner / CGS / MoO by role, Tier B, the row the person sa
       expect(res.status).toBe(200);
       expect(h.fake.calls).toEqual([{ name: "set_delivery_settings", params: { p_actor_id: "00000000-0000-4000-8000-0000000000aa", p_location_id: B,
         p_settings: { enabled: true, manual_providers: ["Courier 2"], gratuity_driver_bps: 1000 }, p_expected_updated_at: "2026-11-22T10:00:00.123456+00:00" } }]);
-      expect(((await res.json()) as { saved: { updatedAt: string } }).saved.updatedAt).toBe("2026-11-22T12:00:00.654321+00:00");
+      // The save answers the open jobs now at the shop: what the card warns with after a shop is turned off.
+      expect(((await res.json()) as { saved: { updatedAt: string; openJobs: number } }).saved).toMatchObject({ updatedAt: "2026-11-22T12:00:00.654321+00:00", openJobs: 2 });
     }
   });
   it("a first save names 'no row' (null); a malformed row is 400 invalid_settings and never the writer", async () => {
@@ -330,6 +347,8 @@ describe("the settings: owner / CGS / MoO by role, Tier B, the row the person sa
     const ready = (await (await GET_SETTINGS(get(SETTINGS.path))).json()) as { settings: { state: string; shops: Array<{ locationId: string; name: string; enabled: boolean }> } };
     expect(ready.settings.state).toBe("ready");
     expect(ready.settings.shops.map((s) => s.name)).toEqual(["Shop A", "Shop B"]);
+    // Each card carries the open jobs of leads NOW at the shop, so the warning shows BEFORE it is turned off.
+    expect(ready.settings.shops.map((s) => (s as unknown as { openJobs: number }).openJobs)).toEqual([0, 1]);
     withDb(refuse("delivery_ready", { code: "PGRST202", message: "missing" }));
     expect(await (await GET_SETTINGS(get(SETTINGS.path))).json()).toEqual({ settings: { state: "not_installed" } });
     vi.stubEnv("DELIVERY_TRACKING", ""); withDb();
@@ -382,8 +401,23 @@ describe("GET: the view is decided in the lib, and each payload is an allow-list
       const text = JSON.stringify(body);
       for (const never of [JOB_B, "REF-2", "Courier 2", "3175", "amountCents", "cost", "state", "orderQuote", "detail", "manualProviders", "candidates", "gratuity"]) expect(text).not.toContain(never);
       // It read the lead's shop, the jobs and THEIR events — never the quote, the costs, the split or the settings.
-      expect([...new Set(h.fake.reads)].sort()).toEqual(["catering_pipeline", "delivery_job_current", "delivery_job_events"]);
+      expect([...new Set(h.fake.reads)].sort()).toEqual(["catering_pipeline", "delivery_job_current", "delivery_job_events", "delivery_settings"]);
     }
+  });
+  it("off means off for the history read: with the pickup shop A turned off, A's GM gets 404 and the jobs are never read", async () => {
+    h.off = [A];
+    for (const role of ["gm", "agm"]) {
+      const res = await read(role, [A]);
+      expect([role, res.status, await code(res)]).toEqual([role, 404, "lead_not_found"]);
+      expect(h.fake.reads).not.toContain("delivery_job_current");
+    }
+  });
+  it("a read that kept losing a race with a transfer is the named, retryable 409 delivery_busy", async () => {
+    as("moo");
+    let n = 0;
+    withDb(OK, { ...TABLES, catering_pipeline: () => ({ data: { id: LEAD, location_id: (n++ % 2 === 0) ? A : B, stage: "confirmed", lead_source: "website" } }) });
+    const res = await GET_LEAD(get(`/api/catering/pipeline/${LEAD}/delivery`), ctx());
+    expect([res.status, await code(res)]).toEqual([409, "delivery_busy"]);
   });
   it("a GM of neither shop gets 404; so does an unknown lead and a lead id that is not a uuid", async () => {
     expect((await read("gm", [C])).status).toBe(404);

@@ -19,8 +19,8 @@ const mine = (dict: Record<string, string>) => Object.keys(dict).filter((key) =>
 const holes = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
 
 describe("every DeliveryError code has its own en + es message", () => {
-  it("the vocabulary is the closed one: every SQL refusal, not installed, generic, and the three client outcomes", () => {
-    expect(DELIVERY_MESSAGE_CODES).toEqual([...DELIVERY_SQL_REFUSALS, "delivery_unavailable", "generic", "network", "step_up_required", "step_up_stale"]);
+  it("the vocabulary is the closed one: every SQL refusal, not installed, busy (try again), generic, and the three client outcomes", () => {
+    expect(DELIVERY_MESSAGE_CODES).toEqual([...DELIVERY_SQL_REFUSALS, "delivery_unavailable", "delivery_busy", "generic", "network", "step_up_required", "step_up_stale"]);
     expect(DELIVERY_ERROR_CODES.length + DELIVERY_CLIENT_CODES.length).toBe(DELIVERY_MESSAGE_CODES.length);
   });
   it.each([...DELIVERY_MESSAGE_CODES])("%s", (code) => {

@@ -14,17 +14,18 @@
  *   none         the lead has no quote (ezCater and Toast-created leads): not known to be a delivery
  * `expired` is never a rejection.
  */
-import type { DeliveryLeadStage, OrderQuote, OrderQuoteKind, QuoteCandidate } from "./types-shared";
+import type { DeliveryLeadStage, OrderQuoteKind, OrderQuoteOf, QuoteCandidateBase } from "./types-shared";
 
 /** Newest first by (created_at, id): the instant, then the id as lowercase text (a uuid's own order). */
-function newerFirst(a: QuoteCandidate, b: QuoteCandidate): number {
+function newerFirst(a: QuoteCandidateBase, b: QuoteCandidateBase): number {
   const ta = Date.parse(a.createdAt), tb = Date.parse(b.createdAt);
   if (ta !== tb) return tb - ta;
   const ia = a.id.toLowerCase(), ib = b.id.toLowerCase();
   return ia < ib ? 1 : ia > ib ? -1 : 0;
 }
 
-export function orderQuoteOf(candidates: readonly QuoteCandidate[]): OrderQuote {
+/** Generic over the candidate: the selection reads no money, so a status-tier reader passes candidates that carry none. */
+export function orderQuoteOf<T extends QuoteCandidateBase>(candidates: readonly T[]): OrderQuoteOf<T> {
   if (candidates.length === 0) return { kind: "none", isDelivery: null };
   const accepted = candidates.filter((c) => c.status === "accepted");
   if (accepted.length === 1) return { kind: "accepted", quote: accepted[0]!, isDelivery: accepted[0]!.isDelivery };

@@ -18,14 +18,22 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn(() => { th
 
 type Result = { data?: unknown; error?: { code?: string; message?: string } | null };
 interface Query { eq: Record<string, unknown>; in: Record<string, unknown[]>; is: Record<string, unknown>; range: [number, number] | null }
-/** A chainable PostgREST stand-in. Every settled read or RPC is recorded by name. */
-function client(tables: Record<string, (q: Query) => Result>, rpcs: Record<string, (params: Record<string, unknown>) => Result> = {}) {
+/** A shop that is on (the write wrappers read the shop's own switch before the RPC). */
+const SHOP_ON = (q: Query): Result => ({ data: { location_id: q.eq.location_id, enabled: true } });
+/**
+ * A chainable PostgREST stand-in. Every settled read or RPC is recorded by name; every table read also records the
+ * columns it SELECTED and its filters (`queries`). A test that names no `delivery_settings` table gets a shop that is on.
+ */
+function client(given: Record<string, (q: Query) => Result>, rpcs: Record<string, (params: Record<string, unknown>) => Result> = {}) {
+  const tables: Record<string, (q: Query) => Result> = { delivery_settings: SHOP_ON, ...given };
   const reads: string[] = [];
+  const queries: Array<{ table: string; columns: string[]; query: Query }> = [];
   const calls: Array<{ name: string; params: Record<string, unknown> }> = [];
-  const chain = (name: string, answer: (q: Query) => Result) => {
+  const chain = (name: string, answer: (q: Query) => Result, table = false) => {
     const query: Query = { eq: {}, in: {}, is: {}, range: null };
     const q: Record<string, unknown> = {};
-    for (const m of ["select", "order"]) q[m] = () => q;
+    q.order = () => q;
+    q.select = (cols: string) => { if (table) queries.push({ table: name, columns: cols.split(",").map((c) => c.trim()), query }); return q; };
     q.eq = (col: string, value: unknown) => { query.eq[col] = value; return q; };
     q.is = (col: string, value: unknown) => { query.is[col] = value; return q; };
     q.in = (col: string, value: unknown[]) => { query.in[col] = value; return q; };
@@ -36,10 +44,20 @@ function client(tables: Record<string, (q: Query) => Result>, rpcs: Record<strin
     return q;
   };
   const sb = {
-    from: (name: string) => chain(name, (q) => { const t = tables[name]; if (!t) throw new Error(`unexpected table ${name}`); return t(q); }),
+    from: (name: string) => chain(name, (q) => {
+      const t = tables[name];
+      if (!t) throw new Error(`unexpected table ${name}`);
+      const out = t(q);
+      // D2 (review DELIV2-r1): the pickup shop's own switch is read as a LIST (`in location_id`). A table written for the
+      // one-shop read answers it shop by shop: an "on" row for each shop asked, nothing for a shop with no row.
+      if (name === "delivery_settings" && q.in.location_id && !out.error && !Array.isArray(out.data)) {
+        return { ...out, data: out.data ? q.in.location_id.map((id) => ({ ...(out.data as object), location_id: id })) : [] };
+      }
+      return out;
+    }, true),
     rpc: (name: string, params: Record<string, unknown>) => { calls.push({ name, params }); return chain(name, () => { const f = rpcs[name]; if (!f) throw new Error(`unexpected rpc ${name}`); return f(params); }); },
   };
-  return { sb: sb as never, reads, calls };
+  return { sb: sb as never, reads, calls, queries };
 }
 
 const A = "00000000-0000-4000-8000-00000000000a", B = "00000000-0000-4000-8000-00000000000b", C = "00000000-0000-4000-8000-00000000000c";
@@ -142,7 +160,8 @@ describe("writes: one RPC, the person's own arguments, refusals by name", () => 
       const { sb, calls, reads } = client({}, { [name]: () => ({ data: OK[name] }) });
       await run(who, sb);
       expect(calls.map((c) => c.name)).toEqual([name]);
-      expect(reads).toEqual([name]);
+      // The shop's own switch is read first (its two columns, by the shop the person saw), then the ONE writer.
+      expect(reads).toEqual(["delivery_settings", name]);
       expect(calls[0]!.params).toMatchObject({ p_actor_id: "user-1", p_expected_shop: A });
     }
     const rec = client({}, { record_manual_delivery_job: () => ({ data: OK.record_manual_delivery_job }) });
@@ -164,6 +183,26 @@ describe("writes: one RPC, the person's own arguments, refusals by name", () => 
     expect(error).toMatchObject({ code, status: deliveryErrorStatus(code) });
   });
 
+  it("OFF MEANS OFF in the lib too: a shop with no enabled settings row refuses every write 409 delivery_off before the RPC", async () => {
+    for (const row of [null, { location_id: A, enabled: false }]) {
+      const { sb, calls, queries } = client({ delivery_settings: () => ({ data: row }) }, {});
+      for (const [, run] of WRITES) await expect(run(actor("moo", []), sb)).rejects.toMatchObject({ status: 409, code: "delivery_off" });
+      expect(calls).toEqual([]);
+      expect(queries.every((q) => q.table === "delivery_settings" && q.columns.join() === "location_id,enabled" && q.query.eq.location_id === A)).toBe(true);
+      expect(queries).toHaveLength(WRITES.length);
+    }
+    // A lead with no shop is at no enabled shop.
+    const none = client({}, {});
+    await expect(recordDeliveryEvent(actor("moo", []), { ...event, expectedShopId: null }, { client: none.sb })).rejects.toMatchObject({ status: 409, code: "delivery_off" });
+    expect(none.reads).toEqual([]);
+    // ... and the database's own refusal (the shop went off after the lib's read) is the same named code.
+    const late = client({}, { record_delivery_cost: () => ({ error: { code: "P0001", message: "delivery_off" } }) });
+    await expect(recordDeliveryCost(actor("gm"), cost, { client: late.sb })).rejects.toMatchObject({ status: 409, code: "delivery_off" });
+    // 0356 missing shows at that first read: 503 delivery_unavailable, never a 500.
+    const missing = client({ delivery_settings: () => ({ error: { code: "42P01", message: "relation does not exist" } }) }, {});
+    for (const [, run] of WRITES) await expect(run(actor("moo", []), missing.sb)).rejects.toMatchObject({ status: 503, code: "delivery_unavailable" });
+  });
+
   it("the statuses: 403 forbidden, 404 not found, 400 bad input, 409 for every stale or state refusal", () => {
     expect(deliveryErrorStatus("forbidden")).toBe(403);
     for (const c of ["lead_not_found", "job_not_found", "location_not_found"] as const) expect(deliveryErrorStatus(c)).toBe(404);
@@ -171,6 +210,7 @@ describe("writes: one RPC, the person's own arguments, refusals by name", () => 
     for (const c of ["shop_moved", "status_moved", "settings_moved", "split_moved", "not_current_head", "delivery_job_open", "job_closed", "cost_exists", "ezcater_never_booked",
       "order_rejected", "lead_not_confirmed", "delivery_off"] as const) expect(deliveryErrorStatus(c)).toBe(409);
     expect(deliveryErrorStatus("delivery_unavailable")).toBe(503);
+    expect(deliveryErrorStatus("delivery_busy")).toBe(409);
     expect(deliveryErrorStatus("generic")).toBe(500);
   });
 
@@ -204,12 +244,17 @@ describe("writes: one RPC, the person's own arguments, refusals by name", () => 
 describe("settings", () => {
   const row = { location_id: A, enabled: true, manual_providers: ["Courier A"], gratuity_driver_bps: 1500, updated_at: "2026-11-22T10:00:00Z" };
   it("load: every active shop, a shop with no row is off with the default share", async () => {
-    const { sb, reads } = client({ locations: () => ({ data: [{ id: A, name: "A" }, { id: B, name: "B" }] }), delivery_settings: () => ({ data: [row] }) },
+    // D2: each card also carries the open jobs of leads NOW at the shop (two open jobs: one lead at A, one at no shop).
+    const { sb, reads, queries } = client({ locations: () => ({ data: [{ id: A, name: "A" }, { id: B, name: "B" }] }), delivery_settings: () => ({ data: [row] }),
+      delivery_job_current: () => ({ data: [{ id: JOB_A, pipeline_id: LEAD }, { id: JOB_B, pipeline_id: "lead-2" }] }),
+      catering_pipeline: () => ({ data: [{ id: LEAD, location_id: A }, { id: "lead-2", location_id: null }] }) },
       { delivery_ready: () => ({ data: { ready: true, version: 1 } }) });
     expect(await loadDeliverySettings(actor("moo"), { client: sb })).toEqual({ state: "ready", shops: [
-      { locationId: A, name: "A", enabled: true, manualProviders: ["Courier A"], gratuityDriverBps: 1500, updatedAt: "2026-11-22T10:00:00Z" },
-      { locationId: B, name: "B", enabled: false, manualProviders: [], gratuityDriverBps: 1000, updatedAt: null }] });
-    expect(reads.sort()).toEqual(["delivery_ready", "delivery_settings", "locations"]);
+      { locationId: A, name: "A", enabled: true, manualProviders: ["Courier A"], gratuityDriverBps: 1500, updatedAt: "2026-11-22T10:00:00Z", openJobs: 1 },
+      { locationId: B, name: "B", enabled: false, manualProviders: [], gratuityDriverBps: 1000, updatedAt: null, openJobs: 0 }] });
+    expect(reads.sort()).toEqual(["catering_pipeline", "delivery_job_current", "delivery_ready", "delivery_settings", "locations"]);
+    const open = queries.find((q) => q.table === "delivery_job_current")!;
+    expect([open.columns.join(), open.query.is.closed_at]).toEqual(["id,pipeline_id", null]);
   });
 
   it("load: 0356 missing is not_installed (the probe, or the table), never a 500", async () => {
@@ -223,8 +268,12 @@ describe("settings", () => {
   });
 
   it("save: one RPC with the whole row and the row the person saw; refusals by name", async () => {
-    const ok = client({}, { set_delivery_settings: () => ({ data: row }) });
-    expect(await saveDeliverySettings(actor("cgs"), { ...settings, expectedUpdatedAt: "2026-11-21T10:00:00Z" }, { client: ok.sb })).toMatchObject({ locationId: A, gratuityDriverBps: 1500 });
+    const ok = client({}, { set_delivery_settings: () => ({ data: { ...row, open_jobs: 2 } }) });
+    // The save answers the shop's open jobs: while a shop is off they wait, and the card warns with this number.
+    expect(await saveDeliverySettings(actor("cgs"), { ...settings, expectedUpdatedAt: "2026-11-21T10:00:00Z" }, { client: ok.sb })).toEqual({ locationId: A, enabled: true,
+      manualProviders: ["Courier A"], gratuityDriverBps: 1500, updatedAt: "2026-11-22T10:00:00Z", openJobs: 2 });
+    expect(ok.reads).toEqual(["set_delivery_settings"]);
+    await expect(saveDeliverySettings(actor("moo"), settings, { client: client({}, { set_delivery_settings: () => ({ data: row }) }).sb })).rejects.toMatchObject({ status: 500, code: "generic" });
     expect(ok.calls).toEqual([{ name: "set_delivery_settings", params: { p_actor_id: "user-1", p_location_id: A,
       p_settings: { enabled: true, manual_providers: ["Courier A"], gratuity_driver_bps: 1000 }, p_expected_updated_at: "2026-11-21T10:00:00Z" } }]);
     for (const [code, status] of [["settings_moved", 409], ["no_change", 409], ["invalid_settings", 400], ["location_not_found", 404], ["forbidden", 403]] as const) {
@@ -284,7 +333,7 @@ describe("loadLeadDelivery: the view is decided in the lib", () => {
       ...["id", "jobId", "seq", "status", "occurredAt", "recordedAt", "source", "actorId", "note"].map((k) => `jobs[].events[].${k}`)]);
     expect(paths(view).filter((p) => !allowed.has(p))).toEqual([]);
     // It never read a cost, a split, a quote or the settings.
-    expect(reads.sort()).toEqual(["catering_pipeline", "delivery_job_current", "delivery_job_events"]);
+    expect(reads.sort()).toEqual(["catering_pipeline", "catering_pipeline", "delivery_job_current", "delivery_job_events", "delivery_settings"]);
   });
 
   it("a GM of neither shop gets nothing (a 404 at the route); so does anyone for a lead that does not exist", async () => {
@@ -304,6 +353,148 @@ describe("loadLeadDelivery: the view is decided in the lib", () => {
     for (const leak of ["3000", "10000", "2500", "REF-", "4411", "Cents", "cents"]) expect(JSON.stringify(view)).not.toContain(leak);
     // The prep manager reads the same and no more.
     expect(await loadLeadDelivery(actor("prep_mgr", [B]), LEAD, { client: moved().sb })).toEqual(view);
+  });
+
+  /** table -> the sorted, de-duplicated columns every query of that table selected. */
+  const selected = (queries: Array<{ table: string; columns: string[] }>) => {
+    const out: Record<string, string[]> = {};
+    for (const q of queries) out[q.table] = [...new Set([...(out[q.table] ?? []), ...q.columns])].sort();
+    return out;
+  };
+
+  it("STATUS TIER, by its queries: a key holder's load SELECTS no cost, split, event, reference, note or quote money (review r1 P2)", async () => {
+    for (const role of ["key_holder", "shift_lead", "trainer", "prep_mgr"]) {
+      const { sb, queries } = moved();
+      await loadLeadDelivery(actor(role, [B]), LEAD, { client: sb });
+      expect(selected(queries)).toEqual({
+        catering_pipeline: ["id", "lead_source", "location_id", "stage"],
+        ezcater_orders: ["id"],
+        catering_quotes: ["created_at", "id", "is_delivery", "root_id", "status", "superseded_at"],
+        delivery_job_current: ["attempt_no", "booked_via", "closed_at", "dropoff_at", "id", "location_id", "pickup_at", "pipeline_id", "provider_label", "status", "status_at", "status_seq"],
+        delivery_pickup_decisions: ["id", "job_id", "lead_location_id"],
+        delivery_settings: ["enabled", "location_id"],
+      });
+      const tables = new Set(queries.map((q) => q.table));
+      for (const hidden of ["delivery_job_costs", "delivery_gratuity_splits", "delivery_job_events"]) expect([role, hidden, tables.has(hidden)]).toEqual([role, hidden, false]);
+      const columns = queries.flatMap((q) => q.columns);
+      for (const hidden of ["external_ref", "note", "gratuity_cents", "delivery_fee_cents", "amount_cents", "reason", "manual_providers", "gratuity_driver_bps", "driver_cents", "crew_cents"]) {
+        expect([role, hidden, columns.includes(hidden)]).toEqual([role, hidden, false]);
+      }
+    }
+  });
+
+  it("DETAIL and COST TIERS, by their queries: issued only for a viewer who passes that gate, each adding its own columns", async () => {
+    const { sb, queries } = moved();
+    await loadLeadDelivery(actor("agm", [B]), LEAD, { client: sb });
+    const got = selected(queries);
+    // detail adds the reference, the events with notes, the decisions' notes, the couriers ...
+    expect(got.delivery_job_current).toContain("external_ref");
+    expect(got.delivery_job_events).toEqual(["actor_id", "id", "job_id", "note", "occurred_at", "recorded_at", "seq", "source", "status"]);
+    expect(got.delivery_pickup_decisions).toContain("note");
+    // ... cost adds the costs, the split chain, the quote money, the driver share.
+    expect(got.delivery_job_costs).toContain("amount_cents");
+    expect(got.delivery_gratuity_splits).toEqual(expect.arrayContaining(["gratuity_cents", "driver_cents", "crew_cents"]));
+    expect(got.catering_quotes).toEqual(expect.arrayContaining(["gratuity_cents", "delivery_fee_cents"]));
+    expect(got.delivery_settings).toEqual(["enabled", "gratuity_driver_bps", "location_id", "manual_providers"]);
+    // The status-tier queries of that same load still name no restricted column: the money rides in SEPARATE queries.
+    const quoteQueries = queries.filter((q) => q.table === "catering_quotes").map((q) => q.columns.join());
+    expect(quoteQueries).toEqual(["id,root_id,status,is_delivery,created_at,superseded_at", "id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at"]);
+    expect(queries.filter((q) => q.table === "delivery_settings").map((q) => q.columns.join())).toEqual(["location_id,enabled", "location_id,manual_providers", "location_id,gratuity_driver_bps"]);
+  });
+
+  it("HISTORY TIER, by its queries: the pickup shops' own switch, then the job read names the viewer's own shops; no cost, split or quote query", async () => {
+    const { sb, queries } = moved();
+    await loadLeadDelivery(actor("gm", [A, C]), LEAD, { client: sb });
+    expect(selected(queries)).toEqual({
+      catering_pipeline: ["id", "lead_source", "location_id", "stage"],
+      delivery_job_current: ["attempt_no", "dropoff_at", "external_ref", "id", "location_id", "pickup_at", "pipeline_id", "provider_label", "status", "status_at", "status_seq"],
+      delivery_job_events: ["actor_id", "id", "job_id", "note", "occurred_at", "recorded_at", "seq", "source", "status"],
+      delivery_settings: ["enabled", "location_id"], // D2: off means off for the pickup shop's history too
+    });
+    const jobs = queries.find((q) => q.table === "delivery_job_current")!;
+    expect(jobs.query.eq.pipeline_id).toBe(LEAD);
+    expect(jobs.query.in.location_id).toEqual([A, C]);
+    expect(queries.find((q) => q.table === "delivery_job_events")!.query.in.job_id).toEqual([JOB_A]);
+  });
+
+  describe("a transfer DURING the load (review r1 P1)", () => {
+    const B_NOTE = "B-side note";
+    /**
+     * A scripted client. `shops` = what each successive read of the lead answers. Every OTHER read answers the state
+     * AFTER the transfer and the replacement booking — both jobs, B's reference, B's note, B's cost — and IGNORES the
+     * job read's shop filter, as if the rows had landed between the loader's reads.
+     */
+    const racing = (shops: string[]) => {
+      let leadReads = 0;
+      const c = client({
+        catering_pipeline: () => { const shop = shops[Math.min(leadReads, shops.length - 1)]!; leadReads += 1; return { data: { id: LEAD, location_id: shop, stage: "confirmed", lead_source: "website" } }; },
+        ezcater_orders: () => ({ data: [] }),
+        catering_quotes: () => ({ data: [{ id: "q1", root_id: null, status: "accepted", is_delivery: true, gratuity_cents: 10000, delivery_fee_cents: 2500, created_at: "2026-11-01T10:00:00Z", superseded_at: null }] }),
+        delivery_job_current: () => ({ data: [jobRow(JOB_A, A, 1, "cancelled", true), jobRow(JOB_B, B, 2, "accepted", false)] }),
+        delivery_job_events: () => ({ data: [eventRow(JOB_A, 1, "accepted"), eventRow(JOB_A, 2, "cancelled"), { ...eventRow(JOB_B, 1, "accepted"), note: B_NOTE }] }),
+        delivery_job_costs: () => ({ data: [{ id: "c1", job_id: JOB_B, component: "base", semantics: "snapshot", amount_cents: 3000, money_identity: `${JOB_B}:base`, source: "manual",
+          provider_ref: null, observed_at: "2026-11-22T10:00:00Z", corrects_id: null, actor_id: "u", note: null }] }),
+        delivery_gratuity_splits: () => ({ data: [] }),
+        delivery_pickup_decisions: () => ({ data: [] }),
+      });
+      return { ...c, leadReads: () => leadReads };
+    };
+    const B_ONLY = [JOB_B, "REF-2", B_NOTE, "3000", "10000", "2500", "cost", "state"];
+
+    it("A's GM, lead at A when the gates were judged, at B after the reads: everything is discarded and A's GM gets history with A's job ONLY", async () => {
+      // First read: A (A's GM passes the lead-scoped gates). The re-read after the facts: B. Then B from there on.
+      const c = racing([A, B, B, B]);
+      const view = await loadLeadDelivery(actor("gm", [A]), LEAD, { client: c.sb });
+      expect(view).toMatchObject({ view: "history", leadId: LEAD, movedToShopId: B });
+      if (view?.view !== "history") throw new Error("expected the history view");
+      expect(view.jobs.map((j) => j.jobId)).toEqual([JOB_A]);
+      expect(view.jobs[0]!.events.map((e) => e.jobId)).toEqual([JOB_A, JOB_A]);
+      for (const leak of B_ONLY) expect([leak, JSON.stringify(view).includes(leak)]).toEqual([leak, false]);
+      // Two attempts, each closed by a re-read of the lead.
+      expect(c.leadReads()).toBe(4);
+      // The first attempt really did fetch B's facts (the race is real) — and none of it was returned.
+      expect(c.reads).toContain("delivery_job_costs");
+    });
+
+    it("the history filter holds BY CONSTRUCTION: rows of another shop handed back by the job read are dropped, whatever was fetched", async () => {
+      const c = racing([B]);
+      const view = await loadLeadDelivery(actor("agm", [A]), LEAD, { client: c.sb });
+      if (view?.view !== "history") throw new Error("expected the history view");
+      expect(view.jobs.map((j) => j.jobId)).toEqual([JOB_A]);
+      for (const leak of B_ONLY) expect([leak, JSON.stringify(view).includes(leak)]).toEqual([leak, false]);
+      expect(c.queries.find((q) => q.table === "delivery_job_current")!.query.in.location_id).toEqual([A]);
+    });
+
+    it("the lead view is built only for the FINAL shop: B's GM racing a transfer away (B -> A) ends with nothing of the lead view", async () => {
+      // B's GM passes at B; after the reads the lead is at A, where B's GM passes no lead-scoped gate: history, B's job only.
+      const c = racing([B, A, A, A]);
+      const view = await loadLeadDelivery(actor("gm", [B]), LEAD, { client: c.sb });
+      expect(view).toMatchObject({ view: "history", movedToShopId: A });
+      if (view?.view !== "history") throw new Error("expected the history view");
+      expect(view.jobs.map((j) => j.jobId)).toEqual([JOB_B]);
+      expect(JSON.stringify(view)).not.toContain("3000");
+      expect(view).not.toHaveProperty("state");
+    });
+
+    it("a lead that keeps moving under the reads is 409 delivery_busy after three attempts: nothing is returned", async () => {
+      const c = racing([A, B, A, B, A, B, A, B]);
+      await expect(loadLeadDelivery(actor("moo", []), LEAD, { client: c.sb })).rejects.toMatchObject({ status: 409, code: "delivery_busy" });
+      expect(c.leadReads()).toBe(6);
+    });
+
+    it("a lead that did not move is read once and confirmed once", async () => {
+      const c = racing([A]);
+      const view = await loadLeadDelivery(actor("gm", [A]), LEAD, { client: c.sb });
+      expect(view).toMatchObject({ view: "lead", shopId: A });
+      expect(c.leadReads()).toBe(2);
+    });
+
+    it("a lead deleted under the reads answers nothing", async () => {
+      let n = 0;
+      const c = client({ catering_pipeline: () => ({ data: (n += 1) === 1 ? { id: LEAD, location_id: B, stage: "confirmed", lead_source: "website" } : null }),
+        delivery_job_current: () => ({ data: [jobRow(JOB_A, A, 1, "cancelled", true)] }), delivery_job_events: () => ({ data: [] }) });
+      expect(await loadLeadDelivery(actor("gm", [A]), LEAD, { client: c.sb })).toBeNull();
+    });
   });
 
   it("the catering manager and the MoO see the lead view at any shop", async () => {

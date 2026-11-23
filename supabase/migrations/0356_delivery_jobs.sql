@@ -53,6 +53,10 @@
 --   The two gates below (delivery_lead_gate, delivery_job_gate) are the ONLY places that take (1) and (2).
 -- THE SHOP THE PERSON SAW: every job-level and lead-level writer takes p_expected_shop and refuses `shop_moved` under
 --   the lead lock BEFORE the actor rule: an old panel can never write against the destination shop's settings.
+-- OFF MEANS OFF: every job-level and lead-level writer refuses `delivery_off` when the lead's CURRENT shop has no
+--   enabled delivery_settings row. Judged in the gate, in ONE order everywhere: the lead lock, `shop_moved`,
+--   `delivery_off`, the actor rule. No exception: an open job at a shop that is turned off WAITS until the shop is
+--   turned on again. set_delivery_settings answers `open_jobs` (open jobs of leads now at that shop) so the card can warn.
 -- JUAN'S DECISIONS: (1) a job only on a confirmed / out / completed lead (`lead_not_confirmed`); (1b) nothing new on a
 --   rejected order (`order_rejected`); cancelling stays possible in every stage; (2) the actor rule; (4) the split is
 --   recorded on `delivered`; (5) an ezCater lead takes ONLY booked_via = 'provider_native' (`ezcater_never_booked`), a
@@ -315,7 +319,8 @@ begin
   raise exception 'forbidden' using errcode = 'P0001';
 end $$;
 
--- Lead-level gate: (1) the lead row FOR NO KEY UPDATE, then the shop the person saw, then the actor rule.
+-- Lead-level gate: (1) the lead row FOR NO KEY UPDATE, then the shop the person saw, then the shop's switch, then the
+-- actor rule.
 create function public.delivery_lead_gate(p_actor_id uuid, p_lead_id uuid, p_expected_shop uuid,
   out o_shop uuid, out o_stage text, out o_role text)
 language plpgsql security definer set search_path = pg_catalog, public as $$
@@ -323,11 +328,15 @@ begin
   select l.location_id, l.stage into o_shop, o_stage from public.catering_pipeline l where l.id = p_lead_id for no key update;
   if not found then raise exception 'lead_not_found' using errcode = 'P0001'; end if;
   if o_shop is distinct from p_expected_shop then raise exception 'shop_moved' using errcode = 'P0001'; end if;
+  -- Off means off: the lead's CURRENT shop must have an enabled settings row.
+  if not exists (select 1 from public.delivery_settings s where s.location_id = o_shop and s.enabled) then
+    raise exception 'delivery_off' using errcode = 'P0001';
+  end if;
   o_role := public.delivery_actor_role(p_actor_id, o_shop);
 end $$;
 
 -- Job-level gate: (1) the lead row FOR NO KEY UPDATE -> (2) the job row FOR UPDATE, then the shop the person saw, then
--- the actor rule. A job's lead never changes, so its id is read before the locks.
+-- the shop's switch, then the actor rule. A job's lead never changes, so its id is read before the locks.
 create function public.delivery_job_gate(p_actor_id uuid, p_job_id uuid, p_expected_shop uuid,
   out o_lead uuid, out o_shop uuid, out o_stage text, out o_role text, out o_pickup_shop uuid, out o_closed_at timestamptz,
   out o_booked_via text, out o_attempt integer)
@@ -340,6 +349,10 @@ begin
   select j.location_id, j.closed_at, j.booked_via, j.attempt_no into o_pickup_shop, o_closed_at, o_booked_via, o_attempt
     from public.delivery_jobs j where j.id = p_job_id for update;
   if o_shop is distinct from p_expected_shop then raise exception 'shop_moved' using errcode = 'P0001'; end if;
+  -- Off means off: the lead's CURRENT shop must have an enabled settings row.
+  if not exists (select 1 from public.delivery_settings s where s.location_id = o_shop and s.enabled) then
+    raise exception 'delivery_off' using errcode = 'P0001';
+  end if;
   o_role := public.delivery_actor_role(p_actor_id, o_shop);
 end $$;
 
@@ -478,7 +491,10 @@ begin
   insert into public.audit_log(actor_id, actor_role, action, resource_table, resource_id, metadata, destructive)
     values (p_actor_id, v_role, 'delivery.settings_update', 'delivery_settings', p_location_id,
             jsonb_build_object('location_id', p_location_id, 'before', v_before, 'after', v_after), true);
-  return to_jsonb(v_new);
+  -- The open jobs of leads NOW at this shop: while the shop is off they wait (no writer accepts them).
+  return to_jsonb(v_new) || jsonb_build_object('open_jobs', (
+    select count(*) from public.delivery_jobs j join public.catering_pipeline l on l.id = j.pipeline_id
+     where j.closed_at is null and l.location_id = p_location_id));
 end $$;
 
 -- A booking made outside CO-OPS (the courier's site, or the courier ezCater sent): the job, its first event
@@ -507,6 +523,7 @@ begin
   v_kind := v_quote->>'kind';
   if v_kind = 'rejected' then raise exception 'order_rejected' using errcode = 'P0001'; end if;
   if v_kind = 'ambiguous' then raise exception 'quote_ambiguous' using errcode = 'P0001'; end if;
+  -- The gate already refused an off shop; this read is for the shop's courier list.
   select * into v_settings from public.delivery_settings s where s.location_id = v_shop and s.enabled;
   if not found then raise exception 'delivery_off' using errcode = 'P0001'; end if;
   -- No function in this migration can write an API booking.

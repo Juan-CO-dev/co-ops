@@ -180,6 +180,22 @@ describe("lock order and the shop the person saw (on the text)", () => {
     }
   });
 
+  it("OFF MEANS OFF: both gates refuse delivery_off for the lead's CURRENT shop, after shop_moved and before the actor rule", () => {
+    for (const gate of [fn("delivery_lead_gate"), fn("delivery_job_gate")]) {
+      const moved = gate.indexOf("raise exception 'shop_moved'");
+      const off = gate.indexOf("if not exists (select 1 from public.delivery_settings s where s.location_id = o_shop and s.enabled) then\n    raise exception 'delivery_off'");
+      expect(off).toBeGreaterThan(moved);
+      expect(gate.indexOf("public.delivery_actor_role(")).toBeGreaterThan(off);
+    }
+    // Every job-level and lead-level writer goes through a gate (pinned above), so none can skip the switch; no writer
+    // carries an exception for a cancellation.
+    expect(code.match(/raise exception 'delivery_off'/g)).toHaveLength(3);
+    expect(code).not.toMatch(/p_status\s*(=|<>|in)\s*\(?'cancelled'[^;]*delivery_off|delivery_off[^;]*'cancelled'/);
+    expect(sql).toContain("-- OFF MEANS OFF: every job-level and lead-level writer refuses `delivery_off`");
+    // The settings save answers the open jobs of leads now at that shop: they wait while it is off.
+    expect(fn("set_delivery_settings")).toMatch(/return to_jsonb\(v_new\) \|\| jsonb_build_object\('open_jobs', \(\s+select count\(\*\) from public\.delivery_jobs j join public\.catering_pipeline l on l\.id = j\.pipeline_id\s+where j\.closed_at is null and l\.location_id = p_location_id\)\);/);
+  });
+
   it("decision 5 is permanent and no function can write an API booking", () => {
     const record = fn("record_manual_delivery_job");
     expect(record).toContain("if p_booked_via = 'co_ops_api' then raise exception 'api_booking_unavailable'");
@@ -203,6 +219,6 @@ describe("lock order and the shop the person saw (on the text)", () => {
 describe("0356 behaviour (PGlite, the real file)", () => {
   it("scripts/sql-harness-0356.mjs passes", () => {
     const out = execFileSync(process.execPath, ["scripts/sql-harness-0356.mjs"], { encoding: "utf8" });
-    expect(Number(out.match(/sql-harness-0356: (\d+) checks passed/)![1])).toBeGreaterThanOrEqual(270);
+    expect(Number(out.match(/sql-harness-0356: (\d+) checks passed/)![1])).toBeGreaterThanOrEqual(295);
   }, 300_000);
 });

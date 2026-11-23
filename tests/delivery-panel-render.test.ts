@@ -197,12 +197,18 @@ describe("a reader (status only): the status line, no control, no money", () => 
 describe("the pickup shop's list: deliveries booked here for orders that moved", () => {
   const row: MovedDeliveryRow = { leadId: LEAD, jobId: "00000000-0000-4000-8000-0000000000e1", attemptNo: 1, status: "cancelled", statusAt: "2026-11-22T16:00:00Z", providerLabel: "Courier A",
     pickupAt: "2026-11-25T15:40:00.000Z", dropoffAt: null, pickupShopId: A, pickupShopName: "Shop A", movedToShopId: B, movedToShopName: "Shop B" };
-  const list = (rows: MovedDeliveryRow[], language: Lang = "en", startOpen = true, detail = false) => html(createElement(DeliveryMovedList, { rows, startOpen,
+  const list = (rows: MovedDeliveryRow[], language: Lang = "en", startOpen = true, detail = false) => html(createElement(DeliveryMovedList, { result: { ok: true, rows }, startOpen,
     initialDetail: detail ? { jobId: row.jobId, jobs: [{ jobId: row.jobId, attemptNo: 1, status: "cancelled", statusAt: row.statusAt, providerLabel: "Courier A", externalRef: "REF-77",
       pickupAt: row.pickupAt, dropoffAt: null, pickupShopId: A, events: [eventOf(jobOf(), { id: "e1" }), eventOf(jobOf(), { id: "e2", seq: 2, status: "cancelled", occurredAt: "2026-11-22T16:00:00Z" })] }] } : undefined }), language);
 
   it("hidden when there are none", () => {
     expect(list([])).toBe("");
+  });
+  it("a FAILED read is not 'none': the list says it couldn't load, en + es (review DELIV2-r1)", () => {
+    const failed = (language: Lang) => html(createElement(DeliveryMovedList, { result: { ok: false } }), language);
+    expect(failed("en")).toMatch(/role="alert"/);
+    expect(text(failed("en"))).toContain("Couldn't load deliveries booked here for orders that moved. Reload to try again.");
+    expect(text(failed("es"))).toContain("No se pudieron cargar las entregas reservadas aquí para pedidos que se movieron.");
   });
   it("default-collapsed, with the count on the header", () => {
     const closed = list([row], "en", false);
@@ -229,15 +235,16 @@ describe("the pickup shop's list: deliveries booked here for orders that moved",
     for (const never of ["contactName", "company", "contactPhone", "deliveryAddress", "estimatedRevenue", "stage", "formatCents", "amountCents", "cost", "view.detail", "view.state", "orderQuote"]) expect(src).not.toContain(never);
     expect(src).toContain('view?.view === "history"'); // only the history-only answer is ever rendered
     const page = readFileSync("app/(authed)/catering/pipeline/page.tsx", "utf8");
-    expect(page).toContain("movedDeliveries = await loadMovedDeliveries(auth);");
-    expect(page).toContain("<DeliveryMovedList rows={movedDeliveries} />");
+    expect(page).toContain("const movedDeliveries = await loadMovedDeliveriesSafe(auth);");
+    expect(page).toContain("<DeliveryMovedList result={movedDeliveries} />");
+    expect(page).not.toMatch(/loadMovedDeliveries\(auth\)[^;]*;\s*\} catch/); // the failure is never swallowed into an empty list
   });
 });
 
 describe("the settings card", () => {
   const shops = [
-    { locationId: A, name: "Shop A", enabled: true, manualProviders: ["Courier A", "Courier B"], gratuityDriverBps: 1000, updatedAt: "2026-11-22T10:00:00.123456+00:00" },
-    { locationId: B, name: "Shop B", enabled: false, manualProviders: [], gratuityDriverBps: 1250, updatedAt: null },
+    { locationId: A, name: "Shop A", enabled: true, manualProviders: ["Courier A", "Courier B"], gratuityDriverBps: 1000, updatedAt: "2026-11-22T10:00:00.123456+00:00", openJobs: 3 },
+    { locationId: B, name: "Shop B", enabled: false, manualProviders: [], gratuityDriverBps: 1250, updatedAt: null, openJobs: 2 },
   ];
   const card = (language: Lang, open: string | null = A) => html(createElement(DeliverySettings, { shops, initialOpen: open }), language);
 
@@ -261,6 +268,36 @@ describe("the settings card", () => {
     expect(es).toContain("Solo se registra. El tratamiento legal y de nómina de la parte del conductor no está verificado — el conductor trabaja para el mensajero, no para nosotros. Confirma con nómina antes de pagar algo con esta cifra.");
     expect(es).toContain("Registrar entregas en esta tienda");
   });
+  describe("off means off: the card warns about open deliveries", () => {
+    it("a shop that is ON shows how many are open, in the form, BEFORE the person turns it off", () => {
+      expect(text(card("en"))).toContain("Open deliveries at this shop now: 3.");
+      expect(text(card("es"))).toContain("Entregas abiertas en esta tienda ahora: 3.");
+      expect(text(card("en", null))).toContain("Open deliveries at this shop now: 3."); // rendered (the form is hidden, not unmounted)
+    });
+    it("a shop that is OFF with open deliveries says they are waiting, outside the form (always visible)", () => {
+      const markup = card("en", null);
+      const shopB = markup.slice(markup.indexOf("Shop B"));
+      const beforeForm = text(shopB.slice(0, shopB.indexOf("<form")));
+      expect(beforeForm).toContain("Open deliveries waiting at this shop: 2. They are hidden and can't be updated until you turn this on again.");
+      expect(text(card("es", null))).toContain("Entregas abiertas en espera en esta tienda: 2.");
+      const shopA = text(markup.slice(markup.indexOf("Shop A"), markup.indexOf("Shop B")));
+      expect(shopA).not.toContain("waiting");
+    });
+    it("turning it off warns before the save, and the save's own count is shown after", () => {
+      const src = readFileSync("components/admin/catering/DeliverySettings.tsx", "utf8");
+      expect(src).toContain('{shop.enabled && !enabled && shop.openJobs > 0');
+      expect(src).toContain('t(k("open_jobs.before_off"), { n: shop.openJobs })');
+      expect(src).toContain('if (after && after.enabled === false && typeof after.openJobs === "number" && after.openJobs > 0) setWaiting(after.openJobs);');
+      expect(src).toContain('t(k("open_jobs.waiting"), { n: waiting ?? shop.openJobs })');
+      const en = JSON.parse(readFileSync("lib/i18n/en.json", "utf8")) as Record<string, string>;
+      expect(en["admin.catering.delivery.open_jobs.before_off"]).toBe("Open deliveries at this shop: {n}. If you turn this off, they are hidden and nobody can update or cancel them here until you turn it on again.");
+    });
+    it("no open delivery: no line at all", () => {
+      const quiet = html(createElement(DeliverySettings, { shops: shops.map((shop) => ({ ...shop, openJobs: 0 })), initialOpen: A }), "en");
+      expect(text(quiet)).not.toMatch(/Open deliveries/);
+    });
+  });
+
   it("the switch is a labelled 44 px control naming the setting and the shop", () => {
     expect(card("en")).toMatch(/role="switch" aria-checked="true"[^>]*aria-label="Record deliveries at this shop: Shop A"/);
   });
@@ -292,6 +329,13 @@ describe("where it is mounted, and what every POST names", () => {
     expect(count(panelSrc, 'requestStepUp("A")')).toBe(2);
     expect(panelSrc).toContain("if (!result.ok && isStepUpRefusal(result.code)) {");
     expect(panelSrc).not.toMatch(/requestStepUp\("[BE]"\)/);
+  });
+  it("delivery_busy (the order was changing shop while it was read) is 'try again': asked once more, then a Try again button", () => {
+    expect(panelSrc).toContain("if (r.status === 409 && attempt === 0) continue;");
+    expect(panelSrc).toContain('<button type="button" className={QUIET} onClick={() => void load()}>{t(k("try_again"))}</button>');
+    const en = JSON.parse(readFileSync("lib/i18n/en.json", "utf8")) as Record<string, string>, es = JSON.parse(readFileSync("lib/i18n/es.json", "utf8")) as Record<string, string>;
+    expect([en["delivery.error.delivery_busy"], es["delivery.error.delivery_busy"]]).toEqual(["This order was being moved between shops. Nothing was saved. Try again.",
+      "Este pedido se estaba moviendo entre tiendas. No se guardó nada. Inténtalo de nuevo."]);
   });
   it("after ANY answer the panel reloads; a moved order also refreshes the board", () => {
     expect(panelSrc).toMatch(/finally \{\s*await load\(\);/);

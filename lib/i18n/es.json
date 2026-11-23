@@ -10347,5 +10347,11 @@
   "admin.catering.delivery.couriers.pending": "Toca Agregar mensajero para poner este nombre en la lista, o vacía el cuadro.",
   "admin.catering.delivery.share.label": "Parte de la propina para el conductor (%)",
   "admin.catering.delivery.share.invalid": "Escribe un porcentaje de 0 a 100, con hasta dos decimales.",
-  "admin.catering.delivery.share.unverified": "Solo se registra. El tratamiento legal y de nómina de la parte del conductor no está verificado — el conductor trabaja para el mensajero, no para nosotros. Confirma con nómina antes de pagar algo con esta cifra."
+  "admin.catering.delivery.share.unverified": "Solo se registra. El tratamiento legal y de nómina de la parte del conductor no está verificado — el conductor trabaja para el mensajero, no para nosotros. Confirma con nómina antes de pagar algo con esta cifra.",
+  "catering.delivery.try_again": "Intentar de nuevo",
+  "catering.delivery.moved.unavailable": "No se pudieron cargar las entregas reservadas aquí para pedidos que se movieron. Recarga para intentarlo de nuevo.",
+  "delivery.error.delivery_busy": "Este pedido se estaba moviendo entre tiendas. No se guardó nada. Inténtalo de nuevo.",
+  "admin.catering.delivery.open_jobs.now": "Entregas abiertas en esta tienda ahora: {n}.",
+  "admin.catering.delivery.open_jobs.before_off": "Entregas abiertas en esta tienda: {n}. Si apagas esto, se ocultan y nadie puede actualizarlas ni cancelarlas aquí hasta que lo enciendas otra vez.",
+  "admin.catering.delivery.open_jobs.waiting": "Entregas abiertas en espera en esta tienda: {n}. Están ocultas y no se pueden actualizar hasta que lo enciendas otra vez."
 }
