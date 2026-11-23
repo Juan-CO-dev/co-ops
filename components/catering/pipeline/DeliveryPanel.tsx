@@ -171,9 +171,11 @@ export function DeliveryPanel({ leadId, stage, eventDate, locations, startOpen =
       </>}
     </div>}
 
+    {/* A refusal is shown whether or not the body is open: an alert's action sits above it. */}
+    {message && <p role="alert" className="mt-1 text-xs text-co-cta-text">{message}</p>}
+    {busy && <p role="status" className="mt-1 text-xs text-co-text-muted">{t(k("saving"))}</p>}
+
     <div id={bodyId} hidden={!open} className="space-y-3 pb-1 text-xs text-co-text-muted">
-      {message && <p role="alert" className="text-co-cta-text">{message}</p>}
-      {busy && <p role="status">{t(k("saving"))}</p>}
       {!write && <p>{t(k("view_only"))}</p>}
       {!write && about && <p className="text-co-text">{statusLine(about, t, language)}</p>}
 
