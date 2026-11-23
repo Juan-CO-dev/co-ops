@@ -3,6 +3,7 @@
 /** Catering (KH+): due today with stage + source, tomorrow look-ahead, ezCater orders not rung into Toast (money at GM+ only), prep status. */
 import Link from "next/link";
 import { leadSourceLabelKey } from "@/lib/catering/intake-shared";
+import { DELIVERY_TONE_TEXT, deliveryLabel } from "@/lib/delivery/day-shared";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -30,6 +31,8 @@ export function CateringSection({ data, mode }: { data: CateringData; mode: "car
             {rows.map((ev) => {
               const chip = stageChip(ev.stage);
               const src = ev.source === null && data.redacted ? null : leadSourceLabelKey(ev.source);
+              // D3: the delivery status line (status only); absent while delivery tracking is off.
+              const delivery = deliveryLabel(ev.delivery);
               return (
                 <li key={ev.id} className="flex min-h-[44px] flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-co-gold/50 bg-co-surface px-3 py-1.5">
                   <span className="text-sm font-extrabold text-co-text">{timeWindowLabel(ev.timeWindow, language) ?? t("midshift.catering.no_time")}</span>
@@ -38,6 +41,7 @@ export function CateringSection({ data, mode }: { data: CateringData; mode: "car
                   {ev.headcount != null && <span className="text-xs text-co-text-muted">{ev.headcount === 1 ? t("midshift.catering.covers_one") : t("midshift.catering.covers_other", { count: ev.headcount })}</span>}
                   <span className="text-xs font-semibold text-co-text-muted">{t(ev.isDelivery ? "midshift.catering.delivery" : "midshift.catering.pickup")}</span>
                   {src && <span className="text-xs text-co-text-dim">{"key" in src ? t(src.key) : src.verbatim}</span>}
+                  {delivery && <span data-delivery-state={ev.delivery?.state} className={`w-full text-xs ${DELIVERY_TONE_TEXT[delivery.tone]}`}>{t(delivery.key, delivery.time ? { time: formatTime(delivery.time, language) } : undefined)}</span>}
                 </li>
               );
             })}

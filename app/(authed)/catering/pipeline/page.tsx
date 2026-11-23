@@ -25,6 +25,8 @@ import {
   type PipelineSearchResult,
 } from "@/lib/catering/pipeline";
 import { PipelineClient } from "@/components/catering/pipeline/PipelineClient";
+import { DeliveryStatesProvider } from "@/components/catering/pipeline/DeliveryStateChip";
+import { loadPipelineDeliveryStates } from "@/lib/delivery/day";
 import { BackLink } from "@/components/nav/BackLink";
 import { loadNotInToast, type PipelineToastOrder } from "@/lib/catering/not-in-toast";
 import { resolveShop } from "@/lib/shop-context";
@@ -91,6 +93,11 @@ export default async function CateringPipelinePage({
       loadFollowUps(auth, today),
     ]);
   }
+  // Catering delivery D3: the cards' delivery chips, ONE batched read for the listed leads, gated like the status read
+  // (each lead at its own shop). Off (the switch, a shop that is off, a viewer the gate refuses) = no chip and no query
+  // beyond the switch; a failed read is said once above the board, never shown as "to book". It never throws.
+  const delivery = await loadPipelineDeliveryStates(auth, leads.map((l) => l.id));
+  const deliveryStates = "ok" in delivery && delivery.ok ? delivery.states : null;
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
@@ -99,7 +106,11 @@ export default async function CateringPipelinePage({
       </div>
       <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.pipeline.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.pipeline.subtitle")}</p>
+      {"ok" in delivery && !delivery.ok ? (
+        <p role="status" data-delivery-states="failed" className="mt-2 text-sm text-co-text-muted">{serverT(lang, "catering.delivery_state.unknown")}</p>
+      ) : null}
       <StepUpProvider unlocked={auth.session.stepUpUnlocked} unlockedAt={auth.session.stepUpUnlockedAt}>
+      <DeliveryStatesProvider states={deliveryStates}>
       <PipelineClient
         notInToast={notInToast}
         staff={await loadAssignableStaff(auth)}
@@ -114,6 +125,7 @@ export default async function CateringPipelinePage({
         searchQuery={q}
         results={results}
       />
+      </DeliveryStatesProvider>
       </StepUpProvider>
     </main>
   );

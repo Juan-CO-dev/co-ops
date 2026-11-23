@@ -18,6 +18,9 @@ import { loadMaintenanceOverview } from "@/lib/maintenance";
 import { loadShrinkageSignals, loadOrderingAttention } from "@/lib/ordering";
 import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
+import { deliveryActorOf } from "@/lib/delivery/access-shared";
+import { loadDeliveryDay } from "@/lib/delivery/day";
+import { attachDelivery } from "@/lib/delivery/day-shared";
 
 import {
   computeOverdue,
@@ -456,7 +459,7 @@ export async function loadMidShiftPulse(
   const { startIso, endExclusiveIso } = operationalDayUtcRange(args.date);
 
   // The five top-level loads are independent — one parallel group.
-  const [statuses, overview, notesRes, activeToday, cateringToday, cateringTomorrow] = await Promise.all([
+  const [statuses, overview, notesRes, activeToday, cateringDue, cateringTomorrow] = await Promise.all([
     loadReportStatuses(service, { locationId: args.locationId, date: args.date, actor: args.actor }),
     loadMaintenanceOverview(service, { locationId: args.locationId, today: args.date, sinceDate: args.date }),
     service
@@ -469,6 +472,11 @@ export async function loadMidShiftPulse(
     loadCateringDueToday(service, { locationId: args.locationId, date: args.date }),
     loadCateringTomorrow(service, { locationId: args.locationId, date: args.date }),
   ]);
+  // Catering delivery D3: the status line of each event (key holder and up; never the social media manager). The loader
+  // gates by the viewer's real role and answers "off" with NO query while delivery tracking is off; it never rejects (a
+  // failure is "Couldn't load delivery" on the rows, never "to book"). Without the full AuthContext nothing is read.
+  const cateringToday = attachDelivery(cateringDue, args.authContext
+    ? await loadDeliveryDay(service, deliveryActorOf(args.authContext), args.locationId, args.date) : null);
   const { rows, closingDone, midDayDoneCount } = statuses;
 
   const reports: ReportStatusRow[] = rows.map((r) => ({

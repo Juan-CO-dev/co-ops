@@ -56,7 +56,7 @@ import { aggregateFailure, amPrepEditFor, dayViewerFor, greetingKey, myShiftKey 
 import { loadDayFactsSafe, richBodies, settleBy, startPageDeadline, unwrapSettled, type Settle, type Widget } from "@/lib/dashboard-day";
 import { loadCateringBlockExtras, loadNeedsYou, loadStrip } from "@/lib/dashboard-blocks";
 import { assignmentsKnown, cateringBlockIndex, needsYouFor, nextUpInBlock, numbersStripFor } from "@/lib/dashboard-blocks-shared";
-import { lensFor, planDay, type DayPlan, type SmmPlan } from "@/lib/day-plan-shared";
+import { deliveryNeedsOf, lensFor, planDay, type DayPlan, type SmmPlan } from "@/lib/day-plan-shared";
 import { firstName } from "@/lib/day-plan-load-shared";
 import { renderDayReason } from "@/lib/day-plan-render";
 import { operationalNow } from "@/lib/midshift-shared";
@@ -198,6 +198,9 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const blockItem = plan && blockIndex >= 0 ? plan.items[blockIndex] : undefined;
   const blockDrawsHeadsUp = blockItem !== undefined && plan!.cateringBlock !== null && plan!.headsUp !== null;
   const amPrepEditHref = input && shop ? amPrepEditFor(input, auth.user.id, shop.id) : undefined;
+  // Catering delivery D3: the "Needs you" delivery cell, from the day's own facts (no second read). null = delivery is off
+  // here, and then no prop is handed on at all (the tree is the pre-D3 tree).
+  const deliveryNeeds = input ? deliveryNeedsOf(input) : null;
 
   // The own Receiving body: the loader rows projected for the tile, at the request's one instant.
   const missingEmailIds = rich?.deliveries ? deriveMissingEmailIds(rich.deliveries, now.getTime()) : new Set<string>();
@@ -340,7 +343,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         ))}
         {strip ? <NumbersStrip rows={strip} language={language} /> : null}
         {needs && plan && shop && input ? (
-          <NeedsYou cells={needs} plan={plan} tasksKnown={assignmentsKnown(input) && !aggregateFailure(plan)} shopId={shop.id} language={language} />
+          <NeedsYou cells={needs} plan={plan} tasksKnown={assignmentsKnown(input) && !aggregateFailure(plan)} shopId={shop.id} language={language}
+            {...(deliveryNeeds ? { delivery: deliveryNeeds } : {})} />
         ) : null}
         {plan && shop && blockItem && plan.cateringBlock ? (
           <CateringBlock item={blockItem} block={plan.cateringBlock} heavyToday={plan.heavyToday} headsUp={plan.headsUp} extras={blockExtras}

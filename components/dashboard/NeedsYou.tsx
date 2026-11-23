@@ -8,7 +8,11 @@
  *   - tasks now or urgent with nobody on them (only when the whole board's assignments loaded; otherwise "Couldn't load
  *     who has it." and the line reads "at least", never 0);
  *   - recipe updates waiting;
- *   - catering inbox waiting at the shop, and, for a company-wide reader, the messages not tied to a shop, named apart.
+ *   - catering inbox waiting at the shop, and, for a company-wide reader, the messages not tied to a shop, named apart;
+ *   - catering deliveries that need a person at this shop (D3: a courier to book inside the lead window, to cancel, a
+ *     failed delivery, a courier booked at another shop). The SAME rows and alerts the catering block draws
+ *     (`deliveryNeedsOf`, from the day's facts: no second read). No row while delivery tracking is off here; a delivery
+ *     read that failed is named and makes the line read "at least".
  * A source that failed is named ("<source>: Couldn't load right now"). A source the viewer's role does not read has no row.
  */
 import Link from "next/link";
@@ -22,8 +26,10 @@ import type { Language, TranslationKey } from "@/lib/i18n/types";
 
 const ROW = "flex min-h-[44px] min-w-0 items-center text-sm text-co-text underline-offset-2 hover:underline";
 
-export function NeedsYou({ cells, plan, tasksKnown, shopId, language }: {
+export function NeedsYou({ cells, plan, tasksKnown, shopId, language, delivery }: {
   cells: NeedsYouCells;
+  /** D3: `deliveryNeedsOf(input)`. Absent / null = delivery tracking is off here: no row. `count: null` = it did not load. */
+  delivery?: NeedsYouCount | null;
   plan: Pick<DayPlan, "items">;
   /** The whole board's assignments loaded for the plan date (`assignmentsKnown`) and the day is not all failed. */
   tasksKnown: boolean;
@@ -74,6 +80,13 @@ export function NeedsYou({ cells, plan, tasksKnown, shopId, language }: {
         {unplaced ? <span data-needs-you="inbox_unplaced">{t("dashboard.needs_you.inbox_unplaced", { n: unplaced })}</span> : null}
       </span></Link>);
     } else { counts.push({ count: null }); failed("inbox", "catering.inbox.title"); }
+  }
+
+  if (delivery) {
+    counts.push(delivery);
+    if (delivery.count === null) failed("delivery", "dashboard.needs_you.delivery_name");
+    else if (delivery.count > 0) rows.push(<Link key="delivery" data-needs-you="delivery" href="/catering/pipeline" className={ROW}>
+      {delivery.count === 1 ? t("dashboard.needs_you.delivery_one") : t("dashboard.needs_you.delivery_other", { n: delivery.count })}</Link>);
   }
 
   const s = needsYouSummary(counts);

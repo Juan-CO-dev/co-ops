@@ -22,13 +22,16 @@ import { loadBookedCateringEvents } from "@/lib/catering/booked-events";
 import { flaggedLineCounts, type PrepDemandRow } from "@/lib/catering/prep-demand-shared";
 import { findDayInstance, findPrepDayInstances, pickDayInstance, type PrepDaySubtype } from "@/lib/checklist-day-instance";
 import {
-  lensFor, resolveMyStation, type AssignmentFacts, type CateringDay, type ChecklistDay, type DayPlanInput, type DayStation, type DayViewer, type Fact,
+  lensFor, resolveMyStation, type AssignmentFacts, type CateringDay, type ChecklistDay, type DeliveryAlertsDay, type DayPlanInput, type DayStation, type DayViewer, type Fact,
   type MidDayDay, type OrderingFacts, type ReceivingFacts, type ReportDay, type RhythmFacts, type ShopFacts, type ShopHours, type SmmFacts, type StationsFact,
 } from "@/lib/day-plan-shared";
+import type { DeliveryActor } from "@/lib/delivery/access-shared";
+import { loadDeliveryDay } from "@/lib/delivery/day";
+import type { DeliveryDayResult } from "@/lib/delivery/day-shared";
 import { UNKNOWN_DAY_START } from "@/lib/scheduling/opening-shared";
 import { isoWeekStart } from "@/lib/scheduling/time-shared";
 import {
-  cashDay, cateringOrders, checklistDay, cutoffFact, dayAssignments, dayPrepStarts, dayStations, factsNeeded, firstName, midDayDay, notPhaseSections, outTimes,
+  cashDay, cateringDeliveryAlerts, cateringOrders, checklistDay, deliveryInput, cutoffFact, dayAssignments, dayPrepStarts, dayStations, factsNeeded, firstName, midDayDay, notPhaseSections, outTimes,
   pickEffectiveClosingTemplate, pmDay, poFact, rhythmRow, rhythmSkip, sectionsLeft, shopHoursFrom, smmChecklistTasks, smmStationRef, smmTaskState,
   vendorFact, type BaseShopHours, type BookedRow, type ClassificationItem, type ClosingTemplateRow, type CutoffRow, type EzcaterRow, type InstanceRow, type NotPhaseRule,
   type PoRow, type RhythmDbRow, type ScheduleStartRows, type SkipDbRow, type SmmTaskStatus, type VendorRow,
@@ -113,6 +116,12 @@ export interface DayFactDeps {
   booked(sb: Sb, shopId: string, dates: readonly string[]): Promise<BookedRow[]>;
   ezcater(sb: Sb, shopId: string, dates: readonly string[]): Promise<EzcaterRow[]>;
   outEvents(sb: Sb, pipelineIds: readonly string[]): Promise<Array<{ pipeline_id: string; to_stage: string; created_at: string }>>;
+  /**
+   * Catering delivery D3: THE one delivery lane — the day's money-free delivery fact (`loadDeliveryDay`). It answers
+   * `{ off: true }` with NO query while delivery tracking is off, for a viewer the status gate refuses, and for a shop
+   * that is off; `{ ok: false }` on a real failure (this read does not throw: a failure is an answer).
+   */
+  delivery(sb: Sb, a: { actor: DeliveryActor; shopId: string; date: string }): Promise<DeliveryDayResult>;
   /** F1: flagged Prep demand lines per need date (the page's own rule). */
   flaggedLines(sb: Sb, shopId: string, dates: readonly string[]): Promise<Record<string, number>>;
   // ── The social media manager (section 7): own rows only ──
@@ -264,6 +273,9 @@ export const defaultDayFactDeps: DayFactDeps = {
   },
   async ezcater(sb, shopId, dates) {
     return (await loadEzcater(sb, shopId, dates)).map((o) => ({ id: o.id, event_date: o.event_date, event_timestamp: o.event_timestamp, handoff_time: o.handoff_time, headcount: o.headcount, status: o.status }));
+  },
+  delivery(sb, a) {
+    return loadDeliveryDay(sb, a.actor, a.shopId, a.date);
   },
   outEvents(sb, pipelineIds) {
     return inChunks([...pipelineIds], (chunk) => selectAllRows<{ pipeline_id: string; to_stage: string; created_at: string }>((from, to) => sb.from("catering_pipeline_events")
@@ -459,6 +471,9 @@ async function loadShopFacts(service: SupabaseClient, sb: Sb, args: DayFactsArgs
     const [booked, ez] = await Promise.all([deps.booked(sb, shopId, [planDate, tomorrow]), deps.ezcater(sb, shopId, [planDate, tomorrow])]);
     return { booked, ez };
   });
+  // Catering delivery D3: ONE lane. The loader gates and answers "off" itself, before any query (the switch, the status
+  // gate by the viewer's REAL role and memberships, the shop's own switch); a failure or a timeout is "couldn't load".
+  const deliveryP = L("delivery", () => deps.delivery(sb, { actor: { role: args.viewer.role, active: true, locations: args.locations }, shopId, date: planDate }));
   const flaggedP = need.flaggedLines ? L("flaggedLines", async () => {
     const counts = await deps.flaggedLines(sb, shopId, [planDate, tomorrow]);
     return { today: counts[planDate] ?? 0, tomorrow: counts[tomorrow] ?? 0 };
@@ -509,8 +524,15 @@ async function loadShopFacts(service: SupabaseClient, sb: Sb, args: DayFactsArgs
   const catering = await fact(cateringP);
   const outAt = await outP;
   const rules = { eventQFromWindow, etWallQ, ezcaterCancelled };
+  // D3: undefined = off (no key anywhere below: the facts are exactly the pre-D3 facts); a thrown or timed-out lane = failed.
+  const deliveryFact = await fact(deliveryP);
+  const delivery = deliveryInput(deliveryFact.kind === "ok" ? deliveryFact.value : null);
   const cateringFact = (date: string): Fact<CateringDay> => (catering.kind === "failed" ? FAILED
-    : ok({ forDate: date, orders: cateringOrders(date, catering.value.booked, catering.value.ez, outAt, rules) }));
+    : ok({ forDate: date, orders: cateringOrders(date, catering.value.booked, catering.value.ez, outAt, rules, date === planDate ? delivery : undefined) }));
+  const cateringToday = cateringFact(planDate);
+  // The leads with no order row today that still need a person. With the catering read failed, no row is known: every such lead is an alert.
+  const deliveryAlerts: Fact<DeliveryAlertsDay> | undefined = delivery === undefined ? undefined : delivery.kind === "failed" ? FAILED
+    : ok({ forDate: planDate, alerts: cateringDeliveryAlerts(cateringToday.kind === "ok" ? cateringToday.value.orders : [], delivery) });
 
   const board = boardP ? await fact(boardP) : null;
   const boardFacts = await buildBoardFacts(args, planDate, need.board, board, classificationP ? await fact(classificationP) : null,
@@ -530,8 +552,9 @@ async function loadShopFacts(service: SupabaseClient, sb: Sb, args: DayFactsArgs
     ordering: await optional(orderingP),
     rhythm: await optional(rhythmP),
     receiving: await optional(receivingP),
-    cateringToday: cateringFact(planDate),
+    cateringToday,
     cateringTomorrow: cateringFact(tomorrow),
+    ...(deliveryAlerts === undefined ? {} : { deliveryAlerts }),
     flaggedLines: await optional(flaggedP),
     assignments: boardFacts.assignments,
     myStation: boardFacts.myStation,

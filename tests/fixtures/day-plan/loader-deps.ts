@@ -83,6 +83,8 @@ export function okDeps(): DayFactDeps {
     ],
     ezcater: async () => [{ id: "ez-1", event_date: PLAN, event_timestamp: null, handoff_time: "1:00 PM", headcount: 10, status: "Cancelled" }],
     outEvents: async () => [{ pipeline_id: "lead-1", to_stage: "out", created_at: "2026-11-18T16:20:00.000Z" }],
+    // Catering delivery D3: off, as in every environment until a person turns it on (tests/delivery-day-plan.test.ts builds the others).
+    delivery: async () => ({ off: true }),
     flaggedLines: async () => ({ [PLAN]: 2, [TOMORROW]: 1 }),
     ownTasks: async () => [],
     stationBusinessDate: async () => PLAN,

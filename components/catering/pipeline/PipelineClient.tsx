@@ -10,6 +10,7 @@ import type { PipelineLead, PipelineBoardLead, PipelineSearchResult, AssignableS
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
 import { isBookableSignal } from "@/lib/catering/capacity-shared";
+import { DeliveryStateChip } from "./DeliveryStateChip";
 import { EzcaterReconciliationPanel } from "./EzcaterReconciliationPanel";
 import { HouseToastPanel } from "./HouseToastPanel";
 import { TransferLead } from "./TransferLead";
@@ -418,6 +419,7 @@ function LeadCard({
         <ShopChip lead={lead} />
         {notInToast && <NotInToastChip />}
         {showQuoteNotAccepted(lead.stage, lead.quoteStatus) && <QuoteNotAcceptedChip />}
+        <DeliveryStateChip leadId={lead.id} />
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-co-text-muted">
           {lead.eventDate && <span>{formatDateLabel(lead.eventDate, language)}</span>}
           {lead.headcount != null && <span>{t("catering.pipeline.headcount_short").replace("{n}", String(lead.headcount))}</span>}

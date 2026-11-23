@@ -8,6 +8,7 @@
 import { CHECKLIST_TASKS, type CateringOrder, type ChecklistDay, type DayAssignment, type DayStation, type DayViewer, type MidDayDay, type ReportDay, type ShopHours } from "@/lib/day-plan-shared";
 import { currentStation, isFloorStation, type Station, type StationDayFlags, type StationEvent, type TaskAssignment, type TaskType } from "@/lib/assignments-shared";
 import { deriveCloseState } from "@/lib/dashboard-status-shared";
+import { DELIVERY_UNKNOWN, deliveryAlerts, deliveryRowStateOf, type DeliveryAlert, type DeliveryDayLead, type DeliveryDayResult, type DeliveryRowState } from "@/lib/delivery/day-shared";
 import type { PoFact, VendorCutoff, VendorFact } from "@/lib/report-digests-v2-shared";
 import { dayPrepStartFor, type DayPrepStart } from "@/lib/scheduling/opening-shared";
 import type { ScheduleStructure } from "@/lib/scheduling/structure-shared";
@@ -210,15 +211,48 @@ export interface CateringRules {
   ezcaterCancelled(status: string | null): boolean;
 }
 
-/** One day's orders: the pipeline's booked events and the unlinked ezCater orders on `date`. */
-export function cateringOrders(date: string, booked: readonly BookedRow[], ezcater: readonly EzcaterRow[], outAt: ReadonlyMap<string, string>, rules: CateringRules): CateringOrder[] {
+/**
+ * Catering delivery D3: the day's delivery read as the loader hands it to `cateringOrders`. `ok` = the fact's leads;
+ * `failed` = the read failed (every pipeline order reads "Couldn't load delivery", never "to book").
+ */
+export type CateringDeliveryInput = { readonly kind: "ok"; readonly leads: readonly DeliveryDayLead[] } | { readonly kind: "failed" };
+
+/** The day's delivery lane as facts: nothing when it is off, a failure when it failed or timed out. */
+export function deliveryInput(result: DeliveryDayResult | null): CateringDeliveryInput | undefined {
+  if (result === null) return { kind: "failed" };
+  if ("off" in result) return undefined;
+  return result.ok ? { kind: "ok", leads: result.leads } : { kind: "failed" };
+}
+
+/** The leads of the delivery fact with NO order row among `orders` that still need a person (D3's alerts). */
+export function cateringDeliveryAlerts(orders: readonly CateringOrder[], delivery: Extract<CateringDeliveryInput, { kind: "ok" }>): DeliveryAlert[] {
+  return deliveryAlerts(delivery.leads, new Set(orders.filter((o) => o.source === "pipeline").map((o) => o.id)));
+}
+
+/**
+ * One day's orders: the pipeline's booked events and the unlinked ezCater orders on `date`.
+ * D3: with `delivery` (the plan date's own lane; never passed for another day), each PIPELINE order carries its lead's
+ * delivery state, attached by lead id (a pipeline order's id IS its lead's). An ezCater order here is by definition not
+ * linked to a lead (the read filters `lead_id is null`), so it carries none; a linked one arrives as its lead.
+ * Without `delivery` the orders are exactly what they were before D3 (no key added).
+ */
+export function cateringOrders(date: string, booked: readonly BookedRow[], ezcater: readonly EzcaterRow[], outAt: ReadonlyMap<string, string>, rules: CateringRules,
+  delivery?: CateringDeliveryInput): CateringOrder[] {
   const { eventQFromWindow, etWallQ, ezcaterCancelled } = rules;
   const out: CateringOrder[] = [];
+  const byLead = delivery?.kind === "ok" ? new Map(delivery.leads.map((l) => [l.leadId, l])) : null;
+  const deliveryOf = (leadId: string): { delivery: DeliveryRowState | null } | Record<string, never> => {
+    if (!delivery) return {};
+    if (!byLead) return { delivery: DELIVERY_UNKNOWN };
+    const lead = byLead.get(leadId);
+    return { delivery: lead ? deliveryRowStateOf(lead) : null };
+  };
   for (const b of booked) {
     if (b.eventDate !== date) continue;
     const state = PIPELINE_STATE[b.stage];
     if (!state) continue;
-    out.push({ id: b.id, source: "pipeline", eventQ: eventQFromWindow(b.timeWindow), headcount: b.headcount, state, outAt: state === "to_go_out" ? null : outAt.get(b.id) ?? null });
+    out.push({ id: b.id, source: "pipeline", eventQ: eventQFromWindow(b.timeWindow), headcount: b.headcount, state, outAt: state === "to_go_out" ? null : outAt.get(b.id) ?? null,
+      ...deliveryOf(b.id) });
   }
   for (const o of ezcater) {
     if (o.event_date !== date) continue;
