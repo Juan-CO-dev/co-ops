@@ -18,19 +18,22 @@
  */
 import { DELIVERY_COST_COMPONENTS, type DeliveryCostComponent, type DeliveryCostRow } from "./types-shared";
 
+/** What folding reads of a cost row: no note, no author, no source (D4's report selects exactly these). */
+export type CostFoldRow = Pick<DeliveryCostRow, "id" | "jobId" | "component" | "semantics" | "amountCents" | "moneyIdentity" | "observedAt" | "correctsId">;
+
 /** The heads of every correction chain: rows that no other row corrects. */
-export function costHeads(rows: readonly DeliveryCostRow[]): DeliveryCostRow[] {
+export function costHeads<T extends CostFoldRow>(rows: readonly T[]): T[] {
   const corrected = new Set(rows.map((r) => r.correctsId).filter((id): id is string => id !== null));
   return rows.filter((r) => !corrected.has(r.id));
 }
 
-const byObserved = (a: DeliveryCostRow, b: DeliveryCostRow) => {
+const byObserved = (a: CostFoldRow, b: CostFoldRow) => {
   const ta = Date.parse(a.observedAt), tb = Date.parse(b.observedAt);
   return ta !== tb ? ta - tb : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 };
 
 /** One identity's figure from its chain heads. */
-function identityCents(heads: readonly DeliveryCostRow[]): number {
+function identityCents(heads: readonly CostFoldRow[]): number {
   const snapshots = heads.filter((h) => h.semantics === "snapshot").sort(byObserved);
   const latest = snapshots[snapshots.length - 1];
   const deltas = heads.filter((h) => h.semantics === "delta" && (!latest || byObserved(h, latest) > 0));
@@ -54,9 +57,9 @@ export type JobCost =
     };
 
 /** One job's cost from ITS cost rows (every row must belong to the job; `orderCost` filters). */
-export function jobCost(rows: readonly DeliveryCostRow[]): JobCost {
+export function jobCost(rows: readonly CostFoldRow[]): JobCost {
   if (rows.length === 0) return { kind: "unknown" };
-  const identities = new Map<string, DeliveryCostRow[]>();
+  const identities = new Map<string, CostFoldRow[]>();
   for (const h of costHeads(rows)) {
     const list = identities.get(h.moneyIdentity);
     if (list) list.push(h); else identities.set(h.moneyIdentity, [h]);
@@ -84,7 +87,7 @@ export type OrderCost =
   | { kind: "none" }
   | { kind: "unknown" };
 
-export function orderCost(jobs: readonly { jobId: string; costs: readonly DeliveryCostRow[] }[]): OrderCost {
+export function orderCost(jobs: readonly { jobId: string; costs: readonly CostFoldRow[] }[]): OrderCost {
   if (jobs.length === 0) return { kind: "none" };
   let knownCents = 0, known = 0;
   for (const job of jobs) {

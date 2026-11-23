@@ -13,6 +13,13 @@
  *  (c) NO PAYROLL (Juan's decision 4: the gratuity split is RECORDED ONLY). The same closure imports no payroll,
  *      tip-pool, tips, payout, Stripe or payment module, and no payment package.
  *  The pin proves itself: a fake sender, an external fetch in the panel and a fake payroll import each turn it RED.
+ *
+ * D4 (economics): the economics lib files are in `lib/delivery/**` already; the gratuity correction route and the
+ * report section (components/reports-hub/DeliveryEconomicsSection.tsx) join the entries. The panel gains ONE reviewed
+ * target (POST .../delivery/gratuity). The gratuity split stays RECORDED ONLY: (c) holds over every new file.
+ * The Sales catering PAGE that mounts the section is NOT an entry: it is the existing sales report, whose own closure
+ * (mid-shift, ordering, the Toast client) is not delivery's. What it takes from delivery is pinned instead: exactly
+ * the section and the bounded loader, both scanned here.
  */
 import { join, normalize } from "node:path";
 import ts from "typescript";
@@ -28,7 +35,10 @@ const PANEL = join("components", "catering", "pipeline", "DeliveryPanel.tsx");
 const MOVED = join("components", "catering", "pipeline", "DeliveryMovedList.tsx");
 const CARD = join("components", "admin", "catering", "DeliverySettings.tsx");
 const CLIENT = [PANEL, MOVED, CARD, join("components", "catering", "pipeline", "delivery-format.ts")];
-const SERVER = [...LIB, ...ROUTES, ...PAGE];
+/** D4: the report section (a server component): server code, no HTTP call at all. */
+const SECTION = join("components", "reports-hub", "DeliveryEconomicsSection.tsx");
+const REPORT_PAGE = join("app", "(authed)", "reports", "sales", "catering", "page.tsx");
+const SERVER = [...LIB, ...ROUTES, ...PAGE, SECTION];
 const DELIVERY = [...SERVER, ...CLIENT];
 
 /**
@@ -40,6 +50,7 @@ const HTTP_ALLOWLIST = [
   "/api/catering/pipeline/{}/delivery/{}/status",
   "/api/catering/pipeline/{}/delivery/{}/cost",
   "/api/catering/pipeline/{}/delivery/{}/keep-pickup",
+  "/api/catering/pipeline/{}/delivery/gratuity", // D4: recalculate / remove the recorded gratuity split (Tier A)
   "/api/admin/catering/delivery",
   "/api/auth/step-up", // the shared password modal (components/auth/PasswordModal.tsx), the way tests/schedule-no-notify.test.ts reviews it
 ] as const;
@@ -127,15 +138,26 @@ const ROUTE = ROUTES.find((f) => f.endsWith(join("status", "route.ts")))!;
 const LIB_FILE = join("lib", "delivery", "jobs.ts");
 
 describe("catering delivery: the scope is real", () => {
-  it("covers the lib, all five route files, the page and the three screens", () => {
-    expect(LIB.length).toBeGreaterThanOrEqual(13);
+  it("covers the lib, all six route files, the page, the three screens, and D4's report section and page", () => {
+    expect(LIB.length).toBeGreaterThanOrEqual(15);
     expect(LIB).toContain(LIB_FILE);
-    expect(ROUTES).toHaveLength(5);
+    for (const d4 of ["economics.ts", "economics-shared.ts"]) expect(LIB).toContain(join("lib", "delivery", d4));
+    expect(ROUTES).toHaveLength(6);
+    expect(ROUTES).toContain(join("app", "api", "catering", "pipeline", "[id]", "delivery", "gratuity", "route.ts"));
     expect(PAGE).toHaveLength(1);
     for (const f of DELIVERY) expect(diskReader(f), f).not.toBeNull();
     const c = importClosure(DELIVERY);
     expect(c.files.size).toBeGreaterThan(DELIVERY.length + 20); // it really walked past the entries
     for (const reached of [join("lib", "session.ts"), join("components", "auth", "PasswordModal.tsx"), join("lib", "supabase-server.ts")]) expect(c.files.has(reached), reached).toBe(true);
+  });
+});
+
+describe("D4: what the Sales catering page takes from delivery", () => {
+  it("exactly the report section and the bounded economics loader, both inside the scanned closure", () => {
+    const specs = importSpecifiers(diskReader(REPORT_PAGE)!, REPORT_PAGE).filter((spec) => /deliver/i.test(spec)).sort();
+    expect(specs).toEqual(["@/components/reports-hub/DeliveryEconomicsSection", "@/lib/delivery/economics"]);
+    const c = importClosure(DELIVERY);
+    for (const f of [SECTION, join("lib", "delivery", "economics.ts"), join("lib", "delivery", "economics-shared.ts")]) expect(c.files.has(normalize(f)), f).toBe(true);
   });
 });
 
@@ -163,18 +185,19 @@ describe("(a) no notification, email, SMS or push: the transitive closure reache
 
 describe("(b) nothing outbound: server code makes no HTTP call; the screens call only the reviewed same-origin paths", () => {
   it("server code (lib/delivery, the routes, the settings page): no HTTP call at all", () => {
-    expect(SERVER.length).toBeGreaterThanOrEqual(19);
+    expect(SERVER.length).toBeGreaterThanOrEqual(23);
     expect(outboundViolations(SERVER)).toEqual([]);
     for (const f of SERVER) expect([f, httpTargets(diskReader(f)!, f)]).toEqual([f, []]);
   });
   it("the screens name exactly these targets, each literally on the allowlist", () => {
     const targets = (f: string) => [...new Set(httpTargets(diskReader(f)!, f))].sort();
-    expect(targets(PANEL)).toEqual(["/api/catering/pipeline/{}/delivery", "/api/catering/pipeline/{}/delivery/{}/cost", "/api/catering/pipeline/{}/delivery/{}/keep-pickup",
-      "/api/catering/pipeline/{}/delivery/{}/status"]);
+    expect(targets(PANEL)).toEqual(["/api/catering/pipeline/{}/delivery", "/api/catering/pipeline/{}/delivery/gratuity", "/api/catering/pipeline/{}/delivery/{}/cost",
+      "/api/catering/pipeline/{}/delivery/{}/keep-pickup", "/api/catering/pipeline/{}/delivery/{}/status"].sort());
+    expect(targets(SECTION)).toEqual([]);
     expect(targets(MOVED)).toEqual(["/api/catering/pipeline/{}/delivery"]);
     expect(targets(CARD)).toEqual(["/api/admin/catering/delivery"]);
     expect(targets(join("components", "auth", "PasswordModal.tsx"))).toEqual(["/api/auth/step-up"]);
-    for (const path of HTTP_ALLOWLIST) expect(path).toMatch(/^\/api\/(catering\/pipeline\/\{\}\/delivery(\/\{\}\/(status|cost|keep-pickup))?|admin\/catering\/delivery|auth\/step-up)$/);
+    for (const path of HTTP_ALLOWLIST) expect(path).toMatch(/^\/api\/(catering\/pipeline\/\{\}\/delivery(\/\{\}\/(status|cost|keep-pickup)|\/gratuity)?|admin\/catering\/delivery|auth\/step-up)$/);
   });
   it("across the whole closure: every request is an allowlisted literal, and the files that hold an HTTP call are exactly the reviewed ones", () => {
     const c = importClosure(DELIVERY);
@@ -229,7 +252,8 @@ describe("(c) recorded only: no payroll, tip-pool, payout, Stripe or payment mod
     for (const miss of ["lib/delivery/gratuity-shared.ts", "lib/delivery/cost-shared.ts", "lib/session.ts", "lib/catering/pipeline-shared.ts", "lib/i18n/format.ts"]) expect([miss, PAY_PATH.test(miss.replace(/\.ts$/, ""))]).toEqual([miss, false]);
   });
   it("MUTATION: a fake payroll import in the lib, a route or the panel turns it red — a module, a package, and a transitive one", () => {
-    for (const target of [LIB_FILE, ROUTE, PANEL]) {
+    for (const target of [LIB_FILE, ROUTE, PANEL, join("lib", "delivery", "economics.ts"), join("lib", "delivery", "economics-shared.ts"), SECTION,
+      ROUTES.find((f) => f.endsWith(join("gratuity", "route.ts")))!]) {
       const cases: Array<[string, Record<string, string>]> = [
         ['import { runPayroll } from "@/lib/payroll";', { [join("lib", "payroll.ts")]: "export const runPayroll = () => 1;\n" }],
         ['import { addToPool } from "@/lib/tip-pool";', { [join("lib", "tip-pool.ts")]: "export const addToPool = () => 1;\n" }],

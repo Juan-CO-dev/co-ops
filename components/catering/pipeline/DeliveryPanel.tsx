@@ -16,6 +16,12 @@
  *  - A wrong tap is not undone (a terminal status closes the job): the fix is a new delivery. The screen says so.
  *  - A cost correction asks for the password (Tier A). The server drops an unlock on any read outside its step-up
  *    paths, so a refusal there asks once more and retries: the person is never left with a button that cannot work.
+ *  - D4, THE MONEY LINE (only when the response carries `cost`): the delivery fee the customer was charged vs what the
+ *    courier cost us vs the net, every missing side NAMED (never a 0); and the gratuity split — the recorded head, or the
+ *    EXPECTED split before delivery — with the "recorded only / not verified" sentence. Its one correction
+ *    ("Recalculate from the current quote" / "Remove — this delivery didn't happen") needs a reason and the password
+ *    (Tier A), and names the shop and the head the person saw. Neither figure is a sales figure. The rules are
+ *    `panelMoney` (lib/delivery/panel-shared.ts), never this component.
  * Summary row (state, courier, time) + a default-collapsed body (useState only). 44 px controls with items-center;
  * every action row wraps for a 375 px phone. en + es (tú). Times are ET through lib/i18n/format.
  */
@@ -31,8 +37,8 @@ import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { etCalendarDate } from "@/lib/operational-day";
 import { deliveryWhen } from "./delivery-format";
 import {
-  alertJob, canWriteDelivery, deliveryChipTone, deliveryErrorKey, dollarsToCents, jobCostLines, jobsNewestFirst, panelShown, recordOffer, signedCents, statusTaps,
-  type ChipTone, type DeliveryLeadView, type RecordOffer,
+  alertJob, bpsToPercent, canWriteDelivery, deliveryChipTone, deliveryErrorKey, dollarsToCents, jobCostLines, jobsNewestFirst, panelMoney, panelShown, recordOffer, signedCents,
+  statusTaps, type ChipTone, type DeliveryLeadView, type PanelMoney, type RecordOffer,
 } from "@/lib/delivery/panel-shared";
 import type { LeadDeliveryView } from "@/lib/delivery/jobs";
 import { isTerminalStatus, type ManualDeliveryStatus } from "@/lib/delivery/status-shared";
@@ -151,6 +157,18 @@ export function DeliveryPanel({ leadId, stage, eventDate, locations, startOpen =
     }
     return result;
   });
+  /** D4: recalculate or remove the recorded gratuity split. Tier A, like a cost correction; names the shop and the head the person saw. */
+  const correctGratuity = (mode: "recompute" | "void", headId: string | null, reason: string) => run(async () => {
+    const body = { mode, expectedShopId: shopId, expectedHeadId: headId, reason: reason.trim() };
+    if (await requestStepUp("A") !== "ok") return null;
+    let result = await post(`/api/catering/pipeline/${leadId}/delivery/gratuity`, body);
+    if (!result.ok && isStepUpRefusal(result.code)) {
+      if (await requestStepUp("A") !== "ok") return null;
+      result = await post(`/api/catering/pipeline/${leadId}/delivery/gratuity`, body);
+    }
+    return result;
+  });
+  const money = panelMoney(view, stage);
   const recordJob = async (body: Record<string, unknown>) => {
     if (await run(() => post(`/api/catering/pipeline/${leadId}/delivery`, { ...body, expectedShopId: shopId }))) setRecording(false);
   };
@@ -203,9 +221,80 @@ export function DeliveryPanel({ leadId, stage, eventDate, locations, startOpen =
           onAddCost={(component, cents) => void addCost(job, component, cents)} onCorrect={(head, cents, reason) => void correctCost(job, head, cents, reason)} />)}
       </ul>}
 
+      {money && <MoneyLine key={`${leadId}:${money.headId ?? "none"}:${money.offer ?? "none"}`} money={money} busy={busy}
+        onCorrect={(offer, reason) => void correctGratuity(offer === "void" ? "void" : "recompute", money.headId, reason)} />}
+
       {write && <p>{t(k("mistap"))}</p>}
     </div>
   </section>;
+}
+
+/**
+ * D4 — the money line: the delivery fee charged vs the courier cost vs the net, and the gratuity split. A missing side
+ * is named, never shown as 0. RECORDED ONLY: nothing here pays anyone.
+ */
+function MoneyLine({ money, busy, onCorrect }: { money: PanelMoney; busy: boolean; onCorrect: (offer: NonNullable<PanelMoney["offer"]>, reason: string) => void }) {
+  const { t, language } = useTranslation();
+  const [correcting, setCorrecting] = useState(false);
+  const [reason, setReason] = useState("");
+  const { order, offer } = money;
+  const cents = (c: number) => formatCents(c, language);
+  const g = order.gratuity;
+  const parts = (x: { gratuityCents: number; driverCents: number; crewCents: number; driverBps: number }) =>
+    ({ gratuity: cents(x.gratuityCents), driver: cents(x.driverCents), crew: cents(x.crewCents), percent: bpsToPercent(x.driverBps) });
+  const ezcaterNote = g.kind === "none" && order.isEzcater && order.jobs > 0;
+  const showGratuity = g.kind !== "none" || ezcaterNote || offer !== null;
+  const WARN = "text-co-warning-text";
+
+  return <div className="space-y-2 rounded-lg border border-co-border p-3">
+    <h4 className={HEADING}>{t(k("money.heading"))}</h4>
+    {order.fee.kind === "known" ? <p className="text-co-text">{t(k("money.fee"), { amount: cents(order.fee.cents) })}</p>
+      : <p className={WARN}>{t(k(`money.fee_gap.${order.fee.reason}`))}</p>}
+    {order.cost.kind === "complete" && <p className="text-co-text">{t(k("money.cost"), { amount: cents(order.cost.cents) })}</p>}
+    {order.cost.kind === "partial" && <p className={WARN}>{t(k("money.cost_partial"), { amount: cents(order.cost.knownCents), n: order.cost.unknownJobs })}</p>}
+    {(order.cost.kind === "none" || order.cost.kind === "unknown") && <p className={WARN}>{t(k("money.cost_not_recorded"))}</p>}
+    {order.netCents !== null ? <p className="text-sm font-bold text-co-text">{t(k("money.net"), { amount: cents(order.netCents) })}</p>
+      : <p className={WARN}>{t(k("money.no_net"))}</p>}
+    <p>{t(k("money.not_sales"))}</p>
+
+    {showGratuity && <div className="space-y-2 border-t border-co-border pt-2">
+      <h5 className={HEADING}>{t(k("gratuity.heading"))}</h5>
+      {g.kind === "allocated" && <p className="text-co-text">{t(k("gratuity.allocated"), parts(g))}{g.attemptNo !== null && <> {t(k("gratuity.credited"), { n: g.attemptNo })}</>}</p>}
+      {g.kind === "allocated" && g.needsRecalc && <p className={WARN}>{t(k("gratuity.needs_recalc"))}</p>}
+      {g.kind === "voided" && <p className="text-co-text">{t(k("gratuity.voided"))}</p>}
+      {g.kind === "none_on_quote" && <p className="text-co-text">{t(k("gratuity.none_on_quote"))}</p>}
+      {g.kind === "not_recorded" && <p className={WARN}>{t(k("gratuity.not_recorded"))}</p>}
+      {g.kind === "zero_head" && <p className="text-co-text">{t(k("gratuity.zero_head"))}</p>}
+      {g.kind === "zero_head" && g.needsRecalc && <p className={WARN}>{t(k("gratuity.needs_recalc"))}</p>}
+      {g.kind === "source_unknown" && g.reason !== "ambiguous" && <p className={WARN}>{t(k("gratuity.source_unknown"))}</p>}
+      {g.kind === "source_unknown" && g.reason === "ambiguous" && <p className={WARN}>{t(k("gratuity.quote_ambiguous"))}</p>}
+      {g.kind === "expected" && <p className="text-co-text">{t(k("gratuity.expected"), parts(g))}</p>}
+      {g.kind === "quote_ambiguous" && <p className={WARN}>{t(k("gratuity.quote_ambiguous"))}</p>}
+      {ezcaterNote && <p>{t(k("gratuity.ezcater"))}</p>}
+      {!ezcaterNote && <p>{t("admin.catering.delivery.share.unverified")}</p>}
+
+      {offer !== null && (correcting
+        ? <div className="grid gap-2 rounded-lg border border-co-border bg-co-surface-inset p-3">
+          {offer === "recompute" && <p className="text-co-text">{t(k("gratuity.recompute"))}</p>}
+          {offer === "restore" && <p className="text-co-text">{t(k("gratuity.restore"))}</p>}
+          {offer === "void" && <p className="text-co-text">{t(k("gratuity.void"))}</p>}
+          <label className={LABEL}>{t(k("gratuity.reason"))}
+            <input aria-label={t(k("gratuity.reason"))} className={FIELD} value={reason} maxLength={MAX_DELIVERY_NOTE} disabled={busy} onChange={(e) => setReason(e.target.value)} />
+          </label>
+          <p>{t(k("cost.password_note"))}</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={PRIMARY} disabled={busy || reason.trim() === ""} onClick={() => { setCorrecting(false); onCorrect(offer, reason); }}>
+              {offer === "recompute" && t(k("gratuity.submit_recompute"))}{offer === "restore" && t(k("gratuity.submit_restore"))}{offer === "void" && t(k("gratuity.submit_void"))}</button>
+            <button type="button" className={QUIET} disabled={busy} onClick={() => setCorrecting(false)}>{t(k("record.cancel"))}</button>
+          </div>
+        </div>
+        : <div className="flex flex-wrap gap-2">
+          {offer === "recompute" && <button type="button" className={PRIMARY} disabled={busy} onClick={() => { setReason(""); setCorrecting(true); }}>{t(k("gratuity.recompute"))}</button>}
+          {offer === "restore" && <button type="button" className={PRIMARY} disabled={busy} onClick={() => { setReason(""); setCorrecting(true); }}>{t(k("gratuity.restore"))}</button>}
+          {offer === "void" && <button type="button" className={QUIET} disabled={busy} onClick={() => { setReason(""); setCorrecting(true); }}>{t(k("gratuity.void"))}</button>}
+        </div>)}
+    </div>}
+  </div>;
 }
 
 function statusLine(s: NonNullable<DeliveryLeadView["status"]>, t: Tr, language: Language): string {
