@@ -217,6 +217,19 @@ export interface CateringRules {
  */
 export type CateringDeliveryInput = { readonly kind: "ok"; readonly leads: readonly DeliveryDayLead[] } | { readonly kind: "failed" };
 
+/**
+ * Who the day load reads delivery for: ONLY a viewer who renders something from it — the catering manager holding
+ * `catering` (the block: the rows' states, the alerts, the four reasons) and the "Needs you" roles (GM, MoO, Owner, CGS:
+ * the delivery cell). Everyone else — a key holder, a shift lead, an AGM, crew — sends no delivery query on the day load
+ * and gets the pre-D3 facts. By REAL role, never a level.
+ * The role list is the Dashboard's `NEEDS_YOU_ROLES` (lib/dashboard-blocks-shared.ts), restated here because this pure
+ * module may not import the Dashboard's (its closure reaches modules the day engine must not); a test pins them equal.
+ */
+export const DELIVERY_LANE_NEEDS_YOU_ROLES: ReadonlySet<DayViewer["role"]> = new Set<DayViewer["role"]>(["gm", "moo", "owner", "cgs"]);
+export function deliveryLaneFor(viewer: Pick<DayViewer, "role" | "surfaces">): boolean {
+  return (viewer.role === "catering_mgr" && viewer.surfaces.has("catering")) || DELIVERY_LANE_NEEDS_YOU_ROLES.has(viewer.role);
+}
+
 /** The day's delivery lane as facts: nothing when it is off, a failure when it failed or timed out. */
 export function deliveryInput(result: DeliveryDayResult | null): CateringDeliveryInput | undefined {
   if (result === null) return { kind: "failed" };

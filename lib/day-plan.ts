@@ -26,12 +26,13 @@ import {
   type MidDayDay, type OrderingFacts, type ReceivingFacts, type ReportDay, type RhythmFacts, type ShopFacts, type ShopHours, type SmmFacts, type StationsFact,
 } from "@/lib/day-plan-shared";
 import type { DeliveryActor } from "@/lib/delivery/access-shared";
+import { DELIVERY_READ_DEADLINE_MS } from "@/lib/delivery/bounded";
 import { loadDeliveryDay } from "@/lib/delivery/day";
 import type { DeliveryDayResult } from "@/lib/delivery/day-shared";
 import { UNKNOWN_DAY_START } from "@/lib/scheduling/opening-shared";
 import { isoWeekStart } from "@/lib/scheduling/time-shared";
 import {
-  cashDay, cateringDeliveryAlerts, cateringOrders, checklistDay, deliveryInput, cutoffFact, dayAssignments, dayPrepStarts, dayStations, factsNeeded, firstName, midDayDay, notPhaseSections, outTimes,
+  cashDay, cateringDeliveryAlerts, cateringOrders, checklistDay, deliveryInput, deliveryLaneFor, cutoffFact, dayAssignments, dayPrepStarts, dayStations, factsNeeded, firstName, midDayDay, notPhaseSections, outTimes,
   pickEffectiveClosingTemplate, pmDay, poFact, rhythmRow, rhythmSkip, sectionsLeft, shopHoursFrom, smmChecklistTasks, smmStationRef, smmTaskState,
   vendorFact, type BaseShopHours, type BookedRow, type ClassificationItem, type ClosingTemplateRow, type CutoffRow, type EzcaterRow, type InstanceRow, type NotPhaseRule,
   type PoRow, type RhythmDbRow, type ScheduleStartRows, type SkipDbRow, type SmmTaskStatus, type VendorRow,
@@ -471,9 +472,15 @@ async function loadShopFacts(service: SupabaseClient, sb: Sb, args: DayFactsArgs
     const [booked, ez] = await Promise.all([deps.booked(sb, shopId, [planDate, tomorrow]), deps.ezcater(sb, shopId, [planDate, tomorrow])]);
     return { booked, ez };
   });
-  // Catering delivery D3: ONE lane. The loader gates and answers "off" itself, before any query (the switch, the status
-  // gate by the viewer's REAL role and memberships, the shop's own switch); a failure or a timeout is "couldn't load".
-  const deliveryP = L("delivery", () => deps.delivery(sb, { actor: { role: args.viewer.role, active: true, locations: args.locations }, shopId, date: planDate }));
+  // Catering delivery D3: ONE lane, started ONLY for a viewer who renders something from it (`deliveryLaneFor`: the
+  // catering manager's block and the "Needs you" roles) — anyone else sends no delivery query on the day load. The loader
+  // gates and answers "off" itself, before any query (the switch, the status gate by the viewer's REAL role and
+  // memberships, the shop's own switch). It is bounded INDEPENDENTLY (its own abort and its own, shorter race: a delivery
+  // read that hangs is "couldn't load" after DELIVERY_READ_DEADLINE_MS and never holds the day back).
+  const deliveryP = deliveryLaneFor(args.viewer)
+    ? boundedRead(service, "delivery", (abortable) => deps.delivery(abortable, { actor: { role: args.viewer.role, active: true, locations: args.locations }, shopId, date: planDate }),
+      Math.min(ms, DELIVERY_READ_DEADLINE_MS))
+    : null;
   const flaggedP = need.flaggedLines ? L("flaggedLines", async () => {
     const counts = await deps.flaggedLines(sb, shopId, [planDate, tomorrow]);
     return { today: counts[planDate] ?? 0, tomorrow: counts[tomorrow] ?? 0 };
@@ -525,8 +532,8 @@ async function loadShopFacts(service: SupabaseClient, sb: Sb, args: DayFactsArgs
   const outAt = await outP;
   const rules = { eventQFromWindow, etWallQ, ezcaterCancelled };
   // D3: undefined = off (no key anywhere below: the facts are exactly the pre-D3 facts); a thrown or timed-out lane = failed.
-  const deliveryFact = await fact(deliveryP);
-  const delivery = deliveryInput(deliveryFact.kind === "ok" ? deliveryFact.value : null);
+  const deliveryRead = deliveryP ? await deliveryP : null;
+  const delivery = deliveryRead === null ? undefined : deliveryInput(deliveryRead.ok ? deliveryRead.value : null);
   const cateringFact = (date: string): Fact<CateringDay> => (catering.kind === "failed" ? FAILED
     : ok({ forDate: date, orders: cateringOrders(date, catering.value.booked, catering.value.ez, outAt, rules, date === planDate ? delivery : undefined) }));
   const cateringToday = cateringFact(planDate);

@@ -28,7 +28,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthContext } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
-import { deliveryActorOf, deliveryStatusReadAllowed, type DeliveryActor } from "./access-shared";
+import { deliveryActorOf, deliveryReadPossible, deliveryStatusReadAllowed, type DeliveryActor } from "./access-shared";
+import { boundedDeliveryRead, DELIVERY_READ_DEADLINE_MS } from "./bounded";
 import { deliveryTrackingOn } from "./config";
 import {
   deliveryDayLeads, deliveryRowStateOf, type DayDecisionRow, type DayEzcaterRow, type DayJobRow, type DayLeadRow, type DayQuoteRow, type DeliveryDayLead,
@@ -136,8 +137,10 @@ export type DeliveryStatesResult = { ok: true; states: Record<string, DeliveryRo
  */
 export async function loadDeliveryStates(sb: Sb, actor: DeliveryActor, leadIds: readonly string[]): Promise<DeliveryStatesResult> {
   if (!deliveryTrackingOn()) return { off: true };
-  // The coarse refusal before the first query: a viewer no shop could admit.
-  if (!actor.active || actor.role === "social_media_mgr") return { off: true };
+  // THE GATE BEFORE ANY I/O (review DELIV3-r1): a viewer NO shop could admit — inactive, the social media manager, or
+  // below the status floor (crew, trainee) — issues ZERO queries. The per-lead shop authorization below still decides
+  // which of the leads an admitted role may read.
+  if (!deliveryReadPossible(actor)) return { off: true };
   const ids = [...new Set(leadIds)];
   if (ids.length === 0) return { ok: true, states: {} };
   try {
@@ -157,13 +160,10 @@ export async function loadDeliveryStates(sb: Sb, actor: DeliveryActor, leadIds: 
 
 /**
  * The pipeline page's read: the listed leads' states for the signed-in person. The switch is checked BEFORE a client is
- * made, so with delivery tracking off this touches nothing. Never throws: a failure is `{ ok: false }`.
+ * made, so with delivery tracking off this touches nothing. Never throws and never hangs the board: a failure, or a read
+ * still running after `DELIVERY_READ_DEADLINE_MS`, is `{ ok: false }` (the board renders; the page says the chips could not load).
  */
-export async function loadPipelineDeliveryStates(actor: AuthContext, leadIds: readonly string[], deps: { client?: Sb } = {}): Promise<DeliveryStatesResult> {
+export async function loadPipelineDeliveryStates(actor: AuthContext, leadIds: readonly string[], deps: { client?: Sb; deadlineMs?: number } = {}): Promise<DeliveryStatesResult> {
   if (!deliveryTrackingOn()) return { off: true };
-  try {
-    return await loadDeliveryStates(deps.client ?? getServiceRoleClient(), deliveryActorOf(actor), leadIds);
-  } catch {
-    return { ok: false };
-  }
+  return boundedDeliveryRead(async () => loadDeliveryStates(deps.client ?? getServiceRoleClient(), deliveryActorOf(actor), leadIds), deps.deadlineMs ?? DELIVERY_READ_DEADLINE_MS);
 }

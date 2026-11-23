@@ -29,7 +29,8 @@ import {
 } from "@/lib/midshift";
 import { timeWindowMinutes } from "@/lib/midshift-shared";
 import { readNotInToast } from "@/lib/catering/not-in-toast";
-import { deliveryActorOf, deliveryStatusReadAllowed } from "@/lib/delivery/access-shared";
+import { deliveryActorOf, deliveryStatusReadAllowed, deliveryWriteAllowed } from "@/lib/delivery/access-shared";
+import { boundedDeliveryRead } from "@/lib/delivery/bounded";
 import { loadDeliveryDay } from "@/lib/delivery/day";
 import { attachDelivery, type DeliveryDayResult } from "@/lib/delivery/day-shared";
 import { PIPELINE_READ_MIN } from "@/lib/catering/pipeline";
@@ -589,7 +590,9 @@ async function catering(deps: PulseDeps, ctx: PulseCtx): Promise<CateringData> {
   // Catering delivery D3: the status line, only for a viewer the status gate admits (decided here, BEFORE the read is
   // started). A rejected or failed read is "Couldn't load delivery" on the rows, never "to book"; off = the rows as they were.
   const deliveryP: Promise<DeliveryDayResult | null> = deps.cateringDelivery && deliveryStatusReadAllowed(deliveryActorOf(ctx.auth), ctx.locationId)
-    ? Promise.resolve().then(() => deps.cateringDelivery!(ctx)).catch((): DeliveryDayResult => ({ ok: false })) : Promise.resolve(null);
+    // Bounded on its own, well inside SECTION_DEADLINE_MS (review DELIV3-r1): a read that HANGS is "Couldn't load delivery"
+    // after DELIVERY_READ_DEADLINE_MS, and today's orders, tomorrow and the prep status still render.
+    ? boundedDeliveryRead(() => deps.cateringDelivery!(ctx)) : Promise.resolve(null);
   // Crew (Astra #11): shop-level TIMING only — the not-rung orders (order numbers, money) are not read for them.
   const [today, tomorrow, notRung, reports, prior] = await Promise.all([
     deps.cateringToday(ctx), deps.cateringTomorrow(ctx), crew ? Promise.resolve<NotInToastOrder[]>([]) : deps.notRung(ctx), deps.reports(ctx),
@@ -601,7 +604,7 @@ async function catering(deps: PulseDeps, ctx: PulseCtx): Promise<CateringData> {
     redacted: crew,
     today: attachDelivery(today.map((e) => ({
       id: e.id, name: crew ? null : e.name, timeWindow: e.timeWindow, headcount: e.headcount, isDelivery: e.isDelivery, stage: e.stage, source: crew ? null : e.source,
-    })), delivery),
+    })), delivery, deliveryWriteAllowed(deliveryActorOf(ctx.auth), ctx.locationId)),
     tomorrow,
     notRung: notRung.map((o) => ({
       orderId: o.order_id, orderNumber: o.order_number, source: notRungSource(o), readyAt: toastReadyAt(o), headcount: o.headcount,

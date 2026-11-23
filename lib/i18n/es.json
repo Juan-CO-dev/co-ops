@@ -1083,6 +1083,8 @@
   "catering.delivery_state.problem": "Problema de entrega",
   "catering.delivery_state.cancel_needed": "Cancela el mensajero",
   "catering.delivery_state.pickup_mismatch": "Mensajero reservado en otra tienda",
+  "catering.delivery_state.cancel_needed_tell": "Hay que cancelar el mensajero · avisa a un gerente",
+  "catering.delivery_state.pickup_mismatch_tell": "Mensajero reservado en otra tienda · avisa a un gerente",
   "catering.delivery_state.provider_managed": "Mensajero de ezCater",
   "catering.delivery_state.unknown": "No se pudo cargar la entrega",
   "catering.pipeline.move_to": "Mover a",

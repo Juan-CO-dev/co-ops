@@ -51,6 +51,9 @@ export interface DeliveryRowState {
   readonly at: string | null;
   /** The status of the job the state is about; null when the state is about no job. */
   readonly status: DeliveryStatus | null;
+  /** Set ONLY by `attachDelivery` for a viewer who may not manage deliveries, on a state that needs a manager
+   *  (`cancel_needed`, `pickup_mismatch`): the line reads "tell a manager", not an action. Absent everywhere else. */
+  readonly tellManager?: true;
 }
 export const DELIVERY_UNKNOWN: DeliveryRowState = { state: "unknown", at: null, status: null };
 
@@ -135,15 +138,18 @@ export function deliveryAlerts(leads: readonly DeliveryDayLead[], orderIds: Read
  * off → the SAME array, untouched (no key added: the payload is what it was before D3); a failed read → every row
  * reads `unknown` ("Couldn't load delivery"), never "to book"; ok → the lead's state, and no key when there is nothing
  * to show (`none`, or a lead the fact does not hold).
+ * `canAct` = the viewer passes the delivery WRITE gate at this shop (`deliveryWriteAllowed`). Without it, the two states
+ * only a manager can settle carry `tellManager` (a key holder is told to tell a manager, never to cancel a courier).
  */
-export function attachDelivery<T extends { id: string }>(rows: T[], result: DeliveryDayResult | null): Array<T & { delivery?: DeliveryRowState }> {
+export function attachDelivery<T extends { id: string }>(rows: T[], result: DeliveryDayResult | null, canAct = true): Array<T & { delivery?: DeliveryRowState }> {
   if (result === null || "off" in result) return rows;
   if (!result.ok) return rows.map((r) => ({ ...r, delivery: DELIVERY_UNKNOWN }));
   const byLead = new Map(result.leads.map((l) => [l.leadId, l]));
   return rows.map((r) => {
     const lead = byLead.get(r.id);
     const state = lead ? deliveryRowStateOf(lead) : null;
-    return state && state.state !== "none" ? { ...r, delivery: state } : r;
+    if (!state || state.state === "none") return r;
+    return { ...r, delivery: !canAct && (DELIVERY_ALERT_STATES as readonly string[]).includes(state.state) ? { ...state, tellManager: true as const } : state };
   });
 }
 
@@ -163,12 +169,16 @@ export type DeliveryLabelKey =
   | "catering.delivery_state.picked_up" | "catering.delivery_state.picked_up_at" | "catering.delivery_state.on_the_way"
   | "catering.delivery_state.delivered" | "catering.delivery_state.delivered_at" | "catering.delivery_state.problem"
   | "catering.delivery_state.cancel_needed" | "catering.delivery_state.pickup_mismatch" | "catering.delivery_state.provider_managed"
+  | "catering.delivery_state.cancel_needed_tell" | "catering.delivery_state.pickup_mismatch_tell"
   | "catering.delivery_state.unknown";
 export type DeliveryTone = "alert" | "warn" | "ok" | "muted";
 export interface DeliveryLabel { key: DeliveryLabelKey; time: string | null; tone: DeliveryTone }
 
 export function deliveryLabel(row: DeliveryRowState | null | undefined): DeliveryLabel | null {
   if (!row) return null;
+  // A viewer who cannot manage deliveries (a key holder or shift lead on mid-shift) is not handed an action.
+  if (row.tellManager && row.state === "cancel_needed") return { key: "catering.delivery_state.cancel_needed_tell", time: null, tone: "alert" };
+  if (row.tellManager && row.state === "pickup_mismatch") return { key: "catering.delivery_state.pickup_mismatch_tell", time: null, tone: "alert" };
   const timed = (withTime: DeliveryLabelKey, bare: DeliveryLabelKey, tone: DeliveryTone): DeliveryLabel =>
     (row.at ? { key: withTime, time: row.at, tone } : { key: bare, time: null, tone });
   switch (row.state) {
@@ -177,10 +187,13 @@ export function deliveryLabel(row: DeliveryRowState | null | undefined): Deliver
     case "to_book": return { key: "catering.delivery_state.to_book", time: null, tone: "warn" };
     case "to_book_soon": return { key: "catering.delivery_state.to_book_soon", time: null, tone: "alert" };
     case "booked": return timed("catering.delivery_state.booked_at", "catering.delivery_state.booked", "ok");
-    // The food has left only from `picked_up` on; a courier still heading to the shop is "on the way".
-    case "on_the_way": return row.status === "picked_up" || row.status === "en_route_dropoff" || row.status === "at_dropoff"
-      ? timed("catering.delivery_state.picked_up_at", "catering.delivery_state.picked_up", "ok")
-      : { key: "catering.delivery_state.on_the_way", time: null, tone: "ok" };
+    // The food has left only from `picked_up` on; a courier still heading to the shop is "on the way". The row's instant
+    // is the CURRENT status's: only while that status IS `picked_up` is it the pick-up time. A later status (heading to
+    // or at the drop-off) says "Picked up" with NO time — its own time is not when the food was picked up.
+    case "on_the_way":
+      if (row.status === "picked_up") return timed("catering.delivery_state.picked_up_at", "catering.delivery_state.picked_up", "ok");
+      if (row.status === "en_route_dropoff" || row.status === "at_dropoff") return { key: "catering.delivery_state.picked_up", time: null, tone: "ok" };
+      return { key: "catering.delivery_state.on_the_way", time: null, tone: "ok" };
     case "delivered": return timed("catering.delivery_state.delivered_at", "catering.delivery_state.delivered", "ok");
     case "problem": return { key: "catering.delivery_state.problem", time: null, tone: "alert" };
     case "cancel_needed": return { key: "catering.delivery_state.cancel_needed", time: null, tone: "alert" };

@@ -24,13 +24,15 @@ import type { InboxWaiting, NeedsYouCells, NotRungScoped } from "@/lib/dashboard
 import { assignmentsKnown, cateringBlockIndex, needsYouFor, NEEDS_YOU_ROLES, needsYouSummary, nextUpInBlock } from "@/lib/dashboard-blocks-shared";
 import type { Settled } from "@/lib/dashboard-day";
 import { aggregateFailure } from "@/lib/dashboard-day-shared";
-import { defaultDayFactDeps, loadDayFacts } from "@/lib/day-plan";
-import { cateringDeliveryAlerts, cateringOrders, deliveryInput } from "@/lib/day-plan-load-shared";
+import { DAY_FACT_DEADLINE_MS, defaultDayFactDeps, loadDayFacts } from "@/lib/day-plan";
+import { cateringDeliveryAlerts, cateringOrders, DELIVERY_LANE_NEEDS_YOU_ROLES, deliveryInput, deliveryLaneFor } from "@/lib/day-plan-load-shared";
+import { DELIVERY_READ_DEADLINE_MS } from "@/lib/delivery/bounded";
+import { loadMidShiftPulse } from "@/lib/midshift";
 import { buildDay, cateringOrderRows, deliveryNeedsOf, EMITTED_KEYS, planDay, type CateringOrder, type DayPlan, type DayPlanInput, type DayViewer, type ShopFacts } from "@/lib/day-plan-shared";
 import { DELIVERY_UNKNOWN, type DeliveryAlert, type DeliveryDayLead, type DeliveryDayResult, type DeliveryRowState } from "@/lib/delivery/day-shared";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
-import { loadPulseSection, memoDeps, cachedPulseDeps, type PulseCtx, type PulseDeps } from "@/lib/pulse/sections";
+import { loadPulseSection, memoDeps, cachedPulseDeps, SECTION_DEADLINE_MS, type PulseCtx, type PulseDeps } from "@/lib/pulse/sections";
 import type { CateringData } from "@/lib/pulse/types";
 import type { AuthContext } from "@/lib/session";
 import { ALL_VIEWERS, ANA, CATERING_MEMBER, CGS, failed, GM, hm, LUIS, MOO, ok, order, PLAN_DATE, viewer, withFailed } from "./fixtures/day-plan/build";
@@ -121,7 +123,8 @@ describe("cateringOrders(): the state is attached by lead id", () => {
 // ══ loadDayFacts: ONE lane ══════════════════════════════════════════════════
 describe("loadDayFacts: the delivery lane", () => {
   const booked = async () => [{ id: "lead-1", eventDate: PLAN, timeWindow: "3:00 PM", headcount: 20, stage: "confirmed" }, { id: "lead-2", eventDate: TOMORROW, timeWindow: "11:00 AM", headcount: 40, stage: "confirmed" }];
-  const load = async (delivery: () => Promise<DeliveryDayResult>, v: DayViewer = ANA, over = {}) => {
+  // The lane runs only for a viewer who renders something from it: here the GM ("Needs you").
+  const load = async (delivery: () => Promise<DeliveryDayResult>, v: DayViewer = GM, over = {}) => {
     const input = await loadDayFacts(NO_CLIENT, loaderArgs(v), withDeps({ booked, delivery, ...over }));
     if (input.facts.kind !== "shop") throw new Error("shop facts expected");
     return input.facts;
@@ -133,7 +136,23 @@ describe("loadDayFacts: the delivery lane", () => {
   it("the lane is asked ONCE, for the shop, the plan date, and the viewer's real role and memberships", async () => {
     const seen: unknown[] = [];
     await load(async (...a: unknown[]) => { seen.push(a[1]); return { off: true }; });
-    expect(seen).toEqual([{ actor: { role: "key_holder", active: true, locations: [P_SHOP.id] }, shopId: P_SHOP.id, date: PLAN }]);
+    expect(seen).toEqual([{ actor: { role: "gm", active: true, locations: [P_SHOP.id] }, shopId: P_SHOP.id, date: PLAN }]);
+  });
+
+  it("ruling 4: the lane is started ONLY for a viewer who renders something from it — the catering manager holding catering, and GM / MoO / Owner / CGS", async () => {
+    const started: string[] = [];
+    for (const [name, v] of Object.entries(ALL_VIEWERS)) {
+      const delivery = vi.fn(async (): Promise<DeliveryDayResult> => ({ ok: true, leads: LEADS }));
+      const f = await load(delivery, v);
+      if (delivery.mock.calls.length > 0) started.push(name);
+      else expect(JSON.stringify(f), name).not.toContain("delivery");
+      expect(deliveryLaneFor(v), name).toBe(delivery.mock.calls.length === 1);
+    }
+    expect(started.sort()).toEqual(["CATERING_MEMBER", "CATERING_NON_MEMBER", "CGS", "GM", "MOO", "OWNER"]);
+    expect([...DELIVERY_LANE_NEEDS_YOU_ROLES].sort()).toEqual([...NEEDS_YOU_ROLES].sort());
+    // By real role and the surface the block needs, never a level: a catering manager without `catering` gets no block, so no read.
+    expect(deliveryLaneFor(viewer("catering_mgr", "u-x", new Set(["tasks", "schedule"])))).toBe(false);
+    for (const role of ["key_holder", "trainer", "shift_lead", "agm", "prep_mgr", "social_media_mgr", "employee", "trainee"] as const) expect([role, deliveryLaneFor(viewer(role, "u"))]).toEqual([role, false]);
   });
 
   it("ok: today's order carries its state, the order-less lead is an alert; tomorrow's orders carry nothing", async () => {
@@ -161,16 +180,28 @@ describe("loadDayFacts: the delivery lane", () => {
     expect(strip(f)).toBe(strip(good));
   });
 
-  it("a delivery read that hangs past the deadline is a failure, and holds nothing else back", async () => {
-    const f = await load(() => new Promise<DeliveryDayResult>(() => undefined), ANA, {});
+  it("a delivery read that HANGS is bounded on its own: 'couldn't load' after its own, shorter deadline; every other fact loads and the day is not held to its 6 s", async () => {
+    const good = await load(async () => ({ off: true }));
+    const started = Date.now();
+    const f = await load(() => new Promise<DeliveryDayResult>(() => undefined));
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(DELIVERY_READ_DEADLINE_MS - 100);
+    expect(elapsed).toBeLessThan(DAY_FACT_DEADLINE_MS - 1000);
     expect(f.deliveryAlerts).toEqual(failed());
     expect(today(f)[0]!.delivery).toEqual(DELIVERY_UNKNOWN);
-    expect(f.opening.kind).toBe("ok");
+    const strip = (x: ShopFacts) => JSON.stringify({ ...x, cateringToday: null, deliveryAlerts: undefined });
+    expect(strip(f)).toBe(strip(good));
+    // "Needs you" then reads "at least" (the cell is unknown), and the catering manager's block still draws its orders.
+    const input: DayPlanInput = { planDate: PLAN, nowMin: hm("13:45"), viewer: GM, facts: f };
+    expect(deliveryNeedsOf(input)).toEqual({ count: null });
+    const p = planDay({ ...input, viewer: CATERING_MEMBER }) as DayPlan;
+    expect(p.cateringBlock!.today).not.toBe("unknown");
+    expect(renderBlock(p)).toContain('data-delivery-state="unknown"');
   }, 20_000);
 
   it("the catering read failed and the delivery read loaded: no row is known, so every lead that needs a person is an alert", async () => {
     const f = await load(async () => ({ ok: true, leads: [...LEADS, dayLead("lead-1b", { currentShopId: P_SHOP.id, orderQuote: { kind: "rejected", isDelivery: false }, jobs: [openJob({ pickupShopId: P_SHOP.id })] })] }),
-      ANA, { booked: async () => { throw new Error("down"); } });
+      GM, { booked: async () => { throw new Error("down"); } });
     expect(f.cateringToday).toEqual(failed());
     expect(f.deliveryAlerts!.kind === "ok" && f.deliveryAlerts!.value.alerts.map((a) => a.leadId)).toEqual(["lead-9", "lead-1b"]);
   });
@@ -426,6 +457,39 @@ describe("mid-shift: the status-only line", () => {
     expect(text(strip([item("a", row("booked", { status: "accepted" }))], "es"))).toContain(ES["catering.delivery_state.booked"]);
   });
 
+  it("ruling 5: a viewer who cannot act reads 'tell a manager' for a courier to cancel or booked at another shop, en and es; never the action", () => {
+    for (const language of ["en", "es"] as const) {
+      const L = language === "en" ? EN : ES;
+      const html = strip([item("a", row("cancel_needed", { status: "accepted", tellManager: true })), item("b", row("pickup_mismatch", { status: "accepted", tellManager: true }))], language);
+      expect(text(html)).toContain(L["catering.delivery_state.cancel_needed_tell"]);
+      expect(text(html)).toContain(L["catering.delivery_state.pickup_mismatch_tell"]);
+      expect(text(html)).not.toContain(L["catering.delivery_state.cancel_needed"]);
+    }
+    expect(text(strip([item("a", row("cancel_needed", { status: "accepted" }))]))).toContain(EN["catering.delivery_state.cancel_needed"]);
+  });
+
+  it("the v1 loader: a delivery read that never settles does not hold the mid-shift pulse — the events load, delivery unknown; a key holder's lines are 'tell a manager'", async () => {
+    const LOC = "11111111-1111-4111-8111-111111111111";
+    const service = fakeSupabase((c) => (c.table === "catering_pipeline" && String(c.arg("select")).includes("event_name")
+      ? { data: [{ id: "ev-1", event_name: "Acme lunch", company: null, contact_name: "A", headcount: 9, time_window: "noon", delivery_address: "1 Way", stage: "confirmed", lead_source: null }] }
+      : { data: [], count: 0 }), () => ({ data: null }));
+    const authContext = { user: { id: "u-kh", role: "key_holder", active: true, language: "en" }, role: "key_holder", level: 4, locations: [LOC], session: {} } as unknown as AuthContext;
+    const base = { locationId: LOC, date: PLAN_DATE, now: at("13:45", PLAN_DATE), actor: { userId: "u-kh", role: "key_holder" as const, level: 4 }, authContext };
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const pending = loadMidShiftPulse(service.client as never, { ...base, deliveryRead: () => new Promise<DeliveryDayResult>(() => undefined) });
+    await vi.advanceTimersByTimeAsync(DELIVERY_READ_DEADLINE_MS + 1);
+    const hung = await pending;
+    vi.useRealTimers();
+    expect(hung.cateringToday.map((e) => [e.id, e.name, e.delivery])).toEqual([["ev-1", "Acme lunch", DELIVERY_UNKNOWN]]);
+    const told = await loadMidShiftPulse(service.client as never, { ...base, deliveryRead: async () => ({ ok: true, leads: [dayLead("ev-1", { currentShopId: LOC, stage: "lost", jobs: [openJob({ pickupShopId: LOC })] })] }) });
+    expect(told.cateringToday[0]!.delivery).toMatchObject({ state: "cancel_needed", tellManager: true });
+    // Without the full AuthContext nothing is read.
+    const read = vi.fn(async (): Promise<DeliveryDayResult> => ({ ok: false }));
+    const bare = await loadMidShiftPulse(service.client as never, { ...base, authContext: undefined, deliveryRead: read });
+    expect(read).not.toHaveBeenCalled();
+    expect("delivery" in bare.cateringToday[0]!).toBe(false);
+  }, 20_000);
+
   it("nothing when off; 'Couldn't load delivery' on a failed read, never a booked or to-book line", () => {
     expect(strip([item("a")])).not.toContain("data-delivery-state");
     const html = strip([item("a", DELIVERY_UNKNOWN)]);
@@ -485,6 +549,33 @@ describe("the pulse's catering section: the same lane, gated before the read", (
     }
   });
 
+  it("review DELIV3-r1: a delivery read that NEVER SETTLES is bounded on its own — the section still succeeds, with today's orders, tomorrow and prep, and delivery unknown", async () => {
+    vi.useFakeTimers();
+    const pending = loadPulseSection(deps(() => new Promise<DeliveryDayResult>(() => undefined)), ctx(auth("gm", 7)), "catering");
+    // Well inside the section's own 7 s deadline.
+    await vi.advanceTimersByTimeAsync(DELIVERY_READ_DEADLINE_MS + 1);
+    const r = (await pending) as { state: string; data: CateringData };
+    vi.useRealTimers();
+    expect(DELIVERY_READ_DEADLINE_MS).toBeLessThan(SECTION_DEADLINE_MS - 2_000);
+    expect(r.state).toBe("ok");
+    expect(r.data.today.map((e) => [e.id, e.name, e.delivery])).toEqual([["c1", "Acme lunch", DELIVERY_UNKNOWN], ["c2", "Pickup co", DELIVERY_UNKNOWN]]);
+    expect(r.data.tomorrow).toEqual({ count: 0, firstWindow: null });
+    expect(r.data.prep).toEqual({ amPrep: "not_started", midDay: "not_started" });
+  });
+
+  it("ruling 5: a key holder or shift lead cannot act, so cancel_needed and pickup_mismatch read 'tell a manager'; an AGM, a GM and the catering manager get the state as an action", async () => {
+    const needs: DeliveryDayResult = { ok: true, leads: [dayLead("c1", { currentShopId: LOC, stage: "lost", jobs: [openJob({ pickupShopId: LOC })] }),
+      dayLead("c2", { currentShopId: LOC, jobs: [openJob({ pickupShopId: "another-shop" })] })] };
+    for (const [role, level] of [["key_holder", 4], ["trainer", 4], ["shift_lead", 5], ["prep_mgr", 6]] as const) {
+      const got = await today(deps(async () => needs), auth(role, level));
+      expect(got.map((r) => [r.delivery!.state, r.delivery!.tellManager]), role).toEqual([["cancel_needed", true], ["pickup_mismatch", true]]);
+    }
+    for (const [role, level, locs] of [["agm", 6, [LOC]], ["gm", 7, [LOC]], ["catering_mgr", 6, [LOC]], ["moo", 8, [LOC]]] as const) {
+      const got = await today(deps(async () => needs), auth(role, level, [...locs]));
+      expect(got.map((r) => [r.delivery!.state, "tellManager" in r.delivery!]), role).toEqual([["cancel_needed", false], ["pickup_mismatch", false]]);
+    }
+  });
+
   it("off, or not wired: the rows are exactly the pre-D3 rows", async () => {
     const bare = await today(deps(), auth("gm", 7));
     expect(await today(deps(async () => ({ off: true })), auth("gm", 7))).toEqual(bare);
@@ -503,6 +594,10 @@ describe("the pulse's catering section: the same lane, gated before the read", (
 describe("the day loader's pinned read counts move by exactly the delivery lane's queries", () => {
   const LOC = "11111111-1111-4111-8111-111111111111";
   const KH = { ...ANA, userId: "33333333-3333-4333-8333-333333333333" };
+  // Ruling 4: the lane runs only for the catering manager's block and the "Needs you" roles. The GM is the reader below.
+  const GMV = { ...GM, userId: "55555555-5555-4555-8555-555555555555" };
+  const CATV = { ...CATERING_MEMBER, userId: "66666666-6666-4666-8666-666666666666" };
+  const MOOV = { ...MOO, userId: "77777777-7777-4777-8777-777777777777" };
   const CREW = { ...LUIS, userId: "44444444-4444-4444-8444-444444444444" };
   const NOW = at("13:45", PLAN_DATE);
   const count = async (v: DayViewer, world: World) => {
@@ -519,6 +614,7 @@ describe("the day loader's pinned read counts move by exactly the delivery lane'
   // `loader/real/KH/count` and `/CREW/count`, frozen from the unchanged base).
   const dayWorld = (over: Partial<World> = {}): World => ({ settings: [on(LOC)], leads: [leadRow("lead", { location_id: LOC, event_date: PLAN_DATE })], jobs: [], decisions: [],
     quotes: [quote("lead", "accepted")], ezcater: [], ...over });
+  // The GM's, the catering manager's and the MoO's pre-D3 budget on this day is 34 too (the golden's `loader/real/GM_V|CAT_V|MOO_V/count`).
   const PRE_D3 = { kh: 34, crew: 24 };
 
   it("off (the switch unset): 34 for a key holder, 24 for crew — the pre-D3 budget, not one query more", async () => {
@@ -526,10 +622,23 @@ describe("the day loader's pinned read counts move by exactly the delivery lane'
     const [kh, crew] = [await count(KH, dayWorld()), await count(CREW, dayWorld())];
     expect({ kh: kh.n, crew: crew.n }).toEqual(PRE_D3);
     expect(kh.delivery).toEqual([]);
+    for (const v of [GMV, CATV, MOOV]) expect([v.role, (await count(v, dayWorld())).n]).toEqual([v.role, 34]);
   });
 
-  it("on, the shop off (no settings row): 35 = 34 + 1 (the shop's own switch), and nothing after it", async () => {
-    const kh = await count(KH, dayWorld({ settings: [] }));
+  it("ruling 4, per role, with delivery ON for the shop: 41 for the GM, the catering manager and the MoO; a key holder, a shift lead, an AGM, a prep manager and crew send NO delivery query", async () => {
+    const got: Record<string, [number, number]> = {};
+    for (const [name, v] of Object.entries({ KH, CREW, GMV, CATV, MOOV })) { const r = await count(v, dayWorld()); got[name] = [r.n, r.delivery.length]; }
+    expect(got).toEqual({ KH: [34, 0], CREW: [24, 0], GMV: [41, 3], CATV: [41, 3], MOOV: [41, 3] });
+    for (const role of ["shift_lead", "agm", "prep_mgr", "trainer"] as const) {
+      const v = { ...viewer(role, "u"), userId: "88888888-8888-4888-8888-888888888888" };
+      const [onN, offN] = [await count(v, dayWorld()), (vi.stubEnv("DELIVERY_TRACKING", ""), await count(v, dayWorld()))];
+      vi.stubEnv("DELIVERY_TRACKING", "1");
+      expect([role, onN.delivery, onN.n]).toEqual([role, [], offN.n]);
+    }
+  });
+
+  it("on, the shop off (no settings row), a GM: 35 = 34 + 1 (the shop's own switch), and nothing after it", async () => {
+    const kh = await count(GMV, dayWorld({ settings: [] }));
     expect(kh.n).toBe(35);
     expect(kh.delivery).toEqual(["delivery_settings"]);
   });
@@ -540,11 +649,11 @@ describe("the day loader's pinned read counts move by exactly the delivery lane'
     expect(crew.delivery).toEqual([]);
   });
 
-  it("on, the shop on, a key holder: 41 = 34 + 7 — the shop's switch, the open jobs, the day's leads, then the lead's jobs, quotes, ezCater rows and the shop re-check", async () => {
+  it("on, the shop on, a GM: 41 = 34 + 7 — the shop's switch, the open jobs, the day's leads, then the lead's jobs, quotes, ezCater rows and the shop re-check", async () => {
     // WHY THE COUNT MOVED (D3): the delivery lane (`deps.delivery` → loadDeliveryDay) is the ONLY new reader in the day
     // loader. With delivery on for the shop it sends exactly these 7 queries on this day (1 lead, no job: no decision
     // read), and the day's other 34 are untouched. Nothing else in the loader gained or lost a query.
-    const kh = await count(KH, dayWorld());
+    const kh = await count(GMV, dayWorld());
     expect(kh.n).toBe(PRE_D3.kh + 7);
     expect(kh.delivery).toEqual(["delivery_job_current", "delivery_job_current", "delivery_settings"]);
     const added = kh.calls.map((c) => `${c.table}:${String(c.arg("select"))}`).filter((q) => [
@@ -557,9 +666,9 @@ describe("the day loader's pinned read counts move by exactly the delivery lane'
 
   it("on, a day with no lead and nothing open: + 3 only (the switch, the open jobs, the day's leads)", async () => {
     const empty = dayWorld({ leads: [], quotes: [] });
-    const quietOn = await count(KH, empty);
+    const quietOn = await count(GMV, empty);
     vi.stubEnv("DELIVERY_TRACKING", "");
-    const quietOff = await count(KH, empty);
+    const quietOff = await count(GMV, empty);
     expect(quietOn.n - quietOff.n).toBe(3);
     expect(quietOn.delivery).toEqual(["delivery_job_current", "delivery_settings"]);
   });
@@ -567,7 +676,7 @@ describe("the day loader's pinned read counts move by exactly the delivery lane'
   it("the same number of delivery queries at 3 leads and at 90 (no per-lead read)", async () => {
     const leads = (n: number) => dayWorld({ leads: Array.from({ length: n }, (_, i) => leadRow(`lead-${i}`, { location_id: LOC, event_date: PLAN_DATE })),
       jobs: Array.from({ length: n }, (_, i) => job(`lead-${i}`, 1, "accepted", { location_id: LOC })) });
-    const [few, many] = [await count(KH, leads(3)), await count(KH, leads(90))];
+    const [few, many] = [await count(GMV, leads(3)), await count(GMV, leads(90))];
     expect(many.n).toBe(few.n);
     expect(many.delivery).toEqual(few.delivery);
     expect(many.delivery).toEqual(["delivery_job_current", "delivery_job_current", "delivery_pickup_decisions", "delivery_settings"]);
@@ -577,7 +686,7 @@ describe("the day loader's pinned read counts move by exactly the delivery lane'
     const w = dayWorld({ leads: [leadRow("lead", { location_id: LOC, event_date: PLAN_DATE }), leadRow("gone", { location_id: LOC, stage: "lost", event_date: "2026-11-01" })],
       jobs: [job("lead", 1, "accepted", { location_id: LOC, pickup_at: "2026-11-18T19:00:00.000Z" }), job("gone", 1, "accepted", { location_id: LOC })],
       quotes: [quote("lead", "accepted"), quote("gone", "accepted")] });
-    const { input, calls } = await count(KH, w);
+    const { input, calls } = await count(GMV, w);
     const textOf = JSON.stringify(input);
     for (const s of SENTINELS) expect(textOf).not.toContain(String(s));
     const f = input.facts as ShopFacts;

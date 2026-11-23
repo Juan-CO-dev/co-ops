@@ -93,16 +93,27 @@ describe("the wiring", () => {
 
   it("mid-shift: the delivery read needs the full AuthContext (the gate reads the real role and memberships), and attaches by lead id", () => {
     const lib = src("lib/midshift.ts");
-    expect(lib).toContain("const deliveryP = args.authContext ? loadDeliveryDay(service, deliveryActorOf(args.authContext), args.locationId, args.date) : Promise.resolve(null);");
-    expect(lib).toContain("const cateringToday = attachDelivery(cateringDue, await deliveryP);");
-    expect(lib.match(/loadDeliveryDay\(/g)).toHaveLength(1);
+    expect(lib).toContain("const deliveryActor = args.authContext ? deliveryActorOf(args.authContext) : null;");
+    // Bounded on its own, and "tell a manager" for a viewer who cannot manage deliveries.
+    expect(lib).toContain("const deliveryP = deliveryActor ? boundedDeliveryRead(() => (args.deliveryRead ?? loadDeliveryDay)(service, deliveryActor, args.locationId, args.date)) : Promise.resolve(null);");
+    expect(lib).toContain("attachDelivery(cateringDue, await deliveryP, deliveryActor !== null && deliveryWriteAllowed(deliveryActor, args.locationId));");
   });
 
   it("the pulse: the lane is gated by the status gate before the dep is called, and wired once in the production deps", () => {
     const sections = src("lib/pulse/sections.ts");
     expect(sections).toContain("deps.cateringDelivery && deliveryStatusReadAllowed(deliveryActorOf(ctx.auth), ctx.locationId)");
+    expect(sections).toContain("? boundedDeliveryRead(() => deps.cateringDelivery!(ctx)) : Promise.resolve(null);");
+    expect(sections).toContain("delivery, deliveryWriteAllowed(deliveryActorOf(ctx.auth), ctx.locationId)),");
     expect(sections).toContain("cateringDelivery: (ctx) => loadDeliveryDay(service, deliveryActorOf(ctx.auth), ctx.locationId, ctx.date),");
     expect(sections.match(/loadDeliveryDay\(/g)).toHaveLength(1);
+  });
+
+  it("every delivery read that rides beside other data is bounded: the day plan, the pulse, mid-shift and the pipeline page", () => {
+    expect(src("lib/day-plan.ts")).toContain('boundedRead(service, "delivery", (abortable) => deps.delivery(abortable,');
+    expect(src("lib/day-plan.ts")).toContain("Math.min(ms, DELIVERY_READ_DEADLINE_MS))");
+    expect(src("lib/delivery/day.ts")).toContain("return boundedDeliveryRead(async () => loadDeliveryStates(");
+    // No caller outside lib/delivery reaches the raw readers unbounded.
+    for (const f of ["lib/midshift.ts", "lib/pulse/sections.ts"]) expect(src(f).match(/boundedDeliveryRead\(/g), f).toHaveLength(1);
   });
 
   it("no D3 surface moves a lead's stage, and none writes: the delivery day module has no rpc, insert, update or delete", () => {

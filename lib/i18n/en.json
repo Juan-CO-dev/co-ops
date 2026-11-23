@@ -1083,6 +1083,8 @@
   "catering.delivery_state.problem": "Delivery problem",
   "catering.delivery_state.cancel_needed": "Cancel the courier",
   "catering.delivery_state.pickup_mismatch": "Courier booked at another shop",
+  "catering.delivery_state.cancel_needed_tell": "Courier needs cancelling · tell a manager",
+  "catering.delivery_state.pickup_mismatch_tell": "Courier booked at another shop · tell a manager",
   "catering.delivery_state.provider_managed": "ezCater's courier",
   "catering.delivery_state.unknown": "Couldn't load delivery",
   "catering.pipeline.move_to": "Move to",

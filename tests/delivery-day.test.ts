@@ -17,6 +17,7 @@ import {
   DAY_DECISION_COLUMNS, DAY_EZCATER_COLUMNS, DAY_JOB_COLUMNS, DAY_LEAD_COLUMNS, DAY_OPEN_JOB_COLUMNS, DAY_QUOTE_COLUMNS, DAY_SETTINGS_COLUMNS, DAY_SHOP_RECHECK_COLUMNS,
   loadDeliveryDay, loadDeliveryStates, loadPipelineDeliveryStates,
 } from "@/lib/delivery/day";
+import { boundedDeliveryRead, DELIVERY_READ_DEADLINE_MS } from "@/lib/delivery/bounded";
 import {
   attachDelivery, DELIVERY_ALERT_STATES, DELIVERY_NEEDS_PERSON, DELIVERY_UNKNOWN, deliveryAlerts, deliveryDayLeads, deliveryLabel, deliveryNeedsPerson, deliveryRowStateOf,
   rowStateSoon, type DeliveryDayLead, type DeliveryDayResult, type DeliveryRowState,
@@ -149,6 +150,13 @@ describe("the pure shaping", () => {
     }
     expect(deliveryLabel({ state: "booked", at: "T", status: "accepted" })).toEqual({ key: "catering.delivery_state.booked_at", time: "T", tone: "ok" });
     expect(deliveryLabel({ state: "on_the_way", at: "T", status: "picked_up" })!.key).toBe("catering.delivery_state.picked_up_at");
+    // Review DELIV3-r1: a LATER status's time is not the pick-up time. Picked up at 10:40, at the drop-off at 11:00: the row's
+    // instant is 11:00, so the line says "Picked up" with no time (never "Picked up · 11:00").
+    for (const status of ["en_route_dropoff", "at_dropoff"] as const) {
+      expect(deliveryLabel({ state: "on_the_way", at: "2026-11-18T16:00:00.000Z", status })).toEqual({ key: "catering.delivery_state.picked_up", time: null, tone: "ok" });
+    }
+    expect(deliveryLabel({ state: "on_the_way", at: "2026-11-18T15:40:00.000Z", status: "picked_up" })).toEqual({ key: "catering.delivery_state.picked_up_at", time: "2026-11-18T15:40:00.000Z", tone: "ok" });
+    expect(deliveryLabel({ state: "on_the_way", at: null, status: "picked_up" })!.key).toBe("catering.delivery_state.picked_up");
     // A courier still heading to the shop has not picked anything up.
     expect(deliveryLabel({ state: "on_the_way", at: "T", status: "en_route_pickup" })).toEqual({ key: "catering.delivery_state.on_the_way", time: null, tone: "ok" });
     expect(deliveryLabel(DELIVERY_UNKNOWN)).toEqual({ key: "catering.delivery_state.unknown", time: null, tone: "muted" });
@@ -163,6 +171,38 @@ describe("the pure shaping", () => {
     const fact = deliveryDayLeads({ leads: [{ id: "l-book", location_id: A, stage: "confirmed", lead_source: null }, { id: "l-pickup", location_id: A, stage: "confirmed", lead_source: null }],
       jobs: [], decisions: [], ezcater: [], quotes: [{ id: "q1", pipeline_id: "l-book", status: "accepted", is_delivery: true, created_at: "x" }, { id: "q2", pipeline_id: "l-pickup", status: "accepted", is_delivery: false, created_at: "x" }] });
     expect(attachDelivery(rows, { ok: true, leads: fact })).toEqual([{ id: "l-book", delivery: { state: "to_book", at: null, status: null } }, { id: "l-pickup" }, { id: "nobody" }]);
+  });
+
+  it("a viewer who cannot manage deliveries is told to tell a manager: cancel_needed and pickup_mismatch only, en and es; everything else reads the same", () => {
+    const EN = en as Record<string, string>, ES = es as Record<string, string>;
+    const open = { attemptNo: 1, status: "accepted" as const, open: true, pickupShopId: A, keptForCurrentShop: false, at: "t", pickupAt: null };
+    const l = (leadId: string, over: Partial<DeliveryDayLead> = {}): DeliveryDayLead => ({ leadId, stage: "confirmed", currentShopId: A, orderQuote: { kind: "accepted", isDelivery: true }, isEzcater: false, jobs: [], ...over });
+    const fact: DeliveryDayResult = { ok: true, leads: [l("cancel", { stage: "lost", jobs: [open] }), l("moved", { jobs: [{ ...open, pickupShopId: B }] }), l("book"), l("booked", { jobs: [open] })] };
+    const rows = [{ id: "cancel" }, { id: "moved" }, { id: "book" }, { id: "booked" }];
+    const cannot = attachDelivery(rows, fact, false), can = attachDelivery(rows, fact, true);
+    expect(cannot.map((r) => [r.delivery!.state, r.delivery!.tellManager ?? false])).toEqual([["cancel_needed", true], ["pickup_mismatch", true], ["to_book", false], ["booked", false]]);
+    for (const r of can) expect("tellManager" in r.delivery!).toBe(false);
+    expect(attachDelivery(rows, fact)).toEqual(can);
+    expect(cannot.map((r) => deliveryLabel(r.delivery)!.key)).toEqual(["catering.delivery_state.cancel_needed_tell", "catering.delivery_state.pickup_mismatch_tell", "catering.delivery_state.to_book", "catering.delivery_state.booked"]);
+    expect(can.map((r) => deliveryLabel(r.delivery)!.key).slice(0, 2)).toEqual(["catering.delivery_state.cancel_needed", "catering.delivery_state.pickup_mismatch"]);
+    for (const d of [EN, ES]) {
+      expect(d["catering.delivery_state.cancel_needed_tell"]).toBeTruthy();
+      expect(d["catering.delivery_state.pickup_mismatch_tell"]).toBeTruthy();
+    }
+    expect(EN["catering.delivery_state.cancel_needed_tell"]).toMatch(/tell a manager/);
+    expect(ES["catering.delivery_state.pickup_mismatch_tell"]).toMatch(/avisa a un gerente/);
+    // The flag never turns another state into a manager line.
+    expect(deliveryLabel({ state: "problem", at: null, status: "failed", tellManager: true })!.key).toBe("catering.delivery_state.problem");
+  });
+
+  it("boundedDeliveryRead: the value when it settles in time; { ok: false } on a throw, a rejection, or a read still running at the bound; it never rejects", async () => {
+    await expect(boundedDeliveryRead(async () => ({ off: true as const }), 50)).resolves.toEqual({ off: true });
+    await expect(boundedDeliveryRead(async () => { throw new Error("down"); }, 50)).resolves.toEqual({ ok: false });
+    await expect(boundedDeliveryRead((() => { throw new Error("sync"); }) as () => Promise<never>, 50)).resolves.toEqual({ ok: false });
+    const started = Date.now();
+    await expect(boundedDeliveryRead(() => new Promise<never>(() => undefined), 30)).resolves.toEqual({ ok: false });
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(DELIVERY_READ_DEADLINE_MS).toBeLessThan(6_000);
   });
 });
 
@@ -407,11 +447,28 @@ describe("loadDeliveryStates: the pipeline's cards, one batched read", () => {
     expect(off).toMatchObject({ result: { off: true }, calls: [] });
   });
 
-  it("crew: the leads are read (one query), no shop admits them, off", async () => {
-    const { result, calls } = await states(world(), actor("employee"), ALL);
+  it.each([
+    ["employee", actor("employee")], ["trainee", actor("trainee")], ["the social media manager", actor("social_media_mgr")], ["an inactive GM", actor("gm", [A], false)],
+    ["an inactive MoO", actor("moo", [], false)],
+  ])("the gate before any I/O (review DELIV3-r1): %s can never pass the status gate — off, ZERO queries", async (_n, who) => {
+    const { result, calls } = await states(world(), who, ALL);
+    expect(result).toEqual({ off: true });
+    expect(calls).toEqual([]);
+  });
+
+  it("the per-lead shop authorization still decides for a role that may pass somewhere: a key holder of another shop reads the leads, is admitted to none, and gets off", async () => {
+    const { result, calls } = await states({ ...world(), leads: world().leads.filter((l) => l.location_id === A) }, actor("key_holder", [B]), ["l-book", "l-lost"]);
     expect(result).toEqual({ off: true });
     expect(calls.map((c) => c.table)).toEqual(["catering_pipeline"]);
     expect(String(calls[0]!.arg("select"))).toBe(DAY_LEAD_COLUMNS);
+  });
+
+  it("a read that never settles is { ok: false } after the bound: the pipeline board is never held by its chips", async () => {
+    const auth = { role: "gm", locations: [A], user: { id: "u", active: true }, level: 7, session: {} } as unknown as AuthContext;
+    const hang = { from: () => { const q: Record<string, unknown> = {}; for (const m of ["select", "in", "eq", "is", "order", "range"]) q[m] = () => q; q.then = () => undefined; return q; } };
+    const started = Date.now();
+    await expect(loadPipelineDeliveryStates(auth, ALL, { client: hang as never, deadlineMs: 30 })).resolves.toEqual({ ok: false });
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   it("a failed read is { ok: false }; not installed is off; the queries name the same money-free columns", async () => {
