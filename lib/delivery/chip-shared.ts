@@ -1,30 +1,42 @@
 /**
- * Catering delivery D3 — the pipeline card's chip and the lead's Delivery panel always agree (review round 5).
+ * Catering delivery D3 — the pipeline card's chip and the lead's Delivery panel always agree (review rounds 5 and 6).
  * Zero I/O. Client-safe.
  *
  * The chip reads a map the SERVER built once for the board (`loadPipelineDeliveryStates`). The panel in the same card
  * records a courier, a status, a kept pickup — and then reloads its own GET, which carries the lead's state derived by
  * the ONE rule (`deliveryStateOf`, on the server). Without an update path the card kept saying "To book" beside a panel
- * that said "Booked". So the panel PUBLISHES what its GET answered, and the chip shows a published state over the server's.
+ * that said "Booked". So the panel PUBLISHES the OUTCOME of every completed load of its GET, and the chip shows what was
+ * published over the server's map.
  *
- *  - NOTHING IS DERIVED HERE. `publishedRowOf` only reshapes the GET's `{ state, status }` into the chip's row through
- *    `rowStateFor` — the same reshaping the server's own row uses (`deliveryRowStateOf`), so both paths give one row.
- *  - STATUS ONLY. The published row is exactly `{ state, at, status }`: no money, courier, reference or note crosses,
+ * EVERY COMPLETED LOAD HAS AN OUTCOME, AND EACH ONE OVERRIDES THE SERVER MAP FOR THAT LEAD (round 6):
+ *   - a lead view            → its state (the server's; reshaped by `rowStateFor`, the function the server's own row uses);
+ *   - a FAILED load          → `unknown`: the chip reads "Couldn't load delivery". A failed read is never read as a state:
+ *                              after a courier was recorded and the reload failed, the card must not go on saying
+ *                              "To book" (someone would book twice);
+ *   - an authoritative "nothing to show here" (off, not installed, no access / nothing to see, the pickup shop's
+ *     history-only view)     → SUPPRESSED: the chip renders nothing. Off renders nothing.
+ * Unknown and suppressed are ENTRIES in the published store (a suppression is a `null` tombstone), never a deleted entry:
+ * a deleted entry would let the stale server value show through again.
+ *
+ *  - NOTHING IS DERIVED HERE. `publishedOutcomeOf` only reshapes what the load answered.
+ *  - STATUS ONLY. A published row is exactly `{ state, at, status }`: no money, courier, reference or note crosses,
  *    whatever the GET carried for a manager.
- *  - A response that says nothing about the lead's state (off, not installed, the pickup shop's history view, nothing
- *    to see, a failed load) publishes NOTHING: the chip stays as it was.
- *  - A FRESH SERVER MAP SUPERSEDES what was published before it (`adoptServer`): after a real reload or a
- *    `router.refresh()` the server's answer is newer than any earlier panel read.
+ *  - ONLY LOAD OUTCOMES PUBLISH. A write that failed and was followed by no load publishes nothing (nothing is known to
+ *    have changed); an aborted load (the panel closed) publishes nothing either.
+ *  - A FRESH SERVER MAP SUPERSEDES everything published before it (`adoptServer`), tombstones included: after a real
+ *    reload or a `router.refresh()` the server's answer is newer than any earlier panel read.
  */
-import { rowStateFor, type DeliveryRowState } from "./day-shared";
+import { DELIVERY_UNKNOWN, rowStateFor, type DeliveryRowState } from "./day-shared";
 import type { DeliveryState, DeliveryStatus } from "./types-shared";
 
 export type ChipStates = Readonly<Record<string, DeliveryRowState>>;
+/** What one load published for a lead: a row (a state, or `unknown`), or `null` = suppressed (render nothing). */
+export type PublishedChip = DeliveryRowState | null;
 export interface ChipStore {
   /** The map the server rendered the board with; null = no chip anywhere (off, or the states read failed). */
   readonly server: ChipStates | null;
-  /** What a panel's own GET answered since that map arrived, by lead id. */
-  readonly published: ChipStates;
+  /** The outcome of a panel's own load since that map arrived, by lead id. A `null` value is a tombstone, not "absent". */
+  readonly published: Readonly<Record<string, PublishedChip>>;
 }
 export const chipStore = (server: ChipStates | null): ChipStore => ({ server, published: {} });
 
@@ -33,17 +45,20 @@ export function adoptServer(store: ChipStore, server: ChipStates | null): ChipSt
   return server === store.server ? store : chipStore(server);
 }
 
-const sameRow = (a: DeliveryRowState | undefined, b: DeliveryRowState): boolean => !!a && a.state === b.state && a.at === b.at && a.status === b.status;
+const has = (store: ChipStore, leadId: string): boolean => Object.prototype.hasOwnProperty.call(store.published, leadId);
+const sameOutcome = (a: PublishedChip, b: PublishedChip): boolean =>
+  a === b || (a !== null && b !== null && a.state === b.state && a.at === b.at && a.status === b.status);
 
-/** One lead's published state. The same store when nothing changed (no re-render for a reload that found the same). */
-export function publishState(store: ChipStore, leadId: string, row: DeliveryRowState): ChipStore {
-  if (sameRow(store.published[leadId], row)) return store;
-  return { server: store.server, published: { ...store.published, [leadId]: row } };
+/** One lead's published outcome. The same store when nothing changed (no re-render for a reload that found the same). */
+export function publishState(store: ChipStore, leadId: string, outcome: PublishedChip): ChipStore {
+  if (has(store, leadId) && sameOutcome(store.published[leadId]!, outcome)) return store;
+  return { server: store.server, published: { ...store.published, [leadId]: outcome } };
 }
 
-/** What the chip of this lead shows: the published state when there is one, else the server's. */
+/** What the chip of this lead shows: the published outcome when there is one (a tombstone = nothing), else the server's. */
 export function chipStateOf(store: ChipStore, leadId: string): DeliveryRowState | undefined {
-  return store.published[leadId] ?? store.server?.[leadId];
+  if (has(store, leadId)) return store.published[leadId] ?? undefined;
+  return store.server?.[leadId];
 }
 
 /** The part of the panel's GET this reads. Deliberately narrow: nothing else of the response is touched. */
@@ -51,13 +66,17 @@ export type PanelViewForChip =
   | { view: "lead"; state: DeliveryState; status: { status: DeliveryStatus; statusAt: string; pickupAt: string | null } | null }
   | { view: "off" | "not_installed" | "history" }
   | null | undefined;
+/** One COMPLETED load of the panel's GET: what it answered, or that it failed (network, 5xx, still busy after its retry). */
+export type PanelLoadOutcome = { loaded: PanelViewForChip } | { failed: true };
 
 /**
- * The chip's row from the panel's GET, or undefined = "this answer says nothing about the lead's state: publish nothing".
- * The state is the SERVER's (`deliveryStateOf`); only the three status-only fields are kept.
+ * What a completed load publishes for the lead — always something:
+ * a lead view → its row (the SERVER's state, status-only); a failed load → `unknown`; anything else → `null` (suppress).
  */
-export function publishedRowOf(view: PanelViewForChip): DeliveryRowState | undefined {
-  if (!view || view.view !== "lead") return undefined;
+export function publishedOutcomeOf(outcome: PanelLoadOutcome): PublishedChip {
+  if ("failed" in outcome) return DELIVERY_UNKNOWN;
+  const view = outcome.loaded;
+  if (!view || view.view !== "lead") return null;
   const row = rowStateFor(view.state, view.status ? { status: view.status.status, at: view.status.statusAt, pickupAt: view.status.pickupAt } : null);
   return { state: row.state, at: row.at, status: row.status };
 }

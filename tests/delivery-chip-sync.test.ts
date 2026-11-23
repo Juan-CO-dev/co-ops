@@ -6,14 +6,16 @@
  *  - Nothing is derived on the client: the published row is the server's state reshaped by the SAME function the
  *    server's own row uses (`rowStateFor`), so the two paths give one row for one situation.
  *  - Status only: `{ state, at, status }`, whatever a manager's GET carried.
- *  - An answer that says nothing about the state publishes nothing. A new server map supersedes what came before it.
+ *  - Round 6: EVERY completed load has an outcome that overrides the server map for that lead: a state; `unknown` when
+ *    the load failed (a failed read is never read as a state); a tombstone (nothing rendered) for off / not installed /
+ *    nothing to see. A new server map supersedes everything published before it, tombstones included.
  */
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DeliveryStateChip, DeliveryStatesProvider } from "@/components/catering/pipeline/DeliveryStateChip";
-import { adoptServer, chipStateOf, chipStore, publishedRowOf, publishState, type PanelViewForChip } from "@/lib/delivery/chip-shared";
-import { deliveryRowStateOf, rowStateFor, type DeliveryDayLead, type DeliveryRowState } from "@/lib/delivery/day-shared";
+import { adoptServer, chipStateOf, chipStore, publishedOutcomeOf, publishState, type PanelViewForChip } from "@/lib/delivery/chip-shared";
+import { DELIVERY_UNKNOWN, deliveryRowStateOf, rowStateFor, type DeliveryDayLead, type DeliveryRowState } from "@/lib/delivery/day-shared";
 import { deliveryStateOf } from "@/lib/delivery/status-shared";
 import { DELIVERY_STATES, DELIVERY_STATUSES, type DeliveryStatus } from "@/lib/delivery/types-shared";
 import { TranslationProvider } from "@/lib/i18n/provider";
@@ -62,16 +64,70 @@ describe("the store: published over server; a new server map supersedes", () => 
   });
 });
 
+describe("round 6: unknown and suppressed OVERRIDE the server map (tombstones, never deleted entries)", () => {
+  const SERVER = { "lead-1": row("to_book"), "lead-2": row("booked", { status: "accepted" }) };
+
+  it("a courier was recorded and the reload FAILED: the chip reads unknown, not the server's stale 'to book'", () => {
+    const s = publishState(chipStore(SERVER), "lead-1", publishedOutcomeOf({ failed: true }));
+    expect(chipStateOf(s, "lead-1")).toEqual(DELIVERY_UNKNOWN);
+    expect(chipStateOf(s, "lead-2")).toEqual(SERVER["lead-2"]);
+  });
+
+  it("the shop was turned off and the GET answers off: the chip shows NOTHING — the stale server value does not show through", () => {
+    for (const view of [{ view: "off" }, { view: "not_installed" }, { view: "history" }, null] as PanelViewForChip[]) {
+      const s = publishState(chipStore(SERVER), "lead-2", publishedOutcomeOf({ loaded: view }));
+      expect(chipStateOf(s, "lead-2")).toBeUndefined();
+      // It is an ENTRY (a tombstone), not an absence.
+      expect(Object.prototype.hasOwnProperty.call(s.published, "lead-2")).toBe(true);
+      expect(s.published["lead-2"]).toBeNull();
+    }
+  });
+
+  it("a later successful load replaces a tombstone or an unknown with the real state", () => {
+    let s = publishState(chipStore(SERVER), "lead-1", null);
+    s = publishState(s, "lead-1", row("booked", { status: "accepted" }));
+    expect(chipStateOf(s, "lead-1")!.state).toBe("booked");
+    s = publishState(s, "lead-1", DELIVERY_UNKNOWN);
+    expect(chipStateOf(s, "lead-1")!.state).toBe("unknown");
+    s = publishState(s, "lead-1", row("delivered", { status: "delivered" }));
+    expect(chipStateOf(s, "lead-1")!.state).toBe("delivered");
+  });
+
+  it("publishing the same tombstone or the same unknown again returns the SAME store; a first tombstone on a lead the server never listed is still an entry", () => {
+    const tomb = publishState(chipStore(SERVER), "lead-1", null);
+    expect(publishState(tomb, "lead-1", null)).toBe(tomb);
+    const unknown = publishState(chipStore(SERVER), "lead-1", DELIVERY_UNKNOWN);
+    expect(publishState(unknown, "lead-1", { ...DELIVERY_UNKNOWN })).toBe(unknown);
+    expect(publishState(tomb, "lead-1", DELIVERY_UNKNOWN)).not.toBe(tomb);
+    const fresh = publishState(chipStore(SERVER), "never-listed", null);
+    expect(fresh).not.toBe(chipStore(SERVER));
+    expect(chipStateOf(fresh, "never-listed")).toBeUndefined();
+  });
+
+  it("a fresh server map supersedes a tombstone and an unknown", () => {
+    let s = publishState(chipStore(SERVER), "lead-1", null);
+    s = publishState(s, "lead-2", DELIVERY_UNKNOWN);
+    const next = adoptServer(s, { "lead-1": row("booked", { status: "accepted" }), "lead-2": row("delivered", { status: "delivered" }) });
+    expect(chipStateOf(next, "lead-1")!.state).toBe("booked");
+    expect(chipStateOf(next, "lead-2")!.state).toBe("delivered");
+    expect(next.published).toEqual({});
+  });
+});
+
 describe("what the panel publishes from its GET", () => {
-  it("an answer that says nothing about the lead's state publishes nothing", () => {
-    for (const view of [null, undefined, { view: "off" }, { view: "not_installed" }, { view: "history" }] as PanelViewForChip[]) expect(publishedRowOf(view)).toBeUndefined();
+  it("round 6: an authoritative 'nothing to show here' (off, not installed, no access / nothing to see, history-only) is SUPPRESSED, not skipped", () => {
+    for (const view of [null, undefined, { view: "off" }, { view: "not_installed" }, { view: "history" }] as PanelViewForChip[]) expect(publishedOutcomeOf({ loaded: view })).toBeNull();
+  });
+
+  it("round 6: a FAILED load publishes `unknown` — never nothing, never a state", () => {
+    expect(publishedOutcomeOf({ failed: true })).toEqual(DELIVERY_UNKNOWN);
   });
 
   it("STATUS ONLY: a manager's full view (jobs, events, reference, costs, the courier) publishes exactly { state, at, status }", () => {
     const view = viewOf({ state: "booked", write: true, money: true, jobs: [jobOf({ externalRef: "SENTINEL-REF", providerLabel: "Sentinel Courier" })],
       costs: [{ id: "c", jobId: "j", component: "base", semantics: "snapshot", amountCents: 987654321, moneyIdentity: "m", source: "manual", providerRef: null, observedAt: "x", correctsId: null,
         actorId: null, note: "sentinel note" }] });
-    const published = publishedRowOf(view)!;
+    const published = publishedOutcomeOf({ loaded: view })!;
     expect(Object.keys(published).sort()).toEqual(["at", "state", "status"]);
     expect(published).toEqual({ state: "booked", at: "2026-11-25T15:40:00.000Z", status: "accepted" });
     for (const s of ["SENTINEL-REF", "Sentinel Courier", "987654321", "sentinel note"]) expect(JSON.stringify(published)).not.toContain(s);
@@ -80,9 +136,9 @@ describe("what the panel publishes from its GET", () => {
   it("a state about no job carries no instant and no status, even though the GET's `status` names the latest job", () => {
     // After a cancellation the GET says to_book and still describes the cancelled job.
     const cancelled = jobOf({ status: "cancelled", closedAt: "2026-11-22T16:00:00.000Z" });
-    expect(publishedRowOf(viewOf({ state: "to_book", jobs: [cancelled] }))).toEqual({ state: "to_book", at: null, status: null });
-    expect(publishedRowOf(viewOf({ state: "none", jobs: [cancelled] }))).toEqual({ state: "none", at: null, status: null });
-    expect(publishedRowOf(viewOf({ state: "provider_managed", jobs: [] }))).toEqual({ state: "provider_managed", at: null, status: null });
+    expect(publishedOutcomeOf({ loaded: viewOf({ state: "to_book", jobs: [cancelled] }) })).toEqual({ state: "to_book", at: null, status: null });
+    expect(publishedOutcomeOf({ loaded: viewOf({ state: "none", jobs: [cancelled] }) })).toEqual({ state: "none", at: null, status: null });
+    expect(publishedOutcomeOf({ loaded: viewOf({ state: "provider_managed", jobs: [] }) })).toEqual({ state: "provider_managed", at: null, status: null });
   });
 
   it("ONE row for one situation: the published row equals the server's own row, for every state the rule can produce", () => {
@@ -103,7 +159,7 @@ describe("what the panel publishes from its GET", () => {
       const derived = deliveryStateOf({ ...l, soon });
       const about = l.jobs.find((x) => x.attemptNo === derived.attemptNo) ?? l.jobs.reduce<(typeof l.jobs)[number] | null>((b, x) => (!b || x.attemptNo > b.attemptNo ? x : b), null);
       const get: PanelViewForChip = { view: "lead", state: derived.state, status: about ? { status: about.status, statusAt: about.at, pickupAt: about.pickupAt } : null };
-      expect(publishedRowOf(get), JSON.stringify(l)).toEqual(server);
+      expect(publishedOutcomeOf({ loaded: get }), JSON.stringify(l)).toEqual(server);
       seen.add(server.state);
     }
     expect([...seen].sort()).toEqual([...DELIVERY_STATES].sort());
@@ -130,10 +186,12 @@ describe("render: a published state wins over the server map; a fresh server map
 
 describe("the wiring", () => {
   const src = (p: string) => readFileSync(p, "utf8");
-  it("the panel publishes on EVERY successful load of its GET (mount, and after each write's reload) and never on a failed one", () => {
+  it("the panel publishes the outcome of EVERY completed load of its GET — the answer, or the failure — and nothing for an aborted one", () => {
     const panel = src("components/catering/pipeline/DeliveryPanel.tsx");
-    expect(panel).toContain(".then((view) => { setState({ leadId, view, failed: false }); publishToChip(leadId, view); })");
-    expect(panel.match(/publishToChip\(/g)).toHaveLength(1);
+    expect(panel).toContain(".then((view) => { setState({ leadId, view, failed: false }); publishToChip(leadId, { loaded: view }); })");
+    expect(panel).toContain(".catch(() => { if (!signal?.aborted) { setState({ leadId, view: null, failed: true }); publishToChip(leadId, { failed: true }); } })");
+    // ONLY the load publishes: the write runner calls it nowhere (a failed write with no load after it publishes nothing).
+    expect(panel.match(/publishToChip\(/g)).toHaveLength(2);
     // Every write reloads (the `finally` of the one write runner), so every write republishes.
     expect(panel).toMatch(/finally \{\s*await load\(\);/);
   });

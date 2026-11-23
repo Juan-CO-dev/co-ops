@@ -96,12 +96,14 @@ export function DeliveryPanel({ leadId, stage, eventDate, locations, startOpen =
   const [message, setMessage] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
 
-  // D3 (review round 5): every answer of this GET is published to the card's chip, so the card and the panel agree after
-  // a write and whenever a reload finds a different state. A failed load publishes nothing.
+  // D3 (review rounds 5, 6): the OUTCOME of every completed load of this GET is published to the card's chip, so the card
+  // and the panel agree: the lead's state; a FAILED load reads "Couldn't load delivery" (never the old state: after a
+  // courier was recorded the card must not go on saying "to book"); off / not installed / nothing to see shows no chip.
+  // An aborted load (the panel closed) is not an outcome.
   const publishToChip = usePublishDeliveryState();
   const load = useCallback((signal?: AbortSignal) => fetchDeliveryView(leadId, signal)
-    .then((view) => { setState({ leadId, view, failed: false }); publishToChip(leadId, view); })
-    .catch(() => { if (!signal?.aborted) setState({ leadId, view: null, failed: true }); }), [leadId, publishToChip]);
+    .then((view) => { setState({ leadId, view, failed: false }); publishToChip(leadId, { loaded: view }); })
+    .catch(() => { if (!signal?.aborted) { setState({ leadId, view: null, failed: true }); publishToChip(leadId, { failed: true }); } }), [leadId, publishToChip]);
 
   useEffect(() => {
     const controller = new AbortController();
