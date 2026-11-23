@@ -9,7 +9,9 @@
  *   - The social media manager and the GM: the strip's loaders are never called, and no strip value is in the tree or the
  *     markup. The SMM calls none of the blocks' loaders and sees none of the four (group 13).
  *   - Controls: the MoO's tree has the strip values; the GM's has 13 / 17 / 19 and no strip value.
- *   - Group 12: a CGS whose session smuggles a key-holder "works as" row gets the strip, at both shops.
+ *   - Group 12: a CGS whose session smuggles a key-holder "works as" row gets the strip, at either selected shop.
+ *   - Juan 2026-11-22: the strip is the SELECTED shop's row only. With two shops, no row and no strip read for the other
+ *     one, whether the shop comes from `?loc=`, the remembered `co_shop` cookie, or the first allowed.
  *   - Group 11 page half (Q5): the catering manager's night-before line is drawn once, in the block, not in the phase line;
  *     a key holder's phase line still draws it.
  *   - No "use client" in the five new component files.
@@ -25,10 +27,11 @@ const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const st = vi.hoisted(() => ({
   role: "moo", level: 8, locations: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"] as string[], worksAs: undefined as Record<string, string> | undefined,
   spies: {} as Record<string, ReturnType<typeof vi.fn>>,
+  cookieShop: undefined as string | undefined,
 }));
 const { spy } = vi.hoisted(() => ({ spy: (name: string) => (...args: unknown[]) => (st.spies[name] as (...a: unknown[]) => unknown)(...args) }));
 vi.mock("next/server", () => ({ after: vi.fn() }));
-vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: (name: string) => (name === "co_shop" && st.cookieShop ? { name, value: st.cookieShop } : undefined) }) }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: async () => ({
   user: { id: "u-viewer", name: "Vi Ewer", language: "en", active: true, role: st.role }, session: { id: "s" }, level: st.level, role: st.role, locations: st.locations,
@@ -133,12 +136,26 @@ function treeJson(tree: unknown): string {
   };
   return JSON.stringify(walk(tree));
 }
+const stripShops = (html: string) => [...html.matchAll(/data-strip-shop="([^"]+)"/g)].map((m) => m[1]);
+/** The numbers strip's own markup (the header's shop switcher names every shop, on purpose). */
+const stripMarkup = (html: string) => html.match(/<section[^>]*data-numbers-strip[\s\S]*?<\/section>/)?.[0] ?? "";
+/** The shop each strip reader was asked for, one entry per call (the readers' own argument shapes, lib/dashboard-blocks.ts). */
+function stripReadShops(): Record<string, string[]> {
+  const calls = (n: string) => st.spies[n]!.mock.calls as unknown[][];
+  return {
+    sales: calls("sales").map((c) => (c[1] as { locationId: string }).locationId),
+    labor: calls("labor").map((c) => (c[1] as { locationId: string }).locationId),
+    booked: calls("booked").map((c) => (c[1] as { locationId: string }).locationId),
+    ezcater: calls("ezcater").map((c) => c[1] as string),
+  };
+}
 const as = (role: string, level: number, locations: string[]) => { st.role = role; st.level = level; st.locations = locations; };
 
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-18T18:45:00.000Z"));
   for (const [k, v] of Object.entries(ON)) vi.stubEnv(k, v);
   st.worksAs = undefined;
+  st.cookieShop = undefined;
   await installSpies();
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
@@ -200,12 +217,12 @@ describe("T-R4 / 7.3: never for a GM or the social media manager", () => {
 });
 
 describe("T-R1 page half / group 12: the real role, never works-as", () => {
-  it("a CGS with a smuggled key-holder works-as row gets the strip at both shops, at either selected shop", async () => {
+  it("a CGS with a smuggled key-holder works-as row gets the strip at either selected shop, for that shop", async () => {
     as("cgs", 10, []);
     st.worksAs = { [A]: "key_holder" };
-    for (const loc of [A, B]) {
+    for (const [loc, code] of [[A, "A"], [B, "B"]] as const) {
       const html = await render(await pageTree(loc));
-      expect([...html.matchAll(/data-strip-shop="([^"]+)"/g)].map((m) => m[1])).toEqual(["A", "B"]);
+      expect(stripShops(html)).toEqual([code]);
       expect(html).toContain("data-needs-you-line");
     }
   });
@@ -242,6 +259,55 @@ describe("group 2 / Q9 / Q5 at the page: the catering manager", () => {
     const html = await render(await pageTree());
     expect(html).not.toContain("data-catering-block");
     expect(html.match(/<section[^>]*data-phase=[\s\S]*?<\/section>/)?.[0] ?? "").toMatch(/Tomorrow is a heavy catering day/);
+  });
+});
+
+describe("Juan 2026-11-22: the strip is the selected shop's row only", () => {
+  const ONLY = (shop: string) => ({ sales: [shop], labor: [shop], booked: [shop], ezcater: [shop] });
+  it.each([["cgs", 10], ["owner", 9], ["moo", 8]] as const)("%s with two shops, B selected: only B's row, every strip read once and for B, none for A", async (role, level) => {
+    as(role, level, role === "moo" ? [A, B] : []);
+    const html = await render(await pageTree(B));
+    expect(stripShops(html)).toEqual(["B"]);
+    const strip = stripMarkup(html);
+    expect(strip).toContain("B · Shop B");
+    expect(strip).not.toContain("Shop A");
+    for (const v of STRIP_MARKUP) expect(html).toContain(v);
+    // The labor cell streams: its resolved content is written after the section, once, for the one row.
+    expect(html.match(/data-strip-cell="labor"/g)).toHaveLength(1);
+    expect(html.match(/data-strip-cell="(sales|catering)"/g)).toHaveLength(2);
+    expect(stripReadShops()).toEqual(ONLY(B));
+    // The switcher still offers both shops: the other one is one tap away.
+    expect(html).toContain(`href="/dashboard?loc=${A}"`);
+  });
+  it("A selected: only A's row and reads (the first shop by name is not special)", async () => {
+    as("cgs", 10, []);
+    expect(stripShops(await render(await pageTree(A)))).toEqual(["A"]);
+    expect(stripReadShops()).toEqual(ONLY(A));
+  });
+  it("no ?loc: the remembered shop's row only; with no remembered shop, the first allowed", async () => {
+    as("cgs", 10, []);
+    st.cookieShop = B;
+    expect(stripShops(await render(await DashboardPage({ searchParams: Promise.resolve({}) })))).toEqual(["B"]);
+    expect(stripReadShops()).toEqual(ONLY(B));
+    await installSpies();
+    st.cookieShop = undefined;
+    expect(stripShops(await render(await DashboardPage({ searchParams: Promise.resolve({}) })))).toEqual(["A"]);
+    expect(stripReadShops()).toEqual(ONLY(A));
+  });
+  it("?loc wins over the remembered shop; a ?loc the person cannot open falls back, never widening to every shop", async () => {
+    as("cgs", 10, []);
+    st.cookieShop = B;
+    expect(stripShops(await render(await pageTree(A)))).toEqual(["A"]);
+    expect(stripReadShops()).toEqual(ONLY(A));
+    await installSpies();
+    expect(stripShops(await render(await pageTree("cccccccc-cccc-4ccc-8ccc-cccccccccccc")))).toEqual(["B"]);
+    expect(stripReadShops()).toEqual(ONLY(B));
+  });
+  it("no shop to open: no strip and no strip read", async () => {
+    as("moo", 8, []);
+    const html = await render(await pageTree());
+    expect(html).not.toContain("data-numbers-strip");
+    for (const n of STRIP_LOADERS) expect(st.spies[n], n).not.toHaveBeenCalled();
   });
 });
 

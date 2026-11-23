@@ -17,7 +17,7 @@
  * shop-fact read (the loader's SMM branch); the bar gives it no bell either. Decided by the REAL role, never "works as".
  *
  * Nav PR 8, the role blocks (spec 3.6), each by the REAL role and each read through the page's `settle` (the SAME
- * deadline, one cell per read): the numbers strip for MoO / Owner / CGS, "Needs you" for GM and up, the catering block
+ * deadline, one cell per read): the numbers strip for MoO / Owner / CGS (the SELECTED shop's row only), "Needs you" for GM and up, the catering block
  * from the engine's `placement: "block"` item, and the "My shift | Shop pulse" toggle. The social media manager starts
  * none of their reads and sees none of them.
  */
@@ -181,7 +181,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     ? richBodies(boardSettled, { userId: auth.user.id, receiving: (signal) => loadRecentDeliveries(auth, shop.id, 20, { signal }), counts: (signal) => loadCountsTileState(auth, shop.id, { signal }) }, widget)
     : null;
   // Nav PR 8: started before anything is awaited, each only for its real role (never a level), never for the SMM.
-  const stripP = !smm && shop && numbersStripFor(auth.role) ? loadStrip(sb, auth, locations, planDate, switches, settle) : null;
+  // The strip is the SELECTED shop's row only (Juan 2026-11-22): never a row, or a read, for another shop the person can open.
+  const stripP = !smm && selectedLocation && numbersStripFor(auth.role) ? loadStrip(sb, auth, [selectedLocation], planDate, switches, settle) : null;
   const needsP = !smm && shop && needsYouFor(auth.role) ? loadNeedsYou(auth, shop.id, settle) : null;
   const blockP = !smm && shop && auth.role === "catering_mgr" && viewer.surfaces.has("catering")
     ? loadCateringBlockExtras(sb, auth, shop.id, planDate, settle) : null;
