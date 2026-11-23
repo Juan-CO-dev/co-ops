@@ -1,6 +1,6 @@
 /**
- * Catering delivery (D1) — THE service-role reader / writer lib over migration 0356. Server-only. No route imports it
- * yet (the routes are D2). Read with AGENTS.md "Catering delivery".
+ * Catering delivery (D1) — THE service-role reader / writer lib over migration 0356. Server-only. The D2 routes
+ * (`app/api/catering/pipeline/[id]/delivery/**`) call these entry points and nothing else. Read with AGENTS.md "Catering delivery".
  *
  * EVERY ENTRY POINT, IN THIS ORDER:
  *   1. the switch (`DELIVERY_TRACKING`): off = a loader answers "off" with NO query; a write throws 503 `delivery_off`;
@@ -268,6 +268,69 @@ export async function loadLeadDelivery(actor: AuthContext, leadId: string, deps:
   }
 }
 
+// ── The pickup shop's entry point after an order moved away (D2) ─────────────
+/** How far back the list looks (by the job's `created_at`). A moved order's delivery is settled within days. */
+export const MOVED_DELIVERY_WINDOW_DAYS = 90;
+/**
+ * One row of "Deliveries booked here for orders that moved". The job only: no customer field, no lead state, no cost,
+ * no reference, no note. The detail is the history-only read (`loadLeadDelivery`, `view: "history"`).
+ */
+export interface MovedDeliveryRow {
+  leadId: string; jobId: string; attemptNo: number; status: DeliveryStatus; statusAt: string; providerLabel: string;
+  pickupAt: string | null; dropoffAt: string | null; pickupShopId: string; pickupShopName: string | null;
+  movedToShopId: string | null; movedToShopName: string | null;
+}
+/**
+ * The jobs recorded FOR a shop this AGM / GM belongs to whose order now sits at a shop they do NOT read (so the lead is
+ * gone from their pipeline). Exactly the set the history gate opens: `deliveryJobHistoryReadAllowed` for the job and no
+ * lead-scoped status read. Anyone else, the switch off, or 0356 missing = [] (the first two with no query). Newest first.
+ * `now` is the caller's clock.
+ */
+export async function loadMovedDeliveries(actor: AuthContext, deps: { client?: Sb; now?: Date } = {}): Promise<MovedDeliveryRow[]> {
+  if (!deliveryTrackingOn()) return [];
+  const who = deliveryActorOf(actor);
+  const shops = [...new Set(who.locations)].sort().filter((shop) => deliveryJobHistoryReadAllowed(who, shop));
+  if (shops.length === 0) return [];
+  const sb = deps.client ?? getServiceRoleClient();
+  const since = new Date((deps.now ?? new Date()).getTime() - MOVED_DELIVERY_WINDOW_DAYS * 86_400_000).toISOString();
+  try {
+    const jobs: DeliveryJob[] = [];
+    for (const ids of chunks(shops)) {
+      jobs.push(...(await pages<JobRow>((from, to) => sb.from("delivery_job_current").select(JOB_COLUMNS).in("location_id", ids).gte("created_at", since)
+        .order("created_at").order("id").range(from, to))).map(toJob));
+    }
+    if (jobs.length === 0) return [];
+    const leadShop = new Map<string, string | null>();
+    for (const ids of chunks([...new Set(jobs.map((j) => j.pipelineId))].sort())) {
+      const rows = await pages<{ id: string; location_id: string | null }>((from, to) => sb.from("catering_pipeline").select("id,location_id").in("id", ids).order("id").range(from, to));
+      for (const r of rows) leadShop.set(r.id, r.location_id);
+    }
+    const moved = jobs.filter((j) => {
+      if (!leadShop.has(j.pipelineId)) return false;
+      const current = leadShop.get(j.pipelineId) ?? null;
+      return current !== j.locationId && deliveryJobHistoryReadAllowed(who, j.locationId) && !deliveryStatusReadAllowed(who, current);
+    });
+    if (moved.length === 0) return [];
+    const names = new Map<string, string>();
+    const shopIds = [...new Set(moved.flatMap((j) => [j.locationId, leadShop.get(j.pipelineId) ?? null]).filter((id): id is string => id !== null))].sort();
+    for (const ids of chunks(shopIds)) {
+      const rows = await pages<{ id: string; name: string }>((from, to) => sb.from("locations").select("id,name").in("id", ids).order("id").range(from, to));
+      for (const r of rows) names.set(r.id, r.name);
+    }
+    return moved.reverse().map((j) => {
+      const current = leadShop.get(j.pipelineId) ?? null;
+      return { leadId: j.pipelineId, jobId: j.id, attemptNo: j.attemptNo, status: j.status, statusAt: j.statusAt, providerLabel: j.providerLabel, pickupAt: j.pickupAt,
+        dropoffAt: j.dropoffAt, pickupShopId: j.locationId, pickupShopName: names.get(j.locationId) ?? null, movedToShopId: current,
+        movedToShopName: current ? names.get(current) ?? null : null };
+    });
+  } catch (error) {
+    // Not installed = nothing to list. Any other failure is the caller's to show.
+    if (error instanceof DeliveryError && error.code === "delivery_unavailable") return [];
+    if (error instanceof DeliveryError) throw error;
+    throw new DeliveryError(500, "generic");
+  }
+}
+
 // ── Writes ──────────────────────────────────────────────────────────────────
 /** The switch, then the write gate at the shop the person SAW. Before any I/O. */
 function assertWrite(actor: AuthContext, expectedShopId: string | null): void {
@@ -280,6 +343,18 @@ async function call<T extends Record<string, unknown>>(sb: Sb, fn: string, args:
   // A writer always answers an object; anything else is a failure, never a silent success.
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new DeliveryError(500, "generic");
   return data as T;
+}
+
+/**
+ * A job-level route names its lead in the URL (`/pipeline/[id]/delivery/[jobId]/...`). The job must be THAT lead's:
+ * `pipeline_id` never changes, so one read after the gate is enough. Anything else is `job_not_found` (404), before the
+ * writer. Read from the view like every other job read.
+ */
+async function assertJobOfLead(sb: Sb, jobId: string, leadId: string | null | undefined): Promise<void> {
+  if (leadId === null || leadId === undefined) return;
+  const { data, error } = await sb.from("delivery_job_current").select("id,pipeline_id").eq("id", jobId).maybeSingle<{ id: string; pipeline_id: string }>();
+  if (error) throw deliveryErrorFrom(error);
+  if (!data || data.pipeline_id !== leadId) throw new DeliveryError(404, "job_not_found");
 }
 
 export interface RecordDeliveryJobInput {
@@ -310,6 +385,8 @@ export async function recordManualDeliveryJob(actor: AuthContext, input: RecordD
 
 export interface RecordDeliveryEventInput {
   jobId: string; expectedShopId: string | null;
+  /** The lead the route named; when given, the job must be that lead's (`job_not_found`). */
+  leadId?: string | null;
   /** The status the person saw (a stale one is `status_moved`). */
   expectedStatus: DeliveryStatus;
   status: ManualDeliveryStatus;
@@ -321,6 +398,7 @@ export async function recordDeliveryEvent(actor: AuthContext, input: RecordDeliv
   Promise<{ jobId: string; status: DeliveryStatus; statusSeq: number; closed: boolean; splitId: string | null }> {
   assertWrite(actor, input.expectedShopId);
   const sb = deps.client ?? getServiceRoleClient();
+  await assertJobOfLead(sb, input.jobId, input.leadId);
   const out = await call<{ job_id?: unknown; status?: unknown; status_seq?: unknown; closed?: unknown; split_id?: unknown }>(sb, "record_delivery_event", {
     p_actor_id: actor.user.id, p_job_id: input.jobId, p_expected_shop: input.expectedShopId, p_expected_status: input.expectedStatus,
     p_status: input.status, p_occurred_at: input.occurredAt, p_note: input.note,
@@ -331,6 +409,8 @@ export async function recordDeliveryEvent(actor: AuthContext, input: RecordDeliv
 
 export interface RecordDeliveryCostInput {
   jobId: string; expectedShopId: string | null; component: DeliveryCostComponent;
+  /** The lead the route named; when given, the job must be that lead's (`job_not_found`). */
+  leadId?: string | null;
   /** A credit is <= 0; every other component is >= 0. An explicit 0 is a record ("no charge"). */
   amountCents: number;
   /** Null = a first observation; else the CURRENT head of that figure, and `note` (the reason) is required. */
@@ -340,6 +420,7 @@ export interface RecordDeliveryCostInput {
 export async function recordDeliveryCost(actor: AuthContext, input: RecordDeliveryCostInput, deps: { client?: Sb } = {}): Promise<{ costId: string }> {
   assertWrite(actor, input.expectedShopId);
   const sb = deps.client ?? getServiceRoleClient();
+  await assertJobOfLead(sb, input.jobId, input.leadId);
   const out = await call<{ cost_id?: unknown }>(sb, "record_delivery_cost", {
     p_actor_id: actor.user.id, p_job_id: input.jobId, p_expected_shop: input.expectedShopId, p_component: input.component,
     p_amount_cents: input.amountCents, p_corrects_id: input.correctsId, p_note: input.note,
@@ -348,10 +429,11 @@ export async function recordDeliveryCost(actor: AuthContext, input: RecordDelive
   return { costId: out.cost_id };
 }
 
-export async function keepDeliveryPickup(actor: AuthContext, input: { jobId: string; expectedShopId: string | null; note: string | null }, deps: { client?: Sb } = {}):
+export async function keepDeliveryPickup(actor: AuthContext, input: { jobId: string; expectedShopId: string | null; note: string | null; leadId?: string | null }, deps: { client?: Sb } = {}):
   Promise<{ decisionId: string }> {
   assertWrite(actor, input.expectedShopId);
   const sb = deps.client ?? getServiceRoleClient();
+  await assertJobOfLead(sb, input.jobId, input.leadId);
   const out = await call<{ decision_id?: unknown }>(sb, "keep_delivery_pickup", {
     p_actor_id: actor.user.id, p_job_id: input.jobId, p_expected_shop: input.expectedShopId, p_note: input.note,
   }, "already_kept");

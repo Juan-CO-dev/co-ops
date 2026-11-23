@@ -22,6 +22,8 @@ import { AlertPill } from "@/components/ui/AlertPill";
 import { canTransferCatering } from "@/lib/catering/transfers-shared";
 import { canManageCateringToastSettings } from "@/lib/catering/catering-toast-settings-shared";
 import { CATERING_EDITORS } from "@/lib/nav/legacy";
+import { canManageDeliverySettings } from "@/lib/delivery/access-shared";
+import { deliveryTrackingOn } from "@/lib/delivery/config";
 
 // The editor cards, derived from the destination list (lib/nav/legacy.ts), plus the cross-link to the workspace.
 const EDITORS = CATERING_EDITORS;
@@ -65,6 +67,10 @@ export default async function AdminCateringHubPage() {
         {/* Item 21 PR 5: the Toast cross-check settings, Owner / CGS / MoO by role (the page and its routes re-check). */}
         {canManageCateringToastSettings(auth.user.role) && <Link href="/admin/catering/toast" className="co-card co-card-interactive p-4 font-semibold text-co-text">
           {serverT(lang, "admin.catering.hub.toast")}
+        </Link>}
+        {/* Catering delivery D2: the delivery settings, Owner / CGS / MoO by role; hidden while DELIVERY_TRACKING is off. */}
+        {deliveryTrackingOn() && canManageDeliverySettings(auth.user.role) && <Link href="/admin/catering/delivery" className="co-card co-card-interactive p-4 font-semibold text-co-text">
+          {serverT(lang, "admin.catering.hub.delivery")}
         </Link>}
         {visible.map((e) => (
           <Link key={e.id} href={e.href} className="co-card co-card-interactive flex items-center justify-between gap-2 p-4 text-co-text">

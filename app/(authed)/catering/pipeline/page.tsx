@@ -28,6 +28,8 @@ import { PipelineClient } from "@/components/catering/pipeline/PipelineClient";
 import { BackLink } from "@/components/nav/BackLink";
 import { loadNotInToast, type PipelineToastOrder } from "@/lib/catering/not-in-toast";
 import { resolveShop } from "@/lib/shop-context";
+import { DeliveryMovedList } from "@/components/catering/pipeline/DeliveryMovedList";
+import { loadMovedDeliveries, type MovedDeliveryRow } from "@/lib/delivery/jobs";
 
 export default async function CateringPipelinePage({
   searchParams,
@@ -74,6 +76,10 @@ export default async function CateringPipelinePage({
   let results: PipelineSearchResult[] | null = null;
   let notInToast: PipelineToastOrder[] | null = null;
   try { notInToast = await loadNotInToast(auth); } catch { /* Visible unavailable state below. */ }
+  // Catering delivery D2: deliveries booked at this AGM's / GM's shop for orders that have since moved away (the jobs
+  // only; [] when off, not installed, or for anyone else). A failed read hides the list: it is a passive surface.
+  let movedDeliveries: MovedDeliveryRow[] = [];
+  try { movedDeliveries = await loadMovedDeliveries(auth); } catch { /* Hidden. */ }
 
   if (q.trim()) {
     // SEARCH MODE: skip the board/follow-up loads entirely.
@@ -115,6 +121,7 @@ export default async function CateringPipelinePage({
         results={results}
       />
       </StepUpProvider>
+      <DeliveryMovedList rows={movedDeliveries} />
     </main>
   );
 }
