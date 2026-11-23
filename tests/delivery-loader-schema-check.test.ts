@@ -130,7 +130,7 @@ describe("lib/delivery against the real 0356 schema", () => {
     const quoteSelects = new Set(captured.filter((c) => c.table === "catering_quotes").map((c) => c.select.join()));
     expect([...quoteSelects].sort()).toEqual(["id,root_id,status,is_delivery,created_at,superseded_at", "id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at"]);
     const settingSelects = new Set(captured.filter((c) => c.table === "delivery_settings").map((c) => c.select.join()));
-    expect([...settingSelects].sort()).toEqual(["location_id,enabled", "location_id,enabled,manual_providers,gratuity_driver_bps,updated_at", "location_id,gratuity_driver_bps", "location_id,manual_providers"]);
+    expect([...settingSelects].sort()).toEqual(["location_id,enabled", "location_id,enabled,manual_providers,gratuity_driver_bps", "location_id,enabled,manual_providers,gratuity_driver_bps,updated_at"]);
     expect(captured.some((c) => c.table === "delivery_job_current" && c.filters.includes("location_id") && c.select.includes("external_ref"))).toBe(true);
   });
 

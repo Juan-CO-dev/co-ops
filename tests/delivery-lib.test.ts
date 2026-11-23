@@ -396,10 +396,73 @@ describe("loadLeadDelivery: the view is decided in the lib", () => {
     expect(got.delivery_gratuity_splits).toEqual(expect.arrayContaining(["gratuity_cents", "driver_cents", "crew_cents"]));
     expect(got.catering_quotes).toEqual(expect.arrayContaining(["gratuity_cents", "delivery_fee_cents"]));
     expect(got.delivery_settings).toEqual(["enabled", "gratuity_driver_bps", "location_id", "manual_providers"]);
-    // The status-tier queries of that same load still name no restricted column: the money rides in SEPARATE queries.
-    const quoteQueries = queries.filter((q) => q.table === "catering_quotes").map((q) => q.columns.join());
-    expect(quoteQueries).toEqual(["id,root_id,status,is_delivery,created_at,superseded_at", "id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at"]);
-    expect(queries.filter((q) => q.table === "delivery_settings").map((q) => q.columns.join())).toEqual(["location_id,enabled", "location_id,manual_providers", "location_id,gratuity_driver_bps"]);
+    // ONE query per relation per load, with the column list of the tier decided BEFORE reading (review r2): the job
+    // set, the quote set, the decisions and the settings are each read once, so every part of the answer agrees.
+    for (const table of ["catering_quotes", "delivery_job_current", "delivery_pickup_decisions", "delivery_settings", "delivery_job_events", "delivery_job_costs", "delivery_gratuity_splits"]) {
+      expect([table, queries.filter((q) => q.table === table).length]).toEqual([table, 1]);
+    }
+    expect(queries.find((q) => q.table === "catering_quotes")!.columns.join()).toBe("id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at");
+    expect(queries.find((q) => q.table === "delivery_settings")!.columns.join()).toBe("location_id,enabled,manual_providers,gratuity_driver_bps");
+  });
+
+  describe("a replacement job recorded at the SAME shop during the load (review r2 P2)", () => {
+    const JOB_2 = "00000000-0000-4000-8000-0000000000e9";
+    /** The first read of the lead's jobs sees job 1 only; any LATER read would also see job 2 (recorded meanwhile, no cost yet). */
+    const replacing = () => {
+      let jobReads = 0;
+      const c = client({
+        catering_pipeline: () => ({ data: { id: LEAD, location_id: A, stage: "confirmed", lead_source: "website" } }),
+        ezcater_orders: () => ({ data: [] }),
+        catering_quotes: () => ({ data: [{ id: "q1", root_id: null, status: "accepted", is_delivery: true, gratuity_cents: 0, delivery_fee_cents: 2500, created_at: "2026-11-01T10:00:00Z", superseded_at: null }] }),
+        delivery_job_current: () => { jobReads += 1; return { data: jobReads === 1 ? [jobRow(JOB_A, A, 1, "cancelled", true)] : [jobRow(JOB_A, A, 1, "cancelled", true), jobRow(JOB_2, A, 2, "accepted", false)] }; },
+        delivery_job_events: (q) => ({ data: [eventRow(JOB_A, 1, "accepted"), eventRow(JOB_A, 2, "cancelled"), eventRow(JOB_2, 1, "accepted")].filter((e) => (q.in.job_id ?? []).includes(e.job_id)) }),
+        delivery_job_costs: (q) => ({ data: [{ id: "c1", job_id: JOB_A, component: "base", semantics: "snapshot", amount_cents: 3000, money_identity: `${JOB_A}:base`, source: "manual",
+          provider_ref: null, observed_at: "2026-11-22T10:00:00Z", corrects_id: null, actor_id: "u", note: null }].filter((r) => (q.in.job_id ?? []).includes(r.job_id)) }),
+        delivery_gratuity_splits: () => ({ data: [] }),
+        delivery_pickup_decisions: () => ({ data: [] }),
+      });
+      return { ...c, jobReads: () => jobReads };
+    };
+
+    it("the lead's jobs are read ONCE: status, detail and cost are derived from that one job set, and cost is never 'complete' over fewer jobs than shown", async () => {
+      for (const who of [actor("gm", [A]), actor("agm", [A]), actor("catering_mgr", []), actor("moo", [])]) {
+        const c = replacing();
+        const view = await loadLeadDelivery(who, LEAD, { client: c.sb });
+        if (view?.view !== "lead" || !view.detail || !view.cost) throw new Error("expected the full lead view");
+        expect(c.jobReads()).toBe(1);
+        const shown = view.detail.jobs.map((j) => j.id);
+        expect(shown).toEqual([JOB_A]);
+        // Status speaks of a job in the shown set; the events, the costs and the coverage are of exactly that set.
+        expect(shown.map((id) => view.detail!.jobs.find((j) => j.id === id)!.attemptNo)).toContain(view.status!.attemptNo);
+        expect([...new Set(view.detail.events.map((e) => e.jobId))]).toEqual(shown);
+        expect([...new Set(view.cost.costs.map((r) => r.jobId))].every((id) => shown.includes(id))).toBe(true);
+        expect(view.cost.orderCost).toEqual({ kind: "complete", cents: 3000 });
+        expect(view.state).toBe("to_book");
+        // The job that appeared later is simply not in this response — consistently everywhere.
+        expect(JSON.stringify(view)).not.toContain(JOB_2);
+        expect(c.queries.find((q) => q.table === "delivery_job_events")!.query.in.job_id).toEqual(shown);
+        expect(c.queries.find((q) => q.table === "delivery_job_costs")!.query.in.job_id).toEqual(shown);
+      }
+    });
+
+    it("had the one read seen both jobs, the cost is partial (job 2 has no cost row): unknown is not zero", async () => {
+      const c = replacing();
+      // Burn the first answer: this load's single job read is the "later" one.
+      await (c.sb as unknown as { from: (t: string) => { select: (c: string) => PromiseLike<unknown> } }).from("delivery_job_current").select("id");
+      const view = await loadLeadDelivery(actor("gm", [A]), LEAD, { client: c.sb });
+      if (view?.view !== "lead" || !view.detail || !view.cost) throw new Error("expected the full lead view");
+      expect(view.detail.jobs.map((j) => j.id)).toEqual([JOB_A, JOB_2]);
+      expect(view.cost.orderCost).toEqual({ kind: "partial", knownCents: 3000, unknownJobs: 1 });
+      expect(view.state).toBe("booked");
+    });
+
+    it("a status-only viewer's one job read still names no restricted column", async () => {
+      const c = replacing();
+      await loadLeadDelivery(actor("key_holder", [A]), LEAD, { client: c.sb });
+      const jobs = c.queries.filter((q) => q.table === "delivery_job_current");
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]!.columns.join()).toBe("id,pipeline_id,location_id,booked_via,provider_label,attempt_no,pickup_at,dropoff_at,closed_at,status,status_seq,status_at");
+    });
   });
 
   it("HISTORY TIER, by its queries: the pickup shops' own switch, then the job read names the viewer's own shops; no cost, split or quote query", async () => {

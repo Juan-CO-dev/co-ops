@@ -58,6 +58,10 @@ async function pages<T>(build: (from: number, to: number) => PromiseLike<{ data:
   });
 }
 
+/** A query whose column list is chosen at run time (the viewer's tier): the client cannot derive its row type, so it is stated. */
+type RowsResult<T> = PromiseLike<{ data: T[] | null; error: { code?: string; message: string } | null }>;
+const rowsOf = <T>(query: unknown): RowsResult<T> => query as RowsResult<T>;
+
 // ── Rows ────────────────────────────────────────────────────────────────────
 export const LEAD_COLUMNS = "id,location_id,stage,lead_source";
 export const QUOTE_COLUMNS = "id,status,is_delivery,gratuity_cents,delivery_fee_cents,created_at";
@@ -200,7 +204,8 @@ export function leadDeliveryState(facts: Pick<LeadDeliveryFacts, "stage" | "shop
 
 // ── The gated view ──────────────────────────────────────────────────────────
 //
-// THREE PROJECTIONS, and a query is ISSUED only after its own gate passed (a tier-hidden column is never SELECTed for a
+// THREE PROJECTIONS. The viewer's tier is decided BEFORE reading and picks every query's column list; each relation is
+// read ONCE per load (one job set for the whole answer). A restricted query or column is issued only when its gate passed (a tier-hidden column is never SELECTed for a
 // viewer who may not see it — redacting a fetched row is not the rule):
 //   status  — the lead, ezCater-ness, the quote candidates WITHOUT money, the jobs WITHOUT reference, the pickup
 //             decisions WITHOUT note, the shop's switch. No event, no cost, no split.
@@ -212,8 +217,6 @@ export const STATUS_QUOTE_COLUMNS = "id,root_id,status,is_delivery,created_at,su
 export const STATUS_JOB_COLUMNS = "id,pipeline_id,location_id,booked_via,provider_label,attempt_no,pickup_at,dropoff_at,closed_at,status,status_seq,status_at";
 export const STATUS_DECISION_COLUMNS = "id,job_id,lead_location_id";
 export const STATUS_SETTINGS_COLUMNS = "location_id,enabled";
-export const DETAIL_SETTINGS_COLUMNS = "location_id,manual_providers";
-export const COST_SETTINGS_COLUMNS = "location_id,gratuity_driver_bps";
 export const HISTORY_JOB_COLUMNS = "id,pipeline_id,location_id,provider_label,external_ref,attempt_no,pickup_at,dropoff_at,status,status_seq,status_at";
 /** The moved-order LIST (D2): the job only. No reference (that is the history read's), no author, no quote, no confirm event. */
 export const MOVED_JOB_COLUMNS = "id,pipeline_id,location_id,provider_label,attempt_no,pickup_at,dropoff_at,status,status_at,created_at";
@@ -268,50 +271,70 @@ async function enabledShops(sb: Sb, shops: readonly string[]): Promise<string[]>
   return shops.filter((shop) => on.has(shop));
 }
 
-/** The lead view for a viewer who PASSED the status gate at `lead.location_id`. Detail and cost queries run only behind their gates. */
+/**
+ * The lead view for a viewer who PASSED the status gate at `lead.location_id`.
+ *
+ * THE TIER IS DECIDED BEFORE ANYTHING IS READ, AND EACH RELATION IS READ ONCE (review DELIV1-r2). The viewer's tier
+ * (status, + detail, + cost) picks the column list of every query up front; the lead's jobs are then read ONCE, and the
+ * status, the detail and the cost coverage are all derived from THAT ONE job set — events, costs and pickup decisions
+ * are read for exactly those job ids. Reading the jobs once per tier let a replacement job recorded between two reads
+ * appear in `detail.jobs` while the cost aggregate still covered the older set: "complete: $30" beside a job whose cost
+ * is unknown. Now a job that appears after the one read is simply not in this response, consistently everywhere, and
+ * the cost can never be `complete` over fewer jobs than the response shows. The same holds for the quotes (the order
+ * quote and the cost tier's candidates are one read) and the shop's settings.
+ * The per-tier SELECT rule stands: a status-only viewer's one job query names no restricted column.
+ */
 async function leadView(sb: Sb, who: DeliveryActor, lead: LeadRow, soon: boolean): Promise<Extract<LeadDeliveryView, { view: "lead" }>> {
   const leadId = lead.id, shopId = lead.location_id;
-  // ── status tier ──
+  const detail = deliveryDetailReadAllowed(who, shopId), cost = deliveryCostReadAllowed(who, shopId);
+  // Typed `string`: the client must not try to parse a union of column lists into a row type.
+  const jobColumns: string = detail ? JOB_COLUMNS : STATUS_JOB_COLUMNS;
+  const quoteColumns: string = cost ? QUOTE_COLUMNS : STATUS_QUOTE_COLUMNS;
+  const decisionColumns: string = detail ? DECISION_COLUMNS : STATUS_DECISION_COLUMNS;
+  const settingColumns = [STATUS_SETTINGS_COLUMNS, ...(detail ? ["manual_providers"] : []), ...(cost ? ["gratuity_driver_bps"] : [])].join(",");
+
+  // ONE read each: the jobs (THE job set of this response), the quotes, the settings.
   const [isEzcater, quotes, jobs, setting] = await Promise.all([
     readIsEzcater(sb, lead),
-    pages<StatusQuoteRow>((from, to) => sb.from("catering_quotes").select(STATUS_QUOTE_COLUMNS).eq("pipeline_id", leadId).is("superseded_at", null)
-      .order("created_at").order("id").range(from, to)),
-    pages<StatusJobRow>((from, to) => sb.from("delivery_job_current").select(STATUS_JOB_COLUMNS).eq("pipeline_id", leadId).order("attempt_no").order("id").range(from, to)),
-    shopSetting<{ location_id: string; enabled: boolean }>(sb, STATUS_SETTINGS_COLUMNS, shopId),
+    pages<StatusQuoteRow & Partial<QuoteRow>>((from, to) => rowsOf(sb.from("catering_quotes").select(quoteColumns).eq("pipeline_id", leadId).is("superseded_at", null)
+      .order("created_at").order("id").range(from, to))),
+    pages<StatusJobRow & Partial<JobRow>>((from, to) => rowsOf(sb.from("delivery_job_current").select(jobColumns).eq("pipeline_id", leadId).order("attempt_no").order("id").range(from, to))),
+    shopSetting<{ location_id: string; enabled: boolean; manual_providers?: unknown; gratuity_driver_bps?: number }>(sb, settingColumns, shopId),
   ]);
   const jobIds = jobs.map((j) => j.id);
-  const kept: { jobId: string; leadLocationId: string }[] = [];
+  // Everything below is read for exactly those job ids.
+  const decisions: Array<{ id: string; job_id: string; lead_location_id: string } & Partial<DecisionRow>> = [];
   for (const ids of chunks(jobIds)) {
-    const rows = await pages<{ id: string; job_id: string; lead_location_id: string }>((from, to) => sb.from("delivery_pickup_decisions").select(STATUS_DECISION_COLUMNS)
-      .in("job_id", ids).order("job_id").order("id").range(from, to));
-    kept.push(...rows.map((r) => ({ jobId: r.job_id, leadLocationId: r.lead_location_id })));
+    decisions.push(...await pages<{ id: string; job_id: string; lead_location_id: string } & Partial<DecisionRow>>((from, to) => rowsOf(sb.from("delivery_pickup_decisions").select(decisionColumns)
+      .in("job_id", ids).order("job_id").order("id").range(from, to))));
   }
+  const inSet = new Set(jobIds);
+  const kept = decisions.filter((d) => inSet.has(d.job_id)).map((d) => ({ jobId: d.job_id, leadLocationId: d.lead_location_id }));
+
   const quote = orderQuoteOf(quotes.map((q) => ({ id: q.id, status: q.status, isDelivery: q.is_delivery === true, createdAt: q.created_at })));
   const derived = deliveryStateOf({
     stage: lead.stage, currentShopId: shopId, orderQuote: { kind: quote.kind, isDelivery: quote.isDelivery }, isEzcater, soon,
     jobs: jobs.map((j) => ({ attemptNo: j.attempt_no, status: j.status, open: j.closed_at === null, pickupShopId: j.location_id, keptForCurrentShop: keptForShop(kept, j.id, shopId) })),
   });
-  const about = jobs.find((j) => j.attempt_no === derived.attemptNo) ?? latestJob(jobs.map((j) => ({ ...j, attemptNo: j.attempt_no })));
+  const about = jobs.find((j) => j.attempt_no === derived.attemptNo) ?? jobs.reduce<(typeof jobs)[number] | null>((best, j) => (!best || j.attempt_no > best.attempt_no ? j : best), null);
   const view: Extract<LeadDeliveryView, { view: "lead" }> = {
     view: "lead", leadId, shopId, enabled: setting?.enabled === true, isEzcater, orderQuote: { kind: quote.kind, isDelivery: quote.isDelivery }, state: derived.state,
     status: about ? { attemptNo: about.attempt_no, status: about.status, statusAt: about.status_at, providerLabel: about.provider_label, pickupAt: about.pickup_at, dropoffAt: about.dropoff_at } : null,
   };
-  // ── detail tier ──
-  if (deliveryDetailReadAllowed(who, shopId)) {
-    const [full, couriers] = await Promise.all([readJobs(sb, leadId), shopSetting<{ location_id: string; manual_providers: unknown }>(sb, DETAIL_SETTINGS_COLUMNS, shopId)]);
-    const ids = full.map((j) => j.id);
-    const [events, pickupDecisions] = ids.length === 0 ? [[], []] as [DeliveryJobEvent[], DeliveryPickupDecision[]] : await Promise.all([readEvents(sb, ids), readDecisions(sb, ids)]);
-    view.detail = { jobs: full, events, pickupDecisions,
-      manualProviders: Array.isArray(couriers?.manual_providers) ? couriers.manual_providers.filter((p): p is string => typeof p === "string") : [] };
+  if (detail) {
+    const events = jobIds.length === 0 ? [] : (await readEvents(sb, jobIds)).filter((e) => inSet.has(e.jobId));
+    view.detail = { jobs: jobs.map((j) => toJob(j as JobRow)), events,
+      pickupDecisions: decisions.filter((d) => inSet.has(d.job_id)).map((d) => toDecision(d as DecisionRow)),
+      manualProviders: Array.isArray(setting?.manual_providers) ? setting.manual_providers.filter((p): p is string => typeof p === "string") : [] };
   }
-  // ── cost tier ──
-  if (deliveryCostReadAllowed(who, shopId)) {
-    const [costs, splits, candidates, share] = await Promise.all([
-      jobIds.length === 0 ? Promise.resolve([] as DeliveryCostRow[]) : readCosts(sb, jobIds), readSplits(sb, leadId), readQuoteCandidates(sb, leadId),
-      shopSetting<{ location_id: string; gratuity_driver_bps: number }>(sb, COST_SETTINGS_COLUMNS, shopId),
+  if (cost) {
+    const [costs, splits] = await Promise.all([
+      jobIds.length === 0 ? Promise.resolve([] as DeliveryCostRow[]) : readCosts(sb, jobIds).then((rows) => rows.filter((r) => inSet.has(r.jobId))),
+      readSplits(sb, leadId),
     ]);
-    view.cost = { costs, orderCost: orderCost(jobIds.map((jobId) => ({ jobId, costs }))), splits, splitHead: splitHead(splits), candidates,
-      gratuityDriverBps: share?.gratuity_driver_bps ?? null };
+    // Coverage is over THE job set: a job with no cost row in it makes the order partial, never complete.
+    view.cost = { costs, orderCost: orderCost(jobIds.map((jobId) => ({ jobId, costs }))), splits, splitHead: splitHead(splits),
+      candidates: quotes.map((q) => toCandidate(q as QuoteRow)), gratuityDriverBps: setting?.gratuity_driver_bps ?? null };
   }
   return view;
 }

@@ -1,5 +1,6 @@
 -- Migration 0356_delivery_jobs
 -- AUTHORED 2026-11-22 (PR DELIV-1, CO Claude, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO SIM 2026-11-23 (schema_migrations version 20261123031134, name '0356_delivery_jobs')
 -- NUMBER: 0354 is the highest on main; 0355 is reserved for the all-shops access build (co-ops-wt/.mig-claims), so this
 -- file takes 0356 (claimed there by unit deliv).
 -- Plan: catering delivery integration, plan r6 (Astra-approved), section 4. Juan's decisions 2026-11-22.
@@ -793,11 +794,16 @@ begin
     if exists (select 1 from pg_policies y where y.schemaname = 'public' and y.tablename = t) then raise exception 'ceiling: % has a policy', t; end if;
   end loop;
 
-  -- No user role (and not PUBLIC) may execute any function of this file.
+  -- No user role (and not PUBLIC) may execute any function of this file. An EXPLICIT list of exactly the eighteen
+  -- functions this file creates, never a name pattern: the database already holds unrelated vendor-receipt functions
+  -- under a delivery_ name (delivery_match_verdict, delivery_receipt_auto_link, delivery_receipt_unlink) that this file
+  -- does not own and must not judge.
   select count(*) into n from information_schema.routine_privileges g
     where g.routine_schema = 'public' and g.privilege_type = 'EXECUTE' and g.grantee in ('PUBLIC', 'anon', 'authenticated')
-      and (g.routine_name like 'delivery\_%' or g.routine_name in ('set_delivery_settings', 'record_manual_delivery_job',
-           'record_delivery_event', 'record_delivery_cost', 'keep_delivery_pickup', 'record_delivery_gratuity_split'));
+      and g.routine_name in ('delivery_gratuity_split', 'delivery_status_terminal', 'delivery_manual_move_allowed', 'delivery_order_quote',
+           'delivery_order_rejected', 'delivery_lead_is_ezcater', 'delivery_actor_role', 'delivery_lead_gate', 'delivery_job_gate',
+           'delivery_computed_split', 'delivery_write_split', 'set_delivery_settings', 'record_manual_delivery_job',
+           'record_delivery_event', 'record_delivery_cost', 'keep_delivery_pickup', 'record_delivery_gratuity_split', 'delivery_ready');
   if n <> 0 then raise exception 'ceiling: a user role can execute a delivery function'; end if;
   -- service_role executes exactly the public surface, never an internal helper.
   select count(distinct g.routine_name) into n from information_schema.routine_privileges g
@@ -820,4 +826,6 @@ commit;
 --   select count(*) from public.delivery_settings;                    -- 0 (this file switches no shop on)
 --   select has_table_privilege('service_role', 'public.delivery_jobs', 'insert');   -- false
 --   select has_function_privilege('authenticated', 'public.record_manual_delivery_job(uuid,uuid,uuid,text,text,text,timestamptz,timestamptz,integer,text)', 'execute');  -- false
---   select tablename from pg_policies where tablename like 'delivery\_%';           -- no rows
+--   select tablename from pg_policies where schemaname = 'public' and tablename in ('delivery_settings', 'delivery_jobs', 'delivery_job_events',
+--     'delivery_job_costs', 'delivery_gratuity_splits', 'delivery_pickup_decisions');   -- no rows
+--   (Name 0356's six tables explicitly: the older vendor-receipt table delivery_receipt_unlinks has policies of its own.)

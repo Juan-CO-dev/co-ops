@@ -64,9 +64,21 @@ export const STUB = `
   create table audit_log(id bigserial primary key, actor_id uuid, actor_role text, action text, resource_table text, resource_id uuid,
     metadata jsonb, destructive boolean, created_at timestamptz default now());`;
 
+/** What already exists on the real database under a delivery_ name and is NOT 0356's: the vendor-receipt objects. One of
+ *  the functions is executable by `authenticated` and the table carries a policy: 0356 must not judge either. */
+export const VENDOR_FNS = ['delivery_match_verdict', 'delivery_receipt_auto_link', 'delivery_receipt_unlink'];
+const PRE_EXISTING = `
+  create table delivery_receipt_unlinks(id uuid primary key default gen_random_uuid());
+  alter table delivery_receipt_unlinks enable row level security;
+  create policy delivery_receipt_unlinks_read on delivery_receipt_unlinks for select using (true);
+  create function delivery_match_verdict() returns text language sql as $$ select 'x' $$;
+  create function delivery_receipt_auto_link() returns text language sql as $$ select 'x' $$;
+  create function delivery_receipt_unlink() returns text language sql as $$ select 'x' $$;`;
+
 async function base() {
   const db = new PGlite();
   await db.exec(STUB);
+  await db.exec(PRE_EXISTING);
   await db.exec(`insert into locations(id, name, active) values ('${A}', 'A', true), ('${B}', 'B', true), ('${C}', 'C', true), ('${CLOSED}', 'Closed', false);
     insert into users values ('${OWNER}', 'owner', true), ('${CGS}', 'cgs', true), ('${MOO}', 'moo', true), ('${CM}', 'catering_mgr', true),
       ('${GM_A}', 'gm', true), ('${AGM_A}', 'agm', true), ('${GM_B}', 'gm', true), ('${AGM_B}', 'agm', true), ('${PREP}', 'prep_mgr', true),
@@ -172,15 +184,26 @@ async function main() {
         has_function_privilege('service_role', p.oid, 'execute') s, has_function_privilege('authenticated', p.oid, 'execute') a,
         has_function_privilege('anon', p.oid, 'execute') n
       from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
-      where ns.nspname = 'public' and (p.proname like 'delivery\\_%' or p.proname like '%\\_delivery\\_%') order by 1`)).rows;
-    check(JSON.stringify(fns.map(f => f.proname).sort()) === JSON.stringify([...PUBLIC_FNS, ...INTERNAL_FNS].sort()), `the 18 functions of the file: ${fns.map(f => f.proname)}`);
+      where ns.nspname = 'public' and p.proname = any($1) order by 1`, [[...PUBLIC_FNS, ...INTERNAL_FNS]])).rows;
+    check(fns.length === 18 && JSON.stringify(fns.map(f => f.proname).sort()) === JSON.stringify([...PUBLIC_FNS, ...INTERNAL_FNS].sort()), `the 18 functions of the file: ${fns.map(f => f.proname)}`);
+    // The file applied although unrelated delivery_* objects exist that a user role may execute / that carry a policy:
+    // its assertions name ITS objects explicitly and judge nothing else.
+    const vendor = (await db.query(`select p.proname, has_function_privilege('authenticated', p.oid, 'execute') a from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+      where ns.nspname = 'public' and p.proname = any($1) order by 1`, [VENDOR_FNS])).rows;
+    check(vendor.length === 3 && vendor.every(f => f.a === true), 'pre-existing vendor delivery_* functions executable by authenticated did not make 0356 fail, and are untouched');
+    check((await num(db, `select count(*) n from pg_policies where tablename = 'delivery_receipt_unlinks'`)) === 1
+      && (await one(db, `select has_table_privilege('authenticated', 'public.delivery_receipt_unlinks', 'select') r`)).r === true, 'the pre-existing delivery_receipt_unlinks table keeps its policy and grants');
+    const wide = await num(db, `select count(*) n from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace where ns.nspname = 'public' and p.proname like 'delivery\\_%'`);
+    check(wide === 12 + 3, `a 'delivery_%' pattern is too wide: it matches ${wide} functions, 3 of them not 0356's`);
+    const src = m0356.replace(/--[^\n]*/g, '');
+    check(!/like\s+'delivery/.test(src) && !/like\s+'delivery/.test(m0356), 'the file matches no object by a delivery_% pattern, in code or in a comment');
     check(fns.every(f => !f.a && !f.n), 'no user role executes any delivery function');
     check(fns.filter(f => PUBLIC_FNS.includes(f.proname)).every(f => f.s), 'service_role executes the 12 public functions');
     check(fns.filter(f => INTERNAL_FNS.includes(f.proname)).every(f => !f.s), 'service_role executes no internal helper');
     check(fns.every(f => String(f.cfg).includes('search_path=pg_catalog, public')), 'every function pins search_path');
     check(fns.filter(f => WRITERS.includes(f.proname)).every(f => f.prosecdef), 'every writer is SECURITY DEFINER');
     const pub = await num(db, `select count(*) n from information_schema.routine_privileges g where g.routine_schema = 'public' and g.grantee = 'PUBLIC'
-      and (g.routine_name like 'delivery\\_%' or g.routine_name like '%\\_delivery\\_%')`);
+      and g.routine_name = any($1)`, [[...PUBLIC_FNS, ...INTERNAL_FNS]]);
     check(pub === 0, 'PUBLIC holds EXECUTE on none of them (routine_privileges)');
   }
   {
@@ -735,8 +758,8 @@ async function main() {
       and p.prosrc ~* 'from public\\.catering_pipeline[^;]*for (no key )?update' order by 1`)).rows.map(r => r.proname);
     check(lockers.join() === 'delivery_job_gate,delivery_lead_gate', `only the two gates lock a lead: ${lockers}`);
     const touches = await num(db, `select count(*) n from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace where ns.nspname = 'public'
-      and (p.proname like 'delivery\\_%' or p.proname like '%\\_delivery\\_%')
-      and p.prosrc ~* '(insert into|update|delete from)\\s+public\\.(catering_|ezcater_|users|user_locations|locations)'`);
+      and p.proname = any($1)
+      and p.prosrc ~* '(insert into|update|delete from)\\s+public\\.(catering_|ezcater_|users|user_locations|locations)'`, [[...PUBLIC_FNS, ...INTERNAL_FNS]]);
     check(touches === 0, 'no delivery function writes a catering, ezCater, user or shop table');
   }
 

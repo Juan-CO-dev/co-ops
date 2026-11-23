@@ -34,6 +34,10 @@ describe("0356 header and shape", () => {
     const lines = sql.split("\n");
     expect(lines[0]).toBe("-- Migration 0356_delivery_jobs");
     expect(lines[1]).toMatch(/^-- AUTHORED 2026-11-22 .*NOT YET APPLIED -- GATE CC\/JUAN/);
+    // The gate line is never deleted; the apply is stamped under it.
+    expect(lines[1]).toBe("-- AUTHORED 2026-11-22 (PR DELIV-1, CO Claude, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.");
+    expect(lines[2]).toBe("-- APPLIED TO SIM 2026-11-23 (schema_migrations version 20261123031134, name '0356_delivery_jobs')");
+    expect(sql).not.toMatch(/APPLIED TO PROD/);
     expect(sql).toMatch(/0355 is reserved for the all-shops access build/);
     expect(code.match(/^begin;$/gm)).toHaveLength(1);
     expect(code.match(/^commit;$/gm)).toHaveLength(1);
@@ -74,6 +78,17 @@ describe("0356 header and shape", () => {
     expect(code).not.toMatch(/grant execute[^;]*to (anon|authenticated|public)/i);
     for (const w of WRITERS) expect([w, /security definer set search_path = pg_catalog, public as \$\$/.test(fn(w))]).toEqual([w, true]);
     expect(code).toContain("from information_schema.routine_privileges g");
+    // The assertions name EXACTLY the objects this file creates, never a pattern: the database already holds unrelated
+    // vendor-receipt objects under a delivery_ name (delivery_match_verdict, delivery_receipt_unlinks, ...).
+    expect(sql).not.toMatch(/like\s+'/);
+    const ceiling = code.slice(code.lastIndexOf("do $$"), code.indexOf("commit;"));
+    const quoted = (text: string) => [...text.matchAll(/'(\w+)'/g)].map((m) => m[1]!);
+    const userCheck = ceiling.match(/g\.grantee in \('PUBLIC', 'anon', 'authenticated'\)\s+and g\.routine_name in \(([^)]+)\)/)![1]!;
+    expect(quoted(userCheck).sort()).toEqual([...created].sort());
+    for (const m of ceiling.matchAll(/foreach t in array array\[([^\]]+)\]/g)) for (const t of quoted(m[1]!)) expect([...TABLES, "delivery_job_current"]).toContain(t);
+    expect(ceiling).toContain("where y.schemaname = 'public' and y.tablename = t");
+    const verify = sql.slice(sql.indexOf("-- Verify after apply:"));
+    expect(verify).toMatch(/from pg_policies where schemaname = 'public' and tablename in \('delivery_settings', 'delivery_jobs', 'delivery_job_events',\n--\s+'delivery_job_costs', 'delivery_gratuity_splits', 'delivery_pickup_decisions'\);\s+-- no rows/);
   });
 });
 
@@ -219,6 +234,6 @@ describe("lock order and the shop the person saw (on the text)", () => {
 describe("0356 behaviour (PGlite, the real file)", () => {
   it("scripts/sql-harness-0356.mjs passes", () => {
     const out = execFileSync(process.execPath, ["scripts/sql-harness-0356.mjs"], { encoding: "utf8" });
-    expect(Number(out.match(/sql-harness-0356: (\d+) checks passed/)![1])).toBeGreaterThanOrEqual(295);
+    expect(Number(out.match(/sql-harness-0356: (\d+) checks passed/)![1])).toBeGreaterThanOrEqual(303);
   }, 300_000);
 });
