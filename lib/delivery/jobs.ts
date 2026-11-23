@@ -317,7 +317,9 @@ export async function loadMovedDeliveries(actor: AuthContext, deps: { client?: S
       const rows = await pages<{ id: string; name: string }>((from, to) => sb.from("locations").select("id,name").in("id", ids).order("id").range(from, to));
       for (const r of rows) names.set(r.id, r.name);
     }
-    return moved.reverse().map((j) => {
+    // Newest first, by when the job was recorded (a list order only: nothing is decided by it).
+    moved.sort((x, y) => Date.parse(y.createdAt) - Date.parse(x.createdAt) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+    return moved.map((j) => {
       const current = leadShop.get(j.pipelineId) ?? null;
       return { leadId: j.pipelineId, jobId: j.id, attemptNo: j.attemptNo, status: j.status, statusAt: j.statusAt, providerLabel: j.providerLabel, pickupAt: j.pickupAt,
         dropoffAt: j.dropoffAt, pickupShopId: j.locationId, pickupShopName: names.get(j.locationId) ?? null, movedToShopId: current,

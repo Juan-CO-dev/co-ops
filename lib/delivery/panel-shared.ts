@@ -103,7 +103,7 @@ export function dollarsToCents(typed: string): number | null {
 }
 /** A credit is recorded as a negative figure; every other component as typed. */
 export function signedCents(component: DeliveryCostComponent, cents: number): number {
-  return component === "credit" ? -Math.abs(cents) : cents;
+  return component === "credit" && cents !== 0 ? -Math.abs(cents) : cents;
 }
 /** "37.5" percent → 3750 basis points; null unless 0 to 100 with at most two decimals. */
 export function percentToBps(typed: string): number | null {
