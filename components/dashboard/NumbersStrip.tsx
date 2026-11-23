@@ -2,7 +2,8 @@
  * The numbers strip (nav PR 8, plan r2 2.4; spec r5 3.6). Server component. MoO, Owner and CGS only: the page renders it
  * only when `numbersStripFor(auth.role)`; a GM and the social media manager never get it (nor its reads).
  *
- * One row per shop the page can open, in the page's order, never blended across shops. Three cells, each a full-row link
+ * One row per shop it is given, never blended across shops; the Dashboard gives it the SELECTED shop's row only (Juan
+ * 2026-11-22: a person on one shop's tab never sees another shop's card). Three cells, each a full-row link
  * to its page, each failing on its own ("Couldn't load right now", never $0):
  *   - sales so far today: an amount ("At least" when partial), a covered zero, or "not captured from Toast yet";
  *   - labor % (StripLaborCell, the only strip file under the figure census); absent while the switch is off. Streamed in
