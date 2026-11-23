@@ -427,6 +427,10 @@ describe("T-P1 (nav PR 8): the page's source pins", () => {
     for (const fn of ["loadStrip(", "loadNeedsYou(", "loadCateringBlockExtras("]) expect(code.split(fn).length - 1, fn).toBe(1);
     expect(code).not.toMatch(/auth\.level\s*>=?\s*\d+\s*\?\s*load(Strip|NeedsYou|CateringBlockExtras)/);
   });
+  it("the strip is started for the SELECTED shop only, never for the list of shops the person can open (Juan 2026-11-22)", () => {
+    expect(code).toContain("selectedLocation && numbersStripFor(auth.role) ? loadStrip(sb, auth, [selectedLocation], planDate, switches, settle)");
+    expect(code).not.toMatch(/loadStrip\(\s*sb,\s*auth,\s*locations/);
+  });
 });
 
 describe("settleBy: the absolute deadline helper (G1 timer cleanup)", () => {
