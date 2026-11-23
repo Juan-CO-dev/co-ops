@@ -18,7 +18,8 @@
  *   K. `shop_moved` on EVERY writer after a transfer, nothing written;
  *   L. the pickup decision is bound to the destination shop (A -> B kept; -> C a mismatch again);
  *   M. lock order (lead FOR NO KEY UPDATE -> job FOR UPDATE -> children), pinned on the function sources;
- *   N. audit: one destructive row per write, the registered names, never a note.
+ *   N. audit: one destructive row per write, the registered names, never a note;
+ *   O. every refusal name in the file was raised here.
  */
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -80,7 +81,10 @@ async function refuses(db, run, code, message) {
   try { await run(); } catch (e) { error = e; }
   await db.exec('rollback');
   check(String(error?.message ?? '') === code, `${message}: expected ${code}, got ${error?.message ?? 'success'}`);
+  refused.add(code);
 }
+/** Every refusal name a writer was SEEN to raise (section O holds it to the names in the file). */
+const refused = new Set();
 /** Succeeds, and is rolled back (a probe that leaves nothing behind). */
 async function allows(db, run, message) {
   await db.exec('begin'); let error;
@@ -690,6 +694,14 @@ async function main() {
     }
     check(JSON.stringify([...names].sort()) === JSON.stringify(['delivery.cost', 'delivery.cost_correct', 'delivery.gratuity_split', 'delivery.pickup_kept', 'delivery.record', 'delivery.settings_update', 'delivery.status']),
       `the seven audit names: ${[...names].sort()}`);
+  }
+
+  // O. Every refusal the file can raise was raised here, by name (bad_gratuity is the pure rule's, section H).
+  {
+    const named = new Set([...m0356.replace(/--[^\n]*/g, '').matchAll(/raise exception '(\w+)' using errcode = 'P0001'/g)].map(m => m[1]));
+    refused.add('bad_gratuity');
+    const missing = [...named].filter(n => !refused.has(n)), extra = [...refused].filter(n => !named.has(n));
+    check(missing.length === 0 && extra.length === 0 && named.size === 31, `every named refusal is exercised: missing ${missing}, unknown ${extra}, ${named.size} names`);
   }
 
   console.log(`sql-harness-0356: ${checks} checks passed`);
