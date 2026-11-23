@@ -150,7 +150,8 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
       <RangeCaption from={range.from} to={range.to} language={language} todaySoFar={range.todaySoFar} capturedAt={capturedAt} />
       <ExportLinks className="mb-3" family="sales" language={language} query={{ ...context, view: "catering", location: shopId }} />
       {body}
-      <div className="mt-3 min-w-0"><DeliveryEconomicsSection result={await deliveryRead} language={language} idBase={`delivery-economics-${shopId}`} /></div>
+      {/* Off adds NOTHING: the section owns its own spacing wrapper and renders null when delivery is off. */}
+      <DeliveryEconomicsSection result={await deliveryRead} language={language} idBase={`delivery-economics-${shopId}`} />
     </div>;
   };
 

@@ -3,6 +3,8 @@
  * number arrives as the result of lib/delivery/economics.ts (no read here, no client state of its own).
  *
  *  - OFF RENDERS NOTHING: the switch, the shop's switch, 0356 not installed, or a viewer who may not read delivery money.
+ *    Nothing means nothing: the spacing wrapper is this component's own (`SHELL`), so an off page is byte-identical to
+ *    the page without this section (review DELIV4-r2; tests/delivery-economics-page-off.test.ts).
  *  - A FAILED READ is this section's own "couldn't load" line. Never zeros, and the four sales sections are untouched.
  *  - COVERAGE FIRST: "N of M delivery orders have both a fee and a full cost", then the totals over those N only, then
  *    the orders left out per reason, then (collapsed) the per-order list where every missing side is named.
@@ -25,6 +27,8 @@ import type { Language, TranslationKey } from "@/lib/i18n/types";
 
 const k = (key: string) => `reports.sales.delivery.${key}` as TranslationKey;
 const WARN = "text-co-warning-text";
+/** The section's own spacing below the sales blocks. Rendered only with the section, never around nothing. */
+const SHELL = "mt-3 min-w-0";
 /** Basis points as a percentage: 1000 → "10", 1250 → "12.5". */
 const percent = (bps: number) => String(bps / 100);
 
@@ -42,10 +46,10 @@ export function DeliveryEconomicsSection({ result, language, idBase }: { result:
   const t = tFor(language);
   const title = t(k("title"));
   if (result.kind === "failed") {
-    return <section className={salesCard} aria-label={title}>
+    return <div className={SHELL}><section className={salesCard} aria-label={title}>
       <h2 className="mb-2 font-bold">{title}</h2>
       <p role="status" className={`text-sm ${WARN}`}>{t(k("failed"))}</p>
-    </section>;
+    </section></div>;
   }
   const { report } = result;
   const money = (cents: number) => formatCents(cents, language);
@@ -59,7 +63,7 @@ export function DeliveryEconomicsSection({ result, language, idBase }: { result:
     g.expected > 0 ? t(k("gratuity.expected"), { n: g.expected }) : null,
   ].filter((line): line is string => line !== null);
 
-  return <section className={salesCard} aria-label={title}>
+  return <div className={SHELL}><section className={salesCard} aria-label={title}>
     <h2 className="mb-2 font-bold">{title}</h2>
     {/* Coverage precedes numbers. */}
     <p className="text-sm font-semibold">{report.coverage.orders === 0 ? t(k("none")) : t(k("coverage"), { n: report.coverage.withNet, m: report.coverage.orders })}</p>
@@ -122,7 +126,7 @@ export function DeliveryEconomicsSection({ result, language, idBase }: { result:
         </CollapsibleSection>
       </div>}
     </div>}
-  </section>;
+  </section></div>;
 }
 
 /** One order: its date, its couriers, then fee / cost / net — each missing side NAMED in its place, never a 0. */

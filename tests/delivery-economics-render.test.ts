@@ -475,8 +475,13 @@ describe("the report page: the delivery read cannot take the four sales blocks d
     // The bounded loader never rejects (tests/delivery-economics-loader.test.ts), so no await of it can throw here.
     expect(page).not.toContain("loadDeliveryEconomics(");
   });
-  it("renders the section after the sales body, whatever the sales body is (the four blocks or their own 'unavailable')", () => {
-    expect(page).toContain("{body}\n      <div className=\"mt-3 min-w-0\"><DeliveryEconomicsSection result={await deliveryRead} language={language} idBase={`delivery-economics-${shopId}`} /></div>");
+  it("renders the section after the sales body, whatever the sales body is (the four blocks or their own 'unavailable'), with NO wrapper of the page's own", () => {
+    // Off must add nothing (review DELIV4-r2): the section is a direct sibling of the sales body, and its spacing
+    // wrapper is the section's own. The byte-identical off render is tests/delivery-economics-page-off.test.ts.
+    expect(page).toMatch(/\{body\}\n\s*\{\/\*[^\n]*\*\/\}\n\s*<DeliveryEconomicsSection result=\{await deliveryRead\} language=\{language\} idBase=\{`delivery-economics-\$\{shopId\}`\} \/>\n\s*<\/div>;/);
+    expect(page).not.toMatch(/<div[^>]*>\s*<DeliveryEconomicsSection/);
+    expect(section(ok())).toMatch(/^<div class="mt-3 min-w-0"><section /);
+    expect(section({ kind: "failed" })).toMatch(/^<div class="mt-3 min-w-0"><section /);
     expect(page.match(/<section className=\{salesCard\}/g)).toHaveLength(4);
   });
   it("adds no delivery number to a sales figure, and the delivery files read no pipeline-value source", () => {
