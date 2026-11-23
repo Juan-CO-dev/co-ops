@@ -63,6 +63,10 @@ export function deliveryJobHistoryReadAllowed(actor: DeliveryActor, jobPickupSho
 export function deliverySettingsWriteAllowed(actor: DeliveryActor): boolean {
   return actor.active && (DELIVERY_SETTINGS_ROLES as readonly RoleCode[]).includes(actor.role);
 }
+/** The settings page and its hub tile, by trusted role alone (owner / CGS / MoO). The save re-checks `active` too. */
+export function canManageDeliverySettings(role: RoleCode): boolean {
+  return (DELIVERY_SETTINGS_ROLES as readonly RoleCode[]).includes(role);
+}
 /** Could this person pass ANY delivery read gate at some shop? The coarse refusal before the first query. */
 export function deliveryReadPossible(actor: DeliveryActor): boolean {
   if (!actor.active || actor.role === "social_media_mgr") return false;

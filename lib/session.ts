@@ -338,11 +338,17 @@ export function isAdminPath(currentPath: string): boolean {
  * request 2026-11-15): the same act as Send — a payable offer goes out to a customer — behind
  * the same fresh password, so its own requireSession keeps the unlock in the same way.
  * Exactly that one path segment after the quote id; nothing else under a quote is admitted.
+ *
+ * ...and a delivery COST route (POST /api/catering/pipeline/[id]/delivery/[jobId]/cost, catering delivery D2): a
+ * correction of a recorded courier cost is Tier A, so exactly that path keeps the unlock. A first cost asserts no
+ * tier there and only preserves an unlock (the /api/operations/counts posture). The delivery read, the record, status
+ * and keep-pickup routes are NOT admitted: they still clear it.
  */
 export function isCateringStepUpPath(currentPath: string): boolean {
   return (currentPath.startsWith("/api/catering/quotes/") && currentPath.endsWith("/send")) ||
     /^\/api\/catering\/quotes\/[^/]+\/resend$/.test(currentPath) ||
-    /^\/api\/catering\/pipeline\/[^/]+\/transfer$/.test(currentPath);
+    /^\/api\/catering\/pipeline\/[^/]+\/transfer$/.test(currentPath) ||
+    /^\/api\/catering\/pipeline\/[^/]+\/delivery\/[^/]+\/cost$/.test(currentPath);
 }
 
 /** The physical-count surface is Tier-A (council A4) but lives OUTSIDE /admin —

@@ -44,7 +44,17 @@ function client(given: Record<string, (q: Query) => Result>, rpcs: Record<string
     return q;
   };
   const sb = {
-    from: (name: string) => chain(name, (q) => { const t = tables[name]; if (!t) throw new Error(`unexpected table ${name}`); return t(q); }, true),
+    from: (name: string) => chain(name, (q) => {
+      const t = tables[name];
+      if (!t) throw new Error(`unexpected table ${name}`);
+      const out = t(q);
+      // D2 (review DELIV2-r1): the pickup shop's own switch is read as a LIST (`in location_id`). A table written for the
+      // one-shop read answers it shop by shop: an "on" row for each shop asked, nothing for a shop with no row.
+      if (name === "delivery_settings" && q.in.location_id && !out.error && !Array.isArray(out.data)) {
+        return { ...out, data: out.data ? q.in.location_id.map((id) => ({ ...(out.data as object), location_id: id })) : [] };
+      }
+      return out;
+    }, true),
     rpc: (name: string, params: Record<string, unknown>) => { calls.push({ name, params }); return chain(name, () => { const f = rpcs[name]; if (!f) throw new Error(`unexpected rpc ${name}`); return f(params); }); },
   };
   return { sb: sb as never, reads, calls, queries };
@@ -234,12 +244,17 @@ describe("writes: one RPC, the person's own arguments, refusals by name", () => 
 describe("settings", () => {
   const row = { location_id: A, enabled: true, manual_providers: ["Courier A"], gratuity_driver_bps: 1500, updated_at: "2026-11-22T10:00:00Z" };
   it("load: every active shop, a shop with no row is off with the default share", async () => {
-    const { sb, reads } = client({ locations: () => ({ data: [{ id: A, name: "A" }, { id: B, name: "B" }] }), delivery_settings: () => ({ data: [row] }) },
+    // D2: each card also carries the open jobs of leads NOW at the shop (two open jobs: one lead at A, one at no shop).
+    const { sb, reads, queries } = client({ locations: () => ({ data: [{ id: A, name: "A" }, { id: B, name: "B" }] }), delivery_settings: () => ({ data: [row] }),
+      delivery_job_current: () => ({ data: [{ id: JOB_A, pipeline_id: LEAD }, { id: JOB_B, pipeline_id: "lead-2" }] }),
+      catering_pipeline: () => ({ data: [{ id: LEAD, location_id: A }, { id: "lead-2", location_id: null }] }) },
       { delivery_ready: () => ({ data: { ready: true, version: 1 } }) });
     expect(await loadDeliverySettings(actor("moo"), { client: sb })).toEqual({ state: "ready", shops: [
-      { locationId: A, name: "A", enabled: true, manualProviders: ["Courier A"], gratuityDriverBps: 1500, updatedAt: "2026-11-22T10:00:00Z" },
-      { locationId: B, name: "B", enabled: false, manualProviders: [], gratuityDriverBps: 1000, updatedAt: null }] });
-    expect(reads.sort()).toEqual(["delivery_ready", "delivery_settings", "locations"]);
+      { locationId: A, name: "A", enabled: true, manualProviders: ["Courier A"], gratuityDriverBps: 1500, updatedAt: "2026-11-22T10:00:00Z", openJobs: 1 },
+      { locationId: B, name: "B", enabled: false, manualProviders: [], gratuityDriverBps: 1000, updatedAt: null, openJobs: 0 }] });
+    expect(reads.sort()).toEqual(["catering_pipeline", "delivery_job_current", "delivery_ready", "delivery_settings", "locations"]);
+    const open = queries.find((q) => q.table === "delivery_job_current")!;
+    expect([open.columns.join(), open.query.is.closed_at]).toEqual(["id,pipeline_id", null]);
   });
 
   it("load: 0356 missing is not_installed (the probe, or the table), never a 500", async () => {
@@ -318,7 +333,7 @@ describe("loadLeadDelivery: the view is decided in the lib", () => {
       ...["id", "jobId", "seq", "status", "occurredAt", "recordedAt", "source", "actorId", "note"].map((k) => `jobs[].events[].${k}`)]);
     expect(paths(view).filter((p) => !allowed.has(p))).toEqual([]);
     // It never read a cost, a split, a quote or the settings.
-    expect(reads.sort()).toEqual(["catering_pipeline", "catering_pipeline", "delivery_job_current", "delivery_job_events"]);
+    expect(reads.sort()).toEqual(["catering_pipeline", "catering_pipeline", "delivery_job_current", "delivery_job_events", "delivery_settings"]);
   });
 
   it("a GM of neither shop gets nothing (a 404 at the route); so does anyone for a lead that does not exist", async () => {
@@ -450,13 +465,14 @@ describe("loadLeadDelivery: the view is decided in the lib", () => {
     });
   });
 
-  it("HISTORY TIER, by its queries: the job read names the viewer's own shops; no cost, split, quote or settings query", async () => {
+  it("HISTORY TIER, by its queries: the pickup shops' own switch, then the job read names the viewer's own shops; no cost, split or quote query", async () => {
     const { sb, queries } = moved();
     await loadLeadDelivery(actor("gm", [A, C]), LEAD, { client: sb });
     expect(selected(queries)).toEqual({
       catering_pipeline: ["id", "lead_source", "location_id", "stage"],
       delivery_job_current: ["attempt_no", "dropoff_at", "external_ref", "id", "location_id", "pickup_at", "pipeline_id", "provider_label", "status", "status_at", "status_seq"],
       delivery_job_events: ["actor_id", "id", "job_id", "note", "occurred_at", "recorded_at", "seq", "source", "status"],
+      delivery_settings: ["enabled", "location_id"], // D2: off means off for the pickup shop's history too
     });
     const jobs = queries.find((q) => q.table === "delivery_job_current")!;
     expect(jobs.query.eq.pipeline_id).toBe(LEAD);

@@ -28,6 +28,8 @@ import { PipelineClient } from "@/components/catering/pipeline/PipelineClient";
 import { BackLink } from "@/components/nav/BackLink";
 import { loadNotInToast, type PipelineToastOrder } from "@/lib/catering/not-in-toast";
 import { resolveShop } from "@/lib/shop-context";
+import { DeliveryMovedList } from "@/components/catering/pipeline/DeliveryMovedList";
+import { loadMovedDeliveriesSafe } from "@/lib/delivery/jobs";
 
 export default async function CateringPipelinePage({
   searchParams,
@@ -74,6 +76,10 @@ export default async function CateringPipelinePage({
   let results: PipelineSearchResult[] | null = null;
   let notInToast: PipelineToastOrder[] | null = null;
   try { notInToast = await loadNotInToast(auth); } catch { /* Visible unavailable state below. */ }
+  // Catering delivery D2: deliveries booked at this AGM's / GM's shop for orders that have since moved away (the jobs
+  // only; empty when off, the shop is off, not installed, or for anyone else). A FAILED read is its own result and the
+  // list says "couldn't load": it is the pickup shop's only way in, so it never silently disappears.
+  const movedDeliveries = await loadMovedDeliveriesSafe(auth);
 
   if (q.trim()) {
     // SEARCH MODE: skip the board/follow-up loads entirely.
@@ -115,6 +121,7 @@ export default async function CateringPipelinePage({
         results={results}
       />
       </StepUpProvider>
+      <DeliveryMovedList result={movedDeliveries} />
     </main>
   );
 }

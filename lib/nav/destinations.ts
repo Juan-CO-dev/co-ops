@@ -167,6 +167,11 @@ export const DESTINATIONS: readonly Destination[] = [
     id: "catering-toast", route: "/admin/catering/toast", nameKey: "admin.catering.hub.toast", room: "catering", parent: "catering",
     takesShop: false, access: { minLevel: 8, onlyRoles: MOO_PLUS }, surface: "catering", numbers: false, kind: "place",
   },
+  {
+    // Catering delivery D2: the per-shop delivery settings (the hub tile is hidden while DELIVERY_TRACKING is off; the page says so).
+    id: "catering-delivery", route: "/admin/catering/delivery", nameKey: "admin.catering.hub.delivery", room: "catering", parent: "catering",
+    takesShop: false, access: { minLevel: 8, onlyRoles: MOO_PLUS }, surface: "catering", numbers: false, kind: "place",
+  },
 
   // ─── Reports ──────────────────────────────────────────────────────────────────────────────────────────────────
   {

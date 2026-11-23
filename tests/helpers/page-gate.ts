@@ -5,7 +5,7 @@
  * `?location=S` when the destination takes a shop, S a shop the viewer is an active member of, and no other
  * parameter) render the page or refuse? The system is assumed healthy.
  *
- * The reader is CLOSED and fails closed. It reads the census files (the 84 destination pages, the admin layout and
+ * The reader is CLOSED and fails closed. It reads the census files (the 85 destination pages, the admin layout and
  * PulseHome) with the TypeScript API and enumerates every construct that can end the page:
  *   - every redirect(...) / notFound() call, every `throw`, every standalone call of an imported or same-file
  *     function, and every early `return` of a walked function (each together with its own guarding `if`);
@@ -46,6 +46,7 @@ import { TASK_MIN_LEVEL, type TaskType } from "@/lib/assignments-shared";
 import { businessAllShopsAllowed, businessShopAllowed } from "@/lib/business-access-shared";
 import { businessReportRefusal } from "@/lib/business-report-shared";
 import { canManageCateringToastSettings } from "@/lib/catering/catering-toast-settings-shared";
+import { canManageDeliverySettings } from "@/lib/delivery/access-shared";
 import { COMPANY_READ_MIN } from "@/lib/catering/companies";
 import { CUSTOMER_READ_MIN } from "@/lib/catering/customers";
 import { INSIGHTS_READ_MIN } from "@/lib/catering/insights";
@@ -199,6 +200,7 @@ export const ROLE_PREDICATES: Readonly<Record<string, TableEntry<Fn>>> = {
   canManageInboundAliases: { modules: ["@/lib/admin/inbound-settings-shared"], value: canManageInboundAliases },
   canTransferCatering: { modules: ["@/lib/catering/transfers-shared"], value: canTransferCatering },
   canManageCateringToastSettings: { modules: ["@/lib/catering/catering-toast-settings-shared"], value: canManageCateringToastSettings },
+  canManageDeliverySettings: { modules: ["@/lib/delivery/access-shared"], value: canManageDeliverySettings },
   canReadMarketing: { modules: ["@/lib/marketing/access-shared"], value: canReadMarketing },
   canViewDemandSignals: { modules: ["@/lib/demand-signals/access-shared"], value: canViewDemandSignals },
   canMarkSource: { modules: ["@/lib/demand-signals/access-shared"], value: canMarkSource },
@@ -2362,7 +2364,7 @@ export function runCensus(reader: Reader, files: readonly string[]): CensusResul
   };
 }
 
-/** The census list: the 84 destination pages' files, the admin layout and PulseHome. */
+/** The census list: the 85 destination pages' files, the admin layout and PulseHome. */
 export const LAYOUT_FILE = "app/admin/layout.tsx";
 export const PULSE_HOME_FILE = "components/pulse/PulseHome.tsx";
 
