@@ -255,15 +255,18 @@ function snapshotInput(s: SnapshotRow | undefined): RefundSnapshotInput | null {
  * the newest). Best effort: a missing function (before 0357) or a failed write is logged and the caller goes on — the
  * snapshot only ever makes the figures more current; the reserve and Stripe's own cap still hold without it.
  */
-async function recordSnapshot(sb: ServiceClient, paymentId: string, listedAt: string, capturedCents: number | null, listed: StripeRefund[]): Promise<void> {
+async function recordSnapshot(sb: ServiceClient, paymentId: string, listedAt: string, capturedCents: number | null, listed: StripeRefund[]): Promise<boolean> {
   const refunds = listed.map((r) => ({ id: r.id, amount: r.amountCents ?? 0, status: r.status, request_id: r.requestId }));
   const { error } = await sb.rpc("catering_refund_record_snapshot", { p_payment_id: paymentId, p_listed_at: listedAt, p_captured_cents: capturedCents, p_refunds: refunds });
-  if (error && !missingRelation(error)) console.error(`[catering refunds] snapshot for ${paymentId} not recorded: ${error.message}`);
+  if (!error) return true; // recorded, or a newer listing already is: either way the stored one is current
+  if (!missingRelation(error)) console.error(`[catering refunds] snapshot for ${paymentId} not recorded: ${error.message}`);
+  return false; // the figures below may be stale (review r7): the caller says so
 }
 
 /** Refresh the snapshot of every Stripe-paid payment of the order. Returns true when one could not be asked. */
 async function refreshStripeSnapshots(sb: ServiceClient, locationId: string, payments: PaymentRow[]): Promise<boolean> {
-  const stripePaid = payments.filter((p) => p.status === "paid" && p.provider === "stripe" && /^pi_[A-Za-z0-9_]+$/.test(p.provider_ref ?? ""));
+  // `refunded` rows too (review r7): a whole-charge refund Stripe later canceled is visible only here.
+  const stripePaid = payments.filter((p) => (p.status === "paid" || p.status === "refunded") && p.provider === "stripe" && /^pi_[A-Za-z0-9_]+$/.test(p.provider_ref ?? ""));
   if (stripePaid.length === 0) return false;
   let accounts: StripeCredentials[];
   try {
@@ -282,7 +285,7 @@ async function refreshStripeSnapshots(sb: ServiceClient, locationId: string, pay
         continue;
       }
       const listed = await listRefundsForPaymentIntent(owner.account.secretKey, p.provider_ref!);
-      await recordSnapshot(sb, p.id, listedAt, owner.capturedCents, listed);
+      if (!(await recordSnapshot(sb, p.id, listedAt, owner.capturedCents, listed))) unchecked = true;
     } catch {
       unchecked = true;
     }

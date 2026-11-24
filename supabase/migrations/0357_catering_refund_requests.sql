@@ -42,7 +42,11 @@
 --                                             in_flight = our own pending requests the snapshot does not already list
 --                                                         (a lost answer that landed is listed, so it counts once);
 --                                             refundable = captured - refunded - in_flight, never below 0; 0 unless the
---                                                         row is `paid`, provider 'stripe', with a PaymentIntent.
+--                                                         row is `paid` OR `refunded` (review r7: the webhook moves a row to
+--                                                         `refunded` on a whole-charge refund and never back, so a refund
+--                                                         Stripe later CANCELED is only visible in a snapshot), provider
+--                                                         'stripe', with a PaymentIntent. A `refunded` row with no snapshot
+--                                                         is taken at its word: fully refunded, nothing refundable.
 --                                             The app's pure twin is refundFigures (lib/catering/refunds-shared.ts).
 --     catering_refund_reserve(...)            THE one writer of the table (service_role only). Validates the input,
 --                                             locks the order's Stripe-paid payment rows, re-checks the actor, replays
@@ -242,6 +246,7 @@ begin
       from public.catering_refund_requests r where r.payment_id = p_payment_id;
     o_captured := coalesce(v_charge, v_pay.amount_cents::bigint);
     o_refunded := greatest(coalesce(v_cum, 0), v_done);
+    if v_pay.status = 'refunded' then o_refunded := greatest(o_refunded, o_captured); end if;
   else
     select coalesce(sum((x->>'amount')::bigint) filter (where coalesce(x->>'status', '') not in ('failed', 'canceled')), 0)
       into v_listed from jsonb_array_elements(v_snap.refunds) x;
@@ -256,7 +261,7 @@ begin
     o_refunded := case when v_last_event is null or v_snap.listed_at >= v_last_event then v_snap_refunded
                        else greatest(coalesce(v_cum, 0), v_snap_refunded) end;
   end if;
-  o_eligible := v_pay.status = 'paid' and v_pay.provider = 'stripe' and coalesce(v_pay.provider_ref, '') ~ '^pi_[A-Za-z0-9_]+$';
+  o_eligible := v_pay.status in ('paid', 'refunded') and v_pay.provider = 'stripe' and coalesce(v_pay.provider_ref, '') ~ '^pi_[A-Za-z0-9_]+$';
   o_refundable := case when o_eligible then greatest(0, o_captured - o_refunded - o_in_flight) else 0 end;
 end $$;
 
@@ -278,7 +283,7 @@ begin
     values (p_payment_id, p_listed_at, p_captured_cents, p_refunds)
   on conflict (payment_id) do update set listed_at = excluded.listed_at, captured_cents = excluded.captured_cents,
     refunds = excluded.refunds, recorded_at = now()
-    where catering_refund_stripe_snapshots.listed_at < excluded.listed_at;
+    where catering_refund_stripe_snapshots.listed_at <= excluded.listed_at; -- the same instant: the later write wins
   get diagnostics v_n = row_count;
   return v_n > 0; -- false: a newer listing is already recorded
 end $$;

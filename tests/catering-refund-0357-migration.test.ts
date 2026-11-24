@@ -136,7 +136,7 @@ describe("review r1", () => {
     expect(body).toContain("filter (where coalesce(x->>'status', '') not in ('failed', 'canceled'))");
     expect(body).toContain("v_snap_refunded := v_listed + v_own_unlisted;");
     expect(body).toContain("o_refunded := case when v_last_event is null or v_snap.listed_at >= v_last_event then v_snap_refunded");
-    expect(fn("catering_refund_record_snapshot")).toContain("where catering_refund_stripe_snapshots.listed_at < excluded.listed_at;");
+    expect(fn("catering_refund_record_snapshot")).toContain("where catering_refund_stripe_snapshots.listed_at <= excluded.listed_at;");
     expect(code).toContain("grant select on table public.catering_refund_stripe_snapshots to service_role;");
   });
   it("captured is the charge Stripe reported when known, in both directions", () => {

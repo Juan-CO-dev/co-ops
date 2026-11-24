@@ -239,6 +239,16 @@ try {
     await db.query("insert into public.catering_payment_refund_events (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents, charge_amount_cents) values ('evt_y', $1, now() + interval '1 hour', 25000, 30000)", [px]);
     fx = await figures(db, px);
     check(Number(fx.o_refunded) === 25000, "P3 an event newer than the snapshot is not ignored");
+    // Review r7: a row the webhook moved to `refunded`, whose whole-charge refund Stripe later CANCELED.
+    const Qr7 = await f.quote();
+    const pr7 = await f.pay(Qr7, "deposit", 20000, { status: "refunded" });
+    check(Number((await figures(db, pr7)).o_refundable) === 0, "P3 r7: a refunded row with no snapshot is taken at its word");
+    await db.query("insert into public.catering_payment_refund_events (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents, charge_amount_cents) values ('evt_r7', $1, now() - interval '1 hour', 20000, 20000)", [pr7]);
+    await one(db, "select public.catering_refund_record_snapshot($1, now(), 20000, $2::jsonb) as ok", [pr7, JSON.stringify([{ id: "re_r7", amount: 20000, status: "canceled", request_id: null }])]);
+    const f7 = await figures(db, pr7);
+    check(f7.o_eligible === true && Number(f7.o_refundable) === 20000, "P3 r7: …and refundable again once a snapshot shows the refund canceled");
+    const r7 = await reserve(db, owner, Qr7, randomUUID(), 20000);
+    check(r7.requests.length === 1 && r7.requests[0].payment_id === pr7, "P3 r7: the reserve agrees");
     // The writer validates what it stores.
     await refuses(() => snap(new Date(Date.now() + 7_200_000).toISOString(), [{ id: "nope", amount: 1, status: "succeeded" }]), "invalid_request", "P3 a listing with a non-refund id is refused");
     await refuses(() => snap(new Date(Date.now() + 7_200_000).toISOString(), [{ id: "re_q", amount: 1.5, status: "succeeded" }]), "invalid_request", "P3 a fractional amount is refused");

@@ -131,11 +131,23 @@ function reserve(args: Record<string, unknown>, db: FakeDb) {
     if (args.p_amount_cents !== total) return { data: null, error: { message: "token_reused" } };
     return { data: { replay: true, location_id: quote.location_id, requests: existing.map((r) => ({ id: r.id, payment_id: r.payment_id, amount_cents: r.amount_cents, status: r.status })) }, error: null };
   }
-  const fig = (p: Row) => refundFigures(
-    { amountCents: Number(p.amount_cents), status: String(p.status), provider: p.provider as string | null, providerRef: p.provider_ref as string | null },
-    [],
-    (t.catering_refund_requests ?? []).filter((r) => r.payment_id === p.id).map((r) => ({ amountCents: Number(r.amount_cents), status: r.status as "pending" })),
-  );
+  // The same inputs 0357's catering_refund_figures reads: events, own rows, the newest snapshot.
+  const fig = (p: Row) => {
+    const snap = (t.catering_refund_stripe_snapshots ?? []).find((x) => x.payment_id === p.id);
+    return refundFigures(
+      { amountCents: Number(p.amount_cents), status: String(p.status), provider: p.provider as string | null, providerRef: p.provider_ref as string | null },
+      (t.catering_payment_refund_events ?? []).filter((e) => e.payment_id === p.id).map((e) => ({
+        cumulativeRefundedCents: Number(e.cumulative_refunded_cents), chargeAmountCents: e.charge_amount_cents == null ? null : Number(e.charge_amount_cents), refundedAt: (e.refunded_at as string | undefined) ?? null,
+      })),
+      (t.catering_refund_requests ?? []).filter((r) => r.payment_id === p.id).map((r) => ({
+        id: r.id as string, amountCents: Number(r.amount_cents), status: r.status as "pending", stripeRefundId: (r.stripe_refund_id as string | null) ?? null,
+      })),
+      snap ? {
+        listedAt: String(snap.listed_at), capturedCents: snap.captured_cents == null ? null : Number(snap.captured_cents),
+        refunds: (snap.refunds as Array<{ id: string; amount: number; status: string | null; request_id: string | null }>).map((x) => ({ id: x.id, amountCents: x.amount, status: x.status, requestId: x.request_id })),
+      } : null,
+    );
+  };
   const total = pays.reduce((s, p) => s + fig(p).refundableCents, 0);
   if (total <= 0) return { data: null, error: { message: "nothing_refundable" } };
   if (args.p_amount_cents == null || Number(args.p_amount_cents) <= 0) return { data: null, error: { message: "invalid_amount" } };
@@ -191,7 +203,7 @@ function seed() {
       catering_refund_record_snapshot: (args, db) => {
         const t = (db.tables.catering_refund_stripe_snapshots ??= []);
         const cur = t.find((x) => x.payment_id === args.p_payment_id);
-        if (cur && String(cur.listed_at) >= String(args.p_listed_at)) return { data: false, error: null };
+        if (cur && String(cur.listed_at) > String(args.p_listed_at)) return { data: false, error: null };
         const row = { payment_id: args.p_payment_id, listed_at: args.p_listed_at, captured_cents: args.p_captured_cents, refunds: args.p_refunds };
         if (cur) Object.assign(cur, row);
         else t.push(row);
@@ -510,6 +522,30 @@ describe("review r4-r6: mixed dashboard and app refunds, by identity and current
     stripe.charges.get("pi_dep")!.refunded -= 10000;
     await new Promise((r) => setTimeout(r, 5)); // a later listing
     expect(await dep()).toMatchObject({ refundedCents: 5000, refundableCents: 25000 });
+  });
+
+  it("r7: a whole-charge refund the webhook recorded, later CANCELED at Stripe: the payment is refundable again", async () => {
+    const bal = (h.db.tables.catering_payments as Row[]).find((p) => p.id === BAL)!;
+    bal.status = "refunded"; // the webhook's flip on charge.refunded (whole charge)
+    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: BAL, cumulative_refunded_cents: 70000, charge_amount_cents: 70000, refunded_at: new Date(Date.now() - 600_000).toISOString() });
+    stripe.refunds.push({ id: "re_full", status: "canceled", amount: 70000, paymentIntent: "pi_bal", requestId: null, account: "sk_test_fake_A" });
+    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
+    expect(s.payments.find((p) => p.id === BAL)!.figures).toMatchObject({ eligible: true, refundedCents: 0, refundableCents: 70000 });
+    expect(s.totals.refundableCents).toBe(100000);
+    // …and the reserve agrees: the balance can be refunded (the live cap at Stripe has the last word).
+    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 70000 }));
+    expect(out.results[0]).toMatchObject({ paymentId: BAL, status: "succeeded" });
+  });
+
+  it("r7: Stripe answered but the snapshot could not be stored: the summary says the figures may be out of date", async () => {
+    setup();
+    const db = h.db as unknown as { client: { rpc: (n: string, a: Record<string, unknown>) => Promise<unknown> } };
+    const real = db.client.rpc;
+    db.client.rpc = async (n: string, a: Record<string, unknown>) =>
+      n === "catering_refund_record_snapshot" ? { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } } : real(n, a);
+    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
+    db.client.rpc = real;
+    expect(s.stripeUnchecked).toBe(true);
   });
 
   it("r6: Stripe cannot be asked: the last snapshot stands and the summary says the figures may be out of date", async () => {

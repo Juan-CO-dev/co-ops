@@ -94,6 +94,13 @@ describe("refundFigures — the twin of 0357", () => {
     // A snapshot's captured amount is the charge's.
     expect(refundFigures({ ...PAID, amountCents: 20000 }, [], [], { listedAt: "2026-11-23T11:00:00Z", capturedCents: 30000, refunds: [] }).capturedCents).toBe(30000);
   });
+  it("review r7: a row the webhook moved to refunded is taken at its word until a snapshot shows the refund canceled", () => {
+    const refunded = { ...PAID, status: "refunded" };
+    expect(refundFigures(refunded, [], []).refundableCents).toBe(0);
+    const f = refundFigures(refunded, [{ cumulativeRefundedCents: 30000, chargeAmountCents: 30000, refundedAt: "2026-11-23T10:00:00Z" }], [],
+      { listedAt: "2026-11-23T11:00:00Z", capturedCents: 30000, refunds: [{ id: "re_full", amountCents: 30000, status: "canceled", requestId: null }] });
+    expect([f.eligible, f.refundedCents, f.refundableCents]).toEqual([true, 0, 30000]);
+  });
   it("never below zero", () => {
     expect(refundFigures(PAID, [{ cumulativeRefundedCents: 40000, chargeAmountCents: 30000 }], []).refundableCents).toBe(0);
   });

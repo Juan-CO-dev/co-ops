@@ -128,6 +128,8 @@ export function refundFigures(
     inFlightCents = requests.filter((r) => r.status === "pending").reduce((s, r) => s + r.amountCents, 0);
     capturedCents = charge ?? payment.amountCents;
     refundedCents = Math.max(cumulative, accepted.reduce((s, r) => s + r.amountCents, 0));
+    // A row the webhook moved to `refunded` is taken at its word until a snapshot says otherwise (review r7).
+    if (payment.status === "refunded") refundedCents = Math.max(refundedCents, capturedCents);
   } else {
     const listedIds = new Set(snapshot.refunds.map((x) => x.id));
     const listedRequests = new Set(snapshot.refunds.flatMap((x) => (x.requestId ? [x.requestId] : [])));
@@ -142,7 +144,8 @@ export function refundFigures(
     const snapRefunded = listed + ownUnlisted;
     refundedCents = lastEvent == null || Date.parse(snapshot.listedAt) >= lastEvent ? snapRefunded : Math.max(cumulative, snapRefunded);
   }
-  const eligible = payment.status === "paid" && payment.provider === "stripe" && PI_RE.test(payment.providerRef ?? "");
+  // `refunded` too (review r7): a whole-charge refund Stripe later canceled is visible only in a snapshot.
+  const eligible = (payment.status === "paid" || payment.status === "refunded") && payment.provider === "stripe" && PI_RE.test(payment.providerRef ?? "");
   return {
     capturedCents,
     refundedCents,
@@ -371,9 +374,10 @@ export function summarizeTotals(payments: readonly RefundPaymentView[]): RefundS
   let paidCents = 0, refundedCents = 0, inFlightCents = 0, refundableCents = 0, outsideAppCents = 0;
   for (const p of payments) {
     if (p.status !== "paid" && p.status !== "refunded") continue;
-    if (p.figures.eligible || (p.status === "refunded" && p.provider === "stripe")) {
+    if (p.figures.eligible) {
+      // The figures decide, `refunded` rows included (review r7): the row's status alone cannot show a canceled refund.
       paidCents += p.figures.capturedCents;
-      refundedCents += p.status === "refunded" ? p.figures.capturedCents : p.figures.refundedCents;
+      refundedCents += Math.min(p.figures.capturedCents, p.figures.refundedCents);
       inFlightCents += p.figures.inFlightCents;
       refundableCents += p.figures.refundableCents;
     } else if (p.status === "paid") {
