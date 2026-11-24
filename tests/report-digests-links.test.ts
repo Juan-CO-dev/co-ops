@@ -74,7 +74,7 @@ describe("the link map (targetPath)", () => {
     [{ to: "team", location: A }, `/reports/trends/team?location=${A}`],
     [{ to: "yield", location: A }, `/operations/production/yield?location=${A}`],
     [{ to: "pipeline" }, "/catering/pipeline"],
-    [{ to: "pipeline", lead: "lead-7" }, "/catering/pipeline#lead-lead-7"],
+    [{ to: "pipeline", lead: "lead-7" }, "/catering/pipeline?lead=lead-7#lead-lead-7"],
     [{ to: "pipeline", anchor: "to_ring" }, `/catering/pipeline#${DIGEST_ANCHORS.pipelineToRing}`],
     [{ to: "quotes", quote: "qt-1" }, "/catering/quotes?quote=qt-1"],
     [{ to: "prep_demand" }, "/admin/catering/prep-demand"],
@@ -258,8 +258,8 @@ describe("catering digest: lead lines open the lead by id, never a name in the U
     for (const lang of ["en", "es"] as const) {
       const sections = composeCateringSections(facts, scope, lang, BASE, CATERING_MGR);
       const hrefs = allHrefs(sections).filter((h): h is string => !!h);
-      expect(hrefs).toContain(`${BASE}/catering/pipeline#lead-lead-1`);
-      expect(hrefs).toContain(`${BASE}/catering/pipeline#lead-lead-2`);
+      expect(hrefs).toContain(`${BASE}/catering/pipeline?lead=lead-1#lead-lead-1`);
+      expect(hrefs).toContain(`${BASE}/catering/pipeline?lead=lead-2#lead-lead-2`);
       expect(hrefs).toContain(`${BASE}/catering/quotes?quote=qt-1`);
       expect(hrefs).toContain(`${BASE}/admin/catering/prep-demand`);
       expect(hrefs).toContain(`${BASE}/stations?loc=${A}`);

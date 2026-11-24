@@ -88,12 +88,12 @@ describe("composed sections", () => {
     };
     const y = texts(f)[0]![1];
     expect(y[0]).toBe(`issue|Yesterday|2 orders ran · 20 guests · completed $500.00 · confirmed, not completed $300.00|${BASE}/catering/pipeline`);
-    expect(y[1]).toBe(`ok|Ana|11:30 AM · 20 guests · $500.00 · Fulfilled|${BASE}/catering/pipeline#lead-${done.id}`);
-    expect(y[2]).toBe(`issue|Bo Li (Acme)|time not set · size not set · $300.00 · Not marked completed|${BASE}/catering/pipeline#lead-${notDone.id}`);
-    expect(y[3]).toBe(`issue|Cy|Lost / cancelled|${BASE}/catering/pipeline#lead-${lost.id}`);
+    expect(y[1]).toBe(`ok|Ana|11:30 AM · 20 guests · $500.00 · Fulfilled|${BASE}/catering/pipeline?lead=${done.id}#lead-${done.id}`);
+    expect(y[2]).toBe(`issue|Bo Li (Acme)|time not set · size not set · $300.00 · Not marked completed|${BASE}/catering/pipeline?lead=${notDone.id}#lead-${notDone.id}`);
+    expect(y[3]).toBe(`issue|Cy|Lost / cancelled|${BASE}/catering/pipeline?lead=${lost.id}#lead-${lost.id}`);
     expect(y[4]).toBe(`info|Inquiries|2 new (EZCater 1, Online portal 1)|${BASE}/catering/pipeline`);
     expect(y[5]).toBe(`info|Quotes|1 quote sent ($250.00)|${BASE}/catering/quotes?quote=q1`);
-    expect(y[6]).toBe(`info|EZCater|Order: Dee|${BASE}/catering/pipeline#lead-${ez.id}`);
+    expect(y[6]).toBe(`info|EZCater|Order: Dee|${BASE}/catering/pipeline?lead=${ez.id}#lead-${ez.id}`);
     expect(y[7]).toBe(`issue|Issues|1 refund ($40.00)|${BASE}/catering/pipeline`);
     expect(y[8]).toBe(`issue|Issues|1 follow-up overdue|${BASE}/catering/pipeline`);
   });
@@ -114,14 +114,14 @@ describe("composed sections", () => {
     };
     const out = texts(f);
     expect(out[1]![1]).toEqual([
-      `info|Early|ready by 8:00 AM · 12 guests · Pickup|${BASE}/catering/pipeline#lead-early`,
-      `info|Late|ready by 5:00 PM · 40 guests · Delivery · prep for Wed, Oct 7: 3.5 qt Chicken salad, 12 × Turkey (whole)|${BASE}/catering/pipeline#lead-late`,
+      `info|Early|ready by 8:00 AM · 12 guests · Pickup|${BASE}/catering/pipeline?lead=early#lead-early`,
+      `info|Late|ready by 5:00 PM · 40 guests · Delivery · prep for Wed, Oct 7: 3.5 qt Chicken salad, 12 × Turkey (whole)|${BASE}/catering/pipeline?lead=late#lead-late`,
       `info|Today|1 order has no prep ledger yet|${BASE}/catering/pipeline`,
     ]);
-    expect(out[2]![1]).toEqual([`info|Tmrw|time not set · 25 guests · Delivery|${BASE}/catering/pipeline#lead-tmrw`, `info|Tomorrow|1 order has no prep ledger yet|${BASE}/catering/pipeline`]);
+    expect(out[2]![1]).toEqual([`info|Tmrw|time not set · 25 guests · Delivery|${BASE}/catering/pipeline?lead=tmrw#lead-tmrw`, `info|Tomorrow|1 order has no prep ledger yet|${BASE}/catering/pipeline`]);
     expect(out[3]![1]).toEqual([
-      `issue|Maybe|Unconfirmed (Thu, Oct 8)|${BASE}/catering/pipeline#lead-maybe`,
-      `issue|Early|Unpaid $150.00 (Wed, Oct 7)|${BASE}/catering/pipeline#lead-early`,
+      `issue|Maybe|Unconfirmed (Thu, Oct 8)|${BASE}/catering/pipeline?lead=maybe#lead-maybe`,
+      `issue|Early|Unpaid $150.00 (Wed, Oct 7)|${BASE}/catering/pipeline?lead=early#lead-early`,
       `info|Quotes|2 open quotes awaiting the customer|${BASE}/catering/quotes`,
     ]);
   });

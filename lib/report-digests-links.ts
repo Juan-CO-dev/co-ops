@@ -85,7 +85,8 @@ export function targetPath(t: DigestTarget): string {
     case "vendor_mail": return `/operations/vendor-mail?${loc(t.location)}`;
     case "team": return `/reports/trends/team?${loc(t.location)}`;
     case "yield": return `/operations/production/yield?${loc(t.location)}`;
-    case "pipeline": return `/catering/pipeline${t.lead ? `#${DIGEST_ANCHORS.lead(t.lead)}` : t.anchor === "to_ring" ? `#${DIGEST_ANCHORS.pipelineToRing}` : ""}`;
+    // `?lead=` makes the board load that lead even past its row cap; `#lead-<id>` opens and scrolls to its card.
+    case "pipeline": return `/catering/pipeline${t.lead ? `?lead=${encodeURIComponent(t.lead)}#${DIGEST_ANCHORS.lead(t.lead)}` : t.anchor === "to_ring" ? `#${DIGEST_ANCHORS.pipelineToRing}` : ""}`;
     case "quotes": return `/catering/quotes${t.quote ? `?quote=${encodeURIComponent(t.quote)}` : ""}`;
     case "prep_demand": return "/admin/catering/prep-demand";
     // The stations page reads its shop as ?loc= (lib/shop-context-shared.ts), not ?location=.

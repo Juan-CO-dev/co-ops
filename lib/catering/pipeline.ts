@@ -287,8 +287,16 @@ async function currentQuoteStatuses(
   return out;
 }
 
-/** All non-archived leads the actor may view, for the board (grouped client-side by stage). */
-export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineBoardLead[]> {
+/** A lead id as it may ride in a URL (`?lead=`): a UUID, nothing else. */
+const LEAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * All non-archived leads the actor may view, for the board (grouped client-side by stage).
+ * `ensureLead` (a deep link's `?lead=<id>`, e.g. from a digest email): that one lead is on the board
+ * even when the newest-first read stopped before it (the row cap), read under the SAME scope — a lead
+ * the actor may not view is simply not added.
+ */
+export async function loadPipelineBoard(actor: AuthContext, opts: { ensureLead?: string | null } = {}): Promise<PipelineBoardLead[]> {
   requireLevel(actor, PIPELINE_READ_MIN);
   const sb = getServiceRoleClient();
   let q = sb.from("catering_pipeline").select(LEAD_COLS);
@@ -296,7 +304,16 @@ export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineBoa
   if (scope) q = q.or(scope);
   const { data, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
   if (error) throw new Error(`loadPipelineBoard: ${error.message}`);
-  const leads = await withLocationNames(sb, (data ?? []).map(mapLead));
+  const rows = [...(data ?? [])];
+  const wanted = opts.ensureLead && LEAD_ID.test(opts.ensureLead) ? opts.ensureLead.toLowerCase() : null;
+  if (wanted && !rows.some((r) => r.id.toLowerCase() === wanted)) {
+    let one = sb.from("catering_pipeline").select(LEAD_COLS).eq("id", wanted);
+    if (scope) one = one.or(scope);
+    const extra = await one.limit(1).returns<DbLeadRow[]>();
+    if (extra.error) throw new Error(`loadPipelineBoard: ${extra.error.message}`);
+    rows.push(...(extra.data ?? []));
+  }
+  const leads = await withLocationNames(sb, rows.map(mapLead));
   const confirmedIds = leads.filter((l) => l.stage === "confirmed").map((l) => l.id);
   const statuses = confirmedIds.length ? await currentQuoteStatuses(sb, confirmedIds) : new Map<string, string>();
   return leads.map((l) => ({ ...l, quoteStatus: statuses.get(l.id) ?? null }));
