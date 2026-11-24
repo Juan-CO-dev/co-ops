@@ -45,6 +45,7 @@ import {
   refundIdempotencyKey,
   refundStatusFromStripe,
   requestRetryState,
+  resendStillInWindow,
   stripeCreateFailure,
   stripeRefundReason,
   summarizeTotals,
@@ -469,6 +470,9 @@ async function keepPending(sb: ServiceClient, actor: AuthContext, row: ClaimedRo
  * it. Throws only for our own database failures (and then the row is still `pending` and its claim expires by itself).
  */
 export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, requestId: string, nowMs: number = Date.now()): Promise<RefundAttemptResult> {
+  // `nowMs` is the press's instant; the clock keeps running through the Stripe reads below (review r10).
+  const startedReal = Date.now();
+  const clock = () => nowMs + (Date.now() - startedReal);
   const row = await loadRequest(sb, requestId);
   if (!row) throw new CateringRefundError(404, "not_found");
   if (row.status !== "pending") return result(row, row.status, null);
@@ -533,6 +537,13 @@ export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, req
     // The live cap, before the first send: Stripe says less is left on the charge than this row asks for (a refund
     // made in the Stripe dashboard that the webhook has not reported yet). Nothing is sent; the amount is released.
     return ourSideStop("over_charge_remaining", `Stripe has ${owner.capturedCents - owner.refundedCents} cents left on this charge`);
+  }
+
+  // A RE-send leaves only inside Stripe's 24-hour window, measured NOW with a margin (review r10): the reads above take
+  // time. Past it the row is reconciled, never sent (docs.stripe.com/error-low-level): the claim is released, the
+  // reservation stays, and the person is told to check Stripe.
+  if (claimed.sentBefore && !resendStillInWindow(claimed.first_attempt_at, row.requested_at, clock())) {
+    return keepPending(sb, actor, claimed, "needs_reconcile", "The 24-hour retry window ended before this retry could be sent", { window_closed_before_send: true });
   }
 
   const reasonCode = isRefundReasonCode(row.reason_code) ? row.reason_code : "other";

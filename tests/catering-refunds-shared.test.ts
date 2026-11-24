@@ -19,6 +19,7 @@ import {
   stripeRefundReason,
   summarizeTotals,
   REFUND_RETRY_WINDOW_MS,
+  resendStillInWindow,
 } from "@/lib/catering/refunds-shared";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import en from "@/lib/i18n/en.json";
@@ -192,6 +193,12 @@ describe("the retry window (docs.stripe.com/error-low-level: 24 hours, then reco
   it("a pending row is retryable inside 24 h and needs a person after", () => {
     expect(requestRetryState({ status: "pending", firstAttemptAt: at, requestedAt: at }, t0 + 1000)).toEqual({ needsReconcile: false, retryable: true });
     expect(requestRetryState({ status: "pending", firstAttemptAt: at, requestedAt: at }, t0 + REFUND_RETRY_WINDOW_MS + 1)).toEqual({ needsReconcile: true, retryable: false });
+  });
+  it("review r10: a re-send must leave with a minute to spare", () => {
+    expect(resendStillInWindow(at, at, t0 + REFUND_RETRY_WINDOW_MS - 61_000)).toBe(true);
+    expect(resendStillInWindow(at, at, t0 + REFUND_RETRY_WINDOW_MS - 59_000)).toBe(false);
+    expect(resendStillInWindow(null, at, t0)).toBe(true);
+    expect(resendStillInWindow("nope", "nope", t0)).toBe(false);
   });
   it("submitted can be refreshed; succeeded and failed are finished", () => {
     expect(requestRetryState({ status: "submitted", firstAttemptAt: at, requestedAt: at }, t0 + REFUND_RETRY_WINDOW_MS * 3)).toEqual({ needsReconcile: false, retryable: true });

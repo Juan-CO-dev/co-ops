@@ -363,6 +363,39 @@ describe("unknown outcomes stay pending and are retried safely", () => {
     expect(s.requests[0]).toMatchObject({ needsReconcile: true, retryable: false });
   });
 
+  it("review r10: a retry that reaches the send inside the window's last minute is not sent: needs_reconcile", async () => {
+    stripe.nextCreate = ["network_before"];
+    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
+    const row = rows()[0]!;
+    // 30 seconds before the window ends: the first check passes, the send-time check (60 s margin) does not.
+    const at = Date.parse(String(row.first_attempt_at)) + REFUND_RETRY_WINDOW_MS - 30_000;
+    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, at);
+    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
+    expect(stripe.creates).toHaveLength(1); // the first send only
+    expect(row.claim_token).toBeNull(); // released; the reservation stays
+  });
+
+  it("review r10: the clock crosses the deadline DURING the Stripe reads: nothing is sent", async () => {
+    stripe.nextCreate = ["network_before"];
+    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
+    const row = rows()[0]!;
+    const at = Date.parse(String(row.first_attempt_at)) + REFUND_RETRY_WINDOW_MS - 120_000; // 2 minutes left
+    const { listRefundsForPaymentIntent } = await import("@/lib/stripe/client");
+    const realList = vi.mocked(listRefundsForPaymentIntent).getMockImplementation()!;
+    const realNow = Date.now.bind(Date);
+    let skew = 0;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + skew);
+    vi.mocked(listRefundsForPaymentIntent).mockImplementation(async (k: string, pi: string) => {
+      skew += 90_000; // the listing took 90 seconds
+      return realList(k, pi);
+    });
+    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, at);
+    nowSpy.mockRestore();
+    vi.mocked(listRefundsForPaymentIntent).mockImplementation(realList);
+    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
+    expect(stripe.creates).toHaveLength(1);
+  });
+
   it("review r2: a lost answer that landed, its webhook recorded, nobody retried for 24 h: Check Stripe adopts it and the money is no longer double-held", async () => {
     stripe.nextCreate = ["network_lost_after_executing"];
     await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 40000 }));

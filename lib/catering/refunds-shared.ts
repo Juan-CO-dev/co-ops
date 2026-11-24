@@ -227,6 +227,20 @@ export function stripeCreateFailure(httpStatus: number): "unknown" | "refused" {
  */
 export const REFUND_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * The margin kept before the window's end at the moment a RE-send leaves (review r10): Stripe reads, the listing and
+ * the snapshot write happen between the first check and the send, and the request itself takes time. A re-send that
+ * would leave inside the last minute of the window is not sent; the row becomes `needs_reconcile`.
+ */
+export const REFUND_SEND_MARGIN_MS = 60 * 1000;
+
+/** May a row that was possibly sent before be sent again NOW? (the window, minus the margin, measured right before the send) */
+export function resendStillInWindow(firstAttemptAt: string | null, requestedAt: string, nowMs: number): boolean {
+  const start = Date.parse(firstAttemptAt ?? requestedAt);
+  if (!Number.isFinite(start)) return false;
+  return nowMs - start + REFUND_SEND_MARGIN_MS <= REFUND_RETRY_WINDOW_MS;
+}
+
 /** Stripe's own `reason` enum is `duplicate | fraudulent | requested_by_customer`; ours maps onto two of them. */
 export function stripeRefundReason(code: RefundReasonCode): "duplicate" | "requested_by_customer" | null {
   if (code === "duplicate_charge") return "duplicate";
