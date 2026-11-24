@@ -116,6 +116,7 @@ function actor(role: string, locations: string[] = [SHOP]): AuthContext {
 }
 
 let reqSeq = 0;
+let claimSeq = 0;
 /** 0357's contract in TS: token replay, figures under "the lock", allocation, named refusals. */
 function reserve(args: Record<string, unknown>, db: FakeDb) {
   const t = db.tables;
@@ -127,7 +128,7 @@ function reserve(args: Record<string, unknown>, db: FakeDb) {
   const existing = (t.catering_refund_requests ?? []).filter((r) => r.client_token === args.p_client_token);
   if (existing.length > 0) {
     const total = existing.reduce((s, r) => s + Number(r.amount_cents), 0);
-    if (args.p_amount_cents != null && args.p_amount_cents !== total) return { data: null, error: { message: "token_reused" } };
+    if (args.p_amount_cents !== total) return { data: null, error: { message: "token_reused" } };
     return { data: { replay: true, location_id: quote.location_id, requests: existing.map((r) => ({ id: r.id, payment_id: r.payment_id, amount_cents: r.amount_cents, status: r.status })) }, error: null };
   }
   const fig = (p: Row) => refundFigures(
@@ -137,7 +138,8 @@ function reserve(args: Record<string, unknown>, db: FakeDb) {
   );
   const total = pays.reduce((s, p) => s + fig(p).refundableCents, 0);
   if (total <= 0) return { data: null, error: { message: "nothing_refundable" } };
-  const want = (args.p_amount_cents as number | null) ?? total;
+  if (args.p_amount_cents == null || Number(args.p_amount_cents) <= 0) return { data: null, error: { message: "invalid_amount" } };
+  const want = Number(args.p_amount_cents);
   if (want > total) return { data: null, error: { message: "over_refundable", details: String(total) } };
   let left = want;
   const out: Row[] = [];
@@ -173,6 +175,18 @@ function seed() {
     },
     {
       catering_refund_reserve: reserve,
+      catering_refund_claim: (args, db) => {
+        const r = (db.tables.catering_refund_requests ?? []).find((x) => x.id === args.p_request_id);
+        const live = r && r.claimed_until && Date.parse(String(r.claimed_until)) > Date.now();
+        if (!r || !["pending", "submitted"].includes(String(r.status)) || live) return { data: null, error: null };
+        r.claim_token = `claim-${++claimSeq}`;
+        r.claimed_until = new Date(Date.now() + 180_000).toISOString();
+        if (r.status === "pending") {
+          r.attempts = Number(r.attempts) + 1;
+          r.first_attempt_at ??= new Date().toISOString();
+        }
+        return { data: { claim_token: r.claim_token, attempts: r.attempts, first_attempt_at: r.first_attempt_at, status: r.status }, error: null };
+      },
       catering_refund_actor_ok: (args, db) => ({ data: ["owner", "cgs", "moo", "catering_mgr"].includes(String(db.tables.users?.find((u) => u.id === args.p_actor_id)?.role)), error: null }),
     },
   );
@@ -188,7 +202,7 @@ function seed() {
 }
 
 const body = (over: Partial<RefundRequestBody> = {}): RefundRequestBody => ({
-  clientToken: "11111111-1111-4111-8111-111111111111", amountCents: null, reasonCode: "event_lost", reasonNote: null, trigger: "lost", ...over,
+  clientToken: "11111111-1111-4111-8111-111111111111", amountCents: 100000, reasonCode: "event_lost", reasonNote: null, trigger: "lost", ...over,
 });
 const rows = () => h.db.tables.catering_refund_requests as Row[];
 
@@ -210,6 +224,15 @@ describe("the confirm tap", () => {
     const sent = JSON.parse(stripe.creates[0]!.params) as { reason: string; metadata: Record<string, string> };
     expect(sent.reason).toBe("requested_by_customer");
     expect(sent.metadata.refund_request_id).toBe(rows()[0]!.id);
+  });
+
+  it("review r1: a payment that lands between the screen and the tap never grows a Full refund (the confirmed number is sent)", async () => {
+    (h.db.tables.catering_payments as Row[]).push({ id: "00000000-0000-4000-8000-0000000000c9", quote_id: QUOTE, kind: "full", amount_cents: 50000, status: "paid", provider: "stripe", provider_ref: "pi_late", paid_at: "2026-11-06T10:00:00Z", created_at: "2026-11-06T09:00:00Z" });
+    stripe.charges.set("pi_late", { account: "sk_test_fake_A", captured: 50000, refunded: 0 });
+    // The person saw (and confirmed) $1,000.00; $500 more landed meanwhile.
+    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100000 }));
+    expect(out.results.reduce((s, r) => s + r.amountCents, 0)).toBe(100000);
+    expect(stripe.refunds.reduce((s, r) => s + r.amount, 0)).toBe(100000);
   });
 
   it("a double tap (the same token) is the same request: no second Stripe call, no second row", async () => {
@@ -315,31 +338,38 @@ describe("unknown outcomes stay pending and are retried safely", () => {
     expect(s.requests[0]).toMatchObject({ needsReconcile: true, retryable: false });
   });
 
-  it("two presses at once: the one that loses the claim sends nothing", async () => {
+  it("review r1: a press while another holds the claim sends nothing; a press that outlived its claim writes nothing", async () => {
     stripe.nextCreate = ["network_before"];
     await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
     const row = rows()[0]!;
-    // Another press's claim lands between this press's read of the row and its own claim.
-    const client = h.db.client as unknown as { from: (t: string) => Record<string, (...a: unknown[]) => unknown> };
-    const real = client.from;
-    let bumped = false;
-    client.from = (table: string) => {
-      const q = real(table);
-      if (table !== "catering_refund_requests") return q;
-      const upd = q.update!;
-      q.update = (p: unknown, o?: unknown) => {
-        if (!bumped && p && typeof p === "object" && "attempts" in p) {
-          bumped = true;
-          row.attempts = Number(row.attempts) + 1;
-        }
-        return upd(p, o);
-      };
-      return q;
-    };
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
-    client.from = real;
-    expect(r).toMatchObject({ status: "pending", errorCode: "in_progress" });
+    // Press B takes the claim (for example its Stripe call is slow).
+    row.claim_token = "claim-B";
+    row.claimed_until = new Date(Date.now() + 60_000).toISOString();
+    const a = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
+    expect(a).toMatchObject({ status: "pending", errorCode: "in_progress" });
     expect(stripe.creates).toHaveLength(1); // only the first tap's send
+
+    // B's claim expires; press C claims, and B (holding the OLD token) comes back with "failed": fenced out.
+    row.claimed_until = new Date(Date.now() - 1000).toISOString();
+    const c = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
+    expect(c.status).toBe("succeeded");
+    const { error, count } = await h.db.client.from("catering_refund_requests").update({ status: "failed" }, { count: "exact" }).eq("id", row.id).eq("status", "pending").eq("claim_token", "claim-B");
+    expect([error, count]).toEqual([null, 0]);
+    expect(row.status).toBe("succeeded");
+    expect(row.claim_token).toBeNull(); // released by the outcome write
+    expect(stripe.refunds).toHaveLength(1);
+  });
+
+  it("review r1: even a FIRST attempt lists first, and adopts a refund already carrying this row's id instead of sending", async () => {
+    // A reserved row nobody has sent yet, and a Stripe refund that names it (a press that outlived its claim).
+    reserve({ p_actor_id: ACTOR, p_quote_id: QUOTE, p_client_token: "22222222-2222-4222-8222-222222222222", p_amount_cents: 2000, p_reason_code: "event_lost", p_reason_note: null, p_trigger: "lost" }, h.db);
+    const row = rows()[0]!;
+    expect(row.attempts).toBe(0);
+    stripe.refunds.push({ id: "re_ghost", status: "succeeded", amount: 2000, paymentIntent: "pi_bal", requestId: row.id as string, account: "sk_test_fake_A" });
+    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
+    expect(r.status).toBe("succeeded");
+    expect(row.stripe_refund_id).toBe("re_ghost");
+    expect(stripe.creates).toHaveLength(0);
   });
 
   it("a payment Stripe does not know in any configured account fails before anything is sent", async () => {

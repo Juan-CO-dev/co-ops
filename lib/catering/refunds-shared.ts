@@ -76,7 +76,7 @@ export interface RefundRequestInput {
   status: RefundStatus;
 }
 export interface RefundFigures {
-  /** The row's amount, capped by the charge amount Stripe reported (when it did). */
+  /** The charge amount Stripe reported (when it did) — the charge is the money, in both directions — else the row's. */
   capturedCents: number;
   /** The larger of Stripe's cumulative refund (the webhook's events) and our own accepted requests. */
   refundedCents: number;
@@ -102,7 +102,7 @@ export function refundFigures(
   const cumulative = events.reduce((m, e) => Math.max(m, e.cumulativeRefundedCents), 0);
   const done = requests.filter((r) => r.status === "submitted" || r.status === "succeeded").reduce((s, r) => s + r.amountCents, 0);
   const inFlightCents = requests.filter((r) => r.status === "pending").reduce((s, r) => s + r.amountCents, 0);
-  const capturedCents = Math.min(payment.amountCents, charge ?? payment.amountCents);
+  const capturedCents = charge ?? payment.amountCents;
   const refundedCents = Math.max(cumulative, done);
   const eligible = payment.status === "paid" && payment.provider === "stripe" && PI_RE.test(payment.providerRef ?? "");
   return {
@@ -201,8 +201,11 @@ export function refundIdempotencyKey(requestId: string): string {
 // ── The request body (strict) ─────────────────────────────────────────────────────────────────────────
 export interface RefundRequestBody {
   clientToken: string;
-  /** null = refund everything that is refundable. */
-  amountCents: number | null;
+  /**
+   * The exact amount the person saw and confirmed — REQUIRED, "Full" included (review r1): the server never re-reads
+   * "everything" at execution, so money that lands between the screen and the tap cannot grow the refund.
+   */
+  amountCents: number;
   reasonCode: RefundReasonCode;
   reasonNote: string | null;
   trigger: RefundTrigger;
@@ -222,12 +225,9 @@ export function parseRefundBody(raw: unknown): RefundRequestBody | "invalid_requ
   if (!isUuid(b.clientToken)) return "invalid_request";
   if (!isRefundReasonCode(b.reasonCode)) return "invalid_request";
   if (!isRefundTrigger(b.trigger)) return "invalid_request";
-  let amountCents: number | null = null;
-  if (b.amountCents !== null && b.amountCents !== undefined) {
-    if (typeof b.amountCents !== "number" || !Number.isInteger(b.amountCents)) return "invalid_amount";
-    if (b.amountCents <= 0 || b.amountCents > MAX_REFUND_CENTS) return "invalid_amount";
-    amountCents = b.amountCents;
-  }
+  if (typeof b.amountCents !== "number" || !Number.isInteger(b.amountCents)) return "invalid_amount";
+  if (b.amountCents <= 0 || b.amountCents > MAX_REFUND_CENTS) return "invalid_amount";
+  const amountCents = b.amountCents;
   let reasonNote: string | null = null;
   if (b.reasonNote !== null && b.reasonNote !== undefined) {
     if (typeof b.reasonNote !== "string") return "invalid_request";

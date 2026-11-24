@@ -59,8 +59,11 @@ describe("refundFigures — the twin of 0357", () => {
       { amountCents: 500, status: "submitted" },
       { amountCents: 9999, status: "failed" },
     ]);
-    // captured = min(30000, 29000); refunded = max(5000, 3000 + 500); in flight = 1000.
+    // captured = the charge Stripe reported (29000); refunded = max(5000, 3000 + 500); in flight = 1000.
     expect(f).toEqual({ capturedCents: 29000, refundedCents: 5000, inFlightCents: 1000, refundableCents: 23000, eligible: true });
+  });
+  it("review r1: a charge LARGER than the row is what was captured (the difference stays refundable)", () => {
+    expect(refundFigures({ ...PAID, amountCents: 20000 }, [{ cumulativeRefundedCents: 20000, chargeAmountCents: 30000 }], []).refundableCents).toBe(10000);
   });
   it("never below zero", () => {
     expect(refundFigures(PAID, [{ cumulativeRefundedCents: 40000, chargeAmountCents: 30000 }], []).refundableCents).toBe(0);
@@ -112,7 +115,12 @@ describe("parseRefundBody — strict", () => {
   const ok = { clientToken: "11111111-1111-4111-8111-111111111111", amountCents: 1000, reasonCode: "event_lost", reasonNote: " lost it ", trigger: "lost" };
   it("accepts a good body and trims the note", () => {
     expect(parseRefundBody(ok)).toEqual({ ...ok, reasonNote: "lost it" });
-    expect(parseRefundBody({ ...ok, amountCents: null, reasonNote: null })).toMatchObject({ amountCents: null, reasonNote: null });
+    expect(parseRefundBody({ ...ok, reasonNote: null })).toMatchObject({ amountCents: 1000, reasonNote: null });
+    // Review r1: the amount is required ("Full" sends the confirmed number).
+    expect(parseRefundBody({ ...ok, amountCents: null })).toBe("invalid_amount");
+    const { amountCents: _drop, ...noAmount } = ok;
+    void _drop;
+    expect(parseRefundBody(noAmount)).toBe("invalid_amount");
   });
   it("refuses unknown keys, bad tokens, reasons and triggers", () => {
     expect(parseRefundBody({ ...ok, extra: 1 })).toBe("invalid_request");

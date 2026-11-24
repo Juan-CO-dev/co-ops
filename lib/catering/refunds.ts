@@ -9,8 +9,10 @@
  *      destructive `catering.refund.request` audit row, all in one transaction) → `submitRefundRow` for each new row.
  *      A tap whose `clientToken` the database has seen is the SAME tap: the rows it made are returned and Stripe is
  *      NOT called again (a double tap, a re-sent request, a browser retry = exactly one Stripe refund).
- *   2. `submitRefundRow` — one row, one Stripe request, under the row's own claim (a compare-and-set on `attempts`, so
- *      two presses never send at once). Idempotency-Key `catering-refund:<row id>`, the same parameters every time.
+ *   2. `submitRefundRow` — one row, one Stripe request, under the row's own exclusive, expiring claim (0357
+ *      `catering_refund_claim`; every outcome write is fenced on the claim token, review r1), so two presses never send
+ *      at once and a press that outlived its claim cannot overwrite the newer one. Every attempt first lists the
+ *      PaymentIntent's refunds for one carrying this row's id. Idempotency-Key `catering-refund:<row id>`, the same parameters every time.
  *      A refusal Stripe certainly did not act on → `failed` (the amount is released). An unknown outcome (no response,
  *      5xx, 409, 429) → the row STAYS `pending`, counted against what is refundable, with the error recorded:
  *      a clear, retryable state.
@@ -281,21 +283,51 @@ async function loadRequest(sb: ServiceClient, requestId: string): Promise<Reques
   return data ?? null;
 }
 
-/** Write an outcome, guarded on the status it was read in. Returns false when the row moved meanwhile. */
-async function settleRow(
-  sb: ServiceClient,
-  row: RequestRow,
-  patch: { status?: RefundStatus; stripe_refund_id?: string | null; stripe_status?: string | null; last_error_code?: string | null; last_error_message?: string | null },
-): Promise<boolean> {
+/**
+ * A row this press holds the claim on (0357 `catering_refund_claim`, review r1): an exclusive, expiring sender lock.
+ * Every outcome below is written ONLY while the row still carries this press's claim token (and releases it), so a
+ * press that outlived its claim can never overwrite what a newer one recorded.
+ */
+interface ClaimedRow extends RequestRow {
+  claimToken: string;
+  /** Was anything possibly sent for this row before this press? (attempts counted before this claim) */
+  sentBefore: boolean;
+}
+
+type Outcome = { status?: RefundStatus; stripe_refund_id?: string | null; stripe_status?: string | null; last_error_code?: string | null; last_error_message?: string | null };
+
+/** Write an outcome, fenced on the claim and the status it was claimed in. Returns false when the claim was lost. */
+async function settleRow(sb: ServiceClient, row: ClaimedRow, patch: Outcome): Promise<boolean> {
   const now = new Date().toISOString();
   const terminal = patch.status === "succeeded" || patch.status === "failed";
   const { error, count } = await sb
     .from("catering_refund_requests")
-    .update({ ...patch, updated_at: now, ...(terminal ? { settled_at: now } : {}) }, { count: "exact" })
+    .update({ ...patch, claim_token: null, claimed_until: null, updated_at: now, ...(terminal ? { settled_at: now } : {}) }, { count: "exact" })
     .eq("id", row.id)
-    .eq("status", row.status);
+    .eq("status", row.status)
+    .eq("claim_token", row.claimToken);
   if (error) throw new Error(`refund settle: ${error.message}`);
   return (count ?? 0) > 0;
+}
+
+/** Take the row's sender claim. null = another press holds a live claim, or the row is finished. */
+async function claimRow(sb: ServiceClient, row: RequestRow): Promise<ClaimedRow | null> {
+  const { data, error } = await sb.rpc("catering_refund_claim", { p_request_id: row.id });
+  if (error) {
+    if (missingRelation(error)) throw new CateringRefundError(503, "refunds_unavailable");
+    throw new Error(`catering_refund_claim: ${error.message}`);
+  }
+  const c = data as { claim_token: string; attempts: number; first_attempt_at: string | null; status: RefundStatus } | null;
+  if (!c || typeof c.claim_token !== "string") return null;
+  const attempts = Number(c.attempts);
+  return {
+    ...row,
+    status: c.status,
+    attempts,
+    first_attempt_at: c.first_attempt_at,
+    claimToken: c.claim_token,
+    sentBefore: c.status === "pending" ? attempts - 1 > 0 : true,
+  };
 }
 
 function result(row: RequestRow, status: RefundStatus, errorCode: string | null): RefundAttemptResult {
@@ -332,42 +364,43 @@ async function owningAccount(accounts: StripeCredentials[], paymentIntentId: str
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 500);
 
+/** Record "still unknown" (the row stays pending, the claim is released). The claim lost = nothing written. */
+async function keepPending(sb: ServiceClient, actor: AuthContext, row: ClaimedRow, code: string, message: string, extra: Record<string, unknown> = {}): Promise<RefundAttemptResult> {
+  const recorded = await settleRow(sb, row, { last_error_code: code.slice(0, 80), last_error_message: message.slice(0, 500) });
+  stripeOutcomeAudit(actor, row, { outcome: "pending", error_code: code, attempt: row.attempts, recorded, ...extra });
+  return result(row, "pending", recorded ? code : "claim_lost");
+}
+
 /**
- * Send ONE request row to Stripe (or, on a retry, find what an earlier send did). Never throws for a Stripe problem:
- * the row records it. Throws only for our own database failures (and then the row is still `pending`, retryable).
+ * Send ONE request row to Stripe (or find what an earlier send did). Never throws for a Stripe problem: the row records
+ * it. Throws only for our own database failures (and then the row is still `pending` and its claim expires by itself).
  */
 export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, requestId: string, nowMs: number = Date.now()): Promise<RefundAttemptResult> {
   const row = await loadRequest(sb, requestId);
   if (!row) throw new CateringRefundError(404, "not_found");
   if (row.status !== "pending") return result(row, row.status, null);
-  const sentBefore = row.attempts > 0;
-  if (sentBefore && requestRetryState({ status: row.status, firstAttemptAt: row.first_attempt_at, requestedAt: row.requested_at }, nowMs).needsReconcile) {
+  if (requestRetryState({ status: row.status, firstAttemptAt: row.first_attempt_at, requestedAt: row.requested_at }, nowMs).needsReconcile) {
     return result(row, "pending", "needs_reconcile");
   }
 
-  // THE CLAIM: one sender per row at a time. A press that loses it sends nothing.
-  const nowIso = new Date(nowMs).toISOString();
-  const { error: cErr, count } = await sb
-    .from("catering_refund_requests")
-    .update({ attempts: row.attempts + 1, first_attempt_at: row.first_attempt_at ?? nowIso, updated_at: nowIso }, { count: "exact" })
-    .eq("id", row.id)
-    .eq("status", "pending")
-    .eq("attempts", row.attempts);
-  if (cErr) throw new Error(`refund claim: ${cErr.message}`);
-  if ((count ?? 0) === 0) return result(row, "pending", "in_progress");
-  const claimed: RequestRow = { ...row, attempts: row.attempts + 1, first_attempt_at: row.first_attempt_at ?? nowIso };
+  // THE CLAIM: one sender per row at a time. A press that does not get it sends nothing.
+  const claimed = await claimRow(sb, row);
+  if (!claimed) return result(row, "pending", "in_progress");
+  if (claimed.status !== "pending") {
+    // Moved on between the read and the claim (another press recorded Stripe's answer): release, report as it is.
+    await settleRow(sb, claimed, {});
+    return result(claimed, claimed.status, null);
+  }
 
-  // Nothing has been sent for this row yet: a problem on OUR side can close it (the amount is released).
-  // After a send, only Stripe's own answer may close it.
+  // Nothing can have been sent for this row before this press: a problem on OUR side can close it (the amount is
+  // released). After a possible send, only Stripe's own answer may close it.
   const ourSideStop = async (code: string, message: string) => {
-    if (!sentBefore) {
-      await settleRow(sb, claimed, { status: "failed", last_error_code: code, last_error_message: message });
-      stripeOutcomeAudit(actor, claimed, { outcome: "failed", error_code: code, attempt: claimed.attempts });
-      return result(claimed, "failed", code);
+    if (!claimed.sentBefore) {
+      const recorded = await settleRow(sb, claimed, { status: "failed", last_error_code: code, last_error_message: message });
+      stripeOutcomeAudit(actor, claimed, { outcome: "failed", error_code: code, attempt: claimed.attempts, recorded });
+      return result(claimed, recorded ? "failed" : "pending", recorded ? code : "claim_lost");
     }
-    await settleRow(sb, claimed, { last_error_code: code, last_error_message: message });
-    stripeOutcomeAudit(actor, claimed, { outcome: "pending", error_code: code, attempt: claimed.attempts });
-    return result(claimed, "pending", code);
+    return keepPending(sb, actor, claimed, code, message);
   };
 
   const { data: pay, error: pErr } = await sb
@@ -386,24 +419,21 @@ export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, req
   try {
     owner = await owningAccount(accounts, paymentIntentId);
   } catch (e) {
-    await settleRow(sb, claimed, { last_error_code: "stripe_unreachable", last_error_message: errText(e) });
-    stripeOutcomeAudit(actor, claimed, { outcome: "pending", error_code: "stripe_unreachable", attempt: claimed.attempts });
-    return result(claimed, "pending", "stripe_unreachable");
+    return keepPending(sb, actor, claimed, "stripe_unreachable", errText(e));
   }
   if (!owner) return ourSideStop("payment_not_in_stripe", "No configured Stripe account knows this payment");
 
-  // A RETRY first asks Stripe whether an earlier send landed (a lost response): adopt it, never send a second one.
-  if (sentBefore) {
-    let found: StripeRefund | undefined;
-    try {
-      found = (await listRefundsForPaymentIntent(owner.account.secretKey, paymentIntentId)).find((r) => r.requestId === row.id);
-    } catch (e) {
-      await settleRow(sb, claimed, { last_error_code: "stripe_unreachable", last_error_message: errText(e) });
-      stripeOutcomeAudit(actor, claimed, { outcome: "pending", error_code: "stripe_unreachable", attempt: claimed.attempts });
-      return result(claimed, "pending", "stripe_unreachable");
-    }
-    if (found) return adopt(sb, actor, claimed, found, "found_on_retry");
-  } else if (owner.capturedCents != null && owner.refundedCents != null && Number(row.amount_cents) > owner.capturedCents - owner.refundedCents) {
+  // EVERY attempt first asks Stripe whether a refund for THIS row already exists (a lost answer, or another press
+  // that outlived its claim): adopt it, never send a second one.
+  let found: StripeRefund | undefined;
+  try {
+    found = (await listRefundsForPaymentIntent(owner.account.secretKey, paymentIntentId)).find((r) => r.requestId === row.id);
+  } catch (e) {
+    return keepPending(sb, actor, claimed, "stripe_unreachable", errText(e));
+  }
+  if (found) return adopt(sb, actor, claimed, found, claimed.sentBefore ? "found_on_retry" : "found");
+
+  if (!claimed.sentBefore && owner.capturedCents != null && owner.refundedCents != null && Number(row.amount_cents) > owner.capturedCents - owner.refundedCents) {
     // The live cap, before the first send: Stripe says less is left on the charge than this row asks for (a refund
     // made in the Stripe dashboard that the webhook has not reported yet). Nothing is sent; the amount is released.
     return ourSideStop("over_charge_remaining", `Stripe has ${owner.capturedCents - owner.refundedCents} cents left on this charge`);
@@ -426,24 +456,22 @@ export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, req
     const status = e instanceof StripeError ? e.status : 0;
     const code = e instanceof StripeError ? e.code : "network_error";
     if (stripeCreateFailure(status) === "refused") {
-      await settleRow(sb, claimed, { status: "failed", last_error_code: code.slice(0, 80), last_error_message: errText(e) });
-      stripeOutcomeAudit(actor, claimed, { outcome: "failed", error_code: code, http_status: status, attempt: claimed.attempts });
-      return result(claimed, "failed", code);
+      const recorded = await settleRow(sb, claimed, { status: "failed", last_error_code: code.slice(0, 80), last_error_message: errText(e) });
+      stripeOutcomeAudit(actor, claimed, { outcome: "failed", error_code: code, http_status: status, attempt: claimed.attempts, recorded });
+      return result(claimed, recorded ? "failed" : "pending", recorded ? code : "claim_lost");
     }
-    await settleRow(sb, claimed, { last_error_code: code.slice(0, 80), last_error_message: errText(e) });
-    stripeOutcomeAudit(actor, claimed, { outcome: "pending", error_code: code, http_status: status, attempt: claimed.attempts });
-    return result(claimed, "pending", code);
+    return keepPending(sb, actor, claimed, code, errText(e), { http_status: status });
   }
 }
 
-async function adopt(sb: ServiceClient, actor: AuthContext, row: RequestRow, refund: StripeRefund, how: "created" | "found_on_retry" | "refreshed"): Promise<RefundAttemptResult> {
+async function adopt(sb: ServiceClient, actor: AuthContext, row: ClaimedRow, refund: StripeRefund, how: "created" | "found" | "found_on_retry" | "refreshed"): Promise<RefundAttemptResult> {
   // Stripe gave it an id: it exists. An unknown status still means "accepted" (submitted), never "failed".
   const status: RefundStatus = refundStatusFromStripe(refund.status) ?? "submitted";
-  const moved = status === row.status
+  const recorded = status === row.status
     ? await settleRow(sb, row, { stripe_status: refund.status, last_error_code: null, last_error_message: null })
     : await settleRow(sb, row, { status, stripe_refund_id: row.stripe_refund_id ?? refund.id, stripe_status: refund.status, last_error_code: null, last_error_message: null });
-  stripeOutcomeAudit(actor, row, { outcome: status, how, stripe_refund_id: refund.id, stripe_status: refund.status, attempt: row.attempts, recorded: moved });
-  return result(row, moved ? status : row.status, moved ? null : "row_moved");
+  stripeOutcomeAudit(actor, row, { outcome: status, how, stripe_refund_id: refund.id, stripe_status: refund.status, attempt: row.attempts, recorded });
+  return result(row, recorded ? status : row.status, recorded ? null : "claim_lost");
 }
 
 // ── Retry / refresh ───────────────────────────────────────────────────────────────────────────────────
@@ -472,18 +500,25 @@ export async function retryRefundRequest(actor: AuthContext, quoteId: string, re
     const accounts = stripeAccountsForShop(await shopCode(sb, row.location_id));
     const { data: pay } = await sb.from("catering_payments").select("provider_ref").eq("id", row.payment_id).maybeSingle<{ provider_ref: string | null }>();
     if (accounts.length === 0 || !pay?.provider_ref) throw new CateringRefundError(503, "stripe_not_configured");
+    const claimed = await claimRow(sb, row);
+    if (!claimed) return result(row, row.status, "in_progress");
     try {
       const owner = await owningAccount(accounts, pay.provider_ref);
-      if (!owner) throw new CateringRefundError(503, "stripe_not_configured");
+      if (!owner) {
+        await settleRow(sb, claimed, {});
+        throw new CateringRefundError(503, "stripe_not_configured");
+      }
       const refund = await retrieveRefund(owner.account.secretKey, row.stripe_refund_id);
-      return adopt(sb, actor, row, refund, "refreshed");
+      return adopt(sb, actor, claimed, refund, "refreshed");
     } catch (e) {
       if (e instanceof CateringRefundError) throw e;
+      await settleRow(sb, claimed, {});
       return result(row, row.status, "stripe_unreachable");
     }
   }
   throw new CateringRefundError(409, "not_retryable");
 }
+
 
 /** Lead → the live quotes of its order(s) with money still refundable (the pipeline's "Refund" banner). */
 export async function loadLeadRefundables(actor: AuthContext, leadId: string): Promise<Array<{ quoteId: string; refundableCents: number; paidCents: number }>> {

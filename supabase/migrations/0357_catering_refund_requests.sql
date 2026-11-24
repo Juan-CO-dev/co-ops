@@ -6,7 +6,7 @@
 -- customer paid. Ships DARK: the app refuses every refund unless CATERING_REFUNDS=1 (lib/catering/refunds-shared.ts).
 --
 -- WHAT THIS IS. The ledger of refunds a PERSON asked CO-OPS to make at Stripe, and the one function that reserves one.
--- PURELY ADDITIVE: one new table, three new functions, one trigger on the new table. No existing table, function,
+-- PURELY ADDITIVE: one new table, four new functions, one trigger on the new table. No existing table, function,
 -- trigger, policy or grant is altered or re-emitted (catering_payments, catering_payment_refund_events and the Stripe
 -- webhook are untouched: the webhook's `charge.refunded` path still records what Stripe did and still moves a payment
 -- to `refunded` only when the whole charge is refunded — the report and the digest keep reading exactly that).
@@ -26,8 +26,10 @@
 --                                             (gm, agm, prep_mgr, social_media_mgr, every lower role) and anyone
 --                                             inactive: false. The conservative gate (Juan to confirm, see the PR).
 --     catering_refund_figures(payment)        what one payment can still give back, from what we KNOW:
---                                             captured  = the row's amount, capped by the charge amount Stripe reported
---                                                         (catering_payment_refund_events.charge_amount_cents) when known;
+--                                             captured  = the CHARGE amount Stripe reported (the largest
+--                                                         catering_payment_refund_events.charge_amount_cents) when known --
+--                                                         the charge is the money, in both directions (review r1: a $300
+--                                                         charge on a $200 row is $300 the customer paid) -- else the row's;
 --                                             refunded  = the larger of Stripe's cumulative amount_refunded (the
 --                                                         webhook's events) and our own submitted + succeeded requests;
 --                                             in_flight = our own pending requests;
@@ -40,6 +42,16 @@
 --                                             the amount (balance -> full -> deposit, newest first), refuses an
 --                                             over-refund by name, inserts the rows and their audit row
 --                                             (`catering.refund.request`, destructive) in the same transaction.
+--                                             The amount is REQUIRED (review r1): it is the number the person saw
+--                                             and confirmed. "Refund everything" is never re-read at execution, so a
+--                                             payment that lands between the screen and the tap cannot grow it.
+--     catering_refund_claim(request)          THE one sender lock for a row (review r1): an exclusive, EXPIRING claim
+--                                             (claim_token + claimed_until, 3 minutes, the database clock) on a
+--                                             pending or submitted row. A second press while a claim is live gets
+--                                             nothing and sends nothing. Every outcome the app writes is fenced on
+--                                             the claim_token it holds (and releases it), so a press that outlived
+--                                             its claim can never overwrite what the newer one recorded. Sending
+--                                             counts an attempt and stamps first_attempt_at (the 24-hour window).
 --   TRIGGER catering_refund_requests_guard   a row's money facts never change (amount, payment, token, reason, who),
 --                                            a terminal row never changes status, a Stripe refund id once set never
 --                                            changes, and a status only moves forward
@@ -53,13 +65,14 @@
 --   an error ... when trying to refund more money than is left on a charge" -- docs.stripe.com/api/refunds/create); this
 --   function is what stops CO-OPS asking, and what keeps two people from splitting one deposit twice.
 --
--- PRIVILEGES: the table is deny-all RLS with no policies; service_role holds SELECT and UPDATE on the outcome columns
---   only (no INSERT, DELETE, TRUNCATE, REFERENCES, TRIGGER). The functions are service_role EXECUTE only.
+-- PRIVILEGES: the table is deny-all RLS with no policies; service_role holds SELECT and UPDATE on the outcome and claim
+--   columns only (no INSERT, DELETE, TRUNCATE, REFERENCES, TRIGGER). The functions are service_role EXECUTE only.
 -- DEPENDS ON: 0127 (catering_payments), 0120 (catering_quotes.root_id), 0333 (catering_payment_refund_events), users,
 --   user_locations, audit_log.
 -- PROOF: scripts/sql-harness-0357.mjs (PGlite, the REAL file), CI-pinned by tests/catering-refund-0357-migration.test.ts.
 -- ROLLBACK (only while the table is empty): drop trigger catering_refund_requests_guard on public.catering_refund_requests;
 --   drop function public.catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text);
+--   drop function public.catering_refund_claim(uuid);
 --   drop function public.catering_refund_figures(uuid); drop function public.catering_refund_actor_ok(uuid, uuid);
 --   drop function public.catering_refund_requests_guard(); drop table public.catering_refund_requests;
 --   Once a row exists it is money history: never delete it.
@@ -80,7 +93,7 @@ begin
     raise exception '0357: public.catering_refund_requests already exists';
   end if;
   foreach t in array array['catering_refund_actor_ok', 'catering_refund_figures', 'catering_refund_reserve',
-                           'catering_refund_requests_guard'] loop
+                           'catering_refund_claim', 'catering_refund_requests_guard'] loop
     if exists (select 1 from pg_proc where proname = t and pronamespace = 'public'::regnamespace) then
       raise exception '0357: function public.% already exists', t;
     end if;
@@ -109,6 +122,8 @@ create table public.catering_refund_requests (
   requested_at       timestamptz not null default now(),
   updated_at         timestamptz not null default now(),
   settled_at         timestamptz,
+  claim_token        uuid,
+  claimed_until      timestamptz,
   constraint catering_refund_requests_one_per_tap unique (client_token, payment_id),
   constraint catering_refund_requests_other_needs_note check (reason_code <> 'other' or reason_note is not null)
 );
@@ -118,8 +133,8 @@ create index catering_refund_requests_quote on public.catering_refund_requests (
 alter table public.catering_refund_requests enable row level security;
 revoke all on table public.catering_refund_requests from public, anon, authenticated, service_role;
 grant select on table public.catering_refund_requests to service_role;
-grant update (status, stripe_refund_id, stripe_status, last_error_code, last_error_message, attempts, first_attempt_at,
-              updated_at, settled_at)
+grant update (status, stripe_refund_id, stripe_status, last_error_code, last_error_message, updated_at, settled_at,
+              claim_token, claimed_until)
   on table public.catering_refund_requests to service_role;
 
 create function public.catering_refund_requests_guard() returns trigger
@@ -131,6 +146,9 @@ begin
      or new.reason_code is distinct from old.reason_code or new.reason_note is distinct from old.reason_note
      or new.trigger_kind is distinct from old.trigger_kind or new.requested_by is distinct from old.requested_by
      or new.requested_at is distinct from old.requested_at then
+    raise exception 'refund_request_immutable' using errcode = 'P0001';
+  end if;
+  if new.attempts < old.attempts or (old.first_attempt_at is not null and new.first_attempt_at is distinct from old.first_attempt_at) then
     raise exception 'refund_request_immutable' using errcode = 'P0001';
   end if;
   if old.stripe_refund_id is not null and new.stripe_refund_id is distinct from old.stripe_refund_id then
@@ -183,7 +201,7 @@ begin
          coalesce(sum(r.amount_cents) filter (where r.status = 'pending'), 0)
     into v_done, o_in_flight
     from public.catering_refund_requests r where r.payment_id = p_payment_id;
-  o_captured := least(v_pay.amount_cents::bigint, coalesce(v_charge, v_pay.amount_cents::bigint));
+  o_captured := coalesce(v_charge, v_pay.amount_cents::bigint);
   o_refunded := greatest(coalesce(v_cum, 0), v_done);
   o_eligible := v_pay.status = 'paid' and v_pay.provider = 'stripe' and coalesce(v_pay.provider_ref, '') ~ '^pi_[A-Za-z0-9_]+$';
   o_refundable := case when o_eligible then greatest(0, o_captured - o_refunded - o_in_flight) else 0 end;
@@ -222,7 +240,7 @@ begin
   end if;
   if v_note is not null and length(v_note) > 500 then raise exception 'note_too_long' using errcode = 'P0001'; end if;
   if p_reason_code = 'other' and v_note is null then raise exception 'note_required' using errcode = 'P0001'; end if;
-  if p_amount_cents is not null and p_amount_cents <= 0 then raise exception 'invalid_amount' using errcode = 'P0001'; end if;
+  if p_amount_cents is null or p_amount_cents <= 0 then raise exception 'invalid_amount' using errcode = 'P0001'; end if;
 
   select q.location_id, coalesce(q.root_id, q.id) into v_shop, v_root from public.catering_quotes q where q.id = p_quote_id;
   if v_shop is null then raise exception 'quote_not_found' using errcode = 'P0001'; end if;
@@ -245,7 +263,7 @@ begin
     into v_existing, v_existing_total, v_existing_bad
     from public.catering_refund_requests r where r.client_token = p_client_token;
   if jsonb_array_length(v_existing) > 0 then
-    if v_existing_bad or (p_amount_cents is not null and p_amount_cents <> v_existing_total) then
+    if v_existing_bad or p_amount_cents <> v_existing_total then
       raise exception 'token_reused' using errcode = 'P0001';
     end if;
     return jsonb_build_object('replay', true, 'location_id', v_shop, 'requests', v_existing);
@@ -259,7 +277,7 @@ begin
     v_total := v_total + v_fig.o_refundable;
   end loop;
   if v_total <= 0 then raise exception 'nothing_refundable' using errcode = 'P0001'; end if;
-  v_want := coalesce(p_amount_cents, v_total);
+  v_want := p_amount_cents;
   if v_want > v_total then
     raise exception 'over_refundable' using errcode = 'P0001', detail = v_total::text;
   end if;
@@ -283,7 +301,7 @@ begin
               jsonb_build_object('quote_id', p_quote_id, 'payment_id', v_row.id, 'location_id', v_shop,
                                  'amount_cents', v_take, 'requested_total_cents', v_want, 'refundable_before_cents', v_total,
                                  'reason_code', p_reason_code, 'trigger', p_trigger, 'has_note', v_note is not null,
-                                 'full', p_amount_cents is null), true);
+                                 'full', p_amount_cents = v_total), true);
     v_out := v_out || jsonb_build_object('id', v_new, 'payment_id', v_row.id, 'amount_cents', v_take, 'status', 'pending');
     v_left := v_left - v_take;
   end loop;
@@ -291,12 +309,31 @@ begin
   return jsonb_build_object('replay', false, 'location_id', v_shop, 'requests', v_out);
 end $$;
 
+create function public.catering_refund_claim(p_request_id uuid) returns jsonb
+language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_out jsonb;
+begin
+  update public.catering_refund_requests r
+     set claim_token = gen_random_uuid(),
+         claimed_until = now() + interval '3 minutes',
+         attempts = r.attempts + case when r.status = 'pending' then 1 else 0 end,
+         first_attempt_at = case when r.status = 'pending' then coalesce(r.first_attempt_at, now()) else r.first_attempt_at end,
+         updated_at = now()
+   where r.id = p_request_id and r.status in ('pending', 'submitted') and (r.claimed_until is null or r.claimed_until < now())
+  returning jsonb_build_object('claim_token', r.claim_token, 'attempts', r.attempts, 'first_attempt_at', r.first_attempt_at,
+                               'status', r.status, 'claimed_until', r.claimed_until)
+    into v_out;
+  return v_out; -- null: the row is finished, or another press holds a live claim
+end $$;
+
 revoke all on function public.catering_refund_actor_ok(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.catering_refund_figures(uuid) from public, anon, authenticated;
 revoke all on function public.catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text) from public, anon, authenticated;
+revoke all on function public.catering_refund_claim(uuid) from public, anon, authenticated;
 revoke all on function public.catering_refund_requests_guard() from public, anon, authenticated;
 grant execute on function public.catering_refund_actor_ok(uuid, uuid) to service_role;
 grant execute on function public.catering_refund_figures(uuid) to service_role;
 grant execute on function public.catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text) to service_role;
+grant execute on function public.catering_refund_claim(uuid) to service_role;
 
 commit;

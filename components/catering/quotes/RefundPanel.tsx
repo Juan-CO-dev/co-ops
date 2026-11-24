@@ -143,7 +143,8 @@ export function RefundPanel({
       `/api/catering/quotes/${quoteId}/refunds`,
       {
         clientToken: token,
-        amountCents: mode === "full" ? null : amountCents,
+        // The number on the confirm button, "Full" included: the server refunds exactly what was confirmed.
+        amountCents,
         reasonCode: chosenReason,
         reasonNote: note.trim() || null,
         trigger,

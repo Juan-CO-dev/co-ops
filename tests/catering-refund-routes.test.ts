@@ -27,7 +27,7 @@ import { GET as LEAD_GET } from "@/app/api/catering/pipeline/[id]/refunds/route"
 const ORIGIN = "http://localhost";
 const Q = "00000000-0000-4000-8000-0000000000b1";
 const R = "00000000-0000-4000-8000-0000000000c1";
-const BODY = { clientToken: "11111111-1111-4111-8111-111111111111", amountCents: null, reasonCode: "event_lost", reasonNote: null, trigger: "lost" };
+const BODY = { clientToken: "11111111-1111-4111-8111-111111111111", amountCents: 100000, reasonCode: "event_lost", reasonNote: null, trigger: "lost" };
 const post = (path: string, body: unknown, origin: string | null = ORIGIN) =>
   new NextRequest(`${ORIGIN}${path}`, { method: "POST", body: typeof body === "string" ? body : JSON.stringify(body), headers: { "content-type": "application/json", ...(origin ? { origin } : {}) } });
 const as = (role: string, fresh = true) => {
@@ -66,6 +66,8 @@ describe("POST /refunds — the confirm tap", () => {
     expect(await code(await POST(post(path, { ...BODY, extra: 1 }), ctx))).toBe("invalid_request");
     expect(await code(await POST(post(path, { ...BODY, reasonCode: "other" }), ctx))).toBe("note_required");
     expect(await code(await POST(post(path, { ...BODY, amountCents: 1.5 }), ctx))).toBe("invalid_amount");
+    // Review r1: "Full" is sent as the confirmed number; no amount is never "everything".
+    expect(await code(await POST(post(path, { ...BODY, amountCents: null }), ctx))).toBe("invalid_amount");
     expect(h.request).not.toHaveBeenCalled();
   });
   it("a GM / AGM / prep manager is refused by ROLE before the password is asked for", async () => {

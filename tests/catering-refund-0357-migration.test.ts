@@ -46,19 +46,22 @@ describe("0357 header and shape", () => {
     expect(readdirSync("supabase/migrations").filter((f) => f.startsWith("0357_"))).toEqual([`${NAME}.sql`]);
   });
 
-  it("purely additive: one table, four functions, one trigger on its own table; nothing existing is altered", () => {
+  it("purely additive: one table, five functions, one trigger on its own table; nothing existing is altered", () => {
     expect(code.match(/^create table public\.[a-z_]+/gm)).toEqual(["create table public.catering_refund_requests"]);
     expect(code.match(/^create function public\.[a-z_]+/gm)).toEqual([
       "create function public.catering_refund_requests_guard",
       "create function public.catering_refund_actor_ok",
       "create function public.catering_refund_figures",
       "create function public.catering_refund_reserve",
+      "create function public.catering_refund_claim",
     ]);
     expect(code.match(/^create trigger [a-z_]+ [^\n]+/gm)).toEqual(["create trigger catering_refund_requests_guard before update on public.catering_refund_requests"]);
     expect(code).not.toMatch(/\balter table public\.(?!catering_refund_requests)/);
     expect(code).not.toMatch(/\bcreate or replace\b/);
     expect(code).not.toMatch(/\bdrop\b/);
-    expect(code).not.toMatch(/^\s*(update|delete from)\s+public\./m);
+    // The only UPDATE is the claim's, on the new table itself; nothing deletes.
+    expect(code).not.toMatch(/^\s*(update|delete from)\s+public\.(?!catering_refund_requests\b)/m);
+    expect(code).not.toMatch(/\bdelete from\b/);
   });
 
   it("the privilege ceiling: deny-all RLS, service_role SELECT + outcome-column UPDATE, functions service_role only", () => {
@@ -67,11 +70,11 @@ describe("0357 header and shape", () => {
     expect(code).toContain("grant select on table public.catering_refund_requests to service_role;");
     expect(code).not.toMatch(/grant (insert|delete|all)/);
     expect(code).not.toMatch(/create policy/);
-    for (const f of ["catering_refund_actor_ok(uuid, uuid)", "catering_refund_figures(uuid)", "catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text)"]) {
+    for (const f of ["catering_refund_actor_ok(uuid, uuid)", "catering_refund_figures(uuid)", "catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text)", "catering_refund_claim(uuid)"]) {
       expect(code).toContain(`revoke all on function public.${f} from public, anon, authenticated;`);
       expect(code).toContain(`grant execute on function public.${f} to service_role;`);
     }
-    for (const f of ["catering_refund_actor_ok", "catering_refund_figures", "catering_refund_reserve"]) {
+    for (const f of ["catering_refund_actor_ok", "catering_refund_figures", "catering_refund_reserve", "catering_refund_claim"]) {
       expect(fn(f)).toMatch(/security definer set search_path = pg_catalog, public/);
     }
   });
@@ -103,7 +106,7 @@ describe("the vocabularies are the SQL's", () => {
 
   it("the audit row: catering.refund.request, destructive, SQL-only (reserved); the Stripe answer is an observation", () => {
     expect(fn("catering_refund_reserve")).toContain("'catering.refund.request', 'catering_refund_requests', v_new");
-    expect(fn("catering_refund_reserve")).toMatch(/'full', p_amount_cents is null\), true\);/);
+    expect(fn("catering_refund_reserve")).toMatch(/'full', p_amount_cents = v_total\), true\);/);
     expect((DESTRUCTIVE_ACTIONS as readonly string[]).includes("catering.refund.request")).toBe(true);
     expect((RESERVED_ACTIONS as readonly string[]).includes("catering.refund.request")).toBe(true);
     expect((NON_DESTRUCTIVE_ACTIONS as readonly string[]).includes("catering.refund.stripe_result")).toBe(true);
@@ -117,6 +120,27 @@ describe("the vocabularies are the SQL's", () => {
     expect(body.indexOf("where r.client_token = p_client_token")).toBeGreaterThan(lock);
     expect(body.indexOf("catering_refund_figures(v_row.id)")).toBeGreaterThan(lock);
     expect(body).toMatch(/order by p\.id for no key update/);
+  });
+});
+
+describe("review r1", () => {
+  it("the amount is required: no amount is never re-read as everything", () => {
+    const body = fn("catering_refund_reserve");
+    expect(body).toContain("if p_amount_cents is null or p_amount_cents <= 0 then raise exception 'invalid_amount'");
+    expect(body).toContain("v_want := p_amount_cents;");
+    expect(body).not.toMatch(/coalesce\(p_amount_cents/);
+  });
+  it("captured is the charge Stripe reported when known, in both directions", () => {
+    expect(fn("catering_refund_figures")).toContain("o_captured := coalesce(v_charge, v_pay.amount_cents::bigint);");
+    expect(fn("catering_refund_figures")).not.toMatch(/least\(/);
+  });
+  it("the sender claim is exclusive, expiring, on the database clock; attempts move only through it", () => {
+    const body = fn("catering_refund_claim");
+    expect(body).toContain("claimed_until = now() + interval '3 minutes'");
+    expect(body).toContain("(r.claimed_until is null or r.claimed_until < now())");
+    expect(body).toContain("r.status in ('pending', 'submitted')");
+    const grant = code.match(/grant update \(([^)]*)\)\s+on table public\.catering_refund_requests to service_role;/)![1]!.split(",").map((c) => c.trim()).sort();
+    expect(grant).toEqual(["claim_token", "claimed_until", "last_error_code", "last_error_message", "settled_at", "status", "stripe_refund_id", "stripe_status", "updated_at"]);
   });
 });
 
