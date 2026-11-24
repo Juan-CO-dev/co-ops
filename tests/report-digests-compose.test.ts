@@ -75,7 +75,7 @@ describe("shop digest lines", () => {
       reports: [report("cash", "ok")], tasks: ["cash_report", "am_prep", "counts"],
     }), "en", BASE);
     const by = (label: string) => lines.find((l) => l.label === label)!;
-    expect(by("Receiving")).toMatchObject({ text: "1 with discrepancies, 2 without a receipt photo", tone: "issue", href: `${BASE}/operations/receiving?location=${LOC}` });
+    expect(by("Receiving")).toMatchObject({ text: "1 with discrepancies, 2 without a receipt photo", tone: "issue", href: `${BASE}/operations/receiving?location=${LOC}#recent-deliveries` });
     expect(by("Tosses / waste")).toMatchObject({ text: "4 items tossed", tone: "issue" });
     expect(by("Store runs pending review")).toMatchObject({ text: "2 items pending review", tone: "issue" });
     // counts leaves no report to prove it, so it is never called "not done"

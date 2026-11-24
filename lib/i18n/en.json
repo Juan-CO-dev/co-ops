@@ -10466,5 +10466,6 @@
   "delivery.error.delivery_busy": "This order was being moved between shops. Nothing was saved. Try again.",
   "admin.catering.delivery.open_jobs.now": "Open deliveries at this shop now: {n}.",
   "admin.catering.delivery.open_jobs.before_off": "Open deliveries at this shop: {n}. If you turn this off, they are hidden and nobody can update or cancel them here until you turn it on again.",
-  "admin.catering.delivery.open_jobs.waiting": "Open deliveries waiting at this shop: {n}. They are hidden and can't be updated until you turn this on again."
+  "admin.catering.delivery.open_jobs.waiting": "Open deliveries waiting at this shop: {n}. They are hidden and can't be updated until you turn this on again.",
+  "digest.section.open": "Open this in the app →"
 }

@@ -36,6 +36,7 @@ import {
   expectedDeliveries,
   missingDeliveries,
   resolveDigestRecipients,
+  roleLevel,
   tickBusinessDays,
   unifiedFallbackAt,
   type DigestDirectory,
@@ -65,6 +66,7 @@ import {
   type PackageRecipientRow,
 } from "@/lib/report-package-shared";
 import type { PackageCadence } from "@/lib/report-recipients-shared";
+import { NO_ACCESS_VIEWER, type LinkViewer } from "@/lib/report-digests-links";
 export type { ComposedSend, EmailAttachment, PackageIO };
 
 /** Everything the send log keys: the three digests and (exports PR) the three package cadences. */
@@ -248,6 +250,20 @@ class Run {
     return entry;
   }
 
+  /**
+   * Who a digest is composed for, for its deep links: the recipient's real role and ACTIVE memberships
+   * from this run's directory (the same rows the session's locations come from). Unknown or inactive =
+   * no access, so no gated link is ever offered to someone the app would refuse. Links only: this never
+   * changes who receives what.
+   */
+  viewerFor(r: ResolvedRecipient): LinkViewer {
+    const u = this.dir.users.find((x) => x.id === r.userId);
+    if (!u || !u.active) return NO_ACCESS_VIEWER;
+    const active = new Set(this.dir.locationIds);
+    const locations = [...new Set(this.dir.memberships.filter((m) => m.userId === u.id && active.has(m.locationId)).map((m) => m.locationId))];
+    return { role: u.role, level: roleLevel(u.role), locations };
+  }
+
   shopFacts(location: { id: string; name: string }, day: string): Promise<ShopDayFacts> {
     const key = `${location.id}|${day}`;
     let p = this.facts.get(key);
@@ -365,7 +381,7 @@ class Run {
     // Compose BEFORE a FRESH attempt is recorded: a compose failure never reached the provider.
     let mail: ComposedSend;
     try {
-      const env: Envelope = { language: r.language, baseUrl: this.io.baseUrl, previewFor: this.mode === "preview" ? { name: r.name, email: r.email } : null };
+      const env: Envelope = { language: r.language, baseUrl: this.io.baseUrl, viewer: this.viewerFor(r), previewFor: this.mode === "preview" ? { name: r.name, email: r.email } : null };
       mail = await compose(env);
     } catch (e) {
       const msg = `compose: ${e instanceof Error ? e.message : String(e)}`;

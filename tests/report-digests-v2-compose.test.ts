@@ -51,7 +51,7 @@ describe("digest v2 layout", () => {
 
   it("headline: net pre-tax, vs the same weekday last week, checks, average, 3rd-party share; catering kept apart", () => {
     expect(lineIn(facts(), "Headline", "Register sales (pre-tax, excl. ezCater)")).toMatchObject({
-      text: "$100.00 · +25% vs last Wed · 1 check · avg $100.00 · 3rd-party 0%", href: `${BASE}/mid-shift?location=${LOC}`,
+      text: "$100.00 · +25% vs last Wed · 1 check · avg $100.00 · 3rd-party 0%", href: `${BASE}/reports/sales?location=${LOC}&range=custom&from=${DAY}&to=${DAY}`,
     });
     expect(lineIn(facts(), "Headline", "Catering (pipeline totals; ezCater incl. fees/tax)")!.text).toBe("1 order · completed $50.00 · confirmed, not completed $0.00 · separate from register sales");
   });

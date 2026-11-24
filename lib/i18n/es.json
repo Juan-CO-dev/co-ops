@@ -10466,5 +10466,6 @@
   "delivery.error.delivery_busy": "Este pedido se estaba moviendo entre tiendas. No se guardó nada. Inténtalo de nuevo.",
   "admin.catering.delivery.open_jobs.now": "Entregas abiertas en esta tienda ahora: {n}.",
   "admin.catering.delivery.open_jobs.before_off": "Entregas abiertas en esta tienda: {n}. Si apagas esto, se ocultan y nadie puede actualizarlas ni cancelarlas aquí hasta que lo enciendas otra vez.",
-  "admin.catering.delivery.open_jobs.waiting": "Entregas abiertas en espera en esta tienda: {n}. Están ocultas y no se pueden actualizar hasta que lo enciendas otra vez."
+  "admin.catering.delivery.open_jobs.waiting": "Entregas abiertas en espera en esta tienda: {n}. Están ocultas y no se pueden actualizar hasta que lo enciendas otra vez.",
+  "digest.section.open": "Abrir esto en la app →"
 }
