@@ -353,12 +353,23 @@ async function shopCode(sb: ServiceClient, locationId: string): Promise<string |
   return data?.code ?? null;
 }
 
-/** Which configured account owns this PaymentIntent: the first that can see it. Throws when one cannot be asked. */
+/**
+ * Which configured account owns this PaymentIntent: the first that can see it. An account that cannot be asked (a
+ * revoked key, an outage) does not stop the search (review r3: the shared account may own an older payment while the
+ * shop's own key is failing) — the same pattern as session-owner.ts `retireSessionInOwningAccount`. null = every
+ * account answered and none knows it; THROWS (the first error) only when no account owns it and one could not be asked.
+ */
 async function owningAccount(accounts: StripeCredentials[], paymentIntentId: string): Promise<{ account: StripeCredentials; capturedCents: number | null; refundedCents: number | null } | null> {
+  let couldNotAsk: unknown = null;
   for (const account of accounts) {
-    const read = await retrievePaymentIntentCharge(account.secretKey, paymentIntentId);
-    if (read.status === "found") return { account, capturedCents: read.amountCapturedCents, refundedCents: read.amountRefundedCents };
+    try {
+      const read = await retrievePaymentIntentCharge(account.secretKey, paymentIntentId);
+      if (read.status === "found") return { account, capturedCents: read.amountCapturedCents, refundedCents: read.amountRefundedCents };
+    } catch (e) {
+      couldNotAsk ??= e;
+    }
   }
+  if (couldNotAsk) throw couldNotAsk;
   return null;
 }
 

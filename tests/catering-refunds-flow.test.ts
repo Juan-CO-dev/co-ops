@@ -428,6 +428,37 @@ describe("unknown outcomes stay pending and are retried safely", () => {
     expect(stripe.creates[0]!.account).toBe("sk_test_fake_A");
   });
 
+  it("review r3: an account that cannot be asked does not hide the one that owns the payment", async () => {
+    h.accounts = [
+      { secretKey: "sk_test_fake_BROKEN", webhookSecret: "whsec_fake", source: "location" },
+      { secretKey: "sk_test_fake_A", webhookSecret: "whsec_fake", source: "default" },
+    ];
+    const { retrievePaymentIntentCharge } = await import("@/lib/stripe/client");
+    const real = vi.mocked(retrievePaymentIntentCharge).getMockImplementation()!;
+    vi.mocked(retrievePaymentIntentCharge).mockImplementation(async (key: string, pi: string) => {
+      if (key === "sk_test_fake_BROKEN") {
+        const { StripeError } = await import("@/lib/stripe/client");
+        throw new StripeError(401, "api_key_expired");
+      }
+      return real(key, pi);
+    });
+    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
+    vi.mocked(retrievePaymentIntentCharge).mockImplementation(real);
+    expect(out.results[0]!.status).toBe("succeeded");
+    expect(stripe.creates[0]!.account).toBe("sk_test_fake_A");
+  });
+
+  it("review r3: when no account owns it and one could not be asked, the row stays pending (never failed)", async () => {
+    h.accounts = [{ secretKey: "sk_test_fake_BROKEN", webhookSecret: "whsec_fake", source: "location" }];
+    const { retrievePaymentIntentCharge, StripeError } = await import("@/lib/stripe/client");
+    const real = vi.mocked(retrievePaymentIntentCharge).getMockImplementation()!;
+    vi.mocked(retrievePaymentIntentCharge).mockImplementation(async () => { throw new StripeError(401, "api_key_expired"); });
+    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
+    vi.mocked(retrievePaymentIntentCharge).mockImplementation(real);
+    expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "stripe_unreachable" });
+    expect(stripe.creates).toHaveLength(0);
+  });
+
   it("no Stripe account configured: the first attempt fails by name (nothing was sent)", async () => {
     h.accounts = [];
     const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
