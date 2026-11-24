@@ -396,6 +396,27 @@ describe("unknown outcomes stay pending and are retried safely", () => {
     expect(stripe.creates).toHaveLength(1);
   });
 
+  it("review r11: the clock crosses the deadline during the CALLER's database reads: nothing is sent", async () => {
+    stripe.nextCreate = ["network_before"];
+    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
+    const row = rows()[0]!;
+    const at = Date.parse(String(row.first_attempt_at)) + REFUND_RETRY_WINDOW_MS - 120_000; // 2 minutes left
+    const realNow = Date.now.bind(Date);
+    let skew = 0;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + skew);
+    const db = h.db as unknown as { client: { rpc: (n: string, a: Record<string, unknown>) => Promise<unknown> } };
+    const realRpc = db.client.rpc;
+    db.client.rpc = async (n: string, a: Record<string, unknown>) => {
+      if (n === "catering_refund_actor_ok") skew += 130_000; // the actor check took 130 seconds
+      return realRpc(n, a);
+    };
+    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, at);
+    db.client.rpc = realRpc;
+    nowSpy.mockRestore();
+    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
+    expect(stripe.creates).toHaveLength(1);
+  });
+
   it("review r2: a lost answer that landed, its webhook recorded, nobody retried for 24 h: Check Stripe adopts it and the money is no longer double-held", async () => {
     stripe.nextCreate = ["network_lost_after_executing"];
     await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 40000 }));

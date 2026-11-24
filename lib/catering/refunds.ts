@@ -469,10 +469,17 @@ async function keepPending(sb: ServiceClient, actor: AuthContext, row: ClaimedRo
  * Send ONE request row to Stripe (or find what an earlier send did). Never throws for a Stripe problem: the row records
  * it. Throws only for our own database failures (and then the row is still `pending` and its claim expires by itself).
  */
-export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, requestId: string, nowMs: number = Date.now()): Promise<RefundAttemptResult> {
-  // `nowMs` is the press's instant; the clock keeps running through the Stripe reads below (review r10).
+/**
+ * A clock anchored at the press's ENTRY (review r10, r11): `atMs` is the instant the press started (a test may set it),
+ * and every reading adds the real time that has passed since — through every database and Stripe read the press makes.
+ */
+export function anchoredClock(atMs: number = Date.now()): () => number {
   const startedReal = Date.now();
-  const clock = () => nowMs + (Date.now() - startedReal);
+  return () => atMs + (Date.now() - startedReal);
+}
+
+export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, requestId: string, clock: () => number = anchoredClock()): Promise<RefundAttemptResult> {
+  const nowMs = clock();
   const row = await loadRequest(sb, requestId);
   if (!row) throw new CateringRefundError(404, "not_found");
   if (row.status !== "pending") return result(row, row.status, null);
@@ -542,7 +549,8 @@ export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, req
   // A RE-send leaves only inside Stripe's 24-hour window, measured NOW with a margin (review r10): the reads above take
   // time. Past it the row is reconciled, never sent (docs.stripe.com/error-low-level): the claim is released, the
   // reservation stays, and the person is told to check Stripe.
-  if (claimed.sentBefore && !resendStillInWindow(claimed.first_attempt_at, row.requested_at, clock())) {
+  // Never earlier than the real clock either: whatever the anchor says, a send cannot leave late by real time.
+  if (claimed.sentBefore && !resendStillInWindow(claimed.first_attempt_at, row.requested_at, Math.max(clock(), Date.now()))) {
     return keepPending(sb, actor, claimed, "needs_reconcile", "The 24-hour retry window ended before this retry could be sent", { window_closed_before_send: true });
   }
 
@@ -639,6 +647,8 @@ export async function retryRefundRequest(
   /** `retry` = send / refresh / (past 24 h) reconcile; `release` = close a past-24 h row Stripe shows no refund for. */
   mode: "retry" | "release" = "retry",
 ): Promise<RefundAttemptResult> {
+  // Anchored HERE, before the quote / request / payments / actor reads (review r11): their time counts too.
+  const clock = anchoredClock(nowMs);
   const sb = getServiceRoleClient();
   const quote = await loadQuote(sb, quoteId);
   if (!quote || !canSee(actor, quote.location_id)) throw new CateringRefundError(404, "not_found");
@@ -655,11 +665,11 @@ export async function retryRefundRequest(
   if (okData !== true) throw new CateringRefundError(403, "forbidden");
 
   if (row.status === "pending") {
-    const state = requestRetryState({ status: row.status, firstAttemptAt: row.first_attempt_at, requestedAt: row.requested_at }, nowMs);
+    const state = requestRetryState({ status: row.status, firstAttemptAt: row.first_attempt_at, requestedAt: row.requested_at }, clock());
     // Past Stripe's 24-hour window nothing is SENT again; the press reconciles (review r2).
     if (mode === "release" && !state.needsReconcile) throw new CateringRefundError(409, "not_releasable");
     if (state.needsReconcile) return reconcileRefundRow(sb, actor, row, mode === "release");
-    return submitRefundRow(sb, actor, row.id, nowMs);
+    return submitRefundRow(sb, actor, row.id, clock);
   }
   if (mode === "release") throw new CateringRefundError(409, "not_releasable");
   if (row.status === "submitted" && row.stripe_refund_id) {
