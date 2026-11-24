@@ -27,7 +27,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!canRequestRefund(ctx.user.role)) return jsonError(403, "forbidden");
   try {
     const result = await retryRefundRequest(ctx, id, requestId);
-    return jsonOk({ ok: true, result, summary: await loadRefundSummary(ctx, id) });
+    const summary = await loadRefundSummary(ctx, id).catch(() => null);
+    return jsonOk({ ok: true, result, summary });
   } catch (e) {
     if (e instanceof CateringRefundError) return jsonError(e.status, e.code, e.detail ?? {});
     throw e;

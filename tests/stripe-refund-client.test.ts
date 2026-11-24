@@ -86,9 +86,8 @@ describe("listRefundsForPaymentIntent", () => {
     expect(calls.every((c) => c.method === "GET" && !("Idempotency-Key" in c.headers))).toBe(true);
   });
   it("more pages than it reads is a refusal, never a partial answer", async () => {
-    answer = (c) => ({ status: 200, body: { data: [{ id: `re_${calls.length}`, status: "succeeded", amount: 1 }], has_more: true } });
+    answer = () => ({ status: 200, body: { data: [{ id: `re_${calls.length}`, status: "succeeded", amount: 1 }], has_more: true } });
     await expect(listRefundsForPaymentIntent("sk_test_x", "pi_123", 2)).rejects.toMatchObject({ code: "refund_list_incomplete" });
-    void answer;
   });
 });
 

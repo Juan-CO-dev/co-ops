@@ -65,7 +65,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!step.ok) return jsonError(403, step.code);
   try {
     const out = await requestRefund(ctx, id, body);
-    return jsonOk({ ok: true, replay: out.replay, results: out.results, summary: await loadRefundSummary(ctx, id) });
+    // The refund is made; a failed re-read must not turn that into an error the person would retry.
+    const summary = await loadRefundSummary(ctx, id).catch(() => null);
+    return jsonOk({ ok: true, replay: out.replay, results: out.results, summary });
   } catch (e) {
     return refusal(e);
   }

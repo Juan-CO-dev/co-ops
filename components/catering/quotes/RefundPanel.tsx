@@ -91,9 +91,23 @@ export function RefundPanel({
     }
   }, [quoteId]);
 
+  // The first read, in the subscribe-then-set shape (state is set only in the promise callbacks).
   useEffect(() => {
-    void load();
-  }, [load]);
+    let alive = true;
+    void fetch(`/api/catering/quotes/${quoteId}/refunds`, { redirect: "manual" })
+      .then((r) => (r.ok ? (r.json() as Promise<{ summary: RefundSummary }>) : null))
+      .then((body) => {
+        if (!alive) return;
+        if (body) setSummary(body.summary);
+        setLoadFailed(!body);
+      })
+      .catch(() => {
+        if (alive) setLoadFailed(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [quoteId]);
 
   if (loadFailed || !summary) return null;
   const { totals } = summary;
@@ -141,6 +155,7 @@ export function RefundPanel({
       setStepUpOpen(false);
       const results = (res.data.results ?? []) as Array<{ status: string; errorCode: string | null }>;
       if (res.data.summary) setSummary(res.data.summary as RefundSummary);
+      else void load();
       const failed = results.find((r) => r.status === "failed");
       if (failed) setFlash({ key: "catering.refunds.result.failed", params: { code: failed.errorCode ?? "" } });
       else if (results.some((r) => r.status === "pending")) setFlash({ key: "catering.refunds.result.pending" });
@@ -170,6 +185,7 @@ export function RefundPanel({
     setRowBusy(null);
     if (res.ok) {
       if (res.data.summary) setSummary(res.data.summary as RefundSummary);
+      else void load();
       const r = res.data.result as { status: string; errorCode: string | null } | undefined;
       setFlash(
         r?.status === "failed"
@@ -238,11 +254,11 @@ export function RefundPanel({
           <fieldset className="flex flex-col gap-2">
             <legend className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("catering.refunds.how_much")}</legend>
             <label className="flex min-h-[44px] items-center gap-2 text-sm text-co-text">
-              <input type="radio" name={`refund-mode-${quoteId}`} checked={mode === "full"} onChange={() => setMode("full")} className="h-5 w-5" />
+              <input type="radio" name={`refund-mode-${quoteId}`} aria-label={t("catering.refunds.choice.full", { amount: money(totals.refundableCents) })} checked={mode === "full"} onChange={() => setMode("full")} className="h-5 w-5" />
               {t("catering.refunds.choice.full", { amount: money(totals.refundableCents) })}
             </label>
             <label className="flex min-h-[44px] items-center gap-2 text-sm text-co-text">
-              <input type="radio" name={`refund-mode-${quoteId}`} checked={mode === "partial"} onChange={() => setMode("partial")} className="h-5 w-5" />
+              <input type="radio" name={`refund-mode-${quoteId}`} aria-label={t("catering.refunds.choice.partial")} checked={mode === "partial"} onChange={() => setMode("partial")} className="h-5 w-5" />
               {t("catering.refunds.choice.partial")}
             </label>
             {mode === "partial" && (
