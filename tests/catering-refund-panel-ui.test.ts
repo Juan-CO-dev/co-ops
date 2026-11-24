@@ -85,6 +85,18 @@ describe("LeadRefundBanner", () => {
     expect(container.querySelector("[data-testid='lead-refund-banner']")).toBeNull();
   });
 
+  it("review r8: Stripe could not be asked for an order: the warning shows even at $0 refundable, and a refund prompt the figures support still shows", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(reply(200, { quotes: [{ quoteId: Q, refundableCents: 0, paidCents: 30000, stripeUnchecked: true }] }))
+      .mockResolvedValueOnce(reply(200, { quotes: [{ quoteId: Q, refundableCents: 5000, paidCents: 30000, stripeUnchecked: true }] })));
+    render(wrap(jsx(RefundsSwitch, { on: true, children: jsx(LeadRefundBanner, { leadId: L, phase: "lost" }) })));
+    expect(await screen.findByText(en["catering.refunds.lead.unavailable"])).toBeTruthy();
+    expect(screen.queryByTestId("lead-refund-banner")).toBeNull();
+    fireEvent.click(screen.getByText(en["catering.refunds.try_again"]));
+    expect(await screen.findByTestId("lead-refund-banner")).toBeTruthy();
+    expect(screen.getByText(en["catering.refunds.lead.unavailable"])).toBeTruthy();
+  });
+
   it("switch off: nothing renders and nothing is fetched", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

@@ -95,6 +95,7 @@ import { createRefund } from "@/lib/stripe/client";
 import { audit } from "@/lib/audit";
 import {
   CateringRefundError,
+  loadLeadRefundables,
   loadRefundSummary,
   refundFigures,
   requestRefund,
@@ -546,6 +547,14 @@ describe("review r4-r6: mixed dashboard and app refunds, by identity and current
     const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
     db.client.rpc = real;
     expect(s.stripeUnchecked).toBe(true);
+  });
+
+  it("r8: the lead read carries 'could not check' through, even for an order showing $0 refundable", async () => {
+    setup();
+    (h.db.tables.catering_payments as Row[]).find((p) => p.id === DEP)!.status = "refunded";
+    h.accounts = [];
+    const rows = await loadLeadRefundables(actor("catering_mgr"), "lead-1");
+    expect(rows).toEqual([expect.objectContaining({ quoteId: QUOTE, refundableCents: 0, stripeUnchecked: true })]);
   });
 
   it("r6: Stripe cannot be asked: the last snapshot stands and the summary says the figures may be out of date", async () => {

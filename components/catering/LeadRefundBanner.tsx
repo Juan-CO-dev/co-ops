@@ -26,14 +26,14 @@ export function useRefundsEnabled(): boolean {
 export function LeadRefundBanner({ leadId, phase }: { leadId: string; phase: "lost" | "confirming_lost" }) {
   const enabled = useRefundsEnabled();
   const { t, language } = useTranslation();
-  const [rows, setRows] = useState<{ leadId: string; failed: boolean; quotes: Array<{ quoteId: string; refundableCents: number; paidCents: number }> } | null>(null);
+  const [rows, setRows] = useState<{ leadId: string; failed: boolean; quotes: Array<{ quoteId: string; refundableCents: number; paidCents: number; stripeUnchecked?: boolean }> } | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!enabled) return;
     let alive = true;
     void fetch(`/api/catering/pipeline/${leadId}/refunds`, { redirect: "manual" })
-      .then((r) => (r.ok ? (r.json() as Promise<{ quotes?: Array<{ quoteId: string; refundableCents: number; paidCents: number }> }>) : null))
+      .then((r) => (r.ok ? (r.json() as Promise<{ quotes?: Array<{ quoteId: string; refundableCents: number; paidCents: number; stripeUnchecked?: boolean }> }>) : null))
       .then((d) => {
         // A failed read is NOT "nothing to refund" (review r4): it is said, with a way to try again.
         if (alive) setRows({ leadId, failed: d === null, quotes: d?.quotes ?? [] });
@@ -47,23 +47,25 @@ export function LeadRefundBanner({ leadId, phase }: { leadId: string; phase: "lo
   }, [enabled, leadId, attempt]);
 
   if (!enabled || !rows || rows.leadId !== leadId) return null;
-  if (rows.failed) {
-    return (
-      <div data-testid="lead-refund-unavailable" role="status" className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-co-warning bg-co-warning-surface p-3 text-sm">
-        <span className="font-semibold text-co-warning-text">{t("catering.refunds.lead.unavailable")}</span>
-        <button
-          type="button"
-          onClick={() => setAttempt((n) => n + 1)}
-          className="inline-flex min-h-[44px] items-center rounded-md border border-co-border-2 bg-co-surface px-4 text-sm font-semibold text-co-text"
-        >
-          {t("catering.refunds.try_again")}
-        </button>
-      </div>
-    );
-  }
+  // Could not check at all, or Stripe could not be asked about one of the orders (review r8): say so, with Try again,
+  // whatever the (possibly stale) figure is — and still show any refund prompt the figures do support.
+  const warning = rows.failed || rows.quotes.some((q) => q.stripeUnchecked) ? (
+    <div data-testid="lead-refund-unavailable" role="status" className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-co-warning bg-co-warning-surface p-3 text-sm">
+      <span className="font-semibold text-co-warning-text">{t("catering.refunds.lead.unavailable")}</span>
+      <button
+        type="button"
+        onClick={() => setAttempt((n) => n + 1)}
+        className="inline-flex min-h-[44px] items-center rounded-md border border-co-border-2 bg-co-surface px-4 text-sm font-semibold text-co-text"
+      >
+        {t("catering.refunds.try_again")}
+      </button>
+    </div>
+  ) : null;
   const open = rows.quotes.filter((q) => q.refundableCents > 0);
-  if (open.length === 0) return null;
+  if (open.length === 0) return warning;
   return (
+    <>
+    {warning}
     <div data-testid="lead-refund-banner" className="mt-2 rounded-md border border-co-warning bg-co-warning-surface p-3 text-sm">
       {open.map((q) => (
         <div key={q.quoteId} className="flex flex-col gap-2">
@@ -84,5 +86,6 @@ export function LeadRefundBanner({ leadId, phase }: { leadId: string; phase: "lo
         </div>
       ))}
     </div>
+    </>
   );
 }

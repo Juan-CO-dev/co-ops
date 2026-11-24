@@ -676,7 +676,14 @@ export async function retryRefundRequest(
 
 
 /** Lead → the live quotes of its order(s) with money still refundable (the pipeline's "Refund" banner). */
-export async function loadLeadRefundables(actor: AuthContext, leadId: string): Promise<Array<{ quoteId: string; refundableCents: number; paidCents: number }>> {
+export interface LeadRefundable {
+  quoteId: string;
+  refundableCents: number;
+  paidCents: number;
+  /** Stripe could not be asked (or the answer not stored) for this order just now: the figures may be stale (review r8). */
+  stripeUnchecked: boolean;
+}
+export async function loadLeadRefundables(actor: AuthContext, leadId: string): Promise<LeadRefundable[]> {
   if (getRoleLevel(actor.user.role) < REFUND_READ_MIN) throw new CateringRefundError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { data, error } = await sb
@@ -686,11 +693,14 @@ export async function loadLeadRefundables(actor: AuthContext, leadId: string): P
     .is("superseded_at", null)
     .returns<QuoteRow[]>();
   if (error) throw new Error(`refunds lead quotes: ${error.message}`);
-  const out: Array<{ quoteId: string; refundableCents: number; paidCents: number }> = [];
+  const out: LeadRefundable[] = [];
   for (const q of data ?? []) {
     if (!canSee(actor, q.location_id)) continue;
     const s = await loadRefundSummary(actor, q.id);
-    if (s.totals.paidCents > 0) out.push({ quoteId: q.id, refundableCents: s.totals.refundableCents, paidCents: s.totals.paidCents });
+    // A stale figure is reported even at $0 refundable (review r8): $0 from an old snapshot is not "nothing to refund".
+    if (s.totals.paidCents > 0 || s.stripeUnchecked) {
+      out.push({ quoteId: q.id, refundableCents: s.totals.refundableCents, paidCents: s.totals.paidCents, stripeUnchecked: s.stripeUnchecked === true });
+    }
   }
   return out;
 }
