@@ -37,6 +37,7 @@ import {
 import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
 import type { Payment } from "@/lib/catering/payments";
 import { postJson, resolveErrorKey, isStepUpCode, quoteDetailActions } from "./shared";
+import { RefundPanel } from "./RefundPanel";
 
 const WRITE_MIN = 6;
 
@@ -58,6 +59,10 @@ export interface QuotesClientProps {
   actorLevel: number;
   /** Deep link (?quote=<id>): open this quote's detail panel first. Null/absent = the list. */
   initialQuoteId?: string | null;
+  /** Catering refunds (0357): the server switch CATERING_REFUNDS. False = no refund panel, no refund request. */
+  refundsEnabled?: boolean;
+  /** Deep link (?refund=lost): open the deep-linked quote's refund form, opened "from a lost order". */
+  initialRefundTrigger?: "lost" | null;
 }
 
 type View = { mode: "list" } | { mode: "build"; reviseOf: QuoteDetail | null } | { mode: "detail"; id: string };
@@ -80,7 +85,7 @@ function dollarsToCents(v: string): number | null {
   return Math.round(n * 100);
 }
 
-export function QuotesClient({ quotes, locations, defaultLocationId, customers, leads, pricingByLocation, menuItems, packagesByLocation, actorLevel, initialQuoteId = null }: QuotesClientProps) {
+export function QuotesClient({ quotes, locations, defaultLocationId, customers, leads, pricingByLocation, menuItems, packagesByLocation, actorLevel, initialQuoteId = null, refundsEnabled = false, initialRefundTrigger = null }: QuotesClientProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const [view, setView] = useState<View>(initialQuoteId ? { mode: "detail", id: initialQuoteId } : { mode: "list" });
@@ -112,6 +117,8 @@ export function QuotesClient({ quotes, locations, defaultLocationId, customers, 
       <QuoteDetailPanel
         id={view.id}
         canWrite={canWrite}
+        refundsEnabled={refundsEnabled}
+        initialRefundTrigger={view.id === initialQuoteId ? initialRefundTrigger : null}
         onBack={() => {
           router.refresh();
           setView({ mode: "list" });
@@ -696,11 +703,15 @@ function PaymentsSection({
 function QuoteDetailPanel({
   id,
   canWrite,
+  refundsEnabled,
+  initialRefundTrigger,
   onBack,
   onRevise,
 }: {
   id: string;
   canWrite: boolean;
+  refundsEnabled: boolean;
+  initialRefundTrigger: "lost" | null;
   onBack: () => void;
   onRevise: (detail: QuoteDetail) => void;
 }) {
@@ -720,6 +731,8 @@ function QuoteDetailPanel({
   const [resendDate, setResendDate] = useState("");
   const [resendConfirm, setResendConfirm] = useState(false);
   const [lateNote, setLateNote] = useState(false);
+  // Catering refunds (0357): where the refund form was last asked to open from (a decline just now, a lost lead).
+  const [refundTrigger, setRefundTrigger] = useState<"declined" | "lost" | null>(initialRefundTrigger);
   // Which action the password modal retries: the panel has one modal and two Tier B actions.
   const stepUpFor = useRef<"send" | "resend">("send");
   const todayEt = etCalendarDate(new Date().toISOString());
@@ -852,8 +865,12 @@ function QuoteDetailPanel({
       setErrorKey(null);
       const res = await postJson(`/api/catering/quotes/${id}`, { status }, "PATCH");
       setBusy(false);
-      if (res.ok) await load();
-      else setErrorKey(resolveErrorKey(res.code));
+      if (res.ok) {
+        // A declined order the customer already paid for: offer the refund step right here (it opens only when
+        // the refund panel finds money it can give back, and only with the switch on).
+        if (status === "declined") setRefundTrigger("declined");
+        await load();
+      } else setErrorKey(resolveErrorKey(res.code));
     },
     [id, load],
   );
@@ -941,6 +958,15 @@ function QuoteDetailPanel({
           onMarkPaid={(pid) => void markPaid(pid)}
           money={money}
           t={t}
+        />
+      )}
+
+      {refundsEnabled && (
+        <RefundPanel
+          quoteId={q.id}
+          openTrigger={refundTrigger}
+          onTriggerHandled={() => setRefundTrigger(null)}
+          onChanged={() => void loadPayments()}
         />
       )}
 

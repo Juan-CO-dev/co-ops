@@ -346,13 +346,18 @@ export function isAdminPath(currentPath: string): boolean {
  *
  * ...and the delivery GRATUITY correction (POST /api/catering/pipeline/[id]/delivery/gratuity, catering delivery D4):
  * recalculating or removing the recorded driver / crew split is Tier A, so exactly that path keeps the unlock.
+ *
+ * ...and a catering REFUND (POST /api/catering/quotes/[id]/refunds, migration 0357): money out is Tier B, the same
+ * fresh password as Send, so exactly that path keeps the unlock. Its retry route (.../refunds/<id>/retry) takes no
+ * tier and is NOT admitted.
  */
 export function isCateringStepUpPath(currentPath: string): boolean {
   return (currentPath.startsWith("/api/catering/quotes/") && currentPath.endsWith("/send")) ||
     /^\/api\/catering\/quotes\/[^/]+\/resend$/.test(currentPath) ||
     /^\/api\/catering\/pipeline\/[^/]+\/transfer$/.test(currentPath) ||
     /^\/api\/catering\/pipeline\/[^/]+\/delivery\/[^/]+\/cost$/.test(currentPath) ||
-    /^\/api\/catering\/pipeline\/[^/]+\/delivery\/gratuity$/.test(currentPath);
+    /^\/api\/catering\/pipeline\/[^/]+\/delivery\/gratuity$/.test(currentPath) ||
+    /^\/api\/catering\/quotes\/[^/]+\/refunds$/.test(currentPath);
 }
 
 /** The physical-count surface is Tier-A (council A4) but lives OUTSIDE /admin —

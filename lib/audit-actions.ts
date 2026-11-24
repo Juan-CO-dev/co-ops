@@ -218,6 +218,10 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // attempt ended and whether its Checkout Session was released from the intent.
   "catering.payment.provider_payment_failed",
   "catering.payment.provider_refunded",
+  // Catering refund step (0357): STRIPE'S ANSWER to a refund a person asked for (created, refused, unknown, found on a
+  // retry, refreshed). The human act itself is `catering.refund.request` (destructive, written in SQL by the reserve).
+  // This row records what the payment provider then did, so it is an observation like provider_refunded.
+  "catering.refund.stripe_result",
   "catering.pipeline.create",
   "catering.pipeline.edit",
   "catering.pipeline.stage_move",
@@ -431,6 +435,10 @@ export const RESERVED_ACTIONS = [
   "delivery.pickup_kept",
   "delivery.gratuity_split",
   "delivery.settings_update",
+  // SQL-only: 0357 catering_refund_reserve INSERTs one audit row per refund request it reserves (destructive literally
+  // true; who, the quote, the payment, the amount, the reason code, where it was opened from — never the note) in the
+  // same transaction as the row. No TypeScript audit() call site: lib/catering/refunds.ts only calls the RPC.
+  "catering.refund.request",
   // Emitted from SQL only — migration 0198 rewrote the PostgREST-role grants on public.users
   // (LRA-001 credential columns readable, LRA-214 self-promotion via PATCH) and INSERTs its own
   // audit row with destructive=true literally. Grant changes never go through app code.

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useId, useRef, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
+import { LeadRefundBanner } from "@/components/catering/LeadRefundBanner";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { LEAD_EMAIL_MAX, LEAD_PHONE_MAX, LEGAL_TRANSITIONS, PIPELINE_STAGES, cateringStageOverlay, projectedCateringStage, leadEditPatch, shopChipLabel, showQuoteNotAccepted, stageMoveNeedsConfirm, type CateringStageMove, type CateringStageOverlay, type PipelineStage } from "@/lib/catering/pipeline-shared";
@@ -551,6 +552,9 @@ function LeadDetail({
 
       {canWrite && reopen && lead.stage === "lost" && <ReopenLead leadId={lead.id} target={reopen.target} onReopened={onClose} />}
 
+      {/* Catering refunds (0357, dark): a lost order that still holds refundable money says so and links to its refund. */}
+      {lead.stage === "lost" && <LeadRefundBanner leadId={lead.id} phase="lost" />}
+
       <EzcaterReconciliationPanel leadId={lead.id} />
 
       {/* Item 21 PR 3: a house order's Toast checks (renders nothing unless the server returns a panel). */}
@@ -593,6 +597,7 @@ function LeadDetail({
                 {t("catering.pipeline.confirm_final.title", { stage: t(stageKey(confirming)) })}
               </p>
               <p className="mt-1 text-xs text-co-text">{t("catering.pipeline.confirm_final.body")}</p>
+              {confirming === "lost" && <LeadRefundBanner leadId={lead.id} phase="confirming_lost" />}
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
