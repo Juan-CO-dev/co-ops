@@ -21,6 +21,9 @@ import {
   REFUND_RETRY_WINDOW_MS,
 } from "@/lib/catering/refunds-shared";
 import { ROLES, type RoleCode } from "@/lib/roles";
+import en from "@/lib/i18n/en.json";
+import es from "@/lib/i18n/es.json";
+import { REFUND_ERROR_CODES, REFUND_REASON_CODES, REFUND_STATUSES } from "@/lib/catering/refunds-shared";
 
 const PAID = { amountCents: 30000, status: "paid", provider: "stripe", providerRef: "pi_123" };
 
@@ -162,5 +165,22 @@ describe("summarizeTotals", () => {
       { id: "d", kind: "full", status: "due", provider: null, amountCents: 900, paidAt: null, figures: refundFigures({ ...PAID, status: "due" }, [], []) },
     ]);
     expect(totals).toEqual({ paidCents: 35000, refundedCents: 6000, inFlightCents: 0, refundableCents: 29000, outsideAppCents: 700 });
+  });
+});
+
+describe("i18n: every dynamic refund key exists in en AND es, with the same placeholders", () => {
+  const keys = [
+    ...REFUND_ERROR_CODES.map((c) => `catering.refunds.error.${c}`),
+    ...REFUND_REASON_CODES.map((c) => `catering.refunds.reason.${c}`),
+    ...REFUND_STATUSES.map((c) => `catering.refunds.status.${c}`),
+    ...Object.keys(en).filter((k) => k.startsWith("catering.refunds.")),
+  ];
+  const holes = (v: string | undefined) => [...(v ?? "").matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+  it.each([...new Set(keys)])("%s", (k) => {
+    const e = (en as Record<string, string>)[k];
+    const s = (es as Record<string, string>)[k];
+    expect(typeof e).toBe("string");
+    expect(typeof s).toBe("string");
+    expect(holes(s)).toEqual(holes(e));
   });
 });
