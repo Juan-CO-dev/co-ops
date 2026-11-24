@@ -56,6 +56,25 @@ describe("RefundPanel", () => {
   });
 });
 
+describe("RefundPanel, review r5", () => {
+  it("a refund made, then the reload fails: the warning comes with Try again, and Try again brings the panel back current", async () => {
+    let gets = 0;
+    const fetchMock = vi.fn(async (_url: string, init?: { method?: string }) => {
+      if (init?.method === "POST") return reply(200, { ok: true, results: [{ status: "succeeded", errorCode: null }], summary: null });
+      gets += 1;
+      return gets === 2 ? reply(500, { code: "generic" }) : reply(200, { summary: summary() });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(wrap(jsx(RefundPanel, { quoteId: Q, openTrigger: "declined", onTriggerHandled: () => {}, onChanged: () => {} })));
+    fireEvent.click(await screen.findByText(en["catering.refunds.review"]));
+    fireEvent.click(await screen.findByText(en["catering.refunds.confirm_button"].replace("{amount}", "$300.00")));
+    const stale = await screen.findByTestId("refund-panel-stale");
+    fireEvent.click(stale.querySelector("button")!);
+    await waitFor(() => expect(screen.queryByTestId("refund-panel-stale")).toBeNull());
+    expect(gets).toBe(3);
+  });
+});
+
 describe("LeadRefundBanner", () => {
   it("a failed read says it could not check (with Try again); an empty read renders nothing", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(reply(503, { code: "generic" })).mockResolvedValueOnce(reply(200, { quotes: [] })));

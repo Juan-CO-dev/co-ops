@@ -384,7 +384,18 @@ export function RefundPanel({
         <p className="rounded-lg border-2 border-co-success/40 bg-co-success/10 px-3 py-2 text-sm font-semibold text-co-confirm-text">{t(flash.key, flash.params)}</p>
       )}
       {errKey && <p className="text-sm font-semibold text-co-cta-text">{t(errKey)}</p>}
-      {loadFailed && <p className="text-xs font-semibold text-co-warning-text" role="status">{t("catering.refunds.unavailable")}</p>}
+      {loadFailed && (
+        <div className="flex flex-wrap items-center gap-2" role="status" data-testid="refund-panel-stale">
+          <span className="text-xs font-semibold text-co-warning-text">{t("catering.refunds.unavailable")}</span>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text"
+          >
+            {t("catering.refunds.try_again")}
+          </button>
+        </div>
+      )}
 
       {summary.requests.length > 0 && (
         <div className="flex flex-col gap-2 border-t border-co-border pt-3">

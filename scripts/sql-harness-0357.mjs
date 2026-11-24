@@ -196,16 +196,21 @@ try {
     check(Number(fm.o_captured) === 30000 && Number(fm.o_refundable) === 10000, "P3 a charge LARGER than the row: the difference stays refundable");
   }
   {
-    // Review r4: $100 dashboard refund reported by the webhook + our $50 accepted, not reported yet; Stripe's
-    // cumulative as seen when ours was recorded = $150. Both count; $150 is left.
+    // Review r4/r5: $100 dashboard refund reported by the webhook + our $50 accepted, not reported yet; Stripe listed
+    // $100 not made by CO-OPS when ours was recorded. Both count, each once; $150 is left.
     const Qx = await f.quote();
     const px = await f.pay(Qx, "deposit", 30000);
     await db.query("insert into public.catering_payment_refund_events (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents, charge_amount_cents) values ('evt_x', $1, now(), 10000, 30000)", [px]);
     const rx = await reserve(db, owner, Qx, randomUUID(), 5000);
-    await db.query("update public.catering_refund_requests set status = 'succeeded', stripe_refund_id = 're_x', charge_refunded_seen_cents = 15000 where id = $1", [rx.requests[0].id]);
+    await db.query("update public.catering_refund_requests set status = 'succeeded', stripe_refund_id = 're_x', outside_refunded_seen_cents = 10000 where id = $1", [rx.requests[0].id]);
     const fx = await figures(db, px);
     check(Number(fx.o_refunded) === 15000 && Number(fx.o_refundable) === 15000, "P3 review r4: mixed dashboard + app refunds leave exactly what is left");
-    await refuses(() => db.query("update public.catering_refund_requests set charge_refunded_seen_cents = 1 where id = $1", [rx.requests[0].id]), "refund_request_immutable", "P3 the seen figure is written once");
+    // Review r5: a SECOND app refund that listed the same $100 before either was sent.
+    const ry = await reserve(db, owner, Qx, randomUUID(), 5000);
+    await db.query("update public.catering_refund_requests set status = 'submitted', stripe_refund_id = 're_y', outside_refunded_seen_cents = 10000 where id = $1", [ry.requests[0].id]);
+    const fy = await figures(db, px);
+    check(Number(fy.o_refunded) === 20000 && Number(fy.o_refundable) === 10000, "P3 review r5: two app refunds sharing one listing count the dashboard refund once and both of ours");
+    await refuses(() => db.query("update public.catering_refund_requests set outside_refunded_seen_cents = 1 where id = $1", [rx.requests[0].id]), "refund_request_immutable", "P3 the listing figure is written once");
   }
 
   // ── P4 — reserve ─────────────────────────────────────────────────────────────────────────────

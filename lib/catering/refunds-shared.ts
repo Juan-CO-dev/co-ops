@@ -74,16 +74,16 @@ export interface RefundEventInput {
 export interface RefundRequestInput {
   amountCents: number;
   status: RefundStatus;
-  /** The charge's cumulative refunded at Stripe as seen when this refund was accepted (0357, review r4). */
-  chargeRefundedSeenCents?: number | null;
+  /** Refunds on the charge CO-OPS did NOT make, as Stripe listed them when this refund was recorded (0357, r4/r5). */
+  outsideRefundedSeenCents?: number | null;
 }
 export interface RefundFigures {
   /** The charge amount Stripe reported (when it did) — the charge is the money, in both directions — else the row's. */
   capturedCents: number;
   /**
-   * The largest of: Stripe's cumulative refund (the webhook's events), our own accepted requests, and the charge's
-   * cumulative refunded as seen when each of our accepted refunds was recorded (review r4: a dashboard refund the
-   * webhook reported plus an app refund it has not reported yet are both in that last figure).
+   * The larger of Stripe's cumulative refund (the webhook's events) and, BY IDENTITY (review r4, r5), our own accepted
+   * requests plus the refunds CO-OPS did not make that Stripe listed when one of ours was recorded. A dashboard refund
+   * and any number of app refunds the webhook has not reported yet all count, each once.
    */
   refundedCents: number;
   /** Our own requests whose Stripe answer is not confirmed yet. */
@@ -108,10 +108,10 @@ export function refundFigures(
   const cumulative = events.reduce((m, e) => Math.max(m, e.cumulativeRefundedCents), 0);
   const accepted = requests.filter((r) => r.status === "submitted" || r.status === "succeeded");
   const done = accepted.reduce((s, r) => s + r.amountCents, 0);
-  const seen = accepted.reduce((m, r) => Math.max(m, r.chargeRefundedSeenCents ?? 0), 0);
+  const outside = accepted.reduce((m, r) => Math.max(m, r.outsideRefundedSeenCents ?? 0), 0);
   const inFlightCents = requests.filter((r) => r.status === "pending").reduce((s, r) => s + r.amountCents, 0);
   const capturedCents = charge ?? payment.amountCents;
-  const refundedCents = Math.max(cumulative, done, seen);
+  const refundedCents = Math.max(cumulative, done + outside);
   const eligible = payment.status === "paid" && payment.provider === "stripe" && PI_RE.test(payment.providerRef ?? "");
   return {
     capturedCents,
@@ -199,6 +199,14 @@ export function stripeRefundReason(code: RefundReasonCode): "duplicate" | "reque
   if (code === "duplicate_charge") return "duplicate";
   if (code === "customer_cancelled" || code === "quote_declined" || code === "event_lost") return "requested_by_customer";
   return null;
+}
+
+/**
+ * The refunds on a charge that CO-OPS did not make: every listed refund with no `refund_request_id` in its metadata
+ * (every CO-OPS refund carries one), failed and canceled ones excluded.
+ */
+export function outsideRefundedCents(listed: ReadonlyArray<{ requestId: string | null; status: string | null; amountCents: number | null }>): number {
+  return listed.reduce((s, r) => (r.requestId === null && r.status !== "failed" && r.status !== "canceled" ? s + (r.amountCents ?? 0) : s), 0);
 }
 
 /** The one Stripe Idempotency-Key spelling for a request row: stable across every retry of that row. */

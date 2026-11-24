@@ -23,7 +23,7 @@ import {
 import { ROLES, type RoleCode } from "@/lib/roles";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
-import { REFUND_ERROR_CODES, REFUND_REASON_CODES, REFUND_STATUSES } from "@/lib/catering/refunds-shared";
+import { REFUND_ERROR_CODES, REFUND_REASON_CODES, REFUND_STATUSES, outsideRefundedCents } from "@/lib/catering/refunds-shared";
 
 const PAID = { amountCents: 30000, status: "paid", provider: "stripe", providerRef: "pi_123" };
 
@@ -65,15 +65,35 @@ describe("refundFigures — the twin of 0357", () => {
   it("review r1: a charge LARGER than the row is what was captured (the difference stays refundable)", () => {
     expect(refundFigures({ ...PAID, amountCents: 20000 }, [{ cumulativeRefundedCents: 20000, chargeAmountCents: 30000 }], []).refundableCents).toBe(10000);
   });
-  it("review r4: a dashboard refund the webhook reported plus an app refund it has not reported yet: both count", () => {
-    // $300 charge; $100 refunded in the dashboard (the webhook's event); our $50 accepted, its event not delivered yet.
-    // Stripe's cumulative refunded as seen when ours was recorded = $150.
-    const f = refundFigures({ ...PAID, amountCents: 30000 }, [{ cumulativeRefundedCents: 10000, chargeAmountCents: 30000 }], [
-      { amountCents: 5000, status: "succeeded", chargeRefundedSeenCents: 15000 },
-    ]);
+  it("review r4/r5: a dashboard refund plus app refunds the webhook has not reported yet: each counts once, by identity", () => {
+    const charge = { ...PAID, amountCents: 30000 };
+    const ev = [{ cumulativeRefundedCents: 10000, chargeAmountCents: 30000 }]; // the $100 dashboard refund, reported
+    // One app refund of $50 (Stripe listed $100 not made by CO-OPS when it was recorded).
+    let f = refundFigures(charge, ev, [{ amountCents: 5000, status: "succeeded", outsideRefundedSeenCents: 10000 }]);
     expect([f.refundedCents, f.refundableCents]).toEqual([15000, 15000]);
-    // A refund that later FAILED stops counting, seen figure included.
-    expect(refundFigures({ ...PAID, amountCents: 30000 }, [], [{ amountCents: 5000, status: "failed", chargeRefundedSeenCents: 15000 }]).refundableCents).toBe(30000);
+    // Review r5: TWO app refunds of $50 that both listed the same $100 before either was sent: $200 gone, $100 left.
+    f = refundFigures(charge, ev, [
+      { amountCents: 5000, status: "succeeded", outsideRefundedSeenCents: 10000 },
+      { amountCents: 5000, status: "submitted", outsideRefundedSeenCents: 10000 },
+    ]);
+    expect([f.refundedCents, f.refundableCents]).toEqual([20000, 10000]);
+    // Once the webhook reports everything, its cumulative figure agrees.
+    f = refundFigures(charge, [{ cumulativeRefundedCents: 20000, chargeAmountCents: 30000 }], [
+      { amountCents: 5000, status: "succeeded", outsideRefundedSeenCents: 10000 },
+      { amountCents: 5000, status: "succeeded", outsideRefundedSeenCents: 10000 },
+    ]);
+    expect(f.refundableCents).toBe(10000);
+    // A refund that later FAILED stops counting, its listing included.
+    expect(refundFigures(charge, [], [{ amountCents: 5000, status: "failed", outsideRefundedSeenCents: 10000 }]).refundableCents).toBe(30000);
+  });
+  it("outsideRefundedCents: only refunds with no CO-OPS request id, failed and canceled ones excluded", () => {
+    expect(outsideRefundedCents([
+      { requestId: null, status: "succeeded", amountCents: 1000 },
+      { requestId: null, status: "pending", amountCents: 200 },
+      { requestId: null, status: "failed", amountCents: 9999 },
+      { requestId: null, status: "canceled", amountCents: 9999 },
+      { requestId: "req-1", status: "succeeded", amountCents: 5000 },
+    ])).toBe(1200);
   });
   it("never below zero", () => {
     expect(refundFigures(PAID, [{ cumulativeRefundedCents: 40000, chargeAmountCents: 30000 }], []).refundableCents).toBe(0);
