@@ -10542,5 +10542,6 @@
   "catering.refunds.error.not_releasable": "Este reembolso solo se puede liberar después de 24 horas sin respuesta de Stripe.",
   "catering.refunds.unavailable": "No se pudieron cargar los pagos y reembolsos de este pedido. No se cambió nada.",
   "catering.refunds.try_again": "Intentar otra vez",
-  "catering.refunds.lead.unavailable": "No se pudo revisar si este pedido tiene dinero por reembolsar."
+  "catering.refunds.lead.unavailable": "No se pudo revisar si este pedido tiene dinero por reembolsar.",
+  "catering.refunds.stripe_unchecked": "No se pudo revisar Stripe ahora, así que estas cifras pueden no estar al día."
 }

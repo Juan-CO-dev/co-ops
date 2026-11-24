@@ -46,17 +46,18 @@ describe("0357 header and shape", () => {
     expect(readdirSync("supabase/migrations").filter((f) => f.startsWith("0357_"))).toEqual([`${NAME}.sql`]);
   });
 
-  it("purely additive: one table, five functions, one trigger on its own table; nothing existing is altered", () => {
-    expect(code.match(/^create table public\.[a-z_]+/gm)).toEqual(["create table public.catering_refund_requests"]);
+  it("purely additive: two tables, six functions, one trigger on its own table; nothing existing is altered", () => {
+    expect(code.match(/^create table public\.[a-z_]+/gm)).toEqual(["create table public.catering_refund_requests", "create table public.catering_refund_stripe_snapshots"]);
     expect(code.match(/^create function public\.[a-z_]+/gm)).toEqual([
       "create function public.catering_refund_requests_guard",
       "create function public.catering_refund_actor_ok",
       "create function public.catering_refund_figures",
+      "create function public.catering_refund_record_snapshot",
       "create function public.catering_refund_reserve",
       "create function public.catering_refund_claim",
     ]);
     expect(code.match(/^create trigger [a-z_]+ [^\n]+/gm)).toEqual(["create trigger catering_refund_requests_guard before update on public.catering_refund_requests"]);
-    expect(code).not.toMatch(/\balter table public\.(?!catering_refund_requests)/);
+    expect(code).not.toMatch(/\balter table public\.(?!catering_refund_(?:requests|stripe_snapshots)\b)/);
     expect(code).not.toMatch(/\bcreate or replace\b/);
     expect(code).not.toMatch(/\bdrop\b/);
     // The only UPDATE is the claim's, on the new table itself; nothing deletes.
@@ -70,11 +71,11 @@ describe("0357 header and shape", () => {
     expect(code).toContain("grant select on table public.catering_refund_requests to service_role;");
     expect(code).not.toMatch(/grant (insert|delete|all)/);
     expect(code).not.toMatch(/create policy/);
-    for (const f of ["catering_refund_actor_ok(uuid, uuid)", "catering_refund_figures(uuid)", "catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text)", "catering_refund_claim(uuid)"]) {
+    for (const f of ["catering_refund_actor_ok(uuid, uuid)", "catering_refund_figures(uuid)", "catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text)", "catering_refund_claim(uuid)", "catering_refund_record_snapshot(uuid, timestamptz, bigint, jsonb)"]) {
       expect(code).toContain(`revoke all on function public.${f} from public, anon, authenticated;`);
       expect(code).toContain(`grant execute on function public.${f} to service_role;`);
     }
-    for (const f of ["catering_refund_actor_ok", "catering_refund_figures", "catering_refund_reserve", "catering_refund_claim"]) {
+    for (const f of ["catering_refund_actor_ok", "catering_refund_figures", "catering_refund_reserve", "catering_refund_claim", "catering_refund_record_snapshot"]) {
       expect(fn(f)).toMatch(/security definer set search_path = pg_catalog, public/);
     }
   });
@@ -130,8 +131,13 @@ describe("review r1", () => {
     expect(body).toContain("v_want := p_amount_cents;");
     expect(body).not.toMatch(/coalesce\(p_amount_cents/);
   });
-  it("review r4/r5: refunded is by identity: the events' cumulative, or ours plus the refunds CO-OPS did not make", () => {
-    expect(fn("catering_refund_figures")).toContain("o_refunded := greatest(coalesce(v_cum, 0), v_done + v_outside);");
+  it("review r4-r6: refunded is by identity and current status, from the newest snapshot", () => {
+    const body = fn("catering_refund_figures");
+    expect(body).toContain("filter (where coalesce(x->>'status', '') not in ('failed', 'canceled'))");
+    expect(body).toContain("v_snap_refunded := v_listed + v_own_unlisted;");
+    expect(body).toContain("o_refunded := case when v_last_event is null or v_snap.listed_at >= v_last_event then v_snap_refunded");
+    expect(fn("catering_refund_record_snapshot")).toContain("where catering_refund_stripe_snapshots.listed_at < excluded.listed_at;");
+    expect(code).toContain("grant select on table public.catering_refund_stripe_snapshots to service_role;");
   });
   it("captured is the charge Stripe reported when known, in both directions", () => {
     expect(fn("catering_refund_figures")).toContain("o_captured := coalesce(v_charge, v_pay.amount_cents::bigint);");
@@ -143,7 +149,7 @@ describe("review r1", () => {
     expect(body).toContain("(r.claimed_until is null or r.claimed_until < now())");
     expect(body).toContain("r.status in ('pending', 'submitted')");
     const grant = code.match(/grant update \(([^)]*)\)\s+on table public\.catering_refund_requests to service_role;/)![1]!.split(",").map((c) => c.trim()).sort();
-    expect(grant).toEqual(["claim_token", "claimed_until", "last_error_code", "last_error_message", "outside_refunded_seen_cents", "settled_at", "status", "stripe_refund_id", "stripe_status", "updated_at"]);
+    expect(grant).toEqual(["claim_token", "claimed_until", "last_error_code", "last_error_message", "settled_at", "status", "stripe_refund_id", "stripe_status", "updated_at"]);
   });
 });
 

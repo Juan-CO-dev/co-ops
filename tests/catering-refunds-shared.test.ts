@@ -23,7 +23,7 @@ import {
 import { ROLES, type RoleCode } from "@/lib/roles";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
-import { REFUND_ERROR_CODES, REFUND_REASON_CODES, REFUND_STATUSES, outsideRefundedCents } from "@/lib/catering/refunds-shared";
+import { REFUND_ERROR_CODES, REFUND_REASON_CODES, REFUND_STATUSES } from "@/lib/catering/refunds-shared";
 
 const PAID = { amountCents: 30000, status: "paid", provider: "stripe", providerRef: "pi_123" };
 
@@ -65,35 +65,34 @@ describe("refundFigures — the twin of 0357", () => {
   it("review r1: a charge LARGER than the row is what was captured (the difference stays refundable)", () => {
     expect(refundFigures({ ...PAID, amountCents: 20000 }, [{ cumulativeRefundedCents: 20000, chargeAmountCents: 30000 }], []).refundableCents).toBe(10000);
   });
-  it("review r4/r5: a dashboard refund plus app refunds the webhook has not reported yet: each counts once, by identity", () => {
+  it("review r4-r6: by identity and CURRENT status, from the newest Stripe snapshot", () => {
     const charge = { ...PAID, amountCents: 30000 };
-    const ev = [{ cumulativeRefundedCents: 10000, chargeAmountCents: 30000 }]; // the $100 dashboard refund, reported
-    // One app refund of $50 (Stripe listed $100 not made by CO-OPS when it was recorded).
-    let f = refundFigures(charge, ev, [{ amountCents: 5000, status: "succeeded", outsideRefundedSeenCents: 10000 }]);
+    const ev = [{ cumulativeRefundedCents: 10000, chargeAmountCents: 30000, refundedAt: "2026-11-23T10:00:00Z" }];
+    const dash = { id: "re_dash", amountCents: 10000, status: "pending", requestId: null };
+    const snap = (refunds: Array<typeof dash | { id: string; amountCents: number; status: string; requestId: string | null }>, listedAt = "2026-11-23T11:00:00Z") =>
+      ({ listedAt, capturedCents: 30000, refunds });
+    // r4: the dashboard refund (listed) + our $50 (not listed yet).
+    let f = refundFigures(charge, ev, [{ id: "r1", amountCents: 5000, status: "succeeded", stripeRefundId: "re_1" }], snap([dash]));
     expect([f.refundedCents, f.refundableCents]).toEqual([15000, 15000]);
-    // Review r5: TWO app refunds of $50 that both listed the same $100 before either was sent: $200 gone, $100 left.
+    // r5: two of ours that both came after the same listing: each counts once.
     f = refundFigures(charge, ev, [
-      { amountCents: 5000, status: "succeeded", outsideRefundedSeenCents: 10000 },
-      { amountCents: 5000, status: "submitted", outsideRefundedSeenCents: 10000 },
-    ]);
+      { id: "r1", amountCents: 5000, status: "succeeded", stripeRefundId: "re_1" },
+      { id: "r2", amountCents: 5000, status: "submitted", stripeRefundId: "re_2" },
+    ], snap([dash]));
     expect([f.refundedCents, f.refundableCents]).toEqual([20000, 10000]);
-    // Once the webhook reports everything, its cumulative figure agrees.
-    f = refundFigures(charge, [{ cumulativeRefundedCents: 20000, chargeAmountCents: 30000 }], [
-      { amountCents: 5000, status: "succeeded", outsideRefundedSeenCents: 10000 },
-      { amountCents: 5000, status: "succeeded", outsideRefundedSeenCents: 10000 },
-    ]);
-    expect(f.refundableCents).toBe(10000);
-    // A refund that later FAILED stops counting, its listing included.
-    expect(refundFigures(charge, [], [{ amountCents: 5000, status: "failed", outsideRefundedSeenCents: 10000 }]).refundableCents).toBe(30000);
-  });
-  it("outsideRefundedCents: only refunds with no CO-OPS request id, failed and canceled ones excluded", () => {
-    expect(outsideRefundedCents([
-      { requestId: null, status: "succeeded", amountCents: 1000 },
-      { requestId: null, status: "pending", amountCents: 200 },
-      { requestId: null, status: "failed", amountCents: 9999 },
-      { requestId: null, status: "canceled", amountCents: 9999 },
-      { requestId: "req-1", status: "succeeded", amountCents: 5000 },
-    ])).toBe(1200);
+    // r6: the dashboard refund is CANCELED; the newer listing shows it and ours (by id): $250 left.
+    f = refundFigures(charge, ev, [
+      { id: "r1", amountCents: 5000, status: "succeeded", stripeRefundId: "re_1" },
+    ], snap([{ ...dash, status: "canceled" }, { id: "re_1", amountCents: 5000, status: "succeeded", requestId: "r1" }]));
+    expect([f.refundedCents, f.refundableCents]).toEqual([5000, 25000]);
+    // A pending row whose refund the listing already shows (a lost answer) counts once, not also in flight.
+    f = refundFigures(charge, [], [{ id: "r3", amountCents: 3000, status: "pending" }], snap([{ id: "re_3", amountCents: 3000, status: "succeeded", requestId: "r3" }]));
+    expect([f.refundedCents, f.inFlightCents, f.refundableCents]).toEqual([3000, 0, 27000]);
+    // An event NEWER than the snapshot (a refund after it) is not ignored.
+    f = refundFigures(charge, [{ cumulativeRefundedCents: 25000, chargeAmountCents: 30000, refundedAt: "2026-11-23T12:00:00Z" }], [], snap([dash]));
+    expect(f.refundedCents).toBe(25000);
+    // A snapshot's captured amount is the charge's.
+    expect(refundFigures({ ...PAID, amountCents: 20000 }, [], [], { listedAt: "2026-11-23T11:00:00Z", capturedCents: 30000, refunds: [] }).capturedCents).toBe(30000);
   });
   it("never below zero", () => {
     expect(refundFigures(PAID, [{ cumulativeRefundedCents: 40000, chargeAmountCents: 30000 }], []).refundableCents).toBe(0);

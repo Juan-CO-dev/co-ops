@@ -170,6 +170,7 @@ function seed() {
       ],
       catering_payment_refund_events: [],
       catering_refund_requests: [],
+      catering_refund_stripe_snapshots: [],
       locations: [{ id: SHOP, code: "S1" }],
       users: [{ id: ACTOR, role: "catering_mgr", name: "Kim" }],
     },
@@ -186,6 +187,15 @@ function seed() {
           r.first_attempt_at ??= new Date().toISOString();
         }
         return { data: { claim_token: r.claim_token, attempts: r.attempts, first_attempt_at: r.first_attempt_at, status: r.status }, error: null };
+      },
+      catering_refund_record_snapshot: (args, db) => {
+        const t = (db.tables.catering_refund_stripe_snapshots ??= []);
+        const cur = t.find((x) => x.payment_id === args.p_payment_id);
+        if (cur && String(cur.listed_at) >= String(args.p_listed_at)) return { data: false, error: null };
+        const row = { payment_id: args.p_payment_id, listed_at: args.p_listed_at, captured_cents: args.p_captured_cents, refunds: args.p_refunds };
+        if (cur) Object.assign(cur, row);
+        else t.push(row);
+        return { data: true, error: null };
       },
       catering_refund_actor_ok: (args, db) => ({ data: ["owner", "cgs", "moo", "catering_mgr"].includes(String(db.tables.users?.find((u) => u.id === args.p_actor_id)?.role)), error: null }),
     },
@@ -289,8 +299,9 @@ describe("unknown outcomes stay pending and are retried safely", () => {
     const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
     expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "network_error" });
     const s1 = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    expect(s1.totals.inFlightCents).toBe(2000);
-    expect(s1.totals.refundableCents).toBe(98000); // the pending row counts against what is refundable
+    // Opening the panel asked Stripe: the landed refund is listed under this row id, so it counts once, as refunded.
+    expect([s1.totals.inFlightCents, s1.totals.refundedCents]).toEqual([0, 2000]);
+    expect(s1.totals.refundableCents).toBe(98000);
     expect(s1.requests[0]).toMatchObject({ retryable: true, needsReconcile: false });
 
     const id = rows()[0]!.id as string;
@@ -347,7 +358,9 @@ describe("unknown outcomes stay pending and are retried safely", () => {
     (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: BAL, cumulative_refunded_cents: 40000, charge_amount_cents: 70000 });
     const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
     const before = await loadRefundSummary(actor("catering_mgr"), QUOTE, later);
-    expect(before.totals.refundableCents).toBe(30000); // the balance shows 0: $400 refunded AND $400 still held as in flight
+    // Opening the panel asks Stripe (review r6): the landed refund is LISTED under this row's id, so it already
+    // counts once (refunded), not twice (refunded and in flight).
+    expect(before.totals.refundableCents).toBe(60000);
     const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, later);
     expect(r.status).toBe("succeeded");
     expect(stripe.creates).toHaveLength(1);
@@ -466,31 +479,44 @@ describe("unknown outcomes stay pending and are retried safely", () => {
   });
 });
 
-describe("review r4: mixed dashboard and app refunds", () => {
-  it("a dashboard refund (reported) plus an app refund (not reported yet) leave exactly what is left", async () => {
-    // $100 refunded on the deposit in the Stripe dashboard (no CO-OPS request id); the webhook recorded it.
+describe("review r4-r6: mixed dashboard and app refunds, by identity and current status", () => {
+  const setup = () => {
+    // $100 refunded on the deposit in the Stripe dashboard (no CO-OPS id), still pending; the webhook recorded it.
     stripe.charges.get("pi_dep")!.refunded = 10000;
-    stripe.refunds.push({ id: "re_dash", status: "succeeded", amount: 10000, paymentIntent: "pi_dep", requestId: null, account: "sk_test_fake_A" });
-    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: DEP, cumulative_refunded_cents: 10000, charge_amount_cents: 30000 });
-    // Our $50 on the deposit: take the balance out of the way so the allocation lands on the deposit.
+    stripe.refunds.push({ id: "re_dash", status: "pending", amount: 10000, paymentIntent: "pi_dep", requestId: null, account: "sk_test_fake_A" });
+    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: DEP, cumulative_refunded_cents: 10000, charge_amount_cents: 30000, refunded_at: new Date(Date.now() - 600_000).toISOString() });
     (h.db.tables.catering_payments as Row[]).find((p) => p.id === BAL)!.status = "refunded";
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
-    expect(out.results[0]).toMatchObject({ paymentId: DEP, status: "succeeded" });
-    expect(rows()[0]!.outside_refunded_seen_cents).toBe(10000);
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    expect(s.payments.find((p) => p.id === DEP)!.figures).toMatchObject({ refundedCents: 15000, refundableCents: 15000 });
+  };
+  const dep = async () => (await loadRefundSummary(actor("catering_mgr"), QUOTE)).payments.find((p) => p.id === DEP)!.figures;
+
+  it("r4: a dashboard refund plus an app refund leave exactly what is left", async () => {
+    setup();
+    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
+    expect(await dep()).toMatchObject({ refundedCents: 15000, refundableCents: 15000 });
   });
 
-  it("review r5: two separate app refunds before any webhook: the dashboard refund counts once and both of ours count", async () => {
-    stripe.charges.get("pi_dep")!.refunded = 10000;
-    stripe.refunds.push({ id: "re_dash", status: "succeeded", amount: 10000, paymentIntent: "pi_dep", requestId: null, account: "sk_test_fake_A" });
-    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: DEP, cumulative_refunded_cents: 10000, charge_amount_cents: 30000 });
-    (h.db.tables.catering_payments as Row[]).find((p) => p.id === BAL)!.status = "refunded";
+  it("r5: two separate app refunds: the dashboard refund counts once and both of ours count", async () => {
+    setup();
     await requestRefund(actor("catering_mgr"), QUOTE, body({ clientToken: "33333333-3333-4333-8333-333333333333", amountCents: 5000 }));
     await requestRefund(actor("catering_mgr"), QUOTE, body({ clientToken: "44444444-4444-4444-8444-444444444444", amountCents: 5000 }));
-    expect(rows().map((r) => r.outside_refunded_seen_cents)).toEqual([10000, 10000]);
+    expect(await dep()).toMatchObject({ refundedCents: 20000, refundableCents: 10000 });
+  });
+
+  it("r6: the dashboard refund is CANCELED: opening the panel asks Stripe again and the amount is refundable again", async () => {
+    setup();
+    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
+    expect(await dep()).toMatchObject({ refundableCents: 15000 });
+    stripe.refunds.find((r) => r.id === "re_dash")!.status = "canceled";
+    stripe.charges.get("pi_dep")!.refunded -= 10000;
+    await new Promise((r) => setTimeout(r, 5)); // a later listing
+    expect(await dep()).toMatchObject({ refundedCents: 5000, refundableCents: 25000 });
+  });
+
+  it("r6: Stripe cannot be asked: the last snapshot stands and the summary says the figures may be out of date", async () => {
+    setup();
+    h.accounts = [];
     const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    expect(s.payments.find((p) => p.id === DEP)!.figures).toMatchObject({ refundedCents: 20000, refundableCents: 10000 });
+    expect(s.stripeUnchecked).toBe(true);
   });
 });
 
@@ -517,6 +543,7 @@ describe("the read model", () => {
   it("names what was paid, refunded, in flight and refundable; a hand-marked payment is outside the app", async () => {
     (h.db.tables.catering_payments as Row[]).push({ id: "00000000-0000-4000-8000-0000000000c3", quote_id: QUOTE, kind: "full", amount_cents: 5000, status: "paid", provider: "manual", provider_ref: null, paid_at: null, created_at: "2026-11-06T00:00:00Z" });
     (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: DEP, cumulative_refunded_cents: 1000, charge_amount_cents: 30000 });
+    stripe.refunds.push({ id: "re_ev", status: "succeeded", amount: 1000, paymentIntent: "pi_dep", requestId: null, account: "sk_test_fake_A" });
     const s = await loadRefundSummary(actor("shift_lead"), QUOTE);
     expect(s.totals).toEqual({ paidCents: 100000, refundedCents: 1000, inFlightCents: 0, refundableCents: 99000, outsideAppCents: 5000 });
     expect(s.canRefund).toBe(false); // a shift lead sees, never refunds

@@ -134,7 +134,7 @@ try {
   check(true, "0357 applied");
 
   // ── P1 — objects and privileges ──────────────────────────────────────────────────────────────
-  for (const fn of ["catering_refund_actor_ok(uuid,uuid)", "catering_refund_figures(uuid)", "catering_refund_reserve(uuid,uuid,uuid,bigint,text,text,text)", "catering_refund_claim(uuid)"]) {
+  for (const fn of ["catering_refund_actor_ok(uuid,uuid)", "catering_refund_figures(uuid)", "catering_refund_reserve(uuid,uuid,uuid,bigint,text,text,text)", "catering_refund_claim(uuid)", "catering_refund_record_snapshot(uuid,timestamptz,bigint,jsonb)"]) {
     for (const role of ["anon", "authenticated"]) {
       check((await one(db, `select has_function_privilege('${role}', 'public.${fn}', 'execute') as ok`)).ok === false, `P1 ${role} cannot execute ${fn}`);
     }
@@ -144,6 +144,9 @@ try {
     check((await one(db, `select has_table_privilege('service_role', 'public.catering_refund_requests', '${priv}') as ok`)).ok === false, `P1 service_role has no ${priv}`);
   }
   check((await one(db, "select has_table_privilege('service_role', 'public.catering_refund_requests', 'SELECT') as ok")).ok === true, "P1 service_role SELECT");
+  for (const priv of ["INSERT", "UPDATE", "DELETE", "TRUNCATE"]) {
+    check((await one(db, `select has_table_privilege('service_role', 'public.catering_refund_stripe_snapshots', '${priv}') as ok`)).ok === false, `P1 snapshots: service_role has no ${priv} (the writer function only)`);
+  }
   for (const col of ["amount_cents", "payment_id", "client_token", "reason_code", "requested_by", "attempts", "first_attempt_at"]) {
     check((await one(db, `select has_column_privilege('service_role', 'public.catering_refund_requests', '${col}', 'UPDATE') as ok`)).ok === false, `P1 service_role cannot UPDATE ${col}`);
   }
@@ -196,21 +199,50 @@ try {
     check(Number(fm.o_captured) === 30000 && Number(fm.o_refundable) === 10000, "P3 a charge LARGER than the row: the difference stays refundable");
   }
   {
-    // Review r4/r5: $100 dashboard refund reported by the webhook + our $50 accepted, not reported yet; Stripe listed
-    // $100 not made by CO-OPS when ours was recorded. Both count, each once; $150 is left.
+    // Review r4-r6: refunded BY IDENTITY AND CURRENT STATUS, from the newest Stripe snapshot of the charge's refunds.
     const Qx = await f.quote();
     const px = await f.pay(Qx, "deposit", 30000);
-    await db.query("insert into public.catering_payment_refund_events (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents, charge_amount_cents) values ('evt_x', $1, now(), 10000, 30000)", [px]);
+    const snap = (at, refunds, captured = 30000) => one(db, "select public.catering_refund_record_snapshot($1, $2, $3, $4::jsonb) as ok", [px, at, captured, JSON.stringify(refunds)]).then((r) => r.ok);
+    await db.query("insert into public.catering_payment_refund_events (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents, charge_amount_cents) values ('evt_x', $1, now() - interval '10 minutes', 10000, 30000)", [px]);
+    // The panel opened: Stripe lists a $100 dashboard refund (no CO-OPS id), pending.
+    check(await snap(new Date(Date.now() - 60_000).toISOString(), [{ id: "re_dash", amount: 10000, status: "pending", request_id: null }]) === true, "P3 a snapshot is recorded");
     const rx = await reserve(db, owner, Qx, randomUUID(), 5000);
-    await db.query("update public.catering_refund_requests set status = 'succeeded', stripe_refund_id = 're_x', outside_refunded_seen_cents = 10000 where id = $1", [rx.requests[0].id]);
-    const fx = await figures(db, px);
-    check(Number(fx.o_refunded) === 15000 && Number(fx.o_refundable) === 15000, "P3 review r4: mixed dashboard + app refunds leave exactly what is left");
-    // Review r5: a SECOND app refund that listed the same $100 before either was sent.
+    await db.query("update public.catering_refund_requests set status = 'succeeded', stripe_refund_id = 're_x' where id = $1", [rx.requests[0].id]);
+    let fx = await figures(db, px);
+    check(Number(fx.o_refunded) === 15000 && Number(fx.o_refundable) === 15000, "P3 r4: the dashboard refund (listed) + ours (not listed yet) both count, once");
     const ry = await reserve(db, owner, Qx, randomUUID(), 5000);
-    await db.query("update public.catering_refund_requests set status = 'submitted', stripe_refund_id = 're_y', outside_refunded_seen_cents = 10000 where id = $1", [ry.requests[0].id]);
-    const fy = await figures(db, px);
-    check(Number(fy.o_refunded) === 20000 && Number(fy.o_refundable) === 10000, "P3 review r5: two app refunds sharing one listing count the dashboard refund once and both of ours");
-    await refuses(() => db.query("update public.catering_refund_requests set outside_refunded_seen_cents = 1 where id = $1", [rx.requests[0].id]), "refund_request_immutable", "P3 the listing figure is written once");
+    await db.query("update public.catering_refund_requests set status = 'submitted', stripe_refund_id = 're_y' where id = $1", [ry.requests[0].id]);
+    fx = await figures(db, px);
+    check(Number(fx.o_refunded) === 20000 && Number(fx.o_refundable) === 10000, "P3 r5: two app refunds and the dashboard refund: each counts once");
+    // r6: the dashboard refund is CANCELED; the next listing shows it, and lists ours by id.
+    const now = new Date().toISOString();
+    check(await snap(now, [
+      { id: "re_dash", amount: 10000, status: "canceled", request_id: null },
+      { id: "re_x", amount: 5000, status: "succeeded", request_id: rx.requests[0].id },
+      { id: "re_y", amount: 5000, status: "pending", request_id: ry.requests[0].id },
+    ]) === true, "P3 a newer snapshot replaces the older");
+    fx = await figures(db, px);
+    check(Number(fx.o_refunded) === 10000 && Number(fx.o_refundable) === 20000, "P3 r6: a canceled refund stops counting; ours count once (listed, by id)");
+    check(await snap(new Date(Date.now() - 3_600_000).toISOString(), [{ id: "re_dash", amount: 10000, status: "pending", request_id: null }]) === false, "P3 an OLDER listing recorded late never overwrites the newer");
+    fx = await figures(db, px);
+    check(Number(fx.o_refunded) === 10000, "P3 …and the figures still follow the newest");
+    // A pending row whose refund Stripe already lists (a lost answer) counts once, as listed — not again as in flight.
+    const rz = await reserve(db, owner, Qx, randomUUID(), 3000);
+    check(await snap(new Date(Date.now() + 1000).toISOString(), [
+      { id: "re_x", amount: 5000, status: "succeeded", request_id: rx.requests[0].id },
+      { id: "re_y", amount: 5000, status: "succeeded", request_id: ry.requests[0].id },
+      { id: "re_z", amount: 3000, status: "succeeded", request_id: rz.requests[0].id },
+    ]) === true, "P3 a listing that includes a refund our row has not recorded yet");
+    fx = await figures(db, px);
+    check(Number(fx.o_refunded) === 13000 && Number(fx.o_in_flight) === 0 && Number(fx.o_refundable) === 17000, "P3 a lost answer that landed counts once (listed), not also in flight");
+    // A webhook event NEWER than the snapshot (a refund made after it): the larger figure wins.
+    await db.query("insert into public.catering_payment_refund_events (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents, charge_amount_cents) values ('evt_y', $1, now() + interval '1 hour', 25000, 30000)", [px]);
+    fx = await figures(db, px);
+    check(Number(fx.o_refunded) === 25000, "P3 an event newer than the snapshot is not ignored");
+    // The writer validates what it stores.
+    await refuses(() => snap(new Date(Date.now() + 7_200_000).toISOString(), [{ id: "nope", amount: 1, status: "succeeded" }]), "invalid_request", "P3 a listing with a non-refund id is refused");
+    await refuses(() => snap(new Date(Date.now() + 7_200_000).toISOString(), [{ id: "re_q", amount: 1.5, status: "succeeded" }]), "invalid_request", "P3 a fractional amount is refused");
+    await refuses(() => one(db, "select public.catering_refund_record_snapshot($1, $2, null, $3::jsonb) as ok", [px, now, JSON.stringify({ a: 1 })]), "invalid_request", "P3 a listing that is not an array is refused");
   }
 
   // ── P4 — reserve ─────────────────────────────────────────────────────────────────────────────

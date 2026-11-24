@@ -70,20 +70,33 @@ export interface RefundPaymentInput {
 export interface RefundEventInput {
   cumulativeRefundedCents: number;
   chargeAmountCents: number | null;
+  /** The event's own time (0333 `refunded_at`); compared with a snapshot's listing time. */
+  refundedAt?: string | null;
+}
+/**
+ * The newest Stripe listing of a charge's refunds (0357 `catering_refund_stripe_snapshots`, review r6): each refund's
+ * id, amount, CURRENT status and our request id (null = not made by CO-OPS), and the charge's captured amount.
+ */
+export interface RefundSnapshotInput {
+  listedAt: string;
+  capturedCents: number | null;
+  refunds: ReadonlyArray<{ id: string; amountCents: number; status: string | null; requestId: string | null }>;
 }
 export interface RefundRequestInput {
+  /** The request row's id (matched against a listed refund's request id). */
+  id?: string;
   amountCents: number;
   status: RefundStatus;
-  /** Refunds on the charge CO-OPS did NOT make, as Stripe listed them when this refund was recorded (0357, r4/r5). */
-  outsideRefundedSeenCents?: number | null;
+  /** The Stripe refund this row recorded (matched against a listed refund's id). */
+  stripeRefundId?: string | null;
 }
 export interface RefundFigures {
   /** The charge amount Stripe reported (when it did) — the charge is the money, in both directions — else the row's. */
   capturedCents: number;
   /**
-   * The larger of Stripe's cumulative refund (the webhook's events) and, BY IDENTITY (review r4, r5), our own accepted
-   * requests plus the refunds CO-OPS did not make that Stripe listed when one of ours was recorded. A dashboard refund
-   * and any number of app refunds the webhook has not reported yet all count, each once.
+   * BY IDENTITY AND CURRENT STATUS (review r4-r6), from the newest Stripe snapshot: every listed refund not failed /
+   * canceled, plus our own accepted refunds it does not list yet. An event NEWER than the snapshot: the larger of the
+   * two. No snapshot: the larger of the webhook's cumulative and our own accepted sum.
    */
   refundedCents: number;
   /** Our own requests whose Stripe answer is not confirmed yet. */
@@ -100,6 +113,7 @@ export function refundFigures(
   payment: RefundPaymentInput,
   events: readonly RefundEventInput[],
   requests: readonly RefundRequestInput[],
+  snapshot: RefundSnapshotInput | null = null,
 ): RefundFigures {
   const charge = events.reduce<number | null>(
     (m, e) => (e.chargeAmountCents == null ? m : m == null ? e.chargeAmountCents : Math.max(m, e.chargeAmountCents)),
@@ -107,11 +121,27 @@ export function refundFigures(
   );
   const cumulative = events.reduce((m, e) => Math.max(m, e.cumulativeRefundedCents), 0);
   const accepted = requests.filter((r) => r.status === "submitted" || r.status === "succeeded");
-  const done = accepted.reduce((s, r) => s + r.amountCents, 0);
-  const outside = accepted.reduce((m, r) => Math.max(m, r.outsideRefundedSeenCents ?? 0), 0);
-  const inFlightCents = requests.filter((r) => r.status === "pending").reduce((s, r) => s + r.amountCents, 0);
-  const capturedCents = charge ?? payment.amountCents;
-  const refundedCents = Math.max(cumulative, done + outside);
+  let capturedCents: number;
+  let refundedCents: number;
+  let inFlightCents: number;
+  if (!snapshot) {
+    inFlightCents = requests.filter((r) => r.status === "pending").reduce((s, r) => s + r.amountCents, 0);
+    capturedCents = charge ?? payment.amountCents;
+    refundedCents = Math.max(cumulative, accepted.reduce((s, r) => s + r.amountCents, 0));
+  } else {
+    const listedIds = new Set(snapshot.refunds.map((x) => x.id));
+    const listedRequests = new Set(snapshot.refunds.flatMap((x) => (x.requestId ? [x.requestId] : [])));
+    const listed = snapshot.refunds.filter((x) => x.status !== "failed" && x.status !== "canceled").reduce((s, x) => s + x.amountCents, 0);
+    const ownUnlisted = accepted.filter((r) => !r.stripeRefundId || !listedIds.has(r.stripeRefundId)).reduce((s, r) => s + r.amountCents, 0);
+    inFlightCents = requests.filter((r) => r.status === "pending" && !(r.id && listedRequests.has(r.id))).reduce((s, r) => s + r.amountCents, 0);
+    capturedCents = snapshot.capturedCents ?? charge ?? payment.amountCents;
+    const lastEvent = events.reduce<number | null>((m, e) => {
+      const t = e.refundedAt ? Date.parse(e.refundedAt) : NaN;
+      return Number.isFinite(t) ? (m == null ? t : Math.max(m, t)) : m;
+    }, null);
+    const snapRefunded = listed + ownUnlisted;
+    refundedCents = lastEvent == null || Date.parse(snapshot.listedAt) >= lastEvent ? snapRefunded : Math.max(cumulative, snapRefunded);
+  }
   const eligible = payment.status === "paid" && payment.provider === "stripe" && PI_RE.test(payment.providerRef ?? "");
   return {
     capturedCents,
@@ -199,14 +229,6 @@ export function stripeRefundReason(code: RefundReasonCode): "duplicate" | "reque
   if (code === "duplicate_charge") return "duplicate";
   if (code === "customer_cancelled" || code === "quote_declined" || code === "event_lost") return "requested_by_customer";
   return null;
-}
-
-/**
- * The refunds on a charge that CO-OPS did not make: every listed refund with no `refund_request_id` in its metadata
- * (every CO-OPS refund carries one), failed and canceled ones excluded.
- */
-export function outsideRefundedCents(listed: ReadonlyArray<{ requestId: string | null; status: string | null; amountCents: number | null }>): number {
-  return listed.reduce((s, r) => (r.requestId === null && r.status !== "failed" && r.status !== "canceled" ? s + (r.amountCents ?? 0) : s), 0);
 }
 
 /** The one Stripe Idempotency-Key spelling for a request row: stable across every retry of that row. */
@@ -341,6 +363,8 @@ export interface RefundSummary {
   payments: RefundPaymentView[];
   requests: RefundRequestView[];
   totals: { paidCents: number; refundedCents: number; inFlightCents: number; refundableCents: number; outsideAppCents: number };
+  /** Stripe could not be asked about a payment just now (review r6): the figures may be out of date. */
+  stripeUnchecked?: boolean;
 }
 
 export function summarizeTotals(payments: readonly RefundPaymentView[]): RefundSummary["totals"] {

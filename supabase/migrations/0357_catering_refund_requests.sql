@@ -6,7 +6,7 @@
 -- customer paid. Ships DARK: the app refuses every refund unless CATERING_REFUNDS=1 (lib/catering/refunds-shared.ts).
 --
 -- WHAT THIS IS. The ledger of refunds a PERSON asked CO-OPS to make at Stripe, and the one function that reserves one.
--- PURELY ADDITIVE: one new table, four new functions, one trigger on the new table. No existing table, function,
+-- PURELY ADDITIVE: two new tables, six new functions, one trigger on the first new table. No existing table, function,
 -- trigger, policy or grant is altered or re-emitted (catering_payments, catering_payment_refund_events and the Stripe
 -- webhook are untouched: the webhook's `charge.refunded` path still records what Stripe did and still moves a payment
 -- to `refunded` only when the whole charge is refunded — the report and the digest keep reading exactly that).
@@ -30,15 +30,17 @@
 --                                                         catering_payment_refund_events.charge_amount_cents) when known --
 --                                                         the charge is the money, in both directions (review r1: a $300
 --                                                         charge on a $200 row is $300 the customer paid) -- else the row's;
---                                             refunded  = the larger of: Stripe's cumulative amount_refunded (the
---                                                         webhook's events); and, BY IDENTITY (review r4, r5), our own
---                                                         submitted + succeeded requests PLUS the refunds CO-OPS did NOT
---                                                         make (no metadata.refund_request_id) that Stripe listed for the
---                                                         charge when one of our refunds was recorded (the largest such
---                                                         listing, outside_refunded_seen_cents). A dashboard refund and any
---                                                         number of app refunds the webhook has not reported yet therefore
---                                                         all count, each once;
---                                             in_flight = our own pending requests;
+--                                             refunded  = BY IDENTITY AND CURRENT STATUS (review r4-r6), from the
+--                                                         newest Stripe SNAPSHOT of the charge's refunds (below): every
+--                                                         listed refund that is not failed / canceled, plus our own accepted
+--                                                         refunds the snapshot does not list yet (by stripe_refund_id). A
+--                                                         dashboard refund, any number of app refunds and a pending refund
+--                                                         that is later canceled are each counted once, as they now stand.
+--                                                         When a webhook event is NEWER than the snapshot, the larger of the
+--                                                         two is taken (a refund made after the snapshot). With no snapshot
+--                                                         yet: the larger of the webhook's cumulative and our accepted sum;
+--                                             in_flight = our own pending requests the snapshot does not already list
+--                                                         (a lost answer that landed is listed, so it counts once);
 --                                             refundable = captured - refunded - in_flight, never below 0; 0 unless the
 --                                                         row is `paid`, provider 'stripe', with a PaymentIntent.
 --                                             The app's pure twin is refundFigures (lib/catering/refunds-shared.ts).
@@ -58,6 +60,14 @@
 --                                             the claim_token it holds (and releases it), so a press that outlived
 --                                             its claim can never overwrite what the newer one recorded. Sending
 --                                             counts an attempt and stamps first_attempt_at (the 24-hour window).
+--     catering_refund_record_snapshot(...)    THE one writer of catering_refund_stripe_snapshots: validates the listing
+--                                             (refund ids, integer amounts), keeps the NEWEST listing per payment.
+--   TABLE catering_refund_stripe_snapshots   one row per payment: the newest listing of the charge's refunds at
+--                                    Stripe (id, amount, status, request id) and the charge's captured amount, taken by
+--                                    the app every time it asks Stripe about the payment (opening the refund panel, every
+--                                    send, every reconcile). Written only by catering_refund_record_snapshot, which keeps
+--                                    the NEWEST listing (an older one recorded late never overwrites it). Derived, not
+--                                    history: it is replaced, never appended.
 --   TRIGGER catering_refund_requests_guard   a row's money facts never change (amount, payment, token, reason, who),
 --                                            a terminal row never changes status, a Stripe refund id once set never
 --                                            changes, and a status only moves forward
@@ -79,6 +89,8 @@
 -- ROLLBACK (only while the table is empty): drop trigger catering_refund_requests_guard on public.catering_refund_requests;
 --   drop function public.catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text);
 --   drop function public.catering_refund_claim(uuid);
+--   drop function public.catering_refund_record_snapshot(uuid, timestamptz, bigint, jsonb);
+--   drop table public.catering_refund_stripe_snapshots;
 --   drop function public.catering_refund_figures(uuid); drop function public.catering_refund_actor_ok(uuid, uuid);
 --   drop function public.catering_refund_requests_guard(); drop table public.catering_refund_requests;
 --   Once a row exists it is money history: never delete it.
@@ -98,8 +110,11 @@ begin
   if to_regclass('public.catering_refund_requests') is not null then
     raise exception '0357: public.catering_refund_requests already exists';
   end if;
+  if to_regclass('public.catering_refund_stripe_snapshots') is not null then
+    raise exception '0357: public.catering_refund_stripe_snapshots already exists';
+  end if;
   foreach t in array array['catering_refund_actor_ok', 'catering_refund_figures', 'catering_refund_reserve',
-                           'catering_refund_claim', 'catering_refund_requests_guard'] loop
+                           'catering_refund_claim', 'catering_refund_record_snapshot', 'catering_refund_requests_guard'] loop
     if exists (select 1 from pg_proc where proname = t and pronamespace = 'public'::regnamespace) then
       raise exception '0357: function public.% already exists', t;
     end if;
@@ -130,9 +145,6 @@ create table public.catering_refund_requests (
   settled_at         timestamptz,
   claim_token        uuid,
   claimed_until      timestamptz,
-  -- The refunds on this charge that CO-OPS did NOT make (Stripe lists them with no metadata.refund_request_id; failed
-  -- and canceled ones excluded), as listed in the attempt that recorded THIS refund. Set once, with the acceptance.
-  outside_refunded_seen_cents bigint check (outside_refunded_seen_cents is null or outside_refunded_seen_cents >= 0),
   constraint catering_refund_requests_one_per_tap unique (client_token, payment_id),
   constraint catering_refund_requests_other_needs_note check (reason_code <> 'other' or reason_note is not null)
 );
@@ -143,8 +155,19 @@ alter table public.catering_refund_requests enable row level security;
 revoke all on table public.catering_refund_requests from public, anon, authenticated, service_role;
 grant select on table public.catering_refund_requests to service_role;
 grant update (status, stripe_refund_id, stripe_status, last_error_code, last_error_message, updated_at, settled_at,
-              claim_token, claimed_until, outside_refunded_seen_cents)
+              claim_token, claimed_until)
   on table public.catering_refund_requests to service_role;
+
+create table public.catering_refund_stripe_snapshots (
+  payment_id     uuid primary key references public.catering_payments(id),
+  listed_at      timestamptz not null,
+  captured_cents bigint check (captured_cents is null or captured_cents >= 0),
+  refunds        jsonb not null check (jsonb_typeof(refunds) = 'array'),
+  recorded_at    timestamptz not null default now()
+);
+alter table public.catering_refund_stripe_snapshots enable row level security;
+revoke all on table public.catering_refund_stripe_snapshots from public, anon, authenticated, service_role;
+grant select on table public.catering_refund_stripe_snapshots to service_role;
 
 create function public.catering_refund_requests_guard() returns trigger
 language plpgsql set search_path = pg_catalog, public as $$
@@ -158,9 +181,6 @@ begin
     raise exception 'refund_request_immutable' using errcode = 'P0001';
   end if;
   if new.attempts < old.attempts or (old.first_attempt_at is not null and new.first_attempt_at is distinct from old.first_attempt_at) then
-    raise exception 'refund_request_immutable' using errcode = 'P0001';
-  end if;
-  if old.outside_refunded_seen_cents is not null and new.outside_refunded_seen_cents is distinct from old.outside_refunded_seen_cents then
     raise exception 'refund_request_immutable' using errcode = 'P0001';
   end if;
   if old.stripe_refund_id is not null and new.stripe_refund_id is distinct from old.stripe_refund_id then
@@ -201,24 +221,66 @@ declare
   v_pay record;
   v_charge bigint;
   v_cum bigint;
+  v_last_event timestamptz;
   v_done bigint;
-  v_outside bigint;
+  v_snap record;
+  v_listed bigint;
+  v_own_unlisted bigint;
+  v_snap_refunded bigint;
 begin
   select p.amount_cents, p.status, p.provider, p.provider_ref into v_pay from public.catering_payments p where p.id = p_payment_id;
   if not found then
     o_captured := 0; o_refunded := 0; o_in_flight := 0; o_refundable := 0; o_eligible := false; return;
   end if;
-  select max(e.charge_amount_cents), max(e.cumulative_refunded_cents) into v_charge, v_cum
+  select max(e.charge_amount_cents), max(e.cumulative_refunded_cents), max(e.refunded_at) into v_charge, v_cum, v_last_event
     from public.catering_payment_refund_events e where e.payment_id = p_payment_id;
-  select coalesce(sum(r.amount_cents) filter (where r.status in ('submitted', 'succeeded')), 0),
-         coalesce(sum(r.amount_cents) filter (where r.status = 'pending'), 0),
-         coalesce(max(r.outside_refunded_seen_cents) filter (where r.status in ('submitted', 'succeeded')), 0)
-    into v_done, o_in_flight, v_outside
-    from public.catering_refund_requests r where r.payment_id = p_payment_id;
-  o_captured := coalesce(v_charge, v_pay.amount_cents::bigint);
-  o_refunded := greatest(coalesce(v_cum, 0), v_done + v_outside);
+  select s.listed_at, s.captured_cents, s.refunds into v_snap from public.catering_refund_stripe_snapshots s where s.payment_id = p_payment_id;
+  if v_snap.listed_at is null then
+    select coalesce(sum(r.amount_cents) filter (where r.status in ('submitted', 'succeeded')), 0),
+           coalesce(sum(r.amount_cents) filter (where r.status = 'pending'), 0)
+      into v_done, o_in_flight
+      from public.catering_refund_requests r where r.payment_id = p_payment_id;
+    o_captured := coalesce(v_charge, v_pay.amount_cents::bigint);
+    o_refunded := greatest(coalesce(v_cum, 0), v_done);
+  else
+    select coalesce(sum((x->>'amount')::bigint) filter (where coalesce(x->>'status', '') not in ('failed', 'canceled')), 0)
+      into v_listed from jsonb_array_elements(v_snap.refunds) x;
+    select coalesce(sum(r.amount_cents) filter (where r.status in ('submitted', 'succeeded') and not exists (
+             select 1 from jsonb_array_elements(v_snap.refunds) x where x->>'id' = r.stripe_refund_id)), 0),
+           coalesce(sum(r.amount_cents) filter (where r.status = 'pending' and not exists (
+             select 1 from jsonb_array_elements(v_snap.refunds) x where x->>'request_id' = r.id::text)), 0)
+      into v_own_unlisted, o_in_flight
+      from public.catering_refund_requests r where r.payment_id = p_payment_id;
+    v_snap_refunded := v_listed + v_own_unlisted;
+    o_captured := coalesce(v_snap.captured_cents, v_charge, v_pay.amount_cents::bigint);
+    o_refunded := case when v_last_event is null or v_snap.listed_at >= v_last_event then v_snap_refunded
+                       else greatest(coalesce(v_cum, 0), v_snap_refunded) end;
+  end if;
   o_eligible := v_pay.status = 'paid' and v_pay.provider = 'stripe' and coalesce(v_pay.provider_ref, '') ~ '^pi_[A-Za-z0-9_]+$';
   o_refundable := case when o_eligible then greatest(0, o_captured - o_refunded - o_in_flight) else 0 end;
+end $$;
+
+create function public.catering_refund_record_snapshot(p_payment_id uuid, p_listed_at timestamptz, p_captured_cents bigint,
+  p_refunds jsonb) returns boolean
+language plpgsql security definer set search_path = pg_catalog, public as $$
+declare v_n int;
+begin
+  if p_payment_id is null or p_listed_at is null or p_refunds is null or jsonb_typeof(p_refunds) <> 'array'
+     or (p_captured_cents is not null and p_captured_cents < 0) then
+    raise exception 'invalid_request' using errcode = 'P0001';
+  end if;
+  if exists (select 1 from jsonb_array_elements(p_refunds) x
+              where coalesce(x->>'id', '') !~ '^(re|pyr)_[A-Za-z0-9_]{1,250}$'
+                 or jsonb_typeof(x->'amount') <> 'number' or (x->>'amount')::numeric < 0 or (x->>'amount')::numeric <> trunc((x->>'amount')::numeric)) then
+    raise exception 'invalid_request' using errcode = 'P0001';
+  end if;
+  insert into public.catering_refund_stripe_snapshots (payment_id, listed_at, captured_cents, refunds)
+    values (p_payment_id, p_listed_at, p_captured_cents, p_refunds)
+  on conflict (payment_id) do update set listed_at = excluded.listed_at, captured_cents = excluded.captured_cents,
+    refunds = excluded.refunds, recorded_at = now()
+    where catering_refund_stripe_snapshots.listed_at < excluded.listed_at;
+  get diagnostics v_n = row_count;
+  return v_n > 0; -- false: a newer listing is already recorded
 end $$;
 
 create function public.catering_refund_reserve(p_actor_id uuid, p_quote_id uuid, p_client_token uuid,
@@ -344,10 +406,12 @@ revoke all on function public.catering_refund_actor_ok(uuid, uuid) from public, 
 revoke all on function public.catering_refund_figures(uuid) from public, anon, authenticated;
 revoke all on function public.catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text) from public, anon, authenticated;
 revoke all on function public.catering_refund_claim(uuid) from public, anon, authenticated;
+revoke all on function public.catering_refund_record_snapshot(uuid, timestamptz, bigint, jsonb) from public, anon, authenticated;
 revoke all on function public.catering_refund_requests_guard() from public, anon, authenticated;
 grant execute on function public.catering_refund_actor_ok(uuid, uuid) to service_role;
 grant execute on function public.catering_refund_figures(uuid) to service_role;
 grant execute on function public.catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text) to service_role;
 grant execute on function public.catering_refund_claim(uuid) to service_role;
+grant execute on function public.catering_refund_record_snapshot(uuid, timestamptz, bigint, jsonb) to service_role;
 
 commit;

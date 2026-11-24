@@ -254,6 +254,7 @@ export function RefundPanel({
         <p className="text-xs text-co-text-muted">{t("catering.refunds.outside_app", { amount: money(totals.outsideAppCents) })}</p>
       )}
       {!summary.installed && <p className="text-xs font-semibold text-co-warning-text">{t("catering.refunds.not_installed")}</p>}
+      {summary.stripeUnchecked && <p className="text-xs font-semibold text-co-warning-text" role="status">{t("catering.refunds.stripe_unchecked")}</p>}
 
       {openTrigger === "declined" && canOffer && !formOpen && (
         <p className="text-sm font-semibold text-co-text">{t("catering.refunds.prompt.declined", { amount: money(totals.refundableCents) })}</p>
