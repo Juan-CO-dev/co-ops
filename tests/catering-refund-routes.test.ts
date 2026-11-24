@@ -115,6 +115,16 @@ describe("POST /refunds/[requestId]/retry", () => {
     expect(await code(await RETRY(post(path, {}), { params: Promise.resolve({ id: Q, requestId: R }) }))).toBe("refunds_off");
     expect(h.retry).toHaveBeenCalledTimes(1);
   });
+  it("the body is {} or { release: true } (review r2), and the mode reaches the lib", async () => {
+    const ctx = { params: Promise.resolve({ id: Q, requestId: R }) };
+    expect((await RETRY(post(path, { release: true }), ctx)).status).toBe(200);
+    expect(h.retry.mock.calls[0]![4]).toBe("release");
+    expect((await RETRY(post(path, {}), { params: Promise.resolve({ id: Q, requestId: R }) })).status).toBe(200);
+    expect(h.retry.mock.calls[1]![4]).toBe("retry");
+    for (const bad of [{ release: false }, { release: "yes" }, { other: 1 }, [1]]) {
+      expect((await RETRY(post(path, bad), { params: Promise.resolve({ id: Q, requestId: R }) })).status).toBe(400);
+    }
+  });
   it("ids that are not uuids are 400", async () => {
     expect((await RETRY(post(`/api/catering/quotes/x/refunds/y/retry`, {}), { params: Promise.resolve({ id: "x", requestId: "y" }) })).status).toBe(400);
   });

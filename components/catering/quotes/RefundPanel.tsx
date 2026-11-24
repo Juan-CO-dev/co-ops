@@ -71,6 +71,7 @@ export function RefundPanel({
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [releasing, setReleasing] = useState<string | null>(null);
   const [token, setToken] = useState<string>(() => newToken());
   const [stepUpOpen, setStepUpOpen] = useState(false);
   const [errKey, setErrKey] = useState<TranslationKey | null>(null);
@@ -178,18 +179,23 @@ export function RefundPanel({
     return false;
   };
 
-  const retry = async (requestId: string) => {
+  const retry = async (requestId: string, release = false) => {
     setRowBusy(requestId);
     setErrKey(null);
     setFlash(null);
-    const res = await postJson(`/api/catering/quotes/${quoteId}/refunds/${requestId}/retry`, {}, "POST");
+    setReleasing(null);
+    const res = await postJson(`/api/catering/quotes/${quoteId}/refunds/${requestId}/retry`, release ? { release: true } : {}, "POST");
     setRowBusy(null);
     if (res.ok) {
       if (res.data.summary) setSummary(res.data.summary as RefundSummary);
       else void load();
       const r = res.data.result as { status: string; errorCode: string | null } | undefined;
       setFlash(
-        r?.status === "failed"
+        r?.errorCode === "released_no_refund"
+          ? { key: "catering.refunds.result.released" }
+          : r?.errorCode === "needs_reconcile"
+            ? { key: "catering.refunds.result.still_unconfirmed" }
+            : r?.status === "failed"
           ? { key: "catering.refunds.result.failed", params: { code: r.errorCode ?? "" } }
           : r?.status === "pending"
             ? { key: "catering.refunds.result.pending" }
@@ -385,6 +391,49 @@ export function RefundPanel({
                 <span className="text-xs text-co-text-muted">{t("catering.refunds.last_answer", { code: r.lastErrorCode })}</span>
               )}
               {r.needsReconcile && <span className="text-xs font-semibold text-co-warning-text">{t("catering.refunds.needs_reconcile")}</span>}
+              {r.needsReconcile && summary.canRefund && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={rowBusy !== null}
+                    onClick={() => void retry(r.id)}
+                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text disabled:opacity-50"
+                  >
+                    {rowBusy === r.id ? t("catering.refunds.working") : t("catering.refunds.check_stripe")}
+                  </button>
+                  {releasing !== r.id ? (
+                    <button
+                      type="button"
+                      disabled={rowBusy !== null}
+                      onClick={() => setReleasing(r.id)}
+                      className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-cta-text bg-co-surface px-3 text-xs font-bold text-co-cta-text disabled:opacity-50"
+                    >
+                      {t("catering.refunds.release")}
+                    </button>
+                  ) : (
+                    <span className="flex flex-col gap-2">
+                      <span className="text-xs text-co-text">{t("catering.refunds.release_confirm")}</span>
+                      <span className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={rowBusy !== null}
+                          onClick={() => void retry(r.id, true)}
+                          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-cta-text bg-co-surface px-3 text-xs font-bold text-co-cta-text disabled:opacity-50"
+                        >
+                          {t("catering.refunds.release_yes")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setReleasing(null)}
+                          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-semibold text-co-text"
+                        >
+                          {t("catering.refunds.cancel")}
+                        </button>
+                      </span>
+                    </span>
+                  )}
+                </div>
+              )}
               {r.retryable && summary.canRefund && (
                 <div>
                   <button

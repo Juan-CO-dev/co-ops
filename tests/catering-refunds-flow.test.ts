@@ -327,15 +327,54 @@ describe("unknown outcomes stay pending and are retried safely", () => {
     expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "rate_limit" });
   });
 
-  it("past Stripe's 24-hour window a pending row is needs_reconcile: Retry refuses and calls nothing", async () => {
+  it("past Stripe's 24-hour window a press RECONCILES: it lists, never sends, and says when Stripe shows nothing", async () => {
     stripe.nextCreate = ["network_before"];
     await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
     const id = rows()[0]!.id as string;
     const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
-    await expect(retryRefundRequest(actor("catering_mgr"), QUOTE, id, later)).rejects.toMatchObject({ status: 409, code: "needs_reconcile" });
-    expect(stripe.creates).toHaveLength(1);
+    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, id, later);
+    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
+    expect(stripe.creates).toHaveLength(1); // never a second send
     const s = await loadRefundSummary(actor("catering_mgr"), QUOTE, later);
     expect(s.requests[0]).toMatchObject({ needsReconcile: true, retryable: false });
+  });
+
+  it("review r2: a lost answer that landed, its webhook recorded, nobody retried for 24 h: Check Stripe adopts it and the money is no longer double-held", async () => {
+    stripe.nextCreate = ["network_lost_after_executing"];
+    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 40000 }));
+    const row = rows()[0]!;
+    // The webhook's charge.refunded event for the balance (cumulative $400 of $700).
+    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: BAL, cumulative_refunded_cents: 40000, charge_amount_cents: 70000 });
+    const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
+    const before = await loadRefundSummary(actor("catering_mgr"), QUOTE, later);
+    expect(before.totals.refundableCents).toBe(30000); // the balance shows 0: $400 refunded AND $400 still held as in flight
+    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, later);
+    expect(r.status).toBe("succeeded");
+    expect(stripe.creates).toHaveLength(1);
+    const after = await loadRefundSummary(actor("catering_mgr"), QUOTE, later);
+    expect(after.totals.refundableCents).toBe(60000); // $1,000 - $400
+  });
+
+  it("review r2: Release closes a past-window row only after a fresh look finds no refund; before the window it is refused", async () => {
+    stripe.nextCreate = ["network_before"];
+    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
+    const row = rows()[0]!;
+    await expect(retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, Date.now(), "release")).rejects.toMatchObject({ status: 409, code: "not_releasable" });
+    const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
+    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, later, "release");
+    expect(r).toMatchObject({ status: "failed", errorCode: "released_no_refund" });
+    expect(stripe.creates).toHaveLength(1);
+    expect((await loadRefundSummary(actor("catering_mgr"), QUOTE, later)).totals.refundableCents).toBe(100000);
+  });
+
+  it("review r2: Release never closes a row whose refund IS at Stripe: it adopts it instead", async () => {
+    stripe.nextCreate = ["network_lost_after_executing"];
+    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
+    const row = rows()[0]!;
+    const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
+    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, later, "release");
+    expect(r.status).toBe("succeeded");
+    expect(row.stripe_refund_id).toMatch(/^re_fake_/);
   });
 
   it("review r1: a press while another holds the claim sends nothing; a press that outlived its claim writes nothing", async () => {

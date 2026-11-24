@@ -267,6 +267,7 @@ export const REFUND_ERROR_CODES = [
   "stripe_not_configured",
   "needs_reconcile",
   "not_retryable",
+  "not_releasable",
   "generic",
 ] as const;
 export type RefundErrorCode = (typeof REFUND_ERROR_CODES)[number];
@@ -307,7 +308,10 @@ export interface RefundRequestView {
   attempts: number;
   requestedAt: string;
   requestedByName: string | null;
-  /** A pending row past the 24 h retry window: a person checks Stripe (see REFUND_RETRY_WINDOW_MS). */
+  /**
+   * A pending row past the 24 h retry window (REFUND_RETRY_WINDOW_MS). Nothing is ever SENT for it again; "Check
+   * Stripe" looks for a refund carrying its id and adopts it (review r2), and "Release" closes it once Stripe shows none.
+   */
   needsReconcile: boolean;
   /** Can a press of Retry / Refresh do something now? */
   retryable: boolean;

@@ -10510,7 +10510,7 @@
   "catering.refunds.by": "{name} · {date}",
   "catering.refunds.someone": "Someone",
   "catering.refunds.last_answer": "Last answer from Stripe: {code}",
-  "catering.refunds.needs_reconcile": "Not confirmed for over 24 hours. Check this refund in the Stripe dashboard before refunding again.",
+  "catering.refunds.needs_reconcile": "Not confirmed for over 24 hours. Nothing will be sent again. Check Stripe: if a refund is there it is recorded here; if not, release it.",
   "catering.refunds.retry": "Retry",
   "catering.refunds.refresh": "Check status",
   "catering.refunds.lead.lost": "The customer paid {paid} for this order. {refundable} can still be refunded.",
@@ -10532,5 +10532,12 @@
   "catering.refunds.error.stripe_not_configured": "Stripe isn't set up for this shop.",
   "catering.refunds.error.needs_reconcile": "This refund wasn't confirmed for over 24 hours. Check it in the Stripe dashboard.",
   "catering.refunds.error.not_retryable": "This refund is already finished.",
-  "catering.refunds.error.generic": "Something went wrong. Nothing new was refunded; check the history before trying again."
+  "catering.refunds.error.generic": "Something went wrong. Nothing new was refunded; check the history before trying again.",
+  "catering.refunds.check_stripe": "Check Stripe again",
+  "catering.refunds.release": "No refund in Stripe: release",
+  "catering.refunds.release_confirm": "Only do this after checking the Stripe dashboard: Stripe shows no refund for this request. Its amount becomes refundable again.",
+  "catering.refunds.release_yes": "Yes, release it",
+  "catering.refunds.result.released": "Released. That amount can be refunded again.",
+  "catering.refunds.result.still_unconfirmed": "Stripe still shows no refund for this request.",
+  "catering.refunds.error.not_releasable": "This refund can only be released after 24 hours without an answer from Stripe."
 }

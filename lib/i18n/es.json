@@ -10510,7 +10510,7 @@
   "catering.refunds.by": "{name} · {date}",
   "catering.refunds.someone": "Alguien",
   "catering.refunds.last_answer": "Última respuesta de Stripe: {code}",
-  "catering.refunds.needs_reconcile": "Lleva más de 24 horas sin confirmar. Revisa este reembolso en el panel de Stripe antes de reembolsar otra vez.",
+  "catering.refunds.needs_reconcile": "Lleva más de 24 horas sin confirmar. No se enviará nada otra vez. Revisa Stripe: si el reembolso está ahí, se registra aquí; si no, libéralo.",
   "catering.refunds.retry": "Reintentar",
   "catering.refunds.refresh": "Revisar estado",
   "catering.refunds.lead.lost": "El cliente pagó {paid} por este pedido. Todavía se pueden reembolsar {refundable}.",
@@ -10532,5 +10532,12 @@
   "catering.refunds.error.stripe_not_configured": "Stripe no está configurado para esta tienda.",
   "catering.refunds.error.needs_reconcile": "Este reembolso lleva más de 24 horas sin confirmar. Revísalo en el panel de Stripe.",
   "catering.refunds.error.not_retryable": "Este reembolso ya terminó.",
-  "catering.refunds.error.generic": "Algo salió mal. No se reembolsó nada nuevo; revisa el historial antes de intentar otra vez."
+  "catering.refunds.error.generic": "Algo salió mal. No se reembolsó nada nuevo; revisa el historial antes de intentar otra vez.",
+  "catering.refunds.check_stripe": "Revisar Stripe otra vez",
+  "catering.refunds.release": "Sin reembolso en Stripe: liberar",
+  "catering.refunds.release_confirm": "Hazlo solo después de revisar el panel de Stripe: Stripe no muestra ningún reembolso para esta solicitud. Su monto se podrá reembolsar otra vez.",
+  "catering.refunds.release_yes": "Sí, liberarlo",
+  "catering.refunds.result.released": "Liberado. Ese monto se puede reembolsar otra vez.",
+  "catering.refunds.result.still_unconfirmed": "Stripe todavía no muestra ningún reembolso para esta solicitud.",
+  "catering.refunds.error.not_releasable": "Este reembolso solo se puede liberar después de 24 horas sin respuesta de Stripe."
 }

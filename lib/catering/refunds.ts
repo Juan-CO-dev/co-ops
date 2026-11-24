@@ -464,7 +464,7 @@ export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, req
   }
 }
 
-async function adopt(sb: ServiceClient, actor: AuthContext, row: ClaimedRow, refund: StripeRefund, how: "created" | "found" | "found_on_retry" | "refreshed"): Promise<RefundAttemptResult> {
+async function adopt(sb: ServiceClient, actor: AuthContext, row: ClaimedRow, refund: StripeRefund, how: "created" | "found" | "found_on_retry" | "found_on_reconcile" | "refreshed"): Promise<RefundAttemptResult> {
   // Stripe gave it an id: it exists. An unknown status still means "accepted" (submitted), never "failed".
   const status: RefundStatus = refundStatusFromStripe(refund.status) ?? "submitted";
   const recorded = status === row.status
@@ -474,8 +474,55 @@ async function adopt(sb: ServiceClient, actor: AuthContext, row: ClaimedRow, ref
   return result(row, recorded ? status : row.status, recorded ? null : "claim_lost");
 }
 
+/**
+ * RECONCILE a pending row past Stripe's 24-hour retry window (review r2). Stripe: "If the outcome is still unknown after
+ * that window, don't retry with either the old key or a new one. Retrieve the relevant object ... to reconcile the
+ * outcome" (docs.stripe.com/error-low-level). So this NEVER sends: under the row's claim it lists the PaymentIntent's
+ * refunds and adopts one carrying this row's id (a lost answer that landed — its money is already in the webhook's
+ * events, and the row must stop holding a second reservation). When Stripe shows none, the row stays pending and says
+ * so — unless the person asked to RELEASE it, which closes it `failed` (`released_no_refund`) after that same fresh
+ * look, giving its amount back to "refundable". A release before the window is refused (`not_releasable`).
+ */
+async function reconcileRefundRow(sb: ServiceClient, actor: AuthContext, row: RequestRow, release: boolean): Promise<RefundAttemptResult> {
+  const claimed = await claimRow(sb, row);
+  if (!claimed) return result(row, row.status, "in_progress");
+  if (claimed.status !== "pending") {
+    await settleRow(sb, claimed, {});
+    return result(claimed, claimed.status, null);
+  }
+  const { data: pay, error: pErr } = await sb
+    .from("catering_payments")
+    .select("id, provider, provider_ref")
+    .eq("id", row.payment_id)
+    .maybeSingle<{ id: string; provider: string | null; provider_ref: string | null }>();
+  if (pErr) throw new Error(`refund payment: ${pErr.message}`);
+  const paymentIntentId = pay?.provider === "stripe" ? pay.provider_ref : null;
+  const accounts = stripeAccountsForShop(await shopCode(sb, row.location_id));
+  if (!paymentIntentId || accounts.length === 0) return keepPending(sb, actor, claimed, "needs_reconcile", "Stripe cannot be asked about this payment", { reconcile: true });
+  let found: StripeRefund | undefined;
+  try {
+    const owner = await owningAccount(accounts, paymentIntentId);
+    if (!owner) return keepPending(sb, actor, claimed, "needs_reconcile", "No configured Stripe account knows this payment", { reconcile: true });
+    found = (await listRefundsForPaymentIntent(owner.account.secretKey, paymentIntentId)).find((r) => r.requestId === row.id);
+  } catch (e) {
+    return keepPending(sb, actor, claimed, "stripe_unreachable", errText(e), { reconcile: true });
+  }
+  if (found) return adopt(sb, actor, claimed, found, "found_on_reconcile");
+  if (!release) return keepPending(sb, actor, claimed, "needs_reconcile", "Stripe shows no refund for this request", { reconcile: true });
+  const recorded = await settleRow(sb, claimed, { status: "failed", last_error_code: "released_no_refund", last_error_message: "Released by a person after Stripe showed no refund for it" });
+  stripeOutcomeAudit(actor, claimed, { outcome: "released", error_code: "released_no_refund", attempt: claimed.attempts, recorded });
+  return result(claimed, recorded ? "failed" : "pending", recorded ? "released_no_refund" : "claim_lost");
+}
+
 // ── Retry / refresh ───────────────────────────────────────────────────────────────────────────────────
-export async function retryRefundRequest(actor: AuthContext, quoteId: string, requestId: string, nowMs: number = Date.now()): Promise<RefundAttemptResult> {
+export async function retryRefundRequest(
+  actor: AuthContext,
+  quoteId: string,
+  requestId: string,
+  nowMs: number = Date.now(),
+  /** `retry` = send / refresh / (past 24 h) reconcile; `release` = close a past-24 h row Stripe shows no refund for. */
+  mode: "retry" | "release" = "retry",
+): Promise<RefundAttemptResult> {
   const sb = getServiceRoleClient();
   const quote = await loadQuote(sb, quoteId);
   if (!quote || !canSee(actor, quote.location_id)) throw new CateringRefundError(404, "not_found");
@@ -493,9 +540,12 @@ export async function retryRefundRequest(actor: AuthContext, quoteId: string, re
 
   if (row.status === "pending") {
     const state = requestRetryState({ status: row.status, firstAttemptAt: row.first_attempt_at, requestedAt: row.requested_at }, nowMs);
-    if (state.needsReconcile) throw new CateringRefundError(409, "needs_reconcile");
+    // Past Stripe's 24-hour window nothing is SENT again; the press reconciles (review r2).
+    if (mode === "release" && !state.needsReconcile) throw new CateringRefundError(409, "not_releasable");
+    if (state.needsReconcile) return reconcileRefundRow(sb, actor, row, mode === "release");
     return submitRefundRow(sb, actor, row.id, nowMs);
   }
+  if (mode === "release") throw new CateringRefundError(409, "not_releasable");
   if (row.status === "submitted" && row.stripe_refund_id) {
     const accounts = stripeAccountsForShop(await shopCode(sb, row.location_id));
     const { data: pay } = await sb.from("catering_payments").select("provider_ref").eq("id", row.payment_id).maybeSingle<{ provider_ref: string | null }>();
