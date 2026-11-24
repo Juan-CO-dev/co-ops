@@ -116,9 +116,10 @@ interface RequestRow {
   first_attempt_at: string | null;
   requested_by: string;
   requested_at: string;
+  charge_refunded_seen_cents: number | null;
 }
 const REQUEST_COLS =
-  "id, payment_id, quote_id, location_id, amount_cents, reason_code, reason_note, trigger_kind, status, stripe_refund_id, stripe_status, last_error_code, attempts, first_attempt_at, requested_by, requested_at";
+  "id, payment_id, quote_id, location_id, amount_cents, reason_code, reason_note, trigger_kind, status, stripe_refund_id, stripe_status, last_error_code, attempts, first_attempt_at, requested_by, requested_at, charge_refunded_seen_cents";
 
 async function loadQuote(sb: ServiceClient, quoteId: string): Promise<QuoteRow | null> {
   const { data, error } = await sb.from("catering_quotes").select("id, location_id, root_id").eq("id", quoteId).maybeSingle<QuoteRow>();
@@ -179,7 +180,11 @@ export async function loadRefundSummary(actor: AuthContext, quoteId: string, now
     figures: refundFigures(
       { amountCents: p.amount_cents, status: p.status, provider: p.provider, providerRef: p.provider_ref },
       events.filter((e) => e.payment_id === p.id).map((e) => ({ cumulativeRefundedCents: Number(e.cumulative_refunded_cents), chargeAmountCents: e.charge_amount_cents == null ? null : Number(e.charge_amount_cents) })),
-      requests.filter((r) => r.payment_id === p.id).map((r) => ({ amountCents: Number(r.amount_cents), status: r.status })),
+      requests.filter((r) => r.payment_id === p.id).map((r) => ({
+        amountCents: Number(r.amount_cents),
+        status: r.status,
+        chargeRefundedSeenCents: r.charge_refunded_seen_cents == null ? null : Number(r.charge_refunded_seen_cents),
+      })),
     ),
   }));
 
@@ -294,7 +299,14 @@ interface ClaimedRow extends RequestRow {
   sentBefore: boolean;
 }
 
-type Outcome = { status?: RefundStatus; stripe_refund_id?: string | null; stripe_status?: string | null; last_error_code?: string | null; last_error_message?: string | null };
+type Outcome = {
+  status?: RefundStatus;
+  stripe_refund_id?: string | null;
+  stripe_status?: string | null;
+  last_error_code?: string | null;
+  last_error_message?: string | null;
+  charge_refunded_seen_cents?: number | null;
+};
 
 /** Write an outcome, fenced on the claim and the status it was claimed in. Returns false when the claim was lost. */
 async function settleRow(sb: ServiceClient, row: ClaimedRow, patch: Outcome): Promise<boolean> {
@@ -442,7 +454,7 @@ export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, req
   } catch (e) {
     return keepPending(sb, actor, claimed, "stripe_unreachable", errText(e));
   }
-  if (found) return adopt(sb, actor, claimed, found, claimed.sentBefore ? "found_on_retry" : "found");
+  if (found) return adopt(sb, actor, claimed, found, claimed.sentBefore ? "found_on_retry" : "found", owner.refundedCents);
 
   if (!claimed.sentBefore && owner.capturedCents != null && owner.refundedCents != null && Number(row.amount_cents) > owner.capturedCents - owner.refundedCents) {
     // The live cap, before the first send: Stripe says less is left on the charge than this row asks for (a refund
@@ -462,7 +474,7 @@ export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, req
       },
       refundIdempotencyKey(row.id),
     );
-    return adopt(sb, actor, claimed, refund, "created");
+    return adopt(sb, actor, claimed, refund, "created", owner.refundedCents == null ? null : owner.refundedCents + Number(row.amount_cents));
   } catch (e) {
     const status = e instanceof StripeError ? e.status : 0;
     const code = e instanceof StripeError ? e.code : "network_error";
@@ -475,12 +487,26 @@ export async function submitRefundRow(sb: ServiceClient, actor: AuthContext, req
   }
 }
 
-async function adopt(sb: ServiceClient, actor: AuthContext, row: ClaimedRow, refund: StripeRefund, how: "created" | "found" | "found_on_retry" | "found_on_reconcile" | "refreshed"): Promise<RefundAttemptResult> {
+/**
+ * `seenCents`: the charge's cumulative refunded at Stripe as best known WITH this refund in it (review r4) — the live
+ * read taken earlier in this attempt, plus this refund's amount when this attempt created it (the read came before
+ * the create); the read alone when the refund already existed when it was taken. null = no read this attempt. Recorded
+ * once, with the acceptance; a later failed refund (status `failed`) stops counting it.
+ */
+async function adopt(
+  sb: ServiceClient,
+  actor: AuthContext,
+  row: ClaimedRow,
+  refund: StripeRefund,
+  how: "created" | "found" | "found_on_retry" | "found_on_reconcile" | "refreshed",
+  seenCents: number | null = null,
+): Promise<RefundAttemptResult> {
   // Stripe gave it an id: it exists. An unknown status still means "accepted" (submitted), never "failed".
   const status: RefundStatus = refundStatusFromStripe(refund.status) ?? "submitted";
+  const seen = row.charge_refunded_seen_cents == null && seenCents != null && status !== "failed" ? { charge_refunded_seen_cents: seenCents } : {};
   const recorded = status === row.status
-    ? await settleRow(sb, row, { stripe_status: refund.status, last_error_code: null, last_error_message: null })
-    : await settleRow(sb, row, { status, stripe_refund_id: row.stripe_refund_id ?? refund.id, stripe_status: refund.status, last_error_code: null, last_error_message: null });
+    ? await settleRow(sb, row, { stripe_status: refund.status, last_error_code: null, last_error_message: null, ...seen })
+    : await settleRow(sb, row, { status, stripe_refund_id: row.stripe_refund_id ?? refund.id, stripe_status: refund.status, last_error_code: null, last_error_message: null, ...seen });
   stripeOutcomeAudit(actor, row, { outcome: status, how, stripe_refund_id: refund.id, stripe_status: refund.status, attempt: row.attempts, recorded });
   return result(row, recorded ? status : row.status, recorded ? null : "claim_lost");
 }
@@ -511,14 +537,16 @@ async function reconcileRefundRow(sb: ServiceClient, actor: AuthContext, row: Re
   const accounts = stripeAccountsForShop(await shopCode(sb, row.location_id));
   if (!paymentIntentId || accounts.length === 0) return keepPending(sb, actor, claimed, "needs_reconcile", "Stripe cannot be asked about this payment", { reconcile: true });
   let found: StripeRefund | undefined;
+  let seenOnReconcile: number | null = null;
   try {
     const owner = await owningAccount(accounts, paymentIntentId);
     if (!owner) return keepPending(sb, actor, claimed, "needs_reconcile", "No configured Stripe account knows this payment", { reconcile: true });
     found = (await listRefundsForPaymentIntent(owner.account.secretKey, paymentIntentId)).find((r) => r.requestId === row.id);
+    seenOnReconcile = owner.refundedCents;
   } catch (e) {
     return keepPending(sb, actor, claimed, "stripe_unreachable", errText(e), { reconcile: true });
   }
-  if (found) return adopt(sb, actor, claimed, found, "found_on_reconcile");
+  if (found) return adopt(sb, actor, claimed, found, "found_on_reconcile", seenOnReconcile);
   if (!release) return keepPending(sb, actor, claimed, "needs_reconcile", "Stripe shows no refund for this request", { reconcile: true });
   const recorded = await settleRow(sb, claimed, { status: "failed", last_error_code: "released_no_refund", last_error_message: "Released by a person after Stripe showed no refund for it" });
   stripeOutcomeAudit(actor, claimed, { outcome: "released", error_code: "released_no_refund", attempt: claimed.attempts, recorded });

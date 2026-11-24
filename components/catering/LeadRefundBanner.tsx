@@ -26,25 +26,41 @@ export function useRefundsEnabled(): boolean {
 export function LeadRefundBanner({ leadId, phase }: { leadId: string; phase: "lost" | "confirming_lost" }) {
   const enabled = useRefundsEnabled();
   const { t, language } = useTranslation();
-  const [rows, setRows] = useState<{ leadId: string; quotes: Array<{ quoteId: string; refundableCents: number; paidCents: number }> } | null>(null);
+  const [rows, setRows] = useState<{ leadId: string; failed: boolean; quotes: Array<{ quoteId: string; refundableCents: number; paidCents: number }> } | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!enabled) return;
     let alive = true;
     void fetch(`/api/catering/pipeline/${leadId}/refunds`, { redirect: "manual" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { quotes?: Array<{ quoteId: string; refundableCents: number; paidCents: number }> } | null) => {
-        if (alive) setRows({ leadId, quotes: d?.quotes ?? [] });
+      .then((r) => (r.ok ? (r.json() as Promise<{ quotes?: Array<{ quoteId: string; refundableCents: number; paidCents: number }> }>) : null))
+      .then((d) => {
+        // A failed read is NOT "nothing to refund" (review r4): it is said, with a way to try again.
+        if (alive) setRows({ leadId, failed: d === null, quotes: d?.quotes ?? [] });
       })
       .catch(() => {
-        if (alive) setRows(null);
+        if (alive) setRows({ leadId, failed: true, quotes: [] });
       });
     return () => {
       alive = false;
     };
-  }, [enabled, leadId]);
+  }, [enabled, leadId, attempt]);
 
   if (!enabled || !rows || rows.leadId !== leadId) return null;
+  if (rows.failed) {
+    return (
+      <div data-testid="lead-refund-unavailable" role="status" className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-co-warning bg-co-warning-surface p-3 text-sm">
+        <span className="font-semibold text-co-warning-text">{t("catering.refunds.lead.unavailable")}</span>
+        <button
+          type="button"
+          onClick={() => setAttempt((n) => n + 1)}
+          className="inline-flex min-h-[44px] items-center rounded-md border border-co-border-2 bg-co-surface px-4 text-sm font-semibold text-co-text"
+        >
+          {t("catering.refunds.try_again")}
+        </button>
+      </div>
+    );
+  }
   const open = rows.quotes.filter((q) => q.refundableCents > 0);
   if (open.length === 0) return null;
   return (

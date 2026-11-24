@@ -30,8 +30,13 @@
 --                                                         catering_payment_refund_events.charge_amount_cents) when known --
 --                                                         the charge is the money, in both directions (review r1: a $300
 --                                                         charge on a $200 row is $300 the customer paid) -- else the row's;
---                                             refunded  = the larger of Stripe's cumulative amount_refunded (the
---                                                         webhook's events) and our own submitted + succeeded requests;
+--                                             refunded  = the largest of: Stripe's cumulative amount_refunded (the
+--                                                         webhook's events); our own submitted + succeeded requests; and
+--                                                         the charge's cumulative refunded AS SEEN when each of our own
+--                                                         accepted refunds was recorded (charge_refunded_seen_cents, review
+--                                                         r4: a dashboard refund the webhook reported plus an app refund it
+--                                                         has not reported yet are BOTH in that figure, so neither hides
+--                                                         the other);
 --                                             in_flight = our own pending requests;
 --                                             refundable = captured - refunded - in_flight, never below 0; 0 unless the
 --                                                         row is `paid`, provider 'stripe', with a PaymentIntent.
@@ -124,6 +129,9 @@ create table public.catering_refund_requests (
   settled_at         timestamptz,
   claim_token        uuid,
   claimed_until      timestamptz,
+  -- The charge's cumulative refunded amount at Stripe as best known right after THIS refund was accepted (the live read
+  -- taken in the same attempt, plus this refund when it was created in that attempt). Set once, with the acceptance.
+  charge_refunded_seen_cents bigint check (charge_refunded_seen_cents is null or charge_refunded_seen_cents >= 0),
   constraint catering_refund_requests_one_per_tap unique (client_token, payment_id),
   constraint catering_refund_requests_other_needs_note check (reason_code <> 'other' or reason_note is not null)
 );
@@ -134,7 +142,7 @@ alter table public.catering_refund_requests enable row level security;
 revoke all on table public.catering_refund_requests from public, anon, authenticated, service_role;
 grant select on table public.catering_refund_requests to service_role;
 grant update (status, stripe_refund_id, stripe_status, last_error_code, last_error_message, updated_at, settled_at,
-              claim_token, claimed_until)
+              claim_token, claimed_until, charge_refunded_seen_cents)
   on table public.catering_refund_requests to service_role;
 
 create function public.catering_refund_requests_guard() returns trigger
@@ -149,6 +157,9 @@ begin
     raise exception 'refund_request_immutable' using errcode = 'P0001';
   end if;
   if new.attempts < old.attempts or (old.first_attempt_at is not null and new.first_attempt_at is distinct from old.first_attempt_at) then
+    raise exception 'refund_request_immutable' using errcode = 'P0001';
+  end if;
+  if old.charge_refunded_seen_cents is not null and new.charge_refunded_seen_cents is distinct from old.charge_refunded_seen_cents then
     raise exception 'refund_request_immutable' using errcode = 'P0001';
   end if;
   if old.stripe_refund_id is not null and new.stripe_refund_id is distinct from old.stripe_refund_id then
@@ -190,6 +201,7 @@ declare
   v_charge bigint;
   v_cum bigint;
   v_done bigint;
+  v_seen bigint;
 begin
   select p.amount_cents, p.status, p.provider, p.provider_ref into v_pay from public.catering_payments p where p.id = p_payment_id;
   if not found then
@@ -198,11 +210,12 @@ begin
   select max(e.charge_amount_cents), max(e.cumulative_refunded_cents) into v_charge, v_cum
     from public.catering_payment_refund_events e where e.payment_id = p_payment_id;
   select coalesce(sum(r.amount_cents) filter (where r.status in ('submitted', 'succeeded')), 0),
-         coalesce(sum(r.amount_cents) filter (where r.status = 'pending'), 0)
-    into v_done, o_in_flight
+         coalesce(sum(r.amount_cents) filter (where r.status = 'pending'), 0),
+         coalesce(max(r.charge_refunded_seen_cents) filter (where r.status in ('submitted', 'succeeded')), 0)
+    into v_done, o_in_flight, v_seen
     from public.catering_refund_requests r where r.payment_id = p_payment_id;
   o_captured := coalesce(v_charge, v_pay.amount_cents::bigint);
-  o_refunded := greatest(coalesce(v_cum, 0), v_done);
+  o_refunded := greatest(coalesce(v_cum, 0), v_done, v_seen);
   o_eligible := v_pay.status = 'paid' and v_pay.provider = 'stripe' and coalesce(v_pay.provider_ref, '') ~ '^pi_[A-Za-z0-9_]+$';
   o_refundable := case when o_eligible then greatest(0, o_captured - o_refunded - o_in_flight) else 0 end;
 end $$;

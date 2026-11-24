@@ -10539,5 +10539,8 @@
   "catering.refunds.release_yes": "Yes, release it",
   "catering.refunds.result.released": "Released. That amount can be refunded again.",
   "catering.refunds.result.still_unconfirmed": "Stripe still shows no refund for this request.",
-  "catering.refunds.error.not_releasable": "This refund can only be released after 24 hours without an answer from Stripe."
+  "catering.refunds.error.not_releasable": "This refund can only be released after 24 hours without an answer from Stripe.",
+  "catering.refunds.unavailable": "Couldn't load this order's payments and refunds. Nothing was changed.",
+  "catering.refunds.try_again": "Try again",
+  "catering.refunds.lead.unavailable": "Couldn't check whether this order has money to refund."
 }

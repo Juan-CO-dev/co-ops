@@ -74,11 +74,17 @@ export interface RefundEventInput {
 export interface RefundRequestInput {
   amountCents: number;
   status: RefundStatus;
+  /** The charge's cumulative refunded at Stripe as seen when this refund was accepted (0357, review r4). */
+  chargeRefundedSeenCents?: number | null;
 }
 export interface RefundFigures {
   /** The charge amount Stripe reported (when it did) — the charge is the money, in both directions — else the row's. */
   capturedCents: number;
-  /** The larger of Stripe's cumulative refund (the webhook's events) and our own accepted requests. */
+  /**
+   * The largest of: Stripe's cumulative refund (the webhook's events), our own accepted requests, and the charge's
+   * cumulative refunded as seen when each of our accepted refunds was recorded (review r4: a dashboard refund the
+   * webhook reported plus an app refund it has not reported yet are both in that last figure).
+   */
   refundedCents: number;
   /** Our own requests whose Stripe answer is not confirmed yet. */
   inFlightCents: number;
@@ -100,10 +106,12 @@ export function refundFigures(
     null,
   );
   const cumulative = events.reduce((m, e) => Math.max(m, e.cumulativeRefundedCents), 0);
-  const done = requests.filter((r) => r.status === "submitted" || r.status === "succeeded").reduce((s, r) => s + r.amountCents, 0);
+  const accepted = requests.filter((r) => r.status === "submitted" || r.status === "succeeded");
+  const done = accepted.reduce((s, r) => s + r.amountCents, 0);
+  const seen = accepted.reduce((m, r) => Math.max(m, r.chargeRefundedSeenCents ?? 0), 0);
   const inFlightCents = requests.filter((r) => r.status === "pending").reduce((s, r) => s + r.amountCents, 0);
   const capturedCents = charge ?? payment.amountCents;
-  const refundedCents = Math.max(cumulative, done);
+  const refundedCents = Math.max(cumulative, done, seen);
   const eligible = payment.status === "paid" && payment.provider === "stripe" && PI_RE.test(payment.providerRef ?? "");
   return {
     capturedCents,

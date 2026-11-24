@@ -466,6 +466,21 @@ describe("unknown outcomes stay pending and are retried safely", () => {
   });
 });
 
+describe("review r4: mixed dashboard and app refunds", () => {
+  it("a dashboard refund (reported) plus an app refund (not reported yet) leave exactly what is left", async () => {
+    // $100 refunded on the deposit in the Stripe dashboard; the webhook recorded it.
+    stripe.charges.get("pi_dep")!.refunded = 10000;
+    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: DEP, cumulative_refunded_cents: 10000, charge_amount_cents: 30000 });
+    // Our $50 on the deposit: take the balance out of the way so the allocation lands on the deposit.
+    (h.db.tables.catering_payments as Row[]).find((p) => p.id === BAL)!.status = "refunded";
+    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
+    expect(out.results[0]).toMatchObject({ paymentId: DEP, status: "succeeded" });
+    expect(rows()[0]!.charge_refunded_seen_cents).toBe(15000);
+    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
+    expect(s.payments.find((p) => p.id === DEP)!.figures).toMatchObject({ refundedCents: 15000, refundableCents: 15000 });
+  });
+});
+
 describe("a submitted (Stripe pending) refund is refreshed, never re-sent", () => {
   it("Check status reads the refund again", async () => {
     await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));

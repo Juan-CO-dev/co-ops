@@ -65,6 +65,16 @@ describe("refundFigures — the twin of 0357", () => {
   it("review r1: a charge LARGER than the row is what was captured (the difference stays refundable)", () => {
     expect(refundFigures({ ...PAID, amountCents: 20000 }, [{ cumulativeRefundedCents: 20000, chargeAmountCents: 30000 }], []).refundableCents).toBe(10000);
   });
+  it("review r4: a dashboard refund the webhook reported plus an app refund it has not reported yet: both count", () => {
+    // $300 charge; $100 refunded in the dashboard (the webhook's event); our $50 accepted, its event not delivered yet.
+    // Stripe's cumulative refunded as seen when ours was recorded = $150.
+    const f = refundFigures({ ...PAID, amountCents: 30000 }, [{ cumulativeRefundedCents: 10000, chargeAmountCents: 30000 }], [
+      { amountCents: 5000, status: "succeeded", chargeRefundedSeenCents: 15000 },
+    ]);
+    expect([f.refundedCents, f.refundableCents]).toEqual([15000, 15000]);
+    // A refund that later FAILED stops counting, seen figure included.
+    expect(refundFigures({ ...PAID, amountCents: 30000 }, [], [{ amountCents: 5000, status: "failed", chargeRefundedSeenCents: 15000 }]).refundableCents).toBe(30000);
+  });
   it("never below zero", () => {
     expect(refundFigures(PAID, [{ cumulativeRefundedCents: 40000, chargeAmountCents: 30000 }], []).refundableCents).toBe(0);
   });

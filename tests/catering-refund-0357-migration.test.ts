@@ -130,6 +130,9 @@ describe("review r1", () => {
     expect(body).toContain("v_want := p_amount_cents;");
     expect(body).not.toMatch(/coalesce\(p_amount_cents/);
   });
+  it("review r4: refunded takes the seen cumulative of our accepted refunds too", () => {
+    expect(fn("catering_refund_figures")).toContain("o_refunded := greatest(coalesce(v_cum, 0), v_done, v_seen);");
+  });
   it("captured is the charge Stripe reported when known, in both directions", () => {
     expect(fn("catering_refund_figures")).toContain("o_captured := coalesce(v_charge, v_pay.amount_cents::bigint);");
     expect(fn("catering_refund_figures")).not.toMatch(/least\(/);
@@ -140,7 +143,7 @@ describe("review r1", () => {
     expect(body).toContain("(r.claimed_until is null or r.claimed_until < now())");
     expect(body).toContain("r.status in ('pending', 'submitted')");
     const grant = code.match(/grant update \(([^)]*)\)\s+on table public\.catering_refund_requests to service_role;/)![1]!.split(",").map((c) => c.trim()).sort();
-    expect(grant).toEqual(["claim_token", "claimed_until", "last_error_code", "last_error_message", "settled_at", "status", "stripe_refund_id", "stripe_status", "updated_at"]);
+    expect(grant).toEqual(["charge_refunded_seen_cents", "claim_token", "claimed_until", "last_error_code", "last_error_message", "settled_at", "status", "stripe_refund_id", "stripe_status", "updated_at"]);
   });
 });
 

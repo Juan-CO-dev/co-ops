@@ -195,13 +195,26 @@ try {
     const fm = await figures(db, over);
     check(Number(fm.o_captured) === 30000 && Number(fm.o_refundable) === 10000, "P3 a charge LARGER than the row: the difference stays refundable");
   }
+  {
+    // Review r4: $100 dashboard refund reported by the webhook + our $50 accepted, not reported yet; Stripe's
+    // cumulative as seen when ours was recorded = $150. Both count; $150 is left.
+    const Qx = await f.quote();
+    const px = await f.pay(Qx, "deposit", 30000);
+    await db.query("insert into public.catering_payment_refund_events (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents, charge_amount_cents) values ('evt_x', $1, now(), 10000, 30000)", [px]);
+    const rx = await reserve(db, owner, Qx, randomUUID(), 5000);
+    await db.query("update public.catering_refund_requests set status = 'succeeded', stripe_refund_id = 're_x', charge_refunded_seen_cents = 15000 where id = $1", [rx.requests[0].id]);
+    const fx = await figures(db, px);
+    check(Number(fx.o_refunded) === 15000 && Number(fx.o_refundable) === 15000, "P3 review r4: mixed dashboard + app refunds leave exactly what is left");
+    await refuses(() => db.query("update public.catering_refund_requests set charge_refunded_seen_cents = 1 where id = $1", [rx.requests[0].id]), "refund_request_immutable", "P3 the seen figure is written once");
+  }
 
   // ── P4 — reserve ─────────────────────────────────────────────────────────────────────────────
   const auditBefore = await count(db, "select count(*) n from public.audit_log");
+  const requestsBefore = await count(db, "select count(*) n from public.catering_refund_requests");
   await refuses(() => reserve(db, gm, Q, randomUUID(), 100), "forbidden", "P4 a GM is refused");
   await refuses(() => reserve(db, ctr, Q, randomUUID(), 94001), "over_refundable", "P4 asking above the refundable total is refused");
   await refuses(() => reserve(db, ctr, Q, randomUUID(), 94001), "94000", "P4 …and names the refundable total (24000 + 70000)");
-  check((await count(db, "select count(*) n from public.catering_refund_requests")) === 0 && (await count(db, "select count(*) n from public.audit_log")) === auditBefore,
+  check((await count(db, "select count(*) n from public.catering_refund_requests")) === requestsBefore && (await count(db, "select count(*) n from public.audit_log")) === auditBefore,
     "P4 a refusal writes nothing");
   const t1 = randomUUID();
   const r1 = await reserve(db, ctr, Q, t1, 80000, "event_lost", null, "lost");
