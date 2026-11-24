@@ -90,7 +90,7 @@ describe("shop digest lines", () => {
 
   it("speaks Spanish to a Spanish-preference recipient", () => {
     const lines = composeShopLines(facts({ reports: [] }), "es", BASE);
-    expect(lines.find((l) => l.href.includes("type=closing"))?.text).toBe("No enviado");
+    expect(lines.find((l) => l.href?.includes("type=closing"))?.text).toBe("No enviado");
     const mail = renderShopDigest(facts(), { language: "es", baseUrl: BASE });
     expect(mail.subject).toContain("Resumen de cierre de Shop A");
     expect(mail.text).toContain("Todo bien");

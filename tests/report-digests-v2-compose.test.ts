@@ -46,7 +46,7 @@ describe("digest v2 layout", () => {
   });
 
   it("every line deep-links into the app", () => {
-    for (const s of flat(facts())) for (const l of s.lines) expect(l.href.startsWith(`${BASE}/`), `${s.title} / ${l.label}`).toBe(true);
+    for (const s of flat(facts())) for (const l of s.lines) expect((l.href ?? "").startsWith(`${BASE}/`), `${s.title} / ${l.label}`).toBe(true);
   });
 
   it("headline: net pre-tax, vs the same weekday last week, checks, average, 3rd-party share; catering kept apart", () => {
