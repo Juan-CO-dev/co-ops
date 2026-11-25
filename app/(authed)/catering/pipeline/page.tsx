@@ -32,6 +32,8 @@ import { loadNotInToast, type PipelineToastOrder } from "@/lib/catering/not-in-t
 import { resolveShop } from "@/lib/shop-context";
 import { DeliveryMovedList } from "@/components/catering/pipeline/DeliveryMovedList";
 import { loadMovedDeliveriesSafe } from "@/lib/delivery/jobs";
+import { RefundsSwitch } from "@/components/catering/LeadRefundBanner";
+import { cateringRefundsOn } from "@/lib/catering/refunds-shared";
 
 export default async function CateringPipelinePage({
   searchParams,
@@ -119,6 +121,7 @@ export default async function CateringPipelinePage({
       ) : null}
       <StepUpProvider unlocked={auth.session.stepUpUnlocked} unlockedAt={auth.session.stepUpUnlockedAt}>
       <DeliveryStatesProvider states={deliveryStates}>
+      <RefundsSwitch on={cateringRefundsOn(process.env)}>
       <PipelineClient
         notInToast={notInToast}
         staff={await loadAssignableStaff(auth)}
@@ -133,6 +136,7 @@ export default async function CateringPipelinePage({
         searchQuery={q}
         results={results}
       />
+      </RefundsSwitch>
       </DeliveryStatesProvider>
       </StepUpProvider>
       <DeliveryMovedList result={movedDeliveries} />
