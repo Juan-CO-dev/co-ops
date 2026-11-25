@@ -24,6 +24,8 @@
   "catering/pipeline/[id]/delivery/gratuity/route.ts": "POST",
   "catering/pipeline/[id]/delivery/route.ts": "POST",
   "catering/quotes/[id]/payments/route.ts": "POST",
+  "catering/quotes/[id]/refunds/route.ts": "POST",
+  "catering/quotes/[id]/refunds/[requestId]/retry/route.ts": "POST",
   "catering/quotes/[id]/resend/route.ts": "POST",
   "catering/quotes/[id]/route.ts": "PATCH",
   "catering/quotes/[id]/send/route.ts": "POST",

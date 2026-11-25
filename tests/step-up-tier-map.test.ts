@@ -292,6 +292,9 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/catering/quotes/[id]/send/route.ts": ["B"],
   // Owner request 2026-11-15: resend an expired quote with a new expiry — Send's own tier.
   "app/api/catering/quotes/[id]/resend/route.ts": ["B"],
+  // Catering refunds (0357): money out takes Send's fresh password. Its retry route asserts no tier (it can only
+  // re-send a request already confirmed behind this one).
+  "app/api/catering/quotes/[id]/refunds/route.ts": ["B"],
   // Catering inbox phase 1b: Send draft (outside /admin, isCateringInboxSendPath) and the owner / CGS mode switch.
   "app/api/catering/inbox/[id]/send/route.ts": ["B"],
   "app/api/admin/catering-inbox/settings/route.ts": ["B"],
@@ -418,6 +421,9 @@ const REACTIVE_STEP_UP_COMPONENTS = [
   "components/admin/catering/menu/ToastTab.tsx",
   "components/admin/catering/prep-demand/SalesTab.tsx",
   "components/catering/quotes/QuotesClient.tsx",
+  // Catering refunds (0357): the refund panel carries its own PasswordModal and opens it only on the server's
+  // step_up_required / step_up_stale, re-sending the same confirm tap (the same client token).
+  "components/catering/quotes/RefundPanel.tsx",
   // Outside /admin's StepUpProvider — carries its own PasswordModal.
   "components/counts/CountForm.tsx",
   // Outside /admin too (the yield variance page, level 5+); Update recipe yield is the only
