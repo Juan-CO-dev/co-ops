@@ -37,6 +37,7 @@ export function CollapsibleSection({
   onToggle,
   children,
   idBase,
+  anchorId,
 }: {
   /** Already-translated section title (caller runs t()). */
   title: string;
@@ -57,6 +58,8 @@ export function CollapsibleSection({
   children: ReactNode;
   /** Stable id for the controlled panel (aria-controls target). */
   idBase: string;
+  /** Optional page anchor on the section itself (a deep link scrolls here, e.g. from a digest email). */
+  anchorId?: string;
 }) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
   const isControlled = open !== undefined;
@@ -72,7 +75,7 @@ export function CollapsibleSection({
   const labelId = useId();
 
   return (
-    <section className="co-card p-0">
+    <section id={anchorId} className="co-card p-0">
       <button
         type="button"
         onClick={handleToggle}

@@ -222,3 +222,16 @@ describe("check detail projection", () => {
     expect(d.payments[0]!.tipCents).toBeNull();
   });
 });
+
+describe("a one-day custom range on today (digest section links, 2026-11-23)", () => {
+  it("is today so far while the day is open, and the finished day once it is behind us", () => {
+    const open = resolveSalesRange({ range: "custom", from: "2026-11-22", to: "2026-11-22" }, "2026-11-22");
+    expect(open).toMatchObject({ range: "today", from: "2026-11-22", to: "2026-11-22", empty: false, todaySoFar: true });
+    const closed = resolveSalesRange({ range: "custom", from: "2026-11-22", to: "2026-11-22" }, "2026-11-23");
+    expect(closed).toMatchObject({ range: "custom", from: "2026-11-22", to: "2026-11-22", empty: false, todaySoFar: false });
+  });
+  it("a longer custom range ending today still never mixes today in", () => {
+    const r = resolveSalesRange({ range: "custom", from: "2026-11-20", to: "2026-11-22" }, "2026-11-22");
+    expect(r).toMatchObject({ range: "custom", to: "2026-11-21", todaySoFar: false });
+  });
+});

@@ -88,3 +88,19 @@ export function safeNextPath(raw: string | null | undefined): string {
 
   return raw;
 }
+
+/** An in-page anchor the sign-in page may carry: `#` + a plain id (letters, digits, `-`, `_`). */
+const RETURN_FRAGMENT = /^#[A-Za-z0-9_-]{1,100}$/;
+
+/**
+ * The sign-in round trip keeps a deep link's in-page anchor (digest section links, 2026-11-23).
+ * A signed-out tap on `/catering/pipeline#lead-<id>` is redirected to `/?next=/catering/pipeline`;
+ * the browser keeps the fragment on the redirect (it never reaches the server, so `next` cannot
+ * carry it), and this re-attaches it to the sanitized `next` after sign-in. Only a plain id is
+ * carried; a `next` that already has a fragment, or the default landing, is returned unchanged.
+ */
+export function withReturnFragment(safeNext: string, hash: string | null | undefined): string {
+  if (!hash || !RETURN_FRAGMENT.test(hash)) return safeNext;
+  if (safeNext === DEFAULT_NEXT_PATH || safeNext.includes("#")) return safeNext;
+  return `${safeNext}${hash}`;
+}

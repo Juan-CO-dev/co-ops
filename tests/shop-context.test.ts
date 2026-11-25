@@ -552,7 +552,8 @@ describe("source shape — every shop-defaulting page uses the one resolver", ()
     expect(login).toMatch(/rememberShopOnDevice\(shopId\)/);
     // W06-2: `next` is first dropped when it is bound (`for`) to another person, then sanitized as before.
     expect(login).toMatch(/const next = ownsReturnLink\(searchParams\?\.get\("for"\), userId\) \? searchParams\?\.get\("next"\) : null;/);
-    expect(login).toMatch(/loginLandingPath\(safeNextPath\(next\), shopId\)/);
+    // The sanitized next keeps a deep link's plain #id (withReturnFragment, digest section links 2026-11-23).
+    expect(login).toMatch(/loginLandingPath\(withReturnFragment\(safeNextPath\(next\), window\.location\.hash\), shopId\)/);
   });
 
   it("every authenticated shell mounts the URL→cookie sync (behind Suspense for useSearchParams)", () => {

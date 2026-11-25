@@ -109,7 +109,11 @@ function grainFloor(to: string, grain: ReportGrain): string {
  */
 export function resolveSalesRange(p: Record<string, string | undefined>, today: string): SalesRange {
   const yesterday = shiftReportDate(today, -1);
-  const requested = p.range && (SALES_RANGES as readonly string[]).includes(p.range) ? p.range : (p.from || p.to ? "custom" : "last7");
+  const asked = p.range && (SALES_RANGES as readonly string[]).includes(p.range) ? p.range : (p.from || p.to ? "custom" : "last7");
+  // A one-day custom range that IS today is the explicit "today" (so far), not a historical window:
+  // a digest link for business day D opened while D is still today shows the day so far, and the same
+  // link shows the finished day once D is behind us (digest section links, 2026-11-23).
+  const requested = asked === "custom" && p.from === today && p.to === today ? "today" : asked;
   let grain: ReportGrain = p.g === "week" || p.g === "month" ? p.g : "day";
   let from = shiftReportDate(yesterday, -6);
   let to = yesterday;

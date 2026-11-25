@@ -47,6 +47,8 @@ export default async function CateringPipelinePage({
 
   const sp = await searchParams;
   const q = typeof sp["q"] === "string" ? sp["q"] : "";
+  // A deep link to one lead (`?lead=<id>#lead-<id>`, e.g. a digest email): it is on the board even past the row cap.
+  const leadParam = typeof sp["lead"] === "string" ? sp["lead"] : null;
 
   // Transfer authority spans shops; creation retains its existing membership bind.
   const sb = getServiceRoleClient();
@@ -97,7 +99,7 @@ export default async function CateringPipelinePage({
       day: "2-digit",
     }).format(new Date());
     [leads, followUps] = await Promise.all([
-      loadPipelineBoard(auth),
+      loadPipelineBoard(auth, { ensureLead: leadParam }),
       loadFollowUps(auth, today),
     ]);
   }

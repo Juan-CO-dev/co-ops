@@ -22,6 +22,7 @@ import { etWallTime } from "@/lib/report-digests-shared";
 import { toastRingLines } from "@/lib/report-digests-toast-shared";
 import { cutoffMinutes } from "@/lib/vendor-rhythm-shared";
 import type { DigestLine, DigestSection, DigestTone } from "@/lib/report-digests-compose";
+import { digestLink, type DigestTarget, type LinkViewer } from "@/lib/report-digests-links";
 
 type Params = Record<string, string | number>;
 export type T = (key: TranslationKey, params?: Params) => string;
@@ -39,9 +40,10 @@ export function plural(t: T, n: number, one: TranslationKey, other: TranslationK
   return n === 1 ? t(one, params) : t(other, { ...params, n });
 }
 
-interface Ctx { t: T; language: Language; baseUrl: string; locationId: string; day: string }
+interface Ctx { t: T; language: Language; baseUrl: string; locationId: string; day: string; viewer?: LinkViewer | null }
 
-const q = (locationId: string) => `location=${encodeURIComponent(locationId)}`;
+/** The first target of the chain this recipient can open (lib/report-digests-links.ts), or null. */
+const link = (c: Ctx, ...chain: DigestTarget[]): string | null => digestLink({ baseUrl: c.baseUrl, viewer: c.viewer }, ...chain);
 const money = (c: Ctx, cents: number) => formatCents(cents, c.language);
 /** A bare "HH:MM[:SS]" cutoff → "10:00 AM" (house formatter, ET). */
 function cutoffLabel(c: Ctx, time: string): string {
@@ -50,7 +52,7 @@ function cutoffLabel(c: Ctx, time: string): string {
 }
 
 /** The line every area shows when its read failed or its source is not there. */
-function notLoaded(c: Ctx, label: string, href: string, l: Loaded<unknown>): DigestLine | null {
+function notLoaded(c: Ctx, label: string, href: string | null, l: Loaded<unknown>): DigestLine | null {
   if (l.kind === "error") return { label, text: c.t("digest.v2.could_not_load"), tone: "issue", href };
   if (l.kind === "unavailable") {
     const key = l.reason === "no_capture" ? "digest.v2.sales.no_capture" : l.reason === "no_labor" || l.reason === "labor_off" || l.reason === "labor_pull_failed" ? "digest.v2.labor.no_entries" : "digest.v2.not_available";
@@ -62,7 +64,7 @@ function notLoaded(c: Ctx, label: string, href: string, l: Loaded<unknown>): Dig
 // ── 1. Headline ──────────────────────────────────────────────────────────────────────────────
 
 export function headlineLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
-  const salesHref = `${c.baseUrl}/mid-shift?${q(c.locationId)}`;
+  const salesHref = link(c, { to: "sales", location: c.locationId, day: c.day }, { to: "mid_shift", location: c.locationId });
   const label = c.t("digest.v2.sales.net_label");
   const lines: DigestLine[] = [];
   const nl = notLoaded(c, label, salesHref, v.sales);
@@ -81,7 +83,7 @@ export function headlineLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
     ].filter((x): x is string => x !== null);
     lines.push({ label, text: parts.join(" · "), tone: "info", href: salesHref });
   }
-  const catHref = `${c.baseUrl}/catering/pipeline`;
+  const catHref = link(c, { to: "sales_catering", location: c.locationId, day: c.day }, { to: "pipeline" });
   const catLabel = c.t("digest.v2.catering.revenue_label");
   const cl = notLoaded(c, catLabel, catHref, v.catering);
   if (cl) lines.push(cl);
@@ -100,8 +102,8 @@ export function headlineLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
 // ── 2. Ordering (day D) ──────────────────────────────────────────────────────────────────────
 
 export function orderingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
-  const href = `${c.baseUrl}/ordering?${q(c.locationId)}`;
-  const poHref = (id: string) => `${href}&po=${encodeURIComponent(id)}`;
+  const href = link(c, { to: "ordering", location: c.locationId });
+  const poHref = (id: string) => link(c, { to: "ordering", location: c.locationId, po: id });
   const nl = notLoaded(c, c.t("digest.v2.ordering.label"), href, v.ordering);
   if (nl) return [nl];
   if (v.ordering.kind !== "ok") return [];
@@ -144,7 +146,10 @@ function vendorName(v: ShopV2Facts, vendorId: string): string {
 // ── 3. Receiving ─────────────────────────────────────────────────────────────────────────────
 
 export function receivingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
-  const href = `${c.baseUrl}/operations/receiving?${q(c.locationId)}`;
+  const href = link(c, { to: "receiving", location: c.locationId, anchor: "recent" });
+  const creditsHref = link(c, { to: "receiving", location: c.locationId, anchor: "credits" });
+  // Unlinked vendor invoices wait in the vendor mail inbox (GM / MoO+); everyone else gets receiving.
+  const invoicesHref = link(c, { to: "vendor_mail", location: c.locationId }, { to: "receiving", location: c.locationId, anchor: "recent" });
   const nl = notLoaded(c, c.t("digest.family.receiving"), href, v.receiving);
   if (nl) return [nl];
   if (v.receiving.kind !== "ok") return [];
@@ -157,16 +162,16 @@ export function receivingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
       .filter(([, n]) => n > 0).map(([k, n]) => c.t(`digest.v2.receiving.${k}` as TranslationKey, { n }));
     const problems = [...disc, ...(d.matchState === "discrepant" && disc.length === 0 ? [c.t("digest.v2.receiving.discrepant")] : []), ...(!d.hasReceipt ? [c.t("digest.v2.receiving.no_receipt")] : [])];
     lines.push({
-      label: d.vendorName, href: `${c.baseUrl}/operations/receiving/${encodeURIComponent(d.id)}`,
+      label: d.vendorName, href: link(c, { to: "delivery", location: c.locationId, id: d.id }),
       tone: problems.length > 0 ? "issue" : "ok",
       text: [d.cents === null ? c.t("digest.v2.receiving.no_total") : money(c, d.cents), d.poDisplayCode, ...problems].filter(Boolean).join(" · "),
     });
   }
   const credits = sumKnown(r.credits.map((x) => x.amountCents));
   lines.push(r.credits.length === 0
-    ? { label: c.t("digest.v2.receiving.credits_label"), text: c.t("digest.v2.receiving.no_credits"), tone: "ok", href }
+    ? { label: c.t("digest.v2.receiving.credits_label"), text: c.t("digest.v2.receiving.no_credits"), tone: "ok", href: creditsHref }
     : {
-      label: c.t("digest.v2.receiving.credits_label"), tone: "issue", href,
+      label: c.t("digest.v2.receiving.credits_label"), tone: "issue", href: creditsHref,
       // An unknown credit amount is never $0 (Astra r2 P2).
       text: [
         plural(c.t, r.credits.length, "digest.v2.receiving.credits_one", "digest.v2.receiving.credits_other"),
@@ -175,8 +180,8 @@ export function receivingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
       ].filter(Boolean).join(" · "),
     });
   lines.push(r.invoicesPendingReview === 0
-    ? { label: c.t("digest.v2.receiving.invoices_label"), text: c.t("digest.v2.receiving.no_invoices"), tone: "ok", href }
-    : { label: c.t("digest.v2.receiving.invoices_label"), tone: "issue", href, text: plural(c.t, r.invoicesPendingReview, "digest.v2.receiving.invoices_one", "digest.v2.receiving.invoices_other") });
+    ? { label: c.t("digest.v2.receiving.invoices_label"), text: c.t("digest.v2.receiving.no_invoices"), tone: "ok", href: invoicesHref }
+    : { label: c.t("digest.v2.receiving.invoices_label"), tone: "issue", href: invoicesHref, text: plural(c.t, r.invoicesPendingReview, "digest.v2.receiving.invoices_one", "digest.v2.receiving.invoices_other") });
   return lines;
 }
 
@@ -185,9 +190,9 @@ export function receivingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
 const names = (xs: Array<{ name: string }>, max = 5) => xs.slice(0, max).map((x) => x.name).join(", ") + (xs.length > max ? ` +${xs.length - max}` : "");
 
 export function inventoryLines(c: Ctx, v: ShopV2Facts, pendingItems: number): DigestLine[] {
-  const countsHref = `${c.baseUrl}/operations/counts?${q(c.locationId)}`;
-  const orderingHref = `${c.baseUrl}/ordering?${q(c.locationId)}`;
-  const receivingHref = `${c.baseUrl}/operations/receiving?${q(c.locationId)}`;
+  const countsHref = link(c, { to: "counts", location: c.locationId });
+  const orderingHref = link(c, { to: "ordering", location: c.locationId });
+  const receivingHref = link(c, { to: "receiving", location: c.locationId, anchor: "recent" });
   const nl = notLoaded(c, c.t("digest.v2.inventory.label"), countsHref, v.inventory);
   if (nl) return [nl];
   if (v.inventory.kind !== "ok") return [];
@@ -223,25 +228,27 @@ export function inventoryLines(c: Ctx, v: ShopV2Facts, pendingItems: number): Di
 // ── 6. Sales detail ──────────────────────────────────────────────────────────────────────────
 
 export function salesDetailLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
-  const href = `${c.baseUrl}/mid-shift?${q(c.locationId)}`;
+  const salesView = (view: "summary" | "items" | "channels" | "discounts") =>
+    link(c, { to: "sales", location: c.locationId, day: c.day, view }, { to: "mid_shift", location: c.locationId });
+  const href = salesView("summary");
   const nl = notLoaded(c, c.t("digest.v2.sales.detail_label"), href, v.sales);
   if (nl) return [nl];
   if (v.sales.kind !== "ok") return [];
   const s = v.sales.value.today;
   const lines: DigestLine[] = [];
   lines.push(s.topItems.length === 0
-    ? { label: c.t("digest.v2.sales.top_items_label"), text: c.t("digest.v2.sales.no_items"), tone: "info", href }
-    : { label: c.t("digest.v2.sales.top_items_label"), tone: "info", href, text: `${s.topItems.map((i) => `${i.name} ${i.units}`).join(", ")} · ${c.t("digest.v2.sales.item_dollars_unavailable")}` });
+    ? { label: c.t("digest.v2.sales.top_items_label"), text: c.t("digest.v2.sales.no_items"), tone: "info", href: salesView("items") }
+    : { label: c.t("digest.v2.sales.top_items_label"), tone: "info", href: salesView("items"), text: `${s.topItems.map((i) => `${i.name} ${i.units}`).join(", ")} · ${c.t("digest.v2.sales.item_dollars_unavailable")}` });
   const channel = (ch: string | null) => c.t(`digest.v2.channel.${ch ?? "unmapped"}` as TranslationKey);
   lines.push(s.channels.length === 0
-    ? { label: c.t("digest.v2.sales.channels_label"), text: c.t("digest.v2.sales.no_channels"), tone: "info", href }
+    ? { label: c.t("digest.v2.sales.channels_label"), text: c.t("digest.v2.sales.no_channels"), tone: "info", href: salesView("channels") }
     : {
-      label: c.t("digest.v2.sales.channels_label"), tone: "info", href,
+      label: c.t("digest.v2.sales.channels_label"), tone: "info", href: salesView("channels"),
       text: s.channels.map((ch) => `${channel(ch.channel)} ${money(c, ch.netCents)}${s.netCents > 0 ? ` (${Math.round((ch.netCents / s.netCents) * 100)}%)` : ""}`).join(", "),
     });
   lines.push(s.discounts.length === 0
-    ? { label: c.t("digest.v2.sales.discounts_label"), text: c.t("digest.v2.sales.no_discounts"), tone: "ok", href }
-    : { label: c.t("digest.v2.sales.discounts_label"), tone: "info", href, text: s.discounts.slice(0, 8).map((d) => `${d.name ?? c.t("digest.v2.sales.unnamed_discount")} ×${d.count} ${money(c, d.cents)}`).join(", ") });
+    ? { label: c.t("digest.v2.sales.discounts_label"), text: c.t("digest.v2.sales.no_discounts"), tone: "ok", href: salesView("discounts") }
+    : { label: c.t("digest.v2.sales.discounts_label"), tone: "info", href: salesView("discounts"), text: s.discounts.slice(0, 8).map((d) => `${d.name ?? c.t("digest.v2.sales.unnamed_discount")} ×${d.count} ${money(c, d.cents)}`).join(", ") });
   const voided = s.voids.orders + s.voids.checks + s.voids.units;
   lines.push(voided === 0
     ? { label: c.t("digest.v2.sales.voids_label"), text: c.t("digest.v2.sales.no_voids"), tone: "ok", href }
@@ -258,13 +265,13 @@ export function salesDetailLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
 
 // ── 8. People ────────────────────────────────────────────────────────────────────────────────
 
-export function peopleLines(c: Ctx, v: ShopV2Facts, who: { openedBy: string | null; closedBy: string | null; openingHref: string; closingHref: string }, pmLine: DigestLine | null): DigestLine[] {
+export function peopleLines(c: Ctx, v: ShopV2Facts, who: { openedBy: string | null; closedBy: string | null; openingHref: string | null; closingHref: string | null }, pmLine: DigestLine | null): DigestLine[] {
   const lines: DigestLine[] = [
     { label: c.t("digest.v2.people.opened_label"), href: who.openingHref, ...(who.openedBy ? { text: who.openedBy, tone: "info" as const } : { text: c.t("digest.v2.people.no_name"), tone: "info" as const }) },
     { label: c.t("digest.v2.people.closed_label"), href: who.closingHref, ...(who.closedBy ? { text: who.closedBy, tone: "info" as const } : { text: c.t("digest.v2.people.no_name"), tone: "info" as const }) },
   ];
   if (pmLine) lines.push(pmLine);
-  const href = `${c.baseUrl}/operations/production/yield?${q(c.locationId)}`;
+  const href = link(c, { to: "yield", location: c.locationId });
   const nl = notLoaded(c, c.t("digest.v2.people.retrains_label"), href, v.people);
   if (nl) lines.push(nl);
   else if (v.people.kind === "ok") {
@@ -279,14 +286,14 @@ export function peopleLines(c: Ctx, v: ShopV2Facts, who: { openedBy: string | nu
 // ── Tomorrow (D+1) ───────────────────────────────────────────────────────────────────────────
 
 export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
-  const ordering = `${c.baseUrl}/ordering?${q(c.locationId)}`;
+  const ordering = link(c, { to: "ordering", location: c.locationId });
   const tomorrowLabel = formatDateLabel(v.lookahead, c.language);
   const lines: DigestLine[] = [];
   const nl = notLoaded(c, c.t("digest.v2.tomorrow.deliveries_label"), ordering, v.ordering);
   if (nl) lines.push(nl);
   else if (v.ordering.kind === "ok") {
     const { deliveries, cutoffsTomorrow } = v.ordering.value;
-    const poHref = (id: string) => `${ordering}&po=${encodeURIComponent(id)}`;
+    const poHref = (id: string) => link(c, { to: "ordering", location: c.locationId, po: id });
     if (deliveries.due.length === 0) lines.push({ label: c.t("digest.v2.tomorrow.deliveries_label"), text: c.t("digest.v2.tomorrow.no_deliveries"), tone: "info", href: ordering });
     for (const d of deliveries.due) lines.push({
       label: d.vendorName, href: poHref(d.po.id), tone: "info",
@@ -306,7 +313,7 @@ export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
       text: `${c.t("digest.v2.tomorrow.cutoff_at", { time: cutoffLabel({ ...c, day: v.lookahead }, x.cutoffTime) })} · ${c.t(x.ordered ? "digest.v2.tomorrow.already_ordered" : x.hasDraft ? "digest.v2.tomorrow.draft_ready" : "digest.v2.tomorrow.no_draft")}`,
     });
   }
-  const catHref = `${c.baseUrl}/catering/pipeline`;
+  const catHref = link(c, { to: "pipeline" });
   const cl = notLoaded(c, c.t("digest.v2.tomorrow.catering_label"), catHref, v.catering);
   if (cl) lines.push(cl);
   else if (v.catering.kind === "ok") {
@@ -331,7 +338,7 @@ export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
 // ── Labor (Toast time entries, D) ── appended to lib/report-digests-v2-compose.ts ────────────
 
 export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
-  const href = `${c.baseUrl}/reports/trends/team?${q(c.locationId)}`;
+  const href = link(c, { to: "team", location: c.locationId });
   const label = c.t("digest.v2.labor.label");
   if (!v.labor) return [];
   const nl = notLoaded(c, label, href, v.labor);
@@ -377,40 +384,65 @@ export interface V2Extras {
   operations: DigestLine[];
   pmLine: DigestLine | null;
   pendingItems: number;
-  who: { openedBy: string | null; closedBy: string | null; openingHref: string; closingHref: string };
+  who: { openedBy: string | null; closedBy: string | null; openingHref: string | null; closingHref: string | null };
 }
 
-export function composeV2Sections(args: { shopName: string; locationId: string; day: string; v: ShopV2Facts; extras: V2Extras; prefix: boolean }, language: Language, baseUrl: string): DigestSection[] {
-  const c: Ctx = { t: translator(language), language, baseUrl, locationId: args.locationId, day: args.day };
+/**
+ * The screen each v2 section summarizes, for this recipient (the section's "Open this in the app" link).
+ * Exported so the tests pin the section → link map.
+ */
+export function v2SectionLinks(c: Ctx): Record<"headline" | "ordering" | "receiving" | "inventory" | "operations" | "sales" | "labor" | "people" | "tomorrow" | "to_ring", string | null> {
+  const loc = c.locationId;
+  return {
+    headline: link(c, { to: "sales", location: loc, day: c.day }, { to: "mid_shift", location: loc }),
+    ordering: link(c, { to: "ordering", location: loc }),
+    receiving: link(c, { to: "receiving", location: loc, anchor: "recent" }),
+    inventory: link(c, { to: "counts", location: loc }, { to: "ordering", location: loc }),
+    operations: link(c, { to: "reports_list", location: loc, day: c.day }),
+    sales: link(c, { to: "sales", location: loc, day: c.day }, { to: "mid_shift", location: loc }),
+    labor: link(c, { to: "team", location: loc }),
+    people: link(c, { to: "team", location: loc }, { to: "reports_list", location: loc, day: c.day, type: "pm" }),
+    tomorrow: link(c, { to: "ordering", location: loc }),
+    to_ring: link(c, { to: "pipeline", anchor: "to_ring" }),
+  };
+}
+
+export function composeV2Sections(args: { shopName: string; locationId: string; day: string; v: ShopV2Facts; extras: V2Extras; prefix: boolean }, language: Language, baseUrl: string, viewer?: LinkViewer | null): DigestSection[] {
+  const c: Ctx = { t: translator(language), language, baseUrl, locationId: args.locationId, day: args.day, viewer };
   const title = (key: TranslationKey, params?: Params) => (args.prefix ? `${args.shopName} · ` : "") + c.t(key, params);
-  const toRing = toastRingLines(args.v.catering.kind === "ok" ? args.v.catering.value.toRingInToast ?? [] : [], args.locationId, args.v.lookahead, language, baseUrl);
+  const toRing = toastRingLines(args.v.catering.kind === "ok" ? args.v.catering.value.toRingInToast ?? [] : [], args.locationId, args.v.lookahead, language, baseUrl, viewer);
+  const href = v2SectionLinks(c);
   return [
-    { title: title("digest.v2.section.headline"), lines: headlineLines(c, args.v) },
-    { title: title("digest.v2.section.ordering"), lines: orderingLines(c, args.v) },
-    { title: title("digest.v2.section.receiving"), lines: receivingLines(c, args.v) },
-    { title: title("digest.v2.section.inventory"), lines: inventoryLines(c, args.v, args.extras.pendingItems) },
-    { title: title("digest.v2.section.operations"), lines: args.extras.operations },
-    { title: title("digest.v2.section.sales"), lines: salesDetailLines(c, args.v) },
-    ...(args.v.labor ? [{ title: title("digest.v2.section.labor"), lines: laborLines(c, args.v) }] : []),
-    { title: title("digest.v2.section.people"), lines: peopleLines(c, args.v, args.extras.who, args.extras.pmLine) },
-    { title: title("digest.v2.section.tomorrow", { date: formatDateLabel(args.v.lookahead, language) }), lines: tomorrowLines(c, args.v) },
-    ...(toRing.length > 0 ? [{ title: title("digest.catering.to_ring.tomorrow"), lines: toRing }] : []),
+    { title: title("digest.v2.section.headline"), lines: headlineLines(c, args.v), href: href.headline },
+    { title: title("digest.v2.section.ordering"), lines: orderingLines(c, args.v), href: href.ordering },
+    { title: title("digest.v2.section.receiving"), lines: receivingLines(c, args.v), href: href.receiving },
+    { title: title("digest.v2.section.inventory"), lines: inventoryLines(c, args.v, args.extras.pendingItems), href: href.inventory },
+    { title: title("digest.v2.section.operations"), lines: args.extras.operations, href: href.operations },
+    { title: title("digest.v2.section.sales"), lines: salesDetailLines(c, args.v), href: href.sales },
+    ...(args.v.labor ? [{ title: title("digest.v2.section.labor"), lines: laborLines(c, args.v), href: href.labor }] : []),
+    { title: title("digest.v2.section.people"), lines: peopleLines(c, args.v, args.extras.who, args.extras.pmLine), href: href.people },
+    { title: title("digest.v2.section.tomorrow", { date: formatDateLabel(args.v.lookahead, language) }), lines: tomorrowLines(c, args.v), href: href.tomorrow },
+    ...(toRing.length > 0 ? [{ title: title("digest.catering.to_ring.tomorrow"), lines: toRing, href: href.to_ring }] : []),
   ];
 }
 
 /** The level-8+ all-shop totals section: "not available" / "partial (n of m shops)", never a false 0. */
-export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, language: Language, baseUrl: string): DigestSection {
+export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, language: Language, baseUrl: string, day?: string, viewer?: LinkViewer | null): DigestSection {
   const t = translator(language);
   const m = (cents: number) => formatCents(cents, language);
   const tot = allShopTotals(shops.map((s) => s.v2));
-  const href = `${baseUrl}/reports`;
+  const ctx = { baseUrl, viewer };
+  // Every shop for the business day (level 8+: the only recipients of this section).
+  const href = day ? digestLink(ctx, { to: "reports_hub", location: "all", day }) : null;
+  const salesHref = day ? digestLink(ctx, { to: "sales", location: "all", day }) ?? href : href;
+  const cateringHref = day ? digestLink(ctx, { to: "sales_catering", location: "all", day }, { to: "pipeline" }) : digestLink(ctx, { to: "pipeline" });
   const lines: DigestLine[] = [];
   /** null = nothing covered; else the parts plus a "partial" note when some shops are missing. */
   const covered = (cov: Coverage, parts: Array<string | null>): string | null => cov.covered === 0 ? null
     : [...parts, cov.covered < cov.total ? t("digest.v2.totals.partial", { n: cov.covered, total: cov.total }) : null].filter((x): x is string => x !== null).join(" · ");
   const unknown = (n: number) => n > 0 ? plural(t, n, "digest.v2.totals.unknown_one", "digest.v2.totals.unknown_other") : null;
-  const push = (label: string, text: string | null, tone: DigestTone, link = href) =>
-    lines.push(text === null ? { label, text: t("digest.v2.not_available"), tone: "info", href: link } : { label, text, tone, href: link });
+  const push = (label: string, text: string | null, tone: DigestTone, to: string | null = href) =>
+    lines.push(text === null ? { label, text: t("digest.v2.not_available"), tone: "info", href: to } : { label, text, tone, href: to });
 
   const s = tot.sales;
   const delta = s.lastWeekCents !== null && s.lastWeekCents > 0 ? Math.round(((s.netCents - s.lastWeekCents) / s.lastWeekCents) * 100) : null;
@@ -420,10 +452,10 @@ export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, lang
     plural(t, s.checks, "digest.v2.sales.checks_one", "digest.v2.sales.checks_other"),
     s.checks > 0 ? t("digest.v2.sales.avg_check", { money: m(Math.round(s.netCents / s.checks)) }) : null,
     s.netCents > 0 ? t("digest.v2.sales.third_party", { pct: `${Math.round((s.thirdPartyCents / s.netCents) * 100)}%` }) : null,
-  ]), "info");
+  ]), "info", salesHref);
   push(t("digest.v2.catering.revenue_label"), covered(tot.catering, [
     t("digest.v2.catering.split", { completed: m(tot.catering.completedCents), confirmed: m(tot.catering.confirmedCents) }), t("digest.v2.catering.not_in_pos"),
-  ]), "info", `${baseUrl}/catering/pipeline`);
+  ]), "info", cateringHref);
   const o = tot.ordering;
   push(t("digest.v2.ordering.placed_label"), covered(o, [
     plural(t, o.placed, "digest.v2.ordering.placed_one", "digest.v2.ordering.placed_other"), m(o.placedCents), unknown(o.unpriced),
@@ -434,5 +466,5 @@ export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, lang
     plural(t, r.deliveries, "digest.v2.totals.deliveries_one", "digest.v2.totals.deliveries_other"), m(r.cents), unknown(r.unknownCents),
   ]), "info");
   push(t("digest.v2.tomorrow.deliveries_label"), covered(o, [plural(t, o.dueTomorrow, "digest.v2.totals.due_one", "digest.v2.totals.due_other")]), "info");
-  return { title: t("digest.v2.section.all_shops"), lines };
+  return { title: t("digest.v2.section.all_shops"), lines, href };
 }
