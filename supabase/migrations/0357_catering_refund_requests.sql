@@ -1,5 +1,7 @@
 -- Migration 0357_catering_refund_requests
 -- AUTHORED 2026-11-23 (refund build, CC bench Opus, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO SIM 2026-11-24 (schema_migrations version 20261124014005, name '0357_catering_refund_requests')
+-- APPLIED TO PROD 2026-11-25 UTC (schema_migrations version 20261125160656, name '0357_catering_refund_requests')
 -- NUMBER: 0356 is the highest on main; 0355 is reserved for the all-shops access build (co-ops-wt/.mig-claims), so this
 -- file takes 0357 (claimed there by the refund build).
 -- Juan 2026-11-23: "Yes" to an in-app refund step when a catering order is rejected / cancelled / lost after the
