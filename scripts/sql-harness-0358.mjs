@@ -283,17 +283,22 @@ try {
   // 'public' really is the PUBLIC pseudo-role here: it answers true for a function nobody revoked.
   await db.exec("create function public.h0358_open() returns int language sql as 'select 1'");
   check((await one(db, "select has_function_privilege('public', 'public.h0358_open()', 'execute') as ok")).ok === true, "P3 control: has_function_privilege('public', …) is true for an un-revoked function");
-  await db.exec("drop function public.h0358_open()");
-  await db.exec("create role h0358_nobody");
+  await db.exec("create role h0358_nobody; grant usage on schema public to h0358_nobody");
   for (const role of ["anon", "authenticated", "h0358_nobody"]) {
+    const who = role === "h0358_nobody" ? "a role that belongs to nothing (PUBLIC)" : role;
     await db.exec(`set role ${role}`);
-    try { await refuses(() => db.query(`select public.catering_refund_actor_ok($1, $2)`, [gm, f.shop]), "42501", `P3 calling it as ${role === "h0358_nobody" ? "a role that belongs to nothing (PUBLIC)" : role} is permission denied`); }
-    finally { await db.exec("reset role"); }
+    try {
+      // The control (review, GLM P3): the role CAN reach the schema and run an un-revoked function, so the refusal
+      // below is the FUNCTION's own EXECUTE privilege and nothing else.
+      check((await one(db, "select public.h0358_open() as v")).v === 1, `P3 control: ${who} can run an un-revoked function in the same schema`);
+      await refuses(() => db.query(`select public.catering_refund_actor_ok($1, $2)`, [gm, f.shop]), "42501", `P3 calling it as ${who} is permission denied`);
+      await refuses(() => db.query(`select public.catering_refund_actor_ok($1, $2)`, [gm, f.shop]), "permission denied for function catering_refund_actor_ok", `P3 …and the denial names the function (${who})`);
+    } finally { await db.exec("reset role"); }
   }
   await db.exec("set role service_role");
   try { check((await ok(db, gm, f.shop)) === true, "P3 calling it as service_role answers (a member GM: true)"); }
   finally { await db.exec("reset role"); }
-  await db.exec("drop role h0358_nobody");
+  await db.exec("drop function public.h0358_open(); revoke usage on schema public from h0358_nobody; drop role h0358_nobody");
 
   // ── P4 — the matrix ──────────────────────────────────────────────────────────────────────────
   const STATES = [

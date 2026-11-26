@@ -280,6 +280,7 @@ describe("the executable proof", () => {
       "P3 calling it as anon is permission denied",
       "P3 calling it as authenticated is permission denied",
       "P3 calling it as a role that belongs to nothing (PUBLIC) is permission denied",
+      "P3 control: a role that belongs to nothing (PUBLIC) can run an un-revoked function in the same schema",
       "P3 calling it as service_role answers",
       "P4 the matrix: 15 roles x 5 states x 2 shops = 150 cells",
       "P5 a GM whose membership is inactive is refused by the reserve",
