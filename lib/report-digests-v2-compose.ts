@@ -7,11 +7,16 @@
  * catering morning digest stays the catering section.
  */
 import { serverT } from "@/lib/i18n/server";
-import { formatCents, formatDateLabel, formatTime } from "@/lib/i18n/format";
+import { formatCents, formatDateLabel, formatHourRange, formatTime } from "@/lib/i18n/format";
+import { SALES_EMPTY_KEY, serverRef, type SalesView } from "@/lib/sales-reports-shared";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { timeWindowLabel, timeWindowMinutes } from "@/lib/midshift-shared";
 import {
   allShopTotals,
+  busiestHours,
+  cateringVsWalkIn,
+  deliveryPlatforms,
+  topServers,
   salesDeltaPct,
   type Coverage,
   sumKnown,
@@ -235,7 +240,22 @@ export function inventoryLines(c: Ctx, v: ShopV2Facts, pendingItems: number): Di
 
 // ── 6. Sales detail ──────────────────────────────────────────────────────────────────────────
 
+/**
+ * The Sales section. The pulse lines (top items, channel mix, discounts, voids) are EXACTLY what they always
+ * were and carry no gate. The Sales-report lines of PR 3 (`salesReportLines`) are interleaved around them and
+ * every one of them `needs: "sales_detail"`, so finishSection cuts them before anything is counted: a recipient
+ * the Sales page refuses gets this section byte for byte as before PR 3 (lines, status, overflow, issue count).
+ */
 export function salesDetailLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
+  const report = salesReportLines(c, v);
+  const pulse = salesPulseLines(c, v);
+  // A pulse that did not load is its one "not available" line.
+  if (pulse.length < 4) return [...report.head, ...pulse, ...report.mid, ...report.tail];
+  // pulse = [top items, channel mix, discounts, voids]; their relative order never changes.
+  return [...report.head, ...pulse.slice(0, 2), ...report.mid, ...pulse.slice(2), ...report.tail];
+}
+
+function salesPulseLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   const salesView = (view: "summary" | "items" | "channels" | "discounts") =>
     link(c, { to: "sales", location: c.locationId, day: c.day, view }, { to: "mid_shift", location: c.locationId });
   const href = salesView("summary");
@@ -269,6 +289,178 @@ export function salesDetailLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
       ].filter(Boolean).join(", "),
     });
   return lines;
+}
+
+// ── 6b. Sales report lines (digests round 3, PR 3): every one needs `sales_detail` ───────────
+
+/**
+ * The Sales page's server label (components/reports-hub/SalesParts.tsx `serverLabel`), same rule and same keys:
+ * the order's server by first name; no name and an online channel = "Online / no server"; no server at all =
+ * "No server on the order"; else "not matched" + a 4-character reference. Pinned equal by a parity test.
+ */
+export function salesServerLabel(t: T, key: string, name: string | null | undefined, online = false): string {
+  if (!name?.trim() && online) return t("reports.sales.server.online");
+  if (!key) return t("reports.sales.server.none");
+  return name && name.trim() ? name : t("reports.sales.server.unmapped", { ref: serverRef(key) });
+}
+
+/**
+ * The Sales report's figures for D, as digest lines. Each keeps the Sales page's rules: nothing unless the day's
+ * capture is complete (one "not available" line, never $0); a missing amount is counted and said ("+ N amounts
+ * not recorded") and marks its line unknown; a read that failed or stalled is its own "not available" line and
+ * leaves every other line standing. EVERY line here carries `needs: "sales_detail"` — its status contribution and
+ * its place in the overflow line go with it when it is cut.
+ * `head` prints before the pulse lines, `mid` after the channel mix, `tail` after the voids.
+ */
+function salesReportLines(c: Ctx, v: ShopV2Facts): { head: DigestLine[]; mid: DigestLine[]; tail: DigestLine[] } {
+  const out: { head: DigestLine[]; mid: DigestLine[]; tail: DigestLine[] } = { head: [], mid: [], tail: [] };
+  const d = v.salesDetail;
+  if (!d) return out;
+  const gated = (line: DigestLine): DigestLine => ({ ...line, needs: "sales_detail" });
+  const view = (to?: SalesView) => link(c, { to: "sales", location: c.locationId, day: c.day, ...(to && to !== "summary" ? { view: to } : {}) });
+  const summaryHref = view();
+  const missing = (n: number) => n > 0 ? plural(c.t, n, "digest.v2.totals.unknown_one", "digest.v2.totals.unknown_other") : null;
+  const join = (parts: Array<string | null>, sep = " · ") => parts.filter((x): x is string => x !== null).join(sep);
+  const checks = (n: number) => plural(c.t, n, "digest.v2.sales.checks_one", "digest.v2.sales.checks_other");
+  const label = c.t("digest.v2.sales.report_label");
+
+  // The whole area stands on the day's totals: loaded, and the day fully captured (the Sales page's coverage rule).
+  const nl = notLoaded(c, label, summaryHref, d.totals);
+  if (nl) { out.head.push(gated(nl)); return out; }
+  if (d.totals.kind !== "ok") return out;
+  const tot = d.totals.value;
+  if (tot.coverage !== "complete") {
+    out.head.push(gated({ label, text: c.t("digest.v2.sales.report_not_covered"), tone: "info", href: summaryHref, unknown: true }));
+    return out;
+  }
+
+  // 1. The ladder: gross − discounts and comps − item voids − sales refunds = Toast net (summarizeSales' own figures).
+  const { grossCents: gross, discountsCompsCents: disc, voidsCents: voids, salesRefundsCents: refunds, toastNetCents: net } = tot;
+  out.head.push(gross !== null && disc !== null && voids !== null && refunds !== null && net !== null
+    ? gated({ label, tone: "info", href: summaryHref, text: c.t("digest.v2.sales.ladder", { gross: money(c, gross), discounts: money(c, disc), voids: money(c, voids), refunds: money(c, refunds), net: money(c, net) }) })
+    : gated({
+      label, tone: "info", href: summaryHref, unknown: true,
+      text: join([
+        c.t("digest.v2.sales.net_unavailable"),
+        tot.accountingMissing > 0 ? plural(c.t, tot.accountingMissing, "digest.v2.sales.accounting_missing_one", "digest.v2.sales.accounting_missing_other") : null,
+        tot.salesRefundMissing > 0 ? plural(c.t, tot.salesRefundMissing, "digest.v2.sales.refund_missing_one", "digest.v2.sales.refund_missing_other") : null,
+      ]),
+    }));
+
+  // 2. Tips · tax · service charges (one line). An unknown tip or tax amount is counted; service charges are the
+  // exact component, null when any check's accounting is missing.
+  const sc = tot.serviceChargesCents;
+  out.head.push(gated({
+    label: c.t("digest.v2.sales.tips_tax_label"), tone: "info", href: summaryHref,
+    ...(tot.tipMissing + tot.taxMissing > 0 || sc === null ? { unknown: true } : {}),
+    text: c.t("digest.v2.sales.tips_tax", {
+      tips: join([money(c, tot.tipCents), missing(tot.tipMissing)], " "),
+      tax: join([money(c, tot.taxCents), missing(tot.taxMissing)], " "),
+      service: sc === null ? c.t("digest.v2.not_available") : money(c, sc),
+    }),
+  }));
+
+  // 3. ezCater as sales, and the Sales page's total (Toast check totals + ezCater subtotals, before refunds).
+  out.head.push(gated({
+    label: c.t("digest.v2.sales.ezcater_label"), tone: "info", href: summaryHref,
+    ...(tot.amountMissing > 0 ? { unknown: true } : {}),
+    text: join([
+      tot.ezcaterOrders === 0 ? c.t("digest.v2.sales.no_ezcater")
+        : c.t("digest.v2.sales.ezcater", { money: money(c, tot.ezcaterCents), orders: plural(c.t, tot.ezcaterOrders, "digest.v2.catering.orders_one", "digest.v2.catering.orders_other") }),
+      c.t("digest.v2.sales.total_before_refunds", { money: money(c, tot.totalCents) }),
+      missing(tot.amountMissing),
+    ]),
+  }));
+
+  // 4. Busiest hours: top 3 with $ and checks; a check with no opened time is said apart, never ranked.
+  const hoursHref = view("heatmap");
+  const hoursLabel = c.t("digest.v2.sales.hours_label");
+  const hl = notLoaded(c, hoursLabel, hoursHref, d.hours);
+  if (hl) out.mid.push(gated(hl));
+  else if (d.hours.kind === "ok") {
+    const h = busiestHours(d.hours.value);
+    const lost = d.hours.value.reduce((a, r) => a + r.amountMissing, 0);
+    out.mid.push(gated(h.top.length === 0 && h.unknown.checks === 0
+      ? { label: hoursLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: hoursHref }
+      : {
+        label: hoursLabel, tone: "info", href: hoursHref, ...(lost > 0 ? { unknown: true } : {}),
+        text: join([
+          h.top.length === 0 ? null : h.top.map((x) => c.t("digest.v2.sales.hour_item", { hour: formatHourRange(x.hour, c.language), money: money(c, x.cents), checks: checks(x.checks) })).join(", "),
+          h.unknown.checks > 0 ? c.t("digest.v2.sales.hour_unknown", { checks: checks(h.unknown.checks), money: money(c, h.unknown.cents) }) : null,
+          missing(lost),
+        ]),
+      }));
+  }
+
+  // 5. Delivery platforms with $ (counted third-party delivery sales by provider).
+  const platformsLabel = c.t("digest.v2.sales.platforms_label");
+  const channelsHref = view("channels");
+  const pl = notLoaded(c, platformsLabel, channelsHref, d.channels);
+  if (pl) out.mid.push(gated(pl));
+  else if (d.channels.kind === "ok") {
+    const rows = deliveryPlatforms(d.channels.value);
+    const one = rows.length === 1 ? rows[0] : undefined;
+    const href = link(c,
+      ...(one ? [{ to: "sales_checks" as const, location: c.locationId, day: c.day, channel: "third_party" as const, provider: one.provider ?? SALES_EMPTY_KEY }] : []),
+      { to: "sales_checks", location: c.locationId, day: c.day, channel: "third_party" },
+      { to: "sales", location: c.locationId, day: c.day, view: "channels" });
+    const lost = rows.reduce((a, r) => a + r.amountMissing, 0);
+    const shown = rows.slice(0, 5).map((r) => `${r.provider?.trim() ? r.provider : c.t("reports.sales.provider.none")} ${money(c, r.cents)} (${checks(r.checks)})`);
+    out.mid.push(gated(rows.length === 0
+      ? { label: platformsLabel, text: c.t("digest.v2.sales.no_platforms"), tone: "info", href }
+      : { label: platformsLabel, tone: "info", href, ...(lost > 0 ? { unknown: true } : {}), text: join([shown.join(", ") + (rows.length > 5 ? ` +${rows.length - 5}` : ""), missing(lost)]) }));
+  }
+
+  // 6. Catering vs walk-in (catering = Toast catering checks + ezCater orders; walk-in = every other counted sale).
+  const cateringLabel = c.t("digest.v2.sales.catering_vs_label");
+  const cateringHref = link(c, { to: "sales_catering", location: c.locationId, day: c.day });
+  const cl = notLoaded(c, cateringLabel, cateringHref, d.channels);
+  if (cl) out.mid.push(gated(cl));
+  else if (d.channels.kind === "ok") {
+    const split = cateringVsWalkIn(d.channels.value);
+    const lost = split.catering.amountMissing + split.walkIn.amountMissing;
+    out.mid.push(gated(split.catering.checks === 0 && split.walkIn.checks === 0
+      ? { label: cateringLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: cateringHref }
+      : {
+        label: cateringLabel, tone: "info", href: cateringHref, ...(lost > 0 ? { unknown: true } : {}),
+        text: join([c.t("digest.v2.sales.catering_vs", { catering: money(c, split.catering.cents), walkin: money(c, split.walkIn.cents) }), missing(lost)]),
+      }));
+  }
+
+  // 7. Void $, refunds $ and count, excluded checks.
+  const excluded = ([
+    ["digest.v2.sales.excluded_gift", tot.giftCardChecks], ["digest.v2.sales.excluded_ezcater", tot.ezcaterLinkedChecks],
+    ["digest.v2.sales.excluded_void", tot.voidChecks], ["digest.v2.sales.excluded_excess", tot.excessFoodChecks],
+  ] as const).filter(([, n]) => n > 0);
+  const excludedChecks = excluded.reduce((a, [, n]) => a + n, 0);
+  out.tail.push(gated({
+    label: c.t("digest.v2.sales.adjustments_label"), tone: "info", href: summaryHref,
+    ...(voids === null ? { unknown: true } : {}),
+    text: join([
+      voids === null ? c.t("digest.v2.sales.item_voids_unavailable") : c.t("digest.v2.sales.item_voids", { money: money(c, voids) }),
+      tot.refundCount === 0 ? c.t("digest.v2.sales.no_refunds")
+        : plural(c.t, tot.refundCount, "digest.v2.sales.refunds_one", "digest.v2.sales.refunds_other", { money: money(c, tot.refundCents) }),
+      excludedChecks === 0 ? c.t("digest.v2.sales.no_excluded")
+        : plural(c.t, excludedChecks, "digest.v2.sales.excluded_one", "digest.v2.sales.excluded_other", { detail: excluded.map(([k, n]) => c.t(k, { n })).join(", ") }),
+    ]),
+  }));
+
+  // 8. Servers: the top 3 of the Sales page's servers view, in its order.
+  const serversLabel = c.t("digest.v2.sales.servers_label");
+  const serversHref = view("servers");
+  const sl = notLoaded(c, serversLabel, serversHref, d.servers);
+  if (sl) out.tail.push(gated(sl));
+  else if (d.servers.kind === "ok") {
+    const top = topServers(d.servers.value);
+    const lost = top.reduce((a, r) => a + r.amountMissing, 0);
+    out.tail.push(gated(top.length === 0
+      ? { label: serversLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: serversHref }
+      : {
+        label: serversLabel, tone: "info", href: serversHref, ...(lost > 0 ? { unknown: true } : {}),
+        text: join([top.map((r) => `${salesServerLabel(c.t, r.key, r.label, r.serverOnline)} ${money(c, r.cents)} (${checks(r.checks)})`).join(", "), missing(lost)]),
+      }));
+  }
+  return out;
 }
 
 // ── 8. People ────────────────────────────────────────────────────────────────────────────────

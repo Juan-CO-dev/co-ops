@@ -21,7 +21,7 @@ import { reportsRoleAllowed } from "@/lib/reports-access-shared";
 import { canOpenPeopleViews, canViewPeople } from "@/lib/people/access-shared";
 import { vendorMailRoleAllowed } from "@/lib/vendor-mail-shared";
 import type { ReportTypeKey } from "@/lib/reports-hub";
-import type { SalesView } from "@/lib/sales-reports-shared";
+import { SALES_CHANNELS, SALES_EMPTY_KEY, type SalesChannel, type SalesView } from "@/lib/sales-reports-shared";
 import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
 
 /** Who will open the link: the recipient's real role, its level and their ACTIVE shop memberships. */
@@ -45,6 +45,13 @@ export type DigestTarget =
   | { to: "sales"; location: string; day: string; view?: SalesView }
   /** The catering slice of Sales for the business day (ezCater ↔ Toast cross-check, pipeline split). */
   | { to: "sales_catering"; location: string; day: string }
+  /**
+   * The checks behind a Sales number for the business day (app/(authed)/reports/sales/checks/page.tsx, which
+   * parses these with parseSalesCheckFilters). Enum- and id-shaped filters only: `channel` from the reviewed
+   * channel list, `provider` id-shaped or the empty-key sentinel, `hour` -1 (no opened time) to 23. A value of
+   * any other shape is no link (rule 2), so a free-text provider name never rides in a URL.
+   */
+  | { to: "sales_checks"; location: string; day: string; channel?: SalesChannel; provider?: string; hour?: number }
   /** The live mid-shift pulse (today only): the fallback below the Sales floor. */
   | { to: "mid_shift"; location: string }
   | { to: "ordering"; location: string; po?: string }
@@ -78,6 +85,11 @@ export function targetPath(t: DigestTarget): string {
     case "report": return `/reports/${t.type}/${encodeURIComponent(t.id)}?${dayParams(t.location, t.day)}`;
     case "sales": return `/reports/sales?${dayParams(t.location, t.day, t.view && t.view !== "summary" ? { view: t.view } : {})}`;
     case "sales_catering": return `/reports/sales/catering?${dayParams(t.location, t.day)}`;
+    case "sales_checks": return `/reports/sales/checks?${dayParams(t.location, t.day, {
+      ...(t.channel !== undefined ? { channel: t.channel } : {}),
+      ...(t.provider !== undefined ? { provider: t.provider } : {}),
+      ...(t.hour !== undefined ? { hour: String(t.hour) } : {}),
+    })}`;
     case "mid_shift": return `/mid-shift?${loc(t.location)}`;
     case "ordering": return `/ordering?${loc(t.location)}${t.po ? `&po=${encodeURIComponent(t.po)}` : ""}`;
     case "receiving": return `/operations/receiving?${loc(t.location)}${t.anchor === "recent" ? `#${DIGEST_ANCHORS.receivingRecent}` : t.anchor === "credits" ? `#${DIGEST_ANCHORS.receivingCredits}` : ""}`;
@@ -105,6 +117,11 @@ function wellFormed(t: DigestTarget): boolean {
   if (t.to === "pipeline") ids.push(t.lead);
   if (t.to === "quotes") ids.push(t.quote);
   if ("day" in t && t.day !== undefined && !DAY.test(t.day)) return false;
+  if (t.to === "sales_checks") {
+    if (t.channel !== undefined && !(SALES_CHANNELS as readonly string[]).includes(t.channel)) return false;
+    if (t.provider !== undefined && t.provider !== SALES_EMPTY_KEY) ids.push(t.provider);
+    if (t.hour !== undefined && !(Number.isInteger(t.hour) && t.hour >= -1 && t.hour <= 23)) return false;
+  }
   return ids.every((x) => x === undefined || ID.test(x));
 }
 
@@ -133,7 +150,8 @@ export function canOpen(viewer: LinkViewer | null | undefined, t: DigestTarget):
     case "reports_hub": case "reports_list": return reports(t.location);
     // A cash report's detail is KH+ (REPORTS_HUB_CASH_LEVEL = 4).
     case "report": return reports(t.location) && t.location !== "all" && (t.type !== "cash" || w.level >= 4);
-    case "sales": case "sales_catering": return sales(t.location);
+    // The checks list runs the same gate as Sales (app/(authed)/reports/sales/checks/page.tsx).
+    case "sales": case "sales_catering": case "sales_checks": return sales(t.location);
     case "mid_shift": case "ordering": case "receiving": case "delivery": return floor(t.location);
     // Counts: the history read is AGM+ (COUNT_READ_MIN = 6) when today's count is someone else's task.
     case "counts": return floor(t.location) && w.level >= 6;
