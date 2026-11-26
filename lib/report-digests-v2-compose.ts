@@ -23,6 +23,8 @@ import { toastRingLines } from "@/lib/report-digests-toast-shared";
 import { cutoffMinutes } from "@/lib/vendor-rhythm-shared";
 import type { DigestLine, DigestSection, DigestTone } from "@/lib/report-digests-compose";
 import { digestLink, type DigestTarget, type LinkViewer } from "@/lib/report-digests-links";
+import { digestCan, type DigestAccess, type DigestCapability } from "@/lib/report-digests-access-shared";
+import { capItems, finishSection, finishSections, SECTION_CAP_WIDE, type SectionDraft } from "@/lib/report-digests-layout-shared";
 
 type Params = Record<string, string | number>;
 export type T = (key: TranslationKey, params?: Params) => string;
@@ -51,12 +53,15 @@ function cutoffLabel(c: Ctx, time: string): string {
   return mins === null ? time : formatTime(etWallTime(c.day, mins).toISOString(), c.language);
 }
 
-/** The line every area shows when its read failed or its source is not there. */
+/**
+ * The line every area shows when its read failed or its source is not there. Both are UNKNOWN (digests
+ * round 3): a failed read is not an issue and never "All good"; it counts toward `? N not available`.
+ */
 function notLoaded(c: Ctx, label: string, href: string | null, l: Loaded<unknown>): DigestLine | null {
-  if (l.kind === "error") return { label, text: c.t("digest.v2.could_not_load"), tone: "issue", href };
+  if (l.kind === "error") return { label, text: c.t("digest.v2.could_not_load"), tone: "info", href, unknown: true };
   if (l.kind === "unavailable") {
     const key = l.reason === "no_capture" ? "digest.v2.sales.no_capture" : l.reason === "no_labor" || l.reason === "labor_off" || l.reason === "labor_pull_failed" ? "digest.v2.labor.no_entries" : "digest.v2.not_available";
-    return { label, text: c.t(key as TranslationKey), tone: "info", href };
+    return { label, text: c.t(key as TranslationKey), tone: "info", href, unknown: true };
   }
   return null;
 }
@@ -81,7 +86,8 @@ export function headlineLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
       today.thirdPartySharePct === null ? null : c.t("digest.v2.sales.third_party", { pct: `${today.thirdPartySharePct}%` }),
       today.configDegraded ? c.t("digest.v2.sales.partial_channels") : null,
     ].filter((x): x is string => x !== null);
-    lines.push({ label, text: parts.join(" · "), tone: "info", href: salesHref });
+    // No completed capture for D-7: the comparison could not be checked (UNKNOWN).
+    lines.push({ label, text: parts.join(" · "), tone: "info", href: salesHref, ...(lastWeek === null ? { unknown: true } : {}) });
   }
   const catHref = link(c, { to: "sales_catering", location: c.locationId, day: c.day }, { to: "pipeline" });
   const catLabel = c.t("digest.v2.catering.revenue_label");
@@ -131,8 +137,9 @@ export function orderingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
     label: m.vendorName, href, tone: "issue",
     text: `${c.t("digest.v2.ordering.missed_cutoff", { time: cutoffLabel(c, m.cutoffTime) })} · ${plural(c.t, m.suggestedLines, "digest.v2.ordering.walk_suggested_one", "digest.v2.ordering.walk_suggested_other")}`,
   });
-  for (const m of day.late) lines.push({ label: m.vendorName, href, tone: "info", text: c.t("digest.v2.ordering.ordered_late", { time: cutoffLabel(c, m.cutoffTime), code: m.displayCode }) });
-  for (const m of day.unverified) lines.push({ label: m.vendorName, href, tone: "info", text: c.t("digest.v2.ordering.cutoff_unverified", { time: cutoffLabel(c, m.cutoffTime) }) });
+  // A late order is a to-do (attention); a cutoff nothing can check is UNKNOWN.
+  for (const m of day.late) lines.push({ label: m.vendorName, href, tone: "attention", text: c.t("digest.v2.ordering.ordered_late", { time: cutoffLabel(c, m.cutoffTime), code: m.displayCode }) });
+  for (const m of day.unverified) lines.push({ label: m.vendorName, href, tone: "info", unknown: true, text: c.t("digest.v2.ordering.cutoff_unverified", { time: cutoffLabel(c, m.cutoffTime) }) });
   if (day.missed.length === 0 && day.unverified.length === 0) {
     lines.push({ label: c.t("digest.v2.ordering.cutoffs_label"), text: c.t("digest.v2.ordering.no_missed"), tone: "ok", href });
   }
@@ -187,7 +194,8 @@ export function receivingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
 
 // ── 4. Inventory ─────────────────────────────────────────────────────────────────────────────
 
-const names = (xs: Array<{ name: string }>, max = 5) => xs.slice(0, max).map((x) => x.name).join(", ") + (xs.length > max ? ` +${xs.length - max}` : "");
+/** At most 5 names inside a line, then "+N" (plan §2.6: `capItems`). */
+const names = (xs: Array<{ name: string }>) => capItems(xs.map((x) => x.name));
 
 export function inventoryLines(c: Ctx, v: ShopV2Facts, pendingItems: number): DigestLine[] {
   const countsHref = link(c, { to: "counts", location: c.locationId });
@@ -248,7 +256,7 @@ export function salesDetailLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
     });
   lines.push(s.discounts.length === 0
     ? { label: c.t("digest.v2.sales.discounts_label"), text: c.t("digest.v2.sales.no_discounts"), tone: "ok", href: salesView("discounts") }
-    : { label: c.t("digest.v2.sales.discounts_label"), tone: "info", href: salesView("discounts"), text: s.discounts.slice(0, 8).map((d) => `${d.name ?? c.t("digest.v2.sales.unnamed_discount")} ×${d.count} ${money(c, d.cents)}`).join(", ") });
+    : { label: c.t("digest.v2.sales.discounts_label"), tone: "info", href: salesView("discounts"), text: capItems(s.discounts.map((d) => `${d.name ?? c.t("digest.v2.sales.unnamed_discount")} ×${d.count} ${money(c, d.cents)}`)) });
   const voided = s.voids.orders + s.voids.checks + s.voids.units;
   lines.push(voided === 0
     ? { label: c.t("digest.v2.sales.voids_label"), text: c.t("digest.v2.sales.no_voids"), tone: "ok", href }
@@ -309,7 +317,8 @@ export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
     });
     if (cutoffsTomorrow.length === 0) lines.push({ label: c.t("digest.v2.tomorrow.cutoffs_label"), text: c.t("digest.v2.tomorrow.no_cutoffs"), tone: "info", href: ordering });
     for (const x of cutoffsTomorrow) lines.push({
-      label: x.vendorName, href: ordering, tone: x.ordered || x.hasDraft ? "info" : "issue",
+      // A draft waiting for tomorrow's cutoff is a to-do (send it); no draft at all is an issue.
+      label: x.vendorName, href: ordering, tone: x.ordered ? "info" : x.hasDraft ? "attention" : "issue",
       text: `${c.t("digest.v2.tomorrow.cutoff_at", { time: cutoffLabel({ ...c, day: v.lookahead }, x.cutoffTime) })} · ${c.t(x.ordered ? "digest.v2.tomorrow.already_ordered" : x.hasDraft ? "digest.v2.tomorrow.draft_ready" : "digest.v2.tomorrow.no_draft")}`,
     });
   }
@@ -338,7 +347,8 @@ export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
 // ── Labor (Toast time entries, D) ── appended to lib/report-digests-v2-compose.ts ────────────
 
 export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
-  const href = link(c, { to: "team", location: c.locationId });
+  // The day-D lines open Team on that same day (digests round 3, plan §3.5).
+  const href = link(c, { to: "team", location: c.locationId, day: c.day });
   const label = c.t("digest.v2.labor.label");
   if (!v.labor) return [];
   const nl = notLoaded(c, label, href, v.labor);
@@ -350,7 +360,8 @@ export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   // "No one clocked in" only when there are NO entries at all — unknown-hour shifts are still shifts.
   if (s.people.length === 0 && s.openEntries === 0 && s.unknownHoursEntries === 0) return [{ label, text: c.t("digest.v2.labor.none"), tone: "info", href }];
   lines.push({
-    label, href, tone: "info",
+    // Someone still clocked in is a to-do (attention): a punch to close out.
+    label, href, tone: s.openEntries > 0 ? "attention" : "info",
     text: [
       c.t("digest.v2.labor.total", { hours: hours(s.totalHours) }),
       s.unknownHoursEntries > 0 ? plural(c.t, s.unknownHoursEntries, "digest.v2.labor.unknown_one", "digest.v2.labor.unknown_other") : null,
@@ -360,18 +371,19 @@ export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
     ].filter((x): x is string => x !== null).join(" · "),
   });
   if (s.byJob.length > 0) lines.push({ label: c.t("digest.v2.labor.by_job_label"), href, tone: "info", text: s.byJob.map((j) => `${j.job ?? c.t("digest.v2.labor.no_job")} ${hours(j.hours)} h`).join(", ") });
-  if (s.people.length > 0) lines.push({ label: c.t("digest.v2.labor.people_label"), href, tone: "info", text: s.people.map((p) => `${p.firstName ?? "—"} ${hours(p.hours)} h${p.unknownShifts > 0 ? ` ${plural(c.t, p.unknownShifts, "digest.v2.labor.person_unknown_one", "digest.v2.labor.person_unknown_other")}` : ""}`).join(", ") });
+  if (s.people.length > 0) lines.push({ label: c.t("digest.v2.labor.people_label"), href, tone: "info", text: capItems(s.people.map((p) => `${p.firstName ?? "—"} ${hours(p.hours)} h${p.unknownShifts > 0 ? ` ${plural(c.t, p.unknownShifts, "digest.v2.labor.person_unknown_one", "digest.v2.labor.person_unknown_other")}` : ""}`)) });
   if (!s.dayOvertimeAssessed) {
-    lines.push({ label: c.t("digest.v2.labor.overtime_label"), href, tone: "info", text: c.t("digest.v2.labor.overtime_partial") });
+    lines.push({ label: c.t("digest.v2.labor.overtime_label"), href, tone: "info", text: c.t("digest.v2.labor.overtime_partial"), unknown: true });
     return lines;
   }
   if (!s.weekOvertimeAssessed) {
     // An unknown earlier in the week leaves D's own over-10 h alert standing; only the 40 h figure is withheld.
     const weekPartial = c.t("digest.v2.labor.week_partial");
     lines.push(s.dayOvertime.length === 0
-      ? { label: c.t("digest.v2.labor.overtime_label"), href, tone: "info", text: [c.t("digest.v2.labor.no_day_overtime"), weekPartial].join(" · ") }
+      ? { label: c.t("digest.v2.labor.overtime_label"), href, tone: "info", text: [c.t("digest.v2.labor.no_day_overtime"), weekPartial].join(" · "), unknown: true }
       : {
-        label: c.t("digest.v2.labor.overtime_label"), href, tone: "issue",
+        // Issue AND unknown: D's alert stands, and the 40 h week still could not be checked.
+        label: c.t("digest.v2.labor.overtime_label"), href, tone: "issue", unknown: true,
         text: [s.dayOvertime.map((p) => c.t("digest.v2.labor.over_day", { name: p.firstName ?? "—", hours: hours(p.hours) })).join(", "), weekPartial].join(" · "),
       });
     return lines;
@@ -411,34 +423,45 @@ export function v2SectionLinks(c: Ctx): Record<"headline" | "ordering" | "receiv
     inventory: link(c, { to: "counts", location: loc }, { to: "ordering", location: loc }),
     operations: link(c, { to: "reports_list", location: loc, day: c.day }),
     sales: link(c, { to: "sales", location: loc, day: c.day }, { to: "mid_shift", location: loc }),
-    labor: link(c, { to: "team", location: loc }),
-    people: link(c, { to: "team", location: loc }, { to: "reports_list", location: loc, day: c.day, type: "pm" }),
+    labor: link(c, { to: "team", location: loc, day: c.day }),
+    people: link(c, { to: "team", location: loc, day: c.day }, { to: "reports_list", location: loc, day: c.day, type: "pm" }),
     tomorrow: link(c, { to: "ordering", location: loc }),
     to_ring: link(c, { to: "pipeline", anchor: "to_ring" }),
   };
 }
 
-export function composeV2Sections(args: { shopName: string; locationId: string; day: string; v: ShopV2Facts; extras: V2Extras; prefix: boolean }, language: Language, baseUrl: string, viewer?: LinkViewer | null): DigestSection[] {
+/**
+ * The shop's v2 sections, each FINISHED for this recipient (lib/report-digests-layout-shared.ts: cut →
+ * count → cap) against this shop and day. `access` = the recipient's data gates; absent or null = no
+ * gated line (fail closed). Sales and labor carry the wide cap.
+ */
+export function composeV2Sections(args: { shopName: string; locationId: string; day: string; v: ShopV2Facts; extras: V2Extras; prefix: boolean }, language: Language, baseUrl: string, viewer?: LinkViewer | null, access?: DigestAccess | null): DigestSection[] {
   const c: Ctx = { t: translator(language), language, baseUrl, locationId: args.locationId, day: args.day, viewer };
   const title = (key: TranslationKey, params?: Params) => (args.prefix ? `${args.shopName} · ` : "") + c.t(key, params);
   const toRing = toastRingLines(args.v.catering.kind === "ok" ? args.v.catering.value.toRingInToast ?? [] : [], args.locationId, args.v.lookahead, language, baseUrl, viewer);
   const href = v2SectionLinks(c);
-  return [
+  const can = (cap: DigestCapability) => digestCan(access, cap, { locationId: args.locationId, day: args.day });
+  const drafts: SectionDraft[] = [
     { title: title("digest.v2.section.headline"), lines: headlineLines(c, args.v), href: href.headline },
     { title: title("digest.v2.section.ordering"), lines: orderingLines(c, args.v), href: href.ordering },
     { title: title("digest.v2.section.receiving"), lines: receivingLines(c, args.v), href: href.receiving },
     { title: title("digest.v2.section.inventory"), lines: inventoryLines(c, args.v, args.extras.pendingItems), href: href.inventory },
     { title: title("digest.v2.section.operations"), lines: args.extras.operations, href: href.operations },
-    { title: title("digest.v2.section.sales"), lines: salesDetailLines(c, args.v), href: href.sales },
-    ...(args.v.labor ? [{ title: title("digest.v2.section.labor"), lines: laborLines(c, args.v), href: href.labor }] : []),
+    { title: title("digest.v2.section.sales"), lines: salesDetailLines(c, args.v), href: href.sales, cap: SECTION_CAP_WIDE },
+    ...(args.v.labor ? [{ title: title("digest.v2.section.labor"), lines: laborLines(c, args.v), href: href.labor, cap: SECTION_CAP_WIDE }] : []),
     { title: title("digest.v2.section.people"), lines: peopleLines(c, args.v, args.extras.who, args.extras.pmLine), href: href.people },
     { title: title("digest.v2.section.tomorrow", { date: formatDateLabel(args.v.lookahead, language) }), lines: tomorrowLines(c, args.v), href: href.tomorrow },
-    ...(toRing.length > 0 ? [{ title: title("digest.catering.to_ring.tomorrow"), lines: toRing, href: href.to_ring }] : []),
+    // Present only when a line is left for this recipient: finishSection decides from the allowed lines.
+    { title: title("digest.catering.to_ring.tomorrow"), lines: toRing, href: href.to_ring },
   ];
+  return finishSections(drafts, { t: c.t, can });
 }
 
-/** The level-8+ all-shop totals section: "not available" / "partial (n of m shops)", never a false 0. */
-export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, language: Language, baseUrl: string, day?: string, viewer?: LinkViewer | null): DigestSection {
+/**
+ * The level-8+ all-shop totals section: "not available" / "partial (n of m shops)", never a false 0.
+ * Finished like every section, against "all" shops and the business day; null = every line was cut.
+ */
+export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, language: Language, baseUrl: string, day?: string, viewer?: LinkViewer | null, access?: DigestAccess | null): DigestSection | null {
   const t = translator(language);
   const m = (cents: number) => formatCents(cents, language);
   const tot = allShopTotals(shops.map((s) => s.v2));
@@ -452,8 +475,11 @@ export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, lang
   const covered = (cov: Coverage, parts: Array<string | null>): string | null => cov.covered === 0 ? null
     : [...parts, cov.covered < cov.total ? t("digest.v2.totals.partial", { n: cov.covered, total: cov.total }) : null].filter((x): x is string => x !== null).join(" · ");
   const unknown = (n: number) => n > 0 ? plural(t, n, "digest.v2.totals.unknown_one", "digest.v2.totals.unknown_other") : null;
-  const push = (label: string, text: string | null, tone: DigestTone, to: string | null = href) =>
-    lines.push(text === null ? { label, text: t("digest.v2.not_available"), tone: "info", href: to } : { label, text, tone, href: to });
+  /** `partial`: some shops are missing (or a comparison could not be made), so the figure is UNKNOWN in part. */
+  const push = (label: string, text: string | null, tone: DigestTone, to: string | null = href, partial = false) =>
+    lines.push(text === null ? { label, text: t("digest.v2.not_available"), tone: "info", href: to, unknown: true }
+      : { label, text, tone, href: to, ...(partial ? { unknown: true } : {}) });
+  const isPartial = (cov: Coverage) => cov.covered > 0 && cov.covered < cov.total;
 
   const s = tot.sales;
   const delta = s.lastWeekCents !== null && s.lastWeekCents > 0 ? Math.round(((s.netCents - s.lastWeekCents) / s.lastWeekCents) * 100) : null;
@@ -463,19 +489,20 @@ export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, lang
     plural(t, s.checks, "digest.v2.sales.checks_one", "digest.v2.sales.checks_other"),
     s.checks > 0 ? t("digest.v2.sales.avg_check", { money: m(Math.round(s.netCents / s.checks)) }) : null,
     s.netCents > 0 ? t("digest.v2.sales.third_party", { pct: `${Math.round((s.thirdPartyCents / s.netCents) * 100)}%` }) : null,
-  ]), "info", salesHref);
+  ]), "info", salesHref, isPartial(s) || s.lastWeekCents === null);
   push(t("digest.v2.catering.revenue_label"), covered(tot.catering, [
     t("digest.v2.catering.split", { completed: m(tot.catering.completedCents), confirmed: m(tot.catering.confirmedCents) }), t("digest.v2.catering.not_in_pos"),
-  ]), "info", cateringHref);
+  ]), "info", cateringHref, isPartial(tot.catering));
   const o = tot.ordering;
   push(t("digest.v2.ordering.placed_label"), covered(o, [
     plural(t, o.placed, "digest.v2.ordering.placed_one", "digest.v2.ordering.placed_other"), m(o.placedCents), unknown(o.unpriced),
     plural(t, o.missed, "digest.v2.totals.missed_one", "digest.v2.totals.missed_other"),
-  ]), o.missed > 0 ? "issue" : "info");
+  ]), o.missed > 0 ? "issue" : "info", href, isPartial(o));
   const r = tot.receiving;
   push(t("digest.family.receiving"), covered(r, [
     plural(t, r.deliveries, "digest.v2.totals.deliveries_one", "digest.v2.totals.deliveries_other"), m(r.cents), unknown(r.unknownCents),
-  ]), "info");
-  push(t("digest.v2.tomorrow.deliveries_label"), covered(o, [plural(t, o.dueTomorrow, "digest.v2.totals.due_one", "digest.v2.totals.due_other")]), "info");
-  return { title: t("digest.v2.section.all_shops"), lines, href };
+  ]), "info", href, isPartial(r));
+  push(t("digest.v2.tomorrow.deliveries_label"), covered(o, [plural(t, o.dueTomorrow, "digest.v2.totals.due_one", "digest.v2.totals.due_other")]), "info", href, isPartial(o));
+  const can = (cap: DigestCapability) => digestCan(access, cap, { locationId: "all", day: day ?? "" });
+  return finishSection({ title: t("digest.v2.section.all_shops"), lines, href }, { t, can });
 }

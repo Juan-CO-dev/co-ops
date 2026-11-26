@@ -52,7 +52,8 @@ export type DigestTarget =
   | { to: "delivery"; location: string; id: string }
   | { to: "counts"; location: string }
   | { to: "vendor_mail"; location: string }
-  | { to: "team"; location: string }
+  /** The Team roster; with `day` it opens on that one business day (range=custom&from=D&to=D). */
+  | { to: "team"; location: string; day?: string }
   | { to: "yield"; location: string }
   /** The catering pipeline board; `lead` opens that lead's card, `anchor` the Toast to-ring list. */
   | { to: "pipeline"; lead?: string; anchor?: "to_ring" }
@@ -83,7 +84,8 @@ export function targetPath(t: DigestTarget): string {
     case "delivery": return `/operations/receiving/${encodeURIComponent(t.id)}`;
     case "counts": return `/operations/counts?${loc(t.location)}`;
     case "vendor_mail": return `/operations/vendor-mail?${loc(t.location)}`;
-    case "team": return `/reports/trends/team?${loc(t.location)}`;
+    // The page reads location + range/from/to through resolveTrendRange (granularity `g` defaults to day).
+    case "team": return `/reports/trends/team?${t.day !== undefined ? dayParams(t.location, t.day) : loc(t.location)}`;
     case "yield": return `/operations/production/yield?${loc(t.location)}`;
     // `?lead=` makes the board load that lead even past its row cap; `#lead-<id>` opens and scrolls to its card.
     case "pipeline": return `/catering/pipeline${t.lead ? `?lead=${encodeURIComponent(t.lead)}#${DIGEST_ANCHORS.lead(t.lead)}` : t.anchor === "to_ring" ? `#${DIGEST_ANCHORS.pipelineToRing}` : ""}`;
@@ -102,7 +104,7 @@ function wellFormed(t: DigestTarget): boolean {
   if (t.to === "ordering") ids.push(t.po);
   if (t.to === "pipeline") ids.push(t.lead);
   if (t.to === "quotes") ids.push(t.quote);
-  if ("day" in t && !DAY.test(t.day)) return false;
+  if ("day" in t && t.day !== undefined && !DAY.test(t.day)) return false;
   return ids.every((x) => x === undefined || ID.test(x));
 }
 

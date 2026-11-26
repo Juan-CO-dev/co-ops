@@ -37,7 +37,21 @@ export class Provider {
 import { describe, expect, it, vi } from "vitest";
 import { classifyProviderResult, runClosingDigestsWith, runDigestTickWith, type ClaimRow, type DigestAlert, type DigestIO, type FinishGuard, type SendOutcome } from "@/lib/report-digests-engine";
 import { DEFAULT_DIGEST_SETTINGS, type DigestSettings, type RecipientOverride, type SendLogRow } from "@/lib/report-digests-shared";
-import type { CateringFacts, ShopDayFacts } from "@/lib/report-digests-compose";
+import type { CateringFacts, Envelope, ShopDayFacts } from "@/lib/report-digests-compose";
+import { digestAccessFor, digestCan } from "@/lib/report-digests-access-shared";
+import { NO_ACCESS_VIEWER } from "@/lib/report-digests-links";
+
+/** Digests round 3: every envelope the engine composes with, recorded (the renderers still run for real). */
+const envelopes = vi.hoisted(() => [] as Array<{ kind: string; env: Envelope }>);
+vi.mock("@/lib/report-digests-compose", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/report-digests-compose")>();
+  return {
+    ...real,
+    renderShopDigest: (f: Parameters<typeof real.renderShopDigest>[0], env: Envelope) => { envelopes.push({ kind: "shop", env }); return real.renderShopDigest(f, env); },
+    renderUnifiedDigest: (a: Parameters<typeof real.renderUnifiedDigest>[0], env: Envelope) => { envelopes.push({ kind: "unified", env }); return real.renderUnifiedDigest(a, env); },
+    renderCateringDigest: (f: Parameters<typeof real.renderCateringDigest>[0], s: Parameters<typeof real.renderCateringDigest>[1], env: Envelope) => { envelopes.push({ kind: "catering", env }); return real.renderCateringDigest(f, s, env); },
+  };
+});
 
 const A = { id: "aaaaaaaa-0000-4000-8000-000000000001", name: "Shop A" };
 const B = { id: "bbbbbbbb-0000-4000-8000-000000000002", name: "Shop B" };
@@ -652,5 +666,32 @@ describe("digest deep links (2026-11-23): built per recipient, never a resend", 
     const firstKeys = new Set(one.sent.map((m) => m.key));
     expect(two.sent.filter((m) => firstKeys.has(m.key))).toEqual([]);
     expect(one.provider.calls.length + two.provider.calls.length).toBe(one.sent.length + two.sent.length);
+  });
+});
+
+describe("digests round 3: the engine sets the recipient's DATA access on every send", () => {
+  it("every envelope carries access = digestAccessFor(its own viewer): shop, unified and catering", async () => {
+    envelopes.length = 0;
+    const { io, sent } = makeIO({ now: "2026-10-08T02:30:00Z", finalized: { [DAY]: [A.id, B.id] } });
+    await runClosingDigestsWith(io, B.id, DAY);
+    const morning = makeIO({ now: "2026-10-08T11:05:00Z", finalized: { [DAY]: [A.id, B.id] } });
+    await runDigestTickWith(morning.io);
+    expect(new Set(envelopes.map((e) => e.kind))).toEqual(new Set(["shop", "unified", "catering"]));
+    expect(sent.length).toBeGreaterThan(0);
+    for (const { env } of envelopes) {
+      expect(env.viewer).toBeTruthy();
+      expect(env.access).toEqual(digestAccessFor(env.viewer));
+      expect(env.access).not.toBeNull();
+    }
+    // The GM of Shop A gets their own shop's data, never Shop B's; the owner gets both.
+    const gmA = envelopes.find((e) => e.env.viewer?.role === "gm" && e.env.viewer.locations.includes(A.id))!.env;
+    expect(digestCan(gmA.access, "sales_detail", { locationId: A.id, day: DAY })).toBe(true);
+    expect(digestCan(gmA.access, "sales_detail", { locationId: B.id, day: DAY })).toBe(false);
+  });
+
+  it("an unresolvable recipient's viewer (NO_ACCESS_VIEWER) yields an access that can do nothing", () => {
+    const none = digestAccessFor(NO_ACCESS_VIEWER);
+    expect(none).toEqual({ viewer: NO_ACCESS_VIEWER });
+    for (const locationId of [A.id, B.id, "all"]) expect(digestCan(none, "sales_detail", { locationId, day: DAY })).toBe(false);
   });
 });

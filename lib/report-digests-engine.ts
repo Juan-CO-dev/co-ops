@@ -67,6 +67,7 @@ import {
 } from "@/lib/report-package-shared";
 import type { PackageCadence } from "@/lib/report-recipients-shared";
 import { NO_ACCESS_VIEWER, type LinkViewer } from "@/lib/report-digests-links";
+import { digestAccessFor } from "@/lib/report-digests-access-shared";
 export type { ComposedSend, EmailAttachment, PackageIO };
 
 /** Everything the send log keys: the three digests and (exports PR) the three package cadences. */
@@ -381,7 +382,10 @@ class Run {
     // Compose BEFORE a FRESH attempt is recorded: a compose failure never reached the provider.
     let mail: ComposedSend;
     try {
-      const env: Envelope = { language: r.language, baseUrl: this.io.baseUrl, viewer: this.viewerFor(r), previewFor: this.mode === "preview" ? { name: r.name, email: r.email } : null };
+      // The viewer is built ONCE per send; links and data gates both come from it. An unresolvable
+      // recipient is NO_ACCESS_VIEWER, whose access can do nothing.
+      const viewer = this.viewerFor(r);
+      const env: Envelope = { language: r.language, baseUrl: this.io.baseUrl, viewer, access: digestAccessFor(viewer), previewFor: this.mode === "preview" ? { name: r.name, email: r.email } : null };
       mail = await compose(env);
     } catch (e) {
       const msg = `compose: ${e instanceof Error ? e.message : String(e)}`;

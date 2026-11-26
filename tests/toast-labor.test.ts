@@ -218,11 +218,12 @@ describe("the nightly digest's Labor section", () => {
     ], 175_000);
     const sections = composeShopSections({ ...base, v2: v2Fixture({ labor: ok(labor) }) }, "en", "https://x.test", false);
     const s = sections.find((x) => x.title === "Labor")!;
+    // Digests round 3, fix round 1 (F9): the issue line sorts first; the rest keep the composer's order.
     expect(s.lines.map((l) => `${l.tone}|${l.label}|${l.text}`)).toEqual([
+      "issue|Overtime|Ana 11 h today (over 10 h)",
       "info|Labor (Toast)|17.5 h clocked · $100.00 sales per labor hour",
       "info|Hours by job|Line Cook 11 h, Cashier 6.5 h",
       "info|Who worked|Ana 11 h, Lu 6.5 h",
-      "issue|Overtime|Ana 11 h today (over 10 h)",
     ]);
     const none = composeShopSections({ ...base, v2: v2Fixture({ labor: unavailable("no_labor") }) }, "en", "https://x.test", false);
     expect(none.find((x) => x.title === "Labor")!.lines[0]!.text).toBe("Labor not available yet");
@@ -283,27 +284,34 @@ describe("unknown labor hours survive aggregation and rendering (Astra r3)", () 
     const mixed = summarizeLabor("2026-10-07", [e("a", "Ana", 8), e("l", "Lu", null)], 100_000);
     const lines = (lang: "en" | "es", s = mixed) => composeShopSections({ ...base, v2: v2Fixture({ labor: ok(s) }) }, lang, "https://x.test", false)
       .find((x) => x.title === (lang === "en" ? "Labor" : "Mano de obra"))!.lines.map((l) => `${l.tone}|${l.label}|${l.text}`);
+    // Fix round 1 (F9): the unknown overtime line sorts before the routine lines.
     expect(lines("en")).toEqual([
+      "info|Overtime|Not assessed — partial hours",
       "info|Labor (Toast)|8 h clocked · 1 shift with unknown hours · sales per labor hour not available (partial hours)",
       "info|Hours by job|Line Cook 8 h",
       "info|Who worked|Ana 8 h, Lu 0 h (+1 shift, hours unknown)",
-      "info|Overtime|Not assessed — partial hours",
     ]);
     expect(lines("es")).toEqual([
+      "info|Horas extra|Sin evaluar — horas parciales",
       "info|Mano de obra (Toast)|8 h trabajadas · 1 turno con horas desconocidas · ventas por hora de trabajo no disponibles (horas parciales)",
       "info|Horas por puesto|Line Cook 8 h",
       "info|Quién trabajó|Ana 8 h, Lu 0 h (+1 turno, horas desconocidas)",
-      "info|Horas extra|Sin evaluar — horas parciales",
     ]);
     // An unknown earlier in the week: D's own over-10 h alert still prints; only the 40 h week is withheld.
+    // After PR 1a the issue / unknown overtime line sorts first in the section (F9 priority order).
     const earlierUnknown = summarizeLabor("2026-10-07", [e("a", "Ana", 10.5), e("l", "Lu", null, false, "2026-10-04")], 100_000);
-    expect(lines("en", earlierUnknown).at(-1)).toBe("issue|Overtime|Ana 10.5 h today (over 10 h) · 40 h week not assessed (hours unknown earlier this week)");
-    expect(lines("es", earlierUnknown).at(-1)).toBe("issue|Horas extra|Ana 10.5 h hoy (más de 10 h) · semana de 40 h sin evaluar (horas desconocidas antes esta semana)");
+    expect(lines("en", earlierUnknown)[0]).toBe("issue|Overtime|Ana 10.5 h today (over 10 h) · 40 h week not assessed (hours unknown earlier this week)");
+    expect(lines("es", earlierUnknown)[0]).toBe("issue|Horas extra|Ana 10.5 h hoy (más de 10 h) · semana de 40 h sin evaluar (horas desconocidas antes esta semana)");
+    // Both flags: the issue counts AND the unchecked week counts as unknown (status + preheader see both).
+    const flags = (s: ReturnType<typeof summarizeLabor>) => composeShopSections({ ...base, v2: v2Fixture({ labor: ok(s) }) }, "en", "https://x.test", false)
+      .find((x) => x.title === "Labor")!.lines.filter((l) => l.label === "Overtime").map((l) => `${l.tone}|${l.unknown === true}`);
+    expect(flags(earlierUnknown)).toEqual(["issue|true"]);
     const earlierUnknownNoAlert = summarizeLabor("2026-10-07", [e("a", "Ana", 8), e("l", "Lu", null, false, "2026-10-04")], 100_000);
-    expect(lines("en", earlierUnknownNoAlert).at(-1)).toBe("info|Overtime|No one over 10 h today · 40 h week not assessed (hours unknown earlier this week)");
+    expect(lines("en", earlierUnknownNoAlert)[0]).toBe("info|Overtime|No one over 10 h today · 40 h week not assessed (hours unknown earlier this week)");
     // Only unknown-hour shifts: still not "No one clocked in".
     const onlyUnknown = summarizeLabor("2026-10-07", [e("l", "Lu", null), e("m", "Mo", null)], 100_000);
-    expect(lines("en", onlyUnknown)[0]).toBe("info|Labor (Toast)|0 h clocked · 2 shifts with unknown hours · sales per labor hour not available (partial hours)");
+    expect(lines("en", onlyUnknown)[1]).toBe("info|Labor (Toast)|0 h clocked · 2 shifts with unknown hours · sales per labor hour not available (partial hours)");
     expect(lines("en", onlyUnknown).join("\n")).not.toContain("No one clocked in");
+    expect(flags(earlierUnknownNoAlert)).toEqual(["info|true"]);
   });
 });
