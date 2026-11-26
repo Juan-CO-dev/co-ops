@@ -326,6 +326,41 @@ async function applicableDayFilter(
 }
 
 /**
+ * The filtered board's rows: one scoped read of exactly that day (the shop, the booked stages, AND-ed with the
+ * reader's `or(scope)`), filtered in the database BEFORE paging, read to completion by KEYSET paging on the unique
+ * total order (created_at desc, id asc) — fix round 1, A5. Each page continues strictly after the last
+ * (created_at, id) pair read, so a lead that leaves or enters the set between two page requests never shifts the
+ * boundary: no row that stays in the set is skipped or repeated. Pages until a short page (PostgREST's max-rows).
+ */
+async function readDayFilterRows(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  f: PipelineDayFilter,
+  scope: string | null,
+): Promise<DbLeadRow[]> {
+  const out: DbLeadRow[] = [];
+  let after: { createdAt: string; id: string } | null = null;
+  for (;;) {
+    let q = sb.from("catering_pipeline").select(LEAD_COLS)
+      .eq("event_date", f.day)
+      .in("stage", [...CATERING_RAN_STAGES]);
+    q = f.location === PIPELINE_NO_SHOP ? q.is("location_id", null) : q.eq("location_id", f.location);
+    if (scope) q = q.or(scope); // AND-ed with the filters above (two filters = AND)
+    // The keyset: strictly after the last row in (created_at desc, id asc). Values are quoted (a timestamp carries
+    // `:` and `.`); both come from the previous page's own rows (a timestamptz and a uuid), never from a request.
+    if (after) q = q.or(`created_at.lt."${after.createdAt}",and(created_at.eq."${after.createdAt}",id.gt.${after.id})`);
+    const { data, error } = await q.order("created_at", { ascending: false }).order("id", { ascending: true })
+      .limit(DAY_FILTER_PAGE).returns<DbLeadRow[]>();
+    if (error) throw new Error(`loadPipelineBoard day filter: ${error.message}`);
+    const page = data ?? [];
+    out.push(...page);
+    const last = page[page.length - 1];
+    if (page.length < DAY_FILTER_PAGE || !last) break;
+    after = { createdAt: last.created_at, id: last.id };
+  }
+  return out;
+}
+
+/**
  * All non-archived leads the actor may view, for the board (grouped client-side by stage).
  * `ensureLead` (a deep link's `?lead=<id>`, e.g. from a digest email): that one lead is on the board
  * even when the newest-first read stopped before it (the row cap), read under the SAME scope — a lead
@@ -353,8 +388,9 @@ export async function loadPipelineBoardView(
   const sb = getServiceRoleClient();
   const { or: scope, reader } = await readScope(actor);
   const wanted = opts.ensureLead && LEAD_ID.test(opts.ensureLead) ? opts.ensureLead.toLowerCase() : null;
-  // The ensured lead, read once under the board's scope (undefined = not read yet; null = not viewable).
-  let ensured: DbLeadRow | null | undefined;
+  // The ensured lead, read under the board's scope (null = not viewable). A row read here is used ONLY for the
+  // decision it was read for: it is never carried into the board (fix round 1, A1: a lead that left the reader's
+  // scope between two reads must not reach the response).
   const readEnsured = async (id: string): Promise<DbLeadRow | null> => {
     let one = sb.from("catering_pipeline").select(LEAD_COLS).eq("id", id);
     if (scope) one = one.or(scope);
@@ -365,29 +401,24 @@ export async function loadPipelineBoardView(
 
   let filter = opts.filter ? await applicableDayFilter(sb, reader, opts.filter) : null;
   if (filter && wanted) {
-    ensured = await readEnsured(wanted);
-    if (ensured && !leadMatchesDayFilter(mapLead(ensured), filter)) filter = null;
+    // Decision only: does a lead the reader may view sit outside the filter? Then the lead wins (no filter).
+    const probe = await readEnsured(wanted);
+    if (probe && !leadMatchesDayFilter(mapLead(probe), filter)) filter = null;
   }
 
   let rows: DbLeadRow[];
   if (filter) {
-    const f = filter;
-    rows = await selectAllRows<DbLeadRow>((from, to) => {
-      let q = sb.from("catering_pipeline").select(LEAD_COLS)
-        .eq("event_date", f.day)
-        .in("stage", [...CATERING_RAN_STAGES]);
-      q = f.location === PIPELINE_NO_SHOP ? q.is("location_id", null) : q.eq("location_id", f.location);
-      if (scope) q = q.or(scope); // AND-ed with the filters above (two filters = AND)
-      return q.order("created_at", { ascending: false }).order("id", { ascending: true }).range(from, to).returns<DbLeadRow[]>();
-    }, DAY_FILTER_PAGE);
+    rows = await readDayFilterRows(sb, filter, scope);
   } else {
     let q = sb.from("catering_pipeline").select(LEAD_COLS);
     if (scope) q = q.or(scope);
     const { data, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
     if (error) throw new Error(`loadPipelineBoard: ${error.message}`);
     rows = [...(data ?? [])];
+    // The ensured lead is RE-READ under scope here, beside the board read, even when the filter decision above
+    // already read it: a lead that has left the reader's scope since then is not found and not added.
     if (wanted && !rows.some((r) => r.id.toLowerCase() === wanted)) {
-      const one = ensured === undefined ? await readEnsured(wanted) : ensured;
+      const one = await readEnsured(wanted);
       if (one) rows.push(one);
     }
   }

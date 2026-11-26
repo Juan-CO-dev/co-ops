@@ -5,7 +5,7 @@
  *  - The page parses `?day=&location=&view=booked` and hands it to the board loader; a bad or impossible day, a
  *    malformed shop or a missing `view` is ignored (null), never an error.
  *  - Search (`q`) wins: no board read, no banner.
- *  - The board loader's APPLIED filter decides the banner: one line "Showing booked <shop> events on <date> · Show all",
+ *  - The board loader's APPLIED filter decides the banner: one line "The stage columns show only booked <shop> events on <date> · Show all" (fix round 1, O2: it names only what it filters),
  *    "Show all" a plain link to /catering/pipeline (44 px); none when the loader cleared or ignored it. en + es.
  *  - The anchors the digest links to are on the board: #follow-ups (when one is due) and #pipeline-stages.
  */
@@ -97,7 +97,9 @@ describe("the banner follows the filter the board APPLIED", () => {
     st.view = { leads: [boardLead("l1")], filter: { day: "2026-11-27", location: A, shopName: "Shop A" } };
     const html = await page({ day: "2026-11-27", location: A, view: "booked" });
     const banner = html.match(BANNER)?.[0] ?? "";
-    expect(banner).toContain("Showing booked Shop A events on");
+    expect(banner).toContain("The stage columns show only booked Shop A events on");
+    // O2: it names only what it filters; the follow-ups and the to-ring list are not filtered and are not implied to be.
+    expect(banner).not.toMatch(/follow-up|Toast|to ring/i);
     expect(banner).toContain("Nov 27");
     expect(banner).toMatch(/<a href="\/catering\/pipeline" class="inline-flex min-h-\[44px\] items-center[^"]*">Show all<\/a>/);
     expect(html.match(new RegExp(BANNER.source, "g"))).toHaveLength(1);
@@ -105,11 +107,12 @@ describe("the banner follows the filter the board APPLIED", () => {
 
   it("`none`: the no-shop wording; Spanish", async () => {
     st.view = { leads: [], filter: { day: "2026-11-27", location: "none", shopName: null } };
-    expect((await page({ day: "2026-11-27", location: "none", view: "booked" })).match(BANNER)?.[0]).toContain("Showing booked events with no shop set on");
+    expect((await page({ day: "2026-11-27", location: "none", view: "booked" })).match(BANNER)?.[0]).toContain("The stage columns show only booked events with no shop set on");
     st.lang = "es";
     st.view = { leads: [], filter: { day: "2026-11-27", location: A, shopName: "Shop A" } };
     const es = (await page({ day: "2026-11-27", location: A, view: "booked" })).match(BANNER)?.[0] ?? "";
-    expect(es).toContain("Mostrando los eventos reservados de Shop A el");
+    expect(es).toContain("Las columnas de etapas muestran solo los eventos reservados de Shop A el");
+    expect(es).not.toMatch(/seguimiento|Toast/i);
     expect(es).toContain(">Ver todo</a>");
   });
 

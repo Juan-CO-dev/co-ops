@@ -327,6 +327,15 @@ export function isCalendarDay(v: unknown): v is string {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 
+/**
+ * The ONE shape check for a pipeline shop param (`?location=` of the day filter): a shop UUID or `none`. The page's
+ * parser and the digest link builder (lib/report-digests-links.ts) both call it, so the builder never emits a link
+ * with a shop id the page would discard (fix round 1, A6).
+ */
+export function isPipelineShopParam(v: unknown): v is string {
+  return typeof v === "string" && (v === PIPELINE_NO_SHOP || SHOP_ID.test(v));
+}
+
 /** The parsed (not yet scope-checked) day filter: a calendar day and a shop id or `none`. */
 export interface PipelineDayFilterParams { day: string; location: string }
 
@@ -339,8 +348,7 @@ export function parsePipelineDayFilter(sp: Record<string, string | string[] | un
   const one = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
   const day = one("day");
   const location = one("location");
-  if (one("view") !== "booked" || !isCalendarDay(day) || location === null) return null;
-  if (location !== PIPELINE_NO_SHOP && !SHOP_ID.test(location)) return null;
+  if (one("view") !== "booked" || !isCalendarDay(day) || !isPipelineShopParam(location)) return null;
   return { day, location: location === PIPELINE_NO_SHOP ? location : location.toLowerCase() };
 }
 

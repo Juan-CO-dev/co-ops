@@ -15,9 +15,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/session";
 
 type Row = Record<string, unknown>;
-const { db, calls } = vi.hoisted(() => ({
+const { db, calls, hooks } = vi.hoisted(() => ({
   db: {} as Record<string, Row[]>,
   calls: [] as Array<{ table: string; ops: Array<[string, unknown[]]> }>,
+  /** Runs after every response is cut (fix round 1): a test moves rows BETWEEN two requests here. */
+  hooks: { afterExec: null as null | ((table: string, ops: Array<[string, unknown[]]>) => void) },
 }));
 
 const MAX_ROWS = 1000;
@@ -42,8 +44,17 @@ function splitTop(s: string): string[] {
   return out;
 }
 function term(t: string): Pred {
+  // A nested logic tree: and(a,b,…) / or(a,b,…).
+  const nested = /^(and|or)\((.*)\)$/.exec(t);
+  if (nested) {
+    const parts = splitTop(nested[2]!).map(term);
+    return nested[1] === "and" ? (r) => parts.every((f) => f(r)) : (r) => parts.some((f) => f(r));
+  }
   const [col, op, ...rest] = t.split(".");
-  const val = rest.join(".");
+  // PostgREST's quoted value ("…"): the quotes are not part of the value.
+  const val = rest.join(".").replace(/^"(.*)"$/, "$1");
+  if (op === "lt") return (r) => String(r[col!]) < val;
+  if (op === "gt") return (r) => String(r[col!]) > val;
   if (op === "is") return (r) => (r[col!] ?? null) === (val === "null" ? null : val);
   if (op === "in") { const ids = val.replace(/^\(|\)$/g, "").split(","); return (r) => ids.includes(String(r[col!])); }
   if (op === "eq") return (r) => String(r[col!]) === val;
@@ -79,7 +90,9 @@ class Q {
       return salt(String(a.id), n) - salt(String(b.id), n); // ties: a fresh order per request
     });
     const take = Math.min(this.size ?? MAX_ROWS, MAX_ROWS);
-    return { data: rows.slice(this.from, this.from + take).map((r) => ({ ...r })), error: null };
+    const out = rows.slice(this.from, this.from + take).map((r) => ({ ...r }));
+    hooks.afterExec?.(this.table, this.rec.ops);
+    return { data: out, error: null };
   }
   maybeSingle() { const r = this.exec(); return Promise.resolve({ data: r.data[0] ?? null, error: null }); }
   then<A, B>(res: (v: { data: Row[]; error: null }) => A, rej?: (e: unknown) => B) { return Promise.resolve(this.exec()).then(res, rej); }
@@ -89,7 +102,7 @@ vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => sbFake }))
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 
 import { loadPipelineBoard, loadPipelineBoardView } from "@/lib/catering/pipeline";
-import { CATERING_RAN_STAGES, isCalendarDay, leadMatchesDayFilter, parsePipelineDayFilter } from "@/lib/catering/pipeline-shared";
+import { CATERING_RAN_STAGES, isCalendarDay, isPipelineShopParam, leadMatchesDayFilter, parsePipelineDayFilter } from "@/lib/catering/pipeline-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -112,6 +125,7 @@ function lead(over: Row = {}): Row {
 beforeEach(() => {
   for (const k of Object.keys(db)) delete db[k];
   calls.length = 0;
+  hooks.afterExec = null;
   next = 1;
   db.users = [];
   db.user_locations = [];
@@ -139,7 +153,14 @@ describe("the URL parser: anything but a well-formed booked filter is ignored", 
     [{ location: A, view: "booked" }, "no day"],
     [{ day: D, view: "booked" }, "no shop"],
     [{ day: [D, D], location: A, view: "booked" }, "a repeated param"],
+    [{ day: D, location: "shop-a", view: "booked" }, "an id-shaped word that is not a UUID (fix round 1, A6)"],
   ] as const)("%j (%s) → null", (sp: unknown, why: string) => expect(parsePipelineDayFilter(sp as never), why).toBeNull());
+  it("the ONE shop-param validator (page and link builder): a shop UUID or `none`, nothing else (fix round 1, A6)", () => {
+    expect(isPipelineShopParam(A)).toBe(true);
+    expect(isPipelineShopParam(A.toUpperCase())).toBe(true);
+    expect(isPipelineShopParam("none")).toBe(true);
+    for (const bad of ["shop-a", "Shop A", "", "NONE", `${A}x`, null, undefined, 7]) expect(isPipelineShopParam(bad), String(bad)).toBe(false);
+  });
   it("a calendar day is a real one (leap years included)", () => {
     expect(isCalendarDay("2028-02-29")).toBe(true);
     expect(isCalendarDay("2026-02-29")).toBe(false);
@@ -183,24 +204,38 @@ describe("the filtered board: one scoped read of exactly that day, read to compl
     expect(ids(view.leads)).toEqual(ids(none as Array<{ id: string }>));
   });
 
-  it("the shape of the read: filtered in the database BEFORE paging, scope AND-ed, a unique total order, paged", async () => {
+  it("the shape of the read: filtered in the database BEFORE paging, scope AND-ed, a unique total order, KEYSET pages", async () => {
     const gm = actor("gm-a", "gm", [A]);
-    db.catering_pipeline!.push(lead());
+    // 1,000 + 1 rows: exactly two pages, so the second page's keyset is visible.
+    for (let i = 0; i < 1001; i += 1) db.catering_pipeline!.push(lead({ created_at: `2026-11-${String(1 + (i % 20)).padStart(2, "0")}T08:00:00.000Z` }));
     calls.length = 0;
     await loadPipelineBoardView(gm, { filter: F(A) });
-    const read = calls.find((c) => c.table === "catering_pipeline")!;
-    const ops = read.ops.map(([op, args]) => `${op}:${JSON.stringify(args)}`);
-    expect(ops).toEqual(expect.arrayContaining([
-      `eq:${JSON.stringify(["event_date", D])}`,
-      `in:${JSON.stringify(["stage", ["confirmed", "out", "completed"]])}`,
-      `eq:${JSON.stringify(["location_id", A])}`,
-      `or:${JSON.stringify([`location_id.is.null,location_id.in.(${A})`])}`,
-      `range:${JSON.stringify([0, 999])}`,
-    ]));
-    const orders = read.ops.filter(([op]) => op === "order").map(([, a]) => a);
-    expect(orders).toEqual([["created_at", { ascending: false }], ["id", { ascending: true }]]);
-    // Every filter precedes the range: nothing is filtered after a page is cut.
-    expect(read.ops.findIndex(([op]) => op === "range")).toBeGreaterThan(Math.max(...read.ops.map(([op], i) => (["eq", "in", "is", "or"].includes(op) ? i : -1))));
+    const reads = calls.filter((c) => c.table === "catering_pipeline");
+    expect(reads).toHaveLength(2);
+    const scope = `or:${JSON.stringify([`location_id.is.null,location_id.in.(${A})`])}`;
+    for (const read of reads) {
+      const ops = read.ops.map(([op, args]) => `${op}:${JSON.stringify(args)}`);
+      expect(ops).toEqual(expect.arrayContaining([
+        `eq:${JSON.stringify(["event_date", D])}`,
+        `in:${JSON.stringify(["stage", ["confirmed", "out", "completed"]])}`,
+        `eq:${JSON.stringify(["location_id", A])}`,
+        scope,
+        `limit:${JSON.stringify([1000])}`,
+      ]));
+      // No offset anywhere: a page never starts at a row COUNT.
+      expect(read.ops.some(([op]) => op === "range")).toBe(false);
+      const orders = read.ops.filter(([op]) => op === "order").map(([, a]) => a);
+      expect(orders).toEqual([["created_at", { ascending: false }], ["id", { ascending: true }]]);
+      // Every filter precedes the limit: nothing is filtered after a page is cut.
+      expect(read.ops.findIndex(([op]) => op === "limit")).toBeGreaterThan(Math.max(...read.ops.map(([op], i) => (["eq", "in", "is", "or"].includes(op) ? i : -1))));
+    }
+    // Page 1 has no keyset; page 2 continues strictly after page 1's last (created_at, id) in the board's order.
+    const keyset = (read: (typeof reads)[number]) => read.ops.filter(([op, a]) => op === "or" && `or:${JSON.stringify(a)}` !== scope).map(([, a]) => a[0]);
+    expect(keyset(reads[0]!)).toEqual([]);
+    const sorted = [...db.catering_pipeline!].sort((a, b) =>
+      a.created_at === b.created_at ? (String(a.id) < String(b.id) ? -1 : 1) : (String(a.created_at) < String(b.created_at) ? 1 : -1));
+    const last = sorted[999]!;
+    expect(keyset(reads[1]!)).toEqual([`created_at.lt."${String(last.created_at)}",and(created_at.eq."${String(last.created_at)}",id.gt.${String(last.id)})`]);
   });
 
   it("tied timestamps across a page boundary: every row once, none lost (2,500 orders at one instant)", async () => {
@@ -215,6 +250,44 @@ describe("the filtered board: one scoped read of exactly that day, read to compl
       .order("created_at", { ascending: false }).range(from, to) as never);
     expect(careless).toHaveLength(2500);
     expect(new Set(careless.map((r) => r.id)).size).toBeLessThan(2500);
+  });
+
+  // Fix round 1, A5: the set CHANGES between two page requests. With an offset, a row leaving page 1 shifts the old
+  // 1,001st row to offset 999 and the next page skips it; a row entering ahead of the boundary repeats one. The keyset
+  // continues after the last (created_at, id) actually read, so neither happens.
+  const distinct = (n: number) => Array.from({ length: n }, (_, i) => lead({ created_at: new Date(Date.UTC(2026, 10, 20) - i * 60_000).toISOString() }));
+
+  it("a row LEAVES the set between page requests: every row that stayed is shown once, none skipped", async () => {
+    const moo = actor("moo", "moo", []);
+    // Distinct instants, newest first by index: page 1 is rows 0..999 and page 2 starts at row 1000.
+    const rows = distinct(1500);
+    db.catering_pipeline!.push(...rows);
+    const leaver = rows[10]!;
+    let pages = 0;
+    hooks.afterExec = (table) => {
+      if (table === "catering_pipeline" && ++pages === 1) leaver.event_date = OTHER_DAY; // left the day after page 1
+    };
+    const view = await loadPipelineBoardView(moo, { filter: F(A) });
+    const seen = view.leads.map((l) => l.id);
+    expect(new Set(seen).size).toBe(seen.length); // nothing repeated
+    expect(seen).toContain(rows[1000]!.id); // the row an offset would skip
+    for (const r of rows) if (r !== leaver) expect(seen).toContain(r.id); // nothing skipped
+  });
+
+  it("a row ENTERS the set ahead of the boundary between page requests: nothing repeated, nothing skipped", async () => {
+    const moo = actor("moo", "moo", []);
+    const rows = distinct(1500);
+    const joiner = lead({ event_date: OTHER_DAY, created_at: "2026-11-21T00:00:00.000Z" }); // newer than every row
+    db.catering_pipeline!.push(...rows, joiner);
+    let pages = 0;
+    hooks.afterExec = (table) => {
+      if (table === "catering_pipeline" && ++pages === 1) joiner.event_date = D; // joined the day after page 1
+    };
+    const view = await loadPipelineBoardView(moo, { filter: F(A) });
+    const seen = view.leads.map((l) => l.id);
+    expect(new Set(seen).size).toBe(seen.length); // the old 1,000th row is not read twice
+    expect(seen).toHaveLength(1500);
+    for (const r of rows) expect(seen).toContain(r.id);
   });
 });
 
@@ -290,6 +363,42 @@ describe("the ensured lead never contradicts the banner (plan check, Astra #1): 
     const view = await loadPipelineBoardView(gm, { ensureLead: match.id as string, filter: F(A) });
     expect(view.filter?.location).toBe(A);
     expect(ids(view.leads)).toEqual([match.id as string]);
+  });
+
+  it("fix round 1, A1: a lead that LEAVES the reader's scope between the filter decision and the board read is not in the response", async () => {
+    const gm = actor("gm-a", "gm", [A]);
+    // Readable when the filter decision reads it (shop A, another day: the filter is cleared) ...
+    const moving = lead({ event_date: OTHER_DAY });
+    const mine = lead();
+    db.catering_pipeline!.push(moving, mine);
+    let reads = 0;
+    hooks.afterExec = (table, ops) => {
+      if (table !== "catering_pipeline" || ++reads !== 1) return;
+      // ... and transferred to shop B right after that first read (the ensured-lead probe), before the board read.
+      expect(ops).toContainEqual(["eq", ["id", moving.id]]);
+      moving.location_id = B;
+    };
+    const view = await loadPipelineBoardView(gm, { ensureLead: moving.id as string, filter: F(A) });
+    expect(view.filter).toBeNull(); // the decision was taken on the first read
+    expect(view.leads.some((l) => l.id === moving.id)).toBe(false); // never the first read's row
+    expect(view.leads.every((l) => l.locationId === A || l.locationId === null)).toBe(true);
+    expect(ids(view.leads)).toEqual([mine.id as string]);
+    // It was re-read under scope beside the board read (and missed), not reused.
+    const idReads = calls.filter((c) => c.table === "catering_pipeline" && c.ops.some(([op, a]) => op === "eq" && a[0] === "id"));
+    expect(idReads).toHaveLength(2);
+    for (const r of idReads) expect(r.ops).toContainEqual(["or", [`location_id.is.null,location_id.in.(${A})`]]);
+  });
+
+  it("fix round 1, A1: a lead still in scope at the board read is ensured from that second read (its current row)", async () => {
+    const gm = actor("gm-a", "gm", [A]);
+    const elsewhere = lead({ event_date: OTHER_DAY, created_at: "2026-01-01T00:00:00.000Z", contact_name: "Before" });
+    for (let i = 0; i < 1100; i += 1) db.catering_pipeline!.push(lead({ created_at: "2026-11-25T00:00:00.000Z" }));
+    db.catering_pipeline!.push(elsewhere);
+    let reads = 0;
+    hooks.afterExec = (table) => { if (table === "catering_pipeline" && ++reads === 1) elsewhere.contact_name = "After"; };
+    const view = await loadPipelineBoardView(gm, { ensureLead: elsewhere.id as string, filter: F(A) });
+    expect(view.filter).toBeNull();
+    expect(view.leads.find((l) => l.id === elsewhere.id)?.contactName).toBe("After");
   });
 
   it("a lead the reader may NOT view: ignored, the filter stands, the lead is not added", async () => {

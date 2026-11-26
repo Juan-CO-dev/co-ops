@@ -28,7 +28,7 @@ export function toastRingLines(orders: readonly NotInToastOrder[], locationId: s
         tone: "attention",
         // The order's own lead card when it has one, else the board's "to ring in Toast" list.
         href: order.lead_id
-          ? digestLink(ctx, { to: "pipeline", lead: order.lead_id }, { to: "pipeline", anchor: "to_ring" })
+          ? digestLink(ctx, { to: "pipeline", lead: order.lead_id, leadShop: order.location_id }, { to: "pipeline", anchor: "to_ring" })
           : digestLink(ctx, { to: "pipeline", anchor: "to_ring" }),
       };
     });

@@ -502,8 +502,9 @@ export function composeCateringSections(
   const stagesHref = digestLink(ctx, { to: "pipeline", anchor: "stages" });
   const followUpsHref = digestLink(ctx, { to: "pipeline", anchor: "follow_ups" });
   // The lead's OWN card on the board, by id (the board opens it from #lead-<id>). Never a search by the
-  // contact's name: no personal data in a URL.
-  const leadHref = (l: CateringLeadFact) => digestLink(ctx, { to: "pipeline", lead: l.id }, { to: "pipeline" });
+  // contact's name: no personal data in a URL. The lead's shop is in the gate: a recipient whose pipeline scope
+  // does not hold it gets the plain board, as the section does (fix round 1, A2).
+  const leadHref = (l: CateringLeadFact) => digestLink(ctx, { to: "pipeline", lead: l.id, leadShop: l.locationId }, { to: "pipeline" });
   const quotesHref = digestLink(ctx, { to: "quotes" });
   /** The day's catering slice of Sales for this shop (ezCater ↔ Toast, the pipeline split), else the board. */
   const salesCateringHref = (shopId: string | null, day: string) =>

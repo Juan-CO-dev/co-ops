@@ -23,7 +23,7 @@ import { vendorMailRoleAllowed } from "@/lib/vendor-mail-shared";
 import type { ReportTypeKey } from "@/lib/reports-hub";
 import { SALES_CHANNELS, SALES_EMPTY_KEY, type SalesChannel, type SalesView } from "@/lib/sales-reports-shared";
 import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
-import { isCalendarDay, PIPELINE_NO_SHOP, pipelineShopInScope } from "@/lib/catering/pipeline-shared";
+import { isCalendarDay, isPipelineShopParam, PIPELINE_NO_SHOP, pipelineShopInScope } from "@/lib/catering/pipeline-shared";
 
 /** Who will open the link: the recipient's real role, its level and their ACTIVE shop memberships. */
 export interface LinkViewer { role: string; level: number; locations: readonly string[] }
@@ -65,12 +65,18 @@ export type DigestTarget =
   | { to: "team"; location: string; day?: string }
   | { to: "yield"; location: string }
   /**
-   * The catering pipeline board; `lead` opens that lead's card, `anchor` a part of the board (the Toast
-   * to-ring list, the follow-ups due, the stage board). `day` + `location` (a shop id or `none`) +
-   * `view: "booked"` = the board's server-side day filter (lib/catering/pipeline.ts): only the booked
-   * orders of that shop on that day. All three or none.
+   * One lead's card on the catering pipeline board (`?lead=<id>#lead-<id>`). `leadShop` is the lead's OWN shop (its
+   * `location_id`; null = no shop set) and goes into the gate: the board shows the card only to a reader whose
+   * pipeline scope holds that shop, so anyone else gets the chain's next target (fix round 1, A2). Required, so no
+   * caller can build a lead link without saying whose lead it is.
    */
-  | { to: "pipeline"; lead?: string; anchor?: PipelineAnchor; day?: string; location?: string; view?: "booked" }
+  | { to: "pipeline"; lead: string; leadShop: string | null }
+  /**
+   * The catering pipeline board; `anchor` a part of the board (the Toast to-ring list, the follow-ups due, the
+   * stage board). `day` + `location` (a shop id or `none`) + `view: "booked"` = the board's server-side day filter
+   * (lib/catering/pipeline.ts): only the booked orders of that shop on that day. All three or none.
+   */
+  | { to: "pipeline"; lead?: undefined; anchor?: PipelineAnchor; day?: string; location?: string; view?: "booked" }
   | { to: "quotes"; quote?: string }
   /** Catering prep demand; `location` its shop, `tab` the first tab, `day` that need date's section (Prep tab). */
   | { to: "prep_demand"; location?: string; tab?: "prep" | "sku"; day?: string }
@@ -118,7 +124,7 @@ export function targetPath(t: DigestTarget): string {
     case "yield": return `/operations/production/yield?${loc(t.location)}`;
     // `?lead=` makes the board load that lead even past its row cap; `#lead-<id>` opens and scrolls to its card.
     case "pipeline": {
-      if (t.lead) return `/catering/pipeline?lead=${encodeURIComponent(t.lead)}#${DIGEST_ANCHORS.lead(t.lead)}`;
+      if (t.lead !== undefined) return `/catering/pipeline?lead=${encodeURIComponent(t.lead)}#${DIGEST_ANCHORS.lead(t.lead)}`;
       const filter = t.day && t.location ? `?${new URLSearchParams({ day: t.day, location: t.location, view: "booked" })}` : "";
       return `/catering/pipeline${filter}${t.anchor ? `#${PIPELINE_ANCHOR[t.anchor]}` : ""}`;
     }
@@ -144,9 +150,14 @@ function wellFormed(t: DigestTarget): boolean {
   if (t.to === "quotes") ids.push(t.quote);
   // A day is a real calendar day (2026-02-31 is no link).
   if ("day" in t && t.day !== undefined && !isCalendarDay(t.day)) return false;
-  // The pipeline day filter is all three params or none.
-  if (t.to === "pipeline" && (t.day !== undefined || t.location !== undefined || t.view !== undefined)
-    && (t.day === undefined || t.location === undefined || t.view !== "booked")) return false;
+  // (A lead's `leadShop` never rides in the URL: it is only the gate's input, checked by scope in canOpen.)
+  if (t.to === "pipeline" && t.lead === undefined) {
+    if (t.day !== undefined || t.location !== undefined || t.view !== undefined) {
+      // The pipeline day filter is all three params or none, and its shop is one the PAGE accepts: the page's own
+      // validator (a shop UUID or `none`), so no link carries a shop id the page would discard (fix round 1, A6).
+      if (t.day === undefined || t.location === undefined || t.view !== "booked" || !isPipelineShopParam(t.location)) return false;
+    }
+  }
   if (t.to === "sales_checks") {
     if (t.channel !== undefined && !(SALES_CHANNELS as readonly string[]).includes(t.channel)) return false;
     if (t.provider !== undefined && t.provider !== SALES_EMPTY_KEY) ids.push(t.provider);
@@ -192,9 +203,14 @@ export function canOpen(viewer: LinkViewer | null | undefined, t: DigestTarget):
     }
     // YIELD_STATS_READ_MIN = 5, report-bound shop read.
     case "yield": return w.level >= 5 && t.location !== "all" && canReadReportLocation(actor, t.location);
-    // PIPELINE_READ_MIN = QUOTE_READ_MIN = 5. A day filter for one shop also needs that shop in the board's
-    // read scope (pipelineShopInScope = readScopeOr in lib/catering/pipeline.ts): a shop outside it is no link.
-    case "pipeline": return w.level >= 5 && (t.location === undefined || t.location === PIPELINE_NO_SHOP || pipelineShopInScope(actor, t.location));
+    // PIPELINE_READ_MIN = QUOTE_READ_MIN = 5. A day filter for one shop, and one lead's card, also need that shop
+    // (the filter's, or the lead's own) in the board's read scope (pipelineShopInScope = readScopeOr in
+    // lib/catering/pipeline.ts): a shop outside it is no link. A lead with no shop set is in every reader's scope.
+    case "pipeline": {
+      if (w.level < 5) return false;
+      if (t.lead !== undefined) return pipelineShopInScope(actor, t.leadShop ?? PIPELINE_NO_SHOP);
+      return t.location === undefined || pipelineShopInScope(actor, t.location);
+    }
     case "quotes": return w.level >= 5;
     // The admin shell (level 6) and PREP_DEMAND_READ_MIN = 6. A shop must be one the page would list
     // (loadPackageLocations: every active shop at level 9+, else the reader's own): the page silently shows

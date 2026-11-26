@@ -76,7 +76,7 @@ describe("the link map (targetPath)", () => {
     [{ to: "team", location: A, day: DAY }, `/reports/trends/team?${q(A)}`],
     [{ to: "yield", location: A }, `/operations/production/yield?location=${A}`],
     [{ to: "pipeline" }, "/catering/pipeline"],
-    [{ to: "pipeline", lead: "lead-7" }, "/catering/pipeline?lead=lead-7#lead-lead-7"],
+    [{ to: "pipeline", lead: "lead-7", leadShop: A }, "/catering/pipeline?lead=lead-7#lead-lead-7"],
     [{ to: "pipeline", anchor: "to_ring" }, `/catering/pipeline#${DIGEST_ANCHORS.pipelineToRing}`],
     [{ to: "quotes", quote: "qt-1" }, "/catering/quotes?quote=qt-1"],
     [{ to: "prep_demand" }, "/admin/catering/prep-demand"],
@@ -90,8 +90,8 @@ describe("the link map (targetPath)", () => {
   });
 
   it("anything that is not an id or a day never rides in a URL", () => {
-    expect(digestLink({ baseUrl: BASE }, { to: "pipeline", lead: "Jane Doe" })).toBeNull();
-    expect(digestLink({ baseUrl: BASE }, { to: "pipeline", lead: "jane@example.com" }, { to: "pipeline" })).toBe(`${BASE}/catering/pipeline`);
+    expect(digestLink({ baseUrl: BASE }, { to: "pipeline", lead: "Jane Doe", leadShop: A })).toBeNull();
+    expect(digestLink({ baseUrl: BASE }, { to: "pipeline", lead: "jane@example.com", leadShop: A }, { to: "pipeline" })).toBe(`${BASE}/catering/pipeline`);
     expect(digestLink({ baseUrl: BASE }, { to: "reports_hub", location: A, day: "yesterday" })).toBeNull();
     expect(digestLink({ baseUrl: BASE }, { to: "team", location: A, day: "yesterday" })).toBeNull();
   });

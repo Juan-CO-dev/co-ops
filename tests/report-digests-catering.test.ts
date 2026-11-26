@@ -8,8 +8,9 @@ import {
 } from "@/lib/report-digests-compose";
 
 const BASE = "https://ops.example.com";
-const A = "loc-a";
-const B = "loc-b";
+// Real shop ids are UUIDs: the pipeline day filter only links a shop id the page accepts (fix round 1, A6).
+const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const TODAY = "2026-10-07";
 const YESTERDAY = "2026-10-06";
 const TOMORROW = "2026-10-08";

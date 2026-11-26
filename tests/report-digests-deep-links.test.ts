@@ -22,6 +22,8 @@ import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
 import { withReturnFragment } from "@/lib/nav-redirect";
 import { ok } from "@/lib/report-digests-v2-shared";
 import { v2Fixture } from "./fixtures/digest-v2";
+import { parsePipelineDayFilter } from "@/lib/catering/pipeline-shared";
+import { toastRingLines } from "@/lib/report-digests-toast-shared";
 
 const BASE = "https://ops.example.com";
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -71,6 +73,22 @@ describe("paths", () => {
     expect(digestLink({ baseUrl: BASE }, booked("Shop A"))).toBeNull();
     expect(digestLink({ baseUrl: BASE }, { to: "prep_demand", location: A, day: "2026-02-31" })).toBeNull();
     expect(digestLink({ baseUrl: BASE }, booked(A, "2026-02-31"), { to: "pipeline" })).toBe(`${BASE}/catering/pipeline`);
+  });
+
+  it("fix round 1, A6: the shop must be one the PAGE accepts (a UUID or `none`): an id-shaped word is no link", () => {
+    // `shop-a` passes the generic id shape; the page's parser would discard it and open the whole board.
+    for (const v of [undefined, OWNER, MOO]) {
+      expect(digestLink({ baseUrl: BASE, viewer: v }, booked("shop-a"))).toBeNull();
+      expect(digestLink({ baseUrl: BASE, viewer: v }, booked("shop-a"), { to: "pipeline" })).toBe(`${BASE}/catering/pipeline`);
+    }
+    expect(digestLink({ baseUrl: BASE, viewer: OWNER }, booked(A))).toBe(`${BASE}/catering/pipeline?day=${DAY}&location=${A}&view=booked`);
+    expect(digestLink({ baseUrl: BASE, viewer: OWNER }, booked("none"))).toBe(`${BASE}/catering/pipeline?day=${DAY}&location=none&view=booked`);
+    // The two agree by construction: whatever the builder emits, the page parses back to the same filter.
+    for (const shop of [A, "none"]) {
+      const href = digestLink({ baseUrl: BASE, viewer: OWNER }, booked(shop))!;
+      const sp = Object.fromEntries(new URL(href).searchParams);
+      expect(parsePipelineDayFilter(sp)).toEqual({ day: DAY, location: shop });
+    }
   });
 });
 
@@ -289,8 +307,48 @@ describe("catering digest: section and line map (plan §3.5)", () => {
     for (const h of hrefs) {
       expect(h).not.toContain(`location=${B}&view=booked`);
       expect(h).not.toContain("/admin/catering/prep-demand");
+      // Fix round 1, A2: never the Shop B lead's own card either (the board would not show it to them).
+      expect(h).not.toContain("?lead=");
     }
     expect(s.find((x) => x.title.startsWith("Shop B · Today"))!.href).toBe(`${BASE}/catering/pipeline`);
+    // The individual order's line falls back as the section does: the plain board.
+    const order = s.find((x) => x.title.startsWith("Shop B · Today"))!.lines.find((l) => l.label === "Jane")!;
+    expect(order.href).toBe(`${BASE}/catering/pipeline`);
+  });
+
+  it("fix round 1, A2: the per-order lead link is gated on the lead's OWN shop", () => {
+    const orderHref = (v: LinkViewer, locationId: string | null, shopTitle: string) => {
+      const s = composeCateringSections(facts([lead({ locationId })]), { locations: [{ id: A, name: "Shop A" }, { id: B, name: "Shop B" }], includeUnassigned: true }, "en", BASE, v);
+      return s.find((x) => x.title.startsWith(`${shopTitle} · Today`))!.lines.find((l) => l.label === "Jane")!.href;
+    };
+    const card = `${BASE}/catering/pipeline?lead=lead-1#lead-lead-1`;
+    // In scope: the lead's own card.
+    expect(orderHref(GM_A, A, "Shop A")).toBe(card);
+    expect(orderHref(CATERING_MGR_A, B, "Shop B")).toBe(card);
+    expect(orderHref(MOO, B, "Shop B")).toBe(card);
+    // A lead with no shop set is on every pipeline reader's board.
+    expect(orderHref(GM_A, null, "No shop set")).toBe(card);
+    // Out of scope: the plain board.
+    expect(orderHref(GM_A, B, "Shop B")).toBe(`${BASE}/catering/pipeline`);
+    expect(orderHref(SHIFT_LEAD_A, B, "Shop B")).toBe(`${BASE}/catering/pipeline`);
+  });
+
+  it("fix round 1, A2: the gate itself, on the lead's own shop", () => {
+    expect(canOpen(GM_A, { to: "pipeline", lead: "l1", leadShop: A })).toBe(true);
+    expect(canOpen(GM_A, { to: "pipeline", lead: "l1", leadShop: B })).toBe(false);
+    expect(canOpen(GM_A, { to: "pipeline", lead: "l1", leadShop: null })).toBe(true);
+    expect(canOpen(KEY_HOLDER_A, { to: "pipeline", lead: "l1", leadShop: A })).toBe(false);
+    expect(canOpen(NO_ACCESS_VIEWER, { to: "pipeline", lead: "l1", leadShop: null })).toBe(false);
+    // The lead's shop is the gate's input only (never in the URL): a shop the reader's scope does not hold is no link.
+    expect(canOpen(GM_A, { to: "pipeline", lead: "l1", leadShop: "shop-z" })).toBe(false);
+    expect(digestLink({ baseUrl: BASE, viewer: GM_A }, { to: "pipeline", lead: "l1", leadShop: B }, { to: "pipeline", anchor: "to_ring" }))
+      .toBe(`${BASE}/catering/pipeline#to-ring-in-toast`);
+  });
+
+  it("fix round 1, A2: the Toast to-ring line of a Shop B order is not a lead link for a GM of A", () => {
+    const orders = [{ order_id: "o1", lead_id: "lead-9", location_id: B, event_date: TODAY, order_number: "AB12", handoff_time: null, event_timestamp: null, headcount: 5, total_cents: 100 }];
+    expect(toastRingLines(orders, B, TODAY, "en", BASE, GM_A)[0]!.href).toBe(`${BASE}/catering/pipeline#to-ring-in-toast`);
+    expect(toastRingLines(orders, B, TODAY, "en", BASE, MOO)[0]!.href).toBe(`${BASE}/catering/pipeline?lead=lead-9#lead-lead-9`);
   });
 
   it("a level-5 recipient: the filtered board for their shop, no Prep demand link", () => {
