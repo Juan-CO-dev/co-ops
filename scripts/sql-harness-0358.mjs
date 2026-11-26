@@ -36,7 +36,8 @@
  *       THE WHOLE ACL (review, Astra P1 / P2): ANOTHER role holding EXECUTE on the re-emitted function (it survives
  *       CREATE OR REPLACE and the three-name REVOKE) or on 0357's reserve; service_role holding a GRANT OPTION on a
  *       function, on a table or on a column; another role holding SELECT on a table; MAINTAIN held by authenticated
- *       or by service_role. THE TRIGGER'S IDENTITY: the same name on BEFORE INSERT, or calling another function
+ *       or by service_role. THE TRIGGER'S IDENTITY: the same name on BEFORE INSERT, AFTER UPDATE, calling another
+ *       function, or NARROWED (UPDATE OF one column; a WHEN condition) so that some updates are never guarded
  *   P8  the rollback written in the header: re-emitting 0357's body (kept verbatim below) restores 0357's fingerprint
  *       and a GM is refused again
  */
@@ -442,6 +443,22 @@ try {
     drop trigger catering_refund_requests_guard on public.catering_refund_requests;
     create trigger catering_refund_requests_guard before update on public.catering_refund_requests for each row execute function public.h0358_noop()`,
     TRIGGER_REFUSAL, "P7 a same-named BEFORE UPDATE trigger calling another function");
+  // Re-check (Astra P2): the right event, timing and function, but NARROWED so some updates are never guarded.
+  const RETRIGGER = (clause) => `drop trigger catering_refund_requests_guard on public.catering_refund_requests;
+    create trigger catering_refund_requests_guard ${clause} execute function public.catering_refund_requests_guard()`;
+  await refusedOn(drift, RETRIGGER("before update of status on public.catering_refund_requests for each row"),
+    TRIGGER_REFUSAL, "P7 a same-named BEFORE UPDATE OF status trigger (a write to stripe_refund_id alone would skip the guard)");
+  await refusedOn(drift, RETRIGGER("before update on public.catering_refund_requests for each row when (old.status is distinct from new.status)"),
+    TRIGGER_REFUSAL, "P7 a same-named BEFORE UPDATE trigger with a WHEN condition");
+  {
+    // The control: 0357's own trigger, dropped and created again exactly as 0357 wrote it, is ACCEPTED.
+    const fresh = await base();
+    try {
+      await fresh.exec(RETRIGGER("before update on public.catering_refund_requests for each row"));
+      await fresh.exec(M0358);
+      check((await fingerprint(fresh)) === FP_0358, "P7 control: 0357's trigger re-created exactly as 0357 wrote it is accepted");
+    } finally { await fresh.close(); }
+  }
 
   // ── P8 — the rollback in the header ──────────────────────────────────────────────────────────
   await db.exec(`begin; ${ROLLBACK_TO_0357} commit;`);

@@ -45,7 +45,8 @@
 --   entry aside, is exactly `service_role=SELECT`, and the column ACLs are exactly the nine `service_role=UPDATE`
 --   (none on the snapshots table) -- so another role, a grant option, or Postgres 17's MAINTAIN is refused by name.
 --   The guard trigger is 0357's: that name, enabled, BEFORE UPDATE FOR EACH ROW, calling
---   catering_refund_requests_guard().
+--   catering_refund_requests_guard() with no arguments, on EVERY update: no column list (UPDATE OF ...) and no WHEN
+--   condition, either of which would let some updates through unguarded (re-check, Astra P2).
 --   A grant this file does not expect is REFUSED, never silently revoked: who put it there is a question for a person.
 -- DEPLOY ORDER: safe both ways. App first: the SQL rule still answers `forbidden` to a GM / AGM. This file first: the
 --   app's role list still refuses them before the database is asked. Nothing opens until both are in, and the switch
@@ -238,9 +239,12 @@ begin
   end if;
   -- The guard trigger is 0357's own: that name, enabled, calling the guard function, BEFORE UPDATE FOR EACH ROW
   -- (pg_trigger.tgtype 19 = ROW 1 + BEFORE 2 + UPDATE 16). A same-named trigger on another event guards nothing.
+  -- And it fires on EVERY update: no column list (tgattr empty: `UPDATE OF status` would skip a write to
+  -- stripe_refund_id alone), no WHEN condition (tgqual null), no arguments.
   if (select count(*) from pg_trigger tg where tg.tgrelid = 'public.catering_refund_requests'::regclass
         and tg.tgname = 'catering_refund_requests_guard' and not tg.tgisinternal and tg.tgenabled = 'O'
-        and tg.tgfoid = 'public.catering_refund_requests_guard()'::regprocedure and tg.tgtype = 19) <> 1 then
+        and tg.tgfoid = 'public.catering_refund_requests_guard()'::regprocedure and tg.tgtype = 19
+        and tg.tgattr::text = '' and tg.tgqual is null and tg.tgnargs = 0) <> 1 then
     raise exception '0358: the catering_refund_requests_guard trigger is missing, disabled, or not 0357''s BEFORE UPDATE row trigger';
   end if;
 

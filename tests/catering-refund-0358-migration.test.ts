@@ -186,7 +186,8 @@ describe("privileges are stated again in the file, and asserted in it", () => {
       "where cl.oid = t::regclass and a.grantee <> cl.relowner) x;",
       "if v_acl <> 'service_role=SELECT' then",
       "from pg_attribute att, lateral aclexplode(att.attacl) a",
-      "and tg.tgfoid = 'public.catering_refund_requests_guard()'::regprocedure and tg.tgtype = 19) <> 1 then",
+      "and tg.tgfoid = 'public.catering_refund_requests_guard()'::regprocedure and tg.tgtype = 19",
+      "and tg.tgattr::text = '' and tg.tgqual is null and tg.tgnargs = 0) <> 1 then",
     ]) expect(assertions, needle).toContain(needle);
     // The whole-ACL check covers all six functions: it sits inside the loop over them, before the guard exception.
     const loop = assertions.slice(assertions.indexOf("foreach f in array array["), assertions.indexOf("-- (3)") === -1 ? undefined : assertions.indexOf("-- (3)"));
@@ -299,6 +300,10 @@ describe("the executable proof", () => {
       "P7 service_role holding a GRANT OPTION on one of its UPDATE columns",
       "P7 a same-named trigger on BEFORE INSERT (updates would no longer be guarded)",
       "P7 a same-named BEFORE UPDATE trigger calling another function",
+      // The re-check's finding (Astra P2 on the fix round): a NARROWED trigger.
+      "P7 a same-named BEFORE UPDATE OF status trigger (a write to stripe_refund_id alone would skip the guard)",
+      "P7 a same-named BEFORE UPDATE trigger with a WHEN condition",
+      "P7 control: 0357's trigger re-created exactly as 0357 wrote it is accepted",
     ]) expect(out, needle).toContain(`ok   ${needle}`);
   }, 260_000);
 });

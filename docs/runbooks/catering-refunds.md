@@ -46,7 +46,8 @@ otherwise.
 Another shop's order, for anyone below owner / CGS, in the order the gates run:
 
 1. A role outside the list is 403 `forbidden` at the route, whatever shop the order belongs to.
-2. On Confirm, a role in the list without a fresh password is 403 `step_up_required`.
+2. On Confirm, a role in the list without a fresh password is 403: `step_up_required` when the session was never
+   unlocked, `step_up_stale` when an earlier unlock has aged out.
 3. Then the order is looked up, and a shop the person does not belong to is 404 `not_found`: it is never said that the
    order exists. The same on Retry / Release (which have no step 2), and on the panel's read.
 
