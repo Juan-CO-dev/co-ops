@@ -7,15 +7,22 @@
  * catering morning digest stays the catering section.
  */
 import { serverT } from "@/lib/i18n/server";
-import { formatCents, formatDateLabel, formatTime } from "@/lib/i18n/format";
+import { formatCents, formatDateLabel, formatHourRange, formatTime } from "@/lib/i18n/format";
+import { SALES_EMPTY_KEY, serverRef, type SalesView } from "@/lib/sales-reports-shared";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { timeWindowLabel, timeWindowMinutes } from "@/lib/midshift-shared";
 import {
   allShopTotals,
+  amountAllUnknown,
+  busiestHours,
+  cateringVsWalkIn,
+  deliveryPlatforms,
+  topServers,
   salesDeltaPct,
   type Coverage,
   sumKnown,
   type Loaded,
+  type MoneyPart,
   type ShopV2Facts,
 } from "@/lib/report-digests-v2-shared";
 import { etWallTime } from "@/lib/report-digests-shared";
@@ -24,7 +31,7 @@ import { cutoffMinutes } from "@/lib/vendor-rhythm-shared";
 import type { DigestLine, DigestSection, DigestTone } from "@/lib/report-digests-compose";
 import { digestLink, type DigestTarget, type LinkViewer } from "@/lib/report-digests-links";
 import { digestCan, type DigestAccess, type DigestCapability } from "@/lib/report-digests-access-shared";
-import { capItems, finishSection, finishSections, SECTION_CAP_WIDE, type SectionDraft } from "@/lib/report-digests-layout-shared";
+import { capItems, finishSection, finishSections, LINE_ITEMS_MAX, SECTION_CAP_WIDE, type SectionDraft } from "@/lib/report-digests-layout-shared";
 
 type Params = Record<string, string | number>;
 export type T = (key: TranslationKey, params?: Params) => string;
@@ -235,7 +242,28 @@ export function inventoryLines(c: Ctx, v: ShopV2Facts, pendingItems: number): Di
 
 // ── 6. Sales detail ──────────────────────────────────────────────────────────────────────────
 
+/**
+ * The Sales section. The pulse lines (top items, channel mix, discounts, voids) are EXACTLY what they always
+ * were and carry no gate. The Sales-report lines of PR 3 (`salesReportLines`) are interleaved around them and
+ * every one of them `needs: "sales_detail"`, so finishSection cuts them before anything is counted: a recipient
+ * the Sales page refuses gets this section byte for byte as before PR 3 (lines, status, overflow, issue count).
+ *
+ * Order (the composer order inside each tier of finishSection's sort, which puts issues, unknowns and to-dos
+ * first): the ladder, tips / tax / service, ezCater and total, DELIVERY PLATFORMS, then top items and the channel
+ * mix, then busiest hours and catering vs walk-in, then discounts and voids, then the adjustments and servers.
+ * Platform dollars sit before the top items (plan §9.2, CC ruling S5), so on a healthy day they print under the
+ * cap and the later lines fold into "and N more".
+ */
 export function salesDetailLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
+  const report = salesReportLines(c, v);
+  const pulse = salesPulseLines(c, v);
+  // A pulse that did not load is its one "not available" line.
+  if (pulse.length < 4) return [...report.head, ...pulse, ...report.mid, ...report.tail];
+  // pulse = [top items, channel mix, discounts, voids]; their relative order never changes.
+  return [...report.head, ...pulse.slice(0, 2), ...report.mid, ...pulse.slice(2), ...report.tail];
+}
+
+function salesPulseLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   const salesView = (view: "summary" | "items" | "channels" | "discounts") =>
     link(c, { to: "sales", location: c.locationId, day: c.day, view }, { to: "mid_shift", location: c.locationId });
   const href = salesView("summary");
@@ -269,6 +297,211 @@ export function salesDetailLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
       ].filter(Boolean).join(", "),
     });
   return lines;
+}
+
+// ── 6b. Sales report lines (digests round 3, PR 3): every one needs `sales_detail` ───────────
+
+/**
+ * The Sales page's server label (components/reports-hub/SalesParts.tsx `serverLabel`), same rule and same keys:
+ * the order's server by first name; no name and an online channel = "Online / no server"; no server at all =
+ * "No server on the order"; else "not matched" + a 4-character reference. Pinned equal by a parity test.
+ */
+export function salesServerLabel(t: T, key: string, name: string | null | undefined, online = false): string {
+  if (!name?.trim() && online) return t("reports.sales.server.online");
+  if (!key) return t("reports.sales.server.none");
+  return name && name.trim() ? name : t("reports.sales.server.unmapped", { ref: serverRef(key) });
+}
+
+/**
+ * The Sales report's figures for D, as digest lines. Each keeps the Sales page's rules: nothing unless the day's
+ * capture is complete (one "not available" line, never $0); a missing amount is counted and said ("+ N amounts
+ * not recorded") and marks its line unknown; a read that failed or stalled is its own "not available" line and
+ * leaves every other line standing. EVERY line here carries `needs: "sales_detail"` — its status contribution and
+ * its place in the overflow line go with it when it is cut.
+ * `head` prints before the pulse lines (delivery platforms last in it), `mid` after the channel mix, `tail` after
+ * the voids.
+ */
+function salesReportLines(c: Ctx, v: ShopV2Facts): { head: DigestLine[]; mid: DigestLine[]; tail: DigestLine[] } {
+  const out: { head: DigestLine[]; mid: DigestLine[]; tail: DigestLine[] } = { head: [], mid: [], tail: [] };
+  const d = v.salesDetail;
+  if (!d) return out;
+  const gated = (line: DigestLine): DigestLine => ({ ...line, needs: "sales_detail" });
+  const view = (to?: SalesView) => link(c, { to: "sales", location: c.locationId, day: c.day, ...(to && to !== "summary" ? { view: to } : {}) });
+  const summaryHref = view();
+  const missing = (n: number) => n > 0 ? plural(c.t, n, "digest.v2.totals.unknown_one", "digest.v2.totals.unknown_other") : null;
+  const join = (parts: Array<string | null>, sep = " · ") => parts.filter((x): x is string => x !== null).join(sep);
+  const checks = (n: number) => plural(c.t, n, "digest.v2.sales.checks_one", "digest.v2.sales.checks_other");
+  const orders = (n: number) => plural(c.t, n, "digest.v2.catering.orders_one", "digest.v2.catering.orders_other");
+  /** The inline unknown wording (lowercase, mid-sentence): "amount unknown (2 orders)". Never a $0.00. */
+  const amountUnknown = (count: string) => c.t("digest.v2.sales.amount_unknown", { count });
+  /** A figure: unknown when every row of it has no amount; else its known $ with its own gap said beside it. */
+  const figure = (p: MoneyPart, count: (n: number) => string) => amountAllUnknown(p) ? amountUnknown(count(p.checks))
+    : join([money(c, p.cents), missing(p.amountMissing)], " ");
+  const label = c.t("digest.v2.sales.report_label");
+
+  // The whole area stands on the day's totals: loaded, and the day fully captured (the Sales page's coverage rule).
+  const nl = notLoaded(c, label, summaryHref, d.totals);
+  if (nl) { out.head.push(gated(nl)); return out; }
+  if (d.totals.kind !== "ok") return out;
+  const tot = d.totals.value;
+  if (tot.coverage !== "complete") {
+    out.head.push(gated({ label, text: c.t("digest.v2.sales.report_not_covered"), tone: "info", href: summaryHref, unknown: true }));
+    return out;
+  }
+
+  // 1. The ladder: gross − discounts and comps − item voids − sales refunds = Toast net (summarizeSales' own figures).
+  const { grossCents: gross, discountsCompsCents: disc, voidsCents: voids, salesRefundsCents: refunds, toastNetCents: net } = tot;
+  out.head.push(gross !== null && disc !== null && voids !== null && refunds !== null && net !== null
+    ? gated({ label, tone: "info", href: summaryHref, text: c.t("digest.v2.sales.ladder", { gross: money(c, gross), discounts: money(c, disc), voids: money(c, voids), refunds: money(c, refunds), net: money(c, net) }) })
+    : gated({
+      label, tone: "info", href: summaryHref, unknown: true,
+      text: join([
+        c.t("digest.v2.sales.net_unavailable"),
+        tot.accountingMissing > 0 ? plural(c.t, tot.accountingMissing, "digest.v2.sales.accounting_missing_one", "digest.v2.sales.accounting_missing_other") : null,
+        tot.salesRefundMissing > 0 ? plural(c.t, tot.salesRefundMissing, "digest.v2.sales.refund_missing_one", "digest.v2.sales.refund_missing_other") : null,
+      ]),
+    }));
+
+  // 2. Tips · tax · service charges (one line). An unknown tip or tax amount is counted; service charges are the
+  // exact component, null when any check's accounting is missing: then the inline unknown wording, mid-sentence.
+  const sc = tot.serviceChargesCents;
+  out.head.push(gated({
+    label: c.t("digest.v2.sales.tips_tax_label"), tone: "info", href: summaryHref,
+    ...(tot.tipMissing + tot.taxMissing > 0 || sc === null ? { unknown: true } : {}),
+    text: c.t("digest.v2.sales.tips_tax", {
+      tips: join([money(c, tot.tipCents), missing(tot.tipMissing)], " "),
+      tax: join([money(c, tot.taxCents), missing(tot.taxMissing)], " "),
+      service: sc === null ? c.t("digest.v2.sales.amount_unknown_bare") : money(c, sc),
+    }),
+  }));
+
+  // 3. ezCater as sales, and the Sales page's total (Toast check totals + ezCater subtotals, before refunds). The
+  // ezCater figure carries its OWN missing count (an unpriced order is never a $0 order); the total is unknown only
+  // when every check and every order in it is.
+  const ez: MoneyPart = { cents: tot.ezcaterCents, checks: tot.ezcaterOrders, amountMissing: tot.ezcaterMissing };
+  const toastMissing = tot.amountMissing - tot.ezcaterMissing;
+  const totalUnknown = tot.checks + tot.ezcaterOrders > 0 && toastMissing >= tot.checks && tot.ezcaterMissing >= tot.ezcaterOrders;
+  out.head.push(gated({
+    label: c.t("digest.v2.sales.ezcater_label"), tone: "info", href: summaryHref,
+    ...(tot.amountMissing > 0 ? { unknown: true } : {}),
+    text: join([
+      tot.ezcaterOrders === 0 ? c.t("digest.v2.sales.no_ezcater")
+        : amountAllUnknown(ez) ? c.t("digest.v2.sales.ezcater_unknown", { amount: amountUnknown(orders(ez.checks)) })
+          : c.t("digest.v2.sales.ezcater", {
+            money: money(c, ez.cents),
+            orders: ez.amountMissing > 0 ? c.t("digest.v2.sales.with_missing", { count: orders(ez.checks), n: ez.amountMissing }) : orders(ez.checks),
+          }),
+      c.t("digest.v2.sales.total_before_refunds", {
+        money: totalUnknown ? amountUnknown(join([tot.checks > 0 ? checks(tot.checks) : null, tot.ezcaterOrders > 0 ? orders(tot.ezcaterOrders) : null], ", ")) : money(c, tot.totalCents),
+      }),
+      totalUnknown ? null : missing(tot.amountMissing),
+    ]),
+  }));
+
+  // 4. Busiest hours: top 3 with $ and checks; a check with no opened time is said apart, never ranked.
+  const hoursHref = view("heatmap");
+  const hoursLabel = c.t("digest.v2.sales.hours_label");
+  const hl = notLoaded(c, hoursLabel, hoursHref, d.hours);
+  if (hl) out.mid.push(gated(hl));
+  else if (d.hours.kind === "ok") {
+    const h = busiestHours(d.hours.value);
+    const lost = d.hours.value.reduce((a, r) => a + r.amountMissing, 0);
+    out.mid.push(gated(h.top.length === 0 && h.unknown.checks === 0
+      ? { label: hoursLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: hoursHref }
+      : {
+        label: hoursLabel, tone: "info", href: hoursHref, ...(lost > 0 ? { unknown: true } : {}),
+        text: join([
+          h.top.length === 0 ? null : h.top.map((x) => c.t("digest.v2.sales.hour_item", { hour: formatHourRange(x.hour, c.language), money: money(c, x.cents), checks: checks(x.checks) })).join(", "),
+          h.unknown.checks > 0 ? c.t("digest.v2.sales.hour_unknown", { checks: checks(h.unknown.checks), money: money(c, h.unknown.cents) }) : null,
+          missing(lost),
+        ]),
+      }));
+  }
+
+  // 5. Delivery platforms with $ (counted third-party delivery sales by provider). In `head`: platform dollars print
+  // before the top items (plan §9.2, CC ruling S5); a provider whose every check has no amount is "amount unknown".
+  const platformsLabel = c.t("digest.v2.sales.platforms_label");
+  const channelsHref = view("channels");
+  const pl = notLoaded(c, platformsLabel, channelsHref, d.channels);
+  if (pl) out.head.push(gated(pl));
+  else if (d.channels.kind === "ok") {
+    const rows = deliveryPlatforms(d.channels.value);
+    const one = rows.length === 1 ? rows[0] : undefined;
+    const href = link(c,
+      ...(one ? [{ to: "sales_checks" as const, location: c.locationId, day: c.day, channel: "third_party" as const, provider: one.provider ?? SALES_EMPTY_KEY }] : []),
+      { to: "sales_checks", location: c.locationId, day: c.day, channel: "third_party" },
+      { to: "sales", location: c.locationId, day: c.day, view: "channels" });
+    const lost = rows.reduce((a, r) => a + r.amountMissing, 0);
+    // Each provider says its own gap; the gaps of providers folded into "+N" are counted at the end.
+    const hiddenLost = rows.slice(LINE_ITEMS_MAX).reduce((a, r) => a + r.amountMissing, 0);
+    const item = (r: (typeof rows)[number]) => {
+      const name = r.provider?.trim() ? r.provider : c.t("reports.sales.provider.none");
+      if (amountAllUnknown(r)) return `${name} ${amountUnknown(checks(r.checks))}`;
+      return `${name} ${money(c, r.cents)} (${r.amountMissing > 0 ? c.t("digest.v2.sales.with_missing", { count: checks(r.checks), n: r.amountMissing }) : checks(r.checks)})`;
+    };
+    out.head.push(gated(rows.length === 0
+      ? { label: platformsLabel, text: c.t("digest.v2.sales.no_platforms"), tone: "info", href }
+      : { label: platformsLabel, tone: "info", href, ...(lost > 0 ? { unknown: true } : {}), text: join([capItems(rows.map(item)), missing(hiddenLost)]) }));
+  }
+
+  // 6. Catering vs walk-in (catering = Toast catering checks + ezCater orders; walk-in = every other counted sale).
+  const cateringLabel = c.t("digest.v2.sales.catering_vs_label");
+  const cateringHref = link(c, { to: "sales_catering", location: c.locationId, day: c.day });
+  const cl = notLoaded(c, cateringLabel, cateringHref, d.channels);
+  if (cl) out.mid.push(gated(cl));
+  else if (d.channels.kind === "ok") {
+    const split = cateringVsWalkIn(d.channels.value);
+    const lost = split.catering.amountMissing + split.walkIn.amountMissing;
+    out.mid.push(gated(split.catering.checks === 0 && split.walkIn.checks === 0
+      ? { label: cateringLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: cateringHref }
+      : {
+        label: cateringLabel, tone: "info", href: cateringHref, ...(lost > 0 ? { unknown: true } : {}),
+        // Each side says its own gap; a side whose every order / check has no amount is "amount unknown (N …)".
+        text: c.t("digest.v2.sales.catering_vs", { catering: figure(split.catering, orders), walkin: figure(split.walkIn, checks) }),
+      }));
+  }
+
+  // 7. Void $, the refunds captured so far ($ and count; the Sales page's "Refunds captured so far", not the
+  // ladder's item-sales refunds), excluded checks. A refund that cannot be allocated to item sales (0247's
+  // `sales_refund_missing`, which can come with a dated count of 0) is said in the Sales page's words and marks
+  // the line unknown: "no refunds" is never printed while one is.
+  const excluded = ([
+    ["digest.v2.sales.excluded_gift", tot.giftCardChecks], ["digest.v2.sales.excluded_ezcater", tot.ezcaterLinkedChecks],
+    ["digest.v2.sales.excluded_void", tot.voidChecks], ["digest.v2.sales.excluded_excess", tot.excessFoodChecks],
+  ] as const).filter(([, n]) => n > 0);
+  const excludedChecks = excluded.reduce((a, [, n]) => a + n, 0);
+  const refundUnknown = tot.salesRefundMissing > 0;
+  out.tail.push(gated({
+    label: c.t("digest.v2.sales.adjustments_label"), tone: "info", href: summaryHref,
+    ...(voids === null || refundUnknown ? { unknown: true } : {}),
+    text: join([
+      voids === null ? c.t("digest.v2.sales.item_voids_unavailable") : c.t("digest.v2.sales.item_voids", { money: money(c, voids) }),
+      tot.refundCount > 0 ? plural(c.t, tot.refundCount, "digest.v2.sales.refunds_one", "digest.v2.sales.refunds_other", { money: money(c, tot.refundCents) })
+        : refundUnknown ? null : c.t("digest.v2.sales.no_refunds"),
+      refundUnknown ? plural(c.t, tot.salesRefundMissing, "digest.v2.sales.refund_missing_one", "digest.v2.sales.refund_missing_other") : null,
+      excludedChecks === 0 ? c.t("digest.v2.sales.no_excluded")
+        : plural(c.t, excludedChecks, "digest.v2.sales.excluded_one", "digest.v2.sales.excluded_other", { detail: excluded.map(([k, n]) => c.t(k, { n })).join(", ") }),
+    ]),
+  }));
+
+  // 8. Servers: the top 3 of the Sales page's servers view, in its order. The gaps are counted across EVERY server
+  // row before the top 3 are taken (as the hours line does): a check of unknown amount anywhere could move the
+  // ranking, so it marks the line unknown even when its server is ranked below third.
+  const serversLabel = c.t("digest.v2.sales.servers_label");
+  const serversHref = view("servers");
+  const sl = notLoaded(c, serversLabel, serversHref, d.servers);
+  if (sl) out.tail.push(gated(sl));
+  else if (d.servers.kind === "ok") {
+    const lost = d.servers.value.reduce((a, r) => a + r.amountMissing, 0);
+    const top = topServers(d.servers.value);
+    out.tail.push(gated(top.length === 0
+      ? { label: serversLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: serversHref }
+      : {
+        label: serversLabel, tone: "info", href: serversHref, ...(lost > 0 ? { unknown: true } : {}),
+        text: join([top.map((r) => `${salesServerLabel(c.t, r.key, r.label, r.serverOnline)} ${money(c, r.cents)} (${checks(r.checks)})`).join(", "), missing(lost)]),
+      }));
+  }
+  return out;
 }
 
 // ── 8. People ────────────────────────────────────────────────────────────────────────────────

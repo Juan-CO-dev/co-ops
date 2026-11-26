@@ -20,6 +20,7 @@ import { etDayFromDate } from "@/lib/et-day-shared";
 import { addDays, etClock, etWallTime } from "@/lib/report-digests-shared";
 import type { LaborSummary } from "@/lib/toast/labor-shared";
 import type { NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
+import { channelView, summarizeSales, type BreakdownRow, type DailyRaw, type SalesTotals } from "@/lib/sales-reports-shared";
 
 /** A loaded area: the value, a source that is not there (yet), or a read that failed. */
 export type Loaded<T> = { kind: "ok"; value: T } | { kind: "unavailable"; reason: string } | { kind: "error" };
@@ -136,6 +137,96 @@ export interface SalesFacts {
   today: SalesDaySummary;
   /** null = no completed capture for D-7 (the delta is then said to be unavailable). */
   lastWeek: SalesDaySummary | null;
+}
+
+// ── 6b. Sales detail (digests round 3, PR 3): the Sales page's OWN figures for day D ─────────
+//
+// Every figure below is the Sales report's (lib/sales-reports-shared.ts) on the same raws: the ladder and the
+// totals are `summarizeSales` over `sales_report_daily` for D alone; channels, hours and servers are
+// `mergeBreakdown` over `sales_report_breakdown` for D alone (the Sales page's own merge and sort). Nothing is
+// recomputed a second way. Every line built from these needs `sales_detail` (the Sales page's gate).
+
+/** The four Sales reads for one shop and day D. Each part loads fail-soft on its own. */
+export interface SalesDetailFacts {
+  /** `summarizeSales([sales_report_daily(D, D)], D, D, "day").totals`, plus the ezCater-only missing count. */
+  totals: Loaded<SalesDetailTotals>;
+  /** `mergeBreakdown("channel", …)` for D (Toast sale / excluded rows + the ezCater source row). */
+  channels: Loaded<BreakdownRow[]>;
+  /** `mergeBreakdown("hour_weekday", …)` for D. */
+  hours: Loaded<BreakdownRow[]>;
+  /** `mergeBreakdown("server", …)` for D: the Sales page's servers view, in its order. */
+  servers: Loaded<BreakdownRow[]>;
+}
+
+/**
+ * Day D's Sales totals, plus `ezcaterMissing`: how many of `ezcaterOrders` have no subtotal. The Sales page folds
+ * that count into `amountMissing` (with the Toast checks of unknown amount); the digest keeps it apart so an
+ * unpriced ezCater order is never told from a genuine $0 one by a trailing count that names no figure.
+ */
+export interface SalesDetailTotals extends SalesTotals { ezcaterMissing: number }
+
+/**
+ * Day D's Sales totals exactly as the Sales page computes them for a one-day range. The ezCater-only missing count
+ * is the same `summarizeSales` over the same response's ezCater rows alone (no Toast class), so it follows the
+ * Sales page's own rule for those rows and is never recomputed a second way.
+ */
+export function salesDetailTotals(raw: DailyRaw, day: string): SalesDetailTotals {
+  const totals = summarizeSales([raw], day, day, "day").totals;
+  const ezOnly: DailyRaw = { classes: [], tips: [], discounts: [], refunds: [], captured_days: raw.captured_days ?? [], ezcater: raw.ezcater ?? [] };
+  return { ...totals, ezcaterMissing: summarizeSales([ezOnly], day, day, "day").totals.amountMissing };
+}
+
+/** A figure whose every row is of unknown amount: its cents are not a $0, they are unknown. */
+export function amountAllUnknown(p: Pick<MoneyPart, "checks" | "amountMissing">): boolean {
+  return p.checks > 0 && p.amountMissing >= p.checks;
+}
+
+/** A money figure with the count of rows whose amount is unknown (never read as $0). */
+export interface MoneyPart { cents: number; checks: number; amountMissing: number }
+const addPart = (a: MoneyPart, r: Pick<BreakdownRow, "cents" | "checks" | "amountMissing">): MoneyPart =>
+  ({ cents: a.cents + r.cents, checks: a.checks + r.checks, amountMissing: a.amountMissing + r.amountMissing });
+const ZERO: MoneyPart = { cents: 0, checks: 0, amountMissing: 0 };
+
+/**
+ * The busiest opened hours of D: sale checks by the hour they were opened (ET), most dollars first, then more
+ * checks, then the earlier hour (a stable tiebreak). A check with no opened time (hour -1) is NEVER ranked: it is
+ * carried apart as `unknown`, the way the heatmap lists it.
+ */
+export function busiestHours(rows: readonly BreakdownRow[], n = 3): { top: Array<MoneyPart & { hour: number }>; unknown: MoneyPart; hours: number } {
+  const byHour = new Map<number, MoneyPart>();
+  let unknown = ZERO;
+  for (const r of rows) {
+    const hour = r.hour ?? -1;
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) { unknown = addPart(unknown, r); continue; }
+    byHour.set(hour, addPart(byHour.get(hour) ?? ZERO, r));
+  }
+  const ranked = [...byHour].map(([hour, p]) => ({ hour, ...p }))
+    .sort((a, b) => b.cents - a.cents || b.checks - a.checks || a.hour - b.hour);
+  return { top: ranked.slice(0, n), unknown, hours: ranked.length };
+}
+
+/**
+ * Catering vs walk-in, from the Sales page's channel view: CATERING = Toast checks on the catering channel plus
+ * the ezCater orders (the source of truth for ezCater revenue); WALK-IN = every other counted sale (dine in,
+ * takeout, online, app, delivery, third party, unmapped). Excluded rows (gift cards, ezCater rings) are in neither.
+ */
+export function cateringVsWalkIn(rows: readonly BreakdownRow[]): { catering: MoneyPart; walkIn: MoneyPart } {
+  let catering = ZERO;
+  let walkIn = ZERO;
+  for (const r of channelView(rows).included) {
+    if (r.channel === "catering") catering = addPart(catering, r); else walkIn = addPart(walkIn, r);
+  }
+  return { catering, walkIn };
+}
+
+/** Delivery platforms: the counted third-party-delivery sales by provider, the channel view's order (most $ first). */
+export function deliveryPlatforms(rows: readonly BreakdownRow[]): BreakdownRow[] {
+  return rows.filter((r) => r.saleClass === "sale" && r.channel === "third_party");
+}
+
+/** The servers view's first `n` rows: the Sales page's own ranking (`mergeBreakdown` → `sortBreakdown`). */
+export function topServers(rows: readonly BreakdownRow[], n = 3): BreakdownRow[] {
+  return rows.slice(0, n);
 }
 
 // ── 1 + 7. Catering money (0195 split) and tomorrow ──────────────────────────────────────────
@@ -406,6 +497,12 @@ export interface ShopV2Facts {
   people: Loaded<PeopleFacts>;
   /** Toast time entries for D (0224). Absent = labor not loaded on this branch of the build. */
   labor?: Loaded<LaborSummary>;
+  /**
+   * The Sales report's own figures for D (digests round 3, PR 3); every line built from them needs
+   * `sales_detail`. Absent = not loaded (a fixture, a build before PR 3): the Sales section is then exactly the
+   * pulse lines it always had.
+   */
+  salesDetail?: SalesDetailFacts;
 }
 
 /** How many shops an aggregate covers: a shop whose area failed or is unavailable is NOT a zero. */
