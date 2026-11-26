@@ -13,6 +13,8 @@
  *
  * THE OLD APP is modelled by replacing ONE function — the app's role gate — with main's four-role list; every other
  * line under test is this branch's. That list is pinned equal to 0357's own roles (what main's gate was held to).
+ * THE NEW APP is the REAL gate, untouched: with nothing switched the mock hands every call to the module's own
+ * `canRequestRefund` (review, Astra P3: a re-implemented "new" gate could admit someone the real one refuses).
  * THE SQL RULE is the same TS stand-in tests/catering-refunds-flow.test.ts uses, pinned there and here to the two
  * real files; the real SQL of each rule is proven by scripts/sql-harness-0357.mjs and scripts/sql-harness-0358.mjs.
  * Stripe is never reachable from this file: every Stripe function throws.
@@ -46,14 +48,15 @@ vi.mock("@/lib/stripe/client", async (original) => {
 });
 vi.mock("@/lib/catering/refunds-shared", async (original) => {
   const real = await original<typeof import("@/lib/catering/refunds-shared")>();
-  return { ...real, canRequestRefund: (role: string) => (h.appRoles ?? (real.REFUND_ROLES as readonly string[])).includes(role) };
+  // OLD app: main's list. NEW app: the module's OWN function, called as it is (never a copy of its rule).
+  return { ...real, canRequestRefund: (role: RoleCode) => (h.appRoles ? h.appRoles.includes(role) : real.canRequestRefund(role)) };
 });
 
 import { REFUND_ROLES, actorMayRefund, canRequestRefund, requestRefund, retryRefundRequest, type RefundRequestBody } from "@/lib/catering/refunds";
 import { POST } from "@/app/api/catering/quotes/[id]/refunds/route";
 import { POST as RETRY } from "@/app/api/catering/quotes/[id]/refunds/[requestId]/retry/route";
 import type { AuthContext } from "@/lib/session";
-import type { RoleCode } from "@/lib/roles";
+import { ROLES, type RoleCode } from "@/lib/roles";
 
 /** Main's app gate before this PR (and 0357's rule: pinned below). */
 const OLD_APP_ROLES = ["catering_mgr", "moo", "owner", "cgs"] as const;
@@ -65,16 +68,17 @@ const SHOP = "00000000-0000-4000-8000-0000000000a1";
 const OTHER = "00000000-0000-4000-8000-0000000000a2";
 const QUOTE = "00000000-0000-4000-8000-0000000000b1";
 const REQUEST = "00000000-0000-4000-8000-0000000000d1";
+const PAYMENT = "00000000-0000-4000-8000-0000000000c1";
 const ACTOR = "00000000-0000-4000-8000-0000000000aa";
 const BODY: RefundRequestBody = { clientToken: "11111111-1111-4111-8111-111111111111", amountCents: 100000, reasonCode: "event_lost", reasonNote: null, trigger: "lost" };
 
 function sqlActorOk(db: FakeDb, actorId: unknown, shopId: unknown): boolean {
   const u = (db.tables.users ?? []).find((x) => x.id === actorId);
-  if (!u || u.active === false) return false;
+  if (!u || u.active !== true) return false; // SQL: `and u.active` — NULL is not active
   const role = String(u.role);
   if (SQL_ANY_SHOP.includes(role)) return true;
   return (SQL_MEMBER_SHOP[h.sqlRule] as readonly string[]).includes(role) && shopId != null
-    && (db.tables.user_locations ?? []).some((m) => m.user_id === actorId && m.location_id === shopId && m.active !== false);
+    && (db.tables.user_locations ?? []).some((m) => m.user_id === actorId && m.location_id === shopId && m.active === true);
 }
 
 /** A signed-in member of `locations`, the database agreeing with the session. `fresh` = a password typed just now. */
@@ -100,7 +104,18 @@ const answer = async (res: Response) => [res.status, ((await res.json()) as { co
 beforeEach(() => {
   vi.stubEnv("CATERING_REFUNDS", "1");
   h.db = fakeSupabase(
-    { catering_quotes: [{ id: QUOTE, location_id: SHOP, root_id: null }], catering_payments: [], catering_refund_requests: [], users: [], user_locations: [] },
+    {
+      catering_quotes: [{ id: QUOTE, location_id: SHOP, root_id: null }],
+      // One Stripe-paid payment and one request someone else left pending: what Retry / Release act on.
+      catering_payments: [{ id: PAYMENT, quote_id: QUOTE, kind: "deposit", amount_cents: 30000, status: "paid", provider: "stripe", provider_ref: "pi_dep", paid_at: "2026-11-01T10:00:00Z", created_at: "2026-11-01T09:00:00Z" }],
+      catering_refund_requests: [{
+        id: REQUEST, payment_id: PAYMENT, quote_id: QUOTE, location_id: SHOP, client_token: "33333333-3333-4333-8333-333333333333", amount_cents: 2000,
+        reason_code: "event_lost", reason_note: null, trigger_kind: "lost", status: "pending", stripe_refund_id: null, stripe_status: null, last_error_code: "network_error",
+        last_error_message: null, attempts: 1, first_attempt_at: new Date().toISOString(), requested_by: "00000000-0000-4000-8000-0000000000ab",
+        requested_at: new Date().toISOString(), updated_at: new Date().toISOString(), settled_at: null, claim_token: null, claimed_until: null,
+      }],
+      users: [], user_locations: [],
+    },
     {
       // The reserve as far as this file needs it: the actor rule first (as 0357 / 0358 order it), then "nothing to refund".
       catering_refund_reserve: (args, db) => ({ data: null, error: { message: sqlActorOk(db, args.p_actor_id, SHOP) ? "nothing_refundable" : "forbidden" } }),
@@ -133,9 +148,10 @@ describe("the two models are the real things", () => {
   it("the OLD app's list is 0357's roles (what main's gate was pinned to), and the NEW list adds exactly gm and agm", () => {
     expect([...OLD_APP_ROLES].sort()).toEqual(sqlLists("0357_catering_refund_requests.sql").flat().sort());
     expect([...REFUND_ROLES].sort()).toEqual([...OLD_APP_ROLES, "gm", "agm"].sort());
-    // The switchable gate is the real one when nothing is switched.
-    for (const role of ["gm", "agm", "catering_mgr", "moo", "owner", "cgs", "prep_mgr", "shift_lead"] as RoleCode[]) {
-      expect(canRequestRefund(role)).toBe((REFUND_ROLES as readonly string[]).includes(role));
+    // With nothing switched the gate under test is the module's own function (see the mock): every role, against the
+    // list the module exports.
+    for (const role of Object.keys(ROLES) as RoleCode[]) {
+      expect([role, canRequestRefund(role)]).toEqual([role, (REFUND_ROLES as readonly string[]).includes(role)]);
     }
     h.appRoles = OLD_APP_ROLES;
     expect([canRequestRefund("gm"), canRequestRefund("agm"), canRequestRefund("catering_mgr")]).toEqual([false, false, true]);
@@ -181,6 +197,27 @@ describe.each(["gm", "agm"] as const)("a member %s, app x SQL", (role) => {
     expect(h.rpcCalls).toEqual([]);
     expect(h.stripeCalls).toBe(0);
     expect(h.db.writes).toEqual([]);
+  });
+
+  it("NEW app + 0357, Retry and Release THROUGH THE ROUTE: the SQL re-check refuses before any claim → 403; nothing claimed, written or sent", async () => {
+    h.sqlRule = "0357";
+    for (const body of [{}, { release: true }]) {
+      h.rpcCalls = [];
+      actor(role, [SHOP], false); // the retry path asks for no password
+      expect(await answer(await retry(body))).toEqual([403, "forbidden"]);
+      expect(h.rpcCalls).toEqual(["catering_refund_actor_ok"]); // asked once, refused; catering_refund_claim never reached
+    }
+    expect(h.stripeCalls).toBe(0);
+    expect(h.db.writes).toEqual([]);
+    expect(h.db.tables.catering_refund_requests![0]).toMatchObject({ status: "pending", attempts: 1, claim_token: null });
+    // The control for this test: under 0358 the same press gets PAST the SQL re-check (it then reaches the sender
+    // claim, which this file does not model: the fake throws by name).
+    h.sqlRule = "0358";
+    h.rpcCalls = [];
+    actor(role, [SHOP], false);
+    await expect(retry()).rejects.toThrow(/no fake for rpc catering_refund_claim/);
+    expect(h.rpcCalls).toEqual(["catering_refund_actor_ok", "catering_refund_claim"]);
+    expect(h.stripeCalls).toBe(0);
   });
 
   it("NEW app + 0358 (both in): the actor passes both homes; the reserve is reached and refuses nothing about WHO", async () => {

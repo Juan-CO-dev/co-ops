@@ -54,10 +54,28 @@ describe("who may refund (Juan 2026-11-25: GM and AGM too)", () => {
     const refused = (Object.keys(ROLES) as RoleCode[]).filter((r) => !canRequestRefund(r));
     expect(refused).toHaveLength(Object.keys(ROLES).length - 6);
   });
-  it("the forbidden message names the roles and the member-shop rule, in both languages", () => {
+  it("the forbidden message names every role, and says WHO needs a shop, in both languages", () => {
     const key = "catering.refunds.error.forbidden";
-    for (const word of ["catering manager", "AGM", "GM", "MoO", "shop you belong to"]) expect(en[key]).toContain(word);
-    for (const word of ["gerente de catering", "AGM", "GM", "MoO", "tienda a la que perteneces"]) expect(es[key]).toContain(word);
+    // Whole words: "GM" must be there on its own (a bare `toContain("GM")` is satisfied by "AGM").
+    const words = (text: string) => text.split(/[^\p{L}]+/u).filter(Boolean);
+    for (const word of ["AGM", "GM", "MoO", "CGS", "owner"]) expect(words(en[key]), word).toContain(word);
+    for (const word of ["AGM", "GM", "MoO", "CGS", "dueño"]) expect(words(es[key]), word).toContain(word);
+    expect(en[key]).toContain("catering manager");
+    expect(es[key]).toContain("gerente de catering");
+    expect(words("the AGM and the MoO")).not.toContain("GM");
+    // Owner and CGS refund at ANY shop; the other four at a shop they belong to. The sentence keeps the two apart.
+    const [enAny, enMember] = en[key].split(" at any shop; ");
+    expect(enMember).toBeDefined();
+    for (const word of ["owner", "CGS"]) expect(words(enAny!), word).toContain(word);
+    for (const word of ["MoO", "AGM", "GM"]) { expect(words(enMember!), word).toContain(word); expect(words(enAny!), word).not.toContain(word); }
+    expect(enMember).toContain("catering manager");
+    expect(enMember).toContain("only at a shop they belong to");
+    const [esAny, esMember] = es[key].split(" en cualquier tienda; ");
+    expect(esMember).toBeDefined();
+    for (const word of ["dueño", "CGS"]) expect(words(esAny!), word).toContain(word);
+    for (const word of ["MoO", "AGM", "GM"]) { expect(words(esMember!), word).toContain(word); expect(words(esAny!), word).not.toContain(word); }
+    expect(esMember).toContain("gerente de catering");
+    expect(esMember).toContain("solo en una tienda a la que pertenecen");
   });
 });
 

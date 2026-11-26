@@ -3,8 +3,9 @@
 Owner: CC (sim and prod applies, the merge), Juan (every prod act, the switch, the Stripe Dashboard checks below).
 
 **State.** Everything here is DARK. The switch is the server env `CATERING_REFUNDS=1`; it is unset everywhere. With it
-unset no refund UI is rendered and every refund route answers 503 `refunds_off`, whatever migrations are applied and
-whoever is signed in.
+unset no refund UI is rendered and no refund route does any refund work, whatever migrations are applied and whoever is
+signed in: a signed-in, same-origin request is answered 503 `refunds_off` before its body is read. (The two checks that
+come before the switch still answer first: a cross-origin POST is 403, and a request with no session is 401.)
 
 | Build | What | Migration |
 |---|---|---|
@@ -42,7 +43,14 @@ The SQL rule reads the database, not the session. A person whose membership was 
 shop, deactivated or demoted since they signed in is refused by the reserve (403) even while their session still says
 otherwise.
 
-Another shop's order is a 404 for anyone below owner / CGS: they cannot see it, so the role is never looked at.
+Another shop's order, for anyone below owner / CGS, in the order the gates run:
+
+1. A role outside the list is 403 `forbidden` at the route, whatever shop the order belongs to.
+2. On Confirm, a role in the list without a fresh password is 403 `step_up_required`.
+3. Then the order is looked up, and a shop the person does not belong to is 404 `not_found`: it is never said that the
+   order exists. The same on Retry / Release (which have no step 2), and on the panel's read.
+
+So a GM or AGM of another shop gets a 404, never a refund, and never a 403 that would confirm the order is real.
 
 ## Applying 0358 (CC)
 
@@ -51,10 +59,15 @@ trigger, policy or row. It takes no table lock.
 
 1. **Read-only pre-flight.** The live body must still be 0357's:
    `select md5(regexp_replace(prosrc, '[^\x21-\x7E]+', '', 'g')) from pg_proc where oid = 'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure;`
-   → `e33880cdb5aab577a829ef45c2afa61a`. Any other value: stop. The file refuses by name too (a later definer exists).
+   → `e33880cdb5aab577a829ef45c2afa61a`. Any other value: stop. The file refuses by name too (a later definer exists),
+   and it also compares a second, exact fingerprint that sees a change inside a string literal (the file header has
+   that query).
 2. **Sim first:** dry run (the file without its `commit`, rolled back), then apply. Done 2026-11-26 UTC: `schema_migrations` version 20261126055240, verify clean, nothing outside the one function changed.
 3. **Prod on Juan's word.** Dry run first. The file's own assertions also check that 0357's other privileges are still
-   as 0357 left them; a database that has drifted is refused and nothing is changed.
+   as 0357 left them, by the WHOLE ACL: on the six functions nobody but the owner and `service_role` holds anything; on
+   the two tables, the owner aside, exactly `service_role` SELECT and 0357's nine UPDATE columns. A database that has
+   drifted (another role, a grant option, a changed guard trigger) is refused by name and nothing is changed. An
+   unexpected grant is never revoked silently: a person finds out who made it.
 4. **Verify:** the same query answers `4076029ec89d7b777af23ff3d8fcbdee`; `has_function_privilege` on the function is
    false for `anon` and `authenticated`, true for `service_role`.
 5. **Stamp the header** under the gate line: `-- APPLIED TO PROD <date> (schema_migrations version <v>, name '0358_catering_refund_roles')`.
@@ -67,7 +80,7 @@ Either order is safe. Nothing opens until BOTH are in, and the switch is off reg
 |---|---|---|
 | Old | 0357 | Refused by the app (today) |
 | Old | 0358 | Refused by the app, before the database is asked |
-| New | 0357 | The app lets them through and the reserve answers `forbidden` → 403. With the switch on, the panel would show the Refund button and the press would fail until 0358 is applied. |
+| New | 0357 | The app lets them through and the reserve answers `forbidden` → 403. With the switch on, the panel would show the Refund button and the press would fail until 0358 is applied, with a message that names their own role. Apply 0358 before the switch. |
 | New | 0358 | May refund |
 
 Pinned by `tests/catering-refund-deploy-order.test.ts`.
@@ -99,8 +112,9 @@ stop an email Stripe sends.
 | Shared | | | | |
 | (each shop with its own keys) | | | | |
 
-Refunds are not planned to go on with #638 and Part A alone: a refund that Stripe later fails or cancels is not handled
-until Part B. Turning the switch on before then is Juan's decision, and lines 1 to 3 gate it either way.
+**Do not turn the switch on with #638 and Part A alone.** A refund that Stripe later fails or cancels is not handled
+until Part B: the payment would keep saying "refunded" and nobody would be told. Only Juan can decide otherwise, in
+writing, and lines 1 to 3 gate the switch either way.
 
 ### What Stripe says (official docs, fetched 2026-11-26)
 

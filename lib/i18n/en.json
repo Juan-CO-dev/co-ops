@@ -10518,7 +10518,7 @@
   "catering.refunds.lead.open": "Open the refund",
   "catering.refunds.error.refunds_off": "Refunds are turned off.",
   "catering.refunds.error.refunds_unavailable": "Refunds aren't set up yet. Nothing was refunded.",
-  "catering.refunds.error.forbidden": "You can't refund this order. Refunds are for the catering manager, AGM, GM, and MoO and up, at a shop you belong to.",
+  "catering.refunds.error.forbidden": "You can't refund this order. The owner and CGS can refund at any shop; the MoO, catering manager, GM and AGM only at a shop they belong to.",
   "catering.refunds.error.not_found": "That order wasn't found.",
   "catering.refunds.error.invalid_request": "Something in the request was wrong. Nothing was refunded.",
   "catering.refunds.error.invalid_reason": "Pick a reason.",

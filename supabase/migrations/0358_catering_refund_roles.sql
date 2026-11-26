@@ -22,9 +22,13 @@
 --   decision or written. 0357's file is not edited.
 --
 -- PRE-FLIGHT (in this file; it refuses a drifted database by name and changes nothing):
---   0357's two tables and its six functions exist; catering_refund_actor_ok has exactly one overload; the live body's
---   fingerprint (md5 of prosrc with every non-printing character removed, the 0354 convention) is 0357's. A live body
---   that is already this file's = "already applied". Any other body = a later definer exists: re-emit from it.
+--   0357's two tables and its six functions exist; catering_refund_actor_ok has exactly one overload; the live body
+--   is 0357's by TWO fingerprints that must both match: the house one (md5 of prosrc with every non-printing character
+--   removed, the 0354 convention) and an EXACT one that keeps every character inside a line, string literals included
+--   (md5 of prosrc with only its line breaks, and the whitespace around them, normalized). The house one alone cannot
+--   see a space inside a literal ('catering_ mgr' reads as 'catering_mgr'); the exact one can (review, Astra P2).
+--   A live body that is already this file's = "already applied". Any other body = a later definer exists: re-emit
+--   from it.
 -- PRIVILEGES (stated again, never inherited): revoke all from PUBLIC, anon and authenticated; grant EXECUTE to
 --   service_role. CREATE OR REPLACE keeps the function's ACL, so this is a restatement; the assertions below prove it.
 -- ASSERTIONS (in this file, after the replace; any failure raises and the transaction changes nothing):
@@ -35,18 +39,32 @@
 --   with the pinned search_path; on catering_refund_requests service_role holds table SELECT and UPDATE on exactly
 --   0357's nine outcome / claim columns and nothing else; on catering_refund_stripe_snapshots service_role holds
 --   SELECT only; PUBLIC, anon and authenticated hold nothing on either table or any of their columns; both tables are
---   RLS-enabled with no policy; the guard trigger is in place.
+--   RLS-enabled with no policy.
+--   THE WHOLE ACL, not four named roles (review, Astra P1 / P2): on each of the six functions nobody but the owner
+--   and service_role holds any privilege, and service_role holds no grant option; each table's ACL, the owner's own
+--   entry aside, is exactly `service_role=SELECT`, and the column ACLs are exactly the nine `service_role=UPDATE`
+--   (none on the snapshots table) -- so another role, a grant option, or Postgres 17's MAINTAIN is refused by name.
+--   The guard trigger is 0357's: that name, enabled, BEFORE UPDATE FOR EACH ROW, calling
+--   catering_refund_requests_guard().
+--   A grant this file does not expect is REFUSED, never silently revoked: who put it there is a question for a person.
 -- DEPLOY ORDER: safe both ways. App first: the SQL rule still answers `forbidden` to a GM / AGM. This file first: the
 --   app's role list still refuses them before the database is asked. Nothing opens until both are in, and the switch
 --   is off regardless.
 -- LOCKS: CREATE OR REPLACE FUNCTION takes no table lock; a call already running finishes on the old body.
 -- DEPENDS ON: 0357 only (applied to sim 2026-11-24 and prod 2026-11-25).
+-- SIM, STATED EXACTLY: the sim apply above ran this file as it stood at commit f9ebc936. The post-build review then
+--   strengthened the PRE-FLIGHT and the ASSERTIONS only (the exact fingerprint, the whole-ACL checks, the trigger's
+--   identity). The function, the REVOKE and the GRANT are unchanged, so what is live on the sim is what this file
+--   creates. The strengthened blocks were then run against the sim in a rolled-back transaction (the pre-flight
+--   answers "already applied"; the assertion block passes on the real Supabase ACLs).
 -- PROOF: scripts/sql-harness-0358.mjs (PGlite, the REAL 0357 then the REAL 0358), CI-pinned by
 --   tests/catering-refund-0358-migration.test.ts.
--- PRE-FLIGHT (read-only, before apply):
+-- PRE-FLIGHT (read-only, before apply): the house fingerprint, then the exact one.
 --   select md5(regexp_replace(prosrc, '[^\x21-\x7E]+', '', 'g')) from pg_proc where oid = 'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure; -- e33880cdb5aab577a829ef45c2afa61a
+--   select md5(btrim(regexp_replace(prosrc, '\s*[\r\n]+\s*', E'\n', 'g'), E' \t\r\n')) from pg_proc where oid = 'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure; -- b08aab6eb05f8ec251ea2cf8e3785af5
 -- VERIFY AFTER APPLY:
 --   select md5(regexp_replace(prosrc, '[^\x21-\x7E]+', '', 'g')) from pg_proc where oid = 'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure; -- 4076029ec89d7b777af23ff3d8fcbdee
+--   select md5(btrim(regexp_replace(prosrc, '\s*[\r\n]+\s*', E'\n', 'g'), E' \t\r\n')) from pg_proc where oid = 'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure; -- d78c4f8d7e4aa13351cde97c7541b884
 --   select has_function_privilege('authenticated', 'public.catering_refund_actor_ok(uuid, uuid)', 'EXECUTE');           -- false
 --   select has_function_privilege('service_role', 'public.catering_refund_actor_ok(uuid, uuid)', 'EXECUTE');            -- true
 -- ROLLBACK: reverting the APP change alone withdraws the permission (the SQL rule is reachable only through
@@ -59,7 +77,8 @@ begin;
 do $$
 declare
   t text;
-  v_live text;
+  v_live text;   -- the house fingerprint (every non-printing character removed)
+  v_exact text;  -- the exact fingerprint (only line breaks and the whitespace around them normalized)
 begin
   foreach t in array array['catering_refund_requests', 'catering_refund_stripe_snapshots', 'users', 'user_locations'] loop
     if to_regclass('public.' || t) is null then raise exception '0358: public.% is missing (0357 must be applied first)', t; end if;
@@ -74,14 +93,17 @@ begin
   if (select count(*) from pg_proc p where p.proname = 'catering_refund_actor_ok' and p.pronamespace = 'public'::regnamespace) <> 1 then
     raise exception '0358: public.catering_refund_actor_ok has more than one overload. Refusing.';
   end if;
-  select md5(regexp_replace(p.prosrc, '[^\x21-\x7E]+', '', 'g')) into v_live from pg_proc p
+  select md5(regexp_replace(p.prosrc, '[^\x21-\x7E]+', '', 'g')),
+         md5(btrim(regexp_replace(p.prosrc, '\s*[\r\n]+\s*', E'\n', 'g'), E' \t\r\n'))
+    into v_live, v_exact from pg_proc p
    where p.oid = 'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure;
-  if v_live = '4076029ec89d7b777af23ff3d8fcbdee' then
+  if v_live = '4076029ec89d7b777af23ff3d8fcbdee' and v_exact = 'd78c4f8d7e4aa13351cde97c7541b884' then
     raise exception '0358: already applied';
   end if;
-  -- The live body this file replaces must be 0357's (a later definer would be silently lost).
-  if v_live is distinct from 'e33880cdb5aab577a829ef45c2afa61a' then
-    raise exception '0358: the live body of public.catering_refund_actor_ok(uuid, uuid) (md5 %) is not its 0357 definition -- a later definer exists; re-emit from it. Refusing.', v_live;
+  -- The live body this file replaces must be 0357's, character for character inside every line (a later definer, or
+  -- a body that differs only by a space inside a string literal, would be silently lost).
+  if v_live is distinct from 'e33880cdb5aab577a829ef45c2afa61a' or v_exact is distinct from 'b08aab6eb05f8ec251ea2cf8e3785af5' then
+    raise exception '0358: the live body of public.catering_refund_actor_ok(uuid, uuid) (md5 %, exact %) is not its 0357 definition -- a later definer exists; re-emit from it. Refusing.', v_live, v_exact;
   end if;
 end $$;
 
@@ -113,6 +135,7 @@ declare
   c text;
   v_fn pg_proc%rowtype;
   v_cols text;
+  v_acl text;
 begin
   -- (1) The re-emitted function: what it is.
   select * into v_fn from pg_proc p where p.oid = 'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure;
@@ -125,7 +148,8 @@ begin
      or replace(v_fn.proconfig[1], ' ', '') <> 'search_path=pg_catalog,public' then
     raise exception '0358: catering_refund_actor_ok search_path is not pinned to pg_catalog, public (%)', v_fn.proconfig;
   end if;
-  if md5(regexp_replace(v_fn.prosrc, '[^\x21-\x7E]+', '', 'g')) <> '4076029ec89d7b777af23ff3d8fcbdee' then
+  if md5(regexp_replace(v_fn.prosrc, '[^\x21-\x7E]+', '', 'g')) <> '4076029ec89d7b777af23ff3d8fcbdee'
+     or md5(btrim(regexp_replace(v_fn.prosrc, '\s*[\r\n]+\s*', E'\n', 'g'), E' \t\r\n')) <> 'd78c4f8d7e4aa13351cde97c7541b884' then
     raise exception '0358: the body written is not this file''s (md5 %)', md5(regexp_replace(v_fn.prosrc, '[^\x21-\x7E]+', '', 'g'));
   end if;
 
@@ -144,6 +168,13 @@ begin
     if exists (select 1 from pg_proc p, lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
                 where p.oid = f and a.grantee = 0) then
       raise exception '0358: PUBLIC holds a privilege on % (RPC escape)', f;
+    end if;
+    -- THE WHOLE ACL: nobody but the owner and service_role holds anything on it (any other role that kept an EXECUTE
+    -- across the replace is an escape the three names above would not see), and service_role cannot grant it on.
+    if exists (select 1 from pg_proc p, lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                where p.oid = f and a.grantee <> p.proowner
+                  and (a.grantee <> 'service_role'::regrole::oid or a.is_grantable)) then
+      raise exception '0358: % has an unexpected grantee or a grant option in its ACL (RPC escape)', f;
     end if;
     if f <> 'public.catering_refund_requests_guard()'::regprocedure then
       if not has_function_privilege('service_role', f, 'EXECUTE') then raise exception '0358: service_role cannot execute %', f; end if;
@@ -173,6 +204,27 @@ begin
     if has_any_column_privilege('service_role', t, 'INSERT') or has_any_column_privilege('service_role', t, 'REFERENCES') then
       raise exception '0358: service_role holds a column INSERT / REFERENCES on %', t;
     end if;
+    -- THE WHOLE table ACL, the owner's own entry aside: exactly service_role SELECT, with no grant option. This is
+    -- what catches another role, a grant option, and Postgres 17's MAINTAIN, which the named checks above do not.
+    select coalesce(string_agg(x.e, ',' order by x.e), '') into v_acl from (
+      select case when a.grantee = 0 then 'PUBLIC' else a.grantee::regrole::text end || '=' || a.privilege_type
+             || case when a.is_grantable then '*' else '' end as e
+        from pg_class cl, lateral aclexplode(coalesce(cl.relacl, acldefault('r', cl.relowner))) a
+       where cl.oid = t::regclass and a.grantee <> cl.relowner) x;
+    if v_acl <> 'service_role=SELECT' then
+      raise exception '0358: the ACL of % is not 0357''s (%)', t, v_acl;
+    end if;
+    -- THE WHOLE column ACL: exactly 0357's nine UPDATE grants on the requests table, none on the snapshots table.
+    select coalesce(string_agg(x.e, ',' order by x.e), '') into v_acl from (
+      select att.attname::text || ':' || case when a.grantee = 0 then 'PUBLIC' else a.grantee::regrole::text end || '=' || a.privilege_type
+             || case when a.is_grantable then '*' else '' end as e
+        from pg_attribute att, lateral aclexplode(att.attacl) a
+       where att.attrelid = t::regclass and att.attnum > 0 and not att.attisdropped and att.attacl is not null) x;
+    if v_acl <> (case when t = 'public.catering_refund_requests' then
+         'claim_token:service_role=UPDATE,claimed_until:service_role=UPDATE,last_error_code:service_role=UPDATE,last_error_message:service_role=UPDATE,settled_at:service_role=UPDATE,status:service_role=UPDATE,stripe_refund_id:service_role=UPDATE,stripe_status:service_role=UPDATE,updated_at:service_role=UPDATE'
+         else '' end) then
+      raise exception '0358: the column ACL of % is not 0357''s (%)', t, v_acl;
+    end if;
   end loop;
   select string_agg(a.attname::text, ',' order by a.attname::text) into v_cols
     from pg_attribute a
@@ -184,9 +236,12 @@ begin
   if has_any_column_privilege('service_role', 'public.catering_refund_stripe_snapshots', 'UPDATE') then
     raise exception '0358: service_role holds a column UPDATE on catering_refund_stripe_snapshots';
   end if;
+  -- The guard trigger is 0357's own: that name, enabled, calling the guard function, BEFORE UPDATE FOR EACH ROW
+  -- (pg_trigger.tgtype 19 = ROW 1 + BEFORE 2 + UPDATE 16). A same-named trigger on another event guards nothing.
   if (select count(*) from pg_trigger tg where tg.tgrelid = 'public.catering_refund_requests'::regclass
-        and tg.tgname = 'catering_refund_requests_guard' and not tg.tgisinternal and tg.tgenabled = 'O') <> 1 then
-    raise exception '0358: the catering_refund_requests_guard trigger is missing or disabled';
+        and tg.tgname = 'catering_refund_requests_guard' and not tg.tgisinternal and tg.tgenabled = 'O'
+        and tg.tgfoid = 'public.catering_refund_requests_guard()'::regprocedure and tg.tgtype = 19) <> 1 then
+    raise exception '0358: the catering_refund_requests_guard trigger is missing, disabled, or not 0357''s BEFORE UPDATE row trigger';
   end if;
 
   -- (4) It answers: nobody is nobody.

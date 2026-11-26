@@ -7,12 +7,15 @@
  *
  * Builds the same base as scripts/sql-harness-0357.mjs (the REAL 0120 / 0127 / 0333 DDL, minimal users /
  * user_locations / locations / audit_log), applies the REAL 0357, then the REAL 0358, and proves:
- *   P0  the pre-flight: refuses without 0357; refuses a CHANGED live body by name (a later definer); refuses a second
- *       overload; refuses a second apply ("already applied"); a refused apply leaves 0357's body in place
+ *   P0  the pre-flight: refuses without 0357; refuses a CHANGED live body by name (a later definer); refuses a body
+ *       that differs from 0357's only by a SPACE INSIDE A STRING LITERAL (the house fingerprint cannot see it, the
+ *       exact one can; review, Astra P2); refuses a second overload; refuses a second apply ("already applied"); a
+ *       refused apply leaves 0357's body in place
  *   P1  OLD SQL (0357 alone, the "app deployed first" half of the deploy order): a GM / AGM is `false` at their own
  *       shop and the real reserve answers `forbidden`
  *   P2  what was re-emitted: SECURITY DEFINER, plpgsql, volatile, boolean, the pinned search_path and nothing else in
- *       proconfig; the body fingerprints written in the file are the real ones (0357's before, 0358's after)
+ *       proconfig; the body fingerprints written in the file, house and exact, are the real ones (0357's before,
+ *       0358's after)
  *   P3  who may EXECUTE it, asked two ways: has_function_privilege for anon / authenticated / PUBLIC (false) and
  *       service_role (true), and by actually calling it under each role (42501 for anon, authenticated and a fresh
  *       role that belongs to nothing = PUBLIC; an answer for service_role). The REVOKE is the file's own: a database
@@ -26,9 +29,14 @@
  *       and a refusal writes nothing
  *   P6  nothing else moved: every other function body, ACL and setting in `public`, every table / column ACL and every
  *       column are identical before and after 0358 (0357's other five functions and its two tables included)
- *   P7  the in-file assertions refuse a drifted database and keep nothing (eleven drifts): 0357's reserve executable by
- *       authenticated; service_role holding INSERT on the requests table; an extra UPDATE column; RLS off; a policy;
- *       anon holding SELECT on the snapshots table
+ *   P7  the in-file assertions refuse a drifted database and keep nothing. Named roles: a 0357 RPC executable by
+ *       authenticated or by PUBLIC; service_role without one; an RPC without its pinned search_path; service_role
+ *       holding INSERT on the requests table or an extra UPDATE column; RLS off; a policy; anon holding SELECT on the
+ *       snapshots table; authenticated holding one column; the guard trigger disabled.
+ *       THE WHOLE ACL (review, Astra P1 / P2): ANOTHER role holding EXECUTE on the re-emitted function (it survives
+ *       CREATE OR REPLACE and the three-name REVOKE) or on 0357's reserve; service_role holding a GRANT OPTION on a
+ *       function, on a table or on a column; another role holding SELECT on a table; MAINTAIN held by authenticated
+ *       or by service_role. THE TRIGGER'S IDENTITY: the same name on BEFORE INSERT, or calling another function
  *   P8  the rollback written in the header: re-emitting 0357's body (kept verbatim below) restores 0357's fingerprint
  *       and a GM is refused again
  */
@@ -43,6 +51,9 @@ const M0358 = read("0358_catering_refund_roles.sql");
 /** The fingerprints 0358 carries (its pre-flight and its own body assertion). */
 export const FP_0357 = "e33880cdb5aab577a829ef45c2afa61a";
 export const FP_0358 = "4076029ec89d7b777af23ff3d8fcbdee";
+/** The EXACT fingerprints (only line breaks and the whitespace around them normalized; every in-line character kept). */
+export const EXACT_0357 = "b08aab6eb05f8ec251ea2cf8e3785af5";
+export const EXACT_0358 = "d78c4f8d7e4aa13351cde97c7541b884";
 
 /** Every role code (held equal to lib/roles.ts by tests/catering-refund-0358-migration.test.ts). */
 const ROLES = ["cgs", "owner", "moo", "gm", "agm", "catering_mgr", "prep_mgr", "social_media_mgr", "shift_lead", "key_holder", "trainer", "employee", "trainee", "hired_not_yet_worked", "prospect"];
@@ -132,6 +143,8 @@ const digest = async (db) => one(db, `select
      from pg_trigger t join pg_class c on c.oid = t.tgrelid where c.relnamespace = 'public'::regnamespace and not t.tgisinternal) as trgs,
   (select count(*)::int from pg_proc p where p.pronamespace = 'public'::regnamespace) as fn_count,
   (select count(*)::int from pg_policies where schemaname = 'public') as policies`);
+const exact = async (db) => (await one(db, `select md5(btrim(regexp_replace(prosrc, '\\s*[\\r\\n]+\\s*', E'\\n', 'g'), E' \\t\\r\\n')) as fp from pg_proc
+  where oid = 'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure`)).fp;
 const actorAcl = async (db) => (await one(db, "select coalesce(proacl::text, '(default)') as acl from pg_proc where oid = 'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure")).acl;
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -203,6 +216,18 @@ try {
   const CHANGED = ROLLBACK_TO_0357.replace("('moo', 'catering_mgr')", "('moo', 'catering_mgr', 'prep_mgr')");
   await refusedApply((d) => d.exec(CHANGED),
     "is not its 0357 definition -- a later definer exists; re-emit from it. Refusing.", "P0 a CHANGED live body is refused by name");
+  {
+    // Review, Astra P2: a body that is 0357's except for ONE SPACE inside a string literal. It authorizes differently
+    // (no role is called 'catering_ mgr'), and the house fingerprint reads it as 0357's.
+    const SPACED = ROLLBACK_TO_0357.replace("('moo', 'catering_mgr')", "('moo', 'catering_ mgr')");
+    check(SPACED !== ROLLBACK_TO_0357, "P0 (setup) the spaced body differs from 0357's");
+    await drift.exec("begin"); await drift.exec(SPACED);
+    const [houseFp, exactFp] = [await fingerprint(drift), await exact(drift)];
+    await drift.exec("rollback");
+    check(houseFp === FP_0357 && exactFp !== EXACT_0357, "P0 the house fingerprint cannot tell a space inside a literal from 0357's body; the exact one can");
+    await refusedOn(drift, SPACED, "is not its 0357 definition -- a later definer exists; re-emit from it. Refusing.",
+      "P0 a live body that differs only by a space inside a string literal is refused");
+  }
   await refusedOn(drift, "create function public.catering_refund_actor_ok(p_actor_id uuid) returns boolean language sql as 'select false'",
     "0358: public.catering_refund_actor_ok has more than one overload. Refusing.", "P0 a second overload is refused");
   await refusedOn(drift, "drop function public.catering_refund_claim(uuid)",
@@ -210,7 +235,7 @@ try {
 
   db = await base();
   const f = await fixtures(db);
-  check((await fingerprint(db)) === FP_0357, `P0 the live 0357 body's fingerprint is the one 0358 expects (${FP_0357})`);
+  check((await fingerprint(db)) === FP_0357 && (await exact(db)) === EXACT_0357, `P0 the live 0357 body's fingerprints are the ones 0358 expects (${FP_0357}, exact ${EXACT_0357})`);
 
   // ── P1 — OLD SQL: 0357 alone (the app deployed first) ────────────────────────────────────────
   const gm = await f.user("gm");
@@ -237,8 +262,9 @@ try {
   await db.exec("rollback");
 
   // ── P2 — what was re-emitted ─────────────────────────────────────────────────────────────────
-  check((await fingerprint(db)) === FP_0358, `P2 the body is 0358's (${FP_0358})`);
-  check(M0358.split(FP_0357).length === 3 && M0358.split(FP_0358).length === 4, "P2 the file carries exactly those two fingerprints (0357's twice, its own three times)");
+  check((await fingerprint(db)) === FP_0358 && (await exact(db)) === EXACT_0358, `P2 the body is 0358's (${FP_0358}, exact ${EXACT_0358})`);
+  check(M0358.split(FP_0357).length === 3 && M0358.split(FP_0358).length === 4 && M0358.split(EXACT_0357).length === 3 && M0358.split(EXACT_0358).length === 4,
+    "P2 the file carries exactly those four fingerprints (0357's twice each, its own three times each)");
   const fn = await one(db, `select p.prosecdef, p.provolatile::text as vol, p.prorettype::regtype::text as ret, p.proconfig, l.lanname,
       pg_get_function_identity_arguments(p.oid) as args
     from pg_proc p join pg_language l on l.oid = p.prolang where p.oid = 'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure`);
@@ -359,7 +385,7 @@ try {
   await refusedOn(drift, "grant insert on table public.catering_refund_requests to service_role",
     "0358: service_role holds table-level INSERT on public.catering_refund_requests", "P7 service_role holding INSERT on the requests table");
   await refusedOn(drift, "grant update (amount_cents) on table public.catering_refund_requests to service_role",
-    "0358: service_role UPDATE columns on catering_refund_requests are not 0357's", "P7 an extra UPDATE column for service_role");
+    "0358: the column ACL of public.catering_refund_requests is not 0357's (amount_cents:service_role=UPDATE,claim_token:service_role=UPDATE,", "P7 an extra UPDATE column for service_role");
   await refusedOn(drift, "alter table public.catering_refund_requests disable row level security",
     "0358: RLS is off on public.catering_refund_requests", "P7 RLS switched off");
   await refusedOn(drift, "create policy p on public.catering_refund_stripe_snapshots for select using (true)",
@@ -368,17 +394,58 @@ try {
     "0358: anon holds SELECT on public.catering_refund_stripe_snapshots", "P7 anon holding SELECT on the snapshots table");
   await refusedOn(drift, "grant select (status) on table public.catering_refund_requests to authenticated",
     "0358: authenticated holds column SELECT on public.catering_refund_requests", "P7 authenticated holding one column");
-  await refusedOn(drift, "alter table public.catering_refund_requests disable trigger catering_refund_requests_guard",
-    "0358: the catering_refund_requests_guard trigger is missing or disabled", "P7 the guard trigger disabled");
+  const TRIGGER_REFUSAL = "0358: the catering_refund_requests_guard trigger is missing, disabled, or not 0357's BEFORE UPDATE row trigger";
+  await refusedOn(drift, "alter table public.catering_refund_requests disable trigger catering_refund_requests_guard", TRIGGER_REFUSAL, "P7 the guard trigger disabled");
+
+  // ── P7 (review, Astra P1): THE WHOLE ACL of the functions ────────────────────────────────────
+  const FN_REFUSAL = (f) => `0358: ${f} has an unexpected grantee or a grant option in its ACL (RPC escape)`;
+  await refusedOn(drift, "create role h0358_reporting; grant execute on function public.catering_refund_actor_ok(uuid, uuid) to h0358_reporting",
+    FN_REFUSAL("catering_refund_actor_ok(uuid,uuid)"), "P7 ANOTHER role holding EXECUTE on the re-emitted function (it survives the replace and the three-name REVOKE)");
+  await refusedOn(drift, "create role h0358_reporting; grant execute on function public.catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text) to h0358_reporting",
+    FN_REFUSAL("catering_refund_reserve(uuid,uuid,uuid,bigint,text,text,text)"), "P7 another role holding EXECUTE on 0357's reserve");
+  await refusedOn(drift, "create role h0358_reporting; grant execute on function public.catering_refund_requests_guard() to h0358_reporting",
+    FN_REFUSAL("catering_refund_requests_guard()"), "P7 another role holding EXECUTE on the guard function");
+  await refusedOn(drift, "grant execute on function public.catering_refund_actor_ok(uuid, uuid) to service_role with grant option",
+    FN_REFUSAL("catering_refund_actor_ok(uuid,uuid)"), "P7 service_role holding a GRANT OPTION on the re-emitted function");
+  await refusedOn(drift, "grant execute on function public.catering_refund_claim(uuid) to service_role with grant option",
+    FN_REFUSAL("catering_refund_claim(uuid)"), "P7 service_role holding a GRANT OPTION on a 0357 RPC");
+
+  // ── P7 (review, Astra P2): THE WHOLE ACL of the tables and their columns ─────────────────────
+  await refusedOn(drift, "grant maintain on table public.catering_refund_requests to authenticated",
+    "0358: the ACL of public.catering_refund_requests is not 0357's (authenticated=MAINTAIN,service_role=SELECT)", "P7 authenticated holding MAINTAIN on the requests table");
+  await refusedOn(drift, "grant maintain on table public.catering_refund_stripe_snapshots to service_role",
+    "0358: the ACL of public.catering_refund_stripe_snapshots is not 0357's (service_role=MAINTAIN,service_role=SELECT)", "P7 service_role holding MAINTAIN on the snapshots table");
+  await refusedOn(drift, "grant select on table public.catering_refund_stripe_snapshots to service_role with grant option",
+    "0358: the ACL of public.catering_refund_stripe_snapshots is not 0357's (service_role=SELECT*)", "P7 service_role holding SELECT WITH GRANT OPTION on the snapshots table");
+  await refusedOn(drift, "create role h0358_reporting; grant select on table public.catering_refund_requests to h0358_reporting",
+    "0358: the ACL of public.catering_refund_requests is not 0357's (h0358_reporting=SELECT,service_role=SELECT)", "P7 another role holding SELECT on the requests table");
+  await refusedOn(drift, "grant update (status) on table public.catering_refund_requests to service_role with grant option",
+    "0358: the column ACL of public.catering_refund_requests is not 0357's", "P7 service_role holding a GRANT OPTION on one of its UPDATE columns");
+  await refusedOn(drift, "create role h0358_reporting; grant select (status) on table public.catering_refund_requests to h0358_reporting",
+    "0358: the column ACL of public.catering_refund_requests is not 0357's", "P7 another role holding one column of the requests table");
+  await refusedOn(drift, "create role h0358_reporting; grant select (listed_at) on table public.catering_refund_stripe_snapshots to h0358_reporting",
+    "0358: the column ACL of public.catering_refund_stripe_snapshots is not 0357's (listed_at:h0358_reporting=SELECT)", "P7 another role holding one column of the snapshots table");
+
+  // ── P7 (review, Astra P2): the guard trigger's IDENTITY, not only its name ───────────────────
+  await refusedOn(drift, `drop trigger catering_refund_requests_guard on public.catering_refund_requests;
+    create trigger catering_refund_requests_guard before insert on public.catering_refund_requests for each row execute function public.catering_refund_requests_guard()`,
+    TRIGGER_REFUSAL, "P7 a same-named trigger on BEFORE INSERT (updates would no longer be guarded)");
+  await refusedOn(drift, `drop trigger catering_refund_requests_guard on public.catering_refund_requests;
+    create trigger catering_refund_requests_guard after update on public.catering_refund_requests for each row execute function public.catering_refund_requests_guard()`,
+    TRIGGER_REFUSAL, "P7 a same-named trigger AFTER UPDATE");
+  await refusedOn(drift, `create function public.h0358_noop() returns trigger language plpgsql as 'begin return new; end';
+    drop trigger catering_refund_requests_guard on public.catering_refund_requests;
+    create trigger catering_refund_requests_guard before update on public.catering_refund_requests for each row execute function public.h0358_noop()`,
+    TRIGGER_REFUSAL, "P7 a same-named BEFORE UPDATE trigger calling another function");
 
   // ── P8 — the rollback in the header ──────────────────────────────────────────────────────────
   await db.exec(`begin; ${ROLLBACK_TO_0357} commit;`);
-  check((await fingerprint(db)) === FP_0357, "P8 re-emitting 0357's body restores 0357's fingerprint");
+  check((await fingerprint(db)) === FP_0357 && (await exact(db)) === EXACT_0357, "P8 re-emitting 0357's body restores 0357's fingerprint");
   check((await ok(db, gm, f.shop)) === false, "P8 …and a GM is refused again");
   check((await one(db, `select has_function_privilege('authenticated', '${FN}', 'execute') as ok`)).ok === false
     && (await one(db, `select has_function_privilege('service_role', '${FN}', 'execute') as ok`)).ok === true, "P8 …with the same privileges");
   await db.exec(M0358);
-  check((await fingerprint(db)) === FP_0358 && (await ok(db, gm, f.shop)) === true, "P8 0358 applies again on the restored body");
+  check((await fingerprint(db)) === FP_0358 && (await exact(db)) === EXACT_0358 && (await ok(db, gm, f.shop)) === true, "P8 0358 applies again on the restored body");
 } catch (e) {
   failures++;
   console.error(`FAIL 0358 harness: ${e.stack ?? e}`);

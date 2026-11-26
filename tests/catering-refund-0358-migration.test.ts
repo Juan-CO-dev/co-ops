@@ -33,6 +33,8 @@ const body = (text: string) => {
 };
 /** The 0354 convention: md5 of the body with every non-printing character removed. */
 const fingerprint = (text: string) => createHash("md5").update(text.replace(/[^\x21-\x7E]+/g, ""), "utf8").digest("hex");
+/** The EXACT fingerprint: only line breaks (and the whitespace around them) normalized, every in-line character kept. */
+const exactFingerprint = (text: string) => createHash("md5").update(text.replace(/\s*[\r\n]+\s*/g, "\n").trim(), "utf8").digest("hex");
 const harness = readFileSync("scripts/sql-harness-0358.mjs", "utf8").replace(/\r\n/g, "\n");
 
 const NEW_LIST = "('moo', 'catering_mgr', 'gm', 'agm')";
@@ -176,7 +178,24 @@ describe("privileges are stated again in the file, and asserted in it", () => {
       "aclexplode(coalesce(p.proacl, acldefault('f', p.proowner)))",
       "if not has_function_privilege('service_role', f, 'EXECUTE') then raise exception '0358: service_role cannot execute %', f;",
       "if public.catering_refund_actor_ok(null, null) is distinct from false then",
+      // Review (Astra P1 / P2): THE WHOLE ACL, a grant option, MAINTAIN, and the trigger's identity.
+      "where p.oid = f and a.grantee <> p.proowner",
+      "and (a.grantee <> 'service_role'::regrole::oid or a.is_grantable)) then",
+      "raise exception '0358: % has an unexpected grantee or a grant option in its ACL (RPC escape)', f;",
+      "from pg_class cl, lateral aclexplode(coalesce(cl.relacl, acldefault('r', cl.relowner))) a",
+      "where cl.oid = t::regclass and a.grantee <> cl.relowner) x;",
+      "if v_acl <> 'service_role=SELECT' then",
+      "from pg_attribute att, lateral aclexplode(att.attacl) a",
+      "and tg.tgfoid = 'public.catering_refund_requests_guard()'::regprocedure and tg.tgtype = 19) <> 1 then",
     ]) expect(assertions, needle).toContain(needle);
+    // The whole-ACL check covers all six functions: it sits inside the loop over them, before the guard exception.
+    const loop = assertions.slice(assertions.indexOf("foreach f in array array["), assertions.indexOf("-- (3)") === -1 ? undefined : assertions.indexOf("-- (3)"));
+    expect(loop.indexOf("has an unexpected grantee or a grant option")).toBeGreaterThan(-1);
+    expect(loop.indexOf("has an unexpected grantee or a grant option")).toBeLessThan(loop.indexOf("if f <> 'public.catering_refund_requests_guard()'::regprocedure then"));
+    // The expected column ACL is 0357's nine grants, by name.
+    const nine = strip(sql0357).match(/grant update \(([^)]*)\)\s+on table public\.catering_refund_requests to service_role;/)![1]!.split(",").map((c) => c.trim()).sort();
+    expect(nine).toHaveLength(9);
+    expect(assertions).toContain(`'${nine.map((c) => `${c}:service_role=UPDATE`).join(",")}'`);
     // 0357's other five functions and its two tables are COMPARED, never re-granted.
     for (const f of ["catering_refund_figures(uuid)", "catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text)", "catering_refund_claim(uuid)",
       "catering_refund_record_snapshot(uuid, timestamptz, bigint, jsonb)", "catering_refund_requests_guard()"]) {
@@ -193,36 +212,54 @@ describe("privileges are stated again in the file, and asserted in it", () => {
     const pre = code.slice(code.indexOf("do $$"), code.indexOf("create or replace function"));
     expect(pre).toContain("raise exception '0358: already applied';");
     // (Read from the raw file: the message holds a "--", which the comment stripper above would cut.)
-    expect(sql.slice(sql.indexOf("\ndo $$"), sql.indexOf("create or replace function"))).toContain("is not its 0357 definition -- a later definer exists; re-emit from it. Refusing.', v_live;");
+    expect(sql.slice(sql.indexOf("\ndo $$"), sql.indexOf("create or replace function"))).toContain("(md5 %, exact %) is not its 0357 definition -- a later definer exists; re-emit from it. Refusing.', v_live, v_exact;");
     expect(pre).toContain("has more than one overload. Refusing.");
     expect(pre).toContain("is missing (0357 must be applied first)");
-    expect(pre).toContain("select md5(regexp_replace(p.prosrc, '[^\\x21-\\x7E]+', '', 'g')) into v_live from pg_proc p");
+    expect(pre).toContain("select md5(regexp_replace(p.prosrc, '[^\\x21-\\x7E]+', '', 'g')),");
+    expect(pre).toContain("md5(btrim(regexp_replace(p.prosrc, '\\s*[\\r\\n]+\\s*', E'\\n', 'g'), E' \\t\\r\\n'))");
+    expect(pre).toContain("into v_live, v_exact from pg_proc p");
   });
 });
 
 describe("the fingerprints in the file are the real ones", () => {
   const fp57 = fingerprint(body(sql0357));
   const fp58 = fingerprint(body(sql));
+  const x57 = exactFingerprint(body(sql0357));
+  const x58 = exactFingerprint(body(sql));
 
-  it("0357's body and 0358's body, computed here from the two files", () => {
-    expect(fp57).not.toBe(fp58);
-    expect(code).toContain(`if v_live is distinct from '${fp57}' then`);
-    expect(code).toContain(`if v_live = '${fp58}' then`);
-    expect(code).toContain(`if md5(regexp_replace(v_fn.prosrc, '[^\\x21-\\x7E]+', '', 'g')) <> '${fp58}' then`);
-    // The header's read-only pre-flight and verify lines carry the same two values.
-    expect(sql).toContain(`'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure; -- ${fp57}`);
-    expect(sql).toContain(`'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure; -- ${fp58}`);
-    expect([...sql.matchAll(/\b[0-9a-f]{32}\b/g)].map((m) => m[0]).sort()).toEqual([fp57, fp57, fp58, fp58, fp58].sort());
+  it("0357's body and 0358's body, house and exact, computed here from the two files", () => {
+    expect(new Set([fp57, fp58, x57, x58]).size).toBe(4);
+    // BOTH must match for the live body to count as 0357's; both for "already applied"; both for the body written.
+    expect(code).toContain(`if v_live is distinct from '${fp57}' or v_exact is distinct from '${x57}' then`);
+    expect(code).toContain(`if v_live = '${fp58}' and v_exact = '${x58}' then`);
+    expect(code).toContain(`if md5(regexp_replace(v_fn.prosrc, '[^\\x21-\\x7E]+', '', 'g')) <> '${fp58}'\n     or md5(btrim(regexp_replace(v_fn.prosrc, '\\s*[\\r\\n]+\\s*', E'\\n', 'g'), E' \\t\\r\\n')) <> '${x58}' then`);
+    // The header's read-only pre-flight and verify lines carry the same four values.
+    for (const value of [fp57, x57, fp58, x58]) expect(sql).toContain(`'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure; -- ${value}`);
+    expect([...sql.matchAll(/\b[0-9a-f]{32}\b/g)].map((m) => m[0]).sort()).toEqual([fp57, fp57, x57, x57, fp58, fp58, fp58, x58, x58, x58].sort());
+  });
+
+  it("review (Astra P2): the exact fingerprint sees a space inside a string literal; the house one does not", () => {
+    const spaced = body(sql0357).replace("'catering_mgr')", "'catering_ mgr')");
+    expect(spaced).not.toBe(body(sql0357));
+    expect(fingerprint(spaced)).toBe(fp57);
+    expect(exactFingerprint(spaced)).not.toBe(x57);
+    // …and it still tolerates what an apply tool may change: line endings, indentation, trailing spaces.
+    const reflowed = body(sql0357).replace(/\n/g, "\r\n").replace(/\r\n {2}/g, "\r\n\t  ").replace(/;\r\n/g, ";  \r\n");
+    expect(reflowed).not.toBe(body(sql0357));
+    expect(exactFingerprint(reflowed)).toBe(x57);
   });
 
   it("the harness proves the same two values on a real Postgres, and its role list is every role", () => {
     expect(harness).toContain(`export const FP_0357 = "${fp57}";`);
     expect(harness).toContain(`export const FP_0358 = "${fp58}";`);
+    expect(harness).toContain(`export const EXACT_0357 = "${x57}";`);
+    expect(harness).toContain(`export const EXACT_0358 = "${x58}";`);
     const roles = [...harness.match(/const ROLES = \[([^\]]*)\];/)![1]!.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]!);
     expect(roles.sort()).toEqual(Object.keys(ROLES).sort());
     // Its rollback body is 0357's, verbatim.
     const rollback = harness.match(/const ROLLBACK_TO_0357 = `([\s\S]*?)`;/)![1]!;
     expect(fingerprint(body(rollback))).toBe(fp57);
+    expect(exactFingerprint(body(rollback))).toBe(x57);
     expect(body(rollback)).toBe(body(sql0357));
   });
 });
@@ -249,6 +286,18 @@ describe("the executable proof", () => {
       "P6 every other function (body, ACL, settings), table, column ACL, column and trigger is identical before and after",
       "P7 0357's reserve executable by authenticated",
       "P8 re-emitting 0357's body restores 0357's fingerprint",
+      // The post-build review's fixes, one proof each (Astra P1, P2, P2, P2).
+      "P7 ANOTHER role holding EXECUTE on the re-emitted function (it survives the replace and the three-name REVOKE)",
+      "P7 another role holding EXECUTE on 0357's reserve",
+      "P7 service_role holding a GRANT OPTION on the re-emitted function",
+      "P0 the house fingerprint cannot tell a space inside a literal from 0357's body; the exact one can",
+      "P0 a live body that differs only by a space inside a string literal is refused",
+      "P7 authenticated holding MAINTAIN on the requests table",
+      "P7 service_role holding SELECT WITH GRANT OPTION on the snapshots table",
+      "P7 another role holding SELECT on the requests table",
+      "P7 service_role holding a GRANT OPTION on one of its UPDATE columns",
+      "P7 a same-named trigger on BEFORE INSERT (updates would no longer be guarded)",
+      "P7 a same-named BEFORE UPDATE trigger calling another function",
     ]) expect(out, needle).toContain(`ok   ${needle}`);
   }, 260_000);
 });

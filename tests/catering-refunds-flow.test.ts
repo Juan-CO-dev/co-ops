@@ -140,11 +140,11 @@ const SQL_ANY_SHOP = ["owner", "cgs"];
 const SQL_MEMBER_SHOP = { "0357": ["moo", "catering_mgr"], "0358": ["moo", "catering_mgr", "gm", "agm"] } as const;
 function sqlActorOk(db: FakeDb, actorId: unknown, shopId: unknown): boolean {
   const u = (db.tables.users ?? []).find((x) => x.id === actorId);
-  if (!u || u.active === false) return false;
+  if (!u || u.active !== true) return false; // SQL: `and u.active` — NULL is not active
   const role = String(u.role);
   if (SQL_ANY_SHOP.includes(role)) return true;
   return (SQL_MEMBER_SHOP[h.sqlRule] as readonly string[]).includes(role) && shopId != null
-    && (db.tables.user_locations ?? []).some((m) => m.user_id === actorId && m.location_id === shopId && m.active !== false);
+    && (db.tables.user_locations ?? []).some((m) => m.user_id === actorId && m.location_id === shopId && m.active === true);
 }
 
 let reqSeq = 0;
@@ -720,6 +720,16 @@ describe("the stand-in actor rule is the SQL's", () => {
   it("its role lists are the two files' own, in the same branches", () => {
     expect(sqlLists("0357_catering_refund_requests.sql")).toEqual([SQL_ANY_SHOP, [...SQL_MEMBER_SHOP["0357"]]]);
     expect(sqlLists("0358_catering_refund_roles.sql")).toEqual([SQL_ANY_SHOP, [...SQL_MEMBER_SHOP["0358"]]]);
+  });
+  it("NULL is not active (as in SQL): a user or a membership whose `active` is missing is refused", () => {
+    actor("gm");
+    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(true);
+    delete (h.db.tables.user_locations as Row[])[0]!.active;
+    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(false);
+    actor("owner", []);
+    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(true);
+    (h.db.tables.users as Row[])[0]!.active = null;
+    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(false);
   });
   it("for a fresh session the app gate and the SQL rule give the SAME answer, every role x member / other shop / no shop", () => {
     for (const role of Object.keys(ROLES) as RoleCode[]) {
