@@ -94,6 +94,8 @@ describe("shop digest lines", () => {
     const mail = renderShopDigest(facts(), { language: "es", baseUrl: BASE });
     expect(mail.subject).toContain("Resumen de cierre de Shop A");
     expect(mail.text).toContain("Todo bien");
+    // A line (not only the section status) says it.
+    expect(mail.text).toMatch(/\n✓ [^\n]+: Todo bien/);
   });
 });
 
@@ -126,7 +128,8 @@ describe("P2 (Astra): never All good without evidence", () => {
   const byLabel = (f: ShopDayFacts, label: string) => composeShopLines(f, "en", BASE).find((l) => l.label === label)!;
 
   it("PM: the list carries no PM signals, so the evaluations decide — or the line says not assessed", () => {
-    expect(byLabel(facts({ pmFindings: null }), "PM report")).toMatchObject({ text: "Submitted · PM issues not assessed", tone: "info" });
+    expect(byLabel(facts({ pmFindings: null }), "PM report")).toMatchObject({ text: "Submitted · PM issues not assessed", tone: "info", unknown: true });
+    expect(byLabel(facts({ pmFindings: { evaluations: 4, needsWork: 0 } }), "PM report").unknown).toBeUndefined();
     expect(byLabel(facts({ pmFindings: { evaluations: 4, needsWork: 3 } }), "PM report")).toMatchObject({ text: "3 needs-work ratings across 4 evaluations", tone: "issue" });
     expect(byLabel(facts({ pmFindings: { evaluations: 0, needsWork: 0 } }), "PM report")).toMatchObject({ text: "Submitted · no evaluations recorded", tone: "info" });
     expect(byLabel(facts({ pmFindings: { evaluations: 4, needsWork: 0 } }), "PM report")).toMatchObject({ text: "All good (4 evaluations)", tone: "ok" });
@@ -134,7 +137,21 @@ describe("P2 (Astra): never All good without evidence", () => {
 
   it("a report whose signals were never computed is not assessed, not All good", () => {
     const unsignalled = { ...report("opening", "phase2_complete"), signalSummary: undefined };
-    expect(byLabel(facts({ reports: [unsignalled] }), "Opening")).toMatchObject({ text: "Submitted · issues not assessed", tone: "info" });
+    expect(byLabel(facts({ reports: [unsignalled] }), "Opening")).toMatchObject({ text: "Submitted · issues not assessed", tone: "info", unknown: true });
+  });
+
+  it("not assessed AND late (system-finalized, v2) is genuinely both: issue AND unknown", () => {
+    const late = { ...report("closing", "auto_finalized"), signalSummary: undefined };
+    const line = composeShopLines(facts({ reports: [late] }), "en", BASE, { v2Layout: true }).find((l) => l.label === "Closing")!;
+    expect(line).toMatchObject({ tone: "issue", unknown: true });
+    expect(line.text).toContain("issues not assessed");
+  });
+
+  it("the v1 single section is finished too: 11 lines on a clean day, 5 print and 6 fold into one 'and 6 more' line", () => {
+    const mail = renderShopDigest(facts(), { language: "en", baseUrl: BASE });
+    expect(mail.text).toContain("\nShop A — ✓ All good\n");
+    expect(mail.text).toContain("• and 6 more: PM report, Maintenance, Receiving, Tosses / waste, Store runs pending review +1\n");
+    expect(mail.html).toContain("All good across Shop A");
   });
 
   it("tasks: counts + ordering with no evidence are NOT 'All done (2)' (the reproduced case)", () => {

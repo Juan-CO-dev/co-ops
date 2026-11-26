@@ -117,6 +117,9 @@ describe("catering morning digest: today's orders", () => {
     const hidden = todayLines(f, false);
     expect(hidden.join("\n")).not.toContain("1200 First St NE");
     expect(hidden[1]).toBe('issue|Late Co|ready by 1:00 PM · 40 guests · Delivery · $150.00 due · notes: "Cut in half"');
+    // Digests round 3: 8 lines, 2 issues, 6 plain → cap 5; the "no prep" footnote (label "Today") folds.
+    expect(hidden).toHaveLength(8);
+    expect(hidden[7]).toBe("info|and 1 more|Today");
   });
 
   it("inventory readiness: shortfalls highlighted, uncounted SKUs say so, covered rolled up, unchecked lines disclosed", () => {
@@ -136,9 +139,13 @@ describe("catering morning digest: today's orders", () => {
 
   it("a failed readiness / staff read is said; no orders today = no readiness or staff lines at all", () => {
     const failedF = facts([lead({})], { readiness: { [A]: { kind: "error" } }, staff: { [A]: { kind: "error" } } });
+    // Digests round 3: a failed read is UNKNOWN (tone info + unknown), not an issue.
     expect(todayLines(failedF, false)).toEqual(expect.arrayContaining([
-      "issue|Inventory for today|Could not load — check the app", "issue|Staff today|Could not load — check the app",
+      "info|Inventory for today|Could not load — check the app", "info|Staff today|Could not load — check the app",
     ]));
+    const today = composeCateringSections(failedF, { locations: [{ id: A, name: "Shop A" }], includeUnassigned: false }, "en", BASE)[1]!;
+    expect(today.lines.filter((l) => l.unknown).map((l) => l.label)).toEqual(["Inventory for today", "Staff today"]);
+    expect(today.status).toMatchObject({ unknowns: 2 });
     expect(todayLines(facts([]), false)).toEqual(["info|Today|Nothing booked today"]);
   });
 });

@@ -10546,5 +10546,14 @@
   "catering.refunds.try_again": "Try again",
   "catering.refunds.lead.unavailable": "Couldn't check whether this order has money to refund.",
   "catering.refunds.stripe_unchecked": "Couldn't check Stripe just now, so these figures may be out of date.",
-  "digest.section.open": "Open this in the app →"
+  "digest.section.open": "Open this in the app →",
+  "digest.status.issues_one": "1 issue",
+  "digest.status.issues_other": "{n} issues",
+  "digest.status.unknown_one": "1 not available",
+  "digest.status.unknown_other": "{n} not available",
+  "digest.status.ok": "All good",
+  "digest.section.more_one": "and 1 more",
+  "digest.section.more_other": "and {n} more",
+  "digest.shop.preheader_unknown_one": "1 line could not be checked.",
+  "digest.shop.preheader_unknown_other": "{n} lines could not be checked."
 }

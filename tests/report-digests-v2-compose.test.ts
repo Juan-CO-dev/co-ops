@@ -74,10 +74,12 @@ describe("digest v2 layout", () => {
     expect(texts.some((x) => /\$0\.00 · 0 checks/.test(x))).toBe(false);
   });
 
-  it("a failed read is said, as an issue, and the rest of the digest still renders", () => {
+  it("a failed read is said, as UNKNOWN (not an issue, never All good), and the rest of the digest still renders", () => {
     const f = facts({ v2: v2Fixture({ receiving: failed(), sales: failed() }) });
-    expect(lineIn(f, "Receiving", "Receiving")).toMatchObject({ text: "Could not load — check the app", tone: "issue" });
-    expect(lineIn(f, "Sales detail", "Sales detail")).toMatchObject({ text: "Could not load — check the app", tone: "issue" });
+    // Digests round 3: a failed read changed from tone "issue" to tone "info" + unknown.
+    expect(lineIn(f, "Receiving", "Receiving")).toMatchObject({ text: "Could not load — check the app", tone: "info", unknown: true });
+    expect(lineIn(f, "Sales detail", "Sales detail")).toMatchObject({ text: "Could not load — check the app", tone: "info", unknown: true });
+    expect(flat(f).find((s) => s.title === "Receiving")!.status).toMatchObject({ tone: "unknown", text: "1 not available", issues: 0, unknowns: 1 });
     expect(lineIn(f, "Ordering", "POs placed")!.text).toBe("1 PO placed · $25.00");
   });
 
@@ -117,8 +119,12 @@ describe("digest v2 layout", () => {
     const cash = facts({ reports: [report("cash", "ok", { ...clean, cashOverShortCents: 8 })] });
     expect(lineIn(cash, "Operations", "Cash deposit")).toMatchObject({ text: "1 issue: cash over $0.08 · by Maria", tone: "issue" });
     // v2 moves receiving / tosses / store runs / PM out of Operations.
-    const labels = flat(facts()).find((s) => s.title === "Operations")!.lines.map((l) => l.label);
-    expect(labels).toEqual(["Opening", "AM prep list", "Mid-day prep", "Closing", "Cash deposit", "Maintenance", "Assigned tasks"]);
+    // Digests round 3: seven plain lines and a cap of 5 — the last two fold into one "and 2 more" line that
+    // names them and carries the section link; nothing is lost from the count.
+    const ops = flat(facts()).find((s) => s.title === "Operations")!;
+    expect(ops.lines.map((l) => l.label)).toEqual(["Opening", "AM prep list", "Mid-day prep", "Closing", "Cash deposit", "and 2 more"]);
+    expect(ops.lines[5]).toMatchObject({ text: "Maintenance, Assigned tasks", tone: "info", href: ops.href });
+    expect(ops.status).toMatchObject({ tone: "ok", text: "All good" });
   });
 
   it("people: who opened and closed, the PM flags, retrains", () => {
@@ -177,7 +183,7 @@ describe("unified (level 8+): all-shop totals first, then each shop, label said 
   it("adds the totals section and prefixes each shop's sections", () => {
     const b = { ...facts(), location: { id: "22222222-2222-4222-8222-222222222222", name: "Shop B" } };
     const mail = renderUnifiedDigest({ day: DAY, shops: [facts(), b], notFinalized: [{ id: "x", name: "Shop B" }] }, { language: "en", baseUrl: BASE });
-    expect(mail.text).toContain("\nAll shops\n");
+    expect(mail.text).toContain("\nAll shops — ✓ All good\n");
     expect(mail.text).toContain("$200.00 · +25% vs last week · 2 checks");
     expect(mail.text).toContain("Shop A · Headline");
     expect(mail.text).toContain("Shop B · Tomorrow · Thu, Oct 8");
@@ -187,7 +193,8 @@ describe("unified (level 8+): all-shop totals first, then each shop, label said 
 
   it("the GM email renders the v2 sections and counts issues with a plural preheader", () => {
     const mail = renderShopDigest(facts({ reports: [] }), { language: "en", baseUrl: BASE });
-    expect(mail.html).toContain(">Headline</h2>");
+    // The section status prints beside the title, inside the <h2>.
+    expect(mail.html).toMatch(/>Headline <span style="[^"]*">— [!?✓] [^<]+<\/span><\/h2>/);
     expect(mail.html).toMatch(/\d+ lines need a look\./);
   });
 });

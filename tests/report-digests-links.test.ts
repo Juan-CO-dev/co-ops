@@ -72,6 +72,8 @@ describe("the link map (targetPath)", () => {
     [{ to: "counts", location: A }, `/operations/counts?location=${A}`],
     [{ to: "vendor_mail", location: A }, `/operations/vendor-mail?location=${A}`],
     [{ to: "team", location: A }, `/reports/trends/team?location=${A}`],
+    // Digests round 3: with a day, Team opens on that one day (resolveTrendRange reads range/from/to).
+    [{ to: "team", location: A, day: DAY }, `/reports/trends/team?${q(A)}`],
     [{ to: "yield", location: A }, `/operations/production/yield?location=${A}`],
     [{ to: "pipeline" }, "/catering/pipeline"],
     [{ to: "pipeline", lead: "lead-7" }, "/catering/pipeline?lead=lead-7#lead-lead-7"],
@@ -91,6 +93,13 @@ describe("the link map (targetPath)", () => {
     expect(digestLink({ baseUrl: BASE }, { to: "pipeline", lead: "Jane Doe" })).toBeNull();
     expect(digestLink({ baseUrl: BASE }, { to: "pipeline", lead: "jane@example.com" }, { to: "pipeline" })).toBe(`${BASE}/catering/pipeline`);
     expect(digestLink({ baseUrl: BASE }, { to: "reports_hub", location: A, day: "yesterday" })).toBeNull();
+    expect(digestLink({ baseUrl: BASE }, { to: "team", location: A, day: "yesterday" })).toBeNull();
+  });
+
+  it("team with a day: the gate is unchanged (the day never widens or narrows who may open it)", () => {
+    for (const v of [GM_A, AGM_A, MOO_NO_MEMBERSHIP, OWNER, CATERING_MGR, SHIFT_LEAD_A, SMM, NO_ACCESS_VIEWER, { role: "gm", level: 7, locations: [B] }]) {
+      expect(canOpen(v, { to: "team", location: A, day: DAY }), v.role).toBe(canOpen(v, { to: "team", location: A }));
+    }
   });
 });
 
@@ -146,9 +155,18 @@ describe("GM shop digest: every section links to its own screen", () => {
       Inventory: `${BASE}/operations/counts?location=${A}`,
       Operations: `${BASE}/reports/operations?${q(A)}`,
       "Sales detail": `${BASE}/reports/sales?${q(A)}`,
-      People: `${BASE}/reports/trends/team?location=${A}`,
+      // Digests round 3: People opens Team on the digest's day.
+      People: `${BASE}/reports/trends/team?${q(A)}`,
       Tomorrow: `${BASE}/ordering?location=${A}`,
     });
+  });
+
+  it("the labor section and its day-D lines open Team on the digest's day", () => {
+    const labor = { totalHours: 8, people: [{ employeeGuid: "e1", firstName: "Person A", hours: 8, unknownShifts: 0 }], byJob: [{ job: "Line", hours: 8 }], openEntries: 0, unknownHoursEntries: 0, partial: false, salesPerLaborHourCents: 1250, overtimeAssessed: true, dayOvertime: [], weekOvertime: [] };
+    const s = composeShopSections(shop(A, "Shop A", { v2: v2Fixture({ labor: ok(labor) } as never) }), "en", BASE, false, GM_A);
+    const sec = s.find((x) => x.title === "Labor")!;
+    expect(sec.href).toBe(`${BASE}/reports/trends/team?${q(A)}`);
+    for (const l of sec.lines) expect(l.href, l.label).toBe(`${BASE}/reports/trends/team?${q(A)}`);
   });
 
   it("line links: a delivery opens its own page, a PO its panel, a report its detail for the day, sales lines their view", () => {

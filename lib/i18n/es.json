@@ -10546,5 +10546,14 @@
   "catering.refunds.try_again": "Intentar otra vez",
   "catering.refunds.lead.unavailable": "No se pudo revisar si este pedido tiene dinero por reembolsar.",
   "catering.refunds.stripe_unchecked": "No se pudo revisar Stripe ahora, así que estas cifras pueden no estar al día.",
-  "digest.section.open": "Abrir esto en la app →"
+  "digest.section.open": "Abrir esto en la app →",
+  "digest.status.issues_one": "1 problema",
+  "digest.status.issues_other": "{n} problemas",
+  "digest.status.unknown_one": "1 no disponible",
+  "digest.status.unknown_other": "{n} no disponibles",
+  "digest.status.ok": "Todo bien",
+  "digest.section.more_one": "y 1 más",
+  "digest.section.more_other": "y {n} más",
+  "digest.shop.preheader_unknown_one": "1 línea no se pudo revisar.",
+  "digest.shop.preheader_unknown_other": "{n} líneas no se pudieron revisar."
 }
