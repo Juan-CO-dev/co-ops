@@ -1,8 +1,10 @@
 /**
  * Migration 0357 (catering refund requests) pinned BY NAME. FILE ONLY — CC applies sim then prod on Juan's word.
  * Pins the house header and gate line, one transaction, that it is the only 0357, that it alters nothing that exists,
- * holds the TS vocabularies (reasons, triggers, statuses, the refusal names, the actor roles, the audit name) to the
- * SQL, and runs the offline PGlite proof (scripts/sql-harness-0357.mjs, the REAL file).
+ * holds the TS vocabularies (reasons, triggers, statuses, the refusal names, the audit name) to the SQL, and runs the
+ * offline PGlite proof (scripts/sql-harness-0357.mjs, the REAL file). The actor roles are FROZEN here to 0357's own
+ * four: migration 0358 re-emits the actor rule with `gm` and `agm`, and the tie between the SQL rule and the app's
+ * REFUND_ROLES lives in tests/catering-refund-0358-migration.test.ts from then on.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
@@ -13,7 +15,6 @@ import { NON_DESTRUCTIVE_ACTIONS, RESERVED_ACTIONS } from "@/lib/audit-actions";
 import {
   MAX_REFUND_NOTE,
   REFUND_REASON_CODES,
-  REFUND_ROLES,
   REFUND_SQL_REFUSALS,
   REFUND_STATUSES,
   REFUND_TRIGGERS,
@@ -98,10 +99,10 @@ describe("the vocabularies are the SQL's", () => {
     expect([...new Set(raised)].sort()).toEqual(Object.keys(REFUND_SQL_REFUSALS).sort());
   });
 
-  it("the actor rule's roles are the app gate's", () => {
+  it("the actor rule's roles are 0357's own four (a literal: 0358 owns the tie to the app gate)", () => {
     const body = fn("catering_refund_actor_ok");
     const roles = [...body.matchAll(/v_role in \(([^)]*)\)/g)].flatMap((m) => list(m[1]!));
-    expect(roles.sort()).toEqual([...REFUND_ROLES].sort());
+    expect(roles.sort()).toEqual(["catering_mgr", "cgs", "moo", "owner"]);
     expect(body).toMatch(/v_role in \('moo', 'catering_mgr'\) and p_shop_id is not null and exists \(\s*select 1 from public\.user_locations m where m\.user_id = p_actor_id and m\.location_id = p_shop_id and m\.active\)/);
   });
 

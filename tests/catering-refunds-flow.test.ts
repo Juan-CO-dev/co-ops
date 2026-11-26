@@ -9,7 +9,12 @@
  * The reserve RPC is a TS stand-in that keeps 0357's contract (the real SQL is proven by scripts/sql-harness-0357.mjs,
  * run in CI by tests/catering-refund-0357-migration.test.ts): token replay, figures from refundFigures, allocation,
  * named refusals.
+ * The SQL ACTOR RULE (`catering_refund_actor_ok`) is a TS stand-in too (`sqlActorOk`): an active user, owner / cgs at
+ * any shop, a membership-branch role only with an ACTIVE membership at that shop. It answers as migration 0358 wrote
+ * it (GM and AGM in the membership branch) or, for the deploy-order tests, as 0357 did (`h.sqlRule`); its role lists
+ * are held equal to the two real files below, and the real SQL is proven by scripts/sql-harness-0358.mjs.
  */
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fakeSupabase, type FakeDb, type Row } from "./fake-supabase";
@@ -17,6 +22,10 @@ import { fakeSupabase, type FakeDb, type Row } from "./fake-supabase";
 const h = vi.hoisted(() => ({
   db: null as unknown as import("./fake-supabase").FakeDb,
   accounts: [{ secretKey: "sk_test_fake_A", webhookSecret: "whsec_fake", source: "default" }] as Array<{ secretKey: string; webhookSecret: string; source: string }>,
+  /** Which migration's actor rule the fake database answers with (the deploy-order tests set "0357"). */
+  sqlRule: "0358" as "0357" | "0358",
+  /** Every RPC the code under test called, by name, in order. */
+  rpcCalls: [] as string[],
 }));
 
 vi.mock("server-only", () => ({}));
@@ -94,7 +103,7 @@ vi.mock("@/lib/stripe/client", async (original) => {
 import { createRefund } from "@/lib/stripe/client";
 import { audit } from "@/lib/audit";
 import {
-  CateringRefundError,
+  actorMayRefund,
   loadLeadRefundables,
   loadRefundSummary,
   refundFigures,
@@ -104,6 +113,7 @@ import {
   type RefundRequestBody,
 } from "@/lib/catering/refunds";
 import type { AuthContext } from "@/lib/session";
+import { ROLES, type RoleCode } from "@/lib/roles";
 
 const SHOP = "00000000-0000-4000-8000-0000000000a1";
 const OTHER = "00000000-0000-4000-8000-0000000000a2";
@@ -112,8 +122,29 @@ const DEP = "00000000-0000-4000-8000-0000000000c1";
 const BAL = "00000000-0000-4000-8000-0000000000c2";
 const ACTOR = "00000000-0000-4000-8000-0000000000aa";
 
+/**
+ * A signed-in person. The fake database is made to AGREE with the session (the role, and an ACTIVE membership at each
+ * of the session's shops), as it does while a session is fresh. A test of a STALE session changes the tables after
+ * calling this.
+ */
 function actor(role: string, locations: string[] = [SHOP]): AuthContext {
+  const t = h.db.tables;
+  const user = (t.users ??= []).find((u) => u.id === ACTOR);
+  if (user) Object.assign(user, { role, active: true });
+  t.user_locations = locations.map((location_id) => ({ user_id: ACTOR, location_id, active: true }));
   return { user: { id: ACTOR, role, active: true, language: "en", name: "Kim" }, locations, session: { stepUpUnlocked: true, stepUpUnlockedAt: new Date().toISOString() } } as unknown as AuthContext;
+}
+
+/** `catering_refund_actor_ok` in TS, as 0357 or 0358 wrote it (see the header). */
+const SQL_ANY_SHOP = ["owner", "cgs"];
+const SQL_MEMBER_SHOP = { "0357": ["moo", "catering_mgr"], "0358": ["moo", "catering_mgr", "gm", "agm"] } as const;
+function sqlActorOk(db: FakeDb, actorId: unknown, shopId: unknown): boolean {
+  const u = (db.tables.users ?? []).find((x) => x.id === actorId);
+  if (!u || u.active === false) return false;
+  const role = String(u.role);
+  if (SQL_ANY_SHOP.includes(role)) return true;
+  return (SQL_MEMBER_SHOP[h.sqlRule] as readonly string[]).includes(role) && shopId != null
+    && (db.tables.user_locations ?? []).some((m) => m.user_id === actorId && m.location_id === shopId && m.active !== false);
 }
 
 let reqSeq = 0;
@@ -123,8 +154,7 @@ function reserve(args: Record<string, unknown>, db: FakeDb) {
   const t = db.tables;
   const quote = (t.catering_quotes ?? []).find((q) => q.id === args.p_quote_id);
   if (!quote) return { data: null, error: { message: "quote_not_found" } };
-  const role = (t.users ?? []).find((u) => u.id === args.p_actor_id)?.role as string | undefined;
-  if (!role || !["owner", "cgs", "moo", "catering_mgr"].includes(role)) return { data: null, error: { message: "forbidden" } };
+  if (!sqlActorOk(db, args.p_actor_id, quote.location_id)) return { data: null, error: { message: "forbidden" } };
   const pays = (t.catering_payments ?? []).filter((p) => p.quote_id === quote.id);
   const existing = (t.catering_refund_requests ?? []).filter((r) => r.client_token === args.p_client_token);
   if (existing.length > 0) {
@@ -185,7 +215,8 @@ function seed() {
       catering_refund_requests: [],
       catering_refund_stripe_snapshots: [],
       locations: [{ id: SHOP, code: "S1" }],
-      users: [{ id: ACTOR, role: "catering_mgr", name: "Kim" }],
+      users: [{ id: ACTOR, role: "catering_mgr", name: "Kim", active: true }],
+      user_locations: [{ user_id: ACTOR, location_id: SHOP, active: true }],
     },
     {
       catering_refund_reserve: reserve,
@@ -210,9 +241,14 @@ function seed() {
         else t.push(row);
         return { data: true, error: null };
       },
-      catering_refund_actor_ok: (args, db) => ({ data: ["owner", "cgs", "moo", "catering_mgr"].includes(String(db.tables.users?.find((u) => u.id === args.p_actor_id)?.role)), error: null }),
+      catering_refund_actor_ok: (args, db) => ({ data: sqlActorOk(db, args.p_actor_id, args.p_shop_id), error: null }),
     },
   );
+  h.sqlRule = "0358";
+  h.rpcCalls = [];
+  const client = h.db.client as unknown as { rpc: (name: string, args: Record<string, unknown>) => unknown };
+  const rpc = client.rpc;
+  client.rpc = (name, args) => { h.rpcCalls.push(name); return rpc(name, args); };
   stripe.charges = new Map([
     ["pi_dep", { account: "sk_test_fake_A", captured: 30000, refunded: 0 }],
     ["pi_bal", { account: "sk_test_fake_A", captured: 70000, refunded: 0 }],
@@ -277,10 +313,16 @@ describe("the confirm tap", () => {
     expect(stripe.creates).toHaveLength(0);
   });
 
-  it("a GM, an AGM and a catering manager of another shop are refused before the database is asked", async () => {
-    for (const a of [actor("gm"), actor("agm"), actor("prep_mgr"), actor("catering_mgr", [OTHER])]) {
-      await expect(requestRefund(a, QUOTE, body())).rejects.toBeInstanceOf(CateringRefundError);
+  it("a prep manager at the shop (403) and a catering manager, GM or AGM of another shop (404) are refused before the database is asked", async () => {
+    for (const role of ["prep_mgr", "social_media_mgr", "shift_lead", "key_holder", "employee"]) {
+      await expect(requestRefund(actor(role), QUOTE, body()), role).rejects.toMatchObject({ status: 403, code: "forbidden" });
     }
+    // Another shop's people cannot see this order at all: 404, never a leak (unchanged; the role is not even looked at).
+    for (const role of ["catering_mgr", "gm", "agm", "moo", "prep_mgr"]) {
+      await expect(requestRefund(actor(role, [OTHER]), QUOTE, body()), role).rejects.toMatchObject({ status: 404, code: "not_found" });
+      await expect(requestRefund(actor(role, []), QUOTE, body()), role).rejects.toMatchObject({ status: 404, code: "not_found" });
+    }
+    expect(h.rpcCalls).toEqual([]);
     expect(rows()).toHaveLength(0);
     expect(stripe.creates).toHaveLength(0);
   });
@@ -664,5 +706,181 @@ describe("the read model", () => {
 
   it("another shop's order is a 404, never a leak", async () => {
     await expect(loadRefundSummary(actor("shift_lead", [OTHER]), QUOTE)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+// ── Refund round 2, Part A (Juan 2026-11-25): GM and AGM refund at a shop they belong to ───────────────
+describe("the stand-in actor rule is the SQL's", () => {
+  const sqlLists = (file: string) => {
+    const code = readFileSync(`supabase/migrations/${file}`, "utf8").replace(/\r\n/g, "\n").replace(/--[^\n]*/g, "");
+    const fn = code.match(/function public\.catering_refund_actor_ok\([\s\S]*?\nend \$\$;/);
+    if (!fn) throw new Error(`catering_refund_actor_ok not found in ${file}`);
+    return [...fn[0].matchAll(/v_role in \(([^)]*)\)/g)].map((m) => [...m[1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!));
+  };
+  it("its role lists are the two files' own, in the same branches", () => {
+    expect(sqlLists("0357_catering_refund_requests.sql")).toEqual([SQL_ANY_SHOP, [...SQL_MEMBER_SHOP["0357"]]]);
+    expect(sqlLists("0358_catering_refund_roles.sql")).toEqual([SQL_ANY_SHOP, [...SQL_MEMBER_SHOP["0358"]]]);
+  });
+  it("for a fresh session the app gate and the SQL rule give the SAME answer, every role x member / other shop / no shop", () => {
+    for (const role of Object.keys(ROLES) as RoleCode[]) {
+      for (const locations of [[SHOP], [OTHER], [], [SHOP, OTHER]]) {
+        const a = actor(role, locations);
+        expect([role, locations.length, actorMayRefund(a, SHOP)]).toEqual([role, locations.length, sqlActorOk(h.db, ACTOR, SHOP)]);
+        expect([role, locations.length, actorMayRefund(a, OTHER)]).toEqual([role, locations.length, sqlActorOk(h.db, ACTOR, OTHER)]);
+      }
+    }
+  });
+});
+
+describe("Part A: a GM and an AGM refund at a shop they belong to", () => {
+  it("the confirm tap: reserved, sent to Stripe once under the row's key, succeeded, audited", async () => {
+    for (const role of ["gm", "agm"]) {
+      seed();
+      vi.mocked(audit).mockClear();
+      const out = await requestRefund(actor(role), QUOTE, body({ amountCents: 5000 }));
+      expect(out.results).toEqual([expect.objectContaining({ paymentId: BAL, amountCents: 5000, status: "succeeded" })]);
+      expect(stripe.creates.map((c) => c.key)).toEqual([`catering-refund:${rows()[0]!.id}`]);
+      expect(stripe.refunds).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({ requested_by: ACTOR, status: "succeeded", location_id: SHOP });
+      expect(h.rpcCalls[0]).toBe("catering_refund_reserve");
+      expect(vi.mocked(audit).mock.calls.some(([a]) => a.action === "catering.refund.stripe_result" && a.actorRole === role)).toBe(true);
+    }
+  });
+
+  it("a full refund of the order by a GM is one Stripe refund per payment, like every other refunder's", async () => {
+    const out = await requestRefund(actor("gm"), QUOTE, body());
+    expect(out.results.map((r) => [r.paymentId, r.amountCents, r.status])).toEqual([[BAL, 70000, "succeeded"], [DEP, 30000, "succeeded"]]);
+    await expect(requestRefund(actor("gm"), QUOTE, body({ clientToken: "22222222-2222-4222-8222-222222222222", amountCents: 1 }))).rejects.toMatchObject({ status: 409, code: "nothing_refundable" });
+  });
+
+  it("summary.canRefund follows the same rule: member GM / AGM yes, other level-6 managers no, another shop never sees it", async () => {
+    for (const role of ["gm", "agm", "catering_mgr", "moo"]) expect([role, (await loadRefundSummary(actor(role), QUOTE)).canRefund]).toEqual([role, true]);
+    for (const role of ["owner", "cgs"]) expect([role, (await loadRefundSummary(actor(role, []), QUOTE)).canRefund]).toEqual([role, true]);
+    for (const role of ["prep_mgr", "social_media_mgr", "shift_lead"]) expect([role, (await loadRefundSummary(actor(role), QUOTE)).canRefund]).toEqual([role, false]);
+    for (const role of ["gm", "agm", "catering_mgr", "moo"]) {
+      await expect(loadRefundSummary(actor(role, [OTHER]), QUOTE), role).rejects.toMatchObject({ status: 404 });
+    }
+  });
+
+  it("a GM of BOTH shops refunds this shop's order; the row is this shop's", async () => {
+    const out = await requestRefund(actor("gm", [OTHER, SHOP]), QUOTE, body({ amountCents: 700 }));
+    expect(out.results[0]).toMatchObject({ status: "succeeded", amountCents: 700 });
+    expect(rows()[0]!.location_id).toBe(SHOP);
+  });
+
+  it("a STALE session: a GM whose membership was switched off is refused by the SQL rule (403), and nothing is sent", async () => {
+    for (const role of ["gm", "agm"]) {
+      seed();
+      const a = actor(role); // the session still lists the shop…
+      (h.db.tables.user_locations as Row[])[0]!.active = false; // …the membership row no longer does
+      await expect(requestRefund(a, QUOTE, body()), role).rejects.toMatchObject({ status: 403, code: "forbidden" });
+      expect(h.rpcCalls).toEqual(["catering_refund_reserve"]); // the app let it through; the database refused
+      expect(rows()).toHaveLength(0);
+      expect(stripe.creates).toHaveLength(0);
+    }
+  });
+
+  it("a STALE session: a membership moved to another shop, or a deactivated GM, is refused the same way", async () => {
+    const a = actor("gm");
+    (h.db.tables.user_locations as Row[])[0]!.location_id = OTHER;
+    await expect(requestRefund(a, QUOTE, body())).rejects.toMatchObject({ status: 403, code: "forbidden" });
+    const b = actor("gm");
+    (h.db.tables.users as Row[])[0]!.active = false;
+    await expect(requestRefund(b, QUOTE, body())).rejects.toMatchObject({ status: 403, code: "forbidden" });
+    // A session that says GM for a person the database now calls a prep manager (demoted since sign-in).
+    const c = actor("gm");
+    (h.db.tables.users as Row[])[0]!.role = "prep_mgr";
+    await expect(requestRefund(c, QUOTE, body())).rejects.toMatchObject({ status: 403, code: "forbidden" });
+    expect(rows()).toHaveLength(0);
+    expect(stripe.creates).toHaveLength(0);
+  });
+
+  it("Retry / Check Stripe by a GM or an AGM: a lost answer is found and nothing is sent twice", async () => {
+    for (const role of ["gm", "agm"]) {
+      seed();
+      stripe.nextCreate = ["network_lost_after_executing"];
+      const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
+      expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "network_error" });
+      const r = await retryRefundRequest(actor(role), QUOTE, rows()[0]!.id as string);
+      expect(r.status).toBe("succeeded");
+      expect(stripe.creates).toHaveLength(1);
+      expect(stripe.refunds).toHaveLength(1);
+      expect(h.rpcCalls).toContain("catering_refund_actor_ok");
+    }
+  });
+
+  it("Retry re-sends the SAME key for a GM when nothing landed", async () => {
+    stripe.nextCreate = ["network_before"];
+    await requestRefund(actor("agm"), QUOTE, body({ amountCents: 2000 }));
+    const id = rows()[0]!.id as string;
+    const r = await retryRefundRequest(actor("gm"), QUOTE, id);
+    expect(r.status).toBe("succeeded");
+    expect(stripe.creates.map((c) => c.key)).toEqual([`catering-refund:${id}`, `catering-refund:${id}`]);
+    expect(stripe.refunds).toHaveLength(1);
+  });
+
+  it("Retry and Release with a STALE session are refused by the SQL re-check before any claim: 403, nothing sent", async () => {
+    stripe.nextCreate = ["network_before"];
+    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
+    const id = rows()[0]!.id as string;
+    for (const mode of ["retry", "release"] as const) {
+      const a = actor("gm");
+      (h.db.tables.user_locations as Row[])[0]!.active = false;
+      h.rpcCalls = [];
+      await expect(retryRefundRequest(a, QUOTE, id, Date.now(), mode), mode).rejects.toMatchObject({ status: 403, code: "forbidden" });
+      expect(h.rpcCalls).toEqual(["catering_refund_actor_ok"]);
+    }
+    expect(stripe.creates).toHaveLength(1); // only the first tap's send
+    expect(rows()[0]).toMatchObject({ status: "pending", attempts: 1 });
+    // A refused role at the shop, and another shop's GM, never reach the database on this path either.
+    h.rpcCalls = [];
+    await expect(retryRefundRequest(actor("prep_mgr"), QUOTE, id)).rejects.toMatchObject({ status: 403, code: "forbidden" });
+    await expect(retryRefundRequest(actor("gm", [OTHER]), QUOTE, id)).rejects.toMatchObject({ status: 404, code: "not_found" });
+    expect(h.rpcCalls).toEqual([]);
+  });
+});
+
+describe("deploy order: the NEW app on 0357's SQL rule (the app deployed before migration 0358)", () => {
+  beforeEach(() => { h.sqlRule = "0357"; });
+
+  it("a GM / AGM passes the app's gate and the database refuses: 403 forbidden, no row, nothing reaches Stripe", async () => {
+    for (const role of ["gm", "agm"]) {
+      seed();
+      h.sqlRule = "0357";
+      await expect(requestRefund(actor(role), QUOTE, body()), role).rejects.toMatchObject({ status: 403, code: "forbidden" });
+      expect(h.rpcCalls).toEqual(["catering_refund_reserve"]);
+      expect(rows()).toHaveLength(0);
+      expect(stripe.creates).toHaveLength(0);
+      expect(stripe.refunds).toHaveLength(0);
+    }
+  });
+
+  it("Retry and Release on someone else's pending row: refused by the SQL re-check, nothing claimed or sent", async () => {
+    stripe.nextCreate = ["network_before"];
+    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 })); // 0357 still lets a catering manager
+    const id = rows()[0]!.id as string;
+    for (const role of ["gm", "agm"]) {
+      for (const mode of ["retry", "release"] as const) {
+        h.rpcCalls = [];
+        await expect(retryRefundRequest(actor(role), QUOTE, id, Date.now(), mode), `${role} ${mode}`).rejects.toMatchObject({ status: 403, code: "forbidden" });
+        expect(h.rpcCalls).toEqual(["catering_refund_actor_ok"]);
+      }
+    }
+    expect(stripe.creates).toHaveLength(1);
+    expect(rows()[0]).toMatchObject({ status: "pending", attempts: 1 });
+  });
+
+  it("stated consequence: the panel offers the button (the app's list) and the press answers 403 until 0358 is applied", async () => {
+    expect((await loadRefundSummary(actor("gm"), QUOTE)).canRefund).toBe(true);
+    await expect(requestRefund(actor("gm"), QUOTE, body())).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("everyone 0357 allowed still refunds", async () => {
+    for (const [role, locations] of [["catering_mgr", [SHOP]], ["moo", [SHOP]], ["owner", []], ["cgs", []]] as const) {
+      seed();
+      h.sqlRule = "0357";
+      const out = await requestRefund(actor(role, [...locations]), QUOTE, body({ amountCents: 300 }));
+      expect([role, out.results[0]!.status]).toEqual([role, "succeeded"]);
+    }
   });
 });

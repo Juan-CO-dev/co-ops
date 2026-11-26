@@ -70,12 +70,34 @@ describe("POST /refunds — the confirm tap", () => {
     expect(await code(await POST(post(path, { ...BODY, amountCents: null }), ctx))).toBe("invalid_amount");
     expect(h.request).not.toHaveBeenCalled();
   });
-  it("a GM / AGM / prep manager is refused by ROLE before the password is asked for", async () => {
-    for (const role of ["gm", "agm", "prep_mgr", "social_media_mgr", "shift_lead"]) {
+  it("a prep manager / social media manager / shift lead and below is refused by ROLE before the password is asked for", async () => {
+    for (const role of ["prep_mgr", "social_media_mgr", "shift_lead", "key_holder", "trainer", "employee"]) {
       as(role, false);
       const res = await POST(post(path, BODY), ctx);
       expect([res.status, await code(res)]).toEqual([403, "forbidden"]);
+      // …and a fresh password does not change a role refusal.
+      as(role, true);
+      expect(await code(await POST(post(path, BODY), ctx))).toBe("forbidden");
     }
+    expect(h.request).not.toHaveBeenCalled();
+  });
+  it("Juan 2026-11-25: a GM and an AGM pass the role gate and reach the Tier B password, like every other refunder", async () => {
+    for (const role of ["gm", "agm", "catering_mgr", "moo", "owner", "cgs"]) {
+      h.request.mockClear();
+      as(role, false);
+      const stale = await POST(post(path, BODY), ctx);
+      expect([role, stale.status, await code(stale)]).toEqual([role, 403, "step_up_required"]);
+      expect(h.request).not.toHaveBeenCalled();
+      as(role, true);
+      expect((await POST(post(path, BODY), ctx)).status).toBe(200);
+      expect(h.request).toHaveBeenCalledTimes(1);
+    }
+  });
+  it("the switch still comes first for a GM: off = 503 refunds_off, nothing asked", async () => {
+    vi.stubEnv("CATERING_REFUNDS", "");
+    as("gm", true);
+    const res = await POST(post(path, BODY), ctx);
+    expect([res.status, await code(res)]).toEqual([503, "refunds_off"]);
     expect(h.request).not.toHaveBeenCalled();
   });
   it("Tier B: no fresh password = step_up_required, and nothing is refunded", async () => {
@@ -109,11 +131,30 @@ describe("POST /refunds/[requestId]/retry", () => {
   it("no step-up needed, but the role gate holds and the switch is first", async () => {
     as("catering_mgr", false);
     expect((await RETRY(post(path, {}), { params: Promise.resolve({ id: Q, requestId: R }) })).status).toBe(200);
-    as("gm", true);
+    as("prep_mgr", true);
     expect((await RETRY(post(path, {}), { params: Promise.resolve({ id: Q, requestId: R }) })).status).toBe(403);
     vi.stubEnv("CATERING_REFUNDS", "");
     expect(await code(await RETRY(post(path, {}), { params: Promise.resolve({ id: Q, requestId: R }) }))).toBe("refunds_off");
     expect(h.retry).toHaveBeenCalledTimes(1);
+  });
+  it("Juan 2026-11-25: a GM and an AGM retry, check and release without a password; the refused roles never reach the lib", async () => {
+    const ctx = () => ({ params: Promise.resolve({ id: Q, requestId: R }) });
+    for (const role of ["gm", "agm"]) {
+      h.retry.mockClear();
+      as(role, false); // no fresh password: the retry path takes no tier
+      expect((await RETRY(post(path, {}), ctx())).status).toBe(200);
+      expect(h.retry.mock.calls[0]![4]).toBe("retry");
+      expect((await RETRY(post(path, { release: true }), ctx())).status).toBe(200);
+      expect(h.retry.mock.calls[1]![4]).toBe("release");
+    }
+    h.retry.mockClear();
+    for (const role of ["prep_mgr", "social_media_mgr", "shift_lead", "employee"]) {
+      as(role, true);
+      const res = await RETRY(post(path, {}), ctx());
+      expect([res.status, await code(res)]).toEqual([403, "forbidden"]);
+      expect((await RETRY(post(path, { release: true }), ctx())).status).toBe(403);
+    }
+    expect(h.retry).not.toHaveBeenCalled();
   });
   it("the body is {} or { release: true } (review r2), and the mode reaches the lib", async () => {
     const ctx = { params: Promise.resolve({ id: Q, requestId: R }) };

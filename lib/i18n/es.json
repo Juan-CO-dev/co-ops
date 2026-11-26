@@ -10518,7 +10518,7 @@
   "catering.refunds.lead.open": "Abrir el reembolso",
   "catering.refunds.error.refunds_off": "Los reembolsos están apagados.",
   "catering.refunds.error.refunds_unavailable": "Los reembolsos aún no están configurados. No se reembolsó nada.",
-  "catering.refunds.error.forbidden": "Solo el gerente de catering o el MoO para arriba pueden reembolsar un pedido.",
+  "catering.refunds.error.forbidden": "No puedes reembolsar este pedido. Los reembolsos son para el gerente de catering, el AGM, el GM y el MoO para arriba, en una tienda a la que perteneces.",
   "catering.refunds.error.not_found": "No se encontró ese pedido.",
   "catering.refunds.error.invalid_request": "Algo en la solicitud estaba mal. No se reembolsó nada.",
   "catering.refunds.error.invalid_reason": "Elige un motivo.",

@@ -24,7 +24,7 @@ import {
 import { ROLES, type RoleCode } from "@/lib/roles";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
-import { REFUND_ERROR_CODES, REFUND_REASON_CODES, REFUND_STATUSES } from "@/lib/catering/refunds-shared";
+import { REFUND_ERROR_CODES, REFUND_REASON_CODES, REFUND_ROLES, REFUND_STATUSES } from "@/lib/catering/refunds-shared";
 
 const PAID = { amountCents: 30000, status: "paid", provider: "stripe", providerRef: "pi_123" };
 
@@ -37,10 +37,27 @@ describe("the switch", () => {
   });
 });
 
-describe("who may refund (the conservative gate)", () => {
-  it("catering manager, MoO, owner, CGS — never GM, AGM, prep or social media manager, never by level", () => {
+describe("who may refund (Juan 2026-11-25: GM and AGM too)", () => {
+  it("exactly six roles: catering manager, AGM, GM, MoO, owner, CGS", () => {
     const allowed = (Object.keys(ROLES) as RoleCode[]).filter(canRequestRefund).sort();
-    expect(allowed).toEqual(["catering_mgr", "cgs", "moo", "owner"]);
+    expect(allowed).toEqual(["agm", "catering_mgr", "cgs", "gm", "moo", "owner"]);
+    expect([...REFUND_ROLES].sort()).toEqual(allowed);
+    expect(new Set(REFUND_ROLES).size).toBe(REFUND_ROLES.length);
+  });
+  it("a ROLE list, never a level: the other level-6 managers and everyone below stay out", () => {
+    // Level 6 holds four roles; two of them refund and two do not, so no level test can express the gate.
+    const level6 = (Object.keys(ROLES) as RoleCode[]).filter((r) => ROLES[r].level === 6).sort();
+    expect(level6).toEqual(["agm", "catering_mgr", "prep_mgr", "social_media_mgr"]);
+    for (const role of ["prep_mgr", "social_media_mgr", "shift_lead", "key_holder", "trainer", "employee", "trainee", "hired_not_yet_worked", "prospect"] as RoleCode[]) {
+      expect(canRequestRefund(role), role).toBe(false);
+    }
+    const refused = (Object.keys(ROLES) as RoleCode[]).filter((r) => !canRequestRefund(r));
+    expect(refused).toHaveLength(Object.keys(ROLES).length - 6);
+  });
+  it("the forbidden message names the roles and the member-shop rule, in both languages", () => {
+    const key = "catering.refunds.error.forbidden";
+    for (const word of ["catering manager", "AGM", "GM", "MoO", "shop you belong to"]) expect(en[key]).toContain(word);
+    for (const word of ["gerente de catering", "AGM", "GM", "MoO", "tienda a la que perteneces"]) expect(es[key]).toContain(word);
   });
 });
 
