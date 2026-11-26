@@ -110,14 +110,22 @@ describe("catering morning digest: today's orders", () => {
 
   it("earliest ready-by first, with logistics, payment and instructions; the address only for the catering manager / level 8+", () => {
     const shown = todayLines(f, true);
-    expect(shown.slice(0, 2)).toEqual([
-      "info|ezCater #VPCTM5|ready by 10:45 AM · 25 guests · Pickup · paid on the platform",
+    // The composer lists orders earliest ready-by first; the layout then sorts by tier (fix round 1, F9):
+    // issues, unknowns, to-dos, routine — the composer's order inside each tier.
+    expect(shown).toEqual([
       'issue|Late Co|ready by 1:00 PM · 40 guests · Delivery · 1200 First St NE · $150.00 due · notes: "Cut in half"',
+      "issue|Ham|need 64 oz · on hand 20 oz · short 44 oz · order 2 packs",
+      "info|Mayo|need 8 oz · on hand not counted yet",
+      "info|Inventory for today|1 order line cannot be checked (no recipe, or a customer choice)",
+      "attention|Staff today|Luis (Grill) · schedule not connected",
+      "info|ezCater #VPCTM5|ready by 10:45 AM · 25 guests · Pickup · paid on the platform",
+      "ok|Inventory for today|1 ingredient covered",
+      "info|and 1 more|Today",
     ]);
     const hidden = todayLines(f, false);
     expect(hidden.join("\n")).not.toContain("1200 First St NE");
-    expect(hidden[1]).toBe('issue|Late Co|ready by 1:00 PM · 40 guests · Delivery · $150.00 due · notes: "Cut in half"');
-    // Digests round 3: 8 lines, 2 issues, 6 plain → cap 5; the "no prep" footnote (label "Today") folds.
+    expect(hidden[0]).toBe('issue|Late Co|ready by 1:00 PM · 40 guests · Delivery · $150.00 due · notes: "Cut in half"');
+    // 8 lines, 2 issues (never capped), 6 others → cap 5; the routine "no prep" footnote (label "Today") folds.
     expect(hidden).toHaveLength(8);
     expect(hidden[7]).toBe("info|and 1 more|Today");
   });
@@ -131,7 +139,8 @@ describe("catering morning digest: today's orders", () => {
   });
 
   it("staff: today's stations, and the schedule is said to be not connected", () => {
-    expect(todayLines(f, false)).toContain("info|Staff today|Luis (Grill) · schedule not connected");
+    // Someone on a station now is a to-do (attention, fix round 1); nobody on one stays plain information.
+    expect(todayLines(f, false)).toContain("attention|Staff today|Luis (Grill) · schedule not connected");
     const none = facts([lead({})], { staff: { [A]: { kind: "ok", value: { source: "stations", scheduleConnected: false, onStation: [] } } } });
     expect(todayLines(none, false)).toContain("info|Staff today|No station assignments yet · schedule not connected");
     expect(todayLines(none, false, "es")).toContain("info|Personal hoy|Aún sin asignaciones de estación · horario no conectado");

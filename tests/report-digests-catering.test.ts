@@ -87,15 +87,16 @@ describe("composed sections", () => {
       refundsYesterday: [{ locationId: A, amountCents: 4000 }],
     };
     const y = texts(f)[0]![1];
+    // Fix round 1 (F9): the issues first (the composer's order among them), then the routine lines.
     expect(y[0]).toBe(`issue|Yesterday|2 orders ran · 20 guests · completed $500.00 · confirmed, not completed $300.00|${BASE}/catering/pipeline`);
-    expect(y[1]).toBe(`ok|Ana|11:30 AM · 20 guests · $500.00 · Fulfilled|${BASE}/catering/pipeline?lead=${done.id}#lead-${done.id}`);
-    expect(y[2]).toBe(`issue|Bo Li (Acme)|time not set · size not set · $300.00 · Not marked completed|${BASE}/catering/pipeline?lead=${notDone.id}#lead-${notDone.id}`);
-    expect(y[3]).toBe(`issue|Cy|Lost / cancelled|${BASE}/catering/pipeline?lead=${lost.id}#lead-${lost.id}`);
-    expect(y[4]).toBe(`info|Inquiries|2 new (EZCater 1, Online portal 1)|${BASE}/catering/pipeline`);
-    expect(y[5]).toBe(`info|Quotes|1 quote sent ($250.00)|${BASE}/catering/quotes?quote=q1`);
-    expect(y[6]).toBe(`info|EZCater|Order: Dee|${BASE}/catering/pipeline?lead=${ez.id}#lead-${ez.id}`);
-    expect(y[7]).toBe(`issue|Issues|1 refund ($40.00)|${BASE}/catering/pipeline`);
-    expect(y[8]).toBe(`issue|Issues|1 follow-up overdue|${BASE}/catering/pipeline`);
+    expect(y[1]).toBe(`issue|Bo Li (Acme)|time not set · size not set · $300.00 · Not marked completed|${BASE}/catering/pipeline?lead=${notDone.id}#lead-${notDone.id}`);
+    expect(y[2]).toBe(`issue|Cy|Lost / cancelled|${BASE}/catering/pipeline?lead=${lost.id}#lead-${lost.id}`);
+    expect(y[3]).toBe(`issue|Issues|1 refund ($40.00)|${BASE}/catering/pipeline`);
+    expect(y[4]).toBe(`issue|Issues|1 follow-up overdue|${BASE}/catering/pipeline`);
+    expect(y[5]).toBe(`ok|Ana|11:30 AM · 20 guests · $500.00 · Fulfilled|${BASE}/catering/pipeline?lead=${done.id}#lead-${done.id}`);
+    expect(y[6]).toBe(`info|Inquiries|2 new (EZCater 1, Online portal 1)|${BASE}/catering/pipeline`);
+    expect(y[7]).toBe(`info|Quotes|1 quote sent ($250.00)|${BASE}/catering/quotes?quote=q1`);
+    expect(y[8]).toBe(`info|EZCater|Order: Dee|${BASE}/catering/pipeline?lead=${ez.id}#lead-${ez.id}`);
   });
 
   it("today and early tomorrow: time, size, pickup/delivery, prep load; then what needs action", () => {
@@ -159,10 +160,11 @@ describe("P2 (Astra): the outlook shows the prep LOAD — quantities, units, dem
     expect(es).toContain("1 × Turkey (media)");
   });
 
-  it("more than six lines per date are summarised, never dropped silently", () => {
+  it("more than five lines per date are summarised, never dropped silently (plan §2.6: 5 items, then +N)", () => {
     const prep = Array.from({ length: 8 }, (_, i) => ({ needDate: TODAY, name: `Item ${i}`, nameEs: null, qty: i + 1, unit: "ea", portion: null }));
     const f = empty([lead({ contactName: "Many", eventDate: TODAY, stage: "confirmed", prep })]);
     const text = composeCateringSections(f, { locations: [shops[0]!], includeUnassigned: false }, "en", BASE)[1]!.lines[0]!.text;
-    expect(text).toContain("6 ea Item 5, +2 more");
+    expect(text).toContain("prep for Wed, Oct 7: 1 ea Item 0, 2 ea Item 1, 3 ea Item 2, 4 ea Item 3, 5 ea Item 4, +3 more");
+    expect(text).not.toContain("Item 5");
   });
 });

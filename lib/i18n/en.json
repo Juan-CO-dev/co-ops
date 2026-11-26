@@ -10555,5 +10555,9 @@
   "digest.section.more_one": "and 1 more",
   "digest.section.more_other": "and {n} more",
   "digest.shop.preheader_unknown_one": "1 line could not be checked.",
-  "digest.shop.preheader_unknown_other": "{n} lines could not be checked."
+  "digest.shop.preheader_unknown_other": "{n} lines could not be checked.",
+  "digest.status.todo_one": "1 to do",
+  "digest.status.todo_other": "{n} to do",
+  "digest.shop.preheader_todo_one": "1 thing to do.",
+  "digest.shop.preheader_todo_other": "{n} things to do."
 }

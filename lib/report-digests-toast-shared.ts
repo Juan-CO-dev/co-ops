@@ -24,7 +24,8 @@ export function toastRingLines(orders: readonly NotInToastOrder[], locationId: s
           order.headcount === null ? t("digest.catering.to_ring.guests_unknown") : t("digest.catering.to_ring.guests", { count: order.headcount }),
           order.total_cents === null ? t("digest.catering.to_ring.amount_unknown") : formatCents(order.total_cents, language),
         ].join(" · "),
-        tone: "info",
+        // Each order still to ring into Toast is a TO-DO: it counts toward "N to do", never "All good".
+        tone: "attention",
         // The order's own lead card when it has one, else the board's "to ring in Toast" list.
         href: order.lead_id
           ? digestLink(ctx, { to: "pipeline", lead: order.lead_id }, { to: "pipeline", anchor: "to_ring" })

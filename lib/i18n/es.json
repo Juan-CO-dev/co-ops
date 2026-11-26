@@ -10555,5 +10555,9 @@
   "digest.section.more_one": "y 1 más",
   "digest.section.more_other": "y {n} más",
   "digest.shop.preheader_unknown_one": "1 línea no se pudo revisar.",
-  "digest.shop.preheader_unknown_other": "{n} líneas no se pudieron revisar."
+  "digest.shop.preheader_unknown_other": "{n} líneas no se pudieron revisar.",
+  "digest.status.todo_one": "1 pendiente",
+  "digest.status.todo_other": "{n} pendientes",
+  "digest.shop.preheader_todo_one": "1 cosa por hacer.",
+  "digest.shop.preheader_todo_other": "{n} cosas por hacer."
 }

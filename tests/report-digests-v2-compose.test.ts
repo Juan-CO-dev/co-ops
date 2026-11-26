@@ -97,16 +97,20 @@ describe("digest v2 layout", () => {
         }),
       }),
     });
-    const lines = flat(f).find((s) => s.title === "Ordering")!.lines;
-    expect(lines.map((l) => `${l.tone}|${l.label}|${l.text}`)).toEqual([
+    const section = flat(f).find((s) => s.title === "Ordering")!;
+    const lines = section.lines;
+    // Fix round 1 (F9): issues, then unknowns, then to-dos, then routine; the composer's order inside a tier.
+    // F1: a cutoff nothing could check is UNKNOWN.
+    expect(lines.map((l) => `${l.tone}|${l.label}|${l.text}${l.unknown ? "|?" : ""}`)).toEqual([
+      "issue|Leonard Paper|MEP-d · draft generated, never sent",
+      "issue|Trimark|Missed the 10:00 AM cutoff · the walk suggested 2 items",
+      "info|Cardinal|2:30 PM cutoff passed with no order and no walk to check against|?",
       "ok|POs placed|2 POs placed · $123.45 (some not priced)",
       "ok|Boar's Head|MEP-a · $123.45 · placed by Alex",
       "ok|Leonard Paper|MEP-b · $ not priced yet",
-      "issue|Leonard Paper|MEP-d · draft generated, never sent",
-      "issue|Trimark|Missed the 10:00 AM cutoff · the walk suggested 2 items",
-      "info|Cardinal|2:30 PM cutoff passed with no order and no walk to check against",
     ]);
-    expect(lines[1]!.href).toBe(`${BASE}/ordering?location=${LOC}&po=a`);
+    expect(lines[4]!.href).toBe(`${BASE}/ordering?location=${LOC}&po=a`);
+    expect(section.status).toMatchObject({ tone: "issue", text: "2 issues · 1 not available" });
   });
 
   it("operations: AM prep under/over par is a neutral line, only SKIPPED is an issue (Juan 10-08); who confirmed; late = system-finalized", () => {
@@ -129,8 +133,9 @@ describe("digest v2 layout", () => {
 
   it("people: who opened and closed, the PM flags, retrains", () => {
     const lines = flat(facts({ v2: v2Fixture({ people: ok({ retrains: { assignedToday: 1, open: 2 } }) }) })).find((s) => s.title === "People")!.lines;
+    // Fix round 1 (F9): the issue line sorts first; the rest keep the composer's order.
     expect(lines.map((l) => `${l.tone}|${l.label}|${l.text}`)).toEqual([
-      "info|Opened by|Ana", "info|Closed by|Luis", "ok|PM report|All good (3 evaluations)", "issue|Retrains|1 assigned today · 2 still open",
+      "issue|Retrains|1 assigned today · 2 still open", "info|Opened by|Ana", "info|Closed by|Luis", "ok|PM report|All good (3 evaluations)",
     ]);
   });
 
@@ -156,15 +161,17 @@ describe("digest v2 layout", () => {
         ] }),
       }),
     });
-    const lines = flat(f).find((s) => s.title.startsWith("Tomorrow"))!.lines;
-    expect(lines.map((l) => `${l.tone}|${l.label}|${l.text}`)).toEqual([
-      "info|Boar's Head|due Thu, Oct 8 · MEP-a · $456.00",
+    const section = flat(f).find((s) => s.title.startsWith("Tomorrow"))!;
+    // Fix round 1 (F9): issues, then the to-do (a draft waiting for tomorrow's cutoff), then routine lines.
+    expect(section.lines.map((l) => `${l.tone}|${l.label}|${l.text}`)).toEqual([
       "issue|Trimark|MEP-b · was due Tue, Oct 6, not received",
-      "info|Deliveries due tomorrow|1 open order has no delivery day on file (Sysco)",
-      "info|Boar's Head|cutoff 10:00 AM · draft ready",
       "issue|Trimark|cutoff 11:00 AM · no draft yet",
+      "attention|Boar's Head|cutoff 10:00 AM · draft ready",
+      "info|Boar's Head|due Thu, Oct 8 · MEP-a · $456.00",
+      "info|Deliveries due tomorrow|1 open order has no delivery day on file (Sysco)",
       "info|Catering tomorrow|2 orders · 42 guests · 10:45 AM, 4:00 PM",
     ]);
+    expect(section.status).toMatchObject({ tone: "issue", text: "2 issues · 1 to do", todos: 1 });
   });
 
   it("plurals in en and es (polish item 2)", () => {

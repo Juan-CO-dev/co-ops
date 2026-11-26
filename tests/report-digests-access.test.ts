@@ -31,6 +31,16 @@ describe("fail closed", () => {
     }
   });
 
+  it("F8: an impossible calendar date has the right shape and is still no day at all (the report screens' validator)", () => {
+    const owner = digestAccessFor(v("owner", []));
+    for (const day of ["2026-02-31", "2026-02-29", "2026-04-31", "2026-13-01", "2026-00-10", "2026-10-00", "2026-10-32"]) {
+      expect(digestCan(owner, "sales_detail", { locationId: A, day }), day).toBe(false);
+      expect(digestCan(owner, "sales_detail", { locationId: "all", day }), day).toBe(false);
+    }
+    // Real dates, a leap day included, still pass.
+    for (const day of ["2028-02-29", "2026-12-31", "2026-01-01"]) expect(digestCan(owner, "sales_detail", { locationId: A, day }), day).toBe(true);
+  });
+
   it("the asymmetry is deliberate: a LINK with no viewer is unscoped (true), DATA with no access is no (false)", () => {
     expect(canOpen(undefined, { to: "sales", location: A, day: DAY })).toBe(true);
     expect(digestCan(digestAccessFor(undefined), "sales_detail", { locationId: A, day: DAY })).toBe(false);

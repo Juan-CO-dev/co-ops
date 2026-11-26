@@ -22,6 +22,7 @@
  * HTML and text.
  */
 import { canOpen, type LinkViewer } from "@/lib/report-digests-links";
+import { validReportDate } from "@/lib/report-range";
 
 /** Every gated kind of digest data. A line carries at most one (`DigestLine.needs`). */
 export type DigestCapability = "sales_detail";
@@ -32,8 +33,6 @@ export interface DigestAccess { viewer: LinkViewer }
 /** The shop (null = no shop set; "all" = every shop) and business day a piece of data is about. */
 export interface DigestScope { locationId: string | null; day: string }
 
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
-
 /** The recipient's access from their link viewer. No viewer = no access (null), never "unscoped". */
 export function digestAccessFor(viewer: LinkViewer | null | undefined): DigestAccess | null {
   return viewer ? { viewer } : null;
@@ -42,7 +41,8 @@ export function digestAccessFor(viewer: LinkViewer | null | undefined): DigestAc
 /** May this recipient be shown `capability` data for this shop and day? Absent or null access = no. */
 export function digestCan(access: DigestAccess | null | undefined, capability: DigestCapability, scope: DigestScope): boolean {
   if (!access || !access.viewer) return false;
-  if (scope.locationId === null || !DAY.test(scope.day)) return false;
+  // A real calendar date only (the report screens' own validator): "2026-02-31" is no day at all.
+  if (scope.locationId === null || !validReportDate(scope.day)) return false;
   switch (capability) {
     // Every Sales figure beyond the pulse lines the digest has always carried: the Sales page's own gate
     // (SALES_READ_MIN = 7, own shop below level 8; "all" at the all-shops level).
