@@ -24,6 +24,7 @@ import { postJson, resolveErrorKey } from "./shared";
 import { SaveStatus } from "@/components/ui/SaveStatus";
 import { NotInToast, NotInToastChip } from "./NotInToast";
 import type { PipelineToastOrder } from "@/lib/catering/not-in-toast";
+import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
 
 interface LocationOpt {
   id: string;
@@ -182,7 +183,7 @@ export function PipelineClient({ notInToast, staff, leads, followUps, locations,
           </div>
 
           {followUps.length > 0 && (
-            <section className="co-card p-4">
+            <section id={DIGEST_ANCHORS.pipelineFollowUps} className="co-card p-4">
               <h2 className="text-sm font-bold text-co-text">{t("catering.pipeline.follow_ups.heading")}</h2>
               <ul className="mt-2 space-y-1.5">
                 {followUps.map((l) => (
@@ -201,7 +202,7 @@ export function PipelineClient({ notInToast, staff, leads, followUps, locations,
             </section>
           )}
 
-          <div className="flex gap-3 overflow-x-auto pb-2">
+          <div id={DIGEST_ANCHORS.pipelineStages} className="flex gap-3 overflow-x-auto pb-2">
             {PIPELINE_STAGES.map((stage) => (
               <div key={stage} className="min-w-[15rem] flex-1">
                 <div className="flex items-center justify-between px-1">

@@ -17,13 +17,16 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
 import {
   loadAssignableStaff,
-  loadPipelineBoard,
+  loadPipelineBoardView,
   loadFollowUps,
   searchPipeline,
   PIPELINE_READ_MIN,
   PIPELINE_WRITE_MIN,
   type PipelineSearchResult,
+  type PipelineDayFilter,
 } from "@/lib/catering/pipeline";
+import { parsePipelineDayFilter } from "@/lib/catering/pipeline-shared";
+import { formatDateLabel } from "@/lib/i18n/format";
 import { PipelineClient } from "@/components/catering/pipeline/PipelineClient";
 import { DeliveryStatesProvider } from "@/components/catering/pipeline/DeliveryStateChip";
 import { loadPipelineDeliveryStates } from "@/lib/delivery/day";
@@ -49,6 +52,9 @@ export default async function CateringPipelinePage({
   const q = typeof sp["q"] === "string" ? sp["q"] : "";
   // A deep link to one lead (`?lead=<id>#lead-<id>`, e.g. a digest email): it is on the board even past the row cap.
   const leadParam = typeof sp["lead"] === "string" ? sp["lead"] : null;
+  // A digest's "booked <shop> events on <day>" link (`?day=&location=<id|none>&view=booked`): parsed here (a bad
+  // day, an impossible date or a malformed shop = ignored), scope-checked by the board loader. Search wins.
+  const dayFilterParam = parsePipelineDayFilter(sp);
 
   // Transfer authority spans shops; creation retains its existing membership bind.
   const sb = getServiceRoleClient();
@@ -80,6 +86,7 @@ export default async function CateringPipelinePage({
   let leads: Parameters<typeof PipelineClient>[0]["leads"] = [];
   let followUps: Parameters<typeof PipelineClient>[0]["followUps"] = [];
   let results: PipelineSearchResult[] | null = null;
+  let dayFilter: PipelineDayFilter | null = null;
   let notInToast: PipelineToastOrder[] | null = null;
   try { notInToast = await loadNotInToast(auth); } catch { /* Visible unavailable state below. */ }
   // Catering delivery D2: deliveries booked at this AGM's / GM's shop for orders that have since moved away (the jobs
@@ -98,10 +105,13 @@ export default async function CateringPipelinePage({
       month: "2-digit",
       day: "2-digit",
     }).format(new Date());
-    [leads, followUps] = await Promise.all([
-      loadPipelineBoard(auth, { ensureLead: leadParam }),
+    const [board, due] = await Promise.all([
+      loadPipelineBoardView(auth, { ensureLead: leadParam, filter: dayFilterParam }),
       loadFollowUps(auth, today),
     ]);
+    leads = board.leads;
+    dayFilter = board.filter;
+    followUps = due;
   }
   // Catering delivery D3: the cards' delivery chips, ONE batched read for the listed leads, gated like the status read
   // (each lead at its own shop). Off (the switch, a shop that is off, a viewer the gate refuses) = no chip and no query
@@ -116,6 +126,18 @@ export default async function CateringPipelinePage({
       </div>
       <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.pipeline.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.pipeline.subtitle")}</p>
+      {dayFilter ? (
+        <p role="status" data-pipeline-day-filter={dayFilter.location} className="mt-2 flex flex-wrap items-center gap-x-2 text-sm text-co-text">
+          <span>{dayFilter.shopName === null
+            ? serverT(lang, "catering.pipeline.day_filter.showing_none", { date: formatDateLabel(dayFilter.day, lang) })
+            : serverT(lang, "catering.pipeline.day_filter.showing", { shop: dayFilter.shopName, date: formatDateLabel(dayFilter.day, lang) })}</span>
+          <span aria-hidden>·</span>
+          {/* A plain link: "Show all" is the whole board, and it dismisses the line. */}
+          <a href="/catering/pipeline" className="inline-flex min-h-[44px] items-center font-semibold text-co-text underline">
+            {serverT(lang, "catering.pipeline.day_filter.show_all")}
+          </a>
+        </p>
+      ) : null}
       {"ok" in delivery && !delivery.ok ? (
         <p role="status" data-delivery-states="failed" className="mt-2 text-sm text-co-text-muted">{serverT(lang, "catering.delivery_state.unknown")}</p>
       ) : null}

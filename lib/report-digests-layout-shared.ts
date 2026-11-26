@@ -36,8 +36,8 @@ export const LINE_ITEMS_MAX = 5;
 
 type Tr = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
-/** A composed section before the rule runs. */
-export interface SectionDraft { title: string; lines: DigestLine[]; href?: string | null; cap?: number }
+/** A composed section before the rule runs. `live` (the section link opens a live screen) passes through unchanged. */
+export interface SectionDraft { title: string; lines: DigestLine[]; href?: string | null; live?: boolean; cap?: number }
 
 export interface FinishCtx {
   t: Tr;
@@ -161,7 +161,7 @@ export function finishSection(draft: SectionDraft, ctx: FinishCtx): DigestSectio
       tone: "info", href: draft.href ?? null,
     });
   }
-  return { title: draft.title, lines: kept, href: draft.href, ...(status ? { status } : {}) };
+  return { title: draft.title, lines: kept, href: draft.href, ...(draft.live ? { live: true } : {}), ...(status ? { status } : {}) };
 }
 
 /** finishSection over a list, dropping the sections that do not exist for this recipient. */

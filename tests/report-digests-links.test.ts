@@ -150,14 +150,15 @@ describe("GM shop digest: every section links to its own screen", () => {
     const map = Object.fromEntries(sections(GM_A).map((s) => [s.title.replace(/ · .*/, ""), s.href]));
     expect(map).toEqual({
       Headline: `${BASE}/reports/sales?${q(A)}`,
-      Ordering: `${BASE}/ordering?location=${A}`,
+      // Digests round 3 (PR 1b): the live screens open at the part the section is about.
+      Ordering: `${BASE}/ordering?location=${A}#todays-orders`,
       Receiving: `${BASE}/operations/receiving?location=${A}#recent-deliveries`,
-      Inventory: `${BASE}/operations/counts?location=${A}`,
+      Inventory: `${BASE}/operations/counts?location=${A}#on-hand`,
       Operations: `${BASE}/reports/operations?${q(A)}`,
       "Sales detail": `${BASE}/reports/sales?${q(A)}`,
       // Digests round 3: People opens Team on the digest's day.
       People: `${BASE}/reports/trends/team?${q(A)}`,
-      Tomorrow: `${BASE}/ordering?location=${A}`,
+      Tomorrow: `${BASE}/ordering?location=${A}#order-cutoffs`,
     });
   });
 
@@ -196,7 +197,9 @@ describe("GM shop digest: every section links to its own screen", () => {
   it("the email shows a visible link per section, the line labels as links, and keeps the general link at the bottom", () => {
     for (const [lang, open, cta] of [["en", "Open this in the app →", "Open reports"], ["es", "Abrir esto en la app →", "Abrir reportes"]] as const) {
       const mail = renderShopDigest(shop(A, "Shop A"), { language: lang, baseUrl: BASE, viewer: GM_A });
-      expect(mail.html.split(open).length - 1).toBe(8);
+      // 8 sections: 5 dated + 3 live (Ordering, Inventory, Tomorrow), whose link says it shows the current day.
+      expect(mail.html.split(open).length - 1).toBe(5);
+      expect(mail.html.split(lang === "en" ? "Open this in the app (live: shows the current day) →" : "Abrir esto en la app (en vivo: muestra el día actual) →").length - 1).toBe(3);
       expect(mail.html).toContain(`href="${BASE}/operations/receiving/dlv-1"`);
       expect(mail.html).toContain("text-decoration:underline");
       expect(mail.html).toContain(cta);
@@ -261,9 +264,11 @@ describe("catering digest: lead lines open the lead by id, never a name in the U
     expect(map).toEqual([
       // Below the Sales floor: yesterday's catering slice of Sales is not theirs → the pipeline.
       ["Yesterday", `${BASE}/catering/pipeline`],
-      ["Today", `${BASE}/catering/pipeline`],
-      ["Early tomorrow", `${BASE}/catering/pipeline`],
-      ["Needs action", `${BASE}/catering/pipeline`],
+      // Digests round 3 (PR 1b): the day's sections open the board filtered to that day's booked orders at the
+      // shop; "Needs action" with no follow-up due opens the stage board.
+      ["Today", `${BASE}/catering/pipeline?day=${TODAY}&location=${A}&view=booked`],
+      ["Early tomorrow", `${BASE}/catering/pipeline?day=2026-10-08&location=${A}&view=booked`],
+      ["Needs action", `${BASE}/catering/pipeline#pipeline-stages`],
       [expect.any(String), `${BASE}/catering/pipeline#${DIGEST_ANCHORS.pipelineToRing}`],
     ]);
   });
@@ -279,7 +284,7 @@ describe("catering digest: lead lines open the lead by id, never a name in the U
       expect(hrefs).toContain(`${BASE}/catering/pipeline?lead=lead-1#lead-lead-1`);
       expect(hrefs).toContain(`${BASE}/catering/pipeline?lead=lead-2#lead-lead-2`);
       expect(hrefs).toContain(`${BASE}/catering/quotes?quote=qt-1`);
-      expect(hrefs).toContain(`${BASE}/admin/catering/prep-demand`);
+      expect(hrefs).toContain(`${BASE}/admin/catering/prep-demand?location=${A}&tab=sku`);
       expect(hrefs).toContain(`${BASE}/stations?loc=${A}`);
       for (const h of hrefs) for (const pii of ["Jane", "Doe", "John", "Roe", "Acme", "q="]) expect(h).not.toContain(pii);
     }

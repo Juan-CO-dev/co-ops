@@ -24,6 +24,7 @@ import { loadCateringPrepDemand, PREP_DEMAND_READ_MIN } from "@/lib/catering/pre
 import { loadCateringSkuDemand, type CateringSkuDemand } from "@/lib/catering/sku-demand";
 import { loadCateringSurplus, type SurplusDay } from "@/lib/catering/surplus";
 import { PrepDemandClient } from "@/components/admin/catering/prep-demand/PrepDemandClient";
+import { isPrepDemandTab } from "@/lib/catering/prep-demand-shared";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 /** YYYY-MM-DD of today (request-time) in operational TZ. */
@@ -55,6 +56,9 @@ export default async function AdminCateringPrepDemandPage({
   // Active location (B2): ?location= when allowed, else the remembered shop, else the first.
   const paramLocation = shopParamFor("/admin/catering/prep-demand", searchParamValues(sp));
   const locationId = (await resolveShop(locations, paramLocation))?.id ?? null;
+  // A deep link (the catering digest) may name the first tab: ?tab=prep|sku|surplus|sales; anything else = Prep.
+  const tabParam = typeof sp["tab"] === "string" ? sp["tab"] : null;
+  const initialTab = isPrepDemandTab(tabParam) ? tabParam : "prep";
 
   // Default 14-day window from today.
   const from = todayYmd();
@@ -87,6 +91,7 @@ export default async function AdminCateringPrepDemandPage({
         skuDemand={skuDemand}
         surplus={surplus}
         canPull={level >= 7}
+        initialTab={initialTab}
       />
     </div>
   );

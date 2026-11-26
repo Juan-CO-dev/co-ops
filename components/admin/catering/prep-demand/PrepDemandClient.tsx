@@ -9,7 +9,10 @@
  *     with advisory on-hand shortfall / order-more signal.
  *
  * Both tabs share the location selector + date-window caption above them.
- * Tab state is local useState (no useSearchParams).
+ * Tab state is local useState (no useSearchParams); the FIRST tab may come from the page's `?tab=`
+ * (`initialTab`, a digest deep link). Each Prep day section carries the anchor `#prep-day-<date>`
+ * (DIGEST_ANCHORS.prepDay): a link with that hash opens the day and scrolls to it once the tab has
+ * mounted (CollapsibleSection's reveal).
  * DORMANT-safe: both tabs render empty states with 0 data.
  */
 
@@ -27,6 +30,8 @@ import type { PrepDemandDay, PrepDemandLine } from "@/lib/catering/prep-demand";
 import type { PackageLocationOption } from "@/lib/admin/catering/packages";
 import type { CateringSkuDemand, SkuDemandRow } from "@/lib/catering/sku-demand";
 import type { SurplusDay, SurplusLine } from "@/lib/catering/surplus";
+import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
+import type { PrepDemandTab } from "@/lib/catering/prep-demand-shared";
 
 // Portion label map: quarter → ¼, half → ½, whole → (no prefix).
 const PORTION_LABELS: Record<string, string> = {
@@ -59,14 +64,16 @@ interface Props {
   skuDemand: CateringSkuDemand;
   surplus: SurplusDay[];
   canPull: boolean;
+  /** The tab shown first (the page's `?tab=`); default Prep. */
+  initialTab?: PrepDemandTab;
 }
 
 // ─── PrepDemandClient ─────────────────────────────────────────────────────────
 
-export function PrepDemandClient({ days, locations, locationId, from, to, lang, skuDemand, surplus, canPull }: Props) {
+export function PrepDemandClient({ days, locations, locationId, from, to, lang, skuDemand, surplus, canPull, initialTab = "prep" }: Props) {
   const { t } = useTranslation();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"prep" | "sku" | "surplus" | "sales">("prep");
+  const [activeTab, setActiveTab] = useState<PrepDemandTab>(initialTab);
 
   const fieldCls =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-60";
@@ -467,6 +474,7 @@ function DaySection({
   return (
     <CollapsibleSection
       idBase={`prep-demand-day-${day.needDate}`}
+      anchorId={DIGEST_ANCHORS.prepDay(day.needDate)}
       title={dateLabel}
       count={t("admin.catering.prep_demand.day_count" as TranslationKey, {
         n: day.lines.length,

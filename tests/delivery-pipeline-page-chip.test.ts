@@ -25,7 +25,7 @@ vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: async () => ({
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => st.client }));
 vi.mock("@/lib/catering/pipeline", async (orig) => ({
   ...(await orig<typeof import("@/lib/catering/pipeline")>()),
-  loadPipelineBoard: async () => st.leads, loadFollowUps: async () => [], loadAssignableStaff: async () => [], searchPipeline: async () => [],
+  loadPipelineBoard: async () => st.leads, loadPipelineBoardView: async () => ({ leads: st.leads, filter: null }), loadFollowUps: async () => [], loadAssignableStaff: async () => [], searchPipeline: async () => [],
 }));
 vi.mock("@/lib/catering/not-in-toast", () => ({ loadNotInToast: async () => [] }));
 vi.mock("@/lib/shop-context", () => ({ resolveShop: async (list: Array<{ id: string }>) => list[0] ?? null }));

@@ -28,7 +28,7 @@ import { emailOrderUpdate, type OrderUpdateEmailOutcome } from "@/lib/catering/o
 import { orderChanges } from "@/lib/catering/order-update-email-shared";
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
-import { PIPELINE_STAGES, type PipelineStage, canTransition, normalizeLeadEmail, normalizeLeadPhone } from "./pipeline-shared";
+import { PIPELINE_STAGES, type PipelineStage, canTransition, normalizeLeadEmail, normalizeLeadPhone, CATERING_RAN_STAGES, PIPELINE_NO_SHOP, leadMatchesDayFilter, pipelineReadsAllShops, pipelineShopInScope, type PipelineDayFilterParams } from "./pipeline-shared";
 import { resolveOrCreateContact } from "./companies";
 import { isLeadSource } from "./intake-shared";
 import { ezcaterReopenTarget } from "@/lib/ezcater/lifecycle-shared";
@@ -238,15 +238,22 @@ export async function withLocationNames<T extends PipelineLead>(
   return leads.map((l) => ({ ...l, locationName: l.locationId ? names.get(l.locationId) ?? null : null }));
 }
 
-/** Catering reads: catering manager and level 8+ see all shops; writes retain their own scope. */
-async function readScopeOr(actor: AuthContext): Promise<string | null> {
+/**
+ * Catering reads: catering manager and level 8+ see all shops (`pipelineReadsAllShops`, the pure twin the
+ * digest link gate uses); writes retain their own scope. Returns the reader too, for the day filter's scope check.
+ */
+async function readScope(actor: AuthContext): Promise<{ or: string | null; reader: { role: RoleCode; locations: string[] } }> {
   const reader = await loadCateringReader(actor);
   if (!reader || getRoleLevel(reader.role) < PIPELINE_READ_MIN) throw new CateringPipelineError(403, "forbidden");
-  if (reader.role === "catering_mgr" || getRoleLevel(reader.role) >= 8) return null;
+  if (pipelineReadsAllShops(reader.role)) return { or: null, reader };
   const ids = reader.locations;
-  return ids.length === 0
-    ? "location_id.is.null"
-    : `location_id.is.null,location_id.in.(${ids.join(",")})`;
+  return {
+    or: ids.length === 0 ? "location_id.is.null" : `location_id.is.null,location_id.in.(${ids.join(",")})`,
+    reader,
+  };
+}
+async function readScopeOr(actor: AuthContext): Promise<string | null> {
+  return (await readScope(actor)).or;
 }
 
 // ── Reads ───────────────────────────────────────────────────────────────────
@@ -291,32 +298,111 @@ async function currentQuoteStatuses(
 const LEAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * The day filter as the board APPLIED it (digests round 3, PR 1b): the day, the shop (an id or `none`)
+ * and the shop's name for the banner (null for `none`). Null = no filter (the normal board).
+ */
+export interface PipelineDayFilter { day: string; location: string; shopName: string | null }
+export interface PipelineBoardView { leads: PipelineBoardLead[]; filter: PipelineDayFilter | null }
+
+/** Rows per page of the filtered read: PostgREST's max-rows, so only a short page means "the end". */
+const DAY_FILTER_PAGE = 1000;
+
+/**
+ * Is the parsed filter's shop one this reader's board shows? `none` always; a shop by the board's own
+ * scope rule (pipelineShopInScope = readScope above), and only a shop that exists (its name is the
+ * banner's). Anything else = null: the params are ignored, never another shop and never an error.
+ */
+async function applicableDayFilter(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  reader: { role: RoleCode; locations: string[] },
+  f: PipelineDayFilterParams,
+): Promise<PipelineDayFilter | null> {
+  if (!pipelineShopInScope(reader, f.location)) return null;
+  if (f.location === PIPELINE_NO_SHOP) return { day: f.day, location: PIPELINE_NO_SHOP, shopName: null };
+  const { data, error } = await sb.from("locations").select("id, name").eq("id", f.location)
+    .maybeSingle<{ id: string; name: string }>();
+  if (error) throw new Error(`loadPipelineBoard shop: ${error.message}`);
+  return data ? { day: f.day, location: f.location, shopName: data.name } : null;
+}
+
+/**
  * All non-archived leads the actor may view, for the board (grouped client-side by stage).
  * `ensureLead` (a deep link's `?lead=<id>`, e.g. from a digest email): that one lead is on the board
  * even when the newest-first read stopped before it (the row cap), read under the SAME scope — a lead
  * the actor may not view is simply not added.
+ *
+ * `filter` (a digest's "booked <shop> events on <day>" link, `?day=&location=&view=booked`, parsed by
+ * parsePipelineDayFilter): with a filter whose shop is in the reader's scope, the board's leads are ONE
+ * scoped read of exactly that day — `event_date = day`, the shop (`location_id = id`, or `is null` for
+ * `none`), `stage in` CATERING_RAN_STAGES (the digest's own set), AND-ed with the same `or(scope)` —
+ * filtered in the database BEFORE paging and read to completion in a unique total order
+ * (created_at desc, id asc), so a booked order older than the unfiltered board's row cap is shown and
+ * no row is lost or repeated across a page boundary. A filter outside the scope is ignored (normal board).
+ *
+ * THE ENSURED LEAD UNDER A FILTER (plan check, Astra #1): the banner must never contradict the board.
+ * DECISION: the lead wins. When `?lead=` names a lead the reader may view that does NOT match the
+ * filter (another day, another shop, or not a booked stage), the filter is CLEARED: the normal board is
+ * shown with that lead ensured, and no banner. A lead that matches the filter is in the filtered read by
+ * construction; a lead the reader may not view is ignored and the filter stands.
  */
-export async function loadPipelineBoard(actor: AuthContext, opts: { ensureLead?: string | null } = {}): Promise<PipelineBoardLead[]> {
+export async function loadPipelineBoardView(
+  actor: AuthContext,
+  opts: { ensureLead?: string | null; filter?: PipelineDayFilterParams | null } = {},
+): Promise<PipelineBoardView> {
   requireLevel(actor, PIPELINE_READ_MIN);
   const sb = getServiceRoleClient();
-  let q = sb.from("catering_pipeline").select(LEAD_COLS);
-  const scope = await readScopeOr(actor);
-  if (scope) q = q.or(scope);
-  const { data, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
-  if (error) throw new Error(`loadPipelineBoard: ${error.message}`);
-  const rows = [...(data ?? [])];
+  const { or: scope, reader } = await readScope(actor);
   const wanted = opts.ensureLead && LEAD_ID.test(opts.ensureLead) ? opts.ensureLead.toLowerCase() : null;
-  if (wanted && !rows.some((r) => r.id.toLowerCase() === wanted)) {
-    let one = sb.from("catering_pipeline").select(LEAD_COLS).eq("id", wanted);
+  // The ensured lead, read once under the board's scope (undefined = not read yet; null = not viewable).
+  let ensured: DbLeadRow | null | undefined;
+  const readEnsured = async (id: string): Promise<DbLeadRow | null> => {
+    let one = sb.from("catering_pipeline").select(LEAD_COLS).eq("id", id);
     if (scope) one = one.or(scope);
     const extra = await one.limit(1).returns<DbLeadRow[]>();
     if (extra.error) throw new Error(`loadPipelineBoard: ${extra.error.message}`);
-    rows.push(...(extra.data ?? []));
+    return extra.data?.[0] ?? null;
+  };
+
+  let filter = opts.filter ? await applicableDayFilter(sb, reader, opts.filter) : null;
+  if (filter && wanted) {
+    ensured = await readEnsured(wanted);
+    if (ensured && !leadMatchesDayFilter(mapLead(ensured), filter)) filter = null;
+  }
+
+  let rows: DbLeadRow[];
+  if (filter) {
+    const f = filter;
+    rows = await selectAllRows<DbLeadRow>((from, to) => {
+      let q = sb.from("catering_pipeline").select(LEAD_COLS)
+        .eq("event_date", f.day)
+        .in("stage", [...CATERING_RAN_STAGES]);
+      q = f.location === PIPELINE_NO_SHOP ? q.is("location_id", null) : q.eq("location_id", f.location);
+      if (scope) q = q.or(scope); // AND-ed with the filters above (two filters = AND)
+      return q.order("created_at", { ascending: false }).order("id", { ascending: true }).range(from, to).returns<DbLeadRow[]>();
+    }, DAY_FILTER_PAGE);
+  } else {
+    let q = sb.from("catering_pipeline").select(LEAD_COLS);
+    if (scope) q = q.or(scope);
+    const { data, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
+    if (error) throw new Error(`loadPipelineBoard: ${error.message}`);
+    rows = [...(data ?? [])];
+    if (wanted && !rows.some((r) => r.id.toLowerCase() === wanted)) {
+      const one = ensured === undefined ? await readEnsured(wanted) : ensured;
+      if (one) rows.push(one);
+    }
   }
   const leads = await withLocationNames(sb, rows.map(mapLead));
   const confirmedIds = leads.filter((l) => l.stage === "confirmed").map((l) => l.id);
   const statuses = confirmedIds.length ? await currentQuoteStatuses(sb, confirmedIds) : new Map<string, string>();
-  return leads.map((l) => ({ ...l, quoteStatus: statuses.get(l.id) ?? null }));
+  return { leads: leads.map((l) => ({ ...l, quoteStatus: statuses.get(l.id) ?? null })), filter };
+}
+
+/** The board's leads (no filter view): see loadPipelineBoardView. */
+export async function loadPipelineBoard(
+  actor: AuthContext,
+  opts: { ensureLead?: string | null; filter?: PipelineDayFilterParams | null } = {},
+): Promise<PipelineBoardLead[]> {
+  return (await loadPipelineBoardView(actor, opts)).leads;
 }
 
 export interface PipelineSearchResult extends PipelineLead {

@@ -26,6 +26,7 @@ import { toastRingLines } from "@/lib/report-digests-toast-shared";
 import { digestLink, type DigestTarget, type LinkCtx, type LinkViewer } from "@/lib/report-digests-links";
 import { digestCan, type DigestAccess, type DigestCapability } from "@/lib/report-digests-access-shared";
 import { digestCounts, finishedIntro, finishIntro, finishSections, LINE_ITEMS_MAX, type SectionDraft } from "@/lib/report-digests-layout-shared";
+import { CATERING_RAN_STAGES, CATERING_UPCOMING_STAGES, PIPELINE_NO_SHOP } from "@/lib/catering/pipeline-shared";
 
 /**
  * `attention` = a TO-DO: something a person must act on today (an order to ring into Toast, a late order,
@@ -54,10 +55,12 @@ export interface DigestLine {
 /** A finished section's status: computed AFTER the recipient cut and BEFORE any truncation. */
 export interface DigestSectionStatus { tone: "ok" | "issue" | "unknown" | "todo"; text: string; issues: number; unknowns: number; todos: number }
 /**
- * A section; `href` = the screen the WHOLE section summarizes (its "Open this in the app" link). `status`
- * is set by finishSection (lib/report-digests-layout-shared.ts); a section with no allowed line does not exist.
+ * A section; `href` = the screen the WHOLE section summarizes (its "Open this in the app" link). `live` = that
+ * screen shows the CURRENT day, not the digest's (lib/report-digests-links.ts isLiveTarget): the link says so.
+ * `status` is set by finishSection (lib/report-digests-layout-shared.ts); a section with no allowed line does
+ * not exist.
  */
-export interface DigestSection { title: string; lines: DigestLine[]; href?: string | null; status?: DigestSectionStatus }
+export interface DigestSection { title: string; lines: DigestLine[]; href?: string | null; live?: boolean; status?: DigestSectionStatus }
 export interface ComposedEmail { subject: string; html: string; text: string }
 
 // ── Shop (GM / unified) ─────────────────────────────────────────────────────────────────────
@@ -415,8 +418,9 @@ export interface CateringScope {
   showAddresses?: boolean;
 }
 
-const UPCOMING = new Set(["confirmed", "out"]);
-const RAN = new Set(["confirmed", "out", "completed"]);
+// The ONE definition of booked (lib/catering/pipeline-shared.ts), shared with the pipeline's day filter.
+const UPCOMING = new Set<string>(CATERING_UPCOMING_STAGES);
+const RAN = new Set<string>(CATERING_RAN_STAGES);
 const OPEN = new Set(["inquiry", "quote_sent"]);
 /** Orders a platform took and paid for (the scan / webhook tributaries). */
 const PLATFORM = new Set(["ezcater", "toast_catering"]);
@@ -492,6 +496,11 @@ export function composeCateringSections(
   const tomorrow = addDay(f.today, 1);
   const ctx: LinkCtx = { baseUrl, viewer };
   const pipeline = digestLink(ctx, { to: "pipeline" });
+  /** The board filtered to one shop's booked orders on one day (dated); the plain board when the shop is outside the reader's scope. */
+  const bookedHref = (shopId: string | null, day: string) =>
+    digestLink(ctx, { to: "pipeline", day, location: shopId ?? PIPELINE_NO_SHOP, view: "booked" }, { to: "pipeline" });
+  const stagesHref = digestLink(ctx, { to: "pipeline", anchor: "stages" });
+  const followUpsHref = digestLink(ctx, { to: "pipeline", anchor: "follow_ups" });
   // The lead's OWN card on the board, by id (the board opens it from #lead-<id>). Never a search by the
   // contact's name: no personal data in a URL.
   const leadHref = (l: CateringLeadFact) => digestLink(ctx, { to: "pipeline", lead: l.id }, { to: "pipeline" });
@@ -539,12 +548,13 @@ export function composeCateringSections(
       y.push({ label: who(l), text: t("digest.catering.lost"), tone: "issue", href: leadHref(l) });
     }
     const created = leads.filter((l) => l.createdDay === yesterday);
-    if (created.length === 0) y.push({ label: t("digest.catering.inquiries_label"), text: t("digest.catering.no_new_inquiries"), tone: "info", href: pipeline });
+    // New inquiries sit in the board's stage columns.
+    if (created.length === 0) y.push({ label: t("digest.catering.inquiries_label"), text: t("digest.catering.no_new_inquiries"), tone: "info", href: stagesHref });
     else {
       const bySource = new Map<string, number>();
       for (const l of created) bySource.set(source(l.leadSource), (bySource.get(source(l.leadSource)) ?? 0) + 1);
       y.push({
-        label: t("digest.catering.inquiries_label"), tone: "info", href: pipeline,
+        label: t("digest.catering.inquiries_label"), tone: "info", href: stagesHref,
         text: plural(t, created.length, "digest.catering.new_inquiries_one", "digest.catering.new_inquiries_other", { sources: [...bySource].map(([k, v]) => `${k} ${v}`).join(", ") }),
       });
     }
@@ -566,7 +576,11 @@ export function composeCateringSections(
       text: plural(t, refunds.length, "digest.catering.refunds_one", "digest.catering.refunds_other", { money: money(refunds.reduce((a, r) => a + r.amountCents, 0)) }),
     });
     const overdue = leads.filter((l) => OPEN.has(l.stage) && l.followUpDate !== null && l.followUpDate < f.today);
-    if (overdue.length > 0) y.push({ label: t("digest.catering.issues_label"), tone: "issue", href: pipeline, text: plural(t, overdue.length, "digest.catering.overdue_followups_one", "digest.catering.overdue_followups_other") });
+    if (overdue.length > 0) y.push({ label: t("digest.catering.issues_label"), tone: "issue", href: followUpsHref, text: plural(t, overdue.length, "digest.catering.overdue_followups_one", "digest.catering.overdue_followups_other") });
+    // "Needs action" opens the board's follow-ups list when this shop has one due (the board lists every follow-up
+    // due through today in a non-terminal stage), else the stage board.
+    const followUpDue = leads.some((l) => l.followUpDate !== null && l.followUpDate <= f.today && l.stage !== "completed" && l.stage !== "lost");
+    const actionHref = followUpDue ? followUpsHref : stagesHref;
 
     const qty = (n: number) => new Intl.NumberFormat(language === "es" ? "es-US" : "en-US", { maximumFractionDigits: 2 }).format(n);
     /** The prep ledger for one order, or null when it has none (said ONCE per list — item 5). */
@@ -588,7 +602,7 @@ export function composeCateringSections(
     const outlook = (day: string, emptyKey: TranslationKey, label: TranslationKey): DigestLine[] => {
       const list = leads.filter((l) => l.eventDate === day && UPCOMING.has(l.stage))
         .sort((a, b) => timeWindowMinutes(a.timeWindow) - timeWindowMinutes(b.timeWindow));
-      if (list.length === 0) return [{ label: t(label), text: t(emptyKey), tone: "info", href: pipeline }];
+      if (list.length === 0) return [{ label: t(label), text: t(emptyKey), tone: "info", href: bookedHref(shop.id, day) }];
       const isToday = day === f.today;
       const out: DigestLine[] = list.map((l) => ({
         label: who(l), href: leadHref(l), tone: isToday && l.payment?.kind === "due" ? "issue" as const : "info" as const,
@@ -604,7 +618,10 @@ export function composeCateringSections(
       }));
       if (isToday && shop.id !== null) out.push(...readinessLines(shop.id), ...staffLines(shop.id));
       const noPrep = list.filter((l) => prepText(l) === null).length;
-      if (noPrep > 0) out.push({ label: t(label), href: pipeline, tone: "info", text: plural(t, noPrep, "digest.catering.no_prep_footnote_one", "digest.catering.no_prep_footnote_other") });
+      // The day's section on the Prep demand page (live; this shop only, else the board as before).
+      const prepDayHref = shop.id === null ? pipeline
+        : digestLink(ctx, { to: "prep_demand", location: shop.id, tab: "prep", day }, { to: "pipeline" });
+      if (noPrep > 0) out.push({ label: t(label), href: prepDayHref, tone: "info", text: plural(t, noPrep, "digest.catering.no_prep_footnote_one", "digest.catering.no_prep_footnote_other") });
       return out;
     };
 
@@ -617,7 +634,8 @@ export function composeCateringSections(
     function readinessLines(locationId: string): DigestLine[] {
       const r = f.readiness?.[locationId];
       const label = t("digest.catering.readiness_label");
-      const href = digestLink(ctx, { to: "prep_demand" });
+      // The shop's raw / SKU tab on Prep demand (live); no link when the page would not list this shop.
+      const href = digestLink(ctx, { to: "prep_demand", location: locationId, tab: "sku" });
       if (!r) return [];
       // A failed read is UNKNOWN, not an issue (digests round 3).
       if (r.kind === "error") return [{ label, text: t("digest.v2.could_not_load"), tone: "info", href, unknown: true }];
@@ -663,7 +681,7 @@ export function composeCateringSections(
     }
     const open = f.openQuotes.filter((q) => q.locationId === shop.id).length;
     if (open > 0) action.push({ label: t("digest.catering.quotes_label"), tone: "info", href: quotesHref, text: plural(t, open, "digest.catering.awaiting_customer_one", "digest.catering.awaiting_customer_other") });
-    if (action.length === 0) action.push({ label: t("digest.catering.needs_action"), text: t("digest.catering.none_action"), tone: "ok", href: pipeline });
+    if (action.length === 0) action.push({ label: t("digest.catering.needs_action"), text: t("digest.catering.none_action"), tone: "ok", href: actionHref });
 
     const crossCheck: DigestLine[] = [];
     const toRing = toastRingLines(f.toRingInToast ?? [], shop.id, f.today, language, baseUrl, viewer);
@@ -681,9 +699,9 @@ export function composeCateringSections(
       text: t("digest.catering.cross_check.orphans", { n: orphans.length, money: money(orphans.reduce((sum, o) => sum + o.amount_cents, 0)) }) });
     const drafts: SectionDraft[] = [
       { title: `${shop.name} · ${t("digest.catering.yesterday", { date: formatDateLabel(yesterday, language) })}`, lines: y, href: salesCateringHref(shop.id, yesterday) },
-      { title: `${shop.name} · ${t("digest.catering.today", { date: formatDateLabel(f.today, language) })}`, lines: outlook(f.today, "digest.catering.none_today", "digest.catering.today_label"), href: pipeline },
-      { title: `${shop.name} · ${t("digest.catering.tomorrow", { date: formatDateLabel(tomorrow, language) })}`, lines: outlook(tomorrow, "digest.catering.none_tomorrow", "digest.catering.tomorrow_label"), href: pipeline },
-      { title: `${shop.name} · ${t("digest.catering.needs_action")}`, lines: action, href: pipeline },
+      { title: `${shop.name} · ${t("digest.catering.today", { date: formatDateLabel(f.today, language) })}`, lines: outlook(f.today, "digest.catering.none_today", "digest.catering.today_label"), href: bookedHref(shop.id, f.today) },
+      { title: `${shop.name} · ${t("digest.catering.tomorrow", { date: formatDateLabel(tomorrow, language) })}`, lines: outlook(tomorrow, "digest.catering.none_tomorrow", "digest.catering.tomorrow_label"), href: bookedHref(shop.id, tomorrow) },
+      { title: `${shop.name} · ${t("digest.catering.needs_action")}`, lines: action, href: actionHref },
       // Present only when a line is left for this recipient: finishSection decides from the allowed lines.
       { title: `${shop.name} · ${t("digest.catering.cross_check.title", { date: formatDateLabel(yesterday, language) })}`, lines: crossCheck, href: crossHref },
       { title: `${shop.name} · ${t("digest.catering.to_ring.title")}`, lines: toRing, href: digestLink(ctx, { to: "pipeline", anchor: "to_ring" }) },
@@ -761,13 +779,14 @@ export function renderDigest(env: Envelope, d: DigestDocument): ComposedEmail {
     `<tr><td style="width:20px;vertical-align:top;font-weight:700;color:${lineMark(l).color};">${escapeHtml(lineMark(l).mark)}</td>` +
     `<td style="padding:0 0 8px;">${l.href ? a(l.href, l.label) : `<strong>${escapeHtml(l.label)}</strong>`}: ${lineText(l)}</td></tr>`;
   const table = (lines: DigestLine[]) => `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${lines.map(row).join("")}</table>`;
-  const openLabel = t("digest.section.open");
+  // A section whose screen shows the CURRENT day (not the digest's) says so on its link (plan §3.3).
+  const openLabel = (s: DigestSection) => t(s.live ? "digest.section.open_live" : "digest.section.open");
   const statusHtml = (s: DigestSection) => s.status
     ? ` <span style="font-size:14px;font-weight:700;color:${statusMark(s.status).color};">— ${escapeHtml(statusMark(s.status).mark)} ${escapeHtml(s.status.text)}</span>`
     : "";
   const sectionHtml = (s: DigestSection) =>
     `<h2 style="margin:20px 0 4px;font-size:17px;">${escapeHtml(s.title)}${statusHtml(s)}</h2>` +
-    (s.href ? `<p style="margin:0 0 8px;font-size:14px;">${a(s.href, openLabel)}</p>` : "") +
+    (s.href ? `<p style="margin:0 0 8px;font-size:14px;">${a(s.href, openLabel(s))}</p>` : "") +
     table(s.lines);
   const bodyHtml = [
     preview ? `<p style="margin:0 0 16px;padding:8px 12px;background:#FFF3D4;font-weight:700;">${escapeHtml(preview)}</p>` : "",
@@ -782,7 +801,7 @@ export function renderDigest(env: Envelope, d: DigestDocument): ComposedEmail {
     ...(preview ? [preview, ""] : []),
     d.heading, "",
     ...intro.map(textLine),
-    ...d.sections.flatMap((s) => ["", s.status ? `${s.title} — ${statusMark(s.status).mark} ${s.status.text}` : s.title, ...(s.href ? [`${openLabel} ${s.href}`] : []), ...s.lines.map(textLine)]),
+    ...d.sections.flatMap((s) => ["", s.status ? `${s.title} — ${statusMark(s.status).mark} ${s.status.text}` : s.title, ...(s.href ? [`${openLabel(s)} ${s.href}`] : []), ...s.lines.map(textLine)]),
     "", `${d.cta.label}: ${ctaUrl}`, "", t("digest.footer", { tenant: TENANT_NAME }),
   ].join("\n");
   const html = renderEmailLayout({
