@@ -189,7 +189,8 @@ describe("shop digest: section and line map (plan §3.5)", () => {
       Inventory: [`${BASE}/operations/counts?location=${A}#on-hand`, true],
       Operations: [`${BASE}/reports/operations?location=${A}&range=custom&from=${DAY}&to=${DAY}`, false],
       "Sales detail": [`${BASE}/reports/sales?location=${A}&range=custom&from=${DAY}&to=${DAY}`, false],
-      People: [`${BASE}/reports/trends/team?location=${A}`, false],
+      // 1a (#641): People opens Team on the digest's day (dated, so not live).
+      People: [`${BASE}/reports/trends/team?location=${A}&range=custom&from=${DAY}&to=${DAY}`, false],
       Tomorrow: [`${BASE}/ordering?location=${A}#order-cutoffs`, true],
     });
   });

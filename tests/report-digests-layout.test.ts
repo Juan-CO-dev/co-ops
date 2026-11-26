@@ -108,6 +108,20 @@ describe("cut → count → cap", () => {
     expect(finishSections([draft([gated(plain("Y"))]), draft([plain("Z")])], NOBODY)).toHaveLength(1);
     expect(finishSection(draft([]), NOBODY)).toBeNull();
   });
+
+  it("1b rebase: a section's `live` flag survives the rule; a live section with every line cut is still no section", () => {
+    const live = (lines: DigestLine[]): SectionDraft => ({ ...draft(lines), live: true });
+    expect(finishSection(live([plain("A")]), NOBODY)).toMatchObject({ href: HREF, live: true });
+    expect(finishSection(draft([plain("A")]), NOBODY)).not.toHaveProperty("live");
+    expect(finishSection(live([gated(issue("X"))]), NOBODY)).toBeNull();
+    // Byte-identical for a refused recipient (the AGM cannot open Sales): a live draft whose lines are all cut
+    // renders exactly as if it was never composed — no heading, no "live" link label.
+    const refused = renderDrafts([draft([plain("Z")]), { ...live([gated(plain("Y"))]), title: "Live section" }], env(AGM_A));
+    expect(refused).toEqual(renderDrafts([draft([plain("Z")])], env(AGM_A)));
+    expect(refused.html).not.toContain("live: shows the current day");
+    // The same draft for a GM who may see the line prints it with the live label.
+    expect(renderDrafts([draft([plain("Z")]), { ...live([gated(plain("Y"))]), title: "Live section" }], env(GM_A)).html).toContain("live: shows the current day");
+  });
 });
 
 describe("three statuses: a failed read is `?`, never All good", () => {
