@@ -18,7 +18,7 @@ beforeEach(()=>{
   mocks.related.mockResolvedValue({sameDay:[],previous:[],next:[],baselineHrefs:{}});
 });
 const context={location:"shop",returnLocation:"all",range:"last30",cursor:"opaque",q:"chips"};
-it.each(["opening","closing","am_prep","mid_day","cash","pm","maintenance"])("renders Operations parent and Dashboard on %s, including missing data",async type=>{
+it.each(["opening","closing","am_prep","mid_day","cash","pm","maintenance"])("renders the Operations parent (nav PR 9: no extra Dashboard link; the top bar has it) on %s, including missing data",async type=>{
   mocks.path=`/reports/${type}/report-id`;
   for(const missing of [false,true]) {
     mocks.detail.mockResolvedValue(missing?null:{kind:type==="closing"||type==="am_prep"||type==="mid_day"?"checklist":type,date:"2026-09-06",items:[]});
@@ -27,7 +27,7 @@ it.each(["opening","closing","am_prep","mid_day","cash","pm","maintenance"])("re
     const back=links.find(link=>link.pathname==="/reports/operations");
     expect(back).toBeDefined();expect(back!.searchParams.get("location")).toBe("all");
     expect(back!.searchParams.get("cursor")).toBe("opaque");expect(back!.searchParams.has("returnLocation")).toBe(false);
-    expect(links.some(link=>link.pathname==="/dashboard")).toBe(true);
+    expect(links.some(link=>link.pathname==="/dashboard")).toBe(false); // nav PR 9 (Q6): the duplicate Dashboard link is gone
     expect(links.every(link=>link.pathname!==mocks.path)).toBe(true);
     expect(html).toContain("reports.hub.operations");
   }
@@ -36,6 +36,6 @@ it("keeps escape navigation on cash denial and does not accept an employee all-s
   mocks.auth.mockResolvedValue({user:{id:"me",language:"en"},role:"employee",level:3,locations:["shop"]});
   mocks.path="/reports/cash/report-id";
   const html=renderToStaticMarkup(await Page({params:Promise.resolve({type:"cash",id:"report-id"}),searchParams:Promise.resolve(context)}));
-  expect(html).toContain("/reports/operations?location=shop");expect(html).toContain("/dashboard?");
+  expect(html).toContain("/reports/operations?location=shop");expect(html).not.toContain("/dashboard?"); // the top bar's Dashboard link is the escape (nav PR 9, Q6)
   expect(mocks.detail).not.toHaveBeenCalled();expect(mocks.related).not.toHaveBeenCalled();
 });

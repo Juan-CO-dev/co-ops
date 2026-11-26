@@ -626,3 +626,31 @@ describe("P2 (Astra r4): stale recovery is a compare-and-set on the observed row
     expect(pete.outcome).toBe("sent");
   });
 });
+
+describe("digest deep links (2026-11-23): built per recipient, never a resend", () => {
+  it("each recipient's links are for THEM: a GM's own shop screens; a MoO with no membership gets no floor-screen link; the owner does", async () => {
+    const { io, sent } = makeIO({ now: "2026-10-08T02:30:00Z", finalized: { [DAY]: [A.id, B.id] } });
+    await runClosingDigestsWith(io, B.id, DAY);
+    const to = (email: string) => sent.find((m) => m.to === email)!.text;
+    expect(to("john@example.com")).toContain(`https://ops.example.com/operations/receiving?location=${B.id}#recent-deliveries`);
+    expect(to("john@example.com")).toContain("Abrir esto en la app →");
+    expect(to("cristian@example.com")).not.toContain("/operations/receiving");
+    expect(to("cristian@example.com")).toContain(`https://ops.example.com/reports?location=all&range=custom&from=${DAY}&to=${DAY}`);
+    expect(to("pete@example.com")).toContain(`/operations/receiving?location=${A.id}`);
+  });
+
+  it("a digest already sent is never resent because its links (its content) changed", async () => {
+    const store = new Store();
+    const one = makeIO({ now: "2026-10-08T02:30:00Z", store, finalized: { [DAY]: [A.id, B.id] } });
+    await runClosingDigestsWith(one.io, B.id, DAY);
+    expect(one.sent.length).toBeGreaterThan(0);
+    const two = makeIO({ now: "2026-10-08T02:40:00Z", store, finalized: { [DAY]: [A.id, B.id] } });
+    two.io.baseUrl = "https://changed.example.com";
+    await runDigestTickWith(two.io);
+    await runClosingDigestsWith(two.io, B.id, DAY);
+    // Nobody who already got a digest for the day gets it again (the send log, not the content hash, decides).
+    const firstKeys = new Set(one.sent.map((m) => m.key));
+    expect(two.sent.filter((m) => firstKeys.has(m.key))).toEqual([]);
+    expect(one.provider.calls.length + two.provider.calls.length).toBe(one.sent.length + two.sent.length);
+  });
+});

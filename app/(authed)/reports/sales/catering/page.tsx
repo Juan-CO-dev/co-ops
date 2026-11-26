@@ -10,6 +10,11 @@
  *      quote/estimate value, not POS sales. Item 21 PR 2: for a shop whose Toast cross-check is enabled, one line
  *      says how much of that UNCHANGED total is also rung in Toast (0344 catering_pipeline_reconciliation).
  * No customer name, contact or note is read: the order list is number, date, headcount, money.
+ *
+ * Catering delivery D4 adds a FIFTH, separate section, "Delivery": the delivery fee charged vs what the courier cost us,
+ * and the recorded gratuity split. Its read is its own (lib/delivery/economics.ts), started beside the sales read and
+ * bounded by a deadline: when it fails or hangs it renders its OWN "couldn't load" line and the four blocks above are
+ * untouched; when delivery tracking is off it renders nothing. No delivery number is added to any block above.
  */
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -18,10 +23,12 @@ import { ExportLinks } from "@/components/reports-export/ExportLinks";
 import { ReportPageNav } from "@/components/reports-hub/ReportPageNav";
 import { ReportRangeControls } from "@/components/reports-hub/ReportRangeControls";
 import { ReportShopTabs } from "@/components/reports-hub/ReportShopTabs";
+import { DeliveryEconomicsSection } from "@/components/reports-hub/DeliveryEconomicsSection";
 import { Money, RangeCaption, SalesUnavailable, providerLabel, salesCard, salesLink, tFor } from "@/components/reports-hub/SalesParts";
 import { TrendShopPanels } from "@/components/trends/TrendShopPanels";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { loadDeliveryEconomicsBounded } from "@/lib/delivery/economics";
 import { REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { reportNavigationHref } from "@/lib/report-navigation";
@@ -66,6 +73,9 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
 
   const panel = async (shopId: string): Promise<ReactNode> => {
     const cursorKey = locationId === "all" ? `cursor_${shopId}` : "cursor";
+    // D4: the delivery section's own read. Never rejects, bounded by a deadline, and awaited only AFTER the sales
+    // blocks are built — so it can neither fail nor hold them.
+    const deliveryRead = loadDeliveryEconomicsBounded(auth, { locationId: shopId }, range);
     const capturedAt = range.todaySoFar ? await loadSalesLatestCapture(viewer, { locationId: shopId, businessDate: range.to }) : null;
     let body: ReactNode;
     try {
@@ -140,6 +150,8 @@ export default async function SalesCateringPage({ searchParams }: { searchParams
       <RangeCaption from={range.from} to={range.to} language={language} todaySoFar={range.todaySoFar} capturedAt={capturedAt} />
       <ExportLinks className="mb-3" family="sales" language={language} query={{ ...context, view: "catering", location: shopId }} />
       {body}
+      {/* Off adds NOTHING: the section owns its own spacing wrapper and renders null when delivery is off. */}
+      <DeliveryEconomicsSection result={await deliveryRead} language={language} idBase={`delivery-economics-${shopId}`} />
     </div>;
   };
 

@@ -88,11 +88,16 @@ const DEFERRED: { what: string; target: { en: string; es: string }; current: Nam
     current: { en: "Settings", es: "Configuración", keys: ["nav.settings", "settings.page.title"] },
     appliedBy: "nav PR 10, merge M4 (/settings retitled Me when it holds the Me rows)",
   },
+];
+
+/** Section 2 names APPLIED by a later PR, flipped out of DEFERRED on purpose. Not destinations (no route). */
+const APPLIED: { what: string; name: { en: string; es: string }; keys: string[]; retiredKeys: string[]; appliedBy: string }[] = [
   {
     what: "the global button → Go to",
-    target: { en: "Go to", es: "Ir a" },
-    current: { en: "User menu", es: "Menú de usuario", keys: ["user_menu.aria_label"] },
-    appliedBy: "nav PR 9 (the Go to sheet; today's user menu is not that sheet)",
+    name: { en: "Go to", es: "Ir a" },
+    keys: ["nav.goto.open", "nav.goto.heading"],
+    retiredKeys: ["user_menu.aria_label"],
+    appliedBy: "nav PR 9 (the Go to sheet replaced the user menu)",
   },
 ];
 
@@ -153,6 +158,17 @@ describe("nav names: one canonical name per destination (spec section 2)", () =>
     // The target name is not already in use for another destination.
     expect(Object.values(NAMES).map((n) => n.en)).not.toContain(target.en);
     expect(Object.values(NAMES).map((n) => n.es)).not.toContain(target.es);
+  });
+
+  it.each(APPLIED)("APPLIED: $what (by $appliedBy)", ({ name, keys, retiredKeys }) => {
+    for (const key of keys) {
+      expect(enDict[key], `en ${key}`).toBe(name.en);
+      expect(esDict[key], `es ${key}`).toBe(name.es);
+    }
+    for (const key of retiredKeys) {
+      expect(enDict[key], `en ${key} retired`).toBeUndefined();
+      expect(esDict[key], `es ${key} retired`).toBeUndefined();
+    }
   });
 
   it("no two destinations share a name in either language", () => {

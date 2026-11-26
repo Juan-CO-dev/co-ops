@@ -103,13 +103,14 @@ describe("app/page.tsx delegates the post-login hop to the sanitizer", () => {
   const src = readFileSync(join(repoRoot, "app", "page.tsx"), "utf8");
 
   it("imports safeNextPath from the pure module", () => {
-    expect(src).toMatch(/import\s*\{\s*safeNextPath\s*\}\s*from\s*"@\/lib\/nav-redirect"/);
+    // Digest section links (2026-11-23): withReturnFragment re-attaches a plain #id AFTER the sanitizer.
+    expect(src).toMatch(/import\s*\{\s*safeNextPath(?:\s*,\s*withReturnFragment)?\s*\}\s*from\s*"@\/lib\/nav-redirect"/);
   });
 
   it("routes the post-login push through safeNextPath", () => {
     // B2 (#30): the sanitized path may be wrapped by loginLandingPath, which only ever turns the
     // exact "/dashboard" into "/dashboard?loc=<uuid>" (tests/shop-context.test.ts) — never off-origin.
-    expect(src).toMatch(/router\.push\(\s*(?:loginLandingPath\(\s*)?safeNextPath\(/);
+    expect(src).toMatch(/router\.push\(\s*(?:loginLandingPath\(\s*)?(?:withReturnFragment\(\s*)?safeNextPath\(/);
   });
 
   it("no longer carries its own startsWith(\"/\") next check — the bug's exact shape", () => {

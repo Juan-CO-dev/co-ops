@@ -12,6 +12,10 @@
  * - Tomorrow, inbox waiting, and the orders the reconciliation lists as not rung in Toast. A clear list is said ONLY in
  *   words scoped to that list ("No orders are waiting to be rung in Toast"), never "every order is in Toast" (B1), and
  *   for ezCater alone while house orders are not checked (A6).
+ * - Catering delivery D3 (only when delivery tracking is on for the shop; nothing is drawn otherwise): each order's
+ *   delivery state beside its own state, and above the rows one alert line per lead that has NO order row and still needs
+ *   a person (a rejected order whose courier is still booked). A failed delivery read is "Couldn't load delivery", never
+ *   "to book". Status only: no courier name, no reference, no cost.
  * No money, no names, no order numbers.
  */
 import Link from "next/link";
@@ -20,6 +24,7 @@ import type { InboxWaiting, NotRungScoped } from "@/lib/dashboard-blocks";
 import type { Settled } from "@/lib/dashboard-day";
 import { itemHref } from "@/lib/dashboard-day-shared";
 import type { CateringBlockOrder, CateringBlockPlan, DayItem, HeavyTodayLines, Reason } from "@/lib/day-plan-shared";
+import { DELIVERY_TONE_TEXT, deliveryLabel, type DeliveryAlert, type DeliveryRowState } from "@/lib/delivery/day-shared";
 import type { CateringDayLoad } from "@/lib/scheduling/catering-day-shared";
 import { renderDayReason } from "@/lib/day-plan-render";
 import { formatClockTime, formatTime } from "@/lib/i18n/format";
@@ -39,6 +44,21 @@ export function orderStateText(o: Pick<CateringBlockOrder, "state" | "outAt">, l
     case "completed": return serverT(language, "dashboard.catering_block.state.completed");
     case "not_tracked": return serverT(language, "dashboard.catering_block.state.not_tracked");
   }
+}
+
+/** D3: a delivery state in words (the one label rule, `deliveryLabel`); null = nothing to show. Text roles only: a
+ *  state that needs a person is red TEXT (`co-cta-text`), never a fill. */
+export function deliveryStateText(d: DeliveryRowState | undefined, language: Language): { text: string; className: string } | null {
+  const label = deliveryLabel(d);
+  if (!label) return null;
+  return { text: serverT(language, label.key, label.time ? { time: formatTime(label.time, language) } : undefined), className: DELIVERY_TONE_TEXT[label.tone] };
+}
+/** D3: one alert line for a lead with no order row. */
+export function deliveryAlertText(a: DeliveryAlert, language: Language): string {
+  if (a.state === "pickup_mismatch") return serverT(language, "dashboard.catering_block.delivery_alert.pickup_mismatch");
+  return a.at
+    ? serverT(language, "dashboard.catering_block.delivery_alert.cancel_needed_at", { time: formatTime(a.at, language) })
+    : serverT(language, "dashboard.catering_block.delivery_alert.cancel_needed");
 }
 
 /** The not-rung line(s) from the scoped read (A6, B1). */
@@ -105,21 +125,33 @@ export function CateringBlock({ item, block, heavyToday, headsUp, extras, nextUp
       {item.reasons.map((r, i) => <p key={`r:${r.key}:${i}`} className="text-sm text-co-text">{renderDayReason(r, language)}</p>)}
       {heavy.map((r, i) => <p key={`h:${r.key}:${i}`} className="text-sm font-semibold text-co-text" data-heavy-line={r.key}>{renderDayReason(r, language)}</p>)}
 
+      {block.deliveryAlerts === "unknown" && (block.today === "unknown" || !block.today.some((o) => o.delivery?.state === "unknown")) ? (
+        // The delivery read failed and no row says so itself.
+        <Muted data-delivery-alerts="unknown">{t("dashboard.catering_block.delivery_unknown")}</Muted>
+      ) : Array.isArray(block.deliveryAlerts) && block.deliveryAlerts.length > 0 ? (
+        <ul aria-label={t("dashboard.catering_block.delivery_alerts_aria")} data-delivery-alerts="list" className="flex flex-col gap-1">
+          {block.deliveryAlerts.map((a) => (
+            <li key={a.leadId} data-delivery-alert={a.state} className="min-w-0 break-words text-sm font-semibold text-co-cta-text">{deliveryAlertText(a, language)}</li>
+          ))}
+        </ul>
+      ) : null}
+
       {block.today === "unknown" ? (
         <Muted data-orders="unknown">{t("day.reason.catering.unavailable")}</Muted>
       ) : block.today.length === 0 ? (
         <Muted data-orders="none">{t("day.reason.catering.none")}</Muted>
       ) : (
         <ul className="flex flex-col gap-1" data-orders="list">
-          {block.today.map((o) => (
-            <li key={o.id} data-order-state={o.state} className="flex min-w-0 flex-wrap gap-x-2 text-sm text-co-text">
+          {block.today.map((o) => { const delivery = deliveryStateText(o.delivery, language); return (
+            <li key={o.id} data-order-state={o.state} {...(o.delivery ? { "data-delivery-state": o.delivery.state } : {})} className="flex min-w-0 flex-wrap gap-x-2 text-sm text-co-text">
               <span className="font-semibold tabular-nums">{o.eventQ !== null ? clock(o.eventQ * 15, language) : t("dashboard.catering_block.no_time")}</span>
               <span>·</span>
               <span>{o.guests === null ? t("dashboard.catering_block.no_count") : o.guests === 1 ? t("dashboard.catering_block.guests_one") : t("dashboard.catering_block.guests_other", { n: o.guests })}</span>
               <span>·</span>
               <span>{orderStateText(o, language)}</span>
+              {delivery ? <><span>·</span><span data-delivery className={delivery.className}>{delivery.text}</span></> : null}
             </li>
-          ))}
+          ); })}
         </ul>
       )}
       {block.next ? <p className="text-sm text-co-text" data-next-order>{t("dashboard.catering_block.next", { time: clock(block.next.atMin, language) })}</p> : null}

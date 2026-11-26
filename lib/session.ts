@@ -338,11 +338,26 @@ export function isAdminPath(currentPath: string): boolean {
  * request 2026-11-15): the same act as Send — a payable offer goes out to a customer — behind
  * the same fresh password, so its own requireSession keeps the unlock in the same way.
  * Exactly that one path segment after the quote id; nothing else under a quote is admitted.
+ *
+ * ...and a delivery COST route (POST /api/catering/pipeline/[id]/delivery/[jobId]/cost, catering delivery D2): a
+ * correction of a recorded courier cost is Tier A, so exactly that path keeps the unlock. A first cost asserts no
+ * tier there and only preserves an unlock (the /api/operations/counts posture). The delivery read, the record, status
+ * and keep-pickup routes are NOT admitted: they still clear it.
+ *
+ * ...and the delivery GRATUITY correction (POST /api/catering/pipeline/[id]/delivery/gratuity, catering delivery D4):
+ * recalculating or removing the recorded driver / crew split is Tier A, so exactly that path keeps the unlock.
+ *
+ * ...and a catering REFUND (POST /api/catering/quotes/[id]/refunds, migration 0357): money out is Tier B, the same
+ * fresh password as Send, so exactly that path keeps the unlock. Its retry route (.../refunds/<id>/retry) takes no
+ * tier and is NOT admitted.
  */
 export function isCateringStepUpPath(currentPath: string): boolean {
   return (currentPath.startsWith("/api/catering/quotes/") && currentPath.endsWith("/send")) ||
     /^\/api\/catering\/quotes\/[^/]+\/resend$/.test(currentPath) ||
-    /^\/api\/catering\/pipeline\/[^/]+\/transfer$/.test(currentPath);
+    /^\/api\/catering\/pipeline\/[^/]+\/transfer$/.test(currentPath) ||
+    /^\/api\/catering\/pipeline\/[^/]+\/delivery\/[^/]+\/cost$/.test(currentPath) ||
+    /^\/api\/catering\/pipeline\/[^/]+\/delivery\/gratuity$/.test(currentPath) ||
+    /^\/api\/catering\/quotes\/[^/]+\/refunds$/.test(currentPath);
 }
 
 /** The physical-count surface is Tier-A (council A4) but lives OUTSIDE /admin —
@@ -390,6 +405,31 @@ export function isStepUpSurface(currentPath: string): boolean {
  */
 export function isHeartbeatPath(currentPath: string): boolean {
   return currentPath === "/api/auth/heartbeat";
+}
+
+/**
+ * Step-up NEUTRAL paths (nav PR 9, plan r2 3.4 and 6.2): the heartbeat's precedent widened to the top bar's background
+ * requests. On an admin page the bar searches people, refreshes the bell, marks notices read and saves the language or
+ * the profile note; each of those calls `requireSession` with its own path, and as ordinary non-surface paths they
+ * would clear a password unlock on every keystroke. A neutral request neither keeps the flag for a gate (none of these
+ * routes asserts a tier, so the list can never authorize anything) nor clears it: the flag is left exactly as it
+ * stands. Its only `sessions` write is the ordinary `last_activity_at` touch; it never calls `unlockStepUp` or
+ * `clearStepUp`, so it never unlocks, never stamps either clock, never extends Tier B or Tier E and never restores a
+ * flag that navigation cleared. EXACT strings, set membership: never a prefix (`/api/nav/people/x` clears).
+ * `/api/notifications/mark-read` is the label the per-item mark-read server action passes (it has no URL of its own).
+ */
+export const STEP_UP_NEUTRAL_PATHS: ReadonlySet<string> = new Set([
+  "/api/auth/heartbeat",
+  "/api/nav/people",
+  "/api/notifications/unread",
+  "/api/notifications/mark-all-read",
+  "/api/notifications/mark-read",
+  "/api/users/me/language",
+  "/api/users/me/profile-blurb",
+]);
+
+export function isStepUpNeutralPath(currentPath: string): boolean {
+  return STEP_UP_NEUTRAL_PATHS.has(currentPath);
 }
 
 /**
@@ -511,7 +551,8 @@ async function requireSessionCore(
   // retries on the next request; the context below therefore reports the row as
   // it actually stands rather than asserting a clear that did not land.
   let stepUpCleared = false;
-  if (row.step_up_unlocked && !isStepUpSurface(currentPath) && !isHeartbeatPath(currentPath)) {
+  // A step-up NEUTRAL request (the heartbeat and the top bar's background requests, exact paths) leaves it as it stands.
+  if (row.step_up_unlocked && !isStepUpSurface(currentPath) && !isStepUpNeutralPath(currentPath)) {
     try {
       await clearStepUp(row.id);
       stepUpCleared = true;

@@ -101,8 +101,8 @@ describe("guard (d): the list's access matches the pages, over every role, switc
     expect([...base.exercised].sort()).toEqual(EXCEPTIONS.map((e) => e.id).sort());
   });
 
-  it("the space is the plan's: 84 destinations, 15 roles, 64 switch combinations", () => {
-    expect(DESTINATIONS).toHaveLength(84);
+  it("the space is the plan's: 85 destinations, 15 roles, 64 switch combinations", () => {
+    expect(DESTINATIONS).toHaveLength(85);
     expect(ALL_ROLES).toHaveLength(15);
     expect(SWITCH_COMBOS).toHaveLength(64);
     expect(new Set(SWITCH_COMBOS.map((s) => JSON.stringify(s))).size).toBe(64);

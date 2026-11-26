@@ -471,6 +471,9 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
   const ss = secondsLeft % 60;
   const formatted = `${mm}:${ss.toString().padStart(2, "0")}`;
 
+  // Nav PR 9 (A3): z-[1050], above the top bar's sheets (z-[1000]) and below the password modal (z-[1100]) and the
+  // sign-out cover (z-[2000]). Modal arbitration also suspends an open sheet while this shows; the raise keeps the
+  // order right even for the frame before the suspension runs.
   return (
     <div
       role="dialog"
@@ -478,7 +481,7 @@ export function IdleTimeoutWarning({ idleMinutes = DEFAULT_IDLE_MINUTES, userId,
       aria-labelledby="idle-warning-title"
       aria-describedby="idle-warning-body"
       onKeyDown={onKeyDown}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-co-text/60 backdrop-blur-sm px-4 py-6"
+      className="fixed inset-0 z-[1050] flex items-center justify-center bg-co-text/60 backdrop-blur-sm px-4 py-6"
     >
       <div className="w-full max-w-sm rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-2xl">
         <h2 id="idle-warning-title" className="text-center text-xl font-extrabold leading-tight text-co-text">

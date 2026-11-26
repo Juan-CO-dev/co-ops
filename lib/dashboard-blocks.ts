@@ -52,7 +52,8 @@ export interface StripShop {
 }
 
 /**
- * The numbers strip: one row per shop the page can open, three cells each, every cell its own bounded read. The caller
+ * The numbers strip: one row per shop GIVEN, three cells each, every cell its own bounded read. The Dashboard gives the
+ * SELECTED shop only (Juan 2026-11-22), so no read is issued for another shop. The caller
  * starts it only for MoO / Owner / CGS (`numbersStripFor`, by real role); the readers' own gates still run first.
  * It resolves when sales and catering have settled; the labor read is started at the same moment and handed on
  * unawaited (its ~1.2 s denominator read must not hold the page; lead rulings r3, P1).

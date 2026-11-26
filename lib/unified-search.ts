@@ -1,6 +1,5 @@
 import type { TranslationKey } from "@/lib/i18n/types";
 import { navDestinationsFor } from "@/lib/nav-links";
-import type { ProfileDirectoryResult } from "@/lib/profiles";
 import type { RoleCode } from "@/lib/roles";
 
 export interface PersonResult {
@@ -16,13 +15,17 @@ export interface PageResult {
 
 export const PEOPLE_CAP = 10;
 
+/** A directory entry as the matcher reads it. `ProfileDirectoryResult` (lib/profiles.ts) satisfies it, and so does Go
+ *  to's own error-propagating directory (lib/nav/people-search.ts, nav PR 9): the type is structural, the body unchanged. */
+type DirectoryPerson = { readonly userId: string; readonly name: string; readonly role: RoleCode };
+
 /**
  * Filter an ALREADY-AUTHORIZED profile directory by name / role-label substring.
  * Pure: the caller loads the directory (which enforces visibility) and passes a
  * role-label translator. The matcher never widens the authorized set.
  */
 export function matchPeople(
-  directory: ProfileDirectoryResult,
+  directory: { readonly staff: readonly DirectoryPerson[]; readonly leadership: readonly DirectoryPerson[] },
   query: string,
   translateRole: (role: RoleCode) => string,
 ): { people: PersonResult[]; hasMore: boolean } {

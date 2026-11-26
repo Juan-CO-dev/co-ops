@@ -27,7 +27,7 @@ import { usePathname } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { resolveBackLink } from "@/lib/nav-parents";
+import { backLinkPrefetch, resolveBackLink } from "@/lib/nav-parents";
 
 export function BackLink({
   hrefOverride,
@@ -52,6 +52,7 @@ export function BackLink({
   return (
     <Link
       href={href}
+      prefetch={backLinkPrefetch(pathname ?? "/", href)}
       aria-label={t("nav.back_to_aria", { label })}
       className={`-ml-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted transition hover:text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60${className ? ` ${className}` : ""}`}
     >

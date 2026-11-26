@@ -29,6 +29,10 @@ import {
 } from "@/lib/midshift";
 import { timeWindowMinutes } from "@/lib/midshift-shared";
 import { readNotInToast } from "@/lib/catering/not-in-toast";
+import { deliveryActorOf, deliveryStatusReadAllowed, deliveryWriteAllowed } from "@/lib/delivery/access-shared";
+import { boundedDeliveryRead } from "@/lib/delivery/bounded";
+import { loadDeliveryDay } from "@/lib/delivery/day";
+import { attachDelivery, type DeliveryDayResult } from "@/lib/delivery/day-shared";
 import { PIPELINE_READ_MIN } from "@/lib/catering/pipeline";
 import { notRungSource, toastReadyAt, toastRingTiming, type NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
 import { loadRecentDeliveries, type DeliveryView } from "@/lib/receiving";
@@ -89,6 +93,13 @@ export interface PulseDeps {
   fridges(ctx: PulseCtx): Promise<FridgeToday[]>;
   cateringToday(ctx: PulseCtx): Promise<CateringDueItem[]>;
   cateringTomorrow(ctx: PulseCtx): Promise<CateringTomorrow>;
+  /**
+   * Catering delivery D3: the shop day's money-free delivery fact (`loadDeliveryDay`), for the catering section's status
+   * lines. Optional: absent = delivery is not wired (nothing is shown). The section calls it ONLY for a viewer the
+   * delivery status gate admits (key holder and up at the shop; never the social media manager), so the shop-wide cache
+   * never serves it to anyone else. It answers "off" with no query while delivery tracking is off.
+   */
+  cateringDelivery?(ctx: PulseCtx): Promise<DeliveryDayResult>;
   notRung(ctx: PulseCtx): Promise<NotInToastOrder[]>;
   unlinkedClockIns(ctx: PulseCtx): Promise<{ count: number; entries: Array<{ employeeGuid: string; firstName: string | null; since: string }> }>;
   lastParPass(ctx: PulseCtx): Promise<ParPassFacts | null>;
@@ -172,6 +183,7 @@ export function cachedPulseDeps(deps: PulseDeps, opts: { ttlMs?: number; now?: (
     cateringTomorrow: wrap("cateringTomorrow"), notRung: wrap("notRung"), unlinkedClockIns: wrap("unlinkedClockIns"),
     lastParPass: wrap("lastParPass"), priorAmPrep: wrap("priorAmPrep"), deliveries: wrap("deliveries"), cutoffs: wrap("cutoffs"), sales,
     handoff: wrap("handoff"), layout: wrap("layout"),
+    ...(deps.cateringDelivery ? { cateringDelivery: wrap("cateringDelivery") } : {}),
   };
 }
 
@@ -202,6 +214,7 @@ export function memoDeps(deps: PulseDeps): PulseDeps {
     cateringTomorrow: wrap("cateringTomorrow"), notRung: wrap("notRung"), unlinkedClockIns: wrap("unlinkedClockIns"),
     lastParPass: wrap("lastParPass"), priorAmPrep: wrap("priorAmPrep"), deliveries: wrap("deliveries"), cutoffs: wrap("cutoffs"), sales: wrap("sales"),
     handoff: wrap("handoff"), layout: wrap("layout"),
+    ...(deps.cateringDelivery ? { cateringDelivery: wrap("cateringDelivery") } : {}),
   };
 }
 
@@ -574,17 +587,24 @@ async function sales(deps: PulseDeps, ctx: PulseCtx): Promise<SalesData> {
 async function catering(deps: PulseDeps, ctx: PulseCtx): Promise<CateringData> {
   const money = moneyVisible(ctx.auth.level);
   const crew = crewScoped(ctx.auth.level);
+  // Catering delivery D3: the status line, only for a viewer the status gate admits (decided here, BEFORE the read is
+  // started). A rejected or failed read is "Couldn't load delivery" on the rows, never "to book"; off = the rows as they were.
+  const deliveryP: Promise<DeliveryDayResult | null> = deps.cateringDelivery && deliveryStatusReadAllowed(deliveryActorOf(ctx.auth), ctx.locationId)
+    // Bounded on its own, well inside SECTION_DEADLINE_MS (review DELIV3-r1): a read that HANGS is "Couldn't load delivery"
+    // after DELIVERY_READ_DEADLINE_MS, and today's orders, tomorrow and the prep status still render.
+    ? boundedDeliveryRead(() => deps.cateringDelivery!(ctx)) : Promise.resolve(null);
   // Crew (Astra #11): shop-level TIMING only — the not-rung orders (order numbers, money) are not read for them.
   const [today, tomorrow, notRung, reports, prior] = await Promise.all([
     deps.cateringToday(ctx), deps.cateringTomorrow(ctx), crew ? Promise.resolve<NotInToastOrder[]>([]) : deps.notRung(ctx), deps.reports(ctx),
     deps.priorAmPrep(ctx),
   ]);
   const progress = (key: ReportKey): ReportProgress => reports.rows.find((r) => r.key === key)?.progress ?? "not_started";
+  const delivery = await deliveryP;
   return {
     redacted: crew,
-    today: today.map((e) => ({
+    today: attachDelivery(today.map((e) => ({
       id: e.id, name: crew ? null : e.name, timeWindow: e.timeWindow, headcount: e.headcount, isDelivery: e.isDelivery, stage: e.stage, source: crew ? null : e.source,
-    })),
+    })), delivery, deliveryWriteAllowed(deliveryActorOf(ctx.auth), ctx.locationId)),
     tomorrow,
     notRung: notRung.map((o) => ({
       orderId: o.order_id, orderNumber: o.order_number, source: notRungSource(o), readyAt: toastReadyAt(o), headcount: o.headcount,
@@ -703,6 +723,7 @@ export function defaultPulseDeps(service: SupabaseClient): PulseDeps {
     fridges: (ctx) => loadFridgesToday(service, { locationId: ctx.locationId, date: ctx.date }),
     cateringToday: (ctx) => loadCateringDueToday(service, { locationId: ctx.locationId, date: ctx.date }),
     cateringTomorrow: (ctx) => loadCateringTomorrow(service, { locationId: ctx.locationId, date: ctx.date }),
+    cateringDelivery: (ctx) => loadDeliveryDay(service, deliveryActorOf(ctx.auth), ctx.locationId, ctx.date),
     notRung: (ctx) => readNotInToast(service, [ctx.locationId], { through: ctx.date }),
     unlinkedClockIns: async (ctx) => {
       const { data, error } = await service.from("toast_time_entries").select("employee_guid,employee_first_name,in_at")

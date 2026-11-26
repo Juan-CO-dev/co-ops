@@ -497,3 +497,40 @@ describe("r5 · Confirm refuses a quote whose package line was saved without its
     expect(readFileSync("components/catering/pipeline/shared.ts", "utf8")).toContain(`"quote_needs_repair",`);
   });
 });
+
+// ── Digest deep links (2026-11-23): `?lead=<id>` puts that lead on the board past the row cap ──────
+describe("the board loads a deep-linked lead even when the newest-first read stopped before it", () => {
+  const U = (n: number) => `0000000${n}-0000-4000-8000-00000000000${n}`;
+  const lead = (n: number, location_id: string | null = A): Row => ({
+    id: U(n), stage: "confirmed", location_id, customer_id: null, contact_name: `Contact ${n}`, company: null, created_at: `2026-10-0${n}`,
+  });
+  const realFrom = sbFake.from;
+  beforeEach(() => {
+    db.locations = [{ id: A, name: "Shop A" }];
+    db.catering_pipeline = [lead(1), lead(2), lead(3), lead(4, "loc-b")];
+    db.catering_quotes = [];
+    // A PostgREST row cap of 2: the unbounded board read returns only the two newest leads.
+    sbFake.from = (t: string) => (t === "catering_pipeline" ? new Q(t).limit(2) : new Q(t));
+    return () => { sbFake.from = realFrom; };
+  });
+
+  it("without the deep link the old lead is not on the board (the cap is real)", async () => {
+    expect((await loadPipelineBoard(gmA)).map((l) => l.id)).toEqual([U(3), U(2)]);
+  });
+
+  it("with ?lead= the old lead is added, once", async () => {
+    const ids = (await loadPipelineBoard(gmA, { ensureLead: U(1) })).map((l) => l.id);
+    expect(ids).toEqual([U(3), U(2), U(1)]);
+    expect((await loadPipelineBoard(gmA, { ensureLead: U(3) })).map((l) => l.id)).toEqual([U(3), U(2)]);
+  });
+
+  it("never a lead outside the actor's scope, and never a non-id value", async () => {
+    expect((await loadPipelineBoard(gmA, { ensureLead: U(4) })).map((l) => l.id)).toEqual([U(3), U(2)]);
+    expect((await loadPipelineBoard(gmA, { ensureLead: "Contact 1" })).map((l) => l.id)).toEqual([U(3), U(2)]);
+  });
+
+  it("the pipeline page passes ?lead= to the board", () => {
+    const page = readFileSync("app/(authed)/catering/pipeline/page.tsx", "utf8");
+    expect(page).toMatch(/loadPipelineBoard\(auth, \{ ensureLead: leadParam \}\)/);
+  });
+});

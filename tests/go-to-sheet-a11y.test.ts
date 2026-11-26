@@ -1,0 +1,272 @@
+// @vitest-environment jsdom
+/* eslint-disable react-hooks/refs, react/no-children-prop -- a test harness builds the sheet with createElement and refs */
+/**
+ * Nav PR 9, U1-U2: the sheet shell's keyboard contract (plan r2 5.2, 5.3; spec 4.2 a11y).
+ *
+ * U1: Tab / Shift+Tab cycle inside the sheet, recomputed on each keypress, so a result list that grows mid-trap is
+ * included. U2: Escape closes and focus returns to the trigger; an Escape already `defaultPrevented`, or aimed outside
+ * the sheet, is ignored; no handler is attached while the sheet is suspended under a foreign modal. (U3, the labels, lands
+ * with Go to in step 7; U4, the stacking pins, with the idle warning's raise in step 12: lead ruling r2 G2.)
+ */
+import { createElement, useRef, useState } from "react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Sheet } from "@/components/nav/Sheet";
+
+afterEach(() => cleanup());
+
+function Harness({ onCloseSpy }: { onCloseSpy?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState(["one", "two"]);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const first = useRef<HTMLInputElement | null>(null);
+  return createElement("div", null,
+    createElement("button", { ref: trigger, "data-testid": "trigger", onClick: () => setOpen(true) }, "open"),
+    createElement("button", { "data-testid": "outside" }, "outside"),
+    createElement(Sheet, {
+      id: "s", open, labelledBy: "s-h", initialFocus: first, returnFocus: trigger.current,
+      onClose: () => { onCloseSpy?.(); setOpen(false); },
+      children: [
+        createElement("h2", { key: "h", id: "s-h" }, "Go to"),
+        createElement("input", { key: "i", ref: first, "data-testid": "search", type: "search" }),
+        ...items.map((x) => createElement("a", { key: x, href: `/${x}`, "data-testid": `item-${x}` }, x)),
+        createElement("button", { key: "grow", "data-testid": "grow", onClick: () => setItems((p) => [...p, `n${p.length}`]) }, "grow"),
+      ],
+    }),
+  );
+}
+const openSheet = () => {
+  render(createElement(Harness));
+  fireEvent.click(screen.getByTestId("trigger"));
+};
+const tab = (shift = false) => fireEvent.keyDown(document.activeElement ?? document.body, { key: "Tab", shiftKey: shift });
+
+describe("U1: the Tab trap", () => {
+  it("focus starts on the search box; Tab from the last wraps to the first; Shift+Tab from the first wraps to the last", () => {
+    openSheet();
+    expect(document.activeElement).toBe(screen.getByTestId("search"));
+    tab(true);
+    expect(document.activeElement).toBe(screen.getByTestId("grow"));
+    tab();
+    expect(document.activeElement).toBe(screen.getByTestId("search"));
+  });
+  it("a list that grows mid-trap is included (recomputed on each keypress)", () => {
+    openSheet();
+    fireEvent.click(screen.getByTestId("grow"));
+    fireEvent.click(screen.getByTestId("grow"));
+    screen.getByTestId("item-n3").focus();
+    tab(true);
+    // item-n3 is not the first: no wrap. The last is still the grow button, now after four items.
+    expect(document.activeElement).toBe(screen.getByTestId("item-n3"));
+    screen.getByTestId("grow").focus();
+    tab();
+    expect(document.activeElement).toBe(screen.getByTestId("search"));
+    tab(true);
+    expect(document.activeElement).toBe(screen.getByTestId("grow"));
+  });
+  it("focus outside the sheet is pulled back in on Tab", () => {
+    openSheet();
+    screen.getByTestId("outside").focus();
+    tab();
+    expect(document.activeElement).toBe(screen.getByTestId("search"));
+  });
+});
+
+describe("U2: Escape", () => {
+  it("closes, and focus returns to the trigger", () => {
+    render(createElement(Harness));
+    const trigger = screen.getByTestId("trigger");
+    trigger.focus();
+    fireEvent.click(trigger);
+    // Re-render so returnFocus (read from the ref) is the trigger, as NavShell passes it on open.
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    fireEvent.keyDown(screen.getByTestId("search"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+  it("ignores an Escape already defaultPrevented", () => {
+    const spy = vi.fn();
+    render(createElement(Harness, { onCloseSpy: spy }));
+    fireEvent.click(screen.getByTestId("trigger"));
+    const search = screen.getByTestId("search");
+    search.addEventListener("keydown", (e) => e.preventDefault(), { once: true });
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(spy).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+  it("ignores an Escape aimed outside the sheet", () => {
+    const spy = vi.fn();
+    render(createElement(Harness, { onCloseSpy: spy }));
+    fireEvent.click(screen.getByTestId("trigger"));
+    fireEvent.keyDown(screen.getByTestId("outside"), { key: "Escape" });
+    expect(spy).not.toHaveBeenCalled();
+  });
+  it("is not attached while suspended under a foreign modal (and Tab is not intercepted)", async () => {
+    const spy = vi.fn();
+    render(createElement(Harness, { onCloseSpy: spy }));
+    fireEvent.click(screen.getByTestId("trigger"));
+    const foreign = document.createElement("div");
+    foreign.setAttribute("role", "dialog");
+    foreign.setAttribute("aria-modal", "true");
+    await act(async () => { document.body.appendChild(foreign); await Promise.resolve(); });
+    const sheet = document.querySelector("[data-co-nav-sheet]") as HTMLElement;
+    expect(sheet.hidden).toBe(true);
+    expect(sheet.hasAttribute("inert")).toBe(true);
+    const esc = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    screen.getByTestId("search").dispatchEvent(esc);
+    expect(spy).not.toHaveBeenCalled();
+    expect(esc.defaultPrevented).toBe(false);
+    const tabEv = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    screen.getByTestId("grow").dispatchEvent(tabEv);
+    expect(tabEv.defaultPrevented).toBe(false);
+    await act(async () => { foreign.remove(); await Promise.resolve(); });
+    expect(sheet.hidden).toBe(false);
+  });
+  it("backdrop click closes", () => {
+    openSheet();
+    fireEvent.click(document.querySelector("[data-co-nav-backdrop]")!);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+  it("locks body scroll while open and restores it on close", () => {
+    document.body.style.overflow = "auto";
+    openSheet();
+    expect(document.body.style.overflow).toBe("hidden");
+    fireEvent.keyDown(screen.getByTestId("search"), { key: "Escape" });
+    expect(document.body.style.overflow).toBe("auto");
+  });
+});
+
+// ─── U3 (step 7): every label in both languages ─────────────────────────────────────────────────────────────────────
+import { NavShell } from "@/components/nav/NavShell";
+import { TranslationProvider } from "@/lib/i18n/provider";
+import { goToEntries } from "@/lib/nav/go-to";
+import enDict from "@/lib/i18n/en.json";
+import esDict from "@/lib/i18n/es.json";
+
+const navRouter = vi.hoisted(() => ({ push: () => {}, refresh: () => {} }));
+vi.mock("next/navigation", () => ({ useRouter: () => navRouter, usePathname: () => "/operations/closing" }));
+
+const EN = enDict as Record<string, string>;
+const ES = esDict as Record<string, string>;
+/** The keys nav PR 9 adds (step 7 part: the bar, Go to and Me). */
+export const NAV_PR9_KEYS = [
+  "nav.room.today", "nav.room.catering", "nav.room.reports", "nav.room.back_office", "nav.room.me",
+  "nav.topbar.aria", "nav.goto.open", "nav.goto.open_aria", "nav.goto.close", "nav.goto.heading", "nav.goto.search_label",
+  "nav.goto.search_placeholder", "nav.goto.shortcut_hint", "nav.goto.results_count", "nav.goto.results.pages",
+  "nav.goto.results.people", "nav.goto.job", "nav.goto.no_results", "nav.goto.people_loading", "nav.goto.people_more",
+  "nav.goto.people_none", "nav.goto.people_error", "user_menu.language.error", "user_menu.language.network_error",
+  // step 8: the bell
+  "notifications.bell.loading_aria", "notifications.bell.unavailable_aria", "notifications.bell.stale_aria",
+  "notifications.sheet.unavailable", "notifications.sheet.stale",
+] as const;
+
+describe("U3: the new keys exist in en and es, with the same {params}", () => {
+  it.each(NAV_PR9_KEYS)("%s", (k) => {
+    expect(EN[k], `en ${k}`).toBeTruthy();
+    expect(ES[k], `es ${k}`).toBeTruthy();
+    const params = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+    expect(params(ES[k]!)).toEqual(params(EN[k]!));
+  });
+});
+
+describe("U3: every label of the bar and the open sheet resolves, in en and es", () => {
+  const ME = { userName: "Gina", userEmail: "g@example.test", actorLevel: 7, initialBlurb: null, sessionId: "s1" };
+  function labels(lang: "en" | "es") {
+    const model = goToEntries({ role: "gm", level: 7, language: lang }, {});
+    render(createElement(TranslationProvider, { initialLanguage: lang, children: createElement(NavShell, { model, me: ME, bell: null, children: null }) }));
+    fireEvent.click(document.querySelector("[data-co-goto-button]")!);
+    const all = Array.from(document.querySelectorAll<HTMLElement>("*"));
+    const aria = all.flatMap((el) => [el.getAttribute("aria-label"), el.getAttribute("placeholder")]).filter((v): v is string => v !== null);
+    const described = all.map((el) => el.getAttribute("aria-describedby")).filter((v): v is string => !!v)
+      .map((id) => document.getElementById(id)?.textContent ?? "");
+    const labelled = all.map((el) => el.getAttribute("aria-labelledby")).filter((v): v is string => !!v)
+      .map((id) => document.getElementById(id)?.textContent ?? "");
+    const text = document.body.textContent ?? "";
+    return { aria, described, labelled, text };
+  }
+  it.each(["en", "es"] as const)("%s", (lang) => {
+    const { aria, described, labelled, text } = labels(lang);
+    for (const v of [...aria, ...described, ...labelled]) {
+      expect(v.trim(), v).not.toBe("");
+      expect(v, "a raw key").not.toMatch(/^[a-z_]+(\.[a-z_]+)+$/);
+    }
+    expect(text).not.toMatch(/\b(nav|user_menu)\.[a-z_.]+/);
+    if (lang === "es") {
+      for (const k of NAV_PR9_KEYS) {
+        if (EN[k] === ES[k] || /\{/.test(EN[k]!)) continue;
+        const escaped = EN[k]!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const word = new RegExp(`(^|[^\\p{L}])${escaped}($|[^\\p{L}])`, "u");
+        expect(word.test(text) || aria.includes(EN[k]!), `English "${EN[k]}" in the es render`).toBe(false);
+      }
+      expect(aria).toContain(ES["nav.goto.open_aria"]);
+      expect(text).toContain(ES["nav.goto.shortcut_hint"]);
+    } else {
+      expect(aria).toContain(EN["nav.goto.open_aria"]);
+    }
+    cleanup();
+  });
+});
+
+// ─── U4 (step 12, with the idle warning's raise: lead ruling r2 G2): the stacking order and the bar's shape ─────────
+import { readFileSync } from "node:fs";
+
+/** Each `<button …>`, `<Link …>` and `<a …>` opening tag (attributes with nested braces and arrows included). */
+function controlTags(src: string): string[] {
+  const out: string[] = [];
+  const re = /<(?:button|Link|a)\b/g;
+  for (let m = re.exec(src); m; m = re.exec(src)) {
+    let depth = 0;
+    let i = m.index + 2;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (c === ">" && depth === 0) break;
+    }
+    out.push(src.slice(m.index, i + 1));
+  }
+  return out;
+}
+
+describe("U4: stacking and controls (source pins)", () => {
+  const src = (f: string) => readFileSync(f, "utf8");
+  const code = (s: string) => s.replace(/\/\*[^]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  it("page ≤ z-[60] < the sheets z-[1000] < the idle warning z-[1050] < the password modal z-[1100] < the sign-out cover z-[2000]", () => {
+    expect(code(src("components/nav/Sheet.tsx"))).toContain('className="fixed inset-0 z-[1000]"');
+    expect(code(src("components/auth/IdleTimeoutWarning.tsx"))).toMatch(/className="fixed inset-0 z-\[1050\] /);
+    expect(code(src("components/auth/IdleTimeoutWarning.tsx"))).not.toMatch(/\bz-50\b/);
+    expect(code(src("components/auth/PasswordModal.tsx"))).toMatch(/fixed inset-0 z-\[1100\]/);
+    expect(src("components/auth/SigningOutOverlay.tsx")).toMatch(/z-\[2000\]/);
+    // The PIN dialog stays at z-50, BELOW the sheet: arbitration (not stacking) protects it.
+    expect(code(src("components/auth/PinConfirmModal.tsx"))).toMatch(/fixed inset-0 z-50 /);
+  });
+  it("the sheet is never a native top-layer <dialog> and is portaled to the body", () => {
+    const s = code(src("components/nav/Sheet.tsx"));
+    expect(s).not.toMatch(/<dialog|showModal/);
+    expect(s).toContain("createPortal(");
+    expect(s).toContain("document.body");
+  });
+  it("the bar row: no fixed, sticky, z-index, transform or filter (no stacking context)", () => {
+    const row = code(src("components/nav/NavShell.tsx")).match(/<nav aria-label=\{t\("nav\.topbar\.aria"\)\}[^>]*className="([^"]+)"/)![1]!;
+    expect(row).not.toMatch(/\b(fixed|sticky)\b|\bz-|transform|filter|backdrop|opacity|isolat/);
+  });
+  it("the search box is focused on open (initialFocus = the search ref)", () => {
+    expect(code(src("components/nav/GoToSheet.tsx"))).toMatch(/initialFocus=\{searchRef\}/);
+  });
+  it("every control of the bar and the sheets is a 44 px control with items-center", () => {
+    for (const f of ["components/nav/GoToButton.tsx", "components/nav/TopBarDashboardLink.tsx", "components/nav/BellIsland.tsx",
+      "components/nav/GoToSheet.tsx", "components/nav/NotificationPanel.tsx", "components/nav/MeControls.tsx", "components/nav/PeopleResults.tsx",
+      "components/DashboardNav.tsx"]) {
+      const s = code(src(f));
+      const classes = controlTags(s).map((tag) => {
+        const m = tag.match(/className=(?:"([^"]+)"|\{\[([\s\S]*?)\]\s*\.)/);
+        return (m?.[1] ?? m?.[2] ?? "").replace(/\s+/g, " ");
+      });
+      expect(classes.length, f).toBeGreaterThan(0);
+      for (const c of classes) {
+        expect(c, `${f}: ${c}`).toMatch(/min-h-\[44px\]|\bh-11\b/);
+        expect(c, `${f}: ${c}`).toMatch(/items-center/);
+      }
+    }
+  });
+});

@@ -23,6 +23,7 @@ import { formatCents } from "@/lib/i18n/format";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { AlertPill } from "@/components/ui/AlertPill";
 import type { OpenCreditVendorSummary } from "@/lib/credits";
+import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
 
 /** Days-aged threshold past which a vendor's open credits read as "aging" (warn). */
 const AGING_DAYS = 7;
@@ -38,7 +39,7 @@ export function OpenCreditsPanel({ summary }: { summary: OpenCreditVendorSummary
   const aging = summary.some((s) => s.oldestDays != null && s.oldestDays > AGING_DAYS);
 
   return (
-    <div className="mt-6">
+    <div id={DIGEST_ANCHORS.receivingCredits} className="mt-6">
       <CollapsibleSection
         idBase="receiving-open-credits"
         title={t("receiving.credits.panel_title")}

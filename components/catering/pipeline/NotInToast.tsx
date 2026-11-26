@@ -8,6 +8,7 @@ import type { PipelineToastOrder } from "@/lib/catering/not-in-toast";
 import { notRungLabel, notRungSource, toastReadyAt } from "@/lib/catering/not-in-toast-shared";
 import type { HouseSuggestions } from "@/lib/catering/catering-toast-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
 import { HouseToastPanel } from "./HouseToastPanel";
 
 export function NotInToastChip() {
@@ -29,7 +30,7 @@ export function NotInToast({ rows, locations }: {
   const overdue = rows.filter((r) => r.overdue).length;
   const visible = rows.filter((r) => `${r.order_number ?? ""} ${shop(r.location_id)} ${r.event_date}`.toLowerCase().includes(query.trim().toLowerCase()));
   return <CollapsibleSection title={t("catering.toast_pending.title")} count={t("catering.toast_pending.count", { n: rows.length })}
-    idBase="not-in-toast" badge={overdue > 0 ? <span className="text-xs font-bold text-co-cta-text">{t("catering.toast_pending.overdue_count", { n: overdue })}</span> : undefined}>
+    idBase="not-in-toast" anchorId={DIGEST_ANCHORS.pipelineToRing} badge={overdue > 0 ? <span className="text-xs font-bold text-co-cta-text">{t("catering.toast_pending.overdue_count", { n: overdue })}</span> : undefined}>
     {rows.length >= 10 && <label className="mb-3 flex min-h-[44px] items-center gap-2 text-sm">
       <span>{t("catering.toast_pending.search")}</span>
       <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} className="min-h-[44px] min-w-0 flex-1 rounded-lg border border-co-border bg-co-surface px-3" />

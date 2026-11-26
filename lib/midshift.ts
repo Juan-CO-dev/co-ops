@@ -18,6 +18,10 @@ import { loadMaintenanceOverview } from "@/lib/maintenance";
 import { loadShrinkageSignals, loadOrderingAttention } from "@/lib/ordering";
 import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
+import { deliveryActorOf, deliveryWriteAllowed } from "@/lib/delivery/access-shared";
+import { boundedDeliveryRead } from "@/lib/delivery/bounded";
+import { loadDeliveryDay } from "@/lib/delivery/day";
+import { attachDelivery } from "@/lib/delivery/day-shared";
 
 import {
   computeOverdue,
@@ -445,6 +449,8 @@ export async function loadMidShiftPulse(
      *  Optional so pm-report's loadReportStatuses reuse (and any other caller) is
      *  untouched; when absent, the shrinkage signal is simply omitted (fail-open). */
     authContext?: AuthContext;
+    /** Tests only: the delivery read (default `loadDeliveryDay`). */
+    deliveryRead?: typeof loadDeliveryDay;
   },
 ): Promise<MidShiftPulse> {
   const { minutesOfDay } = operationalNow(args.now);
@@ -455,8 +461,17 @@ export async function loadMidShiftPulse(
   // council P1). Convert to the day's real UTC instant range.
   const { startIso, endExclusiveIso } = operationalDayUtcRange(args.date);
 
+  // Catering delivery D3: the status line of each event (key holder and up; never the social media manager). The loader
+  // gates by the viewer's real role and answers "off" with NO query while delivery tracking is off; it never rejects (a
+  // failure is "Couldn't load delivery" on the rows, never "to book"). Without the full AuthContext nothing is read.
+  // Started here, beside the other loads; attached to the events by lead id below.
+  // Bounded on its own (review DELIV3-r1): a delivery read that hangs is "Couldn't load delivery" after
+  // DELIVERY_READ_DEADLINE_MS; it never holds the pulse.
+  const deliveryActor = args.authContext ? deliveryActorOf(args.authContext) : null;
+  const deliveryP = deliveryActor ? boundedDeliveryRead(() => (args.deliveryRead ?? loadDeliveryDay)(service, deliveryActor, args.locationId, args.date)) : Promise.resolve(null);
+
   // The five top-level loads are independent — one parallel group.
-  const [statuses, overview, notesRes, activeToday, cateringToday, cateringTomorrow] = await Promise.all([
+  const [statuses, overview, notesRes, activeToday, cateringDue, cateringTomorrow] = await Promise.all([
     loadReportStatuses(service, { locationId: args.locationId, date: args.date, actor: args.actor }),
     loadMaintenanceOverview(service, { locationId: args.locationId, today: args.date, sinceDate: args.date }),
     service
@@ -469,6 +484,8 @@ export async function loadMidShiftPulse(
     loadCateringDueToday(service, { locationId: args.locationId, date: args.date }),
     loadCateringTomorrow(service, { locationId: args.locationId, date: args.date }),
   ]);
+  // A viewer who cannot manage deliveries (key holder, shift lead) reads "tell a manager" where a manager would act.
+  const cateringToday = attachDelivery(cateringDue, await deliveryP, deliveryActor !== null && deliveryWriteAllowed(deliveryActor, args.locationId));
   const { rows, closingDone, midDayDoneCount } = statuses;
 
   const reports: ReportStatusRow[] = rows.map((r) => ({

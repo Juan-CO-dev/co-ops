@@ -19,6 +19,11 @@ export const DASHBOARD_BLOCK_KEYS = {
   "dashboard.needs_you.aria": [], "dashboard.needs_you.summary": ["n"], "dashboard.needs_you.summary_at_least": ["n"], "dashboard.needs_you.none": [],
   "dashboard.needs_you.tasks_one": [], "dashboard.needs_you.tasks_other": ["n"], "dashboard.needs_you.recipes_one": [], "dashboard.needs_you.recipes_other": ["n"],
   "dashboard.needs_you.inbox_one": [], "dashboard.needs_you.inbox_other": ["n"], "dashboard.needs_you.inbox_unplaced": ["n"], "dashboard.needs_you.unavailable": ["name"],
+  // Catering delivery D3: the delivery cell of "Needs you", and the block's alert lines.
+  "dashboard.needs_you.delivery_one": [], "dashboard.needs_you.delivery_other": ["n"], "dashboard.needs_you.delivery_name": [],
+  "dashboard.catering_block.delivery_alerts_aria": [], "dashboard.catering_block.delivery_alert.cancel_needed": [],
+  "dashboard.catering_block.delivery_alert.cancel_needed_at": ["time"], "dashboard.catering_block.delivery_alert.pickup_mismatch": [],
+  "dashboard.catering_block.delivery_unknown": [],
   "dashboard.catering_block.aria": [], "dashboard.catering_block.guests_one": [], "dashboard.catering_block.guests_other": ["n"],
   "dashboard.catering_block.state.to_go_out": [], "dashboard.catering_block.state.out": ["time"], "dashboard.catering_block.state.out_no_time": [],
   "dashboard.catering_block.state.completed": [], "dashboard.catering_block.state.not_tracked": [], "dashboard.catering_block.no_time": [],

@@ -9,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { loadSimEnv } from "./env";
 import { Evidence } from "./evidence";
 import { acquire, assertHeld, release, quarantine } from "./lease.mjs";
-import { SIM_APP_ORIGIN, RUNNER_PRIVATE_KEYS } from "../../../lib/sim-isolation-shared";
+import { SIM_APP_ORIGIN, RUNNER_PRIVATE_KEYS, takeNodeOnlyControls, withoutNodeOnlyControls } from "../../../lib/sim-isolation-shared";
 import { SIM_LOCATIONS, SIM_PERSONAS } from "../personas-shared";
 import * as driver from "../concurrency/driver.mjs";
 import { resetFixture, assertClean } from "./reset";
@@ -17,7 +17,7 @@ import { CatalogDirtyWriteError } from "../../catalog-jobs/cleanup.mjs";
 import type { Catalog } from "./fixtures";
 import { startProduction, buildReceiptPath, buildAssetsFromHtml, type BuildReceipt } from "./target";
 
-export const SUITES = ["runner", "isolation", "personas", "fixtures", "opening", "ordering", "customer", "catalog"] as const;
+export const SUITES = ["runner", "isolation", "personas", "fixtures", "opening", "ordering", "customer", "catalog", "nav"] as const;
 export const FIXTURES = ["warm-history", "cold-empty", "incomplete-pack", "over-1000", "two-shop-divergent", "catalog-isolated"] as const;
 export function parseArgs(args: string[]) {
   let suite = "runner", fixture = "cold-empty", dev = false, noRestore = false, repeat = 1, restoreOnly = false;
@@ -35,21 +35,25 @@ export function parseArgs(args: string[]) {
   }
   if (!(SUITES as readonly string[]).includes(suite) || !(FIXTURES as readonly string[]).includes(fixture) || !Number.isSafeInteger(repeat)) throw new Error("usage");
   if (noRestore && (suite !== "runner" || restoreOnly)) throw new Error("usage");
-  if (["opening", "ordering", "customer"].includes(suite) && fixture !== "cold-empty") throw new Error("usage");
+  if (["opening", "ordering", "customer", "nav"].includes(suite) && fixture !== "cold-empty") throw new Error("usage");
   if ((suite === "catalog") !== (fixture === "catalog-isolated") || (fixture === "catalog-isolated" && restoreOnly)) throw new Error("usage");
-  if (["customer", "catalog"].includes(suite) && dev) throw new Error("usage"); // release suites require attested production build
+  if (["customer", "catalog", "nav"].includes(suite) && dev) throw new Error("usage"); // release suites require attested production build (nav: its R4 check needs it)
   return { suite, fixture, dev, noRestore, repeat, restoreOnly };
 }
 export const restoreFixture = resetFixture;
 async function portFree() {
   await new Promise<void>((ok, fail) => { const probe = net.createServer(); probe.once("error", () => fail(new Error("port occupied"))); probe.listen(3100, "localhost", () => probe.close(() => ok())); });
 }
-function launch(args: string[], env: Record<string, string | undefined>): ChildProcess {
-  const childEnv = { ...env };
+/** The environment a launched child gets: Node-only private controls (any letter case) never reach it; a suite's
+ * Playwright child gets its own control explicitly through `extra` (nav PR 9: SIM_NAV_PASSWORD_MARCUS). */
+export function launchEnv(env: Record<string, string | undefined>, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const childEnv: NodeJS.ProcessEnv = { ...withoutNodeOnlyControls(env), ...extra };
   delete childEnv.SIM_PIN_TOMMY; // Node-only reconcile persona; never browser/app input.
-  delete childEnv.SIM_CATALOG_PASSWORD; // Node-only step-up control; never a child or browser input.
+  return { ...childEnv, NODE_ENV: env.NODE_ENV === "development" ? "development" : "production" };
+}
+function launch(args: string[], env: Record<string, string | undefined>, extra: Record<string, string> = {}): ChildProcess {
   // LRA_DEBUG: inherit child stdio so startup failures are visible locally (never in evidence).
-  return spawn(process.execPath, args, { cwd: process.cwd(), env: { ...childEnv, NODE_ENV: env.NODE_ENV === "development" ? "development" : "production" }, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: process.env.LRA_DEBUG ? "inherit" : "ignore" });
+  return spawn(process.execPath, args, { cwd: process.cwd(), env: launchEnv(env, extra), shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: process.env.LRA_DEBUG ? "inherit" : "ignore" });
 }
 async function stopped(child: ChildProcess | undefined) {
   if (!child?.pid) return;
@@ -129,9 +133,13 @@ async function verifyDev(html: string, child: ChildProcess, started: number) {
 function requireSeparator() { return process.platform === "win32" ? "\\" : "/"; }
 
 export async function main(args = process.argv.slice(2)) {
+  // Parent-only controls leave process.env before anything is spawned: every child, with or without an explicit env
+  // (git, netstat, PowerShell, taskkill included), inherits none; the catalog contracts and the nav Playwright child
+  // get theirs from here, explicitly (Astra code r2).
+  const controls = takeNodeOnlyControls(process.env);
   const runId = randomUUID();
   let options: ReturnType<typeof parseArgs>;
-  try { options = parseArgs(args); } catch { const e = new Evidence(runId, "invalid"); e.manifest.reason = "usage: --suite runner|isolation|personas|fixtures|opening|ordering|customer|catalog --fixture <known-id> [--dev] [--no-restore] [--repeat N] or --restore-only <known-id>; opening, ordering and customer require cold-empty; catalog requires catalog-isolated; customer and catalog require production mode"; e.finalize([]); return 2; }
+  try { options = parseArgs(args); } catch { const e = new Evidence(runId, "invalid"); e.manifest.reason = "usage: --suite runner|isolation|personas|fixtures|opening|ordering|customer|catalog|nav --fixture <known-id> [--dev] [--no-restore] [--repeat N] or --restore-only <known-id>; opening, ordering, customer and nav require cold-empty; catalog requires catalog-isolated; customer, catalog and nav require production mode"; e.finalize([]); return 2; }
   const evidence = new Evidence(runId, options.fixture);
   // Heartbeat (2026-09-10): a watcher must never mistake silence for progress. Touched every 30 s while the run lives;
   // lra-watch.sh alerts when it stops moving or the pid disappears without a terminal LRA line.
@@ -148,9 +156,8 @@ export async function main(args = process.argv.slice(2)) {
   try {
     acquire({ runId }); held = true;
     // Exercise the actual CLI while we hold the lease, BEFORE config or DB work.
-    const contenderEnv = { ...process.env };
+    const contenderEnv = withoutNodeOnlyControls(process.env); // already clean (takeNodeOnlyControls above); a second layer
     delete contenderEnv.SIM_PIN_TOMMY;
-    delete contenderEnv.SIM_CATALOG_PASSWORD;
     const contender = spawnSync(process.execPath, ["--import", "tsx", resolve("scripts/sim/launch-readiness/run.ts"), "--suite", "runner", "--no-restore", "--dev"], { env: contenderEnv, shell: false, windowsHide: true, encoding: "utf8", timeout: 15_000 });
     if (contender.status !== 2 || !contender.stdout.includes(`owned by ${runId}`)) throw new Error("second runner was not refused by this lease");
     evidence.manifest.identity.secondRunnerRefused = true;
@@ -243,7 +250,7 @@ export async function main(args = process.argv.slice(2)) {
         evidence.manifest.identity.locations = true; evidence.manifest.identity.personas = true;
         const catalogReport = await runCatalogContracts({ assertLease: () => assertHeld(runId),
           verifiedServer: evidence.manifest.identity.server, pin: pins.SIM_PIN_MARCUS ?? "",
-          password: process.env.SIM_CATALOG_PASSWORD ?? "" });
+          password: controls.SIM_CATALOG_PASSWORD ?? "" });
         const success = catalogReport.fails.length === 0;
         passed &&= success;
         const file = `catalog-contracts-${attempt}.json`;
@@ -255,13 +262,16 @@ export async function main(args = process.argv.slice(2)) {
       evidence.manifest.status = passed && !interrupted ? "pass" : "fail";
       evidence.manifest.reason = passed && !interrupted ? "catalog SQL, lock and Session contracts passed" : "catalog contracts failed";
       evidence.write("results.json", { status: evidence.manifest.status, tests: evidence.manifest.tests });
-    } else if (["opening", "ordering", "customer"].includes(options.suite)) {
+    } else if (["opening", "ordering", "customer", "nav"].includes(options.suite)) {
       // Today's opening and vendor PO are singletons. Every Node pass and viewport
       // must start from cold-empty under this SAME lease, with the app stopped.
       const suite = options.suite;
+      // Nav PR 9: the nav suite has no Node contracts (its unit half is CI); the browser journey is the gate.
+      const noContracts: typeof import("./contracts/opening.spec").runOpeningContracts = async () => [];
       const runContracts = suite === "opening"
         ? (await import("./contracts/opening.spec")).runOpeningContracts
         : suite === "ordering" ? (await import("./contracts/ordering-receiving.spec")).runOrderingContracts
+        : suite === "nav" ? noContracts
         : (await import("./contracts/customer-first-use.spec")).runCustomerContracts;
       const nodeResults: Awaited<ReturnType<typeof runContracts>>[number][] = [];
       const slices: { project: string; attempt: number; status: string; report: string; html: string }[] = [];
@@ -280,7 +290,7 @@ export async function main(args = process.argv.slice(2)) {
         evidence.write(`${suite}-contracts.json`, nodeResults);
         await stopSlice();
         // LRA_PROJECTS (comma list) narrows the viewport slices for local iteration; release evidence runs all four.
-        const allProjects = ["phone-en", "phone-es", "tablet-en", "tablet-es"];
+        const allProjects = suite === "nav" ? ["phone375-en", "phone375-es"] : ["phone-en", "phone-es", "tablet-en", "tablet-es"];
         const wanted = (process.env.LRA_PROJECTS ?? "").split(",").map(s => s.trim()).filter(Boolean);
         const projects = wanted.length ? allProjects.filter(p => wanted.includes(p)) : allProjects;
         if (!projects.length || wanted.some(p => !allProjects.includes(p))) throw new Error("unknown viewport project");
@@ -292,7 +302,10 @@ export async function main(args = process.argv.slice(2)) {
           evidence.write("manifest.json", evidence.manifest);
           stage = "playwright";
           const slice = `${project}-${attempt}${shop ? `-${shop}` : ""}`;
-          playwright = launch(["node_modules/@playwright/test/cli.js", "test", "--config", "scripts/sim/launch-readiness/playwright.config.ts", `--project=${project}`, ...(shop ? ["--grep", ` customer ${shop} `] : [])], { ...loaded.env, ...pins, LRA_DEV: options.dev ? "1" : "0", LRA_RUN_ID: runId, LRA_SUITE: suite, LRA_FIXTURE: "cold-empty", LRA_CONFIG_ROOT: privateDir, LRA_MAIL_DIR: mailDir, [suite === "opening" ? "LRA_OPENING_SLICE" : suite === "ordering" ? "LRA_ORDERING_SLICE" : "LRA_CUSTOMER_SLICE"]: slice });
+          // Nav PR 9: SIM_NAV_PASSWORD_MARCUS (the P3 / R4 step-up) is a PARENT-ONLY control: never in .env.sim, never in
+          // the app or contender environment; it reaches only the nav suite's Playwright child.
+          const navPassword: Record<string, string> = suite === "nav" && controls.SIM_NAV_PASSWORD_MARCUS ? { SIM_NAV_PASSWORD_MARCUS: controls.SIM_NAV_PASSWORD_MARCUS } : {};
+          playwright = launch(["node_modules/@playwright/test/cli.js", "test", "--config", "scripts/sim/launch-readiness/playwright.config.ts", `--project=${project}`, ...(shop ? ["--grep", ` customer ${shop} `] : [])], { ...loaded.env, ...pins, LRA_DEV: options.dev ? "1" : "0", LRA_RUN_ID: runId, LRA_SUITE: suite, LRA_FIXTURE: "cold-empty", LRA_CONFIG_ROOT: privateDir, LRA_MAIL_DIR: mailDir, [suite === "opening" ? "LRA_OPENING_SLICE" : suite === "ordering" ? "LRA_ORDERING_SLICE" : suite === "nav" ? "LRA_NAV_SLICE" : "LRA_CUSTOMER_SLICE"]: slice }, navPassword);
           const code = await new Promise<number | null>((ok, fail) => { playwright!.once("error", fail); playwright!.once("exit", ok); });
           failed ||= code !== 0;
           const report = `${suite}/${slice}/results.json`, html = `${suite}/${slice}/html/index.html`;

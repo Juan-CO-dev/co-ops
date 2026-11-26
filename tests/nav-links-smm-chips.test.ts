@@ -5,6 +5,7 @@
  * The filter reads S1's own rule (`reportsRoleAllowed`); no second role list. Without `role`, the output is today's.
  */
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { navDestinationsFor } from "@/lib/nav-links";
@@ -61,35 +62,24 @@ describe("the role changes nothing else", () => {
   });
 });
 
-describe("DashboardNav (nav PR 7: the collapsed \"All pages\" list)", () => {
-  const hrefs = (html: string) => [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]!);
-  it("renders no /reports chip for the social media manager, and all three for an AGM at the same level", async () => {
+describe("\"All pages\" (nav PR 9: the top bar's Go to)", () => {
+  it("renders one button and no chips (no links) for any role; it opens the bar's Go to", async () => {
     const { DashboardNav } = await import("@/components/DashboardNav");
-    const smm = renderToStaticMarkup(DashboardNav({ language: "en", actorLevel: 6, selectedLocationId: null, actorRole: "social_media_mgr", switches: {} }));
-    const agm = renderToStaticMarkup(DashboardNav({ language: "en", actorLevel: 6, selectedLocationId: null, actorRole: "agm", switches: {} }));
-    expect(smm).not.toContain('href="/reports');
-    for (const r of REPORT_CHIPS) expect(agm).toContain(`href="${r}"`);
+    const html = renderToStaticMarkup(createElement(DashboardNav, { label: "All pages" }));
+    expect(html).toMatch(/^<button[^>]*data-dashboard-all-pages=""[^>]*>All pages<\/button>$/);
+    expect(html).not.toContain("href=");
+    expect(readFileSync("components/DashboardNav.tsx", "utf8")).toContain("useGoTo()");
   });
 
-  it("the social media manager's list is its role menu minus the Dashboard: Me, My performance, Training (any switches)", async () => {
-    const { DashboardNav } = await import("@/components/DashboardNav");
-    for (const switches of [{}, { vault: true, pulseV2: true, businessReport: true, marketingScorecard: true }]) {
-      const smm = renderToStaticMarkup(DashboardNav({ language: "en", actorLevel: 6, selectedLocationId: "shop-1", actorRole: "social_media_mgr", switches }));
-      expect(hrefs(smm)).toEqual(["/settings", "/my-feedback", "/training"]);
-    }
+  it("Go to never lists a report page for the social media manager, and lists all three for an AGM at the same level", async () => {
+    const { goToEntries } = await import("@/lib/nav/go-to");
+    const { allEntries } = await import("@/lib/nav/go-to-shared");
+    const hrefs = (role: RoleCode) => allEntries(goToEntries({ role, level: 6, language: "en" }, {})).map((e) => e.href);
+    expect(hrefs("social_media_mgr").filter(isReport)).toEqual([]);
+    for (const r of REPORT_CHIPS) expect(hrefs("agm")).toContain(r);
   });
 
-  it("the chips sit in a collapsed <details> under \"All pages\"; the Explore heading is gone; an AGM keeps the full list", async () => {
-    const { DashboardNav } = await import("@/components/DashboardNav");
-    const agm = renderToStaticMarkup(DashboardNav({ language: "en", actorLevel: 6, selectedLocationId: "shop-1", actorRole: "agm", switches: {} }));
-    expect(agm).toMatch(/<details[^>]*><summary[^>]*>All pages<\/summary>/);
-    expect(agm).not.toMatch(/<details[^>]*\bopen\b/);
-    expect(agm).not.toContain("Explore");
-    expect(hrefs(agm)).toEqual(navDestinationsFor(6, { role: "agm" }).map((l) => (l.scoped ? `${l.href}?location=shop-1` : l.href)));
-  });
-
-  it("source pins: DashboardNav passes the request's switches and role: actorRole; the dashboard passes the session's real role", () => {
-    expect(readFileSync("components/DashboardNav.tsx", "utf8")).toContain("navDestinationsFor(actorLevel, { vault: switches.vault, pulseV2: switches.pulseV2, role: actorRole })");
+  it("the dashboard passes the session's real role to the shortcuts", () => {
     const page = readFileSync("app/(authed)/dashboard/page.tsx", "utf8");
     expect(page).toContain("actorRole={auth.role}");
     expect(page).not.toMatch(/actorRole=\{[^}]*works/i);

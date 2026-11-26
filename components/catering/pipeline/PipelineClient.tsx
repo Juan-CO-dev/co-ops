@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useId, useRef, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
+import { LeadRefundBanner } from "@/components/catering/LeadRefundBanner";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { LEAD_EMAIL_MAX, LEAD_PHONE_MAX, LEGAL_TRANSITIONS, PIPELINE_STAGES, cateringStageOverlay, projectedCateringStage, leadEditPatch, shopChipLabel, showQuoteNotAccepted, stageMoveNeedsConfirm, type CateringStageMove, type CateringStageOverlay, type PipelineStage } from "@/lib/catering/pipeline-shared";
@@ -10,8 +11,10 @@ import type { PipelineLead, PipelineBoardLead, PipelineSearchResult, AssignableS
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
 import { isBookableSignal } from "@/lib/catering/capacity-shared";
+import { DeliveryStateChip } from "./DeliveryStateChip";
 import { EzcaterReconciliationPanel } from "./EzcaterReconciliationPanel";
 import { HouseToastPanel } from "./HouseToastPanel";
+import { DeliveryPanel } from "./DeliveryPanel";
 import { TransferLead } from "./TransferLead";
 import { EzcaterDetail } from "./EzcaterDetail";
 import { ReopenLead } from "./ReopenLead";
@@ -418,6 +421,7 @@ function LeadCard({
         <ShopChip lead={lead} />
         {notInToast && <NotInToastChip />}
         {showQuoteNotAccepted(lead.stage, lead.quoteStatus) && <QuoteNotAcceptedChip />}
+        <DeliveryStateChip leadId={lead.id} />
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-co-text-muted">
           {lead.eventDate && <span>{formatDateLabel(lead.eventDate, language)}</span>}
           {lead.headcount != null && <span>{t("catering.pipeline.headcount_short").replace("{n}", String(lead.headcount))}</span>}
@@ -548,10 +552,16 @@ function LeadDetail({
 
       {canWrite && reopen && lead.stage === "lost" && <ReopenLead leadId={lead.id} target={reopen.target} onReopened={onClose} />}
 
+      {/* Catering refunds (0357, dark): a lost order that still holds refundable money says so and links to its refund. */}
+      {lead.stage === "lost" && <LeadRefundBanner leadId={lead.id} phase="lost" />}
+
       <EzcaterReconciliationPanel leadId={lead.id} />
 
       {/* Item 21 PR 3: a house order's Toast checks (renders nothing unless the server returns a panel). */}
       {lead.leadSource !== "ezcater" && <HouseToastPanel leadId={lead.id} />}
+
+      {/* Catering delivery D2: the order's courier delivery (renders nothing unless delivery is on for the lead's shop). */}
+      <DeliveryPanel leadId={lead.id} stage={lead.stage} eventDate={lead.eventDate} locations={locations} />
 
       {canTransfer && <TransferLead leadId={lead.id} locationId={lead.locationId} locations={locations} onMoved={onClose} />}
 
@@ -587,6 +597,7 @@ function LeadDetail({
                 {t("catering.pipeline.confirm_final.title", { stage: t(stageKey(confirming)) })}
               </p>
               <p className="mt-1 text-xs text-co-text">{t("catering.pipeline.confirm_final.body")}</p>
+              {confirming === "lost" && <LeadRefundBanner leadId={lead.id} phase="confirming_lost" />}
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"

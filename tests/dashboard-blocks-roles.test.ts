@@ -1,7 +1,7 @@
 /**
  * Nav PR 8, T-R1 (plan r2 7.1, the pure half): the role blocks are decided by the REAL role only, never by a level, so the
  * strip is always Juan's (CGS) and never a GM's. "Needs you" is GM and up (a GM DOES get it, A8's correction). The page
- * half (a CGS with a key-holder "works as" row gets the strip at both shops) is in tests/dashboard-blocks-payload.test.ts.
+ * half (a CGS with a key-holder "works as" row gets the strip at either selected shop) is in tests/dashboard-blocks-payload.test.ts.
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";

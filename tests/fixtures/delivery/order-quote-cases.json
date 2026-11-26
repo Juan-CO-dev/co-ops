@@ -1,0 +1,135 @@
+{
+  "_about": "The ONE order-quote selection contract (plan r6 section 4.8). Consumed by scripts/sql-harness-0356.mjs (SQL delivery_order_quote) and tests/delivery-quote.test.ts (TS orderQuoteOf). `quotes` are every revision the lead holds; a candidate is a revision with superseded = false (one per family). `n` is the ordinal the quote's id is built from (a higher n is a greater id). expect.quote is the selected quote's n (null when the kind selects none).",
+  "cases": [
+    {
+      "name": "no quote at all (ezCater and Toast-created leads)",
+      "quotes": [],
+      "expect": { "kind": "none", "quote": null, "isDelivery": null, "rejected": false }
+    },
+    {
+      "name": "one accepted delivery quote",
+      "quotes": [
+        { "n": 1, "status": "accepted", "isDelivery": true, "gratuityCents": 10000, "deliveryFeeCents": 2500, "createdAt": "2026-11-01T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "accepted", "quote": 1, "isDelivery": true, "rejected": false }
+    },
+    {
+      "name": "one accepted pickup quote",
+      "quotes": [
+        { "n": 1, "status": "accepted", "isDelivery": false, "gratuityCents": 0, "deliveryFeeCents": 0, "createdAt": "2026-11-01T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "accepted", "quote": 1, "isDelivery": false, "rejected": false }
+    },
+    {
+      "name": "an accepted family beside a NEWER declined sibling is accepted, not rejected",
+      "quotes": [
+        { "n": 1, "status": "accepted", "isDelivery": true, "gratuityCents": 5000, "deliveryFeeCents": 2000, "createdAt": "2026-11-01T10:00:00Z", "superseded": false },
+        { "n": 2, "status": "declined", "isDelivery": false, "gratuityCents": 0, "deliveryFeeCents": 0, "createdAt": "2026-11-03T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "accepted", "quote": 1, "isDelivery": true, "rejected": false }
+    },
+    {
+      "name": "an accepted family beside a newer sent sibling is still accepted",
+      "quotes": [
+        { "n": 1, "status": "accepted", "isDelivery": false, "gratuityCents": 0, "deliveryFeeCents": 0, "createdAt": "2026-11-01T10:00:00Z", "superseded": false },
+        { "n": 2, "status": "sent", "isDelivery": true, "gratuityCents": 900, "deliveryFeeCents": 2000, "createdAt": "2026-11-04T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "accepted", "quote": 1, "isDelivery": false, "rejected": false }
+    },
+    {
+      "name": "two accepted families are ambiguous; a delivery when any accepted one is",
+      "quotes": [
+        { "n": 1, "status": "accepted", "isDelivery": false, "gratuityCents": 100, "deliveryFeeCents": 0, "createdAt": "2026-11-01T10:00:00Z", "superseded": false },
+        { "n": 2, "status": "accepted", "isDelivery": true, "gratuityCents": 200, "deliveryFeeCents": 2000, "createdAt": "2026-11-02T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "ambiguous", "quote": null, "isDelivery": true, "rejected": false }
+    },
+    {
+      "name": "two accepted pickup families are ambiguous and not a delivery",
+      "quotes": [
+        { "n": 1, "status": "accepted", "isDelivery": false, "gratuityCents": 100, "deliveryFeeCents": 0, "createdAt": "2026-11-01T10:00:00Z", "superseded": false },
+        { "n": 2, "status": "accepted", "isDelivery": false, "gratuityCents": 200, "deliveryFeeCents": 0, "createdAt": "2026-11-02T10:00:00Z", "superseded": false },
+        { "n": 3, "status": "sent", "isDelivery": true, "gratuityCents": 300, "deliveryFeeCents": 2000, "createdAt": "2026-11-03T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "ambiguous", "quote": null, "isDelivery": false, "rejected": false }
+    },
+    {
+      "name": "the only family declined is rejected",
+      "quotes": [
+        { "n": 1, "status": "declined", "isDelivery": true, "gratuityCents": 5000, "deliveryFeeCents": 2000, "createdAt": "2026-11-01T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "rejected", "quote": null, "isDelivery": false, "rejected": true }
+    },
+    {
+      "name": "every family declined is rejected",
+      "quotes": [
+        { "n": 1, "status": "declined", "isDelivery": true, "gratuityCents": 5000, "deliveryFeeCents": 2000, "createdAt": "2026-11-01T10:00:00Z", "superseded": false },
+        { "n": 2, "status": "declined", "isDelivery": false, "gratuityCents": 0, "deliveryFeeCents": 0, "createdAt": "2026-11-02T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "rejected", "quote": null, "isDelivery": false, "rejected": true }
+    },
+    {
+      "name": "a declined family and a re-quote that is not declined: pending on the re-quote",
+      "quotes": [
+        { "n": 1, "status": "declined", "isDelivery": false, "gratuityCents": 0, "deliveryFeeCents": 0, "createdAt": "2026-11-01T10:00:00Z", "superseded": false },
+        { "n": 2, "status": "draft", "isDelivery": true, "gratuityCents": 700, "deliveryFeeCents": 2000, "createdAt": "2026-11-05T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "pending", "quote": 2, "isDelivery": true, "rejected": false }
+    },
+    {
+      "name": "pending picks the NEWEST non-declined candidate by created_at",
+      "quotes": [
+        { "n": 1, "status": "sent", "isDelivery": true, "gratuityCents": 700, "deliveryFeeCents": 2000, "createdAt": "2026-11-06T10:00:00Z", "superseded": false },
+        { "n": 2, "status": "draft", "isDelivery": false, "gratuityCents": 0, "deliveryFeeCents": 0, "createdAt": "2026-11-05T10:00:00Z", "superseded": false },
+        { "n": 3, "status": "declined", "isDelivery": false, "gratuityCents": 0, "deliveryFeeCents": 0, "createdAt": "2026-11-09T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "pending", "quote": 1, "isDelivery": true, "rejected": false }
+    },
+    {
+      "name": "pending breaks a created_at tie by the greater id",
+      "quotes": [
+        { "n": 1, "status": "sent", "isDelivery": true, "gratuityCents": 700, "deliveryFeeCents": 2000, "createdAt": "2026-11-06T10:00:00Z", "superseded": false },
+        { "n": 2, "status": "sent", "isDelivery": false, "gratuityCents": 0, "deliveryFeeCents": 0, "createdAt": "2026-11-06T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "pending", "quote": 2, "isDelivery": false, "rejected": false }
+    },
+    {
+      "name": "expired is never a rejection: pending",
+      "quotes": [
+        { "n": 1, "status": "expired", "isDelivery": true, "gratuityCents": 700, "deliveryFeeCents": 2000, "createdAt": "2026-11-06T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "pending", "quote": 1, "isDelivery": true, "rejected": false }
+    },
+    {
+      "name": "expired beside declined: pending on the expired one",
+      "quotes": [
+        { "n": 1, "status": "expired", "isDelivery": false, "gratuityCents": 0, "deliveryFeeCents": 0, "createdAt": "2026-11-01T10:00:00Z", "superseded": false },
+        { "n": 2, "status": "declined", "isDelivery": true, "gratuityCents": 700, "deliveryFeeCents": 2000, "createdAt": "2026-11-06T10:00:00Z", "superseded": false }
+      ],
+      "expect": { "kind": "pending", "quote": 1, "isDelivery": false, "rejected": false }
+    },
+    {
+      "name": "a superseded accepted revision is not a candidate: the live declined revision rejects",
+      "quotes": [
+        { "n": 1, "status": "accepted", "isDelivery": true, "gratuityCents": 5000, "deliveryFeeCents": 2000, "createdAt": "2026-11-01T10:00:00Z", "superseded": true },
+        { "n": 2, "status": "declined", "isDelivery": true, "gratuityCents": 5000, "deliveryFeeCents": 2000, "createdAt": "2026-11-02T10:00:00Z", "superseded": false, "rootN": 1 }
+      ],
+      "expect": { "kind": "rejected", "quote": null, "isDelivery": false, "rejected": true }
+    },
+    {
+      "name": "a superseded declined revision is not a candidate: the live accepted revision stands",
+      "quotes": [
+        { "n": 1, "status": "declined", "isDelivery": false, "gratuityCents": 0, "deliveryFeeCents": 0, "createdAt": "2026-11-01T10:00:00Z", "superseded": true },
+        { "n": 2, "status": "accepted", "isDelivery": true, "gratuityCents": 4200, "deliveryFeeCents": 2000, "createdAt": "2026-11-02T10:00:00Z", "superseded": false, "rootN": 1 }
+      ],
+      "expect": { "kind": "accepted", "quote": 2, "isDelivery": true, "rejected": false }
+    },
+    {
+      "name": "only superseded revisions (no live candidate) is none",
+      "quotes": [
+        { "n": 1, "status": "accepted", "isDelivery": true, "gratuityCents": 5000, "deliveryFeeCents": 2000, "createdAt": "2026-11-01T10:00:00Z", "superseded": true }
+      ],
+      "expect": { "kind": "none", "quote": null, "isDelivery": null, "rejected": false }
+    }
+  ]
+}

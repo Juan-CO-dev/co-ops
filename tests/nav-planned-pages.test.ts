@@ -16,8 +16,12 @@ const h = vi.hoisted(() => ({ auth: vi.fn(), path: "/" }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => { throw new Error(`redirect:${url}`); },
   usePathname: () => h.path,
+  useRouter: () => ({ push: () => {}, refresh: () => {} }),
 }));
-vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: h.auth }));
+vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: h.auth, sessionIdleMinutes: () => 10 }));
+// Nav PR 9: the six non-admin planned pages render inside the top bar's frame. Its streamed bell is an async server
+// component this static render cannot await; the bell has its own tests (tests/top-bar-bell.test.ts).
+vi.mock("@/components/nav/TopBarBell", () => ({ TopBarBell: () => null }));
 
 import AuditPage from "@/app/admin/audit/page";
 import TipsPage from "@/app/tips/page";
@@ -29,7 +33,7 @@ import CommsPage from "@/app/comms/page";
 
 const ROOT = process.cwd();
 const session = (role: RoleCode, level: number, language: "en" | "es" = "en") =>
-  ({ user: { role, language }, role, level, locations: [] });
+  ({ user: { id: "u1", name: "Cy", email: null, profileBlurb: null, role, language }, session: { id: "s1" }, role, level, locations: [] });
 
 const PLANNED = [
   { route: "/tips", file: "app/tips/page.tsx", Page: TipsPage, titleKey: "planned.name.tips" },
@@ -105,6 +109,9 @@ describe("the seven planned pages are the feature's name and one honest sentence
       // Outside the admin shell the page draws the registry back link to the dashboard; inside it, the shell does.
       if (route.startsWith("/admin/")) expect(html).not.toContain("href=");
       else expect(html).toContain(`href="/dashboard"`);
+      // Nav PR 9: outside both layouts the page draws the top bar itself; inside the admin shell it does not.
+      if (route.startsWith("/admin/")) expect(html).not.toContain("data-co-top-bar");
+      else expect(html).toContain("data-co-top-bar");
     }
   });
 

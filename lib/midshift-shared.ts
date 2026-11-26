@@ -6,6 +6,7 @@
  * import paths).
  */
 
+import type { DeliveryRowState } from "@/lib/delivery/day-shared";
 import { formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 
@@ -227,6 +228,9 @@ export interface CateringDueItem {
   stage: DueStage;
   /** v2: where the lead came from (registry code or legacy free text; null = unlabelled). */
   source: string | null;
+  /** Catering delivery D3: the lead's delivery state, status only (no money, courier, reference or note). Absent =
+   *  nothing to show: delivery tracking is off here, the viewer may not read it, or the order has no delivery. */
+  delivery?: DeliveryRowState;
 }
 
 /** Tomorrow's booked catering, as one line under today's list. */

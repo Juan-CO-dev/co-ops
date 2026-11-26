@@ -1,5 +1,32 @@
 # Launch-readiness runner (F4 / F2)
 
+## Nav PR 9: the top bar journey (suite `nav`)
+
+`nav` is the signed-in browser gate for the top bar, Go to and search (CHIEF `nav-PR9-PLAN-r2.md` 8.3, P1-P4). It
+requires `cold-empty` and a production build (its R4 step checks a production router), and runs at **375 px only**:
+projects `phone375-en` and `phone375-es` (the other suites keep their four projects). It has no Node contracts; the
+parent restores `cold-empty` and restarts the app before each project. Existing personas only: `marcus` (GM, both
+shops), `rosa` (KH, es, EM), `angel` (KH, en, MEP). There is no SMM or MoO persona: adding them is a sim write that
+needs Juan's word (lead ruling Q7); the SMM is proven in CI by unit serialization only.
+
+Controls: `SIM_PIN_MARCUS`, `SIM_PIN_ROSA`, `SIM_PIN_ANGEL` (as for the other suites), plus the PARENT-ONLY
+`SIM_NAV_PASSWORD_MARCUS` (Marcus's password, for P3 and R4's Tier A unlock). Like `SIM_PIN_TOMMY`, it is never added
+to `.env.sim`; the runner passes it to the nav Playwright child only (never to the app or the contender), and the spec
+pauses tracing around it and sends it with the same POST /api/auth/step-up the password prompt sends (nothing is typed
+into the page). Without it P3 fails by name. The Tier A state is read with a no-write probe (see the spec header).
+
+```sh
+# CC (Git Bash), after building the reviewed candidate:
+SIM_NAV_PASSWORD_MARCUS=... node --import tsx scripts/sim/launch-readiness/run.ts --suite nav --fixture cold-empty
+# One project while iterating (not release evidence):
+LRA_PROJECTS=phone375-en SIM_NAV_PASSWORD_MARCUS=... node --import tsx scripts/sim/launch-readiness/run.ts --suite nav --fixture cold-empty
+```
+
+R4 (BackLink's prefetch of /dashboard from the admin hub) is RECORDED, not judged: the P3 test adds an annotation
+`nav.r4` (build id, every /dashboard request seen in the 3 s with its `rsc` / `next-router-prefetch` headers, and the
+Tier A state after) to `results.json`. The lead reads it: a prefetch that cleared Tier A means BackLink gets
+`prefetch={false}` when it leaves /admin (plan 6.4) and S4's exemption goes.
+
 ## G1-C customer first use
 
 `customer` adds Node contracts and the real anonymous-to-customer Playwright journey. It requires
@@ -73,7 +100,7 @@ node --import tsx scripts/sim/launch-readiness/run.ts --suite runner --fixture c
 
 The lease override above is for sandbox tests only. Ordinary runs must unset it so all clones share `C:/Users/conta/co-ops-assets/lra-sim-lease/`. Do not run two clones with different overrides against the shared sim. Acquisition is an atomic mkdir; `owner.json` contains PID, started-at, run ID and host. A live owner refuses a second invocation before configuration, DB access or login. A dead PID is automatically cleared with `clearing stale lease from <runId>`. Missing/malformed ownership records fail closed. There is no heartbeat or age-based expiry. The runner itself launches a second invocation to verify refusal on every acquired run.
 
-Suites: `runner`, `isolation`, `personas`, `fixtures` (parent-owned Node lifecycle contract), `opening` (G1-A Node contracts + browser journeys), `ordering` (G1-O Node contracts + ordering/receiving journeys). Fixtures: `warm-history`, `cold-empty`, `incomplete-pack`, `over-1000`, `two-shop-divergent`. Unknown flags/names return 2. `--repeat N` repeats every test without overwriting earlier evidence. All four Chromium projects run serially: phone/tablet × en/es, fresh browser context for each test. Project locale is a tag; it does not change a persona's saved app preference. Persona login checks the actual seeded language.
+Suites: `runner`, `isolation`, `personas`, `fixtures` (parent-owned Node lifecycle contract), `opening` (G1-A Node contracts + browser journeys), `ordering` (G1-O Node contracts + ordering/receiving journeys), `nav` (nav PR 9 top bar journey, 375 px, above). Fixtures: `warm-history`, `cold-empty`, `incomplete-pack`, `over-1000`, `two-shop-divergent`. Unknown flags/names return 2. `--repeat N` repeats every test without overwriting earlier evidence. All four Chromium projects run serially: phone/tablet × en/es, fresh browser context for each test. Project locale is a tag; it does not change a persona's saved app preference. Persona login checks the actual seeded language.
 
 `.env.sim` is the sole app configuration source and must satisfy F1. Next autoload env filenames are forbidden. Optional `SIM_PIN_MARCUS`, `SIM_PIN_ROSA`, `SIM_PIN_ANGEL`, `SIM_PIN_MAYA`, and `SIM_PIN_LUIS` come from that private file or the process environment; no credential is in a spec. The runner extracts the closed `RUNNER_PRIVATE_KEYS` controls and writes an ephemeral private config copy for the unchanged F1 loader and F3 oracle, then deletes it on cleanup. Never commit or print either file. Missing PIN controls fail the relevant login contract. The real UI is location → role → name → four-digit PIN; wrong-shop refusal means the persona cannot be selected in that shop (the PIN API has no location field).
 

@@ -4,8 +4,10 @@ import { serverT } from "@/lib/i18n/server";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { DigestLine } from "@/lib/report-digests-compose";
+import { digestLink, type LinkViewer } from "@/lib/report-digests-links";
 
-export function toastRingLines(orders: readonly NotInToastOrder[], locationId: string | null, day: string, language: Language, baseUrl: string): DigestLine[] {
+export function toastRingLines(orders: readonly NotInToastOrder[], locationId: string | null, day: string, language: Language, baseUrl: string, viewer?: LinkViewer | null): DigestLine[] {
+  const ctx = { baseUrl, viewer };
   const t = (key: TranslationKey, params?: Record<string, string | number>) => serverT(language, key, params);
   const readyMillis = (order: NotInToastOrder) => {
     const ready = toastReadyAt(order);
@@ -23,7 +25,10 @@ export function toastRingLines(orders: readonly NotInToastOrder[], locationId: s
           order.total_cents === null ? t("digest.catering.to_ring.amount_unknown") : formatCents(order.total_cents, language),
         ].join(" · "),
         tone: "info",
-        href: `${baseUrl}/catering/pipeline`,
+        // The order's own lead card when it has one, else the board's "to ring in Toast" list.
+        href: order.lead_id
+          ? digestLink(ctx, { to: "pipeline", lead: order.lead_id }, { to: "pipeline", anchor: "to_ring" })
+          : digestLink(ctx, { to: "pipeline", anchor: "to_ring" }),
       };
     });
 }

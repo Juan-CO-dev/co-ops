@@ -1,6 +1,7 @@
 import { type NextRequest } from "next/server";
 
 import { jsonError, jsonOk } from "@/lib/api-helpers";
+import { notificationBellRoleAllowed } from "@/lib/notification-bell-shared";
 import { markAllNotificationsRead, notificationLocationContext } from "@/lib/notifications";
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import { requireSession } from "@/lib/session";
@@ -15,12 +16,17 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
  * the widget reads with (`notificationLocationContext`), so it marks exactly
  * what the widget can show. Answers `{ marked: n }` = rows actually changed.
  * Not audited (routine self-act, like the per-item mark-read).
+ *
+ * Nav PR 9 (A2, spec 8.1): the S1 rule, by the session's real role, BEFORE the mark (whose first step is a read of
+ * the person's notices): the social media manager is 403 `bell_refused` with no read. The session path is step-up
+ * NEUTRAL (lib/session.ts STEP_UP_NEUTRAL_PATHS): "Mark all read" from the top bar on an admin page keeps the unlock.
  */
 export async function POST(req: NextRequest) {
   const origin = assertSameOrigin(req);
   if (origin) return origin;
   const ctx = await requireSession(req, "/api/notifications/mark-all-read");
   if (ctx instanceof Response) return ctx;
+  if (!notificationBellRoleAllowed(ctx.role)) return jsonError(403, "bell_refused");
 
   try {
     const { marked } = await markAllNotificationsRead(getServiceRoleClient(), {

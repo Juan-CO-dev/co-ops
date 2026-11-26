@@ -2,8 +2,9 @@
  * The social media manager's Dashboard body (nav PR 7, plan r2 2.7; spec 3.3.6, 8.1; group 13). Server component.
  *
  * Input: the SmmPlan and nothing else from the shop. Own checklist tasks ("Assigned to you."), the own station, a link to
- * the closing checklist, the two shortcuts and "All pages". NEVER: the phase line, a count, a time, a holder, "Nobody yet",
- * "Edit", the board, Team today, Shop pulse, the numbers strip or retrain tasks. The page draws the header without a bell.
+ * the closing checklist, the two shortcuts and "All pages" (the top bar's Go to: its four entries). NEVER: the phase line,
+ * a count, a time, a holder, "Nobody yet", "Edit", the board, Team today, Shop pulse, the numbers strip or retrain tasks.
+ * No bell anywhere: the page draws none, and the top bar gives this role none (nav PR 9).
  */
 import Link from "next/link";
 import { taskHref } from "@/lib/assignments-shared";

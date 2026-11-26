@@ -17,6 +17,7 @@
  */
 import { closedStationFor, currentFloorStation, taskVisible, type ShiftBoard, type TaskAssignment, type TaskType } from "@/lib/assignments-shared";
 import { deriveCloseState } from "@/lib/dashboard-status-shared";
+import { deliveryNeedsPerson, rowStateSoon, type DeliveryAlert, type DeliveryRowState } from "@/lib/delivery/day-shared";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { operationalNow } from "@/lib/midshift-shared";
@@ -125,8 +126,14 @@ export interface CateringOrder {
   readonly headcount: number | null;
   readonly state: FulfillmentState;
   readonly outAt: string | null;
+  /** Catering delivery D3: the lead's delivery state (`{ state: "unknown" }` = the delivery read failed). Absent or null
+   *  = nothing to show: delivery tracking is off, or the order is not a pipeline lead. Never money, a name or a courier. */
+  readonly delivery?: DeliveryRowState | null;
 }
 export interface CateringDay extends ForDate { readonly orders: readonly CateringOrder[] }
+/** Catering delivery D3: the day's leads that have NO order row and still need a person (a rejected order whose courier
+ *  is still booked). The order is gone from the day; the courier is not. */
+export interface DeliveryAlertsDay extends ForDate { readonly alerts: readonly DeliveryAlert[] }
 
 export interface DayAssignment {
   readonly id: string; readonly task: TaskType; readonly assigneeId: string;
@@ -158,6 +165,9 @@ export interface ShopFacts {
   readonly receiving: Fact<ReceivingFacts>;
   readonly cateringToday: Fact<CateringDay>;
   readonly cateringTomorrow: Fact<CateringDay>;
+  /** Catering delivery D3. ABSENT = delivery tracking is off here (nothing renders, and the plan is byte-identical to
+   *  one built before D3). `failed` = the delivery read failed: never read as "to book", counts read "at least". */
+  readonly deliveryAlerts?: Fact<DeliveryAlertsDay>;
   readonly flaggedLines: Fact<{ readonly today: number; readonly tomorrow: number }>;
   readonly assignments: Fact<AssignmentFacts> | { readonly kind: "not_shown" };
   /** resolveMyStation: currentFloorStation, else closedStationFor. */
@@ -303,6 +313,8 @@ export interface CateringBlockOrder {
   readonly state: Exclude<FulfillmentState, "cancelled">;
   readonly outAt: string | null;
   readonly open: boolean;
+  /** D3: absent when there is nothing to show (delivery off, or not a lead). `to_book` inside the lead window is `to_book_soon`. */
+  readonly delivery?: DeliveryRowState;
 }
 export interface CateringBlockPlan {
   /** The block's OWN order: timed by event time, untimed last (a sorted copy; the catering row's order is untouched). */
@@ -311,6 +323,8 @@ export interface CateringBlockPlan {
   readonly next: { readonly atMin: number } | null;
   readonly untracked: number;
   readonly tomorrow: CateringDayLoad | "unknown";
+  /** D3: the leads with NO order row that still need a person; "unknown" = the delivery read failed. Absent = delivery off. */
+  readonly deliveryAlerts?: readonly DeliveryAlert[] | "unknown";
 }
 
 export interface SmmPlan {
@@ -444,6 +458,11 @@ export const EMITTED_KEYS = {
   "day.reason.catering.no_time_one": [],
   "day.reason.catering.no_time_other": ["n"],
   "day.reason.catering.unavailable": [],
+  // Catering delivery D3: the catering manager's block only (the lens drops them from every other row).
+  "day.reason.catering.delivery_to_book": ["n"],
+  "day.reason.catering.delivery_cancel_needed": ["n"],
+  "day.reason.catering.delivery_problem": ["n"],
+  "day.reason.catering.delivery_pickup_mismatch": ["n"],
   "day.reason.heavy.today": ["guests", "time", "start"],
   "day.reason.heavy.today_no_time": ["guests", "start"],
   "day.reason.heavy.flagged_one": [],
@@ -886,7 +905,13 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
 
   items.push(orderingItem(facts, planDate, nowMin, shopDay.prepStartQ, atNight));
   items.push(receivingItem(facts, planDate));
-  items.push(cateringItem(cateringToday, todayOrders, todayLoad, cateringSetting, nowMin));
+  // Catering delivery D3: the day's delivery, read ONCE through the one row rule; null = delivery is off (nothing below changes).
+  const deliveryToday = cateringDeliveryOf(facts, planDate, cateringToday, todayOrders, cateringSetting, nowMin);
+  {
+    const item = cateringItem(cateringToday, todayOrders, todayLoad, cateringSetting, nowMin);
+    const extra = deliveryToday ? deliveryReasons(deliveryToday) : [];
+    items.push(extra.length === 0 ? item : { ...item, reasons: [...item.reasons, ...extra] });
+  }
 
   // ── Inventory count: an audit tool; now only while a count is in progress ──
   {
@@ -941,7 +966,7 @@ export function buildDay(planDate: string, nowMin: number, facts: ShopFacts): Da
   const headsUp = tomorrowLoad?.heavy && nowMin >= serviceStart ? tomorrowReason(tomorrowLoad, startOf(tomorrow)) : null;
 
   // ── The catering block (E4): the same rows as the catering item, in the block's own order ──
-  const cateringBlock = cateringBlockOf(cateringToday, todayOrders, cateringSetting, nowMin, tomorrowLoad);
+  const cateringBlock = cateringBlockOf(cateringToday, todayOrders, cateringSetting, nowMin, tomorrowLoad, deliveryToday);
 
   return {
     planDate, phase, items: sortItems(finalItems, heavy, planDate), headsUp, heavyToday, cateringBlock, notes, alerts,
@@ -1107,20 +1132,81 @@ export function cateringOrderRows(
 
 const notCancelled = (s: FulfillmentState): s is Exclude<FulfillmentState, "cancelled"> => s !== "cancelled";
 
+// ═══ Catering delivery D3 ═════════════════════════════════════════════════════════════════════════════════════════════
+//
+// PLACEMENT THROUGH THE ONE ROW RULE. An order's delivery state rides on the order (`CateringOrder.delivery`, attached by
+// lead id in the loader) and is read here through `cateringOrderRows`: no second row rule, no new ordering, no band moved.
+// The only thing the engine adds is the clock: `to_book` inside the shop's catering lead window (the row's own `from`,
+// the same `leadMinutes`) reads `to_book_soon`. A lead with NO order row is an alert, never a row.
+
+/** The day's delivery as the engine reads it. */
+export interface CateringDelivery {
+  /** Order id → its state, for the orders that carry one. */
+  readonly rows: ReadonlyMap<string, DeliveryRowState>;
+  readonly alerts: readonly DeliveryAlert[] | "unknown";
+  /** How many deliveries need a person now (rows + alerts); null = it cannot be known (a read failed): "at least". */
+  readonly needs: number | null;
+}
+
+function cateringDeliveryOf(
+  facts: Pick<ShopFacts, "deliveryAlerts">, planDate: string, day: CateringDay | null, orders: readonly CateringOrder[],
+  setting: Pick<ScheduleStructure["catering"], "leadMinutes" | "defaultStartQ" | "defaultEndQ">, nowMin: number,
+): CateringDelivery | null {
+  if (facts.deliveryAlerts === undefined) return null;
+  const alertsDay = dayValue(facts.deliveryAlerts, planDate);
+  const alerts: CateringDelivery["alerts"] = alertsDay === null ? "unknown" : alertsDay.alerts;
+  const rows = new Map<string, DeliveryRowState>();
+  for (const r of cateringOrderRows(orders, setting, nowMin)) {
+    if (r.o.delivery) rows.set(r.o.id, rowStateSoon(r.o.delivery, nowMin >= r.from));
+  }
+  const known = day !== null && alerts !== "unknown" && [...rows.values()].every((d) => d.state !== "unknown");
+  return { rows, alerts, needs: known ? [...rows.values()].filter((d) => deliveryNeedsPerson(d.state)).length + alerts.length : null };
+}
+
+/** The delivery lines of the catering item: how many to cancel, failed, booked at another shop, to book. */
+function deliveryReasons(d: CateringDelivery): Reason[] {
+  const states = [...d.rows.values()].map((r) => r.state as string).concat(d.alerts === "unknown" ? [] : d.alerts.map((a) => a.state));
+  const n = (...of: string[]) => states.filter((s) => of.includes(s)).length;
+  const out: Reason[] = [];
+  const toBook = n("to_book", "to_book_soon"), cancel = n("cancel_needed"), problem = n("problem"), mismatch = n("pickup_mismatch");
+  if (cancel > 0) out.push(reason("day.reason.catering.delivery_cancel_needed", { n: countParam(cancel) }));
+  if (problem > 0) out.push(reason("day.reason.catering.delivery_problem", { n: countParam(problem) }));
+  if (mismatch > 0) out.push(reason("day.reason.catering.delivery_pickup_mismatch", { n: countParam(mismatch) }));
+  if (toBook > 0) out.push(reason("day.reason.catering.delivery_to_book", { n: countParam(toBook) }));
+  return out;
+}
+const isDeliveryReason = (r: Reason) => r.key.startsWith("day.reason.catering.delivery_");
+
+/**
+ * "Needs you": the deliveries that need a person now at this shop. null = delivery is off here (no row, not a failure);
+ * `count: null` = a source did not load ("at least", never 0). The SAME rows and alerts the catering block draws.
+ */
+export function deliveryNeedsOf(input: Pick<DayPlanInput, "planDate" | "nowMin" | "facts">): { readonly count: number | null } | null {
+  const facts = input.facts;
+  if (facts.kind !== "shop" || facts.deliveryAlerts === undefined) return null;
+  const setting = okValue(facts.hours)?.catering ?? SCHEDULE_STRUCTURE_DEFAULTS.catering;
+  const day = dayValue(facts.cateringToday, input.planDate);
+  const d = cateringDeliveryOf(facts, input.planDate, day, day?.orders.filter((o) => o.state !== "cancelled") ?? [], setting, input.nowMin);
+  return d === null ? null : { count: d.needs };
+}
+
 /** The block's plan (E4). `today` is "unknown" when the fact failed or describes another day. */
 function cateringBlockOf(
   day: CateringDay | null, orders: readonly CateringOrder[],
   setting: Pick<ScheduleStructure["catering"], "leadMinutes" | "defaultStartQ" | "defaultEndQ">, nowMin: number,
-  tomorrow: CateringDayLoad | null,
+  tomorrow: CateringDayLoad | null, delivery: CateringDelivery | null,
 ): CateringBlockPlan {
   const tomorrowOut: CateringBlockPlan["tomorrow"] = tomorrow ?? "unknown";
-  if (day === null) return { today: "unknown", next: null, untracked: 0, tomorrow: tomorrowOut };
+  // D3: the key exists only when delivery is on (off = the same object as before D3).
+  const alerts = delivery ? { deliveryAlerts: delivery.alerts } : {};
+  if (day === null) return { today: "unknown", next: null, untracked: 0, tomorrow: tomorrowOut, ...alerts };
   const rows = cateringOrderRows(orders, setting, nowMin);
   const today: CateringBlockOrder[] = [];
   for (const r of rows) {
     const state = r.o.state;
     if (!notCancelled(state)) continue;
-    today.push({ id: r.o.id, eventQ: r.o.eventQ, guests: r.o.headcount, state, outAt: r.o.outAt, open: r.open });
+    const d = delivery?.rows.get(r.o.id);
+    today.push({ id: r.o.id, eventQ: r.o.eventQ, guests: r.o.headcount, state, outAt: r.o.outAt, open: r.open, ...(d ? { delivery: d } : {}) });
   }
   // Timed by event time, untimed last. A stable sort on a copy: equal keys keep the rows' order.
   today.sort((a, b) => (a.eventQ === null ? 1 : 0) - (b.eventQ === null ? 1 : 0) || (a.eventQ ?? 0) - (b.eventQ ?? 0));
@@ -1130,6 +1216,7 @@ function cateringBlockOf(
     next: timedOpen.length > 0 ? { atMin: Math.min(...timedOpen) } : null,
     untracked: rows.filter((r) => !r.tracked).length,
     tomorrow: tomorrowOut,
+    ...alerts,
   };
 }
 
@@ -1222,8 +1309,10 @@ export function applyLens(
     if (item.id === "catering_today") {
       if (!kh) return null;
       const pipeline = viewer.level >= 5;
-      return { ...item, destId: pipeline ? "catering-workspace" : "mid-shift", ...(pipeline ? {} : { section: "catering" }),
-        placement: viewer.role === "catering_mgr" ? "block" : "list", actions: ["do"] };
+      const block = viewer.role === "catering_mgr";
+      // D3: the delivery lines are the catering manager's block's only.
+      return { ...item, reasons: block ? item.reasons : item.reasons.filter((r) => !isDeliveryReason(r)), destId: pipeline ? "catering-workspace" : "mid-shift",
+        ...(pipeline ? {} : { section: "catering" }), placement: block ? "block" : "list", actions: ["do"] };
     }
     if (TASK_ITEMS.has(item.id) && item.task) {
       if (!canSee(byId(item.destId), navViewer, { assignedTasks })) return null;

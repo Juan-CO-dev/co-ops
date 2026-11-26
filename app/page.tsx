@@ -34,7 +34,7 @@ import { PinKeypad, type PinKeypadError } from "@/components/auth/PinKeypad";
 import { pinErrorFromResponse } from "@/lib/auth-pin-errors";
 import { ManagerLoginForm } from "@/components/auth/ManagerLoginForm";
 import { BrandMark } from "@/components/BrandMark";
-import { safeNextPath } from "@/lib/nav-redirect";
+import { safeNextPath, withReturnFragment } from "@/lib/nav-redirect";
 import { ownsReturnLink } from "@/lib/nav-sign-in-return";
 import { isShopId, loginLandingPath } from "@/lib/shop-context-shared";
 import { rememberShopOnDevice } from "@/components/ShopContextSync";
@@ -144,7 +144,8 @@ function LoginPageContent() {
   const navigateToDashboard = useCallback((shopId?: string, userId?: string) => {
     if (isShopId(shopId)) rememberShopOnDevice(shopId);
     const next = ownsReturnLink(searchParams?.get("for"), userId) ? searchParams?.get("next") : null;
-    router.push(loginLandingPath(safeNextPath(next), shopId));
+    // A deep link's anchor (#lead-<id>, a digest section) survives the sign-in: see withReturnFragment.
+    router.push(loginLandingPath(withReturnFragment(safeNextPath(next), window.location.hash), shopId));
   }, [router, searchParams]);
 
   // Initial location load.

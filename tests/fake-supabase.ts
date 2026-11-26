@@ -23,13 +23,13 @@ export interface FakeDb {
   failInsertTables: string[];
   failSelectTables: string[];
 }
-type Result = { data: Row[] | null; error: { message: string } | null };
+type Result = { data: Row[] | null; error: { message: string } | null; count?: number };
 
 let seq = 0;
 const isNull = (v: unknown) => v === null || v === undefined;
 
 /** A fake RPC: runs against the in-memory tables; returns PostgREST's { data, error } shape. */
-export type FakeRpc = (args: Record<string, unknown>, db: FakeDb) => { data: unknown; error: { code?: string; message: string } | null };
+export type FakeRpc = (args: Record<string, unknown>, db: FakeDb) => { data: unknown; error: { code?: string; message: string; details?: string } | null };
 
 export function fakeSupabase(tables: Record<string, Row[]>, rpcs: Record<string, FakeRpc> = {}): FakeDb {
   const db: FakeDb = { client: null as unknown as SupabaseClient, tables, writes: [], failUpdates: 0, failInserts: 0, failInsertTables: [], failSelectTables: [] };
@@ -64,7 +64,7 @@ export function fakeSupabase(tables: Record<string, Row[]>, rpcs: Record<string,
         }
         for (const r of matched) Object.assign(r, payload as Row);
         db.writes.push({ table, op, payload, matched: matched.length });
-        return { data: matched.map((r) => ({ ...r })), error: null };
+        return { data: matched.map((r) => ({ ...r })), error: null, count: matched.length };
       }
       if (db.failSelectTables.includes(table)) return { data: null, error: { message: "fake select failure" } };
       let out = [...matched];
@@ -82,6 +82,16 @@ export function fakeSupabase(tables: Record<string, Row[]>, rpcs: Record<string,
       eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
       is: (c: string, v: null | boolean) => { filters.push((r) => (v === null ? isNull(r[c]) : r[c] === v)); return q; },
       in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
+      // PostgREST's `or`, the `col.eq.value` terms only (comma-separated): any term matching keeps the row.
+      or: (expr: string) => {
+        const terms = expr.split(",").map((t) => {
+          const m = /^([a-z_]+)\.eq\.(.+)$/.exec(t.trim());
+          if (!m) throw new Error(`fake-supabase: unsupported or(${expr})`);
+          return [m[1]!, m[2]!] as const;
+        });
+        filters.push((r) => terms.some(([c, v]) => String(r[c]) === v));
+        return q;
+      },
       not: (c: string, operator: string, v: unknown) => {
         if (operator !== "is" || v !== null) throw new Error(`fake-supabase: unsupported not(${c}, ${operator})`);
         filters.push((r) => !isNull(r[c]));
@@ -93,7 +103,7 @@ export function fakeSupabase(tables: Record<string, Row[]>, rpcs: Record<string,
       range: (a: number, b: number) => { window = [a, b]; return q; },
       returns: () => q,
       insert: (p: unknown) => { op = "insert"; payload = p; return q; },
-      update: (p: unknown) => { op = "update"; payload = p; return q; },
+      update: (p: unknown, _opts?: { count?: "exact" }) => { op = "update"; payload = p; return q; },
       maybeSingle: async () => { const r = run(); return { data: r.data?.[0] ?? null, error: r.error }; },
       then: (resolve: (v: Result) => unknown, reject?: (e: unknown) => unknown) => Promise.resolve(run()).then(resolve, reject),
     };
