@@ -26,7 +26,7 @@
  *       and a refusal writes nothing
  *   P6  nothing else moved: every other function body, ACL and setting in `public`, every table / column ACL and every
  *       column are identical before and after 0358 (0357's other five functions and its two tables included)
- *   P7  the in-file assertions refuse a drifted database and keep nothing: 0357's reserve executable by
+ *   P7  the in-file assertions refuse a drifted database and keep nothing (eleven drifts): 0357's reserve executable by
  *       authenticated; service_role holding INSERT on the requests table; an extra UPDATE column; RLS off; a policy;
  *       anon holding SELECT on the snapshots table
  *   P8  the rollback written in the header: re-emitting 0357's body (kept verbatim below) restores 0357's fingerprint
@@ -169,8 +169,29 @@ async function refusedApply(prepare, needle, what) {
   } finally { await db.close(); }
 }
 
+/**
+ * The same refusal on ONE shared database (fewer in-memory databases to boot): the drift is made inside an OPEN
+ * transaction, the file's own `begin` then only warns, the refusal aborts that transaction, and the rollback takes the
+ * drift away with it. That 0358 keeps nothing when it refuses is proven without an outer transaction by the two
+ * `refusedApply` cases (a changed body; a 0357 RPC opened to authenticated).
+ */
+async function refusedOn(shared, driftSql, needle, what) {
+  const before = await digest(shared);
+  const aclBefore = await actorAcl(shared);
+  const fpBefore = await fingerprint(shared);
+  await shared.exec("begin");
+  try {
+    await shared.exec(driftSql);
+    await refuses(() => shared.exec(M0358), needle, what);
+  } finally { await shared.exec("rollback"); }
+  check(fpBefore === FP_0357 && (await fingerprint(shared)) === fpBefore && same(await digest(shared), before) && (await actorAcl(shared)) === aclBefore,
+    `${what}: the database is as it was`);
+}
+
 let db;
+let drift;
 try {
+  drift = await base();
   // ── P0 — the pre-flight ──────────────────────────────────────────────────────────────────────
   {
     const no0357 = await base({ with0357: false });
@@ -182,9 +203,9 @@ try {
   const CHANGED = ROLLBACK_TO_0357.replace("('moo', 'catering_mgr')", "('moo', 'catering_mgr', 'prep_mgr')");
   await refusedApply((d) => d.exec(CHANGED),
     "is not its 0357 definition -- a later definer exists; re-emit from it. Refusing.", "P0 a CHANGED live body is refused by name");
-  await refusedApply((d) => d.exec("create function public.catering_refund_actor_ok(p_actor_id uuid) returns boolean language sql as 'select false'"),
+  await refusedOn(drift, "create function public.catering_refund_actor_ok(p_actor_id uuid) returns boolean language sql as 'select false'",
     "0358: public.catering_refund_actor_ok has more than one overload. Refusing.", "P0 a second overload is refused");
-  await refusedApply((d) => d.exec("drop function public.catering_refund_claim(uuid)"),
+  await refusedOn(drift, "drop function public.catering_refund_claim(uuid)",
     "0358: function public.catering_refund_claim(uuid) is missing (0357 must be applied first)", "P0 a missing 0357 function is refused");
 
   db = await base();
@@ -329,25 +350,25 @@ try {
   // ── P7 — the in-file assertions refuse a drifted database ────────────────────────────────────
   await refusedApply((d) => d.exec("grant execute on function public.catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text) to authenticated"),
     "0358: authenticated may execute catering_refund_reserve(uuid,uuid,uuid,bigint,text,text,text) (RPC escape)", "P7 0357's reserve executable by authenticated");
-  await refusedApply((d) => d.exec("grant execute on function public.catering_refund_figures(uuid) to public"),
+  await refusedOn(drift, "grant execute on function public.catering_refund_figures(uuid) to public",
     "0358: public may execute catering_refund_figures(uuid) (RPC escape)", "P7 a 0357 function executable by PUBLIC");
-  await refusedApply((d) => d.exec("revoke execute on function public.catering_refund_claim(uuid) from service_role"),
+  await refusedOn(drift, "revoke execute on function public.catering_refund_claim(uuid) from service_role",
     "0358: service_role cannot execute catering_refund_claim(uuid)", "P7 service_role lost a 0357 RPC");
-  await refusedApply((d) => d.exec("alter function public.catering_refund_figures(uuid) reset search_path"),
+  await refusedOn(drift, "alter function public.catering_refund_figures(uuid) reset search_path",
     "0358: catering_refund_figures(uuid) is not SECURITY DEFINER with the pinned search_path", "P7 a 0357 RPC without its pinned search_path");
-  await refusedApply((d) => d.exec("grant insert on table public.catering_refund_requests to service_role"),
+  await refusedOn(drift, "grant insert on table public.catering_refund_requests to service_role",
     "0358: service_role holds table-level INSERT on public.catering_refund_requests", "P7 service_role holding INSERT on the requests table");
-  await refusedApply((d) => d.exec("grant update (amount_cents) on table public.catering_refund_requests to service_role"),
+  await refusedOn(drift, "grant update (amount_cents) on table public.catering_refund_requests to service_role",
     "0358: service_role UPDATE columns on catering_refund_requests are not 0357's", "P7 an extra UPDATE column for service_role");
-  await refusedApply((d) => d.exec("alter table public.catering_refund_requests disable row level security"),
+  await refusedOn(drift, "alter table public.catering_refund_requests disable row level security",
     "0358: RLS is off on public.catering_refund_requests", "P7 RLS switched off");
-  await refusedApply((d) => d.exec("create policy p on public.catering_refund_stripe_snapshots for select using (true)"),
+  await refusedOn(drift, "create policy p on public.catering_refund_stripe_snapshots for select using (true)",
     "0358: public.catering_refund_stripe_snapshots has a policy", "P7 a policy on the snapshots table");
-  await refusedApply((d) => d.exec("grant select on table public.catering_refund_stripe_snapshots to anon"),
+  await refusedOn(drift, "grant select on table public.catering_refund_stripe_snapshots to anon",
     "0358: anon holds SELECT on public.catering_refund_stripe_snapshots", "P7 anon holding SELECT on the snapshots table");
-  await refusedApply((d) => d.exec("grant select (status) on table public.catering_refund_requests to authenticated"),
+  await refusedOn(drift, "grant select (status) on table public.catering_refund_requests to authenticated",
     "0358: authenticated holds column SELECT on public.catering_refund_requests", "P7 authenticated holding one column");
-  await refusedApply((d) => d.exec("alter table public.catering_refund_requests disable trigger catering_refund_requests_guard"),
+  await refusedOn(drift, "alter table public.catering_refund_requests disable trigger catering_refund_requests_guard",
     "0358: the catering_refund_requests_guard trigger is missing or disabled", "P7 the guard trigger disabled");
 
   // ── P8 — the rollback in the header ──────────────────────────────────────────────────────────
@@ -363,6 +384,7 @@ try {
   console.error(`FAIL 0358 harness: ${e.stack ?? e}`);
 } finally {
   if (db) await db.close();
+  if (drift) await drift.close();
 }
 if (failures) { console.error(`${failures} failure(s)`); process.exitCode = 1; }
 else console.log(`PASS 0358: ${checks} checks (single-session PGlite, the REAL 0357 then the REAL 0358)`);

@@ -1,5 +1,6 @@
 -- Migration 0358_catering_refund_roles
 -- AUTHORED 2026-11-26 (refund round 2 Part A, CO CC Fable lead, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO SIM 2026-11-26 UTC (schema_migrations version 20261126055240, name '0358_catering_refund_roles')
 -- NUMBER: 0357 is the highest on main; 0358 is claimed for this build in co-ops-wt/.mig-claims (Part A only).
 -- Plan: co-ops-wt/PLAN-refund2.md revision 2, PART A (A1 to A7). Astra's re-check: Part A = GO. Parts B1 / B2 of that
 --   plan are NOT in this file and are not approved.

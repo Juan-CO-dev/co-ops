@@ -9,7 +9,7 @@ whoever is signed in.
 | Build | What | Migration |
 |---|---|---|
 | #638 (merged) | The refund step on a rejected / cancelled / lost order: reserve, send to Stripe, retry, release | 0357, APPLIED TO PROD 2026-11-25 UTC |
-| Round 2, Part A (this runbook's PR) | GM and AGM may refund, at a shop they belong to | 0358, NOT YET APPLIED TO PROD (see "Applying 0358") |
+| Round 2, Part A (this runbook's PR) | GM and AGM may refund, at a shop they belong to | 0358, APPLIED TO SIM 2026-11-26 UTC (version 20261126055240); NOT YET APPLIED TO PROD (see "Applying 0358") |
 | Round 2, Part B | Customer refund email, failed / canceled refund handling | Not built. Its plan is not approved. |
 
 ## Who may refund
@@ -52,7 +52,7 @@ trigger, policy or row. It takes no table lock.
 1. **Read-only pre-flight.** The live body must still be 0357's:
    `select md5(regexp_replace(prosrc, '[^\x21-\x7E]+', '', 'g')) from pg_proc where oid = 'public.catering_refund_actor_ok(uuid, uuid)'::regprocedure;`
    → `e33880cdb5aab577a829ef45c2afa61a`. Any other value: stop. The file refuses by name too (a later definer exists).
-2. **Sim first:** dry run (the file without its `commit`, rolled back), then apply.
+2. **Sim first:** dry run (the file without its `commit`, rolled back), then apply. Done 2026-11-26 UTC: `schema_migrations` version 20261126055240, verify clean, nothing outside the one function changed.
 3. **Prod on Juan's word.** Dry run first. The file's own assertions also check that 0357's other privileges are still
    as 0357 left them; a database that has drifted is refused and nothing is changed.
 4. **Verify:** the same query answers `4076029ec89d7b777af23ff3d8fcbdee`; `has_function_privilege` on the function is
