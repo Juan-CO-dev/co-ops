@@ -186,18 +186,20 @@ describe("the digest's labor math", () => {
       { employee_guid: "x", employee_first_name: "Alex", job_name: "Line Cook", business_date: "2026-10-07", hours: 9, overtime_hours: 0, out_at: "t" },
     ];
     const filters: Record<string, unknown> = {};
-    let gte = "", lte = "";
+    let gte = "", lte = "", gteCol = "", lteCol = "";
     const q = {
       select: () => q, order: () => q,
       eq: (k: string, v: unknown) => { filters[k] = v; return q; },
-      gte: (_k: string, v: string) => { gte = v; return q; },
-      lte: (_k: string, v: string) => { lte = v; return q; },
+      gte: (k: string, v: string) => { gteCol = k; gte = v; return q; },
+      lte: (k: string, v: string) => { lteCol = k; lte = v; return q; },
       range: async () => ({ data: rows.filter((r) => r.business_date >= gte && r.business_date <= lte), error: null }),
     };
     const sb = { from: (table: string) => { filters.table = table; return q; } } as unknown as Parameters<typeof loadLabor>[0];
     const out = await loadLabor(sb, LOC, "2026-10-07", unavailable("no_sales"));
     expect(filters).toMatchObject({ table: "toast_time_entries", location_id: LOC, deleted: false });
     expect([gte, lte]).toEqual(["2026-10-04", "2026-10-07"]);
+    // Both bounds are on the Toast business date, never on a clock column (Astra W P3).
+    expect([gteCol, lteCol]).toEqual(["business_date", "business_date"]);
     expect(out.kind).toBe("ok");
     if (out.kind !== "ok") throw new Error(out.kind);
     expect(out.value.weekOvertime).toEqual([{ firstName: "Alex", hours: 41 }]);
@@ -241,9 +243,32 @@ describe("unknown labor hours survive aggregation and rendering (Astra r3)", () 
     ]);
   });
 
-  it("an unknown shift earlier in the week withholds overtime but not today's rate", () => {
+  it("an unknown shift earlier in the week withholds the 40 h week figure but neither today's rate nor today's over-10 h alert", () => {
     const s = summarizeLabor("2026-10-07", [e("a", "Ana", 11), e("a", "Ana", null, false, "2026-10-06")], 110_000);
-    expect(s).toMatchObject({ partial: true, overtimeAssessed: false, dayOvertime: [], salesPerLaborHourCents: 10_000 });
+    expect(s).toMatchObject({
+      partial: true, overtimeAssessed: false, dayOvertimeAssessed: true, weekOvertimeAssessed: false,
+      dayOvertime: [{ firstName: "Ana", hours: 11 }], weekOvertime: [], salesPerLaborHourCents: 10_000,
+    });
+  });
+
+  it("CC ruling (b): an unknown on Sunday or Monday plus a valid 10.5 h on D shows the daily alert and a partial week", () => {
+    for (const earlier of ["2026-10-04", "2026-10-05"]) { // Sunday, Monday of D's payroll week
+      const s = summarizeLabor("2026-10-07", [e("a", "Ana", 10.5), e("l", "Lu", null, false, earlier)], null);
+      expect(s).toMatchObject({ partial: true, dayOvertimeAssessed: true, weekOvertimeAssessed: false, dayOvertime: [{ firstName: "Ana", hours: 10.5 }], weekOvertime: [] });
+    }
+  });
+
+  it("an unknown ON D itself still withholds D's daily alert", () => {
+    const s = summarizeLabor("2026-10-07", [e("a", "Ana", 10.5), e("l", "Lu", null)], null);
+    expect(s).toMatchObject({ partial: true, dayOvertimeAssessed: false, weekOvertimeAssessed: false, dayOvertime: [], weekOvertime: [] });
+  });
+
+  it("the Sunday edge: an unknown on Sunday marks D's week partial; the same unknown on the Saturday before does not", () => {
+    const known = [e("a", "Ana", 8)];
+    expect(summarizeLabor("2026-10-07", [...known, e("l", "Lu", null, false, "2026-10-04")], null))
+      .toMatchObject({ overtimeAssessed: false, weekOvertimeAssessed: false, dayOvertimeAssessed: true });
+    expect(summarizeLabor("2026-10-07", [...known, e("l", "Lu", null, false, "2026-10-03")], null))
+      .toMatchObject({ partial: false, overtimeAssessed: true, weekOvertimeAssessed: true, dayOvertimeAssessed: true });
   });
 
   it("all known = assessed as before", () => {
@@ -270,6 +295,12 @@ describe("unknown labor hours survive aggregation and rendering (Astra r3)", () 
       "info|Quién trabajó|Ana 8 h, Lu 0 h (+1 turno, horas desconocidas)",
       "info|Horas extra|Sin evaluar — horas parciales",
     ]);
+    // An unknown earlier in the week: D's own over-10 h alert still prints; only the 40 h week is withheld.
+    const earlierUnknown = summarizeLabor("2026-10-07", [e("a", "Ana", 10.5), e("l", "Lu", null, false, "2026-10-04")], 100_000);
+    expect(lines("en", earlierUnknown).at(-1)).toBe("issue|Overtime|Ana 10.5 h today (over 10 h) · 40 h week not assessed (hours unknown earlier this week)");
+    expect(lines("es", earlierUnknown).at(-1)).toBe("issue|Horas extra|Ana 10.5 h hoy (más de 10 h) · semana de 40 h sin evaluar (horas desconocidas antes esta semana)");
+    const earlierUnknownNoAlert = summarizeLabor("2026-10-07", [e("a", "Ana", 8), e("l", "Lu", null, false, "2026-10-04")], 100_000);
+    expect(lines("en", earlierUnknownNoAlert).at(-1)).toBe("info|Overtime|No one over 10 h today · 40 h week not assessed (hours unknown earlier this week)");
     // Only unknown-hour shifts: still not "No one clocked in".
     const onlyUnknown = summarizeLabor("2026-10-07", [e("l", "Lu", null), e("m", "Mo", null)], 100_000);
     expect(lines("en", onlyUnknown)[0]).toBe("info|Labor (Toast)|0 h clocked · 2 shifts with unknown hours · sales per labor hour not available (partial hours)");

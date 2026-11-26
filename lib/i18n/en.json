@@ -6287,6 +6287,8 @@
   "digest.v2.labor.unknown_other": "{n} shifts with unknown hours",
   "digest.v2.labor.splh_partial": "sales per labor hour not available (partial hours)",
   "digest.v2.labor.overtime_partial": "Not assessed — partial hours",
+  "digest.v2.labor.no_day_overtime": "No one over 10 h today",
+  "digest.v2.labor.week_partial": "40 h week not assessed (hours unknown earlier this week)",
   "digest.v2.labor.person_unknown_one": "(+1 shift, hours unknown)",
   "digest.v2.labor.person_unknown_other": "(+{n} shifts, hours unknown)",
   "digestWatch.preview_subject": "CO-OPS: digest preview is ON but no operator account could be resolved",

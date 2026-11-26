@@ -168,18 +168,30 @@ export interface LaborSummary {
   partial: boolean;
   /** Register sales / closed-shift hours; null for unknown/zero hours or any open shift today. */
   salesPerLaborHourCents: number | null;
-  /** False when partial: overtime is not assessed (no "no overtime" conclusion, no flags). */
+  /** False when partial: overtime is not assessed as a whole (no "no overtime" conclusion). */
   overtimeAssessed: boolean;
-  /** More than 10 h in the day. */
+  /**
+   * The daily over-10 h alert depends ONLY on day D's own entries (CC ruling, digest3 fix round 1): an
+   * unknown-hours shift earlier in the week leaves it alone; an unknown-hours shift ON D withholds it.
+   */
+  dayOvertimeAssessed: boolean;
+  /** The 40 h week figure: false when any closed shift in the week so far (Sun..D) has unknown hours. */
+  weekOvertimeAssessed: boolean;
+  /** More than 10 h in the day (empty when the day is not assessed). */
   dayOvertime: Array<{ firstName: string | null; hours: number }>;
-  /** More than 40 h payroll-week-to-date (Sun..D, a LOWER bound: only what was pulled), or Toast's own OT. */
+  /**
+   * More than 40 h payroll-week-to-date (Sun..D, grouped by Toast business date: only what was pulled),
+   * or Toast's own OT. Empty when the week is not assessed.
+   */
   weekOvertime: Array<{ firstName: string | null; hours: number }>;
 }
 
 /**
- * Sunday on or before `day` (ET calendar date): the start of the payroll week (Sunday 00:00 ET, Juan
- * 2026-11-17: "the payroll week turns over at midnight Saturday → Sunday"). Pure date arithmetic in UTC
- * on the calendar date, so DST never moves it. Drives both the digest's labor query window and its 40 h flag.
+ * Sunday on or before `day` (a Toast business date): the start of the payroll week (Juan 2026-11-17: "the
+ * payroll week turns over at midnight Saturday → Sunday"). Entries are grouped by Toast business date, not
+ * by clock time: a Saturday close that runs past midnight keeps Saturday's business date and stays in the
+ * old week. Pure date arithmetic in UTC on the calendar date, so DST never moves it. Drives both the
+ * digest's labor query window and its 40 h flag.
  */
 export function weekStart(day: string): string {
   const [y, m, d] = day.split("-").map(Number);
@@ -222,8 +234,11 @@ export function summarizeLabor(day: string, entries: readonly LaborEntryFact[], 
   }
   const people = [...byPerson].map(([employeeGuid, p]) => ({ employeeGuid, firstName: p.firstName, hours: round2(p.hours), unknownShifts: p.unknownShifts }))
     .sort((a, b) => b.hours - a.hours || String(a.firstName).localeCompare(String(b.firstName)));
-  // Unknown hours make every total a lower bound: rates and overtime conclusions are withheld.
+  // Unknown hours make every total a lower bound: rates and overtime conclusions are withheld. The daily
+  // over-10 h alert reads only D's own entries, so an unknown earlier in the week never hides it.
   const partial = unknownToday.length > 0 || weekUnknown > 0;
+  const dayAssessed = unknownToday.length === 0;
+  const weekAssessed = !partial;
   const openEntries = today.filter((e) => e.open).length;
   const splhPartial = unknownToday.length > 0 || openEntries > 0;
   return {
@@ -235,8 +250,10 @@ export function summarizeLabor(day: string, entries: readonly LaborEntryFact[], 
     partial,
     salesPerLaborHourCents: splhPartial || netSalesCents === null || totalHours <= 0 ? null : Math.round(netSalesCents / totalHours),
     overtimeAssessed: !partial,
-    dayOvertime: partial ? [] : people.filter((p) => p.hours > DAY_OVERTIME_HOURS).map((p) => ({ firstName: p.firstName, hours: p.hours })),
-    weekOvertime: partial ? [] : [...week.values()].filter((w) => w.hours > WEEK_OVERTIME_HOURS || w.toastOt)
+    dayOvertimeAssessed: dayAssessed,
+    weekOvertimeAssessed: weekAssessed,
+    dayOvertime: !dayAssessed ? [] : people.filter((p) => p.hours > DAY_OVERTIME_HOURS).map((p) => ({ firstName: p.firstName, hours: p.hours })),
+    weekOvertime: !weekAssessed ? [] : [...week.values()].filter((w) => w.hours > WEEK_OVERTIME_HOURS || w.toastOt)
       .map((w) => ({ firstName: w.firstName, hours: round2(w.hours) })).sort((a, b) => b.hours - a.hours),
   };
 }

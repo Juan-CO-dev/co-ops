@@ -361,8 +361,19 @@ export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   });
   if (s.byJob.length > 0) lines.push({ label: c.t("digest.v2.labor.by_job_label"), href, tone: "info", text: s.byJob.map((j) => `${j.job ?? c.t("digest.v2.labor.no_job")} ${hours(j.hours)} h`).join(", ") });
   if (s.people.length > 0) lines.push({ label: c.t("digest.v2.labor.people_label"), href, tone: "info", text: s.people.map((p) => `${p.firstName ?? "—"} ${hours(p.hours)} h${p.unknownShifts > 0 ? ` ${plural(c.t, p.unknownShifts, "digest.v2.labor.person_unknown_one", "digest.v2.labor.person_unknown_other")}` : ""}`).join(", ") });
-  if (!s.overtimeAssessed) {
+  if (!s.dayOvertimeAssessed) {
     lines.push({ label: c.t("digest.v2.labor.overtime_label"), href, tone: "info", text: c.t("digest.v2.labor.overtime_partial") });
+    return lines;
+  }
+  if (!s.weekOvertimeAssessed) {
+    // An unknown earlier in the week leaves D's own over-10 h alert standing; only the 40 h figure is withheld.
+    const weekPartial = c.t("digest.v2.labor.week_partial");
+    lines.push(s.dayOvertime.length === 0
+      ? { label: c.t("digest.v2.labor.overtime_label"), href, tone: "info", text: [c.t("digest.v2.labor.no_day_overtime"), weekPartial].join(" · ") }
+      : {
+        label: c.t("digest.v2.labor.overtime_label"), href, tone: "issue",
+        text: [s.dayOvertime.map((p) => c.t("digest.v2.labor.over_day", { name: p.firstName ?? "—", hours: hours(p.hours) })).join(", "), weekPartial].join(" · "),
+      });
     return lines;
   }
   lines.push(s.dayOvertime.length === 0 && s.weekOvertime.length === 0
