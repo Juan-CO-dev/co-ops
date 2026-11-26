@@ -382,7 +382,8 @@ export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
     lines.push(s.dayOvertime.length === 0
       ? { label: c.t("digest.v2.labor.overtime_label"), href, tone: "info", text: [c.t("digest.v2.labor.no_day_overtime"), weekPartial].join(" · "), unknown: true }
       : {
-        label: c.t("digest.v2.labor.overtime_label"), href, tone: "issue",
+        // Issue AND unknown: D's alert stands, and the 40 h week still could not be checked.
+        label: c.t("digest.v2.labor.overtime_label"), href, tone: "issue", unknown: true,
         text: [s.dayOvertime.map((p) => c.t("digest.v2.labor.over_day", { name: p.firstName ?? "—", hours: hours(p.hours) })).join(", "), weekPartial].join(" · "),
       });
     return lines;
