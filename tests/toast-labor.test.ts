@@ -298,11 +298,12 @@ describe("unknown labor hours survive aggregation and rendering (Astra r3)", () 
       "info|Quién trabajó|Ana 8 h, Lu 0 h (+1 turno, horas desconocidas)",
     ]);
     // An unknown earlier in the week: D's own over-10 h alert still prints; only the 40 h week is withheld.
+    // After PR 1a the issue / unknown overtime line sorts first in the section (F9 priority order).
     const earlierUnknown = summarizeLabor("2026-10-07", [e("a", "Ana", 10.5), e("l", "Lu", null, false, "2026-10-04")], 100_000);
-    expect(lines("en", earlierUnknown).at(-1)).toBe("issue|Overtime|Ana 10.5 h today (over 10 h) · 40 h week not assessed (hours unknown earlier this week)");
-    expect(lines("es", earlierUnknown).at(-1)).toBe("issue|Horas extra|Ana 10.5 h hoy (más de 10 h) · semana de 40 h sin evaluar (horas desconocidas antes esta semana)");
+    expect(lines("en", earlierUnknown)[0]).toBe("issue|Overtime|Ana 10.5 h today (over 10 h) · 40 h week not assessed (hours unknown earlier this week)");
+    expect(lines("es", earlierUnknown)[0]).toBe("issue|Horas extra|Ana 10.5 h hoy (más de 10 h) · semana de 40 h sin evaluar (horas desconocidas antes esta semana)");
     const earlierUnknownNoAlert = summarizeLabor("2026-10-07", [e("a", "Ana", 8), e("l", "Lu", null, false, "2026-10-04")], 100_000);
-    expect(lines("en", earlierUnknownNoAlert).at(-1)).toBe("info|Overtime|No one over 10 h today · 40 h week not assessed (hours unknown earlier this week)");
+    expect(lines("en", earlierUnknownNoAlert)[0]).toBe("info|Overtime|No one over 10 h today · 40 h week not assessed (hours unknown earlier this week)");
     // Only unknown-hour shifts: still not "No one clocked in".
     const onlyUnknown = summarizeLabor("2026-10-07", [e("l", "Lu", null), e("m", "Mo", null)], 100_000);
     expect(lines("en", onlyUnknown)[1]).toBe("info|Labor (Toast)|0 h clocked · 2 shifts with unknown hours · sales per labor hour not available (partial hours)");
