@@ -312,7 +312,7 @@ export async function laborForDigest(
 }
 
 export async function loadLabor(sb: Sb, locationId: string, day: string, sales: Loaded<SalesFacts>): Promise<Loaded<LaborSummary>> {
-  // Week-to-date (Mon..D) for the 40 h flag; D for everything else.
+  // Payroll-week-to-date (Sun..D by Toast business date, weekStart) for the 40 h flag; D for everything else.
   const rows = await selectAllRows<{ employee_guid: string; employee_first_name: string | null; job_name: string | null; business_date: string; hours: number | string | null; overtime_hours: number | string | null; out_at: string | null }>((f, t) =>
     sb.from("toast_time_entries").select("employee_guid, employee_first_name, job_name, business_date, hours, overtime_hours, out_at")
       .eq("location_id", locationId).eq("deleted", false).gte("business_date", weekStart(day)).lte("business_date", day)

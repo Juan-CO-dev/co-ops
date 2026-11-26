@@ -6287,6 +6287,8 @@
   "digest.v2.labor.unknown_other": "{n} turnos con horas desconocidas",
   "digest.v2.labor.splh_partial": "ventas por hora de trabajo no disponibles (horas parciales)",
   "digest.v2.labor.overtime_partial": "Sin evaluar — horas parciales",
+  "digest.v2.labor.no_day_overtime": "Nadie con más de 10 h hoy",
+  "digest.v2.labor.week_partial": "semana de 40 h sin evaluar (horas desconocidas antes esta semana)",
   "digest.v2.labor.person_unknown_one": "(+1 turno, horas desconocidas)",
   "digest.v2.labor.person_unknown_other": "(+{n} turnos, horas desconocidas)",
   "digestWatch.preview_subject": "CO-OPS: la vista previa de resúmenes está activa pero no se encontró la cuenta del operador",
