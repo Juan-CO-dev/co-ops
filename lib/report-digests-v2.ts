@@ -13,7 +13,7 @@ import { loadCapturedToastDay } from "@/lib/toast/captured-day";
 import { summarizeLabor, weekStart, type LaborEntryFact, type LaborSummary } from "@/lib/toast/labor-shared";
 import { laborPullEnabled, runToastLaborPull } from "@/lib/toast/labor";
 import { addDays, etDayRange } from "@/lib/report-digests-shared";
-import { mergeBreakdown, type BreakdownRaw, type DailyRaw, type SalesDimension } from "@/lib/sales-reports-shared";
+import { mergeBreakdown, SALES_WINDOW_CONCURRENCY, type BreakdownRaw, type DailyRaw, type SalesDimension } from "@/lib/sales-reports-shared";
 import {
   cutoffsTomorrow,
   deliveriesLookahead,
@@ -113,12 +113,36 @@ type RpcClient = Pick<Sb, "rpc">;
 type RpcResult = { data: unknown; error: { code?: string; message?: string } | null };
 
 /**
+ * Runs `tasks` in order with at most `limit` in flight; results keep the tasks' order. The tasks never reject
+ * (each read settles to a `Loaded`), so one slow task holds only its own slot.
+ */
+async function runBounded<const F extends readonly (() => Promise<unknown>)[]>(limit: number, tasks: F): Promise<{ -readonly [K in keyof F]: F[K] extends () => Promise<infer R> ? R : never }> {
+  const out: unknown[] = new Array(tasks.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < tasks.length) {
+      const i = next++;
+      out[i] = await tasks[i]!();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, worker));
+  return out as { -readonly [K in keyof F]: F[K] extends () => Promise<infer R> ? R : never };
+}
+
+/**
+ * Sales reads in flight at once for one shop: the Sales page's own per-shop bound (plan §7, "the Sales constant").
+ */
+export const DIGEST_SALES_DETAIL_CONCURRENCY = SALES_WINDOW_CONCURRENCY;
+
+/**
  * The Sales report's own reads for day D ONLY (never D-7..D): `sales_report_daily` once and
  * `sales_report_breakdown` for channel, hour_weekday and server (the server dimension is the Sales page's
  * servers view; no other source gives its ranking). Four RPCs, read-only (0232/0248 are SECURITY DEFINER
- * reads, service role here), all under ONE deadline: one AbortSignal passed to every RPC, and each read also
- * settles at the deadline even if the transport ignores the signal. A stalled, failed or missing read is that
- * part's `error` / `unavailable` — "not available" in the digest, never $0 — and nothing else is held up.
+ * reads, service role here), at most `DIGEST_SALES_DETAIL_CONCURRENCY` (2) in flight at once, all under ONE
+ * deadline for the whole set (8 s, CC-confirmed D8): one AbortSignal passed to every RPC, each read settles at the
+ * deadline even if the transport ignores the signal, and a read still QUEUED at the deadline never starts. A
+ * stalled, queued-out, failed or missing read is that part's `error` / `unavailable` — "not available" in the
+ * digest, never $0 — and nothing else is held up.
  * Never logs an RPC message, an argument or a payload (lib/sales-reports.ts rule).
  */
 export async function loadSalesDetail(sb: RpcClient, locationId: string, day: string, deadlineMs = DIGEST_SALES_DETAIL_MS): Promise<SalesDetailFacts> {
@@ -128,6 +152,8 @@ export async function loadSalesDetail(sb: RpcClient, locationId: string, day: st
     timer = setTimeout(() => { resolve("deadline"); controller.abort(); }, deadlineMs);
   });
   const read = async <T,>(area: string, fn: string, args: Record<string, unknown>, map: (data: unknown) => T): Promise<Loaded<T>> => {
+    // Queued past the deadline: the read never starts, and its lines print as unknown (never as zero).
+    if (controller.signal.aborted) { console.error(`[digest v2] sales detail ${area}: deadline`); return failed(); }
     try {
       const call = Promise.resolve(sb.rpc(fn, args).abortSignal(controller.signal) as PromiseLike<RpcResult>);
       call.catch(() => {}); // a rejection after the deadline already decided is not unhandled
@@ -148,11 +174,11 @@ export async function loadSalesDetail(sb: RpcClient, locationId: string, day: st
   const breakdown = (dimension: (typeof DIGEST_SALES_DETAIL_DIMENSIONS)[number]) => read(dimension, "sales_report_breakdown",
     { ...window, p_dimension: dimension }, (data) => mergeBreakdown(dimension, [(data ?? []) as BreakdownRaw[]]));
   try {
-    const [totals, channels, hours, servers] = await Promise.all([
-      read("daily", "sales_report_daily", window, (data) => salesDetailTotals(data as DailyRaw, day)),
-      breakdown("channel"), breakdown("hour_weekday"), breakdown("server"),
-    ]);
-    return { totals, channels, hours, servers };
+    const totals = () => read("daily", "sales_report_daily", window, (data) => salesDetailTotals(data as DailyRaw, day));
+    const [t, channels, hours, servers] = await runBounded(DIGEST_SALES_DETAIL_CONCURRENCY, [
+      totals, () => breakdown("channel"), () => breakdown("hour_weekday"), () => breakdown("server"),
+    ] as const);
+    return { totals: t, channels, hours, servers };
   } finally {
     clearTimeout(timer);
     controller.abort(); // release anything still in flight

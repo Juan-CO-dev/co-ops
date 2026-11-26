@@ -150,13 +150,15 @@ describe("a recipient the Sales page refuses gets the Sales section and the emai
 });
 
 describe("a recipient the Sales page admits sees the new lines", () => {
-  it("GM own shop, MoO, owner: the ladder, tips, ezCater, hours … and the overflow names the rest", () => {
+  it("GM own shop, MoO, owner: the ladder, tips, ezCater, delivery platforms … and the overflow names the rest", () => {
     for (const viewer of [GM_A, MOO, OWNER]) {
       const s = sectionFor(facts(A, "Shop A", detail()), env(viewer))!;
+      // S5: platform dollars sit before the top items (plan §9.2), so they print under the cap on a healthy day.
       expect(s.lines.map((l) => l.label)).toEqual([
-        "Sales report", "Tips, tax, service charges", "ezCater and total", "Top items (units)", "Channel mix", "Busiest hours", "and 6 more",
+        "Sales report", "Tips, tax, service charges", "ezCater and total", "Delivery platforms", "Top items (units)", "Channel mix", "and 6 more",
       ]);
-      expect(s.lines.at(-1)!.text).toBe("Delivery platforms, Catering vs walk-in, Discounts, Voids, Voids, refunds, exclusions +1");
+      // S8: a comma-free label keeps the overflow list readable.
+      expect(s.lines.at(-1)!.text).toBe("Busiest hours, Catering vs walk-in, Discounts, Voids, Voids · refunds · exclusions +1");
       expect(s.status).toMatchObject({ tone: "ok", issues: 0, unknowns: 0 });
       for (const l of s.lines.slice(0, 3)) expect(l.needs).toBe("sales_detail");
     }
@@ -195,10 +197,10 @@ describe("every figure is the Sales page's on the same raws", () => {
     expect(tot.toastNetCents).toBe(665500 - 31000 - 4500 - 12000);
     expect(line(detail(), "Sales report")).toMatchObject({
       tone: "info", needs: "sales_detail",
-      text: `gross ${money(tot.grossCents!)} − discounts and comps ${money(tot.discountsCompsCents!)} − item voids ${money(tot.voidsCents!)} − refunds ${money(tot.salesRefundsCents!)} = Toast net ${money(tot.toastNetCents!)}`,
+      text: `gross ${money(tot.grossCents!)} − discounts and comps ${money(tot.discountsCompsCents!)} − item voids ${money(tot.voidsCents!)} − item-sales refunds ${money(tot.salesRefundsCents!)} = Toast net ${money(tot.toastNetCents!)}`,
       href: `${BASE}/reports/sales?location=${A}&range=custom&from=${D}&to=${D}`,
     });
-    expect(salesDetailTotals(dailyRaw(), D)).toEqual(tot);
+    expect(salesDetailTotals(dailyRaw(), D)).toEqual({ ...tot, ezcaterMissing: 0 });
     expect(all(facts(A, "Shop A", detail())).some((l) => l.text.includes("Toast net $6,180.00"))).toBe(true);
   });
 
@@ -213,8 +215,8 @@ describe("every figure is the Sales page's on the same raws", () => {
     expect(line(detail(), "Delivery platforms")!.text).toBe("DoorDash $820.00 (8 checks), Uber Eats $590.00 (6 checks)");
     // Catering = the Toast catering ring + ezCater; walk-in = every other counted sale. Gift cards in neither.
     expect(line(detail(), "Catering vs walk-in")!.text).toBe("catering $1,140.00 · walk-in and other channels $5,800.00");
-    expect(line(detail(), "Voids, refunds, exclusions")!.text)
-      .toBe("item voids $45.00 · 3 refunds $120.00 · 4 checks not counted as sales (gift cards 1, ezCater rung in Toast 2, voided 1)");
+    expect(line(detail(), "Voids · refunds · exclusions")!.text)
+      .toBe("item voids $45.00 · 3 refunds captured so far $120.00 · 4 checks not counted as sales (gift cards 1, ezCater rung in Toast 2, voided 1)");
     expect(line(detail(), "Top servers")!.text).toBe("Ana $2,000.00 (15 checks), Ben $1,500.00 (10 checks), No server on the order $1,500.00 (5 checks)");
   });
 });
@@ -362,7 +364,7 @@ describe("reads", () => {
     const signals = new Set(calls.map((c) => c.signal));
     expect(signals.size).toBe(1);
     expect([...signals][0]).toBeInstanceOf(AbortSignal);
-    expect(d.totals).toEqual(ok(summarizeSales([dailyRaw()], D, D, "day").totals));
+    expect(d.totals).toEqual(ok({ ...summarizeSales([dailyRaw()], D, D, "day").totals, ezcaterMissing: 0 }));
   });
 
   it("loadShopV2Facts makes exactly those four RPCs per shop/day", async () => {
@@ -534,6 +536,207 @@ describe("i18n: every new key ships in en and es with the same params", () => {
     }
     for (const k of ["digest.v2.sales.report_label", "digest.v2.sales.ladder", "digest.v2.sales.hours_label", "digest.v2.sales.servers_label", "digest.v2.sales.catering_vs"]) {
       expect(s[k], k).not.toBe(e[k]);
+    }
+  });
+});
+
+// ── 9. Fix round 1 (CC rulings S1–S8, RULINGS-digest3-fixround.md "PR 3") ─────────────────────
+
+describe("fix round 1: unknown is never zero, the names are the Sales page's, platforms print", () => {
+  const lineOf = (d: SalesDetailFacts, label: string, language: "en" | "es" = "en") =>
+    salesDetailLines({ t: translator(language), language, baseUrl: BASE, locationId: A, day: D, viewer: GM_A }, v2Fixture({ salesDetail: d }))
+      .find((l) => l.label === label);
+  const totalsOf = (over: Partial<DailyRaw>) => detail({ totals: ok(salesDetailTotals(dailyRaw(over), D)) });
+
+  // S1 ──────────────────────────────────────────────────────────────────────────────────────────
+  it("S1: 0247's uncertainty-only refund row (count 0, sales_refund_missing 2) never reads 'no refunds' and is unknown", () => {
+    const d = totalsOf({ refunds: [{ business_date: D, count: 0, refund_cents: 0, refund_tip_cents: 0, sales_refund_cents: null, sales_refund_missing: 2 }] });
+    const adj = lineOf(d, "Voids · refunds · exclusions")!;
+    expect(adj).toMatchObject({ unknown: true, needs: "sales_detail" });
+    expect(adj.text).toBe("item voids $45.00 · 2 refunds cannot be allocated to item sales · 4 checks not counted as sales (gift cards 1, ezCater rung in Toast 2, voided 1)");
+    expect(adj.text).not.toMatch(/no refunds/);
+    expect(lineOf(d, "Sales report")).toMatchObject({ unknown: true, text: "Toast net not available · 2 refunds cannot be allocated to item sales" });
+    const esLine = lineOf(d, "Anulaciones · reembolsos · exclusiones", "es")!;
+    expect(esLine.text).toContain("2 reembolsos no se pueden asignar a ventas de artículos");
+    expect(esLine.text).not.toMatch(/sin reembolsos/);
+    // The section is never "All good" while that refund is unaccounted for.
+    expect(sectionFor(facts(A, "Shop A", d), env(GM_A))!.status?.tone).toBe("unknown");
+    expect(renderShopDigest(facts(A, "Shop A", d), env(GM_A)).text).not.toMatch(/no refunds/);
+  });
+
+  it("S1: a dated refund count AND an unallocatable one: both said, the line unknown", () => {
+    const d = totalsOf({ refunds: [
+      { business_date: D, count: 3, refund_cents: 12000, refund_tip_cents: 0, sales_refund_cents: 12000, sales_refund_missing: 0 },
+      { business_date: D, count: 0, refund_cents: 0, refund_tip_cents: 0, sales_refund_cents: null, sales_refund_missing: 1 },
+    ] });
+    expect(lineOf(d, "Voids · refunds · exclusions")).toMatchObject({
+      unknown: true, text: expect.stringContaining("3 refunds captured so far $120.00 · 1 refund cannot be allocated to item sales"),
+    });
+  });
+
+  it("S1: no refund at all and none missing still reads 'no refunds captured so far', not unknown", () => {
+    const l = lineOf(totalsOf({ refunds: [] }), "Voids · refunds · exclusions")!;
+    expect(l.text).toContain("no refunds captured so far");
+    expect(l.unknown).toBeUndefined();
+  });
+
+  // S2 ──────────────────────────────────────────────────────────────────────────────────────────
+  it("S2 ezCater: an unpriced order is 'amount unknown (1 order)', never $0.00; a genuine $0 order stays $0.00 and known", () => {
+    const unpriced = totalsOf({ classes: [], tips: [], discounts: [], refunds: [], ezcater: [{ business_date: D, orders: 1, subtotal_cents: null, amount_missing: 1 }] });
+    const l = lineOf(unpriced, "ezCater and total")!;
+    expect(l).toMatchObject({ unknown: true, text: "ezCater amount unknown (1 order) · sales before refunds amount unknown (1 order)" });
+    expect(l.text).not.toContain("$0.00");
+    expect(lineOf(unpriced, "ezCater y total", "es")!.text).toBe("ezCater: monto desconocido (1 pedido) · ventas antes de reembolsos monto desconocido (1 pedido)");
+    const free = lineOf(totalsOf({ ezcater: [{ business_date: D, orders: 1, subtotal_cents: 0, amount_missing: 0 }] }), "ezCater and total")!;
+    expect(free.text).toBe("ezCater $0.00 (1 order) · sales before refunds $6,000.00");
+    expect(free.unknown).toBeUndefined();
+  });
+
+  it("S2 ezCater: one of two orders unpriced names the ezCater gap on the ezCater figure", () => {
+    const d = totalsOf({ ezcater: [{ business_date: D, orders: 2, subtotal_cents: 94000, amount_missing: 1 }] });
+    expect(d.totals.kind === "ok" && d.totals.value.ezcaterMissing).toBe(1);
+    expect(lineOf(d, "ezCater and total")).toMatchObject({
+      unknown: true, text: "ezCater $940.00 (2 orders, 1 without an amount) · sales before refunds $6,940.00 · + 1 amount not recorded",
+    });
+  });
+
+  it("S2 catering vs walk-in: a side whose every order has no amount is 'amount unknown (N orders)'; a partial side says its gap", () => {
+    const raw = channelRaw.map((r) => r.channel === "catering" ? { ...r, cents: 0, amount_missing: r.checks } : r);
+    expect(lineOf(detail({ channels: ok(mergeBreakdown("channel", [raw])) }), "Catering vs walk-in"))
+      .toMatchObject({ unknown: true, text: "catering amount unknown (3 orders) · walk-in and other channels $5,800.00" });
+    const partial = channelRaw.map((r) => r.channel === "dine_in" ? { ...r, amount_missing: 1 } : r);
+    expect(lineOf(detail({ channels: ok(mergeBreakdown("channel", [partial])) }), "Catering vs walk-in"))
+      .toMatchObject({ unknown: true, text: "catering $1,140.00 · walk-in and other channels $5,800.00 + 1 amount not recorded" });
+    expect(lineOf(detail({ channels: ok(mergeBreakdown("channel", [raw])) }), "Catering vs. en tienda", "es")!.text)
+      .toBe("catering monto desconocido (3 pedidos) · en tienda y otros canales $5,800.00");
+  });
+
+  it("S2 delivery platforms: a provider whose every check has no amount is 'amount unknown (N checks)'; a partial one says its gap", () => {
+    const raw = channelRaw.map((r) => r.provider === "DoorDash" ? { ...r, cents: 0, amount_missing: 8 } : r.provider === "Uber Eats" ? { ...r, amount_missing: 1 } : r);
+    const l = lineOf(detail({ channels: ok(mergeBreakdown("channel", [raw])) }), "Delivery platforms")!;
+    expect(l).toMatchObject({ unknown: true, text: "Uber Eats $590.00 (6 checks, 1 without an amount), DoorDash amount unknown (8 checks)" });
+    expect(l.text).not.toContain("$0.00");
+  });
+
+  // S3 ──────────────────────────────────────────────────────────────────────────────────────────
+  it("S3: a 4th-place server whose only check has no amount marks the top-3 line unknown; the page's order is kept", () => {
+    const raw: BreakdownRaw[] = [
+      { key: "guid-ana", label: "Ana", checks: 15, cents: 200000, amount_missing: 0 },
+      { key: "guid-ben", label: "Ben", checks: 10, cents: 150000, amount_missing: 0 },
+      { key: "guid-cy", label: "Cy", checks: 5, cents: 90000, amount_missing: 0 },
+      { key: "guid-dee", label: "Dee", checks: 1, cents: 0, amount_missing: 1 },
+    ];
+    const rows = mergeBreakdown("server", [raw]);
+    expect(rows.map((r) => r.label)).toEqual(["Ana", "Ben", "Cy", "Dee"]);
+    expect(lineOf(detail({ servers: ok(rows) }), "Top servers")).toMatchObject({
+      unknown: true, text: "Ana $2,000.00 (15 checks), Ben $1,500.00 (10 checks), Cy $900.00 (5 checks) · + 1 amount not recorded",
+    });
+    expect(sectionFor(facts(A, "Shop A", detail({ servers: ok(rows) })), env(GM_A))!.status?.tone).toBe("unknown");
+  });
+
+  // S4 ──────────────────────────────────────────────────────────────────────────────────────────
+  /** An RPC stand-in that counts the reads in flight. A `stall` read never settles (whatever the signal says). */
+  function countingClient(stall: (args: Record<string, unknown>) => boolean = () => false) {
+    let inFlight = 0;
+    let peak = 0;
+    const calls: string[] = [];
+    const rpc = (fn: string, args: Record<string, unknown>) => ({
+      abortSignal() {
+        calls.push(fn === "sales_report_daily" ? "daily" : String(args.p_dimension));
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        if (stall(args)) return new Promise(() => {});
+        return new Promise((resolve) => setTimeout(() => {
+          inFlight -= 1;
+          resolve({ data: fn === "sales_report_daily" ? dailyRaw() : args.p_dimension === "channel" ? channelRaw : args.p_dimension === "hour_weekday" ? hourRaw : serverRaw, error: null });
+        }, 5));
+      },
+    });
+    return { sb: { rpc } as unknown as SupabaseClient, calls, peak: () => peak };
+  }
+
+  it("S4: never more than 2 Sales reads in flight; all four still run, in order, and load", async () => {
+    const c = countingClient();
+    const d = await loadSalesDetail(c.sb, A, D);
+    expect(c.peak()).toBe(2);
+    expect(c.calls).toEqual(["daily", "channel", "hour_weekday", "server"]);
+    expect([d.totals.kind, d.channels.kind, d.hours.kind, d.servers.kind]).toEqual(["ok", "ok", "ok", "ok"]);
+  });
+
+  it("S4: the deadline expires with work queued: the queued read never starts, and every line on an unfinished read is unknown, never zero", async () => {
+    // The daily read answers; channel and hour_weekday stall in the two slots; server is still queued at the deadline.
+    const c = countingClient((args) => args.p_dimension === "channel" || args.p_dimension === "hour_weekday");
+    const started = Date.now();
+    const d = await loadSalesDetail(c.sb, A, D, 40);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(c.peak()).toBe(2);
+    expect(c.calls).toEqual(["daily", "channel", "hour_weekday"]);
+    expect(d).toEqual({ totals: expect.objectContaining({ kind: "ok" }), channels: failed(), hours: failed(), servers: failed() });
+    const lines = uncappedSales(d).filter((l) => l.needs === "sales_detail");
+    for (const label of ["Delivery platforms", "Busiest hours", "Catering vs walk-in", "Top servers"]) {
+      expect(lines.find((l) => l.label === label), label).toMatchObject({ text: "Could not load — check the app", unknown: true });
+    }
+    expect(lines.filter((l) => l.unknown).some((l) => /\$0\.00/.test(l.text))).toBe(false);
+  });
+
+  it("S4: every read stalled: only 2 ever start, and every part is failed", async () => {
+    const c = countingClient(() => true);
+    const d = await loadSalesDetail(c.sb, A, D, 30);
+    expect(c.peak()).toBe(2);
+    expect(c.calls).toEqual(["daily", "channel"]);
+    expect(d).toEqual({ totals: failed(), channels: failed(), hours: failed(), servers: failed() });
+  });
+
+  // S5 ──────────────────────────────────────────────────────────────────────────────────────────
+  it("S5: on a healthy day the platform dollars print before the top items, in the rendered text AND HTML", () => {
+    for (const viewer of [GM_A, MOO]) {
+      const mail = renderShopDigest(facts(A, "Shop A", detail()), env(viewer));
+      for (const body of [mail.text, mail.html]) {
+        const platforms = body.indexOf("DoorDash $820.00 (8 checks), Uber Eats $590.00 (6 checks)");
+        expect(platforms).toBeGreaterThan(-1);
+        expect(platforms).toBeLessThan(body.indexOf("Top items (units)"));
+      }
+      expect(sectionFor(facts(A, "Shop A", detail()), env(viewer))!.lines.at(-1)!.text).not.toContain("Delivery platforms");
+    }
+  });
+
+  // S6 ──────────────────────────────────────────────────────────────────────────────────────────
+  it("S6: the ladder's 'item-sales refunds' and the adjustments' 'refunds captured so far' are named apart (en + es)", () => {
+    expect(lineOf(detail(), "Sales report")!.text).toContain("− item-sales refunds $120.00");
+    expect(lineOf(detail(), "Voids · refunds · exclusions")!.text).toContain("3 refunds captured so far $120.00");
+    expect(lineOf(detail(), "Reporte de ventas", "es")!.text).toContain("− reembolsos de ventas de artículos $120.00");
+    expect(lineOf(detail(), "Anulaciones · reembolsos · exclusiones", "es")!.text).toContain("3 reembolsos capturados hasta ahora $120.00");
+  });
+
+  // S7 ──────────────────────────────────────────────────────────────────────────────────────────
+  it("S7: a null service-charges figure uses the inline unknown wording, lowercase, mid-sentence", () => {
+    const raw = dailyRaw();
+    raw.classes[0] = { ...raw.classes[0]!, service_charges_cents: null, accounting_missing: 1 };
+    const d = detail({ totals: ok(salesDetailTotals(raw, D)) });
+    const enLine = lineOf(d, "Tips, tax, service charges")!;
+    expect(enLine).toMatchObject({ unknown: true, text: "tips $612.00 · tax $642.00 · service charges amount unknown" });
+    const esLine = lineOf(d, "Propinas, impuesto, cargos de servicio", "es")!;
+    expect(esLine.text).toBe("propinas $612.00 · impuesto $642.00 · cargos de servicio monto desconocido");
+    for (const l of [enLine, esLine]) expect(l.text).not.toMatch(/Not yet available|Aún no disponible/);
+  });
+
+  // S8 ──────────────────────────────────────────────────────────────────────────────────────────
+  it("S8: the adjustments label has no comma in either language", () => {
+    expect((en as Record<string, string>)["digest.v2.sales.adjustments_label"]).toBe("Voids · refunds · exclusions");
+    expect((es as Record<string, string>)["digest.v2.sales.adjustments_label"]).not.toContain(",");
+  });
+
+  it("refused recipients stay byte-identical with every fix-round shape (unknown refunds, unknown amounts, unfinished reads), en + es", () => {
+    const shapes: SalesDetailFacts[] = [
+      totalsOf({ refunds: [{ business_date: D, count: 0, refund_cents: 0, refund_tip_cents: 0, sales_refund_cents: null, sales_refund_missing: 2 }] }),
+      totalsOf({ classes: [], tips: [], discounts: [], refunds: [], ezcater: [{ business_date: D, orders: 1, subtotal_cents: null, amount_missing: 1 }] }),
+      detail({ channels: ok(mergeBreakdown("channel", [channelRaw.map((r) => ({ ...r, cents: 0, amount_missing: r.checks }))])) }),
+      detail({ channels: failed(), hours: failed(), servers: failed() }),
+    ];
+    for (const viewer of [AGM_A, PREP_A, GM_B, NO_ACCESS_VIEWER, null]) {
+      for (const language of ["en", "es"] as const) {
+        for (const d of shapes) expect(renderShopDigest(facts(A, "Shop A", d), env(viewer, language))).toEqual(renderShopDigest(facts(A, "Shop A"), env(viewer, language)));
+      }
     }
   });
 });

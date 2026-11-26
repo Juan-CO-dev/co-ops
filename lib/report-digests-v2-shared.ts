@@ -148,8 +148,8 @@ export interface SalesFacts {
 
 /** The four Sales reads for one shop and day D. Each part loads fail-soft on its own. */
 export interface SalesDetailFacts {
-  /** `summarizeSales([sales_report_daily(D, D)], D, D, "day").totals`. */
-  totals: Loaded<SalesTotals>;
+  /** `summarizeSales([sales_report_daily(D, D)], D, D, "day").totals`, plus the ezCater-only missing count. */
+  totals: Loaded<SalesDetailTotals>;
   /** `mergeBreakdown("channel", …)` for D (Toast sale / excluded rows + the ezCater source row). */
   channels: Loaded<BreakdownRow[]>;
   /** `mergeBreakdown("hour_weekday", …)` for D. */
@@ -158,9 +158,27 @@ export interface SalesDetailFacts {
   servers: Loaded<BreakdownRow[]>;
 }
 
-/** Day D's Sales totals exactly as the Sales page computes them for a one-day range. */
-export function salesDetailTotals(raw: DailyRaw, day: string): SalesTotals {
-  return summarizeSales([raw], day, day, "day").totals;
+/**
+ * Day D's Sales totals, plus `ezcaterMissing`: how many of `ezcaterOrders` have no subtotal. The Sales page folds
+ * that count into `amountMissing` (with the Toast checks of unknown amount); the digest keeps it apart so an
+ * unpriced ezCater order is never told from a genuine $0 one by a trailing count that names no figure.
+ */
+export interface SalesDetailTotals extends SalesTotals { ezcaterMissing: number }
+
+/**
+ * Day D's Sales totals exactly as the Sales page computes them for a one-day range. The ezCater-only missing count
+ * is the same `summarizeSales` over the same response's ezCater rows alone (no Toast class), so it follows the
+ * Sales page's own rule for those rows and is never recomputed a second way.
+ */
+export function salesDetailTotals(raw: DailyRaw, day: string): SalesDetailTotals {
+  const totals = summarizeSales([raw], day, day, "day").totals;
+  const ezOnly: DailyRaw = { classes: [], tips: [], discounts: [], refunds: [], captured_days: raw.captured_days ?? [], ezcater: raw.ezcater ?? [] };
+  return { ...totals, ezcaterMissing: summarizeSales([ezOnly], day, day, "day").totals.amountMissing };
+}
+
+/** A figure whose every row is of unknown amount: its cents are not a $0, they are unknown. */
+export function amountAllUnknown(p: Pick<MoneyPart, "checks" | "amountMissing">): boolean {
+  return p.checks > 0 && p.amountMissing >= p.checks;
 }
 
 /** A money figure with the count of rows whose amount is unknown (never read as $0). */
