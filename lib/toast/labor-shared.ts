@@ -172,15 +172,19 @@ export interface LaborSummary {
   overtimeAssessed: boolean;
   /** More than 10 h in the day. */
   dayOvertime: Array<{ firstName: string | null; hours: number }>;
-  /** More than 40 h week-to-date (Mon..D, a LOWER bound: only what was pulled), or Toast's own OT. */
+  /** More than 40 h payroll-week-to-date (Sun..D, a LOWER bound: only what was pulled), or Toast's own OT. */
   weekOvertime: Array<{ firstName: string | null; hours: number }>;
 }
 
-/** Monday of the ISO week containing `day` (ET calendar date). */
+/**
+ * Sunday on or before `day` (ET calendar date): the start of the payroll week (Sunday 00:00 ET, Juan
+ * 2026-11-17: "the payroll week turns over at midnight Saturday → Sunday"). Pure date arithmetic in UTC
+ * on the calendar date, so DST never moves it. Drives both the digest's labor query window and its 40 h flag.
+ */
 export function weekStart(day: string): string {
   const [y, m, d] = day.split("-").map(Number);
   const t = new Date(Date.UTC(y!, m! - 1, d!));
-  const back = (t.getUTCDay() + 6) % 7;
+  const back = t.getUTCDay(); // 0 = Sunday
   return new Date(t.getTime() - back * 86_400_000).toISOString().slice(0, 10);
 }
 
