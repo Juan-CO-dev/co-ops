@@ -407,6 +407,10 @@ export const RESERVED_ACTIONS = [
   // and sets destructive=true literally. There is no TypeScript call site and there may
   // never be one: no app code path deletes catering rows.
   "catering.test_data_purge",
+  // Emitted from SQL only: toast_snapshot_dedup_apply (0351) INSERTs one audit row per batch of
+  // exact duplicate Toast snapshot payloads it deletes, destructive=true literally. Postgres-only
+  // function (no EXECUTE for service_role), so there is no TypeScript call site.
+  "toast.snapshot_dedup",
   // SQL-only: save_labor_burden (0338; its contract re-emitted by 0346 with "follow the company") INSERTs its own
   // audit row (destructive literally true, before/after values) in the same transaction as the burden row. No
   // TypeScript audit() call site: lib/facts/labor-burden.ts only calls the RPC.

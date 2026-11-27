@@ -5,7 +5,9 @@
  * (the CLI then prints needs_react_server_condition). The env file is the operator's; the script reads none itself.
  * Default days: T−10 and T−11, T = today's ET calendar date. A day must be closed (≤ T−4).
  * For every shop-day: re-reads Toast ordersBulk, normalizes with line prices ON, hashes, and compares
- * with toast_orders (SELECT only). Exit 1 unless every day is representative (≥ 50 orders) and has zero
+ * with the stored snapshots' hashes (SELECT only). Those are read from toast_snapshot_registry (0351), which keeps
+ * every snapshot's ORIGINAL hash even after the duplicate cleanup deleted its payload, so the cleanup cannot move a
+ * verdict; on a database without 0351 (no cleanup possible there) they are read from toast_orders. Exit 1 unless every day is representative (≥ 50 orders) and has zero
  * absent-with-same-modified_at orders. Prints counts and order GUIDs only; never prices or payloads.
  * Never writes (no insert / update / upsert / rpc). */
 import { pathToFileURL } from "node:url";
@@ -73,8 +75,20 @@ async function readAll<T>(build: () => Query, code: string, pageSize: number, ma
   }
 }
 
+/** Where every snapshot's identity and hash live. The registry (0351) has one row per snapshot EVER created,
+ *  payload deleted or not; without it nothing can have been deleted, so toast_orders is complete. Any other
+ *  answer than "ok" or "no such table" REFUSES: the canary never guesses which history it is judging. */
+export async function canarySnapshotSource(sb: Deps["sb"]): Promise<"toast_snapshot_registry" | "toast_orders"> {
+  const { error } = await sb.from("toast_snapshot_registry").select("id", { count: "exact" }).range(0, 0);
+  if (!error) return "toast_snapshot_registry";
+  const code = (error as { code?: unknown }).code;
+  if (code === "42P01" || code === "PGRST205") return "toast_orders";
+  throw new Error("canary_registry_unavailable");
+}
+
 export async function runCanary(options: ReturnType<typeof parseCanaryArgs>, deps: Deps): Promise<CanaryReport> {
   const pageSize = deps.pageSize ?? PAGE_SIZE, maxPages = deps.maxPages ?? MAX_PAGES;
+  const source = await canarySnapshotSource(deps.sb);
   const shops = () => {
     const q = deps.sb.from("locations").select("id", { count: "exact" }).eq("active", true).not("toast_restaurant_guid", "is", null);
     return (options.location ? q.eq("id", options.location) : q).order("id");
@@ -91,7 +105,7 @@ export async function runCanary(options: ReturnType<typeof parseCanaryArgs>, dep
       for (let i = 0; i < guids.length; i += 50) {
         const chunk = guids.slice(i, i + 50);
         const snapshots = await readAll<{ id: string; order_guid: string; content_hash: string; modified_at: string | null }>(
-          () => deps.sb.from("toast_orders").select("id,order_guid,content_hash,modified_at", { count: "exact" }).eq("location_id", location).in("order_guid", chunk).order("id"),
+          () => deps.sb.from(source).select("id,order_guid,content_hash,modified_at", { count: "exact" }).eq("location_id", location).in("order_guid", chunk).order("id"),
           "canary_snapshots_read_failed", pageSize, maxPages);
         const pointers = await readAll<{ order_guid: string; snapshot_id: string }>(
           () => deps.sb.from("toast_order_latest_pointers").select("order_guid,snapshot_id", { count: "exact" }).eq("location_id", location).in("order_guid", chunk).order("order_guid"),

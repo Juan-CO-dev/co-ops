@@ -1,8 +1,16 @@
 -- Toast canonical content_hash (churn fix PR 1): READ-ONLY acceptance and recovery checks.
 -- Procedure: docs/runbooks/toast-hash-canonical.md. Run by CC (Supabase MCP execute_sql), never by the app.
 -- Replace the :params with literals. Every query is a SELECT; nothing here writes.
--- Executed against the real 0221 / 0225 / 0229 / 0239 SQL in PGlite by tests/toast-hash-acceptance-sql.test.ts
+-- Executed against the real 0221 / 0225 / 0229 / 0239 / 0351 SQL in PGlite by tests/toast-hash-acceptance-sql.test.ts
 -- (each "-- @query <name>" section is one statement).
+-- NEEDS 0351 (toast_snapshot_registry). Since the duplicate cleanup a snapshot's payload may be gone, so:
+--   IDENTITY (shop, order, business day, modified_at) is read from toast_snapshot_registry, which keeps a row for
+--            every snapshot ever created, under its original id;
+--   CONTENT  is read from the payload of coalesce(survivor_id, id): a deleted snapshot's content IS its survivor's
+--            (the cleanup deletes only on full content equality).
+-- So a run inside W that captured an OLD day still counts both a deleted twin and its survivor as two snapshots
+-- with one content (CHURN), exactly as before the delete. On a database without 0351 use this file as of commit
+-- 29da5d4c (it read toast_orders directly; nothing can have been deleted there).
 
 -- STORED CONTENT (both queries below carry the same "content" CTE, text for text): one jsonb per
 -- snapshot holding everything stored for it, ignoring storage identity (toast_orders.id, content_hash,
@@ -30,7 +38,7 @@ with m as (
   select ro.location_id, ro.order_guid, ro.snapshot_id, o.modified_at, r.started_at, r.id as run_id
   from public.toast_capture_run_orders ro
   join public.toast_capture_runs r on r.id = ro.run_id
-  join public.toast_orders o on o.id = ro.snapshot_id
+  join public.toast_snapshot_registry o on o.id = ro.snapshot_id
   where r.started_at >= :w_from::timestamptz and r.started_at < :w_to::timestamptz
 ), multi as (
   select location_id, order_guid, modified_at
@@ -41,7 +49,7 @@ with m as (
   from m join multi g on g.location_id = m.location_id and g.order_guid = m.order_guid
                      and g.modified_at is not distinct from m.modified_at
 ), content as (
-  select o.id, jsonb_build_object(
+  select g.id, jsonb_build_object(
     'order', to_jsonb(o) - 'id' - 'content_hash' - 'selection_units',
     'selection_units', (select coalesce(jsonb_agg(u order by u::text), '[]'::jsonb) from jsonb_array_elements(o.selection_units) u),
     'checks', (select coalesce(jsonb_agg(x order by x::text), '[]'::jsonb)
@@ -53,8 +61,9 @@ with m as (
     'payments', (select coalesce(jsonb_agg(x order by x::text), '[]'::jsonb)
                  from (select to_jsonb(p) - 'snapshot_id' as x from public.toast_payments p where p.snapshot_id = o.id) p)
   ) as content
-  from public.toast_orders o
-  where o.id in (select id from content_ids)
+  from public.toast_snapshot_registry g
+  join public.toast_orders o on o.id = coalesce(g.survivor_id, g.id)
+  where g.id in (select id from content_ids)
 ), contents as (
   select m.location_id, m.order_guid, m.modified_at, count(distinct c.content) as contents
   from (select distinct location_id, order_guid, modified_at, snapshot_id from m) m
@@ -103,11 +112,11 @@ with cand as (
   where ro.snapshot_id in (select snapshot_id from cand) group by ro.snapshot_id
 ), fresh as (
   select o.id, o.location_id, o.order_guid, o.business_date, o.modified_at, f.first_seen
-  from public.toast_orders o join cand_fs f on f.snapshot_id = o.id
+  from public.toast_snapshot_registry o join cand_fs f on f.snapshot_id = o.id
   where f.first_seen >= :w_from::timestamptz and f.first_seen < :w_to::timestamptz
 ), peer_ids as (
   select p.id
-  from public.toast_orders p join (select distinct location_id, order_guid from fresh) k
+  from public.toast_snapshot_registry p join (select distinct location_id, order_guid from fresh) k
     on k.location_id = p.location_id and k.order_guid = p.order_guid
 ), first_seen as (
   select ro.snapshot_id, min(r.started_at) as first_seen
@@ -115,10 +124,10 @@ with cand as (
   where ro.snapshot_id in (select id from peer_ids) group by ro.snapshot_id
 ), content_ids as (
   select distinct p.id
-  from public.toast_orders p join fresh fr
+  from public.toast_snapshot_registry p join fresh fr
     on fr.location_id = p.location_id and fr.order_guid = p.order_guid and p.modified_at is not distinct from fr.modified_at
 ), content as (
-  select o.id, jsonb_build_object(
+  select g.id, jsonb_build_object(
     'order', to_jsonb(o) - 'id' - 'content_hash' - 'selection_units',
     'selection_units', (select coalesce(jsonb_agg(u order by u::text), '[]'::jsonb) from jsonb_array_elements(o.selection_units) u),
     'checks', (select coalesce(jsonb_agg(x order by x::text), '[]'::jsonb)
@@ -130,23 +139,24 @@ with cand as (
     'payments', (select coalesce(jsonb_agg(x order by x::text), '[]'::jsonb)
                  from (select to_jsonb(p) - 'snapshot_id' as x from public.toast_payments p where p.snapshot_id = o.id) p)
   ) as content
-  from public.toast_orders o
-  where o.id in (select id from content_ids)
+  from public.toast_snapshot_registry g
+  join public.toast_orders o on o.id = coalesce(g.survivor_id, g.id)
+  where g.id in (select id from content_ids)
 ), classed as (
   select fr.location_id, fr.business_date,
     case
-      when exists (select 1 from public.toast_orders p join first_seen pf on pf.snapshot_id = p.id join content pc on pc.id = p.id
+      when exists (select 1 from public.toast_snapshot_registry p join first_seen pf on pf.snapshot_id = p.id join content pc on pc.id = p.id
                    where p.location_id = fr.location_id and p.order_guid = fr.order_guid and p.id <> fr.id
                      and (pf.first_seen, p.id) < (fr.first_seen, fr.id) and p.modified_at is not distinct from fr.modified_at
                      and pf.first_seen >= :w_from::timestamptz and pc.content = fc.content) then 'churn'
-      when exists (select 1 from public.toast_orders p join first_seen pf on pf.snapshot_id = p.id join content pc on pc.id = p.id
+      when exists (select 1 from public.toast_snapshot_registry p join first_seen pf on pf.snapshot_id = p.id join content pc on pc.id = p.id
                    where p.location_id = fr.location_id and p.order_guid = fr.order_guid and p.id <> fr.id
                      and pf.first_seen < :w_from::timestamptz and p.modified_at is not distinct from fr.modified_at
                      and pc.content = fc.content) then 'transition'
-      when exists (select 1 from public.toast_orders p join first_seen pf on pf.snapshot_id = p.id
+      when exists (select 1 from public.toast_snapshot_registry p join first_seen pf on pf.snapshot_id = p.id
                    where p.location_id = fr.location_id and p.order_guid = fr.order_guid and p.id <> fr.id
                      and (pf.first_seen, p.id) < (fr.first_seen, fr.id) and p.modified_at is not distinct from fr.modified_at) then 'edit_same_modified'
-      when exists (select 1 from public.toast_orders p join first_seen pf on pf.snapshot_id = p.id
+      when exists (select 1 from public.toast_snapshot_registry p join first_seen pf on pf.snapshot_id = p.id
                    where p.location_id = fr.location_id and p.order_guid = fr.order_guid and p.id <> fr.id
                      and (pf.first_seen, p.id) < (fr.first_seen, fr.id)) then 'edit'
       else 'new_order'

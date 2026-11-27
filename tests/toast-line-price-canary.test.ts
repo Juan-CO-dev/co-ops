@@ -9,7 +9,7 @@ import { classifyCanaryDay, CANARY_MIN_ORDERS } from "@/lib/toast/line-price-can
 import { canaryToastDate } from "@/lib/toast/capture";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { toastConfigured, toastGet } from "@/lib/toast/client";
-import { parseCanaryArgs, runCanary } from "../scripts/toast-line-price-canary";
+import { canarySnapshotSource, parseCanaryArgs, runCanary } from "../scripts/toast-line-price-canary";
 
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/toast/client", async (original) => ({ ...await original<typeof import("@/lib/toast/client")>(), toastConfigured: vi.fn(), toastGet: vi.fn(), toastGetPage: vi.fn() }));
@@ -99,7 +99,7 @@ describe("scripts/toast-line-price-canary", () => {
           in: (_k: string, values: string[]) => { ids = values; expect(values.length).toBeLessThanOrEqual(50); return q; },
           then: (resolve: (v: unknown) => void) => {
             const data = table === "locations" ? [{ id: "shop" }]
-              : table === "toast_orders" ? ids.map((g) => ({ id: `s-${g}`, order_guid: g, content_hash: "a".repeat(64), modified_at: T }))
+              : table === "toast_snapshot_registry" ? ids.map((g) => ({ id: `s-${g}`, order_guid: g, content_hash: "a".repeat(64), modified_at: T }))
               : ids.map((g) => ({ order_guid: g, snapshot_id: `s-${g}` }));
             resolve({ error: null, data, count: data.length });
           },
@@ -112,13 +112,15 @@ describe("scripts/toast-line-price-canary", () => {
     const fetch = vi.fn(async () => ({ orders }));
     const report = await runCanary({ dates: ["2026-10-01", "2026-10-02"], location: null }, { sb: sb as never, fetchDay: fetch });
     expect(fetch.mock.calls).toEqual([["shop", "2026-10-01"], ["shop", "2026-10-02"]]);
-    expect(new Set(ops)).toEqual(new Set(["select:locations", "select:toast_orders", "select:toast_order_latest_pointers"]));
+    // Stored hashes come from the registry (0351): toast_orders is never read once it exists.
+    expect(new Set(ops)).toEqual(new Set(["select:locations", "select:toast_snapshot_registry", "select:toast_order_latest_pointers"]));
     expect(report).toMatchObject({ pass: true, days: [{ location: "shop", date: "2026-10-01", present: 120, pass: true }, { date: "2026-10-02", pass: true }] });
   });
   // Fix round 1 (ITEM1B-r1 P2 #1): a truncated history must REFUSE, never pass. The mock below is a
   // PostgREST stand-in: it honours select's `count: "exact"`, .range() and a server row cap (`cap`).
   type Snap = { id: string; order_guid: string; content_hash: string; modified_at: string | null };
-  const history = (snaps: Snap[], pointers: { order_guid: string; snapshot_id: string }[], cap = Infinity, log: string[] = []) => ({
+  const history = (snaps: Snap[], pointers: { order_guid: string; snapshot_id: string }[], cap = Infinity, log: string[] = [],
+    registry: { rows?: Snap[]; error?: { code: string } } = { rows: snaps }) => ({
     from: (table: string) => {
       let ids: string[] | null = null; let range: [number, number] | null = null; let counted = false;
       const q = {
@@ -127,7 +129,9 @@ describe("scripts/toast-line-price-canary", () => {
         in: (_k: string, values: string[]) => { ids = values; return q; },
         range: (from: number, to: number) => { range = [from, to]; log.push(`${table}:${from}-${to}`); return q; },
         then: (resolve: (v: unknown) => void) => {
+          if (table === "toast_snapshot_registry" && registry.error) return resolve({ error: registry.error, data: null, count: null });
           const all: unknown[] = table === "locations" ? [{ id: "shop" }]
+            : table === "toast_snapshot_registry" ? (registry.rows ?? []).filter((s) => !ids || ids.includes(s.order_guid))
             : table === "toast_orders" ? snaps.filter((s) => !ids || ids.includes(s.order_guid))
             : pointers.filter((p) => !ids || ids.includes(p.order_guid));
           const window = range ? all.slice(range[0], range[1] + 1) : all;
@@ -154,7 +158,8 @@ describe("scripts/toast-line-price-canary", () => {
     const { snaps, pointers, orders } = violationFixture();
     const log: string[] = [];
     const report = await runCanary(one, { sb: history(snaps, pointers, Infinity, log) as never, fetchDay: async () => ({ orders }), pageSize: 40 });
-    expect(log.some((l) => l.startsWith("toast_orders:40-"))).toBe(true);
+    expect(log.some((l) => l.startsWith("toast_snapshot_registry:40-"))).toBe(true);
+    expect(log.some((l) => l.startsWith("toast_orders:"))).toBe(false);
     expect(report).toMatchObject({ pass: false, days: [{ absent_same_modified: 1, violations: ["o0"] }] });
   });
   it("REFUSES (never PASS) when the server row cap truncates the snapshot history", async () => {
@@ -183,6 +188,45 @@ describe("scripts/toast-line-price-canary", () => {
     const from = sb.from;
     const uncounted = { from: (t: string) => { const q = from(t); const select = q.select; q.select = (c: string) => select(c); return q; } };
     await expect(runCanary(one, { sb: uncounted as never, fetchDay: async () => ({ orders }) })).rejects.toThrow("canary_history_uncounted");
+  });
+
+  // Duplicate cleanup (0351; Astra r4 P2 #5). The comparator accepts ANY stored hash of the order. A failed run can
+  // leave a canonical-hash twin that never became the pointer; the cleanup deletes its payload and keeps the equal
+  // legacy pointer target. Read from toast_orders the fetched canonical hash would go from present to
+  // absent_same_modified; read from the registry, which keeps every original hash, the verdict cannot move.
+  const twinFixture = () => {
+    const legacy: Snap[] = [], canonical: Snap[] = []; const pointers: { order_guid: string; snapshot_id: string }[] = [];
+    for (let i = 0; i < CANARY_MIN_ORDERS; i++) {
+      legacy.push({ id: `legacy-${i}`, order_guid: `o${i}`, content_hash: "1".repeat(64), modified_at: T });
+      canonical.push({ id: `canon-${i}`, order_guid: `o${i}`, content_hash: "a".repeat(64), modified_at: T });
+      pointers.push({ order_guid: `o${i}`, snapshot_id: `legacy-${i}` });
+    }
+    return { legacy, canonical, pointers, orders: Array.from({ length: CANARY_MIN_ORDERS }, (_, i) => order(i, "a".repeat(64))) };
+  };
+  it("a canonical twin whose payload the cleanup deleted still counts as present (hashes come from the registry)", async () => {
+    const { legacy, canonical, pointers, orders } = twinFixture();
+    // Before the delete: both snapshots have a payload.
+    const before = await runCanary(one, { sb: history([...legacy, ...canonical], pointers) as never, fetchDay: async () => ({ orders }) });
+    // After: toast_orders holds only the legacy pointer targets; the registry still holds both hashes.
+    const after = await runCanary(one, { sb: history(legacy, pointers, Infinity, [], { rows: [...legacy, ...canonical] }) as never, fetchDay: async () => ({ orders }) });
+    expect(before).toMatchObject({ pass: true, days: [{ present: CANARY_MIN_ORDERS, absent_same_modified: 0 }] });
+    expect(after).toEqual(before);
+    // The same database judged from toast_orders alone would have failed every order.
+    const stale = await runCanary(one, { sb: history(legacy, pointers, Infinity, [], { error: { code: "42P01" } }) as never, fetchDay: async () => ({ orders }) });
+    expect(stale).toMatchObject({ pass: false, days: [{ present: 0, absent_same_modified: CANARY_MIN_ORDERS }] });
+  });
+  it("without 0351 (no registry table) it reads toast_orders; any other registry error REFUSES", async () => {
+    const { snaps, pointers, orders } = violationFixture();
+    for (const code of ["42P01", "PGRST205"]) {
+      const log: string[] = [];
+      const report = await runCanary(one, { sb: history(snaps, pointers, Infinity, log, { error: { code } }) as never, fetchDay: async () => ({ orders }) });
+      expect(report).toMatchObject({ pass: false, days: [{ absent_same_modified: 1, violations: ["o0"] }] });
+      expect(log.some((l) => l.startsWith("toast_orders:"))).toBe(true);
+      expect(await canarySnapshotSource(history(snaps, pointers, Infinity, [], { error: { code } }) as never)).toBe("toast_orders");
+    }
+    expect(await canarySnapshotSource(history(snaps, pointers) as never)).toBe("toast_snapshot_registry");
+    await expect(runCanary(one, { sb: history(snaps, pointers, Infinity, [], { error: { code: "42501" } }) as never, fetchDay: async () => ({ orders }) }))
+      .rejects.toThrow("canary_registry_unavailable");
   });
 
   it("fails overall on any violation or any day that could not be judged", async () => {

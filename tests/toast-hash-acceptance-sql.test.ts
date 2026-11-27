@@ -22,6 +22,7 @@ const m0221 = read("supabase/migrations/0221_toast_order_capture.sql");
 const m0225 = read("supabase/migrations/0225_ezcater_pass2.sql");
 const m0229 = read("supabase/migrations/0229_ezcater_toast_reconcile.sql");
 const m0239 = read("supabase/migrations/0239_sales_true_net.sql");
+const m0351 = read("supabase/migrations/0351_toast_snapshot_dedup.sql");
 const cut = (sql: string, start: string, end: string) => {
   const i = sql.indexOf(start); expect(i, start).toBeGreaterThan(-1);
   const j = sql.indexOf(end, i); expect(j, end).toBeGreaterThan(i);
@@ -97,6 +98,12 @@ beforeAll(async () => {
       "toast_capture_pages", "toast_capture_run_orders", "toast_order_latest_pointers"].map(table).join("\n")}
     ${cut(m0239, "alter table public.toast_order_checks add column accounting jsonb", ";\n")}
     ${cut(m0239, "alter table public.toast_payments add column sales_refund_cents bigint", ";\n")}
+    ${cut(m0351, "create table public.toast_snapshot_dedup_manifests (", "\n);\n")}
+    ${cut(m0351, "create table public.toast_snapshot_registry (", "\n);\n")}
+    ${cut(m0351, "create function public.toast_snapshot_register() returns trigger", "end $$;")}
+    ${cut(m0351, "create trigger toast_orders_register after insert on public.toast_orders", ";\n")}
+    ${cut(m0351, "alter table public.toast_capture_run_orders\n  add constraint toast_capture_run_orders_snapshot_registry_fkey", ";\n")}
+    ${cut(m0351, "do $$\ndeclare v_name text; v_count integer;", "end $$;")}
     create table public.ezcater_orders(id uuid primary key, snapshot_id uuid not null, event_date date not null);
     ${shadow}
     ${lineOf(m0229, 245)}
@@ -267,6 +274,47 @@ describe("same-modified_at: churn only when the stored content is equal (prod 20
       { w_from: "2026-11-21T00:00:00Z", w_to: "2026-11-24T00:00:00Z" }, { w_from: "2026-11-01T00:00:00Z", w_to: "2026-12-01T00:00:00Z" }];
     for (const w of windows) expect(await insertRows(query("inserts", w)), JSON.stringify(w)).toEqual(await insertRows(unscopedInserts(w)));
     expect((await insertRows(query("inserts", W))).length).toBe(2);
+  });
+});
+
+describe("after the duplicate cleanup (0351): identity from the registry, content from the survivor (Astra r4 P2 #2)", () => {
+  const shop3 = "00000000-0000-4000-8000-0000000000a3";
+  const t = "2026-11-20T09:00:00Z";
+  const check = { check_guid: "c1", amount_cents: 700 };
+  type Row = { location_id: string; order_guid: string; kind: string; snapshots: number; contents: number; sequence: string };
+  const churn = async () => (await db.query<Row>(query("churn", W))).rows.filter((r) => r.location_id === shop3)
+    .map((r) => [r.order_guid, r.kind, Number(r.snapshots), Number(r.contents), r.sequence]);
+  const inserts = async () => (await insertRows(query("inserts", W))).filter((r) => r[0] === shop3);
+
+  it("a run inside W that captured a day whose twin was later deleted reports exactly what it reported before the delete", async () => {
+    await db.query("insert into public.locations(id) values($1)", [shop3]);
+    // Order K: twins k1 / k2 (equal content, same modified_at), both captured inside W; k3 is a real same-modified edit.
+    const k1 = await snapshot("K", t, "71", { checks: [check] }, shop3), k2 = await snapshot("K", t, "72", { checks: [check] }, shop3);
+    const k3 = await snapshot("K", t, "73", { checks: [{ ...check, amount_cents: 900 }] }, shop3);
+    await capture("2026-11-20T14:00:00Z", { K: k1 }, shop3);
+    await capture("2026-11-20T15:00:00Z", { K: k2 }, shop3);
+    await capture("2026-11-20T16:00:00Z", { K: k3 }, shop3);
+    const before = { churn: await churn(), inserts: await inserts() };
+    expect(before.churn).toEqual([["K", "CHURN", 3, 2, [k1, k2, k3].join(" > ")]]);
+    expect(before.inserts.map((r) => r.slice(2))).toEqual([[0, 1, 1, 0, 1]]);
+
+    // The cleanup deletes k1's payload (survivor k2) and stamps the registry, as toast_snapshot_dedup_apply does.
+    const manifest = uuid();
+    await db.query("insert into public.toast_snapshot_dedup_manifests(id, version, cutoff_date, registry_rows_at_begin, memberships_at_begin) values ($1, 1, '2026-11-20', 0, 0)", [manifest]);
+    await db.query("update public.toast_snapshot_registry set payload_deleted_at = now(), survivor_id = $1, content_md5 = 'x', manifest_id = $2 where id = $3", [k2, manifest, k1]);
+    await db.query("delete from public.toast_order_checks where snapshot_id = $1", [k1]);
+    await db.query("delete from public.toast_orders where id = $1", [k1]);
+    expect((await db.query("select 1 from public.toast_orders where id = $1", [k1])).rows.length).toBe(0);
+
+    expect(await churn()).toEqual(before.churn);
+    expect(await inserts()).toEqual(before.inserts);
+  });
+
+  it("the file says it needs 0351 and reads toast_orders only for the surviving payload", () => {
+    expect(acceptance).toContain("NEEDS 0351 (toast_snapshot_registry)");
+    const sqlOnly = acceptance.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+    expect(sqlOnly.match(/public[.]toast_orders(?![a-z_])/g)).toHaveLength(2);
+    expect(sqlOnly.split("join public.toast_orders o on o.id = coalesce(g.survivor_id, g.id)")).toHaveLength(3);
   });
 });
 
