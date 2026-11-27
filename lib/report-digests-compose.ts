@@ -589,16 +589,25 @@ export function composeCateringSections(
       if (l.prep === null || l.prep.length === 0) return null;
       const byDate = new Map<string, PrepLoadLine[]>();
       for (const p of l.prep) byDate.set(p.needDate, [...(byDate.get(p.needDate) ?? []), p]);
-      return [...byDate].sort(([a], [b]) => a.localeCompare(b)).map(([date, list]) => {
-        // Plan §2.6: at most 5 items inside the line, then "+N".
-        const shown = list.slice(0, LINE_ITEMS_MAX).map((p) => {
+      const dated = [...byDate].sort(([a], [b]) => a.localeCompare(b));
+      // Plan §2.6: at most 5 items inside the line, then "+N" — ONE budget for the whole order line, across every
+      // prep date (date order, then ledger order). A date whose items all fall past the budget is not named; its
+      // items are in the "+N".
+      const total = dated.reduce((a, [, list]) => a + list.length, 0);
+      let budget = LINE_ITEMS_MAX;
+      const groups: string[] = [];
+      for (const [date, list] of dated) {
+        if (budget === 0) break;
+        const shown = list.slice(0, budget).map((p) => {
           const name = language === "es" && p.nameEs ? p.nameEs : p.name;
           if (p.portion) return `${qty(p.qty)} × ${name} (${t(`digest.catering.portion.${p.portion}` as TranslationKey)})`;
           return p.unit ? `${qty(p.qty)} ${p.unit} ${name}` : `${qty(p.qty)} × ${name}`;
         });
-        if (list.length > LINE_ITEMS_MAX) shown.push(t("digest.catering.prep_more", { n: list.length - LINE_ITEMS_MAX }));
-        return t("digest.catering.prep_load", { date: formatDateLabel(date, language), items: shown.join(", ") });
-      }).join(" · ");
+        budget -= shown.length;
+        groups.push(t("digest.catering.prep_load", { date: formatDateLabel(date, language), items: shown.join(", ") }));
+      }
+      const text = groups.join(" · ");
+      return total > LINE_ITEMS_MAX ? `${text}, ${t("digest.catering.prep_more", { n: total - LINE_ITEMS_MAX })}` : text;
     };
     const outlook = (day: string, emptyKey: TranslationKey, label: TranslationKey): DigestLine[] => {
       const list = leads.filter((l) => l.eventDate === day && UPCOMING.has(l.stage))

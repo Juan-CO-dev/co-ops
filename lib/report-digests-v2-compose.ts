@@ -253,10 +253,10 @@ export function inventoryLines(c: Ctx, v: ShopV2Facts, pendingItems: number): Di
  * the Sales page refuses gets this section byte for byte as before PR 3 (lines, status, overflow, issue count).
  *
  * Order (the composer order inside each tier of finishSection's sort, which puts issues, unknowns and to-dos
- * first): the ladder, tips / tax / service, ezCater and total, DELIVERY PLATFORMS, then top items and the channel
- * mix, then busiest hours and catering vs walk-in, then discounts and voids, then the adjustments and servers.
- * Platform dollars sit before the top items (plan §9.2, CC ruling S5), so on a healthy day they print under the
- * cap and the later lines fold into "and N more".
+ * first): the ladder, tips / tax / service, ezCater and total, DELIVERY PLATFORMS, BUSIEST HOURS, then top items and
+ * the channel mix, then catering vs walk-in, then discounts and voids, then the adjustments and servers.
+ * Platform dollars and the busiest hours sit before the top items (plan §9.2, CC ruling S5; digest round 3 polish),
+ * so on a healthy day they print under the cap and the later lines (the channel mix first) fold into "and N more".
  */
 export function salesDetailLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   const report = salesReportLines(c, v);
@@ -322,7 +322,7 @@ export function salesServerLabel(t: T, key: string, name: string | null | undefi
  * not recorded") and marks its line unknown; a read that failed or stalled is its own "not available" line and
  * leaves every other line standing. EVERY line here carries `needs: "sales_detail"` — its status contribution and
  * its place in the overflow line go with it when it is cut.
- * `head` prints before the pulse lines (delivery platforms last in it), `mid` after the channel mix, `tail` after
+ * `head` prints before the pulse lines (delivery platforms, then busiest hours, last in it), `mid` after the channel mix, `tail` after
  * the voids.
  */
 function salesReportLines(c: Ctx, v: ShopV2Facts): { head: DigestLine[]; mid: DigestLine[]; tail: DigestLine[] } {
@@ -341,6 +341,8 @@ function salesReportLines(c: Ctx, v: ShopV2Facts): { head: DigestLine[]; mid: Di
   /** A figure: unknown when every row of it has no amount; else its known $ with its own gap said beside it. */
   const figure = (p: MoneyPart, count: (n: number) => string) => amountAllUnknown(p) ? amountUnknown(count(p.checks))
     : join([money(c, p.cents), missing(p.amountMissing)], " ");
+  /** A row's $ in a "{money} ({checks})" slot: the bare "amount unknown" when every check of it has no amount. */
+  const amountOrUnknown = (p: MoneyPart) => amountAllUnknown(p) ? c.t("digest.v2.sales.amount_unknown_bare") : money(c, p.cents);
   const label = c.t("digest.v2.sales.report_label");
 
   // The whole area stands on the day's totals: loaded, and the day fully captured (the Sales page's coverage rule).
@@ -402,27 +404,7 @@ function salesReportLines(c: Ctx, v: ShopV2Facts): { head: DigestLine[]; mid: Di
     ]),
   }));
 
-  // 4. Busiest hours: top 3 with $ and checks; a check with no opened time is said apart, never ranked.
-  const hoursHref = view("heatmap");
-  const hoursLabel = c.t("digest.v2.sales.hours_label");
-  const hl = notLoaded(c, hoursLabel, hoursHref, d.hours);
-  if (hl) out.mid.push(gated(hl));
-  else if (d.hours.kind === "ok") {
-    const h = busiestHours(d.hours.value);
-    const lost = d.hours.value.reduce((a, r) => a + r.amountMissing, 0);
-    out.mid.push(gated(h.top.length === 0 && h.unknown.checks === 0
-      ? { label: hoursLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: hoursHref }
-      : {
-        label: hoursLabel, tone: "info", href: hoursHref, ...(lost > 0 ? { unknown: true } : {}),
-        text: join([
-          h.top.length === 0 ? null : h.top.map((x) => c.t("digest.v2.sales.hour_item", { hour: formatHourRange(x.hour, c.language), money: money(c, x.cents), checks: checks(x.checks) })).join(", "),
-          h.unknown.checks > 0 ? c.t("digest.v2.sales.hour_unknown", { checks: checks(h.unknown.checks), money: money(c, h.unknown.cents) }) : null,
-          missing(lost),
-        ]),
-      }));
-  }
-
-  // 5. Delivery platforms with $ (counted third-party delivery sales by provider). In `head`: platform dollars print
+  // 4. Delivery platforms with $ (counted third-party delivery sales by provider). In `head`: platform dollars print
   // before the top items (plan §9.2, CC ruling S5); a provider whose every check has no amount is "amount unknown".
   const platformsLabel = c.t("digest.v2.sales.platforms_label");
   const channelsHref = view("channels");
@@ -446,6 +428,29 @@ function salesReportLines(c: Ctx, v: ShopV2Facts): { head: DigestLine[]; mid: Di
     out.head.push(gated(rows.length === 0
       ? { label: platformsLabel, text: c.t("digest.v2.sales.no_platforms"), tone: "info", href }
       : { label: platformsLabel, tone: "info", href, ...(lost > 0 ? { unknown: true } : {}), text: join([capItems(rows.map(item)), missing(hiddenLost)]) }));
+  }
+
+  // 5. Busiest hours: top 3 with $ and checks (plan §6); a check with no opened time is said apart, never ranked. In
+  // `head`, right after the delivery platforms (the §9.2 mock's order; digest round 3 polish): on a healthy day it
+  // prints under the cap instead of folding into "and N more". An hour, or the no-opened-time group, whose every
+  // check has no amount says "amount unknown", never $0.00 (ruling S2's wording).
+  const hoursHref = view("heatmap");
+  const hoursLabel = c.t("digest.v2.sales.hours_label");
+  const hl = notLoaded(c, hoursLabel, hoursHref, d.hours);
+  if (hl) out.head.push(gated(hl));
+  else if (d.hours.kind === "ok") {
+    const h = busiestHours(d.hours.value);
+    const lost = d.hours.value.reduce((a, r) => a + r.amountMissing, 0);
+    out.head.push(gated(h.top.length === 0 && h.unknown.checks === 0
+      ? { label: hoursLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: hoursHref }
+      : {
+        label: hoursLabel, tone: "info", href: hoursHref, ...(lost > 0 ? { unknown: true } : {}),
+        text: join([
+          h.top.length === 0 ? null : h.top.map((x) => c.t("digest.v2.sales.hour_item", { hour: formatHourRange(x.hour, c.language), money: amountOrUnknown(x), checks: checks(x.checks) })).join(", "),
+          h.unknown.checks > 0 ? c.t("digest.v2.sales.hour_unknown", { checks: checks(h.unknown.checks), money: amountOrUnknown(h.unknown) }) : null,
+          missing(lost),
+        ]),
+      }));
   }
 
   // 6. Catering vs walk-in (catering = Toast catering checks + ezCater orders; walk-in = every other counted sale).
@@ -502,7 +507,8 @@ function salesReportLines(c: Ctx, v: ShopV2Facts): { head: DigestLine[]; mid: Di
       ? { label: serversLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: serversHref }
       : {
         label: serversLabel, tone: "info", href: serversHref, ...(lost > 0 ? { unknown: true } : {}),
-        text: join([top.map((r) => `${salesServerLabel(c.t, r.key, r.label, r.serverOnline)} ${money(c, r.cents)} (${checks(r.checks)})`).join(", "), missing(lost)]),
+        // A server whose every check has no amount says "amount unknown (N checks)", never $0.00 (ruling S2's wording).
+        text: join([top.map((r) => `${salesServerLabel(c.t, r.key, r.label, r.serverOnline)} ${amountAllUnknown(r) ? amountUnknown(checks(r.checks)) : `${money(c, r.cents)} (${checks(r.checks)})`}`).join(", "), missing(lost)]),
       }));
   }
   return out;

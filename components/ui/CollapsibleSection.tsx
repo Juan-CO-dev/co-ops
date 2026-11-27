@@ -39,6 +39,12 @@
  * closed gets no scroll from the reveal. `revealOnMount={false}` skips the after-mount reveal (a section
  * re-mounted on the same visit, e.g. a tab shown again, must not re-open and jump); `hashchange` still
  * reveals.
+ *
+ * Digest round 3 polish: a pending scroll belongs to the URL that asked for it. The reveal records the full URL
+ * (`location.href`); the scroll is paid only while the page is still on that URL, so a deferred open that commits
+ * after the person navigated elsewhere (another hash, or a pushState that kept the hash but changed the query) opens
+ * the section and does NOT scroll to it. A `hashchange` naming another section drops the pending scroll at once, and
+ * so does an unmount. The open request (`opening`) is kept: a deferred parent is still asked once, never twice.
  */
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
@@ -89,18 +95,19 @@ export function CollapsibleSection({
   const sectionRef = useRef<HTMLElement>(null);
   const latest = useRef({ isOpen, isControlled, onToggle, revealOnMount });
   useEffect(() => { latest.current = { isOpen, isControlled, onToggle, revealOnMount }; });
-  // `opening`: an open was requested and has not committed yet (never request it twice). `scrollPending`: the
-  // reveal still owes a scroll, paid once the section renders open. `reveal` re-runs the scroll effect when the
-  // section is already open (no open-state change to wait for).
+  // `opening`: an open was requested and has not committed yet (never request it twice). `scrollPending`: the URL
+  // whose reveal still owes a scroll (null = none), paid once the section renders open while the page is still on
+  // that URL. `reveal` re-runs the scroll effect when the section is already open (no open-state change to wait for).
   const opening = useRef(false);
-  const scrollPending = useRef(false);
+  const scrollPending = useRef<string | null>(null);
   const [reveal, setReveal] = useState(0);
   useEffect(() => {
     if (!anchorId) return;
     const fromHash = () => {
-      if (window.location.hash !== `#${anchorId}`) return;
+      // A navigation to another anchor (or none) cancels a scroll this section still owes.
+      if (window.location.hash !== `#${anchorId}`) { scrollPending.current = null; return; }
       const now = latest.current;
-      scrollPending.current = true;
+      scrollPending.current = window.location.href;
       if (!now.isOpen && !opening.current) {
         opening.current = true; // marked BEFORE the request: a second effect run sees it
         if (now.isControlled) now.onToggle?.();
@@ -110,21 +117,27 @@ export function CollapsibleSection({
     };
     if (latest.current.revealOnMount) fromHash();
     window.addEventListener("hashchange", fromHash);
-    return () => window.removeEventListener("hashchange", fromHash);
+    return () => {
+      window.removeEventListener("hashchange", fromHash);
+      scrollPending.current = null; // an unmount (or a new anchor) owes no scroll
+    };
   }, [anchorId]);
   // The open committed: the request is done, and a pending scroll is paid now (after the open rendered).
   useEffect(() => {
     if (!isOpen) return;
     opening.current = false;
-    if (!scrollPending.current) return;
-    scrollPending.current = false;
+    const requestedAt = scrollPending.current;
+    if (requestedAt === null) return;
+    scrollPending.current = null;
+    // The page moved on since the reveal asked (another hash, another query): open, but never jump to a stale anchor.
+    if (window.location.href !== requestedAt) return;
     sectionRef.current?.scrollIntoView?.({ block: "start" });
   }, [isOpen, reveal]);
 
   const handleToggle = () => {
     // The person's own tap ends any reveal in progress: it neither scrolls later nor blocks a later reveal.
     opening.current = false;
-    scrollPending.current = false;
+    scrollPending.current = null;
     if (isControlled) onToggle?.();
     else setUncontrolledOpen((v) => !v);
   };
