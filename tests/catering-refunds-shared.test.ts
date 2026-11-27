@@ -24,7 +24,7 @@ import {
 import { ROLES, type RoleCode } from "@/lib/roles";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
-import { REFUND_ERROR_CODES, REFUND_REASON_CODES, REFUND_STATUSES } from "@/lib/catering/refunds-shared";
+import { REFUND_ERROR_CODES, REFUND_REASON_CODES, REFUND_ROLES, REFUND_STATUSES } from "@/lib/catering/refunds-shared";
 
 const PAID = { amountCents: 30000, status: "paid", provider: "stripe", providerRef: "pi_123" };
 
@@ -37,10 +37,45 @@ describe("the switch", () => {
   });
 });
 
-describe("who may refund (the conservative gate)", () => {
-  it("catering manager, MoO, owner, CGS — never GM, AGM, prep or social media manager, never by level", () => {
+describe("who may refund (Juan 2026-11-25: GM and AGM too)", () => {
+  it("exactly six roles: catering manager, AGM, GM, MoO, owner, CGS", () => {
     const allowed = (Object.keys(ROLES) as RoleCode[]).filter(canRequestRefund).sort();
-    expect(allowed).toEqual(["catering_mgr", "cgs", "moo", "owner"]);
+    expect(allowed).toEqual(["agm", "catering_mgr", "cgs", "gm", "moo", "owner"]);
+    expect([...REFUND_ROLES].sort()).toEqual(allowed);
+    expect(new Set(REFUND_ROLES).size).toBe(REFUND_ROLES.length);
+  });
+  it("a ROLE list, never a level: the other level-6 managers and everyone below stay out", () => {
+    // Level 6 holds four roles; two of them refund and two do not, so no level test can express the gate.
+    const level6 = (Object.keys(ROLES) as RoleCode[]).filter((r) => ROLES[r].level === 6).sort();
+    expect(level6).toEqual(["agm", "catering_mgr", "prep_mgr", "social_media_mgr"]);
+    for (const role of ["prep_mgr", "social_media_mgr", "shift_lead", "key_holder", "trainer", "employee", "trainee", "hired_not_yet_worked", "prospect"] as RoleCode[]) {
+      expect(canRequestRefund(role), role).toBe(false);
+    }
+    const refused = (Object.keys(ROLES) as RoleCode[]).filter((r) => !canRequestRefund(r));
+    expect(refused).toHaveLength(Object.keys(ROLES).length - 6);
+  });
+  it("the forbidden message names every role, and says WHO needs a shop, in both languages", () => {
+    const key = "catering.refunds.error.forbidden";
+    // Whole words: "GM" must be there on its own (a bare `toContain("GM")` is satisfied by "AGM").
+    const words = (text: string) => text.split(/[^\p{L}]+/u).filter(Boolean);
+    for (const word of ["AGM", "GM", "MoO", "CGS", "owner"]) expect(words(en[key]), word).toContain(word);
+    for (const word of ["AGM", "GM", "MoO", "CGS", "dueño"]) expect(words(es[key]), word).toContain(word);
+    expect(en[key]).toContain("catering manager");
+    expect(es[key]).toContain("gerente de catering");
+    expect(words("the AGM and the MoO")).not.toContain("GM");
+    // Owner and CGS refund at ANY shop; the other four at a shop they belong to. The sentence keeps the two apart.
+    const [enAny, enMember] = en[key].split(" at any shop; ");
+    expect(enMember).toBeDefined();
+    for (const word of ["owner", "CGS"]) expect(words(enAny!), word).toContain(word);
+    for (const word of ["MoO", "AGM", "GM"]) { expect(words(enMember!), word).toContain(word); expect(words(enAny!), word).not.toContain(word); }
+    expect(enMember).toContain("catering manager");
+    expect(enMember).toContain("only at a shop they belong to");
+    const [esAny, esMember] = es[key].split(" en cualquier tienda; ");
+    expect(esMember).toBeDefined();
+    for (const word of ["dueño", "CGS"]) expect(words(esAny!), word).toContain(word);
+    for (const word of ["MoO", "AGM", "GM"]) { expect(words(esMember!), word).toContain(word); expect(words(esAny!), word).not.toContain(word); }
+    expect(esMember).toContain("gerente de catering");
+    expect(esMember).toContain("solo en una tienda a la que pertenecen");
   });
 });
 

@@ -47,15 +47,20 @@ export function isRefundTrigger(v: unknown): v is RefundTrigger {
   return typeof v === "string" && (REFUND_TRIGGERS as readonly string[]).includes(v);
 }
 
-// ── Who may refund (the conservative gate; Juan to confirm) ───────────────────────────────────────────────
+// ── Who may refund (Juan 2026-11-25: GM and AGM too, at a shop they belong to) ─────────────────────────────
 /**
- * Money OUT is more sensitive than sending a quote. The catering manager, and level 8+ (MoO, owner, CGS) — the same
- * roles as 0357's `catering_refund_actor_ok`, which is the authority (a MoO or catering manager also needs an active
- * membership at the order's shop; the app checks that with `lockLocationContext` before the RPC, and the RPC again
- * under the lock). GM and AGM are deliberately NOT included until Juan says so. A ROLE check, never level-only:
- * level 6 also holds the prep and social media managers.
+ * Money OUT is more sensitive than sending a quote. The catering manager, the AGM, the GM, and level 8+ (MoO, owner,
+ * CGS) — the same roles as migration 0358's `catering_refund_actor_ok` (re-emitted from 0357 with `gm` and `agm`
+ * added), which is the authority. Owner and CGS refund at any shop; a MoO, catering manager, GM or AGM also needs an
+ * ACTIVE membership at the order's shop: the app checks that with `lockLocationContext` before the RPC
+ * (`actorMayRefund`, lib/catering/refunds.ts), and the RPC again under the lock. A ROLE check, never level-only:
+ * level 6 also holds the prep and social media managers, who stay out.
+ *
+ * TWO HOMES, HELD EQUAL: this list and the SQL rule's (tests/catering-refund-0358-migration.test.ts). Either one alone
+ * opens nothing: with this list and 0357's rule the reserve answers `forbidden` (403); with 0358's rule and the old
+ * list the routes refuse before the database is asked. Everything stays behind `CATERING_REFUNDS` regardless.
  */
-export const REFUND_ROLES: readonly RoleCode[] = ["catering_mgr", "moo", "owner", "cgs"];
+export const REFUND_ROLES: readonly RoleCode[] = ["catering_mgr", "agm", "gm", "moo", "owner", "cgs"];
 export function canRequestRefund(role: RoleCode): boolean {
   return REFUND_ROLES.includes(role);
 }
