@@ -289,7 +289,7 @@ describe("busiest hours: top 3 by $, ties broken by checks then the earlier hour
 
   it("the line: each hour with $ and checks; checks with no opened time said apart, never ranked", () => {
     const l = uncappedSales(detail()).find((x) => x.label === "Busiest hours")!;
-    expect(l.text).toBe(`${formatHourRange(12, "en")} $1,140.00 (38 checks), ${formatHourRange(13, "en")} $980.00 (30 checks), ${formatHourRange(18, "en")} $760.00 (20 checks) · no opened time: 2 checks $45.00`);
+    expect(l.text).toBe(`${formatHourRange(12, "en")} $1,140.00 (38 checks), ${formatHourRange(13, "en")} $980.00 (30 checks), ${formatHourRange(18, "en")} $760.00 (20 checks) +1 · no opened time: 2 checks $45.00`);
     expect(l.href).toBe(`${BASE}/reports/sales?location=${A}&range=custom&from=${D}&to=${D}&view=heatmap`);
   });
 
@@ -758,7 +758,7 @@ describe("digest round 3 polish: busiest hours print; an all-unknown hour or ser
     for (const viewer of [GM_A, MOO, OWNER]) {
       const s = sectionFor(facts(A, "Shop A", detail()), env(viewer))!;
       const hours = s.lines.find((l) => l.label === "Busiest hours")!;
-      expect(hours.text).toBe(`${threeHours} · no opened time: 2 checks $45.00`);
+      expect(hours.text).toBe(`${threeHours} +1 · no opened time: 2 checks $45.00`); // 11 AM is the 4th hour: folded, counted
       expect(s.lines.at(-1)!.text).not.toContain("Busiest hours");
       const mail = renderShopDigest(facts(A, "Shop A", detail()), env(viewer));
       for (const body of [mail.text, mail.html]) {
@@ -767,6 +767,15 @@ describe("digest round 3 polish: busiest hours print; an all-unknown hour or ser
         expect(at).toBeLessThan(body.indexOf("Top items (units)"));
       }
     }
+  });
+
+  it("hours past the top 3 fold into ' +N' inside the line (never silently); exactly 3 hours print no '+N'", () => {
+    const hourRows = (n: number) => Array.from({ length: n }, (_, i) => ({ key: `3|${8 + i}`, dow: 3, hour: 8 + i, checks: 1 + i, cents: 1000 * (1 + i), amount_missing: 0 }));
+    const twelve = lineOf(hoursOf(hourRows(12)), "Busiest hours")!.text;
+    expect(twelve).toBe(`${formatHourRange(19, "en")} $120.00 (12 checks), ${formatHourRange(18, "en")} $110.00 (11 checks), ${formatHourRange(17, "en")} $100.00 (10 checks) +9`);
+    const three = lineOf(hoursOf(hourRows(3)), "Busiest hours")!.text;
+    expect(three).toBe(`${formatHourRange(10, "en")} $30.00 (3 checks), ${formatHourRange(9, "en")} $20.00 (2 checks), ${formatHourRange(8, "en")} $10.00 (1 check)`);
+    expect(lineOf(hoursOf(hourRows(12)), "Horas con más ventas", "es")!.text).toMatch(/ \+9$/);
   });
 
   it("the cap rule is unchanged (F3: only issues are exempt): with six higher-priority unknown lines a routine hours line can still fold", () => {

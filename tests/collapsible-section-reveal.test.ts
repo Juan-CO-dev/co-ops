@@ -233,7 +233,7 @@ describe("digest round 3 polish: a deferred open never scrolls to a stale anchor
     expect(scrolls).toEqual([]);
   });
 
-  it("an unmount before the deferred open commits: no scroll, no error", async () => {
+  it("an unmount before the deferred open commits: no scroll, no error (a guard: this also held before the change)", async () => {
     vi.useFakeTimers();
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -245,6 +245,29 @@ describe("digest round 3 polish: a deferred open never scrolls to a stale anchor
       await act(async () => { vi.advanceTimersByTime(60); });
       expect(scrolls).toEqual([]);
       expect(errors).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the section's anchor changes (revealOnMount off) before the deferred open commits: the old request owes no scroll", async () => {
+    // Fix round (Opus P3 #1): this is the case the effect cleanup's reset exists for. The element is the same, so
+    // without the reset the old request would scroll to it under its NEW id, with no hashchange or URL change.
+    function Renamed({ spy, anchorId }: { spy: () => void; anchorId: string }): ReactNode {
+      const [open, setOpen] = useState(false);
+      return section({ anchorId, revealOnMount: anchorId === "ctl", open, onToggle: () => { spy(); setTimeout(() => setOpen((v) => !v), 50); } }, "Controlled");
+    }
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/page#ctl");
+      const spy = vi.fn();
+      const { rerender } = render(createElement(Renamed, { spy, anchorId: "ctl" }));
+      expect(spy).toHaveBeenCalledTimes(1);
+      rerender(createElement(Renamed, { spy, anchorId: "renamed" }));
+      await act(async () => { vi.advanceTimersByTime(60); });
+      expect(header("Controlled").getAttribute("aria-expanded")).toBe("true");
+      expect(scrolls).toEqual([]);
+      expect(spy).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

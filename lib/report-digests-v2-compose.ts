@@ -446,7 +446,9 @@ function salesReportLines(c: Ctx, v: ShopV2Facts): { head: DigestLine[]; mid: Di
       : {
         label: hoursLabel, tone: "info", href: hoursHref, ...(lost > 0 ? { unknown: true } : {}),
         text: join([
-          h.top.length === 0 ? null : h.top.map((x) => c.t("digest.v2.sales.hour_item", { hour: formatHourRange(x.hour, c.language), money: amountOrUnknown(x), checks: checks(x.checks) })).join(", "),
+          // The top 3 print in full; the hours past them fold into " +N" (plan §2.6's in-line rule), never silently.
+          h.top.length === 0 ? null : h.top.map((x) => c.t("digest.v2.sales.hour_item", { hour: formatHourRange(x.hour, c.language), money: amountOrUnknown(x), checks: checks(x.checks) })).join(", ")
+            + (h.hours > h.top.length ? ` +${h.hours - h.top.length}` : ""),
           h.unknown.checks > 0 ? c.t("digest.v2.sales.hour_unknown", { checks: checks(h.unknown.checks), money: amountOrUnknown(h.unknown) }) : null,
           missing(lost),
         ]),
