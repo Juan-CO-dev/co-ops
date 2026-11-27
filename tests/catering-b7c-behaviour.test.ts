@@ -531,6 +531,7 @@ describe("the board loads a deep-linked lead even when the newest-first read sto
 
   it("the pipeline page passes ?lead= to the board", () => {
     const page = readFileSync("app/(authed)/catering/pipeline/page.tsx", "utf8");
-    expect(page).toMatch(/loadPipelineBoard\(auth, \{ ensureLead: leadParam \}\)/);
+    // Digests round 3 (PR 1b): the board view also takes the day filter; ?lead= still rides along.
+    expect(page).toMatch(/loadPipelineBoardView\(auth, \{ ensureLead: leadParam, filter: dayFilterParam \}\)/);
   });
 });

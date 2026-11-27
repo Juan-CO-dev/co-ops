@@ -292,3 +292,11 @@ export function flaggedLineCounts(rows: readonly PrepDemandRow[], par: PrepParIn
   }
   return out;
 }
+
+// ── The Prep demand page's tabs (digests round 3, PR 1b) ──────────────────────────────────────
+/** The tabs of /admin/catering/prep-demand; the page's `?tab=` picks the first one (default Prep). */
+export const PREP_DEMAND_TABS = ["prep", "sku", "surplus", "sales"] as const;
+export type PrepDemandTab = (typeof PREP_DEMAND_TABS)[number];
+export function isPrepDemandTab(v: unknown): v is PrepDemandTab {
+  return typeof v === "string" && (PREP_DEMAND_TABS as readonly string[]).includes(v);
+}

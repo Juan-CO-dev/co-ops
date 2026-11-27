@@ -10,6 +10,7 @@ import { ROLES, getRoleLevel, type RoleCode } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import type { AuthContext } from "@/lib/session";
 import { reportsRoleAllowed } from "@/lib/reports-access-shared";
+import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
 
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
@@ -163,6 +164,7 @@ async function countPage(role: RoleCode, mayCount: boolean) {
     Suspense: "Suspense", OnHandBoundary: "OnHandBoundary", OnHandSection: "OnHandSection",
     CountForm: "CountForm", OnHandPanel: "OnHandPanel", DashboardBackLink: "DashboardBackLink", ExportLinks: "ExportLinks",
     reportsRoleAllowed, // nav spec PR S1: the export link is not offered to the social media manager
+    DIGEST_ANCHORS, // digests round 3 (PR 1b): the on-hand panel carries the digest's #on-hand anchor
     React: { createElement: (type: unknown, props: unknown, ...children: unknown[]) => ({ type, props, children }) },
   };
   const page = new Function(...Object.keys(deps), `${js}; return CountsPage;`)(...Object.values(deps));

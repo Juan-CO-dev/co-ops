@@ -29,7 +29,7 @@ import { etWallTime } from "@/lib/report-digests-shared";
 import { toastRingLines } from "@/lib/report-digests-toast-shared";
 import { cutoffMinutes } from "@/lib/vendor-rhythm-shared";
 import type { DigestLine, DigestSection, DigestTone } from "@/lib/report-digests-compose";
-import { digestLink, type DigestTarget, type LinkViewer } from "@/lib/report-digests-links";
+import { digestLink, sectionLink, type DigestTarget, type LinkViewer } from "@/lib/report-digests-links";
 import { digestCan, type DigestAccess, type DigestCapability } from "@/lib/report-digests-access-shared";
 import { capItems, finishSection, finishSections, LINE_ITEMS_MAX, SECTION_CAP_WIDE, type SectionDraft } from "@/lib/report-digests-layout-shared";
 
@@ -115,7 +115,9 @@ export function headlineLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
 // ── 2. Ordering (day D) ──────────────────────────────────────────────────────────────────────
 
 export function orderingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
-  const href = link(c, { to: "ordering", location: c.locationId });
+  // Live screen: today's orders on /ordering (a PO stays its own dated panel; a missed cutoff its alert).
+  const href = link(c, { to: "ordering", location: c.locationId, anchor: "today" });
+  const missedHref = link(c, { to: "ordering", location: c.locationId, anchor: "missed" });
   const poHref = (id: string) => link(c, { to: "ordering", location: c.locationId, po: id });
   const nl = notLoaded(c, c.t("digest.v2.ordering.label"), href, v.ordering);
   if (nl) return [nl];
@@ -141,7 +143,7 @@ export function orderingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
     text: `${p.displayCode} · ${c.t(p.status === "draft" ? "digest.v2.ordering.draft_not_sent" : "digest.v2.ordering.confirmed_not_sent")}`,
   });
   for (const m of day.missed) lines.push({
-    label: m.vendorName, href, tone: "issue",
+    label: m.vendorName, href: missedHref, tone: "issue",
     text: `${c.t("digest.v2.ordering.missed_cutoff", { time: cutoffLabel(c, m.cutoffTime) })} · ${plural(c.t, m.suggestedLines, "digest.v2.ordering.walk_suggested_one", "digest.v2.ordering.walk_suggested_other")}`,
   });
   // A late order is a to-do (attention); a cutoff nothing can check is UNKNOWN.
@@ -205,8 +207,10 @@ export function receivingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
 const names = (xs: Array<{ name: string }>) => capItems(xs.map((x) => x.name));
 
 export function inventoryLines(c: Ctx, v: ShopV2Facts, pendingItems: number): DigestLine[] {
+  // Tosses keep the counts page (the AM prep report is not confirmed to show batch tosses); the walk's
+  // out / below-par lines open the par walk on /ordering (live).
   const countsHref = link(c, { to: "counts", location: c.locationId });
-  const orderingHref = link(c, { to: "ordering", location: c.locationId });
+  const orderingHref = link(c, { to: "ordering", location: c.locationId, anchor: "walk" });
   const receivingHref = link(c, { to: "receiving", location: c.locationId, anchor: "recent" });
   const nl = notLoaded(c, c.t("digest.v2.inventory.label"), countsHref, v.inventory);
   if (nl) return [nl];
@@ -528,6 +532,8 @@ export function peopleLines(c: Ctx, v: ShopV2Facts, who: { openedBy: string | nu
 
 export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   const ordering = link(c, { to: "ordering", location: c.locationId });
+  // Tomorrow's cutoffs: the cutoff list on /ordering, right once the day has rolled over (live).
+  const cutoffsHref = link(c, { to: "ordering", location: c.locationId, anchor: "cutoffs" });
   const tomorrowLabel = formatDateLabel(v.lookahead, c.language);
   const lines: DigestLine[] = [];
   const nl = notLoaded(c, c.t("digest.v2.tomorrow.deliveries_label"), ordering, v.ordering);
@@ -548,14 +554,16 @@ export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
       label: c.t("digest.v2.tomorrow.deliveries_label"), href: ordering, tone: "info",
       text: plural(c.t, deliveries.undated.length, "digest.v2.tomorrow.undated_one", "digest.v2.tomorrow.undated_other", { vendors: [...new Set(deliveries.undated.map((u) => u.vendorName))].join(", ") }),
     });
-    if (cutoffsTomorrow.length === 0) lines.push({ label: c.t("digest.v2.tomorrow.cutoffs_label"), text: c.t("digest.v2.tomorrow.no_cutoffs"), tone: "info", href: ordering });
+    if (cutoffsTomorrow.length === 0) lines.push({ label: c.t("digest.v2.tomorrow.cutoffs_label"), text: c.t("digest.v2.tomorrow.no_cutoffs"), tone: "info", href: cutoffsHref });
     for (const x of cutoffsTomorrow) lines.push({
       // A draft waiting for tomorrow's cutoff is a to-do (send it); no draft at all is an issue.
-      label: x.vendorName, href: ordering, tone: x.ordered ? "info" : x.hasDraft ? "attention" : "issue",
+      label: x.vendorName, href: cutoffsHref, tone: x.ordered ? "info" : x.hasDraft ? "attention" : "issue",
       text: `${c.t("digest.v2.tomorrow.cutoff_at", { time: cutoffLabel({ ...c, day: v.lookahead }, x.cutoffTime) })} · ${c.t(x.ordered ? "digest.v2.tomorrow.already_ordered" : x.hasDraft ? "digest.v2.tomorrow.draft_ready" : "digest.v2.tomorrow.no_draft")}`,
     });
   }
-  const catHref = link(c, { to: "pipeline" });
+  // Tomorrow's catering: the pipeline filtered to D+1 and this shop (dated); the plain board when the shop is
+  // outside the reader's pipeline scope.
+  const catHref = link(c, { to: "pipeline", day: v.lookahead, location: c.locationId, view: "booked" }, { to: "pipeline" });
   const cl = notLoaded(c, c.t("digest.v2.tomorrow.catering_label"), catHref, v.catering);
   if (cl) lines.push(cl);
   else if (v.catering.kind === "ok") {
@@ -644,22 +652,24 @@ export interface V2Extras {
 }
 
 /**
- * The screen each v2 section summarizes, for this recipient (the section's "Open this in the app" link).
- * Exported so the tests pin the section → link map.
+ * The screen each v2 section summarizes, for this recipient (the section's "Open this in the app" link), and
+ * whether that screen is live (shows the current day; the email says so). Exported so the tests pin the
+ * section → link map.
  */
-export function v2SectionLinks(c: Ctx): Record<"headline" | "ordering" | "receiving" | "inventory" | "operations" | "sales" | "labor" | "people" | "tomorrow" | "to_ring", string | null> {
+export function v2SectionLinks(c: Ctx): Record<"headline" | "ordering" | "receiving" | "inventory" | "operations" | "sales" | "labor" | "people" | "tomorrow" | "to_ring", { href: string | null; live: boolean }> {
   const loc = c.locationId;
+  const s = (...chain: DigestTarget[]) => sectionLink({ baseUrl: c.baseUrl, viewer: c.viewer }, ...chain);
   return {
-    headline: link(c, { to: "sales", location: loc, day: c.day }, { to: "mid_shift", location: loc }),
-    ordering: link(c, { to: "ordering", location: loc }),
-    receiving: link(c, { to: "receiving", location: loc, anchor: "recent" }),
-    inventory: link(c, { to: "counts", location: loc }, { to: "ordering", location: loc }),
-    operations: link(c, { to: "reports_list", location: loc, day: c.day }),
-    sales: link(c, { to: "sales", location: loc, day: c.day }, { to: "mid_shift", location: loc }),
-    labor: link(c, { to: "team", location: loc, day: c.day }),
-    people: link(c, { to: "team", location: loc, day: c.day }, { to: "reports_list", location: loc, day: c.day, type: "pm" }),
-    tomorrow: link(c, { to: "ordering", location: loc }),
-    to_ring: link(c, { to: "pipeline", anchor: "to_ring" }),
+    headline: s({ to: "sales", location: loc, day: c.day }, { to: "mid_shift", location: loc }),
+    ordering: s({ to: "ordering", location: loc, anchor: "today" }),
+    receiving: s({ to: "receiving", location: loc, anchor: "recent" }),
+    inventory: s({ to: "counts", location: loc, anchor: "on_hand" }, { to: "ordering", location: loc, anchor: "walk" }),
+    operations: s({ to: "reports_list", location: loc, day: c.day }),
+    sales: s({ to: "sales", location: loc, day: c.day }, { to: "mid_shift", location: loc }),
+    labor: s({ to: "team", location: loc, day: c.day }),
+    people: s({ to: "team", location: loc, day: c.day }, { to: "reports_list", location: loc, day: c.day, type: "pm" }),
+    tomorrow: s({ to: "ordering", location: loc, anchor: "cutoffs" }),
+    to_ring: s({ to: "pipeline", anchor: "to_ring" }),
   };
 }
 
@@ -675,17 +685,17 @@ export function composeV2Sections(args: { shopName: string; locationId: string; 
   const href = v2SectionLinks(c);
   const can = (cap: DigestCapability) => digestCan(access, cap, { locationId: args.locationId, day: args.day });
   const drafts: SectionDraft[] = [
-    { title: title("digest.v2.section.headline"), lines: headlineLines(c, args.v), href: href.headline },
-    { title: title("digest.v2.section.ordering"), lines: orderingLines(c, args.v), href: href.ordering },
-    { title: title("digest.v2.section.receiving"), lines: receivingLines(c, args.v), href: href.receiving },
-    { title: title("digest.v2.section.inventory"), lines: inventoryLines(c, args.v, args.extras.pendingItems), href: href.inventory },
-    { title: title("digest.v2.section.operations"), lines: args.extras.operations, href: href.operations },
-    { title: title("digest.v2.section.sales"), lines: salesDetailLines(c, args.v), href: href.sales, cap: SECTION_CAP_WIDE },
-    ...(args.v.labor ? [{ title: title("digest.v2.section.labor"), lines: laborLines(c, args.v), href: href.labor, cap: SECTION_CAP_WIDE }] : []),
-    { title: title("digest.v2.section.people"), lines: peopleLines(c, args.v, args.extras.who, args.extras.pmLine), href: href.people },
-    { title: title("digest.v2.section.tomorrow", { date: formatDateLabel(args.v.lookahead, language) }), lines: tomorrowLines(c, args.v), href: href.tomorrow },
+    { title: title("digest.v2.section.headline"), lines: headlineLines(c, args.v), ...href.headline },
+    { title: title("digest.v2.section.ordering"), lines: orderingLines(c, args.v), ...href.ordering },
+    { title: title("digest.v2.section.receiving"), lines: receivingLines(c, args.v), ...href.receiving },
+    { title: title("digest.v2.section.inventory"), lines: inventoryLines(c, args.v, args.extras.pendingItems), ...href.inventory },
+    { title: title("digest.v2.section.operations"), lines: args.extras.operations, ...href.operations },
+    { title: title("digest.v2.section.sales"), lines: salesDetailLines(c, args.v), ...href.sales, cap: SECTION_CAP_WIDE },
+    ...(args.v.labor ? [{ title: title("digest.v2.section.labor"), lines: laborLines(c, args.v), ...href.labor, cap: SECTION_CAP_WIDE }] : []),
+    { title: title("digest.v2.section.people"), lines: peopleLines(c, args.v, args.extras.who, args.extras.pmLine), ...href.people },
+    { title: title("digest.v2.section.tomorrow", { date: formatDateLabel(args.v.lookahead, language) }), lines: tomorrowLines(c, args.v), ...href.tomorrow },
     // Present only when a line is left for this recipient: finishSection decides from the allowed lines.
-    { title: title("digest.catering.to_ring.tomorrow"), lines: toRing, href: href.to_ring },
+    { title: title("digest.catering.to_ring.tomorrow"), lines: toRing, ...href.to_ring },
   ];
   return finishSections(drafts, { t: c.t, can });
 }

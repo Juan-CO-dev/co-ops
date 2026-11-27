@@ -44,6 +44,7 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { searchParamValues, shopParamFor } from "@/lib/shop-context-shared";
 import { resolveShopId } from "@/lib/shop-context";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
 
 export default async function OrderingPage({
   searchParams,
@@ -220,6 +221,8 @@ export default async function OrderingPage({
 
         {/* Keyed by the shop: the tabs are soft navigations, and an unkeyed island would carry
             shop A's unsubmitted counts into shop B's walk (audit W18/B024). */}
+        {/* The digest's "out / below par" lines scroll here (an id only, no visual change). */}
+        <div id={DIGEST_ANCHORS.orderingWalk}>
         <ParPassWalker
           key={locationId}
           walker={walker}
@@ -228,6 +231,7 @@ export default async function OrderingPage({
           shopLabel={shopLabel}
           vendorDateLabel={vendorDateLabel}
         />
+        </div>
       </main>
       </NavFrame>
     </TranslationProvider>

@@ -13,7 +13,7 @@ const h = vi.hoisted(() => ({ auth: null as unknown, sb: null as unknown }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`redirect:${url}`); }, useRouter: () => ({ refresh: () => {} }) }));
 vi.mock("@/lib/session", () => ({ requireSessionFromHeaders: async () => h.auth }));
 vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.sb }));
-vi.mock("@/lib/catering/pipeline", () => ({ PIPELINE_READ_MIN: 5, PIPELINE_WRITE_MIN: 6, loadAssignableStaff: async () => [], loadPipelineBoard: async () => [], loadFollowUps: async () => [], searchPipeline: async () => [] }));
+vi.mock("@/lib/catering/pipeline", () => ({ PIPELINE_READ_MIN: 5, PIPELINE_WRITE_MIN: 6, loadAssignableStaff: async () => [], loadPipelineBoard: async () => [], loadPipelineBoardView: async () => ({ leads: [], filter: null }), loadFollowUps: async () => [], searchPipeline: async () => [] }));
 vi.mock("@/lib/catering/not-in-toast", () => ({ loadNotInToast: async () => [] }));
 vi.mock("@/lib/shop-context", () => ({ resolveShop: async () => null }));
 // The board itself is not under test (it has its own); the page's own markup and the delivery list are.
