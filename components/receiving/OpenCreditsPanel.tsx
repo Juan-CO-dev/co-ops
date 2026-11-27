@@ -39,9 +39,12 @@ export function OpenCreditsPanel({ summary }: { summary: OpenCreditVendorSummary
   const aging = summary.some((s) => s.oldestDays != null && s.oldestDays > AGING_DAYS);
 
   return (
-    <div id={DIGEST_ANCHORS.receivingCredits} className="mt-6">
+    <div className="mt-6">
+      {/* The digest's `#open-credits` anchor sits ON the disclosure, so arriving with it OPENS the credits and
+          scrolls to them (plan §3.5 "credits open on arrival"; fix round 1, A3), not just scrolls to a closed header. */}
       <CollapsibleSection
         idBase="receiving-open-credits"
+        anchorId={DIGEST_ANCHORS.receivingCredits}
         title={t("receiving.credits.panel_title")}
         count={t("receiving.credits.open_count", { n: totalOpen })}
         badge={

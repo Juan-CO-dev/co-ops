@@ -8,8 +8,9 @@ import {
 } from "@/lib/report-digests-compose";
 
 const BASE = "https://ops.example.com";
-const A = "loc-a";
-const B = "loc-b";
+// Real shop ids are UUIDs: the pipeline day filter only links a shop id the page accepts (fix round 1, A6).
+const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const TODAY = "2026-10-07";
 const YESTERDAY = "2026-10-06";
 const TOMORROW = "2026-10-08";
@@ -60,13 +61,15 @@ describe("composed sections", () => {
       "Shop A · Yesterday (Tue, Oct 6)", "Shop A · Today (Wed, Oct 7)", "Shop A · Early tomorrow (Thu, Oct 8)", "Shop A · Needs action",
       "Shop B · Yesterday (Tue, Oct 6)", "Shop B · Today (Wed, Oct 7)", "Shop B · Early tomorrow (Thu, Oct 8)", "Shop B · Needs action",
     ]);
+    // Digests round 3 (PR 1b): inquiries open the stage board; an empty day opens the board filtered to that
+    // day's booked orders at the shop; "Needs action" with no follow-up due opens the stage board.
     expect(out[0]![1]).toEqual([
       `info|Yesterday|No catering yesterday|${BASE}/catering/pipeline`,
-      `info|Inquiries|No new inquiries|${BASE}/catering/pipeline`,
+      `info|Inquiries|No new inquiries|${BASE}/catering/pipeline#pipeline-stages`,
     ]);
-    expect(out[1]![1]).toEqual([`info|Today|Nothing booked today|${BASE}/catering/pipeline`]);
-    expect(out[2]![1]).toEqual([`info|Tomorrow|Nothing booked tomorrow|${BASE}/catering/pipeline`]);
-    expect(out[3]![1]).toEqual([`ok|Needs action|Nothing needs action|${BASE}/catering/pipeline`]);
+    expect(out[1]![1]).toEqual([`info|Today|Nothing booked today|${BASE}/catering/pipeline?day=${TODAY}&location=${A}&view=booked`]);
+    expect(out[2]![1]).toEqual([`info|Tomorrow|Nothing booked tomorrow|${BASE}/catering/pipeline?day=${TOMORROW}&location=${A}&view=booked`]);
+    expect(out[3]![1]).toEqual([`ok|Needs action|Nothing needs action|${BASE}/catering/pipeline#pipeline-stages`]);
   });
 
   it("Spanish recipients get the Spanish empty states", () => {
@@ -87,15 +90,16 @@ describe("composed sections", () => {
       refundsYesterday: [{ locationId: A, amountCents: 4000 }],
     };
     const y = texts(f)[0]![1];
+    // Fix round 1 (F9): the issues first (the composer's order among them), then the routine lines.
     expect(y[0]).toBe(`issue|Yesterday|2 orders ran · 20 guests · completed $500.00 · confirmed, not completed $300.00|${BASE}/catering/pipeline`);
-    expect(y[1]).toBe(`ok|Ana|11:30 AM · 20 guests · $500.00 · Fulfilled|${BASE}/catering/pipeline?lead=${done.id}#lead-${done.id}`);
-    expect(y[2]).toBe(`issue|Bo Li (Acme)|time not set · size not set · $300.00 · Not marked completed|${BASE}/catering/pipeline?lead=${notDone.id}#lead-${notDone.id}`);
-    expect(y[3]).toBe(`issue|Cy|Lost / cancelled|${BASE}/catering/pipeline?lead=${lost.id}#lead-${lost.id}`);
-    expect(y[4]).toBe(`info|Inquiries|2 new (EZCater 1, Online portal 1)|${BASE}/catering/pipeline`);
-    expect(y[5]).toBe(`info|Quotes|1 quote sent ($250.00)|${BASE}/catering/quotes?quote=q1`);
-    expect(y[6]).toBe(`info|EZCater|Order: Dee|${BASE}/catering/pipeline?lead=${ez.id}#lead-${ez.id}`);
-    expect(y[7]).toBe(`issue|Issues|1 refund ($40.00)|${BASE}/catering/pipeline`);
-    expect(y[8]).toBe(`issue|Issues|1 follow-up overdue|${BASE}/catering/pipeline`);
+    expect(y[1]).toBe(`issue|Bo Li (Acme)|time not set · size not set · $300.00 · Not marked completed|${BASE}/catering/pipeline?lead=${notDone.id}#lead-${notDone.id}`);
+    expect(y[2]).toBe(`issue|Cy|Lost / cancelled|${BASE}/catering/pipeline?lead=${lost.id}#lead-${lost.id}`);
+    expect(y[3]).toBe(`issue|Issues|1 refund ($40.00)|${BASE}/catering/pipeline`);
+    expect(y[4]).toBe(`issue|Issues|1 follow-up overdue|${BASE}/catering/pipeline#follow-ups`);
+    expect(y[5]).toBe(`ok|Ana|11:30 AM · 20 guests · $500.00 · Fulfilled|${BASE}/catering/pipeline?lead=${done.id}#lead-${done.id}`);
+    expect(y[6]).toBe(`info|Inquiries|2 new (EZCater 1, Online portal 1)|${BASE}/catering/pipeline#pipeline-stages`);
+    expect(y[7]).toBe(`info|Quotes|1 quote sent ($250.00)|${BASE}/catering/quotes?quote=q1`);
+    expect(y[8]).toBe(`info|EZCater|Order: Dee|${BASE}/catering/pipeline?lead=${ez.id}#lead-${ez.id}`);
   });
 
   it("today and early tomorrow: time, size, pickup/delivery, prep load; then what needs action", () => {
@@ -116,9 +120,10 @@ describe("composed sections", () => {
     expect(out[1]![1]).toEqual([
       `info|Early|ready by 8:00 AM · 12 guests · Pickup|${BASE}/catering/pipeline?lead=early#lead-early`,
       `info|Late|ready by 5:00 PM · 40 guests · Delivery · prep for Wed, Oct 7: 3.5 qt Chicken salad, 12 × Turkey (whole)|${BASE}/catering/pipeline?lead=late#lead-late`,
-      `info|Today|1 order has no prep ledger yet|${BASE}/catering/pipeline`,
+      // The "no prep" footnote opens that day's section on Prep demand for the shop (live).
+      `info|Today|1 order has no prep ledger yet|${BASE}/admin/catering/prep-demand?location=${A}&tab=prep#prep-day-${TODAY}`,
     ]);
-    expect(out[2]![1]).toEqual([`info|Tmrw|time not set · 25 guests · Delivery|${BASE}/catering/pipeline?lead=tmrw#lead-tmrw`, `info|Tomorrow|1 order has no prep ledger yet|${BASE}/catering/pipeline`]);
+    expect(out[2]![1]).toEqual([`info|Tmrw|time not set · 25 guests · Delivery|${BASE}/catering/pipeline?lead=tmrw#lead-tmrw`, `info|Tomorrow|1 order has no prep ledger yet|${BASE}/admin/catering/prep-demand?location=${A}&tab=prep#prep-day-${TOMORROW}`]);
     expect(out[3]![1]).toEqual([
       `issue|Maybe|Unconfirmed (Thu, Oct 8)|${BASE}/catering/pipeline?lead=maybe#lead-maybe`,
       `issue|Early|Unpaid $150.00 (Wed, Oct 7)|${BASE}/catering/pipeline?lead=early#lead-early`,
@@ -159,10 +164,11 @@ describe("P2 (Astra): the outlook shows the prep LOAD — quantities, units, dem
     expect(es).toContain("1 × Turkey (media)");
   });
 
-  it("more than six lines per date are summarised, never dropped silently", () => {
+  it("more than five lines per date are summarised, never dropped silently (plan §2.6: 5 items, then +N)", () => {
     const prep = Array.from({ length: 8 }, (_, i) => ({ needDate: TODAY, name: `Item ${i}`, nameEs: null, qty: i + 1, unit: "ea", portion: null }));
     const f = empty([lead({ contactName: "Many", eventDate: TODAY, stage: "confirmed", prep })]);
     const text = composeCateringSections(f, { locations: [shops[0]!], includeUnassigned: false }, "en", BASE)[1]!.lines[0]!.text;
-    expect(text).toContain("6 ea Item 5, +2 more");
+    expect(text).toContain("prep for Wed, Oct 7: 1 ea Item 0, 2 ea Item 1, 3 ea Item 2, 4 ea Item 3, 5 ea Item 4, +3 more");
+    expect(text).not.toContain("Item 5");
   });
 });

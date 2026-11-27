@@ -33,6 +33,7 @@ import { PoPanel } from "@/components/ordering/PoPanel";
 import type { TodaysOrderVendor, PoHistoryRow } from "@/lib/purchase-orders";
 import type { OrderingCutoffAttention } from "@/lib/ordering";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
 
 /** PO status → pill tone (D2 status always visible; matches PoPanel's mapping). */
 const STATUS_TONE: Record<string, AlertPillTone> = {
@@ -128,7 +129,7 @@ export function OrderingSurfaces({
   return (
     <div className="mt-4 flex flex-col gap-3">
       {missed.length > 0 && (
-        <section role="alert" className="rounded-xl border-2 border-co-cta bg-co-danger-surface p-4">
+        <section id={DIGEST_ANCHORS.orderingMissed} role="alert" className="rounded-xl border-2 border-co-cta bg-co-danger-surface p-4">
           <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-co-cta-text">
             {t("ordering.po.missed_title")}
           </h2>
@@ -143,7 +144,7 @@ export function OrderingSurfaces({
       )}
       {/* Today's orders — a visible EmptyState when nothing's been drafted yet today
           (council C2 adoption sweep; was previously a silent no-render). */}
-      <section className="co-card p-4">
+      <section id={DIGEST_ANCHORS.orderingToday} className="co-card p-4">
         <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">
           {t("ordering.po.todays_title")}
         </h2>
@@ -179,7 +180,7 @@ export function OrderingSurfaces({
 
       {/* Cutoff vendors with no draft yet → Generate draft. */}
       {hasDraftless && (
-        <section className="co-card p-4">
+        <section id={DIGEST_ANCHORS.orderingCutoffs} className="co-card p-4">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">
               {t("ordering.po.cutoff_title")}

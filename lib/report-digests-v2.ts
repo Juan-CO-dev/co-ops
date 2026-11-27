@@ -13,6 +13,7 @@ import { loadCapturedToastDay } from "@/lib/toast/captured-day";
 import { summarizeLabor, weekStart, type LaborEntryFact, type LaborSummary } from "@/lib/toast/labor-shared";
 import { laborPullEnabled, runToastLaborPull } from "@/lib/toast/labor";
 import { addDays, etDayRange } from "@/lib/report-digests-shared";
+import { mergeBreakdown, SALES_WINDOW_CONCURRENCY, type BreakdownRaw, type DailyRaw, type SalesDimension } from "@/lib/sales-reports-shared";
 import {
   cutoffsTomorrow,
   deliveriesLookahead,
@@ -34,6 +35,8 @@ import {
   type PeopleFacts,
   type PoFact,
   type ReceivingFacts,
+  salesDetailTotals,
+  type SalesDetailFacts,
   type SalesFacts,
   type SalesSummaryInput,
   type ShopV2Facts,
@@ -96,6 +99,89 @@ export async function loadSales(sb: Sb, locationId: string, day: string): Promis
     // The pulse's own refusal: a live check with no amount is unknown money, never $0.
     if (e instanceof Error && e.message === "capture_pulse_amount_missing") return unavailable("amount_missing");
     throw e;
+  }
+}
+
+// ── Sales detail (digests round 3, PR 3) ─────────────────────────────────────────────────────
+
+/** The whole Sales-detail area's deadline (plan §7: 8 s). Every read gets the same signal. */
+export const DIGEST_SALES_DETAIL_MS = 8_000;
+/** The breakdowns the digest reads, beside `sales_report_daily`: exactly four Sales RPCs per shop/day. */
+export const DIGEST_SALES_DETAIL_DIMENSIONS = ["channel", "hour_weekday", "server"] as const satisfies readonly SalesDimension[];
+
+type RpcClient = Pick<Sb, "rpc">;
+type RpcResult = { data: unknown; error: { code?: string; message?: string } | null };
+
+/**
+ * Runs `tasks` in order with at most `limit` in flight; results keep the tasks' order. The tasks never reject
+ * (each read settles to a `Loaded`), so one slow task holds only its own slot.
+ */
+async function runBounded<const F extends readonly (() => Promise<unknown>)[]>(limit: number, tasks: F): Promise<{ -readonly [K in keyof F]: F[K] extends () => Promise<infer R> ? R : never }> {
+  const out: unknown[] = new Array(tasks.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < tasks.length) {
+      const i = next++;
+      out[i] = await tasks[i]!();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, worker));
+  return out as { -readonly [K in keyof F]: F[K] extends () => Promise<infer R> ? R : never };
+}
+
+/**
+ * Sales reads in flight at once for one shop: the Sales page's own per-shop bound (plan §7, "the Sales constant").
+ */
+export const DIGEST_SALES_DETAIL_CONCURRENCY = SALES_WINDOW_CONCURRENCY;
+
+/**
+ * The Sales report's own reads for day D ONLY (never D-7..D): `sales_report_daily` once and
+ * `sales_report_breakdown` for channel, hour_weekday and server (the server dimension is the Sales page's
+ * servers view; no other source gives its ranking). Four RPCs, read-only (0232/0248 are SECURITY DEFINER
+ * reads, service role here), at most `DIGEST_SALES_DETAIL_CONCURRENCY` (2) in flight at once, all under ONE
+ * deadline for the whole set (8 s, CC-confirmed D8): one AbortSignal passed to every RPC, each read settles at the
+ * deadline even if the transport ignores the signal, and a read still QUEUED at the deadline never starts. A
+ * stalled, queued-out, failed or missing read is that part's `error` / `unavailable` — "not available" in the
+ * digest, never $0 — and nothing else is held up.
+ * Never logs an RPC message, an argument or a payload (lib/sales-reports.ts rule).
+ */
+export async function loadSalesDetail(sb: RpcClient, locationId: string, day: string, deadlineMs = DIGEST_SALES_DETAIL_MS): Promise<SalesDetailFacts> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"deadline">((resolve) => {
+    timer = setTimeout(() => { resolve("deadline"); controller.abort(); }, deadlineMs);
+  });
+  const read = async <T,>(area: string, fn: string, args: Record<string, unknown>, map: (data: unknown) => T): Promise<Loaded<T>> => {
+    // Queued past the deadline: the read never starts, and its lines print as unknown (never as zero).
+    if (controller.signal.aborted) { console.error(`[digest v2] sales detail ${area}: deadline`); return failed(); }
+    try {
+      const call = Promise.resolve(sb.rpc(fn, args).abortSignal(controller.signal) as PromiseLike<RpcResult>);
+      call.catch(() => {}); // a rejection after the deadline already decided is not unhandled
+      const res = await Promise.race([call, deadline]);
+      if (res === "deadline") { console.error(`[digest v2] sales detail ${area}: deadline`); return failed(); }
+      if (res.error) {
+        console.error(`[digest v2] sales detail ${area}: read failed`);
+        // 0232 not applied: the source is not there (never a fake empty report).
+        return res.error.code === "PGRST202" || res.error.code === "42883" ? unavailable("sales_reads_not_installed") : failed();
+      }
+      return ok(map(res.data));
+    } catch {
+      console.error(`[digest v2] sales detail ${area}: read failed`);
+      return failed();
+    }
+  };
+  const window = { p_location_id: locationId, p_from: day, p_to: day };
+  const breakdown = (dimension: (typeof DIGEST_SALES_DETAIL_DIMENSIONS)[number]) => read(dimension, "sales_report_breakdown",
+    { ...window, p_dimension: dimension }, (data) => mergeBreakdown(dimension, [(data ?? []) as BreakdownRaw[]]));
+  try {
+    const totals = () => read("daily", "sales_report_daily", window, (data) => salesDetailTotals(data as DailyRaw, day));
+    const [t, channels, hours, servers] = await runBounded(DIGEST_SALES_DETAIL_CONCURRENCY, [
+      totals, () => breakdown("channel"), () => breakdown("hour_weekday"), () => breakdown("server"),
+    ] as const);
+    return { totals: t, channels, hours, servers };
+  } finally {
+    clearTimeout(timer);
+    controller.abort(); // release anything still in flight
   }
 }
 
@@ -312,7 +398,7 @@ export async function laborForDigest(
 }
 
 export async function loadLabor(sb: Sb, locationId: string, day: string, sales: Loaded<SalesFacts>): Promise<Loaded<LaborSummary>> {
-  // Week-to-date (Mon..D) for the 40 h flag; D for everything else.
+  // Payroll-week-to-date (Sun..D by Toast business date, weekStart) for the 40 h flag; D for everything else.
   const rows = await selectAllRows<{ employee_guid: string; employee_first_name: string | null; job_name: string | null; business_date: string; hours: number | string | null; overtime_hours: number | string | null; out_at: string | null }>((f, t) =>
     sb.from("toast_time_entries").select("employee_guid, employee_first_name, job_name, business_date, hours, overtime_hours, out_at")
       .eq("location_id", locationId).eq("deleted", false).gte("business_date", weekStart(day)).lte("business_date", day)
@@ -329,8 +415,11 @@ export async function loadLabor(sb: Sb, locationId: string, day: string, sales: 
 export async function loadShopV2Facts(sb: Sb, locationId: string, day: string, now: Date): Promise<ShopV2Facts> {
   const s = sharedReads(sb, locationId, day);
   const deliveries = memo(() => loadDeliveries(sb, s, locationId, day));
-  const [sales, catering, ordering, receiving, inventory, people] = await Promise.all([
+  const [sales, salesDetail, catering, ordering, receiving, inventory, people] = await Promise.all([
     settle(() => loadSales(sb, locationId, day), "sales"),
+    // Never throws (each part settles on its own, under its own 8 s deadline). Read once per shop/day: the
+    // engine memoizes this whole fact set (Run.shopFacts), so every recipient and the unified digest share it.
+    loadSalesDetail(sb, locationId, day),
     settle(() => loadCateringNight(sb, locationId, day), "catering"),
     settle(() => loadOrdering(sb, s, locationId, day, now), "ordering"),
     settle(() => loadReceiving(sb, deliveries, s, locationId, day), "receiving"),
@@ -345,5 +434,5 @@ export async function loadShopV2Facts(sb: Sb, locationId: string, day: string, n
     },
     read: () => loadLabor(sb, locationId, day, sales),
   }), "labor");
-  return { lookahead: lookaheadDay(day), sales, catering, ordering, receiving, inventory, people, labor };
+  return { lookahead: lookaheadDay(day), sales, catering, ordering, receiving, inventory, people, labor, salesDetail };
 }

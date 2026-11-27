@@ -13,6 +13,7 @@ import { OnHandBoundary } from "@/components/counts/OnHandBoundary";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { ExportLinks } from "@/components/reports-export/ExportLinks";
 import { reportsRoleAllowed } from "@/lib/reports-access-shared";
+import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
 
 /**
  * B9: the on-hand panel STREAMS. Its read starts at the top of the render (beside the count
@@ -73,7 +74,7 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
           0180 applies, and the form then renders exactly as it does on prod today. */}
       {mayCount && <CountForm skus={formData.skus} products={formData.products} locationId={location} requiresPin={auth.level < 6} />}
 
-      {onHand && <div className="lg:min-w-0">
+      {onHand && <div id={DIGEST_ANCHORS.countsOnHand} className="lg:min-w-0">
       <h2 className="mt-6 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim lg:mt-0">{serverT(lang, "counts.onhand.title")}</h2>
       {/* Nav spec PR S1: the export route refuses the social media manager, so the link is not offered to it. */}
       {reportsRoleAllowed(auth.role) ? <ExportLinks className="mt-2" family="counts" language={lang} query={{ location }} /> : null}

@@ -7,6 +7,8 @@
  * (type-only imports are erased); only runtime values need to live here.
  */
 
+import { ROLES, isRoleCode } from "@/lib/roles";
+
 export const PIPELINE_STAGES = ["inquiry", "quote_sent", "confirmed", "out", "completed", "lost"] as const;
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
 
@@ -278,4 +280,83 @@ export function leadEditPatch(
   if (crlf(form.notes) !== crlf(lead.notes ?? "")) patch.notes = text(form.notes);
 
   return { ok: true, patch };
+}
+
+// ── Booked-stage sets (digests round 3, PR 1b) ──────────────────────────────────────────────
+/**
+ * The ONE definition of "booked": the catering digest counts upcoming orders by UPCOMING and the
+ * orders that ran on a day by RAN (lib/report-digests-compose.ts), and the pipeline's day filter
+ * (`?day=&location=&view=booked`, lib/catering/pipeline.ts) shows RAN, so an order the digest counted
+ * does not vanish from the view when it is completed later that day.
+ */
+export const CATERING_UPCOMING_STAGES = ["confirmed", "out"] as const satisfies readonly PipelineStage[];
+export const CATERING_RAN_STAGES = ["confirmed", "out", "completed"] as const satisfies readonly PipelineStage[];
+
+// ── The pipeline read scope (mirrors readScopeOr in lib/catering/pipeline.ts) ───────────────
+/** Catering reads: the catering manager and level 8+ read every shop; everyone else their own shops + no shop. */
+export function pipelineReadsAllShops(role: string): boolean {
+  return role === "catering_mgr" || (isRoleCode(role) && ROLES[role].level >= 8);
+}
+
+/** `none` = a lead with no shop set (location_id null): every pipeline reader sees those. */
+export const PIPELINE_NO_SHOP = "none";
+
+/**
+ * May this reader see the pipeline leads of `location` (a shop id, or `none`)? The board's own scope rule:
+ * level 5+ (PIPELINE_READ_MIN), then the catering manager or level 8+ any shop, otherwise a shop they
+ * belong to (active memberships); `none` for everyone in scope. Pure: the board and the digest link gate
+ * both call it.
+ */
+export function pipelineShopInScope(reader: { role: string; locations: readonly string[] }, location: string): boolean {
+  if (!isRoleCode(reader.role) || ROLES[reader.role].level < 5) return false;
+  if (location === PIPELINE_NO_SHOP) return true;
+  return pipelineReadsAllShops(reader.role) || reader.locations.includes(location);
+}
+
+// ── The day filter's URL shape (?day=&location=&view=booked) ────────────────────────────────
+const DAY_SHAPE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const SHOP_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A real YYYY-MM-DD calendar date (2026-02-31 and 2026-13-01 are not). */
+export function isCalendarDay(v: unknown): v is string {
+  if (typeof v !== "string") return false;
+  const m = DAY_SHAPE.exec(v);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
+/**
+ * The ONE shape check for a pipeline shop param (`?location=` of the day filter): a shop UUID or `none`. The page's
+ * parser and the digest link builder (lib/report-digests-links.ts) both call it, so the builder never emits a link
+ * with a shop id the page would discard (fix round 1, A6).
+ */
+export function isPipelineShopParam(v: unknown): v is string {
+  return typeof v === "string" && (v === PIPELINE_NO_SHOP || SHOP_ID.test(v));
+}
+
+/** The parsed (not yet scope-checked) day filter: a calendar day and a shop id or `none`. */
+export interface PipelineDayFilterParams { day: string; location: string }
+
+/**
+ * Parse the pipeline's day filter from the page's search params. All three must be present and well
+ * formed (`view=booked`, a real calendar day, a shop UUID or `none`); anything else is null and the
+ * params are ignored (the normal board, no banner, never an error). Scope is checked by the loader.
+ */
+export function parsePipelineDayFilter(sp: Record<string, string | string[] | undefined>): PipelineDayFilterParams | null {
+  const one = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
+  const day = one("day");
+  const location = one("location");
+  if (one("view") !== "booked" || !isCalendarDay(day) || !isPipelineShopParam(location)) return null;
+  return { day, location: location === PIPELINE_NO_SHOP ? location : location.toLowerCase() };
+}
+
+/** Does a lead match the day filter (its day, its shop, a booked stage)? */
+export function leadMatchesDayFilter(
+  lead: { eventDate: string | null; locationId: string | null; stage: string },
+  f: PipelineDayFilterParams,
+): boolean {
+  const shop = lead.locationId === null ? PIPELINE_NO_SHOP : lead.locationId.toLowerCase();
+  return lead.eventDate === f.day && shop === f.location && (CATERING_RAN_STAGES as readonly string[]).includes(lead.stage);
 }

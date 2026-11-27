@@ -7,22 +7,31 @@
  * catering morning digest stays the catering section.
  */
 import { serverT } from "@/lib/i18n/server";
-import { formatCents, formatDateLabel, formatTime } from "@/lib/i18n/format";
+import { formatCents, formatDateLabel, formatHourRange, formatTime } from "@/lib/i18n/format";
+import { SALES_EMPTY_KEY, serverRef, type SalesView } from "@/lib/sales-reports-shared";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { timeWindowLabel, timeWindowMinutes } from "@/lib/midshift-shared";
 import {
   allShopTotals,
+  amountAllUnknown,
+  busiestHours,
+  cateringVsWalkIn,
+  deliveryPlatforms,
+  topServers,
   salesDeltaPct,
   type Coverage,
   sumKnown,
   type Loaded,
+  type MoneyPart,
   type ShopV2Facts,
 } from "@/lib/report-digests-v2-shared";
 import { etWallTime } from "@/lib/report-digests-shared";
 import { toastRingLines } from "@/lib/report-digests-toast-shared";
 import { cutoffMinutes } from "@/lib/vendor-rhythm-shared";
 import type { DigestLine, DigestSection, DigestTone } from "@/lib/report-digests-compose";
-import { digestLink, type DigestTarget, type LinkViewer } from "@/lib/report-digests-links";
+import { digestLink, sectionLink, type DigestTarget, type LinkViewer } from "@/lib/report-digests-links";
+import { digestCan, type DigestAccess, type DigestCapability } from "@/lib/report-digests-access-shared";
+import { capItems, finishSection, finishSections, LINE_ITEMS_MAX, SECTION_CAP_WIDE, type SectionDraft } from "@/lib/report-digests-layout-shared";
 
 type Params = Record<string, string | number>;
 export type T = (key: TranslationKey, params?: Params) => string;
@@ -51,12 +60,15 @@ function cutoffLabel(c: Ctx, time: string): string {
   return mins === null ? time : formatTime(etWallTime(c.day, mins).toISOString(), c.language);
 }
 
-/** The line every area shows when its read failed or its source is not there. */
+/**
+ * The line every area shows when its read failed or its source is not there. Both are UNKNOWN (digests
+ * round 3): a failed read is not an issue and never "All good"; it counts toward `? N not available`.
+ */
 function notLoaded(c: Ctx, label: string, href: string | null, l: Loaded<unknown>): DigestLine | null {
-  if (l.kind === "error") return { label, text: c.t("digest.v2.could_not_load"), tone: "issue", href };
+  if (l.kind === "error") return { label, text: c.t("digest.v2.could_not_load"), tone: "info", href, unknown: true };
   if (l.kind === "unavailable") {
     const key = l.reason === "no_capture" ? "digest.v2.sales.no_capture" : l.reason === "no_labor" || l.reason === "labor_off" || l.reason === "labor_pull_failed" ? "digest.v2.labor.no_entries" : "digest.v2.not_available";
-    return { label, text: c.t(key as TranslationKey), tone: "info", href };
+    return { label, text: c.t(key as TranslationKey), tone: "info", href, unknown: true };
   }
   return null;
 }
@@ -81,7 +93,8 @@ export function headlineLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
       today.thirdPartySharePct === null ? null : c.t("digest.v2.sales.third_party", { pct: `${today.thirdPartySharePct}%` }),
       today.configDegraded ? c.t("digest.v2.sales.partial_channels") : null,
     ].filter((x): x is string => x !== null);
-    lines.push({ label, text: parts.join(" · "), tone: "info", href: salesHref });
+    // No completed capture for D-7: the comparison could not be checked (UNKNOWN).
+    lines.push({ label, text: parts.join(" · "), tone: "info", href: salesHref, ...(lastWeek === null ? { unknown: true } : {}) });
   }
   const catHref = link(c, { to: "sales_catering", location: c.locationId, day: c.day }, { to: "pipeline" });
   const catLabel = c.t("digest.v2.catering.revenue_label");
@@ -102,7 +115,9 @@ export function headlineLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
 // ── 2. Ordering (day D) ──────────────────────────────────────────────────────────────────────
 
 export function orderingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
-  const href = link(c, { to: "ordering", location: c.locationId });
+  // Live screen: today's orders on /ordering (a PO stays its own dated panel; a missed cutoff its alert).
+  const href = link(c, { to: "ordering", location: c.locationId, anchor: "today" });
+  const missedHref = link(c, { to: "ordering", location: c.locationId, anchor: "missed" });
   const poHref = (id: string) => link(c, { to: "ordering", location: c.locationId, po: id });
   const nl = notLoaded(c, c.t("digest.v2.ordering.label"), href, v.ordering);
   if (nl) return [nl];
@@ -128,11 +143,12 @@ export function orderingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
     text: `${p.displayCode} · ${c.t(p.status === "draft" ? "digest.v2.ordering.draft_not_sent" : "digest.v2.ordering.confirmed_not_sent")}`,
   });
   for (const m of day.missed) lines.push({
-    label: m.vendorName, href, tone: "issue",
+    label: m.vendorName, href: missedHref, tone: "issue",
     text: `${c.t("digest.v2.ordering.missed_cutoff", { time: cutoffLabel(c, m.cutoffTime) })} · ${plural(c.t, m.suggestedLines, "digest.v2.ordering.walk_suggested_one", "digest.v2.ordering.walk_suggested_other")}`,
   });
-  for (const m of day.late) lines.push({ label: m.vendorName, href, tone: "info", text: c.t("digest.v2.ordering.ordered_late", { time: cutoffLabel(c, m.cutoffTime), code: m.displayCode }) });
-  for (const m of day.unverified) lines.push({ label: m.vendorName, href, tone: "info", text: c.t("digest.v2.ordering.cutoff_unverified", { time: cutoffLabel(c, m.cutoffTime) }) });
+  // A late order is a to-do (attention); a cutoff nothing can check is UNKNOWN.
+  for (const m of day.late) lines.push({ label: m.vendorName, href, tone: "attention", text: c.t("digest.v2.ordering.ordered_late", { time: cutoffLabel(c, m.cutoffTime), code: m.displayCode }) });
+  for (const m of day.unverified) lines.push({ label: m.vendorName, href, tone: "info", unknown: true, text: c.t("digest.v2.ordering.cutoff_unverified", { time: cutoffLabel(c, m.cutoffTime) }) });
   if (day.missed.length === 0 && day.unverified.length === 0) {
     lines.push({ label: c.t("digest.v2.ordering.cutoffs_label"), text: c.t("digest.v2.ordering.no_missed"), tone: "ok", href });
   }
@@ -187,11 +203,14 @@ export function receivingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
 
 // ── 4. Inventory ─────────────────────────────────────────────────────────────────────────────
 
-const names = (xs: Array<{ name: string }>, max = 5) => xs.slice(0, max).map((x) => x.name).join(", ") + (xs.length > max ? ` +${xs.length - max}` : "");
+/** At most 5 names inside a line, then "+N" (plan §2.6: `capItems`). */
+const names = (xs: Array<{ name: string }>) => capItems(xs.map((x) => x.name));
 
 export function inventoryLines(c: Ctx, v: ShopV2Facts, pendingItems: number): DigestLine[] {
+  // Tosses keep the counts page (the AM prep report is not confirmed to show batch tosses); the walk's
+  // out / below-par lines open the par walk on /ordering (live).
   const countsHref = link(c, { to: "counts", location: c.locationId });
-  const orderingHref = link(c, { to: "ordering", location: c.locationId });
+  const orderingHref = link(c, { to: "ordering", location: c.locationId, anchor: "walk" });
   const receivingHref = link(c, { to: "receiving", location: c.locationId, anchor: "recent" });
   const nl = notLoaded(c, c.t("digest.v2.inventory.label"), countsHref, v.inventory);
   if (nl) return [nl];
@@ -227,7 +246,28 @@ export function inventoryLines(c: Ctx, v: ShopV2Facts, pendingItems: number): Di
 
 // ── 6. Sales detail ──────────────────────────────────────────────────────────────────────────
 
+/**
+ * The Sales section. The pulse lines (top items, channel mix, discounts, voids) are EXACTLY what they always
+ * were and carry no gate. The Sales-report lines of PR 3 (`salesReportLines`) are interleaved around them and
+ * every one of them `needs: "sales_detail"`, so finishSection cuts them before anything is counted: a recipient
+ * the Sales page refuses gets this section byte for byte as before PR 3 (lines, status, overflow, issue count).
+ *
+ * Order (the composer order inside each tier of finishSection's sort, which puts issues, unknowns and to-dos
+ * first): the ladder, tips / tax / service, ezCater and total, DELIVERY PLATFORMS, then top items and the channel
+ * mix, then busiest hours and catering vs walk-in, then discounts and voids, then the adjustments and servers.
+ * Platform dollars sit before the top items (plan §9.2, CC ruling S5), so on a healthy day they print under the
+ * cap and the later lines fold into "and N more".
+ */
 export function salesDetailLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
+  const report = salesReportLines(c, v);
+  const pulse = salesPulseLines(c, v);
+  // A pulse that did not load is its one "not available" line.
+  if (pulse.length < 4) return [...report.head, ...pulse, ...report.mid, ...report.tail];
+  // pulse = [top items, channel mix, discounts, voids]; their relative order never changes.
+  return [...report.head, ...pulse.slice(0, 2), ...report.mid, ...pulse.slice(2), ...report.tail];
+}
+
+function salesPulseLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   const salesView = (view: "summary" | "items" | "channels" | "discounts") =>
     link(c, { to: "sales", location: c.locationId, day: c.day, view }, { to: "mid_shift", location: c.locationId });
   const href = salesView("summary");
@@ -248,7 +288,7 @@ export function salesDetailLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
     });
   lines.push(s.discounts.length === 0
     ? { label: c.t("digest.v2.sales.discounts_label"), text: c.t("digest.v2.sales.no_discounts"), tone: "ok", href: salesView("discounts") }
-    : { label: c.t("digest.v2.sales.discounts_label"), tone: "info", href: salesView("discounts"), text: s.discounts.slice(0, 8).map((d) => `${d.name ?? c.t("digest.v2.sales.unnamed_discount")} ×${d.count} ${money(c, d.cents)}`).join(", ") });
+    : { label: c.t("digest.v2.sales.discounts_label"), tone: "info", href: salesView("discounts"), text: capItems(s.discounts.map((d) => `${d.name ?? c.t("digest.v2.sales.unnamed_discount")} ×${d.count} ${money(c, d.cents)}`)) });
   const voided = s.voids.orders + s.voids.checks + s.voids.units;
   lines.push(voided === 0
     ? { label: c.t("digest.v2.sales.voids_label"), text: c.t("digest.v2.sales.no_voids"), tone: "ok", href }
@@ -261,6 +301,211 @@ export function salesDetailLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
       ].filter(Boolean).join(", "),
     });
   return lines;
+}
+
+// ── 6b. Sales report lines (digests round 3, PR 3): every one needs `sales_detail` ───────────
+
+/**
+ * The Sales page's server label (components/reports-hub/SalesParts.tsx `serverLabel`), same rule and same keys:
+ * the order's server by first name; no name and an online channel = "Online / no server"; no server at all =
+ * "No server on the order"; else "not matched" + a 4-character reference. Pinned equal by a parity test.
+ */
+export function salesServerLabel(t: T, key: string, name: string | null | undefined, online = false): string {
+  if (!name?.trim() && online) return t("reports.sales.server.online");
+  if (!key) return t("reports.sales.server.none");
+  return name && name.trim() ? name : t("reports.sales.server.unmapped", { ref: serverRef(key) });
+}
+
+/**
+ * The Sales report's figures for D, as digest lines. Each keeps the Sales page's rules: nothing unless the day's
+ * capture is complete (one "not available" line, never $0); a missing amount is counted and said ("+ N amounts
+ * not recorded") and marks its line unknown; a read that failed or stalled is its own "not available" line and
+ * leaves every other line standing. EVERY line here carries `needs: "sales_detail"` — its status contribution and
+ * its place in the overflow line go with it when it is cut.
+ * `head` prints before the pulse lines (delivery platforms last in it), `mid` after the channel mix, `tail` after
+ * the voids.
+ */
+function salesReportLines(c: Ctx, v: ShopV2Facts): { head: DigestLine[]; mid: DigestLine[]; tail: DigestLine[] } {
+  const out: { head: DigestLine[]; mid: DigestLine[]; tail: DigestLine[] } = { head: [], mid: [], tail: [] };
+  const d = v.salesDetail;
+  if (!d) return out;
+  const gated = (line: DigestLine): DigestLine => ({ ...line, needs: "sales_detail" });
+  const view = (to?: SalesView) => link(c, { to: "sales", location: c.locationId, day: c.day, ...(to && to !== "summary" ? { view: to } : {}) });
+  const summaryHref = view();
+  const missing = (n: number) => n > 0 ? plural(c.t, n, "digest.v2.totals.unknown_one", "digest.v2.totals.unknown_other") : null;
+  const join = (parts: Array<string | null>, sep = " · ") => parts.filter((x): x is string => x !== null).join(sep);
+  const checks = (n: number) => plural(c.t, n, "digest.v2.sales.checks_one", "digest.v2.sales.checks_other");
+  const orders = (n: number) => plural(c.t, n, "digest.v2.catering.orders_one", "digest.v2.catering.orders_other");
+  /** The inline unknown wording (lowercase, mid-sentence): "amount unknown (2 orders)". Never a $0.00. */
+  const amountUnknown = (count: string) => c.t("digest.v2.sales.amount_unknown", { count });
+  /** A figure: unknown when every row of it has no amount; else its known $ with its own gap said beside it. */
+  const figure = (p: MoneyPart, count: (n: number) => string) => amountAllUnknown(p) ? amountUnknown(count(p.checks))
+    : join([money(c, p.cents), missing(p.amountMissing)], " ");
+  const label = c.t("digest.v2.sales.report_label");
+
+  // The whole area stands on the day's totals: loaded, and the day fully captured (the Sales page's coverage rule).
+  const nl = notLoaded(c, label, summaryHref, d.totals);
+  if (nl) { out.head.push(gated(nl)); return out; }
+  if (d.totals.kind !== "ok") return out;
+  const tot = d.totals.value;
+  if (tot.coverage !== "complete") {
+    out.head.push(gated({ label, text: c.t("digest.v2.sales.report_not_covered"), tone: "info", href: summaryHref, unknown: true }));
+    return out;
+  }
+
+  // 1. The ladder: gross − discounts and comps − item voids − sales refunds = Toast net (summarizeSales' own figures).
+  const { grossCents: gross, discountsCompsCents: disc, voidsCents: voids, salesRefundsCents: refunds, toastNetCents: net } = tot;
+  out.head.push(gross !== null && disc !== null && voids !== null && refunds !== null && net !== null
+    ? gated({ label, tone: "info", href: summaryHref, text: c.t("digest.v2.sales.ladder", { gross: money(c, gross), discounts: money(c, disc), voids: money(c, voids), refunds: money(c, refunds), net: money(c, net) }) })
+    : gated({
+      label, tone: "info", href: summaryHref, unknown: true,
+      text: join([
+        c.t("digest.v2.sales.net_unavailable"),
+        tot.accountingMissing > 0 ? plural(c.t, tot.accountingMissing, "digest.v2.sales.accounting_missing_one", "digest.v2.sales.accounting_missing_other") : null,
+        tot.salesRefundMissing > 0 ? plural(c.t, tot.salesRefundMissing, "digest.v2.sales.refund_missing_one", "digest.v2.sales.refund_missing_other") : null,
+      ]),
+    }));
+
+  // 2. Tips · tax · service charges (one line). An unknown tip or tax amount is counted; service charges are the
+  // exact component, null when any check's accounting is missing: then the inline unknown wording, mid-sentence.
+  const sc = tot.serviceChargesCents;
+  out.head.push(gated({
+    label: c.t("digest.v2.sales.tips_tax_label"), tone: "info", href: summaryHref,
+    ...(tot.tipMissing + tot.taxMissing > 0 || sc === null ? { unknown: true } : {}),
+    text: c.t("digest.v2.sales.tips_tax", {
+      tips: join([money(c, tot.tipCents), missing(tot.tipMissing)], " "),
+      tax: join([money(c, tot.taxCents), missing(tot.taxMissing)], " "),
+      service: sc === null ? c.t("digest.v2.sales.amount_unknown_bare") : money(c, sc),
+    }),
+  }));
+
+  // 3. ezCater as sales, and the Sales page's total (Toast check totals + ezCater subtotals, before refunds). The
+  // ezCater figure carries its OWN missing count (an unpriced order is never a $0 order); the total is unknown only
+  // when every check and every order in it is.
+  const ez: MoneyPart = { cents: tot.ezcaterCents, checks: tot.ezcaterOrders, amountMissing: tot.ezcaterMissing };
+  const toastMissing = tot.amountMissing - tot.ezcaterMissing;
+  const totalUnknown = tot.checks + tot.ezcaterOrders > 0 && toastMissing >= tot.checks && tot.ezcaterMissing >= tot.ezcaterOrders;
+  out.head.push(gated({
+    label: c.t("digest.v2.sales.ezcater_label"), tone: "info", href: summaryHref,
+    ...(tot.amountMissing > 0 ? { unknown: true } : {}),
+    text: join([
+      tot.ezcaterOrders === 0 ? c.t("digest.v2.sales.no_ezcater")
+        : amountAllUnknown(ez) ? c.t("digest.v2.sales.ezcater_unknown", { amount: amountUnknown(orders(ez.checks)) })
+          : c.t("digest.v2.sales.ezcater", {
+            money: money(c, ez.cents),
+            orders: ez.amountMissing > 0 ? c.t("digest.v2.sales.with_missing", { count: orders(ez.checks), n: ez.amountMissing }) : orders(ez.checks),
+          }),
+      c.t("digest.v2.sales.total_before_refunds", {
+        money: totalUnknown ? amountUnknown(join([tot.checks > 0 ? checks(tot.checks) : null, tot.ezcaterOrders > 0 ? orders(tot.ezcaterOrders) : null], ", ")) : money(c, tot.totalCents),
+      }),
+      totalUnknown ? null : missing(tot.amountMissing),
+    ]),
+  }));
+
+  // 4. Busiest hours: top 3 with $ and checks; a check with no opened time is said apart, never ranked.
+  const hoursHref = view("heatmap");
+  const hoursLabel = c.t("digest.v2.sales.hours_label");
+  const hl = notLoaded(c, hoursLabel, hoursHref, d.hours);
+  if (hl) out.mid.push(gated(hl));
+  else if (d.hours.kind === "ok") {
+    const h = busiestHours(d.hours.value);
+    const lost = d.hours.value.reduce((a, r) => a + r.amountMissing, 0);
+    out.mid.push(gated(h.top.length === 0 && h.unknown.checks === 0
+      ? { label: hoursLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: hoursHref }
+      : {
+        label: hoursLabel, tone: "info", href: hoursHref, ...(lost > 0 ? { unknown: true } : {}),
+        text: join([
+          h.top.length === 0 ? null : h.top.map((x) => c.t("digest.v2.sales.hour_item", { hour: formatHourRange(x.hour, c.language), money: money(c, x.cents), checks: checks(x.checks) })).join(", "),
+          h.unknown.checks > 0 ? c.t("digest.v2.sales.hour_unknown", { checks: checks(h.unknown.checks), money: money(c, h.unknown.cents) }) : null,
+          missing(lost),
+        ]),
+      }));
+  }
+
+  // 5. Delivery platforms with $ (counted third-party delivery sales by provider). In `head`: platform dollars print
+  // before the top items (plan §9.2, CC ruling S5); a provider whose every check has no amount is "amount unknown".
+  const platformsLabel = c.t("digest.v2.sales.platforms_label");
+  const channelsHref = view("channels");
+  const pl = notLoaded(c, platformsLabel, channelsHref, d.channels);
+  if (pl) out.head.push(gated(pl));
+  else if (d.channels.kind === "ok") {
+    const rows = deliveryPlatforms(d.channels.value);
+    const one = rows.length === 1 ? rows[0] : undefined;
+    const href = link(c,
+      ...(one ? [{ to: "sales_checks" as const, location: c.locationId, day: c.day, channel: "third_party" as const, provider: one.provider ?? SALES_EMPTY_KEY }] : []),
+      { to: "sales_checks", location: c.locationId, day: c.day, channel: "third_party" },
+      { to: "sales", location: c.locationId, day: c.day, view: "channels" });
+    const lost = rows.reduce((a, r) => a + r.amountMissing, 0);
+    // Each provider says its own gap; the gaps of providers folded into "+N" are counted at the end.
+    const hiddenLost = rows.slice(LINE_ITEMS_MAX).reduce((a, r) => a + r.amountMissing, 0);
+    const item = (r: (typeof rows)[number]) => {
+      const name = r.provider?.trim() ? r.provider : c.t("reports.sales.provider.none");
+      if (amountAllUnknown(r)) return `${name} ${amountUnknown(checks(r.checks))}`;
+      return `${name} ${money(c, r.cents)} (${r.amountMissing > 0 ? c.t("digest.v2.sales.with_missing", { count: checks(r.checks), n: r.amountMissing }) : checks(r.checks)})`;
+    };
+    out.head.push(gated(rows.length === 0
+      ? { label: platformsLabel, text: c.t("digest.v2.sales.no_platforms"), tone: "info", href }
+      : { label: platformsLabel, tone: "info", href, ...(lost > 0 ? { unknown: true } : {}), text: join([capItems(rows.map(item)), missing(hiddenLost)]) }));
+  }
+
+  // 6. Catering vs walk-in (catering = Toast catering checks + ezCater orders; walk-in = every other counted sale).
+  const cateringLabel = c.t("digest.v2.sales.catering_vs_label");
+  const cateringHref = link(c, { to: "sales_catering", location: c.locationId, day: c.day });
+  const cl = notLoaded(c, cateringLabel, cateringHref, d.channels);
+  if (cl) out.mid.push(gated(cl));
+  else if (d.channels.kind === "ok") {
+    const split = cateringVsWalkIn(d.channels.value);
+    const lost = split.catering.amountMissing + split.walkIn.amountMissing;
+    out.mid.push(gated(split.catering.checks === 0 && split.walkIn.checks === 0
+      ? { label: cateringLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: cateringHref }
+      : {
+        label: cateringLabel, tone: "info", href: cateringHref, ...(lost > 0 ? { unknown: true } : {}),
+        // Each side says its own gap; a side whose every order / check has no amount is "amount unknown (N …)".
+        text: c.t("digest.v2.sales.catering_vs", { catering: figure(split.catering, orders), walkin: figure(split.walkIn, checks) }),
+      }));
+  }
+
+  // 7. Void $, the refunds captured so far ($ and count; the Sales page's "Refunds captured so far", not the
+  // ladder's item-sales refunds), excluded checks. A refund that cannot be allocated to item sales (0247's
+  // `sales_refund_missing`, which can come with a dated count of 0) is said in the Sales page's words and marks
+  // the line unknown: "no refunds" is never printed while one is.
+  const excluded = ([
+    ["digest.v2.sales.excluded_gift", tot.giftCardChecks], ["digest.v2.sales.excluded_ezcater", tot.ezcaterLinkedChecks],
+    ["digest.v2.sales.excluded_void", tot.voidChecks], ["digest.v2.sales.excluded_excess", tot.excessFoodChecks],
+  ] as const).filter(([, n]) => n > 0);
+  const excludedChecks = excluded.reduce((a, [, n]) => a + n, 0);
+  const refundUnknown = tot.salesRefundMissing > 0;
+  out.tail.push(gated({
+    label: c.t("digest.v2.sales.adjustments_label"), tone: "info", href: summaryHref,
+    ...(voids === null || refundUnknown ? { unknown: true } : {}),
+    text: join([
+      voids === null ? c.t("digest.v2.sales.item_voids_unavailable") : c.t("digest.v2.sales.item_voids", { money: money(c, voids) }),
+      tot.refundCount > 0 ? plural(c.t, tot.refundCount, "digest.v2.sales.refunds_one", "digest.v2.sales.refunds_other", { money: money(c, tot.refundCents) })
+        : refundUnknown ? null : c.t("digest.v2.sales.no_refunds"),
+      refundUnknown ? plural(c.t, tot.salesRefundMissing, "digest.v2.sales.refund_missing_one", "digest.v2.sales.refund_missing_other") : null,
+      excludedChecks === 0 ? c.t("digest.v2.sales.no_excluded")
+        : plural(c.t, excludedChecks, "digest.v2.sales.excluded_one", "digest.v2.sales.excluded_other", { detail: excluded.map(([k, n]) => c.t(k, { n })).join(", ") }),
+    ]),
+  }));
+
+  // 8. Servers: the top 3 of the Sales page's servers view, in its order. The gaps are counted across EVERY server
+  // row before the top 3 are taken (as the hours line does): a check of unknown amount anywhere could move the
+  // ranking, so it marks the line unknown even when its server is ranked below third.
+  const serversLabel = c.t("digest.v2.sales.servers_label");
+  const serversHref = view("servers");
+  const sl = notLoaded(c, serversLabel, serversHref, d.servers);
+  if (sl) out.tail.push(gated(sl));
+  else if (d.servers.kind === "ok") {
+    const lost = d.servers.value.reduce((a, r) => a + r.amountMissing, 0);
+    const top = topServers(d.servers.value);
+    out.tail.push(gated(top.length === 0
+      ? { label: serversLabel, text: c.t("digest.v2.sales.no_sales"), tone: "info", href: serversHref }
+      : {
+        label: serversLabel, tone: "info", href: serversHref, ...(lost > 0 ? { unknown: true } : {}),
+        text: join([top.map((r) => `${salesServerLabel(c.t, r.key, r.label, r.serverOnline)} ${money(c, r.cents)} (${checks(r.checks)})`).join(", "), missing(lost)]),
+      }));
+  }
+  return out;
 }
 
 // ── 8. People ────────────────────────────────────────────────────────────────────────────────
@@ -287,6 +532,8 @@ export function peopleLines(c: Ctx, v: ShopV2Facts, who: { openedBy: string | nu
 
 export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   const ordering = link(c, { to: "ordering", location: c.locationId });
+  // Tomorrow's cutoffs: the cutoff list on /ordering, right once the day has rolled over (live).
+  const cutoffsHref = link(c, { to: "ordering", location: c.locationId, anchor: "cutoffs" });
   const tomorrowLabel = formatDateLabel(v.lookahead, c.language);
   const lines: DigestLine[] = [];
   const nl = notLoaded(c, c.t("digest.v2.tomorrow.deliveries_label"), ordering, v.ordering);
@@ -307,13 +554,16 @@ export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
       label: c.t("digest.v2.tomorrow.deliveries_label"), href: ordering, tone: "info",
       text: plural(c.t, deliveries.undated.length, "digest.v2.tomorrow.undated_one", "digest.v2.tomorrow.undated_other", { vendors: [...new Set(deliveries.undated.map((u) => u.vendorName))].join(", ") }),
     });
-    if (cutoffsTomorrow.length === 0) lines.push({ label: c.t("digest.v2.tomorrow.cutoffs_label"), text: c.t("digest.v2.tomorrow.no_cutoffs"), tone: "info", href: ordering });
+    if (cutoffsTomorrow.length === 0) lines.push({ label: c.t("digest.v2.tomorrow.cutoffs_label"), text: c.t("digest.v2.tomorrow.no_cutoffs"), tone: "info", href: cutoffsHref });
     for (const x of cutoffsTomorrow) lines.push({
-      label: x.vendorName, href: ordering, tone: x.ordered || x.hasDraft ? "info" : "issue",
+      // A draft waiting for tomorrow's cutoff is a to-do (send it); no draft at all is an issue.
+      label: x.vendorName, href: cutoffsHref, tone: x.ordered ? "info" : x.hasDraft ? "attention" : "issue",
       text: `${c.t("digest.v2.tomorrow.cutoff_at", { time: cutoffLabel({ ...c, day: v.lookahead }, x.cutoffTime) })} · ${c.t(x.ordered ? "digest.v2.tomorrow.already_ordered" : x.hasDraft ? "digest.v2.tomorrow.draft_ready" : "digest.v2.tomorrow.no_draft")}`,
     });
   }
-  const catHref = link(c, { to: "pipeline" });
+  // Tomorrow's catering: the pipeline filtered to D+1 and this shop (dated); the plain board when the shop is
+  // outside the reader's pipeline scope.
+  const catHref = link(c, { to: "pipeline", day: v.lookahead, location: c.locationId, view: "booked" }, { to: "pipeline" });
   const cl = notLoaded(c, c.t("digest.v2.tomorrow.catering_label"), catHref, v.catering);
   if (cl) lines.push(cl);
   else if (v.catering.kind === "ok") {
@@ -338,7 +588,8 @@ export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
 // ── Labor (Toast time entries, D) ── appended to lib/report-digests-v2-compose.ts ────────────
 
 export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
-  const href = link(c, { to: "team", location: c.locationId });
+  // The day-D lines open Team on that same day (digests round 3, plan §3.5).
+  const href = link(c, { to: "team", location: c.locationId, day: c.day });
   const label = c.t("digest.v2.labor.label");
   if (!v.labor) return [];
   const nl = notLoaded(c, label, href, v.labor);
@@ -350,7 +601,8 @@ export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   // "No one clocked in" only when there are NO entries at all — unknown-hour shifts are still shifts.
   if (s.people.length === 0 && s.openEntries === 0 && s.unknownHoursEntries === 0) return [{ label, text: c.t("digest.v2.labor.none"), tone: "info", href }];
   lines.push({
-    label, href, tone: "info",
+    // Someone still clocked in is a to-do (attention): a punch to close out.
+    label, href, tone: s.openEntries > 0 ? "attention" : "info",
     text: [
       c.t("digest.v2.labor.total", { hours: hours(s.totalHours) }),
       s.unknownHoursEntries > 0 ? plural(c.t, s.unknownHoursEntries, "digest.v2.labor.unknown_one", "digest.v2.labor.unknown_other") : null,
@@ -360,9 +612,21 @@ export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
     ].filter((x): x is string => x !== null).join(" · "),
   });
   if (s.byJob.length > 0) lines.push({ label: c.t("digest.v2.labor.by_job_label"), href, tone: "info", text: s.byJob.map((j) => `${j.job ?? c.t("digest.v2.labor.no_job")} ${hours(j.hours)} h`).join(", ") });
-  if (s.people.length > 0) lines.push({ label: c.t("digest.v2.labor.people_label"), href, tone: "info", text: s.people.map((p) => `${p.firstName ?? "—"} ${hours(p.hours)} h${p.unknownShifts > 0 ? ` ${plural(c.t, p.unknownShifts, "digest.v2.labor.person_unknown_one", "digest.v2.labor.person_unknown_other")}` : ""}`).join(", ") });
-  if (!s.overtimeAssessed) {
-    lines.push({ label: c.t("digest.v2.labor.overtime_label"), href, tone: "info", text: c.t("digest.v2.labor.overtime_partial") });
+  if (s.people.length > 0) lines.push({ label: c.t("digest.v2.labor.people_label"), href, tone: "info", text: capItems(s.people.map((p) => `${p.firstName ?? "—"} ${hours(p.hours)} h${p.unknownShifts > 0 ? ` ${plural(c.t, p.unknownShifts, "digest.v2.labor.person_unknown_one", "digest.v2.labor.person_unknown_other")}` : ""}`)) });
+  if (!s.dayOvertimeAssessed) {
+    lines.push({ label: c.t("digest.v2.labor.overtime_label"), href, tone: "info", text: c.t("digest.v2.labor.overtime_partial"), unknown: true });
+    return lines;
+  }
+  if (!s.weekOvertimeAssessed) {
+    // An unknown earlier in the week leaves D's own over-10 h alert standing; only the 40 h figure is withheld.
+    const weekPartial = c.t("digest.v2.labor.week_partial");
+    lines.push(s.dayOvertime.length === 0
+      ? { label: c.t("digest.v2.labor.overtime_label"), href, tone: "info", text: [c.t("digest.v2.labor.no_day_overtime"), weekPartial].join(" · "), unknown: true }
+      : {
+        // Issue AND unknown: D's alert stands, and the 40 h week still could not be checked.
+        label: c.t("digest.v2.labor.overtime_label"), href, tone: "issue", unknown: true,
+        text: [s.dayOvertime.map((p) => c.t("digest.v2.labor.over_day", { name: p.firstName ?? "—", hours: hours(p.hours) })).join(", "), weekPartial].join(" · "),
+      });
     return lines;
   }
   lines.push(s.dayOvertime.length === 0 && s.weekOvertime.length === 0
@@ -388,46 +652,59 @@ export interface V2Extras {
 }
 
 /**
- * The screen each v2 section summarizes, for this recipient (the section's "Open this in the app" link).
- * Exported so the tests pin the section → link map.
+ * The screen each v2 section summarizes, for this recipient (the section's "Open this in the app" link), and
+ * whether that screen is live (shows the current day; the email says so). Exported so the tests pin the
+ * section → link map.
  */
-export function v2SectionLinks(c: Ctx): Record<"headline" | "ordering" | "receiving" | "inventory" | "operations" | "sales" | "labor" | "people" | "tomorrow" | "to_ring", string | null> {
+export function v2SectionLinks(c: Ctx): Record<"headline" | "ordering" | "receiving" | "inventory" | "operations" | "sales" | "labor" | "people" | "tomorrow" | "to_ring", { href: string | null; live: boolean }> {
   const loc = c.locationId;
+  const s = (...chain: DigestTarget[]) => sectionLink({ baseUrl: c.baseUrl, viewer: c.viewer }, ...chain);
   return {
-    headline: link(c, { to: "sales", location: loc, day: c.day }, { to: "mid_shift", location: loc }),
-    ordering: link(c, { to: "ordering", location: loc }),
-    receiving: link(c, { to: "receiving", location: loc, anchor: "recent" }),
-    inventory: link(c, { to: "counts", location: loc }, { to: "ordering", location: loc }),
-    operations: link(c, { to: "reports_list", location: loc, day: c.day }),
-    sales: link(c, { to: "sales", location: loc, day: c.day }, { to: "mid_shift", location: loc }),
-    labor: link(c, { to: "team", location: loc }),
-    people: link(c, { to: "team", location: loc }, { to: "reports_list", location: loc, day: c.day, type: "pm" }),
-    tomorrow: link(c, { to: "ordering", location: loc }),
-    to_ring: link(c, { to: "pipeline", anchor: "to_ring" }),
+    headline: s({ to: "sales", location: loc, day: c.day }, { to: "mid_shift", location: loc }),
+    ordering: s({ to: "ordering", location: loc, anchor: "today" }),
+    receiving: s({ to: "receiving", location: loc, anchor: "recent" }),
+    inventory: s({ to: "counts", location: loc, anchor: "on_hand" }, { to: "ordering", location: loc, anchor: "walk" }),
+    operations: s({ to: "reports_list", location: loc, day: c.day }),
+    sales: s({ to: "sales", location: loc, day: c.day }, { to: "mid_shift", location: loc }),
+    labor: s({ to: "team", location: loc, day: c.day }),
+    people: s({ to: "team", location: loc, day: c.day }, { to: "reports_list", location: loc, day: c.day, type: "pm" }),
+    tomorrow: s({ to: "ordering", location: loc, anchor: "cutoffs" }),
+    to_ring: s({ to: "pipeline", anchor: "to_ring" }),
   };
 }
 
-export function composeV2Sections(args: { shopName: string; locationId: string; day: string; v: ShopV2Facts; extras: V2Extras; prefix: boolean }, language: Language, baseUrl: string, viewer?: LinkViewer | null): DigestSection[] {
+/**
+ * The shop's v2 sections, each FINISHED for this recipient (lib/report-digests-layout-shared.ts: cut →
+ * count → cap) against this shop and day. `access` = the recipient's data gates; absent or null = no
+ * gated line (fail closed). Sales and labor carry the wide cap.
+ */
+export function composeV2Sections(args: { shopName: string; locationId: string; day: string; v: ShopV2Facts; extras: V2Extras; prefix: boolean }, language: Language, baseUrl: string, viewer?: LinkViewer | null, access?: DigestAccess | null): DigestSection[] {
   const c: Ctx = { t: translator(language), language, baseUrl, locationId: args.locationId, day: args.day, viewer };
   const title = (key: TranslationKey, params?: Params) => (args.prefix ? `${args.shopName} · ` : "") + c.t(key, params);
   const toRing = toastRingLines(args.v.catering.kind === "ok" ? args.v.catering.value.toRingInToast ?? [] : [], args.locationId, args.v.lookahead, language, baseUrl, viewer);
   const href = v2SectionLinks(c);
-  return [
-    { title: title("digest.v2.section.headline"), lines: headlineLines(c, args.v), href: href.headline },
-    { title: title("digest.v2.section.ordering"), lines: orderingLines(c, args.v), href: href.ordering },
-    { title: title("digest.v2.section.receiving"), lines: receivingLines(c, args.v), href: href.receiving },
-    { title: title("digest.v2.section.inventory"), lines: inventoryLines(c, args.v, args.extras.pendingItems), href: href.inventory },
-    { title: title("digest.v2.section.operations"), lines: args.extras.operations, href: href.operations },
-    { title: title("digest.v2.section.sales"), lines: salesDetailLines(c, args.v), href: href.sales },
-    ...(args.v.labor ? [{ title: title("digest.v2.section.labor"), lines: laborLines(c, args.v), href: href.labor }] : []),
-    { title: title("digest.v2.section.people"), lines: peopleLines(c, args.v, args.extras.who, args.extras.pmLine), href: href.people },
-    { title: title("digest.v2.section.tomorrow", { date: formatDateLabel(args.v.lookahead, language) }), lines: tomorrowLines(c, args.v), href: href.tomorrow },
-    ...(toRing.length > 0 ? [{ title: title("digest.catering.to_ring.tomorrow"), lines: toRing, href: href.to_ring }] : []),
+  const can = (cap: DigestCapability) => digestCan(access, cap, { locationId: args.locationId, day: args.day });
+  const drafts: SectionDraft[] = [
+    { title: title("digest.v2.section.headline"), lines: headlineLines(c, args.v), ...href.headline },
+    { title: title("digest.v2.section.ordering"), lines: orderingLines(c, args.v), ...href.ordering },
+    { title: title("digest.v2.section.receiving"), lines: receivingLines(c, args.v), ...href.receiving },
+    { title: title("digest.v2.section.inventory"), lines: inventoryLines(c, args.v, args.extras.pendingItems), ...href.inventory },
+    { title: title("digest.v2.section.operations"), lines: args.extras.operations, ...href.operations },
+    { title: title("digest.v2.section.sales"), lines: salesDetailLines(c, args.v), ...href.sales, cap: SECTION_CAP_WIDE },
+    ...(args.v.labor ? [{ title: title("digest.v2.section.labor"), lines: laborLines(c, args.v), ...href.labor, cap: SECTION_CAP_WIDE }] : []),
+    { title: title("digest.v2.section.people"), lines: peopleLines(c, args.v, args.extras.who, args.extras.pmLine), ...href.people },
+    { title: title("digest.v2.section.tomorrow", { date: formatDateLabel(args.v.lookahead, language) }), lines: tomorrowLines(c, args.v), ...href.tomorrow },
+    // Present only when a line is left for this recipient: finishSection decides from the allowed lines.
+    { title: title("digest.catering.to_ring.tomorrow"), lines: toRing, ...href.to_ring },
   ];
+  return finishSections(drafts, { t: c.t, can });
 }
 
-/** The level-8+ all-shop totals section: "not available" / "partial (n of m shops)", never a false 0. */
-export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, language: Language, baseUrl: string, day?: string, viewer?: LinkViewer | null): DigestSection {
+/**
+ * The level-8+ all-shop totals section: "not available" / "partial (n of m shops)", never a false 0.
+ * Finished like every section, against "all" shops and the business day; null = every line was cut.
+ */
+export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, language: Language, baseUrl: string, day?: string, viewer?: LinkViewer | null, access?: DigestAccess | null): DigestSection | null {
   const t = translator(language);
   const m = (cents: number) => formatCents(cents, language);
   const tot = allShopTotals(shops.map((s) => s.v2));
@@ -441,8 +718,11 @@ export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, lang
   const covered = (cov: Coverage, parts: Array<string | null>): string | null => cov.covered === 0 ? null
     : [...parts, cov.covered < cov.total ? t("digest.v2.totals.partial", { n: cov.covered, total: cov.total }) : null].filter((x): x is string => x !== null).join(" · ");
   const unknown = (n: number) => n > 0 ? plural(t, n, "digest.v2.totals.unknown_one", "digest.v2.totals.unknown_other") : null;
-  const push = (label: string, text: string | null, tone: DigestTone, to: string | null = href) =>
-    lines.push(text === null ? { label, text: t("digest.v2.not_available"), tone: "info", href: to } : { label, text, tone, href: to });
+  /** `partial`: some shops are missing (or a comparison could not be made), so the figure is UNKNOWN in part. */
+  const push = (label: string, text: string | null, tone: DigestTone, to: string | null = href, partial = false) =>
+    lines.push(text === null ? { label, text: t("digest.v2.not_available"), tone: "info", href: to, unknown: true }
+      : { label, text, tone, href: to, ...(partial ? { unknown: true } : {}) });
+  const isPartial = (cov: Coverage) => cov.covered > 0 && cov.covered < cov.total;
 
   const s = tot.sales;
   const delta = s.lastWeekCents !== null && s.lastWeekCents > 0 ? Math.round(((s.netCents - s.lastWeekCents) / s.lastWeekCents) * 100) : null;
@@ -452,19 +732,20 @@ export function allShopsSection(shops: ReadonlyArray<{ v2?: ShopV2Facts }>, lang
     plural(t, s.checks, "digest.v2.sales.checks_one", "digest.v2.sales.checks_other"),
     s.checks > 0 ? t("digest.v2.sales.avg_check", { money: m(Math.round(s.netCents / s.checks)) }) : null,
     s.netCents > 0 ? t("digest.v2.sales.third_party", { pct: `${Math.round((s.thirdPartyCents / s.netCents) * 100)}%` }) : null,
-  ]), "info", salesHref);
+  ]), "info", salesHref, isPartial(s) || s.lastWeekCents === null);
   push(t("digest.v2.catering.revenue_label"), covered(tot.catering, [
     t("digest.v2.catering.split", { completed: m(tot.catering.completedCents), confirmed: m(tot.catering.confirmedCents) }), t("digest.v2.catering.not_in_pos"),
-  ]), "info", cateringHref);
+  ]), "info", cateringHref, isPartial(tot.catering));
   const o = tot.ordering;
   push(t("digest.v2.ordering.placed_label"), covered(o, [
     plural(t, o.placed, "digest.v2.ordering.placed_one", "digest.v2.ordering.placed_other"), m(o.placedCents), unknown(o.unpriced),
     plural(t, o.missed, "digest.v2.totals.missed_one", "digest.v2.totals.missed_other"),
-  ]), o.missed > 0 ? "issue" : "info");
+  ]), o.missed > 0 ? "issue" : "info", href, isPartial(o));
   const r = tot.receiving;
   push(t("digest.family.receiving"), covered(r, [
     plural(t, r.deliveries, "digest.v2.totals.deliveries_one", "digest.v2.totals.deliveries_other"), m(r.cents), unknown(r.unknownCents),
-  ]), "info");
-  push(t("digest.v2.tomorrow.deliveries_label"), covered(o, [plural(t, o.dueTomorrow, "digest.v2.totals.due_one", "digest.v2.totals.due_other")]), "info");
-  return { title: t("digest.v2.section.all_shops"), lines, href };
+  ]), "info", href, isPartial(r));
+  push(t("digest.v2.tomorrow.deliveries_label"), covered(o, [plural(t, o.dueTomorrow, "digest.v2.totals.due_one", "digest.v2.totals.due_other")]), "info", href, isPartial(o));
+  const can = (cap: DigestCapability) => digestCan(access, cap, { locationId: "all", day: day ?? "" });
+  return finishSection({ title: t("digest.v2.section.all_shops"), lines, href }, { t, can });
 }

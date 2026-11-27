@@ -72,9 +72,11 @@ describe("the link map (targetPath)", () => {
     [{ to: "counts", location: A }, `/operations/counts?location=${A}`],
     [{ to: "vendor_mail", location: A }, `/operations/vendor-mail?location=${A}`],
     [{ to: "team", location: A }, `/reports/trends/team?location=${A}`],
+    // Digests round 3: with a day, Team opens on that one day (resolveTrendRange reads range/from/to).
+    [{ to: "team", location: A, day: DAY }, `/reports/trends/team?${q(A)}`],
     [{ to: "yield", location: A }, `/operations/production/yield?location=${A}`],
     [{ to: "pipeline" }, "/catering/pipeline"],
-    [{ to: "pipeline", lead: "lead-7" }, "/catering/pipeline?lead=lead-7#lead-lead-7"],
+    [{ to: "pipeline", lead: "lead-7", leadShop: A }, "/catering/pipeline?lead=lead-7#lead-lead-7"],
     [{ to: "pipeline", anchor: "to_ring" }, `/catering/pipeline#${DIGEST_ANCHORS.pipelineToRing}`],
     [{ to: "quotes", quote: "qt-1" }, "/catering/quotes?quote=qt-1"],
     [{ to: "prep_demand" }, "/admin/catering/prep-demand"],
@@ -88,9 +90,16 @@ describe("the link map (targetPath)", () => {
   });
 
   it("anything that is not an id or a day never rides in a URL", () => {
-    expect(digestLink({ baseUrl: BASE }, { to: "pipeline", lead: "Jane Doe" })).toBeNull();
-    expect(digestLink({ baseUrl: BASE }, { to: "pipeline", lead: "jane@example.com" }, { to: "pipeline" })).toBe(`${BASE}/catering/pipeline`);
+    expect(digestLink({ baseUrl: BASE }, { to: "pipeline", lead: "Jane Doe", leadShop: A })).toBeNull();
+    expect(digestLink({ baseUrl: BASE }, { to: "pipeline", lead: "jane@example.com", leadShop: A }, { to: "pipeline" })).toBe(`${BASE}/catering/pipeline`);
     expect(digestLink({ baseUrl: BASE }, { to: "reports_hub", location: A, day: "yesterday" })).toBeNull();
+    expect(digestLink({ baseUrl: BASE }, { to: "team", location: A, day: "yesterday" })).toBeNull();
+  });
+
+  it("team with a day: the gate is unchanged (the day never widens or narrows who may open it)", () => {
+    for (const v of [GM_A, AGM_A, MOO_NO_MEMBERSHIP, OWNER, CATERING_MGR, SHIFT_LEAD_A, SMM, NO_ACCESS_VIEWER, { role: "gm", level: 7, locations: [B] }]) {
+      expect(canOpen(v, { to: "team", location: A, day: DAY }), v.role).toBe(canOpen(v, { to: "team", location: A }));
+    }
   });
 });
 
@@ -141,14 +150,24 @@ describe("GM shop digest: every section links to its own screen", () => {
     const map = Object.fromEntries(sections(GM_A).map((s) => [s.title.replace(/ · .*/, ""), s.href]));
     expect(map).toEqual({
       Headline: `${BASE}/reports/sales?${q(A)}`,
-      Ordering: `${BASE}/ordering?location=${A}`,
+      // Digests round 3 (PR 1b): the live screens open at the part the section is about.
+      Ordering: `${BASE}/ordering?location=${A}#todays-orders`,
       Receiving: `${BASE}/operations/receiving?location=${A}#recent-deliveries`,
-      Inventory: `${BASE}/operations/counts?location=${A}`,
+      Inventory: `${BASE}/operations/counts?location=${A}#on-hand`,
       Operations: `${BASE}/reports/operations?${q(A)}`,
       "Sales detail": `${BASE}/reports/sales?${q(A)}`,
-      People: `${BASE}/reports/trends/team?location=${A}`,
-      Tomorrow: `${BASE}/ordering?location=${A}`,
+      // Digests round 3: People opens Team on the digest's day.
+      People: `${BASE}/reports/trends/team?${q(A)}`,
+      Tomorrow: `${BASE}/ordering?location=${A}#order-cutoffs`,
     });
+  });
+
+  it("the labor section and its day-D lines open Team on the digest's day", () => {
+    const labor = { totalHours: 8, people: [{ employeeGuid: "e1", firstName: "Person A", hours: 8, unknownShifts: 0 }], byJob: [{ job: "Line", hours: 8 }], openEntries: 0, unknownHoursEntries: 0, partial: false, salesPerLaborHourCents: 1250, overtimeAssessed: true, dayOvertime: [], weekOvertime: [] };
+    const s = composeShopSections(shop(A, "Shop A", { v2: v2Fixture({ labor: ok(labor) } as never) }), "en", BASE, false, GM_A);
+    const sec = s.find((x) => x.title === "Labor")!;
+    expect(sec.href).toBe(`${BASE}/reports/trends/team?${q(A)}`);
+    for (const l of sec.lines) expect(l.href, l.label).toBe(`${BASE}/reports/trends/team?${q(A)}`);
   });
 
   it("line links: a delivery opens its own page, a PO its panel, a report its detail for the day, sales lines their view", () => {
@@ -178,7 +197,9 @@ describe("GM shop digest: every section links to its own screen", () => {
   it("the email shows a visible link per section, the line labels as links, and keeps the general link at the bottom", () => {
     for (const [lang, open, cta] of [["en", "Open this in the app →", "Open reports"], ["es", "Abrir esto en la app →", "Abrir reportes"]] as const) {
       const mail = renderShopDigest(shop(A, "Shop A"), { language: lang, baseUrl: BASE, viewer: GM_A });
-      expect(mail.html.split(open).length - 1).toBe(8);
+      // 8 sections: 5 dated + 3 live (Ordering, Inventory, Tomorrow), whose link says it shows the current day.
+      expect(mail.html.split(open).length - 1).toBe(5);
+      expect(mail.html.split(lang === "en" ? "Open this in the app (live: shows the current day) →" : "Abrir esto en la app (en vivo: muestra el día actual) →").length - 1).toBe(3);
       expect(mail.html).toContain(`href="${BASE}/operations/receiving/dlv-1"`);
       expect(mail.html).toContain("text-decoration:underline");
       expect(mail.html).toContain(cta);
@@ -243,9 +264,11 @@ describe("catering digest: lead lines open the lead by id, never a name in the U
     expect(map).toEqual([
       // Below the Sales floor: yesterday's catering slice of Sales is not theirs → the pipeline.
       ["Yesterday", `${BASE}/catering/pipeline`],
-      ["Today", `${BASE}/catering/pipeline`],
-      ["Early tomorrow", `${BASE}/catering/pipeline`],
-      ["Needs action", `${BASE}/catering/pipeline`],
+      // Digests round 3 (PR 1b): the day's sections open the board filtered to that day's booked orders at the
+      // shop; "Needs action" with no follow-up due opens the stage board.
+      ["Today", `${BASE}/catering/pipeline?day=${TODAY}&location=${A}&view=booked`],
+      ["Early tomorrow", `${BASE}/catering/pipeline?day=2026-10-08&location=${A}&view=booked`],
+      ["Needs action", `${BASE}/catering/pipeline#pipeline-stages`],
       [expect.any(String), `${BASE}/catering/pipeline#${DIGEST_ANCHORS.pipelineToRing}`],
     ]);
   });
@@ -261,7 +284,7 @@ describe("catering digest: lead lines open the lead by id, never a name in the U
       expect(hrefs).toContain(`${BASE}/catering/pipeline?lead=lead-1#lead-lead-1`);
       expect(hrefs).toContain(`${BASE}/catering/pipeline?lead=lead-2#lead-lead-2`);
       expect(hrefs).toContain(`${BASE}/catering/quotes?quote=qt-1`);
-      expect(hrefs).toContain(`${BASE}/admin/catering/prep-demand`);
+      expect(hrefs).toContain(`${BASE}/admin/catering/prep-demand?location=${A}&tab=sku`);
       expect(hrefs).toContain(`${BASE}/stations?loc=${A}`);
       for (const h of hrefs) for (const pii of ["Jane", "Doe", "John", "Roe", "Acme", "q="]) expect(h).not.toContain(pii);
     }
