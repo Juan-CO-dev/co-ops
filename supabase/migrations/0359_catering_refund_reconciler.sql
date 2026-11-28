@@ -1,6 +1,6 @@
 -- Migration 0359_catering_refund_reconciler
 -- AUTHORED 2026-11-27 (catering refunds Part B1 "money", CO CC Fable lead, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
--- APPLIED TO SIM 2026-11-28 UTC (schema_migrations version 20261128052233, name '0359_catering_refund_reconciler')
+-- APPLIED TO SIM 2026-11-28 UTC (schema_migrations version 20261128073908, name '0359_catering_refund_reconciler')
 -- NUMBER: 0358 is the highest refund migration on main; 0359 is claimed for this build in co-ops-wt/.mig-claims
 --   (B1 only). B2 (email) = 0362 and B3 (digest) = 0363 are LATER files; 0360 belongs to other work; 0361 is released.
 -- Plan: PLAN-refund2B-r5 (Astra lead design) section B1 + CC's binding addendum RULINGS-refundB-r5-addendum (A1-A3).
@@ -120,11 +120,13 @@
 --   with the switch ON is refused before the Stripe POST (see WITHDRAWN). App first: the new code with the switch ON
 --   answers `refunds_unavailable` (the functions are missing) and never falls back to the old money writer.
 -- DEPENDS ON: 0127, 0120, 0204 (stripe_events), 0243 / 0343 (cron lease), 0303, 0333, 0357, 0358, sessions (0257 clocks).
--- SIM, STATED EXACTLY: the sim apply above ran this file as it stood at commit 77d62510 (file sha256 f1defd76...). This
+-- SIM, STATED EXACTLY: the sim apply above ran this file as it stood at commit b66fc539 (file sha256 70e7bcbc...). This
 --   stamp is a later, header-only commit: what is live on the sim is what this file creates. HISTORY: the sim first
---   held this file as of commit e4297115 (version 20261128031445, before the post-build review's fix round). That
---   install was never used (no epoch, no refund state); it was removed from the SIM ONLY by a guarded reset and this
---   file applied again through the same pinned tooling. Prod never saw the earlier text.
+--   held this file as of commit e4297115 (version 20261128031445, before the post-build review's fix round), then as
+--   of commit 77d62510 (version 20261128052233, fix round 1). Neither install was ever used (no epoch, no refund
+--   state); each was removed from the SIM ONLY by a guarded reset (it refuses unless this file's tables are empty,
+--   drops nothing CASCADE, and its transport refuses every project but the sim) and this file applied again through
+--   the same pinned tooling. Prod never saw an earlier text.
 -- PROOF: scripts/sql-harness-0359.mjs (PGlite, the REAL 0357 -> 0358 -> 0359), CI-pinned by
 --   tests/catering-refund-0359-migration.test.ts. Two-session lock proof: scripts/sim/refund-0359-lock-check.mjs (sim only, CC).
 -- ROLLBACK (only while no epoch was ever opened): a NEW reviewed migration that drops this file's functions, tables

@@ -187,6 +187,7 @@ const finishDrain = (db: PGlite, d: { epoch: string; generation: number }) => ha
 interface FakeStripeLike {
   charge(pi: string, o?: { captured?: number }): unknown;
   refund(pi: string, amount: number, status: string, o?: { id?: string; created?: number }): string;
+  set(id: string, patch: { status?: string; amount?: number }): void;
 }
 const kit = harnessKit as unknown as {
   FakeStripe: new () => FakeStripeLike;
@@ -658,10 +659,9 @@ describe("the rollback handoff to main (app halves)", () => {
     expect(await deliver(ev)).toMatchObject({ status: 200, body: { result: "refund_state_owed" } });
     // The seal handed it back to main (addendum A2): its stored verdict is main's `payment_not_found`.
     await x.db.query("update public.stripe_events set outcome = 'payment_not_found' where id = $1", [ev.id]);
-    const real = x.sb as { rpc: (fn: string, args?: unknown) => Promise<{ data: unknown; error: unknown }> };
+    const real = x.sb as unknown as { from: (t: string) => unknown; rpc: (fn: string, args?: unknown) => PromiseLike<{ data: unknown; error: unknown }> };
     const withState = (answer: unknown) => ({
-      ...x.sb,
-      from: (t: string) => (x.sb as { from: (t: string) => unknown }).from(t),
+      from: (t: string) => real.from(t),
       rpc: (fn: string, args?: unknown) => (fn === "catering_refund_epoch_state" ? Promise.resolve({ data: answer, error: null }) : real.rpc(fn, args)),
     });
     for (const answer of [null, {}, { state: null }, { state: "some_future_state" }]) {
