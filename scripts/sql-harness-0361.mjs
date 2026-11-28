@@ -738,8 +738,10 @@ try {
     await expectRefused(db, [R("", {})], "toast_labor_invalid_payload", "H5 an element with an empty time_entry_guid");
     await expectRefused(db, [R("inv-f", { location_id: null })], "toast_labor_invalid_payload", "H5 an element with a JSON null location_id");
 
-    // A row CHOSEN for writing that breaks a table constraint, in the MIDDLE of a payload (the walk order is the key order:
-    // x-a, x-b, x-c, so the bad x-b comes after a good insert).
+    // A row CHOSEN for writing that breaks a table constraint, with valid rows around it in the same payload. What these
+    // checks prove is ATOMICITY: the call is one statement, so no row of it is kept whatever order the walk takes. They
+    // do NOT prove the walk's order (fix round, review GLM P3): the lock-order proof is the two-session script on the
+    // sim (scripts/sim/toast-labor-0361-two-sessions.mjs, cases 8a / 8b / 9), which a single-session harness cannot give.
     const absent = (p) => [R(`${p}-a`, { source_modified_at: M1 }), R(`${p}-c`, { source_modified_at: M1 })];
     const mid = (p, bad) => { const [a, c] = absent(p); return [c, bad, a]; };
     await expectRefused(db, mid("c49", R("c49-b", { hours: 49, source_modified_at: M1 })), "23514", "H5 hours 49 on an absent key, mid-payload: the whole call fails");
