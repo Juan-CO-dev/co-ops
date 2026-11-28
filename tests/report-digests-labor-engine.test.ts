@@ -17,12 +17,30 @@ import { runClosingDigestsWith, runDigestTickWith } from "@/lib/report-digests-e
 import { digestAccessFor } from "@/lib/report-digests-access-shared";
 import { businessAccessFor, GM_VISIBILITY_DEFAULTS, type GmVisibility } from "@/lib/business-access-shared";
 import type { Envelope } from "@/lib/report-digests-compose";
+import { failed, ok, unavailable, type Loaded } from "@/lib/report-digests-v2-shared";
 import {
   A, B, CLOCK_START, CLOSING_NOW, D0, D1, MemStore, TICK_NOW, cutHourly, flush, harness, hourlyFacts, ov, ref, roleFacts, stableText,
   type Harness, type HarnessOpts,
 } from "./fixtures/digest-labor-engine";
 
 vi.mock("@/lib/report-digests-compose", async () => (await import("./fixtures/digest-labor-engine")).composeModuleStub());
+
+/**
+ * Astra R6 (access decided ONCE): a counting wrapper of `laborBusinessAccess`, the engine's only access decision. After
+ * `emptyAfter` calls it answers as if the sealed settings result had been replaced by an EMPTY one (no entry): a second
+ * decision would then differ from the first. Default: transparent.
+ */
+const accessSpy = vi.hoisted(() => ({ calls: 0, emptyAfter: Number.POSITIVE_INFINITY }));
+vi.mock("@/lib/report-digests-labor-shared", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/report-digests-labor-shared")>();
+  return {
+    ...actual,
+    laborBusinessAccess: (role: string, settings: Parameters<typeof actual.laborBusinessAccess>[1]) => {
+      accessSpy.calls++;
+      return actual.laborBusinessAccess(role, accessSpy.calls > accessSpy.emptyAfter ? null : settings);
+    },
+  };
+});
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -58,7 +76,7 @@ const viewerBusinessOf = (env: Envelope) => (env.viewer as { business?: unknown 
 
 let unhandled: unknown[] = [];
 const onUnhandled = (e: unknown) => { unhandled.push(e); };
-beforeEach(() => { unhandled = []; process.on("unhandledRejection", onUnhandled); });
+beforeEach(() => { unhandled = []; accessSpy.calls = 0; accessSpy.emptyAfter = Number.POSITIVE_INFINITY; process.on("unhandledRejection", onUnhandled); });
 afterEach(() => { process.off("unhandledRejection", onUnhandled); });
 
 // ── switch off ──────────────────────────────────────────────────────────────────────────────────
@@ -235,12 +253,16 @@ describe("phase 0 (A4-1, A4-2, A4-3, O-N5a)", () => {
     expect(h.composes.some((c) => c.kind === "shop" && (c.facts as { location: { id: string } }).location.id === B)).toBe(false);
   });
 
-  it("A4-1, the writer rule: a SOURCE still pending at the budget → no pre-load: zero piece starts; the owner's store is empty for every shop; a GM gets no business", async () => {
+  // A4-1, the writer rule, UPDATED in the fix round (Astra R6): A4-1's own words are "every labor-money line reads
+  // 'Labor cost not available'". The old expectation here ("a GM gets no business") was the old behaviour: the settings
+  // piece certifies nothing (`needsSettledWriters: false`), so it still runs and the GM's access is still decided.
+  it("A4-1, the writer rule: a SOURCE still pending at the budget → zero hourly / role pieces, ONE settings piece; the owner's store is empty for every shop; a GM keeps its decided business", async () => {
     const h = harness({ ...ONE_DAY(), switchOn: true });
     h.shop.neverSource(B, D1);
     const summary = await tickRun(h);
-    expect(h.labor.starts).toBe(0);
-    expect(laborStarts(h)).toHaveLength(0);
+    expect(laborStarts(h).map((e) => e.ev)).toEqual(["settings:start"]);
+    expect(h.log.count("hourly(")).toBe(0);
+    expect(h.log.count("roles(")).toBe(0);
     // every digest still goes out (its facts settled)
     expect(summary?.counts.gm_shop.sent).toBe(4);
     expect(summary?.counts.unified.sent).toBe(2);
@@ -249,8 +271,28 @@ describe("phase 0 (A4-1, A4-2, A4-3, O-N5a)", () => {
       for (const shop of [A, B]) expect(c.env.laborMoney!.hourly(shop, D1)).toBeNull();
       expect(c.env.laborMoney!.roles(A, D1)).toBeNull();
     }
-    for (const c of h.envOf(ref("gm-a"))) expect(businessOf(c.env)).toBeNull();
-    for (const c of h.envOf(ref("gm-b"))) expect(businessOf(c.env)).toBeNull();
+    for (const [r, shop] of [["gm-a", A], ["gm-b", B]] as const) {
+      const cs = h.envOf(ref(r));
+      expect(cs.length, r).toBeGreaterThan(0);
+      for (const c of cs) {
+        expect(businessOf(c.env), r).toEqual(businessAccessFor("gm", null));
+        expect(c.env.laborMoney!.hourly(shop, D1), r).toBeNull();
+      }
+    }
+  });
+
+  it("A4-1, the writer rule: a GM whose saved settings have hourly cost off keeps exactly that decision; no GM due = no settings piece either", async () => {
+    const h = harness({ ...ONE_DAY(), switchOn: true });
+    h.shop.neverSource(B, D1);
+    h.labor.setGm(GM_NO_HOURLY);
+    await tickRun(h);
+    expect(laborStarts(h).map((e) => e.ev)).toEqual(["settings:start"]);
+    for (const c of h.envOf(ref("gm-a"))) expect(businessOf(c.env)).toEqual(businessAccessFor("gm", GM_NO_HOURLY));
+    const noGm = harness({ ...ONE_DAY(), switchOn: true, dir: { who: ["moo", "own"] } });
+    noGm.shop.neverSource(B, D1);
+    await tickRun(noGm);
+    expect(noGm.labor.starts).toBe(0);
+    for (const c of noGm.envOf(ref("own"))) expect(businessOf(c.env)).toEqual(businessAccessFor("owner", null));
   });
 
   it("O-N5a: one shop's facts and the catering facts both reject → only the composes that print them fail; no unhandled rejection", async () => {
@@ -266,6 +308,163 @@ describe("phase 0 (A4-1, A4-2, A4-3, O-N5a)", () => {
     // the labor pre-load still ran (no writer pending)
     expect(h.labor.starts).toBeGreaterThan(0);
     expect(unhandled).toEqual([]);
+  });
+});
+
+// ── post-build review, the ONE fix round: the source contract, the clock, access decided once ────
+
+describe("Astra R3 (P1): a source whose write's outcome is not known certifies nothing (FactsSource)", () => {
+  const cases: Array<[string, (h: Harness) => void]> = [
+    ["{ writeUncertain: true } (the pull failed or was cut)", (h) => h.shop.uncertainSource(A, D0)],
+    ["a source that REJECTS", (h) => h.shop.rejectSource(A, D0)],
+    ["a source resolving undefined (fail closed)", (h) => h.shop.sourceResolves(A, D0, undefined)],
+    ["a source resolving {} (fail closed)", (h) => h.shop.sourceResolves(A, D0, {})],
+    ["a source resolving null (fail closed)", (h) => h.shop.sourceResolves(A, D0, null)],
+    ["a source resolving { writeUncertain: \"false\" } (fail closed: not exactly false)", (h) => h.shop.sourceResolves(A, D0, { writeUncertain: "false" })],
+  ];
+  for (const [name, arrange] of cases) {
+    it(`${name} → zero hourly and zero role pieces; the settings piece still runs; every digest is sent; every holder's store is empty and the GM keeps its access`, async () => {
+      const h = harness({ ...CLOSING_BOTH, switchOn: true });
+      arrange(h);
+      const summary = await closingRun(h);
+      expect(laborStarts(h).map((e) => e.ev), name).toEqual(["settings:start"]);
+      expect(summary?.counts.gm_shop).toEqual({ sent: 3, skipped: 0, failed: 0, ambiguous: 0 });
+      expect(summary?.counts.unified).toEqual({ sent: 2, skipped: 0, failed: 0, ambiguous: 0 });
+      for (const c of h.composes) if (businessOf(c.env)) for (const s of [A, B]) {
+        expect(c.env.laborMoney!.hourly(s, D0), `${c.ref} ${s}`).toBeNull();
+        expect(c.env.laborMoney!.roles(s, D0), `${c.ref} ${s}`).toBeNull();
+      }
+      expect(businessOf(h.envOf(ref("gm-a"), "shop")[0]!.env)).toEqual(businessAccessFor("gm", null));
+      expect(unhandled).toEqual([]);
+    });
+  }
+
+  it("the control: a source resolving exactly { writeUncertain: false } certifies (both hourly pieces run)", async () => {
+    const h = harness({ ...CLOSING_BOTH, switchOn: true });
+    h.shop.sourceResolves(A, D0, { writeUncertain: false });
+    await closingRun(h);
+    expect(h.log.all("hourly(").filter((e) => e.ev.endsWith(":start"))).toHaveLength(2);
+  });
+
+  it("a tick: one uncertain source of ONE shop-day withholds every shop's labor money in the run", async () => {
+    const h = harness({ ...TWO_DAY(), switchOn: true });
+    h.shop.uncertainSource(B, D1);
+    const summary = await tickRun(h);
+    expect(h.log.count("hourly(")).toBe(0);
+    expect(summary?.counts.gm_shop.sent).toBe(8);
+    expect(summary?.counts.unified.sent).toBe(4);
+  });
+});
+
+describe("Astra R1 (P1): phase 0's budget is judged on the CLOCK, not on the timer", () => {
+  it("Astra's probe: a one-day run; the source and the facts settle at 45 001 ms with the budget timer NOT yet run → no labor piece, the late fact set is FROZEN, the healthy shop's email is sent", async () => {
+    const h = harness({ ...CLOSING_BOTH, switchOn: true });
+    const facts = h.shop.holdFacts(B, D0);
+    const src = h.shop.holdSource(B, D0);
+    const p = runClosingDigestsWith(h.io, A, D0);
+    await flush(8);
+    await h.clock.advance(44_999);
+    h.clock.moveClockOnly(2); // 45 001 ms: past the cutoff; the budget timer is still pending
+    expect(h.clock.now).toBe(CLOCK_START + 45_001);
+    src.resolve(); facts.resolve();
+    await flush(8);
+    const summary = await h.clock.until(p);
+    expect(h.log.count("hourly(")).toBe(0);
+    expect(h.log.count("roles(")).toBe(0);
+    for (const r of ["moo", "own"]) {
+      expect(outcomes(h, "unified", ref(r)), r).toEqual(["failed"]);
+      expect(rowsOf(h, "unified", ref(r))[0]!.error ?? "", r).toContain("ordinary_facts_timeout");
+    }
+    expect(h.composes.some((c) => c.kind === "unified")).toBe(false);
+    for (const r of ["gm-a", "moo", "agm"]) expect(outcomes(h, "gm_shop", ref(r), A), r).toEqual(["sent"]);
+    expect(summary?.counts.gm_shop.sent).toBe(3);
+  });
+
+  it("the mirror: the same at 44 999 ms → accepted: the pre-load runs and the unified digest is sent", async () => {
+    const h = harness({ ...CLOSING_BOTH, switchOn: true });
+    const facts = h.shop.holdFacts(B, D0);
+    const src = h.shop.holdSource(B, D0);
+    const p = runClosingDigestsWith(h.io, A, D0);
+    await flush(8);
+    await h.clock.advance(44_998);
+    h.clock.moveClockOnly(1);
+    expect(h.clock.now).toBe(CLOCK_START + 44_999);
+    src.resolve(); facts.resolve();
+    await flush(8);
+    const summary = await h.clock.until(p);
+    expect(h.log.all("hourly(").filter((e) => e.ev.endsWith(":start"))).toHaveLength(2);
+    expect(summary?.counts.unified).toEqual({ sent: 2, skipped: 0, failed: 0, ambiguous: 0 });
+  });
+
+  it("a two-day tick: a shop whose first day's source settles EXACTLY at the cutoff (90 000 ms) never starts its second day", async () => {
+    const h = harness({ ...TWO_DAY(), switchOn: true });
+    const src = h.shop.holdSource(A, D0);
+    const p = runDigestTickWith(h.io);
+    await flush(8);
+    await h.clock.advance(89_999);
+    h.clock.moveClockOnly(1);
+    expect(h.clock.now).toBe(CLOCK_START + 90_000);
+    src.resolve();
+    await flush(8);
+    await h.clock.until(p);
+    expect(h.log.first(`shopFacts:start(A,${D1})`)).toBe(-1);
+    expect(h.log.count("hourly(")).toBe(0);
+    for (const r of ["gm-a", "moo", "agm"]) {
+      const d1 = rowsOf(h, "gm_shop", ref(r), A).filter((x) => x.business_day === D1);
+      expect(d1.map((x) => x.outcome), r).toEqual(["failed"]);
+      expect(d1[0]!.error ?? "", r).toContain("ordinary_facts_timeout");
+    }
+    // Shop B's two days were loaded and sent.
+    expect(rowsOf(h, "gm_shop", ref("gm-b"), B).map((x) => x.outcome)).toEqual(["sent", "sent"]);
+  });
+});
+
+describe("Astra R6 (P2), Fable F3, Opus R-6: the access map is decided ONCE and kept", () => {
+  it("lm.roles() THROWS while phase C's pieces are built → the GM still carries its decided business and a store whose hourly(...) is null; so does the MoO", async () => {
+    const h = harness({ ...CLOSING_BOTH, switchOn: true });
+    h.labor.setGm(GM_SAVED);
+    h.labor.rolesThrows = true;
+    const summary = await closingRun(h);
+    expect(summary?.counts.gm_shop.sent).toBe(3);
+    const gm = h.envOf(ref("gm-a"), "shop")[0]!;
+    expect(businessOf(gm.env)).toEqual(businessAccessFor("gm", GM_SAVED));
+    expect(viewerBusinessOf(gm.env)).toMatchObject({ access: businessAccessFor("gm", GM_SAVED) });
+    expect(gm.env.laborMoney!.hourly(A, D0)).toBeNull();
+    const moo = h.envOf(ref("moo"), "shop")[0]!;
+    expect(businessOf(moo.env)).toEqual(businessAccessFor("moo", null));
+    expect(moo.env.laborMoney!.hourly(A, D0)).toBeNull();
+  });
+
+  it("the same when lm.hourly() throws", async () => {
+    const h = harness({ ...CLOSING_BOTH, switchOn: true });
+    h.labor.setGm(GM_SAVED);
+    h.labor.hourlyThrows = true;
+    await closingRun(h);
+    const gm = h.envOf(ref("gm-a"), "shop")[0]!;
+    expect(businessOf(gm.env)).toEqual(businessAccessFor("gm", GM_SAVED));
+    expect(gm.env.laborMoney!.hourly(A, D0)).toBeNull();
+  });
+
+  it("laborAccess runs ONCE per run: the hourly phase, the role phase and the envelope show the same decision even if the sealed settings read as EMPTY afterwards", async () => {
+    // One due money recipient (the GM of Shop A, defaults = hourly + cost by role): one decision = one call.
+    const h = harness({ now: CLOSING_NOW, finalized: { [D0]: [A] }, switchOn: true, dir: { who: ["gm-a", "gm-b"] } });
+    accessSpy.emptyAfter = 1;
+    await closingRun(h);
+    expect(accessSpy.calls).toBe(1);
+    expect(h.log.first(`hourly(A,${D0}):start`)).toBeGreaterThan(-1);
+    expect(h.log.first(`roles(A,${D0}):start`), "the role phase used the same decision").toBeGreaterThan(-1);
+    const gm = h.envOf(ref("gm-a"), "shop")[0]!;
+    expect(businessOf(gm.env), "the envelope used the same decision").toEqual(businessAccessFor("gm", null));
+    expect(gm.env.laborMoney!.roles(A, D0)).toEqual(roleFacts(A, D0));
+  });
+
+  it("with a source pending at the budget the access is still decided exactly once (by the final access phase)", async () => {
+    const h = harness({ ...CLOSING_BOTH, switchOn: true });
+    h.shop.neverSource(B, D0);
+    await closingRun(h);
+    // gm-a, moo and agm (Shop A's digest) + moo and own (unified) = five due money sends, one decision each.
+    expect(accessSpy.calls).toBe(5);
+    expect(businessOf(h.envOf(ref("gm-a"), "shop")[0]!.env)).toEqual(businessAccessFor("gm", null));
   });
 });
 
@@ -644,6 +843,8 @@ describe("O-N3: a throw inside the pre-load never fails the run", () => {
     ["lm.hourly() throws synchronously", (h) => { h.labor.hourlyThrows = true; }],
     ["lm.settings() throws", (h) => { h.labor.settingsThrows = true; }],
     ["a piece whose start throws", (h) => { h.labor.hourlyBehaviour.set(`A,${D0}`, { kind: "throwStart" }); h.labor.hourlyBehaviour.set(`B,${D0}`, { kind: "throwStart" }); }],
+    // Astra R5: tells the two behaviours apart. Only Shop A's start throws; Shop B's would succeed: NO shop has facts.
+    ["ONLY shop A's hourly start throws (shop B's would succeed)", (h) => { h.labor.hourlyBehaviour.set(`A,${D0}`, { kind: "throwStart" }); }],
   ];
   for (const [name, arrange] of cases) {
     it(`${name}: runClosingDigestsWith resolves, every digest is sent, no business-holding envelope has facts`, async () => {
@@ -652,10 +853,17 @@ describe("O-N3: a throw inside the pre-load never fails the run", () => {
       const summary = await closingRun(h);
       expect(summary?.counts.gm_shop.sent).toBe(3);
       expect(summary?.counts.unified.sent).toBe(2);
-      for (const c of h.composes) if (businessOf(c.env)) for (const s of [A, B]) {
-        expect(c.env.laborMoney?.hourly(s, D0) ?? null, `${c.ref} ${s}`).toBeNull();
-        expect(c.env.laborMoney?.roles(s, D0) ?? null).toBeNull();
+      let holders = 0;
+      for (const c of h.composes) if (businessOf(c.env)) {
+        holders++;
+        for (const s of [A, B]) {
+          expect(c.env.laborMoney?.hourly(s, D0) ?? null, `${c.ref} ${s}`).toBeNull();
+          expect(c.env.laborMoney?.roles(s, D0) ?? null).toBeNull();
+        }
       }
+      // Every holder is still in a labor-money run (its lines read "Labor cost not available", never nothing).
+      if (name !== "lm.settings() throws") expect(holders, name).toBeGreaterThanOrEqual(4);
+      for (const c of h.composes) if (businessOf(c.env)) expect(c.env.laborMoney, c.ref).toBeTruthy();
     });
   }
   it("runDigestTickWith does not reject either (lm.hourly throws)", async () => {
@@ -664,6 +872,16 @@ describe("O-N3: a throw inside the pre-load never fails the run", () => {
     const summary = await tickRun(h);
     expect(summary?.counts.gm_shop.sent).toBe(8);
     expect(summary?.counts.unified.sent).toBe(4);
+  });
+  it("Astra R5: runDigestTickWith with ONLY shop A's first-day hourly start throwing → no shop and no day has facts; every digest is sent", async () => {
+    const h = harness({ ...TWO_DAY(true), switchOn: true });
+    h.labor.hourlyBehaviour.set(`A,${D0}`, { kind: "throwStart" });
+    const summary = await tickRun(h);
+    expect(summary?.counts.gm_shop.sent).toBe(8);
+    expect(summary?.counts.unified.sent).toBe(4);
+    for (const c of h.composes) if (businessOf(c.env)) for (const s of [A, B]) for (const d of [D0, D1]) {
+      expect(c.env.laborMoney!.hourly(s, d), `${c.ref} ${s} ${d}`).toBeNull();
+    }
   });
 });
 
@@ -689,18 +907,26 @@ function fakeSb() {
 describe("loadShopDayFacts (A4-2): onSource", () => {
   beforeEach(() => { v2.calls = []; v2.next = null; hub.next = null; });
 
-  it("onSource is called exactly once, synchronously, with the v2 load's own promise; it settles only when the v2 load does, even when another part rejects first", async () => {
+  // A4-2 + Astra R3. (The old "is the v2 promise itself" identity assertion no longer holds: the source now RESOLVES a
+  // FactsSource derived from the v2 load's labor area. Replaced by the assertions below.)
+  const load = async (v2Result: () => Promise<unknown>, reportsReject = false) => {
     const { loadShopDayFacts } = await import("@/lib/report-digests");
+    v2.next = v2Result;
+    if (reportsReject) hub.next = () => Promise.reject(new Error("reports read failed (synthetic)"));
+    const sources: Array<Promise<unknown>> = [];
+    const p = loadShopDayFacts(fakeSb(), { id: A, name: "Shop A" }, D0, new Date(CLOSING_NOW), { onSource: (s) => sources.push(s) });
+    // synchronously: before the returned promise's first microtask
+    const syncCount = sources.length;
+    p.catch(() => undefined);
+    return { p, sources, syncCount };
+  };
+  const outcome = async (s: Promise<unknown>) => s.then((v) => ({ resolved: v }), (e) => ({ rejected: String(e) }));
+
+  it("onSource is called exactly once, synchronously; the source settles only when the v2 load does, even when another part rejected first", async () => {
     let releaseV2!: (v: unknown) => void;
     const v2Promise = new Promise((r) => { releaseV2 = r; });
-    v2.next = () => v2Promise;
-    hub.next = () => Promise.reject(new Error("reports read failed (synthetic)"));
-    const sources: Array<Promise<unknown>> = [];
-    const now = new Date(CLOSING_NOW);
-    const p = loadShopDayFacts(fakeSb(), { id: A, name: "Shop A" }, D0, now, { onSource: (s) => sources.push(s) });
-    // synchronously: before the returned promise's first microtask
-    expect(sources).toHaveLength(1);
-    expect(sources[0]).toBe(v2Promise);
+    const { p, sources, syncCount } = await load(() => v2Promise, true);
+    expect(syncCount).toBe(1);
     let rejected = false;
     p.catch(() => { rejected = true; });
     let sourceSettled = false;
@@ -708,10 +934,27 @@ describe("loadShopDayFacts (A4-2): onSource", () => {
     await flush(4);
     expect(rejected).toBe(true);
     expect(sourceSettled).toBe(false);
-    releaseV2({ v2: "done" });
+    releaseV2({ labor: ok({ totalHours: 1 }) });
     await flush(2);
     expect(sourceSettled).toBe(true);
     expect(sources).toHaveLength(1);
+    expect(await outcome(sources[0]!)).toEqual({ resolved: { writeUncertain: false } });
+  });
+
+  it("it resolves { writeUncertain: false } for a v2 load whose labor is ok, and { writeUncertain: true } when labor is unavailable(\"labor_pull_failed\")", async () => {
+    const good = await load(() => Promise.resolve({ labor: ok({ totalHours: 1 }) }));
+    expect(good.syncCount).toBe(1);
+    expect(await outcome(good.sources[0]!)).toEqual({ resolved: { writeUncertain: false } });
+    const bad = await load(() => Promise.resolve({ labor: unavailable("labor_pull_failed") }));
+    expect(bad.syncCount).toBe(1);
+    expect(await outcome(bad.sources[0]!)).toEqual({ resolved: { writeUncertain: true } });
+  });
+
+  it("its promise never rejects: a v2 load that rejects (it should not) resolves { writeUncertain: true }", async () => {
+    const r = await load(() => Promise.reject(new Error("v2 broke its contract (synthetic)")));
+    expect(r.syncCount).toBe(1);
+    expect(await outcome(r.sources[0]!)).toEqual({ resolved: { writeUncertain: true } });
+    expect(unhandled).toEqual([]);
   });
 
   it("with no onSource the call is exactly as before", async () => {
@@ -726,4 +969,23 @@ describe("loadShopDayFacts (A4-2): onSource", () => {
     expect(v2.calls).toHaveLength(3);
     for (const c of v2.calls) expect(c).toEqual([sb, A, D0, now, { schedule: undefined }]);
   });
+});
+
+describe("toastWriteUncertain (Astra R3): is the outcome of the digest's own Toast pull NOT known?", () => {
+  const table: Array<[string, Loaded<unknown> | undefined, boolean]> = [
+    ["ok: the pull finished and its rows were read", ok({ totalHours: 1 }), false],
+    ["unavailable labor_off: no pull was attempted", unavailable("labor_off"), false],
+    ["unavailable no_labor: the pull finished, D has no entries", unavailable("no_labor"), false],
+    ["unavailable labor_pull_failed: the pull failed or was cut", unavailable("labor_pull_failed"), true],
+    ["unavailable with any other reason", unavailable("something_else"), true],
+    ["unavailable with an empty reason", unavailable(""), true],
+    ["error", failed(), true],
+    ["no labor area at all", undefined, true],
+  ];
+  for (const [name, labor, uncertain] of table) {
+    it(`${name} → writeUncertain ${uncertain}`, async () => {
+      const { toastWriteUncertain } = await import("@/lib/report-digests");
+      expect(toastWriteUncertain(labor)).toBe(uncertain);
+    });
+  }
 });

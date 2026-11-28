@@ -42,8 +42,11 @@ const HOURLY: DigestCapability = "labor_hourly";
 const LOADED: DigestCapability = "labor_loaded";
 const ROLES: DigestCapability = "labor_cost_by_role";
 
-/** A figure that is not whole (a dash, or "so far") makes its line UNKNOWN: unknown is never zero, never "All good". */
-const notWhole = (f: Figure) => { const k = figureKindOf(f); return k === "unknown" || k === "incomplete"; };
+/**
+ * A figure that is not whole (a dash, or "so far") makes its line UNKNOWN: unknown is never zero, never "All good". A
+ * figure that is not there at all (Fable F8) is unknown too.
+ */
+const notWhole = (f: Figure | undefined) => { if (f === undefined) return true; const k = figureKindOf(f); return k === "unknown" || k === "incomplete"; };
 
 function targetWords(t: Tr, target: LaborTarget, kind: "pure" | "loaded"): string {
   // The business report's own wording (components/reports-business/BusinessParts.tsx): a target is configuration.
@@ -59,14 +62,19 @@ function overTarget(span: LaborSpanView): boolean {
   return span.labor.pureTone === "watch" || span.labor.pureTone === "high";
 }
 
-/** The pieces every line prints, each through figureText. A money group's figure is present (the view holds both). */
+/**
+ * The pieces every line prints, each through figureText. The view holds both money groups, so a figure is always
+ * there; if one ever is not (Fable F8), the piece says the part's own "not available" sentence and its line is
+ * unknown (`notWhole`), never a hand-written dash.
+ */
 function pieces(c: { t: Tr; fmt: ReturnType<typeof figureFormatFor> }, l: LaborView) {
-  const say = (f: Figure | undefined) => (f === undefined ? "—" : figureText(f, c.fmt, { short: true }));
+  const missing = () => c.t("digest.labor_money.not_available");
+  const say = (f: Figure | undefined) => (f === undefined ? missing() : figureText(f, c.fmt, { short: true }));
   return {
     say,
     hours: () => c.t("digest.labor_money.hours", { hours: say(l.hours) }),
     pct: (f: Figure | undefined, target: LaborTarget, kind: "pure" | "loaded") =>
-      f === undefined ? "—" : figureText(f, c.fmt, { short: true, wrap: (v) => c.t("digest.labor_money.pct_of_net", { pct: v, target: targetWords(c.t, target, kind) }) }),
+      f === undefined ? missing() : figureText(f, c.fmt, { short: true, wrap: (v) => c.t("digest.labor_money.pct_of_net", { pct: v, target: targetWords(c.t, target, kind) }) }),
     overtime: () => c.t("digest.labor_money.overtime", { hours: say(l.otHours), premium: say(l.otPremium) }),
   };
 }
@@ -113,7 +121,7 @@ export function laborMoneyLines(ctx: LaborMoneyCtx, store: LaborMoneyStore | nul
   else if (day.kind !== "ok") f1 = line(HOURLY, t("digest.labor_money.latest_label_plain"), sentence(day), { unknown: true });
   else {
     const s = day.span, l = s.labor, p = pieces({ t, fmt }, l);
-    const shown = [l.pureCost, l.purePct, l.otHours, l.otPremium].filter((f): f is Figure => f !== undefined);
+    const shown = [l.pureCost, l.purePct, l.otHours, l.otPremium];
     f1 = line(HOURLY, t("digest.labor_money.latest_label", { date: date(s.to) }),
       [p.say(l.pureCost), p.pct(l.purePct, s.target, "pure"), p.overtime()].join(" · "),
       { tone: overTarget(s) ? "issue" : "info", unknown: shown.some(notWhole), span: s });
@@ -126,7 +134,7 @@ export function laborMoneyLines(ctx: LaborMoneyCtx, store: LaborMoneyStore | nul
   else if (wk.kind !== "ok") f2 = line(HOURLY, t("digest.labor_money.week_so_far_label_plain"), sentence(wk, "digest.labor_money.week_updating"), { unknown: true });
   else {
     const s = wk.span, l = s.labor, p = pieces({ t, fmt }, l);
-    const shown = [l.hours, l.pureCost, l.purePct, l.otHours, l.otPremium].filter((f): f is Figure => f !== undefined);
+    const shown = [l.hours, l.pureCost, l.purePct, l.otHours, l.otPremium];
     f2 = line(HOURLY, t("digest.labor_money.week_so_far_label", { from: date(s.from), to: date(s.to) }),
       [p.hours(), p.say(l.pureCost), p.pct(l.purePct, s.target, "pure"), p.overtime()].join(" · "), { unknown: shown.some(notWhole), span: s });
   }
@@ -137,7 +145,7 @@ export function laborMoneyLines(ctx: LaborMoneyCtx, store: LaborMoneyStore | nul
   if (last.kind !== "ok") f3 = line(HOURLY, t("digest.labor_money.last_week_label_plain"), sentence(last), { unknown: true });
   else {
     const s = last.span, l = s.labor, p = pieces({ t, fmt }, l);
-    const shown = [l.purePct, l.otHours, l.otPremium].filter((f): f is Figure => f !== undefined);
+    const shown = [l.purePct, l.otHours, l.otPremium];
     f3 = line(HOURLY, t("digest.labor_money.last_week_label", { from: date(s.from), to: date(s.to) }),
       [p.pct(l.purePct, s.target, "pure"), p.overtime()].join(" · "),
       { tone: overTarget(s) ? "issue" : "info", unknown: shown.some(notWhole), span: s });
@@ -146,10 +154,10 @@ export function laborMoneyLines(ctx: LaborMoneyCtx, store: LaborMoneyStore | nul
   // F4: fully loaded — the latest final day's $ and % (its own target) · the last full week's %. A part that is not
   // `ok` is said with its own sentence; both parts with no figure = ONE "not available" line. Never an issue.
   const loadedLabel = t("reports.business.card.fully_loaded");
-  const partText = (p: SpanPartView | { kind: "none" }, what: string, ok: (s: LaborSpanView) => string): { text: string; figures: Figure[]; span: LaborSpanView | null } => {
+  const partText = (p: SpanPartView | { kind: "none" }, what: string, ok: (s: LaborSpanView) => string): { text: string; figures: Array<Figure | undefined>; span: LaborSpanView | null } => {
     if (p.kind === "ok") {
       const l = p.span.labor;
-      return { text: ok(p.span), figures: [l.loadedCost, l.loadedPct].filter((f): f is Figure => f !== undefined), span: p.span };
+      return { text: ok(p.span), figures: [l.loadedCost, l.loadedPct], span: p.span };
     }
     const why = p.kind === "none" ? t("digest.labor_money.no_final_day") : sentence(p);
     return { text: t("digest.labor_money.part", { what, sentence: why }), figures: [], span: null };
@@ -167,11 +175,14 @@ export function laborMoneyLines(ctx: LaborMoneyCtx, store: LaborMoneyStore | nul
       span: dayPart.span ?? weekPart.span,
     });
 
-  // F5: cost by role of the latest final day (straight time, before overtime). It stands on F1's day: no usable day,
-  // no role entry, or a role read that did not finish = "Cost by role not available". Fewer than two buckets = none.
+  // F5: cost by role of the latest final day (straight time, before overtime). It stands on F1's day. Opus R-2 (plan
+  // §11.2.2): a day part that is `updating` (its week is not usable) or `none` (no final day) has NO F5 line at all.
+  // A day part `unavailable`, no role entry, or a role read that did not finish = "Cost by role not available".
+  // Fewer than two buckets = no line.
   const roles = view.roles;
   let f5: DigestLine | null;
-  if (day.kind !== "ok" || roles === null || roles.kind === "unavailable" || (roles.kind === "ok" && roles.date !== day.span.to)) f5 = rolesNotAvailable;
+  if (day.kind === "updating" || day.kind === "none") f5 = null;
+  else if (day.kind !== "ok" || roles === null || roles.kind === "unavailable" || (roles.kind === "ok" && roles.date !== day.span.to)) f5 = rolesNotAvailable;
   else if (roles.kind === "omitted") f5 = null;
   else {
     const name = (b: RoleBucketView) => (b.kind === "role" && b.name ? b.name : t(b.kind === "pool" ? "digest.labor_money.role_pool" : "digest.labor_money.role_other"));

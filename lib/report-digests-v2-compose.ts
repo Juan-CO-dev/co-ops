@@ -625,12 +625,19 @@ function laborScheduleDay(c: Ctx, v: ShopV2Facts) {
  * (index min(1, n)). Every existing ungated line keeps its text and relative order. Exported for the tests.
  */
 export function laborSectionLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
+  return composeLaborSection(c, v).lines;
+}
+
+/** `laborSectionLines` and the status line it holds (the first line `laborLines` returned, null when none), so the
+ * money placement can find its anchor in the composed list without calling `laborLines` again (GLM part 4 F-1). */
+function composeLaborSection(c: Ctx, v: ShopV2Facts): { lines: DigestLine[]; status: DigestLine | null } {
   const base = v.labor ? laborLines(c, v) : [];
+  const status = base[0] ?? null;
   const roster = laborScheduleDay(c, v);
-  if (!roster) return base;
+  if (!roster) return { lines: base, status };
   const href = link(c, { to: "reconcile", location: c.locationId }, { to: "stations", location: c.locationId });
   const at = Math.min(1, base.length);
-  return [...base.slice(0, at), scheduledVsWorkedLine(c, roster, v.labor, href), ...base.slice(at)];
+  return { lines: [...base.slice(0, at), scheduledVsWorkedLine(c, roster, v.labor, href), ...base.slice(at)], status };
 }
 
 /**
@@ -642,15 +649,17 @@ export function laborSectionLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
  * money lines do not depend on today's Toast state, and each carries its own `needs` (finishSection cuts them).
  */
 export function laborSectionWithMoney(c: Ctx, v: ShopV2Facts, laborMoney: LaborMoneyStore | null | undefined): DigestLine[] {
-  const sec = laborSectionLines(c, v);
+  const { lines: sec, status } = composeLaborSection(c, v);
   const money = laborMoneyLines({ language: c.language, baseUrl: c.baseUrl, locationId: c.locationId, day: c.day, viewer: c.viewer }, laborMoney);
   if (!money) return sec;
-  // laborLines' first line (when it returns any) is the status line ("N h clocked", "No one clocked in", or its one
-  // "not available" line); laborSectionLines puts "Scheduled vs worked" right after it (index min(1, n)).
-  const status = v.labor && laborLines(c, v).length > 0 ? 1 : 0;
-  const vs = status + (laborScheduleDay(c, v) ? 1 : 0);
+  // GLM part 4 F-1: the anchors are found in the COMPOSED list itself, never by index arithmetic on where PR 2 put a
+  // line. The status line is the first line `laborLines` returned ("N h clocked", "No one clocked in", or its one
+  // "not available" line); the staffing line is the one whose `needs` is `published_staffing` ("Scheduled vs worked").
+  // Every other line keeps its text and relative order.
+  const staffing = sec.find((l) => l.needs === "published_staffing") ?? null;
+  const rest = sec.filter((l) => l !== status && l !== staffing);
   const opt = (l: DigestLine | null): DigestLine[] => (l ? [l] : []);
-  return [...sec.slice(0, status), money.f1, ...sec.slice(status, vs), ...opt(money.f2), ...sec.slice(vs), ...opt(money.f3), money.f4, ...opt(money.f5)];
+  return [...opt(status), money.f1, ...opt(staffing), ...opt(money.f2), ...rest, ...opt(money.f3), money.f4, ...opt(money.f5)];
 }
 
 // ── Labor (Toast time entries, D) ── appended to lib/report-digests-v2-compose.ts ────────────

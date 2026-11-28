@@ -1,6 +1,6 @@
 {
- "comment": "Switch-off goldens rendered BEFORE PR 4's composer edits, from HEAD 7ba78f46697c16cf44d7f8502eba3e42210ce3c1 (git rev-parse HEAD), working tree with no edit to any composer. Regenerate only with a written reason.",
- "headSha": "7ba78f46697c16cf44d7f8502eba3e42210ce3c1",
+ "comment": "Switch-off goldens: PR 2's composer output, rendered before any composer was edited for PR 4 (7c25f9da..934af8dd changed no composer). Pinned against PR 2's head 934af8dd4593b8af427a01d70227c35d7c03918b: re-rendered byte for byte by PR 2's own code at that head (PR 4 fix round, Opus R-3). Regenerate only with a written reason.",
+ "headSha": "934af8dd4593b8af427a01d70227c35d7c03918b",
  "cases": {
   "shop-en-permitted": {
    "subject": "Shop A closing digest — Wed, Oct 7",

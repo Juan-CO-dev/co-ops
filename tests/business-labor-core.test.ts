@@ -218,6 +218,16 @@ describe("finality: which day is final, and every state is named (never a 0)", (
     expect(facts.weekSoFar).toMatchObject({ kind: "ok", span: { from: WD, to: WD } });
     expect(facts.lastFullWeek.kind).toBe("ok");
   });
+  it("Fable F7: the bracket-1 sales read ends at D − 1 (nothing prints from D), on a Thursday, a Sunday and a Monday", async () => {
+    for (const [day, from, to] of [[D, WP, "2026-10-07"], [WD, WP, "2026-10-03"], ["2026-10-05", WP, WD]] as const) {
+      const { sent } = await hourly({}, undefined, day);
+      const sales = sent.filter((r) => r.name === "sales_report_daily");
+      expect(sales.length, day).toBeGreaterThan(0);
+      expect(sales.map((r) => String(r.args.p_from)).sort()[0], day).toBe(from);
+      expect(sales.map((r) => String(r.args.p_to)).sort().at(-1), day).toBe(to);
+      expect(sales.every((r) => String(r.args.p_to) < day && String(r.args.p_from) < day), day).toBe(true);
+    }
+  });
   it("a DST week (clocks back Sunday 2026-11-01): the payroll weeks and spans are calendar weeks", async () => {
     const { facts } = await hourly({ weeks: [ready("2026-10-25"), ready("2026-11-01")] }, undefined, "2026-11-04");
     expect(facts.latestFinalDay).toMatchObject({ kind: "ok", span: { from: "2026-11-03" } });
@@ -415,8 +425,9 @@ describe("L10: no request after its stage or the snapshot", () => {
     // Only bracket 2's two fingerprints were sent (each week's first request).
     expect(s.sent.filter((r) => r.name === "fact_labor_week_fingerprint").map((r) => r.n)).toEqual([0, 0]);
     expect(s.sent.filter((r) => r.name === "labor_week_coverage")).toHaveLength(4);
-    // Both weeks have no bracket-1 fingerprint (null = stale_source): no day is final.
-    expect(h.snapshot().latestFinalDay).toEqual({ kind: "none" });
+    // Both weeks have no bracket-1 fingerprint (null = stale_source): no day can be chosen, and the window was not
+    // verified, so it is "updating", never "no final day" (Opus R-1).
+    expect(h.snapshot().latestFinalDay).toEqual({ kind: "updating" });
   });
   it("rule 3 on a single request: fingerprints answering after their stage ended (by the clock) are not accepted", async () => {
     let ended = false;
@@ -425,7 +436,8 @@ describe("L10: no request after its stage or the snapshot", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await h.done;
     // The first one sent ends the stage: its answer is refused; accepted, the previous week would make 10-03 final.
-    expect(h.snapshot().latestFinalDay).toEqual({ kind: "none" });
+    // Without it no week of the window is ready in bracket 1: "updating", never "no final day" (Opus R-1).
+    expect(h.snapshot().latestFinalDay).toEqual({ kind: "updating" });
   });
   it("the ledger closes at the snapshot: an answer after it is never accepted, even on a stage that has not ended", async () => {
     const s = setup({}, (r) => (r.name === "fact_labor_week_fingerprint" && r.n === 1 ? "hang" : undefined));

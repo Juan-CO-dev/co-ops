@@ -73,6 +73,8 @@ export const SALARY = { salaried_cents: 4_000, salary_basis: "wages", salaried_p
 export type Req = {
   kind: "rpc" | "table"; name: string; args: Record<string, unknown>; filters: Record<string, unknown>; range?: [number, number];
   signal?: AbortSignal; retry?: boolean; at: number; seq: number;
+  /** The shared time entry's stored `out_at` at the moment the request was sent (A4-3: what a labor read sees). */
+  outAt: string;
   /** The shop a request is about (`p_location_id` or an `eq` on location_id); null = a shared read (coverage, fingerprint). */
   shop: string | null;
 };
@@ -99,6 +101,11 @@ export class LaborDb {
   failRoles = false;
   /** The GM visibility read never settles. */
   stallSettings = false;
+  /**
+   * One shared time entry's stored `out_at` (A4-3). A pull with `pull: { outAt }` rewrites it from its own answer when
+   * it ends; every request records the value it was served against (`Req.outAt`).
+   */
+  entryOutAt = "out-initial";
   readonly sent: Req[] = [];
   readonly client: LaborCoreDeps["sb"];
   private seq = 0;
@@ -132,7 +139,7 @@ export class LaborDb {
   /** The counting, holding wrapper (copied from tests/business-labor-core.test.ts, on the fake clock). */
   private wrap(base: ReturnType<typeof fakeClient>) {
     const make = (kind: Req["kind"], name: string, args: Record<string, unknown>, inner: Record<string, unknown>) => {
-      const req: Req = { kind, name, args, filters: {}, at: 0, seq: 0, shop: typeof args.p_location_id === "string" ? args.p_location_id : null };
+      const req: Req = { kind, name, args, filters: {}, at: 0, seq: 0, outAt: "", shop: typeof args.p_location_id === "string" ? args.p_location_id : null };
       const proxy: Record<string, unknown> = new Proxy({}, {
         get: (_t, prop: string) => {
           if (prop === "abortSignal") return (s: AbortSignal) => { req.signal = s; return proxy; };
@@ -141,6 +148,7 @@ export class LaborDb {
             return (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => {
               req.at = this.clock.now;
               req.seq = ++this.seq;
+              req.outAt = this.entryOutAt;
               this.sent.push(req);
               const how = this.respond(req);
               const answer = (): Promise<unknown> => {
@@ -224,8 +232,19 @@ export function goldenFacts(shop: { id: string; name: string }, day = D, toastCh
   return day === D ? f : { ...f, day };
 }
 
-/** `bare`: no Toast labor fact and no schedule for D (the Labor section exists only through a labor-money line). */
-type ShopMode = { facts?: "never" | "reject"; source?: "never" | Deferred<void>; pullChanges?: boolean; bare?: boolean };
+/**
+ * `bare`: no Toast labor fact and no schedule for D (the Labor section exists only through a labor-money line).
+ * `sourceResult`: what the SOURCE resolves once its pull is over (default `{ writeUncertain: false }`, a healthy night;
+ * `{ writeUncertain: true }` = the pull failed or was cut; any other value is passed as is). `sourceRejects`: it rejects.
+ * `pull` (A4-3): the pull takes `delayMs` of fake time and then rewrites the shared entry's `out_at` from its own answer.
+ * `detached` (the teeth of the A4-3 test): the source settles AT ONCE instead of holding the pull (a loader that does
+ * not hand back its write), so the engine's per-shop chain no longer waits for it; the facts still settle after the pull.
+ */
+export type ShopMode = {
+  facts?: "never" | "reject"; source?: "never" | Deferred<void>; pullChanges?: boolean; bare?: boolean;
+  sourceResult?: unknown; sourceRejects?: boolean; pull?: { outAt: string; delayMs: number }; detached?: boolean;
+};
+export const HEALTHY_SOURCE = { writeUncertain: false } as const;
 
 export class FakeShopFacts {
   readonly calls: Array<{ key: string; at: number; args: number }> = [];
@@ -239,9 +258,18 @@ export class FakeShopFacts {
     this.log.push(`shopFacts:start(${key})`);
     const m = this.modes.get(key) ?? {};
     // The digest's own pull: it may move an out_at of D's payroll week BEFORE the facts settle (N1).
-    const pulled = Promise.resolve().then(() => { if (m.pullChanges) this.db.toastChanged = true; });
-    const source = m.source === "never" ? new Promise<void>(() => {}) : m.source ? pulled.then(() => (m.source as Deferred<void>).promise) : pulled;
-    onSource?.(source);
+    const pullOver = m.pull ? new Promise<void>((r) => { this.clock.timers.set(() => r(), m.pull!.delayMs); }) : Promise.resolve();
+    const pulled = pullOver.then(() => {
+      if (m.pullChanges) this.db.toastChanged = true;
+      if (m.pull) { this.db.entryOutAt = m.pull.outAt; this.log.push(`pull:write(${key}, ${m.pull.outAt})`); }
+    });
+    const written = m.detached ? Promise.resolve() : pulled;
+    const settled = m.source === "never" ? new Promise<void>(() => {}) : m.source ? written.then(() => (m.source as Deferred<void>).promise) : written;
+    const result = "sourceResult" in m ? m.sourceResult : HEALTHY_SOURCE;
+    onSource?.(settled.then(() => {
+      if (m.sourceRejects) throw new Error("source_failed (synthetic)");
+      return result as Awaited<Parameters<NonNullable<typeof onSource>>[0]>;
+    }));
     if (m.facts === "never") return new Promise<ShopDayFacts>(() => {});
     if (m.facts === "reject") return pulled.then(() => { throw new Error("facts_read_failed (synthetic)"); });
     // Sampled when the pull ends: what Toast holds at that moment.

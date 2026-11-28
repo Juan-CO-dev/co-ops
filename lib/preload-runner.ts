@@ -29,9 +29,17 @@
  *
  * SOURCES. Anything that can change what a later read certifies (the digest's own Toast pull) is a SOURCE: it runs
  * before the budget opens and before every phase. The type has no other place for it: phases hold reads only. If the
- * sources did not finish writing, no phase runs and every result is `unavailable`.
+ * sources did not finish writing, no phase that certifies anything runs (every such result is `unavailable`); a phase
+ * that certifies nothing (`needsSettledWriters: false`: the settings read) still runs, so that who may see a line is
+ * still decided and they read "not available".
  *
- * NEVER FAILS THE RUN (O-N3). `run()` never throws: any throw inside the pre-load seals EVERY result `unavailable`.
+ * NEVER FAILS THE RUN (O-N3). `run()` never throws and never leaves a rejection unhandled. Any throw inside the pre-load
+ * (a phase's `pieces()`, a piece's `start()`, a piece with no real cap or no real handle, a duplicate key) seals EVERY
+ * result `unavailable`. The ONE local rule (plan §15.2.2): a `snapshot()` that throws, or that returns a value which
+ * cannot be sealed, makes THAT piece `unavailable` and leaves the others as they are.
+ *
+ * SEALED = READ-ONLY, FOR REAL. A snapshot is deep-frozen (plain objects and arrays, at every depth). A value that
+ * cannot be frozen that way (a `Map`, a `Set`: `Object.freeze` leaves their entries writable) is refused.
  */
 
 /** The timer seam (global timers by default; tests inject fake ones on the same clock). */
@@ -74,12 +82,18 @@ export interface PreloadPhase<D> {
   maxCapMs: number;
   /** The pieces of this phase, from what earlier phases sealed and who is due. Pure: no I/O here. */
   pieces(sealedSoFar: PreloadResults, due: D): PreloadPiece<unknown>[];
+  /**
+   * Default true: this phase certifies something, so it never runs while a source may still be writing. False only for a
+   * phase that certifies nothing (the settings read): it runs even then.
+   */
+  needsSettledWriters?: boolean;
 }
 
 export interface PreloadRunArgs<D> {
   /**
-   * Phase 0: every source-changing load, awaited BEFORE the budget opens. `writersSettled: false` (or a throw) = a write
-   * may still be running, so nothing may be certified: no phase runs.
+   * Phase 0: every source-changing load, awaited BEFORE the budget opens. `writersSettled: false` = a write may still be
+   * running or its outcome is not known, so nothing may be certified: only a phase with `needsSettledWriters: false`
+   * runs. A throw = no phase runs.
    */
   sources: () => Promise<{ writersSettled: boolean }>;
   due: D;
@@ -102,20 +116,22 @@ export const REAL_PRELOAD_TIMERS: PreloadTimers = {
 
 const UNAVAILABLE: PreloadResult = Object.freeze({ kind: "unavailable" });
 
-/** Freezes a value all the way down (plain objects, arrays, Maps and Sets of them). */
+/**
+ * Freezes a value all the way down (plain objects and arrays). A `Map` or a `Set` anywhere in it THROWS: `Object.freeze`
+ * leaves their entries writable, so they can never be part of a sealed value.
+ */
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
   if (typeof value !== "object" || value === null || seen.has(value)) return value;
+  if (value instanceof Map || value instanceof Set || value instanceof WeakMap || value instanceof WeakSet) throw new Error("preload_unsealable_value");
   seen.add(value);
-  if (value instanceof Map) { for (const [k, v] of value) { deepFreeze(k, seen); deepFreeze(v, seen); } }
-  else if (value instanceof Set) { for (const v of value) deepFreeze(v, seen); }
-  else for (const k of Reflect.ownKeys(value)) deepFreeze((value as Record<PropertyKey, unknown>)[k], seen);
+  for (const k of Reflect.ownKeys(value)) deepFreeze((value as Record<PropertyKey, unknown>)[k], seen);
   return Object.freeze(value);
 }
 
 /** THE SEAL: a read-only view over a private copy. Nothing outside this function holds the Map. */
 function seal(results: ReadonlyMap<string, PreloadResult>): PreloadResults {
-  const own = new Map<string, PreloadResult>();
-  for (const [key, r] of results) own.set(key, deepFreeze(r));
+  // Every value was deep-frozen when its piece was snapshotted (`runPiece`).
+  const own = new Map<string, PreloadResult>(results);
   return Object.freeze({
     get: (key: string) => own.get(key),
     has: (key: string) => own.has(key),
@@ -139,8 +155,8 @@ async function runPiece(
   piece: PreloadPiece<unknown>, maxCapMs: number, root: AbortSignal, absoluteAt: number, clock: () => number, timers: PreloadTimers,
 ): Promise<PreloadResult> {
   const startAt = clock();
-  // A piece that does not say a real cap is not run: one bad piece costs that piece, never the others.
-  if (!Number.isFinite(piece.capMs) || piece.capMs <= 0) return UNAVAILABLE;
+  // A piece with no real cap is a programming error: a throw inside the pre-load (O-N3: every result unavailable).
+  if (!Number.isFinite(piece.capMs) || piece.capMs <= 0) throw new Error("preload_bad_piece_cap");
   // O-N3: a piece is clamped to its phase's cap. ONE owner of the cutoff: this function.
   const cutoffAt = Math.min(startAt + Math.min(piece.capMs, maxCapMs), absoluteAt);
   const own = derived(root);
@@ -165,36 +181,43 @@ async function runPiece(
     },
   };
 
-  let handle: PieceHandle<unknown> | null = null;
-  try { handle = piece.start(ctx); } catch { handle = null; }
-  // A handle that is not a handle is `unavailable` for this piece only.
-  if (handle === null || typeof handle !== "object" || typeof handle.snapshot !== "function") handle = null;
+  // A `start()` that throws, or that returns no real handle, is a throw inside the pre-load (O-N3): it propagates,
+  // `run()` seals EVERY result unavailable and aborts the root. (Only `snapshot()` has a local rule, below.)
+  let handle: PieceHandle<unknown>;
+  try {
+    handle = piece.start(ctx);
+    if (handle === null || typeof handle !== "object" || typeof handle.snapshot !== "function") throw new Error("preload_bad_piece_handle");
+  } catch (e) {
+    own.controller.abort();
+    for (const c of cleanups) { try { c(); } catch { /* already cleared */ } }
+    throw e;
+  }
 
   // The wait: `done` settles OR the clock reaches the cutoff. Nothing is taken from it.
-  if (handle !== null) {
-    const done = Promise.resolve(handle.done);
-    await new Promise<void>((resolve) => {
-      let over = false;
-      let timer: unknown = null;
-      const finish = () => {
-        if (over) return;
-        over = true;
-        if (timer !== null) timers.clear(timer);
-        resolve();
-      };
-      const left = cutoffAt - clock();
-      if (left <= 0) { finish(); return; }
-      timer = timers.set(finish, left);
-      done.then(finish, finish);
-    });
-  }
+  await new Promise<void>((resolve) => {
+    let over = false;
+    let timer: unknown = null;
+    const finish = () => {
+      if (over) return;
+      over = true;
+      if (timer !== null) timers.clear(timer);
+      resolve();
+    };
+    // BOTH handlers are attached FIRST, whatever the clock says: a `done` that rejects is always handled, also when the
+    // cutoff has already passed (Astra R4: a rejection at the boundary must never be unhandled).
+    Promise.resolve(handle.done).then(finish, finish);
+    const left = cutoffAt - clock();
+    if (left <= 0) { finish(); return; }
+    timer = timers.set(finish, left);
+  });
 
   // Exactly once: abort the piece's signal, then take the snapshot. The result is the snapshot, whatever ended the wait.
   own.controller.abort();
   for (const c of cleanups) { try { c(); } catch { /* a timer already cleared */ } }
-  if (handle === null) return UNAVAILABLE;
+  // The ONE local rule (plan §15.2.2): a `snapshot()` that throws, or whose value cannot be sealed read-only, is
+  // `unavailable` for THIS piece; the others are untouched.
   try {
-    return Object.freeze({ kind: "ok", value: handle.snapshot() }) as PreloadResult;
+    return Object.freeze({ kind: "ok", value: deepFreeze(handle.snapshot()) }) as PreloadResult;
   } catch {
     return UNAVAILABLE;
   }
@@ -222,7 +245,8 @@ export function definePreload<D>(config: { phases: readonly PreloadPhase<D>[]; b
       try {
         // Phase 0: every source-changing load, before the budget opens and before every bracket.
         const settled = await sources();
-        if (!settled.writersSettled) return NOTHING;
+        // A source may still be writing: nothing may be certified in this run. Only a phase that certifies nothing runs.
+        const writersSettled = settled.writersSettled === true;
 
         const absoluteAt = clock() + budgetMs;
         DEADLINES.set(root.signal, absoluteAt);
@@ -230,6 +254,7 @@ export function definePreload<D>(config: { phases: readonly PreloadPhase<D>[]; b
         for (const phase of phases) {
           // A phase that has not started by the absolute time never starts.
           if (clock() >= absoluteAt) break;
+          if (!writersSettled && phase.needsSettledWriters !== false) continue;
           // A phase sees what the earlier phases sealed, read-only.
           const pieces = phase.pieces(seal(sealed), due);
           const keys = new Set<string>();

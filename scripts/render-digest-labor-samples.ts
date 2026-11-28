@@ -17,7 +17,8 @@
  *
  * Run (the pieces and the composers are server modules, hence the react-server condition):
  *   npx tsx --conditions=react-server scripts/render-digest-labor-samples.ts [outDir]
- * Default outDir: C:/Users/conta/co-ops-wt/samples-digest3-4 (outside the repo).
+ * Default outDir: tmp/digest-labor-samples, relative to the working directory (`tmp/` is git-ignored; Opus R-7: no
+ * absolute user path in the repo).
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -26,7 +27,7 @@ import type { Language } from "@/lib/i18n/types";
 import { GM_ALL_ON } from "../tests/helpers/business-report-fake";
 import { A, B, D, SALARY, e2e, type E2EOpts, type Mail, type Who } from "../tests/fixtures/digest-labor-e2e";
 
-const DEFAULT_OUT = "C:/Users/conta/co-ops-wt/samples-digest3-4";
+const DEFAULT_OUT = path.join("tmp", "digest-labor-samples");
 
 /** The closing run of D with both shops finalized; every recipient in `language`. */
 async function night(language: Language, opts: Partial<E2EOpts> & { gmSettings?: Record<string, boolean> | null } = {}): Promise<Mail[]> {

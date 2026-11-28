@@ -18,6 +18,7 @@ import {
 } from "@/lib/report-digests-labor-shared";
 import { definePreload, preloadValue, signalDeadline, type PieceCtx, type PreloadPiece } from "@/lib/preload-runner";
 import { createServiceRoleClientWithFetch } from "@/lib/supabase-server";
+import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
 import { GM_ALL_ON, fakeClient, gmOff, type VisibilityAnswer } from "./helpers/business-report-fake";
 
 const factory = vi.mocked(createServiceRoleClientWithFetch);
@@ -352,6 +353,131 @@ describe("the fetch boundary (A4-4, O-N4, O-N8): a real client over an injected 
     const n = t.attempts.length;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(t.attempts).toHaveLength(n);
+  });
+});
+
+// ── GLM part 3 F-2: the pre-load's client has the shared client's options, never its cache ─────────────
+
+describe("GLM part 3 F-2: createServiceRoleClientWithFetch = getServiceRoleClient's URL, key and options, plus global.fetch only", () => {
+  afterEach(() => {
+    vi.doUnmock("@supabase/supabase-js");
+    vi.resetModules();
+  });
+  it("same URL, same key, same options except global.fetch (exactly f); a new client per call; never the shared singleton", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://preload-test.invalid");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "test-only-not-a-key");
+    vi.stubEnv("SIM_MODE", "");
+    vi.resetModules();
+    let n = 0;
+    const createClient = vi.fn((...args: unknown[]) => ({ client: ++n, args: args.length }));
+    vi.doMock("@supabase/supabase-js", async (orig) => ({ ...(await orig<Record<string, unknown>>()), createClient }));
+    const mod = await vi.importActual<typeof import("@/lib/supabase-server")>("@/lib/supabase-server");
+    const f = (async () => new Response("[]")) as typeof fetch;
+    const shared = mod.getServiceRoleClient();
+    const p1 = mod.createServiceRoleClientWithFetch(f);
+    const p2 = mod.createServiceRoleClientWithFetch(f);
+    const sharedAgain = mod.getServiceRoleClient();
+    expect(createClient).toHaveBeenCalledTimes(3);
+    const [sharedArgs, p1Args, p2Args] = createClient.mock.calls as unknown as [[string, string, Record<string, unknown>], [string, string, Record<string, unknown>], [string, string, Record<string, unknown>]];
+    expect(p1Args[0]).toBe(sharedArgs[0]);
+    expect(p1Args[1]).toBe(sharedArgs[1]);
+    expect(sharedArgs.slice(0, 2)).toEqual(["https://preload-test.invalid", "test-only-not-a-key"]);
+    const { global, ...rest } = p1Args[2];
+    expect(Object.keys(global as object)).toEqual(["fetch"]);
+    expect((global as { fetch: unknown }).fetch).toBe(f);
+    expect(rest).toEqual(sharedArgs[2]);
+    expect("global" in sharedArgs[2]).toBe(false);
+    expect(p2Args).toEqual(p1Args);
+    // Two calls, two clients; the shared singleton stays the first shared client.
+    expect(p1).not.toBe(p2);
+    expect(sharedAgain).toBe(shared);
+    expect([p1, p2]).not.toContain(shared);
+  });
+});
+
+// ── GLM part 3 F-1: over the real client, only PostgREST requests, none to auth, none refused as unstaged ──
+
+describe("GLM part 3 F-1: the pre-load client never fetches through auth, and no request is refused as unstaged", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://preload-test.invalid");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "test-only-not-a-key");
+    vi.stubEnv("SIM_MODE", "");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-21T08:00:00.000Z"));
+  });
+  const clock = () => Date.now();
+  const URL_BASE = "https://preload-test.invalid";
+  const D = "2026-11-20", WD = "2026-11-15", WP = "2026-11-08", FP = "f".repeat(32);
+  const dates = (from: string, to: string) => {
+    const out: string[] = [];
+    for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`); t += 86_400_000) out.push(new Date(t).toISOString().slice(0, 10));
+    return out;
+  };
+  const costRow = (days: number) => ({ week_start: WP, location_id: A, hourly_straight_cents: 900 * days, ot_premium_cents: 0, salaried_cents: 4_000, salary_basis: "wages",
+    burden_pct: 12, burden_basis: "estimated", estimated_rate_minutes: 0, hourly_minutes: 30 * days, ot_minutes: 0, salaried_minutes: 0, ot_state: "assessed",
+    range_days: days, days_covered: days, days_pending: 0, days_fallback: 0, days_incomplete: 0, days_missing: 0, open_punches: 0,
+    salaried_people: 1, salary_unplaced_people: 0, salary_missing_wage_people: 0 });
+  const table = (rows: unknown[]) => Promise.resolve(new Response(JSON.stringify(rows), { status: 200,
+    headers: { "content-type": "application/json", "content-range": rows.length === 0 ? "*/0" : `0-${rows.length - 1}/${rows.length}` } }));
+  /** A plausible PostgREST for every read the two pieces make (synthetic rows only). */
+  const answer = async (url: string, body: string): Promise<Response> => {
+    const u = new URL(url);
+    if (u.pathname.endsWith("/labor_week_coverage")) {
+      return table([WP, WD].map((w) => ({ week_start: w, ot_scope: "per_shop", builder_version: LABOR_BUILDER_VERSION, built_at: "2026-11-21T05:00:00.000Z", source_fingerprint: FP })));
+    }
+    if (u.pathname.endsWith("/schedule_structures")) return table([]);
+    if (u.pathname.endsWith("/business_report_gm_visibility")) return table([{ id: "00000000-0000-4000-8000-0000000000f1", settings: GM_ALL_ON }]);
+    if (u.pathname.endsWith("/rpc/fact_labor_week_fingerprint")) return json(200, FP);
+    if (u.pathname.endsWith("/rpc/fact_labor_cost")) {
+      const a = JSON.parse(body) as { p_from: string; p_to: string };
+      return table([costRow(dates(a.p_from, a.p_to).length)]);
+    }
+    if (u.pathname.endsWith("/rpc/sales_report_daily")) {
+      const a = JSON.parse(body) as { p_from: string; p_to: string };
+      const ds = dates(a.p_from, a.p_to);
+      return json(200, {
+        classes: ds.map((d) => ({ business_date: d, sale_class: "sale", checks: 2, amount_cents: 3_000, tax_cents: 0, amount_missing: 0, tax_missing: 0,
+          gross_cents: 3_000, discounts_comps_cents: 0, voids_cents: 0, service_charges_cents: 0, accounting_missing: 0 })),
+        tips: [], discounts: [], refunds: [], captured_days: ds,
+        ezcater: ds.map((d) => ({ business_date: d, orders: 1, subtotal_cents: 2_000, amount_missing: 0 })),
+      });
+    }
+    return json(404, { message: "unexpected" });
+  };
+
+  it("a full hourly piece and a settings piece: every URL the transport saw is <url>/rest/v1/…, none /auth/v1/, none refused as unstaged", async () => {
+    const seen: string[] = [];
+    // The transport with the request body (the RPC arguments), logging every URL that reaches it.
+    const withBody = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(String(input));
+      return answer(String(input), typeof init?.body === "string" ? init.body : "");
+    }) as typeof fetch;
+    // Every refusal the wrapped fetch makes is recorded (it rejects before the transport).
+    const refusals: string[] = [];
+    const real = factory.getMockImplementation()!; // the actual factory (the vi.mock at the top wraps it)
+    factory.mockImplementationOnce((wrapped: typeof fetch) => {
+      const spy = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        try { return await wrapped(input, init); } catch (e) { refusals.push(`${(e as Error).message} ${String(input)}`); throw e; }
+      }) as typeof fetch;
+      return real(spy);
+    });
+    const io = buildLaborMoneyIO({ env: ON4, clock, fetch: withBody })!;
+    let sealed: Awaited<ReturnType<typeof runPhase>> | null = null;
+    void runPhase([io.settings() as PreloadPiece<unknown>, io.hourly(A, D) as PreloadPiece<unknown>], clock, 10_000).then((s) => { sealed = s; });
+    await vi.advanceTimersByTimeAsync(10_000 + 1_000);
+    expect(sealed).not.toBeNull();
+    // A FULL hourly piece: both brackets ran to their end and every part certified.
+    const hourly = preloadValue<HourlyLaborFacts>(sealed!, `hourly|${A}|${D}`)!;
+    expect([hourly.latestFinalDay.kind, hourly.weekSoFar.kind, hourly.lastFullWeek.kind]).toEqual(["ok", "ok", "ok"]);
+    expect(preloadValue<GmSettingsResult>(sealed!, LABOR_SETTINGS_KEY)).toEqual({ kind: "settings", settings: GM_ALL_ON });
+    const paths = new Set(seen.map((u) => new URL(u).pathname));
+    for (const p of ["/rest/v1/labor_week_coverage", "/rest/v1/schedule_structures", "/rest/v1/business_report_gm_visibility", "/rest/v1/rpc/sales_report_daily",
+      "/rest/v1/rpc/fact_labor_cost", "/rest/v1/rpc/fact_labor_week_fingerprint"]) expect(paths, p).toContain(p);
+    expect(seen.length).toBeGreaterThan(10);
+    expect(seen.filter((u) => !u.startsWith(`${URL_BASE}/rest/v1/`))).toEqual([]);
+    expect(seen.filter((u) => u.includes("/auth/v1/"))).toEqual([]);
+    expect(refusals.filter((r) => r.includes("preload_unstaged_request"))).toEqual([]);
+    expect(refusals).toEqual([]);
   });
 });
 

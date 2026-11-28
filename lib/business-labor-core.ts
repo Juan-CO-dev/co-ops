@@ -200,7 +200,8 @@ export function hourlyLaborPiece(deps: LaborCoreDeps, locationId: string, day: s
         if (!take(g.stage, () => { ledger.coverageBefore1 = before; })) return;
         await Promise.allSettled([
           quietly((async () => {
-            const windows = salesWindows(frame.weekP, day);
+            // Fable F7: the window ends at D − 1, the newest day any span can hold (nothing prints from D).
+            const windows = salesWindows(frame.weekP, frame.days[0]!);
             const raws = await Promise.all(windows.map(async (w) => {
               const res: { data: unknown; error: { code?: string } | null } = await g.send(() =>
                 preloadRequest(r.sb.rpc("sales_report_daily", { p_location_id: locationId, p_from: w.from, p_to: w.to }), g.stage));

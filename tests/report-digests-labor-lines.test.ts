@@ -6,7 +6,7 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
 import type { Language } from "@/lib/i18n/types";
@@ -88,8 +88,10 @@ describe("F1–F5 in every state: the exact sentence, the needs, never a zero fo
         const a = lines(language, hourlyFacts({ latestFinalDay: p }));
         expect(a.f1).toMatchObject({ label: x.latest, text: sentenceOf, unknown: true });
         expect([a.f2, a.f3]).toEqual([base.f2, base.f3]);
-        // F5 stands on F1's day: no usable day = "Cost by role not available".
-        expect(a.f5).toMatchObject({ text: x.rolesNa, unknown: true });
+        // F5 stands on F1's day: a day part not available = "Cost by role not available"; a day part UPDATING has no
+        // F5 line at all (Opus R-2, plan §11.2.2).
+        if (part === "unavailable") expect(a.f5).toMatchObject({ text: x.rolesNa, unknown: true });
+        else expect(a.f5).toBeNull();
         const b = lines(language, hourlyFacts({ weekSoFar: p }));
         expect(b.f2).toMatchObject({ label: x.week, text: part === "updating" ? x.weekUpdating : x.na, unknown: true });
         expect([b.f1, b.f3, b.f4, b.f5]).toEqual([base.f1, base.f3, base.f4, base.f5]);
@@ -108,7 +110,38 @@ describe("F1–F5 in every state: the exact sentence, the needs, never a zero fo
       expect(m.f2!.unknown).toBeUndefined();
       expect(m.f4.text).toContain(x.noFinal);
       expect(m.f4.unknown).toBe(true);
-      expect(m.f5).toMatchObject({ text: x.rolesNa });
+      // Opus R-2: no final day = no F5 line.
+      expect(m.f5).toBeNull();
+    });
+
+    it(`Opus R-2: F5 for every day state × role state (${language})`, () => {
+      const DAY_STATES = [["ok", hourlyFacts().latestFinalDay], ["unavailable", UNAVAILABLE], ["updating", UPDATING], ["none", { kind: "none" } as const]] as const;
+      const ROLE_STATES: Array<[string, RoleLaborFacts | null]> = [["ok", roleFacts()], ["omitted", { kind: "omitted" }], ["unavailable", { kind: "unavailable" }], ["absent", null]];
+      for (const [dayState, dayPart] of DAY_STATES) {
+        for (const [roleState, r] of ROLE_STATES) {
+          const f5 = lines(language, hourlyFacts({ latestFinalDay: dayPart }), r).f5;
+          const name = `${dayState} × ${roleState}`;
+          if (dayState === "updating" || dayState === "none") expect(f5, name).toBeNull();
+          else if (dayState === "unavailable") expect(f5, name).toMatchObject({ text: x.rolesNa, unknown: true, needs: "labor_cost_by_role" });
+          else if (roleState === "omitted") expect(f5, name).toBeNull();
+          else if (roleState === "ok") expect(f5, name).toMatchObject({ needs: "labor_cost_by_role", label: serverT(language, "digest.labor_money.roles_label", { date: formatDateLabel(LATEST, language) }) });
+          else expect(f5, name).toMatchObject({ text: x.rolesNa, unknown: true, needs: "labor_cost_by_role" });
+        }
+      }
+      // No hourly entry at all keeps "Cost by role not available".
+      for (const [, r] of ROLE_STATES) expect(lines(language, null, r).f5).toMatchObject({ text: x.rolesNa, unknown: true });
+    });
+
+    it(`Opus R-1: a day part "updating" renders "Labor figures are updating", never "No final labor day" (${language})`, () => {
+      const r = recipient("owner", [], { kind: "gm_shop", shops: [A] }, businessOf("owner"));
+      const mail = renderShopDigest(shopFacts(SHOP_A, { labor: loaded(labor()) }), { language, baseUrl: BASE, viewer: r.viewer, access: r.access,
+        laborMoney: laborStore(hourlyFacts({ latestFinalDay: UPDATING }), roleFacts()) });
+      for (const out of [mail.text, mail.html]) {
+        expect(out).toContain(x.updating);
+        expect(out).not.toContain(x.noFinal);
+      }
+      const m = lines(language, hourlyFacts({ latestFinalDay: UPDATING }));
+      expect(m.f1).toMatchObject({ label: x.latest, text: x.updating, unknown: true });
     });
 
     it(`F4: a part that is not ok is said with its own sentence; both missing = one "not available" (${language})`, () => {
@@ -161,6 +194,55 @@ describe("F1–F5 in every state: the exact sentence, the needs, never a zero fo
       expect(notes.text).not.toMatch(/Person/);
     });
   }
+});
+
+describe("Opus R-2: a holder's Labor section on an updating night has no F5 line and one fewer unknown", () => {
+  const r = recipient("owner", [], { kind: "gm_shop", shops: [A] }, businessOf("owner"));
+  const f = shopFacts(SHOP_A, { labor: loaded(labor()) });
+  const title = serverT("en", "digest.v2.section.labor");
+  const section = (store: LaborMoneyStore) => composeShopSections(f, "en", BASE, false, r.viewer, r.access, store).find((s) => s.title === title)!;
+  it("updating: no F5, and one unknown fewer than the same night with the day part unavailable", () => {
+    const upd = section(laborStore(hourlyFacts({ latestFinalDay: UPDATING }), { kind: "unavailable" }));
+    const na = section(laborStore(hourlyFacts({ latestFinalDay: UNAVAILABLE }), { kind: "unavailable" }));
+    const rolesNa = serverT("en", "digest.labor_money.roles_not_available");
+    const texts = (s: DigestSection) => s.lines.map((l) => `${l.label} ${l.text}`).join("\n");
+    expect(texts(upd)).not.toContain(rolesNa);
+    expect(texts(na)).toContain(rolesNa);
+    expect(upd.status!.unknowns).toBe(na.status!.unknowns - 1);
+  });
+});
+
+describe("Fable F8: an undefined figure never prints a bare dash", () => {
+  it("a view missing a money figure says the part's own not-available sentence and the line is unknown", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/report-digests-labor-view", async (orig) => {
+      const real = await orig<typeof import("@/lib/report-digests-labor-view")>();
+      return {
+        ...real,
+        laborMoneyView: (h: HourlyLaborFacts | null, r: RoleLaborFacts | null) => {
+          const v = real.laborMoneyView(h, r);
+          for (const p of [v.hourly?.latestFinalDay, v.hourly?.weekSoFar, v.hourly?.lastFullWeek]) {
+            if (p?.kind === "ok") { delete p.span.labor.pureCost; delete p.span.labor.purePct; delete p.span.labor.loadedCost; delete p.span.labor.loadedPct; }
+          }
+          return v;
+        },
+      };
+    });
+    try {
+      const mod = await import("@/lib/report-digests-labor-compose");
+      const i18n = await import("@/lib/i18n/server");
+      const m = mod.laborMoneyLines(ctx("en"), laborStore(hourlyFacts(), roleFacts()))!;
+      const na = i18n.serverT("en", "digest.labor_money.not_available");
+      for (const l of [m.f1, m.f2!, m.f3!, m.f4]) {
+        expect(l.text, l.label).not.toMatch(/(^|\s|·)—(\s|·|$)/);
+        expect(l.text, l.label).toContain(na);
+        expect(l.unknown, l.label).toBe(true);
+      }
+    } finally {
+      vi.doUnmock("@/lib/report-digests-labor-view");
+      vi.resetModules();
+    }
+  });
 });
 
 describe("tones: over target is an issue on F1 / F3 only; weeks that differ print no tone", () => {
@@ -250,6 +332,35 @@ describe("the order inside the Labor section (plan §3.7 as amended)", () => {
       }
     });
   }
+  for (const language of LANGS) {
+    it(`GLM part 4 F-1: the exact order for {Toast labor present / absent} × {schedule for D loaded / not}, every money line present (${language})`, () => {
+      const t = translator(language);
+      const store = laborStore(hourlyFacts(), roleFacts());
+      const m = laborMoneyLines(ctx(language), store)!;
+      const withLabor = loaded(labor({ weekOvertimeAssessed: true }));
+      const sched = schedule(fullDay(D), tomorrowDay(D1, 1));
+      const CASES: Array<[string, ShopV2Facts, string[]]> = [
+        ["labor + schedule", shopFacts(SHOP_A, { labor: withLabor }, sched).v2!, [
+          t("digest.v2.labor.label"), m.f1.label, t("digest.staffing.vs_label"), m.f2!.label, t("digest.v2.labor.by_job_label"),
+          t("digest.v2.labor.people_label"), t("digest.v2.labor.overtime_label"), m.f3!.label, m.f4.label, m.f5!.label]],
+        ["labor, no schedule", shopFacts(SHOP_A, { labor: withLabor }).v2!, [
+          t("digest.v2.labor.label"), m.f1.label, m.f2!.label, t("digest.v2.labor.by_job_label"),
+          t("digest.v2.labor.people_label"), t("digest.v2.labor.overtime_label"), m.f3!.label, m.f4.label, m.f5!.label]],
+        ["no labor + schedule", { ...shopFacts(SHOP_A, {}, sched).v2!, labor: undefined }, [
+          m.f1.label, t("digest.staffing.vs_label"), m.f2!.label, m.f3!.label, m.f4.label, m.f5!.label]],
+        ["no labor, no schedule", { ...shopFacts(SHOP_A, {}).v2!, labor: undefined }, [
+          m.f1.label, m.f2!.label, m.f3!.label, m.f4.label, m.f5!.label]],
+      ];
+      for (const [name, v, want] of CASES) {
+        const got = laborSectionWithMoney(c(language), v, store);
+        expect(got.map((l) => l.label), name).toEqual(want);
+        // The existing ungated lines keep their text and relative order.
+        const without = laborSectionWithMoney(c(language), v, undefined);
+        const moneyLines = new Set<DigestLine>([m.f1, m.f2!, m.f3!, m.f4, m.f5!].map((l) => got.find((x) => x.label === l.label)!));
+        expect(got.filter((l) => !moneyLines.has(l)), name).toEqual(without);
+      }
+    });
+  }
   it("PR 2's scheduled-vs-worked line keeps needs: published_staffing", () => {
     const got = laborSectionWithMoney(c(), fullV(), laborStore(hourlyFacts(), roleFacts()));
     expect(got.find((l) => l.label === translator("en")("digest.staffing.vs_label"))!.needs).toBe("published_staffing");
@@ -301,6 +412,16 @@ describe("no number is formatted by hand", () => {
     const code = src("lib/report-digests-labor-compose.ts");
     expect(code).toMatch(/figureText\(/);
     expect(code).not.toMatch(/\b(exactFigure|purePctFigure|pureCentsFigure|loadedPctFigure|loadedCentsFigure|figureDisplay|figureCells)\b/);
+  });
+});
+
+describe("Opus R-7: the samples script writes under a relative, git-ignored tmp/ by default", () => {
+  it("no absolute user path; the default is tmp/digest-labor-samples; .gitignore covers tmp/", () => {
+    const ROOT = path.resolve(__dirname, "..");
+    const script = readFileSync(path.join(ROOT, "scripts/render-digest-labor-samples.ts"), "utf8");
+    expect(script).not.toMatch(/[A-Za-z]:[\\/]|\/Users\/|\/home\//);
+    expect(script).toMatch(/const DEFAULT_OUT = path\.join\("tmp", "digest-labor-samples"\);/);
+    expect(readFileSync(path.join(ROOT, ".gitignore"), "utf8").split(/\r?\n/)).toContain("tmp/");
   });
 });
 

@@ -45,7 +45,11 @@ export type SpanPart = { kind: "ok"; span: LaborSpan } | { kind: "unavailable" }
 export interface HourlyLaborFacts {
   /** The digest's business day D. Nothing below is about D itself. */
   day: string;
-  /** F1 and F4's day part. `none` = D−1 … D−7 were all read and verified and none of them is final. */
+  /**
+   * F1 and F4's day part. `none` = D−1 … D−7 were all read, every payroll week holding them (both, or one for a Sunday D) is `ready` in bracket 1,
+   * and none of the seven days is hours-complete. No day chosen while any week holding one of the seven days is not
+   * `ready` in bracket 1 is `updating`, never `none` (Opus R-1).
+   */
   latestFinalDay: SpanPart | { kind: "none" };
   /** F2. `no_final_day_this_week` = the latest final day is in the previous payroll week (or there is none) and D's week is usable. */
   weekSoFar: SpanPart | { kind: "no_final_day_this_week" };

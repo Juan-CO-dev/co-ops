@@ -61,6 +61,7 @@ import {
   type DigestAlert,
   type DigestIO,
   type DigestRunSummary,
+  type FactsSource,
   type SendStore,
 } from "@/lib/report-digests-engine";
 import { packageIO } from "@/lib/report-package";
@@ -156,14 +157,15 @@ async function count(q: PromiseLike<{ count: number | null; error: { message: st
 
 /**
  * `opts.schedule`: the run's one schedule reader, passed through to the v2 facts (digests round 3, PR 2).
- * `opts.onSource` (PR 4, CC addendum A4-2): called ONCE, synchronously, with this load's SOURCE promise: the v2 facts
- * load, which never rejects and holds the digest's own Toast pull. The parts below are joined with `Promise.all`, so
- * this function's own promise can reject early (a failed deliveries page) while that pull is still WRITING; a caller
- * that must not certify anything until the write is over waits on the source promise too. With no callback this
- * function is exactly what it was.
+ * `opts.onSource` (PR 4, CC addendum A4-2): called ONCE, synchronously, with this load's SOURCE promise: it follows
+ * the v2 facts load, which never rejects and holds the digest's own Toast pull. The parts below are joined with
+ * `Promise.all`, so this function's own promise can reject early (a failed deliveries page) while that pull is still
+ * WRITING; a caller that must not certify anything until the write is over waits on the source promise too. It
+ * resolves with whether the write's outcome is KNOWN (`toastWriteUncertain`; post-build review, Astra R3). With no
+ * callback this function is exactly what it was.
  */
 export async function loadShopDayFacts(sb: Sb, location: { id: string; name: string }, day: string, now: Date = new Date(),
-  opts: { schedule?: ScheduleReader; onSource?: (source: Promise<unknown>) => void } = {}): Promise<ShopDayFacts> {
+  opts: { schedule?: ScheduleReader; onSource?: (source: Promise<FactsSource>) => void } = {}): Promise<ShopDayFacts> {
   const [reports, deliveries, tosses, storeRunsPending, tasks, v2] = await Promise.all([
     listReports(sb, { viewer: SYSTEM_VIEWER, locationId: location.id, dateFrom: day, dateTo: day }),
     selectAllRows<{ match_state: string; receipt_url: string | null }>((from, to) =>
@@ -177,7 +179,7 @@ export async function loadShopDayFacts(sb: Sb, location: { id: string; name: str
     // Digest v2 (GO 2026-10-08): fail-soft per area, never throws. (Its labor area pulls Toast for D: the source.)
     ((): ReturnType<typeof loadShopV2Facts> => {
       const v2Load = loadShopV2Facts(sb, location.id, day, now, { schedule: opts.schedule });
-      opts.onSource?.(v2Load);
+      opts.onSource?.(v2Load.then((v2): FactsSource => ({ writeUncertain: toastWriteUncertain(v2.labor) }), (): FactsSource => ({ writeUncertain: true })));
       return v2Load;
     })(),
   ]);
@@ -403,6 +405,24 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date, opts: 
     readiness, staff,
     ...(schedulePending ? { schedule: Object.fromEntries(await schedulePending) } : {}),
   };
+}
+
+/**
+ * Is the outcome of the digest's own Toast pull for day D NOT known? (post-build review, Astra R3.) The pull upserts
+ * time entries; when it fails or hits its deadline the HTTP request is aborted at the client, and whether the database
+ * still commits the write is not known. Decided from what the labor area reports (`laborForDigest`,
+ * lib/report-digests-v2.ts):
+ *   ok                                    the pull finished and its rows were read: known
+ *   unavailable "labor_off"               no pull was attempted: nothing was written
+ *   unavailable "no_labor"                the pull finished; D simply has no entries: known
+ *   unavailable "labor_pull_failed"       the pull failed or was cut: NOT known
+ *   anything else, an error, no answer    NOT known (fail closed)
+ */
+export function toastWriteUncertain(labor: Loaded<unknown> | undefined): boolean {
+  if (!labor) return true;
+  if (labor.kind === "ok") return false;
+  if (labor.kind === "unavailable") return !(labor.reason === "labor_off" || labor.reason === "no_labor");
+  return true;
 }
 
 /**

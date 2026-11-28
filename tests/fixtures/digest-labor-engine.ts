@@ -263,6 +263,13 @@ export const sk = (locationId: string, day: string) => `${shopName(locationId)},
 
 export type FactsMode = { kind: "now" } | { kind: "held"; facts: Deferred<void> } | { kind: "reject"; error?: string } | { kind: "never" } | { kind: "reject_later"; facts: Deferred<void> };
 export type SourceMode = { kind: "now" } | { kind: "held"; source: Deferred<void> } | { kind: "never" };
+/**
+ * What a settled SOURCE resolves (post-build review, Astra R3: `FactsSource`). Default `{ writeUncertain: false }` (a
+ * healthy night). `{ writeUncertain: true }` = a pull that failed or was cut; `reject` = a source that broke its
+ * contract; any other value (`undefined`, `{}`) is passed through as is (the engine must fail closed on it).
+ */
+export type SourceResult = { kind: "value"; value: unknown } | { kind: "reject" };
+export const HEALTHY_SOURCE = { writeUncertain: false } as const;
 
 /** The ordinary shop facts: each call reads the mutable "Toast state" AT THE MOMENT IT IS CALLED (L7). */
 export class FakeShopFacts {
@@ -270,6 +277,7 @@ export class FakeShopFacts {
   calls: Array<{ key: string; args: number; at: number }> = [];
   private factsMode = new Map<string, FactsMode>();
   private sourceMode = new Map<string, SourceMode>();
+  private sourceResult = new Map<string, SourceResult>();
   produced: ShopDayFacts[] = [];
   constructor(private readonly log: CallLog, private readonly clock: () => number) {}
   holdFacts(locationId: string, day: string): Deferred<void> { const d = deferred<void>(); this.factsMode.set(sk(locationId, day), { kind: "held", facts: d }); return d; }
@@ -279,6 +287,12 @@ export class FakeShopFacts {
   neverFacts(locationId: string, day: string): void { this.factsMode.set(sk(locationId, day), { kind: "never" }); }
   holdSource(locationId: string, day: string): Deferred<void> { const d = deferred<void>(); this.sourceMode.set(sk(locationId, day), { kind: "held", source: d }); return d; }
   neverSource(locationId: string, day: string): void { this.sourceMode.set(sk(locationId, day), { kind: "never" }); }
+  /** The source settles with `{ writeUncertain: true }` (its pull failed or was cut at its own deadline). */
+  uncertainSource(locationId: string, day: string): void { this.sourceResult.set(sk(locationId, day), { kind: "value", value: { writeUncertain: true } }); }
+  /** The source settles with exactly `value` (e.g. `undefined`, `{}`: not a `FactsSource`). */
+  sourceResolves(locationId: string, day: string, value: unknown): void { this.sourceResult.set(sk(locationId, day), { kind: "value", value }); }
+  /** The source REJECTS when it settles (a broken loader). */
+  rejectSource(locationId: string, day: string): void { this.sourceResult.set(sk(locationId, day), { kind: "reject" }); }
 
   readonly io: DigestIO["shopFacts"] = (...args: Parameters<DigestIO["shopFacts"]>) => {
     const [location, day, onSource] = args;
@@ -292,7 +306,12 @@ export class FakeShopFacts {
     const sm = this.sourceMode.get(key) ?? { kind: "now" };
     if (onSource) {
       const raw = sm.kind === "now" ? Promise.resolve() : sm.kind === "held" ? sm.source.promise : new Promise<void>(() => {});
-      onSource(raw.then(() => { this.log.push(`source:settle(${key})`); }));
+      const result = this.sourceResult.get(key) ?? { kind: "value", value: HEALTHY_SOURCE };
+      onSource(raw.then(() => {
+        this.log.push(`source:settle(${key})`);
+        if (result.kind === "reject") throw new Error("source_failed (synthetic)");
+        return result.value as Awaited<Parameters<NonNullable<typeof onSource>>[0]>;
+      }));
     }
     const fm = this.factsMode.get(key) ?? { kind: "now" };
     const settleOk = () => { this.log.push(`shopFacts:settle(${key})`); return facts; };
@@ -405,6 +424,8 @@ export class FakeLabor {
   caps = { settings: 3_000, hourly: 10_000, roles: 3_000 };
   hourlyThrows = false;
   settingsThrows = false;
+  /** `lm.roles()` throws synchronously (while phase C's pieces are built). */
+  rolesThrows = false;
   records: PieceRecord[] = [];
   starts = 0;
   constructor(private readonly log: CallLog, private readonly clockObj: FakeClock) {}
@@ -430,6 +451,7 @@ export class FakeLabor {
       return fakePiece(`hourly(${sk(locationId, day)})`, this.caps.hourly, this.hourlyOf(locationId, day), { ...this.hooks(`hourly(${sk(locationId, day)})`), empty: cutHourly(day) });
     },
     roles: (locationId, day, hourly) => {
+      if (this.rolesThrows) throw new Error("roles_piece_failed (synthetic)");
       this.log.push(`roles:given(${sk(locationId, day)}, ${hourly.roleStep?.date ?? "none"})`);
       return fakePiece(`roles(${sk(locationId, day)})`, this.caps.roles, this.rolesOf(locationId, day), { ...this.hooks(`roles(${sk(locationId, day)})`), empty: { kind: "unavailable" } });
     },

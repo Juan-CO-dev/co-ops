@@ -384,22 +384,150 @@ describe("tick: two shops, two business days, Shop B's labor reads stalled", () 
 
 // ── 9. A4-1, the writer rule ─────────────────────────────────────────────────────────────────────
 
+/** The one line a holder reads when the run certified nothing for that shop and day (the store has no entry). */
+const NOT_AVAILABLE_LINE = `? ${T("en", "digest.labor_money.label")}: ${T("en", "digest.labor_money.not_available")}`;
+
+// A4-1, the writer rule, UPDATED in the fix round (Astra R6): the settings piece certifies nothing, so it runs even
+// with a Toast write pending; the GM's access is decided and, holding hourly cost, the GM reads "Labor cost not
+// available" (A4-1's own words: "every labor-money line reads 'Labor cost not available'"). The old expectation here
+// ("the GM's email carries no labor-money line") was the old behaviour.
 describe("A4-1 (closes A-N4): a source promise (the Toast write) still pending at the phase-0 budget", () => {
-  it("no labor request at all; the owner reads \"Labor cost not available\"; the GM's email carries no labor-money line", async () => {
-    const o: E2EOpts = { run: CLOSING, finalized: BOTH, dir: { who: ["gm-a", "own"] }, before: (h) => h.shop.mode(A, D, { source: "never" }) };
+  const o: E2EOpts = { run: CLOSING, finalized: BOTH, dir: { who: ["gm-a", "own"] }, before: (h) => h.shop.mode(A, D, { source: "never" }) };
+  it("no labor request (ONE settings request, a GM being due); the owner and the GM (hourly cost on) read \"Labor cost not available\"", async () => {
     const on = await run({ ...o, switchOn: true });
-    expect(on.db.sent).toHaveLength(0);
+    expect(on.db.laborRequests()).toHaveLength(0);
+    expect(on.db.settingsRequests()).toHaveLength(1);
     const start = 1_000_000; // CLOCK_START
     expect(on.mails[0]!.at).toBeGreaterThanOrEqual(start + 45_000);
     const u = sections(on.mail("unified", "own").text);
     for (const s of ["Shop A · Labor", "Shop B · Labor"]) {
-      expect(u.get(s), s).toContain(`? ${T("en", "digest.labor_money.label")}: ${T("en", "digest.labor_money.not_available")}`);
+      expect(u.get(s), s).toContain(NOT_AVAILABLE_LINE);
       expect(u.get(s), s).not.toMatch(/Latest final day \(/);
     }
     const gm = on.mail("gm_shop", "gm-a", A);
-    expect(noMoney(gm.text) && noMoney(gm.html)).toBe(true);
+    expect(sections(gm.text).get("Labor"), "the GM's Labor section").toContain(NOT_AVAILABLE_LINE);
+    expect(gm.text).not.toMatch(/Latest final day \(|Payroll week so far \(|Last full payroll week \(/);
+  });
+  it("a GM whose settings have hourly cost off: byte-identical to the switch-off email", async () => {
+    const on = await run({ ...o, switchOn: true, ...gmSettings(gmOff("hourly_cost")) });
+    expect(on.db.laborRequests()).toHaveLength(0);
     const off = await run({ ...o, switchOn: false });
-    expectSame(gm, off.mail("gm_shop", "gm-a", A), "GM vs switch off");
+    expectSame(on.mail("gm_shop", "gm-a", A), off.mail("gm_shop", "gm-a", A), "GM (hourly cost off) vs switch off");
+    expect(on.mail("unified", "own").text).toContain(NOT_AVAILABLE_LINE);
+  });
+  it("no GM due: no settings request either", async () => {
+    const on = await run({ ...o, switchOn: true, dir: { who: ["own"] } });
+    expect(on.db.sent).toHaveLength(0);
+    expect(on.mail("unified", "own").text).toContain(NOT_AVAILABLE_LINE);
+  });
+});
+
+// ── 9b. Astra R3: a write whose outcome is not known ─────────────────────────────────────────────
+
+describe("Astra R3 (P1): a source whose Toast write's outcome is not known (FactsSource) → no labor money in the run", () => {
+  const variants: Array<[string, Parameters<Harness["shop"]["mode"]>[2]]> = [
+    ["{ writeUncertain: true } (a pull that failed or was cut)", { sourceResult: { writeUncertain: true } }],
+    ["a source that rejects", { sourceRejects: true }],
+    ["a source resolving undefined (fail closed)", { sourceResult: undefined }],
+    ["a source resolving {} (fail closed)", { sourceResult: {} }],
+  ];
+  it.each(variants)("%s: zero labor requests; every holder reads \"Labor cost not available\" (rendered); every digest is still sent", async (_n, mode) => {
+    const h = await run({ run: CLOSING, finalized: BOTH, switchOn: true, dir: { who: ["gm-a", "moo", "own"] }, db: { laborCostRow: () => SALARY },
+      before: (x) => x.shop.mode(A, D, mode) });
+    expect(h.db.laborRequests()).toHaveLength(0);
+    expect(h.db.settingsRequests()).toHaveLength(1);
+    expect(h.mails.map(key).sort()).toEqual([`gm_shop|${D}|${ref("gm-a")}|${A}`, `gm_shop|${D}|${ref("moo")}|${A}`, `unified|${D}|${ref("moo")}|all`, `unified|${D}|${ref("own")}|all`].sort());
+    for (const who of ["gm-a", "moo"]) {
+      const m = h.mail("gm_shop", who, A);
+      expect(sections(m.text).get("Labor"), who).toContain(NOT_AVAILABLE_LINE);
+      expect(m.text, who).not.toMatch(/Latest final day \(|Payroll week so far \(|Last full payroll week \(/);
+    }
+    for (const who of ["moo", "own"]) {
+      const u = sections(h.mail("unified", who).text);
+      for (const s of ["Shop A · Labor", "Shop B · Labor"]) expect(u.get(s), `${who} ${s}`).toContain(NOT_AVAILABLE_LINE);
+    }
+  });
+  it("the control: a source resolving exactly { writeUncertain: false } prints the figures", async () => {
+    const h = await run({ run: CLOSING, finalized: ONLY_A, switchOn: true, dir: { who: ["gm-a"] }, before: (x) => x.shop.mode(A, D, { sourceResult: { writeUncertain: false } }) });
+    expect(h.mail("gm_shop", "gm-a", A).text).toContain("Latest final day (Tue, Oct 6): $");
+  });
+});
+
+// ── 9c. Astra R6: access decided once, kept after a later failure ─────────────────────────────────
+
+describe("Astra R6 (P2): the access is decided ONCE and kept when a later failure seals the facts unavailable", () => {
+  const throwing = (which: "roles" | "hourly") => (db: LaborDb, clock: FakeClock): LaborMoneyIO => {
+    const io = factoryIO(db, clock);
+    return which === "roles"
+      ? { ...io, roles: () => { throw new Error("roles_factory_failed (synthetic)"); } }
+      : { ...io, hourly: () => { throw new Error("hourly_factory_failed (synthetic)"); } };
+  };
+  it.each(["roles", "hourly"] as const)("lm.%s() throws while its phase's pieces are built: the GM (hourly on, no cost by role) and the MoO read \"Labor cost not available\" on F1–F3, not nothing", async (which) => {
+    const h = await run({ run: CLOSING, finalized: ONLY_A, switchOn: true, dir: { who: ["gm-a", "moo"] }, ...gmSettings(gmOff("person_cost")), laborIO: throwing(which) });
+    for (const who of ["gm-a", "moo"]) {
+      const m = h.mail("gm_shop", who, A);
+      expect(sections(m.text).get("Labor"), `${which} ${who}`).toContain(NOT_AVAILABLE_LINE);
+      expect(m.text, `${which} ${who}`).not.toMatch(/Latest final day \(|Payroll week so far \(|Last full payroll week \(/);
+    }
+    // The GM never holds cost by role: nothing about it.
+    expect(h.mail("gm_shop", "gm-a", A).text).not.toContain(T("en", "digest.labor_money.roles_label_plain"));
+  });
+});
+
+// ── 9d. A4-3, the ruled OUTCOME (Astra R7 = Fable F5) ────────────────────────────────────────────
+
+describe("A4-3 (Astra R7, Fable F5): overlapping modification-window answers → the NEWER clock-out is what bracket 1 reads", () => {
+  const OLDER = "2026-10-06T22:00:00Z", NEWER = "2026-10-06T23:45:00Z";
+  /** Each day's pull ALSO rewrites one shared time entry's out_at from its own answer; D − 1's pull is the slow one. */
+  const tick = (detached: boolean) => run({
+    run: { kind: "tick" }, finalized: { [DM1]: [A], [D]: [A] }, switchOn: true, dir: { who: ["gm-a"] },
+    before: (h) => {
+      h.shop.mode(A, DM1, { pull: { outAt: OLDER, delayMs: 5_000 }, detached });
+      h.shop.mode(A, D, { pull: { outAt: NEWER, delayMs: 100 }, detached });
+    },
+  });
+  it("chained (the engine's order): D's pull starts only after D − 1's source settled, so the stored value after phase 0 is the NEWER one, and every labor read is served against it", async () => {
+    const h = await tick(false);
+    expect(h.log.first(`shopFacts:start(${A}|${D})`)).toBeGreaterThan(h.log.first(`pull:write(${A}|${DM1}, ${OLDER})`));
+    expect(h.log.first(`pull:write(${A}|${D}, ${NEWER})`)).toBeGreaterThan(h.log.first(`pull:write(${A}|${DM1}, ${OLDER})`));
+    expect(h.db.entryOutAt).toBe(NEWER);
+    const bracket1 = h.db.named("labor_week_coverage");
+    expect(bracket1.length).toBeGreaterThan(0);
+    expect(bracket1[0]!.outAt).toBe(NEWER);
+    expect(new Set(h.db.laborRequests().map((r) => r.outAt))).toEqual(new Set([NEWER]));
+  });
+  it("the teeth: with the two pulls started together (the source no longer holds the pull), the OLDER value would win", async () => {
+    const h = await tick(true);
+    expect(h.log.first(`shopFacts:start(${A}|${D})`)).toBeLessThan(h.log.first(`pull:write(${A}|${DM1}, ${OLDER})`));
+    expect(h.db.entryOutAt).toBe(OLDER);
+    expect(h.db.named("labor_week_coverage")[0]!.outAt).toBe(OLDER);
+  });
+});
+
+// ── 9e. F1 when no final day can be chosen (the other fixer's chooseLatestFinalDay change) ───────
+
+describe("F1 when no final day can be chosen: \"updating\" unless every payroll week of the window was verified", () => {
+  const F1 = T("en", "digest.labor_money.latest_label_plain");
+  const f1Of = (h: Harness) => lineOf(h.mail("gm_shop", "moo", A).text, F1);
+  it("both weeks STALE in bracket 1 (the fingerprints answer another value) → \"Labor figures are updating\", never \"No final labor day…\"", async () => {
+    const h = await run({ run: CLOSING, finalized: ONLY_A, switchOn: true, dir: { who: ["moo"] }, db: {
+      laborCostRow: () => SALARY,
+      respond: (r) => (r.name === "fact_labor_week_fingerprint" ? { answer: { data: "e".repeat(32) } } : undefined),
+    } });
+    expect(f1Of(h)).toBe(`? ${F1}: ${T("en", "digest.labor_money.updating")}`);
+    expect(h.mail("gm_shop", "moo", A).text).not.toContain(T("en", "digest.labor_money.no_final_day"));
+  });
+  it("both fingerprints UNANSWERED (never settle) → \"Labor figures are updating\"", async () => {
+    const h = await run({ run: CLOSING, finalized: ONLY_A, switchOn: true, dir: { who: ["moo"] }, db: {
+      laborCostRow: () => SALARY,
+      respond: (r) => (r.name === "fact_labor_week_fingerprint" ? "hang" : undefined),
+    } });
+    expect(f1Of(h)).toBe(`? ${F1}: ${T("en", "digest.labor_money.updating")}`);
+    expect(h.mail("gm_shop", "moo", A).text).not.toContain(T("en", "digest.labor_money.no_final_day"));
+  });
+  it("both weeks ready and no day final → \"No final labor day in the last 7 days\"", async () => {
+    const h = await run({ run: CLOSING, finalized: ONLY_A, switchOn: true, dir: { who: ["moo"] }, db: { laborCostRow: () => ({ days_pending: 1 }) } });
+    expect(f1Of(h)).toBe(`? ${F1}: ${T("en", "digest.labor_money.no_final_day")}`);
   });
 });
 

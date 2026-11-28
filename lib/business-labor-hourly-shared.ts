@@ -17,6 +17,9 @@
  *   - the latest final day is chosen ONLY from a complete bracket 1 (all seven day costs, the sales, the structures and
  *     both coverage reads): with one day missing a newer day might be the missing one, so nothing is chosen;
  *   - a chosen day whose week is not usable is NOT re-chosen: it reads "updating" (§11.2.2);
+ *   - "no final day in the last 7 days" (`none`) is said only when every payroll week holding one of the seven days is
+ *     `ready` in bracket 1 and none of the seven is hours-complete; nothing chosen while a week of the window is not
+ *     ready in bracket 1 is "updating" (Opus R-1);
  *   - the last full week needs bracket 1's sales AND structures (Opus N2): a structures read that did not finish is never
  *     read as "no structures" (that would print the default 18 % / 28 % targets).
  * Every span is priced ONLY by the business report's own functions (`daySalesFrom`, `laborDayFigures`,
@@ -52,7 +55,7 @@ export function hourlyFrame(day: string): { weekD: string; weekP: string; lastFu
 export interface HourlyLedger<S> {
   day: string;
   coverageBefore1?: readonly LaborWeekGenerationRow[];
-  /** sales_report_daily over [the previous payroll week's Sunday, D]: every window, or not accepted. */
+  /** sales_report_daily over [the previous payroll week's Sunday, D − 1] (Fable F7): every window, or not accepted. */
   sales?: readonly DailyRaw[];
   /** schedule_structures, read to completion (an empty list = no structure saved: the report's default). */
   structures?: readonly S[];
@@ -112,7 +115,14 @@ export function weekUsable(v: WeekVerdicts, week: string): boolean {
 
 export type FinalDayChoice =
   | { kind: "day"; date: string; week: string; row: LaborCostRow; labor: LaborFigures; targets: LaborTargets }
+  /** Opus R-1: no day of the seven is hours-complete AND every payroll week holding one of them is `ready` in W1. */
   | { kind: "none" }
+  /**
+   * Opus R-1 (= Fable F4): no day was chosen and a payroll week holding one of the seven days is NOT `ready` in W1 (a
+   * fingerprint that did not answer, a stale or rebuilding week): "No final labor day" would be a claim built on a check
+   * that did not pass, so the day part reads "Labor figures are updating".
+   */
+  | { kind: "updating" }
   /** Bracket 1 is not complete in the ledger: no day can be chosen (a newer day might be the missing one). */
   | { kind: "unavailable" };
 
@@ -134,7 +144,9 @@ export function chooseLatestFinalDay<S>(l: HourlyLedger<S>, targetsFor: TargetsF
     const labor = laborDayFigures(sales, row, w1.get(week), targets.hourly.pct, targets.loaded.pct);
     if (laborHoursComplete(labor.state)) return { kind: "day", date: d, week, row, labor, targets };
   }
-  return { kind: "none" };
+  // Opus R-1: `none` only when the whole window was verified (every week of the seven days ready in W1).
+  const weeks = new Set(days.map(payrollWeekStart));
+  return [...weeks].every((w) => laborWeekState(w1.get(w)) === "ready") ? { kind: "none" } : { kind: "updating" };
 }
 
 const UNAVAILABLE = { kind: "unavailable" } as const;
@@ -164,6 +176,7 @@ export function certifyHourly<S>(l: HourlyLedger<S>, targetsFor: TargetsFor<S>):
   let roleStep: HourlyLaborFacts["roleStep"] = null;
   if (choice.kind === "unavailable") latestFinalDay = UNAVAILABLE;
   else if (choice.kind === "none") latestFinalDay = { kind: "none" };
+  else if (choice.kind === "updating") latestFinalDay = UPDATING; // Opus R-1: not "no final day"
   else if (!bracket2) latestFinalDay = UNAVAILABLE;
   else if (!weekUsable(v, choice.week)) latestFinalDay = UPDATING; // not re-chosen (§11.2.2)
   else {
@@ -171,16 +184,21 @@ export function certifyHourly<S>(l: HourlyLedger<S>, targetsFor: TargetsFor<S>):
       target: choice.targets.hourly.pct, loadedTarget: choice.targets.loaded.pct } };
     const generation = l.coverageAfter2!.find((r) => String(r.week_start).slice(0, 10) === choice.week);
     // The role step's generation is that week as bracket 2 read it last. (A usable week is always in after2.)
-    if (generation) {
+    // GLM part 2 F3: the day's straight cents must be a finite, non-negative integer, or there is NO role step (F5 then
+    // reads "Cost by role not available"); a NaN is never passed on.
+    const dayStraightCents = Number(choice.row.hourly_straight_cents);
+    if (!generation) latestFinalDay = UNAVAILABLE;
+    else if (Number.isSafeInteger(dayStraightCents) && dayStraightCents >= 0) {
       roleStep = { date: choice.date, weekStart: choice.week, generation: { ...generation },
-        dayStraightCents: Number(choice.row.hourly_straight_cents), wageEstimated: Number(choice.row.estimated_rate_minutes) > 0 };
-    } else latestFinalDay = UNAVAILABLE;
+        dayStraightCents, wageEstimated: Number(choice.row.estimated_rate_minutes) > 0 };
+    }
   }
 
   let weekSoFar: HourlyLaborFacts["weekSoFar"];
   if (choice.kind === "unavailable" || !bracket2) weekSoFar = UNAVAILABLE;
   else if (!weekUsable(v, weekD)) weekSoFar = UPDATING;
-  else if (choice.kind === "none" || choice.week !== weekD) weekSoFar = { kind: "no_final_day_this_week" };
+  // D's week usable and no final day in it (none chosen, or chosen / updating in the previous week).
+  else if (choice.kind !== "day" || choice.week !== weekD) weekSoFar = { kind: "no_final_day_this_week" };
   else if (l.weekSoFarRow === undefined || l.weekSoFarTo !== choice.date) weekSoFar = UNAVAILABLE;
   else weekSoFar = rangeSpan(l, targetsFor, weekD, choice.date, l.weekSoFarRow, v.w2!);
 

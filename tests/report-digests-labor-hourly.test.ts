@@ -149,6 +149,49 @@ describe("chooseLatestFinalDay (bracket 1 only)", () => {
   it("none of the seven → none", () => {
     expect(chooseLatestFinalDay(full({ dayCost: () => cost(1, { open_punches: 1 }) }), targetsForWeek)).toEqual({ kind: "none" });
   });
+  it("Opus R-1: both bracket-1 fingerprints null → updating, never none", () => {
+    const l = full();
+    l.fingerprints1 = new Map([[WP, null], [WD, null]]);
+    expect(chooseLatestFinalDay(l, targetsForWeek)).toEqual({ kind: "updating" });
+    const f = certify(l);
+    expect(f.latestFinalDay).toEqual({ kind: "updating" });
+    expect(f.roleStep).toBeNull();
+    // Absent from the map is the same as null (stale_source).
+    l.fingerprints1 = new Map();
+    expect(chooseLatestFinalDay(l, targetsForWeek)).toEqual({ kind: "updating" });
+  });
+  it("Opus R-1: previous week ready with no hours-complete day and the current week stale → updating", () => {
+    const l = full({ dayCost: () => cost(1, { open_punches: 1 }) });
+    l.fingerprints1 = new Map([[WP, FP], [WD, null]]);
+    expect(chooseLatestFinalDay(l, targetsForWeek)).toEqual({ kind: "updating" });
+    const f = certify(l);
+    expect(f.latestFinalDay).toEqual({ kind: "updating" });
+    expect(f.weekSoFar).toEqual({ kind: "updating" }); // D's week is not usable: its own rule
+    // The current week ready, the previous week rebuilding in bracket 1: also updating.
+    const m = full({ dayCost: () => cost(1, { open_punches: 1 }) });
+    m.coverageBefore1 = cov({ [WP]: { builder_version: "labor-v2" } }); m.coverageAfter1 = cov({ [WP]: { builder_version: "labor-v2" } });
+    expect(chooseLatestFinalDay(m, targetsForWeek)).toEqual({ kind: "updating" });
+    // D's week usable and no final day in it: week so far keeps its own answer.
+    expect(certify(m).weekSoFar).toEqual({ kind: "no_final_day_this_week" });
+  });
+  it("Opus R-1: both weeks ready and no hours-complete day → none", () => {
+    const l = full({ dayCost: () => cost(1, { days_pending: 1 }) });
+    expect(chooseLatestFinalDay(l, targetsForWeek)).toEqual({ kind: "none" });
+    expect(certify(l).latestFinalDay).toEqual({ kind: "none" });
+  });
+  it("Opus R-1: a Sunday D (one week in the window) ready with no final day → none; that week stale → updating", () => {
+    const l = full({ dayCost: () => cost(1, { days_pending: 1 }) });
+    (l as { day: string }).day = WD;
+    for (const d of hourlyFrame(WD).days) l.dayCosts.set(d, cost(1, { days_pending: 1 }));
+    expect(chooseLatestFinalDay(l, targetsForWeek)).toEqual({ kind: "none" });
+    l.fingerprints1 = new Map([[WD, FP]]); // WP (the only week of the window) did not answer
+    expect(chooseLatestFinalDay(l, targetsForWeek)).toEqual({ kind: "updating" });
+  });
+  it("Opus R-1: a ready previous week with a final day and a stale current week → still that day (unchanged)", () => {
+    const l = full();
+    l.fingerprints1 = new Map([[WP, FP], [WD, null]]);
+    expect(chooseLatestFinalDay(l, targetsForWeek)).toMatchObject({ kind: "day", date: "2026-10-03", week: WP });
+  });
   it("ONE missing day cost → cannot choose (unavailable), never an older day", () => {
     for (const missing of ["2026-10-07", "2026-10-04", "2026-10-01"]) {
       const l = full();
@@ -192,6 +235,16 @@ describe("each line's own state", () => {
     const f = certify(l);
     expect(f.weekSoFar).toMatchObject({ kind: "ok", span: { labor: { state: "hours_unknown", pct: null, tone: "none" } } });
     expect(f.latestFinalDay).toMatchObject({ kind: "ok", span: { labor: { state: "ok" } } });
+  });
+  it("GLM part 2 F3: a day straight-cents that is not a finite, non-negative integer → no role step (never a NaN)", () => {
+    for (const bad of [Number.NaN, "abc" as unknown as number, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      const f = certify(full({ dayCost: (d) => cost(1, d === "2026-10-07" ? { hourly_straight_cents: bad } : {}) }));
+      expect(f.roleStep, String(bad)).toBeNull();
+      expect(f.latestFinalDay, String(bad)).toMatchObject({ kind: "ok", span: { to: "2026-10-07" } });
+      expect(JSON.stringify(f)).not.toMatch(/NaN/);
+    }
+    // A numeric string is a number (PostgREST may hand bigint as a string): the role step stands.
+    expect(certify(full({ dayCost: () => cost(1, { hourly_straight_cents: "900" as unknown as number }) })).roleStep).toMatchObject({ dayStraightCents: 900 });
   });
   it("a moved generation between the brackets → that week's parts updating (F1 not re-chosen), the other week's stand", () => {
     const l = full();

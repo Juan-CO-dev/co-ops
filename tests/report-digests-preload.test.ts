@@ -3,7 +3,7 @@
  * O-N3, findings L10 / L15, N3 / N5). Generic pieces on ONE fake timeline (tests/fixtures/digest-labor-engine.ts): the
  * fake clock can cross a deadline while the timer callback has not run yet.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { definePreload, preloadValue, signalDeadline, type PieceCtx, type PreloadPhase, type PreloadPiece, type PreloadResults } from "@/lib/preload-runner";
 import { CLOCK_START, FakeClock, deferred, fakePiece, flush, type PieceBehaviour, type PieceRecord } from "./fixtures/digest-labor-engine";
 
@@ -77,12 +77,15 @@ describe("a piece's result is its snapshot(), taken exactly once on every path",
     expect(rec(records, "a").snapshotAt).toBe(CLOCK_START);
   });
 
-  it("start THROWS → that key is unavailable; snapshot is never called; the other piece is untouched", async () => {
+  // Astra R5 (P2), O-N3 as ruled: a throw inside the pre-load seals EVERY result unavailable. (Rewritten: this test
+  // used to pin the old piece-local rule, "the other piece is untouched".)
+  it("O-N3 (Astra R5): start THROWS beside a piece that would succeed → the sealed result has NO key at all; snapshot is never called; run() resolves", async () => {
     const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
     const out = await runWith(clock, [phase("p", 5_000, () => [piece("bad", 5_000, { kind: "throwStart" }), piece("good", 5_000, { kind: "now", value: "G" })])]);
-    expect(out.get("bad")).toEqual({ kind: "unavailable" });
+    expect(out.size).toBe(0);
+    expect(out.has("good"), "the sibling of a throwing start must not be ok").toBe(false);
+    expect(out.get("bad")).toBeUndefined();
     expect(rec(records, "bad").snapshots).toBe(0);
-    expect(out.get("good")).toEqual({ kind: "ok", value: "G" });
   });
 });
 
@@ -394,5 +397,163 @@ describe("§13.2.7: PR 5's extension point (a fourth phase)", () => {
     expect(x.snapshots).toBe(1);
     // and a fourth phase that would overrun the budget is refused at build time
     expect(() => definePreload({ phases: [...ext.phases, phase("too-much", 1_000, () => [])], budgetMs: 20_000 })).toThrow("preload_caps_exceed_budget");
+  });
+});
+
+// ── post-build review, the ONE fix round ────────────────────────────────────────────────────────
+
+describe("Astra R4 (P1): a done that is ALREADY REJECTED when its cutoff has already passed", () => {
+  let unhandled: unknown[] = [];
+  const onUnhandled = (e: unknown) => { unhandled.push(e); };
+  beforeEach(() => { unhandled = []; process.on("unhandledRejection", onUnhandled); });
+  afterEach(() => { process.off("unhandledRejection", onUnhandled); });
+
+  it("zero unhandledRejection events; snapshot() is called exactly once; the result is the snapshot", async () => {
+    const clock = new FakeClock(); const records: PieceRecord[] = [];
+    const piece: PreloadPiece<unknown> = {
+      key: "a", capMs: 5_000,
+      start(ctx) {
+        const r: PieceRecord = { key: "a", ctx, startedAt: ctx.clock(), snapshots: 0, snapshotAt: null };
+        records.push(r);
+        // start() itself consumes the whole remaining budget: the cutoff has passed when the runner reads the clock.
+        clock.moveClockOnly(30_000);
+        return { done: Promise.reject(new Error("x")), snapshot: () => { r.snapshots++; r.snapshotAt = ctx.clock(); return "LEDGER"; } };
+      },
+    };
+    const out = await runWith(clock, [phase("p", 5_000, () => [piece])]);
+    // Give the microtask and the macrotask queues a turn, so a rejection with no handler is reported.
+    await flush(6);
+    await new Promise<void>((r) => setTimeout(r, 0));
+    await flush(6);
+    expect(unhandled).toEqual([]);
+    expect(rec(records, "a").snapshots).toBe(1);
+    expect(out.get("a")).toEqual({ kind: "ok", value: "LEDGER" });
+  });
+});
+
+describe("Astra R5 (P2), O-N3 as ruled: any throw inside the pre-load seals EVERY result unavailable", () => {
+  const good = (clock: FakeClock, records: PieceRecord[]) => mk(clock, records)("good", 5_000, { kind: "now", value: "G" });
+  const bad = (capMs: number, start: PreloadPiece<unknown>["start"]): PreloadPiece<unknown> => ({ key: "bad", capMs, start });
+  const okStart: PreloadPiece<unknown>["start"] = () => ({ done: Promise.resolve(), snapshot: () => "B" });
+
+  for (const capMs of [Number.NaN, 0, -1]) {
+    it(`a piece with capMs ${capMs} beside one that would succeed → NO key at all; run() resolves`, async () => {
+      const clock = new FakeClock(); const records: PieceRecord[] = [];
+      const out = await runWith(clock, [phase("p", 5_000, () => [bad(capMs, okStart), good(clock, records)])]);
+      expect(out.size).toBe(0);
+      expect(out.has("good")).toBe(false);
+    });
+  }
+
+  const handles: Array<[string, unknown]> = [
+    ["a handle with no snapshot function", { done: Promise.resolve() }],
+    ["a null handle", null],
+    ["a handle that is not an object", 7],
+  ];
+  for (const [name, handle] of handles) {
+    it(`${name} beside a piece that would succeed → NO key at all; run() resolves`, async () => {
+      const clock = new FakeClock(); const records: PieceRecord[] = [];
+      const out = await runWith(clock, [phase("p", 5_000, () => [bad(5_000, () => handle as never), good(clock, records)])]);
+      expect(out.size).toBe(0);
+    });
+  }
+
+  it("a throwing pieces() in a later phase → NO key at all, not even what the earlier phase sealed; run() resolves", async () => {
+    const clock = new FakeClock(); const records: PieceRecord[] = [];
+    const out = await runWith(clock, [phase("one", 5_000, () => [good(clock, records)]), phase("two", 5_000, () => { throw new Error("pieces"); })]);
+    expect(out.size).toBe(0);
+  });
+
+  it("a duplicate key → NO key at all (the other key included); run() resolves", async () => {
+    const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+    const out = await runWith(clock, [phase("p", 5_000, () => [piece("a", 5_000, { kind: "now", value: 1 }), piece("a", 5_000, { kind: "now", value: 2 }), good(clock, records)])]);
+    expect(out.size).toBe(0);
+  });
+
+  it("THE one local exception (plan §15.2.2): a snapshot() that THROWS beside one that succeeds → the thrower unavailable, the sibling ok", async () => {
+    const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+    const out = await runWith(clock, [phase("p", 5_000, () => [piece("bad", 5_000, { kind: "throwSnapshot" }), good(clock, records)])]);
+    expect(out.get("bad")).toEqual({ kind: "unavailable" });
+    expect(out.get("good")).toEqual({ kind: "ok", value: "G" });
+  });
+});
+
+describe("Astra R8 (P2) = Fable F6: sealed = read-only, for real", () => {
+  const valued = (key: string, value: () => unknown): PreloadPiece<unknown> => ({ key, capMs: 5_000, start: () => ({ done: Promise.resolve(), snapshot: value }) });
+  const cases: Array<[string, () => unknown]> = [
+    ["a Map at the top level", () => new Map([["k", 1]])],
+    ["a Set at the top level", () => new Set([1])],
+    ["a Map nested inside an object inside an array", () => ({ rows: [{ inner: new Map([["k", 1]]) }] })],
+    ["a Set nested inside an object inside an array", () => ({ rows: [{ inner: new Set([1]) }] })],
+  ];
+  for (const [name, value] of cases) {
+    it(`${name} → that piece unavailable, the others untouched`, async () => {
+      const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+      const out = await runWith(clock, [phase("p", 5_000, () => [valued("bad", value), piece("good", 5_000, { kind: "now", value: { n: 1 } })])]);
+      expect(out.get("bad")).toEqual({ kind: "unavailable" });
+      expect(out.get("good")).toEqual({ kind: "ok", value: { n: 1 } });
+    });
+  }
+
+  it("a plain object / array snapshot is frozen at every depth (also through the producer's retained reference); the results have no set / delete / clear", async () => {
+    const clock = new FakeClock();
+    const produced = { a: { b: [{ c: 1 }] }, list: [[1, 2], [3]] };
+    const out = await runWith(clock, [phase("p", 5_000, () => [valued("a", () => produced)])]);
+    const r = out.get("a") as { kind: "ok"; value: typeof produced };
+    expect(r.kind).toBe("ok");
+    // The very object the producer keeps: freezing it in place is what stops a mutation through that reference.
+    expect(r.value).toBe(produced);
+    // ES modules are strict: a write to a frozen object throws.
+    expect(() => { r.value.a.b[0]!.c = 2; }).toThrow(TypeError);
+    expect(() => { produced.a.b[0]!.c = 3; }).toThrow(TypeError);
+    expect(() => { produced.a.b.push({ c: 4 }); }).toThrow(TypeError);
+    expect(() => { produced.list[0]![0] = 9; }).toThrow(TypeError);
+    expect(() => { (r as { kind: string }).kind = "unavailable"; }).toThrow(TypeError);
+    expect(produced.a.b[0]!.c).toBe(1);
+    for (const m of ["set", "delete", "clear"]) expect((out as unknown as Record<string, unknown>)[m], m).toBeUndefined();
+    expect(Object.isFrozen(out)).toBe(true);
+  });
+});
+
+describe("needsSettledWriters (A4-1 as updated: who may see a line is still decided)", () => {
+  it("writersSettled false: a phase with needsSettledWriters false runs and its result is sealed; every other phase does not run (its pieces() is not called)", async () => {
+    const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+    const called: string[] = [];
+    const phases: PreloadPhase<Due>[] = [
+      { name: "settings", maxCapMs: 3_000, needsSettledWriters: false, pieces: () => { called.push("settings"); return [piece("s", 3_000, { kind: "now", value: "S" })]; } },
+      { name: "hourly", maxCapMs: 10_000, pieces: () => { called.push("hourly"); return [piece("h", 10_000, { kind: "now", value: "H" })]; } },
+      { name: "explicit", maxCapMs: 3_000, needsSettledWriters: true, pieces: () => { called.push("explicit"); return [piece("e", 3_000, { kind: "now", value: "E" })]; } },
+      { name: "access", maxCapMs: 1, needsSettledWriters: false, pieces: () => { called.push("access"); return []; } },
+    ];
+    const out = await runWith(clock, phases, 20_000, async () => ({ writersSettled: false }));
+    expect(called).toEqual(["settings", "access"]);
+    expect(out.get("s")).toEqual({ kind: "ok", value: "S" });
+    expect([...out.keys()]).toEqual(["s"]);
+    // the same phases with the writers settled: every phase runs
+    const clock2 = new FakeClock(); const piece2 = mk(clock2, []);
+    const all: string[] = [];
+    const out2 = await runWith(clock2, [
+      { name: "settings", maxCapMs: 3_000, needsSettledWriters: false, pieces: () => { all.push("settings"); return [piece2("s", 3_000, { kind: "now", value: "S" })]; } },
+      { name: "hourly", maxCapMs: 10_000, pieces: () => { all.push("hourly"); return [piece2("h", 10_000, { kind: "now", value: "H" })]; } },
+    ]);
+    expect(all).toEqual(["settings", "hourly"]);
+    expect(out2.size).toBe(2);
+  });
+
+  it("sources() throwing: no phase runs, not even one with needsSettledWriters false", async () => {
+    const clock = new FakeClock();
+    let called = 0;
+    const out = await runWith(clock, [{ name: "settings", maxCapMs: 3_000, needsSettledWriters: false, pieces: () => { called++; return []; } }], 20_000,
+      async () => { throw new Error("sources failed"); });
+    expect(called).toBe(0);
+    expect(out.size).toBe(0);
+  });
+
+  it("a writersSettled that is not exactly true (missing) counts as not settled", async () => {
+    const clock = new FakeClock();
+    let called = 0;
+    const out = await runWith(clock, [phase("hourly", 5_000, () => { called++; return []; })], 20_000, async () => ({}) as { writersSettled: boolean });
+    expect(called).toBe(0);
+    expect(out.size).toBe(0);
   });
 });
