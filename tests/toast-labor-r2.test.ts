@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runToastLaborPull, toastModifiedParam, withDeadline } from "@/lib/toast/labor";
 import { summarizeLabor, type LaborEntryRow } from "@/lib/toast/labor-shared";
-import { laborForDigest } from "@/lib/report-digests-v2";
+import { laborForDigest, laborPullOutcome } from "@/lib/report-digests-v2";
 import { ok } from "@/lib/report-digests-v2-shared";
 import { audit } from "@/lib/audit";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -15,6 +15,8 @@ const LOC = "loc-1";
 /** A tiny in-memory toast_time_entries keyed like the table (location, entry guid). */
 const table = new Map<string, LaborEntryRow>();
 let stallLocations = false;
+/** D-4: the shop holds no Toast restaurant GUID, so the pull's locations read (which asks for one) answers no row. */
+let noToastShop = false;
 const reconciliations: Array<{ p_location_id: string; p_day: string }> = [];
 
 function client() {
@@ -33,7 +35,7 @@ function client() {
           },
           signal: null as AbortSignal | null,
           then(resolve: (v: unknown) => void, reject: (e: unknown) => void) {
-            if (!stallLocations) return resolve({ data: [{ id: LOC, toast_restaurant_guid: "r-1" }], error: null });
+            if (!stallLocations) return resolve({ data: noToastShop ? [] : [{ id: LOC, toast_restaurant_guid: "r-1" }], error: null });
             // A stalled query that even IGNORES its abort signal: only withDeadline can end it.
             void reject;
           },
@@ -58,7 +60,7 @@ const entry = (over: Record<string, unknown> = {}) => ({
 let toast: Array<Record<string, unknown>> = [];
 beforeEach(() => {
   vi.clearAllMocks();
-  table.clear(); reconciliations.length = 0; stallLocations = false; toast = [];
+  table.clear(); reconciliations.length = 0; stallLocations = false; noToastShop = false; toast = [];
   vi.stubEnv("TOAST_LABOR_PULL", "1");
   vi.mocked(getServiceRoleClient).mockReturnValue(client());
   vi.mocked(toastGet).mockImplementation(async (path: string) => {
@@ -194,5 +196,65 @@ describe("labor timing (Astra r2 P1): the digest pulls day D itself, before comp
     vi.mocked(toastGet).mockRejectedValue(Object.assign(new Error("boom"), { name: "ToastApiError", code: "http_500" }));
     expect(await laborForDigest(LOC, "2026-10-07", deps)).toEqual({ kind: "unavailable", reason: "labor_pull_failed" });
     expect(await laborForDigest(LOC, "2026-10-07", { ...deps, enabled: () => false })).toEqual({ kind: "unavailable", reason: "labor_off" });
+  });
+});
+
+// ── digests round 3 PR 4, fix round 2 (CC ruling D-4): a shop with no Toast connection ──────────
+
+describe("D-4: a shop with no Toast connection is a KNOWN no-write, told apart from a failed pull", () => {
+  const read = async () => ok(summarizeLabor("2026-10-07", [], 80_000));
+  const realPull = async (day: string, loc: string) => laborPullOutcome(await runToastLaborPull([day], { deadlineMs: 10_000, context: "digest", locationIds: [loc] }));
+
+  it("the real pull for a shop that holds no Toast restaurant GUID: it ran, no result row, NO Toast request, NO write → labor_not_connected", async () => {
+    noToastShop = true;
+    const raw = await runToastLaborPull(["2026-10-07"], { deadlineMs: 10_000, context: "digest", locationIds: [LOC] });
+    expect(raw).toEqual({ ran: true, results: [], modified: 0 });
+    expect(laborPullOutcome(raw)).toEqual({ ok: false, connected: false });
+    expect(await laborForDigest(LOC, "2026-10-07", { enabled: () => true, pull: realPull, read })).toEqual({ kind: "unavailable", reason: "labor_not_connected" });
+    expect(toastGet).not.toHaveBeenCalled();
+    expect(table.size).toBe(0);
+  });
+
+  it("a connected shop whose pull FAILS is still labor_pull_failed (a write may have been cut)", async () => {
+    vi.mocked(toastGet).mockRejectedValue(Object.assign(new Error("boom"), { name: "ToastApiError", code: "http_500" }));
+    expect(await laborForDigest(LOC, "2026-10-07", { enabled: () => true, pull: realPull, read })).toEqual({ kind: "unavailable", reason: "labor_pull_failed" });
+  });
+
+  it("a locations read that never answers is a failed pull, never \"not connected\" (its failure is a result row)", async () => {
+    stallLocations = true;
+    const raw = await runToastLaborPull(["2026-10-07"], { deadlineMs: 1_000, context: "digest", locationIds: [LOC] });
+    expect(raw.results.length).toBeGreaterThan(0);
+    expect(laborPullOutcome(raw)).toEqual({ ok: false, connected: true });
+  });
+
+  const outcomes: Array<[string, Parameters<typeof laborPullOutcome>[0], { ok: boolean; connected: boolean }]> = [
+    ["ran, no result row", { ran: true, results: [] }, { ok: false, connected: false }],
+    ["did not run (the switch went off)", { ran: false, results: [] }, { ok: false, connected: true }],
+    ["ran, every row ok", { ran: true, results: [{ ok: true }, { ok: true }] }, { ok: true, connected: true }],
+    ["ran, one row failed", { ran: true, results: [{ ok: true }, { ok: false }] }, { ok: false, connected: true }],
+    ["ran, the locations read failed (one failed row)", { ran: true, results: [{ ok: false }] }, { ok: false, connected: true }],
+  ];
+  for (const [name, r, expected] of outcomes) {
+    it(`laborPullOutcome: ${name} → ${JSON.stringify(expected)}`, () => {
+      expect(laborPullOutcome(r)).toEqual(expected);
+    });
+  }
+
+  const digestCases: Array<[string, () => Promise<{ ok: boolean; connected?: boolean }>, string]> = [
+    ["{ ok: false, connected: false }", async () => ({ ok: false, connected: false }), "labor_not_connected"],
+    ["{ ok: false } (no word on the connection)", async () => ({ ok: false }), "labor_pull_failed"],
+    ["{ ok: false, connected: true }", async () => ({ ok: false, connected: true }), "labor_pull_failed"],
+    ["a pull that throws", async () => { throw new Error("x"); }, "labor_pull_failed"],
+    ["a pull that answers nothing", async () => undefined as never, "labor_pull_failed"],
+  ];
+  for (const [name, pull, reason] of digestCases) {
+    it(`laborForDigest: ${name} → ${reason}`, async () => {
+      expect(await laborForDigest(LOC, "2026-10-07", { enabled: () => true, pull, read })).toEqual({ kind: "unavailable", reason });
+    });
+  }
+
+  it("laborForDigest: a pull that succeeded is read, whatever it says about the connection; a disabled pull is labor_off", async () => {
+    expect((await laborForDigest(LOC, "2026-10-07", { enabled: () => true, pull: async () => ({ ok: true, connected: false }), read })).kind).toBe("ok");
+    expect(await laborForDigest(LOC, "2026-10-07", { enabled: () => false, pull: async () => ({ ok: false, connected: false }), read })).toEqual({ kind: "unavailable", reason: "labor_off" });
   });
 });

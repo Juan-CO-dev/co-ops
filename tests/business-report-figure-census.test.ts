@@ -117,6 +117,8 @@ const EXPORT_FILE = "lib/report-export-shared.ts";
 const PDF_FILE = "lib/business-report-pdf.ts";
 /** Nav PR 8 (T-B2, A8): the Dashboard strip's labor cell, the only strip file that renders a business-report figure. */
 const STRIP_LABOR_FILE = "components/dashboard/StripLaborCell.tsx";
+/** Digests round 3 PR 4 (plan §3.6): the digests' labor-money lines print business-report figures in an email. */
+const DIGEST_LABOR_FILE = "lib/report-digests-labor-compose.ts";
 const EXPORT_BEGIN = "// ── Business rows (item 9c";
 const EXPORT_END = "/** `{family}_{shop-code}_{from}_{to}.{ext}`";
 
@@ -134,6 +136,8 @@ function surfaceOffences(): Offence[] {
   out.push(...census(PDF_FILE, readFileSync(path.join(ROOT, PDF_FILE), "utf8")));
   // Nav PR 8 (T-B2): the strip's labor cell, whole file, the unchanged RULES and ALLOWED_IMPORTS.
   out.push(...census(STRIP_LABOR_FILE, readFileSync(path.join(ROOT, STRIP_LABOR_FILE), "utf8")));
+  // Digests round 3 PR 4: the labor-money lines F1–F5, whole file, the unchanged RULES and ALLOWED_IMPORTS.
+  out.push(...census(DIGEST_LABOR_FILE, readFileSync(path.join(ROOT, DIGEST_LABOR_FILE), "utf8")));
   return out;
 }
 
@@ -197,6 +201,21 @@ describe("the surfaces: no raw amount, no DTO, no number formatter, no sum", () 
       expect(found.length, line).toBeGreaterThan(0);
       expect(found.join("\n")).toContain(rule);
       expect(found[0]).toMatch(/^components\/dashboard\/StripLaborCell\.tsx:\d+ {2}/);
+    });
+  }
+  // Digests round 3 PR 4: a leak planted in the digests' labor-money lines fails by name, under the unchanged rules.
+  for (const [line, rule] of [
+    ["const s = formatCents(b.cents, ctx.language);", "a number formatter"],
+    ["const pct = `${Math.round(x)}%`;", "arithmetic on report values"],
+    ["const n = view.hourly.latestFinalDay.value;", "a figure's number read directly"],
+    ["import { purePctFigure } from \"@/lib/business-figure-shared\";", "imports purePctFigure"],
+  ] as const) {
+    it(`report-digests-labor-compose: fails by name on: ${line}`, () => {
+      const src = readFileSync(path.join(ROOT, DIGEST_LABOR_FILE), "utf8");
+      const found = show(census(DIGEST_LABOR_FILE, `${src}\n${line}\n`));
+      expect(found.length, line).toBeGreaterThan(0);
+      expect(found.join("\n")).toContain(rule);
+      expect(found[0]).toMatch(/^lib\/report-digests-labor-compose\.ts:\d+ {2}/);
     });
   }
   it("a comment may talk about cents; code may not", () => {

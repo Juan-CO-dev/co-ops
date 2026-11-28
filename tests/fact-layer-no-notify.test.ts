@@ -5,7 +5,9 @@ import { expect, it } from "vitest";
 
 // Item 9 PR 9a: the business report reads the facts and sends nothing either.
 const files = [...readdirSync("lib/facts").map((n) => `lib/facts/${n}`), "app/api/cron/fact-build/route.ts",
-  "lib/business-report-shared.ts", "lib/business-report.ts"];
+  "lib/business-report-shared.ts", "lib/business-report.ts",
+  // Digests round 3 PR 4: the labor-money core reads for the digest pre-load and sends nothing either.
+  "lib/business-labor-core.ts", "lib/business-labor-shared.ts", "lib/business-labor-hourly-shared.ts", "lib/business-labor-roles-shared.ts"];
 const SENDER = /(notif|email|mail|sms|twilio|resend|push|digest|nodemailer|web-push|whatsapp)/i;
 
 it("no fact module imports a sender", () => {

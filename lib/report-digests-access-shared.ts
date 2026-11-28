@@ -27,11 +27,21 @@
  * | `published_staffing` | DIGEST ONLY (a): MoO / Owner / CGS at a delivered shop; GM, AGM, prep or    | 2026-11-27 | the digest's day |
  * |                      | catering manager at an own delivered shop; shift lead the same, catering    |            |                  |
  * |                      | digest only                                                                 |            |                  |
+ * | `labor_hourly`       | LABOR MONEY (PR 4, behind DIGEST_LABOR_MONEY): the business report's own    | app's own  | finished spans   |
+ * | `labor_loaded`       | access of this recipient (`business`: MoO / Owner / CGS everything; a GM    |            | only, never the  |
+ * | `labor_cost_by_role` | what the MoO+ settings hold), at a shop the report would open for them, on  |            | digest's day     |
+ * |                      | the shop or unified digest only                                             |            |                  |
  *
  * "Own shop" for a digest-only grant = the shop is in `digest.shops` AND in the viewer's active memberships;
  * for MoO / Owner / CGS the shop is in `digest.shops`. "all" and "no shop set" are never a shop for a
  * digest-only grant (the Sales page path keeps its own "all" reading). The social media manager gets nothing
  * from either grant, by role.
+ *
+ * LABOR MONEY is not a digest-only grant: it is the business report's own access (lib/business-access-shared.ts),
+ * decided ONCE per run before any fact is read (lib/report-digests-engine.ts) and carried here as `business`. No
+ * `business` (the switch off, a recipient the run did not decide for, a fixture) = no labor money. Each of the three
+ * capabilities also needs the shop or unified digest, a delivered shop and `businessShopAllowed` (a GM a shop they
+ * belong to; MoO / Owner / CGS any). Cost per person is never shown to anyone.
  *
  * Adding a capability or a grant = one row here, its predicate below, and a test of the access matrix on
  * rendered HTML and text.
@@ -39,9 +49,10 @@
 import { canOpen, type LinkViewer } from "@/lib/report-digests-links";
 import { validReportDate } from "@/lib/report-range";
 import { isRoleCode, type RoleCode } from "@/lib/roles";
+import { businessShopAllowed, type BusinessAccess } from "@/lib/business-access-shared";
 
 /** Every gated kind of digest data. A line carries at most one (`DigestLine.needs`). */
-export type DigestCapability = "sales_detail" | "published_staffing";
+export type DigestCapability = "sales_detail" | "published_staffing" | "labor_hourly" | "labor_loaded" | "labor_cost_by_role";
 
 /**
  * Which digest an email is and the shops it was resolved to deliver (`ResolvedRecipient.locationIds`, the
@@ -51,15 +62,30 @@ export type DigestCapability = "sales_detail" | "published_staffing";
 export interface DigestDelivery { kind: "gm_shop" | "unified" | "catering"; shops: readonly string[] }
 
 /** Who a digest is composed for, for its DATA gates: the recipient's real role, level and active shops, and the delivery. */
-export interface DigestAccess { viewer: LinkViewer; digest?: DigestDelivery }
+export interface DigestAccess {
+  viewer: LinkViewer;
+  digest?: DigestDelivery;
+  /**
+   * The recipient's business-report access for LABOR MONEY (PR 4), as the run decided it before any fact was read.
+   * Set ONLY by the engine. Absent or null = no labor money.
+   */
+  business?: BusinessAccess | null;
+}
 
 /** The shop (null = no shop set; "all" = every shop) and business day a piece of data is about. */
 export interface DigestScope { locationId: string | null; day: string }
 
-/** The recipient's access from their link viewer (and, from the engine only, the delivery). No viewer = no access (null), never "unscoped". */
-export function digestAccessFor(viewer: LinkViewer | null | undefined, digest?: DigestDelivery | null): DigestAccess | null {
+/**
+ * The recipient's access from their link viewer (and, from the engine only, the delivery and the labor-money access).
+ * No viewer = no access (null), never "unscoped".
+ */
+export function digestAccessFor(viewer: LinkViewer | null | undefined, digest?: DigestDelivery | null, business?: BusinessAccess | null): DigestAccess | null {
   if (!viewer) return null;
-  return digest ? { viewer, digest: { kind: digest.kind, shops: [...digest.shops] } } : { viewer };
+  return {
+    viewer,
+    ...(digest ? { digest: { kind: digest.kind, shops: [...digest.shops] } } : {}),
+    ...(business ? { business: { ...business } } : {}),
+  };
 }
 
 // Juan 2026-11-27, the closed role sets of the two digest-only grants.
@@ -99,6 +125,20 @@ export function digestCan(access: DigestAccess | null | undefined, capability: D
       if (ALL_DELIVERED_SHOPS.includes(role)) return true;
       if (!ownDelivered(withDigest, locationId)) return false;
       return STAFFING_OWN_SHOP.includes(role) || (role === "shift_lead" && withDigest.digest.kind === "catering");
+    }
+    // LABOR MONEY (PR 4): the business report's own access of this recipient, never a second opinion. Finished spans
+    // only; on the shop or unified digest; at a delivered shop the report would open for them.
+    case "labor_hourly": case "labor_loaded": case "labor_cost_by_role": {
+      const b = access.business;
+      if (!b || !withDigest || !role) return false;
+      if (withDigest.digest.kind !== "gm_shop" && withDigest.digest.kind !== "unified") return false;
+      if (!delivered(withDigest.digest, locationId)) return false;
+      if (!businessShopAllowed({ role, locations: access.viewer.locations }, locationId)) return false;
+      // Hourly labor money is the floor of all three (fully loaded and cost by role are built on it).
+      if (!b.report || !b.hourlyCost) return false;
+      if (capability === "labor_hourly") return true;
+      if (capability === "labor_loaded") return b.loaded;
+      return b.people && b.personCost;
     }
   }
 }

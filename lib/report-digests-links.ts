@@ -15,6 +15,8 @@
  *      engine always passes the recipient's viewer, and an unknown recipient is a viewer with no access.
  */
 import { isRoleCode, ROLES, type RoleCode } from "@/lib/roles";
+import { businessShopAllowed, businessTabAllowed, type BusinessAccess } from "@/lib/business-access-shared";
+import { businessReportRefusal } from "@/lib/business-report-shared";
 import { canReadReportLocation, lockLocationContext, REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { canReadScopedReport } from "@/lib/report-scope";
 import { reportsRoleAllowed } from "@/lib/reports-access-shared";
@@ -27,7 +29,15 @@ import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
 import { isCalendarDay, isPipelineShopParam, PIPELINE_NO_SHOP, pipelineShopInScope } from "@/lib/catering/pipeline-shared";
 
 /** Who will open the link: the recipient's real role, its level and their ACTIVE shop memberships. */
-export interface LinkViewer { role: string; level: number; locations: readonly string[] }
+export interface LinkViewer {
+  role: string; level: number; locations: readonly string[];
+  /**
+   * The recipient's business-report access for the `business` target (digests round 3, PR 4): what the run decided for
+   * them, the last finished business day at send time, and whether the report's three switches are on. Set ONLY by the
+   * engine in a labor-money run. Absent on a scoped viewer = no business link.
+   */
+  business?: { access: BusinessAccess; finishedThrough: string; enabled: boolean };
+}
 
 /** A viewer that can open nothing (an unresolvable recipient): every gated link is omitted. */
 export const NO_ACCESS_VIEWER: LinkViewer = { role: "", level: -1, locations: [] };
@@ -83,7 +93,13 @@ export type DigestTarget =
   | { to: "prep_demand"; location?: string; tab?: "prep" | "sku"; day?: string }
   | { to: "stations"; location: string }
   /** The three-way people reconciliation for one shop (app/admin/people-reconcile/page.tsx, which reads ?loc=). */
-  | { to: "reconcile"; location: string };
+  | { to: "reconcile"; location: string }
+  /**
+   * The business report (app/(authed)/reports/business/page.tsx) for one FINISHED span of one shop: the custom range
+   * [from, through] (`through` because `to` is this union's tag), optionally its People tab. Digests round 3, PR 4: the
+   * labor-money lines F1–F5. A DATED screen.
+   */
+  | { to: "business"; location: string; from: string; through: string; tab?: "people" };
 
 export type OrderingAnchor = "today" | "missed" | "cutoffs" | "walk";
 export type PipelineAnchor = "to_ring" | "follow_ups" | "stages";
@@ -142,6 +158,9 @@ export function targetPath(t: DigestTarget): string {
     case "stations": return `/stations?loc=${encodeURIComponent(t.location)}`;
     // The reconciliation page reads its shop as ?loc= too (SHOP_PARAMS_BY_PATH["/admin/people-reconcile"]).
     case "reconcile": return `/admin/people-reconcile?loc=${encodeURIComponent(t.location)}`;
+    // The page reads ?location= (SHOP_PARAMS_BY_PATH["/reports/business"]), the range through
+    // parseBusinessRangeRequest (range=custom&from&to) and the tab through businessTab (?tab=).
+    case "business": return `/reports/business?${new URLSearchParams({ location: t.location, range: "custom", from: t.from, to: t.through, ...(t.tab ? { tab: t.tab } : {}) })}`;
   }
 }
 
@@ -155,6 +174,8 @@ function wellFormed(t: DigestTarget): boolean {
   if (t.to === "quotes") ids.push(t.quote);
   // A day is a real calendar day (2026-02-31 is no link).
   if ("day" in t && t.day !== undefined && !isCalendarDay(t.day)) return false;
+  // A business span is two real calendar days, in order (2026-02-31 is no link).
+  if (t.to === "business" && (!isCalendarDay(t.from) || !isCalendarDay(t.through) || t.from > t.through)) return false;
   // (A lead's `leadShop` never rides in the URL: it is only the gate's input, checked by scope in canOpen.)
   if (t.to === "pipeline" && t.lead === undefined) {
     if (t.day !== undefined || t.location !== undefined || t.view !== undefined) {
@@ -232,6 +253,18 @@ export function canOpen(viewer: LinkViewer | null | undefined, t: DigestTarget):
     case "reconcile": {
       const people: PeopleActor = { userId: "", role: w.role, level: w.level, locations: w.locations };
       return w.level >= 6 && t.location !== "all" && canViewReconciliation(people, t.location);
+    }
+    // The business report, gated as the page gates it (app/(authed)/reports/business/page.tsx) AND by what this run
+    // decided for the recipient (`viewer.business`, set only by the engine; absent = no link): the report's three
+    // switches, the role (level 7+, the report family, GM / MoO / Owner / CGS), the shop by ROLE, the report and the
+    // tab in the recipient's own access, and a span that is FINISHED at send time (never today, never a future day).
+    case "business": {
+      const b = viewer.business;
+      if (!b || !b.enabled) return false;
+      if (w.level < 7 || !reportsRoleAllowed(w.role) || businessReportRefusal(w.role) !== null) return false;
+      if (t.location === "all" || !businessShopAllowed({ role: w.role, locations: w.locations }, t.location)) return false;
+      if (!b.access.report || !businessTabAllowed(b.access, t.tab ?? "overview")) return false;
+      return isCalendarDay(b.finishedThrough) && t.from <= t.through && t.through <= b.finishedThrough;
     }
   }
 }

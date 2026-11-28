@@ -20,6 +20,7 @@ import { easternBoundary, easternDay } from "@/lib/job-watch";
 import { listReports } from "@/lib/reports-hub";
 import { loadShopV2Facts } from "@/lib/report-digests-v2";
 import { createScheduleReader } from "@/lib/report-digests-schedule";
+import { buildLaborMoneyIO } from "@/lib/report-digests-labor";
 import type { ScheduleReader, ShopSchedule } from "@/lib/report-digests-schedule-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { refundEventAmounts, type RefundEventRow } from "@/lib/catering/refund-events-shared";
@@ -60,6 +61,7 @@ import {
   type DigestAlert,
   type DigestIO,
   type DigestRunSummary,
+  type FactsSource,
   type SendStore,
 } from "@/lib/report-digests-engine";
 import { packageIO } from "@/lib/report-package";
@@ -153,8 +155,17 @@ async function count(q: PromiseLike<{ count: number | null; error: { message: st
   return n ?? 0;
 }
 
-/** `opts.schedule`: the run's one schedule reader, passed through to the v2 facts (digests round 3, PR 2). */
-export async function loadShopDayFacts(sb: Sb, location: { id: string; name: string }, day: string, now: Date = new Date(), opts: { schedule?: ScheduleReader } = {}): Promise<ShopDayFacts> {
+/**
+ * `opts.schedule`: the run's one schedule reader, passed through to the v2 facts (digests round 3, PR 2).
+ * `opts.onSource` (PR 4, CC addendum A4-2): called ONCE, synchronously, with this load's SOURCE promise: it follows
+ * the v2 facts load, which never rejects and holds the digest's own Toast pull. The parts below are joined with
+ * `Promise.all`, so this function's own promise can reject early (a failed deliveries page) while that pull is still
+ * WRITING; a caller that must not certify anything until the write is over waits on the source promise too. It
+ * resolves with whether the write's outcome is KNOWN (`toastWriteUncertain`; post-build review, Astra R3). With no
+ * callback this function is exactly what it was.
+ */
+export async function loadShopDayFacts(sb: Sb, location: { id: string; name: string }, day: string, now: Date = new Date(),
+  opts: { schedule?: ScheduleReader; onSource?: (source: Promise<FactsSource>) => void } = {}): Promise<ShopDayFacts> {
   const [reports, deliveries, tosses, storeRunsPending, tasks, v2] = await Promise.all([
     listReports(sb, { viewer: SYSTEM_VIEWER, locationId: location.id, dateFrom: day, dateTo: day }),
     selectAllRows<{ match_state: string; receipt_url: string | null }>((from, to) =>
@@ -165,8 +176,15 @@ export async function loadShopDayFacts(sb: Sb, location: { id: string; name: str
       .eq("location_id", location.id).eq("pending_review", true).eq("active", true), "store runs"),
     selectAllRows<{ report_type: string }>((from, to) =>
       sb.from("report_assignments").select("report_type").eq("location_id", location.id).eq("operational_date", day).eq("active", true).order("id").range(from, to)),
-    // Digest v2 (GO 2026-10-08): fail-soft per area, never throws, never writes.
-    loadShopV2Facts(sb, location.id, day, now, opts),
+    // Digest v2 (GO 2026-10-08): fail-soft per area, never throws. (Its labor area pulls Toast for D: the source.)
+    ((): ReturnType<typeof loadShopV2Facts> => {
+      const v2Load = loadShopV2Facts(sb, location.id, day, now, { schedule: opts.schedule });
+      opts.onSource?.(v2Load.then(
+        (v2): FactsSource => ({ writeUncertain: toastWriteUncertain(v2.labor), ...(toastNotConnected(v2.labor) ? { notConnected: true } : {}) }),
+        (): FactsSource => ({ writeUncertain: true }),
+      ));
+      return v2Load;
+    })(),
   ]);
   // PM findings (Astra P2): the list loader carries no PM signals, so read the live evaluations of
   // the day's PM report(s) here. A failed read is "not assessed", never "All good".
@@ -393,6 +411,30 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date, opts: 
 }
 
 /**
+ * Is the outcome of the digest's own Toast pull for day D NOT known? (post-build review, Astra R3.) The pull upserts
+ * time entries; when it fails or hits its deadline the HTTP request is aborted at the client, and whether the database
+ * still commits the write is not known. Decided from what the labor area reports (`laborForDigest`,
+ * lib/report-digests-v2.ts):
+ *   ok                                    the pull finished and its rows were read: known
+ *   unavailable "labor_off"               no pull was attempted: nothing was written
+ *   unavailable "no_labor"                the pull finished; D simply has no entries: known
+ *   unavailable "labor_not_connected"     the shop has no Toast connection: no pull was attempted, nothing was written
+ *   unavailable "labor_pull_failed"       the pull failed or was cut: NOT known
+ *   anything else, an error, no answer    NOT known (fail closed)
+ */
+export function toastWriteUncertain(labor: Loaded<unknown> | undefined): boolean {
+  if (!labor) return true;
+  if (labor.kind === "ok") return false;
+  if (labor.kind === "unavailable") return !(labor.reason === "labor_off" || labor.reason === "no_labor" || labor.reason === "labor_not_connected");
+  return true;
+}
+
+/** Fix round 2 (CC ruling D-4): the shop has no Toast connection, so labor money is not applicable to it. */
+export function toastNotConnected(labor: Loaded<unknown> | undefined): boolean {
+  return !!labor && labor.kind === "unavailable" && labor.reason === "labor_not_connected";
+}
+
+/**
  * One shop's window from the reader. It never throws; a throw would still be "not available", never a lost digest.
  * F8 (PR 2 fix round): the log line is ONE fixed code and nothing from the error, because a reader's thrown message
  * could carry response text or a credential. A synchronous throw from `shopWindow` lands here too (it is awaited
@@ -585,6 +627,7 @@ function buildIO(now: Date): DigestIO {
   // ONE schedule reader per run, shared by the shop and the catering loaders (S6): it memoizes by company and
   // window, so a window is read once however many shops, recipients and digests need it.
   const schedule = createScheduleReader(sb);
+  const laborMoney = buildLaborMoneyIO();
   return {
     now,
     baseUrl: appUrl(),
@@ -593,7 +636,7 @@ function buildIO(now: Date): DigestIO {
     directory: () => loadDigestDirectory(sb),
     sendLog: (days) => loadSendLog(sb, days),
     finalizedClosings: (days) => loadFinalizedClosings(sb, days),
-    shopFacts: (location, day) => loadShopDayFacts(sb, location, day, now, { schedule }),
+    shopFacts: (location, day, onSource) => loadShopDayFacts(sb, location, day, now, { schedule, onSource }),
     cateringFacts: (today) => loadCateringFacts(sb, today, now, { schedule }),
     store: supabaseSendStore(sb),
     sendEmail: (m) => sendEmail({ ...m, from: teamFrom() }),
@@ -601,6 +644,9 @@ function buildIO(now: Date): DigestIO {
     alert: (a) => alertDigestProblem(sb, a, now),
     // Exports PR: the scheduled CSV/PDF package (Pete at close; the accountant once enabled).
     packages: packageIO(sb, now),
+    // Labor money (digests round 3, PR 4): present ONLY with DIGEST_LABOR_MONEY=1 and the business report's three
+    // switches. Off (the default) = the key is absent: no pre-load, no labor-money read, no settings read, no new line.
+    ...(laborMoney ? { laborMoney } : {}),
     async recordRun(summary: DigestRunSummary) {
       await audit({ ...auditBase, action: "digest.run", resourceTable: "report_digest_sends", metadata: { ...summary } });
     },
