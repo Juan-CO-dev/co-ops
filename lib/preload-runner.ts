@@ -33,7 +33,10 @@
  * that certifies nothing (`needsSettledWriters: false`: the settings read) still runs, so that who may see a line is
  * still decided and they read "not available".
  *
- * NEVER FAILS THE RUN (O-N3). `run()` never throws and never leaves a rejection unhandled. Any throw inside the pre-load
+ * NEVER FAILS THE RUN (O-N3). `run()` never throws. It leaves no rejection unhandled under the contract of H0 below:
+ * HONEST pieces (the failures listed under HONEST ASYNC FAILURES) whose snapshots are DATA ONLY (H2). A promise held
+ * inside a value the seal refuses without looking inside (a `Map`, a `Set`, a class instance, a function, a `Date`'s
+ * own property) is outside that contract: it gets no handler. Any throw inside the pre-load
  * (a phase's `pieces()`, a piece's `start()`, a piece with no real cap or no real handle, a duplicate key) seals EVERY
  * result `unavailable`. The ONE local rule (plan §15.2.2; CC ruling D-6: the plan wins over O-N3's wording): a
  * `snapshot()` that throws, or that returns a value which cannot be sealed, makes THAT piece `unavailable` and leaves
@@ -306,10 +309,11 @@ async function runPiece(
     const fields = (typeof returned === "object" && returned !== null) || typeof returned === "function" ? (returned as { done?: unknown; snapshot?: unknown; then?: unknown }) : null;
     // H1: `done` and `snapshot` are each READ exactly ONCE, here, into locals (a lazy getter runs a single time).
     const done: unknown = fields === null ? undefined : fields.done;
-    const snap: unknown = fields === null ? undefined : fields.snapshot;
     // H1: the wait is `Promise.resolve(done)`: the platform adopts `done` AND whatever it fulfils with. The handlers
-    // are attached here, BEFORE the handle is judged: a handle refused on the next line whose `done` rejects is handled.
+    // are attached HERE, right after `done` was read and before anything else of the handle is: a `snapshot` getter
+    // that throws on the next line, or a handle refused after it, leaves a `done` that rejects with its handler.
     settled = Promise.resolve(done).then(noop, noop);
+    const snap: unknown = fields === null ? undefined : fields.snapshot;
     if (fields === null || typeof returned !== "object" || returned instanceof Promise || typeof fields.then === "function" || typeof snap !== "function") throw new Error("preload_bad_piece_handle");
     handle = fields;
     snapshot = snap as (this: unknown) => unknown;

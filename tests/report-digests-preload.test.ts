@@ -1040,6 +1040,22 @@ describe("H1 (E1): honest async failures are contained by the platform's own pro
     expect(at.cut).toBe(CLOCK_START + 5_000);
   });
 
+  it("H1 bullet 3 (Astra's round-4 P1): a handle whose `snapshot` GETTER throws an ordinary TypeError, read after `done` → the `done` that rejects (already, or after run() has returned) is still handled: zero unhandledRejection events; NO key at all (O-N3); run() resolves", async () => {
+    const dones: Array<() => Promise<void>> = [
+      () => rejected("the read failed"),
+      () => new Promise<void>((_, reject) => { setTimeout(() => reject(new Error("the read failed later (synthetic)")), 0); }),
+    ];
+    for (const done of dones) {
+      const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+      const adapters: Record<string, { snapshot(): unknown } | undefined> = {};
+      const bad: PreloadPiece<unknown> = { key: "bad", capMs: 5_000, start: () => ({ done: done(), get snapshot() { return adapters.missing!.snapshot; } }) };
+      const out = await runWith(clock, [phase("p", 5_000, () => [bad, piece("good", 5_000, { kind: "now", value: "G" })])]);
+      await turns();
+      expect(unhandled).toEqual([]);
+      expect(out.size).toBe(0);
+    }
+  });
+
   it("H1 bullet 4: the seal NEVER calls a `then`: a thenable in a snapshot (a `then` that would reject, an `async then()` that throws) is refused untouched → `then` ran 0 times; zero unhandledRejection events; the sibling ok", async () => {
     const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
     let ran = 0;
