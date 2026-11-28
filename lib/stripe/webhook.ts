@@ -922,17 +922,36 @@ async function registerRefundIngress(sb: ServiceClient, ingress: RefundIngress, 
   });
   if (error) throw new Error(`catering_refund_event_register: ${error.message}`);
   const location = (data as { location_id?: unknown } | null)?.location_id;
+  // The database stamps the transport verdict in the same transaction and reads its row count (0359, ruling R11): an
+  // event with no ledger row RAISES there (caught by the caller: retryable). A ledger row that already carried another
+  // writer's verdict is reported, never overwritten: said here so it is not silent.
+  const ledger = (data as { ledger_outcome?: unknown } | null)?.ledger_outcome;
+  if (typeof ledger === "string" && ledger !== "refund_state_owed") {
+    console.error(`[stripe webhook] refund event ${ingress.eventId} is durable work, and its ledger row already reads ${ledger}`);
+  }
   return { locationId: typeof location === "string" ? location : null };
 }
 
-/** Is refund ingress sealed (the final drain closed the epoch and no new one released the seal)? Unknown = sealed. */
-async function refundIngressSealed(sb: ServiceClient): Promise<boolean> {
+/**
+ * Where the ingress seal stands, for the ONE decision that reads it (a `payment_not_found` redelivery):
+ *   sealed   the final drain closed the epoch and no new one released the seal -- or the read itself FAILED (an
+ *            unreadable seal is treated as a seal: retryable, nothing written).
+ *   open     a state this build knows and that is not sealed.
+ *   unknown  the read ANSWERED, with no state or one this build does not know. It is NOT reported as sealed; the
+ *            delivery is answered RETRYABLE all the same (never the terminal `duplicate`) and an ALERT is raised
+ *            (CC ruling R10): a handed-back event must not be swallowed because a state could not be understood.
+ */
+export type RefundSealState = "sealed" | "open" | "unknown";
+const KNOWN_OPEN_EPOCH_STATES: readonly string[] = ["none", "recovering", "live", "draining"];
+async function refundIngressSeal(sb: ServiceClient): Promise<RefundSealState> {
   try {
     const { data, error } = await sb.rpc("catering_refund_epoch_state", { p_caller: REFUND_CALLER_CONTRACT });
-    if (error) return true;
-    return (data as { state?: unknown } | null)?.state === "sealed";
+    if (error) return "sealed";
+    const state = (data as { state?: unknown } | null)?.state;
+    if (state === "sealed") return "sealed";
+    return typeof state === "string" && KNOWN_OPEN_EPOCH_STATES.includes(state) ? "open" : "unknown";
   } catch {
-    return true;
+    return "sealed";
   }
 }
 
@@ -954,7 +973,25 @@ async function processRefundIngress(
       // final 2xx "duplicate": it answers retryable and writes NOTHING (the stored verdict stays main's), so the OFF
       // deployment's redelivery works it through main's own duplicate gate. With ingress open nothing changes: a
       // terminal verdict from before the switch is a duplicate.
-      if (prior !== "payment_not_found" || !(await refundIngressSealed(sb))) return { result: "duplicate", locationId: ctx.locationId };
+      if (prior !== "payment_not_found") return { result: "duplicate", locationId: ctx.locationId };
+      const seal = await refundIngressSeal(sb);
+      if (seal === "open") return { result: "duplicate", locationId: ctx.locationId };
+      if (seal === "unknown") {
+        // NOT sealed as far as anyone can tell, and not provably open either: retryable, nothing written, and a person
+        // is told (the alert), because every redelivery of this event will land here until the state reads again.
+        console.error(`[stripe webhook] ALERT refund ingress seal state is unknown; ${ingress.eventId} is answered retryable and nothing is written`);
+        void audit({
+          actorId: null,
+          actorRole: null,
+          action: "catering.refund.anomaly",
+          resourceTable: "stripe_events",
+          resourceId: null,
+          metadata: { actor_context: "stripe_webhook", kind: "seal_state_unknown", stripe_event_id: ingress.eventId, prior_outcome: prior, location_id: ctx.locationId },
+          ipAddress: null,
+          userAgent: null,
+        });
+        return { result: "processing_failed", locationId: ctx.locationId };
+      }
       console.error(`[stripe webhook] refund ingress is sealed; ${ingress.eventId} is left to the OFF deployment`);
       return { result: "processing_failed", locationId: ctx.locationId };
     }

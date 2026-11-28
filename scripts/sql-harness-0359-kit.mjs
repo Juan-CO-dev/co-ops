@@ -76,7 +76,8 @@ export async function goLive(db, operator = "harness") {
 
 let evt = 0;
 /** A signed delivery as the ON webhook stores and registers it: the ledger row first, then the one ingress transaction. */
-export async function ingest(db, { id = `evt_h${++evt}_${randomUUID().slice(0, 6)}`, type = "charge.refunded", pi, charge = null, created = Math.floor(Date.now() / 1000),
+/** `charge` defaults to the FakeStripe charge of the PaymentIntent (a real event always names its charge); pass `charge: null` for an event that names none. */
+export async function ingest(db, { id = `evt_h${++evt}_${randomUUID().slice(0, 6)}`, type = "charge.refunded", pi, charge = pi ? `ch_${pi.slice(3)}` : null, created = Math.floor(Date.now() / 1000),
   cumulative = null, chargeAmount = null, full = null, hints = [], loc = null, livemode = false, ledgerOnly = false } = {}) {
   const object = type === "charge.refunded"
     ? { id: charge, payment_intent: pi, amount_refunded: cumulative, amount: chargeAmount, refunded: full, refunds: { data: hints } }
@@ -89,14 +90,25 @@ export async function ingest(db, { id = `evt_h${++evt}_${randomUUID().slice(0, 6
 }
 
 /** One discovery pass: begin -> (the fake's list + exact reads) -> the financial apply. */
-export async function pass(db, paymentId, stripe, { complete = true, scheduled = false, runId = randomUUID(), reads = {}, ownerStatus = "resolved", generation = null, token = null } = {}) {
+export async function pass(db, paymentId, stripe, { complete = true, scheduled = false, runId = randomUUID(), reads = {}, ownerStatus = "resolved", generation = null, token = null, limit = null } = {}) {
   const begun = await rpc(db, "catering_refund_pass_begin", [CALLER, paymentId, runId]);
   if (begun.result !== "begun") return begun;
-  const ids = new Set([...begun.ids.map((x) => x.id), ...stripe.listed(begun.payment_intent)]);
+  const listed = stripe.listed(begun.payment_intent);
+  let ids;
+  if (limit == null) {
+    ids = [...new Set([...begun.ids.map((x) => x.id), ...listed])].sort();
+  } else {
+    // The app's per-pass read limit (lib/catering/refund-reconcile.ts): ids the list taught are remembered, an id whose
+    // exact read is already kept is not read again, and the id read longest ago goes first (never-read ids before all).
+    const known = new Set(begun.ids.map((x) => x.id));
+    const learned = listed.filter((id) => !known.has(id)).sort();
+    if (learned.length > 0) await rpc(db, "catering_refund_pass_remember", [CALLER, paymentId, begun.pass_token, JSON.stringify(learned.map((id) => ({ id }))), null, 1]);
+    ids = [...learned, ...begun.ids.filter((x) => !x.staged).map((x) => x.id)].slice(0, limit);
+  }
   const evidence = { complete, scheduled, run_id: runId, owner: stripe.owner(begun.payment_intent, ownerStatus),
-    refunds: [...ids].sort().map((id) => stripe.read(id, reads[id] ?? null)) };
+    refunds: ids.map((id) => stripe.read(id, reads[id] ?? null)) };
   const applied = await rpc(db, "catering_refund_apply", [CALLER, paymentId, token ?? begun.pass_token, generation ?? begun.generation, JSON.stringify(evidence)]);
-  return { ...applied, begun, evidence };
+  return { ...applied, begun, evidence, read: ids };
 }
 
 /** The ON figures of one payment, cents as numbers. */

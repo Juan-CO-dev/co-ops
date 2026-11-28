@@ -283,6 +283,23 @@ describe("RefundPanel, Part B1: the issues list", () => {
     expect(screen.queryByTestId("refund-issue-floor")).toBeNull();
   });
 
+  it("an event floor names the CHARGE the event is about (fix round 2, F10): the charge id, a different charge, or no charge at all", async () => {
+    const floor = (detail: Record<string, unknown>) => b1Issue("awaiting_identity", true, { eventId: "evt_test_floor_2", detail: { event_cumulative_cents: 12000, explained_cents: 7000, remainder_cents: 5000, ...detail } });
+    panelWith(b1Summary({ issues: [floor({ event_charge: "ch_test_floor_charge", payment_charge: "ch_test_floor_charge", charge_matches: true })] }));
+    expect((await screen.findByTestId("refund-issue-floor-charge")).textContent).toBe(en["catering.refunds.issue.floor_charge"].replace("{charge}", "ch_test_floor_charge"));
+    cleanup();
+    panelWith(b1Summary({ issues: [floor({ event_charge: "ch_test_other_charge", payment_charge: "ch_test_floor_charge", charge_matches: false })] }));
+    expect((await screen.findByTestId("refund-issue-floor-charge")).textContent).toBe(en["catering.refunds.issue.floor_charge_other"].replace("{charge}", "ch_test_other_charge"));
+    cleanup();
+    panelWith(b1Summary({ issues: [floor({ event_charge: null, payment_charge: "ch_test_floor_charge", charge_matches: false })] }));
+    expect((await screen.findByTestId("refund-issue-floor-charge")).textContent).toBe(en["catering.refunds.issue.floor_charge_unknown"]);
+    cleanup();
+    // A stored occurrence from before the fix (no charge key in its detail) shows no charge line.
+    panelWith(b1Summary({ issues: [floor({})] }));
+    await screen.findByTestId("refund-issue-floor");
+    expect(screen.queryByTestId("refund-issue-floor-charge")).toBeNull();
+  });
+
   it("with authority: one button per action the server sent; a held issue also offers Reopen and recheck", async () => {
     panelWith(b1Summary({ issues: [b1Issue("refund_revived", true, { state: "held", blocking: true })] }));
     const row = await screen.findByTestId("refund-issue");

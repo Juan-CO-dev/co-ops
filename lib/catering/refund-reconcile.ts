@@ -185,6 +185,8 @@ export interface RefundPassOptions {
   scheduled?: boolean;
   /** List pages read in THIS invocation (the rest continues from the persisted cursor). */
   maxPages?: number;
+  /** Exact refund reads made in THIS invocation (never above `EXACT_READS_PER_PASS` or the database's own limit). */
+  maxReads?: number;
   /** Test seam: the reversal checkout cleanup. */
   cleanup?: (sb: ServiceClient, paymentId: string) => Promise<ReversalCleanup>;
 }
@@ -197,7 +199,11 @@ interface PassBegun {
   location_id: string;
   payment_intent: string;
   cursor: { after: string | null; pages: number } | null;
-  ids: Array<{ id: string; verified: boolean }>;
+  /** In the database's EXACT-READ ORDER: the id read longest ago first, never-read ids before all of them. `staged` =
+   *  an exact read of it is already kept from an earlier, unfinished pass at this generation. */
+  ids: Array<{ id: string; verified: boolean; last_read_at?: string | null; staged?: boolean }>;
+  /** The database's own per-pass exact-read limit (the app never reads more than the smaller of the two). */
+  read_limit?: number;
 }
 export interface RefundApplyResult {
   result: RefundPassResult;
@@ -214,6 +220,8 @@ export interface RefundApplyResult {
   floor_cents?: number;
   available_cents?: number;
   cleanup_owed?: boolean;
+  /** An unfinished pass: how many of its exact reads were kept for the next pass. */
+  staged?: number;
 }
 export interface RefundPassOutcome extends RefundApplyResult {
   /** The resolved owner of a pass that got that far (the staff press arms and POSTs against exactly this). */
@@ -226,6 +234,12 @@ export interface RefundPassOutcome extends RefundApplyResult {
 const FINISH_RESERVE_MS = 2_500;
 /** Exact refund reads made at once (GETs; well under Stripe's read rate limit). */
 const EXACT_READ_CONCURRENCY = 8;
+/**
+ * Exact refund reads made in ONE pass. A payment with more refunds than this finishes over several passes: the
+ * database keeps every exact read an unfinished pass made (at the same generation) and hands the ids back oldest-read
+ * first, so every refund is read once within ceil(ids / limit) passes. No cursor is persisted.
+ */
+export const EXACT_READS_PER_PASS = 40;
 
 /**
  * Run ONE discovery pass over a settled payment and hand its evidence to the financial writer. Never throws for a
@@ -294,15 +308,20 @@ export async function runRefundPass(sb: ServiceClient, paymentId: string, opts: 
     if (remembered.result !== "remembered") return { result: "stale_generation", generation };
   }
 
-  // COVERAGE: an exact read of every id. A spent budget leaves the rest `transient` (the pass is then incomplete).
-  // In bounded parallel (never one long serial walk): a payment with a hundred refunds finishes inside one slice
-  // instead of re-reading the same prefix on every sweep.
+  // COVERAGE: an exact read of every id -- at most `limit` of them in this pass, in THE ORDER OF THE LAST EXACT READ
+  // (never-read ids first: what the list just taught, then the database's order), skipping an id whose exact read an
+  // earlier unfinished pass already kept at this generation. An id this pass does not reach (the limit, or the
+  // budget) is simply NOT in the evidence: the financial writer then publishes nothing, KEEPS the reads that were
+  // made, and the next pass starts with the ids that were not read -- never with the same prefix again.
+  const limit = Math.max(1, Math.min(opts.maxReads ?? EXACT_READS_PER_PASS, EXACT_READS_PER_PASS, Number(begun.read_limit ?? EXACT_READS_PER_PASS) || EXACT_READS_PER_PASS));
+  const known = new Set(begun.ids.map((x) => x.id));
+  const order = [...[...ids].filter((id) => !known.has(id)).sort(), ...begun.ids.filter((x) => x.staged !== true).map((x) => x.id)];
   const reads: RefundRead[] = [];
-  const sorted = [...ids].sort();
-  for (let i = 0; i < sorted.length; i += EXACT_READ_CONCURRENCY) {
-    const batch = sorted.slice(i, i + EXACT_READ_CONCURRENCY);
-    reads.push(...(await Promise.all(batch.map((id): Promise<RefundRead> =>
-      Date.now() >= stop ? Promise.resolve({ id, read: "transient" }) : readRefundExact(owner, id, stop)))));
+  const toRead = order.slice(0, limit);
+  for (let i = 0; i < toRead.length; i += EXACT_READ_CONCURRENCY) {
+    if (Date.now() >= stop) break; // the budget is spent: the rest is read by the next pass
+    const batch = toRead.slice(i, i + EXACT_READ_CONCURRENCY);
+    reads.push(...(await Promise.all(batch.map((id): Promise<RefundRead> => readRefundExact(owner, id, stop)))));
   }
 
   const applied = await apply({
@@ -386,9 +405,13 @@ export async function runReversalCleanup(
       try {
         const outcome = await retire(sessionId);
         if (outcome === "complete") { closed.completing.push(r.id); continue; } // that money is landing: its own event records it
-        // Confirmed expired by the owning account: clear the id, guarded on the exact session retired.
-        const { error: cErr } = await sb.from("catering_payments").update({ provider_session_id: null }).eq("id", r.id).eq("provider_session_id", sessionId);
+        // Confirmed expired by the owning account: clear the id, guarded on the exact session retired -- AND READ THE
+        // ROW COUNT. Zero rows means another checkout was installed on this balance between the expiry and this
+        // write: the row now names a session nobody retired, so it is NOT retired. It stays owed and is reported.
+        const { data: cleared, error: cErr } = await sb.from("catering_payments").update({ provider_session_id: null })
+          .eq("id", r.id).eq("provider_session_id", sessionId).select("id").returns<Array<{ id: string }>>();
         if (cErr) throw new Error(cErr.message);
+        if ((cleared ?? []).length !== 1) { closed.stillOpen.push(r.id); continue; }
         closed.retired.push(r.id);
       } catch {
         closed.stillOpen.push(r.id); // not confirmed closed: the obligation stays owed and staff are told

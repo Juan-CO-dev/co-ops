@@ -32,7 +32,7 @@ vi.mock("@/lib/stripe/client", async (orig) => {
 });
 
 import { requestRefund, loadRefundSummary } from "@/lib/catering/refunds";
-import { runRefundPass, runRefundSweep, runReversalCleanup } from "@/lib/catering/refund-reconcile";
+import { EXACT_READS_PER_PASS, runRefundPass, runRefundSweep, runReversalCleanup } from "@/lib/catering/refund-reconcile";
 import type { ClosedCheckouts, CloseQuoteCheckoutsInput } from "@/lib/catering/payment-sessions";
 
 let BASE: PGlite;
@@ -52,7 +52,7 @@ async function setup(opts: { accounts?: Account[]; captured?: number; live?: boo
 }
 const DEADLINE = () => Date.now() + 100_000;
 const sb = () => h.client as never;
-const pass = (paymentId: string, o: { scheduled?: boolean; runId?: string; maxPages?: number } = {}) => runRefundPass(sb(), paymentId, { deadlineMs: DEADLINE(), ...o });
+const pass = (paymentId: string, o: { scheduled?: boolean; runId?: string; maxPages?: number; maxReads?: number } = {}) => runRefundPass(sb(), paymentId, { deadlineMs: DEADLINE(), ...o });
 const now = () => Math.floor(Date.now() / 1000);
 const identity = (db: PGlite, id: string) => harnessLib.one(db, "select * from public.catering_refund_identities where refund_id = $1", [id]);
 
@@ -301,6 +301,71 @@ describe("reversal", () => {
     expect([w.checkout_cleanup_owed_at != null, w.checkout_cleanup_done_at]).toEqual([true, null]);
     expect((await openIssues(x.db, balance.id)).map((i) => i.code)).toContain("checkout_still_open");
   });
+
+  it("reversal_retire_reads_its_row_count (F1): another checkout installed between the expiry and the guarded clear means ZERO rows changed -- the balance is NOT retired, the obligation stays owed and staff are told", async () => {
+    await setup();
+    const balance = await x.w.pay(x.quote, "balance", 20000);
+    x.stripe.charge(balance.pi, { account: ACCT_A, captured: 20000 });
+    const full = x.stripe.refund(balance.pi, 20000, "succeeded");
+    await pass(balance.id);
+    const replacement = await x.w.pay(x.quote, "balance", 20000, { status: "due" });
+    await x.db.query("update public.catering_payments set provider_session_id = 'cs_test_session_A' where id = $1", [replacement.id]);
+    const close = vi.fn(async () => ({ retired: [], stillOpen: [], completing: [] }));
+    // The owning account confirms session A expired -- and, before our guarded write lands, a new checkout (session B)
+    // is installed on the same replacement balance.
+    const retireFor = vi.fn(async () => async (sessionId: string) => {
+      expect(sessionId).toBe("cs_test_session_A");
+      await x.db.query("update public.catering_payments set provider_session_id = 'cs_test_session_B' where id = $1", [replacement.id]);
+      return "expired" as const;
+    });
+    x.stripe.refunds.get(full)!.status = "canceled";
+    let report: unknown = null;
+    const a = await runRefundPass(sb(), balance.id, { deadlineMs: DEADLINE(), cleanup: async (c, pid) => (report = await runReversalCleanup(c as never, pid, close as never, retireFor as never)) as never });
+    expect([a.payment_status, a.previous_payment_status]).toEqual(["paid", "refunded"]);
+    // ZERO rows matched the compare-and-set: NOT counted retired, NOT complete.
+    expect(report).toEqual({ complete: false, report: { still_open: 1, completing: 0, already_paid_duplicates: 0, retired: 0 } });
+    expect((await harnessLib.one(x.db, "select provider_session_id from public.catering_payments where id = $1", [replacement.id])).provider_session_id).toBe("cs_test_session_B");
+    const w = await work(x.db, balance.id);
+    expect([w.checkout_cleanup_owed_at != null, w.checkout_cleanup_done_at]).toEqual([true, null]);
+    expect((await openIssues(x.db, balance.id)).map((i) => i.code)).toContain("checkout_still_open");
+    // The sweep resumes the obligation and retires session B for real.
+    const retired: string[] = [];
+    const retireB = vi.fn(async () => async (sessionId: string) => { retired.push(sessionId); return "expired" as const; });
+    const sweep = await runRefundSweep(sb(), { deadlineMs: DEADLINE(), cleanup: (c, pid) => runReversalCleanup(c as never, pid, close as never, retireB as never) });
+    expect([sweep.cleanups, retired]).toEqual([1, ["cs_test_session_B"]]);
+    expect((await harnessLib.one(x.db, "select provider_session_id from public.catering_payments where id = $1", [replacement.id])).provider_session_id).toBeNull();
+    expect((await work(x.db, balance.id)).checkout_cleanup_done_at).not.toBeNull();
+    expect(x.stripe.posts).toBe(0);
+  });
+
+  it("exact_reads_are_bounded_per_pass (F12): a payment with MORE refunds than one pass may read finishes in ceil(n / limit) passes, every refund read exactly once, never restarting at the same prefix", async () => {
+    await setup();
+    const n = EXACT_READS_PER_PASS * 2 + 5;
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) ids.push(x.stripe.refund(x.pay.pi, 100, i % 7 === 0 ? "pending" : "succeeded", { created: now() - 600 - i }));
+    const exactReads = () => x.stripe.log.filter((l) => l.op === "get").map((l) => l.arg);
+    const p1 = await pass(x.pay.id);
+    expect([p1.result, p1.reason, p1.staged, exactReads().length]).toEqual(["incomplete_evidence", "coverage", EXACT_READS_PER_PASS, EXACT_READS_PER_PASS]);
+    expect((await work(x.db, x.pay.id)).last_complete_pass_at).toBeNull(); // nothing published by an unfinished pass
+    const p2 = await pass(x.pay.id);
+    expect([p2.result, exactReads().length]).toEqual(["incomplete_evidence", EXACT_READS_PER_PASS * 2]);
+    const p3 = await pass(x.pay.id);
+    expect([p3.result, exactReads().length]).toEqual(["applied", n]);
+    // Every refund was read EXACTLY once across the three passes: the second and third never re-read a kept read.
+    expect([...exactReads()].sort()).toEqual([...ids].sort());
+    const pending = ids.filter((_, i) => i % 7 === 0).length;
+    expect([p3.returned_cents, p3.reserved_cents]).toEqual([(n - pending) * 100, pending * 100]);
+    expect(await harnessLib.count(x.db, "select count(*) n from public.catering_refund_identities where payment_id = $1 and (staged is not null or not verified)", [x.pay.id])).toBe(0);
+    // The sweep reaches the same end by itself: unfinished passes come back within the minute, never up the retry ladder.
+    await setup();
+    for (let i = 0; i < 9; i++) x.stripe.refund(x.pay.pi, 100, "succeeded", { created: now() - 600 - i });
+    const first = await pass(x.pay.id, { maxReads: 4 });
+    const w = await work(x.db, x.pay.id);
+    expect([first.result, first.staged, Number(w.retry_count), new Date(w.next_due_at as string).getTime() - Date.now() < 90_000]).toEqual(["incomplete_evidence", 4, 0, true]);
+    expect([(await pass(x.pay.id, { maxReads: 4 })).result, (await pass(x.pay.id, { maxReads: 4 })).result]).toEqual(["incomplete_evidence", "applied"]);
+    expect(x.stripe.log.filter((l) => l.op === "get").length).toBe(9);
+    expect(x.stripe.posts).toBe(0);
+  }, 120_000);
 
   it("reversal_retires_reopened_checkout_and_reports_race: with only the designed deposit + balance pair, no duplicate is reported", async () => {
     await setup();

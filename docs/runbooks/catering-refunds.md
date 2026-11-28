@@ -202,7 +202,10 @@ read-only queries below, the verify output). Nothing there is committed.
    0343's cron lease) with the values in its pre-flight table, plus the guard trigger's binding, the cron CHECK, the
    whole ACLs of 0357's two tables and the dependency columns. Any drift is refused by name and nothing is changed.
 3. **Sim first:** dry run (rolled back), then apply. Then CC's two-session lock proof on sim,
-   `scripts/sim/refund-0359-lock-check.mjs` (sim only).
+   `scripts/sim/refund-0359-lock-check.mjs` (sim only). It includes the lock-ORDER race: a signed delivery of an event
+   and the settlement of its payment take the PAYMENT lock first and the EVENT lock second, both, so neither can
+   deadlock the other. The file's one order: payment rows (ascending id), then event rows (ascending id), then request
+   rows (ascending id); a payment's work, identities and issues only under that payment's lock.
 4. **Prod on Juan's word.** Dry run first, then apply. **Needs Juan's word.**
 5. **Verify:** `select part, version, migration from public.catering_refund_install_contracts;` answers exactly one row
    (`B1`, `b1-1`, `0359_catering_refund_reconciler`); `select count(*) from public.catering_refund_epochs;` answers 0.
@@ -270,14 +273,14 @@ Never set the switch OFF while an epoch is open: acknowledged refund work would 
 
    | Class | Blocks the close? | What happens |
    |---|---|---|
-   | `outstanding_events` | Yes | Accepted ingress that can still change a payment: attached and not applied, attached with an outstanding floor, or unmatched / `no_payment` while a payment row now carries its PaymentIntent (attach owed). |
+   | `outstanding_events` | Yes | Accepted ingress that can still change a payment: attached and not applied, attached with an outstanding floor, or unmatched / `no_payment` while a payment row carries its PaymentIntent (attach owed). **A payment row in ANY status counts** (CC ruling R3, 2026-11-28: due, paid, refunded, void): such an event is IN scope and is never re-stamped away. It leaves the list when its payment settles and the event is attached and applied, or by break glass. |
    | `admitted_senders` | Yes | A live sender claim, or an arm younger than 180 seconds (a create response may still add evidence). |
    | applied (`counts.applied`) | No | Done. |
-   | `out_of_scope` | No | Parked / unmatched / `no_payment` events whose PaymentIntent matches no `catering_payments` row. At the seal each is RE-STAMPED to main's `payment_not_found` verdict, so main's own OFF replay picks it up. Nothing parks for ever and nothing blocks the drain for ever. |
+   | `out_of_scope` | No | Parked / unmatched / `no_payment` events whose PaymentIntent matches **no `catering_payments` row at all** (ruling R3). At the seal each is RE-STAMPED to main's `payment_not_found` verdict, so main's own OFF replay picks it up. The seal reads how many it re-stamped: if any could not be handed over (its ledger verdict is not this build's) the seal REFUSES `restamp_incomplete` and the epoch stays draining. **Limit, stated:** the app writes a payment's PaymentIntent onto its row only when the payment is recorded as paid, so an event for a checkout that has not been recorded yet cannot be told apart from an event with no payment row. |
    | `outstanding_events`, reason `capture_review` | Yes | An applied event on a payment under an open capture review: its refund may already be whole while the stored status OFF readers use still says `paid`. Disposition the review (panel) or break glass. |
-   | `pending_whole_refunds` | No (listed) | A whole refund still PENDING at the drain: the payment stays `paid` (the money has not returned yet), and main's legacy `charge.refunded` settles it when Stripe does. **UNVERIFIED: whether Stripe sends a new `charge.refunded` when a pending refund later succeeds** (its documented signal for that transition is `refund.updated`, which main ignores). So for every payment listed here: re-check the charge in Stripe after the refund settles and confirm the payment reads `refunded`; if it does not, resend that charge's `charge.refunded` event from the Stripe dashboard. |
+   | `whole_refunds_unsettled` | **Yes** (CC ruling R1) | A payment whose stored status still says `paid` while the refunds the reconciler knows of may be the WHOLE charge and are not settled into that status: reason `non_terminal` (a pending / requires-action / unfamiliar refund is part of it) or `unpublished` (succeeded cents cover it but the status could not be published, for example a capture review). It does not depend on an open issue or on an event: a whole refund a sweep found alone is listed. **It is settled ONLY by an exact per-refund read** (the sweep's pass retrieves the refund by id and the one financial writer applies it); keep the sweep running while draining and call `finish_drain` again. **Nothing is left for OFF code to settle:** whether Stripe sends a new `charge.refunded` when a pending refund later succeeds is UNVERIFIED, and the design does not rely on it. |
    | `cleanup_open`, `unconfirmed_requests` | No (listed) | Post-reversal checkout cleanup still owed; armed requests whose create response was lost. |
-   | `quarantined_events` | No (listed) | Wrong-shop / wrong-mode ingress: it changed no money and is never re-stamped. |
+   | `quarantined_events` | **Yes, until dispositioned** (CC ruling R2) | Wrong-shop / wrong-mode ingress: it changed no money and is NEVER re-stamped. Each one opens a non-blocking "set aside" issue on the payment's panel; the drain cannot finish while a quarantined event has no recorded staff disposition (`outstanding_events`, reason `quarantined_undispositioned`). A MoO at the shop (or Owner / CGS) records it from the panel with a fresh password (`acknowledge_followup` or `exclude_unrelated_hint`); the event stays quarantined and stays in this list (`dispositioned: true`). |
 
 3. With nothing blocking, the same call seals ON ingress and closes the epoch in one transaction (`closed: true`).
    **Only after that receipt** may CC set the switch OFF and roll the app back. The seal stays across the rollout.
@@ -287,14 +290,22 @@ Never set the switch OFF while an epoch is open: acknowledged refund work would 
 OFF with undrained work is allowed **ONLY on Juan's explicit word** (**needs Juan's word**, recorded):
 `select public.catering_refund_break_glass_close('<epoch id>', <generation>, '<operator>', '<reference to Juan''s recorded word>');`
 It records the FULL undrained list in the epoch's drain report and in a destructive `catering.refund.break_glass`
-audit row (outstanding events, admitted senders, out-of-scope events, pending whole refunds, open cleanup, unconfirmed
-requests, quarantined events), and re-stamps every event-backed item (outstanding and out-of-scope) to main's
-`payment_not_found` per A2.
+audit row (outstanding events, admitted senders, out-of-scope events, whole refunds not settled, open cleanup,
+unconfirmed requests, quarantined events), and re-stamps every event-backed item (outstanding and out-of-scope) to
+main's `payment_not_found` per A2 -- **except quarantined events, which are never re-stamped** (ruling R2) and stay in
+the recorded list. The report also carries `restamp_requested`, `restamped` and `not_restamped` (the ids that could NOT
+be handed over; an event is never counted re-stamped unless its ledger row really reads `payment_not_found`).
+**A whole refund in `whole_refunds_unsettled` at a break-glass close is NOT settled by anything afterwards** (ruling
+R1): for each payment listed, a person checks the charge in Stripe and corrects the payment's status through a normal
+reviewed fix. Do not expect OFF code to do it.
 **A re-stamp alone applies nothing to a payment that is already settled:** Stripe does not redeliver an event it was
 answered 2xx for, and main replays a seen-first refund only at settlement. So after the switch is OFF, for every
 payment in the recorded `outstanding_events` list: resend its `charge.refunded` event from the Stripe dashboard (main's
 duplicate gate then works it, because its verdict is `payment_not_found` and a paid row carries the charge) and confirm
 the payment's status against the charge.
+**The resend is DIAGNOSTICS, not a money step** (ruling R1): an event whose stored verdict is still `refund_state_owed`
+(it was applied before the close, or was never re-stamped) answers `duplicate` and moves nothing. A `duplicate` answer
+therefore proves nothing about the money either way; the check against the charge in Stripe is the step that counts.
 The reference is a structured id (8 to 120 of `A-Za-z0-9_.:/#-`), never a name or a message body.
 
 ### A contract upgrade during a drain (addendum A3 i)
@@ -373,6 +384,8 @@ thresholds, alert age, route budgets and the 60-second clock margin are CO-OPS p
 | Owning charge and capture | "ID of the latest Charge object created by this PaymentIntent." "Amount in the smallest currency unit captured". https://docs.stripe.com/api/payment_intents/object · https://docs.stripe.com/api/charges/object |
 | Retry, pruning and cap | "Limit retries of an unresolved operation to the first 24 hours after the original request, using the same key and parameters." "We generate a new request if a key is reused after the original is pruned." Stripe identifies "trying to refund more money than is left on a charge." https://docs.stripe.com/error-low-level · https://docs.stripe.com/api/idempotent_requests · https://docs.stripe.com/api/refunds/create |
 | First refusal | "we save results only after the execution of an endpoint begins." **UNVERIFIED:** a blanket inference of nonexecution from HTTP 4xx. The app closes a request only on a closed list of named Stripe codes and otherwise keeps it pending and reserved. https://docs.stripe.com/api/idempotent_requests |
+| Refusal codes (CC ruling R5) | **The closed list is EMPTY.** A code is on it only when Stripe's own page says, in words, that no refund was created. `charge_already_refunded`: "The charge you’re attempting to refund has already been refunded. Inspect its existing refunds to confirm whether the intended refund is complete." `charge_disputed`: "The charge you’re attempting to refund has been charged back. See Disputes to learn how to respond to the dispute." Neither says that; both are treated as POSSIBLY EXECUTED: the request stays pending and reserved, staff review it (`submission_unconfirmed`), and a retry re-sends the same idempotency key ("Retries with the same key return the saved response"), so no second refund can be made. https://docs.stripe.com/error-codes · https://docs.stripe.com/api/idempotent_requests |
+| Refund outcome after success | "A refund can fail if the customer’s bank or card issuer can’t process it." "In the rare instance that a refund fails, Stripe notifies you using the `refund.failed` event". `charge.refunded`: "Occurs whenever a charge is refunded, including partial refunds." **UNVERIFIED:** whether a `charge.refunded` is sent again when a pending refund later succeeds; B1 does not rely on it (ruling R1: an exact read by id settles a refund). https://docs.stripe.com/refunds · https://docs.stripe.com/api/events/types |
 | Credential identity | **UNVERIFIED:** cross-key idempotency retention after a same-account key rotation, and a 404 proving that an object belongs to a different account. The app resolves the immutable payment context and limits the effect of all-account 404s (three complete scheduled passes before a hint is quarantined). |
 | Webhook transport | "Stripe doesn't guarantee the delivery of events in the order that they're generated." Live retries run "up to three days". Stripe advises "Quickly return a 2xx response". https://docs.stripe.com/webhooks |
 | Refund events | "Occurs whenever a refund is created." "Occurs whenever a refund has failed." "Occurs whenever a refund is updated." Stripe labels the compatibility event "`charge.refund.updated` (Deprecated)". https://docs.stripe.com/api/events/types · https://docs.stripe.com/refunds#refund-events |

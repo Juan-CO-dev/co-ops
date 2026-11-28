@@ -76,7 +76,18 @@ describe("Part B1's closed vocabulary is all in the runbook", () => {
     expect(flat).toContain("**cumulative-gap list** `cumulative_gaps` (addendum Opus P3-c)");
     // Drain before off; A2's classes; break glass only on Juan's word; A3 (i).
     expect(runbook).toContain("### The stop: drain BEFORE off");
-    for (const c of ["`outstanding_events`", "`admitted_senders`", "`out_of_scope`", "`pending_whole_refunds`", "`payment_not_found`"]) expect(runbook, c).toContain(c);
+    for (const c of ["`outstanding_events`", "`admitted_senders`", "`out_of_scope`", "`whole_refunds_unsettled`", "`payment_not_found`"]) expect(runbook, c).toContain(c);
+    // Fix round 2 (CC rulings R1-R3, R5): the pending-whole premise is gone, quarantine needs a disposition, scope is any status, the refusal list is empty.
+    expect(runbook).not.toContain("pending_whole_refunds");
+    expect(flat).not.toContain("main's legacy `charge.refunded` settles it");
+    expect(flat).toContain("**It is settled ONLY by an exact per-refund read**");
+    expect(flat).toContain("**Nothing is left for OFF code to settle:**");
+    expect(flat).toContain("**The resend is DIAGNOSTICS, not a money step**");
+    expect(flat).toContain("the drain cannot finish while a quarantined event has no recorded staff disposition");
+    expect(flat).toContain("**A payment row in ANY status counts**");
+    expect(flat).toContain("**no `catering_payments` row at all**");
+    expect(flat).toContain("**The closed list is EMPTY.**");
+    expect(flat).toContain("payment rows (ascending id), then event rows (ascending id), then request rows (ascending id)");
     expect(flat).toContain("**ONLY on Juan's explicit word**");
     expect(runbook).toContain("select public.catering_refund_adopt_contract_upgrade(");
     expect(runbook.match(/\*\*[Nn]eeds Juan's word\.?\*\*/g)!.length).toBeGreaterThanOrEqual(5);
@@ -117,11 +128,12 @@ describe("platform claims: quoted with their URL, or marked UNVERIFIED", () => {
       "https://docs.stripe.com/error-low-level", "https://docs.stripe.com/api/idempotent_requests", "https://docs.stripe.com/api/refunds/create",
       "https://docs.stripe.com/webhooks", "https://docs.stripe.com/api/events/types", "https://docs.stripe.com/refunds#refund-events",
       "https://supabase.com/docs/reference/python/select", "https://vercel.com/docs/schedules/cron-jobs/manage-cron-jobs",
+      "https://docs.stripe.com/error-codes", "https://docs.stripe.com/refunds ",
     ]) expect(runbook, url).toContain(url);
     // Each row of the B1 platform table quotes something or says UNVERIFIED.
     const table = runbook.slice(runbook.indexOf("### Platform evidence and limits"), runbook.indexOf("### Rollback of the schema"));
     const rows = table.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| Behavior") && !l.startsWith("|---"));
-    expect(rows).toHaveLength(10);
+    expect(rows).toHaveLength(12); // + the refusal codes (CC ruling R5) and the refund outcome after success (R1), fix round 2
     for (const r of rows) expect(r.includes("\"") || r.includes("**UNVERIFIED:**"), r).toBe(true);
   });
 });

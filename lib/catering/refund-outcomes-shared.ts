@@ -263,13 +263,26 @@ export type RefundPassResult = (typeof REFUND_PASS_RESULTS)[number];
 
 /**
  * A FIRST, POSITIVELY IDENTIFIED, UNEXECUTED refusal of a create (plan B1.1): Stripe named the reason, and the reason
- * is one that means the refund was not made. A closed list of Stripe's documented error codes
- * (docs.stripe.com/error-codes); a blanket inference from "HTTP 4xx" is UNVERIFIED and is never made: every other
- * answer is `uncertain` and keeps the request pending and reserved.
+ * is one whose OFFICIAL documentation says, in words, that no refund was created. A code is on this list ONLY with
+ * that citation (CC ruling R5, 2026-11-28); a blanket inference from "HTTP 4xx" is never made. Every other answer is
+ * `uncertain`: the create is treated as POSSIBLY EXECUTED, the request stays pending and reserved, staff review it,
+ * and nothing can make a SECOND refund (a retry inside the window re-sends the SAME idempotency key; Stripe: "Retries
+ * with the same key return the saved response", docs.stripe.com/api/idempotent_requests).
+ *
+ * THE LIST IS EMPTY, deliberately. The two codes it carried cannot be cited as "no refund was created":
+ *   charge_already_refunded  docs.stripe.com/error-codes: "The charge you're attempting to refund has already been
+ *                            refunded. Inspect its existing refunds to confirm whether the intended refund is
+ *                            complete." -- it tells the caller to INSPECT EXISTING REFUNDS: the intended refund may
+ *                            exist. Not a statement that none was created.
+ *   charge_disputed          docs.stripe.com/error-codes: "The charge you're attempting to refund has been charged
+ *                            back. See Disputes to learn how to respond to the dispute." -- silent on whether a
+ *                            refund was created.
+ * (docs.stripe.com/api/errors says only: "Codes in the `4xx` range indicate an error that failed given the
+ * information provided." UNVERIFIED as a guarantee that no object was created; the safe side is taken.)
  */
-export const UNEXECUTED_REFUSAL_CODES = ["charge_already_refunded", "charge_disputed"] as const;
+export const UNEXECUTED_REFUSAL_CODES: readonly string[] = [];
 export function classifyCreateFailure(httpStatus: number, code: string | null | undefined): "refused_unexecuted" | "uncertain" {
-  return httpStatus === 400 && (UNEXECUTED_REFUSAL_CODES as readonly string[]).includes(code ?? "") ? "refused_unexecuted" : "uncertain";
+  return httpStatus === 400 && UNEXECUTED_REFUSAL_CODES.includes(code ?? "") ? "refused_unexecuted" : "uncertain";
 }
 
 // ── What a stored request reads as on the panel ────────────────────────────────────────────────────────────

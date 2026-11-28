@@ -618,7 +618,7 @@ describe("the rollback handoff to main (app halves)", () => {
     }, 60_000);
   }
 
-  it("pending_whole_refund_at_drain_listed_and_legacy_settles: a whole refund pending at the drain is listed, the payment stays paid; under OFF a NEW charge.refunded (refunded: true) moves it through main's legacy writer", async () => {
+  it("pending_whole_refund_holds_the_drain_until_an_exact_read_settles_it (CC ruling R1): the drain does not seal over a pending whole refund, nothing is left for OFF code to settle, and a resent event answers `duplicate` with no money meaning", async () => {
     const x = await setup();
     const q = await x.w.quote();
     const p = await x.w.pay(q, "deposit", 30000);
@@ -630,17 +630,54 @@ describe("the rollback handoff to main (app halves)", () => {
     expect(await deliver(ev)).toMatchObject({ status: 200, body: { result: "refund_state_owed" } });
     await kit.pass(x.db, p.id, stripe);
     const d = await drain(x.db);
-    const done = await finishDrain(x.db, d);
-    expect(done.closed).toBe(true);
-    expect(done.report.pending_whole_refunds.map((r: { payment_id: string; reserved_cents: number }) => [r.payment_id, Number(r.reserved_cents)])).toEqual([[p.id, 30000]]);
+    const held = await finishDrain(x.db, d);
+    // NOT sealed: the pending whole refund holds the drain by itself (no event is owed).
+    expect([held.closed, held.report.outstanding_events.length]).toEqual([false, 0]);
+    expect(held.report.whole_refunds_unsettled.map((r: { payment_id: string; reserved_cents: number; reason: string }) => [r.payment_id, Number(r.reserved_cents), r.reason])).toEqual([[p.id, 30000, "non_terminal"]]);
     expect((await payRow(x.db, p.id)).status).toBe("paid");
-
-    delete process.env.CATERING_REFUNDS;
-    const settled = chargeRefunded({ pi: p.pi, cumulative: 30000, amount: 30000, full: true, embedded: [{ id: "re_pending_1", status: "succeeded" }] });
-    expect(await deliver(settled)).toMatchObject({ status: 200, body: { result: "refunded" } });
+    // DIAGNOSTICS ONLY: resending the acknowledged event answers `duplicate` and moves nothing. It settles no money.
+    expect(await deliver(ev)).toMatchObject({ status: 200, body: { result: "duplicate" } });
+    expect((await payRow(x.db, p.id)).status).toBe("paid");
+    expect(legacyRefundAudits()).toHaveLength(0);
+    // THE EXACT READ settles it while the epoch is still draining (the sweep's own pass; a GET by id).
+    stripe.set("re_pending_1", { status: "succeeded" });
+    await kit.pass(x.db, p.id, stripe);
     expect((await payRow(x.db, p.id)).status).toBe("refunded");
-    expect(legacyRefundAudits()).toHaveLength(1);
+    const done = await finishDrain(x.db, d);
+    expect([done.closed, done.report.whole_refunds_unsettled.length]).toEqual([true, 0]);
+    // The legacy whole-charge writer was never needed and never ran.
+    expect(legacyRefundAudits()).toHaveLength(0);
     expect(h.stripeCalls).toEqual([]);
+  }, 60_000);
+
+  it("seal_state_unknown_is_retryable_and_alerts (CC ruling R10): a `payment_not_found` redelivery under a seal read that answers with no state, or one this build does not know, is NOT answered `duplicate`: retryable, nothing written, an alert raised", async () => {
+    const x = await setup();
+    await harnessKit.goLive(x.db);
+    const pi = `pi_seal_unknown_${randomUUID().slice(0, 8)}`;
+    const ev = chargeRefunded({ pi, cumulative: 5000, amount: 30000, full: false });
+    expect(await deliver(ev)).toMatchObject({ status: 200, body: { result: "refund_state_owed" } });
+    // The seal handed it back to main (addendum A2): its stored verdict is main's `payment_not_found`.
+    await x.db.query("update public.stripe_events set outcome = 'payment_not_found' where id = $1", [ev.id]);
+    const real = x.sb as { rpc: (fn: string, args?: unknown) => Promise<{ data: unknown; error: unknown }> };
+    const withState = (answer: unknown) => ({
+      ...x.sb,
+      from: (t: string) => (x.sb as { from: (t: string) => unknown }).from(t),
+      rpc: (fn: string, args?: unknown) => (fn === "catering_refund_epoch_state" ? Promise.resolve({ data: answer, error: null }) : real.rpc(fn, args)),
+    });
+    for (const answer of [null, {}, { state: null }, { state: "some_future_state" }]) {
+      auditMock.mockClear();
+      const r = await processStripeEvent(withState(answer) as never, ev, SINGLE, {});
+      expect([JSON.stringify(answer), r.result]).toEqual([JSON.stringify(answer), "processing_failed"]); // retryable: never the terminal `duplicate`
+      expect(await ledger(x.db, ev.id)).toBe("payment_not_found"); // nothing written: the stored verdict stays main's
+      const alerts = auditMock.mock.calls.map((c) => c[0] as { action: string; metadata: Record<string, unknown> }).filter((c) => c.action === "catering.refund.anomaly");
+      expect(alerts.map((c) => [c.metadata.kind, c.metadata.stripe_event_id])).toEqual([["seal_state_unknown", ev.id]]);
+    }
+    // A state this build KNOWS and that is not sealed keeps the ordinary answer; a confirmed seal stays retryable without the alert.
+    auditMock.mockClear();
+    expect((await processStripeEvent(withState({ state: "live" }) as never, ev, SINGLE, {})).result).toBe("duplicate");
+    expect((await processStripeEvent(withState({ state: "sealed" }) as never, ev, SINGLE, {})).result).toBe("processing_failed");
+    expect(auditMock.mock.calls.filter((c) => (c[0] as { action: string }).action === "catering.refund.anomaly")).toHaveLength(0);
+    expect(await ledger(x.db, ev.id)).toBe("payment_not_found");
   }, 60_000);
 });
 

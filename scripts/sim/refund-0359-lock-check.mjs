@@ -36,15 +36,28 @@
  *                                  The request stays pending, armed.
  *   5b ARM vs RELEASE, release first  holder = release_unsent COMMITS; racer = arm WAITS, then answers `not_pending`.
  *                                  The request is failed `released_unsent` and was never armed.
+ *   6a LOCK ORDER payment -> event, settlement first (fix round 2, F5)  the event is a recovery SEED not attached yet.
+ *                                  holder = a settlement: it takes the PAYMENT lock, pauses 4 s inside its transaction,
+ *                                  THEN calls catering_refund_settlement_attach (which needs the EVENT) and COMMITS;
+ *                                  racer = the genuine signed delivery of that same event
+ *                                  (catering_refund_event_register: a PROMOTION), started while the holder pauses.
+ *                                  With ONE lock order the racer waits on the payment holding nothing, the holder
+ *                                  attaches, and the racer then promotes: NO DEADLOCK. With the old order (event
+ *                                  first) the racer would hold the event while waiting for the payment and the
+ *                                  holder would wait for the event: Postgres aborts one (40P01) and this step FAILS.
+ *   6b LOCK ORDER payment -> event, delivery first  holder = the signed delivery (payment, then event) COMMITS;
+ *                                  racer = catering_refund_settlement_attach WAITS on the payment, then finds the
+ *                                  event already attached and attaches nothing twice.
  * WHAT IT CANNOT PROVE: the Management API gives no session that stays open across requests, so a holder is always ONE
  * call followed by a sleep (never a person pausing between two calls), and timing beyond "waited at least the holder's
  * remainder" is not measured. The race of a Stripe POST itself is out of scope (no provider is called: every provider
  * fact is a synthetic evidence JSON).
  *
  * FIXTURE (committed, because two sessions must both see it; SYNTHETIC rows only, tagged SIM-0359-LOCK-<id>): one shop,
- * one owner with one session, four quotes with one $300 Stripe deposit each, the two missing install records as stand-ins
+ * one owner with one session, five quotes with one $300 Stripe deposit each, the two missing install records as stand-ins
  * (B2 / B3: plan B1.5 "B1 proof before B2 exists"; only the parts not installed are added), two epochs inserted by the
- * fixture owner (draining, then live), three stripe_events ledger rows, two request rows and two issue rows. While it
+ * fixture owner (draining, then live), five stripe_events ledger rows, two recovery-seed event rows (step 6), two
+ * request rows and two issue rows. While it
  * runs (about two minutes) the sim has an open fixture epoch; with CATERING_REFUNDS unset nothing in the app reads it.
  * CLEANUP (finally, always): every row the fixture or a committed step wrote is DELETED by id (the issues, identities,
  * event work, requests, snapshots and work of the four payments; the ledger rows; the audit rows of the fixture's
@@ -128,9 +141,10 @@ const hex = () => randomUUID().replaceAll('-', '');
 export function fixture() {
   const id = randomUUID();
   const f = { tag: `SIM-0359-LOCK-${id.slice(0, 8)}`, shop: randomUUID(), owner: randomUUID(), session: randomUUID(),
-    q: [1, 2, 3, 4].map(() => randomUUID()), p: [1, 2, 3, 4].map(() => randomUUID()), pi: [1, 2, 3, 4].map(() => `pi_sim0359lock_${hex()}`),
-    ch: [1, 2, 3, 4].map(() => `ch_sim0359lock_${hex()}`), e1: randomUUID(), e2: randomUUID(),
+    q: [1, 2, 3, 4, 5].map(() => randomUUID()), p: [1, 2, 3, 4, 5].map(() => randomUUID()), pi: [1, 2, 3, 4, 5].map(() => `pi_sim0359lock_${hex()}`),
+    ch: [1, 2, 3, 4, 5].map(() => `ch_sim0359lock_${hex()}`), e1: randomUUID(), e2: randomUUID(),
     evSeal: `evt_sim0359lock_seal_${hex()}`, evIngress: `evt_sim0359lock_ingress_${hex()}`, evGen: `evt_sim0359lock_gen_${hex()}`,
+    evOrderA: `evt_sim0359lock_ordera_${hex()}`, evOrderB: `evt_sim0359lock_orderb_${hex()}`,
     r4: randomUUID(), r5: randomUUID(), i4: randomUUID(), i5: randomUUID(), standIns: [] };
   return f;
 }
@@ -165,10 +179,10 @@ export function fixtureSQL(f) {
     insert into public.catering_refund_epochs(id,state,manifest,opened_by,recovery_cutoff,recovery_complete_at,promoted_at,draining_at)
       values(${q(f.e1)},'draining',public.catering_refund_install_manifest(),${q(f.tag)},clock_timestamp(),clock_timestamp(),clock_timestamp(),clock_timestamp());
     insert into public.stripe_events(id,type,livemode,payload,location_id) values
-      ${[f.evSeal, f.evIngress, f.evGen].map(id => `(${q(id)},'refund.created',false,jsonb_build_object('id',${q(id)},'synthetic',${q(f.tag)}),null)`).join(',')};
+      ${[f.evSeal, f.evIngress, f.evGen, f.evOrderA, f.evOrderB].map(id => `(${q(id)},'refund.created',false,jsonb_build_object('id',${q(id)},'synthetic',${q(f.tag)}),null)`).join(',')};
     commit;`;
 }
-const ids = f => ({ P: `array[${f.p.map(q).join(',')}]::uuid[]`, EV: `array[${[f.evSeal, f.evIngress, f.evGen].map(q).join(',')}]::text[]`,
+const ids = f => ({ P: `array[${f.p.map(q).join(',')}]::uuid[]`, EV: `array[${[f.evSeal, f.evIngress, f.evGen, f.evOrderA, f.evOrderB].map(q).join(',')}]::text[]`,
   ALL: `array[${[...f.p, ...f.q, f.e1, f.e2, f.r4, f.r5, f.i4, f.i5, f.owner, f.shop].map(q).join(',')}]::uuid[]` });
 export function cleanupSQL(f) {
   const { P, EV, ALL } = ids(f);
@@ -223,6 +237,7 @@ export const requiredColumns = {
   catering_refund_issues: ['id', 'code', 'payment_id', 'location_id', 'request_id', 'evidence_fingerprint', 'blocking', 'generation_at_open'],
   catering_refund_epochs: ['id', 'state', 'manifest', 'opened_by', 'recovery_cutoff', 'recovery_complete_at', 'promoted_at', 'draining_at'],
   catering_refund_install_contracts: ['part', 'version', 'migration'], stripe_events: ['id', 'type', 'livemode', 'payload', 'location_id'],
+  catering_refund_event_work: ['event_id', 'event_type', 'source', 'livemode', 'payment_intent_id', 'state'],
 };
 const CLEANED = ['catering_refund_issues', 'catering_refund_identities', 'catering_refund_event_work', 'catering_payment_refund_events', 'catering_refund_requests',
   'catering_refund_stripe_snapshots', 'catering_refund_payment_work', 'stripe_events', 'audit_log', 'catering_payments', 'catering_quotes', 'sessions', 'user_locations',
@@ -238,7 +253,7 @@ export async function preflight(query) {
         'catering_refund_reserve_admitted(text,uuid,uuid,uuid,uuid,bigint,text,text,text)', 'catering_refund_claim_admitted(text,uuid,uuid,uuid)',
         'catering_refund_arm(text,uuid,uuid,uuid,uuid,bigint,text,text,boolean)', 'catering_refund_pass_begin(text,uuid,uuid)',
         'catering_refund_apply(text,uuid,uuid,bigint,jsonb)', 'catering_refund_event_register(text,text,text,uuid,boolean,text,text,bigint,bigint,bigint,boolean,jsonb)',
-        'catering_refund_resolve_anomaly(text,uuid,bigint,text,text,uuid,text)']) s) as worker_ok,
+        'catering_refund_resolve_anomaly(text,uuid,bigint,text,text,uuid,text)', 'catering_refund_settlement_attach(text,uuid)']) s) as worker_ok,
       (to_regprocedure('public.catering_refund_finish_drain(uuid,bigint,text)') is not null) as lifecycle_ok,
       (select coalesce(string_agg(t, ',' order by t), '') from unnest(array[${CLEANED.map(q).join(',')}]::text[]) t
         where to_regclass('public.' || t) is null
@@ -384,6 +399,47 @@ export async function runProof(query, { log = console.log, selfTest = false } = 
       assert.equal(x.racer?.ok?.result, 'not_pending', `arm after the release (${JSON.stringify(x.racer)})`);
       const s = await one(query, `select status, last_error_code, create_armed_at is null as never_armed from public.catering_refund_requests where id = ${q(f.r5)}`);
       assert.deepEqual([s.status, s.last_error_code, s.never_armed], ['failed', 'released_unsent', true], 'exactly one won: released, never armed');
+      return `blocked=${x.blocked}`;
+    });
+
+    // ── Fix round 2 (F5): ONE lock order, payment -> event. The event is a recovery SEED whose payment is settling.
+    const seedRow = ev => `begin; update public.stripe_events set outcome = 'processing_failed' where id = ${q(ev)};
+      insert into public.catering_refund_event_work(event_id,event_type,source,livemode,payment_intent_id,state)
+        values(${q(ev)},'refund.created','recovery_seed',false,${q(f.pi[4])},'unmatched'); commit;`;
+    const deliver = ev => capture(callInto(`public.catering_refund_event_register(${C}, ${q(ev)}, 'refund.created', null, false, ${q(f.pi[4])}, ${q(f.ch[4])},
+      extract(epoch from clock_timestamp())::bigint, null, null, null, jsonb_build_array(jsonb_build_object('id', ${q(`re_sim0359lock_${hex()}`)}, 'status', 'pending')))`));
+    const attach = `public.catering_refund_settlement_attach(${C}, ${q(f.p[4])})`;
+    const noDeadlock = x => {
+      for (const side of [x.holder, x.racer]) {
+        assert.ok(!side?.err, `no session may be aborted (a deadlock is 40P01): ${JSON.stringify(side)?.slice(0, 300)}`);
+      }
+    };
+
+    await step('6a LOCK ORDER payment -> event, settlement first: the settlement holds the payment, pauses, then attaches the event; the delivery waits on the PAYMENT (holding nothing), then promotes; no deadlock', async () => {
+      await query(seedRow(f.evOrderA));
+      // The holder takes the payment lock FIRST and only later asks for the event: exactly the interleaving in which a
+      // delivery that locked the event first would close the cycle.
+      const holder = capture(`perform 1 from public.catering_payments p where p.id = ${q(f.p[4])} for no key update;
+        perform pg_sleep(${selfTest ? 0 : 4});
+        r := ${attach};`);
+      const x = await race({ body: holder, role: null }, { body: deliver(f.evOrderA), role: SVC, end: 'commit' }, '6a');
+      noDeadlock(x);
+      assert.deepEqual([x.holder?.ok?.result, x.holder?.ok?.events], ['attached', [f.evOrderA]], `the settlement attached the seed (${JSON.stringify(x.holder)?.slice(0, 300)})`);
+      assert.deepEqual([x.racer?.ok?.result, x.racer?.ok?.state], ['registered', 'attached'], `the delivery then promoted it (${JSON.stringify(x.racer)?.slice(0, 300)})`);
+      const s = await one(query, `select e.source, e.state, e.payment_id::text as payment, (select outcome from public.stripe_events where id = e.event_id) as outcome
+        from public.catering_refund_event_work e where e.event_id = ${q(f.evOrderA)}`);
+      assert.deepEqual([s.source, s.state, s.payment, s.outcome], ['ingress', 'attached', f.p[4], 'refund_state_owed'], 'one event row: ingress, attached to its payment, verdict stamped');
+      return `blocked=${x.blocked}`;
+    });
+
+    await step('6b LOCK ORDER payment -> event, delivery first: the delivery holds payment then event; the settlement attach waits on the payment, then attaches nothing twice', async () => {
+      await query(seedRow(f.evOrderB));
+      const x = await race({ body: deliver(f.evOrderB), role: SVC }, { body: capture(callInto(attach)), role: SVC, end: 'commit' }, '6b');
+      noDeadlock(x);
+      assert.deepEqual([x.holder?.ok?.result, x.holder?.ok?.state], ['registered', 'attached'], `holder delivery (${JSON.stringify(x.holder)?.slice(0, 300)})`);
+      assert.deepEqual([x.racer?.ok?.result, x.racer?.ok?.events], ['attached', []], `the waiting settlement finds nothing left to attach (${JSON.stringify(x.racer)?.slice(0, 300)})`);
+      const s = await one(query, `select count(*)::int as n from public.catering_refund_event_work where payment_id = ${q(f.p[4])} and state = 'attached' and source = 'ingress'`);
+      assert.equal(s.n, 2, 'both seeded events are attached once, as ingress');
       return `blocked=${x.blocked}`;
     });
   } finally {

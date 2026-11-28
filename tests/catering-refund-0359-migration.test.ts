@@ -176,10 +176,10 @@ describe("0359 header, shape and privileges", () => {
       if (f.name === "claim_cron_route") expect(f.head, f.name).toContain("set search_path=pg_catalog,public"); // 0343's own spelling, kept
       else expect(f.head, f.name).toContain("set search_path = pg_catalog, public");
     }
-    // Every catering_refund_* function 0359 CREATES, plus 0357's six, is the 48 the in-file assertion expects.
+    // Every catering_refund_* function 0359 CREATES, plus 0357's six, is the 51 the in-file assertion expects.
     const created = FNS.filter((f) => !f.replace && f.name.startsWith("catering_refund_")).length;
-    expect(sql).toContain("if v_n <> 48 then raise exception '0359: the catering_refund_* function family has % members, expected 48', v_n; end if;");
-    expect(created + functionsOf(sql0357).filter((f) => f.name.startsWith("catering_refund_")).length).toBe(48);
+    expect(sql).toContain("if v_n <> 51 then raise exception '0359: the catering_refund_* function family has % members, expected 51', v_n; end if;");
+    expect(created + functionsOf(sql0357).filter((f) => f.name.startsWith("catering_refund_")).length).toBe(51);
     // The only re-emitted (create or replace) functions are the guard and the cron lease.
     expect(FNS.filter((f) => f.replace).map((f) => f.name)).toEqual(["catering_refund_requests_guard", "claim_cron_route"]);
   });
@@ -551,6 +551,92 @@ describe("SQL <-> TypeScript vocabulary parity (lib/catering/refund-outcomes-sha
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+describe("fix round 2 (CC addendum RULINGS-refundB1-r2): the shapes the SQL must keep", () => {
+  const body = (name: string) => fn59(name).body;
+  const RESOLVES = /update public\.catering_refund_issues[\s\S]{0,400}?set state = (?:'resolved'|v_state)/;
+
+  it("F3 restricted_at_has_one_derivation: every function that resolves, clears or dispositions an issue calls catering_refund_recompute_restriction, and nothing else writes restricted_at", () => {
+    const resolvers = FNS.filter((f) => RESOLVES.test(f.body)).map((f) => f.name).sort();
+    expect(resolvers).toEqual(["catering_refund_apply_inner", "catering_refund_arm", "catering_refund_finish", "catering_refund_register_hints",
+      "catering_refund_release", "catering_refund_resolve_anomaly"]);
+    for (const name of resolvers) expect(body(name), name).toContain("perform public.catering_refund_recompute_restriction(");
+    // The ONE writer of the column.
+    const writers = FNS.filter((f) => /\brestricted_at\s*=/.test(f.body.replace(/--[^\n]*/g, ""))).map((f) => f.name);
+    expect(writers).toEqual(["catering_refund_recompute_restriction"]);
+    // In the financial writer the derivation runs AFTER every evidence clear and BEFORE the projection reads `held`.
+    const apply = body("catering_refund_apply_inner");
+    const at = apply.indexOf("perform public.catering_refund_recompute_restriction(p_payment_id);");
+    expect(at).toBeGreaterThan(apply.lastIndexOf("disposition = 'evidence_cleared'"));
+    expect(at).toBeLessThan(apply.indexOf("-- The projection: available / reserved / returned"));
+  });
+
+  it("F5 one_lock_order: the payment is locked BEFORE the event in ingress (promotion included), settlement attach, housekeeping and seed stage 2; events are taken in ascending event id", () => {
+    const reg = body("catering_refund_event_register");
+    const payLock = reg.indexOf("from public.catering_payments p where p.id = v_lock for no key update");
+    const evLock = reg.indexOf("from public.catering_refund_event_work e where e.event_id = p_event_id for update");
+    const evInsert = reg.indexOf("insert into public.catering_refund_event_work");
+    expect(payLock).toBeGreaterThan(0);
+    expect([payLock < evInsert, payLock < evLock, evInsert < evLock]).toEqual([true, true, true]);
+    // No payment lock is ever taken after the event lock in that function; a payment that moved steps back by name.
+    expect(reg.slice(evLock)).not.toMatch(/catering_payments[\s\S]{0,200}for no key update/);
+    expect(reg).toContain("raise exception 'ingress_retry'");
+    // Settlement attach: the payment (FOR NO KEY UPDATE) first, then its events in ascending event id.
+    const att = body("catering_refund_settlement_attach");
+    expect(att.indexOf("for no key update")).toBeLessThan(att.indexOf("catering_refund_attach_event("));
+    expect(att).toMatch(/and e\.restamped_at is null\s+order by e\.event_id /);
+    // Housekeeping: payments ascending, each before its own events, a payment's events ascending.
+    expect(body("catering_refund_sweep_housekeeping")).toMatch(/order by p\.id nulls last, e\.event_id limit 200/);
+    // Seed stage 2: every payment of the batch locked (ascending) before the first event is written; events ascending.
+    const seed = body("catering_refund_recovery_seed_batch");
+    const lockStmt = "perform 1 from public.catering_payments p where p.id = any(v_locked) order by p.id for no key update;";
+    const lockAll = seed.indexOf(lockStmt);
+    expect(lockAll).toBeGreaterThan(0);
+    expect(lockAll).toBeLessThan(seed.indexOf("where s.id = any(v_batch) order by s.id"));
+    expect(seed.slice(lockAll + lockStmt.length)).not.toContain("for no key update");
+    expect(seed).toContain("v_pay_id = any(v_locked)");
+    // attach_event states its precondition and locks the event only (the caller holds the payment).
+    expect(sql).toContain("-- Attach ONE event to its settled payment. THE CALLER HOLDS THE PAYMENT LOCK.");
+    expect(sql).toMatch(/-- LOCK ORDER \(ONE order, every function of this file\)[\s\S]{0,400}PAYMENT rows FOR NO KEY UPDATE, ascending payment id -> EVENT rows[\s\S]{0,200}ascending event id -> REQUEST rows, ascending request id/);
+  });
+
+  it("F1 conditional_writes_read_their_row_count: each compare-and-set of 0359 is followed by its row count (or an effect check) and a named refusal", () => {
+    const apply = body("catering_refund_apply_inner");
+    for (const cas of ["set status = 'refunded' where p.id = p_payment_id and p.status = 'paid';", "set status = 'paid' where p.id = p_payment_id and p.status = 'refunded';"]) {
+      const at = apply.indexOf(cas);
+      expect(at, cas).toBeGreaterThan(0);
+      expect(apply.slice(at, at + 420), cas).toMatch(/get diagnostics v_rows = row_count;\s+if v_rows <> 1 then raise exception 'stale_generation'/);
+    }
+    const reg = body("catering_refund_event_register");
+    expect(reg).toMatch(/where s\.id = p_event_id and \(s\.outcome is null or s\.outcome = 'processing_failed'\);\s+get diagnostics v_stamped = row_count;/);
+    expect(reg).toContain("raise exception 'ledger_row_missing'");
+    expect(reg).toMatch(/on conflict \(event_id\) do nothing;[\s\S]{0,200}get diagnostics v_new = row_count;/);
+    const restamp = body("catering_refund_restamp_events");
+    expect(restamp).toContain("and exists (select 1 from public.stripe_events s where s.id = e.event_id and s.outcome = 'payment_not_found')");
+    expect(body("catering_refund_finish_drain")).toMatch(/if v_restamped <> coalesce\(cardinality\(v_ids\), 0\) then\s+raise exception 'restamp_incomplete'/);
+    expect(body("catering_refund_break_glass_close")).toContain("'not_restamped'");
+    expect(body("catering_refund_sweep_housekeeping")).toMatch(/and e\.state = 'unmatched';[\s\S]{0,200}get diagnostics v_n = row_count;\s+v_parked := v_parked \+ v_n;/);
+    expect(body("catering_refund_finish")).toMatch(/where r\.id = p_request_id and r\.status = 'pending';\s+get diagnostics v_n = row_count;[\s\S]{0,300}'not_pending'/);
+    const resolve = body("catering_refund_resolve_anomaly");
+    expect(resolve).toMatch(/where i\.id = p_issue_id;\s+get diagnostics v_n = row_count;\s+if v_n <> 1 then raise exception 'stale_generation'/);
+    expect(resolve).toMatch(/and x\.state = 'quarantined';\s+get diagnostics v_n = row_count;\s+if v_n <> 1 then raise exception 'invalid_action'/);
+    // The evidence review of an immutable conflict no longer writes the identity at all.
+    expect(resolve.replace(/--[^\n]*/g, "")).not.toMatch(/set verified = false/);
+  });
+
+  it("F7 + R3: a null event charge matches nothing in BOTH coverage queries; scope at the seal is any payment row carrying the PaymentIntent, in any status", () => {
+    for (const name of ["catering_refund_apply_inner", "catering_refund_resolve_anomaly"]) {
+      expect(body(name), name).toContain("and v_ev.livemode = v_w.livemode and v_ev.charge_id is not null and v_ev.charge_id = v_w.charge_id");
+      expect(body(name), name).not.toContain("v_ev.charge_id is null or");
+    }
+    const drain = body("catering_refund_drain_report").replace(/--[^\n]*/g, "");
+    const scope = drain.slice(drain.indexOf("into v_scope"), drain.indexOf("into v_quar"));
+    expect(scope).toContain("and not exists (select 1 from public.catering_payments p where p.provider = 'stripe' and p.provider_ref = e.payment_intent_id);");
+    expect(scope).not.toContain("p.status");
+    expect(drain.slice(0, drain.indexOf("into v_send"))).not.toContain("p.status in ('paid', 'refunded')");
+    expect(body("catering_refund_finish_drain")).toContain("or jsonb_array_length(v_report->'whole_refunds_unsettled') > 0");
+  });
+});
+
 describe("the migration order (plan r5 6, addendum P3 f)", () => {
   it("refund_migrations_require_0359_0362_0363_order (B1 half): the manifest names exactly B1, B2, B3; 0359 writes only B1; no 0360 / 0361 / 0362 / 0363 refund file on this branch", () => {
     const manifest = JSON.parse(fn59("catering_refund_install_manifest").body.match(/select '(\{[^']*\})'::jsonb/)![1]!) as Record<string, string>;

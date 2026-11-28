@@ -410,6 +410,13 @@ export function RefundPanel({
                   })}
                 </span>
               )}
+              {issue.code === "awaiting_identity" && "event_charge" in issue.detail && (
+                <span className="text-xs text-co-text" data-testid="refund-issue-floor-charge">
+                  {typeof issue.detail.event_charge === "string" && issue.detail.event_charge
+                    ? t(issue.detail.charge_matches === false ? "catering.refunds.issue.floor_charge_other" : "catering.refunds.issue.floor_charge", { charge: issue.detail.event_charge })
+                    : t("catering.refunds.issue.floor_charge_unknown")}
+                </span>
+              )}
               <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
                 <span className={issue.blocking ? "font-semibold text-co-warning-text" : "text-co-text-muted"}>
                   {t(issue.blocking ? "catering.refunds.issue_blocking" : "catering.refunds.issue_not_blocking")}

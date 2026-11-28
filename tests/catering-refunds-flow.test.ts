@@ -53,6 +53,7 @@ import {
   type RefundRequestBody,
 } from "@/lib/catering/refunds";
 import { runRefundPass, runRefundSweep } from "@/lib/catering/refund-reconcile";
+import { UNEXECUTED_REFUSAL_CODES, classifyCreateFailure } from "@/lib/catering/refund-outcomes-shared";
 
 // ── Bases (built once per file) ─────────────────────────────────────────────────────────────────────────────
 let BASE: PGlite; // 0357 -> 0358 -> 0359 + the isolated fixture's B2 / B3 stand-ins
@@ -738,21 +739,37 @@ describe("what may have left", () => {
     expect(x.stripe.posts).toBe(1);
   });
 
-  it("LEAD_MUST_FIX refused_create_keeps_its_name: a create Stripe refused by name closes the row, and the press must report THAT name, not `updated_by_stripe`", async () => {
-    // DEFECT (left failing on purpose): `reread` (lib/catering/refunds.ts:345-348) replaces the error code with
-    // `updated_by_stripe` whenever the row's status changed during the press, and EVERY closing finish changes it
-    // (pending -> failed). So the panel's "failed: <code>" (components/catering/quotes/RefundPanel.tsx:229) says
-    // `updated_by_stripe` for a refusal Stripe named (here `charge_already_refunded`), and for a local refusal at the
-    // arm (`wrong_charge`, `over_refundable`). A clean success reports errorCode `updated_by_stripe` too, against
-    // RefundAttemptResult's own contract ("set when this attempt did not end in a verified Stripe outcome").
+  it("uncited_refusal_is_possibly_executed (CC ruling R5): a create refused with a code Stripe's docs do not state as \"no refund was created\" keeps the row pending and reserved, reports THAT code, goes to staff, and a retry can never make a second refund", async () => {
+    // `charge_already_refunded` (docs.stripe.com/error-codes: "... Inspect its existing refunds to confirm whether the
+    // intended refund is complete.") and `charge_disputed` cannot be cited as "no refund was created": neither closes a row.
+    expect(UNEXECUTED_REFUSAL_CODES).toEqual([]);
+    for (const code of ["charge_already_refunded", "charge_disputed", "some_future_code"]) expect([code, classifyCreateFailure(400, code)]).toEqual([code, "uncertain"]);
     await setup();
     const owner = await actorFor(x.w, "owner");
     const dash = x.stripe.refund(x.pay.pi, 25000, "succeeded"); // made elsewhere; the list has not caught up
     x.stripe.hidden.add(dash);
     const out = await requestRefund(owner, x.quote, body(10000), DEADLINE());
     expect(x.stripe.posts).toBe(1);
-    expect((await req(x.db, out.results[0]!.id)).last_error_code).toBe("charge_already_refunded");
-    expect([out.results[0]!.status, out.results[0]!.errorCode]).toEqual(["failed", "charge_already_refunded"]);
+    const id = out.results[0]!.id;
+    let row = await req(x.db, id);
+    // POSSIBLY EXECUTED: still pending, armed, reserved; the press reports the code Stripe named.
+    expect([row.status, row.last_error_code, row.create_armed_at != null]).toEqual(["pending", "charge_already_refunded", true]);
+    expect([out.results[0]!.status, out.results[0]!.errorCode]).toEqual(["pending", "charge_already_refunded"]);
+    expect((await harnessKit.figures(x.db, x.pay.id)).o_reservations).toBe(10000);
+    // STAFF REVIEW: an armed row with no confirmed outcome is raised by the sweep's housekeeping.
+    await harnessKit.backdate(x.db, "catering_refund_requests", "create_armed_at", id, "10 minutes");
+    await harnessKit.rpc(x.db, "catering_refund_sweep_housekeeping", [harnessLib.CALLER]);
+    expect((await openIssues(x.db, x.pay.id)).map((i) => [i.code, i.request_id])).toContainEqual(["submission_unconfirmed", id]);
+    // NO SECOND CREATE: a Retry re-sends the SAME idempotency key with the same parameters; Stripe answers the saved
+    // refusal; no refund object is made by us, ever.
+    await retryRefundRequest(owner, x.quote, id, Date.now(), "retry", false, DEADLINE());
+    const creates = x.stripe.creates();
+    expect(creates.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(creates.map((c) => c.idem)).size).toBe(1);
+    expect(new Set(creates.map((c) => c.params)).size).toBe(1);
+    expect(x.stripe.refundsOf(x.pay.pi).map((r) => r.id)).toEqual([dash]);
+    row = await req(x.db, id);
+    expect([row.status, row.stripe_refund_id]).toEqual(["pending", null]);
   });
 
   it("LEAD_MUST_FIX clean_success_has_no_error_code: a press that created and verified its own refund reports errorCode null", async () => {
