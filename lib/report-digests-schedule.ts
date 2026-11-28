@@ -15,7 +15,9 @@
  *   3. The deadline belongs to the WINDOW (`from|to`, plan §11.1.4): 6 s from its FIRST ask, HERE, before its first
  *      mirror read (S10): one AbortController, one `deadlineAt` (on the run's clock), one timer and one client per
  *      window; every read is ALSO raced against the timer, so a transport that ignores the signal still settles
- *      (`deadline`). A second window gets its own 6 s, so the worst case added to a run is 6 s per window. Work a
+ *      (`deadline`). The timer is not trusted alone: the run's clock is read again when each piece of work resolves,
+ *      and an answer at or after `deadlineAt` is `deadline` too (discarded, never kept in a memo, never reused), even
+ *      when the timer callback has not run yet. A second window gets its own 6 s, so the worst case added to a run is 6 s per window. Work a
  *      later ask joins while its window is open is awaited only until that window's ORIGINAL deadline. A later ask
  *      of a window whose deadline has passed gets NO fresh time: when the shop links, `whoami` and that window's page
  *      are all already settled it is answered at once from them, with no I/O and no wait (so shop B asking the same
@@ -33,9 +35,10 @@
  *      failure is kept for the run.
  *   7. First names (structured fields only, never `last_name`, never a CO-OPS display name) and role names from the
  *      mirror, in ordered batches of at most 100 ids, memoized for the run per verified company (plan §2.2): a page
- *      asks only for ids not yet resolved. A user row of ANOTHER company is a contradiction (`mirror_conflict`): the
- *      company and window are refused. A user id with no row is "no name on file". A failed read is
- *      `mirror_read_failed` (never an "unnamed" roster) and is never cached.
+ *      asks only for ids nobody has asked for yet. The memo holds each id's IN-FLIGHT lookup, so two windows asking
+ *      at the same moment share one lookup per id. A user row of ANOTHER company is a contradiction
+ *      (`mirror_conflict`): the company and window are refused. A user id with no row is "no name on file". A failed
+ *      read is `mirror_read_failed` (never an "unnamed" roster) and is never kept: its ids are asked again.
  *
  * MIRROR IDS ARE TEXT at the database boundary (`::text` in every select list): a 16 – 18 digit bigint does not fit a
  * JavaScript number, so an id that arrives as a number is unverifiable and refused, never converted. Filters send
@@ -123,6 +126,10 @@ type Link = { sevenShiftsLocationId: string; companyId: string };
 /** Every shop's live link, read once per run: shop id → its link, or the refusal for THAT shop. */
 type LinkMap = ReadonlyMap<string, Link | Fail>;
 type Page = { shifts: PublishedShift[]; names: ScheduleNames };
+/** One proved batch of a name or role lookup: id → the name (null = the row has none); an id not in it has no row. */
+type Found = ReadonlyMap<string, string | null>;
+/** One batch of a name or role lookup, in flight or proved. Every id of the batch points at the SAME object (F7). */
+interface Lookup { p: Promise<Found | Fail> }
 const DEADLINE: Fail = { fail: "deadline" };
 const isFail = (v: unknown): v is Fail => typeof v === "object" && v !== null && "fail" in v;
 
@@ -180,8 +187,8 @@ export function createScheduleReader(sb: ServiceRoleClient, deps: ScheduleReader
   const pageMemo = new Map<string, Settled<Page | Fail>>();
   let links: Settled<LinkMap | Fail> | null = null;
   let whoami: Settled<string[] | Fail> | null = null;
-  /** Step 7, run-level, per verified company (F7): user id → first name (null = no row / no name), role id → name. */
-  const nameCache = new Map<string, { users: Map<string, string | null>; roles: Map<string, string | null> }>();
+  /** Step 7, run-level, per verified company (F7): user id → the lookup that answers its first name, role id → its name's. */
+  const nameCache = new Map<string, { users: Map<string, Lookup>; roles: Map<string, Lookup> }>();
 
   /** The window's context: made by its FIRST ask, before that ask's first mirror read; shared by every later ask. */
   function windowCtx(token: string, key: string, inst: { window: SyncWindow; gte: string; lte: string }): WindowCtx {
@@ -222,12 +229,23 @@ export function createScheduleReader(sb: ServiceRoleClient, deps: ScheduleReader
     return ctx;
   }
 
-  /** `work` raced against the window's deadline; a throw is a fixed code, never the error itself. */
+  /**
+   * `work` raced against the window's deadline; a throw is a fixed code, never the error itself.
+   *
+   * The timer alone is not the deadline (fix round 2, F4): the CLOCK is read when the work resolves, and an answer
+   * (or a failure) that arrives at or after `deadlineAt` is `deadline` even when the timer callback has not run yet.
+   * Every memo keeps what THIS returns, so late work is discarded here and can never be reused by a later ask. No
+   * work is started in a window whose time is already spent.
+   */
   async function within<T>(ctx: WindowCtx, work: () => Promise<T | Fail>, onThrow: string): Promise<T | Fail> {
     ctx.enter();
     try {
-      if (ctx.signal.aborted) return DEADLINE;
-      const run = (async () => { try { return await work(); } catch { return { fail: ctx.signal.aborted ? "deadline" : onThrow }; } })();
+      if (ctx.over()) return DEADLINE;
+      const run = (async (): Promise<T | Fail> => {
+        let r: T | Fail;
+        try { r = await work(); } catch { r = { fail: onThrow }; }
+        return ctx.over() ? DEADLINE : r;
+      })();
       return await Promise.race([run, ctx.expired]);
     } finally {
       ctx.leave();
@@ -314,9 +332,7 @@ export function createScheduleReader(sb: ServiceRoleClient, deps: ScheduleReader
     const userIds = [...new Set(shifts.flatMap((s) => (s.userId === null ? [] : [s.userId])))].sort(idCompare);
     const roleIds = [...new Set(shifts.flatMap((s) => (s.roleId === null ? [] : [s.roleId])))].sort(idCompare);
     const str = (v: unknown) => (typeof v === "string" ? v : null);
-    const newUsers = userIds.filter((id) => !cache.users.has(id));
-    for (let i = 0; i < newUsers.length; i += SCHEDULE_ID_BATCH) {
-      const batch = newUsers.slice(i, i + SCHEDULE_ID_BATCH);
+    const firstNames = await lookedUp(cache.users, userIds, ctx, async (batch) => {
       const r = await from("sevenshifts_users").select(SCHEDULE_USER_COLUMNS)
         .in("id", batch).order("id").abortSignal(ctx.signal);
       if (r.error || !Array.isArray(r.data)) return { fail: "mirror_read_failed" };
@@ -330,12 +346,11 @@ export function createScheduleReader(sb: ServiceRoleClient, deps: ScheduleReader
         if (company !== companyId) return { fail: "mirror_conflict" };
         found.set(id, structuredFirstName({ first_name: str(row.first_name), preferred_first_name: str(row.preferred_first_name) }));
       }
-      // Cached only once the whole batch is proved; an id with no row is "no name on file".
-      for (const id of batch) cache.users.set(id, found.get(id) ?? null);
-    }
-    const newRoles = roleIds.filter((id) => !cache.roles.has(id));
-    for (let i = 0; i < newRoles.length; i += SCHEDULE_ID_BATCH) {
-      const batch = newRoles.slice(i, i + SCHEDULE_ID_BATCH);
+      return found;
+    });
+    // The roles are asked only once every name is proved (a failed names read sends no roles read).
+    if (isFail(firstNames)) return firstNames;
+    const roleNames = await lookedUp(cache.roles, roleIds, ctx, async (batch) => {
       const r = await from("sevenshifts_roles").select(SCHEDULE_ROLE_COLUMNS)
         .in("id", batch).order("id").abortSignal(ctx.signal);
       if (r.error || !Array.isArray(r.data)) return { fail: "mirror_read_failed" };
@@ -346,11 +361,53 @@ export function createScheduleReader(sb: ServiceRoleClient, deps: ScheduleReader
         if (id === null || !asked.has(id) || found.has(id)) return { fail: "mirror_read_failed" };
         found.set(id, str(row.name));
       }
-      for (const id of batch) cache.roles.set(id, found.get(id) ?? null);
-    }
-    const firstNames = new Map<string, string | null>(userIds.map((id) => [id, cache.users.get(id) ?? null]));
-    const roleNames = new Map<string, string | null>(roleIds.map((id) => [id, cache.roles.get(id) ?? null]));
+      return found;
+    });
+    if (isFail(roleNames)) return roleNames;
     return { firstNames, roleNames };
+  }
+
+  /**
+   * Fix round 2, F7: the cache holds the IN-FLIGHT lookup of each id, recorded when its batch is PLANNED (before any
+   * await), so two windows asking at the same moment share one lookup: the second asks the mirror only for ids nobody
+   * has asked for yet. Batches are ordered, at most 100 ids each, sent one at a time; after a failed batch the later
+   * ones of that ask are not sent. Each batch runs under the deadline of the window that started it (`within`).
+   *
+   * A batch that fails (a read error, a conflict, its window's deadline, an answer after the deadline) is NEVER kept:
+   * its ids are dropped before any awaiter resumes, so the next ask reads them again. A lookup that ANOTHER window
+   * started and that ran out of THAT window's time is asked again, once, inside this window's own time (the links
+   * rule of step 4). An id with no row in a proved batch is "no name on file" (null).
+   */
+  async function lookedUp(
+    cache: Map<string, Lookup>, ids: readonly string[], ctx: WindowCtx, readBatch: (batch: string[]) => Promise<Found | Fail>,
+  ): Promise<Map<string, string | null> | Fail> {
+    for (let pass = 0; ; pass += 1) {
+      const fresh = ids.filter((id) => !cache.has(id));
+      let earlier: Promise<Found | Fail | null> = Promise.resolve(null);
+      for (let i = 0; i < fresh.length; i += SCHEDULE_ID_BATCH) {
+        const batch = fresh.slice(i, i + SCHEDULE_ID_BATCH);
+        const before = earlier;
+        const lookup: Lookup = {
+          p: before.then(async (prev) => {
+            const r = isFail(prev) ? prev : await within<Found>(ctx, () => readBatch(batch), "mirror_read_failed");
+            if (isFail(r)) for (const id of batch) if (cache.get(id) === lookup) cache.delete(id);
+            return r;
+          }),
+        };
+        for (const id of batch) cache.set(id, lookup);
+        earlier = lookup.p;
+      }
+      // Every id is in the cache here (its own batch, or one another ask started): nothing above awaited.
+      const asked = ids.map((id) => cache.get(id)!);
+      const answers = await Promise.all(asked.map((l) => l.p));
+      const bad = answers.filter(isFail);
+      if (bad.length === 0) return new Map(ids.map((id, i) => [id, (answers[i] as Found).get(id) ?? null]));
+      // A real failure (a read error, a conflict) is answered as it is; only another window's spent time is retried.
+      const real = bad.find((f) => f.fail !== "deadline");
+      if (real !== undefined) return real;
+      if (pass === 0 && !ctx.over()) continue;
+      return DEADLINE;
+    }
   }
 
   /**

@@ -55,6 +55,12 @@ interface Mirror {
   hangFirst?: string;
   /** Called on every query as it is sent (tests count or advance a clock here). */
   onQuery?: (q: Query) => void;
+  /** A table whose FIRST read is held open until `until` resolves, then answers normally (fix round 2, F7). */
+  holdFirst?: { table: string; until: Promise<void> };
+  /** Called when a query ANSWERS, just before its rows are handed back (fix round 2, F4: the clock moves here). */
+  onAnswer?: (q: Query) => void;
+  /** A table whose FIRST read answers an error (later reads answer normally). */
+  failFirst?: string;
 }
 const DEFAULT_MIRROR: Required<Pick<Mirror, "links" | "locations" | "users" | "roles">> = {
   links: [{ location_id: SHOP_A, sevenshifts_location_id: Number(SHOP_A_7S), active: true },
@@ -99,7 +105,12 @@ function fakeDb(m: Mirror = {}) {
               const v = r[name] ?? null;
               return [name, cast === "text" && v !== null && m.noCast !== table ? String(v) : v];
             })));
-          return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
+          const first = queries.filter((x) => x.table === table)[0] === q;
+          const held = m.holdFirst?.table === table && first ? m.holdFirst.until : Promise.resolve();
+          return held.then(() => {
+            m.onAnswer?.(q);
+            return m.failFirst === table && first ? { data: null, error: { message: "x" } } : { data: rows, error: null };
+          }).then(resolve, reject);
         },
       };
       return b;
@@ -911,3 +922,178 @@ describe("F7: names and roles are memoized for the run by the ids asked (plan §
   });
 });
 
+// ── fix round 2 (CC addendum 2026-11-28) ───────────────────────────────────────────────────────
+
+/** Window 2 = [D+1, D+2]: Person B at Shop B on D+1 (user 12, no role), a third person at Shop A on D+2 (user 13, role 21). */
+const PAGE_W2: StaffingResponse = {
+  status: 200,
+  body: validAnswerBody({
+    rows: [
+      shiftRow("B"),
+      shiftRow("A", { id: "1003", user_id: "13", start: `"2026-03-03T14:00:00Z"`, end: `"2026-03-03T22:00:00Z"` }),
+    ],
+  }),
+};
+const USERS_3: Row[] = [...DEFAULT_MIRROR.users, { id: 13, company_id: COMPANY, first_name: "Person C", preferred_first_name: null }];
+const byWindow = (u: URL) => respond(u.searchParams.get("start[gte]") === CASE_REQUEST.startGte ? VALID_PAGE : PAGE_W2);
+const reads = (db: ReturnType<typeof fakeDb>, t: string) => db.queries.filter((q) => q.table === t);
+/** Lets every pending promise reaction run (real timers). */
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+describe("fix round 2, F4: the clock is read when the work resolves; a late answer is discarded, never reused", () => {
+  /** A reader on a clock only the test moves. The timers are real and never get the chance to fire: only the clock check can refuse. */
+  function clocked(lateTable: string, lateBy: number) {
+    let t = 5_000_000;
+    let armed = true;
+    const net = fakeNet(byWindow);
+    const db = fakeDb({ users: USERS_3, onAnswer: (q) => { if (armed && q.table === lateTable) { armed = false; t += lateBy; } } });
+    const counter = { requests: 0 };
+    const r = createScheduleReader(db.sb, { env: ENV, fetch: net.fetch, counter, clock: () => t });
+    return { r, db, net, counter };
+  }
+
+  it("F4 r2: the clock passes 6 s during the LAST role lookup, the timer not yet fired → not available for BOTH shops; the late roster is never reused", async () => {
+    const { r, db, counter } = clocked("sevenshifts_roles", SCHEDULE_WINDOW_MS + 100);
+    expect(await r.shopWindow(SHOP_A, D, D1)).toEqual({ kind: "unavailable", reason: "deadline" });
+    const readsAfterA = db.queries.length;
+    // Shop B asks the same, now expired, window: nothing settled in time, nothing new is read.
+    expect(await r.shopWindow(SHOP_B, D, D1)).toEqual({ kind: "unavailable", reason: "deadline" });
+    expect(db.queries.length).toBe(readsAfterA);
+    expect(counter.requests).toBe(2);
+    // The late role answer was not kept either: a NEW window (its own 6 s) asks for role 21 again.
+    const w2 = await r.shopWindow(SHOP_A, D1, D2);
+    if (w2.kind !== "ok") throw new Error(JSON.stringify(w2));
+    expect(w2.value.days[1]!.people.map((p) => [p.userId, p.firstName, p.roleName])).toEqual([["13", "Person C", "Cook"]]);
+    expect(reads(db, "sevenshifts_roles").map((q) => q.in)).toEqual([["21"], ["21"]]);
+    // The names of window 1 were proved in time and are kept: window 2 asks only for the new person.
+    expect(reads(db, "sevenshifts_users").map((q) => q.in)).toEqual([["11", "12"], ["13"]]);
+  });
+
+  it("F4 r2: the boundary. An answer AT the deadline (6,000 ms) is late; one millisecond before it is in time", async () => {
+    const at = clocked("sevenshifts_roles", SCHEDULE_WINDOW_MS);
+    expect(await at.r.shopWindow(SHOP_A, D, D1)).toEqual({ kind: "unavailable", reason: "deadline" });
+    expect(await at.r.shopWindow(SHOP_B, D, D1)).toEqual({ kind: "unavailable", reason: "deadline" });
+    const before = clocked("sevenshifts_roles", SCHEDULE_WINDOW_MS - 1);
+    expect((await before.r.shopWindow(SHOP_A, D, D1)).kind).toBe("ok");
+    // The window's time is now nearly spent, yet what settled in time is still served to the other shop.
+    expect((await before.r.shopWindow(SHOP_B, D, D1)).kind).toBe("ok");
+  });
+
+  it("F4 r2: a name lookup answered after the deadline is not kept either", async () => {
+    const { r, db } = clocked("sevenshifts_users", SCHEDULE_WINDOW_MS + 1);
+    expect(await r.shopWindow(SHOP_A, D, D1)).toEqual({ kind: "unavailable", reason: "deadline" });
+    expect(reads(db, "sevenshifts_roles")).toHaveLength(0);
+    const w2 = await r.shopWindow(SHOP_B, D1, D2);
+    if (w2.kind !== "ok") throw new Error(JSON.stringify(w2));
+    expect(w2.value.days[0]!.people.map((p) => [p.userId, p.firstName])).toEqual([["12", "Person B"]]);
+    // Person B's id was in the late batch: it is asked again.
+    expect(reads(db, "sevenshifts_users").map((q) => q.in)).toEqual([["11", "12"], ["12", "13"]]);
+  });
+
+  it("F4 r2: a links read answered after the deadline is discarded: no request is sent on it, and a NEW window reads the links again", async () => {
+    const { r, db, net, counter } = clocked("sevenshifts_locations", SCHEDULE_WINDOW_MS + 100);
+    expect(await r.shopWindow(SHOP_A, D, D1)).toEqual({ kind: "unavailable", reason: "deadline" });
+    expect(counter.requests).toBe(0);
+    expect(await r.shopWindow(SHOP_B, D, D1)).toEqual({ kind: "unavailable", reason: "deadline" });
+    expect(counter.requests).toBe(0);
+    expect((await r.shopWindow(SHOP_A, D1, D2)).kind).toBe("ok");
+    expect(reads(db, "sevenshifts_location_links")).toHaveLength(2);
+    expect(net.whoamiCalls()).toBe(1);
+  });
+});
+
+describe("fix round 2, F7: the memo holds the IN-FLIGHT lookup, so two windows asking at once share one lookup per id", () => {
+  function gate() {
+    let release: () => void = () => {};
+    const until = new Promise<void>((resolve) => { release = resolve; });
+    return { until, release };
+  }
+
+  it("F7 r2: the first users read is held open and an overlapping window asks → the shared id is NOT asked twice; the second window asks only for its new id", async () => {
+    const g = gate();
+    const { r, db } = reader(fakeNet(byWindow), { users: USERS_3, holdFirst: { table: "sevenshifts_users", until: g.until } });
+    const a = r.shopWindow(SHOP_A, D, D1);
+    await vi.waitFor(() => expect(reads(db, "sevenshifts_users")).toHaveLength(1));
+    const b = r.shopWindow(SHOP_A, D1, D2);
+    // Window 2's page is in and its names are asked while window 1's read of [11, 12] is still open.
+    await vi.waitFor(() => expect(reads(db, "sevenshifts_users")).toHaveLength(2));
+    await settle();
+    expect(reads(db, "sevenshifts_users").map((q) => q.in)).toEqual([["11", "12"], ["13"]]);
+    g.release();
+    const [ra, rb] = await Promise.all([a, b]);
+    if (ra.kind !== "ok" || rb.kind !== "ok") throw new Error(JSON.stringify([ra, rb]));
+    expect(ra.value.days[0]!.people.map((p) => [p.userId, p.firstName, p.roleName])).toEqual([["11", "Person A", "Cook"]]);
+    expect(rb.value.days[1]!.people.map((p) => [p.userId, p.firstName, p.roleName])).toEqual([["13", "Person C", "Cook"]]);
+    const b2 = await r.shopWindow(SHOP_B, D1, D2);
+    if (b2.kind !== "ok") throw new Error(JSON.stringify(b2));
+    expect(b2.value.days[0]!.people.map((p) => [p.userId, p.firstName])).toEqual([["12", "Person B"]]);
+    // One lookup per id for the whole run: 11 and 12 once, 13 once, role 21 once.
+    expect(reads(db, "sevenshifts_users").map((q) => q.in)).toEqual([["11", "12"], ["13"]]);
+    expect(reads(db, "sevenshifts_roles").map((q) => q.in)).toEqual([["21"]]);
+  });
+
+  it("F7 r2: the same for roles. The first roles read is held open; an overlapping window with the same role sends no second roles read", async () => {
+    const g = gate();
+    const { r, db } = reader(fakeNet(byWindow), { users: USERS_3, holdFirst: { table: "sevenshifts_roles", until: g.until } });
+    const a = r.shopWindow(SHOP_A, D, D1);
+    await vi.waitFor(() => expect(reads(db, "sevenshifts_roles")).toHaveLength(1));
+    const b = r.shopWindow(SHOP_A, D1, D2);
+    // Window 2 reads its one new name, then reaches its role step while window 1's read of role 21 is still open.
+    await vi.waitFor(() => expect(reads(db, "sevenshifts_users")).toHaveLength(2));
+    await settle();
+    expect(reads(db, "sevenshifts_roles")).toHaveLength(1);
+    g.release();
+    const [ra, rb] = await Promise.all([a, b]);
+    if (ra.kind !== "ok" || rb.kind !== "ok") throw new Error(JSON.stringify([ra, rb]));
+    expect(rb.value.days[1]!.people.map((p) => [p.userId, p.roleName])).toEqual([["13", "Cook"]]);
+    expect(reads(db, "sevenshifts_roles").map((q) => q.in)).toEqual([["21"]]);
+  });
+
+  it("F7 r2: a shared lookup that FAILS fails everyone who joined it, and its ids are dropped: a later window asks for them again", async () => {
+    const g = gate();
+    const D3 = "2026-03-04";
+    const pageW3: StaffingResponse = {
+      status: 200,
+      body: validAnswerBody({ rows: [shiftRow("B", { id: `"2002"`, start: `"2026-03-03T15:00:00-05:00"`, end: `"2026-03-03T23:30:00-05:00"` })] }),
+    };
+    const net = fakeNet((u) => {
+      const gte = u.searchParams.get("start[gte]");
+      return respond(gte === CASE_REQUEST.startGte ? VALID_PAGE : gte === "2026-03-02T05:00:00Z" ? PAGE_W2 : pageW3);
+    });
+    const { r, db } = reader(net, { users: USERS_3, holdFirst: { table: "sevenshifts_users", until: g.until }, failFirst: "sevenshifts_users" });
+    const a = r.shopWindow(SHOP_A, D, D1);
+    await vi.waitFor(() => expect(reads(db, "sevenshifts_users")).toHaveLength(1));
+    const b = r.shopWindow(SHOP_B, D1, D2);
+    await vi.waitFor(() => expect(reads(db, "sevenshifts_users")).toHaveLength(2));
+    await settle();
+    g.release();
+    // Window 1 started the read of [11, 12]; window 2 joined it for 12. It answered an error: both are refused.
+    expect(await a).toEqual({ kind: "unavailable", reason: "mirror_read_failed" });
+    expect(await b).toEqual({ kind: "unavailable", reason: "mirror_read_failed" });
+    // A later window needs 12 again: the failed batch was not kept, so it is read again (13 was proved and is kept).
+    const c = await r.shopWindow(SHOP_B, D2, D3);
+    if (c.kind !== "ok") throw new Error(JSON.stringify(c));
+    expect(c.value.days[0]!.people.map((p) => [p.userId, p.firstName])).toEqual([["12", "Person B"]]);
+    expect(reads(db, "sevenshifts_users").map((q) => q.in)).toEqual([["11", "12"], ["13"], ["12"]]);
+  });
+
+  it("F7 r2: a lookup another window started that runs out of THAT window's time is asked again inside the joiner's own 6 s", async () => {
+    vi.useFakeTimers();
+    const { r, db } = reader(fakeNet(byWindow), { users: USERS_3, hangFirst: "sevenshifts_users" });
+    const a = r.shopWindow(SHOP_A, D, D1);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(reads(db, "sevenshifts_users").map((q) => q.in)).toEqual([["11", "12"]]);
+    let bDone: { kind: string } | null = null;
+    const b = r.shopWindow(SHOP_B, D1, D2).then((x) => { bDone = x; return x; });
+    await vi.advanceTimersByTimeAsync(SCHEDULE_WINDOW_MS - 3_000 - 1);
+    // Window 2 asked only for 13 and is waiting on window 1's read for 12.
+    expect(reads(db, "sevenshifts_users").map((q) => q.in)).toEqual([["11", "12"], ["13"]]);
+    expect(bDone).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await a).toEqual({ kind: "unavailable", reason: "deadline" });
+    const out = await b;
+    if (out.kind !== "ok") throw new Error(JSON.stringify(out));
+    expect(out.value.days[0]!.people.map((p) => [p.userId, p.firstName])).toEqual([["12", "Person B"]]);
+    expect(reads(db, "sevenshifts_users").map((q) => q.in)).toEqual([["11", "12"], ["13"], ["12"]]);
+  });
+});
