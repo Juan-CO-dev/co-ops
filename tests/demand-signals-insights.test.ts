@@ -18,7 +18,7 @@ import type { AskArgs, AskResult } from "@/lib/demand-signals/ai-client";
 import type { AiSettlement, AiToday } from "@/lib/demand-signals/ai-store";
 import { insightInputHash, insightsView, requestInsights, type InsightDeps } from "@/lib/demand-signals/insights";
 import {
-  AI_PRICES, DEMAND_AI_CODE_CAP_MICRO, DEMAND_AI_DEFAULT_MODEL, DEMAND_AI_MAX_OUTPUT_TOKENS, DEMAND_AI_MAX_RETRIES, DEMAND_AI_TIMEOUT_MS, INSIGHT_MAX_CLAIMS,
+  AI_PRICES, DEMAND_AI_CODE_CAP_MICRO, DEMAND_AI_DEFAULT_MODEL, DEMAND_AI_MAX_INPUT_BYTES, DEMAND_AI_MAX_OUTPUT_TOKENS, DEMAND_AI_MAX_RETRIES, DEMAND_AI_TIMEOUT_MS, INSIGHT_MAX_CLAIMS,
   INSIGHT_MAX_FACTS_PER_CLAIM, INSIGHT_OUTPUT_SCHEMA, INSIGHT_SYSTEM, OFFERED_CLAIM_TYPES, acceptClaims, actualMicro, aiConfig, buildInsightFacts, insightInputBytes,
   insightUserMessage, parseModelClaims, readStoredClaims, supportedNow, worstCaseMicro, type AiConfig, type InsightFact, type InsightSourceEvent,
 } from "@/lib/demand-signals/insights-shared";
@@ -49,9 +49,15 @@ describe("the switch, the key and the cap", () => {
     expect(actualMicro("gpt-something", { inputTokens: 1, outputTokens: 1 })).toBeNull();
   });
   it("the environment can only LOWER the cap; a value we cannot read is 0, never the code cap", () => {
-    expect(env().capMicro).toBe(5_000_000);
+    expect(env().capMicro).toBe(50_000_000);   // $50.00 a month (0360; it was $5.00 under 0352)
     expect(env({ monthlyCapCents: "100" }).capMicro).toBe(1_000_000);
-    expect(env({ monthlyCapCents: "99999" }).capMicro).toBe(5_000_000);
+    expect(env({ monthlyCapCents: "500" }).capMicro).toBe(5_000_000);    // the old $5.00, still reachable by lowering
+    expect(env({ monthlyCapCents: "4999" }).capMicro).toBe(49_990_000);
+    expect(env({ monthlyCapCents: "5000" }).capMicro).toBe(50_000_000);  // exactly the code cap
+    expect(env({ monthlyCapCents: "5001" }).capMicro).toBe(50_000_000);  // one cent above it clamps to it
+    expect(env({ monthlyCapCents: "99999" }).capMicro).toBe(50_000_000);
+    expect(env({ monthlyCapCents: "999999" }).capMicro).toBe(50_000_000);
+    expect(env({ monthlyCapCents: "1000000" }).capMicro).toBe(0);        // seven digits is not a value we read
     expect(env({ monthlyCapCents: "0" }).capMicro).toBe(0);
     for (const bad of ["-1", "5.5", "$5", "five", "1e3"]) expect(env({ monthlyCapCents: bad }).capMicro, bad).toBe(0);
   });
@@ -61,8 +67,12 @@ describe("the switch, the key and the cap", () => {
     expect(DEMAND_AI_MAX_RETRIES).toBe(0);
     expect(actualMicro("claude-opus-5-5", { inputTokens: 900, outputTokens: 300 })).toBe(900 * 4 + 300 * 20);
     expect(actualMicro("claude-opus-5-5", { inputTokens: 1.5, outputTokens: 3 })).toBeNull();
-    // Two shops, every day of a 31-day month, at the largest request we send, fits the code cap.
-    expect(worstCaseMicro("claude-sonnet-5-5", 4_000)! * 2 * 31).toBeLessThan(DEMAND_AI_CODE_CAP_MICRO);
+    // Two shops, every day of a 31-day month, at the LARGEST request we can send (the byte limit, the dearest priced
+    // model), fits the code cap. Under the old $5.00 it did not (2 x 31 x 108,096 = 6,701,952).
+    const largest = Math.max(...Object.keys(AI_PRICES).map((model) => worstCaseMicro(model, DEMAND_AI_MAX_INPUT_BYTES)!));
+    expect(largest).toBe(108_096);
+    expect(largest * 2 * 31).toBeLessThan(DEMAND_AI_CODE_CAP_MICRO);
+    expect(largest * 2 * 31).toBeGreaterThan(5_000_000);
     expect(DEMAND_AI_TIMEOUT_MS).toBe(20_000);
   });
 });
@@ -277,7 +287,7 @@ describe("one request: reserve, ask, validate, settle", () => {
 });
 
 describe("what the page says about it", () => {
-  const today = (attempt: AiToday["attempt"] = null, monthSpentMicro = 0): AiToday => ({ dayEt: TODAY, attempt, monthSpentMicro, capCeilingMicro: 5_000_000 });
+  const today = (attempt: AiToday["attempt"] = null, monthSpentMicro = 0): AiToday => ({ dayEt: TODAY, attempt, monthSpentMicro, capCeilingMicro: 50_000_000 });
   const facts = { ok: true as const, facts: FACTS };
   const attempt = (over: Partial<NonNullable<AiToday["attempt"]>> = {}): NonNullable<AiToday["attempt"]> => ({ id: "res-1", inputHash: insightInputHash({ today: TODAY, facts: FACTS, model: "claude-opus-5-5" }),
     model: "claude-opus-5-5", promptVersion: 1, reservedAt: "2026-11-19T12:00:00Z", settled: true, outcome: "ok", stopReason: "end_turn", errorCode: null,
@@ -291,10 +301,13 @@ describe("what the page says about it", () => {
     expect(insightsView({ config: READY, today: "unreadable", facts, todayEt: TODAY })).toEqual({ status: "unreadable" });
   });
   it("ready with nothing asked: the button is offered unless the facts, the cap or the size say no", () => {
-    expect(insightsView({ config: READY, today: today(), facts, todayEt: TODAY })).toMatchObject({ status: "ready", blocked: null, attempt: null, capMicro: 5_000_000 });
+    expect(insightsView({ config: READY, today: today(), facts, todayEt: TODAY })).toMatchObject({ status: "ready", blocked: null, attempt: null, capMicro: 50_000_000 });
     expect(insightsView({ config: READY, today: today(), facts: { ok: false, code: "facts_incomplete" }, todayEt: TODAY })).toMatchObject({ blocked: "facts_incomplete" });
     expect(insightsView({ config: READY, today: today(), facts: { ok: false, code: "nothing_to_say" }, todayEt: TODAY })).toMatchObject({ blocked: "nothing_to_say" });
-    expect(insightsView({ config: READY, today: today(null, 4_990_000), facts, todayEt: TODAY })).toMatchObject({ blocked: "cap_reached" });
+    expect(insightsView({ config: READY, today: today(null, 49_990_000), facts, todayEt: TODAY })).toMatchObject({ blocked: "cap_reached" });
+    // A month at $4.99 was blocked under the $5.00 cap. Under $50.00 it is not; a caller cap of $5.00 still blocks it.
+    expect(insightsView({ config: READY, today: today(null, 4_990_000), facts, todayEt: TODAY })).toMatchObject({ blocked: null });
+    expect(insightsView({ config: { ...READY, capMicro: 5_000_000 }, today: today(null, 4_990_000), facts, todayEt: TODAY })).toMatchObject({ blocked: "cap_reached" });
     expect(insightsView({ config: { ...READY, capMicro: 0 }, today: today(), facts, todayEt: TODAY })).toMatchObject({ blocked: "cap_reached" });
   });
   it("today's stored answer is rendered from the row; a failed or unrecorded attempt shows no claim and still uses the day", () => {

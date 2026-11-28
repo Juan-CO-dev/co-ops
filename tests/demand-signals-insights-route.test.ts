@@ -141,7 +141,7 @@ describe("one request", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ claims: 1, rejected: 1 });   // e7 is not a fact that was sent
     expect(h.calls.map((c) => c[0])).toEqual(["demand_ai_reserve", "demand_ai_settle"]);
-    expect(h.calls[0]![1]).toMatchObject({ p_actor: "user-1", p_location_id: LOC, p_model: "claude-opus-5-5", p_prompt_version: 1, p_cap_micro: 5_000_000 });
+    expect(h.calls[0]![1]).toMatchObject({ p_actor: "user-1", p_location_id: LOC, p_model: "claude-opus-5-5", p_prompt_version: 1, p_cap_micro: 50_000_000 });
     expect(h.calls[0]![1].p_input_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(h.built).toEqual([{ apiKey: "k-test-not-a-real-key", timeout: 20_000, maxRetries: 0 }]);   // one attempt, never a retry
     expect(h.asked).toHaveLength(1);
@@ -165,6 +165,16 @@ describe("one request", () => {
       expect(h.built).toEqual([]); expect(h.asked).toEqual([]);
       expect(h.calls.map((c) => c[0])).toEqual(["demand_ai_reserve"]);
     }
+  });
+  it("THE APP-FIRST ORDER (0360 not applied yet): the ledger refuses the $50.00 cap as demand_ai_invalid = 400, and no model is built or asked", async () => {
+    // 0352's reserve refuses a caller cap above its own ceiling before anything is written. This is what EVERY request
+    // gets if this code serves while the database ceiling is still 5,000,000: nothing is sent, nothing is spent.
+    h.rpcError = { demand_ai_reserve: { message: "demand_ai_invalid" } };
+    const res = await POST(post({ locationId: LOC }));
+    expect([res.status, await code(res)]).toEqual([400, "demand_ai_invalid"]);
+    expect(h.calls.map((c) => c[0])).toEqual(["demand_ai_reserve"]);
+    expect(h.calls[0]![1]).toMatchObject({ p_cap_micro: 50_000_000 });
+    expect(h.built).toEqual([]); expect(h.asked).toEqual([]);
   });
   it("prose from the model is settled at its cost and nothing of it is kept; a failed call is settled 'failed'", async () => {
     h.answer = message("Saturday will be slammed. Order double.");

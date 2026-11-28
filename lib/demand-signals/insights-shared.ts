@@ -212,8 +212,8 @@ export const AI_PRICES: Readonly<Record<string, { inputMicroPerToken: number; ou
   "claude-sonnet-5-5": Object.freeze({ inputMicroPerToken: 2, outputMicroPerToken: 10 }),
 });
 export const DEMAND_AI_DEFAULT_MODEL = "claude-opus-5-5";
-/** The most this feature may cost in one ET month: $5.00. 0352 holds the same ceiling. */
-export const DEMAND_AI_CODE_CAP_MICRO = 5_000_000;
+/** The most this feature may cost in one ET month: $50.00. 0352 created the ceiling; 0360 raised it to this number (0360 is applied BEFORE this code serves). */
+export const DEMAND_AI_CODE_CAP_MICRO = 50_000_000;
 /** Everything the model may write, thinking included, is bounded by this. */
 export const DEMAND_AI_MAX_OUTPUT_TOKENS = 2_000;
 export const DEMAND_AI_TIMEOUT_MS = 20_000;
