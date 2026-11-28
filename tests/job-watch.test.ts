@@ -87,9 +87,10 @@ describe("LRA-228: cadence, Eastern windows, and once-per-day decisions", () => 
     expect(decide("2026-09-10T12:00:00Z", "2026-09-10T13:00:00Z").silent).toBe(false);
   });
 
-  it("keeps eleven closed registry entries and schedules its own daily check", () => {
+  it("keeps twelve closed registry entries and schedules its own daily check", () => {
     expect(JOBS_REGISTRY.map((j) => j.job)).toEqual([
       "ezcater-refresh", "toast-order-capture", "toast-sales-pull", "toast-labor-pull", "prune-sessions", "vault-scrub", "parse-receipts", "toast-catering-scan", "toast-sales-today", "job-watch", "digest-tick",
+      "catering-refund-sweep",
     ]);
     const config = JSON.parse(readFileSync("vercel.json", "utf8"));
     // Vercel Hobby refuses any cron that runs more than once per day at DEPLOY time

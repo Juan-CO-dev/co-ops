@@ -300,7 +300,9 @@ import { sendEmail, teamFrom } from "@/lib/email";
 import { renderEmailLayout, appUrl, escapeHtml } from "@/lib/email-templates/_layout";
 import { resolveCateringManager } from "@/lib/catering/system-intake";
 import { TENANT_NAME } from "@/lib/tenant";
-import { parseCheckoutEvent, stripeEnvSuffix, type CheckoutEventOutcome } from "@/lib/stripe/shared";
+import { REFUND_INGRESS_TYPES, parseCheckoutEvent, parseRefundIngress, stripeEnvSuffix, type CheckoutEventOutcome, type RefundIngress } from "@/lib/stripe/shared";
+import { cateringRefundsOn } from "@/lib/catering/refunds-shared";
+import { REFUND_CALLER_CONTRACT } from "@/lib/catering/refund-outcomes-shared";
 import { quoteTimeExpired } from "@/lib/portal/payability-shared";
 import {
   closeQuoteCheckouts,
@@ -331,6 +333,7 @@ export type StripeProcessingResult =
   | "refunded"            // a paid row became refunded (the WHOLE charge was refunded)
   | "partially_refunded"  // part of the charge was refunded; the row stays 'paid', the amount is audited
   | "no_paid_row"         // charge.refunded arrived for a payment that was not 'paid'
+  | "refund_state_owed"   // CATERING_REFUNDS ON only (0359): the refund event's work is durable; the sweep owns the rest. TERMINAL, never retryable
   | "ignored"             // an event type (or a completed-but-unpaid session) we do not act on
   | "duplicate"           // this exact event id is already on the ledger WITH a terminal verdict
   | "processing_failed"   // recorded, then something below it threw — RETRYABLE (route answers 500)
@@ -882,6 +885,90 @@ async function workStillOwed(sb: ServiceClient, outcome: CheckoutEventOutcome, p
   return settlementRecorded(carrying.status) && carrying.settlement_cleanup_at == null;
 }
 
+// ── Refund ingress with CATERING_REFUNDS ON (catering refunds Part B1, migration 0359) ──────────────
+//
+// With the switch ON a refund event is NOT worked here. One database transaction
+// (`catering_refund_event_register`) appends or finds the event's immutable work and id hints, applies the matched
+// reservation floor, preserves the matched 0333 charge-history append once, and stamps the terminal transport
+// verdict `refund_state_owed`; the answer is 2xx. THERE IS NO INLINE PROVIDER RECONCILIATION: a Stripe outage or a
+// burst of refund events can never fail this shared endpoint (and with it a checkout settlement). The work row owns
+// reconciliation after the acknowledgement (the sweep, lib/catering/refund-reconcile.ts).
+//
+// `refund_state_owed` is TERMINAL for the transport and is deliberately NOT in `isRetryableLedgerOutcome`,
+// `isRetryableResult`, `LEDGER_UNFINISHED` or `REFUND_NOT_APPLIED` (pinned in tests/catering-refund-ingress.test.ts):
+// a redelivery is a duplicate, and main's OFF replay never mistakes it for unapplied legacy work. THE LEGACY
+// WHOLE-CHARGE WRITER (`refund` below) IS NEVER INVOKED ON THE ON PATH.
+//
+// Retryable (`processing_failed`, a non-2xx) ONLY when durability could not be established: the function is missing
+// (0359 not applied), the caller is not the admitted build, ingress is SEALED (the final drain closed the epoch: an
+// old ON instance must leave NULL or `processing_failed`, never a final verdict, so the OFF deployment's redelivery
+// applies it), or the database failed. Bad signatures and malformed payloads are handled as before, upstream.
+
+/** Has the work of this refund event been made durable? */
+async function registerRefundIngress(sb: ServiceClient, ingress: RefundIngress, ctx: StripeWebhookContext): Promise<{ locationId: string | null }> {
+  const { data, error } = await sb.rpc("catering_refund_event_register", {
+    p_caller: REFUND_CALLER_CONTRACT,
+    p_event_id: ingress.eventId,
+    p_event_type: ingress.type,
+    p_endpoint_location_id: ctx.locationId,
+    p_livemode: ingress.livemode,
+    p_payment_intent: ingress.paymentIntentId,
+    p_charge: ingress.chargeId,
+    p_created_sec: ingress.createdSec,
+    p_cumulative_cents: ingress.cumulativeCents,
+    p_charge_amount_cents: ingress.chargeAmountCents,
+    p_fully_refunded: ingress.fullyRefunded,
+    p_hints: ingress.hints,
+  });
+  if (error) throw new Error(`catering_refund_event_register: ${error.message}`);
+  const location = (data as { location_id?: unknown } | null)?.location_id;
+  return { locationId: typeof location === "string" ? location : null };
+}
+
+async function processRefundIngress(
+  sb: ServiceClient,
+  event: unknown,
+  ingress: RefundIngress,
+  ctx: StripeWebhookContext,
+): Promise<{ result: StripeProcessingResult; locationId: string | null }> {
+  // Ledger first, exactly as for every other delivery (a failure here is the route's 500 `ledger_failed`).
+  const appended = await appendEvent(sb, { id: ingress.eventId, type: ingress.type, livemode: ingress.livemode, payload: event, locationId: ctx.locationId });
+  if (appended === "duplicate") {
+    // A duplicate whose work already committed answers 2xx again, even if the previous response was lost. So does a
+    // delivery that carries a terminal verdict from before the switch (recovery imports those as history).
+    const prior = await readLedgerOutcome(sb, ingress.eventId);
+    if (!isRetryableLedgerOutcome(prior)) return { result: "duplicate", locationId: ctx.locationId };
+  }
+  try {
+    const registered = await registerRefundIngress(sb, ingress, ctx);
+    return { result: "refund_state_owed", locationId: registered.locationId ?? ctx.locationId };
+  } catch (e) {
+    console.error(`[stripe webhook] refund ingress not durable for ${ingress.eventId}:`, e instanceof Error ? e.message : e);
+    await finalizeEvent(sb, ingress.eventId, "processing_failed", ctx.locationId);
+    return { result: "processing_failed", locationId: ctx.locationId };
+  }
+}
+
+/**
+ * SETTLEMENT WITH THE SWITCH ON: attach, under the payment lock, every refund event that was seen first for this
+ * payment's PaymentIntent (`catering_refund_settlement_attach`: its work, its hints and its applicable floor), in
+ * place of main's seen-first replay. Nothing is APPLIED here and Stripe is not asked: the sweep owns the provider
+ * apply, so a settlement answers 2xx through a Stripe refund-read outage. A failed attachment is `failed: true`,
+ * which leaves the settlement marker open (`settlement_incomplete`), exactly as a failed look does on main.
+ */
+async function attachRefundsSeenFirst(sb: ServiceClient, paymentId: string): Promise<{ events: EarlierRefund[]; failed: boolean; truncated: boolean }> {
+  try {
+    const { data, error } = await sb.rpc("catering_refund_settlement_attach", { p_caller: REFUND_CALLER_CONTRACT, p_payment_id: paymentId });
+    if (error) throw new Error(error.message);
+    const ids = (data as { events?: unknown } | null)?.events;
+    const events = (Array.isArray(ids) ? ids : []).filter((x): x is string => typeof x === "string").map((eventId) => ({ eventId, payload: null }));
+    return { events, failed: false, truncated: false };
+  } catch (e) {
+    console.error(`[stripe webhook] could not attach refunds seen before payment ${paymentId}:`, e instanceof Error ? e.message : e);
+    return { events: [], failed: true, truncated: false };
+  }
+}
+
 /**
  * Process ONE verified delivery.
  *
@@ -902,6 +989,15 @@ export async function processStripeEvent(
   // the honest answer is to refuse it rather than store it under a surrogate identity that
   // a retry would not match.
   if (!outcome.eventId || !outcome.type) return { result: "invalid_payload", locationId: null };
+
+  // CATERING_REFUNDS ON: a refund event becomes durable work and is acknowledged (see `processRefundIngress`).
+  // OFF: this branch is never taken and nothing below changed.
+  if (cateringRefundsOn(process.env) && (REFUND_INGRESS_TYPES as readonly string[]).includes(outcome.type)) {
+    const ingress = parseRefundIngress(event);
+    // One of the five refund events that the ingress parser cannot read (an unusable event id) is refused as
+    // malformed: with the switch ON nothing may fall through to the legacy whole-charge writer below.
+    return ingress ? processRefundIngress(sb, event, ingress, ctx) : { result: "invalid_payload", locationId: null };
+  }
 
   const appended = await appendEvent(sb, {
     id: outcome.eventId,
@@ -1350,9 +1446,14 @@ async function settle(sb: ServiceClient, input: SettleInput): Promise<Dispatched
   // `refundsSeenFirst`.) Looked for now, told with everything else below, applied after that.
   // Not on a row that is already refunded (review r8): a refund moves a `paid` row, so there
   // is nothing left for one to be applied to.
-  const earlierRefunds = onTheBooks
-    ? await refundsSeenFirst(sb, outcome.paymentIntentId)
-    : { events: [] as EarlierRefund[], failed: false, truncated: false };
+  // CATERING_REFUNDS ON (0359): the seen-first events are ATTACHED as durable work (for a row that has since been
+  // refunded too: the work is owed whatever the row reads) and nothing is applied inline. OFF: main's look, unchanged.
+  const refundsOn = cateringRefundsOn(process.env);
+  const earlierRefunds = refundsOn
+    ? await attachRefundsSeenFirst(sb, payment.id)
+    : onTheBooks
+      ? await refundsSeenFirst(sb, outcome.paymentIntentId)
+      : { events: [] as EarlierRefund[], failed: false, truncated: false };
   if (earlierRefunds.events.length > 0) reasons.push("refund_seen_first");
   if (earlierRefunds.failed || earlierRefunds.truncated) reasons.push("refund_check_failed");
   // A REFUNDED PAYMENT IS NOT JUDGED AGAIN (review r8 — see the doc above). Everything above
@@ -1448,7 +1549,8 @@ async function settle(sb: ServiceClient, input: SettleInput): Promise<Dispatched
   // cleanup, review r8 — so the finding had to be told first). Oldest first; each is the live
   // path's own `refund`.
   let refundsApplied = true;
-  for (const earlier of earlierRefunds.events) {
+  // With the switch ON the legacy whole-charge writer is never invoked: the attached work is the sweep's.
+  for (const earlier of refundsOn ? [] : earlierRefunds.events) {
     if (!(await applyEarlierRefund(sb, earlier, ctx))) refundsApplied = false;
   }
   // Is there NOTHING left for a later run? The order's other payments were read and every

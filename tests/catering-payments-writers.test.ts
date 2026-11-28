@@ -530,6 +530,180 @@ describe("W02 review r5 — the webhook's two remaining id + status writes are b
   });
 });
 
+// ── Catering refunds Part B1 (0359): the closed census of REQUEST writers, and the one new payment-status writer ──
+//
+// Plan B1.6: "Add a closed census of request writers as well as payment-status writers." The same discipline as the
+// inventory above, in SQL as well as TypeScript, because after 0359 every write of a refund request is SQL:
+//   · `catering_refund_requests` is written ONLY by the definer functions below (0357's two are withdrawn by 0359:
+//     no role but the owner may execute them any more), plus 0359's one-off backfill of `legacy_possibly_sent`.
+//   · NO application statement writes it: 0359 revokes service_role's nine UPDATE column grants, so a direct write
+//     would be a 42501 — and none may be added.
+//   · `catering_payments.status` gains exactly ONE writer on this branch, `catering_refund_apply_inner`
+//     (paid -> refunded, refunded -> paid), private, reached only through `catering_refund_apply`, which only the
+//     reconciler calls, which only switch-ON code paths reach.
+
+const MIGRATIONS_DIR = join(ROOT, "supabase/migrations");
+const migrationText = (file: string) => readFileSync(join(MIGRATIONS_DIR, file), "utf8").replace(/\r\n/g, "\n");
+const sqlCode = (text: string) => text.replace(/--[^\n]*/g, "");
+interface SqlFn { name: string; body: string; start: number; end: number }
+function sqlFunctions(text: string): SqlFn[] {
+  return [...text.matchAll(/^create (?:or replace )?function public\.([a-z_]+)\([^)]*\)[\s\S]*?\bas \$\$([\s\S]*?)\$\$;/gm)].map((m) => ({
+    name: m[1]!, body: m[2]!, start: m.index!, end: m.index! + m[0].length,
+  }));
+}
+const WRITE_RE = (table: string) => new RegExp(`\\b(insert into|update|delete from) public\\.${table}\\b`, "g");
+const VERB = { "insert into": "insert", update: "update", "delete from": "delete" } as const;
+
+/** Every SQL statement in every migration that writes `table`: the migration, the function it is in (or top level), the verb. */
+function sqlWriters(table: string, only: (file: string) => boolean = () => true): string[] {
+  const out: string[] = [];
+  for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql") && only(f)).sort()) {
+    const raw = migrationText(file);
+    if (!raw.includes(`public.${table}`)) continue; // cheap: most migrations never name the table
+    const text = sqlCode(raw);
+    const fns = sqlFunctions(text);
+    for (const m of text.matchAll(WRITE_RE(table))) {
+      const inFn = fns.find((f) => f.start < m.index! && m.index! < f.end);
+      out.push(`${file.slice(0, 4)} ${inFn ? inFn.name : "(top level)"} ${VERB[m[1] as keyof typeof VERB]}`);
+    }
+  }
+  return [...new Set(out)];
+}
+
+/** THE CENSUS: every SQL writer of a refund request, in migration order. A new one fails here until it is listed. */
+const REQUEST_WRITERS_SQL = [
+  "0357 catering_refund_reserve insert", // withdrawn by 0359 (EXECUTE revoked from service_role)
+  "0357 catering_refund_claim update", // withdrawn by 0359
+  "0359 (top level) update", // the one-off `legacy_possibly_sent` backfill, under the migration's table lock
+  "0359 catering_refund_reserve_admitted insert", // the confirm tap (live epoch, actor = the session's user)
+  "0359 catering_refund_claim_admitted update", // the sender claim
+  "0359 catering_refund_arm update", // the write-once arm, the last step before a POST
+  "0359 catering_refund_finish update", // what the sender learned, under its claim
+  "0359 catering_refund_release update", // the ordinary Release after the original 24 hours
+  "0359 catering_refund_apply_inner update", // the financial writer: bindings and transitions
+  "0359 catering_refund_resolve_anomaly update", // the operator exits (binding, release_unsent, evidence_reviewed)
+];
+
+/** The TypeScript call sites of the SQL request writers: rpc name -> the one file that calls it. */
+const REQUEST_WRITER_RPCS: Record<string, string> = {
+  catering_refund_reserve_admitted: "lib/catering/refunds.ts",
+  catering_refund_claim_admitted: "lib/catering/refunds.ts",
+  catering_refund_arm: "lib/catering/refunds.ts",
+  catering_refund_finish: "lib/catering/refunds.ts",
+  catering_refund_release: "lib/catering/refunds.ts",
+  catering_refund_resolve_anomaly: "lib/catering/refunds.ts",
+  catering_refund_apply: "lib/catering/refund-reconcile.ts",
+};
+
+describe("refund B1 (0359) — every writer of catering_refund_requests, closed", () => {
+  const COMPONENTS: Array<{ file: string; src: string }> = walk(join(ROOT, "components")).map((full) => ({
+    file: relative(ROOT, full).replace(/\\/g, "/"), src: readFileSync(full, "utf8"),
+  }));
+  const APP_CODE = [...SOURCES, ...COMPONENTS];
+
+  it("SQL: the writers of catering_refund_requests are exactly the census (derived from every migration)", () => {
+    expect(sqlWriters("catering_refund_requests")).toEqual(REQUEST_WRITERS_SQL);
+    // The two historical writers are withdrawn: no role but the owner may execute them after 0359.
+    const m59 = sqlCode(migrationText("0359_catering_refund_reconciler.sql"));
+    expect(m59).toContain("revoke all on function public.catering_refund_reserve(uuid, uuid, uuid, bigint, text, text, text) from public, anon, authenticated, service_role;");
+    expect(m59).toContain("revoke all on function public.catering_refund_claim(uuid) from public, anon, authenticated, service_role;");
+    // The top-level write is the backfill and nothing else.
+    expect(m59.match(/^update public\.catering_refund_requests [^\n]*$/gm)).toEqual([
+      "update public.catering_refund_requests set legacy_possibly_sent = true where first_attempt_at is not null or attempts > 0;",
+    ]);
+    // Nothing deletes a request, anywhere.
+    expect(sqlWriters("catering_refund_requests").filter((w) => w.endsWith(" delete"))).toEqual([]);
+  });
+
+  it("SQL: every function writer but the withdrawn two is reached only through a worker grant (or is the private financial writer)", () => {
+    const m59 = migrationText("0359_catering_refund_reconciler.sql");
+    const grants = m59.slice(m59.indexOf("-- ── Privileges, stated"), m59.indexOf("-- ── Assertions"));
+    for (const w of REQUEST_WRITERS_SQL.filter((x) => x.startsWith("0359 catering_refund_"))) {
+      const fn = w.split(" ")[1]!;
+      if (fn === "catering_refund_apply_inner") {
+        expect(grants, fn).not.toContain(`public.${fn}(`);
+        continue;
+      }
+      expect(grants, fn).toContain(`'public.${fn}(`);
+    }
+  });
+
+  it("TypeScript: NO `.from(\"catering_refund_requests\")` insert / update / upsert / delete anywhere under app/, lib/ or components/ (the grants are withdrawn: it would be a 42501)", () => {
+    const direct: string[] = [];
+    for (const { file, src } of APP_CODE) {
+      for (const m of src.matchAll(/\.from\(\s*["'`]catering_refund_requests["'`]\s*\)/g)) {
+        const stmt = statementFrom(src, m.index!);
+        if (/\.(insert|update|upsert|delete)\(/.test(stmt)) direct.push(`${file}:${src.slice(0, m.index!).split("\n").length}`);
+      }
+    }
+    expect(direct).toEqual([]);
+    // …nor a call of a withdrawn 0357 writer by its old name.
+    for (const { file, src } of APP_CODE) {
+      expect(codeOf(src), file).not.toMatch(/\.rpc\(\s*["'`]catering_refund_(reserve|claim|record_snapshot)["'`]/);
+    }
+  });
+
+  it("TypeScript: each SQL request writer is called from exactly one module", () => {
+    for (const [rpc, home] of Object.entries(REQUEST_WRITER_RPCS)) {
+      const sites = APP_CODE.filter(({ src }) => new RegExp(`["'\`]${rpc}["'\`]`).test(codeOf(src))).map((s) => s.file);
+      expect([rpc, sites]).toEqual([rpc, [home]]);
+    }
+  });
+});
+
+describe("refund B1 (0359) — catering_payments.status gains exactly ONE writer, reachable only with the switch ON", () => {
+  it("SQL: the refund migrations write catering_payments only in catering_refund_apply_inner: paid -> refunded and refunded -> paid, each a compare-and-set on the status read", () => {
+    const refundMigrations = readdirSync(MIGRATIONS_DIR).filter((f) => /^035[7-9]_/.test(f));
+    expect(refundMigrations).toEqual(["0357_catering_refund_requests.sql", "0358_catering_refund_roles.sql", "0359_catering_refund_reconciler.sql"]);
+    expect(sqlWriters("catering_payments", (f) => /^035[7-9]_/.test(f))).toEqual(["0359 catering_refund_apply_inner update"]);
+    const inner = sqlFunctions(sqlCode(migrationText("0359_catering_refund_reconciler.sql"))).find((f) => f.name === "catering_refund_apply_inner")!;
+    expect(inner.body.match(/update public\.catering_payments [^;]*;/g)).toEqual([
+      "update public.catering_payments p set status = 'refunded' where p.id = p_payment_id and p.status = 'paid';",
+      "update public.catering_payments p set status = 'paid' where p.id = p_payment_id and p.status = 'refunded';",
+    ]);
+  });
+
+  it("SQL: the writer is private and has ONE caller, catering_refund_apply, which admits only inside an open epoch", () => {
+    const m59 = sqlCode(migrationText("0359_catering_refund_reconciler.sql"));
+    const calls = [...m59.matchAll(/public\.catering_refund_apply_inner\(/g)].map((m) => sqlFunctions(m59).find((f) => f.start <= m.index! && m.index! < f.end)?.name);
+    expect(calls).toEqual(["catering_refund_apply_inner", "catering_refund_apply"]); // its definition, and its one caller
+    const apply = sqlFunctions(m59).find((f) => f.name === "catering_refund_apply")!;
+    expect(apply.body).toContain("select * into v_adm from public.catering_refund_admit(p_caller, 'work');");
+    expect(sqlFunctions(m59).find((f) => f.name === "catering_refund_admit")!.body).toContain("if p_mode = 'work' and o_state in ('none', 'sealed') then raise exception 'refunds_no_epoch'");
+  });
+
+  it("TypeScript: catering_refund_apply is called only by the reconciler, and every route that can reach the reconciler refuses before it while CATERING_REFUNDS is OFF", () => {
+    const callers = SOURCES.filter(({ src }) => /["'`]catering_refund_apply["'`]/.test(codeOf(src))).map((s) => s.file);
+    expect(callers).toEqual(["lib/catering/refund-reconcile.ts"]);
+    // The reconciler's entry points are called only from the refund lib and the sweep route; the webhook never runs a pass.
+    const ENTRY = /\b(runRefundPass|runRefundSweep|runReversalCleanup)\(/;
+    const passCallers = SOURCES.filter(({ file, src }) => file !== "lib/catering/refund-reconcile.ts" && ENTRY.test(codeOf(src))).map((s) => s.file).sort();
+    expect(passCallers).toEqual(["app/api/cron/catering-refund-sweep/route.ts", "lib/catering/refunds.ts"]);
+    expect(codeOf(readFileSync(join(ROOT, "lib/stripe/webhook.ts"), "utf8"))).not.toMatch(/catering_refund_apply|runRefundPass|runRefundSweep/);
+    // Every route handler that calls a money entry point checks the switch before the call.
+    const MONEY = /\b(requestRefund|retryRefundRequest|resolveRefundAnomaly|submitRefundRow|runRefundSweep|runRefundPass)\(/;
+    const lib = codeOf(readFileSync(join(ROOT, "lib/catering/refunds.ts"), "utf8"));
+    for (const name of ["requestRefund", "retryRefundRequest", "resolveRefundAnomaly", "submitRefundRow"]) {
+      const outside = SOURCES.filter(({ file, src }) => file !== "lib/catering/refunds.ts" && new RegExp(`\\b${name}\\(`).test(codeOf(src))).map((s) => s.file);
+      expect(outside.every((f) => f.startsWith("app/api/")), `${name} is called outside a route: ${outside.join(", ")}`).toBe(true);
+      expect(lib).toMatch(new RegExp(`export async function ${name}\\(`));
+    }
+    let handlers = 0;
+    for (const { file, src } of SOURCES.filter((s) => s.file.startsWith("app/"))) {
+      const body = codeOf(src);
+      for (const h of body.split(/(?=export async function (?:GET|POST|PUT|PATCH|DELETE)\b)/).slice(1)) {
+        const call = h.search(MONEY);
+        if (call < 0) continue;
+        handlers += 1;
+        const gate = h.search(/if \(!cateringRefundsOn\(process\.env\)\) return /);
+        expect(gate, `${file}: a money call with no OFF refusal before it`).toBeGreaterThan(-1);
+        expect(gate, `${file}: the OFF refusal comes after the money call`).toBeLessThan(call);
+      }
+    }
+    expect(handlers).toBe(4); // Confirm, Retry, disposition, the sweep
+  });
+});
+
 // ── The table for the PR body ───────────────────────────────────────────────────────
 
 if (process.env.PRINT_PAYMENT_WRITERS === "1") {

@@ -147,8 +147,8 @@ it('classifies every route and runtime HTTP export, including aliases and re-exp
     expect(mutations.some(e => `${e.path} ${e.method}` === key), key).toBe(true);
     expect(entry.reason.length).toBeGreaterThanOrEqual(15);
   }
-  expect(mutations.length).toBe(122); // +2 catering refunds (0357): POST refunds, POST refunds/[requestId]/retry; +1 catering delivery D4: POST delivery/gratuity; +4 catering delivery D2: POST delivery, status, cost, keep-pickup; +1 item 21 PR 3: POST toast-links; +1 W26: POST /api/notifications/mark-all-read; +2 W23: reopen + portal logout; -2 nav PR 2: the /api/ai and prep/generate stubs deleted
-  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(101); // +2 catering refunds (0357)
+  expect(mutations.length).toBe(123); // +1 catering refunds Part B1 (0359): POST refunds/disposition; +2 catering refunds (0357): POST refunds, POST refunds/[requestId]/retry; +1 catering delivery D4: POST delivery/gratuity; +4 catering delivery D2: POST delivery, status, cost, keep-pickup; +1 item 21 PR 3: POST toast-links; +1 W26: POST /api/notifications/mark-all-read; +2 W23: reopen + portal logout; -2 nav PR 2: the /api/ai and prep/generate stubs deleted
+  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(102); // +1 catering refunds Part B1 (0359): POST refunds/disposition; +2 catering refunds (0357)
 }, 120_000);
 
 // Full parsed stub source includes alias targets and module initializers: an implemented

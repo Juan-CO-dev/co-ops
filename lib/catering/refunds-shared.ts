@@ -13,6 +13,7 @@
  * refund route answers 503 `refunds_off`.
  */
 import type { RoleCode } from "@/lib/roles";
+import type { RefundEpochView, RefundIssueView, StoredRequestState } from "@/lib/catering/refund-outcomes-shared";
 
 // ── The switch ─────────────────────────────────────────────────────────────────────────────────────────
 /** The switch. Read on the server only and passed to the client as a prop (a `-shared` module never reads env). */
@@ -328,6 +329,19 @@ export const REFUND_ERROR_CODES = [
   "needs_reconcile",
   "not_retryable",
   "not_releasable",
+  // Part B1 (migration 0359): the epoch's admission answers, holds and the operator exits.
+  "refunds_no_epoch",
+  "refunds_recovering",
+  "refunds_draining",
+  "payment_held",
+  "stale_generation",
+  "step_up_stale",
+  "evidence_required",
+  "invalid_action",
+  "issue_closed",
+  "stale_evidence",
+  "staff_verification_required",
+  "in_progress",
   "generic",
 ] as const;
 export type RefundErrorCode = (typeof REFUND_ERROR_CODES)[number];
@@ -354,6 +368,18 @@ export interface RefundPaymentView {
   amountCents: number;
   paidAt: string | null;
   figures: RefundFigures;
+  // ── Part B1 (stored state; absent on a pre-0359 summary) ──
+  /** A blocking hold is open or held on this payment: nothing can be refunded from it until an operator exit. */
+  held?: boolean;
+  /** A complete Stripe pass has published these figures. False = "not checked with Stripe yet". */
+  verified?: boolean;
+  lastVerifiedAt?: string | null;
+  /** Verified money by its CURRENT class, and the largest unexplained event floor still honoured. */
+  returnedCents?: number;
+  reservedCents?: number;
+  floorCents?: number;
+  /** A reversal (refunded -> paid) left checkout cleanup owed on the order. */
+  cleanupOwed?: boolean;
 }
 export interface RefundRequestView {
   id: string;
@@ -375,6 +401,12 @@ export interface RefundRequestView {
   needsReconcile: boolean;
   /** Can a press of Retry / Refresh do something now? */
   retryable: boolean;
+  // ── Part B1 (stored state) ──
+  /** What the row reads as: only `reserved_not_sent` may say that no create was sent. */
+  state?: StoredRequestState;
+  /** `create_armed_at` is set: a POST may have left for this row. */
+  armed?: boolean;
+  bindingHold?: string | null;
 }
 export interface RefundSummary {
   quoteId: string;
@@ -387,6 +419,11 @@ export interface RefundSummary {
   totals: { paidCents: number; refundedCents: number; inFlightCents: number; refundableCents: number; outsideAppCents: number };
   /** Stripe could not be asked about a payment just now (review r6): the figures may be out of date. */
   stripeUnchecked?: boolean;
+  // ── Part B1 (stored state) ──
+  /** Where refund admission stands (no epoch, recovering, live, draining). */
+  epoch?: RefundEpochView;
+  /** Open operational issues of this order, with the actions this viewer may take. */
+  issues?: RefundIssueView[];
 }
 
 export function summarizeTotals(payments: readonly RefundPaymentView[]): RefundSummary["totals"] {

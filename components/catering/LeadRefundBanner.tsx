@@ -7,11 +7,17 @@
  * On a LOST lead (or while "Lost" is being confirmed) it asks the server whether the order holds money taken through
  * the app that can still be refunded, and if so names the amount and links to the quote's refund form
  * (/catering/quotes?quote=<id>&refund=lost). The refund itself is made there, behind the confirm tap and the password.
+ *
+ * Part B1: the figures are STORED state. A figure no complete Stripe pass has checked yet is labelled "not checked with
+ * Stripe yet", and an order with a held payment says it is on hold (its refundable figure is 0 until the hold is
+ * reviewed) instead of offering money it cannot give.
  */
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents } from "@/lib/i18n/format";
+
+type LeadQuote = { quoteId: string; refundableCents: number; paidCents: number; stripeUnchecked?: boolean; held?: boolean };
 
 const RefundsOn = createContext(false);
 
@@ -26,14 +32,14 @@ export function useRefundsEnabled(): boolean {
 export function LeadRefundBanner({ leadId, phase }: { leadId: string; phase: "lost" | "confirming_lost" }) {
   const enabled = useRefundsEnabled();
   const { t, language } = useTranslation();
-  const [rows, setRows] = useState<{ leadId: string; failed: boolean; quotes: Array<{ quoteId: string; refundableCents: number; paidCents: number; stripeUnchecked?: boolean }> } | null>(null);
+  const [rows, setRows] = useState<{ leadId: string; failed: boolean; quotes: Array<LeadQuote> } | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!enabled) return;
     let alive = true;
     void fetch(`/api/catering/pipeline/${leadId}/refunds`, { redirect: "manual" })
-      .then((r) => (r.ok ? (r.json() as Promise<{ quotes?: Array<{ quoteId: string; refundableCents: number; paidCents: number; stripeUnchecked?: boolean }> }>) : null))
+      .then((r) => (r.ok ? (r.json() as Promise<{ quotes?: Array<LeadQuote> }>) : null))
       .then((d) => {
         // A failed read is NOT "nothing to refund" (review r4): it is said, with a way to try again.
         if (alive) setRows({ leadId, failed: d === null, quotes: d?.quotes ?? [] });
@@ -61,7 +67,7 @@ export function LeadRefundBanner({ leadId, phase }: { leadId: string; phase: "lo
       </button>
     </div>
   ) : null;
-  const open = rows.quotes.filter((q) => q.refundableCents > 0);
+  const open = rows.quotes.filter((q) => q.refundableCents > 0 || q.held === true);
   if (open.length === 0) return warning;
   return (
     <>
@@ -70,11 +76,14 @@ export function LeadRefundBanner({ leadId, phase }: { leadId: string; phase: "lo
       {open.map((q) => (
         <div key={q.quoteId} className="flex flex-col gap-2">
           <p className="font-semibold text-co-warning-text">
-            {t(phase === "lost" ? "catering.refunds.lead.lost" : "catering.refunds.lead.confirming", {
-              paid: formatCents(q.paidCents, language),
-              refundable: formatCents(q.refundableCents, language),
-            })}
+            {q.held === true
+              ? t("catering.refunds.lead.held", { paid: formatCents(q.paidCents, language) })
+              : t(phase === "lost" ? "catering.refunds.lead.lost" : "catering.refunds.lead.confirming", {
+                  paid: formatCents(q.paidCents, language),
+                  refundable: formatCents(q.refundableCents, language),
+                })}
           </p>
+          {q.stripeUnchecked === true && <p className="text-xs font-semibold text-co-warning-text" data-testid="lead-refund-unchecked">{t("catering.refunds.lead.unchecked")}</p>}
           {phase === "lost" && (
             <a
               href={`/catering/quotes?quote=${q.quoteId}&refund=lost`}

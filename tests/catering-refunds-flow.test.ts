@@ -1,896 +1,853 @@
 /**
- * Catering refunds — the server flow (lib/catering/refunds.ts) over a predicate-aware fake database and a STATEFUL fake
- * of Stripe's refund endpoints. NEVER a network call: lib/stripe/client.ts's refund functions are replaced, and the
- * fake models exactly what decides "one refund, never two" (docs.stripe.com/api/idempotent_requests,
- * docs.stripe.com/error-low-level):
- *   · a key replays its FIRST response — a saved 500 included — and a key re-used with other parameters is an error;
- *   · a refund carries our `metadata.refund_request_id`, so a list can find a send whose answer was lost;
- *   · a refund above what is left on the charge is refused.
- * The reserve RPC is a TS stand-in that keeps 0357's contract (the real SQL is proven by scripts/sql-harness-0357.mjs,
- * run in CI by tests/catering-refund-0357-migration.test.ts): token replay, figures from refundFigures, allocation,
- * named refusals.
- * The SQL ACTOR RULE (`catering_refund_actor_ok`) is a TS stand-in too (`sqlActorOk`): an active user, owner / cgs at
- * any shop, a membership-branch role only with an ACTIVE membership at that shop. It answers as migration 0358 wrote
- * it (GM and AGM in the membership branch) or, for the deploy-order tests, as 0357 did (`h.sqlRule`); its role lists
- * are held equal to the two real files below, and the real SQL is proven by scripts/sql-harness-0358.mjs.
+ * Catering refunds Part B1 — the staff press and the reads END TO END: the app's REAL code (lib/catering/refunds.ts,
+ * lib/catering/refund-reconcile.ts) over the REAL SQL (PGlite: 0357 -> 0358 -> 0359, tests/helpers/refund-pglite.ts)
+ * as `service_role`, with ONE in-memory fake of Stripe (tests/helpers/refund-flow-stripe.ts: accounts by secret key,
+ * an idempotency table that replays a key's first executed answer, scriptable failures, `gets` / `posts`).
+ * No network, no key, synthetic rows only. Every flow test asserts the fake's POST count explicitly.
+ *
+ * Tests whose title starts with `LEAD_MUST_FIX` are DEFECTS this suite found in lead-owned code: they are left
+ * failing on purpose (see the report) and must not be weakened to pass.
  */
-import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PGliteInterface as PGlite } from "@electric-sql/pglite";
 
-import { fakeSupabase, type FakeDb, type Row } from "./fake-supabase";
+import { refundClient, refundDb, harnessKit, harnessLib, type RefundClientOpts } from "./helpers/refund-pglite";
+import {
+  KEY_A, KEY_ROTATED, KEY_SHARED, account, actorFor, flowWorld, grantAppTables, openIssues, req, reqs, rpcNames, work, writes,
+  type Account, type Flow,
+} from "./helpers/refund-flow-world";
 
 const h = vi.hoisted(() => ({
-  db: null as unknown as import("./fake-supabase").FakeDb,
-  accounts: [{ secretKey: "sk_test_fake_A", webhookSecret: "whsec_fake", source: "default" }] as Array<{ secretKey: string; webhookSecret: string; source: string }>,
-  /** Which migration's actor rule the fake database answers with (the deploy-order tests set "0357"). */
-  sqlRule: "0358" as "0357" | "0358",
-  /** Every RPC the code under test called, by name, in order. */
-  rpcCalls: [] as string[],
+  client: null as unknown,
+  accounts: [] as Array<{ secretKey: string; webhookSecret: string; source: string }>,
+  shopCodes: [] as Array<string | null>,
+  stripe: null as unknown as import("./helpers/refund-flow-stripe").FlowStripe,
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.db.client }));
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.client }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
-vi.mock("@/lib/stripe/session-owner", () => ({ stripeAccountsForShop: () => h.accounts }));
-
-// ── The Stripe refund fake ───────────────────────────────────────────────────────────────────────────
-interface FakeRefund { id: string; status: string; amount: number; paymentIntent: string; requestId: string | null; account: string }
-const stripe = vi.hoisted(() => {
-  const state = {
-    charges: new Map<string, { account: string; captured: number; refunded: number }>(),
-    refunds: [] as FakeRefund[],
-    keys: new Map<string, { params: string; response: { ok: true; refund: FakeRefund } | { ok: false; status: number; code: string } }>(),
-    /** Next create calls answer like this BEFORE executing (no result saved) or AFTER (saved, like a 500). */
-    nextCreate: [] as Array<"network_lost_after_executing" | "network_before" | "500_saved" | "429">,
-    creates: [] as Array<{ key: string; account: string; params: string }>,
-    seq: 0,
-  };
-  return state;
-});
-
-vi.mock("@/lib/stripe/client", async (original) => {
-  const real = await original<typeof import("@/lib/stripe/client")>();
-  const { StripeError } = real;
+vi.mock("@/lib/stripe/session-owner", () => ({
+  stripeAccountsForShop: (code: string | null) => {
+    h.shopCodes.push(code);
+    return h.accounts;
+  },
+}));
+vi.mock("@/lib/stripe/client", async (orig) => {
+  const real = await orig<typeof import("@/lib/stripe/client")>();
   return {
     ...real,
-    retrievePaymentIntentCharge: vi.fn(async (key: string, pi: string) => {
-      const c = stripe.charges.get(pi);
-      if (!c || c.account !== key) return { status: "not_found", amountCapturedCents: null, amountRefundedCents: null };
-      return { status: "found", amountCapturedCents: c.captured, amountRefundedCents: c.refunded };
-    }),
-    listRefundsForPaymentIntent: vi.fn(async (key: string, pi: string) =>
-      stripe.refunds.filter((r) => r.paymentIntent === pi && r.account === key).map((r) => ({ id: r.id, status: r.status, amountCents: r.amount, requestId: r.requestId }))),
-    retrieveRefund: vi.fn(async (key: string, id: string) => {
-      const r = stripe.refunds.find((x) => x.id === id && x.account === key);
-      if (!r) throw new StripeError(404, "resource_missing");
-      return { id: r.id, status: r.status, amountCents: r.amount, requestId: r.requestId };
-    }),
-    createRefund: vi.fn(async (key: string, input: { paymentIntentId: string; amountCents: number; reason: string | null; metadata: { refund_request_id: string } }, idem: string) => {
-      const params = JSON.stringify(input);
-      stripe.creates.push({ key: idem, account: key, params });
-      const saved = stripe.keys.get(`${key}|${idem}`);
-      if (saved) {
-        if (saved.params !== params) throw new StripeError(400, "idempotency_error", "Keys for idempotent requests can only be used with the same parameters");
-        if (saved.response.ok) return { id: saved.response.refund.id, status: saved.response.refund.status, amountCents: saved.response.refund.amount, requestId: saved.response.refund.requestId };
-        throw new StripeError(saved.response.status, saved.response.code);
-      }
-      const mode = stripe.nextCreate.shift();
-      if (mode === "network_before") throw new StripeError(0, "network_error");
-      if (mode === "429") throw new StripeError(429, "rate_limit");
-      if (mode === "500_saved") {
-        stripe.keys.set(`${key}|${idem}`, { params, response: { ok: false, status: 500, code: "api_error" } });
-        throw new StripeError(500, "api_error");
-      }
-      const c = stripe.charges.get(input.paymentIntentId);
-      if (!c || c.account !== key) {
-        stripe.keys.set(`${key}|${idem}`, { params, response: { ok: false, status: 400, code: "resource_missing" } });
-        throw new StripeError(400, "resource_missing");
-      }
-      if (input.amountCents > c.captured - c.refunded) {
-        stripe.keys.set(`${key}|${idem}`, { params, response: { ok: false, status: 400, code: "charge_already_refunded" } });
-        throw new StripeError(400, "charge_already_refunded");
-      }
-      c.refunded += input.amountCents;
-      const refund: FakeRefund = { id: `re_fake_${++stripe.seq}`, status: "succeeded", amount: input.amountCents, paymentIntent: input.paymentIntentId, requestId: input.metadata.refund_request_id, account: key };
-      stripe.refunds.push(refund);
-      stripe.keys.set(`${key}|${idem}`, { params, response: { ok: true, refund } });
-      if (mode === "network_lost_after_executing") throw new StripeError(0, "network_error");
-      return { id: refund.id, status: refund.status, amountCents: refund.amount, requestId: refund.requestId };
-    }),
+    retrievePaymentIntentOwner: (...a: Parameters<typeof real.retrievePaymentIntentOwner>) => h.stripe.retrievePaymentIntentOwner(...a),
+    listRefundsPageStrict: (...a: Parameters<typeof real.listRefundsPageStrict>) => h.stripe.listRefundsPageStrict(...a),
+    retrieveRefundStrict: (...a: Parameters<typeof real.retrieveRefundStrict>) => h.stripe.retrieveRefundStrict(...a),
+    createRefund: (...a: Parameters<typeof real.createRefund>) => h.stripe.createRefund(...a),
   };
 });
 
-import { createRefund } from "@/lib/stripe/client";
-import { audit } from "@/lib/audit";
 import {
-  actorMayRefund,
   loadLeadRefundables,
   loadRefundSummary,
-  refundFigures,
   requestRefund,
   retryRefundRequest,
-  REFUND_RETRY_WINDOW_MS,
+  CateringRefundError,
   type RefundRequestBody,
 } from "@/lib/catering/refunds";
-import type { AuthContext } from "@/lib/session";
-import { ROLES, type RoleCode } from "@/lib/roles";
+import { runRefundPass, runRefundSweep } from "@/lib/catering/refund-reconcile";
 
-const SHOP = "00000000-0000-4000-8000-0000000000a1";
-const OTHER = "00000000-0000-4000-8000-0000000000a2";
-const QUOTE = "00000000-0000-4000-8000-0000000000b1";
-const DEP = "00000000-0000-4000-8000-0000000000c1";
-const BAL = "00000000-0000-4000-8000-0000000000c2";
-const ACTOR = "00000000-0000-4000-8000-0000000000aa";
+// ── Bases (built once per file) ─────────────────────────────────────────────────────────────────────────────
+let BASE: PGlite; // 0357 -> 0358 -> 0359 + the isolated fixture's B2 / B3 stand-ins
+let BARE: PGlite; // a genuine 0359-only database
+/** A PREEXISTING pending row reserved through 0357's own function BEFORE 0359 was applied (no epoch yet). */
+let LEGACY: PGlite;
+let legacy: { quote: string; payment: string; pi: string; request: string };
+beforeAll(async () => {
+  BASE = await grantAppTables(await refundDb());
+  BARE = await grantAppTables(await refundDb({ standIns: false }));
+  const db = await harnessLib.base({ upTo: "0358" });
+  const w = await harnessKit.world(db);
+  const owner = await w.user("owner", { member: null });
+  const quote = await w.quote();
+  const p = await w.pay(quote, "deposit", 30000);
+  const r = (await harnessLib.one(db, "select public.catering_refund_reserve($1, $2, $3, 10000, 'customer_cancelled', null, 'panel') as r", [owner, quote, crypto.randomUUID()])).r as { requests: Array<{ id: string }> };
+  await db.exec(harnessLib.M0359);
+  await harnessLib.withStandIns(db);
+  LEGACY = await grantAppTables(db);
+  legacy = { quote, payment: p.id, pi: p.pi, request: r.requests[0]!.id };
+}, 120_000);
 
-/**
- * A signed-in person. The fake database is made to AGREE with the session (the role, and an ACTIVE membership at each
- * of the session's shops), as it does while a session is fresh. A test of a STALE session changes the tables after
- * calling this.
- */
-function actor(role: string, locations: string[] = [SHOP]): AuthContext {
-  const t = h.db.tables;
-  const user = (t.users ??= []).find((u) => u.id === ACTOR);
-  if (user) Object.assign(user, { role, active: true });
-  t.user_locations = locations.map((location_id) => ({ user_id: ACTOR, location_id, active: true }));
-  return { user: { id: ACTOR, role, active: true, language: "en", name: "Kim" }, locations, session: { stepUpUnlocked: true, stepUpUnlockedAt: new Date().toISOString() } } as unknown as AuthContext;
+type Calls = NonNullable<RefundClientOpts["calls"]>;
+let calls: Calls;
+let x: Flow;
+let raw: ReturnType<typeof refundClient>;
+
+function wire(db: PGlite, opts: { accounts?: Account[]; rpc?: RefundClientOpts["rpc"] } = {}) {
+  calls = [];
+  h.client = refundClient(db, { calls, rpc: opts.rpc });
+  raw = refundClient(db); // the same database, no trace, no override: what an override calls through to
+  h.accounts = opts.accounts ?? [account(KEY_A)];
+  h.shopCodes = [];
 }
-
-/** `catering_refund_actor_ok` in TS, as 0357 or 0358 wrote it (see the header). */
-const SQL_ANY_SHOP = ["owner", "cgs"];
-const SQL_MEMBER_SHOP = { "0357": ["moo", "catering_mgr"], "0358": ["moo", "catering_mgr", "gm", "agm"] } as const;
-function sqlActorOk(db: FakeDb, actorId: unknown, shopId: unknown): boolean {
-  const u = (db.tables.users ?? []).find((x) => x.id === actorId);
-  if (!u || u.active !== true) return false; // SQL: `and u.active` — NULL is not active
-  const role = String(u.role);
-  if (SQL_ANY_SHOP.includes(role)) return true;
-  return (SQL_MEMBER_SHOP[h.sqlRule] as readonly string[]).includes(role) && shopId != null
-    && (db.tables.user_locations ?? []).some((m) => m.user_id === actorId && m.location_id === shopId && m.active === true);
+/** Wire the app to a fresh clone: the client every module asks for, the shop's accounts, the fake. */
+async function setup(opts: { live?: boolean; captured?: number; accounts?: Account[]; rpc?: RefundClientOpts["rpc"] } = {}): Promise<Flow> {
+  const db = await BASE.clone();
+  x = await flowWorld(db, { live: opts.live, captured: opts.captured });
+  wire(db, opts);
+  h.stripe = x.stripe;
+  return x;
 }
-
-let reqSeq = 0;
-let claimSeq = 0;
-/** 0357's contract in TS: token replay, figures under "the lock", allocation, named refusals. */
-function reserve(args: Record<string, unknown>, db: FakeDb) {
-  const t = db.tables;
-  const quote = (t.catering_quotes ?? []).find((q) => q.id === args.p_quote_id);
-  if (!quote) return { data: null, error: { message: "quote_not_found" } };
-  if (!sqlActorOk(db, args.p_actor_id, quote.location_id)) return { data: null, error: { message: "forbidden" } };
-  const pays = (t.catering_payments ?? []).filter((p) => p.quote_id === quote.id);
-  const existing = (t.catering_refund_requests ?? []).filter((r) => r.client_token === args.p_client_token);
-  if (existing.length > 0) {
-    const total = existing.reduce((s, r) => s + Number(r.amount_cents), 0);
-    if (args.p_amount_cents !== total) return { data: null, error: { message: "token_reused" } };
-    return { data: { replay: true, location_id: quote.location_id, requests: existing.map((r) => ({ id: r.id, payment_id: r.payment_id, amount_cents: r.amount_cents, status: r.status })) }, error: null };
+const body = (amountCents: number, clientToken: string = crypto.randomUUID()): RefundRequestBody => ({ clientToken, amountCents, reasonCode: "customer_cancelled", reasonNote: null, trigger: "panel" });
+const DEADLINE = () => Date.now() + 100_000;
+const through = async (fn: string, args: Record<string, unknown>) => (await (raw.rpc(fn, args) as unknown as Promise<{ data: unknown; error: unknown }>));
+const refusal = async (p: Promise<unknown>) => {
+  try {
+    await p;
+  } catch (e) {
+    if (e instanceof CateringRefundError) return { status: e.status, code: e.code, detail: e.detail };
+    return { thrown: e instanceof Error ? e.message : String(e) };
   }
-  // The same inputs 0357's catering_refund_figures reads: events, own rows, the newest snapshot.
-  const fig = (p: Row) => {
-    const snap = (t.catering_refund_stripe_snapshots ?? []).find((x) => x.payment_id === p.id);
-    return refundFigures(
-      { amountCents: Number(p.amount_cents), status: String(p.status), provider: p.provider as string | null, providerRef: p.provider_ref as string | null },
-      (t.catering_payment_refund_events ?? []).filter((e) => e.payment_id === p.id).map((e) => ({
-        cumulativeRefundedCents: Number(e.cumulative_refunded_cents), chargeAmountCents: e.charge_amount_cents == null ? null : Number(e.charge_amount_cents), refundedAt: (e.refunded_at as string | undefined) ?? null,
-      })),
-      (t.catering_refund_requests ?? []).filter((r) => r.payment_id === p.id).map((r) => ({
-        id: r.id as string, amountCents: Number(r.amount_cents), status: r.status as "pending", stripeRefundId: (r.stripe_refund_id as string | null) ?? null,
-      })),
-      snap ? {
-        listedAt: String(snap.listed_at), capturedCents: snap.captured_cents == null ? null : Number(snap.captured_cents),
-        refunds: (snap.refunds as Array<{ id: string; amount: number; status: string | null; request_id: string | null }>).map((x) => ({ id: x.id, amountCents: x.amount, status: x.status, requestId: x.request_id })),
-      } : null,
-    );
-  };
-  const total = pays.reduce((s, p) => s + fig(p).refundableCents, 0);
-  if (total <= 0) return { data: null, error: { message: "nothing_refundable" } };
-  if (args.p_amount_cents == null || Number(args.p_amount_cents) <= 0) return { data: null, error: { message: "invalid_amount" } };
-  const want = Number(args.p_amount_cents);
-  if (want > total) return { data: null, error: { message: "over_refundable", details: String(total) } };
-  let left = want;
-  const out: Row[] = [];
-  for (const p of [...pays].sort((a, b) => (a.kind === "balance" ? -1 : b.kind === "balance" ? 1 : 0))) {
-    if (left <= 0) break;
-    const take = Math.min(left, fig(p).refundableCents);
-    if (take <= 0) continue;
-    const row = {
-      id: `00000000-0000-4000-8000-${String(++reqSeq).padStart(12, "0")}`, payment_id: p.id, quote_id: quote.id, location_id: quote.location_id,
-      client_token: args.p_client_token, amount_cents: take, reason_code: args.p_reason_code, reason_note: args.p_reason_note, trigger_kind: args.p_trigger,
-      status: "pending", stripe_refund_id: null, stripe_status: null, last_error_code: null, last_error_message: null, attempts: 0, first_attempt_at: null,
-      requested_by: args.p_actor_id, requested_at: new Date().toISOString(), updated_at: new Date().toISOString(), settled_at: null,
-    };
-    (t.catering_refund_requests ??= []).push(row);
-    out.push({ id: row.id, payment_id: row.payment_id, amount_cents: take, status: "pending" });
-    left -= take;
-  }
-  return { data: { replay: false, location_id: quote.location_id, requests: out }, error: null };
-}
-
-function seed() {
-  h.db = fakeSupabase(
-    {
-      catering_quotes: [{ id: QUOTE, location_id: SHOP, root_id: null, pipeline_id: "lead-1", superseded_at: null }],
-      catering_payments: [
-        { id: DEP, quote_id: QUOTE, kind: "deposit", amount_cents: 30000, status: "paid", provider: "stripe", provider_ref: "pi_dep", paid_at: "2026-11-01T10:00:00Z", created_at: "2026-11-01T09:00:00Z" },
-        { id: BAL, quote_id: QUOTE, kind: "balance", amount_cents: 70000, status: "paid", provider: "stripe", provider_ref: "pi_bal", paid_at: "2026-11-05T10:00:00Z", created_at: "2026-11-05T09:00:00Z" },
-      ],
-      catering_payment_refund_events: [],
-      catering_refund_requests: [],
-      catering_refund_stripe_snapshots: [],
-      locations: [{ id: SHOP, code: "S1" }],
-      users: [{ id: ACTOR, role: "catering_mgr", name: "Kim", active: true }],
-      user_locations: [{ user_id: ACTOR, location_id: SHOP, active: true }],
-    },
-    {
-      catering_refund_reserve: reserve,
-      catering_refund_claim: (args, db) => {
-        const r = (db.tables.catering_refund_requests ?? []).find((x) => x.id === args.p_request_id);
-        const live = r && r.claimed_until && Date.parse(String(r.claimed_until)) > Date.now();
-        if (!r || !["pending", "submitted"].includes(String(r.status)) || live) return { data: null, error: null };
-        r.claim_token = `claim-${++claimSeq}`;
-        r.claimed_until = new Date(Date.now() + 180_000).toISOString();
-        if (r.status === "pending") {
-          r.attempts = Number(r.attempts) + 1;
-          r.first_attempt_at ??= new Date().toISOString();
-        }
-        return { data: { claim_token: r.claim_token, attempts: r.attempts, first_attempt_at: r.first_attempt_at, status: r.status }, error: null };
-      },
-      catering_refund_record_snapshot: (args, db) => {
-        const t = (db.tables.catering_refund_stripe_snapshots ??= []);
-        const cur = t.find((x) => x.payment_id === args.p_payment_id);
-        if (cur && String(cur.listed_at) > String(args.p_listed_at)) return { data: false, error: null };
-        const row = { payment_id: args.p_payment_id, listed_at: args.p_listed_at, captured_cents: args.p_captured_cents, refunds: args.p_refunds };
-        if (cur) Object.assign(cur, row);
-        else t.push(row);
-        return { data: true, error: null };
-      },
-      catering_refund_actor_ok: (args, db) => ({ data: sqlActorOk(db, args.p_actor_id, args.p_shop_id), error: null }),
-    },
-  );
-  h.sqlRule = "0358";
-  h.rpcCalls = [];
-  const client = h.db.client as unknown as { rpc: (name: string, args: Record<string, unknown>) => unknown };
-  const rpc = client.rpc;
-  client.rpc = (name, args) => { h.rpcCalls.push(name); return rpc(name, args); };
-  stripe.charges = new Map([
-    ["pi_dep", { account: "sk_test_fake_A", captured: 30000, refunded: 0 }],
-    ["pi_bal", { account: "sk_test_fake_A", captured: 70000, refunded: 0 }],
-  ]);
-  stripe.refunds = [];
-  stripe.keys = new Map();
-  stripe.nextCreate = [];
-  stripe.creates = [];
-  h.accounts = [{ secretKey: "sk_test_fake_A", webhookSecret: "whsec_fake", source: "default" }];
-}
-
-const body = (over: Partial<RefundRequestBody> = {}): RefundRequestBody => ({
-  clientToken: "11111111-1111-4111-8111-111111111111", amountCents: 100000, reasonCode: "event_lost", reasonNote: null, trigger: "lost", ...over,
-});
-const rows = () => h.db.tables.catering_refund_requests as Row[];
+  return null;
+};
 
 beforeEach(() => {
-  seed();
-  vi.mocked(createRefund).mockClear();
-  vi.mocked(audit).mockClear();
+  process.env.CATERING_REFUNDS = "1";
+});
+afterEach(async () => {
+  await x?.db.close().catch(() => {});
 });
 
-describe("the confirm tap", () => {
-  it("a full refund: one Stripe refund per paid payment, each under its own row's key, and the rows succeed", async () => {
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body());
+// ═══════════════════════════════ The ordinary lifecycle ═══════════════════════════════════════════════════════
+describe("the ordinary live lifecycle", () => {
+  it("b1_sim_live_claim_arm_post_without_prod_bypass: open_recovery -> seed -> promote; Confirm = one claim, one arm, ONE POST under the request's key; finish; apply", async () => {
+    // FIRST: a genuine 0359-only database (no B2 / B3 install records) refuses to open recovery at all.
+    const bare = await BARE.clone();
+    await expect(harnessKit.rpc(bare, "catering_refund_open_recovery", ["cc"])).rejects.toThrow(/install_incomplete/);
+    expect(await harnessLib.count(bare, "select count(*) n from public.catering_refund_epochs")).toBe(0);
+    await bare.close();
+
+    // The ordinary operator lifecycle (goLive = open_recovery -> seed -> promote), then the app as service_role.
+    await setup();
+    expect((await harnessLib.one(x.db, "select state from public.catering_refund_epochs where state <> 'closed'")).state).toBe("live");
+    const owner = await actorFor(x.w, "owner");
+    const out = await requestRefund(owner, x.quote, body(10000), DEADLINE());
     expect(out.replay).toBe(false);
-    expect(out.results.map((r) => [r.paymentId, r.amountCents, r.status])).toEqual([[BAL, 70000, "succeeded"], [DEP, 30000, "succeeded"]]);
-    expect(stripe.creates.map((c) => c.key)).toEqual(rows().map((r) => `catering-refund:${r.id}`));
-    expect(stripe.refunds).toHaveLength(2);
-    expect(rows().every((r) => r.status === "succeeded" && typeof r.stripe_refund_id === "string" && r.attempts === 1)).toBe(true);
-    // The metadata carries the row id (how a later list finds a lost answer) and the reason maps onto Stripe's enum.
-    const sent = JSON.parse(stripe.creates[0]!.params) as { reason: string; metadata: Record<string, string> };
-    expect(sent.reason).toBe("requested_by_customer");
-    expect(sent.metadata.refund_request_id).toBe(rows()[0]!.id);
+    expect(out.results).toHaveLength(1);
+    const r = out.results[0]!;
+    expect(r.status).toBe("succeeded");
+
+    const names = rpcNames(calls);
+    const n = (fn: string) => names.filter((m) => m === fn).length;
+    expect([n("catering_refund_reserve_admitted"), n("catering_refund_claim_admitted"), n("catering_refund_arm"), n("catering_refund_finish")]).toEqual([1, 1, 1, 1]);
+    // claim -> the discovery apply -> arm -> finish -> the post-create apply, in that order.
+    let at = -1;
+    for (const fn of ["catering_refund_claim_admitted", "catering_refund_apply", "catering_refund_arm", "catering_refund_finish", "catering_refund_apply"]) {
+      at = names.indexOf(fn, at + 1);
+      expect(at, `${fn} in order`).toBeGreaterThanOrEqual(0);
+    }
+
+    expect(x.stripe.posts).toBe(1);
+    const post = x.stripe.creates()[0]!;
+    expect(post.key).toBe(KEY_A);
+    expect(post.idem).toBe(`catering-refund:${r.id}`);
+    expect(JSON.parse(post.params!)).toEqual({
+      paymentIntentId: x.pay.pi, amountCents: 10000, reason: "requested_by_customer",
+      metadata: { refund_request_id: r.id, quote_id: x.quote, payment_id: x.pay.id },
+    });
+    const row = await req(x.db, r.id);
+    expect([row.status, row.stripe_refund_id, row.create_armed_at != null, row.arm_count, row.claim_token]).toEqual(["succeeded", x.stripe.refundsOf(x.pay.pi)[0]!.id, true, 1, null]);
+    expect(x.stripe.refundsOf(x.pay.pi)).toHaveLength(1);
+
+    // The fake answers `pending`: the request ends `submitted`.
+    await x.db.close();
+    await setup();
+    x.stripe.createStatus = "pending";
+    const o2 = await requestRefund(await actorFor(x.w, "owner"), x.quote, body(5000), DEADLINE());
+    expect(o2.results[0]!.status).toBe("submitted");
+    expect(x.stripe.posts).toBe(1);
+    // No bypass anywhere: the switch is the only refund env the press reads, and no entry point has a force argument.
+    expect(Object.keys(process.env).filter((k) => /REFUND/i.test(k))).toEqual(["CATERING_REFUNDS"]);
+    expect([requestRefund.length, retryRefundRequest.length]).toEqual([3, 3]); // (actor, quote, body[, deadline]) / (actor, quote, id[, ...])
   });
 
-  it("review r1: a payment that lands between the screen and the tap never grows a Full refund (the confirmed number is sent)", async () => {
-    (h.db.tables.catering_payments as Row[]).push({ id: "00000000-0000-4000-8000-0000000000c9", quote_id: QUOTE, kind: "full", amount_cents: 50000, status: "paid", provider: "stripe", provider_ref: "pi_late", paid_at: "2026-11-06T10:00:00Z", created_at: "2026-11-06T09:00:00Z" });
-    stripe.charges.set("pi_late", { account: "sk_test_fake_A", captured: 50000, refunded: 0 });
-    // The person saw (and confirmed) $1,000.00; $500 more landed meanwhile.
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100000 }));
-    expect(out.results.reduce((s, r) => s + r.amountCents, 0)).toBe(100000);
-    expect(stripe.refunds.reduce((s, r) => s + r.amount, 0)).toBe(100000);
+  it("the switch OFF at the moment before network I/O: armed, but nothing is POSTed", async () => {
+    await setup({
+      rpc: {
+        catering_refund_arm: async (args) => {
+          const a = await through("catering_refund_arm", args);
+          process.env.CATERING_REFUNDS = "0"; // the switch is turned off between the arm and the POST
+          return a as never;
+        },
+      },
+    });
+    const out = await requestRefund(await actorFor(x.w, "owner"), x.quote, body(10000), DEADLINE());
+    expect([out.results[0]!.status, out.results[0]!.errorCode]).toEqual(["pending", "needs_reconcile"]);
+    expect(x.stripe.posts).toBe(0);
+    const row = await req(x.db, out.results[0]!.id);
+    expect([row.status, row.create_armed_at != null, row.claim_token]).toEqual(["pending", true, null]);
+  });
+});
+
+// ═══════════════════════════════ Part A coverage that still applies ════════════════════════════════════════════
+describe("Part A gates and replays on the real SQL", () => {
+  it("role gate, shop gate, 404 for a quote the viewer cannot see; nothing reaches the reserve or Stripe", async () => {
+    await setup();
+    const prep = await actorFor(x.w, "prep_mgr");
+    expect(await refusal(requestRefund(prep, x.quote, body(1000), DEADLINE()))).toMatchObject({ status: 403, code: "forbidden" });
+    const sl = await actorFor(x.w, "shift_lead");
+    expect(await refusal(requestRefund(sl, x.quote, body(1000), DEADLINE()))).toMatchObject({ status: 403, code: "forbidden" });
+    const otherShop = await actorFor(x.w, "catering_mgr", { member: x.w.other });
+    expect(await refusal(requestRefund(otherShop, x.quote, body(1000), DEADLINE()))).toMatchObject({ status: 404, code: "not_found" });
+    expect(await refusal(loadRefundSummary(otherShop, x.quote))).toMatchObject({ status: 404, code: "not_found" });
+    const kh = await actorFor(x.w, "key_holder");
+    expect(await refusal(loadRefundSummary(kh, x.quote))).toMatchObject({ status: 403, code: "forbidden" });
+    expect(await refusal(requestRefund(await actorFor(x.w, "owner"), crypto.randomUUID(), body(1000), DEADLINE()))).toMatchObject({ status: 404, code: "not_found" });
+    expect(rpcNames(calls).filter((fn) => fn === "catering_refund_reserve_admitted")).toEqual([]);
+    expect([x.stripe.gets, x.stripe.posts]).toEqual([0, 0]);
+    expect(await reqs(x.db)).toEqual([]);
   });
 
-  it("a double tap (the same token) is the same request: no second Stripe call, no second row", async () => {
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
-    const again = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
+  it("the SQL actor rule decides under the lock: a GM whose membership is switched off is refused, nothing sent", async () => {
+    await setup();
+    const gm = await actorFor(x.w, "gm");
+    await x.db.query("update public.user_locations set active = false where user_id = $1", [gm.user.id]);
+    expect(await refusal(requestRefund(gm, x.quote, body(1000), DEADLINE()))).toMatchObject({ status: 403, code: "forbidden" });
+    expect([x.stripe.posts, (await reqs(x.db)).length]).toEqual([0, 0]);
+  });
+
+  it("token replay = the same request: no second Stripe call, no second row", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    const b = body(10000);
+    const first = await requestRefund(owner, x.quote, b, DEADLINE());
+    const again = await requestRefund(owner, x.quote, b, DEADLINE());
     expect(again.replay).toBe(true);
-    expect(stripe.creates).toHaveLength(1);
-    expect(rows()).toHaveLength(1);
-    expect(stripe.refunds.reduce((s, r) => s + r.amount, 0)).toBe(5000);
+    expect(again.results.map((r) => r.id)).toEqual(first.results.map((r) => r.id));
+    expect(x.stripe.posts).toBe(1);
+    expect(await reqs(x.db)).toHaveLength(1);
+    // The same token with another amount is refused by name.
+    expect(await refusal(requestRefund(owner, x.quote, { ...b, amountCents: 5000 }, DEADLINE()))).toMatchObject({ status: 409, code: "token_reused" });
+    expect(x.stripe.posts).toBe(1);
   });
 
-  it("a partial refund takes the balance first", async () => {
-    const out = await requestRefund(actor("owner", []), QUOTE, body({ amountCents: 1234 }));
-    expect(out.results).toEqual([expect.objectContaining({ paymentId: BAL, amountCents: 1234, status: "succeeded" })]);
+  it("an over-refund is refused by name before anything reaches Stripe", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    const r = await refusal(requestRefund(owner, x.quote, body(30001), DEADLINE()));
+    expect(r).toMatchObject({ status: 409, code: "over_refundable" });
+    expect([x.stripe.posts, (await reqs(x.db)).length]).toEqual([0, 0]);
   });
 
-  it("over-refund is refused by name with the refundable total, and nothing reaches Stripe", async () => {
-    await expect(requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100001 }))).rejects.toMatchObject({ status: 409, code: "over_refundable", detail: { refundableCents: 100000 } });
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("a prep manager at the shop (403) and a catering manager, GM or AGM of another shop (404) are refused before the database is asked", async () => {
-    for (const role of ["prep_mgr", "social_media_mgr", "shift_lead", "key_holder", "employee"]) {
-      await expect(requestRefund(actor(role), QUOTE, body()), role).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    }
-    // Another shop's people cannot see this order at all: 404, never a leak (unchanged; the role is not even looked at).
-    for (const role of ["catering_mgr", "gm", "agm", "moo", "prep_mgr"]) {
-      await expect(requestRefund(actor(role, [OTHER]), QUOTE, body()), role).rejects.toMatchObject({ status: 404, code: "not_found" });
-      await expect(requestRefund(actor(role, []), QUOTE, body()), role).rejects.toMatchObject({ status: 404, code: "not_found" });
-    }
-    expect(h.rpcCalls).toEqual([]);
-    expect(rows()).toHaveLength(0);
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("the live cap: less left on the charge than the row asks for fails it before any send, releasing the amount", async () => {
-    // Stripe already gave back part of the balance (a dashboard refund the webhook has not reported): the live cap.
-    stripe.charges.get("pi_bal")!.refunded = 69000;
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
-    expect(out.results[0]).toMatchObject({ status: "failed", errorCode: "over_charge_remaining" });
-    expect(stripe.creates).toHaveLength(0);
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    expect(s.totals.refundableCents).toBe(100000); // the failed row counts for nothing
-  });
-
-  it("a 400 at create (Stripe refused) is terminal: failed, amount released", async () => {
-    stripe.charges.set("pi_dep", { account: "sk_test_fake_A", captured: 30000, refunded: 0 });
-    stripe.nextCreate = [];
-    // Make Stripe refuse: the charge was fully refunded between our live read and the create.
-    const spy = vi.mocked(createRefund);
-    spy.mockImplementationOnce(async () => { const { StripeError } = await import("@/lib/stripe/client"); throw new StripeError(400, "charge_already_refunded"); });
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    expect(out.results[0]).toMatchObject({ status: "failed", errorCode: "charge_already_refunded" });
+  it("LEAD_MUST_FIX over_refundable_keeps_its_refundable_total: Part A answered over_refundable WITH the refundable total; the B1 press drops it", async () => {
+    // DEFECT (left failing on purpose): 0359's reserve raises `over_refundable` with DETAIL = the refundable total,
+    // but `refundRpc` throws a plain Error for a name outside REFUND_B1_SQL_REFUSALS (lib/catering/refund-reconcile.ts:76,
+    // the details are dropped) and requestRefund's fallback (lib/catering/refunds.ts:293-295) builds the error with no
+    // detail. Part A's panel showed "only $X can be refunded" from `detail.refundableCents`.
+    await setup();
+    const r = await refusal(requestRefund(await actorFor(x.w, "owner"), x.quote, body(30001), DEADLINE()));
+    expect(r).toMatchObject({ status: 409, code: "over_refundable", detail: { refundableCents: 30000 } });
+    expect(x.stripe.posts).toBe(0);
   });
 });
 
-describe("unknown outcomes stay pending and are retried safely", () => {
-  it("the answer was lost but the refund landed: Retry finds it by request id and sends nothing again", async () => {
-    stripe.nextCreate = ["network_lost_after_executing"];
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "network_error" });
-    const s1 = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    // Opening the panel asked Stripe: the landed refund is listed under this row id, so it counts once, as refunded.
-    expect([s1.totals.inFlightCents, s1.totals.refundedCents]).toEqual([0, 2000]);
-    expect(s1.totals.refundableCents).toBe(98000);
-    expect(s1.requests[0]).toMatchObject({ retryable: true, needsReconcile: false });
+// ═══════════════════════════════ Rotation, owner, charge ═══════════════════════════════════════════════════════
+describe("the owner and the key", () => {
+  it("same_pi_new_key_inside_window_reuses_original_create: (a) a landed create whose answer was lost, then the key ROTATED: Retry adopts it (zero new POSTs)", async () => {
+    // Cross-key provider deduplication (one idempotency key under two secret keys of the same account) is UNVERIFIED:
+    // the fake scopes idempotency by SECRET KEY, so ONLY our discovery can stop a second refund. This proves what OUR
+    // code sends, nothing about what Stripe would deduplicate.
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    x.stripe.failNext("create", "lost_after_executing");
+    const first = await requestRefund(owner, x.quote, body(10000), DEADLINE());
+    const id = first.results[0]!.id;
+    expect([first.results[0]!.status, x.stripe.posts, x.stripe.refundsOf(x.pay.pi).length]).toEqual(["pending", 1, 1]);
+    expect((await req(x.db, id)).create_armed_at).not.toBeNull();
 
-    const id = rows()[0]!.id as string;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, id);
-    expect(r.status).toBe("succeeded");
-    expect(stripe.creates).toHaveLength(1); // found, not re-sent
-    expect(stripe.refunds).toHaveLength(1);
+    h.accounts = [account(KEY_ROTATED)]; // the shop's key is rotated: a different secret key, the same account
+    const rotatedAt = x.stripe.log.length;
+    const retry = await retryRefundRequest(owner, x.quote, id, Date.now(), "retry", false, DEADLINE());
+    expect(retry.status).toBe("succeeded");
+    expect(x.stripe.posts).toBe(1); // ZERO new POSTs
+    expect(x.stripe.refundsOf(x.pay.pi)).toHaveLength(1);
+    expect(x.stripe.log.slice(rotatedAt).every((l) => l.key === KEY_ROTATED)).toBe(true);
+    const row = await req(x.db, id);
+    expect([row.status, row.stripe_refund_id]).toEqual(["succeeded", x.stripe.refundsOf(x.pay.pi)[0]!.id]);
   });
 
-  it("no response and nothing landed: Retry re-sends the SAME key and parameters once", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const id = rows()[0]!.id as string;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, id);
-    expect(r.status).toBe("succeeded");
-    expect(stripe.creates.map((c) => c.key)).toEqual([`catering-refund:${id}`, `catering-refund:${id}`]);
-    expect(stripe.creates[0]!.params).toBe(stripe.creates[1]!.params);
-    expect(stripe.refunds).toHaveLength(1);
+  it("same_pi_new_key_inside_window_reuses_original_create: (b) nothing landed: Retry inside the window re-POSTs with the ORIGINAL key string and byte-identical parameters", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    x.stripe.failNext("create", "network");
+    const first = await requestRefund(owner, x.quote, body(10000), DEADLINE());
+    const id = first.results[0]!.id;
+    expect([first.results[0]!.status, x.stripe.posts, x.stripe.refundsOf(x.pay.pi).length]).toEqual(["pending", 1, 0]);
+
+    h.accounts = [account(KEY_ROTATED)];
+    const retry = await retryRefundRequest(owner, x.quote, id, Date.now(), "retry", false, DEADLINE());
+    expect(retry.status).toBe("succeeded");
+    expect(x.stripe.posts).toBe(2);
+    const [a, b] = x.stripe.creates();
+    expect([a!.key, b!.key]).toEqual([KEY_A, KEY_ROTATED]);
+    expect(b!.idem).toBe(a!.idem);
+    expect(b!.idem).toBe(`catering-refund:${id}`);
+    expect(b!.params).toBe(a!.params); // byte-identical
+    expect(x.stripe.refundsOf(x.pay.pi)).toHaveLength(1);
+    expect((await req(x.db, id)).arm_count).toBe(2);
   });
 
-  it("a saved 500 stays pending on retry (Stripe replays it); nothing is ever sent under a new key", async () => {
-    stripe.nextCreate = ["500_saved"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const id = rows()[0]!.id as string;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, id);
-    expect(r).toMatchObject({ status: "pending", errorCode: "api_error" });
-    expect(new Set(stripe.creates.map((c) => c.key))).toEqual(new Set([`catering-refund:${id}`]));
-    expect(stripe.refunds).toHaveLength(0);
+  it("a saved 500 is replayed by the key: the row stays pending and a Retry sends the SAME key again (never a new key)", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    x.stripe.failNext("create", "500_saved");
+    const first = await requestRefund(owner, x.quote, body(10000), DEADLINE());
+    expect([first.results[0]!.status, x.stripe.posts]).toEqual(["pending", 1]);
+    const retry = await retryRefundRequest(owner, x.quote, first.results[0]!.id, Date.now(), "retry", false, DEADLINE());
+    expect(retry.status).toBe("pending");
+    expect(x.stripe.posts).toBe(2);
+    expect(new Set(x.stripe.creates().map((c) => c.idem)).size).toBe(1);
+    expect(x.stripe.refundsOf(x.pay.pi)).toHaveLength(0);
   });
 
-  it("a 429 stays pending and is retryable", async () => {
-    stripe.nextCreate = ["429"];
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "rate_limit" });
+  it("key_rotation_no_account_lookup: only stripeAccountsForShop's accounts are asked, by the shop's code; no credential label is stored; a failed shop read never defaults to the shared account", async () => {
+    await setup({ accounts: [account(KEY_SHARED, "default"), account(KEY_A)] });
+    const r = await runRefundPass(h.client as never, x.pay.id, { deadlineMs: DEADLINE() });
+    expect(r.result).toBe("applied");
+    expect(h.shopCodes).toEqual(["S1"]);
+    const asked = x.stripe.log.filter((l) => l.op === "owner").map((l) => l.key);
+    expect(asked).toEqual([KEY_SHARED, KEY_A]); // every permitted account, nothing else
+    expect(x.stripe.log.every((l) => [KEY_SHARED, KEY_A].includes(l.key))).toBe(true);
+    // Credentials are never an identity: nothing stored names a key, an account or which pair answered.
+    const stored = JSON.stringify([await work(x.db, x.pay.id), await harnessLib.rows(x.db, "select * from public.catering_refund_identities")]);
+    for (const needle of [KEY_A, KEY_SHARED, "acct_", "\"location\"", "\"default\""]) expect(stored.includes(needle), needle).toBe(false);
+    const workCols = (await harnessLib.rows(x.db, "select column_name from information_schema.columns where table_name = 'catering_refund_payment_work'")).map((c) => c.column_name);
+    expect(workCols.filter((c) => /account|secret|credential|api_key|stripe_key|key_label/.test(String(c)))).toEqual([]);
+
+    // A rotated key alone resolves the same PaymentIntent and charge: the owner.
+    h.accounts = [account(KEY_ROTATED)];
+    expect((await runRefundPass(h.client as never, x.pay.id, { deadlineMs: DEADLINE() })).result).toBe("applied");
+
+    // A FAILED shop read: no account is asked at all (never "the shared account by default"), nothing published.
+    await x.db.close();
+    await setup({ accounts: [account(KEY_SHARED, "default")] });
+    await x.db.exec("revoke select on public.locations from service_role");
+    const failed = await runRefundPass(h.client as never, x.pay.id, { deadlineMs: DEADLINE() });
+    expect(failed.result).toBe("incomplete_evidence");
+    expect(h.shopCodes).toEqual([]);
+    expect([x.stripe.gets, x.stripe.posts]).toEqual([0, 0]);
+    expect((await work(x.db, x.pay.id)).last_complete_pass_at).toBeNull();
+    // And the press: the claim is released, nothing is sent.
+    const press = await requestRefund(await actorFor(x.w, "owner"), x.quote, body(1000), DEADLINE());
+    expect([press.results[0]!.status, press.results[0]!.errorCode, x.stripe.posts]).toEqual(["pending", "stripe_unreachable", 0]);
   });
 
-  it("past Stripe's 24-hour window a press RECONCILES: it lists, never sends, and says when Stripe shows nothing", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const id = rows()[0]!.id as string;
-    const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, id, later);
-    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
-    expect(stripe.creates).toHaveLength(1); // never a second send
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE, later);
-    expect(s.requests[0]).toMatchObject({ needsReconcile: true, retryable: false });
+  it("wrong_charge_rejected: the PaymentIntent's latest charge differs from the verified one: a wrong_charge hold, the arm is never reached, zero POSTs", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    expect((await runRefundPass(h.client as never, x.pay.id, { deadlineMs: DEADLINE() })).result).toBe("applied"); // ch_ verified
+    x.stripe.charges.get(x.pay.pi)!.charge = "ch_flow_other_latest";
+    const out = await requestRefund(owner, x.quote, body(10000), DEADLINE());
+    expect([out.results[0]!.status, out.results[0]!.errorCode]).toEqual(["pending", "payment_held"]);
+    expect(rpcNames(calls)).not.toContain("catering_refund_arm");
+    expect(x.stripe.posts).toBe(0);
+    expect((await openIssues(x.db, x.pay.id)).map((i) => [i.code, i.blocking])).toContainEqual(["wrong_charge", true]);
+    expect((await req(x.db, out.results[0]!.id)).create_armed_at).toBeNull();
   });
 
-  it("review r10: a retry that reaches the send inside the window's last minute is not sent: needs_reconcile", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    // 30 seconds before the window ends: the first check passes, the send-time check (60 s margin) does not.
-    const at = Date.parse(String(row.first_attempt_at)) + REFUND_RETRY_WINDOW_MS - 30_000;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, at);
-    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
-    expect(stripe.creates).toHaveLength(1); // the first send only
-    expect(row.claim_token).toBeNull(); // released; the reservation stays
-  });
-
-  it("review r10: the clock crosses the deadline DURING the Stripe reads: nothing is sent", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    const at = Date.parse(String(row.first_attempt_at)) + REFUND_RETRY_WINDOW_MS - 120_000; // 2 minutes left
-    const { listRefundsForPaymentIntent } = await import("@/lib/stripe/client");
-    const realList = vi.mocked(listRefundsForPaymentIntent).getMockImplementation()!;
-    const realNow = Date.now.bind(Date);
-    let skew = 0;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + skew);
-    vi.mocked(listRefundsForPaymentIntent).mockImplementation(async (k: string, pi: string) => {
-      skew += 90_000; // the listing took 90 seconds
-      return realList(k, pi);
+  it("wrong_charge_rejected: the arm itself refuses a charge other than the verified one (zero POSTs, never armed, the reservation released)", async () => {
+    // The press hands the arm another charge than the one the pass verified (the PaymentIntent's latest charge moved
+    // between the pass and the arm): the arm's own check refuses.
+    await setup({
+      rpc: { catering_refund_arm: (args) => through("catering_refund_arm", { ...args, p_charge: "ch_flow_other_latest" }) as never },
     });
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, at);
-    nowSpy.mockRestore();
-    vi.mocked(listRefundsForPaymentIntent).mockImplementation(realList);
-    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
-    expect(stripe.creates).toHaveLength(1);
+    const out = await requestRefund(await actorFor(x.w, "owner"), x.quote, body(10000), DEADLINE());
+    expect(x.stripe.posts).toBe(0);
+    const row = await req(x.db, out.results[0]!.id);
+    expect([row.create_armed_at, row.status, row.last_error_code]).toEqual([null, "failed", "wrong_charge"]);
+    expect(out.results[0]!.status).toBe("failed");
+  });
+});
+
+// ═══════════════════════════════ Reads are stored state ════════════════════════════════════════════════════════
+describe("reads", () => {
+  async function leadWorld(n: number) {
+    await setup();
+    const lead = (await harnessLib.one(x.db, "insert into public.catering_pipeline (contact_name, stage) values ('Synthetic lead', 'inquiry') returning id")).id as string;
+    for (let i = 0; i < n; i++) {
+      const q = (await harnessLib.one(x.db, "insert into public.catering_quotes (location_id, version, status, pipeline_id) values ($1, 1, 'accepted', $2) returning id", [x.w.shop, lead])).id as string;
+      const p = await x.w.pay(q, "deposit", 1000 + i);
+      x.stripe.charge(p.pi, { account: "acct_flow_shop", captured: 1000 + i });
+    }
+    return lead;
+  }
+
+  it("level5_many_quote_banner_zero_provider_calls: 1, 10, 30 quotes = one quotes read + ONE summary; 55 = two summaries; zero Stripe, no enqueue, no apply", async () => {
+    for (const n of [1, 10, 30, 55]) {
+      const lead = await leadWorld(n);
+      const viewer = await actorFor(x.w, "shift_lead");
+      calls.length = 0;
+      const out = await loadLeadRefundables(viewer, lead);
+      expect(out).toHaveLength(n);
+      expect(out.every((q) => q.stripeUnchecked && q.refundableCents > 0)).toBe(true);
+      const trace = calls.map((c) => `${c.kind}:${c.name}`);
+      expect(trace, `${n} quotes`).toEqual(["select:catering_quotes", ...Array(Math.ceil(n / 50)).fill("rpc:catering_refund_summary")]);
+      expect([x.stripe.gets, x.stripe.posts]).toEqual([0, 0]);
+      await x.db.close();
+    }
   });
 
-  it("review r11: the clock crosses the deadline during the CALLER's database reads: nothing is sent", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    const at = Date.parse(String(row.first_attempt_at)) + REFUND_RETRY_WINDOW_MS - 120_000; // 2 minutes left
-    const realNow = Date.now.bind(Date);
-    let skew = 0;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + skew);
-    const db = h.db as unknown as { client: { rpc: (n: string, a: Record<string, unknown>) => Promise<unknown> } };
-    const realRpc = db.client.rpc;
-    db.client.rpc = async (n: string, a: Record<string, unknown>) => {
-      if (n === "catering_refund_actor_ok") skew += 130_000; // the actor check took 130 seconds
-      return realRpc(n, a);
+  it("quote_get_reads_only: quote read + ONE summary RPC (+ names), zero Stripe, zero writes; an unchecked payment is labelled, a held one is labelled and gives 0", async () => {
+    await setup();
+    const sl = await actorFor(x.w, "shift_lead");
+    const s = await loadRefundSummary(sl, x.quote);
+    expect(calls.map((c) => `${c.kind}:${c.name}`)).toEqual(["select:catering_quotes", "rpc:catering_refund_summary"]);
+    expect(writes(calls)).toEqual([]);
+    expect([x.stripe.gets, x.stripe.posts]).toEqual([0, 0]);
+    expect([s.installed, s.epoch?.state, s.stripeUnchecked, s.payments[0]!.verified, s.payments[0]!.figures.refundableCents, s.canRefund]).toEqual([true, "live", true, false, 30000, false]);
+
+    // A held payment: an ID-less floor nobody can explain yet, then one pass.
+    await harnessKit.ingest(x.db, { pi: x.pay.pi, created: Math.floor(Date.now() / 1000) - 60, cumulative: 10000, chargeAmount: 30000, full: false });
+    await runRefundPass(h.client as never, x.pay.id, { deadlineMs: DEADLINE() });
+    const gets = x.stripe.gets;
+    calls.length = 0;
+    const owner = await actorFor(x.w, "owner");
+    const held = await loadRefundSummary(owner, x.quote);
+    expect(writes(calls)).toEqual([]);
+    expect(rpcNames(calls)).toEqual(["catering_refund_summary"]);
+    expect([x.stripe.gets - gets, x.stripe.posts]).toEqual([0, 0]);
+    const p = held.payments[0]!;
+    expect([p.held, p.verified, p.figures.refundableCents, p.floorCents, held.totals.refundableCents]).toEqual([true, true, 0, 10000, 0]);
+    expect(held.issues?.map((i) => [i.code, i.blocking])).toEqual([["awaiting_identity", true]]);
+    expect(held.stripeUnchecked).toBe(false);
+  });
+
+  it("confirm_and_retry_reload_stored_summary (lib half): after Confirm and after Retry, loadRefundSummary reflects the stored state with no provider call", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    x.stripe.failNext("create", "network");
+    const first = await requestRefund(owner, x.quote, body(10000), DEADLINE());
+    const id = first.results[0]!.id;
+    let gets = x.stripe.gets;
+    let s = await loadRefundSummary(owner, x.quote);
+    expect(x.stripe.gets).toBe(gets);
+    expect(s.requests.map((r) => [r.id, r.status, r.armed, r.state])).toEqual([[id, "pending", true, expect.any(String)]]);
+    expect(s.payments[0]!.figures.inFlightCents).toBe(10000);
+    expect(s.payments[0]!.figures.refundableCents).toBe(20000);
+
+    await retryRefundRequest(owner, x.quote, id, Date.now(), "retry", false, DEADLINE());
+    gets = x.stripe.gets;
+    const posts = x.stripe.posts;
+    s = await loadRefundSummary(owner, x.quote);
+    expect([x.stripe.gets, x.stripe.posts]).toEqual([gets, posts]);
+    expect(s.requests.map((r) => [r.id, r.status])).toEqual([[id, "succeeded"]]);
+    expect([s.payments[0]!.returnedCents, s.payments[0]!.figures.inFlightCents, s.payments[0]!.figures.refundableCents]).toEqual([10000, 0, 20000]);
+    expect(posts).toBe(2);
+  });
+});
+
+// ═══════════════════════════════ The epoch admits the press ════════════════════════════════════════════════════
+describe("epoch admission", () => {
+  it("recovering_confirm_zero_reservations_and_claims: Confirm and Retry-create answer 503 refunds_recovering BEFORE reserve or claim; zero rows, zero POSTs", async () => {
+    await setup({ live: false });
+    await harnessKit.rpc(x.db, "catering_refund_open_recovery", ["cc"]);
+    const owner = await actorFor(x.w, "owner");
+    expect(await refusal(requestRefund(owner, x.quote, body(1000), DEADLINE()))).toMatchObject({ status: 503, code: "refunds_recovering" });
+    expect(rpcNames(calls).filter((n) => /reserve|claim/.test(n))).toEqual([]);
+    expect(await reqs(x.db)).toEqual([]);
+    expect(x.stripe.posts).toBe(0);
+    await x.db.close();
+
+    // Retry-create on a PREEXISTING pending row, while recovering.
+    const db = await LEGACY.clone();
+    const w = await harnessKit.world(db);
+    x = { db, w, stripe: x.stripe, quote: legacy.quote, pay: { id: legacy.payment, pi: legacy.pi } };
+    x.stripe.charge(legacy.pi, { account: "acct_flow_shop" });
+    wire(db);
+    await harnessKit.rpc(db, "catering_refund_open_recovery", ["cc"]);
+    const o = await actorFor(w, "owner");
+    expect(await refusal(retryRefundRequest(o, legacy.quote, legacy.request, Date.now(), "retry", false, DEADLINE()))).toMatchObject({ status: 503, code: "refunds_recovering" });
+    expect(rpcNames(calls).filter((n) => /reserve|claim|arm|apply/.test(n))).toEqual([]);
+    expect([x.stripe.gets, x.stripe.posts]).toEqual([0, 0]);
+    expect((await req(db, legacy.request)).attempts).toBe(0);
+    expect(await harnessLib.count(db, "select count(*) n from public.catering_refund_requests")).toBe(1);
+  });
+
+  it("on_no_epoch_entrypoint_matrix: ON with no epoch, Confirm / Retry answer refunds_no_epoch; summary reads work and show the epoch; no reserve, claim, apply", async () => {
+    const db = await LEGACY.clone();
+    const w = await harnessKit.world(db);
+    x = { db, w, stripe: (await setupStripeOnly()), quote: legacy.quote, pay: { id: legacy.payment, pi: legacy.pi } };
+    wire(db);
+    const owner = await actorFor(w, "owner");
+    expect(await refusal(requestRefund(owner, legacy.quote, body(1000), DEADLINE()))).toMatchObject({ status: 503, code: "refunds_no_epoch" });
+    expect(await refusal(retryRefundRequest(owner, legacy.quote, legacy.request, Date.now(), "retry", false, DEADLINE()))).toMatchObject({ status: 503, code: "refunds_no_epoch" });
+    expect(await refusal(retryRefundRequest(owner, legacy.quote, legacy.request, Date.now(), "release", true, DEADLINE()))).toMatchObject({ status: 503, code: "refunds_no_epoch" });
+    const s = await loadRefundSummary(owner, legacy.quote);
+    expect([s.installed, s.epoch?.state, s.canRefund, s.requests.map((r) => r.id)]).toEqual([true, "none", false, [legacy.request]]);
+    expect(rpcNames(calls).filter((n) => /reserve|claim|arm|apply|pass_begin|finish|release/.test(n))).toEqual([]);
+    expect([x.stripe.gets, x.stripe.posts]).toEqual([0, 0]);
+    expect(await harnessLib.count(db, "select count(*) n from public.catering_refund_requests")).toBe(1);
+  });
+});
+async function setupStripeOnly() {
+  const { FlowStripe } = await import("./helpers/refund-flow-stripe");
+  h.stripe = new FlowStripe().account(KEY_A, "acct_flow_shop");
+  h.stripe.charge(legacy.pi, { account: "acct_flow_shop" });
+  return h.stripe;
+}
+
+// ═══════════════════════════════ Arms, sends and deaths ════════════════════════════════════════════════════════
+describe("what may have left", () => {
+  it("prior_claim_without_arm_is_not_a_prior_send: a claim whose pass was incomplete never armed; a later clean local refusal closes the row", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    x.stripe.failNext("list", "network"); // the discovery pass cannot finish: claim released, never armed
+    const first = await requestRefund(owner, x.quote, body(25000), DEADLINE());
+    const id = first.results[0]!.id;
+    expect([first.results[0]!.status, first.results[0]!.errorCode, x.stripe.posts]).toEqual(["pending", "stripe_unreachable", 0]);
+    let row = await req(x.db, id);
+    expect([row.attempts, row.create_armed_at, row.claim_token]).toEqual([1, null, null]);
+    // A refund made elsewhere meanwhile leaves less than the row asks for: the arm refuses ON OUR SIDE and the row,
+    // never armed, closes with its amount released.
+    x.stripe.refund(x.pay.pi, 10000, "succeeded");
+    const retry = await retryRefundRequest(owner, x.quote, id, Date.now(), "retry", false, DEADLINE());
+    expect(x.stripe.posts).toBe(0);
+    row = await req(x.db, id);
+    expect([row.status, row.last_error_code, row.create_armed_at]).toEqual(["failed", "over_charge_remaining", null]);
+    expect(retry.status).toBe("failed");
+  });
+
+  it("prior_claim_without_arm_is_not_a_prior_send: an ARMED row whose POST timed out stays pending and reserved through an EMPTY list", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    x.stripe.failNext("create", "network");
+    const first = await requestRefund(owner, x.quote, body(10000), DEADLINE());
+    const id = first.results[0]!.id;
+    expect([first.results[0]!.status, x.stripe.posts]).toEqual(["pending", 1]);
+    expect((await runRefundPass(h.client as never, x.pay.id, { deadlineMs: DEADLINE() })).result).toBe("applied"); // the list is EMPTY
+    const row = await req(x.db, id);
+    expect([row.status, row.create_armed_at != null]).toEqual(["pending", true]);
+    expect((await harnessKit.figures(x.db, x.pay.id)).o_reservations).toBe(10000);
+    expect(x.stripe.posts).toBe(1);
+  });
+
+  it("split_tap_dies_after_first_row_second_is_raised_never_posted: one POST; after 15 minutes the sweep raises reserved_not_sent and NEVER posts it", async () => {
+    let claims = 0;
+    await setup({
+      rpc: {
+        catering_refund_claim_admitted: () => (++claims === 2 ? { data: null, error: { message: "terminating connection due to administrator command" } } : undefined),
+      },
+    });
+    const p2 = await x.w.pay(x.quote, "balance", 20000);
+    x.stripe.charge(p2.pi, { account: "acct_flow_shop", captured: 20000 });
+    const owner = await actorFor(x.w, "owner");
+    await expect(requestRefund(owner, x.quote, body(40000), DEADLINE())).rejects.toThrow(/terminating connection/);
+    expect(x.stripe.posts).toBe(1);
+    const rows = await reqs(x.db);
+    expect(rows.map((r) => [r.payment_id, r.amount_cents, r.status])).toEqual(expect.arrayContaining([[p2.id, 20000, "succeeded"], [x.pay.id, 20000, "pending"]]));
+    const second = rows.find((r) => r.payment_id === x.pay.id)!;
+    expect([second.create_armed_at, second.attempts]).toEqual([null, 0]);
+
+    // 15 minutes later, the sweep (the death is over: an ordinary client again).
+    wire(x.db);
+    await harnessKit.backdate(x.db, "catering_refund_requests", "requested_at", String(second.id), "16 minutes");
+    const sweep = await runRefundSweep(h.client as never, { deadlineMs: DEADLINE() });
+    expect(sweep.ran).toBe(true);
+    expect((sweep.housekeeping as { reserved_not_sent?: number }).reserved_not_sent).toBe(1);
+    expect((await openIssues(x.db)).filter((i) => i.code === "reserved_not_sent").map((i) => i.request_id)).toEqual([second.id]);
+    await runRefundSweep(h.client as never, { deadlineMs: DEADLINE() });
+    const after = await req(x.db, String(second.id));
+    expect([after.status, after.create_armed_at, after.arm_count, after.attempts]).toEqual(["pending", null, 0, 0]);
+    expect(rpcNames(calls).filter((n) => /claim|arm|reserve|finish/.test(n))).toEqual([]);
+    expect(x.stripe.posts).toBe(1);
+  });
+
+  it("slow_preflight_never_posts_after_deadline: the discovery reads take the row past the window minus margin: the arm refuses, zero POSTs, the row needs reconcile", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    let moved = false;
+    x.stripe.onCall = async (op) => {
+      if (op === "list" && !moved) {
+        moved = true;
+        const r = await reqs(x.db);
+        await harnessKit.backdate(x.db, "catering_refund_requests", "first_attempt_at", String(r[0]!.id), "23 hours 59 minutes 30 seconds");
+        await harnessKit.backdate(x.db, "catering_refund_requests", "requested_at", String(r[0]!.id), "23 hours 59 minutes 30 seconds");
+      }
     };
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, at);
-    db.client.rpc = realRpc;
-    nowSpy.mockRestore();
-    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
-    expect(stripe.creates).toHaveLength(1);
+    const out = await requestRefund(owner, x.quote, body(10000), DEADLINE());
+    expect([out.results[0]!.status, out.results[0]!.errorCode]).toEqual(["pending", "needs_reconcile"]);
+    expect(x.stripe.posts).toBe(0);
+    expect((await req(x.db, out.results[0]!.id)).create_armed_at).toBeNull();
   });
 
-  it("review r2: a lost answer that landed, its webhook recorded, nobody retried for 24 h: Check Stripe adopts it and the money is no longer double-held", async () => {
-    stripe.nextCreate = ["network_lost_after_executing"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 40000 }));
-    const row = rows()[0]!;
-    // The webhook's charge.refunded event for the balance (cumulative $400 of $700).
-    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: BAL, cumulative_refunded_cents: 40000, charge_amount_cents: 70000 });
-    const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
-    const before = await loadRefundSummary(actor("catering_mgr"), QUOTE, later);
-    // Opening the panel asks Stripe (review r6): the landed refund is LISTED under this row's id, so it already
-    // counts once (refunded), not twice (refunded and in flight).
-    expect(before.totals.refundableCents).toBe(60000);
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, later);
-    expect(r.status).toBe("succeeded");
-    expect(stripe.creates).toHaveLength(1);
-    const after = await loadRefundSummary(actor("catering_mgr"), QUOTE, later);
-    expect(after.totals.refundableCents).toBe(60000); // $1,000 - $400
-  });
-
-  it("review r2: Release closes a past-window row only after a fresh look finds no refund; before the window it is refused", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    await expect(retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, Date.now(), "release")).rejects.toMatchObject({ status: 409, code: "not_releasable" });
-    const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, later, "release");
-    expect(r).toMatchObject({ status: "failed", errorCode: "released_no_refund" });
-    expect(stripe.creates).toHaveLength(1);
-    expect((await loadRefundSummary(actor("catering_mgr"), QUOTE, later)).totals.refundableCents).toBe(100000);
-  });
-
-  it("review r2: Release never closes a row whose refund IS at Stripe: it adopts it instead", async () => {
-    stripe.nextCreate = ["network_lost_after_executing"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, later, "release");
-    expect(r.status).toBe("succeeded");
-    expect(row.stripe_refund_id).toMatch(/^re_fake_/);
-  });
-
-  it("review r1: a press while another holds the claim sends nothing; a press that outlived its claim writes nothing", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    // Press B takes the claim (for example its Stripe call is slow).
-    row.claim_token = "claim-B";
-    row.claimed_until = new Date(Date.now() + 60_000).toISOString();
-    const a = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
-    expect(a).toMatchObject({ status: "pending", errorCode: "in_progress" });
-    expect(stripe.creates).toHaveLength(1); // only the first tap's send
-
-    // B's claim expires; press C claims, and B (holding the OLD token) comes back with "failed": fenced out.
-    row.claimed_until = new Date(Date.now() - 1000).toISOString();
-    const c = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
-    expect(c.status).toBe("succeeded");
-    const { error, count } = await h.db.client.from("catering_refund_requests").update({ status: "failed" }, { count: "exact" }).eq("id", row.id).eq("status", "pending").eq("claim_token", "claim-B");
-    expect([error, count]).toEqual([null, 0]);
-    expect(row.status).toBe("succeeded");
-    expect(row.claim_token).toBeNull(); // released by the outcome write
-    expect(stripe.refunds).toHaveLength(1);
-  });
-
-  it("review r1: even a FIRST attempt lists first, and adopts a refund already carrying this row's id instead of sending", async () => {
-    // A reserved row nobody has sent yet, and a Stripe refund that names it (a press that outlived its claim).
-    reserve({ p_actor_id: ACTOR, p_quote_id: QUOTE, p_client_token: "22222222-2222-4222-8222-222222222222", p_amount_cents: 2000, p_reason_code: "event_lost", p_reason_note: null, p_trigger: "lost" }, h.db);
-    const row = rows()[0]!;
-    expect(row.attempts).toBe(0);
-    stripe.refunds.push({ id: "re_ghost", status: "succeeded", amount: 2000, paymentIntent: "pi_bal", requestId: row.id as string, account: "sk_test_fake_A" });
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
-    expect(r.status).toBe("succeeded");
-    expect(row.stripe_refund_id).toBe("re_ghost");
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("a payment Stripe does not know in any configured account fails before anything is sent", async () => {
-    h.accounts = [{ secretKey: "sk_test_fake_B", webhookSecret: "whsec_fake", source: "location" }];
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    expect(out.results[0]).toMatchObject({ status: "failed", errorCode: "payment_not_in_stripe" });
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("the shop's own account is asked first, then the shared one (the PaymentIntent lives where it was minted)", async () => {
-    h.accounts = [
-      { secretKey: "sk_test_fake_B", webhookSecret: "whsec_fake", source: "location" },
-      { secretKey: "sk_test_fake_A", webhookSecret: "whsec_fake", source: "default" },
-    ];
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    expect(out.results[0]!.status).toBe("succeeded");
-    expect(stripe.creates[0]!.account).toBe("sk_test_fake_A");
-  });
-
-  it("review r3: an account that cannot be asked does not hide the one that owns the payment", async () => {
-    h.accounts = [
-      { secretKey: "sk_test_fake_BROKEN", webhookSecret: "whsec_fake", source: "location" },
-      { secretKey: "sk_test_fake_A", webhookSecret: "whsec_fake", source: "default" },
-    ];
-    const { retrievePaymentIntentCharge } = await import("@/lib/stripe/client");
-    const real = vi.mocked(retrievePaymentIntentCharge).getMockImplementation()!;
-    vi.mocked(retrievePaymentIntentCharge).mockImplementation(async (key: string, pi: string) => {
-      if (key === "sk_test_fake_BROKEN") {
-        const { StripeError } = await import("@/lib/stripe/client");
-        throw new StripeError(401, "api_key_expired");
-      }
-      return real(key, pi);
+  it("slow_preflight_never_posts_after_deadline: time passing between the arm and the POST is caught by the last check before network I/O", async () => {
+    await setup({
+      rpc: {
+        catering_refund_arm: async (args) => {
+          const a = await through("catering_refund_arm", args);
+          await harnessKit.backdate(x.db, "catering_refund_requests", "first_attempt_at", String(args.p_request_id), "23 hours 59 minutes 30 seconds");
+          await harnessKit.backdate(x.db, "catering_refund_requests", "requested_at", String(args.p_request_id), "23 hours 59 minutes 30 seconds");
+          const row = await req(x.db, String(args.p_request_id));
+          return { data: { ...(a.data as object), first_attempt_at: new Date(row.first_attempt_at as string).toISOString() }, error: null } as never;
+        },
+      },
     });
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    vi.mocked(retrievePaymentIntentCharge).mockImplementation(real);
+    const out = await requestRefund(await actorFor(x.w, "owner"), x.quote, body(10000), DEADLINE());
+    expect([out.results[0]!.status, out.results[0]!.errorCode]).toEqual(["pending", "needs_reconcile"]);
+    expect(x.stripe.posts).toBe(0);
+  });
+
+  it("past the 24-hour window a Retry is Check Stripe: GETs only, never a send", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    x.stripe.failNext("create", "network");
+    const id = (await requestRefund(owner, x.quote, body(10000), DEADLINE())).results[0]!.id;
+    for (const col of ["first_attempt_at", "requested_at", "create_armed_at"]) await harnessKit.backdate(x.db, "catering_refund_requests", col, id, "25 hours");
+    const gets = x.stripe.gets;
+    const r = await retryRefundRequest(owner, x.quote, id, Date.now(), "retry", false, DEADLINE());
+    expect([r.status, r.errorCode]).toEqual(["pending", "needs_reconcile"]);
+    expect(x.stripe.gets).toBeGreaterThan(gets);
+    expect(x.stripe.posts).toBe(1);
+    expect(rpcNames(calls).filter((n) => n === "catering_refund_arm")).toHaveLength(1); // the first press's only
+  });
+
+  it("a press with no route budget left sends nothing (the pass defers, the claim is released)", async () => {
+    await setup();
+    const out = await requestRefund(await actorFor(x.w, "owner"), x.quote, body(10000), Date.now() + 2_000);
+    expect(out.results[0]!.status).toBe("pending");
+    expect(x.stripe.posts).toBe(0);
+    const row = await req(x.db, out.results[0]!.id);
+    expect([row.create_armed_at, row.claim_token]).toEqual([null, null]);
+  });
+
+  it("released_request_late_success_staff_review_no_second_create: Release after the window, then the late refund appears: hold, no second create", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    const gm = await actorFor(x.w, "gm");
+    x.stripe.failNext("create", "network");
+    const first = await requestRefund(owner, x.quote, body(10000), DEADLINE());
+    const id = first.results[0]!.id;
+    expect(x.stripe.posts).toBe(1);
+    // Inside the window ordinary Release is refused.
+    expect(await refusal(retryRefundRequest(gm, x.quote, id, Date.now(), "release", true, DEADLINE()))).toMatchObject({ status: 409, code: "not_releasable" });
+    for (const col of ["first_attempt_at", "requested_at", "create_armed_at"]) await harnessKit.backdate(x.db, "catering_refund_requests", col, id, "25 hours");
+    // Without staff verification of the owning charge: refused.
+    expect(await refusal(retryRefundRequest(gm, x.quote, id, Date.now(), "release", false, DEADLINE()))).toMatchObject({ status: 409, code: "staff_verification_required" });
+    const rel = await retryRefundRequest(gm, x.quote, id, Date.now(), "release", true, DEADLINE());
+    expect(rel.status).toBe("failed"); // (its errorCode: see LEAD_MUST_FIX release_reports_released_no_refund)
+    expect((await req(x.db, id)).last_error_code).toBe("released_no_refund");
+    expect((await harnessKit.figures(x.db, x.pay.id)).o_available).toBe(30000);
+    expect(x.stripe.posts).toBe(1);
+
+    // The create HAD landed after all (the list had not caught up): the late matching refund appears.
+    x.stripe.refund(x.pay.pi, 10000, "succeeded", { requestId: id, metaPayment: x.pay.id, metaQuote: x.quote, created: Math.floor(Date.now() / 1000) - 86000 });
+    const a = await runRefundPass(h.client as never, x.pay.id, { deadlineMs: DEADLINE() });
+    expect([a.returned_cents ?? null, a.held]).toEqual([10000, true]);
+    const row = await req(x.db, id);
+    expect([row.status, row.last_error_code, row.binding_hold]).toEqual(["failed", "released_no_refund", "released_request_has_refund"]);
+    expect((await openIssues(x.db, x.pay.id)).map((i) => i.code)).toContain("released_request_has_refund");
+    // No second create: the released row is not retryable and a new Confirm is held.
+    expect(await refusal(retryRefundRequest(owner, x.quote, id, Date.now(), "retry", false, DEADLINE()))).toMatchObject({ status: 409, code: "not_retryable" });
+    expect(await refusal(requestRefund(owner, x.quote, body(10000), DEADLINE()))).toMatchObject({ status: 409, code: "payment_held" });
+    expect(x.stripe.posts).toBe(1);
+    expect(x.stripe.refundsOf(x.pay.pi)).toHaveLength(1);
+  });
+
+  it("LEAD_MUST_FIX release_reports_released_no_refund: an ordinary Release answers errorCode `released_no_refund` (the panel's 'released' message keys on it)", async () => {
+    // DEFECT (left failing on purpose): retryRefundRequest's release branch returns `reread(sb, row, "released_no_refund")`
+    // (lib/catering/refunds.ts:491), and `reread` (:345-348) replaces the code with `updated_by_stripe` because the
+    // status moved pending -> failed. RefundPanel (components/catering/quotes/RefundPanel.tsx:264) shows "released"
+    // only for errorCode `released_no_refund`, so every successful Release is shown as "failed: updated_by_stripe".
+    await setup();
+    const gm = await actorFor(x.w, "gm");
+    x.stripe.failNext("create", "network");
+    const id = (await requestRefund(await actorFor(x.w, "owner"), x.quote, body(10000), DEADLINE())).results[0]!.id;
+    for (const col of ["first_attempt_at", "requested_at", "create_armed_at"]) await harnessKit.backdate(x.db, "catering_refund_requests", col, id, "25 hours");
+    const rel = await retryRefundRequest(gm, x.quote, id, Date.now(), "release", true, DEADLINE());
+    expect(x.stripe.posts).toBe(1);
+    expect([rel.status, rel.errorCode]).toEqual(["failed", "released_no_refund"]);
+  });
+
+  /** The process "dies" the moment the create returned: from then on every database call of the dead press fails. */
+  const DEAD = { catering_refund_finish: () => ({ data: null, error: { message: "server closed the connection unexpectedly" } }) };
+
+  it("accepted_post_then_immediate_process_death: the create succeeds, the process dies before finish; the next Retry finds it by PaymentIntent and adopts it; ONE refund at the fake", async () => {
+    await setup({ rpc: DEAD });
+    const owner = await actorFor(x.w, "owner");
+    await expect(requestRefund(owner, x.quote, body(10000), DEADLINE())).rejects.toThrow(/server closed the connection/);
+    expect([x.stripe.posts, x.stripe.refundsOf(x.pay.pi).length]).toEqual([1, 1]);
+    const [row] = await reqs(x.db);
+    expect([row!.status, row!.stripe_refund_id, row!.create_armed_at != null]).toEqual(["pending", null, true]);
+    wire(x.db); // a new process
+    // A Retry while the dead press's claim is still live sends nothing.
+    const early = await retryRefundRequest(owner, x.quote, String(row!.id), Date.now(), "retry", false, DEADLINE());
+    expect([early.status, early.errorCode, x.stripe.posts]).toEqual(["pending", "in_progress", 1]);
+    await harnessKit.backdate(x.db, "catering_refund_requests", "claimed_until", String(row!.id), "10 minutes");
+    const retry = await retryRefundRequest(owner, x.quote, String(row!.id), Date.now(), "retry", false, DEADLINE());
+    expect(retry.status).toBe("succeeded");
+    expect([x.stripe.posts, x.stripe.refundsOf(x.pay.pi).length]).toEqual([1, 1]);
+    expect((await req(x.db, String(row!.id))).stripe_refund_id).toBe(x.stripe.refundsOf(x.pay.pi)[0]!.id);
+  });
+
+  it("LEAD_MUST_FIX finish_failure_after_create_is_not_a_stripe_failure: a database error recording a SUCCESSFUL create is reported as a network failure of the create and the returned id is dropped", async () => {
+    // DEFECT (left failing on purpose): in submitRefundRow (lib/catering/refunds.ts:417-438) `finish(..., "created",
+    // refund.id)` and the second pass sit INSIDE the try whose catch classifies every Error as a create failure. When
+    // that finish throws (one transient database error, the process alive), the catch records `uncertain` with
+    // last_error_code `network_error` / http 0 and audits the attempt as a pending Stripe failure, and the refund id
+    // Stripe RETURNED is never registered (no `create_response` hint): recovery then depends on the list alone. With a
+    // lagging list and a rotated key (cross-key deduplication UNVERIFIED) a Retry would POST again.
+    let once = false;
+    await setup({ rpc: { catering_refund_finish: () => (once ? undefined : ((once = true), { data: null, error: { message: "could not serialize access" } })) } });
+    const out = await requestRefund(await actorFor(x.w, "owner"), x.quote, body(10000), DEADLINE());
+    expect(x.stripe.posts).toBe(1);
+    const rid = x.stripe.refundsOf(x.pay.pi)[0]!.id;
+    const row = await req(x.db, out.results[0]!.id);
+    expect(row.last_error_code).not.toBe("network_error");
+    expect(await harnessLib.count(x.db, "select count(*) n from public.catering_refund_identities where refund_id = $1", [rid])).toBe(1);
+  });
+
+  async function deadPress() {
+    await setup({ rpc: DEAD });
+    await expect(requestRefund(await actorFor(x.w, "owner"), x.quote, body(10000), DEADLINE())).rejects.toThrow();
+    wire(x.db); // a new process
+    const [dead] = await reqs(x.db);
+    await harnessKit.backdate(x.db, "catering_refund_requests", "claimed_until", String(dead!.id), "10 minutes"); // its claim expired
+    return String(dead!.id);
+  }
+
+  it("accepted_post_then_immediate_process_death: once the payment is due, the SWEEP finds the refund by PaymentIntent and adopts it (GETs only)", async () => {
+    await deadPress();
+    await harnessKit.backdate(x.db, "catering_refund_payment_work", "next_due_at", x.pay.id, "8 days", "payment_id");
+    const sweep = await runRefundSweep(h.client as never, { deadlineMs: DEADLINE() });
+    expect(sweep.applied).toBeGreaterThanOrEqual(1);
+    const [row] = await reqs(x.db);
+    expect([row!.status, row!.stripe_refund_id]).toEqual(["succeeded", x.stripe.refundsOf(x.pay.pi)[0]!.id]);
+    expect([x.stripe.posts, x.stripe.refundsOf(x.pay.pi).length]).toEqual([1, 1]);
+  });
+
+  it("accepted_post_then_immediate_process_death: LEAD_MUST_FIX the sweep revisits an armed, unfinished row within the hour (not at the healthy 7-day poll)", async () => {
+    // DEFECT (left failing on purpose): the press's discovery pass runs BEFORE the arm, so `catering_refund_apply`
+    // schedules the payment's healthy poll (+7 days, 0359 ~line 2150: no armed request exists yet), and
+    // `catering_refund_arm` (~line 1430) never moves next_due_at. A process that dies after the POST and before
+    // `finish` leaves an armed row the sweep's `armed_unbound` list (which requires next_due_at <= now) will not see
+    // for a week: the refund Stripe made is unadopted and the money reads pending / reserved until then (only a person's
+    // Retry finds it). The arm (or the claim) should bring next_due_at to about the claim's expiry.
+    await deadPress();
+    await harnessKit.backdate(x.db, "catering_refund_payment_work", "next_due_at", x.pay.id, "1 hour", "payment_id"); // an hour of sweeps
+    const sweep = await runRefundSweep(h.client as never, { deadlineMs: DEADLINE() });
+    expect(sweep.passes).toBeGreaterThanOrEqual(1);
+    const [row] = await reqs(x.db);
+    expect([row!.status, row!.stripe_refund_id]).toEqual(["succeeded", x.stripe.refundsOf(x.pay.pi)[0]!.id]);
+    expect(x.stripe.posts).toBe(1);
+  });
+
+  it("LEAD_MUST_FIX refused_create_keeps_its_name: a create Stripe refused by name closes the row, and the press must report THAT name, not `updated_by_stripe`", async () => {
+    // DEFECT (left failing on purpose): `reread` (lib/catering/refunds.ts:345-348) replaces the error code with
+    // `updated_by_stripe` whenever the row's status changed during the press, and EVERY closing finish changes it
+    // (pending -> failed). So the panel's "failed: <code>" (components/catering/quotes/RefundPanel.tsx:229) says
+    // `updated_by_stripe` for a refusal Stripe named (here `charge_already_refunded`), and for a local refusal at the
+    // arm (`wrong_charge`, `over_refundable`). A clean success reports errorCode `updated_by_stripe` too, against
+    // RefundAttemptResult's own contract ("set when this attempt did not end in a verified Stripe outcome").
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    const dash = x.stripe.refund(x.pay.pi, 25000, "succeeded"); // made elsewhere; the list has not caught up
+    x.stripe.hidden.add(dash);
+    const out = await requestRefund(owner, x.quote, body(10000), DEADLINE());
+    expect(x.stripe.posts).toBe(1);
+    expect((await req(x.db, out.results[0]!.id)).last_error_code).toBe("charge_already_refunded");
+    expect([out.results[0]!.status, out.results[0]!.errorCode]).toEqual(["failed", "charge_already_refunded"]);
+  });
+
+  it("LEAD_MUST_FIX clean_success_has_no_error_code: a press that created and verified its own refund reports errorCode null", async () => {
+    // DEFECT (left failing on purpose): see refused_create_keeps_its_name — the press's own success is reported as
+    // overtaken (`updated_by_stripe`).
+    await setup();
+    const out = await requestRefund(await actorFor(x.w, "owner"), x.quote, body(10000), DEADLINE());
+    expect(x.stripe.posts).toBe(1);
+    expect([out.results[0]!.status, out.results[0]!.errorCode]).toEqual(["succeeded", null]);
+  });
+});
+
+// ═══════════════════════════════ Interleavings ═════════════════════════════════════════════════════════════════
+describe("two presses, one row", () => {
+  it("released_armed_race: a second press while the first holds the claim gets in_progress and sends nothing; ONE POST", async () => {
+    await setup();
+    const owner = await actorFor(x.w, "owner");
+    const gm = await actorFor(x.w, "gm");
+    let second: Awaited<ReturnType<typeof retryRefundRequest>> | null = null;
+    x.stripe.onCall = async (op) => {
+      if (op === "list" && !second) {
+        second = { id: "", paymentId: "", amountCents: 0, status: "pending", errorCode: "running" };
+        const [row] = await reqs(x.db);
+        second = await retryRefundRequest(gm, x.quote, String(row!.id), Date.now(), "retry", false, DEADLINE());
+      }
+    };
+    const out = await requestRefund(owner, x.quote, body(10000), DEADLINE());
+    expect(second).toMatchObject({ status: "pending", errorCode: "in_progress" });
     expect(out.results[0]!.status).toBe("succeeded");
-    expect(stripe.creates[0]!.account).toBe("sk_test_fake_A");
+    expect([x.stripe.posts, x.stripe.refundsOf(x.pay.pi).length]).toEqual([1, 1]);
   });
 
-  it("review r3: when no account owns it and one could not be asked, the row stays pending (never failed)", async () => {
-    h.accounts = [{ secretKey: "sk_test_fake_BROKEN", webhookSecret: "whsec_fake", source: "location" }];
-    const { retrievePaymentIntentCharge, StripeError } = await import("@/lib/stripe/client");
-    const real = vi.mocked(retrievePaymentIntentCharge).getMockImplementation()!;
-    vi.mocked(retrievePaymentIntentCharge).mockImplementation(async () => { throw new StripeError(401, "api_key_expired"); });
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    vi.mocked(retrievePaymentIntentCharge).mockImplementation(real);
-    expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "stripe_unreachable" });
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("no Stripe account configured: the first attempt fails by name (nothing was sent)", async () => {
-    h.accounts = [];
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    expect(out.results[0]).toMatchObject({ status: "failed", errorCode: "stripe_not_configured" });
-  });
-});
-
-describe("review r4-r6: mixed dashboard and app refunds, by identity and current status", () => {
-  const setup = () => {
-    // $100 refunded on the deposit in the Stripe dashboard (no CO-OPS id), still pending; the webhook recorded it.
-    stripe.charges.get("pi_dep")!.refunded = 10000;
-    stripe.refunds.push({ id: "re_dash", status: "pending", amount: 10000, paymentIntent: "pi_dep", requestId: null, account: "sk_test_fake_A" });
-    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: DEP, cumulative_refunded_cents: 10000, charge_amount_cents: 30000, refunded_at: new Date(Date.now() - 600_000).toISOString() });
-    (h.db.tables.catering_payments as Row[]).find((p) => p.id === BAL)!.status = "refunded";
-  };
-  const dep = async () => (await loadRefundSummary(actor("catering_mgr"), QUOTE)).payments.find((p) => p.id === DEP)!.figures;
-
-  it("r4: a dashboard refund plus an app refund leave exactly what is left", async () => {
-    setup();
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
-    expect(await dep()).toMatchObject({ refundedCents: 15000, refundableCents: 15000 });
-  });
-
-  it("r5: two separate app refunds: the dashboard refund counts once and both of ours count", async () => {
-    setup();
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ clientToken: "33333333-3333-4333-8333-333333333333", amountCents: 5000 }));
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ clientToken: "44444444-4444-4444-8444-444444444444", amountCents: 5000 }));
-    expect(await dep()).toMatchObject({ refundedCents: 20000, refundableCents: 10000 });
-  });
-
-  it("r6: the dashboard refund is CANCELED: opening the panel asks Stripe again and the amount is refundable again", async () => {
-    setup();
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
-    expect(await dep()).toMatchObject({ refundableCents: 15000 });
-    stripe.refunds.find((r) => r.id === "re_dash")!.status = "canceled";
-    stripe.charges.get("pi_dep")!.refunded -= 10000;
-    await new Promise((r) => setTimeout(r, 5)); // a later listing
-    expect(await dep()).toMatchObject({ refundedCents: 5000, refundableCents: 25000 });
-  });
-
-  it("r7: a whole-charge refund the webhook recorded, later CANCELED at Stripe: the payment is refundable again", async () => {
-    const bal = (h.db.tables.catering_payments as Row[]).find((p) => p.id === BAL)!;
-    bal.status = "refunded"; // the webhook's flip on charge.refunded (whole charge)
-    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: BAL, cumulative_refunded_cents: 70000, charge_amount_cents: 70000, refunded_at: new Date(Date.now() - 600_000).toISOString() });
-    stripe.refunds.push({ id: "re_full", status: "canceled", amount: 70000, paymentIntent: "pi_bal", requestId: null, account: "sk_test_fake_A" });
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    expect(s.payments.find((p) => p.id === BAL)!.figures).toMatchObject({ eligible: true, refundedCents: 0, refundableCents: 70000 });
-    expect(s.totals.refundableCents).toBe(100000);
-    // …and the reserve agrees: the balance can be refunded (the live cap at Stripe has the last word).
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 70000 }));
-    expect(out.results[0]).toMatchObject({ paymentId: BAL, status: "succeeded" });
-  });
-
-  it("r7: Stripe answered but the snapshot could not be stored: the summary says the figures may be out of date", async () => {
-    setup();
-    const db = h.db as unknown as { client: { rpc: (n: string, a: Record<string, unknown>) => Promise<unknown> } };
-    const real = db.client.rpc;
-    db.client.rpc = async (n: string, a: Record<string, unknown>) =>
-      n === "catering_refund_record_snapshot" ? { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } } : real(n, a);
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    db.client.rpc = real;
-    expect(s.stripeUnchecked).toBe(true);
-  });
-
-  it("r8: the lead read carries 'could not check' through, even for an order showing $0 refundable", async () => {
-    setup();
-    (h.db.tables.catering_payments as Row[]).find((p) => p.id === DEP)!.status = "refunded";
-    h.accounts = [];
-    const rows = await loadLeadRefundables(actor("catering_mgr"), "lead-1");
-    expect(rows).toEqual([expect.objectContaining({ quoteId: QUOTE, refundableCents: 0, stripeUnchecked: true })]);
-  });
-
-  it("r6: Stripe cannot be asked: the last snapshot stands and the summary says the figures may be out of date", async () => {
-    setup();
-    h.accounts = [];
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    expect(s.stripeUnchecked).toBe(true);
-  });
-});
-
-describe("a submitted (Stripe pending) refund is refreshed, never re-sent", () => {
-  it("Check status reads the refund again", async () => {
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    const row = rows()[0]!;
-    stripe.refunds[0]!.status = "pending";
-    row.status = "submitted";
-    row.stripe_status = "pending";
-    stripe.refunds[0]!.status = "succeeded";
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
-    expect(r.status).toBe("succeeded");
-    expect(stripe.creates).toHaveLength(1);
-  });
-
-  it("a finished row is not retryable", async () => {
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    await expect(retryRefundRequest(actor("catering_mgr"), QUOTE, rows()[0]!.id as string)).rejects.toMatchObject({ status: 409, code: "not_retryable" });
-  });
-});
-
-describe("the read model", () => {
-  it("names what was paid, refunded, in flight and refundable; a hand-marked payment is outside the app", async () => {
-    (h.db.tables.catering_payments as Row[]).push({ id: "00000000-0000-4000-8000-0000000000c3", quote_id: QUOTE, kind: "full", amount_cents: 5000, status: "paid", provider: "manual", provider_ref: null, paid_at: null, created_at: "2026-11-06T00:00:00Z" });
-    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: DEP, cumulative_refunded_cents: 1000, charge_amount_cents: 30000 });
-    stripe.refunds.push({ id: "re_ev", status: "succeeded", amount: 1000, paymentIntent: "pi_dep", requestId: null, account: "sk_test_fake_A" });
-    const s = await loadRefundSummary(actor("shift_lead"), QUOTE);
-    expect(s.totals).toEqual({ paidCents: 100000, refundedCents: 1000, inFlightCents: 0, refundableCents: 99000, outsideAppCents: 5000 });
-    expect(s.canRefund).toBe(false); // a shift lead sees, never refunds
-    expect((await loadRefundSummary(actor("catering_mgr"), QUOTE)).canRefund).toBe(true);
-  });
-
-  it("before 0357 is applied the panel says so and offers nothing", async () => {
-    h.db.failSelectTables = [];
-    const client = h.db.client as unknown as { from: (t: string) => unknown };
-    const real = client.from;
-    client.from = (t: string) => (t === "catering_refund_requests"
-      ? { select: () => ({ in: () => ({ order: () => ({ returns: async () => ({ data: null, error: { code: "PGRST205", message: "Could not find the table" } }) }) }) }) }
-      : real(t));
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    client.from = real;
-    expect(s.installed).toBe(false);
-    expect(s.canRefund).toBe(false);
-  });
-
-  it("another shop's order is a 404, never a leak", async () => {
-    await expect(loadRefundSummary(actor("shift_lead", [OTHER]), QUOTE)).rejects.toMatchObject({ status: 404 });
-  });
-});
-
-// ── Refund round 2, Part A (Juan 2026-11-25): GM and AGM refund at a shop they belong to ───────────────
-describe("the stand-in actor rule is the SQL's", () => {
-  const sqlLists = (file: string) => {
-    const code = readFileSync(`supabase/migrations/${file}`, "utf8").replace(/\r\n/g, "\n").replace(/--[^\n]*/g, "");
-    const fn = code.match(/function public\.catering_refund_actor_ok\([\s\S]*?\nend \$\$;/);
-    if (!fn) throw new Error(`catering_refund_actor_ok not found in ${file}`);
-    return [...fn[0].matchAll(/v_role in \(([^)]*)\)/g)].map((m) => [...m[1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!));
-  };
-  it("its role lists are the two files' own, in the same branches", () => {
-    expect(sqlLists("0357_catering_refund_requests.sql")).toEqual([SQL_ANY_SHOP, [...SQL_MEMBER_SHOP["0357"]]]);
-    expect(sqlLists("0358_catering_refund_roles.sql")).toEqual([SQL_ANY_SHOP, [...SQL_MEMBER_SHOP["0358"]]]);
-  });
-  it("NULL is not active (as in SQL): a user or a membership whose `active` is missing is refused", () => {
-    actor("gm");
-    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(true);
-    delete (h.db.tables.user_locations as Row[])[0]!.active;
-    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(false);
-    actor("owner", []);
-    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(true);
-    (h.db.tables.users as Row[])[0]!.active = null;
-    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(false);
-  });
-  it("for a fresh session the app gate and the SQL rule give the SAME answer, every role x member / other shop / no shop", () => {
-    for (const role of Object.keys(ROLES) as RoleCode[]) {
-      for (const locations of [[SHOP], [OTHER], [], [SHOP, OTHER]]) {
-        const a = actor(role, locations);
-        expect([role, locations.length, actorMayRefund(a, SHOP)]).toEqual([role, locations.length, sqlActorOk(h.db, ACTOR, SHOP)]);
-        expect([role, locations.length, actorMayRefund(a, OTHER)]).toEqual([role, locations.length, sqlActorOk(h.db, ACTOR, OTHER)]);
+  it("equal_clock_competing_applies: a second pass while one is staged is `busy`; the first one's apply commits; nothing is sent by either", async () => {
+    await setup();
+    let competing: string | null = null;
+    x.stripe.onCall = async (op) => {
+      if (op === "list" && competing === null) {
+        competing = "running";
+        competing = (await runRefundPass(h.client as never, x.pay.id, { deadlineMs: DEADLINE() })).result;
       }
-    }
-  });
-});
-
-describe("Part A: a GM and an AGM refund at a shop they belong to", () => {
-  it("the confirm tap: reserved, sent to Stripe once under the row's key, succeeded, audited", async () => {
-    for (const role of ["gm", "agm"]) {
-      seed();
-      vi.mocked(audit).mockClear();
-      const out = await requestRefund(actor(role), QUOTE, body({ amountCents: 5000 }));
-      expect(out.results).toEqual([expect.objectContaining({ paymentId: BAL, amountCents: 5000, status: "succeeded" })]);
-      expect(stripe.creates.map((c) => c.key)).toEqual([`catering-refund:${rows()[0]!.id}`]);
-      expect(stripe.refunds).toHaveLength(1);
-      expect(rows()[0]).toMatchObject({ requested_by: ACTOR, status: "succeeded", location_id: SHOP });
-      expect(h.rpcCalls[0]).toBe("catering_refund_reserve");
-      expect(vi.mocked(audit).mock.calls.some(([a]) => a.action === "catering.refund.stripe_result" && a.actorRole === role)).toBe(true);
-    }
+    };
+    const first = await runRefundPass(h.client as never, x.pay.id, { deadlineMs: DEADLINE() });
+    expect([competing, first.result]).toEqual(["busy", "applied"]);
+    expect(x.stripe.posts).toBe(0);
   });
 
-  it("a full refund of the order by a GM is one Stripe refund per payment, like every other refunder's", async () => {
-    const out = await requestRefund(actor("gm"), QUOTE, body());
-    expect(out.results.map((r) => [r.paymentId, r.amountCents, r.status])).toEqual([[BAL, 70000, "succeeded"], [DEP, 30000, "succeeded"]]);
-    await expect(requestRefund(actor("gm"), QUOTE, body({ clientToken: "22222222-2222-4222-8222-222222222222", amountCents: 1 }))).rejects.toMatchObject({ status: 409, code: "nothing_refundable" });
+  it("equal_clock_competing_applies: new evidence between the pass and the arm makes the arm stale: nothing is sent, the row stays pending, never armed", async () => {
+    await setup({
+      rpc: {
+        catering_refund_arm: async (args) => {
+          await harnessKit.ingest(x.db, { pi: x.pay.pi, created: Math.floor(Date.now() / 1000) - 5, cumulative: 1000, chargeAmount: 30000, full: false });
+          return through("catering_refund_arm", args) as never;
+        },
+      },
+    });
+    const out = await requestRefund(await actorFor(x.w, "owner"), x.quote, body(10000), DEADLINE());
+    expect(x.stripe.posts).toBe(0);
+    const row = await req(x.db, out.results[0]!.id);
+    expect([row.status, row.create_armed_at, row.claim_token]).toEqual(["pending", null, null]);
+    expect(out.results[0]!.status).toBe("pending");
   });
 
-  it("summary.canRefund follows the same rule: member GM / AGM yes, other level-6 managers no, another shop never sees it", async () => {
-    for (const role of ["gm", "agm", "catering_mgr", "moo"]) expect([role, (await loadRefundSummary(actor(role), QUOTE)).canRefund]).toEqual([role, true]);
-    for (const role of ["owner", "cgs"]) expect([role, (await loadRefundSummary(actor(role, []), QUOTE)).canRefund]).toEqual([role, true]);
-    for (const role of ["prep_mgr", "social_media_mgr", "shift_lead"]) expect([role, (await loadRefundSummary(actor(role), QUOTE)).canRefund]).toEqual([role, false]);
-    for (const role of ["gm", "agm", "catering_mgr", "moo"]) {
-      await expect(loadRefundSummary(actor(role, [OTHER]), QUOTE), role).rejects.toMatchObject({ status: 404 });
-    }
+  it("stale_defer: a defer under a token that is not the staged one writes nothing; nothing is sent", async () => {
+    await setup();
+    const begun = await harnessKit.rpc(x.db, "catering_refund_pass_begin", [harnessLib.CALLER, x.pay.id, crypto.randomUUID()]);
+    const before = await work(x.db, x.pay.id);
+    expect((await harnessKit.rpc(x.db, "catering_refund_defer", [harnessLib.CALLER, x.pay.id, crypto.randomUUID(), "contention", 600])).result).toBe("stale_generation");
+    const after = await work(x.db, x.pay.id);
+    expect([after.deferrals, String(after.next_due_at), after.pass_token]).toEqual([before.deferrals, String(before.next_due_at), begun.pass_token]);
+    expect(x.stripe.posts).toBe(0);
   });
 
-  it("a GM of BOTH shops refunds this shop's order; the row is this shop's", async () => {
-    const out = await requestRefund(actor("gm", [OTHER, SHOP]), QUOTE, body({ amountCents: 700 }));
-    expect(out.results[0]).toMatchObject({ status: "succeeded", amountCents: 700 });
-    expect(rows()[0]!.location_id).toBe(SHOP);
-  });
-
-  it("a STALE session: a GM whose membership was switched off is refused by the SQL rule (403), and nothing is sent", async () => {
-    for (const role of ["gm", "agm"]) {
-      seed();
-      const a = actor(role); // the session still lists the shop…
-      (h.db.tables.user_locations as Row[])[0]!.active = false; // …the membership row no longer does
-      await expect(requestRefund(a, QUOTE, body()), role).rejects.toMatchObject({ status: 403, code: "forbidden" });
-      expect(h.rpcCalls).toEqual(["catering_refund_reserve"]); // the app let it through; the database refused
-      expect(rows()).toHaveLength(0);
-      expect(stripe.creates).toHaveLength(0);
-    }
-  });
-
-  it("a STALE session: a membership moved to another shop, or a deactivated GM, is refused the same way", async () => {
-    const a = actor("gm");
-    (h.db.tables.user_locations as Row[])[0]!.location_id = OTHER;
-    await expect(requestRefund(a, QUOTE, body())).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    const b = actor("gm");
-    (h.db.tables.users as Row[])[0]!.active = false;
-    await expect(requestRefund(b, QUOTE, body())).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    // A session that says GM for a person the database now calls a prep manager (demoted since sign-in).
-    const c = actor("gm");
-    (h.db.tables.users as Row[])[0]!.role = "prep_mgr";
-    await expect(requestRefund(c, QUOTE, body())).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    expect(rows()).toHaveLength(0);
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("Retry / Check Stripe by a GM or an AGM: a lost answer is found and nothing is sent twice", async () => {
-    for (const role of ["gm", "agm"]) {
-      seed();
-      stripe.nextCreate = ["network_lost_after_executing"];
-      const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-      expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "network_error" });
-      const r = await retryRefundRequest(actor(role), QUOTE, rows()[0]!.id as string);
-      expect(r.status).toBe("succeeded");
-      expect(stripe.creates).toHaveLength(1);
-      expect(stripe.refunds).toHaveLength(1);
-      expect(h.rpcCalls).toContain("catering_refund_actor_ok");
-    }
-  });
-
-  it("Retry re-sends the SAME key for a GM when nothing landed", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("agm"), QUOTE, body({ amountCents: 2000 }));
-    const id = rows()[0]!.id as string;
-    const r = await retryRefundRequest(actor("gm"), QUOTE, id);
-    expect(r.status).toBe("succeeded");
-    expect(stripe.creates.map((c) => c.key)).toEqual([`catering-refund:${id}`, `catering-refund:${id}`]);
-    expect(stripe.refunds).toHaveLength(1);
-  });
-
-  it("Retry and Release with a STALE session are refused by the SQL re-check before any claim: 403, nothing sent", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const id = rows()[0]!.id as string;
-    for (const mode of ["retry", "release"] as const) {
-      const a = actor("gm");
-      (h.db.tables.user_locations as Row[])[0]!.active = false;
-      h.rpcCalls = [];
-      await expect(retryRefundRequest(a, QUOTE, id, Date.now(), mode), mode).rejects.toMatchObject({ status: 403, code: "forbidden" });
-      expect(h.rpcCalls).toEqual(["catering_refund_actor_ok"]);
-    }
-    expect(stripe.creates).toHaveLength(1); // only the first tap's send
-    expect(rows()[0]).toMatchObject({ status: "pending", attempts: 1 });
-    // A refused role at the shop, and another shop's GM, never reach the database on this path either.
-    h.rpcCalls = [];
-    await expect(retryRefundRequest(actor("prep_mgr"), QUOTE, id)).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    await expect(retryRefundRequest(actor("gm", [OTHER]), QUOTE, id)).rejects.toMatchObject({ status: 404, code: "not_found" });
-    expect(h.rpcCalls).toEqual([]);
-  });
-});
-
-describe("deploy order: the NEW app on 0357's SQL rule (the app deployed before migration 0358)", () => {
-  beforeEach(() => { h.sqlRule = "0357"; });
-
-  it("a GM / AGM passes the app's gate and the database refuses: 403 forbidden, no row, nothing reaches Stripe", async () => {
-    for (const role of ["gm", "agm"]) {
-      seed();
-      h.sqlRule = "0357";
-      await expect(requestRefund(actor(role), QUOTE, body()), role).rejects.toMatchObject({ status: 403, code: "forbidden" });
-      expect(h.rpcCalls).toEqual(["catering_refund_reserve"]);
-      expect(rows()).toHaveLength(0);
-      expect(stripe.creates).toHaveLength(0);
-      expect(stripe.refunds).toHaveLength(0);
-    }
-  });
-
-  it("Retry and Release on someone else's pending row: refused by the SQL re-check, nothing claimed or sent", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 })); // 0357 still lets a catering manager
-    const id = rows()[0]!.id as string;
-    for (const role of ["gm", "agm"]) {
-      for (const mode of ["retry", "release"] as const) {
-        h.rpcCalls = [];
-        await expect(retryRefundRequest(actor(role), QUOTE, id, Date.now(), mode), `${role} ${mode}`).rejects.toMatchObject({ status: 403, code: "forbidden" });
-        expect(h.rpcCalls).toEqual(["catering_refund_actor_ok"]);
+  it("LEAD_MUST_FIX stale_defer_after_new_evidence: a pass whose list fails AFTER new event evidence moved the generation must not push the new work's due time back", async () => {
+    // DEFECT (left failing on purpose): `catering_refund_defer` (0359 ~line 2190) is fenced on the pass TOKEN only, not
+    // on the generation, and ingress bumps the generation without clearing the staged token. So a pass that went stale
+    // (a signed event arrived mid-pass and made its work due AT ONCE) still writes its defer: deferrals + 1 and
+    // next_due_at = now + retry seconds — the stale read overwrites the newer evidence's due time (the reconciler's
+    // header: "a read that went stale in between [is] a named stale_generation, never an overwrite").
+    await setup();
+    await runRefundPass(h.client as never, x.pay.id, { deadlineMs: DEADLINE() });
+    const before = await work(x.db, x.pay.id);
+    let dueAfterEvent: unknown = null;
+    x.stripe.onCall = async (op) => {
+      if (op === "list") {
+        x.stripe.onCall = null;
+        await harnessKit.ingest(x.db, { pi: x.pay.pi, created: Math.floor(Date.now() / 1000) - 5, cumulative: 1000, chargeAmount: 30000, full: false });
+        dueAfterEvent = (await work(x.db, x.pay.id)).next_due_at;
+        x.stripe.failNext("list", "network");
       }
-    }
-    expect(stripe.creates).toHaveLength(1);
-    expect(rows()[0]).toMatchObject({ status: "pending", attempts: 1 });
-  });
-
-  it("stated consequence: the panel offers the button (the app's list) and the press answers 403 until 0358 is applied", async () => {
-    expect((await loadRefundSummary(actor("gm"), QUOTE)).canRefund).toBe(true);
-    await expect(requestRefund(actor("gm"), QUOTE, body())).rejects.toMatchObject({ status: 403 });
-  });
-
-  it("everyone 0357 allowed still refunds", async () => {
-    for (const [role, locations] of [["catering_mgr", [SHOP]], ["moo", [SHOP]], ["owner", []], ["cgs", []]] as const) {
-      seed();
-      h.sqlRule = "0357";
-      const out = await requestRefund(actor(role, [...locations]), QUOTE, body({ amountCents: 300 }));
-      expect([role, out.results[0]!.status]).toEqual([role, "succeeded"]);
-    }
+    };
+    const r = await runRefundPass(h.client as never, x.pay.id, { deadlineMs: DEADLINE() });
+    expect(r.result).toBe("deferred");
+    const after = await work(x.db, x.pay.id);
+    expect(x.stripe.posts).toBe(0);
+    expect(after.deferrals).toBe(before.deferrals);
+    expect(String(after.next_due_at)).toBe(String(dueAfterEvent));
   });
 });

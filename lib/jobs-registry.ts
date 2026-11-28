@@ -46,6 +46,9 @@ export const JOBS_REGISTRY = [
   // Hourly all day, including the 03:00 ET fallback in both DST states.
   // Window matches DIGEST_TICK_WINDOW; two hours of grace for the first heartbeat.
   { job: "digest-tick", cadenceMinutes: 60, window: { startHourET: 0, endHourET: 24 }, source: "vercel" },
+  // Catering refunds B1: the 15-minute refund sweep, all day. Watched CONDITIONALLY (lib/job-watch-run.ts): only
+  // while CATERING_REFUNDS=1 and the epoch is recovering / live / draining, expected no earlier than the epoch opened.
+  { job: "catering-refund-sweep", cadenceMinutes: 15, window: { startHourET: 0, endHourET: 24 }, source: "vercel" },
 ] as const satisfies readonly RegisteredJob[];
 
 export type JobName = (typeof JOBS_REGISTRY)[number]["job"];

@@ -483,7 +483,7 @@ export interface CreateRefundInput {
  * parameters to those of the original request and errors if they're not the same" (docs.stripe.com/api/idempotent_requests).
  * No response throws StripeError(0, "network_error"); every non-2xx throws with its HTTP status.
  */
-export async function createRefund(secretKey: string, input: CreateRefundInput, idempotencyKey: string): Promise<StripeRefund> {
+export async function createRefund(secretKey: string, input: CreateRefundInput, idempotencyKey: string, timeoutMs: number = 20_000): Promise<StripeRefund> {
   if (!secretKey) throw new StripeError(500, "not_configured", "Stripe secret key is not set");
   if (!PAYMENT_INTENT_ID_RE.test(input.paymentIntentId)) throw new StripeError(400, "bad_payment_intent_id", "Not a PaymentIntent id");
   if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new StripeError(400, "bad_amount", "A refund amount is a positive integer");
@@ -507,7 +507,8 @@ export async function createRefund(secretKey: string, input: CreateRefundInput, 
       },
       body: encodeForm(params),
       cache: "no-store",
-      signal: AbortSignal.timeout(20_000),
+      // `timeoutMs` (Part B1): the caller's remaining claim / resend window / route budget; main's 20 s by default.
+      signal: AbortSignal.timeout(Math.min(Math.max(timeoutMs, 1), 20_000)),
     });
   } catch (e) {
     // No response: Stripe may or may not have executed it. The caller keeps the row pending.
@@ -552,4 +553,165 @@ export async function retrieveRefund(secretKey: string, refundId: string): Promi
   const refund = parseRefund(read.json);
   if (!refund) throw new StripeError(502, "bad_payload", "Stripe returned no refund id");
   return refund;
+}
+
+// ── Strict refund evidence (catering refunds Part B1, migration 0359; lib/catering/refund-reconcile.ts) ───────
+//
+// GETs only. The reconciler's evidence contract trusts nothing a response does not PROVE, so these three reads refuse
+// a malformed answer by name (`refund_evidence_malformed`) instead of reading around it, carry a per-call deadline
+// (the caller's remaining claim, resend window and route budget), and tell a 404 apart from a failure to ask:
+//   · GET /v1/payment_intents/:id?expand[]=latest_charge — "ID of the latest Charge object created by this
+//     PaymentIntent"; the Charge's `amount_captured` is "Amount in the smallest currency unit captured"
+//     (docs.stripe.com/api/payment_intents/object, docs.stripe.com/api/charges/object);
+//   · GET /v1/refunds?payment_intent=… ONE page: "Only return refunds for the PaymentIntent specified by this ID";
+//     `has_more`: "If `false`, this set comprises the end of the list" (docs.stripe.com/api/refunds/list,
+//     docs.stripe.com/api/pagination);
+//   · GET /v1/refunds/:id — "Retrieves the details of an existing refund" (docs.stripe.com/api/refunds/retrieve). The
+//     Refund's `charge` is "ID of the charge that's refunded", `created` is "Time at which the object was created",
+//     `status` "can be `pending`, `requires_action`, `succeeded`, `failed`, or `canceled`" (docs.stripe.com/api/refunds/object).
+// A 404 means "THIS key cannot see it" and nothing more (see `retireCheckoutSession`): the caller asks every
+// permitted account before it draws any conclusion. What a 404 says about the OWNING account is UNVERIFIED.
+
+/** A provider id this build does not have to recognise: bounded, URL-safe, never interpolated unencoded. */
+const OPAQUE_STRIPE_ID_RE = /^[A-Za-z0-9_]{1,255}$/;
+const UUID_META_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const REFUND_EVIDENCE_MALFORMED = "refund_evidence_malformed";
+
+export interface StrictRefund {
+  id: string;
+  paymentIntentId: string | null;
+  chargeId: string | null;
+  /** A safe positive integer of cents. */
+  amountCents: number;
+  currency: string;
+  /** Stripe's own status, verbatim (an unfamiliar value is kept, bounded). */
+  status: string | null;
+  /** The refund's own `created`, epoch seconds. */
+  createdSec: number;
+  /** `metadata.refund_request_id` / `payment_id` / `quote_id` exactly as written, when each is a UUID. */
+  requestId: string | null;
+  metaPaymentId: string | null;
+  metaQuoteId: string | null;
+}
+
+function strictId(v: unknown): string | null {
+  const id = typeof v === "string" ? v : v && typeof v === "object" && !Array.isArray(v) ? (v as { id?: unknown }).id : null;
+  return typeof id === "string" && OPAQUE_STRIPE_ID_RE.test(id) ? id : null;
+}
+
+/** One Refund object, or null when ANY required fact is missing or ill-formed. Bare or expanded ids both read. */
+export function parseStrictRefund(json: unknown): StrictRefund | null {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return null;
+  const o = json as Record<string, unknown>;
+  if (o.object !== undefined && o.object !== "refund") return null;
+  const id = strictId(o.id);
+  if (!id) return null;
+  if (typeof o.amount !== "number" || !Number.isSafeInteger(o.amount) || o.amount <= 0) return null;
+  if (typeof o.currency !== "string" || !/^[a-z]{3}$/.test(o.currency)) return null;
+  if (typeof o.created !== "number" || !Number.isSafeInteger(o.created) || o.created <= 0) return null;
+  if (o.status !== null && o.status !== undefined && (typeof o.status !== "string" || o.status.length === 0 || o.status.length > 40)) return null;
+  // Present-but-unreadable ids are malformed; absent ones are simply absent.
+  const pi = o.payment_intent === null || o.payment_intent === undefined ? null : strictId(o.payment_intent);
+  if (o.payment_intent !== null && o.payment_intent !== undefined && !pi) return null;
+  const charge = o.charge === null || o.charge === undefined ? null : strictId(o.charge);
+  if (o.charge !== null && o.charge !== undefined && !charge) return null;
+  if (o.metadata !== null && o.metadata !== undefined && (typeof o.metadata !== "object" || Array.isArray(o.metadata))) return null;
+  const meta = (o.metadata ?? {}) as Record<string, unknown>;
+  const uuid = (v: unknown) => (typeof v === "string" && UUID_META_RE.test(v) ? v.toLowerCase() : null);
+  return {
+    id, paymentIntentId: pi, chargeId: charge, amountCents: o.amount, currency: o.currency,
+    status: typeof o.status === "string" ? o.status : null, createdSec: o.created,
+    requestId: uuid(meta.refund_request_id), metaPaymentId: uuid(meta.payment_id), metaQuoteId: uuid(meta.quote_id),
+  };
+}
+
+async function stripeGet(secretKey: string, url: string, timeoutMs: number): Promise<{ status: number; ok: boolean; json: Record<string, unknown> | null }> {
+  if (!secretKey) throw new StripeError(500, "not_configured", "Stripe secret key is not set");
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 250) throw new StripeError(0, "deadline_exhausted", "No time left for this Stripe read");
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${secretKey}`, "Stripe-Version": apiVersion() },
+      cache: "no-store",
+      signal: AbortSignal.timeout(Math.min(timeoutMs, 20_000)),
+    });
+  } catch (e) {
+    throw new StripeError(0, "network_error", e instanceof Error ? e.message : String(e));
+  }
+  const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  return { status: res.status, ok: res.ok, json };
+}
+
+export interface PaymentIntentOwner {
+  status: "found" | "not_found";
+  chargeId: string | null;
+  currency: string | null;
+  livemode: boolean | null;
+  /** The charge's `amount_captured`; null when the answer does not carry a usable one. */
+  amountCapturedCents: number | null;
+}
+
+/** Does THIS account own the PaymentIntent, and what are its immutable facts? THROWS StripeError on anything but 2xx / 404. */
+export async function retrievePaymentIntentOwner(secretKey: string, paymentIntentId: string, timeoutMs = 20_000): Promise<PaymentIntentOwner> {
+  if (!PAYMENT_INTENT_ID_RE.test(paymentIntentId)) throw new StripeError(400, "bad_payment_intent_id", "Not a PaymentIntent id");
+  const read = await stripeGet(secretKey, `${STRIPE_API}/payment_intents/${paymentIntentId}?expand%5B%5D=latest_charge`, timeoutMs);
+  if (read.status === 404) return { status: "not_found", chargeId: null, currency: null, livemode: null, amountCapturedCents: null };
+  if (!read.ok) throw stripeErrorFrom(read.status, read.json);
+  if (!read.json || read.json.id !== paymentIntentId) throw new StripeError(502, REFUND_EVIDENCE_MALFORMED, "Stripe answered with another PaymentIntent");
+  const charge = read.json.latest_charge;
+  const c = charge && typeof charge === "object" && !Array.isArray(charge) ? (charge as Record<string, unknown>) : null;
+  const currency = typeof read.json.currency === "string" && /^[a-z]{3}$/.test(read.json.currency) ? read.json.currency : null;
+  const captured = c && typeof c.amount_captured === "number" && Number.isSafeInteger(c.amount_captured) && c.amount_captured >= 0 ? c.amount_captured : null;
+  return {
+    status: "found", chargeId: strictId(charge), currency,
+    livemode: typeof read.json.livemode === "boolean" ? read.json.livemode : null, amountCapturedCents: captured,
+  };
+}
+
+export interface RefundListPage {
+  refunds: StrictRefund[];
+  /** Stripe's own `has_more`: false = an EXPLICIT terminal page. */
+  hasMore: boolean;
+  /** The cursor for the next page (the last object's id). Null on an empty page. */
+  lastId: string | null;
+}
+
+/**
+ * ONE page of a PaymentIntent's refunds. THROWS `refund_evidence_malformed` unless the answer has a real `data`
+ * array, a boolean `has_more`, and every object is a well-formed refund OF THIS PaymentIntent with no id repeated in
+ * the page; a non-terminal page must carry a cursor. Cross-page rules (a repeated id or cursor) are the caller's.
+ */
+export async function listRefundsPageStrict(secretKey: string, paymentIntentId: string, startingAfter: string | null, timeoutMs = 20_000): Promise<RefundListPage> {
+  if (!PAYMENT_INTENT_ID_RE.test(paymentIntentId)) throw new StripeError(400, "bad_payment_intent_id", "Not a PaymentIntent id");
+  if (startingAfter !== null && !OPAQUE_STRIPE_ID_RE.test(startingAfter)) throw new StripeError(400, "bad_cursor", "Not a list cursor");
+  const cursor = startingAfter ? `&starting_after=${encodeURIComponent(startingAfter)}` : "";
+  const read = await stripeGet(secretKey, `${STRIPE_API}/refunds?payment_intent=${encodeURIComponent(paymentIntentId)}&limit=100${cursor}`, timeoutMs);
+  if (!read.ok) throw stripeErrorFrom(read.status, read.json);
+  const malformed = (why: string) => new StripeError(502, REFUND_EVIDENCE_MALFORMED, why);
+  if (!read.json || !Array.isArray(read.json.data) || typeof read.json.has_more !== "boolean") throw malformed("The refund list has no data array or no has_more");
+  const refunds: StrictRefund[] = [];
+  const seen = new Set<string>();
+  for (const d of read.json.data as unknown[]) {
+    const r = parseStrictRefund(d);
+    if (!r) throw malformed("The refund list carries a malformed refund");
+    if (r.paymentIntentId !== paymentIntentId) throw malformed("The refund list carries a refund of another PaymentIntent");
+    if (seen.has(r.id)) throw malformed("The refund list repeats an id");
+    seen.add(r.id);
+    refunds.push(r);
+  }
+  const lastId = refunds.length > 0 ? refunds[refunds.length - 1]!.id : null;
+  if (read.json.has_more && (!lastId || lastId === startingAfter)) throw malformed("A non-terminal page has no advancing cursor");
+  return { refunds, hasMore: read.json.has_more, lastId };
+}
+
+/** An EXACT read of one refund by a bounded, safely encoded opaque id. `not_found` = this key cannot see it. */
+export async function retrieveRefundStrict(secretKey: string, refundId: string, timeoutMs = 20_000): Promise<{ status: "found"; refund: StrictRefund } | { status: "not_found" }> {
+  if (!OPAQUE_STRIPE_ID_RE.test(refundId)) throw new StripeError(400, "bad_refund_id", "Not a refund id");
+  const read = await stripeGet(secretKey, `${STRIPE_API}/refunds/${encodeURIComponent(refundId)}`, timeoutMs);
+  if (read.status === 404) return { status: "not_found" };
+  if (!read.ok) throw stripeErrorFrom(read.status, read.json);
+  const refund = parseStrictRefund(read.json);
+  if (!refund || refund.id !== refundId) throw new StripeError(502, REFUND_EVIDENCE_MALFORMED, "Stripe answered with a malformed or different refund");
+  return { status: "found", refund };
 }

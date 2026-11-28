@@ -49,7 +49,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { paymentsFake, sameMigrationState, type PaymentsFake, type Row } from "./payments-fake-client";
 import { stripeFake, type StripeFake } from "./stripe-fake";
@@ -1733,5 +1733,165 @@ describe("W02 review r8 — the money-status axis: every gate that reads `status
     stripe.retires.length = 0;
     expect(refusalOf(await settled(markPaid(DEPOSIT)))).toEqual({ status: 409, code: "not_due" });
     expect(stripe.retires).toEqual([]);
+  });
+});
+
+// ── Catering refunds Part B1 (0359): the refund flow with CATERING_REFUNDS ON ─────────────────────────────────────
+//
+// With the switch ON the matrix's "refund" flow is a different flow: a refund event becomes durable WORK in 0359
+// (`catering_refund_event_register`, one row per event id, verdict `refund_state_owed`) and writes NO payment row;
+// a settlement ATTACHES events seen first (`catering_refund_settlement_attach`) and applies nothing. The only writer of
+// `catering_payments.status` on that path is 0359's `catering_refund_apply_inner`, under its payment lock — so every
+// "× refund" pair of the matrix above is, ON, serialized by that lock inside ONE financial writer, not by a CAS here.
+// What can be shown without the real SQL is below: the ON refund flow beside the card flows, with 0359's two ingress
+// functions answered by a stand-in that records the calls (the fake knows no 0359 function, exactly like a database
+// without it).
+//
+// The Part B interleavings plan B1.6 lists that NEED the real SQL are in scripts/sql-harness-0359.mjs (PGlite, the
+// REAL 0357 -> 0358 -> 0359), by these named tests (pinned to exist below):
+//   · a deliberately aborted / stale late apply, a stale defer, equal-clock competing applies
+//       -> generation_fencing_stale_apply_defer_and_equal_clock
+//   · released / armed races -> released_request_late_success_staff_review_no_second_create, arm_rechecks_everything
+//   · an accepted POST followed by immediate process death -> prior_claim_without_arm_is_not_a_prior_send,
+//       split_tap_dies_after_first_row_second_is_raised_never_posted, arm_epoch1_first_success_epoch2
+//   · an omitted bound id (an id-less floor) -> idless_floor_refund_fails_before_first_list_unblocks,
+//       idless_charge_crash_empty_empty_third_list_covers_floor
+//   · the actual checkout attach while a stale whole-charge event is parked -> aged_no_payment_reawakened_by_settlement,
+//       parked_event_restamped_at_seal_settles_under_off
+//   · ingress racing the stop / a historical seed -> ingress_racing_stop_is_applied_or_retryable,
+//       live_ingress_racing_historical_seed_keeps_its_floor
+//   · every request transition read back through the stored view -> request_transitions_and_stored_view
+// Pagination past capacity is a provider-read sequence (fake Stripe HTTP), proved in the reconciler's vitest suites,
+// not here and not in the SQL harness. The two-session lock order is CC's sim proof, scripts/sim/refund-0359-lock-check.mjs.
+
+const HARNESS_0359_INTERLEAVINGS = [
+  "generation_fencing_stale_apply_defer_and_equal_clock", "released_request_late_success_staff_review_no_second_create", "arm_rechecks_everything",
+  "prior_claim_without_arm_is_not_a_prior_send", "split_tap_dies_after_first_row_second_is_raised_never_posted", "arm_epoch1_first_success_epoch2",
+  "idless_floor_refund_fails_before_first_list_unblocks", "idless_charge_crash_empty_empty_third_list_covers_floor",
+  "aged_no_payment_reawakened_by_settlement", "parked_event_restamped_at_seal_settles_under_off", "ingress_racing_stop_is_applied_or_retryable",
+  "live_ingress_racing_historical_seed_keeps_its_floor", "request_transitions_and_stored_view",
+];
+
+describe("refund B1 (0359) — interleavings: the refund flow with CATERING_REFUNDS ON", () => {
+  const pi = (session: string) => `pi_${session}`;
+  type Settled = { data: unknown; error: { code?: string; message: string } | null; count?: number | null };
+  type IngressRpc = "catering_refund_event_register" | "catering_refund_settlement_attach";
+  /** 0359's ingress functions, as the stand-in answers them. Unset = the fake's own answer (PGRST202: no 0359). */
+  let answers: Partial<Record<IngressRpc, (args: Row) => Settled>> = {};
+  let refundCalls: Array<{ name: string; args: Row }> = [];
+  /** Event ids 0359 has registered (its work row is keyed on the event id: a second registration is a duplicate). */
+  let registered = new Set<string>();
+  const priorSwitch = process.env.CATERING_REFUNDS;
+
+  /** The connection of the running flow, with 0359's two ingress functions answered by the stand-in. */
+  const onClient = (): never => {
+    const c = here().client as unknown as { from: unknown; rpc: (name: string, args?: Row) => Promise<Settled> };
+    return {
+      from: c.from,
+      rpc: async (name: string, args: Row = {}) => {
+        if (name === "catering_refund_event_register" || name === "catering_refund_settlement_attach") {
+          refundCalls.push({ name, args });
+          const answer = answers[name];
+          if (answer) return answer(args);
+        }
+        return c.rpc(name, args);
+      },
+    } as never;
+  };
+  const webhookOn = (event: unknown) => processStripeEvent(onClient(), event, SINGLE, { notifyPaid });
+  /** 0359's registration: work keyed on the event id, and the ledger verdict stamped in the same transaction. */
+  const registerAnswer = (args: Row): Settled => {
+    const id = args.p_event_id as string;
+    const duplicate = registered.has(id);
+    registered.add(id);
+    const row = db.tables.stripe_events!.find((r) => r.id === id);
+    if (row && (row.outcome == null || row.outcome === "processing_failed")) row.outcome = "refund_state_owed";
+    return { data: { result: duplicate ? "duplicate" : "registered", state: "unmatched", payment_id: null, location_id: null, floor: false }, error: null };
+  };
+  const paymentWrites = () => db.ops.filter((o) => o.table === "catering_payments" && o.kind === "update");
+  const refundWrites = () => paymentWrites().filter((o) => (o.payload as Row | null)?.status === "refunded");
+
+  beforeEach(() => {
+    process.env.CATERING_REFUNDS = "1";
+    answers = { catering_refund_event_register: registerAnswer };
+    refundCalls = [];
+    registered = new Set();
+  });
+  afterEach(() => {
+    if (priorSwitch === undefined) delete process.env.CATERING_REFUNDS;
+    else process.env.CATERING_REFUNDS = priorSwitch;
+  });
+
+  it("refund (ON) × webhook completed — the refund is processed FIRST: it becomes durable work (`refund_state_owed`) and writes no payment row; the settlement ATTACHES it and applies nothing — the row stays `paid` for 0359's one financial writer", async () => {
+    answers.catering_refund_settlement_attach = () => ({ data: { result: "attached", events: [...registered], floors: 1 }, error: null });
+    seedDeposit();
+    const session = await sessionFor(DEPOSIT, 20000);
+
+    const early = await webhookOn(refundEvent(pi(session), whole(20000), "evt_refund_on"));
+    expect(early.result).toBe("refund_state_owed");
+    expect(ledger("evt_refund_on").outcome).toBe("refund_state_owed");
+    expect(rowOf(DEPOSIT).status).toBe("due");
+
+    await webhookOn(paidEvent(session));
+
+    // The payment is recorded; the refund is NOT applied inline (main, OFF, moves it to `refunded` here).
+    expect(rowOf(DEPOSIT)).toMatchObject({ status: "paid", provider_ref: pi(session) });
+    expect(refundWrites()).toEqual([]);
+    expect(audits("catering.payment.provider_refunded")).toEqual([]);
+    // The settlement handed the seen-first event to 0359 (under its payment lock), for THIS payment.
+    expect(refundCalls.map((c) => [c.name, c.args.p_payment_id ?? c.args.p_event_id])).toEqual([
+      ["catering_refund_event_register", "evt_refund_on"],
+      ["catering_refund_settlement_attach", DEPOSIT],
+    ]);
+    // …and the person is still told a refund was seen first.
+    expect(metaOf("catering.payment.provider_paid")[0]).toMatchObject({ needs_review: expect.arrayContaining(["refund_seen_first"]) });
+  });
+
+  it("refund (ON) × refund (ON) — two deliveries of one refund event at once: both are acknowledged, the work is registered under ONE event id, and NEITHER writes a payment row", async () => {
+    seedDeposit({ status: "paid", provider: "stripe", provider_ref: "pi_dep", settlement_cleanup_at: "2026-11-02T00:00:01.000Z" });
+    const event = refundEvent("pi_dep", whole(20000), "evt_refund_twice");
+    const isLedgerAppend = (s: Step) => s.table === "stripe_events" && s.kind === "insert";
+
+    const out = await interleave(() => webhookOn(event), isLedgerAppend, () => webhookOn(event));
+
+    expect(["refund_state_owed", "duplicate"]).toContain(valueOf(out.first).result);
+    expect(valueOf(out.second).result).toBe("refund_state_owed");
+    expect(registered).toEqual(new Set(["evt_refund_twice"]));
+    expect(paymentWrites()).toEqual([]);
+    expect(rowOf(DEPOSIT).status).toBe("paid"); // money moves only through the reconciler's pass, never here
+    expect(ledger("evt_refund_twice").outcome).toBe("refund_state_owed");
+  });
+
+  it("refund (ON), 0359 missing — ingress cannot be made durable: the retryable `processing_failed`, no payment row written, and the legacy whole-charge writer is NEVER the fallback", async () => {
+    delete answers.catering_refund_event_register; // the fake has no 0359: PGRST202
+    seedDeposit({ status: "paid", provider: "stripe", provider_ref: "pi_dep", settlement_cleanup_at: "2026-11-02T00:00:01.000Z" });
+
+    const out = await webhookOn(refundEvent("pi_dep", whole(20000), "evt_refund_noschema"));
+
+    expect(out.result).toBe("processing_failed");
+    expect(ledger("evt_refund_noschema").outcome).toBe("processing_failed");
+    expect(paymentWrites()).toEqual([]);
+    expect(rowOf(DEPOSIT).status).toBe("paid");
+    expect(audits("catering.payment.provider_refunded")).toEqual([]);
+  });
+
+  it("webhook completed (ON) × a refund seen first whose ATTACH fails — the settlement is not recorded as done (the marker stays NULL), and nothing is applied", async () => {
+    answers.catering_refund_settlement_attach = () => ({ data: null, error: { code: "XX000", message: "connection reset" } });
+    seedDeposit();
+    const session = await sessionFor(DEPOSIT, 20000);
+    await webhookOn(refundEvent(pi(session), whole(20000), "evt_refund_attach_fails"));
+
+    const out = await webhookOn(paidEvent(session));
+
+    expect(out.result).toBe("settlement_incomplete"); // not a terminal verdict: the same event, redelivered, attaches it
+    expect(rowOf(DEPOSIT).status).toBe("paid");
+    expect(rowOf(DEPOSIT).settlement_cleanup_at ?? null).toBeNull();
+    expect(refundWrites()).toEqual([]);
+    expect(metaOf("catering.payment.provider_paid")[0]).toMatchObject({ needs_review: expect.arrayContaining(["refund_check_failed"]) });
+  });
+
+  it("the Part B interleavings that need the real SQL are named tests of scripts/sql-harness-0359.mjs (the list in the comment above)", () => {
+    const harness = readFileSync(join(ROOT, "scripts/sql-harness-0359.mjs"), "utf8");
+    for (const name of HARNESS_0359_INTERLEAVINGS) expect(harness, name).toMatch(new RegExp(`^(stage|test)\\("${name}"`, "m"));
   });
 });

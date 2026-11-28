@@ -99,6 +99,11 @@ export const DESTRUCTIVE_ACTIONS = [
   // Catering refund step — SQL-only (migration 0357 catering_refund_reserve; destructive literally true): a person asked
   // CO-OPS to give a customer's money back through Stripe (who, the order, the payment, the amount, the reason).
   "catering.refund.request",
+  // Catering refunds Part B1 — SQL-only (migration 0359; destructive literally true): a person dispositioned a refund
+  // issue behind a fresh Tier B (the accountability record of an exit from a money hold), and the operator break-glass
+  // close of a refund epoch that could not drain.
+  "catering.refund.disposition",
+  "catering.refund.break_glass",
   // W23/B129, owner decision W23-4 b — SQL-only (migration 0330): an EMPTY duplicate catering company
   // (no domain, no contact, a same-name company created after it) is switched off (active = false,
   // reversible). One row per company, destructive literally true, actor_context migration_apply.

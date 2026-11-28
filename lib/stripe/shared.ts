@@ -399,6 +399,78 @@ export function parseCheckoutEvent(event: unknown): CheckoutEventOutcome {
   };
 }
 
+// ── Refund ingress (catering refunds Part B1, migration 0359) — OPT-IN ───────────────────────────────
+
+/**
+ * The refund events the ON path makes durable. Stripe: `refund.created` "Occurs whenever a refund is created",
+ * `refund.updated` "Occurs whenever a refund is updated", `refund.failed` "Occurs whenever a refund has failed"
+ * (docs.stripe.com/api/events/types); `charge.refund.updated` is the deprecated compatibility event
+ * ("`charge.refund.updated` (Deprecated)", docs.stripe.com/refunds#refund-events) and is still accepted.
+ */
+export const REFUND_INGRESS_TYPES = ["charge.refunded", "refund.created", "refund.updated", "refund.failed", "charge.refund.updated"] as const;
+export type RefundIngressType = (typeof REFUND_INGRESS_TYPES)[number];
+
+export interface RefundIngress {
+  eventId: string;
+  type: RefundIngressType;
+  livemode: boolean;
+  /** The event's own signed `created` (epoch seconds), or null when the payload carries none. */
+  createdSec: number | null;
+  paymentIntentId: string | null;
+  chargeId: string | null;
+  /** `charge.refunded` only: the charge's CUMULATIVE `amount_refunded`, its `amount`, and Stripe's `refunded` flag. */
+  cumulativeCents: number | null;
+  chargeAmountCents: number | null;
+  fullyRefunded: boolean | null;
+  /** Refund ids this event names (the refund object itself, or a charge's embedded refunds, even when partial). */
+  hints: Array<{ id: string; status: string | null }>;
+}
+
+const INGRESS_ID_RE = /^[A-Za-z0-9_]{1,255}$/;
+const INGRESS_PI_RE = /^pi_[A-Za-z0-9_]{1,250}$/;
+
+/**
+ * Read one of the five refund events for durable ingress, or null when the event is not one of them (or has no
+ * usable id): the caller then handles it exactly as before. NEVER THROWS. Opt-in: nothing calls this while
+ * `CATERING_REFUNDS` is OFF, and `parseCheckoutEvent` is untouched. Bare and expanded ids both read.
+ */
+export function parseRefundIngress(event: unknown): RefundIngress | null {
+  const root = asRecord(event);
+  const eventId = root ? str(root.id) : undefined;
+  const type = root ? str(root.type) : undefined;
+  if (!root || !eventId || eventId.length > 255 || !type || !(REFUND_INGRESS_TYPES as readonly string[]).includes(type)) return null;
+  const object = asRecord(asRecord(root.data)?.object);
+  const created = cents(root.created);
+  const opaque = (v: unknown) => { const id = idOf(v); return id && INGRESS_ID_RE.test(id) ? id : null; };
+  const pi = idOf(object?.payment_intent);
+  const base = {
+    eventId, type: type as RefundIngressType, livemode: root.livemode === true,
+    createdSec: created !== undefined && created > 0 ? created : null,
+    paymentIntentId: pi && INGRESS_PI_RE.test(pi) ? pi : null,
+  };
+  const hint = (v: unknown): { id: string; status: string | null } | null => {
+    const o = asRecord(v);
+    const id = o ? str(o.id) : undefined;
+    if (!id || !INGRESS_ID_RE.test(id)) return null;
+    const status = str(o?.status);
+    return { id, status: status && status.length <= 40 ? status : null };
+  };
+  if (type === "charge.refunded") {
+    const embedded = asRecord(object?.refunds)?.data;
+    const hints = (Array.isArray(embedded) ? embedded : []).slice(0, 100).flatMap((x) => { const h = hint(x); return h ? [h] : []; });
+    return {
+      ...base,
+      chargeId: opaque(object?.id),
+      cumulativeCents: cents(object?.amount_refunded) ?? null,
+      chargeAmountCents: cents(object?.amount) ?? null,
+      fullyRefunded: typeof object?.refunded === "boolean" ? object.refunded : null,
+      hints,
+    };
+  }
+  const own = hint(object);
+  return { ...base, chargeId: opaque(object?.charge), cumulativeCents: null, chargeAmountCents: null, fullyRefunded: null, hints: own ? [own] : [] };
+}
+
 // ── Per-location credential suffixes ────────────────────────────────────────────────
 
 /**
