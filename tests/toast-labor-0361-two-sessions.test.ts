@@ -48,6 +48,9 @@ interface Script {
   retireEntriesSQL(f: Fixture): string;
   retireConfigSQL(f: Fixture): string;
   entriesReadBackSQL(f: Fixture): string;
+  guardCountsViolation(answer: unknown): string | null;
+  judgeCounts(who: string, got: unknown, want: Record<string, number>): string | null;
+  counts(partial: Record<string, number>): Record<string, number>;
   runProof(query: Query, log: Log, opts?: Opts): Promise<number>;
   main(args: string[], env: Record<string, string | undefined>, log: Log, deps?: Opts & { fetcher?: Fetcher }): Promise<number>;
 }
@@ -333,6 +336,8 @@ type Scenario = {
   neverBlocked?: string; wrongCount?: string; bothCommit9?: boolean; racerDeadlock8a?: boolean;
   observerThrowsAt?: string; noGuard?: boolean; leftLink?: boolean; holderMs?: number; racerMs?: number;
   lookup?: Record<string, unknown> | null;
+  /** Replace the FIRST call's guarded answer of one case session (raw, as the session would carry it). */
+  override?: { id: string; role: "h" | "r"; ok: unknown };
 };
 const ep = (iso: string) => Date.parse(iso) / 1000;
 const full = (p: Record<string, number>) => {
@@ -423,6 +428,7 @@ function transport(scenario: Scenario = {}) {
         if (role === "r" && scenario.wrongCount === id) calls = [full({ inserted: 1 })];
         if (id === "09" && scenario.bothCommit9) calls = role === "h" ? [full({ updated: 1 }), full({ updated: 1 })] : [{ rows: 2 }];
         if (id === "8a" && role === "r" && scenario.racerDeadlock8a) calls = [{ sqlstate: "40P01" }];
+        if (scenario.override?.id === id && scenario.override.role === role) calls = [scenario.override.ok, ...calls.slice(1)];
         return later(role === "h" ? (scenario.holderMs ?? 15) : (scenario.racerMs ?? 25), app, answer(app, calls));
       }
     }
@@ -576,5 +582,90 @@ describe("0361 two-session proof: orchestration against a scripted transport", (
     expect(tagged.sent.find((s) => s.includes("set deleted=true"))).toContain(`time_entry_guid like '${tag}-%'`);
     expect(ok.at(-1)).toMatch(new RegExp(`^RETIRED fixture ${tag}: \\d+ time entries marked deleted, 1 link`));
     expect(tagged.sent.some((s) => /\bdelete\s+from\b|\btruncate\b/i.test(s))).toBe(false);
+  });
+});
+
+describe("0361 two-session proof: a guarded answer is judged as strictly as lib/toast/labor.ts parseLaborGuardCounts", () => {
+  // Case 1: the holder inserts (expected inserted 1), the racer is skipped as older (expected skipped_older 1).
+  const holder1 = full({ inserted: 1 });
+  const racer1 = full({ skipped_older: 1 });
+  const without = (o: Record<string, number>, key: string): Record<string, number> =>
+    Object.fromEntries(Object.entries(o).filter(([k]) => k !== key));
+  const malformed: Array<{ name: string; role: "h" | "r"; ok: Record<string, unknown>; line: string }> = [
+    { name: "inserted as the string \"1\"", role: "h", ok: { ...holder1, inserted: "1" },
+      line: "FAIL 0361 case 1: holder call 1 answer count inserted is not a non-negative integer" },
+    { name: "an expected zero as null", role: "r", ok: { ...racer1, updated: null },
+      line: "FAIL 0361 case 1: racer answer count updated is not a non-negative integer" },
+    { name: "a missing key", role: "r", ok: without(racer1, "duplicates"),
+      line: "FAIL 0361 case 1: racer answer lacks the key duplicates" },
+    { name: "an extra key", role: "r", ok: { ...racer1, extra: 0 },
+      line: "FAIL 0361 case 1: racer answer carries an unexpected key" },
+    { name: "a fractional count", role: "r", ok: { ...racer1, skipped_older: 1.5 },
+      line: "FAIL 0361 case 1: racer answer count skipped_older is not a non-negative integer" },
+    { name: "received not the sum", role: "r", ok: { ...racer1, received: 2 },
+      line: "FAIL 0361 case 1: racer answer received is not the sum of the other counts" },
+  ];
+  for (const m of malformed) {
+    it(`FAILS the run when a guarded answer carries ${m.name}`, async () => {
+      const lines: string[] = [];
+      expect(await S.runProof(transport({ override: { id: "01", role: m.role, ok: m.ok } }).query, (l) => lines.push(l), instant)).toBe(1);
+      expect(lines).toContain(m.line);
+      expect(lines.some((l) => l.startsWith("PASS 0361 two-session proof"))).toBe(false);
+      expect(lines.at(-1)).toMatch(/^RETIRED fixture/);
+    });
+  }
+
+  it("the unchanged happy path still passes with the strict judge", async () => {
+    const lines: string[] = [];
+    expect(await S.runProof(transport().query, (l) => lines.push(l), instant)).toBe(0);
+    expect(lines).toContain("PASS 0361 two-session proof: 11 cases");
+  });
+
+  it("--rest answers go through the same strict judge", async () => {
+    const rpc = vi.fn<RestClient["rpc"]>()
+      .mockResolvedValueOnce({ data: { ...full({ inserted: 1 }), inserted: "1" }, error: null });
+    const lines: string[] = [];
+    expect(await S.runProof(transport().query, (l) => lines.push(l), { ...instant, rest: true, restClient: async () => ({ rpc }) })).toBe(1);
+    expect(lines).toContain("FAIL 0361 rest: rest call 1 answer count inserted is not a non-negative integer");
+  });
+
+  it("guardCountsViolation: each malformed shape is named; a well-formed answer is null", () => {
+    const good = full({ updated: 2 });
+    expect(S.guardCountsViolation(good)).toBeNull();
+    expect(S.guardCountsViolation(full({}))).toBeNull();
+    expect(S.guardCountsViolation(null)).toBe("is not an object");
+    expect(S.guardCountsViolation(undefined)).toBe("is not an object");
+    expect(S.guardCountsViolation([good])).toBe("is not an object");
+    expect(S.guardCountsViolation("{}")).toBe("is not an object");
+    expect(S.guardCountsViolation({ ...good, updated: "2" })).toBe("count updated is not a non-negative integer");
+    expect(S.guardCountsViolation({ ...good, inserted: null })).toBe("count inserted is not a non-negative integer");
+    expect(S.guardCountsViolation({ ...good, inserted: 1.5, received: 3.5 })).toBe("count received is not a non-negative integer");
+    expect(S.guardCountsViolation({ ...good, unchanged: 0.5, received: 2.5 })).toBe("count received is not a non-negative integer");
+    expect(S.guardCountsViolation({ ...good, skipped_older: 1.5 })).toBe("count skipped_older is not a non-negative integer");
+    expect(S.guardCountsViolation({ ...good, duplicates: -1, received: 1 })).toBe("count duplicates is not a non-negative integer");
+    expect(S.guardCountsViolation({ ...good, duplicates: Number.NaN })).toBe("count duplicates is not a non-negative integer");
+    expect(S.guardCountsViolation({ ...good, duplicates: Number.MAX_SAFE_INTEGER + 1 })).toBe("count duplicates is not a non-negative integer");
+    expect(S.guardCountsViolation(without(good, "skipped_no_stamp"))).toBe("lacks the key skipped_no_stamp");
+    expect(S.guardCountsViolation({ ...good, rows: 2 })).toBe("carries an unexpected key");
+    expect(S.guardCountsViolation({ ...good, received: 3 })).toBe("received is not the sum of the other counts");
+  });
+
+  it("judgeCounts: the strict shape is checked before the comparison, and the comparison is exact", () => {
+    const want = S.counts({ inserted: 1 });
+    expect(S.judgeCounts("seed", { ok: full({ inserted: 1 }) }, want)).toBeNull();
+    expect(S.judgeCounts("seed", { ok: { ...full({ inserted: 1 }), inserted: "1" } }, want)).toBe("seed answer count inserted is not a non-negative integer");
+    expect(S.judgeCounts("seed", { ok: { ...full({ inserted: 1 }), updated: null } }, want)).toBe("seed answer count updated is not a non-negative integer");
+    expect(S.judgeCounts("seed", { ok: null }, want)).toBe("seed answer is not an object");
+    expect(S.judgeCounts("seed", { ok: full({ updated: 1 }) }, want)).toBe("seed count inserted is not 1");
+    expect(S.judgeCounts("seed", { missing: true }, want)).toBe("seed answer missing");
+    expect(S.judgeCounts("seed", { sqlstate: "40P01", code: null }, want)).toBe("seed reported SQLSTATE 40P01");
+  });
+
+  it("a guarded answer carried through the session setting (jsonb text) parses to JSON numbers and passes", () => {
+    const name = "SIM-0361-x-c01-r";
+    const text = `{"ok": {"inserted": 0, "received": 1, "updated": 0, "unchanged": 0, "duplicates": 0, "skipped_older": 1, "skipped_no_stamp": 0, "skipped_same_stamp": 0}, "tag": "${name}"}`;
+    const parsed = S.parseSession([{ s1: text, pid: 7 }], name, 1);
+    expect(parsed).not.toBeNull();
+    expect(S.judgeCounts("racer", parsed?.calls[0], S.counts({ skipped_older: 1 }))).toBeNull();
   });
 });

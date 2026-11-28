@@ -63,10 +63,15 @@ overlap another is evidence about Toast's stamp: tell CC.
    (`toast-labor-newer/`: `apply-0361-prod.mjs --preflight`, `--dry-run`, then the apply; its README has the exact
    commands and hashes). One new function that nothing calls; `create function` locks no table. Stamp the file header
    `APPLIED TO PROD`.
+   **Then prove the app's own path can reach it, before any switch:** ONE service-role call through prod's REST
+   endpoint, `rpc("toast_time_entries_apply_newer", { p_rows: [] })`. It must answer the eight counts, all 0 (an empty
+   array stores nothing; the harness pins that). An error here (for example `PGRST202`: the REST layer does not see
+   the function yet) means the tool's catalog checks passed but the pull's path would fail: do NOT go to step 3
+   until this call answers.
 3. **Turn the guard ON** (`TOAST_LABOR_GUARD=1` in Vercel, production, then redeploy). **Juan's call**, bundled with
-   the `DIGEST_LABOR_MONEY` ask. **Only after step 2 is verified:** with the switch ON and the function missing,
-   every labor pull fails closed (`toast_labor_write_failed`, labor "not available", no station reconcile from the
-   pull, failure heartbeats) until one of the two is corrected.
+   the `DIGEST_LABOR_MONEY` ask. **Only after step 2 is verified, its REST call included:** with the switch ON and the
+   function missing or unreachable, every labor pull fails closed (`toast_labor_write_failed`, labor "not available",
+   no station reconcile from the pull, failure heartbeats) until one of the two is corrected.
 4. **Drain.** Pulls already running on the previous deployment still hold the unconditional upsert: at most 30 s for
    the 10-minute cron, 45 s for the nightly, 20 s per shop for a digest, 300 s per chunk for a manual backfill. Wait
    15 minutes after the deployment with the switch is promoted and confirm no backfill is running. Until then an old
@@ -81,25 +86,49 @@ overlap another is evidence about Toast's stamp: tell CC.
    (the command of `docs/runbooks/toast-order-capture.md`), with credentials injected by the approved operator
    environment and `TOAST_LABOR_PULL=1` and `TOAST_LABOR_GUARD=1` in it. Without `TOAST_LABOR_GUARD=1` the script
    runs main's upsert and prints no `guard`: a chunk line without `guard` means the re-pull was NOT guarded.
-   `--through` cannot be later than today minus 2 days (the script's own limit). Which pull re-reads what after that:
-   - the 10-minute cron reads **today only** by business date;
-   - the nightly reads **today and the two days before** by business date;
+   `--through` cannot be later than today minus 2 days (the script's own limit), so the backfill alone never covers
+   yesterday or today. Which scheduled pull reads which days BY BUSINESS DATE (ET):
+   - the 10-minute cron (`/api/cron/toast-sales-today`) reads **today only**;
+   - the nightly (`/api/cron/toast-sales-pull`, 09:00 UTC) reads **yesterday and the two days before it** (it is
+     called for yesterday; never today). It runs labor LAST and skips it when 5 s or less of its time is left: a
+     night with no `toast-labor-pull` heartbeat of three dates read nothing;
+   - a digest pre-load reads its one day for its one shop;
    - every pull also reads the 48 h modification window (edits and archives of any business date).
    Shown to CC, per chunk: `rows`, `modified`, `failures` and `guard`. What it does: a row that a past race left on an
    older version is `updated` (Toast's stamp is later than the stored one); everything else is `unchanged`.
    `skipped_same_stamp` or `skipped_older` above 0 on this sequential run are evidence about Toast's stamp, for CC.
    No other historical repair. The residual under "What the guard does NOT do" (an archive older than 48 h) stays.
-6. **Flip gate for `DIGEST_LABOR_MONEY`:** steps 1 to 5 done and the re-pull's counts shown to CC. The ask to Juan
-   states the residual in one sentence: an entry archived in Toast more than 48 h ago that our copy still shows as
-   live is not corrected by the re-pull.
+6. **Flip gate for `DIGEST_LABOR_MONEY`.** Steps 1 to 5 are done AND **every business date from the first day of the
+   prior pay period through today has a guarded day read that succeeded after the drain of step 4.** The evidence,
+   shown to CC, date by date:
+   - through the backfill's `--through`: its chunk lines, each with `guard` and `failures: []`;
+   - every later date up to yesterday: a `toast-labor-pull` heartbeat written AFTER the drain whose `metadata.dates`
+     names that date, with `guard` present, action `cron.success` and `per_location_failures` 0. In practice that is
+     the first nightly that runs after the drain (it reads yesterday and the two days before it): if the backfill ran
+     on day T through T minus 2, the nightly of day T + 1 reads T, T minus 1 and T minus 2, and closes the gap. A
+     nightly that ran BEFORE the switch, or one that skipped labor, does not count;
+   - today: a 10-minute `toast-labor-pull` heartbeat after the drain with `dates` = today, `guard` present, no failure.
+   A date with no such evidence is not covered: wait for the next nightly (or have the day read again) before the
+   ask. The ask to Juan states the residual in one sentence: an entry archived in Toast more than 48 h ago that our
+   copy still shows as live is not corrected by the re-pull.
 
 ## Rollback
 
-Unset `TOAST_LABOR_GUARD`, **redeploy**, and wait out the drain of step 4 (a deployment that read the switch as ON
-keeps calling the function until its pulls finish). Back on main's writer D-R2 is open again, so
-`DIGEST_LABOR_MONEY` goes OFF with it: say so when rolling back. The function stays installed and unused; dropping
-it is not part of a rollback (`drop function public.toast_time_entries_apply_newer(jsonb);` is in the file header
-for completeness, and must never run while a deployment with the switch ON is serving).
+The order matters once `DIGEST_LABOR_MONEY` is ON, because a digest that is already running on a money-enabled
+deployment may still read labor after an unguarded pull has been let back in.
+
+1. **If `DIGEST_LABOR_MONEY` is ON: turn it OFF FIRST, with `TOAST_LABOR_GUARD` still `1`.** Redeploy, then wait until
+   every digest run started on the money-enabled deployment has finished (wait 15 minutes and confirm no digest run
+   is in flight). The guard keeps protecting what those runs read.
+2. **Then unset `TOAST_LABOR_GUARD`, redeploy,** and wait out the drain of rollout step 4 (a deployment that read the
+   switch as ON keeps calling the function until its pulls finish).
+3. If `DIGEST_LABOR_MONEY` was never turned on, step 2 alone is the rollback.
+
+Never unset both in one deployment while money is ON. Back on main's writer D-R2 is open again, so
+`DIGEST_LABOR_MONEY` stays OFF until the guard is back and the flip gate (step 6) has been met again: say so when
+rolling back. The function stays installed and unused; dropping it is not part of a rollback
+(`drop function public.toast_time_entries_apply_newer(jsonb);` is in the file header for completeness, and must never
+run while a deployment with the switch ON is serving).
 
 ## Proofs
 

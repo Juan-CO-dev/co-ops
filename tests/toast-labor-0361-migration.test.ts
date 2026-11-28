@@ -19,6 +19,13 @@ const NAME = "0361_toast_time_entries_newer";
 const sql = readFileSync(`supabase/migrations/${NAME}.sql`, "utf8").replace(/\r\n/g, "\n");
 const lines = sql.split("\n");
 const code = sql.replace(/--[^\n]*/g, "");
+/**
+ * Statement pins are WHITESPACE-NORMALISED (ruling U7, fix round): re-wrapping or re-indenting a statement must not
+ * fail a test when nothing it says changed. `flat` = the code with every run of whitespace as one space; `flatHeader`
+ * = the header's comment text the same way (the `-- ` prefixes dropped, so a sentence may wrap anywhere).
+ */
+const flat = code.replace(/\s+/g, " ").trim();
+const flatHeader = sql.slice(0, sql.indexOf("\nbegin;\n")).replace(/^--[ \t]?/gm, "").replace(/\s+/g, " ");
 const harness = readFileSync("scripts/sql-harness-0361.mjs", "utf8").replace(/\r\n/g, "\n");
 
 const GATE = "-- AUTHORED 2026-11-28 (Toast labor \"only if newer\", CC ruling D-R2, CO CC Fable lead, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.";
@@ -45,9 +52,10 @@ describe("0361 header and shape", () => {
   });
 
   it("one transaction, commit last", () => {
-    expect(code.match(/^begin;$/gm)).toHaveLength(1);
-    expect(code.match(/^commit;$/gm)).toHaveLength(1);
-    expect(code.split("\n").map((l) => l.trim()).filter(Boolean).pop()).toBe("commit;");
+    expect(flat.match(/(?:^|[; ])begin;/g)).toHaveLength(1);
+    expect(flat.match(/(?:^|[; ])commit;/g)).toHaveLength(1);
+    expect(flat.startsWith("begin;")).toBe(true);
+    expect(flat.endsWith("commit;")).toBe(true);
   });
 
   it("is the only file numbered 0361", () => {
@@ -56,7 +64,7 @@ describe("0361 header and shape", () => {
 
   it("exactly ONE create function and no other DDL or data statement", () => {
     expect(code.match(/\bcreate\s+function\b/gi)).toHaveLength(1);
-    expect(code).toMatch(/^create function public\.toast_time_entries_apply_newer\(p_rows jsonb\)$/m);
+    expect(flat).toContain("create function public.toast_time_entries_apply_newer(p_rows jsonb) returns jsonb language plpgsql volatile security invoker");
     for (const banned of [/\bcreate\s+or\s+replace\b/i, /\bcreate\s+(?:unique\s+)?(table|index|policy|trigger|type|view)\b/i, /\balter\s/i, /\bdrop\s/i,
       /\btruncate\b/i, /\bdelete\s+from\b/i, /\bsecurity\s+definer\b/i]) {
       expect(code, String(banned)).not.toMatch(banned);
@@ -64,21 +72,29 @@ describe("0361 header and shape", () => {
   });
 
   it("SECURITY INVOKER, the pinned search_path, the revoke and the grant", () => {
-    expect(code).toMatch(/\bsecurity invoker\b/);
-    expect(code).toContain("set search_path = pg_catalog, public");
-    expect(code).toContain("revoke all on function public.toast_time_entries_apply_newer(jsonb) from public, anon, authenticated;");
-    expect(code).toContain("grant execute on function public.toast_time_entries_apply_newer(jsonb) to service_role;");
-    expect(code.match(/^\s*(grant|revoke)\b/gm)).toHaveLength(2);
+    expect(flat).toMatch(/\bsecurity invoker\b/);
+    expect(flat).toContain("set search_path = pg_catalog, public");
+    expect(flat).toContain("revoke all on function public.toast_time_entries_apply_newer(jsonb) from public, anon, authenticated;");
+    expect(flat).toContain("grant execute on function public.toast_time_entries_apply_newer(jsonb) to service_role;");
+    // Exactly one revoke and one grant STATEMENT (a statement starts the file or follows a `;`).
+    expect(flat.match(/(?:^|; )(grant|revoke)\b/g)).toHaveLength(2);
   });
 
   it("the header cites Toast's spec, says what is UNVERIFIED, carries the rollback and the U1 residual", () => {
-    const header = lines.slice(0, lines.indexOf("begin;")).join("\n");
-    expect(header).toContain("https://doc.toasttab.com/toast-api-specifications/toast-labor-api.yaml");
-    expect(header).toContain("\"Date modified, in UTC");
-    expect(header).toContain("45c2ce1a797297e1a0772270667ab9803e28592e05e18c7a3046f02feca46a92");
-    expect(header).toContain("UNVERIFIED");
-    expect(header).toContain("drop function public.toast_time_entries_apply_newer(jsonb);");
-    expect(header).toContain("archived in Toast more than 48 h ago");
+    expect(flatHeader).toContain("https://doc.toasttab.com/toast-api-specifications/toast-labor-api.yaml");
+    expect(flatHeader).toContain("\"Date modified, in UTC format (read-only).\"");
+    expect(flatHeader).toContain("45c2ce1a797297e1a0772270667ab9803e28592e05e18c7a3046f02feca46a92");
+    expect(flatHeader).toContain("UNVERIFIED");
+    expect(flatHeader).toContain("drop function public.toast_time_entries_apply_newer(jsonb);");
+    expect(flatHeader).toContain("archived in Toast more than 48 h ago");
+  });
+
+  it("the pins above do not depend on line breaks or indentation (U7)", () => {
+    // The same file with every statement re-wrapped: each line break inside the code becomes a break plus an indent,
+    // and each single space between two words becomes a line break. Every flat pin must read the same.
+    const rewrapped = code.replace(/\n/g, "\n      ").replace(/(\w) (\w)/g, "$1\n$2");
+    expect(rewrapped).not.toBe(code);
+    expect(rewrapped.replace(/\s+/g, " ").trim()).toBe(flat);
   });
 });
 

@@ -334,10 +334,31 @@ export const plannedKeys = f => [...cases(f).flatMap(c => c.keys), 'rest'].map(n
 export const sessionName = (f, c, role) => `${f.tag}-c${c.id.padStart(2, '0')}-${role}`;
 
 // ── judging (fixed texts only) ──────────────────────────────────────────────────────────────────
-function judgeCounts(who, got, want) {
+/**
+ * The deployed contract (lib/toast/labor.ts parseLaborGuardCounts): a plain object holding EXACTLY the eight keys,
+ * each a JS number that is a safe integer >= 0, `received` = the sum of the other seven. Null when it holds; else
+ * a fixed text naming the kind of violation (never a value from the server).
+ */
+export function guardCountsViolation(answer) {
+  if (answer === null || typeof answer !== 'object' || Array.isArray(answer)) return 'is not an object';
+  const keys = Object.keys(answer);
+  if (keys.some(k => !COUNT_KEYS.includes(k))) return 'carries an unexpected key';
+  for (const key of COUNT_KEYS) {
+    if (!Object.hasOwn(answer, key)) return `lacks the key ${key}`;
+    const v = answer[key];
+    if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) return `count ${key} is not a non-negative integer`;
+  }
+  const rest = COUNT_KEYS.filter(k => k !== 'received').reduce((s, k) => s + answer[k], 0);
+  if (answer.received !== rest) return 'received is not the sum of the other counts';
+  return null;
+}
+/** A GUARDED call's answer only (apply_newer, via a session or --rest): strict shape first, then exact counts. */
+export function judgeCounts(who, got, want) {
   if (!got || got.missing) return `${who} answer missing`;
   if (got.sqlstate) return `${who} reported SQLSTATE ${got.sqlstate}${got.code ? ` (${got.code})` : ''}`;
-  for (const key of COUNT_KEYS) if (Number(got.ok?.[key]) !== want[key]) return `${who} count ${key} is not ${want[key]}`;
+  const violation = guardCountsViolation(got.ok);
+  if (violation) return `${who} answer ${violation}`;
+  for (const key of COUNT_KEYS) if (got.ok[key] !== want[key]) return `${who} count ${key} is not ${want[key]}`;
   return null;
 }
 function judgeFinal(f, evidence, final) {

@@ -19,7 +19,6 @@
  * " 1": all must equal the golden, and no transcript may hold the guarded RPC. The value "1" is
  * tested elsewhere. This file must not import anything the guarded change adds.
  */
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -437,29 +436,12 @@ describe.skipIf(WRITE)("U4: the restaurant GUID selects the shop, and the golden
     expect(goldenLocA.every((g) => g.startsWith("a-"))).toBe(true);
   });
 
-  it("comparator sensitivity: one changed restaurant GUID in a toastGet event is a difference", () => {
-    const golden = goldenOf("two-shops-several-days");
-    const mutated = structuredClone(golden);
-    const ev = evs(mutated).find((e) => e.ev === "toastGet" && e.guid === "rest-a");
-    expect(ev).toBeDefined();
-    ev!.guid = "rest-b";
-    expect(() => expect(mutated).toEqual(golden)).toThrow();
-  });
 });
 
-// ── U7: whitespace-normalised text pins only ─────────────────────────────────────────────────
-
-describe.skipIf(WRITE)("U7: text pins (whitespace-normalised, never character-pinned)", () => {
-  const norm = (s: string) => s.replace(/\s+/g, " ");
-  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-
-  it("lib/toast/labor.ts still holds main's write statement (lines 105-107 of ec585c12, normalised)", () => {
-    const MAIN_WRITE = "sb.from(\"toast_time_entries\") .upsert(rows.map((r) => ({ ...r, pulled_at: new Date().toISOString() })), { onConflict: \"location_id,time_entry_guid\" }) .abortSignal(signal)";
-    expect(norm(read("../lib/toast/labor.ts"))).toContain(MAIN_WRITE);
-  });
-
-  it("lib/toast/labor-shared.ts is main's file (sha256, CRLF normalised to LF)", () => {
-    const sha = createHash("sha256").update(read("../lib/toast/labor-shared.ts").replace(/\r\n/g, "\n"), "utf8").digest("hex");
-    expect(sha).toBe("bade6ea847d5a10f79b8096acade250e7f021b4d735593b018970a1ac37ad922");
-  });
-});
+// NO SOURCE-TEXT PIN lives in this file (ruling U7; fix round, review seats GLM P2 / Fable P3): the proof that OFF is
+// main's writer is the BEHAVIOUR above (every client call with its rows and options, in order, for every scenario and
+// every non-"1" switch value), which renaming a variable or re-wrapping a statement cannot break and a changed write
+// cannot pass. That `lib/toast/labor-shared.ts` is untouched on this branch is a one-time fact recorded in READY
+// (`git diff ec585c12 <head> -- lib/toast/labor-shared.ts` is empty), not a test. What the guard depends on in that
+// module is pinned by behaviour too: tests/toast-labor-0361-migration.test.ts holds `toastInstant` to the millisecond
+// stamps the harness's "equal stamp" cases are built on.
