@@ -58,7 +58,7 @@ describe("0352: ship state and ceilings", () => {
     const files = readdirSync("supabase/migrations").filter((f) => /^\d{4}_/.test(f));
     // 0360 (2026-11-27) re-emits ONE function of this file, the monthly ceiling, at 50,000,000. This suite applies 0352
     // ALONE, so CEILING above stays 0352's own 5,000,000. 0360 has its own proof: tests/demand-signals-0360-harness.test.ts.
-    expect(files.filter((f) => f.includes("demand_ai"))).toEqual(["0352_demand_ai_insights.sql", "0360_demand_ai_cap.sql"]);
+    expect(files.filter((f) => f.includes("demand_ai")).sort()).toEqual(["0352_demand_ai_insights.sql", "0360_demand_ai_cap.sql"]);   // sorted: readdir order is the file system's
     expect(files.filter((f) => f.startsWith("0352_"))).toEqual(["0352_demand_ai_insights.sql"]);
     expect(M0352).toMatch(/^-- AUTHORED 2026-11-19 .* NOT YET APPLIED/m);
     expect(M0352.split(/\r?\n/)[2]).toBe(

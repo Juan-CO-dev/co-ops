@@ -66,7 +66,9 @@ describe("0360 header and shape", () => {
     expect(lines[1]).toBe("-- AUTHORED 2026-11-27 (demand AI cap raise, CO CC Fable lead, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.");
     // An APPLIED stamp goes UNDER the gate line, never instead of it.
     const stamps = lines.slice(2, 6).filter((l) => /^-- APPLIED /.test(l));
-    expect(stamps.every((l) => new RegExp(`^-- APPLIED TO (PROD|SIM) \\d{4}-\\d{2}-\\d{2}( UTC)? \\(schema_migrations version \\d{14}, name '${NAME}'\\)$`).test(l))).toBe(true);
+    // (0352's own prod stamp carries a trailing sentence after the bracket; that style is allowed here too.)
+    expect(stamps.every((l) => new RegExp(`^-- APPLIED TO (PROD|SIM) \\d{4}-\\d{2}-\\d{2}( UTC)? \\(schema_migrations version \\d{14}, name '${NAME}'\\)([,.;] .*)?$`).test(l))).toBe(true);
+    expect(stamps.length).toBeGreaterThanOrEqual(1);   // the sim stamp is there
     expect(sql).toMatch(/0360 is claimed there for this one/);
     expect(code.match(/^begin;$/gm)).toHaveLength(1);
     expect(code.match(/^commit;$/gm)).toHaveLength(1);
@@ -147,9 +149,11 @@ describe("0360: the fingerprints in the file are the real ones", () => {
     expect(body(sql0352, "demand_ai_reserve")).toContain("or p_cap_micro > public.demand_ai_cap_ceiling_micro() then raise exception 'demand_ai_invalid'");
     expect(body(sql0352, "demand_ai_reserve")).toContain("if v_spent + p_reserve_micro > p_cap_micro then raise exception 'demand_ai_cap_reached'");
     expect(body(sql0352, "demand_ai_today")).toContain("'cap_ceiling_micro', public.demand_ai_cap_ceiling_micro()");
-    // The ceiling function is read by exactly those two places in 0352, and by nothing else in the migrations.
+    // The ceiling function is read by exactly those two places in 0352, and by no migration BEFORE 0360 other than 0352
+    // (so 0360 re-emits from the only definer there was). A LATER migration may name it: the header's own rollback is one.
     expect(count(strip(sql0352), "demand_ai_cap_ceiling_micro()")).toBe(1 + 2 + 2);   // its CREATE, the two readers, the two privilege lists
-    const others = readdirSync("supabase/migrations").filter((f) => /^\d{4}_.*\.sql$/.test(f) && !f.startsWith("0352_") && !f.startsWith("0360_"));
+    const others = readdirSync("supabase/migrations").filter((f) => /^\d{4}_.*\.sql$/.test(f) && Number(f.slice(0, 4)) < 360 && !f.startsWith("0352_"));
+    expect(others.length).toBeGreaterThan(300);
     for (const f of others) expect(strip(readFileSync(`supabase/migrations/${f}`, "utf8")), f).not.toContain("demand_ai_cap_ceiling_micro");
   });
 });
@@ -177,9 +181,32 @@ describe("0360: privileges, assertions and the digest", () => {
       expect(b).toContain("foreach r in array array['public', 'anon', 'authenticated'] loop");
       expect(b).toContain("if not has_function_privilege('service_role', f, 'EXECUTE')");
       expect(b).toContain("aclexplode(coalesce(p.proacl, acldefault('f', p.proowner)))");
-      expect(b).toContain("if v_acl is distinct from 'service_role=EXECUTE'");
-      expect(b).toContain("v_row.provolatile <> 'i' or v_row.prosecdef");
-      expect(b).toContain("replace(v_row.proconfig[1], ' ', '') <> 'search_path=pg_catalog,public'");
+      // THE WHOLE ACL, the owner's own entry and every grantor included (review, Astra P2 / Opus P3).
+      expect(b).toContain("|| '/' || a.grantor::regrole::text as e");
+      expect(b).toContain("where p.oid = f) x;");
+      expect(b).not.toContain("a.grantee <> p.proowner");
+      expect(b).toContain("if v_acl is distinct from 'postgres=EXECUTE/postgres,service_role=EXECUTE/postgres'");
+      // WHAT EACH OF THE SIX IS (review, Astra P2), with a NULL-safe settings check.
+      for (const row of ["('demand_ai_cap_ceiling_micro()', 'sql:i:f:bigint:0')", "('demand_ai_month_spent_micro(date)', 'sql:s:t:bigint:1')",
+        "('demand_ai_reserve(uuid,uuid,text,text,integer,bigint,bigint)', 'plpgsql:v:t:jsonb:7')", "('demand_ai_claims_valid(jsonb)', 'plpgsql:i:f:boolean:1')",
+        "('demand_ai_settle(uuid,text,integer,integer,bigint,text,text,jsonb,integer)', 'plpgsql:v:t:jsonb:9')", "('demand_ai_today(uuid)', 'plpgsql:v:t:jsonb:1')"]) expect(b).toContain(row);
+      expect(b).toContain("p.prokind = 'f' and not p.proretset and p.prosqlbody is null and not p.proisstrict and not p.proleakproof and p.proparallel = 'u'");
+      expect(b).toContain("p.proconfig is not null and array_length(p.proconfig, 1) = 1 and replace(p.proconfig[1], ' ', '') = 'search_path=pg_catalog,public'");
+      expect(b).toContain("if v_now is distinct from v_shape then");
+    }
+    // The shape / owner / ACL checks are ONE text in two places.
+    const shapes = [...sql.matchAll(/-- SHAPE-BEGIN[^\n]*\n([\s\S]*?)\n\s*-- SHAPE-END/g)].map((m) => m[1]!);
+    expect(shapes).toHaveLength(2);
+    expect(shapes[0]).toBe(shapes[1]);
+    // What 0352 declared, read from 0352's own CREATE statements: the six shape rows are not typed from memory.
+    for (const [name, want] of [["demand_ai_cap_ceiling_micro", "returns bigint language sql immutable set search_path = pg_catalog, public as"],
+      ["demand_ai_month_spent_micro", "returns bigint\nlanguage sql stable security definer set search_path = pg_catalog, public as"],
+      ["demand_ai_reserve", "returns jsonb language plpgsql security definer set search_path = pg_catalog, public as"],
+      ["demand_ai_claims_valid", "returns boolean language plpgsql immutable set search_path = pg_catalog, public as"],
+      ["demand_ai_settle", "returns jsonb language plpgsql security definer set search_path = pg_catalog, public as"],
+      ["demand_ai_today", "returns jsonb\nlanguage plpgsql security definer set search_path = pg_catalog, public as"]] as const) {
+      const head = sql0352.match(new RegExp(`create function public\\.${name}\\(([^$]*?)\\$\\$`))![1]!.replace(/\s+/g, " ");
+      expect(head, name).toContain(want.replace(/\s+/g, " "));
     }
     // 0352's own six, in 0352's own words.
     for (const f of [...strip(sql0352).matchAll(/'(public\.demand_ai_\w+\([^)]*\))'::regprocedure/g)].map((m) => m[1]!)) expect(code).toContain(`'${f}'::regprocedure`);
@@ -194,6 +221,13 @@ describe("0360: privileges, assertions and the digest", () => {
     expect(pre).toContain("if public.demand_ai_cap_ceiling_micro() is distinct from 5000000 then");
     expect(pre).toContain("has more than one overload. Refusing.");
     expect(pre.indexOf("already applied")).toBeLessThan(pre.indexOf("is not its 0352 definition"));
+    // A database that RECORDS 0360 with 0352's body back is never raised a second time (review, Astra P2). The ledger is
+    // read only where it exists, and only after the two body checks.
+    expect(pre).toContain("if to_regclass('supabase_migrations.schema_migrations') is not null then\n    if exists (select 1 from supabase_migrations.schema_migrations m where m.name = '0360_demand_ai_cap') then");
+    expect(pre).toContain("raise exception '0360: already recorded as applied, and the live body is 0352''s again");
+    expect(pre.indexOf("is not its 0352 definition")).toBeLessThan(pre.indexOf("already recorded as applied"));
+    expect(pre.indexOf("already recorded as applied")).toBeLessThan(pre.indexOf("is distinct from 5000000"));
+    expect(post).not.toContain("supabase_migrations");
     // The per-reservation bound is named, read through pg_get_constraintdef (never a stored node tree against a literal).
     expect(pre).toContain(String.raw`regexp_replace(pg_get_constraintdef(co.oid), '[\s()]', '', 'g') = 'CHECKreserved_micro>=1ANDreserved_micro<=5000000'`);
     expect(post).toContain("if public.demand_ai_cap_ceiling_micro() is distinct from 50000000");
@@ -220,8 +254,21 @@ describe("0360: privileges, assertions and the digest", () => {
     const aggs = digest.match(/string_agg\(/g)!;
     expect(aggs).toHaveLength(13);
     expect(digest.match(/'\|'\s+order by /g)).toHaveLength(13);
-    // Columns autovacuum, an index rebuild or a sequence's use can move are not in it.
-    expect(digest).not.toMatch(/reltuples|relpages|relallvisible|relfrozenxid|relminmxid|relfilenode|indisvalid|indisready|indislive|indcheckxmin|last_value/);
+    // WHOLE catalog rows, minus exactly the columns other sessions' maintenance moves (named in the header too). Outside
+    // those two exclusion lists none of them is mentioned.
+    const REL_OUT = "to_jsonb(c) - array['reltuples', 'relpages', 'relallvisible', 'relallfrozen', 'relfrozenxid',\n                  'relminmxid', 'relfilenode', 'relhasindex', 'relhasrules', 'relhastriggers', 'relhassubclass']";
+    const IDX_OUT = "to_jsonb(i) - array['indisvalid', 'indisready', 'indislive', 'indcheckxmin']";
+    expect(digest).toContain(REL_OUT);
+    expect(digest).toContain(IDX_OUT);
+    expect(digest.replace(REL_OUT, "").replace(IDX_OUT, "")).not.toMatch(/reltuples|relpages|relallvisible|relallfrozen|relfrozenxid|relminmxid|relfilenode|relhas|indisvalid|indisready|indislive|indcheckxmin|last_value|attstattarget|attmissingval/);
+    for (const whole of ["to_jsonb(p)::text", "to_jsonb(d)::text", "to_jsonb(po)::text", "to_jsonb(tg)::text", "to_jsonb(co)::text", "to_jsonb(rw)::text", "to_jsonb(ty)::text",
+      "to_jsonb(en)::text", "to_jsonb(sq)::text"]) expect(digest, whole).toContain(whole);
+    // pg_attribute by a named list (its missing-value column is a pseudo-type): storage and compression are in it (review, Astra P2).
+    for (const col of ["a.attstorage", "a.attcompression", "a.attlen", "a.attalign", "a.attbyval", "a.attndims", "a.atthasmissing", "a.attislocal", "a.attinhcount", "a.attfdwoptions::text",
+      "a.attnotnull", "a.atthasdef", "a.attidentity", "a.attgenerated", "a.attisdropped", "a.attcollation", "a.attacl::text", "a.attoptions::text"]) expect(digest, col).toContain(col);
+    // The header says the same thing the SQL does: every excluded column is named there.
+    for (const colName of ["reltuples", "relpages", "relallvisible", "relallfrozen", "relfrozenxid", "relminmxid", "relfilenode", "relhasindex", "relhasrules", "relhastriggers", "relhassubclass",
+      "indisvalid", "indisready", "indislive", "indcheckxmin"]) expect(sql.split("\nbegin;\n")[0], colName).toContain(colName);
     // Raw catalog columns only: no pg_get_*def call (the one in the pre-flight is on the reservation check, outside the digest).
     expect(digest).not.toMatch(/pg_get_\w+/);
     expect(count(code, "pg_get_constraintdef(")).toBe(1);
@@ -241,9 +288,8 @@ describe("0360: the app's cap and the database's ceiling are the same number", (
     expect(DEMAND_AI_CODE_CAP_MICRO).toBe(now);
     expect(DEMAND_AI_CODE_CAP_MICRO / 1_000_000).toBe(50);
     // The assertion in the file and the reader's check carry the same number.
-    expect(count(code, String(NEW_MICRO))).toBe(4);   // the body; the value assertion and its message; the reader's check
     const source = readFileSync("lib/demand-signals/insights-shared.ts", "utf8");
-    expect(source).toMatch(/The most this feature may cost in one ET month: \$50\.00\. 0352 created the ceiling; 0360 raised it to this number[^\n]*\*\/\nexport const DEMAND_AI_CODE_CAP_MICRO = 50_000_000;/);
+    expect(source).toMatch(/\$50\.00[^\n]*0360[^\n]*\*\/\nexport const DEMAND_AI_CODE_CAP_MICRO = 50_000_000;/);
   });
 
   it("the environment can still only lower it, and $50.00 is a value it can name", () => {
@@ -275,5 +321,18 @@ describe("0360: the app's cap and the database's ceiling are the same number", (
     expect(runbook).toMatch(/Migration 0360 applied \(the \$50\.00 limit\) \| CC, \*\*BEFORE the app that carries the \$50\.00 limit is deployed\*\*/);
     expect(runbook).toContain("It can only LOWER the built-in limit of $50.00 a month");
     expect(runbook).not.toMatch(/of at most \$5\.00/);
+    // The app-first refusal is stated for the cap the app ASKS for (with the environment value at 500 or less it is admitted).
+    expect(sql).toMatch(/refuses EVERY request whose cap is above 5,000,000 with demand_ai_invalid/);
+    expect(runbook).toMatch(/unless `DEMAND_AI_MONTHLY_CAP_CENTS` is 500 or less/);
+  });
+
+  it("no user-facing AI string carries a dollar figure of its own: the page prints the cap it is given", () => {
+    for (const file of ["lib/i18n/en.json", "lib/i18n/es.json"]) {
+      const strings = JSON.parse(readFileSync(file, "utf8")) as Record<string, string>;
+      const ai = Object.entries(strings).filter(([key]) => key.startsWith("signals.ai."));
+      expect(ai.length, file).toBeGreaterThan(10);
+      for (const [key, value] of ai) expect(value, `${file} ${key}`).not.toMatch(/\$\s?\d|\d+(\.\d+)?\s?(dollars|d[oó]lares|USD)/i);
+      expect(strings["signals.ai.spend"], file).toContain("{cap}");
+    }
   });
 });

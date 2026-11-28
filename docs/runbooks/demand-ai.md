@@ -14,14 +14,14 @@ On the demand signals page (`/admin/demand-signals`), a section "AI insights". O
 | `DEMAND_AI=1` | CC, in Vercel, on Juan's word | The section does not exist. |
 | `DEMAND_AI_API_KEY` | **Juan** (his own key, in Vercel; CC and builders never set, read, print or log it) | The section says "AI insights are not configured: no key is set for them. Nothing is sent anywhere." The route answers 503. Nothing is read, reserved or sent. |
 | Migration 0352 applied | CC. **Done:** sim 2026-11-20 (20261120024511), prod 2026-11-20 UTC (schema_migrations version 20261120033423) | The section says "not set up in this system yet." |
-| Migration 0360 applied (the $50.00 limit) | CC, **BEFORE the app that carries the $50.00 limit is deployed** | Every request is refused (`demand_ai_invalid`) and nothing is sent or spent: the app asks for a $50.00 limit and the database still allows $5.00. |
+| Migration 0360 applied (the $50.00 limit) | CC, **BEFORE the app that carries the $50.00 limit is deployed** | Every request that asks for a limit above $5.00 is refused (`demand_ai_invalid`): that is every request, unless `DEMAND_AI_MONTHLY_CAP_CENTS` is 500 or less. Nothing is sent or spent: the app asks for a $50.00 limit and the database still allows $5.00. |
 
 This feature never uses `ANTHROPIC_API_KEY` (the receipt parser's key). The two are separate on purpose.
 
 Optional:
 
 - `DEMAND_AI_MODEL`: default `claude-opus-5-5`. Only a model with a price row in `lib/demand-signals/insights-shared.ts` (`AI_PRICES`) can be called. Today: `claude-opus-5-5` ($4 / $20 per million tokens in / out) and `claude-sonnet-5-5` ($2 / $10), read from the Claude models overview on 2026-11-19. Re-read that page before changing a row.
-- `DEMAND_AI_MONTHLY_CAP_CENTS`: a whole number of cents. It can only LOWER the built-in limit of $50.00 a month (all shops together; it was $5.00 until migration 0360, Juan 2026-11-27). Unset, or 5000 and above (at most six digits), means $50.00; 500 brings back the old $5.00. A value that is not a whole number of at most six digits means 0: nothing is sent. A change here reaches only a NEW deployment: redeploy after changing it.
+- `DEMAND_AI_MONTHLY_CAP_CENTS`: a whole number of cents. It can only LOWER the built-in limit of $50.00 a month (all shops together; it was $5.00 until migration 0360, Juan 2026-11-27). Unset, or 5000 and above (at most six digits), means $50.00; 500 brings back the old $5.00. A value that is not a whole number of at most six digits means 0: nothing is sent. A change here reaches only a NEW deployment: redeploy after changing it. **A value that was already set may now mean more:** until 0360, anything from 500 up was held at $5.00; now 501 to 4999 take effect as written (1000 = $10.00). Lowering this value is the quick way down, but it is not a hard stop: an older deployment that is still reachable keeps its own limit. The hard stop is a new migration that lowers the database limit (see the header of `0360_demand_ai_cap.sql`).
 
 ## Turning it on (in order)
 

@@ -114,13 +114,61 @@ describe("0360: the pre-flight refuses a drifted database by name and changes no
     await refused(`grant execute on function ${FN} to authenticated;`, "authenticated may execute");
     await refused(`grant execute on function ${FN} to anon;`, "anon may execute");
     await refused(`grant execute on function ${FN} to public;`, "public may execute");
-    await refused(`grant execute on function ${FN} to service_role with grant option;`, /the ACL of .* is not 0352's \(owner aside: service_role=EXECUTE\*\)/);
-    await refused(`create role someone_else; grant execute on function ${FN} to someone_else;`, /the ACL of .* is not 0352's \(owner aside: service_role=EXECUTE,someone_else=EXECUTE\)/);
+    await refused(`grant execute on function ${FN} to service_role with grant option;`, /the ACL of .* is not 0352's \(it is: postgres=EXECUTE\/postgres,service_role=EXECUTE\*\/postgres\)/);
+    await refused(`create role someone_else; grant execute on function ${FN} to someone_else;`,
+      /the ACL of .* is not 0352's \(it is: postgres=EXECUTE\/postgres,service_role=EXECUTE\/postgres,someone_else=EXECUTE\/postgres\)/);
     await refused(`revoke execute on function ${FN} from service_role;`, "service_role cannot execute");
     await refused(`grant execute on function ${RESERVE} to authenticated;`, /authenticated may execute demand_ai_reserve/);
     await refused(`revoke execute on function public.demand_ai_today(uuid) from service_role;`, /service_role cannot execute demand_ai_today/);
     // A NULL ACL is Postgres's default (PUBLIC may execute): it is refused, not read as "no PUBLIC entry".
     await refused(`update pg_proc set proacl = null where oid = '${FN}'::regprocedure;`, "public may execute");
+  });
+  it("THE WHOLE ACL includes the owner's own entry and who granted each privilege (review, Astra P2 / Opus P3)", async () => {
+    // The owner lost its own EXECUTE on the claims validator: a later settlement run as the owner would fail and leave the
+    // reservation charged in full. The three named roles and service_role all read as before; only the whole ACL sees it.
+    await refused(`revoke execute on function public.demand_ai_claims_valid(jsonb) from postgres;`,
+      /the ACL of demand_ai_claims_valid\(jsonb\) is not 0352's \(it is: service_role=EXECUTE\/postgres\)/);
+    await refused(`revoke execute on function ${FN} from postgres;`, /the ACL of demand_ai_cap_ceiling_micro\(\) is not 0352's \(it is: service_role=EXECUTE\/postgres\)/);
+    // service_role's EXECUTE granted by ANOTHER role: this file's own GRANT (run by postgres) would add a second entry, so
+    // it is refused in the pre-flight, by name, and not later by the equal-to-before assertion.
+    await refused(`create role granter; revoke execute on function ${FN} from service_role; grant execute on function ${FN} to granter with grant option;
+      set role granter; grant execute on function ${FN} to service_role; reset role;`,
+      /the ACL of demand_ai_cap_ceiling_micro\(\) is not 0352's \(it is: granter=EXECUTE\*\/postgres,postgres=EXECUTE\/postgres,service_role=EXECUTE\/granter\)/);
+    expect(await one("select current_user")).toBe("postgres");
+  });
+  it("WHAT EACH OF THE SIX IS, not only its text: a metadata-only drift keeps the body's fingerprints and is refused (review, Astra P2)", async () => {
+    // The reserve made STABLE: same source, owner and ACL, and then every reservation fails at its FOR SHARE.
+    await refused(`alter function ${RESERVE} stable;`, "public.demand_ai_reserve(uuid,uuid,text,text,integer,bigint,bigint) is not 0352's shape (it is plpgsql:s:t:jsonb:7, 0352 made it plpgsql:v:t:jsonb:7). Refusing.");
+    await refused(`alter function ${RESERVE} security invoker;`, "is not 0352's shape (it is plpgsql:v:f:jsonb:7, 0352 made it plpgsql:v:t:jsonb:7)");
+    await refused(`alter function public.demand_ai_today(uuid) security invoker;`, "public.demand_ai_today(uuid) is not 0352's shape (it is plpgsql:v:f:jsonb:1,");
+    await refused(`alter function public.demand_ai_month_spent_micro(date) volatile;`, "public.demand_ai_month_spent_micro(date) is not 0352's shape (it is sql:v:t:bigint:1, 0352 made it sql:s:t:bigint:1)");
+    await refused(`alter function public.demand_ai_claims_valid(jsonb) security definer;`, "public.demand_ai_claims_valid(jsonb) is not 0352's shape (it is plpgsql:i:t:boolean:1,");
+    await refused(`alter function public.demand_ai_claims_valid(jsonb) strict;`, "public.demand_ai_claims_valid(jsonb) is not 0352's shape (it is plpgsql:i:f:boolean:1:odd,");
+    await refused(`alter function public.demand_ai_settle(uuid,text,integer,integer,bigint,text,text,jsonb,integer) set search_path = public;`, "is not 0352's shape (it is plpgsql:v:t:jsonb:9:config,");
+    await refused(`alter function public.demand_ai_settle(uuid,text,integer,integer,bigint,text,text,jsonb,integer) reset search_path;`, "is not 0352's shape (it is plpgsql:v:t:jsonb:9:config,");
+    await refused(`alter function ${FN} parallel safe;`, "public.demand_ai_cap_ceiling_micro() is not 0352's shape (it is sql:i:f:bigint:0:odd,");
+    await refused(`alter function ${FN} leakproof;`, "is not 0352's shape (it is sql:i:f:bigint:0:odd,");
+    // A set-returning twin with the same source, value and argument list (CREATE OR REPLACE cannot change the return
+    // type, so it is dropped and made again; the privileges are put back the way 0352 left them).
+    await refused(`drop function ${FN} cascade;
+      create function ${FN} returns setof bigint language sql immutable set search_path = pg_catalog, public as $$\n  select 5000000::bigint\n$$;
+      revoke all on function ${FN} from public, anon, authenticated, service_role; grant execute on function ${FN} to service_role;`, "is not 0352's shape (it is sql:i:f:bigint:0:odd,");
+  });
+  it("A DATABASE THAT RECORDS 0360 IS NEVER RAISED A SECOND TIME (review, Astra P2): 0352's body with a 0360 ledger row is refused", async () => {
+    const ledger = `create schema supabase_migrations; create table supabase_migrations.schema_migrations (version text primary key, name text, statements text[]);`;
+    await refused(`${ledger} insert into supabase_migrations.schema_migrations values ('20261127233259', '0360_demand_ai_cap', array['(the file)']);`,
+      "0360: already recorded as applied, and the live body is 0352's again: the ceiling was lowered after 0360. Re-emit from the later definer. Refusing.");
+    // A ledger that records only OTHER migrations says nothing, and neither does a database with no ledger at all (every other test here).
+    await db.exec("begin");
+    try {
+      await db.exec(`${ledger} insert into supabase_migrations.schema_migrations values ('20261120033423', '0352_demand_ai_insights', array['x']);`);
+      // The file's own `begin;` only warns inside this transaction; its `commit;` is cut off so the whole thing rolls back here.
+      expect(M0360.endsWith("\ncommit;\n")).toBe(true);
+      await db.exec(M0360.slice(0, -"commit;\n".length));
+      expect(await ceiling()).toBe(NEW);
+    } finally { await db.exec("rollback"); }
+    expect(await ceiling()).toBe(OLD);
+    expect(await one("select to_regclass('supabase_migrations.schema_migrations') is null")).toBe(true);
   });
   it("another owner", async () => {
     await refused(`alter function ${RESERVE} owner to service_role;`, /demand_ai_reserve\(.*\) is not owned by postgres/);
@@ -148,7 +196,7 @@ describe("0360: the pre-flight refuses a drifted database by name and changes no
 });
 
 describe("0360: the in-file digest (nothing else in public changed)", () => {
-  it("BITES: any other change between the pre-flight and the assertions is refused, and nothing of it is kept", async () => {
+  it("BITES on every kind of change it claims to compare, made between the pre-flight and the assertions; nothing of it is kept", async () => {
     const strays = [
       "create table public.zz_stray(id integer);",
       "alter table public.locations add column zz_stray integer;",
@@ -160,10 +208,20 @@ describe("0360: the in-file digest (nothing else in public changed)", () => {
       "comment on table public.demand_ai_reservations is 'zz stray';",
       "alter table public.demand_ai_settlements add constraint zz_stray check (rejected_count < 1000000);",
       "alter table public.demand_ai_settlements alter column rejected_count set default 1;",
+      // A column's STORAGE and COMPRESSION, and a table's storage options (review, Astra P2: attstorage was not compared).
+      "alter table public.demand_ai_settlements alter column error_code set storage external;",
+      "alter table public.demand_ai_settlements alter column stop_reason set compression pglz;",
+      "alter table public.demand_ai_reservations set (fillfactor = 90);",
+      "alter table public.demand_ai_reservations alter column model set not null, alter column requested_role drop not null;",
+      "alter table public.demand_ai_reservations replica identity full;",
+      "alter table public.demand_ai_settlements alter constraint demand_ai_settlements_reservation_id_fkey deferrable initially deferred;",
+      "create trigger zz_stray before insert on public.demand_ai_settlements for each row execute function suppress_redundant_updates_trigger();",
+      "alter table public.demand_ai_reservations disable row level security;",
       "create function public.zz_stray() returns integer language sql as $$ select 1 $$;",
       // Another function replaced: one the pre-flight does not fingerprint, so only the digest can see it.
       "create or replace function public.demand_ai_claims_valid(p_claims jsonb) returns boolean language plpgsql immutable set search_path = pg_catalog, public as $$ begin return true; end $$;",
-      "alter function public.demand_ai_settle(uuid,text,integer,integer,bigint,text,text,jsonb,integer) set search_path = public;",
+      // A property of ANOTHER function that neither the fingerprints nor the shape rows read: only the whole-row digest sees it.
+      "alter function public.demand_ai_settle(uuid,text,integer,integer,bigint,text,text,jsonb,integer) cost 500;",
       "create view public.zz_stray as select 1 as one;",
       "create type public.zz_stray as enum ('a');",
       "create sequence public.zz_stray;",
