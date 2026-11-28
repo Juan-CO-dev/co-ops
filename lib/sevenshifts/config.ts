@@ -5,7 +5,8 @@
  *   SEVENSHIFTS_SYNC          CC sets `1` after 0268 + 0269 are applied. The cron and Sync now run only then.
  *
  * `sevenShiftsStatus()` NEVER returns the token, its length or a prefix: it is rendered on screens.
- * `sevenShiftsToken()` hands the token to the client and the sync only.
+ * `sevenShiftsToken()` hands the token to the client, the sync and the digest's schedule reader
+ * (`lib/report-digests-schedule.ts`) only.
  */
 import "server-only";
 

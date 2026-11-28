@@ -23,6 +23,8 @@ import type { Loaded } from "@/lib/report-digests-v2-shared";
 import type { CateringReadiness, PaymentState, StaffRoster, ToastCrossCheck } from "@/lib/report-digests-catering-shared";
 import type { NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
 import { toastRingLines } from "@/lib/report-digests-toast-shared";
+import type { ShopSchedule } from "@/lib/report-digests-schedule-shared";
+import { scheduleDays, scheduleNotAvailableLine, staffScheduledLine } from "@/lib/report-digests-staffing-compose";
 import { digestLink, type DigestTarget, type LinkCtx, type LinkViewer } from "@/lib/report-digests-links";
 import { digestCan, type DigestAccess, type DigestCapability } from "@/lib/report-digests-access-shared";
 import { digestCounts, finishedIntro, finishIntro, finishSections, LINE_ITEMS_MAX, type SectionDraft } from "@/lib/report-digests-layout-shared";
@@ -406,8 +408,13 @@ export interface CateringFacts {
   refundsYesterday: Array<{ locationId: string | null; amountCents: number }>;
   /** Today's inventory readiness per shop (W4b demand vs on-hand); absent = not loaded. */
   readiness?: Record<string, Loaded<CateringReadiness>>;
-  /** Today's staff per shop (stations; the schedule is not connected yet); absent = not loaded. */
+  /** Today's staff per shop (stations); absent = not loaded. */
   staff?: Record<string, Loaded<StaffRoster>>;
+  /**
+   * Each shop's PUBLISHED 7shifts schedule for today and tomorrow, by shop id (digests round 3, PR 2). Every line
+   * built from it needs `published_staffing`. Absent, or a shop with no entry = not loaded: no staffing line.
+   */
+  schedule?: Record<string, Loaded<ShopSchedule>>;
 }
 
 /** Who may see what in the catering digest. */
@@ -609,6 +616,25 @@ export function composeCateringSections(
       const text = groups.join(" · ");
       return total > LINE_ITEMS_MAX ? `${text}, ${t("digest.catering.prep_more", { n: total - LINE_ITEMS_MAX })}` : text;
     };
+    // Published staffing (digests round 3, PR 2). Every line `needs: "published_staffing"` (the builders set it);
+    // nothing here asks who the recipient is. A shop with no entry (or no `schedule` at all) gets no line of any kind.
+    // "Schedule not available" is said ONCE per shop per digest: in the first of Today / Tomorrow with booked orders.
+    const scheduleFact = shop.id === null ? undefined : f.schedule?.[shop.id];
+    const rosters = scheduleFact ? scheduleDays(scheduleFact, [f.today, tomorrow]) : null;
+    let notAvailableSaid = false;
+    const staffingLines = (day: string): DigestLine[] => {
+      if (!scheduleFact || shop.id === null) return [];
+      const sc = { t, language };
+      if (rosters === null) {
+        if (notAvailableSaid) return [];
+        notAvailableSaid = true;
+        return [scheduleNotAvailableLine(sc)];
+      }
+      const roster = rosters[day === f.today ? 0 : 1]!;
+      // Today's roster opens reconcile, else stations (null when neither opens); tomorrow's has no screen in the app.
+      const href = day === f.today ? digestLink(ctx, { to: "reconcile", location: shop.id }, { to: "stations", location: shop.id }) : null;
+      return [staffScheduledLine(sc, roster, href)];
+    };
     const outlook = (day: string, emptyKey: TranslationKey, label: TranslationKey): DigestLine[] => {
       const list = leads.filter((l) => l.eventDate === day && UPCOMING.has(l.stage))
         .sort((a, b) => timeWindowMinutes(a.timeWindow) - timeWindowMinutes(b.timeWindow));
@@ -626,7 +652,9 @@ export function composeCateringSections(
           prepText(l),
         ] : [time(l), size(l), t(l.isDelivery ? "digest.catering.delivery" : "digest.catering.pickup"), prepText(l)]).filter((x): x is string => !!x).join(" · "),
       }));
-      if (isToday && shop.id !== null) out.push(...readinessLines(shop.id), ...staffLines(shop.id));
+      // Today: readiness, then the published roster, then the stations line. Tomorrow: the roster after the orders.
+      if (isToday && shop.id !== null) out.push(...readinessLines(shop.id), ...staffingLines(day), ...staffLines(shop.id));
+      if (!isToday) out.push(...staffingLines(day));
       const noPrep = list.filter((l) => prepText(l) === null).length;
       // The day's section on the Prep demand page (live; this shop only, else the board as before).
       const prepDayHref = shop.id === null ? pipeline
@@ -678,8 +706,12 @@ export function composeCateringSections(
       if (!r) return [];
       if (r.kind !== "ok") return [{ label, text: t(r.kind === "error" ? "digest.v2.could_not_load" : "digest.v2.not_available"), tone: "info", href, unknown: true }];
       const onStation = r.value.onStation.map((p) => `${p.firstName} (${p.station})`).join(", ");
+      // §2.5: "schedule not connected" is false for a recipient who now gets the published roster, so it is dropped
+      // for one the gate admits to `published_staffing` at THIS shop (`can` is bound to the shop above) and kept byte
+      // for byte for everyone else. It depends on the gate only, never on whether a schedule fact exists.
+      const suffix = can("published_staffing") ? [] : [t("digest.catering.schedule_not_connected")];
       // Someone on a station now is a to-do for the day (attention); nobody on one is plain information.
-      return [{ label, href, tone: onStation ? "attention" : "info", text: [onStation || t("digest.catering.staff_none"), t("digest.catering.schedule_not_connected")].join(" · ") }];
+      return [{ label, href, tone: onStation ? "attention" : "info", text: [onStation || t("digest.catering.staff_none"), ...suffix].join(" · ") }];
     }
 
     const action: DigestLine[] = [];

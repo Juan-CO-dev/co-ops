@@ -10603,5 +10603,22 @@
   "digest.status.todo_one": "1 pendiente",
   "digest.status.todo_other": "{n} pendientes",
   "digest.shop.preheader_todo_one": "1 cosa por hacer.",
-  "digest.shop.preheader_todo_other": "{n} cosas por hacer."
+  "digest.shop.preheader_todo_other": "{n} cosas por hacer.",
+  "digest.staffing.label": "Personal programado",
+  "digest.staffing.people_one": "1 persona",
+  "digest.staffing.people_other": "{n} personas",
+  "digest.staffing.span": "{start} a {end}",
+  "digest.staffing.unnamed": "sin nombre",
+  "digest.staffing.extra_one": "+1 turno",
+  "digest.staffing.extra_other": "+{n} turnos",
+  "digest.staffing.open_one": "1 turno abierto",
+  "digest.staffing.open_other": "{n} turnos abiertos",
+  "digest.staffing.none": "Nadie programado",
+  "digest.staffing.not_available": "Horario no disponible",
+  "digest.staffing.vs_label": "Programado vs. trabajado",
+  "digest.staffing.scheduled": "Programado {hours} h (7shifts publicado: turnos asignados que empiezan este día, antes de descansos)",
+  "digest.staffing.clocked": "Marcado {hours} h (día de negocio de Toast)",
+  "digest.staffing.clocked_so_far": "Marcado {hours} h hasta ahora (día de negocio de Toast)",
+  "digest.staffing.clocked_unknown": "horas marcadas no disponibles",
+  "digest.staffing.diff": "({diff} h)"
 }

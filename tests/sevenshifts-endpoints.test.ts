@@ -5,6 +5,7 @@ import {
   SEVENSHIFTS_ENDPOINTS,
   SEVENSHIFTS_RESOURCES,
   LIST_PAGE_LIMIT,
+  PUBLISHED_SHIFTS_ENDPOINT,
   requestPasses,
   windowInstants,
   type SyncWindow,
@@ -194,6 +195,16 @@ describe("chunk B review (Astra) — the endpoint table", () => {
     const passes = requestPasses("users", WINDOW, "1234");
     expect(passes.map((p) => p.get("status"))).toEqual(["active", "inactive"]);
     for (const p of passes) expect(p.get("modified_since")).toBe("2026-10-12");
+  });
+
+  it("digest PR 2: the sync's shifts params are unchanged, and the digest's published-shifts spec is not a sync endpoint", () => {
+    for (const p of requestPasses("shifts", WINDOW, "1234")) {
+      expect(p.get("include_draft")).toBe("false");
+      expect(p.get("include_deleted")).toBe("true");
+    }
+    expect(Object.keys(SEVENSHIFTS_ENDPOINTS)).not.toContain("PUBLISHED_SHIFTS_ENDPOINT");
+    expect(Object.values(SEVENSHIFTS_ENDPOINTS)).not.toContain(PUBLISHED_SHIFTS_ENDPOINT);
+    expect([...SEVENSHIFTS_RESOURCES]).toHaveLength(12);
   });
 
   it("a pass may REMOVE a base parameter (null), and only the declared keys change", () => {

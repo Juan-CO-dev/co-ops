@@ -17,11 +17,19 @@
  * ERRORS are SevenShiftsApiError with a FIXED code as the whole message — never the response body, the
  * URL or the token. The token reaches this module only through `createSevenShiftsClient({ token })`;
  * lib/sevenshifts/config.ts is the only reader of the env.
+ *
+ * THE DIGEST'S BOUNDED READ (digest PR 2, S6 + A2-3). A client built with `maxResponseBytes` reads every
+ * body under that byte ceiling (a stream counted chunk by chunk, never `res.json()`), decodes it as strict
+ * UTF-8 and parses it with `parseJsonWithIdSource`, so an id is checked in its WRITTEN form. Without the
+ * field every byte of the sync's path is what it was. A bounded read takes only an exact HTTP 200 with no
+ * Content-Range, and refuses any text with a repeated object member (Astra F1, F2). `getOnePage` is the digest's one GET of the
+ * published-shifts listing: it never follows a cursor and never judges the page (the digest's pure check
+ * does that).
  */
 import "server-only";
 import {
-  SEVENSHIFTS_API_BASE, SEVENSHIFTS_API_VERSION, SEVENSHIFTS_ENDPOINTS, requestPasses,
-  type SevenShiftsResource, type SyncWindow,
+  PUBLISHED_SHIFTS_ENDPOINT, SEVENSHIFTS_API_BASE, SEVENSHIFTS_API_VERSION, SEVENSHIFTS_ENDPOINTS, requestPasses,
+  type PublishedShiftsQuery, type SevenShiftsResource, type SyncWindow,
 } from "@/lib/sevenshifts/endpoints-shared";
 import {
   assignmentsSnapshot, followPages, laborSettingsSnapshot, listUnpaginatedSnapshot, wagesSnapshot, whoamiSnapshot,
@@ -58,6 +66,8 @@ export interface SevenShiftsClientDeps {
   now?: () => number;
   /** The run's deadline on `now`'s clock. A wait that cannot finish before it is not started. */
   deadlineAt?: number;
+  /** Digest only. Set = every response body is read under this byte ceiling and parsed with source-checked ids. Not set = today's path, unchanged. */
+  maxResponseBytes?: number;
 }
 
 export type GetResult =
@@ -101,6 +111,142 @@ function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** The id keys whose numeric tokens are checked against their source text on a bounded read. */
+export const SOURCE_CHECKED_ID_KEYS = ["id", "location_id", "company_id", "user_id", "role_id"] as const;
+
+/** The one canonical spelling of a numeric id: `0`, or a nonzero digit and up to 17 more (1–18 digits). */
+const CANONICAL_ID_TOKEN = /^(?:0|[1-9]\d{0,17})$/;
+
+/** TypeScript's reviver type has no third parameter; V8 (Node 22) passes `{ source }` for primitives. */
+type SourceReviver = (this: unknown, key: string, value: unknown, context?: { source?: unknown }) => unknown;
+
+/**
+ * JSON.parse with a reviver that reads each number's source text (`context.source`). For a key in `idKeys`, a numeric
+ * token spelled exactly `0` or `[1-9]` + up to 17 digits becomes that STRING (the one canonical id spelling). Any other
+ * numeric token under an id key (a fraction, an exponent, a sign, `42.0000000000000001`), and EVERY numeric id when the
+ * runtime gives no source text, becomes NaN, which no id validator in this codebase accepts (fail closed).
+ * Strings and every other key are left exactly as written.
+ *
+ * A2-3: `JSON.parse` alone turns `42.0000000000000001` into the integer 42 and a 19-digit id into a
+ * rounded one, so the digest could name the wrong person. NaN, not a throw: a nested object the digest
+ * never reads may carry an odd numeric `id`, and that must not refuse the whole answer; the digest's raw
+ * check refuses any id that is not a canonical digit string under a key it reads.
+ */
+export function parseJsonWithIdSource(text: string, idKeys: readonly string[] = SOURCE_CHECKED_ID_KEYS): unknown {
+  const keys = new Set(idKeys);
+  const reviver: SourceReviver = (key, value, context) => {
+    if (typeof value !== "number" || !keys.has(key)) return value;
+    const source = context?.source;
+    if (typeof source === "string" && CANONICAL_ID_TOKEN.test(source)) return source;
+    return Number.NaN;
+  };
+  const parsed: unknown = JSON.parse(text, reviver as (this: unknown, key: string, value: unknown) => unknown);
+  // Astra F1 (post-build review): JSON.parse keeps the LAST of two members with one name and drops the
+  // earlier one before the reviver sees it, so `"draft":true,"draft":false` would read as published. A
+  // well-formed API never writes a repeated member, so any repeat refuses the whole text (fail closed).
+  if (hasDuplicateMember(text)) throw new SyntaxError("duplicate_member");
+  return parsed;
+}
+
+/**
+ * Astra F1 (post-build review): one linear pass over text that JSON.parse has ALREADY accepted. A stack of
+ * frames: an object keeps the member names seen and whether a name comes next; an array keeps nothing. A
+ * string in name position is decoded (only when it holds an escape, with JSON.parse on its own token), so
+ * `"draft"` and `"draft"` are the same name. A string in value position is skipped with its escapes
+ * honoured, so a `{`, `,` or `"` inside a value never moves the frames.
+ */
+function hasDuplicateMember(text: string): boolean {
+  const stack: Array<{ names: Set<string> | null; nameNext: boolean }> = [];
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const c = text.charCodeAt(i);
+    if (c === 0x22 /* " */) {
+      const start = i;
+      let escaped = false;
+      i += 1;
+      while (i < n) {
+        const d = text.charCodeAt(i);
+        if (d === 0x5c /* \ */) { escaped = true; i += 2; continue; }
+        if (d === 0x22) break;
+        i += 1;
+      }
+      const top = stack[stack.length - 1];
+      if (top !== undefined && top.names !== null && top.nameNext) {
+        const name = escaped ? (JSON.parse(text.slice(start, i + 1)) as string) : text.slice(start + 1, i);
+        if (top.names.has(name)) return true;
+        top.names.add(name);
+        top.nameNext = false;
+      }
+      i += 1; // past the closing quote
+      continue;
+    }
+    if (c === 0x7b /* { */) stack.push({ names: new Set<string>(), nameNext: true });
+    else if (c === 0x5b /* [ */) stack.push({ names: null, nameNext: false });
+    else if (c === 0x7d /* } */ || c === 0x5d /* ] */) stack.pop();
+    else if (c === 0x2c /* , */) {
+      const top = stack[stack.length - 1];
+      if (top !== undefined && top.names !== null) top.nameNext = true;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+/** A ceiling is a positive whole byte count; anything else is refused (never read as "no ceiling"). */
+function validCeiling(max: number): boolean {
+  return Number.isSafeInteger(max) && max > 0;
+}
+
+async function cancelQuietly(cancel: () => Promise<void>): Promise<void> {
+  try { await cancel(); } catch { /* the body is being refused either way */ }
+}
+
+/**
+ * S6: read a body under a byte ceiling. A declared length above it is refused unread; otherwise the
+ * stream is counted chunk by chunk and cancelled the moment the count passes the ceiling, so a missing
+ * or false `Content-Length` never lets more than one chunk past it into memory. Strict UTF-8, then the
+ * source-checked parse. Every failure is `bad_payload` (an abort between chunks is `deadline`).
+ */
+async function readBounded(res: Response, max: number, signal: AbortSignal): Promise<unknown> {
+  const declared = res.headers.get("content-length");
+  if (declared !== null && declared.trim() !== "" && Number(declared) > max) {
+    if (res.body) await cancelQuietly(() => res.body!.cancel());
+    throw new SevenShiftsApiError("bad_payload");
+  }
+  if (!res.body) throw new SevenShiftsApiError("bad_payload");
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    if (signal.aborted) {
+      await cancelQuietly(() => reader.cancel());
+      throw new SevenShiftsApiError("deadline");
+    }
+    let step: ReadableStreamReadResult<Uint8Array>;
+    try {
+      step = await reader.read();
+    } catch {
+      throw new SevenShiftsApiError(signal.aborted ? "deadline" : "bad_payload");
+    }
+    if (step.done) break;
+    total += step.value.byteLength;
+    if (total > max) {
+      await cancelQuietly(() => reader.cancel());
+      throw new SevenShiftsApiError("bad_payload");
+    }
+    chunks.push(step.value);
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { bytes.set(c, at); at += c.byteLength; }
+  try {
+    return parseJsonWithIdSource(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new SevenShiftsApiError("bad_payload");
+  }
+}
+
 const VALIDATORS: Partial<Record<SevenShiftsResource, (json: unknown) => SnapshotResult<unknown>>> = {
   whoami: whoamiSnapshot,
   assignments: assignmentsSnapshot,
@@ -140,8 +286,13 @@ export function createSevenShiftsClient(deps: SevenShiftsClientDeps) {
     }
   }
 
-  /** One GET with the limiter, the one 429 retry and the fixed error codes; returns parsed JSON. */
-  async function getJson(url: string): Promise<unknown> {
+  /**
+   * One GET with the limiter, the one 429 retry and the fixed error codes; returns parsed JSON.
+   * `maxBytes` undefined = today's `res.json()`; set = the bounded, source-checked read (S6, A2-3).
+   */
+  async function getJson(url: string, maxBytes: number | undefined = deps.maxResponseBytes): Promise<unknown> {
+    // An unusable ceiling is refused before sending; it never falls back to an unbounded read.
+    if (maxBytes !== undefined && !validCeiling(maxBytes)) throw new SevenShiftsApiError("bad_payload");
     await waitTurn();
     let res = await send(url);
     if (res.status === 429) {
@@ -157,6 +308,21 @@ export function createSevenShiftsClient(deps: SevenShiftsClientDeps) {
       }
     }
     if (!res.ok) throw new SevenShiftsApiError(statusCode(res.status));
+    if (maxBytes !== undefined) {
+      // Astra F2 (post-build review): the digest asks for a COMPLETE listing with no Range, so only an exact
+      // 200 is an answer. `res.ok` also admits 201–299 (a 206 Partial Content printed "No one scheduled"):
+      // those are http_error. A Content-Range header, whatever the status, marks a partial answer: bad_payload.
+      // The sync's unbounded path below keeps `res.ok` unchanged.
+      if (res.status !== 200) {
+        if (res.body) await cancelQuietly(() => res.body!.cancel());
+        throw new SevenShiftsApiError("http_error");
+      }
+      if (res.headers.has("content-range")) {
+        if (res.body) await cancelQuietly(() => res.body!.cancel());
+        throw new SevenShiftsApiError("bad_payload");
+      }
+      return readBounded(res, maxBytes, deps.signal);
+    }
     try {
       return await res.json();
     } catch {
@@ -204,7 +370,22 @@ export function createSevenShiftsClient(deps: SevenShiftsClientDeps) {
     return { kind: "snapshot", value: v.value };
   }
 
-  return { get };
+  /**
+   * ONE GET of the published-shifts default listing. Never follows a cursor. Returns the parsed JSON as it arrived.
+   * It is only ever a bounded read: `opts.maxBytes` (this request) or the client's `maxResponseBytes`;
+   * with neither it throws `bad_payload` without sending. It does not judge the page (terminal or not,
+   * `object` tag, rows): the digest's pure check does, so `pageStep` stays the sync's.
+   */
+  async function getOnePage(q: PublishedShiftsQuery, opts?: { maxBytes?: number }): Promise<unknown> {
+    // Path and params validate the id and both instants BEFORE any request (throw bad_id / bad_window).
+    const path = PUBLISHED_SHIFTS_ENDPOINT.path(q.companyId);
+    const qs = PUBLISHED_SHIFTS_ENDPOINT.params(q).toString();
+    const maxBytes = opts?.maxBytes ?? deps.maxResponseBytes;
+    if (maxBytes === undefined) throw new SevenShiftsApiError("bad_payload");
+    return getJson(`${SEVENSHIFTS_API_BASE}${path}?${qs}`, maxBytes);
+  }
+
+  return { get, getOnePage };
 }
 
 export type SevenShiftsClient = ReturnType<typeof createSevenShiftsClient>;

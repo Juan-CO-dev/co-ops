@@ -16,7 +16,7 @@ import {
   type DigestSection,
   type ShopDayFacts,
 } from "@/lib/report-digests-compose";
-import { canOpen, digestLink, NO_ACCESS_VIEWER, targetPath, type DigestTarget, type LinkViewer } from "@/lib/report-digests-links";
+import { canOpen, digestLink, isLiveTarget, NO_ACCESS_VIEWER, sectionLink, targetPath, type DigestTarget, type LinkViewer } from "@/lib/report-digests-links";
 import { DIGEST_ANCHORS } from "@/lib/report-digests-anchors-shared";
 import { withReturnFragment } from "@/lib/nav-redirect";
 import { ok } from "@/lib/report-digests-v2-shared";
@@ -319,3 +319,61 @@ describe("the sign-in round trip keeps a deep link's anchor", () => {
   });
 });
 
+describe("digests PR 2 (§2.4): the reconcile target mirrors /admin/people-reconcile and its admin shell", () => {
+  const PREP_A: LinkViewer = { role: "prep_mgr", level: 6, locations: [A] };
+  const KEY_HOLDER_A: LinkViewer = { role: "key_holder", level: 4, locations: [A] };
+  const CGS: LinkViewer = { role: "cgs", level: 10, locations: [] };
+  const rec = (location: string): DigestTarget => ({ to: "reconcile", location });
+
+  it("its path is /admin/people-reconcile?loc=<shop> (the page reads ?loc=)", () => {
+    expect(targetPath(rec(A))).toBe(`/admin/people-reconcile?loc=${A}`);
+    expect(digestLink({ baseUrl: `${BASE}/` }, rec(B))).toBe(`${BASE}/admin/people-reconcile?loc=${B}`);
+  });
+
+  // Hand-written from the page: GM own shop, MoO / Owner / CGS any shop, everyone else never.
+  const gate: Array<[string, LinkViewer | null | undefined, string, boolean]> = [
+    ["GM, own shop", GM_A, A, true],
+    ["GM, another shop", GM_A, B, false],
+    ["MoO with no membership, A", MOO_NO_MEMBERSHIP, A, true],
+    ["MoO with no membership, B", MOO_NO_MEMBERSHIP, B, true],
+    ["owner, B", OWNER, B, true],
+    ["CGS, A", CGS, A, true],
+    ["AGM, own shop", AGM_A, A, false],
+    ["catering manager, own shop", CATERING_MGR, A, false],
+    ["prep manager, own shop", PREP_A, A, false],
+    ["social media manager, own shop", SMM, A, false],
+    ["shift lead, own shop", SHIFT_LEAD_A, A, false],
+    ["key holder, own shop", KEY_HOLDER_A, A, false],
+    ["an unknown role claiming level 9", { role: "regional_wizard", level: 9, locations: [A] }, A, false],
+    ["NO_ACCESS_VIEWER", NO_ACCESS_VIEWER, A, false],
+    ["null viewer", null, A, false],
+    ["undefined viewer (unscoped, like every target)", undefined, A, true],
+  ];
+  it.each(gate)("%s → %s", (_name, viewer, location, expected) => {
+    expect(canOpen(viewer, rec(location))).toBe(expected);
+  });
+
+  it('"all" is no link, even for the owner', () => {
+    for (const v of [OWNER, CGS, MOO_NO_MEMBERSHIP, GM_A]) expect(digestLink({ baseUrl: BASE, viewer: v }, rec("all")), v.role).toBeNull();
+  });
+
+  it("a shop that is not an id is no link", () => {
+    expect(digestLink({ baseUrl: BASE, viewer: OWNER }, rec("Shop A"))).toBeNull();
+  });
+
+  it("it is a LIVE screen", () => {
+    expect(isLiveTarget(rec(A))).toBe(true);
+    expect(sectionLink({ baseUrl: BASE, viewer: GM_A }, rec(A))).toEqual({ href: `${BASE}/admin/people-reconcile?loc=${A}`, live: true });
+  });
+
+  it("the chain reconcile → stations → nothing: a GM gets reconcile, an AGM stations, a viewer with no access nothing", () => {
+    const chain: DigestTarget[] = [rec(A), { to: "stations", location: A }];
+    expect(digestLink({ baseUrl: BASE, viewer: GM_A }, ...chain)).toBe(`${BASE}/admin/people-reconcile?loc=${A}`);
+    expect(digestLink({ baseUrl: BASE, viewer: AGM_A }, ...chain)).toBe(`${BASE}/stations?loc=${A}`);
+    expect(digestLink({ baseUrl: BASE, viewer: SMM }, ...chain)).toBe(`${BASE}/stations?loc=${A}`);
+    expect(digestLink({ baseUrl: BASE, viewer: null }, ...chain)).toBeNull();
+    expect(digestLink({ baseUrl: BASE, viewer: NO_ACCESS_VIEWER }, ...chain)).toBeNull();
+    // A GM of another shop: neither screen of A.
+    expect(digestLink({ baseUrl: BASE, viewer: { role: "gm", level: 7, locations: [B] } }, ...chain)).toBeNull();
+  });
+});

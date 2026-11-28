@@ -10603,5 +10603,22 @@
   "digest.status.todo_one": "1 to do",
   "digest.status.todo_other": "{n} to do",
   "digest.shop.preheader_todo_one": "1 thing to do.",
-  "digest.shop.preheader_todo_other": "{n} things to do."
+  "digest.shop.preheader_todo_other": "{n} things to do.",
+  "digest.staffing.label": "Staff scheduled",
+  "digest.staffing.people_one": "1 person",
+  "digest.staffing.people_other": "{n} people",
+  "digest.staffing.span": "{start} to {end}",
+  "digest.staffing.unnamed": "unnamed",
+  "digest.staffing.extra_one": "+1 shift",
+  "digest.staffing.extra_other": "+{n} shifts",
+  "digest.staffing.open_one": "1 open shift",
+  "digest.staffing.open_other": "{n} open shifts",
+  "digest.staffing.none": "No one scheduled",
+  "digest.staffing.not_available": "Schedule not available",
+  "digest.staffing.vs_label": "Scheduled vs worked",
+  "digest.staffing.scheduled": "Scheduled {hours} h (published 7shifts: assigned shifts starting this day, before breaks)",
+  "digest.staffing.clocked": "Clocked {hours} h (Toast business day)",
+  "digest.staffing.clocked_so_far": "Clocked {hours} h so far (Toast business day)",
+  "digest.staffing.clocked_unknown": "clocked hours not available",
+  "digest.staffing.diff": "({diff} h)"
 }

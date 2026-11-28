@@ -13,6 +13,7 @@ import { loadCapturedToastDay } from "@/lib/toast/captured-day";
 import { summarizeLabor, weekStart, type LaborEntryFact, type LaborSummary } from "@/lib/toast/labor-shared";
 import { laborPullEnabled, runToastLaborPull } from "@/lib/toast/labor";
 import { addDays, etDayRange } from "@/lib/report-digests-shared";
+import type { ScheduleReader, ShopSchedule } from "@/lib/report-digests-schedule-shared";
 import { mergeBreakdown, SALES_WINDOW_CONCURRENCY, type BreakdownRaw, type DailyRaw, type SalesDimension } from "@/lib/sales-reports-shared";
 import {
   cutoffsTomorrow,
@@ -411,11 +412,30 @@ export async function loadLabor(sb: Sb, locationId: string, day: string, sales: 
   return ok(summarizeLabor(day, entries, sales.kind === "ok" ? sales.value.today.netCents : null));
 }
 
+/**
+ * The schedule reader's own catch (F8, PR 2 fix round). Not `settle`: settle logs the thrown message, and a reader's
+ * message could carry response text or a credential. This logs ONE fixed code and nothing from the error, and yields
+ * "Schedule not available" (`error`). A synchronous throw from `shopWindow` is caught too (awaited inside the try).
+ */
+async function readScheduleWindow(reader: ScheduleReader, locationId: string, from: string, to: string): Promise<Loaded<ShopSchedule>> {
+  try { return await reader.shopWindow(locationId, from, to); }
+  catch {
+    console.error("[digests] schedule: reader_threw");
+    return failed();
+  }
+}
+
 /** Every v2 area for one shop and business day. Never throws. */
-export async function loadShopV2Facts(sb: Sb, locationId: string, day: string, now: Date): Promise<ShopV2Facts> {
+/**
+ * `opts.schedule` (digests round 3, PR 2): the run's ONE schedule reader (lib/report-digests.ts buildIO). When given,
+ * the shop's published schedule for [D, D+1] is read beside the other areas, never behind the Toast pull, and is
+ * `schedule` on the facts; the reader never throws. No reader = the key is absent (no staffing line at all).
+ */
+export async function loadShopV2Facts(sb: Sb, locationId: string, day: string, now: Date, opts: { schedule?: ScheduleReader } = {}): Promise<ShopV2Facts> {
   const s = sharedReads(sb, locationId, day);
   const deliveries = memo(() => loadDeliveries(sb, s, locationId, day));
-  const [sales, salesDetail, catering, ordering, receiving, inventory, people] = await Promise.all([
+  const reader = opts.schedule;
+  const [sales, salesDetail, catering, ordering, receiving, inventory, people, schedule] = await Promise.all([
     settle(() => loadSales(sb, locationId, day), "sales"),
     // Never throws (each part settles on its own, under its own 8 s deadline). Read once per shop/day: the
     // engine memoizes this whole fact set (Run.shopFacts), so every recipient and the unified digest share it.
@@ -425,6 +445,8 @@ export async function loadShopV2Facts(sb: Sb, locationId: string, day: string, n
     settle(() => loadReceiving(sb, deliveries, s, locationId, day), "receiving"),
     settle(() => loadInventory(sb, deliveries, s, locationId, day), "inventory"),
     settle(() => loadPeople(sb, locationId, day), "people"),
+    // Belt and braces: the reader never throws, and a throw would still be "not available", never a lost digest.
+    reader ? readScheduleWindow(reader, locationId, day, lookaheadDay(day)) : Promise.resolve(undefined),
   ]);
   const labor = await settle(() => laborForDigest(locationId, day, {
     enabled: laborPullEnabled,
@@ -434,5 +456,5 @@ export async function loadShopV2Facts(sb: Sb, locationId: string, day: string, n
     },
     read: () => loadLabor(sb, locationId, day, sales),
   }), "labor");
-  return { lookahead: lookaheadDay(day), sales, catering, ordering, receiving, inventory, people, labor, salesDetail };
+  return { lookahead: lookaheadDay(day), sales, catering, ordering, receiving, inventory, people, labor, salesDetail, ...(schedule ? { schedule } : {}) };
 }

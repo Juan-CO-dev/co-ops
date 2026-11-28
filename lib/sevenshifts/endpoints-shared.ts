@@ -187,6 +187,35 @@ export const SEVENSHIFTS_ENDPOINTS: Record<SevenShiftsResource, EndpointSpec> = 
   labor_settings: { shape: "singleton", path: company("labor_settings"), params: noParams },
 };
 
+/** The window of the digest's published-shifts read: two UTC instants the caller computed ONCE. */
+export interface PublishedShiftsQuery { companyId: string; startGte: string; startLte: string }
+
+/**
+ * THE DIGEST'S SHIFT READ (digest PR 2, plan §11.1.1): 7shifts' DOCUMENTED DEFAULT listing, which
+ * returns published, non-deleted shifts. It sends no `include_draft`, `include_deleted`, `draft`,
+ * `deleted`, `modified_since` or `cursor`: the default is the thing being asked for, and the docs
+ * call `include_draft` internal. It is deliberately NOT a `SevenShiftsResource` and not in
+ * `SEVENSHIFTS_ENDPOINTS`, so the sync (and its `shifts` entry above) is untouched.
+ *
+ * The caller computes the window once (`windowInstants`) and passes the SAME two strings here and
+ * to the digest's raw check, so the request sent and the answer checked name one window.
+ */
+export const PUBLISHED_SHIFTS_ENDPOINT: {
+  path(companyId: string): string;
+  params(q: PublishedShiftsQuery): URLSearchParams;
+} = {
+  path: company("shifts"),
+  params: (q) => {
+    id(q.companyId);
+    return new URLSearchParams({
+      limit: String(LIST_PAGE_LIMIT),
+      "start[gte]": instant(q.startGte),
+      "start[lte]": instant(q.startLte),
+      consider_tz_in_ranges: "true",
+    });
+  },
+};
+
 /** Every request pass of a resource, in order: `params` with each declared pass merged over it. */
 export function requestPasses(resource: SevenShiftsResource, w: SyncWindow, companyId: string): URLSearchParams[] {
   const spec = SEVENSHIFTS_ENDPOINTS[resource];

@@ -334,7 +334,7 @@ function optUtcInstant(o: Obj, k: string): string | null {
   return new Date(ms).toISOString();
 }
 /** A real calendar day (Feb 30 is refused: V8 rolls it over, the round trip catches it). */
-function calendarDay(d: string): boolean {
+export function calendarDay(d: string): boolean {
   const ms = Date.parse(`${d}T00:00:00Z`);
   return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === d;
 }
@@ -352,13 +352,13 @@ function optDate(o: Obj, k: DateField): string | null {
   return absent(o[k]) || o[k] === "" ? null : dateField(o, k, strictDateOf);
 }
 /** A clock of a date field is a real wall clock: 00–23 h, 00–59 min, 00–59 s (fraction free). */
-function clockOk(clock: string): boolean {
+export function clockOk(clock: string): boolean {
   const m = /^(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?$/.exec(clock);
   if (!m) return false;
   return Number(m[1]) <= 23 && Number(m[2]) <= 59 && (m[3] === undefined || Number(m[3]) <= 59);
 }
 /** `Z`, or an offset within ±14:00 with 00–59 minutes (the real-world UTC offset range). */
-function offsetOk(zone: string): boolean {
+export function offsetOk(zone: string): boolean {
   if (zone === "Z") return true;
   const m = /^[+-](\d{2}):?(\d{2})$/.exec(zone);
   if (!m) return false;

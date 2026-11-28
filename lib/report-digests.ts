@@ -19,6 +19,8 @@ import { DEFAULT_OPS_ALERT_EMAIL } from "@/lib/jobs-registry";
 import { easternBoundary, easternDay } from "@/lib/job-watch";
 import { listReports } from "@/lib/reports-hub";
 import { loadShopV2Facts } from "@/lib/report-digests-v2";
+import { createScheduleReader } from "@/lib/report-digests-schedule";
+import type { ScheduleReader, ShopSchedule } from "@/lib/report-digests-schedule-shared";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { refundEventAmounts, type RefundEventRow } from "@/lib/catering/refund-events-shared";
 import { etCalendarDate } from "@/lib/operational-day";
@@ -151,7 +153,8 @@ async function count(q: PromiseLike<{ count: number | null; error: { message: st
   return n ?? 0;
 }
 
-export async function loadShopDayFacts(sb: Sb, location: { id: string; name: string }, day: string, now: Date = new Date()): Promise<ShopDayFacts> {
+/** `opts.schedule`: the run's one schedule reader, passed through to the v2 facts (digests round 3, PR 2). */
+export async function loadShopDayFacts(sb: Sb, location: { id: string; name: string }, day: string, now: Date = new Date(), opts: { schedule?: ScheduleReader } = {}): Promise<ShopDayFacts> {
   const [reports, deliveries, tosses, storeRunsPending, tasks, v2] = await Promise.all([
     listReports(sb, { viewer: SYSTEM_VIEWER, locationId: location.id, dateFrom: day, dateTo: day }),
     selectAllRows<{ match_state: string; receipt_url: string | null }>((from, to) =>
@@ -163,7 +166,7 @@ export async function loadShopDayFacts(sb: Sb, location: { id: string; name: str
     selectAllRows<{ report_type: string }>((from, to) =>
       sb.from("report_assignments").select("report_type").eq("location_id", location.id).eq("operational_date", day).eq("active", true).order("id").range(from, to)),
     // Digest v2 (GO 2026-10-08): fail-soft per area, never throws, never writes.
-    loadShopV2Facts(sb, location.id, day, now),
+    loadShopV2Facts(sb, location.id, day, now, opts),
   ]);
   // PM findings (Astra P2): the list loader carries no PM signals, so read the live evaluations of
   // the day's PM report(s) here. A failed read is "not assessed", never "All good".
@@ -265,9 +268,18 @@ async function loadRefundsYesterday(sb: Sb, y: { startIso: string; endExclusiveI
       .gte("paid_at", y.startIso).lt("paid_at", y.endExclusiveIso).order("id").range(from, to));
 }
 
-export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promise<CateringFacts> {
+/**
+ * `opts.schedule` (digests round 3, PR 2): the run's one schedule reader. Every active shop's published schedule for
+ * [today, tomorrow] is read in parallel with everything below (nothing waits on it; the reader never throws) and
+ * lands in `schedule` by shop id. No reader = no `schedule` key (no staffing line at all).
+ */
+export async function loadCateringFacts(sb: Sb, today: string, now: Date, opts: { schedule?: ScheduleReader } = {}): Promise<CateringFacts> {
   const activeShops = await selectAllRows<{ id: string }>((from, to) =>
     sb.from("locations").select("id").eq("active", true).order("id").range(from, to));
+  const reader = opts.schedule;
+  const schedulePending = reader
+    ? Promise.all(activeShops.map(async (shop) => [shop.id, await scheduleWindow(reader, shop.id, today, addDays(today, 1))] as const))
+    : null;
   const toRingInToast = await readNotInToast(sb, activeShops.map((shop) => shop.id), { from: today, through: today });
   const yesterday = addDays(today, -1);
   const tomorrow = addDays(today, 1);
@@ -376,7 +388,22 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date): Promi
     openQuotes: openQuotes.filter((q) => !q.expires_at || Date.parse(q.expires_at) > now.getTime()).map((q) => ({ id: q.id, locationId: q.location_id })),
     refundsYesterday: refunds.map((r) => ({ locationId: refundLoc.get(r.quote_id) ?? null, amountCents: r.amount_cents })),
     readiness, staff,
+    ...(schedulePending ? { schedule: Object.fromEntries(await schedulePending) } : {}),
   };
+}
+
+/**
+ * One shop's window from the reader. It never throws; a throw would still be "not available", never a lost digest.
+ * F8 (PR 2 fix round): the log line is ONE fixed code and nothing from the error, because a reader's thrown message
+ * could carry response text or a credential. A synchronous throw from `shopWindow` lands here too (it is awaited
+ * inside the try). Exported for the loader test only.
+ */
+export async function scheduleWindow(reader: ScheduleReader, locationId: string, from: string, to: string): Promise<Loaded<ShopSchedule>> {
+  try { return await reader.shopWindow(locationId, from, to); }
+  catch {
+    console.error("[digests] schedule: reader_threw");
+    return { kind: "error" };
+  }
 }
 
 /**
@@ -555,6 +582,9 @@ export async function alertDigestProblem(sb: Sb, a: DigestAlert, now: Date): Pro
 
 function buildIO(now: Date): DigestIO {
   const sb = getServiceRoleClient();
+  // ONE schedule reader per run, shared by the shop and the catering loaders (S6): it memoizes by company and
+  // window, so a window is read once however many shops, recipients and digests need it.
+  const schedule = createScheduleReader(sb);
   return {
     now,
     baseUrl: appUrl(),
@@ -563,8 +593,8 @@ function buildIO(now: Date): DigestIO {
     directory: () => loadDigestDirectory(sb),
     sendLog: (days) => loadSendLog(sb, days),
     finalizedClosings: (days) => loadFinalizedClosings(sb, days),
-    shopFacts: (location, day) => loadShopDayFacts(sb, location, day, now),
-    cateringFacts: (today) => loadCateringFacts(sb, today, now),
+    shopFacts: (location, day) => loadShopDayFacts(sb, location, day, now, { schedule }),
+    cateringFacts: (today) => loadCateringFacts(sb, today, now, { schedule }),
     store: supabaseSendStore(sb),
     sendEmail: (m) => sendEmail({ ...m, from: teamFrom() }),
     sha: (content) => createHash("sha256").update(content).digest("hex"),
