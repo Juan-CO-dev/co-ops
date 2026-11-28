@@ -6,6 +6,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { definePreload, preloadValue, signalDeadline, type PieceCtx, type PreloadPhase, type PreloadPiece, type PreloadResults } from "@/lib/preload-runner";
 import { CLOCK_START, FakeClock, deferred, fakePiece, flush, type PieceBehaviour, type PieceRecord } from "./fixtures/digest-labor-engine";
+import { roleBuckets, type RolePeopleRow } from "@/lib/business-labor-roles-shared";
+import type { GmSettingsResult, HourlyLaborFacts } from "@/lib/report-digests-labor-shared";
 
 type Due = { tag: string };
 const DUE: Due = { tag: "due" };
@@ -712,8 +714,11 @@ describe("E1 (D-2, P1): no rejection a piece hands over is ever unhandled, whate
   };
   const valued = (key: string, value: () => unknown): PreloadPiece<unknown> => ({ key, capMs: 5_000, start: () => ({ done: Promise.resolve(), snapshot: value }) });
   const rejected = (why: string): Promise<never> => Promise.reject(new Error(`${why} (synthetic)`));
-  /** A native promise whose own `then` was replaced: only its internal slot says what it is. */
-  const disguised = (why: string): Promise<never> => Object.assign(rejected(why), { then: () => undefined });
+
+  // Fix round 4 (CC ruling H0 / H3): the shapes that only a HOSTILE object has were taken out of the two lists below
+  // (a native promise whose own `then` was replaced, as a handle and in a snapshot), and so were the rejected promises
+  // INSIDE a value the seal refuses on sight and no longer looks into (a Map's key / value, a Set's entry, a class
+  // instance's fields, a function's property, a Date's own properties): H2 seals JSON-safe data only.
 
   // ── what start() returns ──
   const asyncStart = async (): Promise<never> => { throw new Error("async start failed (synthetic)"); };
@@ -721,7 +726,6 @@ describe("E1 (D-2, P1): no rejection a piece hands over is ever unhandled, whate
     ["an `async start()` that REJECTS (the handle IS a rejected promise)", () => asyncStart()],
     ["a promise handed back as the handle that rejects LATER, after run() has returned", () => new Promise<never>((_, reject) => { setTimeout(() => reject(new Error("later (synthetic)")), 0); })],
     ["a REJECTED promise that also carries a snapshot function and a done (it is still no handle)", () => Object.assign(rejected("dressed as a handle"), { done: Promise.resolve(), snapshot: () => "S" })],
-    ["a rejected promise whose own `then` was replaced", () => disguised("handle with a replaced then")],
     ["a THENABLE that carries a snapshot function and a done (it is still no handle)", () => ({ then(_ok: unknown, fail: (e: unknown) => void) { fail(new Error("thenable (synthetic)")); }, done: Promise.resolve(), snapshot: () => "S" })],
   ];
   for (const [name, handle] of returned) {
@@ -764,7 +768,6 @@ describe("E1 (D-2, P1): no rejection a piece hands over is ever unhandled, whate
   });
 
   // ── the snapshot value: EVERY promise in it, not the first ──
-  class Row { first = rejected("in a class instance, first"); second = rejected("in a class instance, second"); }
   const cyclic = (): unknown => {
     const a: Record<string, unknown> = { p: rejected("in a cycle, first") };
     a.self = a;
@@ -774,15 +777,10 @@ describe("E1 (D-2, P1): no rejection a piece hands over is ever unhandled, whate
   const snapshots: Array<[string, () => unknown]> = [
     ["TWO rejected promises in one record (Astra's probe)", () => ({ a: rejected("first"), b: rejected("second") })],
     ["a Map (refused) FOLLOWED by a rejected promise", () => ({ m: new Map(), c: rejected("after a Map") })],
-    ["rejected promises as a Map's key, a Map's value and a Set's entry", () => ({ m: new Map<unknown, unknown>([[rejected("map key"), 1], ["k", rejected("map value")]]), s: new Set([rejected("set entry")]) })],
     ["rejected promises at three depths of arrays and records", () => [rejected("d0"), [{ x: rejected("d2") }], { y: [rejected("d2b")] }]],
     ["an accessor (refused, never run) FOLLOWED by two rejected promises", () => ({ get code() { return 1; }, a: rejected("after an accessor, first"), b: rejected("after an accessor, second") })],
-    ["a class instance holding two rejected promises", () => ({ row: new Row() })],
-    ["a FUNCTION carrying a rejected promise as a property", () => ({ f: Object.assign(() => 1, { p: rejected("on a function") }) })],
-    ["a rejected promise whose own `then` was replaced", () => ({ p: disguised("replaced then in a snapshot") })],
     ["two rejected promises in NON-ENUMERABLE properties", () => Object.defineProperties({}, { a: { value: rejected("hidden, first"), enumerable: false }, b: { value: rejected("hidden, second"), enumerable: false } })],
     ["two rejected promises in a record that refers to itself", cyclic],
-    ["two rejected promises as the own properties of a Date", () => ({ at: Object.assign(new Date(0), { a: rejected("on a Date, first"), b: rejected("on a Date, second") }) })],
   ];
   for (const [name, value] of snapshots) {
     it(`a snapshot with ${name} → that piece unavailable, the sibling ok, zero unhandledRejection events after run() returns`, async () => {
@@ -795,17 +793,8 @@ describe("E1 (D-2, P1): no rejection a piece hands over is ever unhandled, whate
     });
   }
 
-  it("a THENABLE in a snapshot (a record with its own `then`) is subscribed exactly once and refused → that piece unavailable, the sibling ok", async () => {
-    const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
-    let subscriptions = 0;
-    const thenable = { then(_ok: unknown, fail: (e: unknown) => void) { subscriptions += 1; fail(new Error("thenable in a snapshot (synthetic)")); } };
-    const out = await runWith(clock, [phase("p", 5_000, () => [valued("bad", () => ({ rows: [thenable] })), piece("good", 5_000, { kind: "now", value: "G" })])]);
-    await turns();
-    expect(unhandled).toEqual([]);
-    expect(subscriptions).toBe(1);
-    expect(out.get("bad")).toEqual({ kind: "unavailable" });
-    expect(out.get("good")).toEqual({ kind: "ok", value: "G" });
-  });
+  // Fix round 4 (CC ruling H1): the round-3 test that stood here pinned "a THENABLE in a snapshot is subscribed exactly
+  // once". The seal no longer calls a `then` at all; the test that replaces it is "H1 bullet 4" below.
 });
 
 describe("E2 (D-5, P2): the seal is a fresh copy of the data; it never writes into what the producer handed back", () => {
@@ -881,7 +870,10 @@ describe("E2 (D-5, P2): the seal is a fresh copy of the data; it never writes in
     expect(JSON.parse(JSON.stringify(out.get("a")))).toEqual({ kind: "ok", value: sealed });
   });
 
-  it("only data is sealed: a class instance, a function, a boxed value and a Date that carries a function of its own (a `getTime` that lies) fail closed (that piece unavailable), top level and nested", async () => {
+  // Rewritten in fix round 4 (CC ruling H2). A real Date that carries a `getTime` of its own used to be refused (round 3
+  // walked a Date's own properties); the seal now reads a Date with `Date.prototype.getTime.call` and nothing else of
+  // it, so it is its REAL epoch. A bigint is no longer sealed (it is not JSON-safe): it moved to the H2 refusals.
+  it("only data is sealed: a class instance, a function, a boxed value and an object that only inherits from Date fail closed (that piece unavailable), top level and nested; a real Date that carries a `getTime` of its own (one that lies) is its REAL epoch", async () => {
     const clock = new FakeClock();
     class Money { constructor(readonly cents: number) {} }
     const shapes: Array<() => unknown> = [
@@ -891,47 +883,370 @@ describe("E2 (D-5, P2): the seal is a fresh copy of the data; it never writes in
       () => ({ total: () => 5 }),
       () => ({ n: new Number(5) }),
       () => ({ when: Object.create(Date.prototype) as unknown }),
-      () => ({ at: Object.assign(new Date(EPOCH), { getTime: () => 5 }) }),
     ];
-    const out = await runWith(clock, [phase("p", 5_000, () => [...shapes.map((s, i) => valued(`bad${i}`, s)), valued("good", () => ({ n: 5, s: "five", none: null, missing: undefined, big: BigInt(5) }))])]);
+    const out = await runWith(clock, [phase("p", 5_000, () => [
+      ...shapes.map((s, i) => valued(`bad${i}`, s)),
+      valued("lying", () => ({ at: Object.assign(new Date(EPOCH), { getTime: () => 5 }) })),
+      valued("good", () => ({ n: 5, s: "five", none: null })),
+    ])]);
     shapes.forEach((_, i) => expect(out.get(`bad${i}`), `shape ${i}`).toEqual({ kind: "unavailable" }));
-    expect(out.get("good")).toEqual({ kind: "ok", value: { n: 5, s: "five", none: null, missing: undefined, big: BigInt(5) } });
+    expect(out.get("lying")).toEqual({ kind: "ok", value: { at: EPOCH } });
+    expect(out.get("good")).toEqual({ kind: "ok", value: { n: 5, s: "five", none: null } });
   });
 
-  it("the copy is faithful to the DATA: own enumerable data properties only, as plain frozen records and arrays (a shared reference stays shared, a cycle stays a cycle, a hole stays a hole, a `__proto__` key stays a key)", async () => {
+  // Rewritten in fix round 4 (CC ruling H2). It used to pin "a shared reference stays shared, a cycle stays a cycle, a
+  // hole stays a hole", a null-prototype record copied as a plain one, a symbol key copied and a non-enumerable property
+  // dropped. None of those is JSON-safe data: each now refuses the piece (the H2 tests below). What is left here is what
+  // the copy still has to be faithful to.
+  it("the copy is faithful to the DATA: plain frozen records and arrays, the keys in the producer's order, and a `__proto__` key stays a key (it never becomes the copy's prototype)", async () => {
     const clock = new FakeClock();
-    const tag = Symbol("tag");
-    const shared = { n: 1 };
-    const sparse: unknown[] = [1, , 3];
-    const bare = Object.assign(Object.create(null) as Record<string, unknown>, { k: "v" });
     const withProtoKey = JSON.parse('{"__proto__": {"polluted": true}, "kept": 1}') as Record<string, unknown>;
-    const produced: Record<string | symbol, unknown> = { first: shared, second: shared, sparse, bare, withProtoKey, [tag]: "by symbol" };
-    Object.defineProperty(produced, "hidden", { value: "not enumerable", enumerable: false });
-    produced.self = produced;
+    const produced = { z: 1, a: [3, 1, 2], m: { second: "s", first: "f" }, withProtoKey };
     const out = await runWith(clock, [phase("p", 5_000, () => [valued("a", () => produced)])]);
-    const v = preloadValue<Record<string | symbol, unknown>>(out, "a") as Record<string | symbol, unknown>;
+    const v = preloadValue<typeof produced>(out, "a")!;
     expect(v).not.toBe(produced);
-    expect(v.first).not.toBe(shared);
-    expect(v.first).toEqual({ n: 1 });
-    expect(v.second).toBe(v.first);
-    expect(v.self).toBe(v);
-    expect(v[tag]).toBe("by symbol");
-    expect(Object.prototype.hasOwnProperty.call(v, "hidden")).toBe(false);
-    const copiedSparse = v.sparse as unknown[];
-    expect(Array.isArray(copiedSparse)).toBe(true);
-    expect(copiedSparse.length).toBe(3);
-    expect(1 in copiedSparse).toBe(false);
-    expect([copiedSparse[0], copiedSparse[2]]).toEqual([1, 3]);
-    expect(Object.getPrototypeOf(v.bare)).toBe(Object.prototype);
-    expect(v.bare).toEqual({ k: "v" });
+    expect(Object.keys(v)).toEqual(["z", "a", "m", "withProtoKey"]);
+    expect(Object.keys(v.m)).toEqual(["second", "first"]);
+    expect(v.a).toEqual([3, 1, 2]);
+    expect(Array.isArray(v.a)).toBe(true);
     const copiedProtoKey = v.withProtoKey as Record<string, unknown>;
     expect(Object.getPrototypeOf(copiedProtoKey)).toBe(Object.prototype);
     expect(Object.prototype.hasOwnProperty.call(copiedProtoKey, "__proto__")).toBe(true);
     expect((copiedProtoKey as { polluted?: unknown }).polluted).toBeUndefined();
     expect(copiedProtoKey.kept).toBe(1);
-    for (const node of [v, v.first, v.sparse, v.bare, v.withProtoKey]) expect(Object.isFrozen(node)).toBe(true);
+    for (const node of [v, v.a, v.m, v.withProtoKey]) expect(Object.isFrozen(node)).toBe(true);
     // The producer's own object: untouched.
     expect(Object.isFrozen(produced)).toBe(false);
+  });
+});
+
+// ── fix round 4 (CC addendum RULINGS-digest3-pr4-r4, 2026-11-28): H0 threat model, H1, H2, H3 ────
+// H0: pieces are first-party, reviewed code. The runner contains HONEST failures (a throw, a rejection, a hang, data
+// that should not be there). Hostile objects (Proxies with throwing traps, re-prototyped promises / Maps / Dates, a
+// hostile `then`, a rejected promise thrown as the exception, pathological getters) are out of scope: no test here
+// builds one. One test per bullet of H1 and of H2, and H3's pin of the Map.
+
+describe("H1 (E1): honest async failures are contained by the platform's own promise adoption", () => {
+  let unhandled: unknown[] = [];
+  const onUnhandled = (e: unknown) => { unhandled.push(e); };
+  beforeEach(() => { unhandled = []; process.on("unhandledRejection", onUnhandled); });
+  afterEach(() => { process.off("unhandledRejection", onUnhandled); });
+  /** Several turns of the microtask AND the macrotask queues after run() has returned, so a rejection with no handler is reported. */
+  const turns = async () => {
+    for (let i = 0; i < 3; i++) { await flush(6); await new Promise<void>((r) => setTimeout(r, 0)); }
+    await flush(6);
+  };
+  const valued = (key: string, value: () => unknown): PreloadPiece<unknown> => ({ key, capMs: 5_000, start: () => ({ done: Promise.resolve(), snapshot: value }) });
+  const rejected = (why: string): Promise<never> => Promise.reject(new Error(`${why} (synthetic)`));
+
+  it("H1 bullet 1, pieces(): an `async pieces()` by mistake (one that REJECTS, one that fulfils with a list) is no list → zero unhandledRejection events; NO key at all, not even what the earlier phase sealed (O-N3); run() resolves", async () => {
+    const mistakes: Array<() => Promise<unknown>> = [
+      async () => { throw new Error("async pieces failed (synthetic)"); },
+      async () => [],
+    ];
+    for (const mistake of mistakes) {
+      const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+      const out = await runWith(clock, [
+        phase("one", 5_000, () => [piece("first", 5_000, { kind: "now", value: "F" })]),
+        phase("two", 5_000, mistake as unknown as PreloadPhase<Due>["pieces"]),
+      ]);
+      await turns();
+      expect(unhandled).toEqual([]);
+      expect(out.size).toBe(0);
+    }
+  });
+
+  it("H1 bullet 1, pieces(): a REJECTED PROMISE in the list where a piece belongs (`ids.map(async …)` by mistake) → zero unhandledRejection events; NO key at all (O-N3); run() resolves", async () => {
+    const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+    const out = await runWith(clock, [phase("p", 5_000, () => [
+      piece("good", 5_000, { kind: "now", value: "G" }),
+      rejected("a piece that is a promise") as unknown as PreloadPiece<unknown>,
+    ])]);
+    await turns();
+    expect(unhandled).toEqual([]);
+    expect(out.size).toBe(0);
+  });
+
+  it("H1 bullet 1, start(): an `async start()` by mistake (one that REJECTS, one that fulfils with a good handle) is no handle → zero unhandledRejection events; NO key at all (a bad handle clears the run: O-N3 as ruled after R5); run() resolves", async () => {
+    const mistakes: Array<() => Promise<unknown>> = [
+      async () => { throw new Error("async start failed (synthetic)"); },
+      async () => ({ done: Promise.resolve(), snapshot: () => "S" }),
+    ];
+    for (const mistake of mistakes) {
+      const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+      const bad: PreloadPiece<unknown> = { key: "bad", capMs: 5_000, start: () => mistake() as never };
+      const out = await runWith(clock, [phase("p", 5_000, () => [bad, piece("good", 5_000, { kind: "now", value: "G" })])]);
+      await turns();
+      expect(unhandled).toEqual([]);
+      expect(out.size).toBe(0);
+    }
+  });
+
+  it("H1 bullet 2: `handle.done` is READ exactly once and `handle.snapshot` is READ exactly once (lazy getters); snapshot() is called once, with the handle as `this`", async () => {
+    const clock = new FakeClock();
+    const reads = { done: 0, snapshot: 0 };
+    let calls = 0;
+    const receivers: unknown[] = [];
+    const handle = {
+      get done() { reads.done += 1; return Promise.resolve(); },
+      get snapshot() { reads.snapshot += 1; return function (this: unknown) { calls += 1; receivers.push(this); return "LEDGER"; }; },
+    };
+    const piece: PreloadPiece<unknown> = { key: "a", capMs: 5_000, start: () => handle as never };
+    const out = await runWith(clock, [phase("p", 5_000, () => [piece])]);
+    await turns();
+    expect(unhandled).toEqual([]);
+    expect(out.get("a")).toEqual({ kind: "ok", value: "LEDGER" });
+    expect(reads).toEqual({ done: 1, snapshot: 1 });
+    expect(calls).toBe(1);
+    expect(receivers[0]).toBe(handle);
+  });
+
+  it("H1 bullet 3 (the round-3 regression): a `done` that fulfils WITH an already-rejected promise is adopted → zero unhandledRejection events; the result is the snapshot", async () => {
+    const clock = new FakeClock();
+    let subscriptions = 0;
+    const cold = { then(resolve: (v: unknown) => void) { subscriptions += 1; resolve(rejected("the promise done fulfils with")); } };
+    const piece: PreloadPiece<unknown> = { key: "a", capMs: 5_000, start: () => ({ done: cold as unknown as Promise<void>, snapshot: () => "LEDGER" }) };
+    const out = await runWith(clock, [phase("p", 5_000, () => [piece])]);
+    await turns();
+    expect(unhandled).toEqual([]);
+    expect(subscriptions).toBe(1);
+    expect(out.get("a")).toEqual({ kind: "ok", value: "LEDGER" });
+  });
+
+  it("H1 bullet 3 (the round-3 regression): a `done` that fulfils with a PENDING promise is waited for, so the snapshot is taken when THAT promise settles and not before; one that never settles is cut at the cutoff (the budget race)", async () => {
+    const clock = new FakeClock();
+    let ledger = "unfinished";
+    const at = { waited: -1, cut: -1 };
+    const waited: PreloadPiece<unknown> = {
+      key: "waited", capMs: 5_000,
+      start() {
+        // The piece's real work: it finishes the ledger one second in. `done` fulfils at once WITH that promise.
+        const work = new Promise<void>((res) => { clock.timers.set(() => { ledger = "finished"; res(); }, 1_000); });
+        const done = { then(resolve: (v: unknown) => void) { resolve(work); } };
+        return { done: done as unknown as Promise<void>, snapshot: () => { at.waited = clock.now; return ledger; } };
+      },
+    };
+    const cut: PreloadPiece<unknown> = {
+      key: "cut", capMs: 5_000,
+      start() {
+        const done = { then(resolve: (v: unknown) => void) { resolve(new Promise<void>(() => {})); } };
+        return { done: done as unknown as Promise<void>, snapshot: () => { at.cut = clock.now; return "CUT"; } };
+      },
+    };
+    const out = await runWith(clock, [phase("p", 5_000, () => [waited, cut])]);
+    expect(out.get("waited")).toEqual({ kind: "ok", value: "finished" });
+    expect(at.waited).toBe(CLOCK_START + 1_000);
+    expect(out.get("cut")).toEqual({ kind: "ok", value: "CUT" });
+    expect(at.cut).toBe(CLOCK_START + 5_000);
+  });
+
+  it("H1 bullet 4: the seal NEVER calls a `then`: a thenable in a snapshot (a `then` that would reject, an `async then()` that throws) is refused untouched → `then` ran 0 times; zero unhandledRejection events; the sibling ok", async () => {
+    const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+    let ran = 0;
+    const thenables: Array<() => unknown> = [
+      () => ({ rows: [{ then(_ok: unknown, fail: (e: unknown) => void) { ran += 1; fail(new Error("thenable in a snapshot (synthetic)")); } }] }),
+      () => ({ async then() { ran += 1; throw new Error("async then (synthetic)"); } }),
+    ];
+    const out = await runWith(clock, [phase("p", 5_000, () => [...thenables.map((t, i) => valued(`bad${i}`, t)), piece("good", 5_000, { kind: "now", value: "G" })])]);
+    await turns();
+    expect(unhandled).toEqual([]);
+    expect(ran).toBe(0);
+    thenables.forEach((_, i) => expect(out.get(`bad${i}`), `thenable ${i}`).toEqual({ kind: "unavailable" }));
+    expect(out.get("good")).toEqual({ kind: "ok", value: "G" });
+  });
+
+  it("H1 bullet 4: any object with a `then` property is refused, whatever the property holds (a string, a number on an array, a non-enumerable one, a getter that is never run)", async () => {
+    const clock = new FakeClock();
+    let ran = 0;
+    const shapes: Array<() => unknown> = [
+      () => ({ then: "later", n: 1 }),
+      () => ({ rows: [Object.assign([1, 2], { then: 3 })] }),
+      () => Object.defineProperty({ n: 1 }, "then", { value: 1, enumerable: false }),
+      () => ({ rows: [{ get then() { ran += 1; return undefined; } }] }),
+    ];
+    const out = await runWith(clock, [phase("p", 5_000, () => shapes.map((s, i) => valued(`bad${i}`, s)))]);
+    shapes.forEach((_, i) => expect(out.get(`bad${i}`), `shape ${i}`).toEqual({ kind: "unavailable" }));
+    expect(ran).toBe(0);
+  });
+
+  it("H1 bullet 4: a native promise FOUND in a snapshot gets a handler and makes the piece unavailable: every one of them (at the top, in a record, in an array; rejected already, or rejecting after run() has returned)", async () => {
+    const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+    const later = (why: string) => new Promise<never>((_, reject) => { setTimeout(() => reject(new Error(`${why} (synthetic)`)), 0); });
+    const out = await runWith(clock, [phase("p", 5_000, () => [
+      valued("top", () => later("the snapshot itself, later")),
+      valued("many", () => ({ a: rejected("first"), list: [rejected("second"), { b: later("third, later") }], n: 1 })),
+      piece("good", 5_000, { kind: "now", value: "G" }),
+    ])]);
+    await turns();
+    expect(unhandled).toEqual([]);
+    expect(out.get("top")).toEqual({ kind: "unavailable" });
+    expect(out.get("many")).toEqual({ kind: "unavailable" });
+    expect(out.get("good")).toEqual({ kind: "ok", value: "G" });
+  });
+});
+
+describe("H2 (E2): the seal is JSON-safe data only", () => {
+  const valued = (key: string, value: () => unknown): PreloadPiece<unknown> => ({ key, capMs: 5_000, start: () => ({ done: Promise.resolve(), snapshot: value }) });
+  const EPOCH = Date.parse("2026-03-01T12:00:00.000Z");
+  const sealOf = async (value: () => unknown) => {
+    const clock = new FakeClock();
+    return (await runWith(clock, [phase("p", 5_000, () => [valued("a", value)])])).get("a");
+  };
+
+  it("H2 bullet 1, what is sealed: plain records and arrays of strings, finite numbers, booleans and null, as they are; a Date as its epoch; a record's undefined property left out; the sealed value survives a JSON round trip unchanged", async () => {
+    const produced = {
+      s: "text", empty: "", n: 5, zero: 0, negative: -1.5, yes: true, no: false, none: null, missing: undefined,
+      at: new Date(EPOCH), list: [1, "two", null, false, [new Date(EPOCH + 1)], {}], nested: { deep: { deeper: [] as unknown[], gone: undefined } },
+    };
+    const r = await sealOf(() => produced) as { kind: "ok"; value: unknown };
+    const expected = {
+      s: "text", empty: "", n: 5, zero: 0, negative: -1.5, yes: true, no: false, none: null,
+      at: EPOCH, list: [1, "two", null, false, [EPOCH + 1], {}], nested: { deep: { deeper: [] } },
+    };
+    expect(r.kind).toBe("ok");
+    // Strict: a key holding `undefined` is NOT in the copy, and a Date is a number.
+    expect(r.value).toStrictEqual(expected);
+    expect(JSON.parse(JSON.stringify(r.value))).toStrictEqual(r.value);
+    // Each primitive on its own is data too.
+    for (const v of ["text", 0, -7, true, false, null]) expect(await sealOf(() => v), String(v)).toEqual({ kind: "ok", value: v });
+  });
+
+  it("H2 bullet 1, what is refused: anything that is not JSON-safe data makes THAT piece unavailable (a Set, a class instance, a null-prototype record, an array subclass, a function, a symbol, a bigint, NaN, Infinity, an invalid Date, undefined at the top and in an array, a hole, a symbol key, a non-enumerable property, a property on an array, an accessor that is never run); the sibling is untouched", async () => {
+    const clock = new FakeClock();
+    class Money { constructor(readonly cents: number) {} }
+    class Rows extends Array<number> {}
+    let ran = 0;
+    const shapes: Array<[string, () => unknown]> = [
+      ["a Set", () => ({ s: new Set([1]) })],
+      ["a class instance", () => ({ m: new Money(5) })],
+      ["a null-prototype record", () => ({ bare: Object.assign(Object.create(null) as Record<string, unknown>, { k: "v" }) })],
+      ["an array subclass", () => ({ rows: Rows.from([1, 2]) })],
+      ["a function", () => ({ f: () => 5 })],
+      ["a symbol", () => ({ tag: Symbol("tag") })],
+      ["a bigint", () => ({ big: BigInt(5) })],
+      ["NaN", () => ({ n: Number.NaN })],
+      ["Infinity", () => [1, Number.POSITIVE_INFINITY]],
+      ["-Infinity at the top", () => Number.NEGATIVE_INFINITY],
+      ["an invalid Date", () => ({ at: new Date(Number.NaN) })],
+      ["undefined at the top", () => undefined],
+      ["undefined in an array", () => ({ list: [1, undefined, 3] })],
+      ["a hole in an array", () => ({ list: [1, , 3] })],
+      ["a symbol key", () => ({ n: 1, [Symbol("tag")]: "by symbol" })],
+      ["a non-enumerable property", () => Object.defineProperty({ n: 1 }, "hidden", { value: "not enumerable", enumerable: false })],
+      ["a property on an array that is not an element", () => ({ list: Object.assign([1, 2], { total: 3 }) })],
+      ["an accessor", () => ({ n: 1, get computed() { ran += 1; return 2; } })],
+    ];
+    const out = await runWith(clock, [phase("p", 5_000, () => [...shapes.map(([, s], i) => valued(`bad${i}`, s)), valued("good", () => ({ n: 1 }))])]);
+    shapes.forEach(([name], i) => expect(out.get(`bad${i}`), name).toEqual({ kind: "unavailable" }));
+    expect(ran).toBe(0);
+    expect(out.get("good")).toEqual({ kind: "ok", value: { n: 1 } });
+  });
+
+  /** "leaf" inside `levels` containers, records and arrays in turn. */
+  const nest = (levels: number): unknown => {
+    let v: unknown = "leaf";
+    for (let i = 0; i < levels; i++) v = i % 2 === 0 ? { v } : [v];
+    return v;
+  };
+
+  it("H2 bullet 2, the depth cap: a value inside 32 records / arrays is sealed; inside 33 the piece is unavailable", async () => {
+    const at32 = await sealOf(() => nest(32));
+    expect(at32).toEqual({ kind: "ok", value: nest(32) });
+    expect(await sealOf(() => nest(33))).toEqual({ kind: "unavailable" });
+    expect(await sealOf(() => ({ wide: [nest(31), nest(31)] }))).toEqual({ kind: "unavailable" });
+    expect(await sealOf(() => ({ wide: [nest(30), nest(30)] }))).toEqual({ kind: "ok", value: { wide: [nest(30), nest(30)] } });
+  });
+
+  it("H2 bullet 2, the node cap: a snapshot of 10,000 values is sealed; of 10,001 the piece is unavailable (one array, one record, many small arrays)", async () => {
+    const numbers = (n: number) => Array.from({ length: n }, (_, i) => i);
+    const record = (n: number) => Object.fromEntries(numbers(n).map((i) => [`k${i}`, i]));
+    // The top value counts as one.
+    expect(await sealOf(() => numbers(9_999))).toEqual({ kind: "ok", value: numbers(9_999) });
+    expect(await sealOf(() => numbers(10_000))).toEqual({ kind: "unavailable" });
+    expect(await sealOf(() => record(9_999))).toEqual({ kind: "ok", value: record(9_999) });
+    expect(await sealOf(() => record(10_000))).toEqual({ kind: "unavailable" });
+    // 1 + 100 arrays + 100 × 99 numbers = 10,001; with 98 numbers in the last one, 10,000.
+    const grid = (last: number) => Array.from({ length: 100 }, (_, i) => numbers(i === 99 ? last : 99));
+    expect(await sealOf(() => grid(98))).toEqual({ kind: "ok", value: grid(98) });
+    expect(await sealOf(() => grid(99))).toEqual({ kind: "unavailable" });
+  });
+
+  it("H2 bullet 2, no recursion: 20,000 nested records and a record that refers to itself are unavailable (the walk stops at the cap; it does not overflow the stack or hang); the sibling is untouched", async () => {
+    const clock = new FakeClock();
+    const deep = (): unknown => {
+      let v: Record<string, unknown> = { leaf: true };
+      for (let i = 0; i < 20_000; i++) v = { v };
+      return v;
+    };
+    const cyclic = (): unknown => {
+      const a: Record<string, unknown> = { n: 1 };
+      a.self = a;
+      return a;
+    };
+    const mutual = (): unknown => {
+      const a: unknown[] = [];
+      const b = { a };
+      a.push(b);
+      return { a, b };
+    };
+    const out = await runWith(clock, [phase("p", 5_000, () => [valued("deep", deep), valued("cyclic", cyclic), valued("mutual", mutual), valued("good", () => ({ n: 1 }))])]);
+    for (const k of ["deep", "cyclic", "mutual"]) expect(out.get(k), k).toEqual({ kind: "unavailable" });
+    expect(out.get("good")).toEqual({ kind: "ok", value: { n: 1 } });
+  });
+
+  it("H2 bullet 3: the sealed value is a FRESH, deep-frozen TREE: a value the producer references twice is copied twice, every copy is frozen, and nothing of the producer is frozen or written", async () => {
+    const shared = { n: 1, at: new Date(EPOCH) };
+    const produced = { first: shared, second: shared, list: [shared] };
+    const r = await sealOf(() => produced) as { kind: "ok"; value: { first: object; second: object; list: object[] } };
+    const copy = { n: 1, at: EPOCH };
+    expect(r.value).toStrictEqual({ first: copy, second: copy, list: [copy] });
+    expect(r.value.first).not.toBe(shared);
+    expect(r.value.second).not.toBe(r.value.first);
+    expect(r.value.list[0]).not.toBe(r.value.first);
+    for (const node of [r, r.value, r.value.first, r.value.second, r.value.list, r.value.list[0]]) expect(Object.isFrozen(node)).toBe(true);
+    // The producer's side, exactly as it was: its own objects, its own Date, nothing frozen.
     expect(produced.first).toBe(shared);
+    expect(produced.second).toBe(shared);
+    expect(shared.at.getTime()).toBe(EPOCH);
+    expect(Object.keys(shared)).toEqual(["n", "at"]);
+    for (const node of [produced, produced.list, shared]) expect(Object.isFrozen(node)).toBe(false);
+  });
+
+  // H2 bullet 4 (guard: nothing had to be converted, so this passes on the earlier heads too). The role piece counts
+  // contributors in Maps and Sets INSIDE `roleBuckets`; what it hands back is plain data. The settings and the hourly
+  // facts are records of strings, numbers, booleans and null. The real engine + real pieces + this runner, rendered, are
+  // in tests/report-digests-labor-e2e.test.ts.
+  it("H2 bullet 4 (guard): what the labor pieces hand back is JSON-safe as it is: the real role buckets, a settings result and hourly facts seal `ok` and unchanged", async () => {
+    const clock = new FakeClock();
+    const people: RolePeopleRow[] = [
+      { personKey: "p1", roleKey: "11", source: "7shifts", payClass: "hourly", straightCents: 4_000 },
+      { personKey: "p2", roleKey: "11", source: "7shifts", payClass: "hourly", straightCents: 3_000 },
+      { personKey: "p3", roleKey: "12", source: "7shifts", payClass: "hourly", straightCents: 2_000 },
+      { personKey: "p4", roleKey: "12", source: "7shifts", payClass: "hourly", straightCents: 1_000 },
+    ];
+    const roles = roleBuckets(people, new Map([["11", "Line (synthetic)"], ["12", "Counter (synthetic)"]]), { date: "2026-03-01", dayStraightCents: 10_000, wageEstimated: false });
+    expect(roles.kind).toBe("ok");
+    const settings: GmSettingsResult = { kind: "settings", settings: null };
+    const hourly: HourlyLaborFacts = { day: "2026-03-02", latestFinalDay: { kind: "none" }, weekSoFar: { kind: "no_final_day_this_week" }, lastFullWeek: { kind: "updating" }, roleStep: null };
+    const out = await runWith(clock, [phase("p", 5_000, () => [valued("roles", () => roles), valued("settings", () => settings), valued("hourly", () => hourly)])]);
+    expect(out.get("roles")).toStrictEqual({ kind: "ok", value: roles });
+    expect(out.get("settings")).toStrictEqual({ kind: "ok", value: settings });
+    expect(out.get("hourly")).toStrictEqual({ kind: "ok", value: hourly });
+  });
+});
+
+describe("H3: nothing else", () => {
+  it("a Map in a snapshot is refused: at the top level, in a record, in an array, empty or not → that piece unavailable; the sibling ok", async () => {
+    const clock = new FakeClock();
+    const valued = (key: string, value: () => unknown): PreloadPiece<unknown> => ({ key, capMs: 5_000, start: () => ({ done: Promise.resolve(), snapshot: value }) });
+    const shapes: Array<() => unknown> = [
+      () => new Map([["k", 1]]),
+      () => new Map(),
+      () => ({ byKey: new Map([["k", { n: 1 }]]) }),
+      () => ({ rows: [new Map([["k", 1]])] }),
+    ];
+    const out = await runWith(clock, [phase("p", 5_000, () => [...shapes.map((s, i) => valued(`bad${i}`, s)), valued("good", () => ({ n: 1 }))])]);
+    shapes.forEach((_, i) => expect(out.get(`bad${i}`), `shape ${i}`).toEqual({ kind: "unavailable" }));
+    expect(out.get("good")).toEqual({ kind: "ok", value: { n: 1 } });
   });
 });
