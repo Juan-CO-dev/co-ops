@@ -38,15 +38,32 @@
  * result `unavailable`. The ONE local rule (plan §15.2.2; CC ruling D-6: the plan wins over O-N3's wording): a
  * `snapshot()` that throws, or that returns a value which cannot be sealed, makes THAT piece `unavailable` and leaves
  * the others as they are.
- * A `done` is OBSERVED the moment `start()` hands it back, before the handle is judged (fix round 2, D-2): a handle
- * the runner refuses (no `snapshot`) whose `done` rejects is still a throw inside the pre-load, never an unhandled
- * rejection. A promise handed back as a snapshot VALUE is observed too, and refused.
  *
- * SEALED = READ-ONLY, FOR REAL. A snapshot is deep-frozen (plain objects and arrays, at every depth). A value that
- * cannot be frozen that way (a `Map`, a `Set`: `Object.freeze` leaves their entries writable; a promise) is refused.
- * A `Date` cannot be frozen either (`setTime` works on a frozen Date, also through the producer's own reference), so
- * the seal stores its EPOCH MILLISECONDS, a number, in its place (fix round 2, D-5): `Sealed<T>` is what a snapshot of
- * type `T` reads as. A Date whose holder cannot be written (the producer froze it first) makes the piece `unavailable`.
+ * NO REJECTION A PIECE HANDS OVER IS LEFT WITHOUT A HANDLER (fix round 3, E1; by class, not by case). Three values
+ * come back from a piece, and each gets a handler before anything else is done with it:
+ *   - what `start()` returns, WHATEVER it is. A promise or a thenable there (an `async start()` by mistake) is given a
+ *     handler first and is then no handle at all: a throw inside the pre-load, like any other bad handle;
+ *   - the handle's `done`, READ ONCE into a local and SUBSCRIBED ONCE (a lazy getter or a cold thenable starts its work
+ *     a single time). That one subscription is both the handler and the wait;
+ *   - the snapshot VALUE: the seal walks ALL of it and gives a handler to EVERY promise and thenable it meets (in a
+ *     record, an array, a `Map`, a `Set`, a class instance, at any depth) BEFORE it decides. It never stops at the
+ *     first thing it refuses. Finding one makes that piece `unavailable`.
+ * A native promise is recognised by its internal slot (so one whose `then` was replaced is still handled).
+ * The limit, stated: the runner can only handle a promise it is HANDED as data. One that a piece keeps to itself (in a
+ * closure, behind a getter or a function, which the seal never runs) or deliberately disguises (a promise whose own
+ * `constructor` throws cannot be subscribed by any code; one whose prototype was swapped for a plain object's reads
+ * as an empty record) is the piece's own, like a rejected promise it simply dropped.
+ *
+ * SEALED = READ-ONLY, FOR REAL (fix round 3, E2). The seal never freezes, and never writes into, the object a piece
+ * hands back. It builds a FRESH copy (plain objects and arrays only) from the OWN ENUMERABLE DATA properties, reading
+ * each property once, and deep-freezes the copy. So nothing the producer still holds can reach a sealed value, and the
+ * producer's own object is exactly as it was. In the copy:
+ *   - a `Date` (by its internal slot, at any depth, whatever holds it) is its EPOCH MILLISECONDS, a number: `Sealed<T>`
+ *     is what a snapshot of type `T` reads as;
+ *   - an ACCESSOR property is code, not data (what it answers can change after the seal): it is never run and the piece
+ *     is `unavailable`;
+ *   - anything that is not a primitive, a plain object, an array or a Date (a `Map`, a `Set`, a promise, a thenable, a
+ *     function, a class instance) makes the piece `unavailable`. Fail closed.
  */
 
 /** The timer seam (global timers by default; tests inject fake ones on the same clock). */
@@ -125,7 +142,7 @@ const UNAVAILABLE: PreloadResult = Object.freeze({ kind: "unavailable" });
 
 /**
  * What a snapshot of type `T` reads as once sealed (D-5): every `Date` in it is its epoch milliseconds. Everything else
- * keeps its type (and, for an object or an array, its identity: it is frozen in place).
+ * keeps its type. It is never the producer's own object: the seal hands out a fresh, deep-frozen copy (E2).
  */
 export type Sealed<T> =
   T extends Date ? number
@@ -133,37 +150,127 @@ export type Sealed<T> =
       : T extends object ? { [K in keyof T]: Sealed<T[K]> }
         : T;
 
-/** A rejection nobody else may be listening for is listened for here, so it can never be an `unhandledRejection`. */
-function observe(maybePromise: unknown): void {
-  void Promise.resolve(maybePromise).then(undefined, () => undefined);
-}
+const noop = (): void => undefined;
+// The intrinsics, taken once: each checks the INTERNAL SLOT of its receiver (it throws for anything else), whatever
+// the object's prototype or own properties say.
+const NATIVE_THEN = Promise.prototype.then;
+const DATE_EPOCH = Date.prototype.getTime;
+const MAP_EACH = Map.prototype.forEach;
+const SET_EACH = Set.prototype.forEach;
 
-const isDate = (v: unknown): v is Date => v instanceof Date || Object.prototype.toString.call(v) === "[object Date]";
+const isObjectLike = (v: unknown): v is object => (typeof v === "object" && v !== null) || typeof v === "function";
 
 /**
- * Freezes a value all the way down (plain objects and arrays) and returns it sealed. A `Map` or a `Set` anywhere in it
- * THROWS: `Object.freeze` leaves their entries writable, so they can never be part of a sealed value. So does a
- * promise (it is not data; it is observed first, so a rejected one is never unhandled). A `Date` is replaced by its
- * epoch milliseconds where it sits (D-5); if its holder cannot be written, the assignment THROWS (strict mode).
+ * E1. Gives `v` a handler when it is a promise or a thenable, and says whether it was one. `fn` runs when `v` settles
+ * EITHER way, so a rejection of `v` always has a handler and can never be an `unhandledRejection`. `v` is subscribed
+ * exactly ONCE and its `then` is read at most once. Never throws: a thenable whose `then` (or whose getter for it)
+ * throws counts as settled, and `fn` runs at once. `fn` may run more than once (a careless thenable): pass one that
+ * does not mind.
  */
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): Sealed<T> {
-  if (isDate(value)) return value.getTime() as Sealed<T>;
-  if (typeof value !== "object" || value === null || seen.has(value)) return value as Sealed<T>;
-  if (value instanceof Promise) { observe(value); throw new Error("preload_unsealable_value"); }
-  if (value instanceof Map || value instanceof Set || value instanceof WeakMap || value instanceof WeakSet) throw new Error("preload_unsealable_value");
-  seen.add(value);
-  const holder = value as Record<PropertyKey, unknown>;
-  for (const k of Reflect.ownKeys(value)) {
-    const v = holder[k];
-    if (isDate(v)) holder[k] = v.getTime();
-    else deepFreeze(v, seen);
+function attach(v: unknown, fn: () => void): boolean {
+  if (!isObjectLike(v)) return false;
+  // A native promise, by its internal slot: handled even when its own `then` was replaced or its prototype changed.
+  try { NATIVE_THEN.call(v as Promise<unknown>, fn, fn); return true; } catch { /* not a native promise */ }
+  let then: unknown;
+  try { then = (v as { then?: unknown }).then; } catch { fn(); return true; }
+  if (typeof then !== "function") return false;
+  try { (then as (this: unknown, a: () => void, b: () => void) => unknown).call(v, fn, fn); } catch { fn(); }
+  return true;
+}
+
+/** The epoch milliseconds of a `Date` (by its internal slot: a subclass and another realm's Date count), else null. */
+function epochOf(v: object): number | null {
+  try { return DATE_EPOCH.call(v as Date); } catch { return null; }
+}
+
+interface SealWalk {
+  /** Something in the value cannot be part of a sealed result. Decided only after the WHOLE value was walked. */
+  refused: boolean;
+  /** Each object already met → its copy (so a shared or cyclic reference is copied once). */
+  copies: Map<object, unknown>;
+}
+
+/**
+ * Walks the OWN properties of `source`, each read ONCE through its descriptor (an accessor is never run). Every data
+ * value is walked (so a promise in it gets its handler) and, when `into` is given, every ENUMERABLE one is defined on
+ * the copy. Never throws: a property that cannot be read refuses the value and the walk goes on with the next one.
+ */
+function walkOwn(source: object, into: object | null, walk: SealWalk): void {
+  let keys: Array<string | symbol>;
+  try { keys = Reflect.ownKeys(source); } catch { walk.refused = true; return; }
+  const intoArray = into !== null && Array.isArray(into);
+  for (const k of keys) {
+    try {
+      const d = Object.getOwnPropertyDescriptor(source, k);
+      if (!d) continue;
+      // An accessor is code, not data: what it answers can change after the seal. Never run; the value is refused.
+      if (!("value" in d)) { walk.refused = true; continue; }
+      if (intoArray && k === "length") { (into as unknown[]).length = d.value as number; continue; }
+      // A plain record or array that carries its own `then` function is a thenable: it gets its handler here (anything
+      // not plain went through `attach` in `sealNode`), and the function value refuses the value just below.
+      if (into !== null && k === "then" && typeof d.value === "function") {
+        try { (d.value as (this: unknown, a: () => void, b: () => void) => unknown).call(source, noop, noop); } catch { /* it threw: nothing to wait for */ }
+      }
+      const child = sealNode(d.value, walk);
+      // `defineProperty`, never an assignment: an own key named `__proto__` must stay a key of the copy.
+      if (into !== null && d.enumerable === true) Object.defineProperty(into, k, { value: child, writable: true, enumerable: true, configurable: true });
+    } catch { walk.refused = true; }
   }
-  return Object.freeze(value) as Sealed<T>;
+}
+
+/**
+ * One node of the seal (E1 + E2): returns the node's SEALED COPY, or marks the walk refused. It never throws and never
+ * stops early: a node it refuses is still walked to its end, so every promise beneath it gets a handler.
+ */
+function sealNode(v: unknown, walk: SealWalk): unknown {
+  if (!isObjectLike(v)) return v;
+  if (walk.copies.has(v)) return walk.copies.get(v);
+  walk.copies.set(v, undefined);
+  try {
+    const proto: unknown = Object.getPrototypeOf(v);
+    const isArray = Array.isArray(v);
+    const plain = typeof v === "object" && (isArray ? proto === Array.prototype : proto === null || proto === Object.prototype);
+    if (plain) {
+      const copy: object = isArray ? [] : {};
+      walk.copies.set(v, copy);
+      walkOwn(v, copy, walk);
+      return Object.freeze(copy);
+    }
+    // Not plain. A promise or a thenable: handled FIRST, then refused (a Date that carries a `then` included) …
+    const epoch = attach(v, noop) ? null : epochOf(v);
+    // … a Date …
+    if (epoch !== null) {
+      // The Date is its epoch number in the copy. (Its own properties are not data of the copy, but a promise among
+      // them still gets its handler.)
+      walk.copies.set(v, epoch);
+      walkOwn(v, null, walk);
+      return epoch;
+    }
+    // … or anything else (a Map, a Set, a function, a class instance): refused, and walked to its end all the same.
+    walk.refused = true;
+    try { MAP_EACH.call(v as Map<unknown, unknown>, (value, key) => { sealNode(key, walk); sealNode(value, walk); }); } catch { /* not a Map */ }
+    try { SET_EACH.call(v as Set<unknown>, (value) => { sealNode(value, walk); }); } catch { /* not a Set */ }
+    walkOwn(v, null, walk);
+    return undefined;
+  } catch {
+    walk.refused = true;
+    return undefined;
+  }
+}
+
+/**
+ * THE SEAL OF ONE SNAPSHOT (E2). Walks the whole value first, THEN decides: `ok` with a fresh deep-frozen copy, or
+ * `unavailable` when anything in it was refused. Never throws, and never writes into `value` or anything it holds.
+ */
+function sealSnapshot(value: unknown): PreloadResult {
+  const walk: SealWalk = { refused: false, copies: new Map() };
+  const copy = sealNode(value, walk);
+  return walk.refused ? UNAVAILABLE : Object.freeze({ kind: "ok", value: copy });
 }
 
 /** THE SEAL: a read-only view over a private copy. Nothing outside this function holds the Map. */
 function seal(results: ReadonlyMap<string, PreloadResult>): PreloadResults {
-  // Every value was deep-frozen when its piece was snapshotted (`runPiece`).
+  // Every value is a deep-frozen copy made when its piece was snapshotted (`sealSnapshot`).
   const own = new Map<string, PreloadResult>(results);
   return Object.freeze({
     get: (key: string) => own.get(key),
@@ -217,12 +324,21 @@ async function runPiece(
   // A `start()` that throws, or that returns no real handle, is a throw inside the pre-load (O-N3): it propagates,
   // `run()` seals EVERY result unavailable and aborts the root. (Only `snapshot()` has a local rule, below.)
   let handle: PieceHandle<unknown>;
+  // `done` has settled (either way). Until the wait below takes it over, a settlement is only remembered.
+  let doneSettled = false;
+  let onDone = (): void => { doneSettled = true; };
   try {
-    handle = piece.start(ctx);
-    // D-2: whatever `start()` handed back, the `done` it carries is observed FIRST. A handle refused on the next line
-    // (no `snapshot`) with a `done` that rejects would otherwise leave that rejection with no handler at all.
-    observe((handle as { done?: unknown } | null | undefined)?.done);
-    if (handle === null || typeof handle !== "object" || typeof handle.snapshot !== "function") throw new Error("preload_bad_piece_handle");
+    const returned: unknown = piece.start(ctx);
+    // E1: WHATEVER `start()` handed back gets a handler before anything else is looked at. A promise or a thenable
+    // there (an `async start()` by mistake) may reject; it is never a handle.
+    const promiseLike = attach(returned, noop);
+    // E1: `done` is READ exactly ONCE, into this local, and SUBSCRIBED exactly once, here, before the handle is judged:
+    // a handle refused just below whose `done` rejects already has its handler. This one subscription is also the wait
+    // (so a lazy getter or a cold thenable never starts its work twice). A `done` that is no promise is settled.
+    const done: unknown = isObjectLike(returned) ? (returned as { done?: unknown }).done : undefined;
+    if (!attach(done, () => onDone())) void Promise.resolve().then(() => onDone());
+    if (promiseLike || returned === null || typeof returned !== "object" || typeof (returned as { snapshot?: unknown }).snapshot !== "function") throw new Error("preload_bad_piece_handle");
+    handle = returned as PieceHandle<unknown>;
   } catch (e) {
     own.controller.abort();
     for (const c of cleanups) { try { c(); } catch { /* already cleared */ } }
@@ -239,9 +355,10 @@ async function runPiece(
       if (timer !== null) timers.clear(timer);
       resolve();
     };
-    // BOTH handlers are attached FIRST, whatever the clock says: a `done` that rejects is always handled, also when the
-    // cutoff has already passed (Astra R4: a rejection at the boundary must never be unhandled).
-    Promise.resolve(handle.done).then(finish, finish);
+    // The handlers were attached to `done` FIRST (above), whatever the clock says: a `done` that rejects is always
+    // handled, also when the cutoff has already passed (Astra R4: a rejection at the boundary must never be unhandled).
+    onDone = finish;
+    if (doneSettled) { finish(); return; }
     const left = cutoffAt - clock();
     if (left <= 0) { finish(); return; }
     timer = timers.set(finish, left);
@@ -252,11 +369,10 @@ async function runPiece(
   for (const c of cleanups) { try { c(); } catch { /* a timer already cleared */ } }
   // The ONE local rule (plan §15.2.2): a `snapshot()` that throws, or whose value cannot be sealed read-only, is
   // `unavailable` for THIS piece; the others are untouched.
-  try {
-    return Object.freeze({ kind: "ok", value: deepFreeze(handle.snapshot()) }) as PreloadResult;
-  } catch {
-    return UNAVAILABLE;
-  }
+  let value: unknown;
+  try { value = handle.snapshot(); } catch { return UNAVAILABLE; }
+  // E1 + E2: the seal walks the WHOLE value (every promise in it gets a handler), then decides; it never throws.
+  return sealSnapshot(value);
 }
 
 export interface Preload<D> {
