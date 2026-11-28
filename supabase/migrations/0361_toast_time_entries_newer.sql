@@ -1,5 +1,6 @@
 -- Migration 0361_toast_time_entries_newer
 -- AUTHORED 2026-11-28 (Toast labor "only if newer", CC ruling D-R2, CO CC Fable lead, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
+-- APPLIED TO SIM 2026-11-28 UTC (schema_migrations version 20261128163824, name '0361_toast_time_entries_newer')
 -- NUMBER: 0360 is the highest on main; 0361 is claimed for this build in co-ops-wt/.mig-claims (the digest reserve was
 --   released); 0362 and 0363 are claimed by other builds. It touches no object of theirs.
 -- Plan: PLAN-toast-labor-newer.md revision 3, on CC's rulings R1 to R7 (RULINGS-toast-labor-newer-r3.md) and U1 to U7
