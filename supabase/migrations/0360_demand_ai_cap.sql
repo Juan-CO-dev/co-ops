@@ -1,6 +1,7 @@
 -- Migration 0360_demand_ai_cap
 -- AUTHORED 2026-11-27 (demand AI cap raise, CO CC Fable lead, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.
 -- APPLIED TO SIM 2026-11-27 UTC (schema_migrations version 20261127233259, name '0360_demand_ai_cap')
+-- APPLIED TO PROD 2026-11-28 UTC (schema_migrations version 20261128054525, name '0360_demand_ai_cap')
 -- NUMBER: 0358 is the highest on main; 0359 (refund Part B) and 0361 (digest reserve) are claimed by other builds in
 --   co-ops-wt/.mig-claims; 0360 is claimed there for this one. It touches no object of theirs.
 -- Juan 2026-11-27: raise the Demand AI monthly spend ceiling. CC picked $50.00. Plan: co-ops-wt/PLAN-demand0360.md
