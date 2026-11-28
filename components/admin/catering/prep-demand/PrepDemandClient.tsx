@@ -16,7 +16,7 @@
  * DORMANT-safe: both tabs render empty states with 0 data.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
@@ -78,6 +78,15 @@ export function PrepDemandClient({ days, locations, locationId, from, to, lang, 
   // the Prep tab, the sections re-mount when they come back, and the hash still in the URL must not re-open a day
   // and jump to it. Set in the tab handler (an event), never during render. A real hashchange still reveals.
   const [prepLeft, setPrepLeft] = useState(false);
+  // Digest round 3 polish: ONE reveal per navigation. A hashchange is a new navigation (a link, or Back / Forward
+  // between fragments) and re-arms the mount reveal, so a day reached while the Prep tab was not shown opens when the
+  // person comes back to Prep. Leaving the tab again disarms it. Setting false twice is harmless (StrictMode safe).
+  // popstate is deliberately not used: a traversal that keeps the hash is not a new hash navigation.
+  useEffect(() => {
+    const rearm = () => setPrepLeft(false);
+    window.addEventListener("hashchange", rearm);
+    return () => window.removeEventListener("hashchange", rearm);
+  }, []);
   const setActiveTab = (tab: PrepDemandTab) => {
     if (activeTab === "prep" && tab !== "prep") setPrepLeft(true);
     setActiveTabState(tab);

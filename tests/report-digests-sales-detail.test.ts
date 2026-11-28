@@ -154,11 +154,13 @@ describe("a recipient the Sales page admits sees the new lines", () => {
     for (const viewer of [GM_A, MOO, OWNER]) {
       const s = sectionFor(facts(A, "Shop A", detail()), env(viewer))!;
       // S5: platform dollars sit before the top items (plan §9.2), so they print under the cap on a healthy day.
+      // Digest round 3 polish: the busiest hours right after them (the mock's order), so they print too; the
+      // ungated pulse lines keep their order (top items, then the channel mix, which now folds first).
       expect(s.lines.map((l) => l.label)).toEqual([
-        "Sales report", "Tips, tax, service charges", "ezCater and total", "Delivery platforms", "Top items (units)", "Channel mix", "and 6 more",
+        "Sales report", "Tips, tax, service charges", "ezCater and total", "Delivery platforms", "Busiest hours", "Top items (units)", "and 6 more",
       ]);
       // S8: a comma-free label keeps the overflow list readable.
-      expect(s.lines.at(-1)!.text).toBe("Busiest hours, Catering vs walk-in, Discounts, Voids, Voids · refunds · exclusions +1");
+      expect(s.lines.at(-1)!.text).toBe("Channel mix, Catering vs walk-in, Discounts, Voids, Voids · refunds · exclusions +1");
       expect(s.status).toMatchObject({ tone: "ok", issues: 0, unknowns: 0 });
       for (const l of s.lines.slice(0, 3)) expect(l.needs).toBe("sales_detail");
     }
@@ -287,7 +289,7 @@ describe("busiest hours: top 3 by $, ties broken by checks then the earlier hour
 
   it("the line: each hour with $ and checks; checks with no opened time said apart, never ranked", () => {
     const l = uncappedSales(detail()).find((x) => x.label === "Busiest hours")!;
-    expect(l.text).toBe(`${formatHourRange(12, "en")} $1,140.00 (38 checks), ${formatHourRange(13, "en")} $980.00 (30 checks), ${formatHourRange(18, "en")} $760.00 (20 checks) · no opened time: 2 checks $45.00`);
+    expect(l.text).toBe(`${formatHourRange(12, "en")} $1,140.00 (38 checks), ${formatHourRange(13, "en")} $980.00 (30 checks), ${formatHourRange(18, "en")} $760.00 (20 checks) +1 · no opened time: 2 checks $45.00`);
     expect(l.href).toBe(`${BASE}/reports/sales?location=${A}&range=custom&from=${D}&to=${D}&view=heatmap`);
   });
 
@@ -732,6 +734,117 @@ describe("fix round 1: unknown is never zero, the names are the Sales page's, pl
       totalsOf({ classes: [], tips: [], discounts: [], refunds: [], ezcater: [{ business_date: D, orders: 1, subtotal_cents: null, amount_missing: 1 }] }),
       detail({ channels: ok(mergeBreakdown("channel", [channelRaw.map((r) => ({ ...r, cents: 0, amount_missing: r.checks }))])) }),
       detail({ channels: failed(), hours: failed(), servers: failed() }),
+    ];
+    for (const viewer of [AGM_A, PREP_A, GM_B, NO_ACCESS_VIEWER, null]) {
+      for (const language of ["en", "es"] as const) {
+        for (const d of shapes) expect(renderShopDigest(facts(A, "Shop A", d), env(viewer, language))).toEqual(renderShopDigest(facts(A, "Shop A"), env(viewer, language)));
+      }
+    }
+  });
+});
+
+// ── Digest round 3 polish ─────────────────────────────────────────────────────────────────────
+
+describe("digest round 3 polish: busiest hours print; an all-unknown hour or server is never $0.00", () => {
+  const lineOf = (d: SalesDetailFacts, label: string, language: "en" | "es" = "en") =>
+    salesDetailLines({ t: translator(language), language, baseUrl: BASE, locationId: A, day: D, viewer: GM_A }, v2Fixture({ salesDetail: d }))
+      .find((l) => l.label === label);
+  const hoursOf = (raw: BreakdownRaw[]) => detail({ hours: ok(mergeBreakdown("hour_weekday", [raw])) });
+  const serversOf = (raw: BreakdownRaw[]) => detail({ servers: ok(mergeBreakdown("server", [raw])) });
+  const threeHours = `${formatHourRange(12, "en")} $1,140.00 (38 checks), ${formatHourRange(13, "en")} $980.00 (30 checks), ${formatHourRange(18, "en")} $760.00 (20 checks)`;
+
+  // Item 2 ─────────────────────────────────────────────────────────────────────────────────────
+  it("a healthy day: the busiest hours print in full (the plan's top 3, $ and checks) after the platforms and before the top items, in text AND HTML", () => {
+    for (const viewer of [GM_A, MOO, OWNER]) {
+      const s = sectionFor(facts(A, "Shop A", detail()), env(viewer))!;
+      const hours = s.lines.find((l) => l.label === "Busiest hours")!;
+      expect(hours.text).toBe(`${threeHours} +1 · no opened time: 2 checks $45.00`); // 11 AM is the 4th hour: folded, counted
+      expect(s.lines.at(-1)!.text).not.toContain("Busiest hours");
+      const mail = renderShopDigest(facts(A, "Shop A", detail()), env(viewer));
+      for (const body of [mail.text, mail.html]) {
+        const at = body.indexOf(threeHours);
+        expect(at, viewer.role).toBeGreaterThan(body.indexOf("Uber Eats $590.00 (6 checks)"));
+        expect(at).toBeLessThan(body.indexOf("Top items (units)"));
+      }
+    }
+  });
+
+  it("hours past the top 3 fold into ' +N' inside the line (never silently); exactly 3 hours print no '+N'", () => {
+    const hourRows = (n: number) => Array.from({ length: n }, (_, i) => ({ key: `3|${8 + i}`, dow: 3, hour: 8 + i, checks: 1 + i, cents: 1000 * (1 + i), amount_missing: 0 }));
+    const twelve = lineOf(hoursOf(hourRows(12)), "Busiest hours")!.text;
+    expect(twelve).toBe(`${formatHourRange(19, "en")} $120.00 (12 checks), ${formatHourRange(18, "en")} $110.00 (11 checks), ${formatHourRange(17, "en")} $100.00 (10 checks) +9`);
+    const three = lineOf(hoursOf(hourRows(3)), "Busiest hours")!.text;
+    expect(three).toBe(`${formatHourRange(10, "en")} $30.00 (3 checks), ${formatHourRange(9, "en")} $20.00 (2 checks), ${formatHourRange(8, "en")} $10.00 (1 check)`);
+    expect(lineOf(hoursOf(hourRows(12)), "Horas con más ventas", "es")!.text).toMatch(/ \+9$/);
+  });
+
+  it("the cap rule is unchanged (F3: only issues are exempt): with six higher-priority unknown lines a routine hours line can still fold", () => {
+    const raw = dailyRaw({
+      tips: [{ business_date: D, tip_cents: 61200, tip_missing: 1 }],
+      refunds: [{ business_date: D, count: 0, refund_cents: 0, refund_tip_cents: 0, sales_refund_cents: null, sales_refund_missing: 1 }],
+      ezcater: [{ business_date: D, orders: 2, subtotal_cents: 94000, amount_missing: 1 }],
+    });
+    const channels = channelRaw.map((r) => r.provider === "DoorDash" ? { ...r, amount_missing: 1 } : r);
+    const d = detail({ totals: ok(salesDetailTotals(raw, D)), channels: ok(mergeBreakdown("channel", [channels])), servers: failed() });
+    const s = sectionFor(facts(A, "Shop A", d), env(GM_A))!;
+    expect(lineOf(d, "Busiest hours")!.unknown).toBeUndefined(); // routine: every hour has its amount
+    expect(s.status!.unknowns).toBeGreaterThanOrEqual(6);
+    expect(s.lines.filter((l) => l.unknown)).toHaveLength(6); // the cap's six slots go to the unknown lines first
+    expect(s.lines.some((l) => l.label === "Busiest hours")).toBe(false);
+    expect(s.lines.at(-1)!.text).toContain("Busiest hours");
+  });
+
+  // Item 3 ─────────────────────────────────────────────────────────────────────────────────────
+  it("an hour whose every check has no amount: 'amount unknown (N checks)', never $0.00; the line unknown and the gap counted (en + es)", () => {
+    const d = hoursOf([
+      { key: "3|12", dow: 3, hour: 12, checks: 38, cents: 114000, amount_missing: 0 },
+      { key: "3|15", dow: 3, hour: 15, checks: 1, cents: 0, amount_missing: 1 },
+    ]);
+    const l = lineOf(d, "Busiest hours")!;
+    expect(l).toMatchObject({ unknown: true, needs: "sales_detail" });
+    expect(l.text).toBe(`${formatHourRange(12, "en")} $1,140.00 (38 checks), ${formatHourRange(15, "en")} amount unknown (1 check) · + 1 amount not recorded`);
+    expect(l.text).not.toContain("$0.00");
+    const esLine = lineOf(d, "Horas con más ventas", "es")!;
+    expect(esLine.text).toContain(`${formatHourRange(15, "es")} monto desconocido (1 cuenta)`);
+    expect(esLine.text).not.toContain("$0.00");
+  });
+
+  it("checks with no opened time whose every amount is missing: 'amount unknown', never $0.00", () => {
+    const l = lineOf(hoursOf([{ key: "3|-1", dow: 3, hour: -1, checks: 2, cents: 0, amount_missing: 2 }]), "Busiest hours")!;
+    expect(l).toMatchObject({ unknown: true, text: "no opened time: 2 checks amount unknown · + 2 amounts not recorded" });
+    expect(lineOf(hoursOf([{ key: "3|-1", dow: 3, hour: -1, checks: 2, cents: 0, amount_missing: 2 }]), "Horas con más ventas", "es")!.text)
+      .toBe("sin hora de apertura: 2 cuentas monto desconocido · + 2 montos sin registrar");
+  });
+
+  it("a partly unknown hour keeps its known $ (the gap is counted at the end); a genuine $0 hour stays $0.00 and known", () => {
+    const partial = lineOf(hoursOf([{ key: "3|12", dow: 3, hour: 12, checks: 3, cents: 1500, amount_missing: 1 }]), "Busiest hours")!;
+    expect(partial).toMatchObject({ unknown: true, text: `${formatHourRange(12, "en")} $15.00 (3 checks) · + 1 amount not recorded` });
+    const zero = lineOf(hoursOf([{ key: "3|12", dow: 3, hour: 12, checks: 1, cents: 0, amount_missing: 0 }]), "Busiest hours")!;
+    expect(zero.text).toBe(`${formatHourRange(12, "en")} $0.00 (1 check)`);
+    expect(zero.unknown).toBeUndefined();
+  });
+
+  it("a top-3 server whose every check has no amount: 'amount unknown (N checks)', never $0.00 (en + es); a genuine $0 server stays $0.00", () => {
+    const d = serversOf([
+      { key: "guid-ana", label: "Ana", checks: 15, cents: 200000, amount_missing: 0 },
+      { key: "guid-dee", label: "Dee", checks: 2, cents: 0, amount_missing: 2 },
+    ]);
+    const l = lineOf(d, "Top servers")!;
+    expect(l).toMatchObject({ unknown: true, text: "Ana $2,000.00 (15 checks), Dee amount unknown (2 checks) · + 2 amounts not recorded" });
+    expect(l.text).not.toContain("$0.00");
+    expect(lineOf(d, "Meseros con más ventas", "es")!.text).toBe("Ana $2,000.00 (15 cuentas), Dee monto desconocido (2 cuentas) · + 2 montos sin registrar");
+    const zero = lineOf(serversOf([{ key: "guid-dee", label: "Dee", checks: 1, cents: 0, amount_missing: 0 }]), "Top servers")!;
+    expect(zero.text).toBe("Dee $0.00 (1 check)");
+    expect(zero.unknown).toBeUndefined();
+  });
+
+  it("refused recipients stay byte-identical with the new shapes (hours first in the head, unknown hours and servers), en + es", () => {
+    const shapes: SalesDetailFacts[] = [
+      detail(),
+      hoursOf([{ key: "3|15", dow: 3, hour: 15, checks: 1, cents: 0, amount_missing: 1 }, { key: "3|-1", dow: 3, hour: -1, checks: 2, cents: 0, amount_missing: 2 }]),
+      serversOf([{ key: "guid-dee", label: "Dee", checks: 2, cents: 0, amount_missing: 2 }]),
+      detail({ hours: failed() }),
+      detail({ hours: unavailable("sales_reads_not_installed") }),
     ];
     for (const viewer of [AGM_A, PREP_A, GM_B, NO_ACCESS_VIEWER, null]) {
       for (const language of ["en", "es"] as const) {

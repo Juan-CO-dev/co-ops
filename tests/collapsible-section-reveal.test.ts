@@ -186,6 +186,100 @@ describe("fix round 1, A4: StrictMode and a parent that opens at once or later",
   });
 });
 
+// Digest round 3 polish (1b, A4 follow-up): a pending scroll belongs to the URL that asked for it. A deferred open that
+// commits after the person navigated elsewhere opens the section but never scrolls to the stale anchor.
+describe("digest round 3 polish: a deferred open never scrolls to a stale anchor", () => {
+  const strict = (el: ReactNode) => createElement(StrictMode, null, el);
+  function Deferred({ spy }: { spy: () => void }): ReactNode {
+    const [open, setOpen] = useState(false);
+    return section({ anchorId: "ctl", open, onToggle: () => { spy(); setTimeout(() => setOpen((v) => !v), 50); } }, "Controlled");
+  }
+  const deferredRun = async (el: ReactNode, navigate: () => void) => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/page#ctl");
+      render(el);
+      navigate();
+      await act(async () => { vi.advanceTimersByTime(60); });
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it.each([["plain", false], ["StrictMode", true]] as const)("%s: a hashchange to another anchor before the open commits: it opens, asked ONCE, and does NOT scroll", async (_n, isStrict) => {
+    const spy = vi.fn();
+    const el = createElement(Deferred, { spy });
+    await deferredRun(isStrict ? strict(el) : el, () => setHash("#other"));
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(header("Controlled").getAttribute("aria-expanded")).toBe("true");
+    expect(scrolls).toEqual([]);
+  });
+
+  it("the new hash names ANOTHER section: that one opens and is scrolled to once; the deferred one opens later without a jump", async () => {
+    const spy = vi.fn();
+    const el = createElement("div", null, createElement(Deferred, { spy }), section({ anchorId: "b" }, "Bee"));
+    await deferredRun(el, () => setHash("#b"));
+    expect(header("Bee").getAttribute("aria-expanded")).toBe("true");
+    expect(header("Controlled").getAttribute("aria-expanded")).toBe("true");
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(scrolls).toEqual([{ id: "b", openAtScroll: true }]);
+  });
+
+  it("a pushState that keeps the hash but changes the query (no hashchange): no stale scroll, one toggle", async () => {
+    const spy = vi.fn();
+    await deferredRun(createElement(Deferred, { spy }), () => act(() => { window.history.pushState(null, "", "/page?location=b#ctl"); }));
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(header("Controlled").getAttribute("aria-expanded")).toBe("true");
+    expect(scrolls).toEqual([]);
+  });
+
+  it("an unmount before the deferred open commits: no scroll, no error (a guard: this also held before the change)", async () => {
+    vi.useFakeTimers();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      window.history.replaceState(null, "", "/page#ctl");
+      const spy = vi.fn();
+      const { unmount } = render(createElement(Deferred, { spy }));
+      expect(spy).toHaveBeenCalledTimes(1);
+      unmount();
+      await act(async () => { vi.advanceTimersByTime(60); });
+      expect(scrolls).toEqual([]);
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the section's anchor changes (revealOnMount off) before the deferred open commits: the old request owes no scroll", async () => {
+    // Fix round (Opus P3 #1): this is the case the effect cleanup's reset exists for. The element is the same, so
+    // without the reset the old request would scroll to it under its NEW id, with no hashchange or URL change.
+    function Renamed({ spy, anchorId }: { spy: () => void; anchorId: string }): ReactNode {
+      const [open, setOpen] = useState(false);
+      return section({ anchorId, revealOnMount: anchorId === "ctl", open, onToggle: () => { spy(); setTimeout(() => setOpen((v) => !v), 50); } }, "Controlled");
+    }
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState(null, "", "/page#ctl");
+      const spy = vi.fn();
+      const { rerender } = render(createElement(Renamed, { spy, anchorId: "ctl" }));
+      expect(spy).toHaveBeenCalledTimes(1);
+      rerender(createElement(Renamed, { spy, anchorId: "renamed" }));
+      await act(async () => { vi.advanceTimersByTime(60); });
+      expect(header("Controlled").getAttribute("aria-expanded")).toBe("true");
+      expect(scrolls).toEqual([]);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("no navigation: the deferred open still scrolls once after it commits (A4 unchanged)", async () => {
+    const spy = vi.fn();
+    await deferredRun(createElement(Deferred, { spy }), () => {});
+    expect(scrolls).toEqual([{ id: "ctl", openAtScroll: true }]);
+  });
+});
+
 describe("revealOnMount={false} (fix round 1, O1): no reveal after mount; a hashchange still reveals", () => {
   it("arriving with the hash: stays closed, no scroll; then a hashchange to it opens and scrolls", () => {
     window.history.replaceState(null, "", "/page#target");
@@ -278,6 +372,49 @@ describe("Prep demand: the first tab from ?tab=, then the day section from the h
     expect(expanded()).toBe("true");
     expect(scrolls).toHaveLength(2);
   });
+});
+
+// Digest round 3 polish (1b O1 guard): ONE reveal per navigation, history traversal included. A day reached by Back /
+// Forward while the Prep tab is not shown opens when the person comes back to Prep — once.
+describe("digest round 3 polish: Back / Forward to a Prep day while on another tab", () => {
+  const PAGE = "/admin/catering/prep-demand?location=a&tab=prep";
+  const expanded = (date: string) => document.getElementById(`prep-day-${date}`)?.querySelector("button")?.getAttribute("aria-expanded") ?? null;
+  /** A REAL history traversal: the browser's own hashchange, awaited. */
+  const traverse = async (go: () => void) => {
+    const fired = new Promise<void>((resolve) => window.addEventListener("hashchange", () => resolve(), { once: true }));
+    await act(async () => { go(); await fired; });
+  };
+  const run = async (isStrict: boolean) => {
+    // History: [#day-27, #day-28]; the page is on #day-28 (pushed), so Back goes to day 27.
+    window.history.replaceState(null, "", `${PAGE}#prep-day-2026-11-27`);
+    window.history.pushState(null, "", `${PAGE}#prep-day-2026-11-28`);
+    const el = prepDemand("prep");
+    render(isStrict ? createElement(StrictMode, null, el) : el);
+    expect(expanded("2026-11-28")).toBe("true");
+    const first = scrolls.length;
+    expect(scrolls.at(-1)).toEqual({ id: "prep-day-2026-11-28", openAtScroll: true });
+    fireEvent.click(screen.getByRole("tab", { name: /SKU/i }));
+    await traverse(() => window.history.back());
+    expect(window.location.hash).toBe("#prep-day-2026-11-27");
+    expect(screen.getByRole("tab", { name: /SKU/i }).getAttribute("aria-selected")).toBe("true"); // Back alone keeps the tab
+    fireEvent.click(screen.getAllByRole("tab")[0]!);
+    expect(expanded("2026-11-27")).toBe("true"); // the day Back went to opens
+    expect(expanded("2026-11-28")).toBe("false"); // the earlier day is at its default (5 days start closed)
+    expect(scrolls.slice(first)).toEqual([{ id: "prep-day-2026-11-27", openAtScroll: true }]); // scrolled ONCE
+    // A second tab round trip with the URL untouched: no re-open, no second jump.
+    fireEvent.click(document.querySelector(`#prep-day-2026-11-27 button`)!); // the person closes it
+    fireEvent.click(screen.getByRole("tab", { name: /SKU/i }));
+    fireEvent.click(screen.getAllByRole("tab")[0]!);
+    expect(expanded("2026-11-27")).toBe("false");
+    expect(scrolls.slice(first)).toHaveLength(1);
+    // Forward again, this time while on Prep: the section's own listener reveals day 28.
+    await traverse(() => window.history.forward());
+    expect(expanded("2026-11-28")).toBe("true");
+    expect(scrolls.slice(first)).toEqual([{ id: "prep-day-2026-11-27", openAtScroll: true }, { id: "prep-day-2026-11-28", openAtScroll: true }]);
+  };
+
+  it("plain", async () => { await run(false); });
+  it("StrictMode", async () => { await run(true); });
 });
 
 describe("Ordering: the digest's anchors are ids on the existing parts", () => {
