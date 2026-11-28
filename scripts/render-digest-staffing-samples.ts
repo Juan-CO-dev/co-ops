@@ -35,29 +35,38 @@ type Row = Record<string, unknown>;
 const MIRROR = {
   links: [{ location_id: A, sevenshifts_location_id: SHOP_A_7S, active: true }, { location_id: B, sevenshifts_location_id: SHOP_B_7S, active: true }] as Row[],
   locations: [{ id: SHOP_A_7S, company_id: COMPANY }, { id: SHOP_B_7S, company_id: COMPANY }] as Row[],
-  users: [{ id: "11", first_name: "Person Q", preferred_first_name: null }, { id: "12", first_name: "Person R", preferred_first_name: null }] as Row[],
+  users: [{ id: "11", company_id: COMPANY, first_name: "Person Q", preferred_first_name: null }, { id: "12", company_id: COMPANY, first_name: "Person R", preferred_first_name: null }] as Row[],
   roles: [{ id: "21", name: "Cook" }] as Row[],
 };
+const TABLES: Record<string, Row[]> = {
+  sevenshifts_location_links: MIRROR.links, sevenshifts_locations: MIRROR.locations, sevenshifts_users: MIRROR.users, sevenshifts_roles: MIRROR.roles,
+};
 
+/**
+ * Answers as PostgREST would for the reader's own queries (fix round 2: the mirror had not followed fix round 1's
+ * reader, so every sample read "Schedule not available"): every `eq` / `in` filter applied (compared as text), only
+ * the selected columns, and a `col::text` cast answered as a string under the key `col`.
+ */
 function mirror(): ServiceRoleClient {
   return {
     from(table: string) {
-      const q = { select: "", eq: {} as Record<string, unknown>, in: [] as unknown[] };
+      const q = { select: "", eq: {} as Record<string, unknown>, inCol: null as string | null, in: null as unknown[] | null };
       const b: Record<string, unknown> = {
         select: (c: string) => { q.select = c; return b; },
         eq: (c: string, v: unknown) => { q.eq[c] = v; return b; },
-        in: (_c: string, v: unknown[]) => { q.in = v; return b; },
+        in: (c: string, v: unknown[]) => { q.inCol = c; q.in = v; return b; },
         order: () => b,
         abortSignal: () => b,
         then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) => {
-          let rows: Row[] = [];
-          if (table === "sevenshifts_location_links") rows = MIRROR.links.filter((r) => r.location_id === q.eq.location_id && r.active === q.eq.active);
-          else if (table === "sevenshifts_locations") rows = MIRROR.locations.filter((r) => String(r.id) === String(q.eq.id));
-          else {
-            const want = new Set(q.in.map(String));
-            const cols = q.select.split(",").map((c) => c.trim());
-            rows = (table === "sevenshifts_users" ? MIRROR.users : MIRROR.roles).filter((r) => want.has(String(r.id))).map((r) => Object.fromEntries(cols.map((c) => [c, r[c] ?? null])));
-          }
+          const cols = q.select.split(",").map((c) => c.trim()).map((c) => { const [name, cast] = c.split("::"); return { name: name!, cast: cast ?? null }; });
+          const want = q.in === null ? null : new Set(q.in.map(String));
+          const rows = (TABLES[table] ?? [])
+            .filter((r) => Object.entries(q.eq).every(([k, v]) => String(r[k]) === String(v)))
+            .filter((r) => want === null || want.has(String(r[q.inCol!])))
+            .map((r) => Object.fromEntries(cols.map(({ name, cast }) => {
+              const v = r[name] ?? null;
+              return [name, cast === "text" && v !== null ? String(v) : v];
+            })));
           return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
         },
       };
