@@ -52,6 +52,10 @@ const CENSUS: Record<string, Record<string, number>> = {
   // 0346 (burden "follow the company"): THE burden writer re-emitted with its new contract (same one insert; read
   // time only, in no fingerprint: the writer's own audit row records every change).
   "supabase/migrations/0346_labor_burden_follow_company.sql": { "insert labor_burden_settings": 1 },
+  // 0361 (Toast labor "only if newer", D-R2): the GUARDED writer of the Toast mirror, called by lib/toast/labor.ts
+  // only with TOAST_LABOR_GUARD=1. It writes the same columns the pull's upsert writes (never user_id), so the
+  // week fingerprint already covers everything it changes.
+  "supabase/migrations/0361_toast_time_entries_newer.sql": { "insert toast_time_entries": 1, "update toast_time_entries": 1 },
   // The ledger row (append-only, one per finished run) and the Toast labor pull (upsert by entry guid).
   "lib/sevenshifts/sync.ts": { "insert sevenshifts_sync_runs": 1 },
   "lib/toast/labor.ts": { "insert toast_time_entries": 1 },
