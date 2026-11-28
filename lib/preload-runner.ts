@@ -35,11 +35,18 @@
  *
  * NEVER FAILS THE RUN (O-N3). `run()` never throws and never leaves a rejection unhandled. Any throw inside the pre-load
  * (a phase's `pieces()`, a piece's `start()`, a piece with no real cap or no real handle, a duplicate key) seals EVERY
- * result `unavailable`. The ONE local rule (plan §15.2.2): a `snapshot()` that throws, or that returns a value which
- * cannot be sealed, makes THAT piece `unavailable` and leaves the others as they are.
+ * result `unavailable`. The ONE local rule (plan §15.2.2; CC ruling D-6: the plan wins over O-N3's wording): a
+ * `snapshot()` that throws, or that returns a value which cannot be sealed, makes THAT piece `unavailable` and leaves
+ * the others as they are.
+ * A `done` is OBSERVED the moment `start()` hands it back, before the handle is judged (fix round 2, D-2): a handle
+ * the runner refuses (no `snapshot`) whose `done` rejects is still a throw inside the pre-load, never an unhandled
+ * rejection. A promise handed back as a snapshot VALUE is observed too, and refused.
  *
  * SEALED = READ-ONLY, FOR REAL. A snapshot is deep-frozen (plain objects and arrays, at every depth). A value that
- * cannot be frozen that way (a `Map`, a `Set`: `Object.freeze` leaves their entries writable) is refused.
+ * cannot be frozen that way (a `Map`, a `Set`: `Object.freeze` leaves their entries writable; a promise) is refused.
+ * A `Date` cannot be frozen either (`setTime` works on a frozen Date, also through the producer's own reference), so
+ * the seal stores its EPOCH MILLISECONDS, a number, in its place (fix round 2, D-5): `Sealed<T>` is what a snapshot of
+ * type `T` reads as. A Date whose holder cannot be written (the producer froze it first) makes the piece `unavailable`.
  */
 
 /** The timer seam (global timers by default; tests inject fake ones on the same clock). */
@@ -117,15 +124,41 @@ export const REAL_PRELOAD_TIMERS: PreloadTimers = {
 const UNAVAILABLE: PreloadResult = Object.freeze({ kind: "unavailable" });
 
 /**
- * Freezes a value all the way down (plain objects and arrays). A `Map` or a `Set` anywhere in it THROWS: `Object.freeze`
- * leaves their entries writable, so they can never be part of a sealed value.
+ * What a snapshot of type `T` reads as once sealed (D-5): every `Date` in it is its epoch milliseconds. Everything else
+ * keeps its type (and, for an object or an array, its identity: it is frozen in place).
  */
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-  if (typeof value !== "object" || value === null || seen.has(value)) return value;
+export type Sealed<T> =
+  T extends Date ? number
+    : T extends (...args: never[]) => unknown ? T
+      : T extends object ? { [K in keyof T]: Sealed<T[K]> }
+        : T;
+
+/** A rejection nobody else may be listening for is listened for here, so it can never be an `unhandledRejection`. */
+function observe(maybePromise: unknown): void {
+  void Promise.resolve(maybePromise).then(undefined, () => undefined);
+}
+
+const isDate = (v: unknown): v is Date => v instanceof Date || Object.prototype.toString.call(v) === "[object Date]";
+
+/**
+ * Freezes a value all the way down (plain objects and arrays) and returns it sealed. A `Map` or a `Set` anywhere in it
+ * THROWS: `Object.freeze` leaves their entries writable, so they can never be part of a sealed value. So does a
+ * promise (it is not data; it is observed first, so a rejected one is never unhandled). A `Date` is replaced by its
+ * epoch milliseconds where it sits (D-5); if its holder cannot be written, the assignment THROWS (strict mode).
+ */
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): Sealed<T> {
+  if (isDate(value)) return value.getTime() as Sealed<T>;
+  if (typeof value !== "object" || value === null || seen.has(value)) return value as Sealed<T>;
+  if (value instanceof Promise) { observe(value); throw new Error("preload_unsealable_value"); }
   if (value instanceof Map || value instanceof Set || value instanceof WeakMap || value instanceof WeakSet) throw new Error("preload_unsealable_value");
   seen.add(value);
-  for (const k of Reflect.ownKeys(value)) deepFreeze((value as Record<PropertyKey, unknown>)[k], seen);
-  return Object.freeze(value);
+  const holder = value as Record<PropertyKey, unknown>;
+  for (const k of Reflect.ownKeys(value)) {
+    const v = holder[k];
+    if (isDate(v)) holder[k] = v.getTime();
+    else deepFreeze(v, seen);
+  }
+  return Object.freeze(value) as Sealed<T>;
 }
 
 /** THE SEAL: a read-only view over a private copy. Nothing outside this function holds the Map. */
@@ -186,6 +219,9 @@ async function runPiece(
   let handle: PieceHandle<unknown>;
   try {
     handle = piece.start(ctx);
+    // D-2: whatever `start()` handed back, the `done` it carries is observed FIRST. A handle refused on the next line
+    // (no `snapshot`) with a `done` that rejects would otherwise leave that rejection with no handler at all.
+    observe((handle as { done?: unknown } | null | undefined)?.done);
     if (handle === null || typeof handle !== "object" || typeof handle.snapshot !== "function") throw new Error("preload_bad_piece_handle");
   } catch (e) {
     own.controller.abort();
@@ -279,8 +315,11 @@ export function definePreload<D>(config: { phases: readonly PreloadPhase<D>[]; b
   };
 }
 
-/** A sealed result by key, as its value or null (absent or `unavailable`). */
-export function preloadValue<T>(results: PreloadResults, key: string): T | null {
+/**
+ * A sealed result by key, as its value or null (absent or `unavailable`). `T` is the type the piece's `snapshot()`
+ * returned; what comes back is that value SEALED (`Sealed<T>`: a `Date` in it is its epoch milliseconds).
+ */
+export function preloadValue<T>(results: PreloadResults, key: string): Sealed<T> | null {
   const r = results.get(key);
-  return r && r.kind === "ok" ? (r.value as T) : null;
+  return r && r.kind === "ok" ? (r.value as Sealed<T>) : null;
 }

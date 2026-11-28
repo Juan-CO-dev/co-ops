@@ -557,3 +557,121 @@ describe("needsSettledWriters (A4-1 as updated: who may see a line is still deci
     expect(out.size).toBe(0);
   });
 });
+
+// ── fix round 2 (CC addendum 2026-11-28): D-2, D-5, D-6 ─────────────────────────────────────────
+
+describe("D-2 (P1): a handle the runner refuses whose done REJECTS is never an unhandled rejection", () => {
+  let unhandled: unknown[] = [];
+  const onUnhandled = (e: unknown) => { unhandled.push(e); };
+  beforeEach(() => { unhandled = []; process.on("unhandledRejection", onUnhandled); });
+  afterEach(() => { process.off("unhandledRejection", onUnhandled); });
+  /** Give the microtask and the macrotask queues several turns, so a rejection with no handler is reported. */
+  const turns = async () => {
+    for (let i = 0; i < 3; i++) { await flush(6); await new Promise<void>((r) => setTimeout(r, 0)); }
+    await flush(6);
+  };
+
+  const refused: Array<[string, () => unknown]> = [
+    ["no snapshot function and a done that is ALREADY rejected (Astra's probe)", () => ({ done: Promise.reject(new Error("x")) })],
+    ["a snapshot that is not a function and a done already rejected", () => ({ done: Promise.reject(new Error("x")), snapshot: 7 })],
+    ["a FUNCTION handed back as the handle, carrying a rejected done", () => Object.assign(() => "not a handle", { done: Promise.reject(new Error("x")) })],
+    ["no snapshot function and a done that rejects LATER", () => ({ done: new Promise<void>((_, reject) => { setTimeout(() => reject(new Error("later")), 0); }) })],
+  ];
+  for (const [name, handle] of refused) {
+    it(`${name} → zero unhandledRejection events; NO key at all (O-N3); run() resolves`, async () => {
+      const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+      const bad: PreloadPiece<unknown> = { key: "bad", capMs: 5_000, start: () => handle() as never };
+      const out = await runWith(clock, [phase("p", 5_000, () => [bad, piece("good", 5_000, { kind: "now", value: "G" })])]);
+      await turns();
+      expect(unhandled).toEqual([]);
+      expect(out.size).toBe(0);
+      expect(out.has("good")).toBe(false);
+    });
+  }
+
+  it("a snapshot() that hands back a REJECTED PROMISE (not data) → that piece unavailable, the sibling ok, zero unhandledRejection events", async () => {
+    const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+    const bad: PreloadPiece<unknown> = { key: "bad", capMs: 5_000, start: () => ({ done: Promise.resolve(), snapshot: () => Promise.reject(new Error("x")) }) };
+    const nested: PreloadPiece<unknown> = { key: "nested", capMs: 5_000, start: () => ({ done: Promise.resolve(), snapshot: () => ({ rows: [{ later: Promise.reject(new Error("y")) }] }) }) };
+    const out = await runWith(clock, [phase("p", 5_000, () => [bad, nested, piece("good", 5_000, { kind: "now", value: "G" })])]);
+    await turns();
+    expect(unhandled).toEqual([]);
+    expect(out.get("bad")).toEqual({ kind: "unavailable" });
+    expect(out.get("nested")).toEqual({ kind: "unavailable" });
+    expect(out.get("good")).toEqual({ kind: "ok", value: "G" });
+  });
+});
+
+describe("D-5 (P2): a Date in a snapshot is sealed as its epoch milliseconds, so nothing can move it afterwards", () => {
+  const valued = (key: string, value: () => unknown): PreloadPiece<unknown> => ({ key, capMs: 5_000, start: () => ({ done: Promise.resolve(), snapshot: value }) });
+  const EPOCH = Date.parse("2026-03-01T12:00:00.000Z");
+
+  it("Astra's probe: the producer keeps its Date and calls setTime AFTER the seal → the sealed value does not move; it is a number at every depth", async () => {
+    const clock = new FakeClock();
+    const when = new Date(EPOCH);
+    const inRow = new Date(EPOCH + 1);
+    const inList = new Date(EPOCH + 2);
+    const produced = { at: when, rows: [{ seen: inRow }], list: [inList], label: "x" };
+    const out = await runWith(clock, [phase("p", 5_000, () => [valued("a", () => produced)])]);
+    // Through the producer's retained references, after the seal:
+    when.setTime(0); inRow.setTime(0); inList.setTime(0);
+    const v = preloadValue<{ at: Date; rows: Array<{ seen: Date }>; list: Date[]; label: string }>(out, "a")!;
+    // `Sealed<T>`: the compiler reads these as numbers.
+    const at: number = v.at;
+    const seen: number = v.rows[0]!.seen;
+    const first: number = v.list[0]!;
+    expect([at, seen, first]).toEqual([EPOCH, EPOCH + 1, EPOCH + 2]);
+    expect([typeof v.at, typeof v.rows[0]!.seen, typeof v.list[0]]).toEqual(["number", "number", "number"]);
+    expect(v.label).toBe("x");
+    // And nobody holding the sealed value can move it either.
+    expect(() => { (v as { at: unknown }).at = 5; }).toThrow(TypeError);
+    expect(() => { (v.list as unknown[])[0] = 5; }).toThrow(TypeError);
+    expect(JSON.parse(JSON.stringify(out.get("a")))).toEqual({ kind: "ok", value: { at: EPOCH, rows: [{ seen: EPOCH + 1 }], list: [EPOCH + 2], label: "x" } });
+  });
+
+  it("a Date at the top level → its epoch milliseconds", async () => {
+    const clock = new FakeClock();
+    const when = new Date(EPOCH);
+    const out = await runWith(clock, [phase("p", 5_000, () => [valued("a", () => when)])]);
+    when.setTime(0);
+    expect(out.get("a")).toEqual({ kind: "ok", value: EPOCH });
+    const n: number | null = preloadValue<Date>(out, "a");
+    expect(n).toBe(EPOCH);
+  });
+
+  it("a Date whose holder the producer already FROZE cannot be replaced → that piece unavailable (never a live Date), the sibling untouched", async () => {
+    const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+    const frozen = Object.freeze({ at: new Date(EPOCH) });
+    const out = await runWith(clock, [phase("p", 5_000, () => [valued("bad", () => frozen), piece("good", 5_000, { kind: "now", value: { n: 1 } })])]);
+    expect(out.get("bad")).toEqual({ kind: "unavailable" });
+    expect(out.get("good")).toEqual({ kind: "ok", value: { n: 1 } });
+  });
+
+  it("no sealed result of any shape holds a Date object", async () => {
+    const clock = new FakeClock();
+    const out = await runWith(clock, [phase("p", 5_000, () => [
+      valued("a", () => ({ d: new Date(EPOCH), deep: { deeper: [{ d: new Date(EPOCH) }] } })),
+      valued("b", () => [new Date(EPOCH), [new Date(EPOCH)]]),
+    ])]);
+    const holdsDate = (x: unknown): boolean => x instanceof Date || (typeof x === "object" && x !== null && Object.values(x).some(holdsDate));
+    for (const k of ["a", "b"]) {
+      const r = out.get(k) as { kind: "ok"; value: unknown };
+      expect(r.kind, k).toBe("ok");
+      expect(holdsDate(r.value), k).toBe(false);
+    }
+  });
+});
+
+describe("D-6 (CC ruling: the plan wins over O-N3's wording): a snapshot() that throws costs ONLY that piece", () => {
+  it("phase one sealed, then in phase two one snapshot throws beside one that succeeds → phase one's result and the sibling stand; only the thrower is unavailable", async () => {
+    const clock = new FakeClock(); const records: PieceRecord[] = []; const piece = mk(clock, records);
+    const out = await runWith(clock, [
+      phase("one", 5_000, () => [piece("first", 5_000, { kind: "now", value: "F" })]),
+      phase("two", 5_000, () => [piece("thrower", 5_000, { kind: "throwSnapshot" }), piece("sibling", 5_000, { kind: "now", value: "S" })]),
+    ]);
+    expect(out.get("first")).toEqual({ kind: "ok", value: "F" });
+    expect(out.get("thrower")).toEqual({ kind: "unavailable" });
+    expect(out.get("sibling")).toEqual({ kind: "ok", value: "S" });
+    expect(out.size).toBe(3);
+  });
+});

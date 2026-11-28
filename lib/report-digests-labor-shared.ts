@@ -82,11 +82,20 @@ export interface LaborMoneyStore {
   hourly(locationId: string, day: string): HourlyLaborFacts | null;
   /** null = no entry: a holder of cost by role reads "Cost by role not available". */
   roles(locationId: string, day: string): RoleLaborFacts | null;
+  /**
+   * Fix round 2 (CC ruling D-4): true = the shop has no Toast connection, so labor money is NOT APPLICABLE to it on
+   * that day. Nothing was read for it, nothing is withheld from any other shop because of it, and a holder reads ONE
+   * line that says it is not connected (never "not available": nothing failed).
+   */
+  notConnected(locationId: string, day: string): boolean;
 }
 
-export function laborMoneyStore(results: PreloadResults): LaborMoneyStore {
+/** `notConnected`: the run's `shop|day` keys whose own Toast pull found no connection (copied: the store never moves). */
+export function laborMoneyStore(results: PreloadResults, notConnected: ReadonlySet<string> = new Set()): LaborMoneyStore {
+  const none = new Set(notConnected);
   return {
     hourly: (locationId, day) => preloadValue<HourlyLaborFacts>(results, laborHourlyKey(locationId, day)),
     roles: (locationId, day) => preloadValue<RoleLaborFacts>(results, laborRolesKey(locationId, day)),
+    notConnected: (locationId, day) => none.has(`${locationId}|${day}`),
   };
 }

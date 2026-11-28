@@ -19,6 +19,10 @@
  * moves another line. One wording per failure: "Labor cost not available" (an hourly part), "Cost by role not
  * available" (the role part), "Labor figures are updating" (a week that is not usable). No hourly entry at all = ONE
  * "not available" line for the hourly lines and one for fully loaded (and F5's own sentence), nothing else.
+ *
+ * NOT APPLICABLE IS NOT A FAILURE (fix round 2, CC ruling D-4): a shop with no Toast connection has ONE line, "Toast is
+ * not connected for this shop", for everyone who holds hourly labor money there (the floor of all three capabilities).
+ * It is not `unknown`: nothing failed, so it never counts toward "? N not available", and no other line is composed.
  */
 import { figureKindOf, figureText, type Figure } from "@/lib/business-figure-shared";
 import { figureFormatFor } from "@/lib/business-figure-format";
@@ -80,12 +84,28 @@ function pieces(c: { t: Tr; fmt: ReturnType<typeof figureFormatFor> }, l: LaborV
 }
 
 /**
+ * D-4 (fix round 2): the ONE labor-money line of a shop with no Toast connection, "Toast is not connected for this
+ * shop", for a holder of hourly labor money (the floor of all three capabilities; `finishSection` cuts it for anyone
+ * else). Information, not an unknown. null = the shop is connected, or this is not a labor-money run.
+ */
+export function laborNotConnectedLine(ctx: LaborMoneyCtx, store: LaborMoneyStore | null | undefined): DigestLine | null {
+  if (!store || !store.notConnected(ctx.locationId, ctx.day)) return null;
+  return {
+    label: serverT(ctx.language, "digest.labor_money.label"), text: serverT(ctx.language, "digest.labor_money.not_connected"), tone: "info",
+    href: digestLink({ baseUrl: ctx.baseUrl, viewer: ctx.viewer }, { to: "team", location: ctx.locationId, day: ctx.day }), needs: HOURLY,
+  };
+}
+
+/**
  * THE labor-money lines of one shop and day. `store` absent or null = not a labor-money run: null, and the caller
  * composes NOTHING (the switch-off byte identity). Every line is composed whatever the recipient may see; the cut is
  * `finishSection`'s.
  */
 export function laborMoneyLines(ctx: LaborMoneyCtx, store: LaborMoneyStore | null | undefined): LaborMoneyLines | null {
   if (!store) return null;
+  // D-4: labor money is not applicable to a shop with no Toast connection. F1-F5 do not exist for it (never a "not
+  // available" sentence: nothing failed); its one line is `laborNotConnectedLine`.
+  if (store.notConnected(ctx.locationId, ctx.day)) return null;
   const t: Tr = (key, params) => serverT(ctx.language, key, params);
   const fmt = figureFormatFor(ctx.language);
   const date = (d: string) => formatDateLabel(d, ctx.language);

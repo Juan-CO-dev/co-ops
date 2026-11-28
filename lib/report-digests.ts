@@ -179,7 +179,10 @@ export async function loadShopDayFacts(sb: Sb, location: { id: string; name: str
     // Digest v2 (GO 2026-10-08): fail-soft per area, never throws. (Its labor area pulls Toast for D: the source.)
     ((): ReturnType<typeof loadShopV2Facts> => {
       const v2Load = loadShopV2Facts(sb, location.id, day, now, { schedule: opts.schedule });
-      opts.onSource?.(v2Load.then((v2): FactsSource => ({ writeUncertain: toastWriteUncertain(v2.labor) }), (): FactsSource => ({ writeUncertain: true })));
+      opts.onSource?.(v2Load.then(
+        (v2): FactsSource => ({ writeUncertain: toastWriteUncertain(v2.labor), ...(toastNotConnected(v2.labor) ? { notConnected: true } : {}) }),
+        (): FactsSource => ({ writeUncertain: true }),
+      ));
       return v2Load;
     })(),
   ]);
@@ -415,14 +418,20 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date, opts: 
  *   ok                                    the pull finished and its rows were read: known
  *   unavailable "labor_off"               no pull was attempted: nothing was written
  *   unavailable "no_labor"                the pull finished; D simply has no entries: known
+ *   unavailable "labor_not_connected"     the shop has no Toast connection: no pull was attempted, nothing was written
  *   unavailable "labor_pull_failed"       the pull failed or was cut: NOT known
  *   anything else, an error, no answer    NOT known (fail closed)
  */
 export function toastWriteUncertain(labor: Loaded<unknown> | undefined): boolean {
   if (!labor) return true;
   if (labor.kind === "ok") return false;
-  if (labor.kind === "unavailable") return !(labor.reason === "labor_off" || labor.reason === "no_labor");
+  if (labor.kind === "unavailable") return !(labor.reason === "labor_off" || labor.reason === "no_labor" || labor.reason === "labor_not_connected");
   return true;
+}
+
+/** Fix round 2 (CC ruling D-4): the shop has no Toast connection, so labor money is not applicable to it. */
+export function toastNotConnected(labor: Loaded<unknown> | undefined): boolean {
+  return !!labor && labor.kind === "unavailable" && labor.reason === "labor_not_connected";
 }
 
 /**

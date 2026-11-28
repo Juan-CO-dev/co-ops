@@ -93,8 +93,10 @@ export function roleFacts(over: Partial<Extract<RoleLaborFacts, { kind: "ok" }>>
 }
 
 /** A sealed store: one entry per shop (every shop gets the same facts unless `byShop` says otherwise), for day D. */
-export function laborStore(hourly: HourlyLaborFacts | null, roles: RoleLaborFacts | null, byShop: Record<string, { hourly?: HourlyLaborFacts | null; roles?: RoleLaborFacts | null }> = {}): LaborMoneyStore {
+export function laborStore(hourly: HourlyLaborFacts | null, roles: RoleLaborFacts | null, byShop: Record<string, { hourly?: HourlyLaborFacts | null; roles?: RoleLaborFacts | null }> = {},
+  /** D-4: the shops with no Toast connection on D (labor money not applicable). */ notConnected: readonly string[] = []): LaborMoneyStore {
   return {
+    notConnected: (loc, day) => day === D && notConnected.includes(loc),
     hourly: (loc, day) => (day !== D ? null : loc in byShop && byShop[loc]!.hourly !== undefined ? byShop[loc]!.hourly! : hourly),
     roles: (loc, day) => (day !== D ? null : loc in byShop && byShop[loc]!.roles !== undefined ? byShop[loc]!.roles! : roles),
   };

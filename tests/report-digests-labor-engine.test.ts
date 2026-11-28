@@ -950,6 +950,17 @@ describe("loadShopDayFacts (A4-2): onSource", () => {
     expect(await outcome(bad.sources[0]!)).toEqual({ resolved: { writeUncertain: true } });
   });
 
+  it("D-4: labor unavailable(\"labor_not_connected\") resolves { writeUncertain: false, notConnected: true }; no other labor state carries notConnected", async () => {
+    const nc = await load(() => Promise.resolve({ labor: unavailable("labor_not_connected") }));
+    expect(nc.syncCount).toBe(1);
+    expect(await outcome(nc.sources[0]!)).toEqual({ resolved: { writeUncertain: false, notConnected: true } });
+    for (const labor of [ok({ totalHours: 1 }), unavailable("labor_off"), unavailable("no_labor"), unavailable("labor_pull_failed"), failed()]) {
+      const r = await load(() => Promise.resolve({ labor }));
+      const got = (await outcome(r.sources[0]!)) as { resolved: Record<string, unknown> };
+      expect(Object.keys(got.resolved), JSON.stringify(labor)).toEqual(["writeUncertain"]);
+    }
+  });
+
   it("its promise never rejects: a v2 load that rejects (it should not) resolves { writeUncertain: true }", async () => {
     const r = await load(() => Promise.reject(new Error("v2 broke its contract (synthetic)")));
     expect(r.syncCount).toBe(1);
@@ -977,6 +988,7 @@ describe("toastWriteUncertain (Astra R3): is the outcome of the digest's own Toa
     ["unavailable labor_off: no pull was attempted", unavailable("labor_off"), false],
     ["unavailable no_labor: the pull finished, D has no entries", unavailable("no_labor"), false],
     ["unavailable labor_pull_failed: the pull failed or was cut", unavailable("labor_pull_failed"), true],
+    ["unavailable labor_not_connected: no Toast connection, no pull attempted (D-4)", unavailable("labor_not_connected"), false],
     ["unavailable with any other reason", unavailable("something_else"), true],
     ["unavailable with an empty reason", unavailable(""), true],
     ["error", failed(), true],
@@ -986,6 +998,252 @@ describe("toastWriteUncertain (Astra R3): is the outcome of the digest's own Toa
     it(`${name} → writeUncertain ${uncertain}`, async () => {
       const { toastWriteUncertain } = await import("@/lib/report-digests");
       expect(toastWriteUncertain(labor)).toBe(uncertain);
+    });
+  }
+});
+
+// ── fix round 2 (CC addendum 2026-11-28): D-1, D-3, D-4 ─────────────────────────────────────────
+
+describe("D-1 (P1): a pull that timed out or failed STOPS that shop's chain and freezes its later days for the run", () => {
+  const started = (h: Harness) => h.log.all("shopFacts:start").map((e) => e.ev);
+  const dayRows = (h: Harness, kind: string, r: string, day: string, locationId?: string | null) => rowsOf(h, kind, r, locationId).filter((x) => x.business_day === day);
+
+  const cases: Array<[string, (h: Harness) => void]> = [
+    ["{ writeUncertain: true } (the pull failed or was cut at its own deadline)", (h) => h.shop.uncertainSource(A, D0)],
+    ["a source that REJECTS", (h) => h.shop.rejectSource(A, D0)],
+    ["a source resolving undefined (fail closed)", (h) => h.shop.sourceResolves(A, D0, undefined)],
+  ];
+  for (const [name, arrange] of cases) {
+    it(`shop A's FIRST day: ${name} → A's second day is never loaded in this run; its composes fail by name; the day that was pulled and the other shop are sent`, async () => {
+      const h = harness({ ...TWO_DAY(), switchOn: true });
+      arrange(h);
+      const summary = await tickRun(h);
+      // Nothing starts it later either.
+      await h.clock.advance(120_000);
+      expect(started(h), name).not.toContain(`shopFacts:start(A,${D1})`);
+      expect(started(h)).toContain(`shopFacts:start(A,${D0})`);
+      expect(started(h)).toContain(`shopFacts:start(B,${D0})`);
+      expect(started(h)).toContain(`shopFacts:start(B,${D1})`);
+      // Exactly one load per started shop-day: a compose never loads the held day on its own.
+      expect(h.shop.calls.map((c) => c.key).sort()).toEqual([`A,${D0}`, `B,${D0}`, `B,${D1}`]);
+      // No labor money is certified in this run (the write's outcome is not known).
+      expect(h.log.count("hourly(")).toBe(0);
+      expect(h.log.count("roles(")).toBe(0);
+      for (const r of ["gm-a", "moo", "agm"]) {
+        expect(dayRows(h, "gm_shop", ref(r), D0, A).map((x) => x.outcome), r).toEqual(["sent"]);
+        const held = dayRows(h, "gm_shop", ref(r), D1, A);
+        expect(held.map((x) => x.outcome), r).toEqual(["failed"]);
+        expect(held[0]!.error ?? "", r).toContain("ordinary_facts_pull_uncertain");
+      }
+      // The unified digest of the held day prints every shop: it fails the same way; the first day's goes out.
+      for (const r of ["moo", "own"]) {
+        expect(dayRows(h, "unified", ref(r), D0).map((x) => x.outcome), r).toEqual(["sent"]);
+        const held = dayRows(h, "unified", ref(r), D1);
+        expect(held.map((x) => x.outcome), r).toEqual(["failed"]);
+        expect(held[0]!.error ?? "", r).toContain("ordinary_facts_pull_uncertain");
+      }
+      expect(rowsOf(h, "gm_shop", ref("gm-b"), B).map((x) => x.outcome)).toEqual(["sent", "sent"]);
+      expect(summary?.counts.gm_shop).toEqual({ sent: 5, skipped: 0, failed: 3, ambiguous: 0 });
+      expect(h.alerts.some((a) => a.detector === "digest-send" && /compose: ordinary_facts_pull_uncertain/.test(a.error ?? ""))).toBe(true);
+      expect(h.composes.some((c) => c.kind === "shop" && (c.facts as { location: { id: string }; day: string }).location.id === A && (c.facts as { day: string }).day === D1)).toBe(false);
+      expect(unhandled).toEqual([]);
+    });
+  }
+
+  it("Astra's case: the first day's pull is still running, then TIMES OUT (its source settles uncertain at 20 s) → the second day's pull is never started", async () => {
+    const h = harness({ ...TWO_DAY(), switchOn: true });
+    const src = h.shop.holdSource(A, D0);
+    h.shop.uncertainSource(A, D0);
+    const p = runDigestTickWith(h.io);
+    await flush(6);
+    await h.clock.advance(20_000);
+    expect(started(h)).not.toContain(`shopFacts:start(A,${D1})`);
+    src.resolve();
+    await flush(8);
+    expect(h.log.first(`source:settle(A,${D0})`)).toBeGreaterThan(-1);
+    expect(started(h)).not.toContain(`shopFacts:start(A,${D1})`);
+    await h.clock.until(p);
+    await h.clock.advance(120_000);
+    expect(started(h)).not.toContain(`shopFacts:start(A,${D1})`);
+    expect(dayRows(h, "gm_shop", ref("gm-a"), D1, A)[0]!.error ?? "").toContain("ordinary_facts_pull_uncertain");
+  });
+
+  it("the NEXT tick loads the held day (its key was released) and sends it", async () => {
+    const first = harness({ ...TWO_DAY(), switchOn: true });
+    first.shop.uncertainSource(A, D0);
+    await tickRun(first);
+    const next = harness({ ...TWO_DAY(), switchOn: true, store: first.store });
+    const summary = await tickRun(next);
+    expect(next.log.all("shopFacts:start").map((e) => e.ev)).toContain(`shopFacts:start(A,${D1})`);
+    for (const r of ["gm-a", "moo", "agm"]) expect(dayRows(next, "gm_shop", ref(r), D1, A).map((x) => x.outcome), r).toEqual(["failed", "sent"]);
+    for (const r of ["moo", "own"]) expect(dayRows(next, "unified", ref(r), D1).map((x) => x.outcome), r).toEqual(["failed", "sent"]);
+    expect(summary?.counts.gm_shop.failed).toBe(0);
+  });
+
+  it("the control: an uncertain pull on a shop's LAST day holds nothing back (every digest is sent)", async () => {
+    const h = harness({ ...TWO_DAY(), switchOn: true });
+    h.shop.uncertainSource(A, D1);
+    const summary = await tickRun(h);
+    expect(h.shop.calls.map((c) => c.key).sort()).toEqual([`A,${D0}`, `A,${D1}`, `B,${D0}`, `B,${D1}`]);
+    expect(summary?.counts.gm_shop).toEqual({ sent: 8, skipped: 0, failed: 0, ambiguous: 0 });
+    expect(h.log.count("hourly(")).toBe(0);
+  });
+});
+
+describe("D-3 (P2): what settles just BEFORE the budget is never frozen because the clock moved between two reactions", () => {
+  /**
+   * Astra's probe: the clock crosses the cutoff in a microtask that runs right after the FIRST reaction to the
+   * settlement (two hops: the fake's own `.then` settles the promise the engine holds, then the engine's reaction runs).
+   */
+  const crossAfterFirstReaction = (h: Harness, ms: number) => queueMicrotask(() => queueMicrotask(() => h.clock.moveClockOnly(ms)));
+
+  it("a one-day run: shop B's facts AND its source settle at 44 999 ms; one reaction later the clock reads 45 001 ms → accepted: the pre-load runs and the unified digest is sent", async () => {
+    const h = harness({ ...CLOSING_BOTH, switchOn: true });
+    const facts = h.shop.holdFacts(B, D0);
+    const src = h.shop.holdSource(B, D0);
+    const p = runClosingDigestsWith(h.io, A, D0);
+    await flush(8);
+    await h.clock.advance(44_998);
+    h.clock.moveClockOnly(1);
+    expect(h.clock.now).toBe(CLOCK_START + 44_999);
+    src.resolve(); facts.resolve();
+    crossAfterFirstReaction(h, 2);
+    await flush(8);
+    expect(h.clock.now).toBe(CLOCK_START + 45_001);
+    const summary = await h.clock.until(p);
+    expect(h.log.all("hourly(").filter((e) => e.ev.endsWith(":start"))).toHaveLength(2);
+    expect(summary?.counts.unified).toEqual({ sent: 2, skipped: 0, failed: 0, ambiguous: 0 });
+    expect(h.store.rows.some((r) => (r.error ?? "").includes("ordinary_facts_timeout"))).toBe(false);
+  });
+
+  it("the same for the catering facts (a tick: 90 s): settled at 89 999 ms → the catering digest is sent", async () => {
+    const h = harness({ ...ONE_DAY(true), switchOn: true });
+    const hold = h.catering.hold();
+    const p = runDigestTickWith(h.io);
+    await flush(8);
+    await h.clock.advance(89_998);
+    h.clock.moveClockOnly(1);
+    expect(h.clock.now).toBe(CLOCK_START + 89_999);
+    hold.resolve();
+    crossAfterFirstReaction(h, 2);
+    await flush(8);
+    expect(h.clock.now).toBe(CLOCK_START + 90_001);
+    await h.clock.until(p);
+    const catering = h.store.rows.filter((r) => r.kind === "catering");
+    expect(catering.length).toBeGreaterThan(0);
+    expect(catering.every((r) => r.outcome === "sent")).toBe(true);
+  });
+
+  it("the other edge still holds: settled AT the cutoff (45 000 ms) is late and frozen", async () => {
+    const h = harness({ ...CLOSING_BOTH, switchOn: true });
+    const facts = h.shop.holdFacts(B, D0);
+    const src = h.shop.holdSource(B, D0);
+    const p = runClosingDigestsWith(h.io, A, D0);
+    await flush(8);
+    await h.clock.advance(44_999);
+    h.clock.moveClockOnly(1);
+    expect(h.clock.now).toBe(CLOCK_START + 45_000);
+    src.resolve(); facts.resolve();
+    await flush(8);
+    await h.clock.until(p);
+    expect(h.log.count("hourly(")).toBe(0);
+    for (const r of ["moo", "own"]) expect(rowsOf(h, "unified", ref(r))[0]!.error ?? "", r).toContain("ordinary_facts_timeout");
+  });
+});
+
+describe("D-4 (P2): a shop with no Toast connection is NOT APPLICABLE for labor money", () => {
+  const NOT_CONNECTED = { writeUncertain: false, notConnected: true };
+  const pieceStarts = (h: Harness, prefix: string) => h.log.all(prefix).filter((e) => e.ev.endsWith(":start")).map((e) => e.ev).sort();
+
+  it("a closing run, shop B not connected → shop A's labor money is loaded and delivered; NO fact is read for B; the store says B is not connected", async () => {
+    const h = harness({ ...CLOSING_BOTH, switchOn: true });
+    h.shop.sourceResolves(B, D0, NOT_CONNECTED);
+    const summary = await closingRun(h);
+    // The unified digest's holders hold EVERY shop: without D-4 shop B's hourly piece would start too.
+    expect(pieceStarts(h, "hourly(")).toEqual([`hourly(A,${D0}):start`]);
+    expect(pieceStarts(h, "roles(")).toEqual([`roles(A,${D0}):start`]);
+    expect(summary?.counts.gm_shop).toEqual({ sent: 3, skipped: 0, failed: 0, ambiguous: 0 });
+    expect(summary?.counts.unified).toEqual({ sent: 2, skipped: 0, failed: 0, ambiguous: 0 });
+    const holders = h.composes.filter((c) => businessOf(c.env));
+    expect(holders.length).toBeGreaterThan(0);
+    for (const c of holders) {
+      const store = c.env.laborMoney!;
+      expect(store.notConnected(B, D0), c.ref).toBe(true);
+      expect(store.notConnected(A, D0), c.ref).toBe(false);
+      expect(store.hourly(A, D0), c.ref).toEqual(hourlyFacts(A, D0));
+      expect(store.roles(A, D0), c.ref).toEqual(roleFacts(A, D0));
+      expect(store.hourly(B, D0), c.ref).toBeNull();
+      expect(store.roles(B, D0), c.ref).toBeNull();
+    }
+    expect(unhandled).toEqual([]);
+  });
+
+  it("a two-day tick, shop B not connected on both days → B's chain goes on (its second day is loaded); A's money is loaded for both days; every digest is sent", async () => {
+    const h = harness({ ...TWO_DAY(), switchOn: true });
+    h.shop.sourceResolves(B, D0, NOT_CONNECTED);
+    h.shop.sourceResolves(B, D1, NOT_CONNECTED);
+    const summary = await tickRun(h);
+    expect(h.shop.calls.map((c) => c.key).sort()).toEqual([`A,${D0}`, `A,${D1}`, `B,${D0}`, `B,${D1}`]);
+    expect(pieceStarts(h, "hourly(")).toEqual([`hourly(A,${D0}):start`, `hourly(A,${D1}):start`]);
+    expect(summary?.counts.gm_shop).toEqual({ sent: 8, skipped: 0, failed: 0, ambiguous: 0 });
+    expect(summary?.counts.unified).toEqual({ sent: 4, skipped: 0, failed: 0, ambiguous: 0 });
+    const own = h.envOf(ref("own"))[0]!.env.laborMoney!;
+    expect([own.notConnected(B, D0), own.notConnected(B, D1), own.notConnected(A, D0), own.notConnected(A, D1)]).toEqual([true, true, false, false]);
+  });
+
+  it("a GM of the unconnected shop still has its access decided, and no piece is started for its shop", async () => {
+    const h = harness({ ...CLOSING_BOTH, switchOn: true });
+    h.shop.sourceResolves(A, D0, NOT_CONNECTED);
+    await closingRun(h);
+    expect(pieceStarts(h, "hourly(")).toEqual([`hourly(B,${D0}):start`]);
+    const gm = h.envOf(ref("gm-a"), "shop")[0]!.env;
+    expect(businessOf(gm)).toEqual(businessAccessFor("gm", null));
+    expect(gm.laborMoney!.notConnected(A, D0)).toBe(true);
+    expect(gm.laborMoney!.hourly(A, D0)).toBeNull();
+  });
+
+  const failClosed: Array<[string, unknown]> = [
+    ["notConnected beside an UNCERTAIN write", { writeUncertain: true, notConnected: true }],
+    ["notConnected with no writeUncertain at all", { notConnected: true }],
+    ["notConnected with a writeUncertain that is not exactly false", { writeUncertain: 0, notConnected: true }],
+  ];
+  for (const [name, value] of failClosed) {
+    it(`fail closed: ${name} is an uncertain write → nothing is certified and the shop is NOT recorded as not connected`, async () => {
+      const h = harness({ ...CLOSING_BOTH, switchOn: true });
+      h.shop.sourceResolves(B, D0, value);
+      await closingRun(h);
+      expect(h.log.count("hourly(")).toBe(0);
+      for (const c of h.composes.filter((x) => businessOf(x.env))) expect(c.env.laborMoney!.notConnected(B, D0), c.ref).toBe(false);
+    });
+  }
+
+  it("a truthy notConnected that is not exactly true is ignored (the shop is treated as connected)", async () => {
+    const h = harness({ ...CLOSING_BOTH, switchOn: true });
+    h.shop.sourceResolves(B, D0, { writeUncertain: false, notConnected: "yes" });
+    await closingRun(h);
+    expect(pieceStarts(h, "hourly(")).toEqual([`hourly(A,${D0}):start`, `hourly(B,${D0}):start`]);
+  });
+});
+
+describe("D-4: the loader's source says not connected; toastWriteUncertain / toastNotConnected", () => {
+  it("toastWriteUncertain(unavailable(\"labor_not_connected\")) is false: no pull was attempted, nothing was written", async () => {
+    const { toastWriteUncertain } = await import("@/lib/report-digests");
+    expect(toastWriteUncertain(unavailable("labor_not_connected"))).toBe(false);
+  });
+
+  const table: Array<[string, Loaded<unknown> | undefined, boolean]> = [
+    ["unavailable labor_not_connected", unavailable("labor_not_connected"), true],
+    ["ok", ok({ totalHours: 1 }), false],
+    ["unavailable labor_off", unavailable("labor_off"), false],
+    ["unavailable no_labor", unavailable("no_labor"), false],
+    ["unavailable labor_pull_failed", unavailable("labor_pull_failed"), false],
+    ["error", failed(), false],
+    ["no labor area at all", undefined, false],
+  ];
+  for (const [name, labor, expected] of table) {
+    it(`toastNotConnected: ${name} → ${expected}`, async () => {
+      const { toastNotConnected } = await import("@/lib/report-digests");
+      expect(toastNotConnected(labor)).toBe(expected);
     });
   }
 });

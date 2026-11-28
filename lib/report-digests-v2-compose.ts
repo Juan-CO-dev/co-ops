@@ -34,7 +34,7 @@ import { digestCan, type DigestAccess, type DigestCapability } from "@/lib/repor
 import { capItems, finishSection, finishSections, LINE_ITEMS_MAX, SECTION_CAP_WIDE, type SectionDraft } from "@/lib/report-digests-layout-shared";
 import { scheduleDays, scheduledVsWorkedLine, scheduleNotAvailableLine, staffScheduledLine } from "@/lib/report-digests-staffing-compose";
 import type { LaborMoneyStore } from "@/lib/report-digests-labor-shared";
-import { laborMoneyLines } from "@/lib/report-digests-labor-compose";
+import { laborMoneyLines, laborNotConnectedLine } from "@/lib/report-digests-labor-compose";
 
 type Params = Record<string, string | number>;
 export type T = (key: TranslationKey, params?: Params) => string;
@@ -70,7 +70,7 @@ function cutoffLabel(c: Ctx, time: string): string {
 function notLoaded(c: Ctx, label: string, href: string | null, l: Loaded<unknown>): DigestLine | null {
   if (l.kind === "error") return { label, text: c.t("digest.v2.could_not_load"), tone: "info", href, unknown: true };
   if (l.kind === "unavailable") {
-    const key = l.reason === "no_capture" ? "digest.v2.sales.no_capture" : l.reason === "no_labor" || l.reason === "labor_off" || l.reason === "labor_pull_failed" ? "digest.v2.labor.no_entries" : "digest.v2.not_available";
+    const key = l.reason === "no_capture" ? "digest.v2.sales.no_capture" : l.reason === "no_labor" || l.reason === "labor_off" || l.reason === "labor_pull_failed" || l.reason === "labor_not_connected" ? "digest.v2.labor.no_entries" : "digest.v2.not_available";
     return { label, text: c.t(key as TranslationKey), tone: "info", href, unknown: true };
   }
   return null;
@@ -650,7 +650,15 @@ function composeLaborSection(c: Ctx, v: ShopV2Facts): { lines: DigestLine[]; sta
  */
 export function laborSectionWithMoney(c: Ctx, v: ShopV2Facts, laborMoney: LaborMoneyStore | null | undefined): DigestLine[] {
   const { lines: sec, status } = composeLaborSection(c, v);
-  const money = laborMoneyLines({ language: c.language, baseUrl: c.baseUrl, locationId: c.locationId, day: c.day, viewer: c.viewer }, laborMoney);
+  const moneyCtx = { language: c.language, baseUrl: c.baseUrl, locationId: c.locationId, day: c.day, viewer: c.viewer };
+  // Fix round 2, D-4: a shop with no Toast connection has ONE labor-money line, in F1's place (right after the status
+  // line), and every other line exactly as it is.
+  const notConnected = laborNotConnectedLine(moneyCtx, laborMoney);
+  if (notConnected) {
+    const at = status ? sec.indexOf(status) + 1 : 0;
+    return [...sec.slice(0, at), notConnected, ...sec.slice(at)];
+  }
+  const money = laborMoneyLines(moneyCtx, laborMoney);
   if (!money) return sec;
   // GLM part 4 F-1: the anchors are found in the COMPOSED list itself, never by index arithmetic on where PR 2 put a
   // line. The status line is the first line `laborLines` returned ("N h clocked", "No one clocked in", or its one

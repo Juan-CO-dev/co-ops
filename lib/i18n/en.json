@@ -10623,6 +10623,7 @@
   "digest.staffing.diff": "({diff} h)",
   "digest.labor_money.label": "Labor cost",
   "digest.labor_money.not_available": "Labor cost not available",
+  "digest.labor_money.not_connected": "Toast is not connected for this shop",
   "digest.labor_money.roles_not_available": "Cost by role not available",
   "digest.labor_money.updating": "Labor figures are updating",
   "digest.labor_money.week_updating": "This week's labor figures are updating",

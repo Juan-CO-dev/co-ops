@@ -32,7 +32,7 @@ import {
 import type { CateringFacts, ShopDayFacts } from "@/lib/report-digests-compose";
 import type { PieceHandle, PreloadPiece } from "@/lib/preload-runner";
 import { LABOR_BUILDER_VERSION } from "@/lib/facts/labor-config-shared";
-import { ok } from "@/lib/report-digests-v2-shared";
+import { ok, unavailable } from "@/lib/report-digests-v2-shared";
 import { CallLog, FakeClock, MemStore, deferred, type Deferred } from "./digest-labor-engine";
 import { fakeClient, type FakeOpts, type VisibilityAnswer } from "../helpers/business-report-fake";
 import { A, B, BASE, D, D1, SHOP_A, SHOP_B, cateringFacts, fullDay, labor, schedule, shopFacts, tomorrowDay } from "./digest-staffing";
@@ -239,10 +239,13 @@ export function goldenFacts(shop: { id: string; name: string }, day = D, toastCh
  * `pull` (A4-3): the pull takes `delayMs` of fake time and then rewrites the shared entry's `out_at` from its own answer.
  * `detached` (the teeth of the A4-3 test): the source settles AT ONCE instead of holding the pull (a loader that does
  * not hand back its write), so the engine's per-shop chain no longer waits for it; the facts still settle after the pull.
+ * `notConnected` (fix round 2, D-4): the shop has no Toast connection, as the real loader reports it: the labor area is
+ * `unavailable("labor_not_connected")` and the source resolves `{ writeUncertain: false, notConnected: true }`.
  */
 export type ShopMode = {
   facts?: "never" | "reject"; source?: "never" | Deferred<void>; pullChanges?: boolean; bare?: boolean;
   sourceResult?: unknown; sourceRejects?: boolean; pull?: { outAt: string; delayMs: number }; detached?: boolean;
+  notConnected?: boolean;
 };
 export const HEALTHY_SOURCE = { writeUncertain: false } as const;
 
@@ -265,7 +268,7 @@ export class FakeShopFacts {
     });
     const written = m.detached ? Promise.resolve() : pulled;
     const settled = m.source === "never" ? new Promise<void>(() => {}) : m.source ? written.then(() => (m.source as Deferred<void>).promise) : written;
-    const result = "sourceResult" in m ? m.sourceResult : HEALTHY_SOURCE;
+    const result = m.notConnected ? { writeUncertain: false, notConnected: true } : "sourceResult" in m ? m.sourceResult : HEALTHY_SOURCE;
     onSource?.(settled.then(() => {
       if (m.sourceRejects) throw new Error("source_failed (synthetic)");
       return result as Awaited<Parameters<NonNullable<typeof onSource>>[0]>;
@@ -273,7 +276,11 @@ export class FakeShopFacts {
     if (m.facts === "never") return new Promise<ShopDayFacts>(() => {});
     if (m.facts === "reject") return pulled.then(() => { throw new Error("facts_read_failed (synthetic)"); });
     // Sampled when the pull ends: what Toast holds at that moment.
-    return pulled.then(() => (m.bare ? { ...shopFacts(location), day } : goldenFacts(location, day, this.db.toastChanged)));
+    return pulled.then(() => {
+      if (m.bare) return { ...shopFacts(location), day };
+      const f = goldenFacts(location, day, this.db.toastChanged);
+      return m.notConnected ? { ...f, v2: { ...f.v2!, labor: unavailable("labor_not_connected") } } : f;
+    });
   };
 }
 

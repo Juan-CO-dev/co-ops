@@ -385,17 +385,33 @@ async function loadPeople(sb: Sb, locationId: string, day: string): Promise<Load
  * 09:00 UTC nightly, so the digest pulls D for this shop itself, bounded (20 s) and fail-soft, just
  * before composing; the nightly pull stays the backstop. A pull that is off or fails = "labor not
  * available yet" — never zero, never yesterday's partial rows dressed as the day.
+ *
+ * `labor_not_connected` (digests round 3 PR 4, fix round 2, CC ruling D-4): the pull ran and matched NO shop, because
+ * this shop has no Toast connection. Nothing was attempted and nothing was written: a KNOWN state, told apart from
+ * `labor_pull_failed` (a write may have been cut). The digest's own Toast line reads exactly as before for both.
  */
 export const DIGEST_LABOR_PULL_MS = 20_000;
 export async function laborForDigest(
   locationId: string, day: string,
-  deps: { enabled: () => boolean; pull: (day: string, locationId: string) => Promise<{ ok: boolean }>; read: () => Promise<Loaded<LaborSummary>> },
+  deps: { enabled: () => boolean; pull: (day: string, locationId: string) => Promise<{ ok: boolean; connected?: boolean }>; read: () => Promise<Loaded<LaborSummary>> },
 ): Promise<Loaded<LaborSummary>> {
   if (!deps.enabled()) return unavailable("labor_off");
-  let pulled = false;
-  try { pulled = (await deps.pull(day, locationId)).ok; } catch { pulled = false; }
-  if (!pulled) return unavailable("labor_pull_failed");
+  let pulled: { ok: boolean; connected?: boolean } = { ok: false };
+  try { pulled = await deps.pull(day, locationId); } catch { pulled = { ok: false }; }
+  // Only an explicit `connected: false` on a pull that did not succeed: anything else is a failed pull (fail closed).
+  if (pulled?.ok !== true) return unavailable(pulled?.connected === false ? "labor_not_connected" : "labor_pull_failed");
   return deps.read();
+}
+
+/**
+ * What one shop's digest pull came to (`runToastLaborPull([day], { locationIds: [shop] })`). The pull reads only ACTIVE
+ * shops that hold a Toast restaurant GUID (lib/toast/labor.ts), so "it ran, and there is no result row at all" means
+ * the shop was not in that set: it has no Toast connection, no request was sent and no row was written. A failed
+ * locations read is a result row (`*`), so it can never look like that. A pull that did not run is never "not connected".
+ */
+export function laborPullOutcome(r: { ran: boolean; results: ReadonlyArray<{ ok: boolean }> }): { ok: boolean; connected: boolean } {
+  if (r.ran === true && Array.isArray(r.results) && r.results.length === 0) return { ok: false, connected: false };
+  return { ok: r.ran === true && Array.isArray(r.results) && r.results.length > 0 && r.results.every((x) => x.ok === true), connected: true };
 }
 
 export async function loadLabor(sb: Sb, locationId: string, day: string, sales: Loaded<SalesFacts>): Promise<Loaded<LaborSummary>> {
@@ -450,10 +466,7 @@ export async function loadShopV2Facts(sb: Sb, locationId: string, day: string, n
   ]);
   const labor = await settle(() => laborForDigest(locationId, day, {
     enabled: laborPullEnabled,
-    pull: async (d, loc) => {
-      const r = await runToastLaborPull([d], { deadlineMs: DIGEST_LABOR_PULL_MS, context: "digest", locationIds: [loc] });
-      return { ok: r.ran && r.results.length > 0 && r.results.every((x) => x.ok) };
-    },
+    pull: async (d, loc) => laborPullOutcome(await runToastLaborPull([d], { deadlineMs: DIGEST_LABOR_PULL_MS, context: "digest", locationIds: [loc] })),
     read: () => loadLabor(sb, locationId, day, sales),
   }), "labor");
   return { lookahead: lookaheadDay(day), sales, catering, ordering, receiving, inventory, people, labor, salesDetail, ...(schedule ? { schedule } : {}) };

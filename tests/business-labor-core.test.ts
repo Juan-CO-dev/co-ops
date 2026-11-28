@@ -105,7 +105,9 @@ async function runOne<T>(piece: PreloadPiece<T>, o: { maxCapMs?: number; budgetM
   const preload = definePreload<null>({ budgetMs: o.budgetMs ?? 20_000, phases: [{ name: "p", maxCapMs: o.maxCapMs ?? 10_000, pieces: () => [piece as PreloadPiece<unknown>] }] });
   const p = preload.run({ sources: async () => ({ writersSettled: true }), due: null, clock: () => Date.now(), timers: TIMERS });
   await vi.advanceTimersByTimeAsync(o.advanceMs ?? 25_000);
-  return preloadValue<T>(await p, piece.key);
+  // `preloadValue` answers `Sealed<T>` (a Date in a snapshot reads as its epoch number, fix round 2 D-5). The labor facts
+  // hold no Date, so for every T of this file the sealed type is T itself.
+  return preloadValue<T>(await p, piece.key) as unknown as T | null;
 }
 
 function setup(opts: FakeOpts = {}, respond?: Respond) {

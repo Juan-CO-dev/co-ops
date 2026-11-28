@@ -11,13 +11,13 @@ import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
 import type { Language } from "@/lib/i18n/types";
 import { composeShopSections, renderShopDigest, type DigestLine, type DigestSection } from "@/lib/report-digests-compose";
-import { laborMoneyLines, type LaborMoneyLines } from "@/lib/report-digests-labor-compose";
+import { laborMoneyLines, laborNotConnectedLine, type LaborMoneyLines } from "@/lib/report-digests-labor-compose";
 import type { HourlyLaborFacts, LaborMoneyStore, RoleLaborFacts } from "@/lib/report-digests-labor-shared";
 import { laborSectionWithMoney, translator } from "@/lib/report-digests-v2-compose";
 import { failed, ok as loaded, unavailable, type ShopV2Facts } from "@/lib/report-digests-v2-shared";
 import { cutLines, finishSection } from "@/lib/report-digests-layout-shared";
 import type { DigestCapability } from "@/lib/report-digests-access-shared";
-import { A, BASE, D, D1, fullDay, labor, schedule, SHOP_A, shopFacts, tomorrowDay } from "./fixtures/digest-staffing";
+import { A, B, BASE, D, D1, fullDay, labor, schedule, SHOP_A, shopFacts, tomorrowDay } from "./fixtures/digest-staffing";
 import {
   businessOf, dayFigures, hourlyFacts, LAST_FROM, LAST_TO, LATEST, laborStore, ok, overTargetDay, rangeFigures, recipient, roleFacts, UNAVAILABLE, UPDATING, WEEK_START,
 } from "./fixtures/digest-labor";
@@ -437,4 +437,92 @@ describe("rendered: HTML and text carry the same lines (en + es)", () => {
       }
     });
   }
+});
+
+// ── fix round 2 (CC addendum 2026-11-28): D-4 ───────────────────────────────────────────────────
+
+describe("D-4: a shop with no Toast connection has ONE labor-money line that says so; it is not an unknown", () => {
+  const notConnectedV = (): ShopV2Facts => ({ ...fullV(), labor: unavailable("labor_not_connected") });
+
+  for (const language of LANGS) {
+    const said = serverT(language, "digest.labor_money.not_connected");
+    it(`the line, its needs and its place: right after the status line, every other line as it is (${language})`, () => {
+      // The store holds healthy facts for the shop on purpose: not connected wins, no figure is printed for it.
+      const store = laborStore(hourlyFacts(), roleFacts(), {}, [A]);
+      expect(laborMoneyLines(ctx(language), store)).toBeNull();
+      const line = laborNotConnectedLine(ctx(language), store)!;
+      expect(line).toMatchObject({ label: serverT(language, "digest.labor_money.label"), text: said, tone: "info", needs: "labor_hourly" });
+      expect(line.unknown).toBeUndefined();
+      expect(line.text).toMatch(NO_DIGIT);
+      const withLine = laborSectionWithMoney(c(language), notConnectedV(), store);
+      const without = laborSectionWithMoney(c(language), notConnectedV(), undefined);
+      expect(withLine.filter((l) => l.text === said)).toHaveLength(1);
+      expect(withLine.filter((l) => l.text !== said)).toEqual(without);
+      expect(withLine[0]!.label).toBe(translator(language)("digest.v2.labor.label"));
+      expect(withLine[1]).toEqual(line);
+      // No F1-F5 sentence of any kind for this shop.
+      const x = w(language);
+      for (const l of withLine) for (const s of [x.na, x.rolesNa, x.updating, x.weekUpdating, x.noFinal]) expect(l.text, l.label).not.toBe(s);
+      // No status line at all (no Toast labor fact): the line comes first.
+      const bare = laborSectionWithMoney(c(language), { ...fullV(), labor: undefined }, store);
+      expect(bare[0]).toEqual(line);
+    });
+
+    it(`the other shop of the same run is untouched: its lines are exactly what they are with nobody unconnected (${language})`, () => {
+      const store = laborStore(hourlyFacts(), roleFacts(), {}, [B]);
+      expect(laborNotConnectedLine(ctx(language), store)).toBeNull();
+      expect(laborMoneyLines(ctx(language), store)).toEqual(laborMoneyLines(ctx(language), laborStore(hourlyFacts(), roleFacts())));
+    });
+
+    it(`rendered for a holder: said once, never "not available", never counted as an unknown (${language})`, () => {
+      const r = recipient("owner", [], { kind: "gm_shop", shops: [A] }, businessOf("owner"));
+      const f = shopFacts(SHOP_A, { labor: unavailable("labor_not_connected") });
+      const title = serverT(language, "digest.v2.section.labor");
+      const section = (store: LaborMoneyStore | undefined) => composeShopSections(f, language, BASE, false, r.viewer, r.access, store).find((s) => s.title === title)!;
+      const on = section(laborStore(hourlyFacts(), roleFacts(), {}, [A]));
+      const off = section(undefined);
+      expect(on.lines.filter((l) => l.text === said)).toHaveLength(1);
+      // The line adds no unknown and no issue to the section: the count is the switch-off count.
+      expect(on.status!.unknowns).toBe(off.status!.unknowns);
+      expect(on.status!.issues).toBe(off.status!.issues);
+      const mail = renderShopDigest(f, { language, baseUrl: BASE, viewer: r.viewer, access: r.access, laborMoney: laborStore(hourlyFacts(), roleFacts(), {}, [A]) });
+      expect(mail.text).toContain(said);
+      expect(mail.html).toContain(said);
+      expect(mail.text).not.toContain(serverT(language, "digest.labor_money.not_available"));
+      expect(mail.text).not.toContain(serverT(language, "digest.labor_money.roles_not_available"));
+      expect(mail.text).not.toContain("$180.00");
+    });
+
+    it(`rendered for someone who holds no labor money: the bytes are the switch-off bytes (${language})`, () => {
+      const agm = recipient("agm", [A], { kind: "gm_shop", shops: [A] }, null);
+      const f = shopFacts(SHOP_A, { labor: unavailable("labor_not_connected") });
+      const offMail = renderShopDigest(f, { language, baseUrl: BASE, viewer: agm.viewer, access: agm.access });
+      const onMail = renderShopDigest(f, { language, baseUrl: BASE, viewer: agm.viewer, access: agm.access, laborMoney: laborStore(hourlyFacts(), roleFacts(), {}, [A]) });
+      expect(onMail.text).not.toContain(said);
+      expect(onMail.html).not.toContain(said);
+      expect(onMail.text).toBe(offMail.text);
+    });
+
+    it(`the digest's own Toast line reads the same for a shop that is not connected as for a failed pull: the switch-off bytes do not move (${language})`, () => {
+      const r = recipient("owner", [], { kind: "gm_shop", shops: [A] }, null);
+      const render = (reason: string) => renderShopDigest(shopFacts(SHOP_A, { labor: unavailable(reason) }), { language, baseUrl: BASE, viewer: r.viewer, access: r.access });
+      const a = render("labor_not_connected"), b = render("labor_pull_failed");
+      expect(a.subject).toBe(b.subject);
+      expect(a.html).toBe(b.html);
+      expect(a.text).toBe(b.text);
+      expect(a.text).toContain(serverT(language, "digest.v2.labor.no_entries"));
+    });
+  }
+
+  it("not a labor-money run: no such line", () => {
+    expect(laborNotConnectedLine(ctx("en"), undefined)).toBeNull();
+    expect(laborNotConnectedLine(ctx("en"), null)).toBeNull();
+    expect(laborNotConnectedLine(ctx("en"), laborStore(hourlyFacts(), roleFacts()))).toBeNull();
+  });
+
+  it("en + es both carry the sentence, and they differ", () => {
+    expect(serverT("en", "digest.labor_money.not_connected")).toBe("Toast is not connected for this shop");
+    expect(serverT("es", "digest.labor_money.not_connected")).not.toBe(serverT("en", "digest.labor_money.not_connected"));
+    expect(serverT("es", "digest.labor_money.not_connected")).toContain("Toast");
+  });
 });

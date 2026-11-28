@@ -709,3 +709,96 @@ describe("unknown is never zero", () => {
     expect([WP, WD, LAST_SAT]).toEqual(["2026-09-27", "2026-10-04", "2026-10-03"]);
   });
 });
+
+// ── fix round 2 (CC addendum 2026-11-28): D-1 and D-4 through the real engine, pieces and composers ──
+
+describe("D-1 (P1), Astra's case end to end: the first day's pull is UNCERTAIN → the second day's pull never runs in this run", () => {
+  const OLDER = "2026-10-06T22:00:00Z", NEWER = "2026-10-06T23:45:00Z";
+  /** Each day's pull rewrites one shared time entry's out_at from its own answer (the A4-3 fixture); D − 1's is the slow one. */
+  const tick = (firstDay: Parameters<Harness["shop"]["mode"]>[2]) => run({
+    run: { kind: "tick" }, finalized: { [DM1]: [A], [D]: [A] }, switchOn: true, dir: { who: ["gm-a"] },
+    before: (h) => {
+      h.shop.mode(A, DM1, { pull: { outAt: OLDER, delayMs: 5_000 }, ...firstDay });
+      h.shop.mode(A, D, { pull: { outAt: NEWER, delayMs: 100 } });
+    },
+  });
+
+  it("D − 1's pull ends uncertain: D's facts are never asked for, so D's pull writes NOTHING; no labor request; D − 1's digest is sent and D's is held for the next tick", async () => {
+    const h = await tick({ sourceResult: { writeUncertain: true } });
+    expect(h.log.first(`shopFacts:start(${A}|${D})`)).toBe(-1);
+    expect(h.log.first(`pull:write(${A}|${D}, ${NEWER})`)).toBe(-1);
+    // The one write of the run is the uncertain day's own: there is no newer value for a late commit to land over.
+    expect(h.db.entryOutAt).toBe(OLDER);
+    expect(h.db.laborRequests()).toHaveLength(0);
+    expect(h.mails.map(key)).toEqual([`gm_shop|${DM1}|${ref("gm-a")}|${A}`]);
+    const held = h.store.rows.filter((r) => r.kind === "gm_shop" && r.business_day === D);
+    expect(held.map((r) => r.outcome)).toEqual(["failed"]);
+    expect(held[0]!.error ?? "").toContain("ordinary_facts_pull_uncertain");
+  });
+
+  it("the control: a healthy D − 1 → D's pull runs after it, the newer value stands and both digests are sent", async () => {
+    const h = await tick({});
+    expect(h.log.first(`pull:write(${A}|${D}, ${NEWER})`)).toBeGreaterThan(h.log.first(`pull:write(${A}|${DM1}, ${OLDER})`));
+    expect(h.db.entryOutAt).toBe(NEWER);
+    expect(h.mails.map(key).sort()).toEqual([`gm_shop|${DM1}|${ref("gm-a")}|${A}`, `gm_shop|${D}|${ref("gm-a")}|${A}`].sort());
+  });
+});
+
+describe("D-4 (P2) end to end: Shop B has no Toast connection", () => {
+  /** As the real loader reports it: the labor area `labor_not_connected`, the source `{ writeUncertain: false, notConnected: true }`. */
+  const NOT_CONNECTED = { notConnected: true };
+  const o: E2EOpts = { run: CLOSING, finalized: BOTH, switchOn: true, dir: { who: ["gm-a", "moo", "own"] }, db: { laborCostRow: () => SALARY } };
+
+  for (const language of ["en", "es"] as const) {
+    it(`Shop A's labor money is printed exactly as on a healthy night; Shop B's ONE line says it is not connected; no labor request is made for Shop B (${language})`, async () => {
+      const dir = { who: ["gm-a", "moo", "own"] as const, es: language === "es" ? (["gm-a", "moo", "own"] as const) : [] };
+      const healthy = await run({ ...o, dir });
+      const h = await run({ ...o, dir, before: (x) => x.shop.mode(B, D, NOT_CONNECTED) });
+      const said = T(language, "digest.labor_money.not_connected");
+      const label = T(language, "digest.labor_money.label");
+      for (const who of ["moo", "own"]) {
+        const text = h.mail("unified", who).text;
+        const u = sections(text);
+        const titles = [...u.keys()];
+        const aTitle = titles.find((t) => t.startsWith("Shop A · ") && u.get(t)!.includes(T(language, "digest.labor_money.latest_label_plain")))!;
+        expect(aTitle, who).toBeDefined();
+        // Shop A's Labor section is byte-identical to the night on which both shops are connected.
+        expect(u.get(aTitle), who).toBe(sections(healthy.mail("unified", who).text).get(aTitle));
+        expect(u.get(aTitle), who).toContain("$");
+        const b = u.get(aTitle.replace("Shop A", "Shop B"))!;
+        expect(b, who).toBeDefined();
+        expect(bullets(b).filter((l) => l.includes(said)), who).toHaveLength(1);
+        expect(b, who).toContain(`${label}: ${said}`);
+        // Not an unknown ("? …") and not an issue ("! …"): nothing failed.
+        expect(b, who).not.toContain(`? ${label}`);
+        expect(b, who).not.toContain(`! ${label}`);
+        for (const w of [T(language, "digest.labor_money.not_available"), T(language, "digest.labor_money.roles_not_available"), ...GROUP(language).hourly, ...GROUP(language).loaded, ...GROUP(language).roles]) {
+          expect(b, `${who}: ${w}`).not.toContain(w);
+        }
+        // Said once in the whole email.
+        expect(text.split(said).length - 1, who).toBe(1);
+      }
+      // Shop A's own digests do not show Shop B at all: byte-identical.
+      for (const who of ["gm-a", "moo"]) expectSame(h.mail("gm_shop", who, A), healthy.mail("gm_shop", who, A), who);
+      // Every labor request of the run is Shop A's (or names no shop); the healthy night asks for Shop B too.
+      expect(h.db.laborRequests().filter((r) => r.shop === B)).toHaveLength(0);
+      expect(healthy.db.laborRequests().filter((r) => r.shop === B).length).toBeGreaterThan(0);
+      expect(h.db.laborRequests().filter((r) => r.shop === A).length).toBe(healthy.db.laborRequests().filter((r) => r.shop === A).length);
+      // Composing read nothing.
+      expect(h.requestsAtFirstSend).toBe(h.db.sent.length);
+    });
+  }
+
+  it("a GM of the unconnected shop reads that one line in its own shop digest; an AGM's email is the switch-off email", async () => {
+    const base: E2EOpts = { run: { kind: "closing", locationId: B }, finalized: BOTH, dir: { who: ["gm-b", "own"] }, db: { laborCostRow: () => SALARY } };
+    const h = await run({ ...base, switchOn: true, before: (x) => x.shop.mode(B, D, NOT_CONNECTED) });
+    const labor = sections(h.mail("gm_shop", "gm-b", B).text).get("Labor")!;
+    expect(labor).toContain(`${T("en", "digest.labor_money.label")}: ${T("en", "digest.labor_money.not_connected")}`);
+    expect(labor).not.toContain(T("en", "digest.labor_money.not_available"));
+    const withAgm: E2EOpts = { run: CLOSING, finalized: BOTH, dir: { who: ["agm", "own"] }, db: { laborCostRow: () => SALARY } };
+    const on = await run({ ...withAgm, switchOn: true, before: (x) => x.shop.mode(A, D, NOT_CONNECTED) });
+    const off = await run({ ...withAgm, switchOn: false, before: (x) => x.shop.mode(A, D, NOT_CONNECTED) });
+    expectSame(on.mail("gm_shop", "agm", A), off.mail("gm_shop", "agm", A), "agm");
+    expect(on.mail("gm_shop", "agm", A).text).not.toContain(T("en", "digest.labor_money.not_connected"));
+  });
+});

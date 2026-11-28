@@ -14,6 +14,8 @@
  *                                         moved an out_at of this week): F1 = last Saturday, F2 "updating"
  *   shop-digest-agm                 (v)   a flagged AGM: no labor-money line
  *   unified-digest-owner                  the owner's unified digest (each shop's Labor section)
+ *   unified-digest-owner-shop-b-not-connected   (fix round 2, D-4) the same digest on a night when Shop B has no Toast
+ *                                         connection: Shop A's figures, and Shop B's one line saying so
  *
  * Run (the pieces and the composers are server modules, hence the react-server condition):
  *   npx tsx --conditions=react-server scripts/render-digest-labor-samples.ts [outDir]
@@ -70,6 +72,9 @@ export async function main(outDir = DEFAULT_OUT): Promise<string[]> {
     // The common case Tuesday to Saturday at closing time: the digest's own pull moves this week's source.
     const updating = await night(language, { before: (h) => h.shop.mode(A, D, { pullChanges: true }) });
     write("shop-digest-gm-week-updating", language, pick(updating, "gm_shop", "gm-a", A));
+    // Fix round 2, D-4: Shop B has no Toast connection, so labor money is not applicable there (its source says so).
+    const notConnected = await night(language, { before: (h) => h.shop.mode(B, D, { notConnected: true }) });
+    write("unified-digest-owner-shop-b-not-connected", language, pick(notConnected, "unified", "own", null));
   }
   return written;
 }

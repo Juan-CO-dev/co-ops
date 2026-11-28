@@ -227,8 +227,11 @@ const HOUR = 3_600_000;
  * `writeUncertain` = a write was attempted and its outcome is not known (the pull failed or hit its deadline: the HTTP
  * request was aborted at the client, and whether the database still commits it is not known). Then nothing may be
  * certified in this run: no labor money.
+ * `notConnected` (fix round 2, CC ruling D-4) = the shop has no Toast connection, so no pull was attempted and nothing
+ * was written (`writeUncertain` is false): labor money is NOT APPLICABLE to that shop and day. It withholds nothing
+ * from any other shop; no labor-money fact is read for it; its own line says it is not connected.
  */
-export interface FactsSource { writeUncertain: boolean }
+export interface FactsSource { writeUncertain: boolean; notConnected?: boolean }
 
 /** What a run is about to send, decided from the finalized closings and the clock alone (no I/O). */
 export interface RunPlan {
@@ -246,7 +249,6 @@ export interface RunPlan {
 interface DueSend { kind: DigestKind; day: string; locationId: string | null; recipient: ResolvedRecipient; viewer: LinkViewer }
 
 const FULL_LABOR_ROLES: ReadonlySet<string> = new Set(["moo", "owner", "cgs"]);
-const settledQuietly = (p: Promise<unknown>): Promise<void> => p.then(() => undefined, () => undefined);
 
 class Run {
   readonly summary: DigestRunSummary;
@@ -255,6 +257,8 @@ class Run {
   /** A4-2: each shop-day's SOURCE promise (the part that may still be writing: the digest's own Toast pull). */
   private readonly sources = new Map<string, Promise<FactsSource>>();
   private readonly cateringMemo = new Map<string, Promise<CateringFacts>>();
+  /** D-4: the shop-days (`shop|day`) whose SOURCE said the shop has no Toast connection. Written in phase 0 only. */
+  private readonly laborNotConnected = new Set<string>();
   /**
    * A labor-money run's sealed result (digests round 3, PR 4): the read-only store, each due recipient's business
    * access as decided BEFORE any fact was read, and the last finished business day. null = not a labor-money run:
@@ -628,7 +632,8 @@ class Run {
       const shops = d.locationId !== null ? [d.locationId] : this.locations.map((l) => l.id);
       for (const locationId of shops) {
         const key = `${locationId}|${d.day}`;
-        if (seen.has(key) || !digestCan(a, capability, { locationId, day: d.day })) continue;
+        // D-4: labor money is not applicable to a shop with no Toast connection: no fact is read for it.
+        if (seen.has(key) || this.laborNotConnected.has(key) || !digestCan(a, capability, { locationId, day: d.day })) continue;
         seen.add(key);
         out.push({ locationId, day: d.day });
       }
@@ -653,6 +658,19 @@ class Run {
    *   - A source whose write's outcome is not known (`FactsSource.writeUncertain`: the Toast pull failed or was cut at
    *     its own deadline) also makes `writersSettled` false: a write that may still commit must never land under a
    *     week this run certified.
+   *
+   * Fix round 2 (CC addendum 2026-11-28):
+   *   - D-1: an uncertain source STOPS that shop's chain. Its later days are never started in this run and their facts
+   *     are frozen (`ordinary_facts_pull_uncertain`): their composes fail like any compose failure, the key is
+   *     released and the next tick loads them, when the earlier pull has settled for good. So a later day's pull can
+   *     never write a newer clock-out that the earlier day's write then commits over. The day whose pull was
+   *     uncertain keeps its own facts and is sent.
+   *   - D-3: the clock is read in the FIRST reaction to each settlement (the reaction this function attaches itself,
+   *     not one chained behind another promise), so a fact set that settled before the cutoff is never frozen because
+   *     the clock moved between two reactions.
+   *   - D-4: a source that says the shop has no Toast connection (`notConnected`, with `writeUncertain` exactly false)
+   *     is a KNOWN no-write: it certifies as any healthy source does, its chain goes on, and the shop-day is recorded
+   *     as not applicable for labor money.
    */
   private async loadOrdinaryFacts(plan: RunPlan, due: readonly DueSend[], lm: LaborMoneyIO): Promise<{ writersSettled: boolean }> {
     const timers = lm.timers ?? REAL_PRELOAD_TIMERS;
@@ -684,10 +702,12 @@ class Run {
     const unsettledFacts = new Map<string, "shop" | "catering">();
     const writing = new Set<string>();
     let writeUncertain = false;
+    // D-1: the later days of a shop whose earlier pull was uncertain: never started in this run, frozen below.
+    const heldBack = new Set<string>();
     const all: Array<Promise<void>> = [];
     const chains = [...shopDays].map(async ([locationId, days]) => {
       const location = byId.get(locationId)!;
-      for (const day of days) {
+      for (const [i, day] of days.entries()) {
         // A4-3: the next day of a shop starts only when the previous day's source has settled, and never after the cutoff.
         if (!onTime()) return;
         const key = `${locationId}|${day}`;
@@ -696,21 +716,32 @@ class Run {
         const source: Promise<FactsSource> = this.sources.get(key) ?? facts.then(() => ({ writeUncertain: false }), () => ({ writeUncertain: false }));
         unsettledFacts.set(key, "shop");
         writing.add(key);
-        all.push(settledQuietly(facts).then(() => { if (onTime()) unsettledFacts.delete(key); }));
-        // A source that rejects broke its contract: its write's outcome is not known.
-        const written = source.then((r) => r, (): FactsSource => ({ writeUncertain: true })).then((r) => {
-          if (r?.writeUncertain !== false) writeUncertain = true;
+        // D-3: `onTime()` is read IN the first reaction to the settlement itself (resolved or rejected alike).
+        const factsSettled = () => { if (onTime()) unsettledFacts.delete(key); };
+        all.push(facts.then(factsSettled, factsSettled));
+        // Resolves true when the write's outcome is KNOWN. A source that rejects broke its contract: not known.
+        const sourceSettled = (r: FactsSource | null): boolean => {
           if (onTime()) writing.delete(key);
-        });
-        all.push(written);
-        await written;
+          const known = r?.writeUncertain === false;
+          if (!known) writeUncertain = true;
+          else if (r.notConnected === true) this.laborNotConnected.add(key);
+          return known;
+        };
+        const written = source.then(sourceSettled, () => sourceSettled(null));
+        all.push(written.then(() => undefined));
+        if (!(await written)) {
+          // D-1: this shop's chain stops here. Its later days are not loaded in this run.
+          for (const later of days.slice(i + 1)) heldBack.add(`${locationId}|${later}`);
+          return;
+        }
       }
     });
     for (const day of cateringDays) {
       let facts: Promise<CateringFacts>;
       try { facts = this.cateringFacts(day); } catch (e) { facts = Promise.reject(e); this.cateringMemo.set(day, facts); }
       unsettledFacts.set(day, "catering");
-      all.push(settledQuietly(facts).then(() => { if (onTime()) unsettledFacts.delete(day); }));
+      const factsSettled = () => { if (onTime()) unsettledFacts.delete(day); };
+      all.push(facts.then(factsSettled, factsSettled));
     }
 
     const work = Promise.allSettled(chains).then(() => Promise.allSettled(all)).then(() => undefined);
@@ -722,13 +753,15 @@ class Run {
     // Freeze every fact set that had not settled BY the cutoff, and every one that was never started: its composes
     // fail like any compose failure, and a late answer never replaces it. (When everything settled in time, nothing is
     // left in these sets and nothing is frozen.)
-    const frozen = <T,>(): Promise<T> => { const f = Promise.reject<T>(new Error("ordinary_facts_timeout")); f.catch(() => undefined); return f; };
+    const frozen = <T,>(why = "ordinary_facts_timeout"): Promise<T> => { const f = Promise.reject<T>(new Error(why)); f.catch(() => undefined); return f; };
     let unstarted = 0;
     for (const [locationId, days] of shopDays) {
       for (const day of days) {
         const key = `${locationId}|${day}`;
         if (!this.facts.has(key)) unstarted += 1;
-        if (!this.facts.has(key) || unsettledFacts.get(key) === "shop") this.facts.set(key, frozen<ShopDayFacts>());
+        // D-1: a day held back behind an uncertain pull says so (it was never started, so it is also `unstarted`).
+        if (!this.facts.has(key)) this.facts.set(key, frozen<ShopDayFacts>(heldBack.has(key) ? "ordinary_facts_pull_uncertain" : "ordinary_facts_timeout"));
+        else if (unsettledFacts.get(key) === "shop") this.facts.set(key, frozen<ShopDayFacts>());
       }
     }
     for (const day of cateringDays) if (unsettledFacts.get(day) === "catering") this.cateringMemo.set(day, frozen<CateringFacts>());
@@ -788,7 +821,8 @@ class Run {
       ];
       const sealed = await definePreload({ phases, budgetMs: LABOR_PRELOAD_BUDGET_MS }).run({ sources, due: moneyDue, clock: lm.clock, timers: lm.timers });
       this.labor = {
-        store: laborMoneyStore(sealed),
+        // D-4: the store also answers which shop-days are not applicable (a copy: phase 0 is over, nothing moves).
+        store: laborMoneyStore(sealed, this.laborNotConnected),
         // Normally decided inside the pre-load. If it never got that far (it threw before phase A was sealed), the
         // settings are unknown: a GM gets nothing; MoO / Owner / CGS need no settings.
         access: decided ?? this.laborAccess(moneyDue, sealed),

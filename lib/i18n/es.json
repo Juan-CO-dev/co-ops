@@ -10623,6 +10623,7 @@
   "digest.staffing.diff": "({diff} h)",
   "digest.labor_money.label": "Costo de mano de obra",
   "digest.labor_money.not_available": "Costo de mano de obra no disponible",
+  "digest.labor_money.not_connected": "Toast no está conectado en esta tienda",
   "digest.labor_money.roles_not_available": "Costo por puesto no disponible",
   "digest.labor_money.updating": "Las cifras de mano de obra se están actualizando",
   "digest.labor_money.week_updating": "Las cifras de mano de obra de esta semana se están actualizando",
