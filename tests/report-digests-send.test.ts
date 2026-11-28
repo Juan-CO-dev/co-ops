@@ -680,8 +680,10 @@ describe("digests round 3: the engine sets the recipient's DATA access on every 
     expect(sent.length).toBeGreaterThan(0);
     for (const { env } of envelopes) {
       expect(env.viewer).toBeTruthy();
-      expect(env.access).toEqual(digestAccessFor(env.viewer));
+      // The access is the recipient's own viewer plus the delivery the engine resolved (digests round 3, PR 2).
       expect(env.access).not.toBeNull();
+      expect(env.access!.digest).toBeTruthy();
+      expect(env.access).toEqual(digestAccessFor(env.viewer, env.access!.digest));
     }
     // The GM of Shop A gets their own shop's data, never Shop B's; the owner gets both.
     const gmA = envelopes.find((e) => e.env.viewer?.role === "gm" && e.env.viewer.locations.includes(A.id))!.env;

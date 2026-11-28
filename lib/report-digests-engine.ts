@@ -385,7 +385,14 @@ class Run {
       // The viewer is built ONCE per send; links and data gates both come from it. An unresolvable
       // recipient is NO_ACCESS_VIEWER, whose access can do nothing.
       const viewer = this.viewerFor(r);
-      const env: Envelope = { language: r.language, baseUrl: this.io.baseUrl, viewer, access: digestAccessFor(viewer), previewFor: this.mode === "preview" ? { name: r.name, email: r.email } : null };
+      // A digest send carries its delivery (which digest, the shops THIS email delivers) for the digest-only
+      // grants of Juan 2026-11-27. The shops are the recipient's authorized scope already narrowed by any
+      // override (`r.locationIds`); a per-shop email (the shop digest) delivers one shop, so it carries only
+      // that shop: a GM of two shops gets no digest-only grant for shop B inside shop A's email. A package send
+      // carries no delivery, so it gets no digest-only grant.
+      const digestKind = (DIGEST_KINDS as readonly SendKind[]).includes(kind) ? (kind as DigestKind) : null;
+      const digest = digestKind ? { kind: digestKind, shops: locationId === null ? r.locationIds : r.locationIds.filter((id) => id === locationId) } : null;
+      const env: Envelope = { language: r.language, baseUrl: this.io.baseUrl, viewer, access: digestAccessFor(viewer, digest), previewFor: this.mode === "preview" ? { name: r.name, email: r.email } : null };
       mail = await compose(env);
     } catch (e) {
       const msg = `compose: ${e instanceof Error ? e.message : String(e)}`;

@@ -463,8 +463,10 @@ describe("reads", () => {
     expect(reads.sort()).toEqual([`${A}|${D}`, `${B}|${D}`]);
     expect(calls.length).toBe(4 * 2);
     expect(calls.every((c) => c.args.p_from === D && c.args.p_to === D)).toBe(true);
-    // The flagged AGM's copy carries none of it; the GMs' and the unified copies do.
-    expect(sent.find((m) => m.to === "kim@example.com")!.text).not.toContain("Toast net");
+    // Digests round 3 PR 2, (b): the engine sets the delivery, so the flagged AGM at her OWN shop now gets PR 3's
+    // sales detail on the shop digest (Juan 2026-11-27); a direct compose with no delivery still shows her nothing
+    // (the refused-recipient tests above). The GMs' and the unified copies carry it as before.
+    expect(sent.find((m) => m.to === "kim@example.com")!.text).toContain("Toast net $6,180.00");
     expect(sent.find((m) => m.to === "john@example.com")!.text).toContain("Toast net $6,180.00");
     expect(sent.find((m) => m.to === "pete@example.com")!.text.match(/Toast net \$6,180\.00/g)?.length).toBe(2);
   });

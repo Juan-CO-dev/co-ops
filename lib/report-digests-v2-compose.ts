@@ -32,6 +32,7 @@ import type { DigestLine, DigestSection, DigestTone } from "@/lib/report-digests
 import { digestLink, sectionLink, type DigestTarget, type LinkViewer } from "@/lib/report-digests-links";
 import { digestCan, type DigestAccess, type DigestCapability } from "@/lib/report-digests-access-shared";
 import { capItems, finishSection, finishSections, LINE_ITEMS_MAX, SECTION_CAP_WIDE, type SectionDraft } from "@/lib/report-digests-layout-shared";
+import { scheduleDays, scheduledVsWorkedLine, scheduleNotAvailableLine, staffScheduledLine } from "@/lib/report-digests-staffing-compose";
 
 type Params = Record<string, string | number>;
 export type T = (key: TranslationKey, params?: Params) => string;
@@ -590,7 +591,44 @@ export function tomorrowLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
       });
     }
   }
+  lines.push(...tomorrowStaffingLines(c, v));
   return lines;
+}
+
+/**
+ * Tomorrow's published roster, after the catering line (digests round 3, PR 2); `needs: "published_staffing"` on
+ * every line, set by the builders. No `schedule` fact = nothing. A schedule that is not available is the shop
+ * digest's ONE "Schedule not available" line, here (and then no comparison line in Labor). Tomorrow's roster has no
+ * screen in the app: no link.
+ */
+function tomorrowStaffingLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
+  if (!v.schedule) return [];
+  const rosters = scheduleDays(v.schedule, [c.day, v.lookahead]);
+  if (rosters === null) return [scheduleNotAvailableLine(c)];
+  return [staffScheduledLine(c, rosters[1]!, null)];
+}
+
+/**
+ * Day D's roster for the Labor comparison, or null: no `schedule` fact, or not available (that case is said once,
+ * in Tomorrow). The same rule as `tomorrowStaffingLines`, so the two sections never disagree.
+ */
+function laborScheduleDay(c: Ctx, v: ShopV2Facts) {
+  if (!v.schedule) return null;
+  return scheduleDays(v.schedule, [c.day, v.lookahead])?.[0] ?? null;
+}
+
+/**
+ * The Labor section's lines (digests round 3, PR 2; finding S5): `laborLines` is NOT changed (its early returns
+ * stand), and "Scheduled vs worked" is composed on its own and put right after the status line when there is one
+ * (index min(1, n)). Every existing ungated line keeps its text and relative order. Exported for the tests.
+ */
+export function laborSectionLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
+  const base = v.labor ? laborLines(c, v) : [];
+  const roster = laborScheduleDay(c, v);
+  if (!roster) return base;
+  const href = link(c, { to: "reconcile", location: c.locationId }, { to: "stations", location: c.locationId });
+  const at = Math.min(1, base.length);
+  return [...base.slice(0, at), scheduledVsWorkedLine(c, roster, v.labor, href), ...base.slice(at)];
 }
 
 // ── Labor (Toast time entries, D) ── appended to lib/report-digests-v2-compose.ts ────────────
@@ -699,7 +737,9 @@ export function composeV2Sections(args: { shopName: string; locationId: string; 
     { title: title("digest.v2.section.inventory"), lines: inventoryLines(c, args.v, args.extras.pendingItems), ...href.inventory },
     { title: title("digest.v2.section.operations"), lines: args.extras.operations, ...href.operations },
     { title: title("digest.v2.section.sales"), lines: salesDetailLines(c, args.v), ...href.sales, cap: SECTION_CAP_WIDE },
-    ...(args.v.labor ? [{ title: title("digest.v2.section.labor"), lines: laborLines(c, args.v), ...href.labor, cap: SECTION_CAP_WIDE }] : []),
+    // Drafted when Toast labor exists OR day D's schedule loaded (S5). finishSection decides presence from the ALLOWED
+    // lines, so a recipient refused `published_staffing` gets this section exactly as before: absent when it was absent.
+    ...(args.v.labor || laborScheduleDay(c, args.v) ? [{ title: title("digest.v2.section.labor"), lines: laborSectionLines(c, args.v), ...href.labor, cap: SECTION_CAP_WIDE }] : []),
     { title: title("digest.v2.section.people"), lines: peopleLines(c, args.v, args.extras.who, args.extras.pmLine), ...href.people },
     { title: title("digest.v2.section.tomorrow", { date: formatDateLabel(args.v.lookahead, language) }), lines: tomorrowLines(c, args.v), ...href.tomorrow },
     // Present only when a line is left for this recipient: finishSection decides from the allowed lines.

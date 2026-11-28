@@ -19,6 +19,7 @@ import { cutoffForOrderDay, cutoffMinutes, type CutoffRow, type RhythmRow, type 
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { addDays, etClock, etWallTime } from "@/lib/report-digests-shared";
 import type { LaborSummary } from "@/lib/toast/labor-shared";
+import type { ShopSchedule } from "@/lib/report-digests-schedule-shared";
 import type { NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
 import { channelView, summarizeSales, type BreakdownRow, type DailyRaw, type SalesTotals } from "@/lib/sales-reports-shared";
 
@@ -503,6 +504,11 @@ export interface ShopV2Facts {
    * pulse lines it always had.
    */
   salesDetail?: SalesDetailFacts;
+  /**
+   * The shop's PUBLISHED 7shifts schedule for D and D+1 (digests round 3, PR 2). Every line built from it needs
+   * `published_staffing`. Absent = not loaded (a fixture, the reader not wired): no staffing line at all.
+   */
+  schedule?: Loaded<ShopSchedule>;
 }
 
 /** How many shops an aggregate covers: a shop whose area failed or is unavailable is NOT a zero. */

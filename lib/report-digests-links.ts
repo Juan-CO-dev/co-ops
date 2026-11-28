@@ -18,7 +18,8 @@ import { isRoleCode, ROLES, type RoleCode } from "@/lib/roles";
 import { canReadReportLocation, lockLocationContext, REPORT_ALL_LOCATIONS_LEVEL } from "@/lib/locations";
 import { canReadScopedReport } from "@/lib/report-scope";
 import { reportsRoleAllowed } from "@/lib/reports-access-shared";
-import { canOpenPeopleViews, canViewPeople } from "@/lib/people/access-shared";
+import { canOpenPeopleViews, canViewPeople, type PeopleActor } from "@/lib/people/access-shared";
+import { canViewReconciliation } from "@/lib/scheduling/access-shared";
 import { vendorMailRoleAllowed } from "@/lib/vendor-mail-shared";
 import type { ReportTypeKey } from "@/lib/reports-hub";
 import { SALES_CHANNELS, SALES_EMPTY_KEY, type SalesChannel, type SalesView } from "@/lib/sales-reports-shared";
@@ -80,7 +81,9 @@ export type DigestTarget =
   | { to: "quotes"; quote?: string }
   /** Catering prep demand; `location` its shop, `tab` the first tab, `day` that need date's section (Prep tab). */
   | { to: "prep_demand"; location?: string; tab?: "prep" | "sku"; day?: string }
-  | { to: "stations"; location: string };
+  | { to: "stations"; location: string }
+  /** The three-way people reconciliation for one shop (app/admin/people-reconcile/page.tsx, which reads ?loc=). */
+  | { to: "reconcile"; location: string };
 
 export type OrderingAnchor = "today" | "missed" | "cutoffs" | "walk";
 export type PipelineAnchor = "to_ring" | "follow_ups" | "stages";
@@ -137,6 +140,8 @@ export function targetPath(t: DigestTarget): string {
     }
     // The stations page reads its shop as ?loc= (lib/shop-context-shared.ts), not ?location=.
     case "stations": return `/stations?loc=${encodeURIComponent(t.location)}`;
+    // The reconciliation page reads its shop as ?loc= too (SHOP_PARAMS_BY_PATH["/admin/people-reconcile"]).
+    case "reconcile": return `/admin/people-reconcile?loc=${encodeURIComponent(t.location)}`;
   }
 }
 
@@ -218,6 +223,16 @@ export function canOpen(viewer: LinkViewer | null | undefined, t: DigestTarget):
     case "prep_demand": return w.level >= 6 && (t.location === undefined || w.level >= 9 || w.locations.includes(t.location));
     // Stations: level 8 any shop, else a shop they belong to (an unknown ?loc= silently shows another shop).
     case "stations": return w.level >= 8 || w.locations.includes(t.location);
+    // The reconciliation page's own checks, in its order: the admin shell's floor (app/admin/layout.tsx:
+    // ADMIN_MIN_LEVEL = 6), then the page lists only the shops `canViewReconciliation` admits (GM own shop, MoO+
+    // any; the AGM, the catering / prep / social media managers never) — a ?loc= outside that list silently
+    // shows another shop, and none at all redirects to /admin — so a shop it would not list is no link. "all" is
+    // never a shop there. The page lists ACTIVE shops only: a digest shop is active by construction (the
+    // engine's directory holds active shops only).
+    case "reconcile": {
+      const people: PeopleActor = { userId: "", role: w.role, level: w.level, locations: w.locations };
+      return w.level >= 6 && t.location !== "all" && canViewReconciliation(people, t.location);
+    }
   }
 }
 
@@ -230,7 +245,7 @@ export function canOpen(viewer: LinkViewer | null | undefined, t: DigestTarget):
 export function isLiveTarget(t: DigestTarget): boolean {
   switch (t.to) {
     case "ordering": return !t.po;
-    case "counts": case "prep_demand": case "stations": case "mid_shift": return true;
+    case "counts": case "prep_demand": case "stations": case "mid_shift": case "reconcile": return true;
     default: return false;
   }
 }
