@@ -222,6 +222,16 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   // retry, refreshed). The human act itself is `catering.refund.request` (destructive, written in SQL by the reserve).
   // This row records what the payment provider then did, so it is an observation like provider_refunded.
   "catering.refund.stripe_result",
+  // Catering refunds Part B1 — SQL-only (migration 0359 INSERTs these rows itself, `destructive` set literally; no
+  // TypeScript audit() call site). SYSTEM OBSERVATIONS and operator lifecycle records, never a person changing the
+  // kitchen: `epoch` = an operator lifecycle transition of the refund epoch (open recovery, promote, drain; actor null,
+  // `actor_context: operator`; the contract-upgrade adoption row is written with destructive literally true);
+  // `reversed` / `provider_failed` / `anomaly` = the one financial writer recording what Stripe's verified evidence did
+  // to a request or a payment (actor null).
+  "catering.refund.epoch",
+  "catering.refund.reversed",
+  "catering.refund.provider_failed",
+  "catering.refund.anomaly",
   "catering.pipeline.create",
   "catering.pipeline.edit",
   "catering.pipeline.stage_move",
@@ -439,6 +449,12 @@ export const RESERVED_ACTIONS = [
   // true; who, the quote, the payment, the amount, the reason code, where it was opened from — never the note) in the
   // same transaction as the row. No TypeScript audit() call site: lib/catering/refunds.ts only calls the RPC.
   "catering.refund.request",
+  // SQL-only (migration 0359; destructive literally true; no TypeScript audit() call site): a person dispositioned a
+  // refund issue under a fresh Tier B (`catering_refund_resolve_anomaly`: actor, issue, old / new disposition, bounded
+  // evidence reference, before / after figures), and the operator BREAK-GLASS close of a refund epoch that could not
+  // drain (`catering_refund_epoch_audit`, Juan's word reference, what was left undrained).
+  "catering.refund.disposition",
+  "catering.refund.break_glass",
   // Emitted from SQL only — migration 0198 rewrote the PostgREST-role grants on public.users
   // (LRA-001 credential columns readable, LRA-214 self-promotion via PATCH) and INSERTs its own
   // audit row with destructive=true literally. Grant changes never go through app code.

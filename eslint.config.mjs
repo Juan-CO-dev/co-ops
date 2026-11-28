@@ -29,6 +29,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Vendored, minified co-scenes bundle (scripts/vendor-co-scenes.ts); hash-checked by tests, not linted.
     "vendor/co-scenes/dist/**",
+    // Frozen copies of main @ 9ce98df5 (catering refunds Part B1 OFF-parity evidence): byte-compared, never edited, not linted.
+    "tests/fixtures/main-9ce98df5/**",
   ]),
 ]);
 

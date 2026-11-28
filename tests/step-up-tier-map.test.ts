@@ -295,6 +295,9 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   // Catering refunds (0357): money out takes Send's fresh password. Its retry route asserts no tier (it can only
   // re-send a request already confirmed behind this one).
   "app/api/catering/quotes/[id]/refunds/route.ts": ["B"],
+  // Catering refunds Part B1 (0359): the operator disposition of a refund issue is Tier B (lib/session.ts admits exactly
+  // .../refunds/disposition). The retry route still asserts no tier and is absent from this map.
+  "app/api/catering/quotes/[id]/refunds/disposition/route.ts": ["B"],
   // Catering inbox phase 1b: Send draft (outside /admin, isCateringInboxSendPath) and the owner / CGS mode switch.
   "app/api/catering/inbox/[id]/send/route.ts": ["B"],
   "app/api/admin/catering-inbox/settings/route.ts": ["B"],
@@ -535,4 +538,12 @@ it.each(["requestStepUp('A')", 'requestStepUp("A")', 'requestStepUp(`A`)'])("ext
 
 it("pins AdCodesClient create to A and retire to B", () => {
   expect(read("app/admin/marketing/ad-codes/AdCodesClient.tsx")).toContain("retireCode ? await requestStepUp('B') : await requestStepUp('A')");
+});
+
+it("catering refunds Part B1: the disposition route is Tier B and the retry route asserts no tier", () => {
+  expect(SERVER_TIER_MAP["app/api/catering/quotes/[id]/refunds/disposition/route.ts"]).toEqual(["B"]);
+  expect(SERVER_TIER_MAP["app/api/catering/quotes/[id]/refunds/route.ts"]).toEqual(["B"]);
+  expect(Object.keys(SERVER_TIER_MAP)).not.toContain("app/api/catering/quotes/[id]/refunds/[requestId]/retry/route.ts");
+  expect(read("app/api/catering/quotes/[id]/refunds/[requestId]/retry/route.ts")).not.toMatch(/assertStepUp\(/);
+  expect(read("app/api/catering/quotes/[id]/refunds/disposition/route.ts")).toContain('assertStepUp(ctx, "B")');
 });

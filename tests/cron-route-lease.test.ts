@@ -12,6 +12,12 @@ it.each([true, false])("returns the database claim result %s", async (data) => {
   expect(rpc).toHaveBeenCalledWith("claim_cron_route", { p_job: "toast-sales-today" });
   expect(abortSignal).toHaveBeenCalledWith(expect.any(AbortSignal));
 });
+it("claims the catering-refund-sweep lease by its 0359 name", async () => {
+  const rpc = vi.fn(() => ({ abortSignal: async () => ({ data: true, error: null }) }));
+  vi.mocked(getServiceRoleClient).mockReturnValue({ rpc } as unknown as ReturnType<typeof getServiceRoleClient>);
+  expect(await claimCronRoute("catering-refund-sweep")).toBe(true);
+  expect(rpc).toHaveBeenCalledWith("claim_cron_route", { p_job: "catering-refund-sweep" });
+});
 it.each([{ data: true, error: { message: "unavailable" } }, { data: null, error: null }, { data: "true", error: null }])(
   "refuses failed or malformed claims %j", async (result) => {
     vi.mocked(getServiceRoleClient).mockReturnValue({ rpc: () => ({ abortSignal: async () => result }) } as unknown as ReturnType<typeof getServiceRoleClient>);

@@ -1,6 +1,8 @@
 /**
  * GET — the lead's live quotes that hold money taken through the app, with what is still refundable (the pipeline's
  * "Refund" prompt on a lost order). Read only; the refund itself is made on the quote (../../quotes/[id]/refunds).
+ * STORED STATE ONLY (Part B1): one stored-summary read per batch of the lead's quotes (lib/catering/refunds.ts
+ * `loadLeadRefundables`, LEAD_REFUND_BATCH), ZERO provider calls; an unchecked or held amount is labelled.
  * SHIPS DARK behind CATERING_REFUNDS=1 (503 `refunds_off`).
  */
 import { type NextRequest } from "next/server";

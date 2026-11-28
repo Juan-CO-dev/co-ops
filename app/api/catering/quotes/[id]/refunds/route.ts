@@ -1,7 +1,10 @@
 /**
- * Catering refunds for one order (migration 0357; lib/catering/refunds.ts). SHIPS DARK behind CATERING_REFUNDS=1.
+ * Catering refunds for one order (migrations 0357 / 0358 / 0359; lib/catering/refunds.ts). SHIPS DARK behind
+ * CATERING_REFUNDS=1.
  *
- *   GET  — what was paid, what is still refundable, and the refund history (read floor 5, a shop the viewer sees).
+ *   GET  — what was paid, what is still refundable, the refund history and any open issue (read floor 5, a shop the
+ *          viewer sees). STORED STATE ONLY (Part B1): one stored-summary read, ZERO provider calls, nothing enqueued,
+ *          nothing applied.
  *   POST — the ONE explicit confirm tap: { clientToken, amountCents | null (= everything refundable), reasonCode,
  *          reasonNote, trigger }. Tier B step-up (a fresh password, like Send): money OUT. This path is a step-up
  *          surface (lib/session.ts `isCateringStepUpPath`) so its own requireSession keeps the unlock the preceding
@@ -10,7 +13,8 @@
  * Order (POST): same-origin, the session on the route's own path, the switch (503 `refunds_off` before the body is
  * read), the strict parse (400), the role gate (403 before the password is asked for), Tier B, the lib. The server
  * recomputes every figure under the payment locks; nothing the client sends about amounts is trusted beyond the
- * one number it asks for.
+ * one number it asks for. The lib computes its own deadline from REFUND_ROUTE_BUDGET_MS (= this route's maxDuration,
+ * plan B1.6). After a mutation the stored summary is re-read; a failed re-read is `summary: null`, never an error.
  */
 import { type NextRequest } from "next/server";
 import { assertSameOrigin } from "@/lib/portal/csrf";
@@ -28,6 +32,9 @@ import {
   requestRefund,
 } from "@/lib/catering/refunds";
 import { ROLES } from "@/lib/roles";
+
+/** Plan B1.6: the money mutation's route budget (REFUND_ROUTE_BUDGET_MS), 15 s of it kept back to finish. */
+export const maxDuration = 120;
 
 function refusal(e: unknown) {
   if (e instanceof CateringRefundError) return jsonError(e.status, e.code, e.detail ?? {});

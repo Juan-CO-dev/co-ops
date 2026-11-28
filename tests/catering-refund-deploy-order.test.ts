@@ -18,6 +18,16 @@
  * THE SQL RULE is the same TS stand-in tests/catering-refunds-flow.test.ts uses, pinned there and here to the two
  * real files; the real SQL of each rule is proven by scripts/sql-harness-0357.mjs and scripts/sql-harness-0358.mjs.
  * Stripe is never reachable from this file: every Stripe function throws.
+ *
+ * PART B1 (migration 0359) ADAPTATION. The new lib reaches the database through 0359's protected functions only
+ * (`catering_refund_epoch_state`, `catering_refund_reserve_admitted`, `catering_refund_summary`,
+ * `catering_refund_claim_admitted`), and 0359's pre-flight refuses a database without 0358's actor rule. So the row
+ * "new app + 0357" can no longer reach a reserve that asks 0357's rule: on a database without 0359 (0357 alone, or
+ * 0357 + 0358) the new app finds no epoch / no stored summary and answers 503 `refunds_unavailable` before any reserve,
+ * claim, write or Stripe call — still "nothing opens until both are in". That is what the route-level rows below now
+ * pin for "0357". The 0357 ACTOR RULE itself (gm / agm refused at the shop) is kept as a PURE-RULE case over the SQL
+ * stand-in, pinned to the real 0357 file (see "the two models are the real things" and the pure-rule case below);
+ * the real SQL is proven by scripts/sql-harness-0357.mjs / -0358.mjs / -0359.mjs. "0358" here = 0358 with 0359 on top.
  */
 import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
@@ -70,6 +80,8 @@ const QUOTE = "00000000-0000-4000-8000-0000000000b1";
 const REQUEST = "00000000-0000-4000-8000-0000000000d1";
 const PAYMENT = "00000000-0000-4000-8000-0000000000c1";
 const ACTOR = "00000000-0000-4000-8000-0000000000aa";
+const EPOCH = "00000000-0000-4000-8000-0000000000e0";
+const MISSING = (fn: string) => ({ data: null, error: { message: `Could not find the function public.${fn}`, code: "PGRST202" } });
 const BODY: RefundRequestBody = { clientToken: "11111111-1111-4111-8111-111111111111", amountCents: 100000, reasonCode: "event_lost", reasonNote: null, trigger: "lost" };
 
 function sqlActorOk(db: FakeDb, actorId: unknown, shopId: unknown): boolean {
@@ -117,8 +129,15 @@ beforeEach(() => {
       users: [], user_locations: [],
     },
     {
-      // The reserve as far as this file needs it: the actor rule first (as 0357 / 0358 order it), then "nothing to refund".
-      catering_refund_reserve: (args, db) => ({ data: null, error: { message: sqlActorOk(db, args.p_actor_id, SHOP) ? "nothing_refundable" : "forbidden" } }),
+      // 0359's protected functions exist only on top of 0358 (0359's pre-flight refuses a database without it): under
+      // the "0357" model they are MISSING, exactly as PostgREST answers a function it cannot find.
+      catering_refund_epoch_state: () => (h.sqlRule === "0357" ? MISSING("catering_refund_epoch_state") : { data: { state: "live", epoch_id: EPOCH, caller_ok: true }, error: null }),
+      catering_refund_summary: (args) => (h.sqlRule === "0357" ? MISSING("catering_refund_summary") : {
+        data: { epoch: { state: "live", epoch_id: EPOCH, caller_ok: true }, quotes: (args.p_quote_ids as string[]).includes(QUOTE) ? [{ quote_id: QUOTE, location_id: SHOP, payments: [{ id: PAYMENT }], requests: [], issues: [] }] : [] },
+        error: null,
+      }),
+      // The reserve as far as this file needs it: the actor rule first (as 0357 / 0358 / 0359 order it), then "nothing to refund".
+      catering_refund_reserve_admitted: (args, db) => (h.sqlRule === "0357" ? MISSING("catering_refund_reserve_admitted") : { data: null, error: { message: sqlActorOk(db, args.p_actor_id, SHOP) ? "nothing_refundable" : "forbidden" } }),
       catering_refund_actor_ok: (args, db) => ({ data: sqlActorOk(db, args.p_actor_id, args.p_shop_id), error: null }),
     },
   );
@@ -180,16 +199,16 @@ describe.each(["gm", "agm"] as const)("a member %s, app x SQL", (role) => {
     expect(h.db.writes).toEqual([]);
   });
 
-  it("NEW app + 0357 (the app deployed first): the reserve is asked and answers forbidden → 403; nothing written, nothing sent", async () => {
+  it("NEW app + 0357 (the app deployed first; no 0359): refused 503 refunds_unavailable before any reserve; nothing written, nothing sent", async () => {
     h.sqlRule = "0357";
     const a = actor(role);
     expect(actorMayRefund(a, SHOP)).toBe(true);
-    await expect(requestRefund(a, QUOTE, BODY)).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    expect(h.rpcCalls).toEqual(["catering_refund_reserve"]);
-    // Through the route, with the password typed: the same 403 by name.
+    await expect(requestRefund(a, QUOTE, BODY)).rejects.toMatchObject({ status: 503, code: "refunds_unavailable" });
+    expect(h.rpcCalls).toEqual(["catering_refund_epoch_state"]);
+    // Through the route, with the password typed: the same 503 by name; the reserve is never asked.
     h.rpcCalls = [];
-    expect(await answer(await confirm())).toEqual([403, "forbidden"]);
-    expect(h.rpcCalls).toEqual(["catering_refund_reserve"]);
+    expect(await answer(await confirm())).toEqual([503, "refunds_unavailable"]);
+    expect(h.rpcCalls).toEqual(["catering_refund_epoch_state"]);
     // …and without the password the route stops at Tier B, like any refunder (the database is not asked).
     h.rpcCalls = [];
     actor(role, [SHOP], false);
@@ -199,24 +218,24 @@ describe.each(["gm", "agm"] as const)("a member %s, app x SQL", (role) => {
     expect(h.db.writes).toEqual([]);
   });
 
-  it("NEW app + 0357, Retry and Release THROUGH THE ROUTE: the SQL re-check refuses before any claim → 403; nothing claimed, written or sent", async () => {
+  it("NEW app + 0357 (no 0359), Retry and Release THROUGH THE ROUTE: no stored summary → 503 refunds_unavailable before the actor re-check or any claim; nothing claimed, written or sent", async () => {
     h.sqlRule = "0357";
-    for (const body of [{}, { release: true }]) {
+    for (const body of [{}, { release: true }, { release: true, staffVerified: true }]) {
       h.rpcCalls = [];
       actor(role, [SHOP], false); // the retry path asks for no password
-      expect(await answer(await retry(body))).toEqual([403, "forbidden"]);
-      expect(h.rpcCalls).toEqual(["catering_refund_actor_ok"]); // asked once, refused; catering_refund_claim never reached
+      expect(await answer(await retry(body))).toEqual([503, "refunds_unavailable"]);
+      expect(h.rpcCalls).toEqual(["catering_refund_summary"]); // catering_refund_claim_admitted never reached
     }
     expect(h.stripeCalls).toBe(0);
     expect(h.db.writes).toEqual([]);
     expect(h.db.tables.catering_refund_requests![0]).toMatchObject({ status: "pending", attempts: 1, claim_token: null });
-    // The control for this test: under 0358 the same press gets PAST the SQL re-check (it then reaches the sender
-    // claim, which this file does not model: the fake throws by name).
+    // The control for this test: under 0358 (+ 0359) the same press gets PAST the SQL re-check (it then reaches the
+    // sender claim, which this file does not model: the fake throws by name).
     h.sqlRule = "0358";
     h.rpcCalls = [];
     actor(role, [SHOP], false);
-    await expect(retry()).rejects.toThrow(/no fake for rpc catering_refund_claim/);
-    expect(h.rpcCalls).toEqual(["catering_refund_actor_ok", "catering_refund_claim"]);
+    await expect(retry()).rejects.toThrow(/no fake for rpc catering_refund_claim_admitted/);
+    expect(h.rpcCalls).toEqual(["catering_refund_summary", "catering_refund_actor_ok", "catering_refund_claim_admitted"]);
     expect(h.stripeCalls).toBe(0);
   });
 
@@ -225,7 +244,7 @@ describe.each(["gm", "agm"] as const)("a member %s, app x SQL", (role) => {
     expect(actorMayRefund(a, SHOP)).toBe(true);
     // The stand-in reserve has nothing to refund on this empty order: 409, not 403. The actor was accepted.
     await expect(requestRefund(a, QUOTE, BODY)).rejects.toMatchObject({ status: 409, code: "nothing_refundable" });
-    expect(h.rpcCalls).toEqual(["catering_refund_reserve"]);
+    expect(h.rpcCalls).toEqual(["catering_refund_epoch_state", "catering_refund_reserve_admitted"]);
     expect(await answer(await confirm())).toEqual([409, "nothing_refundable"]);
     expect(h.stripeCalls).toBe(0);
   });
@@ -237,6 +256,18 @@ describe.each(["gm", "agm"] as const)("a member %s, app x SQL", (role) => {
     await expect(requestRefund(a, QUOTE, BODY)).rejects.toMatchObject({ status: 404, code: "not_found" });
     expect(await answer(await confirm())).toEqual([404, "not_found"]);
     expect(h.rpcCalls).toEqual([]);
+  });
+
+  it("PURE RULE (no longer expressible through the route: the B1 app needs 0359, which needs 0358): 0357's actor rule refuses a member gm / agm at the shop, 0358's admits them", () => {
+    actor(role);
+    h.sqlRule = "0357";
+    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(false);
+    h.sqlRule = "0358";
+    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(true);
+    // ...and neither admits a non-member, nor an inactive user.
+    expect(sqlActorOk(h.db, ACTOR, OTHER)).toBe(false);
+    h.db.tables.users![0]!.active = false;
+    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(false);
   });
 
   it("in every combination the switch comes first: CATERING_REFUNDS unset = 503 refunds_off, nothing asked", async () => {
@@ -256,16 +287,23 @@ describe.each(["gm", "agm"] as const)("a member %s, app x SQL", (role) => {
 });
 
 describe("the roles that could already refund are unaffected by either order", () => {
-  it.each([["catering_mgr", [SHOP]], ["moo", [SHOP]], ["owner", []], ["cgs", []]] as const)("%s reaches the reserve in all four combinations", async (role, locations) => {
+  it.each([["catering_mgr", [SHOP]], ["moo", [SHOP]], ["owner", []], ["cgs", []]] as const)("%s passes the app gate in all four combinations: the reserve on 0358 + 0359, 503 refunds_unavailable (no reserve) without 0359", async (role, locations) => {
     for (const appRoles of [OLD_APP_ROLES, null]) {
       for (const sqlRule of ["0357", "0358"] as const) {
         h.appRoles = appRoles;
         h.sqlRule = sqlRule;
         h.rpcCalls = [];
-        await expect(requestRefund(actor(role, [...locations]), QUOTE, BODY)).rejects.toMatchObject({ status: 409, code: "nothing_refundable" });
-        expect(h.rpcCalls).toEqual(["catering_refund_reserve"]);
+        if (sqlRule === "0358") {
+          await expect(requestRefund(actor(role, [...locations]), QUOTE, BODY)).rejects.toMatchObject({ status: 409, code: "nothing_refundable" });
+          expect(h.rpcCalls).toEqual(["catering_refund_epoch_state", "catering_refund_reserve_admitted"]);
+        } else {
+          await expect(requestRefund(actor(role, [...locations]), QUOTE, BODY)).rejects.toMatchObject({ status: 503, code: "refunds_unavailable" });
+          expect(h.rpcCalls).toEqual(["catering_refund_epoch_state"]);
+        }
       }
     }
+    expect(h.stripeCalls).toBe(0);
+    expect(h.db.writes).toEqual([]);
   });
   it("…and the roles outside both lists are refused by the app in all four", async () => {
     for (const role of ["prep_mgr", "social_media_mgr", "shift_lead"]) {

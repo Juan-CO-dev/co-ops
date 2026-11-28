@@ -350,6 +350,10 @@ export function isAdminPath(currentPath: string): boolean {
  * ...and a catering REFUND (POST /api/catering/quotes/[id]/refunds, migration 0357): money out is Tier B, the same
  * fresh password as Send, so exactly that path keeps the unlock. Its retry route (.../refunds/<id>/retry) takes no
  * tier and is NOT admitted.
+ *
+ * ...and the refund OPERATOR DISPOSITION (POST /api/catering/quotes/[id]/refunds/disposition, migration 0359, plan
+ * B1.4): resolving a refund issue is Tier B, so exactly that path keeps the unlock. Nothing else under .../refunds/ is
+ * admitted (the retry route still clears it).
  */
 export function isCateringStepUpPath(currentPath: string): boolean {
   return (currentPath.startsWith("/api/catering/quotes/") && currentPath.endsWith("/send")) ||
@@ -357,7 +361,8 @@ export function isCateringStepUpPath(currentPath: string): boolean {
     /^\/api\/catering\/pipeline\/[^/]+\/transfer$/.test(currentPath) ||
     /^\/api\/catering\/pipeline\/[^/]+\/delivery\/[^/]+\/cost$/.test(currentPath) ||
     /^\/api\/catering\/pipeline\/[^/]+\/delivery\/gratuity$/.test(currentPath) ||
-    /^\/api\/catering\/quotes\/[^/]+\/refunds$/.test(currentPath);
+    /^\/api\/catering\/quotes\/[^/]+\/refunds$/.test(currentPath) ||
+    /^\/api\/catering\/quotes\/[^/]+\/refunds\/disposition$/.test(currentPath);
 }
 
 /** The physical-count surface is Tier-A (council A4) but lives OUTSIDE /admin —
