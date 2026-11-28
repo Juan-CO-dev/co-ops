@@ -31,7 +31,9 @@
  *   4  TWO CLAIMS, ONE REQUEST     holder = catering_refund_claim_admitted COMMITS; racer = the same claim WAITS, then
  *                                  answers claimed=false / in_progress. Exactly one claim.
  *   5a ARM vs RELEASE, arm first   holder = catering_refund_arm COMMITS; racer = resolve_anomaly(release_unsent) WAITS,
- *                                  then is refused `invalid_action` (the row is armed). The request stays pending, armed.
+ *                                  then is refused `issue_closed`: the arm cleared the request's "reserved, not sent"
+ *                                  occurrence in its own transaction (review fix), so there is nothing left to release.
+ *                                  The request stays pending, armed.
  *   5b ARM vs RELEASE, release first  holder = release_unsent COMMITS; racer = arm WAITS, then answers `not_pending`.
  *                                  The request is failed `released_unsent` and was never armed.
  * WHAT IT CANNOT PROVE: the Management API gives no session that stays open across requests, so a holder is always ONE
@@ -353,7 +355,7 @@ export async function runProof(query, { log = console.log, selfTest = false } = 
       return `blocked=${x.blocked}`;
     });
 
-    await step('5a ARM vs RELEASE, arm first: release_unsent waits, then is refused (the row is armed)', async () => {
+    await step('5a ARM vs RELEASE, arm first: release_unsent waits, then is refused (the arm cleared the occurrence)', async () => {
       const pa = await commitTx('5-pass', passApply(f, 3), SVC);
       assert.equal(pa?.ok?.apply?.result, 'applied', `pre-pass on the payment (${JSON.stringify(pa)?.slice(0, 300)})`);
       const gen = Number(pa.ok.apply.generation);
@@ -367,10 +369,10 @@ export async function runProof(query, { log = console.log, selfTest = false } = 
         insert into public.catering_refund_issues`));
       const x = await race({ body: arm(f, f.r4, f.claimToken, gen), role: SVC }, { body: releaseUnsent(f, f.i4, gen), role: SVC }, '5a');
       assert.equal(x.holder?.ok?.result, 'armed', `holder arm (${JSON.stringify(x.holder)})`);
-      assert.equal(x.racer?.err, 'invalid_action', `release_unsent of an armed row must be refused (${JSON.stringify(x.racer)})`);
+      assert.equal(x.racer?.err, 'issue_closed', `release_unsent of an armed row must be refused (${JSON.stringify(x.racer)})`);
       const s = await one(query, `select status, create_armed_at is not null as armed, (select state from public.catering_refund_issues where id = ${q(f.i4)}) as issue
         from public.catering_refund_requests where id = ${q(f.r4)}`);
-      assert.deepEqual([s.status, s.armed, s.issue], ['pending', true, 'open'], 'exactly one won: armed, still pending, the issue still open');
+      assert.deepEqual([s.status, s.armed, s.issue], ['pending', true, 'resolved'], 'exactly one won: armed, still pending, its "reserved, not sent" occurrence cleared by the arm');
       f.gen = gen;
       return `blocked=${x.blocked}`;
     });
