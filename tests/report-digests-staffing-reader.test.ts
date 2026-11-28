@@ -42,53 +42,63 @@ afterEach(() => {
 // ── the fake mirror ────────────────────────────────────────────────────────────────────────────
 
 type Row = Record<string, unknown>;
-interface Query { table: string; select: string; eq: Record<string, unknown>; in: unknown[] | null; order: string[]; signal: boolean }
+interface Query { table: string; select: string; eq: Record<string, unknown>; in: unknown[] | null; inCol: string | null; order: string[]; signal: boolean }
 interface Mirror {
   links?: Row[]; locations?: Row[]; users?: Row[]; roles?: Row[];
   /** A table whose read never answers. */
   hang?: string;
   /** A table whose read answers an error. */
   fail?: string;
-  /** A shop whose link lookup never answers. */
-  hangLinkOf?: string;
+  /** A table whose `::text` casts are NOT honoured: its bigint ids come back as JS numbers (F5). */
+  noCast?: string;
+  /** A table whose FIRST read never answers (later reads answer). */
+  hangFirst?: string;
+  /** Called on every query as it is sent (tests count or advance a clock here). */
+  onQuery?: (q: Query) => void;
 }
 const DEFAULT_MIRROR: Required<Pick<Mirror, "links" | "locations" | "users" | "roles">> = {
   links: [{ location_id: SHOP_A, sevenshifts_location_id: Number(SHOP_A_7S), active: true },
           { location_id: SHOP_B, sevenshifts_location_id: SHOP_B_7S, active: true }],
-  // The bigint comes back as a number here and as a string there.
   locations: [{ id: Number(SHOP_A_7S), company_id: Number(COMPANY) }, { id: SHOP_B_7S, company_id: COMPANY }],
-  users: [{ id: 11, first_name: "Alpha", preferred_first_name: "Person A", last_name: "NEVER-SELECTED" },
-          { id: "12", first_name: "Person B", preferred_first_name: null, last_name: "NEVER-SELECTED" }],
+  users: [{ id: 11, company_id: COMPANY, first_name: "Alpha", preferred_first_name: "Person A", last_name: "NEVER-SELECTED" },
+          { id: "12", company_id: COMPANY, first_name: "Person B", preferred_first_name: null, last_name: "NEVER-SELECTED" }],
   roles: [{ id: 21, name: "Cook" }],
 };
 
+/**
+ * Answers as PostgREST would: every `eq` / `in` filter applied (compared as text), only the selected columns, and a
+ * `col::text` cast answered as a STRING under the key `col` (F5). Values may be stored as numbers or strings.
+ */
 function fakeDb(m: Mirror = {}) {
   const data = { ...DEFAULT_MIRROR, ...m };
+  const tables: Record<string, Row[]> = {
+    sevenshifts_location_links: data.links, sevenshifts_locations: data.locations, sevenshifts_users: data.users, sevenshifts_roles: data.roles,
+  };
   const queries: Query[] = [];
   const sb = {
     from(table: string) {
-      const q: Query = { table, select: "", eq: {}, in: null, order: [], signal: false };
+      const q: Query = { table, select: "", eq: {}, in: null, inCol: null, order: [], signal: false };
       queries.push(q);
       const b: Record<string, unknown> = {
         select: (c: string) => { q.select = c; return b; },
         eq: (c: string, v: unknown) => { q.eq[c] = v; return b; },
-        in: (c: string, v: unknown[]) => { q.in = v; return b; },
+        in: (c: string, v: unknown[]) => { q.inCol = c; q.in = v; return b; },
         order: (c: string) => { q.order.push(c); return b; },
         abortSignal: () => { q.signal = true; return b; },
         then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) => {
+          m.onQuery?.(q);
           if (m.hang === table) return new Promise(() => {}).then(resolve, reject);
-          if (table === "sevenshifts_location_links" && m.hangLinkOf !== undefined && q.eq.location_id === m.hangLinkOf) return new Promise(() => {}).then(resolve, reject);
+          if (m.hangFirst === table && queries.filter((x) => x.table === table)[0] === q) return new Promise(() => {}).then(resolve, reject);
           if (m.fail === table) return Promise.resolve({ data: null, error: { message: "x" } }).then(resolve, reject);
-          let rows: Row[] = [];
-          if (table === "sevenshifts_location_links") rows = data.links.filter((r) => r.location_id === q.eq.location_id && r.active === q.eq.active);
-          else if (table === "sevenshifts_locations") rows = data.locations.filter((r) => String(r.id) === String(q.eq.id));
-          else if (table === "sevenshifts_users" || table === "sevenshifts_roles") {
-            const src = table === "sevenshifts_users" ? data.users : data.roles;
-            const want = new Set((q.in ?? []).map(String));
-            // Only the selected columns come back, as PostgREST would answer.
-            const cols = q.select.split(",").map((c) => c.trim());
-            rows = src.filter((r) => want.has(String(r.id))).map((r) => Object.fromEntries(cols.map((c) => [c, r[c] ?? null])));
-          }
+          const cols = q.select.split(",").map((c) => c.trim()).map((c) => { const [name, cast] = c.split("::"); return { name: name!, cast: cast ?? null }; });
+          const want = q.in === null ? null : new Set(q.in.map(String));
+          const rows = (tables[table] ?? [])
+            .filter((r) => Object.entries(q.eq).every(([k, v]) => String(r[k]) === String(v)))
+            .filter((r) => want === null || want.has(String(r[q.inCol!])))
+            .map((r) => Object.fromEntries(cols.map(({ name, cast }) => {
+              const v = r[name] ?? null;
+              return [name, cast === "text" && v !== null && m.noCast !== table ? String(v) : v];
+            })));
           return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
         },
       };
@@ -401,7 +411,7 @@ describe("one logical read", () => {
 describe("batches", () => {
   it("150 distinct people on one page → the users read is two batches of at most 100, each ordered", async () => {
     const rows = Array.from({ length: 150 }, (_, i) => shiftRow("A", { id: String(10_000 + i), user_id: String(100 + i) }));
-    const users = Array.from({ length: 150 }, (_, i) => ({ id: 100 + i, first_name: `Person ${i}`, preferred_first_name: null }));
+    const users = Array.from({ length: 150 }, (_, i) => ({ id: 100 + i, company_id: COMPANY, first_name: `Person ${i}`, preferred_first_name: null }));
     const net = fakeNet({ status: 200, body: validAnswerBody({ rows }) });
     const { r, db } = reader(net, { users });
     const a = await r.shopWindow(SHOP_A, D, D1);
@@ -566,62 +576,71 @@ describe("S10: the limiter, deadlineAt and the race run on the run's clock", () 
   });
 });
 
-// ── each ask has its own 6 s (lead review: the deadline belongs to the ASK, not to the window key) ─────────
+// ── F4: the deadline belongs to the WINDOW; the links are read once per run; settled work is reused at once ─────
 
-describe("each ask (a shop and a window) has its own 6 s; the page and whoami are fetched once, under their starter", () => {
+describe("F4: one 6 s per window (plan §11.1.4), the links once per run, settled work reused with no I/O and no wait", () => {
   const second = (u: URL) => respond(u.searchParams.get("start[gte]") === CASE_REQUEST.startGte ? VALID_PAGE : { status: 200, body: validAnswerBody({ rows: [] }) });
-  const linkReadsOf = (db: ReturnType<typeof fakeDb>, shop: string) => db.queries.filter((q) => q.table === "sevenshifts_location_links" && q.eq.location_id === shop).length;
+  const tableReads = (db: ReturnType<typeof fakeDb>, t: string) => db.queries.filter((q) => q.table === t).length;
 
-  it("shop B asks the same window 30 s after shop A finished → ok, ZERO new HTTP requests, its own link reads ran", async () => {
+  it("F4: shop A asks [D, D+1] → ok; 30 s later shop B asks the same window → ok with its roster, ZERO new HTTP requests, ZERO new mirror reads", async () => {
     vi.useFakeTimers();
     const net = fakeNet(VALID_PAGE);
     const { r, db, counter } = reader(net);
     expect((await r.shopWindow(SHOP_A, D, D1)).kind).toBe("ok");
     expect(counter.requests).toBe(2);
+    const readsAfterA = db.queries.length;
     await vi.advanceTimersByTimeAsync(30_000);
-    const b = await r.shopWindow(SHOP_B, D, D1);
-    expect(b.kind).toBe("ok");
-    if (b.kind !== "ok") throw new Error("not ok");
-    expect(b.value.days[1]!.people.map((p) => [p.userId, p.firstName])).toEqual([["12", "Person B"]]);
+    let bDone: unknown = null;
+    const b = r.shopWindow(SHOP_B, D, D1).then((x) => { bDone = x; return x; });
+    await vi.advanceTimersByTimeAsync(0); // no time passes: it is answered at once
+    expect(bDone).not.toBeNull();
+    const out = await b;
+    expect(out.kind).toBe("ok");
+    if (out.kind !== "ok") throw new Error("not ok");
+    expect(out.value.days[1]!.people.map((p) => [p.userId, p.firstName])).toEqual([["12", "Person B"]]);
     expect(counter.requests).toBe(2);
     expect(net.urls).toHaveLength(2);
-    expect(linkReadsOf(db, SHOP_B)).toBe(1);
-    expect(db.queries.filter((q) => q.table === "sevenshifts_locations" && String(q.eq.id) === SHOP_B_7S)).toHaveLength(1);
+    // Links, locations, names and roles: nothing new was read for B.
+    expect(db.queries.length).toBe(readsAfterA);
+    expect(tableReads(db, "sevenshifts_location_links")).toBe(1);
   });
 
-  it("30 s later, a NEW window [D+1, D+2] for shop A → ok, one new page request, no new whoami", async () => {
+  it("F4: the links are read ONCE per run however many shops and windows ask (one links read, one locations read)", async () => {
     vi.useFakeTimers();
     const net = fakeNet(second);
-    const { r, counter } = reader(net);
+    const { r, db } = reader(net);
+    await Promise.all([r.shopWindow(SHOP_A, D, D1), r.shopWindow(SHOP_B, D, D1), r.shopWindow(SHOP_C, D, D1)]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const later = await Promise.all([r.shopWindow(SHOP_A, D1, D2), r.shopWindow(SHOP_B, D1, D2), r.shopWindow(SHOP_C, D1, D2)]);
+    expect(later.map((x) => x.kind)).toEqual(["ok", "ok", "unavailable"]);
+    expect(tableReads(db, "sevenshifts_location_links")).toBe(1);
+    expect(tableReads(db, "sevenshifts_locations")).toBe(1);
+    // The one links read names no shop: it reads every live link; the locations read asks for their ids as text.
+    const linkQ = db.queries.find((q) => q.table === "sevenshifts_location_links")!;
+    expect(linkQ.eq).toEqual({ active: true });
+    const locQ = db.queries.find((q) => q.table === "sevenshifts_locations")!;
+    expect(locQ.in).toEqual([SHOP_A_7S, SHOP_B_7S]);
+  });
+
+  it("F4: 30 s later a NEW window for shop A → ok: one new page request, no new whoami, no new links read, and its OWN 6 s", async () => {
+    vi.useFakeTimers();
+    // The second window's page answers 5 s after it is asked: only a fresh 6 s for that window can take it.
+    const net = fakeNet((u) => u.searchParams.get("start[gte]") === CASE_REQUEST.startGte
+      ? respond(VALID_PAGE)
+      : new Promise<Response>((resolve) => setTimeout(() => resolve(respond({ status: 200, body: validAnswerBody({ rows: [] }) })), 5_000)));
+    const { r, db, counter } = reader(net);
     expect((await r.shopWindow(SHOP_A, D, D1)).kind).toBe("ok");
     await vi.advanceTimersByTimeAsync(30_000);
-    expect((await r.shopWindow(SHOP_A, D1, D2)).kind).toBe("ok");
+    const p = r.shopWindow(SHOP_A, D1, D2);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect((await p).kind).toBe("ok");
     expect(counter.requests).toBe(3);
     expect(net.whoamiCalls()).toBe(1);
     expect(net.shiftCalls()).toBe(2);
+    expect(tableReads(db, "sevenshifts_location_links")).toBe(1);
   });
 
-  it("A's ask hits its deadline while the page is in flight → A not available at 6 s; B afterwards gets the kept failure at once, no new request", async () => {
-    vi.useFakeTimers();
-    const net = fakeNet(() => new Promise<Response>(() => {}));
-    const { r, counter } = reader(net);
-    let aDone: unknown = null;
-    const a = r.shopWindow(SHOP_A, D, D1).then((x) => { aDone = x; return x; });
-    await vi.advanceTimersByTimeAsync(SCHEDULE_WINDOW_MS - 1);
-    expect(aDone).toBeNull();
-    await vi.advanceTimersByTimeAsync(1);
-    expect((await a).kind).toBe("unavailable");
-    expect(counter.requests).toBe(2);
-    let bDone: { kind: string } | null = null;
-    const b = r.shopWindow(SHOP_B, D, D1).then((x) => { bDone = x; return x; });
-    await vi.advanceTimersByTimeAsync(0); // no time passes: the kept failure answers at once
-    expect(bDone).not.toBeNull();
-    expect((await b).kind).toBe("unavailable");
-    expect(counter.requests).toBe(2);
-    expect(net.shiftCalls()).toBe(1);
-  });
-
-  it("B asks while A's page is in flight and the page answers at 2 s → both ok, one page request", async () => {
+  it("F4: shop B asks while A's page is in flight and the page answers at 2 s → both ok, one page request", async () => {
     vi.useFakeTimers();
     const net = fakeNet(() => new Promise<Response>((resolve) => setTimeout(() => resolve(respond(VALID_PAGE)), 2_000)));
     const { r, counter } = reader(net);
@@ -636,20 +655,259 @@ describe("each ask (a shop and a window) has its own 6 s; the page and whoami ar
     expect(counter.requests).toBe(2);
   });
 
-  it("B's link lookup never answers, asked 30 s after A finished → B settles 6 s after B's OWN start, zero new HTTP requests", async () => {
+  it("F4: the page never answers; B joins at 3 s → BOTH settle as not available at the WINDOW's 6 s, measured from A's first ask", async () => {
     vi.useFakeTimers();
-    const net = fakeNet(VALID_PAGE);
-    const { r, counter } = reader(net, { hangLinkOf: SHOP_B });
-    expect((await r.shopWindow(SHOP_A, D, D1)).kind).toBe("ok");
-    await vi.advanceTimersByTimeAsync(30_000);
+    const net = fakeNet(() => new Promise<Response>(() => {}));
+    const { r, counter } = reader(net);
+    const t0 = Date.now();
+    let aAt = -1;
+    let bAt = -1;
+    const a = r.shopWindow(SHOP_A, D, D1).then((x) => { aAt = Date.now(); return x; });
+    await vi.advanceTimersByTimeAsync(3_000);
+    const b = r.shopWindow(SHOP_B, D, D1).then((x) => { bAt = Date.now(); return x; });
+    await vi.advanceTimersByTimeAsync(SCHEDULE_WINDOW_MS - 3_000 - 1);
+    expect(aAt).toBe(-1);
+    expect(bAt).toBe(-1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await a).kind).toBe("unavailable");
+    expect((await b).kind).toBe("unavailable");
+    expect(aAt - t0).toBe(SCHEDULE_WINDOW_MS);
+    expect(bAt - t0).toBe(SCHEDULE_WINDOW_MS); // 3 s after B's own ask, not 6
+    expect(net.shiftCalls()).toBe(1);
+    expect(counter.requests).toBe(2);
+  });
+
+  it("F4: A's page runs out of the window's time → B afterwards gets the kept failure at once, no new request", async () => {
+    vi.useFakeTimers();
+    const net = fakeNet(() => new Promise<Response>(() => {}));
+    const { r, counter } = reader(net);
+    const a = r.shopWindow(SHOP_A, D, D1);
+    await vi.advanceTimersByTimeAsync(SCHEDULE_WINDOW_MS);
+    expect((await a).kind).toBe("unavailable");
+    let bDone: { kind: string } | null = null;
+    const b = r.shopWindow(SHOP_B, D, D1).then((x) => { bDone = x; return x; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bDone).not.toBeNull();
+    expect((await b).kind).toBe("unavailable");
+    expect(counter.requests).toBe(2);
+  });
+
+  it("F4 / S10: a links read that never answers → the first ask settles at 6 s with ZERO HTTP requests; the same window again is not available AT ONCE; a NEW window reads the links again inside its own 6 s", async () => {
+    vi.useFakeTimers();
+    const net = fakeNet(second);
+    const { r, db, counter } = reader(net, { hangFirst: "sevenshifts_location_links" });
+    let aDone: unknown = null;
+    const a = r.shopWindow(SHOP_A, D, D1).then((x) => { aDone = x; return x; });
+    await vi.advanceTimersByTimeAsync(SCHEDULE_WINDOW_MS - 1);
+    expect(aDone).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await a).toEqual({ kind: "unavailable", reason: "deadline" });
+    expect(counter.requests).toBe(0);
+    // The same window, another shop: no fresh time and nothing settled → not available at once, nothing read.
+    const readsBefore = db.queries.length;
     let bDone: unknown = null;
     const b = r.shopWindow(SHOP_B, D, D1).then((x) => { bDone = x; return x; });
     await vi.advanceTimersByTimeAsync(0);
-    expect(bDone).toBeNull(); // not immediately
-    await vi.advanceTimersByTimeAsync(SCHEDULE_WINDOW_MS - 1);
-    expect(bDone).toBeNull();
-    await vi.advanceTimersByTimeAsync(1); // and not never
+    expect(bDone).toEqual({ kind: "unavailable", reason: "deadline" });
     expect(await b).toEqual({ kind: "unavailable", reason: "deadline" });
-    expect(counter.requests).toBe(2);
+    expect(db.queries.length).toBe(readsBefore);
+    expect(counter.requests).toBe(0);
+    // A NEW window: the timed-out links read was not kept, so it reads them again with its own 6 s.
+    expect((await r.shopWindow(SHOP_A, D1, D2)).kind).toBe("ok");
+    expect(tableReads(db, "sevenshifts_location_links")).toBe(2);
+  });
+
+  it("F4: one shop with TWO live links → that shop not available (mirror_read_failed), the other shop ok", async () => {
+    const net = fakeNet(VALID_PAGE);
+    const { r } = reader(net, {
+      links: [...DEFAULT_MIRROR.links, { location_id: SHOP_A, sevenshifts_location_id: "503", active: true }],
+      locations: [...DEFAULT_MIRROR.locations, { id: "503", company_id: COMPANY }],
+    });
+    expect(await r.shopWindow(SHOP_A, D, D1)).toEqual({ kind: "unavailable", reason: "mirror_read_failed" });
+    expect((await r.shopWindow(SHOP_B, D, D1)).kind).toBe("ok");
+  });
+
+  it("F4: a link whose 7shifts location id is not a canonical real id refuses THAT shop only", async () => {
+    const net = fakeNet(VALID_PAGE);
+    const { r } = reader(net, { links: [{ location_id: SHOP_A, sevenshifts_location_id: "0501", active: true }, DEFAULT_MIRROR.links[1]!] });
+    expect(await r.shopWindow(SHOP_A, D, D1)).toEqual({ kind: "unavailable", reason: "mirror_read_failed" });
+    expect((await r.shopWindow(SHOP_B, D, D1)).kind).toBe("ok");
+  });
+
+  it("F4: the total time spent waiting across a serial run of two shops on one window never exceeds 6 s (fake clock)", async () => {
+    vi.useFakeTimers();
+    for (const net of [fakeNet(() => new Promise<Response>(() => {})), fakeNet(VALID_PAGE, () => new Promise<Response>(() => {}))]) {
+      const { r } = reader(net);
+      let waited = 0;
+      for (const shop of [SHOP_A, SHOP_B]) {
+        const t = Date.now();
+        let done = false;
+        const p = r.shopWindow(shop, D, D1).then((x) => { done = true; return x; });
+        await vi.advanceTimersByTimeAsync(0);
+        while (!done) await vi.advanceTimersByTimeAsync(100);
+        expect((await p).kind).toBe("unavailable");
+        waited += Date.now() - t;
+        await vi.advanceTimersByTimeAsync(30_000); // the rest of shop A's facts, between the two asks
+      }
+      expect(waited).toBeLessThanOrEqual(SCHEDULE_WINDOW_MS);
+    }
   });
 });
+
+// ── F3: a mirror user of ANOTHER company never supplies a printed name ─────────────────────────
+
+describe("F3: the name lookup proves the mirror user's company", () => {
+  it("F3: a published row whose user has a mirror row of ANOTHER company → not available for both shops (mirror_conflict); the name never appears", async () => {
+    const net = fakeNet(VALID_PAGE);
+    const { r, db } = reader(net, {
+      users: [{ id: 11, company_id: "9002", first_name: "Person X", preferred_first_name: "Person X", last_name: "NEVER-SELECTED" }, DEFAULT_MIRROR.users[1]!],
+    });
+    const a = await r.shopWindow(SHOP_A, D, D1);
+    const b = await r.shopWindow(SHOP_B, D, D1);
+    expect(a).toEqual({ kind: "unavailable", reason: "mirror_conflict" });
+    expect(b).toEqual({ kind: "unavailable", reason: "mirror_conflict" });
+    expect(JSON.stringify([a, b])).not.toContain("Person X");
+    // The user read asked for the company and never for a last name.
+    const q = db.queries.find((x) => x.table === "sevenshifts_users")!;
+    expect(q.select).toContain("company_id");
+    expect(q.select).not.toContain("last_name");
+  });
+
+  it("F3: a user id with NO mirror row → ok, no name on file (null first name)", async () => {
+    const net = fakeNet(VALID_PAGE);
+    const { r } = reader(net, { users: [DEFAULT_MIRROR.users[1]!] });
+    const a = await r.shopWindow(SHOP_A, D, D1);
+    expect(a.kind).toBe("ok");
+    if (a.kind !== "ok") throw new Error("not ok");
+    expect(a.value.days[0]!.people.map((p) => [p.userId, p.firstName])).toEqual([["11", null]]);
+    const b = await r.shopWindow(SHOP_B, D, D1);
+    if (b.kind !== "ok") throw new Error("not ok");
+    expect(b.value.days[1]!.people.map((p) => [p.userId, p.firstName])).toEqual([["12", "Person B"]]);
+  });
+
+  it("F3: a user row with no provable company (null) → mirror_read_failed, no name", async () => {
+    const net = fakeNet(VALID_PAGE);
+    const { r } = reader(net, { users: [{ id: 11, company_id: null, first_name: "Person X", preferred_first_name: null }] });
+    expect(await r.shopWindow(SHOP_A, D, D1)).toEqual({ kind: "unavailable", reason: "mirror_read_failed" });
+  });
+});
+
+// ── F5: mirror ids are text; a number is unverifiable ─────────────────────────────────────────
+
+describe("F5: mirror bigints are selected as TEXT; a JS number for an id is refused", () => {
+  const BIG_CO = "9007199254740993"; // above Number.MAX_SAFE_INTEGER; Number() would round it
+  const BIG_CO_NEXT = "9007199254740994";
+  const BIG_P1 = "9007199254740993";
+  const BIG_P2 = "9007199254740994";
+  const bigWhoami: StaffingResponse = { status: 200, body: `{"object":"whoami","data":{"users":[{"id":77,"company_id":"${BIG_CO}"}]}}` };
+  const bigPage: StaffingResponse = {
+    status: 200,
+    body: validAnswerBody({
+      rows: [
+        shiftRow("A", { company_id: str(BIG_CO), user_id: str(BIG_P1) }),
+        shiftRow("A", { id: "1002", company_id: str(BIG_CO), user_id: str(BIG_P2), start: `"2026-03-01T15:00:00Z"` }),
+      ],
+    }),
+  };
+  const bigMirror: Mirror = {
+    // Shop B's location belongs to the ADJACENT company: it must not pass for whoami's company.
+    locations: [{ id: SHOP_A_7S, company_id: BIG_CO }, { id: SHOP_B_7S, company_id: BIG_CO_NEXT }],
+    users: [
+      { id: BIG_P1, company_id: BIG_CO, first_name: "Person A", preferred_first_name: null },
+      { id: BIG_P2, company_id: BIG_CO, first_name: "Person B", preferred_first_name: null },
+    ],
+  };
+
+  it("F5: ids above MAX_SAFE_INTEGER, two ADJACENT people and two ADJACENT companies → the right names, never collided", async () => {
+    expect(Number(BIG_P1) > Number.MAX_SAFE_INTEGER).toBe(true);
+    const net = fakeNet(bigPage, bigWhoami);
+    const { r, db } = reader(net, bigMirror);
+    const a = await r.shopWindow(SHOP_A, D, D1);
+    expect(a.kind).toBe("ok");
+    if (a.kind !== "ok") throw new Error(JSON.stringify(a));
+    expect(a.value.days[0]!.people.map((p) => [p.userId, p.firstName])).toEqual([[BIG_P1, "Person A"], [BIG_P2, "Person B"]]);
+    expect(net.urls.find((u) => u.pathname.endsWith("/shifts"))!.pathname).toBe(`/v2/company/${BIG_CO}/shifts`);
+    // Shop B's company is the adjacent id: not whoami's, so not verified.
+    expect(await r.shopWindow(SHOP_B, D, D1)).toEqual({ kind: "unavailable", reason: "company_unverified" });
+    // Filters went out as canonical strings.
+    expect(db.queries.find((q) => q.table === "sevenshifts_users")!.in).toEqual([BIG_P1, BIG_P2]);
+  });
+
+  for (const table of ["sevenshifts_location_links", "sevenshifts_locations", "sevenshifts_users", "sevenshifts_roles"]) {
+    it(`F5: ${table} answers a JS NUMBER for an id (cast not honoured) → refused, never converted`, async () => {
+      const net = fakeNet(VALID_PAGE);
+      const { r } = reader(net, { noCast: table });
+      expect(await r.shopWindow(SHOP_A, D, D1)).toEqual({ kind: "unavailable", reason: "mirror_read_failed" });
+    });
+  }
+
+  it("F5: every select list casts its ids to text", async () => {
+    const net = fakeNet(VALID_PAGE);
+    const { r, db } = reader(net);
+    expect((await r.shopWindow(SHOP_A, D, D1)).kind).toBe("ok");
+    const sel = (t: string) => db.queries.find((q) => q.table === t)!.select;
+    expect(sel("sevenshifts_location_links")).toBe("location_id, sevenshifts_location_id::text");
+    expect(sel("sevenshifts_locations")).toBe("id::text, company_id::text");
+    expect(sel("sevenshifts_users")).toBe("id::text, company_id::text, first_name, preferred_first_name");
+    expect(sel("sevenshifts_roles")).toBe("id::text, name");
+  });
+});
+
+// ── F7: names and roles memoized for the run ───────────────────────────────────────────────────
+
+describe("F7: names and roles are memoized for the run by the ids asked (plan §2.2)", () => {
+  it("F7: overlapping windows [D, D+1] then [D+1, D+2] with the same people and roles → the second asks ONLY for the new id", async () => {
+    const pageW2: StaffingResponse = {
+      status: 200,
+      body: validAnswerBody({
+        rows: [
+          shiftRow("B"),
+          shiftRow("A", { id: "1003", user_id: "13", start: `"2026-03-03T14:00:00Z"`, end: `"2026-03-03T22:00:00Z"` }),
+        ],
+      }),
+    };
+    const net = fakeNet((u) => respond(u.searchParams.get("start[gte]") === CASE_REQUEST.startGte ? VALID_PAGE : pageW2));
+    const { r, db } = reader(net, { users: [...DEFAULT_MIRROR.users, { id: 13, company_id: COMPANY, first_name: "Person C", preferred_first_name: null }] });
+    expect((await r.shopWindow(SHOP_A, D, D1)).kind).toBe("ok");
+    const users = () => db.queries.filter((q) => q.table === "sevenshifts_users");
+    const roles = () => db.queries.filter((q) => q.table === "sevenshifts_roles");
+    expect(users()).toHaveLength(1);
+    expect(roles()).toHaveLength(1);
+    const w2 = await r.shopWindow(SHOP_A, D1, D2);
+    if (w2.kind !== "ok") throw new Error(JSON.stringify(w2));
+    expect(w2.value.days[1]!.people.map((p) => [p.userId, p.firstName, p.roleName])).toEqual([["13", "Person C", "Cook"]]);
+    const b2 = await r.shopWindow(SHOP_B, D1, D2);
+    if (b2.kind !== "ok") throw new Error(JSON.stringify(b2));
+    expect(b2.value.days[0]!.people.map((p) => [p.userId, p.firstName])).toEqual([["12", "Person B"]]);
+    // Window 2: one users query, for the new id only; no roles query (role 21 was resolved by window 1).
+    expect(users()).toHaveLength(2);
+    expect(users()[1]!.in).toEqual(["13"]);
+    expect(roles()).toHaveLength(1);
+  });
+
+  it("F7: a failed lookup is not cached as a success: the next window asks for the same ids again", async () => {
+    let failUsers = true;
+    const net = fakeNet((u) => respond(u.searchParams.get("start[gte]") === CASE_REQUEST.startGte ? VALID_PAGE : { status: 200, body: validAnswerBody({ rows: [shiftRow("B")] }) }));
+    const db = fakeDb();
+    const sb = {
+      from(t: string) {
+        if (t === "sevenshifts_users" && failUsers) {
+          failUsers = false;
+          const b: Record<string, unknown> = {
+            select: () => b, eq: () => b, in: () => b, order: () => b, abortSignal: () => b,
+            then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => Promise.resolve({ data: null, error: { message: "x" } }).then(res, rej),
+          };
+          return b;
+        }
+        return (db.sb as unknown as { from(t: string): unknown }).from(t);
+      },
+    } as unknown as ServiceRoleClient;
+    const r = createScheduleReader(sb, { env: ENV, fetch: net.fetch });
+    expect(await r.shopWindow(SHOP_B, D, D1)).toEqual({ kind: "unavailable", reason: "mirror_read_failed" });
+    const w2 = await r.shopWindow(SHOP_B, D1, D2);
+    if (w2.kind !== "ok") throw new Error(JSON.stringify(w2));
+    expect(w2.value.days[0]!.people.map((p) => [p.userId, p.firstName])).toEqual([["12", "Person B"]]);
+    expect(db.queries.filter((q) => q.table === "sevenshifts_users").map((q) => q.in)).toEqual([["12"]]);
+  });
+});
+

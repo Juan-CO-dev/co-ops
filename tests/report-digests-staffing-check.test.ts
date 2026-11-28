@@ -40,6 +40,15 @@ describe("the case request", () => {
 describe("the case table through the pure check", () => {
   const pure = STAFFING_CASES.filter((c) => c.layer === "row" || c.layer === "page");
   it.each(pure.map((c) => [c.name, c] as const))("%s", (_n, c: StaffingCase) => {
+    // Astra F1: a body with a repeated member is refused by the parse itself (the throw is the refusal).
+    if (c.parseRefuses) {
+      expect(c.expect).toBe("refused");
+      expect(c.refusal).toBeUndefined();
+      expect(() => parse(c.shifts.body)).toThrow("duplicate_member");
+      // What a plain parse would have done: kept the last member and handed the check a body it may accept.
+      expect(() => JSON.parse(c.shifts.body)).not.toThrow();
+      return;
+    }
     const out = check(c.shifts.body);
     if (c.expect === "accepted") {
       expect(out).toMatchObject({ ok: true });
@@ -50,7 +59,7 @@ describe("the case table through the pure check", () => {
   });
 
   it("a refused row case always carries a valid row of the other shop (it would pass alone)", () => {
-    for (const c of pure.filter((x) => x.layer === "row" && x.expect === "refused")) {
+    for (const c of pure.filter((x) => x.layer === "row" && x.expect === "refused" && !x.parseRefuses)) {
       const json = parse(c.shifts.body) as { data: unknown[] };
       // At least one row on the page is, on its own, accepted: the refusal is the bad row's, for the whole answer.
       const anyAlone = json.data.some((r) => checkPublishedRows([r], CASE_REQUEST).ok);
@@ -85,6 +94,15 @@ describe("A2-6 ii: the census against what the roster consumes", () => {
     expect(STAFFING_CASES.some((c) => c.layer === "identity" && c.expect === "refused")).toBe(true);
     expect(STAFFING_CASES.some((c) => c.layer === "transport" && c.expect === "refused")).toBe(true);
     expect(STAFFING_CASES.filter((c) => c.layer === "identity" || c.layer === "transport").every((c) => c.refusal === undefined)).toBe(true);
+  });
+
+  it("Astra F1: only row / page cases are parse-refused, and none carries a refusal code", () => {
+    const pr = STAFFING_CASES.filter((c) => c.parseRefuses);
+    expect(pr.length).toBeGreaterThanOrEqual(5);
+    for (const c of pr) {
+      expect(c.layer === "row" || c.layer === "page", c.name).toBe(true);
+      expect(c.refusal, c.name).toBeUndefined();
+    }
   });
 
   it("case names are unique", () => {

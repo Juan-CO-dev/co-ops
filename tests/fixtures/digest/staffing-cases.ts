@@ -18,8 +18,9 @@ export const SHOP_B_7S = "502";
 export const COMPANY = "9001";
 
 /**
- * A byte ceiling for the transport case "oversized body". The reader's real ceiling is not set yet (another packet);
- * the reader test must run the oversized case with a ceiling at or below this.
+ * A byte ceiling for the transport case "oversized body", sized for a 64 KiB test ceiling. The reader's real ceilings
+ * are set (64 KiB for `whoami`, 2 MiB for the shift page: SCHEDULE_PAGE_MAX_BYTES), so the reader and e2e tests
+ * re-pad that case past the real page ceiling.
  */
 export const STAFFING_TEST_MAX_BYTES = 64 * 1024;
 
@@ -38,6 +39,11 @@ export interface StaffingCase {
   expect: "refused" | "accepted";
   /** For row / page cases: the refusal code the pure check gives when run on `parseJsonWithIdSource(shifts.body)`. */
   refusal?: AnswerRefusal;
+  /**
+   * Astra F1: `parseJsonWithIdSource(shifts.body)` itself THROWS (a repeated object member), so the pure check is never
+   * reached: that throw is the refusal. Such a case carries no `refusal` code.
+   */
+  parseRefuses?: true;
 }
 
 /**
@@ -152,6 +158,18 @@ function pageCase(name: string, half: Half, field: Field, body: string, refusal?
   return { name, layer: "page", half, field, shifts: { status: 200, body }, expect: refusal === undefined ? "accepted" : "refused", ...(refusal === undefined ? {} : { refusal }) };
 }
 const str = (s: string) => JSON.stringify(s);
+
+/**
+ * Astra F1: a row whose `key` is WRITTEN TWICE, `first` then `second` (literal value texts). JSON.parse would keep only
+ * `second`; the bounded read refuses the text.
+ */
+function dupRow(base: RowBase, key: string, first: string, second: string): string {
+  return shiftRow(base, { [key]: `${first},${str(key)}:${second}` });
+}
+/** Astra F1: a row or page case whose body the source-checked parse itself refuses (no pure-check refusal code). */
+function parseRefusedCase(name: string, layer: "row" | "page", field: Field, body: string): StaffingCase {
+  return { name, layer, half: "written_form", field, shifts: { status: 200, body }, expect: "refused", parseRefuses: true };
+}
 
 function manyRows(n: number): string[] {
   return Array.from({ length: n }, (_, i) => shiftRow("A", { id: String(10_000 + i) }));
@@ -273,7 +291,17 @@ export const STAFFING_CASES: StaffingCase[] = [
   // CC's narrowing of A2-4: `cursor.current` is never looked at.
   pageCase("cursor.current set to a non-null string (CC: accepted)", "request", "page.cursor.next", validAnswerBody({ cursor: `{"current":"abc","next":null,"prev":null}` })),
 
+  // Astra F1 (post-build review): a repeated member hides what was written; the parse refuses the whole text.
+  parseRefusedCase("F1: \"draft\":true,\"draft\":false", "row", "draft", validAnswerBody({ rows: [dupRow("A", "draft", "true", "false"), shiftRow("B"), shiftRow("OPEN")] })),
+  parseRefusedCase("F1: an earlier user_id 42.0000000000000001 then a valid user_id", "row", "user_id", validAnswerBody({ rows: [dupRow("A", "user_id", "42.0000000000000001", "11"), shiftRow("B"), shiftRow("OPEN")] })),
+  parseRefusedCase("F1: company_id of another company then the verified one", "row", "company_id", validAnswerBody({ rows: [dupRow("A", "company_id", "9002", "9001"), shiftRow("B"), shiftRow("OPEN")] })),
+  parseRefusedCase("F1: a duplicated \"data\" member", "page", "page.shape",
+    `{"object":"shifts","data":[${shiftRow("A", { draft: "true" })}],"data":[${shiftRow("A")},${shiftRow("B")}],"meta":{"cursor":{"next":null,"prev":null}}}`),
+  parseRefusedCase("F1: a duplicated \"next\" inside meta.cursor", "page", "page.cursor.next", validAnswerBody({ cursor: `{"next":"c2","next":null,"prev":null}` })),
+
   // identity (the reader test runs these; whoami names the one company)
+  { name: "F1: whoami user with a duplicated company_id", layer: "identity", half: "written_form", field: "whoami", shifts: { status: 200, body: validAnswerBody() }, whoami: { status: 200, body: `{"object":"whoami","data":{"users":[{"id":77,"company_id":9002,"company_id":9001}]}}` }, expect: "refused" },
+  { name: "F2: whoami answered with HTTP 206", layer: "identity", half: "request", field: "whoami", shifts: { status: 200, body: validAnswerBody() }, whoami: { status: 206, body: VALID_WHOAMI.body }, expect: "refused" },
   { name: "whoami company_id written 9001.5", layer: "identity", half: "written_form", field: "whoami", shifts: { status: 200, body: validAnswerBody() }, whoami: { status: 200, body: `{"object":"whoami","data":{"users":[{"id":77,"company_id":9001.5}]}}` }, expect: "refused" },
   { name: "whoami names two companies", layer: "identity", half: "request", field: "whoami", shifts: { status: 200, body: validAnswerBody() }, whoami: { status: 200, body: `{"object":"whoami","data":{"users":[{"id":77,"company_id":9001},{"id":78,"company_id":9002}]}}` }, expect: "refused" },
   { name: "whoami names another company than the link", layer: "identity", half: "request", field: "whoami", shifts: { status: 200, body: validAnswerBody() }, whoami: { status: 200, body: `{"object":"whoami","data":{"users":[{"id":77,"company_id":9002}]}}` }, expect: "refused" },
@@ -286,4 +314,6 @@ export const STAFFING_CASES: StaffingCase[] = [
   { name: "a 429 on the shift read", layer: "transport", half: "request", field: "bytes", shifts: { status: 429, headers: { "retry-after": "1" }, body: `{"error":"rate"}` }, expect: "refused" },
   { name: "a 500 on the shift read", layer: "transport", half: "request", field: "bytes", shifts: { status: 500, body: `{"error":"x"}` }, expect: "refused" },
   { name: "a body that is not JSON", layer: "transport", half: "written_form", field: "bytes", shifts: { status: 200, body: `{"data":[` }, expect: "refused" },
+  // Astra F2 (post-build review): only an exact 200 is a complete answer.
+  { name: "F2: HTTP 206 with a terminal empty page", layer: "transport", half: "request", field: "bytes", shifts: { status: 206, headers: { "content-range": "items 0-0/1" }, body: validAnswerBody({ rows: [] }) }, expect: "refused" },
 ];

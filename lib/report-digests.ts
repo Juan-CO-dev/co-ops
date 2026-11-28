@@ -392,11 +392,16 @@ export async function loadCateringFacts(sb: Sb, today: string, now: Date, opts: 
   };
 }
 
-/** One shop's window from the reader. It never throws; a throw would still be "not available", never a lost digest. */
-async function scheduleWindow(reader: ScheduleReader, locationId: string, from: string, to: string): Promise<Loaded<ShopSchedule>> {
+/**
+ * One shop's window from the reader. It never throws; a throw would still be "not available", never a lost digest.
+ * F8 (PR 2 fix round): the log line is ONE fixed code and nothing from the error, because a reader's thrown message
+ * could carry response text or a credential. A synchronous throw from `shopWindow` lands here too (it is awaited
+ * inside the try). Exported for the loader test only.
+ */
+export async function scheduleWindow(reader: ScheduleReader, locationId: string, from: string, to: string): Promise<Loaded<ShopSchedule>> {
   try { return await reader.shopWindow(locationId, from, to); }
-  catch (error) {
-    console.error("[digests] schedule read failed:", error instanceof Error ? error.message : String(error));
+  catch {
+    console.error("[digests] schedule: reader_threw");
     return { kind: "error" };
   }
 }

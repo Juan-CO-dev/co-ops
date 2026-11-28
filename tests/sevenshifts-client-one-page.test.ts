@@ -346,6 +346,87 @@ describe("A2-3 — ids are parsed from their SOURCE TEXT (literal bytes)", () =>
   });
 });
 
+describe("Astra F1 (post-build review): a repeated object member refuses the whole text", () => {
+  const WHOAMI_ARGS = { companyId: null, window: WINDOW } as const;
+
+  it('pure: {"a":1,"a":2} throws', () => {
+    expect(() => parseJsonWithIdSource('{"a":1,"a":2}')).toThrow("duplicate_member");
+  });
+  it('pure: the same name in two different objects does not throw', () => {
+    expect(parseJsonWithIdSource('{"a":{"b":1},"c":{"b":2}}')).toEqual({ a: { b: 1 }, c: { b: 2 } });
+  });
+  it("pure: a duplicate three levels deep throws", () => {
+    expect(() => parseJsonWithIdSource('{"x":{"y":{"z":1,"w":2,"z":3}}}')).toThrow("duplicate_member");
+    expect(() => parseJsonWithIdSource('{"x":[{"y":[{"z":1,"z":1}]}]}')).toThrow("duplicate_member");
+  });
+  it('pure: an escaped name is the same name ("dr\\u0061ft" then "draft") and throws', () => {
+    expect(() => parseJsonWithIdSource('{"dr\\u0061ft":true,"draft":false}')).toThrow("duplicate_member");
+    expect(() => parseJsonWithIdSource('{"draft":true,"dr\\u0061ft":false}')).toThrow("duplicate_member");
+  });
+  it('pure: a string VALUE holding ","draft":true does not throw', () => {
+    const text = '{"draft":false,"note":"\\",\\"draft\\":true {[","other":"a,\\"b"}';
+    expect(parseJsonWithIdSource(text)).toEqual({ draft: false, note: '","draft":true {[', other: 'a,"b' });
+  });
+  it("pure: an array of two objects each with id does not throw", () => {
+    expect(parseJsonWithIdSource('[{"id":1},{"id":2}]')).toEqual([{ id: "1" }, { id: "2" }]);
+  });
+  it("pure: an empty object and nested arrays do not throw", () => {
+    expect(parseJsonWithIdSource('{"a":{},"b":[[],[[1,2],{}],{"a":[]}],"c":{}}')).toEqual({ a: {}, b: [[], [[1, 2], {}], { a: [] }], c: {} });
+    expect(parseJsonWithIdSource("{}")).toEqual({});
+  });
+  it("pure: invalid JSON still throws as before (parse first)", () => {
+    expect(() => parseJsonWithIdSource('{"a":1,"a":')).toThrow(SyntaxError);
+  });
+
+  it('client: a whoami body with "company_id":9001,"company_id":7 → get("whoami") on a bounded client throws bad_payload', async () => {
+    const h = harness([raw('{"object":"whoami","data":{"users":[{"id":77,"company_id":9001,"company_id":7}]}}')], { maxResponseBytes: 65_536 });
+    await expect(h.client.get("whoami", WHOAMI_ARGS)).rejects.toMatchObject({ code: "bad_payload" });
+  });
+  it("client: a shift page with a duplicated draft → getOnePage throws bad_payload", async () => {
+    const h = harness([raw('{"object":"shifts","data":[{"id":1,"draft":true,"draft":false}],"meta":{"cursor":{"next":null,"prev":null}}}')], { maxResponseBytes: 65_536 });
+    await expect(h.client.getOnePage(Q)).rejects.toMatchObject({ code: "bad_payload" });
+  });
+  it("pin: the unbounded (sync) path still accepts a body with a duplicate member, exactly as before", async () => {
+    const h = harness([raw('{"object":"whoami","data":{"users":[{"company_id":7,"company_id":1234}]}}')]);
+    expect(await h.client.get("whoami", WHOAMI_ARGS)).toEqual({ kind: "snapshot", value: { companyIds: ["1234"] } });
+  });
+});
+
+describe("Astra F2 (post-build review): a bounded read takes only an exact HTTP 200 with no Content-Range", () => {
+  const PAGE = '{"object":"shifts","data":[],"meta":{"cursor":{"next":null,"prev":null}}}';
+  const WHOAMI_ARGS = { companyId: null, window: WINDOW } as const;
+
+  it("a 206 whose body would otherwise pass → getOnePage throws http_error", async () => {
+    const h = harness([raw(PAGE, 206, { "content-range": "items 0-0/1" }), raw(PAGE, 206)], { maxResponseBytes: 65_536 });
+    await expect(h.client.getOnePage(Q)).rejects.toMatchObject({ code: "http_error" });
+    await expect(h.client.getOnePage(Q)).rejects.toMatchObject({ code: "http_error" });
+  });
+  it('get("whoami") with 206 on a bounded client throws http_error', async () => {
+    const h = harness([raw('{"object":"whoami","data":{"users":[{"company_id":1234}]}}', 206)], { maxResponseBytes: 65_536 });
+    await expect(h.client.get("whoami", WHOAMI_ARGS)).rejects.toMatchObject({ code: "http_error" });
+  });
+  it("a 200 carrying a Content-Range header throws bad_payload", async () => {
+    const h = harness([raw(PAGE, 200, { "content-range": "items 0-0/1" })], { maxResponseBytes: 65_536 });
+    await expect(h.client.getOnePage(Q)).rejects.toMatchObject({ code: "bad_payload" });
+  });
+  it("a 204 throws http_error; 201 and 299 too", async () => {
+    const h = harness([() => new Response(null, { status: 204 }), raw(PAGE, 201), raw(PAGE, 299)], { maxResponseBytes: 65_536 });
+    await expect(h.client.getOnePage(Q)).rejects.toMatchObject({ code: "http_error" });
+    await expect(h.client.getOnePage(Q)).rejects.toMatchObject({ code: "http_error" });
+    await expect(h.client.getOnePage(Q)).rejects.toMatchObject({ code: "http_error" });
+  });
+  it("the existing status mapping is unchanged on the bounded read", async () => {
+    const h = harness([raw("{}", 401), raw("{}", 404), raw("{}", 503)], { maxResponseBytes: 65_536 });
+    await expect(h.client.getOnePage(Q)).rejects.toMatchObject({ code: "auth_failed" });
+    await expect(h.client.getOnePage(Q)).rejects.toMatchObject({ code: "not_found" });
+    await expect(h.client.getOnePage(Q)).rejects.toMatchObject({ code: "server_error" });
+  });
+  it("pin: the unbounded (sync) path still accepts a 206 (and a Content-Range) as before", async () => {
+    const h = harness([raw('{"object":"whoami","data":{"users":[{"company_id":1234}]}}', 206, { "content-range": "items 0-0/1" })]);
+    expect(await h.client.get("whoami", WHOAMI_ARGS)).toEqual({ kind: "snapshot", value: { companyIds: ["1234"] } });
+  });
+});
+
 describe("getOnePage shares getJson: the 429 retry, the deadline, the fixed codes, the token", () => {
   it("429 once then 200 → two requests, one result", async () => {
     const h = harness([raw("{}", 429, { "retry-after": "1" }), raw('{"data":[{"id":3}]}')], { maxResponseBytes: 65_536 });

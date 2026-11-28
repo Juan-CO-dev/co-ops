@@ -678,12 +678,28 @@ describe("digests round 3: the engine sets the recipient's DATA access on every 
     await runDigestTickWith(morning.io);
     expect(new Set(envelopes.map((e) => e.kind))).toEqual(new Set(["shop", "unified", "catering"]));
     expect(sent.length).toBeGreaterThan(0);
-    for (const { env } of envelopes) {
-      expect(env.viewer).toBeTruthy();
-      // The access is the recipient's own viewer plus the delivery the engine resolved (digests round 3, PR 2).
-      expect(env.access).not.toBeNull();
-      expect(env.access!.digest).toBeTruthy();
-      expect(env.access).toEqual(digestAccessFor(env.viewer, env.access!.digest));
+    // O-5 (PR 2 fix round): the expected delivery is worked out from THIS test's directory fixture (`users` + the default
+    // memberships: gm-a at Shop A, gm-b at Shop B, the MoO and the owner with none; Keith has no email), never read back
+    // from the value under test. Shop digest = that GM's own shop; unified = every active shop; catering = the
+    // recipient's resolved shops (a GM's membership shops, level 8+ every shop).
+    const ALL = [A.id, B.id];
+    const recipientOf = (v: Envelope["viewer"]) =>
+      v?.role === "gm" && v.locations.length === 1 && v.locations[0] === A.id ? "gm-a"
+        : v?.role === "gm" && v.locations.length === 1 && v.locations[0] === B.id ? "gm-b"
+          : v?.role === "moo" ? "moo" : v?.role === "owner" ? "own" : "unexpected";
+    const SHOP_OF: Record<string, string> = { "gm-a": A.id, "gm-b": B.id };
+    const CATERING_SHOPS: Record<string, string[]> = { "gm-a": [A.id], "gm-b": [B.id], moo: ALL, own: ALL };
+    for (const { kind, env } of envelopes) {
+      const who = recipientOf(env.viewer);
+      expect(who, JSON.stringify(env.viewer)).not.toBe("unexpected");
+      const expected = kind === "shop" ? { kind: "gm_shop", shops: [SHOP_OF[who]!] }
+        : kind === "unified" ? { kind: "unified", shops: ALL }
+          : { kind: "catering", shops: CATERING_SHOPS[who]! };
+      if (kind === "shop") expect(SHOP_OF[who], `${who} is not a shop-digest recipient`).toBeDefined();
+      if (kind === "unified") expect(["moo", "own"]).toContain(who);
+      expect(env.access, `${kind} ${who}`).not.toBeNull();
+      expect(env.access!.viewer, `${kind} ${who}`).toEqual(env.viewer);
+      expect(env.access!.digest, `${kind} ${who}`).toEqual(expected);
     }
     // The GM of Shop A gets their own shop's data, never Shop B's; the owner gets both.
     const gmA = envelopes.find((e) => e.env.viewer?.role === "gm" && e.env.viewer.locations.includes(A.id))!.env;

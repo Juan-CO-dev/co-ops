@@ -13,7 +13,7 @@ import { loadCapturedToastDay } from "@/lib/toast/captured-day";
 import { summarizeLabor, weekStart, type LaborEntryFact, type LaborSummary } from "@/lib/toast/labor-shared";
 import { laborPullEnabled, runToastLaborPull } from "@/lib/toast/labor";
 import { addDays, etDayRange } from "@/lib/report-digests-shared";
-import type { ScheduleReader } from "@/lib/report-digests-schedule-shared";
+import type { ScheduleReader, ShopSchedule } from "@/lib/report-digests-schedule-shared";
 import { mergeBreakdown, SALES_WINDOW_CONCURRENCY, type BreakdownRaw, type DailyRaw, type SalesDimension } from "@/lib/sales-reports-shared";
 import {
   cutoffsTomorrow,
@@ -412,6 +412,19 @@ export async function loadLabor(sb: Sb, locationId: string, day: string, sales: 
   return ok(summarizeLabor(day, entries, sales.kind === "ok" ? sales.value.today.netCents : null));
 }
 
+/**
+ * The schedule reader's own catch (F8, PR 2 fix round). Not `settle`: settle logs the thrown message, and a reader's
+ * message could carry response text or a credential. This logs ONE fixed code and nothing from the error, and yields
+ * "Schedule not available" (`error`). A synchronous throw from `shopWindow` is caught too (awaited inside the try).
+ */
+async function readScheduleWindow(reader: ScheduleReader, locationId: string, from: string, to: string): Promise<Loaded<ShopSchedule>> {
+  try { return await reader.shopWindow(locationId, from, to); }
+  catch {
+    console.error("[digests] schedule: reader_threw");
+    return failed();
+  }
+}
+
 /** Every v2 area for one shop and business day. Never throws. */
 /**
  * `opts.schedule` (digests round 3, PR 2): the run's ONE schedule reader (lib/report-digests.ts buildIO). When given,
@@ -433,7 +446,7 @@ export async function loadShopV2Facts(sb: Sb, locationId: string, day: string, n
     settle(() => loadInventory(sb, deliveries, s, locationId, day), "inventory"),
     settle(() => loadPeople(sb, locationId, day), "people"),
     // Belt and braces: the reader never throws, and a throw would still be "not available", never a lost digest.
-    reader ? settle(() => reader.shopWindow(locationId, day, lookaheadDay(day)), "schedule") : Promise.resolve(undefined),
+    reader ? readScheduleWindow(reader, locationId, day, lookaheadDay(day)) : Promise.resolve(undefined),
   ]);
   const labor = await settle(() => laborForDigest(locationId, day, {
     enabled: laborPullEnabled,

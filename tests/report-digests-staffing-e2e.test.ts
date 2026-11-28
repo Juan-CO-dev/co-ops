@@ -51,36 +51,38 @@ const MIRROR: Required<Mirror> = {
   links: [{ location_id: A, sevenshifts_location_id: Number(SHOP_A_7S), active: true }, { location_id: B, sevenshifts_location_id: SHOP_B_7S, active: true }],
   locations: [{ id: Number(SHOP_A_7S), company_id: Number(COMPANY) }, { id: SHOP_B_7S, company_id: COMPANY }],
   users: [
-    { id: 11, first_name: "Person Qfirst", preferred_first_name: "Person Q", last_name: "NEVER-SELECTED" },
-    { id: "12", first_name: "Person R", preferred_first_name: null, last_name: "NEVER-SELECTED" },
+    { id: 11, company_id: COMPANY, first_name: "Person Qfirst", preferred_first_name: "Person Q", last_name: "NEVER-SELECTED" },
+    { id: "12", company_id: COMPANY, first_name: "Person R", preferred_first_name: null, last_name: "NEVER-SELECTED" },
     // A2-3: the person a `42.0000000000000001` would name if it were ever read as 42.
-    { id: 42, first_name: "Person Z", preferred_first_name: null, last_name: "NEVER-SELECTED" },
+    { id: 42, company_id: COMPANY, first_name: "Person Z", preferred_first_name: null, last_name: "NEVER-SELECTED" },
   ],
   roles: [{ id: 21, name: "Cook" }],
 };
 /** Every name and role the mirror could put in an email. */
 const MIRROR_WORDS = ["Person Q", "Person R", "Person Z", "Qfirst", "NEVER-SELECTED", "(Cook)"];
 
+/** Answers as PostgREST would: every eq / in filter, only the selected columns, a `col::text` cast as a string. */
 function fakeDb(m: Mirror = {}): ServiceRoleClient {
   const data = { ...MIRROR, ...m };
+  const tables: Record<string, Row[]> = {
+    sevenshifts_location_links: data.links, sevenshifts_locations: data.locations, sevenshifts_users: data.users, sevenshifts_roles: data.roles,
+  };
   return {
     from(table: string) {
-      const q = { select: "", eq: {} as Record<string, unknown>, in: [] as unknown[] };
+      const q = { select: "", eq: {} as Record<string, unknown>, inCol: null as string | null, in: [] as unknown[] };
       const b: Record<string, unknown> = {
         select: (c: string) => { q.select = c; return b; },
         eq: (c: string, v: unknown) => { q.eq[c] = v; return b; },
-        in: (_c: string, v: unknown[]) => { q.in = v; return b; },
+        in: (c: string, v: unknown[]) => { q.inCol = c; q.in = v; return b; },
         order: () => b,
         abortSignal: () => b,
         then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) => {
-          let rows: Row[] = [];
-          if (table === "sevenshifts_location_links") rows = data.links.filter((r) => r.location_id === q.eq.location_id && r.active === q.eq.active);
-          else if (table === "sevenshifts_locations") rows = data.locations.filter((r) => String(r.id) === String(q.eq.id));
-          else if (table === "sevenshifts_users" || table === "sevenshifts_roles") {
-            const want = new Set(q.in.map(String));
-            const cols = q.select.split(",").map((c) => c.trim());
-            rows = (table === "sevenshifts_users" ? data.users : data.roles).filter((r) => want.has(String(r.id))).map((r) => Object.fromEntries(cols.map((c) => [c, r[c] ?? null])));
-          }
+          const cols = q.select.split(",").map((c) => c.trim().split("::"));
+          const want = new Set(q.in.map(String));
+          const rows = (tables[table] ?? [])
+            .filter((r) => Object.entries(q.eq).every(([k, v]) => String(r[k]) === String(v)))
+            .filter((r) => q.inCol === null || want.has(String(r[q.inCol])))
+            .map((r) => Object.fromEntries(cols.map(([c, cast]) => { const v = r[c!] ?? null; return [c!, cast === "text" && v !== null ? String(v) : v]; })));
           return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
         },
       };

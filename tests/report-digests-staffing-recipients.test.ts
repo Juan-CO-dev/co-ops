@@ -9,6 +9,7 @@
  * Then: one email, two shops (§2.5); resolution → render through `resolveDigestRecipients` and the engine (S4); the
  * (b) sales grant through the engine; and the §1.2 matrix row by row.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
@@ -24,6 +25,7 @@ import type { ShopSchedule } from "@/lib/report-digests-schedule-shared";
 import { DEFAULT_DIGEST_SETTINGS, resolveDigestRecipients, type DigestDirectory, type RecipientOverride } from "@/lib/report-digests-shared";
 import { ok, salesDetailTotals, unavailable, type Loaded, type SalesDetailFacts, type ShopV2Facts } from "@/lib/report-digests-v2-shared";
 import type { CutoffTomorrow } from "@/lib/report-digests-v2-shared";
+import { allShopsSection } from "@/lib/report-digests-v2-compose";
 import type { DailyRaw } from "@/lib/sales-reports-shared";
 import {
   A, B, BASE, cateringFacts, D, D1, fullDay, labor, lead, person, roster, schedule, SCHEDULE_VARIANTS, SHOP_A, SHOP_B, shopFacts, tomorrowDay,
@@ -157,6 +159,100 @@ describe("byte equality: a refused recipient's email is identical whatever the s
       expect(renderCateringDigest(cateringWith(sched), scope, ce).text, what).not.toBe(cBase.text);
     }
   });
+});
+
+// ── 1b. S9 against the BASE commit's own render (F6) ──────────────────────────────────────────
+
+/**
+ * F6 (PR 2 fix round): the comparisons above build both sides with the head renderer, so a change to every variant at
+ * once (the unknown Labor line, say) would pass them. Plan §11.1.6 S9 asks for each refused recipient's email against
+ * its own PRE-CHANGE render: `tests/fixtures/digest-staffing-base-goldens.json` holds what the BASE commit (f3ce21fe)
+ * rendered from the same plain facts (no `schedule` key), generated inside a checkout of that commit. Every head render,
+ * whatever the schedule facts, must equal that golden byte for byte. Never regenerate the golden to make this pass.
+ */
+interface BaseBody { subject: string; preheader: string | null; statuses: unknown[]; html: string; text: string }
+interface BaseGoldens {
+  baseSha: string;
+  cateringScope: { locations: Array<{ id: string; name: string }>; includeUnassigned: boolean };
+  facts: { shop: Record<string, { A: ShopDayFacts; B: ShopDayFacts }>; catering: CateringFacts };
+  renders: {
+    shop: Record<string, Record<string, Record<string, number>>>;
+    unified: Record<string, Record<string, Record<string, number>>>;
+    catering: Record<string, Record<string, number>>;
+  };
+  bodies: BaseBody[];
+}
+const GOLDENS = JSON.parse(readFileSync(new URL("./fixtures/digest-staffing-base-goldens.json", import.meta.url), "utf8")) as BaseGoldens;
+/** The golden's preheader is read the same way at base and head: the hidden inbox-preview div of the layout. */
+const PREHEADER = /<div style="display:none;max-height:0;overflow:hidden;color:transparent;line-height:0;">([^<]*)<\/div>/;
+const bodyOf = (mail: { subject: string; html: string; text: string }, sections: Array<DigestSection | null>): BaseBody => ({
+  subject: mail.subject, preheader: PREHEADER.exec(mail.html)?.[1] ?? null,
+  statuses: sections.filter((s): s is DigestSection => s !== null).map((s) => [s.title, s.status ?? null, s.lines.length]),
+  html: mail.html, text: mail.text,
+});
+const golden = (i: number | undefined): BaseBody => {
+  if (i === undefined) throw new Error("no base golden for this case");
+  return GOLDENS.bodies[i]!;
+};
+/** A copy of the golden's plain facts with the schedule variant added (absent = no key, as at base). */
+const withSched = (f: ShopDayFacts, sched?: Loaded<ShopSchedule>): ShopDayFacts =>
+  sched ? { ...f, v2: { ...f.v2!, schedule: sched } } : f;
+const cateringWithSched = (f: CateringFacts, sched?: Loaded<ShopSchedule>): CateringFacts =>
+  sched ? { ...f, schedule: { [A]: sched, [B]: sched } } : f;
+
+describe("S9 / F6: a refused recipient's email equals the BASE commit's render byte for byte, whatever the schedule facts", () => {
+  it("the golden is the base commit's", () => {
+    expect(GOLDENS.baseSha).toBe("f3ce21fe6eba22f1d47cea0c39f74b4977f5f200");
+    for (const pair of Object.values(GOLDENS.facts.shop)) for (const f of [pair.A, pair.B]) expect("schedule" in f.v2!).toBe(false);
+    expect("schedule" in GOLDENS.facts.catering).toBe(false);
+  });
+
+  for (const language of ["en", "es"] as const) {
+    it(`shop digest (${language}): every refused recipient × labor baseline × schedule state`, () => {
+      for (const [who, viewer, access] of refused("gm_shop")) {
+        for (const [baseline] of LABOR_BASELINES) {
+          const expected = golden(GOLDENS.renders.shop[language]?.[who]?.[baseline]);
+          const e = envOf(viewer, access, language);
+          for (const [what, sched] of SCHEDULE_VARIANTS) {
+            const f = withSched(GOLDENS.facts.shop[baseline]!.A, sched);
+            const head = bodyOf(renderShopDigest(f, e), composeShopSections(f, language, BASE, false, viewer, access));
+            expect(head, `${who} · ${baseline} · ${what}`).toEqual(expected);
+          }
+        }
+      }
+    });
+
+    it(`unified digest (${language}): every refused recipient × labor baseline × schedule state`, () => {
+      for (const [who, viewer, access] of refused("unified")) {
+        for (const [baseline] of LABOR_BASELINES) {
+          const expected = golden(GOLDENS.renders.unified[language]?.[who]?.[baseline]);
+          const e = envOf(viewer, access, language);
+          for (const [what, sched] of SCHEDULE_VARIANTS) {
+            const pair = GOLDENS.facts.shop[baseline]!;
+            const shops = [withSched(pair.A, sched), withSched(pair.B, sched)];
+            const head = bodyOf(renderUnifiedDigest({ day: D, shops, notFinalized: [] }, e), [
+              allShopsSection(shops, language, BASE, D, viewer, access),
+              ...shops.flatMap((f) => composeShopSections(f, language, BASE, true, viewer, access)),
+            ]);
+            expect(head, `${who} · ${baseline} · ${what}`).toEqual(expected);
+          }
+        }
+      }
+    });
+
+    it(`catering digest (${language}): every refused recipient × schedule state`, () => {
+      for (const [who, viewer, access] of refused("catering")) {
+        const expected = golden(GOLDENS.renders.catering[language]?.[who]);
+        const e = envOf(viewer, access, language);
+        const scope = GOLDENS.cateringScope;
+        for (const [what, sched] of SCHEDULE_VARIANTS) {
+          const f = cateringWithSched(GOLDENS.facts.catering, sched);
+          const head = bodyOf(renderCateringDigest(f, scope, e), composeCateringSections(f, scope, language, BASE, viewer, access));
+          expect(head, `${who} · ${what}`).toEqual(expected);
+        }
+      }
+    });
+  }
 });
 
 // ── 2. One email, two shops (§2.5) ────────────────────────────────────────────────────────────

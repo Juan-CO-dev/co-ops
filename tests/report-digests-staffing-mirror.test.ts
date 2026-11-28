@@ -75,7 +75,18 @@ const enc = new TextEncoder();
 const respond = (body: string) => new Response(enc.encode(body), { status: 200, headers: { "content-type": "application/json" } });
 /** A user 13 with no mirror row, beside the table's A / B / open rows. */
 const PAGE = validAnswerBody({ rows: [shiftRow("A"), shiftRow("A", { id: "1002", user_id: "13", role_id: "22" }), shiftRow("B"), shiftRow("OPEN")] });
-const fetchFake: SevenShiftsFetch = async (url) => (new URL(url).pathname === "/v2/whoami" ? respond(VALID_WHOAMI.body) : respond(PAGE));
+const makeFetch = (page: string, whoami: string = VALID_WHOAMI.body): SevenShiftsFetch =>
+  async (url) => (new URL(url).pathname === "/v2/whoami" ? respond(whoami) : respond(page));
+const fetchFake = makeFetch(PAGE);
+
+/** F5: ids above Number.MAX_SAFE_INTEGER; adjacent pairs for two people and for two companies. */
+const BIG_CO = "9007199254740993";
+const BIG_CO_NEXT = "9007199254740994";
+const BIG_P1 = "9007199254740993";
+const BIG_P2 = "9007199254740994";
+const SHOP_BIG = "00000000-0000-4000-8000-0000000000b1"; // 7shifts location 504 of BIG_CO
+const SHOP_BIG_NEXT = "00000000-0000-4000-8000-0000000000b2"; // 7shifts location 505 of the ADJACENT company
+const str = (s: string) => JSON.stringify(s);
 
 let db: PGlite;
 beforeAll(async () => {
@@ -91,15 +102,21 @@ beforeAll(async () => {
   }
   await db.exec(`
     insert into public.users (id, name, role) values ('${ACTOR}', 'Person M', 'moo');
-    insert into public.locations (id, name) values ('${SHOP_A}', 'Shop A'), ('${SHOP_B}', 'Shop B'), ('${SHOP_OLD}', 'Shop D'), ('${SHOP_NOLOC}', 'Shop E');
-    insert into public.sevenshifts_locations (id, company_id, name, active) values (501, 9001, 'Shop A', true), (502, 9001, 'Shop B', true), (503, 9002, 'Other', true);
+    insert into public.locations (id, name) values ('${SHOP_A}', 'Shop A'), ('${SHOP_B}', 'Shop B'), ('${SHOP_OLD}', 'Shop D'), ('${SHOP_NOLOC}', 'Shop E'),
+      ('${SHOP_BIG}', 'Shop F'), ('${SHOP_BIG_NEXT}', 'Shop G');
+    insert into public.sevenshifts_locations (id, company_id, name, active) values (501, 9001, 'Shop A', true), (502, 9001, 'Shop B', true), (503, 9002, 'Other', true),
+      (504, ${BIG_CO}, 'Shop F', true), (505, ${BIG_CO_NEXT}, 'Shop G', true);
     insert into public.sevenshifts_users (id, company_id, first_name, last_name, preferred_first_name, active) values
       (11, 9001, 'Alpha', 'NEVER-SELECTED', 'Person A', true),
       (12, 9001, 'Person B', 'NEVER-SELECTED', null, true),
-      (14, 9001, 'Person C', 'NEVER-SELECTED', null, true);
+      (14, 9001, 'Person C', 'NEVER-SELECTED', null, true),
+      (15, 9002, 'Person X', 'NEVER-SELECTED', 'Person X', true),
+      (${BIG_P1}, ${BIG_CO}, 'Person F', 'NEVER-SELECTED', null, true),
+      (${BIG_P2}, ${BIG_CO}, 'Person G', 'NEVER-SELECTED', null, true);
     insert into public.sevenshifts_roles (id, location_id, name, active) values (21, 501, 'Cook', true), (23, 502, 'Cashier', true);
     insert into public.sevenshifts_location_links (location_id, sevenshifts_location_id, active, linked_by) values
-      ('${SHOP_A}', 501, true, '${ACTOR}'), ('${SHOP_B}', 502, true, '${ACTOR}'), ('${SHOP_NOLOC}', 999, true, '${ACTOR}');
+      ('${SHOP_A}', 501, true, '${ACTOR}'), ('${SHOP_B}', 502, true, '${ACTOR}'), ('${SHOP_NOLOC}', 999, true, '${ACTOR}'),
+      ('${SHOP_BIG}', 504, true, '${ACTOR}'), ('${SHOP_BIG_NEXT}', 505, true, '${ACTOR}');
     insert into public.sevenshifts_location_links (location_id, sevenshifts_location_id, active, linked_by, unlinked_by, unlinked_at) values
       ('${SHOP_OLD}', 503, false, '${ACTOR}', '${ACTOR}', now());
   `);
@@ -108,7 +125,9 @@ beforeAll(async () => {
 describe("the reader's mirror reads against the real 0268 / 0269 / 0301 schema, real rows", () => {
   it("the column lists name no last_name, and the queries the reader builds use exactly those lists", async () => {
     for (const cols of [SCHEDULE_LINK_COLUMNS, SCHEDULE_LOCATION_COLUMNS, SCHEDULE_USER_COLUMNS, SCHEDULE_ROLE_COLUMNS]) expect(cols).not.toMatch(/last_name/);
-    expect(SCHEDULE_USER_COLUMNS).toBe("id, first_name, preferred_first_name");
+    // F3: the user list carries the company; F5: every bigint id is cast to text.
+    expect(SCHEDULE_USER_COLUMNS).toBe("id::text, company_id::text, first_name, preferred_first_name");
+    expect(SCHEDULE_USER_COLUMNS).toContain("company_id");
     built.length = 0;
     const r = createScheduleReader(pgliteClient(db), { env: ENV, fetch: fetchFake });
     const a = await r.shopWindow(SHOP_A, "2026-03-01", "2026-03-02");
@@ -139,17 +158,19 @@ describe("the reader's mirror reads against the real 0268 / 0269 / 0301 schema, 
     await db.exec("set role service_role");
     try {
       const link = await db.query(`select ${SCHEDULE_LINK_COLUMNS} from public.sevenshifts_location_links where location_id = $1 and active = $2`, [SHOP_A, true]);
-      expect(link.rows.map((x) => String((x as Record<string, unknown>).sevenshifts_location_id))).toEqual(["501"]);
+      expect(link.rows).toEqual([{ location_id: SHOP_A, sevenshifts_location_id: "501" }]);
       const old = await db.query(`select ${SCHEDULE_LINK_COLUMNS} from public.sevenshifts_location_links where location_id = $1 and active = $2`, [SHOP_OLD, true]);
       expect(old.rows).toEqual([]);
-      const loc = await db.query(`select ${SCHEDULE_LOCATION_COLUMNS} from public.sevenshifts_locations where id = $1`, ["502"]);
-      expect(loc.rows.map((x) => String((x as Record<string, unknown>).company_id))).toEqual(["9001"]);
+      const loc = await db.query(`select ${SCHEDULE_LOCATION_COLUMNS} from public.sevenshifts_locations where id::text = any($1::text[])`, [["502"]]);
+      expect(loc.rows).toEqual([{ id: "502", company_id: "9001" }]);
       const users = await db.query(`select ${SCHEDULE_USER_COLUMNS} from public.sevenshifts_users where id::text = any($1::text[]) order by id`, [["14", "11", "13"]]);
-      expect(users.rows.map((x) => { const o = x as Record<string, unknown>; return [String(o.id), o.first_name, o.preferred_first_name]; }))
-        .toEqual([["11", "Alpha", "Person A"], ["14", "Person C", null]]);
-      expect(users.fields.map((f) => f.name)).toEqual(["id", "first_name", "preferred_first_name"]);
+      expect(users.rows).toEqual([
+        { id: "11", company_id: "9001", first_name: "Alpha", preferred_first_name: "Person A" },
+        { id: "14", company_id: "9001", first_name: "Person C", preferred_first_name: null },
+      ]);
+      expect(users.fields.map((f) => f.name)).toEqual(["id", "company_id", "first_name", "preferred_first_name"]);
       const roles = await db.query(`select ${SCHEDULE_ROLE_COLUMNS} from public.sevenshifts_roles where id::text = any($1::text[]) order by id`, [["23", "22", "21"]]);
-      expect(roles.rows.map((x) => { const o = x as Record<string, unknown>; return [String(o.id), o.name]; })).toEqual([["21", "Cook"], ["23", "Cashier"]]);
+      expect(roles.rows).toEqual([{ id: "21", name: "Cook" }, { id: "23", name: "Cashier" }]);
     } finally {
       await db.exec("reset role");
     }
@@ -161,5 +182,55 @@ describe("the reader's mirror reads against the real 0268 / 0269 / 0301 schema, 
     expect(await r.shopWindow(SHOP_OLD, "2026-03-01", "2026-03-02")).toEqual({ kind: "unavailable", reason: "shop_not_linked" });
     expect(await r.shopWindow(SHOP_NOLOC, "2026-03-01", "2026-03-02")).toEqual({ kind: "unavailable", reason: "shop_not_linked" });
     expect(counter.requests).toBe(0);
+  });
+
+  it("F3: a published user whose mirror row is of ANOTHER company → not available for both shops; the name never appears", async () => {
+    const page = validAnswerBody({ rows: [shiftRow("A", { user_id: "15" }), shiftRow("B")] });
+    const r = createScheduleReader(pgliteClient(db), { env: ENV, fetch: makeFetch(page) });
+    const a = await r.shopWindow(SHOP_A, "2026-03-01", "2026-03-02");
+    const b = await r.shopWindow(SHOP_B, "2026-03-01", "2026-03-02");
+    expect(a).toEqual({ kind: "unavailable", reason: "mirror_conflict" });
+    expect(b).toEqual({ kind: "unavailable", reason: "mirror_conflict" });
+    expect(JSON.stringify([a, b])).not.toContain("Person X");
+  });
+
+  it("F3: a published user with NO mirror row → ok with a null first name", async () => {
+    const page = validAnswerBody({ rows: [shiftRow("A", { user_id: "13" })] });
+    const r = createScheduleReader(pgliteClient(db), { env: ENV, fetch: makeFetch(page) });
+    const a = await r.shopWindow(SHOP_A, "2026-03-01", "2026-03-02");
+    if (a.kind !== "ok") throw new Error(JSON.stringify(a));
+    expect(a.value.days[0]!.people.map((p) => [p.userId, p.firstName])).toEqual([["13", null]]);
+  });
+
+  it("F5: adjacent 16-digit ids come back from the exact select lists as DISTINCT strings", async () => {
+    await db.exec("set role service_role");
+    try {
+      const users = await db.query(`select ${SCHEDULE_USER_COLUMNS} from public.sevenshifts_users where id::text = any($1::text[]) order by id`, [[BIG_P2, BIG_P1]]);
+      expect(users.rows).toEqual([
+        { id: BIG_P1, company_id: BIG_CO, first_name: "Person F", preferred_first_name: null },
+        { id: BIG_P2, company_id: BIG_CO, first_name: "Person G", preferred_first_name: null },
+      ]);
+      const locs = await db.query(`select ${SCHEDULE_LOCATION_COLUMNS} from public.sevenshifts_locations where id::text = any($1::text[]) order by id`, [["504", "505"]]);
+      expect(locs.rows).toEqual([{ id: "504", company_id: BIG_CO }, { id: "505", company_id: BIG_CO_NEXT }]);
+      const links = await db.query(`select ${SCHEDULE_LINK_COLUMNS} from public.sevenshifts_location_links where active = $1`, [true]);
+      expect(links.rows.every((x) => typeof (x as Record<string, unknown>).sevenshifts_location_id === "string")).toBe(true);
+    } finally {
+      await db.exec("reset role");
+    }
+  });
+
+  it("F5: the reader over the real schema: adjacent big people resolve to the right names; the adjacent company is not verified", async () => {
+    const page = validAnswerBody({
+      rows: [
+        shiftRow("A", { location_id: "504", company_id: str(BIG_CO), user_id: str(BIG_P1), role_id: "null" }),
+        shiftRow("A", { id: "1002", location_id: "504", company_id: str(BIG_CO), user_id: str(BIG_P2), role_id: "null", start: `"2026-03-01T15:00:00Z"` }),
+      ],
+    });
+    const whoami = `{"object":"whoami","data":{"users":[{"id":77,"company_id":"${BIG_CO}"}]}}`;
+    const r = createScheduleReader(pgliteClient(db), { env: ENV, fetch: makeFetch(page, whoami) });
+    const a = await r.shopWindow(SHOP_BIG, "2026-03-01", "2026-03-02");
+    if (a.kind !== "ok") throw new Error(JSON.stringify(a));
+    expect(a.value.days[0]!.people.map((p) => [p.userId, p.firstName])).toEqual([[BIG_P1, "Person F"], [BIG_P2, "Person G"]]);
+    expect(await r.shopWindow(SHOP_BIG_NEXT, "2026-03-01", "2026-03-02")).toEqual({ kind: "unavailable", reason: "company_unverified" });
   });
 });

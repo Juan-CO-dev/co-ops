@@ -21,7 +21,8 @@
  * THE DIGEST'S BOUNDED READ (digest PR 2, S6 + A2-3). A client built with `maxResponseBytes` reads every
  * body under that byte ceiling (a stream counted chunk by chunk, never `res.json()`), decodes it as strict
  * UTF-8 and parses it with `parseJsonWithIdSource`, so an id is checked in its WRITTEN form. Without the
- * field every byte of the sync's path is what it was. `getOnePage` is the digest's one GET of the
+ * field every byte of the sync's path is what it was. A bounded read takes only an exact HTTP 200 with no
+ * Content-Range, and refuses any text with a repeated object member (Astra F1, F2). `getOnePage` is the digest's one GET of the
  * published-shifts listing: it never follows a cursor and never judges the page (the digest's pure check
  * does that).
  */
@@ -139,7 +140,57 @@ export function parseJsonWithIdSource(text: string, idKeys: readonly string[] = 
     if (typeof source === "string" && CANONICAL_ID_TOKEN.test(source)) return source;
     return Number.NaN;
   };
-  return JSON.parse(text, reviver as (this: unknown, key: string, value: unknown) => unknown);
+  const parsed: unknown = JSON.parse(text, reviver as (this: unknown, key: string, value: unknown) => unknown);
+  // Astra F1 (post-build review): JSON.parse keeps the LAST of two members with one name and drops the
+  // earlier one before the reviver sees it, so `"draft":true,"draft":false` would read as published. A
+  // well-formed API never writes a repeated member, so any repeat refuses the whole text (fail closed).
+  if (hasDuplicateMember(text)) throw new SyntaxError("duplicate_member");
+  return parsed;
+}
+
+/**
+ * Astra F1 (post-build review): one linear pass over text that JSON.parse has ALREADY accepted. A stack of
+ * frames: an object keeps the member names seen and whether a name comes next; an array keeps nothing. A
+ * string in name position is decoded (only when it holds an escape, with JSON.parse on its own token), so
+ * `"draft"` and `"draft"` are the same name. A string in value position is skipped with its escapes
+ * honoured, so a `{`, `,` or `"` inside a value never moves the frames.
+ */
+function hasDuplicateMember(text: string): boolean {
+  const stack: Array<{ names: Set<string> | null; nameNext: boolean }> = [];
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const c = text.charCodeAt(i);
+    if (c === 0x22 /* " */) {
+      const start = i;
+      let escaped = false;
+      i += 1;
+      while (i < n) {
+        const d = text.charCodeAt(i);
+        if (d === 0x5c /* \ */) { escaped = true; i += 2; continue; }
+        if (d === 0x22) break;
+        i += 1;
+      }
+      const top = stack[stack.length - 1];
+      if (top !== undefined && top.names !== null && top.nameNext) {
+        const name = escaped ? (JSON.parse(text.slice(start, i + 1)) as string) : text.slice(start + 1, i);
+        if (top.names.has(name)) return true;
+        top.names.add(name);
+        top.nameNext = false;
+      }
+      i += 1; // past the closing quote
+      continue;
+    }
+    if (c === 0x7b /* { */) stack.push({ names: new Set<string>(), nameNext: true });
+    else if (c === 0x5b /* [ */) stack.push({ names: null, nameNext: false });
+    else if (c === 0x7d /* } */ || c === 0x5d /* ] */) stack.pop();
+    else if (c === 0x2c /* , */) {
+      const top = stack[stack.length - 1];
+      if (top !== undefined && top.names !== null) top.nameNext = true;
+    }
+    i += 1;
+  }
+  return false;
 }
 
 /** A ceiling is a positive whole byte count; anything else is refused (never read as "no ceiling"). */
@@ -257,7 +308,21 @@ export function createSevenShiftsClient(deps: SevenShiftsClientDeps) {
       }
     }
     if (!res.ok) throw new SevenShiftsApiError(statusCode(res.status));
-    if (maxBytes !== undefined) return readBounded(res, maxBytes, deps.signal);
+    if (maxBytes !== undefined) {
+      // Astra F2 (post-build review): the digest asks for a COMPLETE listing with no Range, so only an exact
+      // 200 is an answer. `res.ok` also admits 201–299 (a 206 Partial Content printed "No one scheduled"):
+      // those are http_error. A Content-Range header, whatever the status, marks a partial answer: bad_payload.
+      // The sync's unbounded path below keeps `res.ok` unchanged.
+      if (res.status !== 200) {
+        if (res.body) await cancelQuietly(() => res.body!.cancel());
+        throw new SevenShiftsApiError("http_error");
+      }
+      if (res.headers.has("content-range")) {
+        if (res.body) await cancelQuietly(() => res.body!.cancel());
+        throw new SevenShiftsApiError("bad_payload");
+      }
+      return readBounded(res, maxBytes, deps.signal);
+    }
     try {
       return await res.json();
     } catch {

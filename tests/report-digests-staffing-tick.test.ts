@@ -48,28 +48,30 @@ type Row = Record<string, unknown>;
 const MIRROR = {
   links: [{ location_id: A, sevenshifts_location_id: Number(SHOP_A_7S), active: true }, { location_id: B, sevenshifts_location_id: SHOP_B_7S, active: true }] as Row[],
   locations: [{ id: Number(SHOP_A_7S), company_id: Number(COMPANY) }, { id: SHOP_B_7S, company_id: COMPANY }] as Row[],
-  users: [{ id: 11, first_name: "Person Q", preferred_first_name: null }, { id: 12, first_name: "Person R", preferred_first_name: null }] as Row[],
+  users: [{ id: 11, company_id: COMPANY, first_name: "Person Q", preferred_first_name: null }, { id: 12, company_id: COMPANY, first_name: "Person R", preferred_first_name: null }] as Row[],
   roles: [{ id: 21, name: "Cook" }] as Row[],
 };
+/** Answers as PostgREST would: every eq / in filter, only the selected columns, a `col::text` cast as a string. */
 function fakeDb(): ServiceRoleClient {
+  const tables: Record<string, Row[]> = {
+    sevenshifts_location_links: MIRROR.links, sevenshifts_locations: MIRROR.locations, sevenshifts_users: MIRROR.users, sevenshifts_roles: MIRROR.roles,
+  };
   return {
     from(table: string) {
-      const q = { select: "", eq: {} as Record<string, unknown>, in: [] as unknown[] };
+      const q = { select: "", eq: {} as Record<string, unknown>, inCol: null as string | null, in: [] as unknown[] };
       const b: Record<string, unknown> = {
         select: (c: string) => { q.select = c; return b; },
         eq: (c: string, v: unknown) => { q.eq[c] = v; return b; },
-        in: (_c: string, v: unknown[]) => { q.in = v; return b; },
+        in: (c: string, v: unknown[]) => { q.inCol = c; q.in = v; return b; },
         order: () => b,
         abortSignal: () => b,
         then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) => {
-          let rows: Row[] = [];
-          if (table === "sevenshifts_location_links") rows = MIRROR.links.filter((r) => r.location_id === q.eq.location_id && r.active === q.eq.active);
-          else if (table === "sevenshifts_locations") rows = MIRROR.locations.filter((r) => String(r.id) === String(q.eq.id));
-          else {
-            const want = new Set(q.in.map(String));
-            const cols = q.select.split(",").map((c) => c.trim());
-            rows = (table === "sevenshifts_users" ? MIRROR.users : MIRROR.roles).filter((r) => want.has(String(r.id))).map((r) => Object.fromEntries(cols.map((c) => [c, r[c] ?? null])));
-          }
+          const cols = q.select.split(",").map((c) => c.trim().split("::"));
+          const want = new Set(q.in.map(String));
+          const rows = (tables[table] ?? [])
+            .filter((r) => Object.entries(q.eq).every(([k, v]) => String(r[k]) === String(v)))
+            .filter((r) => q.inCol === null || want.has(String(r[q.inCol])))
+            .map((r) => Object.fromEntries(cols.map(([c, cast]) => { const v = r[c!] ?? null; return [c!, cast === "text" && v !== null ? String(v) : v]; })));
           return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
         },
       };
@@ -305,7 +307,7 @@ describe("a slow first shop does not blank the second", () => {
     });
     const r = await settle(p);
     expect(bAskedAt - aDoneAt).toBeGreaterThanOrEqual(0);
-    // B asks well past the 6 s of A's ask (the window's first ask): only an ask-owned deadline can serve it.
+    // B asks well past the window's 6 s (from A's first ask): it is served from the settled links, whoami and page, no wait.
     const firstA = r.asks.find((a) => a.location === A && a.from === D)!;
     expect(bAskedAt - firstA.startedAt).toBeGreaterThanOrEqual(30_000);
     const bAsks = r.asks.filter((a) => a.location === B && a.from === D);
