@@ -189,7 +189,9 @@ function laborView(dto: BusinessLaborDto, access: Pick<BusinessAccess, "hourlyCo
   return { ...base, ...hourly, ...loaded };
 }
 /** Nav PR 8 (plan r2 2.12): the SAME labor view for the Dashboard's numbers strip, which reads one day's labor from
- * `loadBusinessLaborDays`. Only `lib/dashboard-blocks.ts` calls it; no surface imports it. */
+ * `loadBusinessLaborDays`. Digests round 3 PR 4 (plan §3.6): and for the digests' labor-money lines, over the spans the
+ * pre-load priced with the report's own pricer. Its two callers are `lib/dashboard-blocks.ts` and
+ * `lib/report-digests-labor-view.ts`; no surface imports it. */
 export const businessLaborView = laborView;
 
 /** "Not included in this view": the claim of a list the access does not hold (never "none"). */

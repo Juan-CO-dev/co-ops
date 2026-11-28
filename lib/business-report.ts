@@ -37,7 +37,7 @@ import { readCurrentWeekFingerprints } from "@/lib/facts/labor-week-gate";
 import type { RoleCode } from "@/lib/roles";
 import {
   BUSINESS_ACCESS_GROUPS, businessAccessFor, businessAllShopsAllowed, businessShopAllowed, businessTabAllowed, parseGmVisibility, redactBusinessDto,
-  sameBusinessAccess, type BusinessAccess, type LABOR_BASE_KEYS, type LABOR_HOURLY_KEYS, type LABOR_LOADED_KEYS,
+  sameBusinessAccess, type BusinessAccess, type GmVisibility, type LABOR_BASE_KEYS, type LABOR_HOURLY_KEYS, type LABOR_LOADED_KEYS,
 } from "@/lib/business-access-shared";
 import {
   BUSINESS_QUARTER_MAX_DAYS, RUSH_HISTORY_WEEKS, RUSH_MIN_CHECKS, RUSH_MIN_HISTORY, RUSH_MULTIPLIER, RUSH_MIN_BASELINE_CHECKS, RUSH_MIN_RUN_QUARTERS,
@@ -88,28 +88,42 @@ export async function resolveBusinessAccess(viewer: BusinessViewer, deps: Busine
   if (viewer.level < SALES_READ_MIN || businessReportRefusal(viewer.role)) throw new BusinessReportError(403, "role_insufficient");
   if (businessAllShopsAllowed(viewer.role)) return businessAccessFor(viewer.role, null);
   const sb = deps.client ?? getServiceRoleClient();
-  let res: { data: unknown; error: { code?: string } | null };
-  try {
-    res = await sb.from("business_report_gm_visibility").select("id, settings").order("seq", { ascending: false }).limit(1);
-  } catch {
-    console.error("business_access_unavailable");
+  const read = await readGmVisibility(sb);
+  if ("unavailable" in read) {
+    if (read.unavailable === "not_installed") throw new BusinessReportError(503, "business_access_not_installed");
+    if (read.unavailable === "read_failed") console.error("business_access_unavailable");
     throw new BusinessReportError(503, "business_access_unavailable");
   }
-  if (res.error) {
-    if (ACCESS_NOT_INSTALLED.has(res.error.code ?? "")) throw new BusinessReportError(503, "business_access_not_installed");
-    console.error("business_access_unavailable");
-    throw new BusinessReportError(503, "business_access_unavailable");
-  }
-  if (!Array.isArray(res.data)) throw new BusinessReportError(503, "business_access_unavailable");
-  let settings: ReturnType<typeof parseGmVisibility> = null;
-  if (res.data.length > 0) {
-    settings = parseGmVisibility((res.data[0] as { settings?: unknown } | null)?.settings);
-    // A stored row that is not the exact coherent twelve is not read "as far as it goes": the report is unavailable.
-    if (settings === null) throw new BusinessReportError(503, "business_access_unavailable");
-  }
-  const access = businessAccessFor(viewer.role, settings);
+  const access = businessAccessFor(viewer.role, read.settings);
   if (!access.report) throw new BusinessReportError(403, "gm_report_off");
   return access;
+}
+
+/** Why the GM visibility settings could not be read: the table is missing; the read threw or errored; or what came back
+ * is not a row list / not the exact coherent twelve (a stored row is never read "as far as it goes"). */
+export type GmVisibilityUnavailable = "not_installed" | "read_failed" | "malformed";
+/**
+ * THE one read of the GM visibility settings (the newest saved row), shared by `resolveBusinessAccess` and the digest's
+ * labor-money pre-load (digests round 3, PR 4). `settings: null` = no row was ever saved (the defaults). NEVER throws,
+ * never wider than what was read.
+ * `signal` (the pre-load only): the request carries it and is sent WITHOUT the SDK's automatic retries, so one call is
+ * one HTTP attempt and nothing is sent from a back-off after its stage ended. With no signal the request is exactly
+ * what it always was.
+ */
+export async function readGmVisibility(sb: Client, signal?: AbortSignal): Promise<{ settings: GmVisibility | null } | { unavailable: GmVisibilityUnavailable }> {
+  let res: { data: unknown; error: { code?: string } | null };
+  try {
+    const q = sb.from("business_report_gm_visibility").select("id, settings").order("seq", { ascending: false }).limit(1);
+    res = await (signal ? q.abortSignal(signal).retry(false) : q);
+  } catch {
+    return { unavailable: "read_failed" };
+  }
+  if (res.error) return { unavailable: ACCESS_NOT_INSTALLED.has(res.error.code ?? "") ? "not_installed" : "read_failed" };
+  if (!Array.isArray(res.data)) return { unavailable: "malformed" };
+  if (res.data.length === 0) return { settings: null };
+  const settings = parseGmVisibility((res.data[0] as { settings?: unknown } | null)?.settings);
+  // A stored row that is not the exact coherent twelve is not read "as far as it goes".
+  return settings === null ? { unavailable: "malformed" } : { settings };
 }
 
 /** Whether the business report is offered to this viewer right now (the hub tile): the switch, the role, and for a
@@ -151,7 +165,7 @@ async function call<T>(sb: Client, fn: string, args: Record<string, unknown>): P
   if (result.error) rpcError(result.error);
   return result.data as T;
 }
-type Page = { data: unknown; error: { code?: string } | null; count?: number | null };
+export type Page = { data: unknown; error: { code?: string } | null; count?: number | null };
 
 /** Rows per request: PostgREST's default max-rows. A server configured lower is still read to completion,
  * because the END is decided by the exact count, never by a short page. */
@@ -165,11 +179,15 @@ export const BUSINESS_READ_MAX_PAGES = 50;
  * missing or moves) before the count is reached is 503 `business_reads_incomplete`: never a silently
  * truncated report. Ordering is the read's own total ORDER BY (0341) / an explicit order on table reads.
  */
-async function readAll<T>(page: (from: number, to: number) => PromiseLike<Page>, onError: (e: { code?: string }) => never): Promise<T[]> {
+export async function readAll<T>(page: (from: number, to: number) => PromiseLike<Page>, onError: (e: { code?: string }) => never,
+  guard?: { expired(): boolean }): Promise<T[]> {
   const out: T[] = [];
   let expected: number | null = null;
   for (let i = 0; ; i++) {
     if (i >= BUSINESS_READ_MAX_PAGES) throw new BusinessReportError(503, "business_reads_incomplete");
+    // The digest's labor-money pre-load only (finding L10): no page is ever asked for after its stage has ended.
+    // The report's own loaders pass no guard and are exactly what they were.
+    if (guard?.expired()) throw new BusinessReportError(503, "business_reads_timeout");
     let r: Page;
     try {
       r = await page(out.length, out.length + BUSINESS_READ_PAGE - 1);
@@ -192,13 +210,13 @@ async function readAll<T>(page: (from: number, to: number) => PromiseLike<Page>,
     }
   }
 }
-const rpcError = (e: { code?: string }): never => {
+export const rpcError = (e: { code?: string }): never => {
   // 0341 not applied yet: say so, never an empty report. Never log messages, args or payloads.
   if (e.code === "PGRST202" || e.code === "42883") throw new BusinessReportError(503, "business_reads_not_installed");
   console.error("business_reads_timeout");
   throw new BusinessReportError(503, "business_reads_timeout");
 };
-const tableError = (e: { code?: string }): never => {
+export const tableError = (e: { code?: string }): never => {
   if (e.code === "42P01" || e.code === "42703" || e.code === "PGRST205") throw new BusinessReportError(503, "business_reads_not_installed");
   console.error("business_reads_timeout");
   throw new BusinessReportError(503, "business_reads_timeout");
@@ -213,7 +231,7 @@ function rows<T>(build: () => { range: (a: number, z: number) => PromiseLike<Pag
 }
 
 /** Order-preserving map with at most `limit` calls in flight. */
-async function mapBounded<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function mapBounded<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
   let failed = false;
@@ -302,14 +320,14 @@ export { BUSINESS_ACCESS_GROUPS };
 interface QuarterRaw { business_date: string; quarter_start_at: string; wall_quarter: number; fold: number; minutes: number | string; straight_cents: number | string }
 interface PersonRaw { week_start: string; person_key: string; person_label: string | null; source: string; pay_class: string;
   minutes: number | string; ot_minutes: number | string; straight_cents: number | string | null }
-interface StructureRow { structure: { labor?: { targetPct: number; basis: "hourly" | "total"; hourlyTargetPct?: number } } | null; created_at: string }
+export interface StructureRow { structure: { labor?: { targetPct: number; basis: "hourly" | "total"; hourlyTargetPct?: number } } | null; created_at: string }
 
-const ymd = (v: unknown) => String(v).slice(0, 10);
+export const ymd = (v: unknown) => String(v).slice(0, 10);
 const isoOf = (v: unknown) => new Date(v as string).toISOString();
 const n = (v: unknown) => Number(v ?? 0);
 
 /** The structure in force at a payroll week's start (ET midnight) decides that week's targets. */
-function targetsForWeek(structures: readonly StructureRow[], weekStart: string): LaborTargets {
+export function targetsForWeek(structures: readonly StructureRow[], weekStart: string): LaborTargets {
   const at = operationalDayUtcRange(weekStart).startIso;
   const s = [...structures].filter((x) => x.created_at <= at).sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0];
   return laborTargetsFor(s?.structure?.labor ? { labor: s.structure.labor } : null);

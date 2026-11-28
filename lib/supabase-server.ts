@@ -82,3 +82,25 @@ export function getServiceRoleClient(): SupabaseClient {
   });
   return cachedServiceRole;
 }
+
+/**
+ * A service-role client whose every request goes through `fetchImpl` (digests round 3, PR 4; CC addendum A4-4).
+ * supabase-js awaits its access token before it calls the transport, so a request can pass a deadline check just
+ * before a cutoff and reach the network just after it. The digest's labor-money pre-load closes that gap with a
+ * `fetch` that re-checks the stage's deadline immediately before the transport.
+ *
+ * Same key and same auth options as `getServiceRoleClient`. A NEW client per call: never cached, never the shared
+ * singleton, so no other code path ever runs through the wrapped transport.
+ * ONE caller: lib/report-digests-labor.ts (pinned by an import census).
+ */
+export function createServiceRoleClientWithFetch(fetchImpl: typeof fetch): SupabaseClient {
+  if (process.env.SIM_MODE) assertSimTarget(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  return createClient(getUrl(), getServiceRoleKey(), {
+    global: { fetch: fetchImpl },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}

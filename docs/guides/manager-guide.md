@@ -1875,6 +1875,27 @@ CO-OPS builds a draft of the week's schedule for you: who works, when, at which 
 - When the minimum crews alone cost more than the target allows, the card says so once for the day, with the numbers. Then the target can't be met without more sales or smaller minimums.
 - An AGM sees the people numbers, not the dollars.
 
+### Labor cost in the nightly digest
+
+The closing digest email can show labor dollars in its **Labor** section. It is off until the owner turns it on.
+
+#### 1. Read the labor cost lines (not shown)
+
+**What to do** — Open the shop digest or the all-shops digest. Read the **Labor** section. Tap a line to open the **Business report** for those dates.
+
+**Worth knowing**
+
+- Who sees it: the same people as the **Business report**, with the same settings. The Manager of Operations, the Owner and the Chief Growth Strategist see all of it. A GM sees what the business report settings give a GM, for their own shop. An AGM and everyone else see no labor dollars.
+- **Latest final day**: the labor $, the % of net sales against the target, and the overtime for the newest finished day.
+- **Payroll week so far**: hours, labor $, % and overtime from Sunday to that latest final day.
+- **Last full payroll week**: the % and the overtime for the week before this one.
+- **Fully loaded labor**: the same, with salaries and taxes and benefits added. It shows only if your settings include it.
+- **Cost by role**: the latest final day's straight time (before overtime) for each role. It shows only if your settings include each person's cost.
+- It never shows money for TODAY. The figures are for finished days only.
+- From Tuesday to Saturday, **Payroll week so far** often says it is updating at closing time, and the latest final day is often last Saturday. That is normal: tonight's hours change this week's numbers until they are rebuilt.
+- **Labor cost not available** and **Labor figures are updating** mean wait. They never mean $0.
+- The **Labor** section shows six lines. The rest fold into **and N more**, which names them. Open the **Business report** to see their figures.
+
 ### Schedule settings (GM, Director of Operations)
 
 Scheduling is off for every shop until the Director of Operations turns it on. Set the structure with your GM first.
@@ -2084,6 +2105,13 @@ CO-OPS te arma un borrador del horario de la semana: quién trabaja, cuándo, en
 #### El objetivo de mano de obra (gerente general)
 
 1. **Lee la tarjeta.** Cada día tiene una tarjeta **Objetivo de mano de obra** con la cuenta: mano de obra máxima en $ = ventas pronosticadas × % objetivo; horas máximas = mano de obra máxima ÷ salario promedio; y cada parte del día con cuántas personas hay y el número óptimo. El óptimo nunca es menor que el equipo mínimo de esa parte del día. **Revisa este día: una franja tiene más personas que su óptimo.** quiere decir que una parte del día se pasa. Cuando solo los equipos mínimos ya cuestan más de lo que permite el objetivo, la tarjeta lo dice una vez para el día, con los números: no se puede cumplir sin más ventas o mínimos más chicos. Un AGM ve los números de personas, no los dólares.
+
+#### El costo de mano de obra en el resumen de la noche
+
+El correo del resumen de cierre puede mostrar dólares de mano de obra en su sección **Mano de obra**. Está apagado hasta que el dueño lo enciende.
+
+1. **Lee las líneas de costo.** Abre el resumen de la tienda o el de todas las tiendas y lee la sección **Mano de obra**. Toca una línea para abrir el **Reporte del negocio** de esas fechas. Lo ven las mismas personas que el **Reporte del negocio**, con los mismos ajustes: el Gerente de Operaciones, el dueño y el Chief Growth Strategist lo ven todo; un gerente general ve lo que los ajustes del reporte le dan, en su propia tienda; un AGM y los demás no ven dólares de mano de obra. **Último día final**: los $ de mano de obra, el % de las ventas netas contra la meta y las horas extra del día terminado más reciente. **Semana de nómina hasta ahora**: horas, $, % y horas extra desde el domingo hasta ese último día final. **Última semana de nómina completa**: el % y las horas extra de la semana anterior. **Mano de obra total**: lo mismo con salarios, impuestos y beneficios; sale solo si tus ajustes lo incluyen. **Costo por puesto**: el tiempo normal (antes de horas extra) de cada puesto en el último día final; sale solo si tus ajustes incluyen el costo de cada persona.
+2. **Nunca hay dinero de HOY.** Las cifras son solo de días terminados. De martes a sábado, a la hora del cierre, **Semana de nómina hasta ahora** muchas veces dice que se está actualizando, y el último día final muchas veces es el sábado pasado. Es normal: las horas de esta noche cambian los números de la semana hasta que se recalculan. **Costo de mano de obra no disponible** y **Las cifras de mano de obra se están actualizando** quieren decir que esperes; nunca quieren decir $0. La sección **Mano de obra** muestra seis líneas; las demás se juntan en **y N más**, que las nombra. Abre el **Reporte del negocio** para ver sus cifras.
 
 #### Ajustes del horario (gerente general, Director de Operaciones)
 

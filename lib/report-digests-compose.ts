@@ -24,6 +24,7 @@ import type { CateringReadiness, PaymentState, StaffRoster, ToastCrossCheck } fr
 import type { NotInToastOrder } from "@/lib/catering/not-in-toast-shared";
 import { toastRingLines } from "@/lib/report-digests-toast-shared";
 import type { ShopSchedule } from "@/lib/report-digests-schedule-shared";
+import type { LaborMoneyStore } from "@/lib/report-digests-labor-shared";
 import { scheduleDays, scheduleNotAvailableLine, staffScheduledLine } from "@/lib/report-digests-staffing-compose";
 import { digestLink, type DigestTarget, type LinkCtx, type LinkViewer } from "@/lib/report-digests-links";
 import { digestCan, type DigestAccess, type DigestCapability } from "@/lib/report-digests-access-shared";
@@ -258,6 +259,12 @@ export interface Envelope {
    * `viewer`, there is no "unscoped" reading. A fixture that wants gated lines passes an explicit access.
    */
   access?: DigestAccess | null;
+  /**
+   * The run's SEALED labor-money facts (digests round 3, PR 4; lib/report-digests-labor-shared.ts), read-only, looked
+   * up by shop and day. Set by the engine only in a labor-money run (the switch on). Absent or null = NOT a
+   * labor-money run: no labor-money line is composed at all. It is never written onto the memoized shop facts.
+   */
+  laborMoney?: LaborMoneyStore | null;
   /** Set in preview mode: who this digest was composed for. */
   previewFor?: { name: string; email: string | null } | null;
 }
@@ -266,9 +273,11 @@ export interface Envelope {
  * One shop's sections: the v2 management layout when its facts carry v2, else the v1 single
  * section. `prefix` puts the shop name in front of every v2 title (the unified digest). Every section is
  * FINISHED for the recipient (cut → count → cap, lib/report-digests-layout-shared.ts) against this shop and
- * day; `access` absent or null = no gated line (fail closed).
+ * day; `access` absent or null = no gated line (fail closed). `laborMoney` = the run's sealed labor-money store (PR 4;
+ * the v2 Labor section only): absent or null = no labor-money line at all. The catering digest never gets it.
  */
-export function composeShopSections(f: ShopDayFacts, language: Language, baseUrl: string, prefix: boolean, viewer?: LinkViewer | null, access?: DigestAccess | null): DigestSection[] {
+export function composeShopSections(f: ShopDayFacts, language: Language, baseUrl: string, prefix: boolean, viewer?: LinkViewer | null, access?: DigestAccess | null,
+  laborMoney?: LaborMoneyStore | null): DigestSection[] {
   const ctx: LinkCtx = { baseUrl, viewer };
   const t: Tr = (key, params) => serverT(language, key, params);
   if (!f.v2) {
@@ -285,7 +294,7 @@ export function composeShopSections(f: ShopDayFacts, language: Language, baseUrl
       pendingItems: f.storeRunsPending,
       who: { openedBy: finalizedBy("opening"), closedBy: finalizedBy("closing"), openingHref: reportHref("opening"), closingHref: reportHref("closing") },
     },
-  }, language, baseUrl, viewer, access);
+  }, language, baseUrl, viewer, access, laborMoney);
 }
 
 /** A report family's link for the day: its one report, else the family's list for the day. */
@@ -311,7 +320,7 @@ export function digestPreheader(t: Tr, sections: readonly DigestSection[], intro
 
 export function renderShopDigest(f: ShopDayFacts, env: Envelope): ComposedEmail {
   const t: Tr = (key, params) => serverT(env.language, key, params);
-  const sections = composeShopSections(f, env.language, env.baseUrl, false, env.viewer, env.access);
+  const sections = composeShopSections(f, env.language, env.baseUrl, false, env.viewer, env.access, env.laborMoney);
   const date = formatDateLabel(f.day, env.language);
   return renderDigest(env, {
     subject: t("digest.shop.subject", { shop: f.location.name, date }),
@@ -333,7 +342,7 @@ export function renderUnifiedDigest(args: {
   const all = v2 ? allShopsSection(args.shops, env.language, env.baseUrl, args.day, env.viewer, env.access) : null;
   const sections = [
     ...(all ? [all] : []),
-    ...args.shops.flatMap((f) => composeShopSections(f, env.language, env.baseUrl, true, env.viewer, env.access)),
+    ...args.shops.flatMap((f) => composeShopSections(f, env.language, env.baseUrl, true, env.viewer, env.access, env.laborMoney)),
   ];
   const allHub = digestLink(ctx, { to: "reports_hub", location: "all", day: args.day });
   // Polish item 1: the label is said ONCE ("Closing not finalized: Capitol Hill, P Street") — and each

@@ -23,6 +23,14 @@
  *      'failed' — the only state that releases the key — is reserved for claims that never reached
  *      the provider. A recorded provider_message_id always wins: claimed or ambiguous → sent.
  *   5. Ambiguous retries take the same lock as fresh sends (ambiguous → claimed, guarded).
+ *
+ * LABOR MONEY (digests round 3, PR 4; behind DIGEST_LABOR_MONEY, `io.laborMoney` present only with the switch on).
+ * ONE pre-load before the first compose (`Run.preload`, the runner in lib/preload-runner.ts): who is due → phase 0, the
+ * ordinary facts FIRST (so the digest's own Toast pull is over; a budget of 45 s per business day; each shop's days one
+ * at a time) → one budget of 20 s → the GM settings → each due recipient's business access (pure) → the hourly facts →
+ * the role facts → the seal. Composing reads nothing and waits for nothing, so no email depends on the order of
+ * recipients or on a read its recipient cannot see. The pre-load never fails a run. With the switch off none of it
+ * runs: the ordinary facts load at compose and every call is what it was.
  */
 import {
   AMBIGUOUS_RETRY_HOURS,
@@ -67,7 +75,14 @@ import {
 } from "@/lib/report-package-shared";
 import type { PackageCadence } from "@/lib/report-recipients-shared";
 import { NO_ACCESS_VIEWER, type LinkViewer } from "@/lib/report-digests-links";
-import { digestAccessFor } from "@/lib/report-digests-access-shared";
+import { digestAccessFor, digestCan, type DigestCapability, type DigestDelivery } from "@/lib/report-digests-access-shared";
+import type { BusinessAccess } from "@/lib/business-access-shared";
+import { definePreload, preloadValue, REAL_PRELOAD_TIMERS, type PreloadPhase, type PreloadPiece, type PreloadResults } from "@/lib/preload-runner";
+import {
+  LABOR_HOURLY_CAP_MS, LABOR_PRELOAD_BUDGET_MS, LABOR_ROLE_CAP_MS, LABOR_SETTINGS_CAP_MS, LABOR_SETTINGS_KEY, ORDINARY_FACTS_BUDGET_MS_PER_DAY,
+  laborBusinessAccess, laborHourlyKey, laborMoneyStore, laborRolesKey,
+  type GmSettingsResult, type HourlyLaborFacts, type LaborMoneyIO, type LaborMoneyStore,
+} from "@/lib/report-digests-labor-shared";
 export type { ComposedSend, EmailAttachment, PackageIO };
 
 /** Everything the send log keys: the three digests and (exports PR) the three package cadences. */
@@ -140,8 +155,19 @@ export interface DigestIO {
   sendLog(days: string[]): Promise<SendLogRow[]>;
   /** day → set of location ids whose closing is finalized (confirmed | incomplete_confirmed | auto_finalized). */
   finalizedClosings(days: string[]): Promise<Map<string, Set<string>>>;
-  shopFacts(location: { id: string; name: string }, day: string): Promise<ShopDayFacts>;
+  /**
+   * `onSource` (digests round 3, PR 4, CC addendum A4-2): passed ONLY in a labor-money run. The loader hands back its
+   * SOURCE promise through it, synchronously: the part of the load that can still be WRITING (the digest's own Toast
+   * pull) after the facts promise itself has settled or rejected. It never rejects. A loader that does not call it has
+   * no such part.
+   */
+  shopFacts(location: { id: string; name: string }, day: string, onSource?: (source: Promise<unknown>) => void): Promise<ShopDayFacts>;
   cateringFacts(today: string): Promise<CateringFacts>;
+  /**
+   * Labor money (digests round 3, PR 4): present ONLY with the switch on (`digestLaborMoneyEnabled`). Absent = no
+   * pre-load, no labor-money read, no settings read, no new line; the ordinary facts load at compose as they always did.
+   */
+  laborMoney?: LaborMoneyIO;
   store: SendStore;
   /** idempotencyKey is passed to the provider (Resend Idempotency-Key, kept 24 h by the provider). */
   sendEmail(input: { to: string; subject: string; html: string; text: string; idempotencyKey: string; attachments?: EmailAttachment[] }): Promise<{ id: string } | { error: string; code?: string }>;
@@ -196,10 +222,37 @@ function emptyCounts(): Record<SendKind, KindCounts> {
 
 const HOUR = 3_600_000;
 
+/** What a run is about to send, decided from the finalized closings and the clock alone (no I/O). */
+export interface RunPlan {
+  /** The run's business days, in the order the sends visit them. */
+  days: string[];
+  /** The shop digests: one per finalized shop and day. */
+  shops: Array<{ day: string; location: { id: string; name: string } }>;
+  /** The days whose unified digest is due. */
+  unified: string[];
+  /** The catering digest's day when it is due, else null. */
+  catering: string | null;
+}
+
+/** One email this run will go on to compose (`Run.willCompose`). */
+interface DueSend { kind: DigestKind; day: string; locationId: string | null; recipient: ResolvedRecipient; viewer: LinkViewer }
+
+const FULL_LABOR_ROLES: ReadonlySet<string> = new Set(["moo", "owner", "cgs"]);
+const settledQuietly = (p: Promise<unknown>): Promise<void> => p.then(() => undefined, () => undefined);
+
 class Run {
   readonly summary: DigestRunSummary;
   private readonly log: SendLogRow[];
   private readonly facts = new Map<string, Promise<ShopDayFacts>>();
+  /** A4-2: each shop-day's SOURCE promise (the part that may still be writing: the digest's own Toast pull). */
+  private readonly sources = new Map<string, Promise<unknown>>();
+  private readonly cateringMemo = new Map<string, Promise<CateringFacts>>();
+  /**
+   * A labor-money run's sealed result (digests round 3, PR 4): the read-only store, each due recipient's business
+   * access as decided BEFORE any fact was read, and the last finished business day. null = not a labor-money run:
+   * no labor-money line is composed and no business link is offered.
+   */
+  private labor: { store: LaborMoneyStore; access: ReadonlyMap<string, BusinessAccess>; finishedThrough: string } | null = null;
 
   constructor(
     readonly io: DigestIO,
@@ -268,8 +321,50 @@ class Run {
   shopFacts(location: { id: string; name: string }, day: string): Promise<ShopDayFacts> {
     const key = `${location.id}|${day}`;
     let p = this.facts.get(key);
-    if (!p) { p = this.io.shopFacts(location, day); this.facts.set(key, p); }
+    if (!p) {
+      if (this.io.laborMoney) {
+        // A labor-money run also keeps the load's SOURCE promise (A4-2); the loader hands it back synchronously.
+        const got: { source: Promise<unknown> | null } = { source: null };
+        p = this.io.shopFacts(location, day, (source) => { got.source = source; });
+        this.sources.set(key, got.source ?? p);
+      } else {
+        p = this.io.shopFacts(location, day);
+      }
+      this.facts.set(key, p);
+    }
     return p;
+  }
+
+  /** The catering facts of a day, loaded once per run (the same promise for every recipient and for phase 0). */
+  cateringFacts(day: string): Promise<CateringFacts> {
+    let p = this.cateringMemo.get(day);
+    if (!p) { p = this.io.cateringFacts(day); this.cateringMemo.set(day, p); }
+    return p;
+  }
+
+  /**
+   * WILL this run go on to compose this email? The ONE predicate behind the pre-load's due list and `sendOnce`
+   * (plan §15.2.4, Astra N2; CC addendum O-N7): not settled, no skip, and no retryable row that already holds a
+   * provider acceptance (that one reconciles without composing). PURE: it changes nothing and logs nothing; the skip
+   * log and the reconcile stay in `sendOnce`. A due recipient may still not be composed in three cases, each of which
+   * costs a read and sends nothing: another run already holds a fresh claim, a reclaim loses to another run, or the
+   * claim itself fails. No recipient is ever composed who was not due.
+   */
+  willCompose(kind: SendKind, day: string, r: ResolvedRecipient, locationId: string | null): boolean {
+    if (this.settled(kind, day, r.ref, locationId)) return false;
+    if (r.skip) return false;
+    return !this.retryable(kind, day, r.ref, locationId)?.provider_message_id;
+  }
+
+  /**
+   * Which digest an email is and the shops THIS email delivers (the digest-only grants of Juan 2026-11-27 and the
+   * labor-money capabilities both need it). The shops are the recipient's authorized scope already narrowed by any
+   * override (`r.locationIds`); a per-shop email (the shop digest) delivers one shop, so it carries only that shop: a
+   * GM of two shops gets no grant for shop B inside shop A's email. A package send carries no delivery.
+   */
+  private deliveryFor(kind: SendKind, r: ResolvedRecipient, locationId: string | null): DigestDelivery | null {
+    const digestKind = (DIGEST_KINDS as readonly SendKind[]).includes(kind) ? (kind as DigestKind) : null;
+    return digestKind ? { kind: digestKind, shops: locationId === null ? r.locationIds : r.locationIds.filter((id) => id === locationId) } : null;
   }
 
   /**
@@ -332,6 +427,9 @@ class Run {
    * call the provider for one key.
    */
   async sendOnce(kind: SendKind, day: string, r: ResolvedRecipient, locationId: string | null, compose: (env: Envelope) => Promise<ComposedSend> | ComposedSend): Promise<"sent" | "skipped" | "failed" | "ambiguous" | "not_due"> {
+    // Read BEFORE anything below changes the log (the claim makes the row "settled"). The branches below are the same
+    // three tests with their side effects (the skip log, the reconcile); `due` only pins that they agree (O-N7).
+    const due = this.willCompose(kind, day, r, locationId);
     if (this.settled(kind, day, r.ref, locationId)) return "not_due";
     const resumed = this.retryable(kind, day, r.ref, locationId);
     if (r.skip && !resumed) { await this.skip(kind, day, r, locationId, r.skip); return "skipped"; }
@@ -384,15 +482,24 @@ class Run {
     try {
       // The viewer is built ONCE per send; links and data gates both come from it. An unresolvable
       // recipient is NO_ACCESS_VIEWER, whose access can do nothing.
-      const viewer = this.viewerFor(r);
-      // A digest send carries its delivery (which digest, the shops THIS email delivers) for the digest-only
-      // grants of Juan 2026-11-27. The shops are the recipient's authorized scope already narrowed by any
-      // override (`r.locationIds`); a per-shop email (the shop digest) delivers one shop, so it carries only
-      // that shop: a GM of two shops gets no digest-only grant for shop B inside shop A's email. A package send
-      // carries no delivery, so it gets no digest-only grant.
-      const digestKind = (DIGEST_KINDS as readonly SendKind[]).includes(kind) ? (kind as DigestKind) : null;
-      const digest = digestKind ? { kind: digestKind, shops: locationId === null ? r.locationIds : r.locationIds.filter((id) => id === locationId) } : null;
-      const env: Envelope = { language: r.language, baseUrl: this.io.baseUrl, viewer, access: digestAccessFor(viewer, digest), previewFor: this.mode === "preview" ? { name: r.name, email: r.email } : null };
+      // No recipient is ever composed who was not due when its send began (never reached: the branches above are the
+      // same tests). Thrown inside this try, so it would end as any compose failure does.
+      if (!due) throw new Error("not_due_at_compose");
+      const base = this.viewerFor(r);
+      // A digest send carries its delivery (`deliveryFor`). A package send carries none, so it gets no digest-only grant.
+      const digest = this.deliveryFor(kind, r, locationId);
+      // Labor money (PR 4): only the shop and unified digests of a labor-money run, and only what the run decided for
+      // this recipient BEFORE any fact was read. Missing from the map = none; nothing is ever read here.
+      const money = this.labor && (kind === "gm_shop" || kind === "unified") ? this.labor : null;
+      const business = money?.access.get(r.ref) ?? null;
+      const viewer: LinkViewer = money && business ? { ...base, business: { access: business, finishedThrough: money.finishedThrough, enabled: true } } : base;
+      const env: Envelope = {
+        language: r.language, baseUrl: this.io.baseUrl, viewer, access: digestAccessFor(viewer, digest, business),
+        // The store goes only to a recipient the run decided an access for: everyone else's envelope is exactly what it
+        // is with the switch off (no store, no business access, no business link).
+        ...(money && business ? { laborMoney: money.store } : {}),
+        previewFor: this.mode === "preview" ? { name: r.name, email: r.email } : null,
+      };
       mail = await compose(env);
     } catch (e) {
       const msg = `compose: ${e instanceof Error ? e.message : String(e)}`;
@@ -464,6 +571,199 @@ class Run {
     return verdict === "refused" ? "failed" : "ambiguous";
   }
 
+  // ── labor money: the pre-load (digests round 3, PR 4) ───────────────────────────────────
+
+  /** Every email this run will go on to compose, in the order the sends visit them. No I/O. */
+  private dueSends(plan: RunPlan): DueSend[] {
+    const out: DueSend[] = [];
+    const add = (kind: DigestKind, day: string, locationId: string | null, recipients: ResolvedRecipient[]) => {
+      for (const r of recipients) if (this.willCompose(kind, day, r, locationId)) out.push({ kind, day, locationId, recipient: r, viewer: this.viewerFor(r) });
+    };
+    for (const day of plan.days) {
+      for (const { location } of plan.shops.filter((x) => x.day === day)) {
+        add("gm_shop", day, location.id, resolveDigestRecipients("gm_shop", this.dir).filter((x) => x.locationIds.includes(location.id)));
+      }
+      if (plan.unified.includes(day)) add("unified", day, null, resolveDigestRecipients("unified", this.dir));
+    }
+    if (plan.catering !== null) add("catering", plan.catering, null, resolveDigestRecipients("catering", this.dir));
+    return out;
+  }
+
+  /**
+   * The business access of every due recipient of a shop or unified digest, by recipient ref. A PURE function of what
+   * phase A sealed and the due list (Opus N4): MoO / Owner / CGS everything; a GM what the settings hold, and NOTHING
+   * when they were not read, did not finish or could not be read; anyone else nothing.
+   */
+  private laborAccess(due: readonly DueSend[], sealed: PreloadResults): Map<string, BusinessAccess> {
+    const settings = preloadValue<GmSettingsResult>(sealed, LABOR_SETTINGS_KEY);
+    const out = new Map<string, BusinessAccess>();
+    for (const d of due) {
+      if (d.kind !== "gm_shop" && d.kind !== "unified") continue;
+      const access = laborBusinessAccess(d.viewer.role, settings);
+      if (access) out.set(d.recipient.ref, access);
+    }
+    return out;
+  }
+
+  /** The (shop, day) pairs for which at least one due recipient holds `capability`, in a stable order. */
+  private laborHolders(due: readonly DueSend[], access: ReadonlyMap<string, BusinessAccess>, capability: DigestCapability): Array<{ locationId: string; day: string }> {
+    const seen = new Set<string>();
+    const out: Array<{ locationId: string; day: string }> = [];
+    for (const d of due) {
+      if (d.kind !== "gm_shop" && d.kind !== "unified") continue;
+      const business = access.get(d.recipient.ref);
+      if (!business) continue;
+      // The very access `sendOnce` will give this recipient for this email.
+      const a = digestAccessFor(d.viewer, this.deliveryFor(d.kind, d.recipient, d.locationId), business);
+      const shops = d.locationId !== null ? [d.locationId] : this.locations.map((l) => l.id);
+      for (const locationId of shops) {
+        const key = `${locationId}|${d.day}`;
+        if (seen.has(key) || !digestCan(a, capability, { locationId, day: d.day })) continue;
+        seen.add(key);
+        out.push({ locationId, day: d.day });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * PHASE 0: every ordinary fact set a digest of this run will print from, loaded FIRST (plan §15.2.1), so that the
+   * digest's own Toast pull is over before any week is certified and no recipient's ordinary facts are sampled at a
+   * moment that depends on a labor-money read.
+   *   - A4-3: each shop's days ONE AT A TIME in the run's own day order (the next day starts only when the previous
+   *     day's SOURCE promise has settled: two pulls of one shop never write at the same time). Shops run side by
+   *     side; so do the catering facts (they make no pull).
+   *   - A4-2: it waits for every facts promise AND every source promise (allSettled: a rejected facts promise is kept
+   *     as it is and fails its compose exactly as it always did).
+   *   - A4-1: a budget of 45 s per business day of the run. At its end every fact set that has not settled is FROZEN
+   *     as a failure (`ordinary_facts_timeout`: its composes fail like any compose failure, the key is released, the
+   *     next tick retries; a late answer never replaces it) and every healthy send goes out. If a source promise has
+   *     not settled by then, `writersSettled` is false and no labor money is certified in this run.
+   */
+  private async loadOrdinaryFacts(plan: RunPlan, due: readonly DueSend[], lm: LaborMoneyIO): Promise<{ writersSettled: boolean }> {
+    const timers = lm.timers ?? REAL_PRELOAD_TIMERS;
+    const byId = new Map(this.locations.map((l) => [l.id, l]));
+    // shop → its days, in the run's own day order.
+    const shopDays = new Map<string, string[]>();
+    const want = (locationId: string, day: string) => {
+      if (!byId.has(locationId)) return;
+      const days = shopDays.get(locationId) ?? [];
+      if (!days.includes(day)) days.push(day);
+      shopDays.set(locationId, days);
+    };
+    for (const day of plan.days) {
+      for (const d of due) {
+        if (d.day !== day) continue;
+        if (d.kind === "gm_shop" && d.locationId !== null) want(d.locationId, day);
+        if (d.kind === "unified") for (const l of this.locations) want(l.id, day);
+      }
+    }
+    const cateringDays = [...new Set(due.filter((d) => d.kind === "catering").map((d) => d.day))];
+
+    const unsettledFacts = new Map<string, "shop" | "catering">();
+    const writing = new Set<string>();
+    const all: Array<Promise<void>> = [];
+    let over = false;
+    const chains = [...shopDays].map(async ([locationId, days]) => {
+      const location = byId.get(locationId)!;
+      for (const day of days) {
+        if (over) return;
+        const key = `${locationId}|${day}`;
+        let facts: Promise<ShopDayFacts>;
+        try { facts = this.shopFacts(location, day); } catch (e) { facts = Promise.reject(e); this.facts.set(key, facts); }
+        const source = this.sources.get(key) ?? facts;
+        unsettledFacts.set(key, "shop");
+        writing.add(key);
+        all.push(settledQuietly(facts).then(() => { unsettledFacts.delete(key); }));
+        const written = settledQuietly(source).then(() => { writing.delete(key); });
+        all.push(written);
+        await written;
+      }
+    });
+    for (const day of cateringDays) {
+      let facts: Promise<CateringFacts>;
+      try { facts = this.cateringFacts(day); } catch (e) { facts = Promise.reject(e); this.cateringMemo.set(day, facts); }
+      unsettledFacts.set(day, "catering");
+      all.push(settledQuietly(facts).then(() => { unsettledFacts.delete(day); }));
+    }
+
+    // A4-1: per business day OF THE RUN (a closing run has one; a tick has two), whatever is due on each.
+    const budgetDays = Math.max(1, plan.days.length);
+    const work = Promise.allSettled(chains).then(() => Promise.allSettled(all)).then(() => "done" as const);
+    let timer: unknown = null;
+    const budget = new Promise<"budget">((resolve) => { timer = timers.set(() => resolve("budget"), ORDINARY_FACTS_BUDGET_MS_PER_DAY * budgetDays); });
+    const ended = await Promise.race([work, budget]);
+    if (ended === "done") { timers.clear(timer); return { writersSettled: true }; }
+
+    // The budget ended first: freeze what has not settled, and what was never started.
+    over = true;
+    const frozen = <T,>(): Promise<T> => { const p = Promise.reject<T>(new Error("ordinary_facts_timeout")); p.catch(() => undefined); return p; };
+    let unstarted = 0;
+    for (const [locationId, days] of shopDays) {
+      for (const day of days) {
+        const key = `${locationId}|${day}`;
+        if (!this.facts.has(key)) unstarted += 1;
+        if (!this.facts.has(key) || unsettledFacts.get(key) === "shop") this.facts.set(key, frozen<ShopDayFacts>());
+      }
+    }
+    for (const day of cateringDays) if (unsettledFacts.get(day) === "catering") this.cateringMemo.set(day, frozen<CateringFacts>());
+    // A source still writing (or a day whose load never began) means a Toast write may land after this point.
+    return { writersSettled: writing.size === 0 && unstarted === 0 };
+  }
+
+  /**
+   * THE PRE-LOAD (plan §15.2.1, §15.2.2; CC addendum A4-1 … A4-4). With the switch off (`io.laborMoney` absent) or
+   * nothing due, NOTHING here runs: no read, no line, the ordinary facts load at compose as they always did.
+   *
+   * Otherwise, before the first compose: who is due → phase 0 (the ordinary facts) → ONE budget of 20 s → the GM
+   * settings (only with a due GM) → each due recipient's access (pure) → the hourly facts of every shop and day a due
+   * recipient holds → the role facts → the seal. Composing then reads nothing and waits for nothing.
+   * It NEVER fails the run (O-N3): whatever goes wrong, every labor-money result is `unavailable` and the sends go on.
+   */
+  async preload(plan: RunPlan): Promise<void> {
+    const lm = this.io.laborMoney;
+    if (!lm) return;
+    try {
+      const due = this.dueSends(plan);
+      if (due.length === 0) return;
+      const moneyDue = due.filter((d) => d.kind === "gm_shop" || d.kind === "unified");
+      const gmDue = moneyDue.some((d) => d.viewer.role === "gm");
+      const sources = () => this.loadOrdinaryFacts(plan, due, lm);
+      // Nobody due could hold labor money by role: one code path for phase 0, and no deadline is opened.
+      if (!gmDue && !moneyDue.some((d) => FULL_LABOR_ROLES.has(d.viewer.role))) { await sources(); return; }
+
+      const keyed = <T,>(key: string, piece: PreloadPiece<T>): PreloadPiece<unknown> => ({ key, capMs: piece.capMs, start: (ctx) => piece.start(ctx) });
+      const phases: PreloadPhase<readonly DueSend[]>[] = [
+        // Phase A: the GM visibility settings, ONE read, only with a due GM (MoO / Owner / CGS never need it).
+        { name: "settings", maxCapMs: LABOR_SETTINGS_CAP_MS, pieces: () => (gmDue ? [keyed(LABOR_SETTINGS_KEY, lm.settings())] : []) },
+        // Phase B: the hourly facts of every shop and day a due recipient holds, all started together.
+        {
+          name: "hourly", maxCapMs: LABOR_HOURLY_CAP_MS,
+          pieces: (sealed, d) => this.laborHolders(d, this.laborAccess(d, sealed), "labor_hourly")
+            .map(({ locationId, day }) => keyed(laborHourlyKey(locationId, day), lm.hourly(locationId, day))),
+        },
+        // Phase C: cost by role, only where a due recipient holds it AND the hourly facts hold a usable latest final day.
+        {
+          name: "roles", maxCapMs: LABOR_ROLE_CAP_MS,
+          pieces: (sealed, d) => this.laborHolders(d, this.laborAccess(d, sealed), "labor_cost_by_role").flatMap(({ locationId, day }) => {
+            const hourly = preloadValue<HourlyLaborFacts>(sealed, laborHourlyKey(locationId, day));
+            return hourly?.roleStep ? [keyed(laborRolesKey(locationId, day), lm.roles(locationId, day, hourly))] : [];
+          }),
+        },
+      ];
+      const sealed = await definePreload({ phases, budgetMs: LABOR_PRELOAD_BUDGET_MS }).run({ sources, due: moneyDue, clock: lm.clock, timers: lm.timers });
+      this.labor = {
+        store: laborMoneyStore(sealed),
+        access: this.laborAccess(moneyDue, sealed),
+        // The business report's finished days end yesterday (ET) at send time.
+        finishedThrough: addDays(etClock(this.io.now).day, -1),
+      };
+    } catch {
+      // Never the run's problem. No access was decided, so no labor-money line and no business link is composed.
+      this.labor = null;
+    }
+  }
+
   // ── per kind ───────────────────────────────────────────────────────────────────────────
 
   async shop(day: string, location: { id: string; name: string }): Promise<void> {
@@ -493,10 +793,10 @@ class Run {
   async catering(day: string): Promise<void> {
     const recipients = resolveDigestRecipients("catering", this.dir);
     if (recipients.every((r) => this.settled("catering", day, r.ref, null))) return;
-    let facts: Promise<CateringFacts> | null = null;
     for (const r of recipients) {
       await this.sendOnce("catering", day, r, null, async (env) => {
-        facts ??= this.io.cateringFacts(day);
+        // Loaded once per run, at the first compose (or already by phase 0 in a labor-money run).
+        const facts = this.cateringFacts(day);
         const locations = this.locations.filter((l) => r.locationIds.includes(l.id));
         return renderCateringDigest(await facts, { locations, includeUnassigned: r.allShops, showAddresses: r.addressAccess === true }, env);
       });
@@ -603,18 +903,29 @@ async function finishTick(run: Run, days: string[], today: string): Promise<Dige
   const io = run.io;
   const finalized = await io.finalizedClosings(days);
   const activeIds = run.locations.map((l) => l.id);
-  for (const day of days) {
+  // What this tick will send is decided from the finalized closings and the clock alone (no I/O), so the labor-money
+  // pre-load can know who is due before the first compose. The sends below are the same sends, in the same order.
+  const perDay = days.map((day) => {
     const done = finalized.get(day) ?? new Set<string>();
+    return { day, done, decision: decideUnified({ day, activeLocationIds: activeIds, finalizedLocationIds: done, now: io.now, settings: run.settings }) };
+  });
+  const catering = decideCatering(io.now, run.settings);
+  // Labor money (PR 4): nothing unless the switch is on. Every optional read of the run happens here.
+  await run.preload({
+    days,
+    shops: perDay.flatMap((d) => run.locations.filter((l) => d.done.has(l.id)).map((location) => ({ day: d.day, location }))),
+    unified: perDay.filter((d) => d.decision.due).map((d) => d.day),
+    catering: catering.due ? catering.day : null,
+  });
+  for (const { day, done, decision } of perDay) {
     for (const location of run.locations) {
       if (done.has(location.id)) await run.shop(day, location);
       else if (io.now.getTime() >= unifiedFallbackAt(day, run.settings).getTime()) await run.shopNotFinalized(day, location.id);
     }
-    const decision = decideUnified({ day, activeLocationIds: activeIds, finalizedLocationIds: done, now: io.now, settings: run.settings });
     if (decision.due) await run.unified(day, decision.missing);
     // Pete (and the accountant, once enabled) get the day's CSV + PDF "at close": with the unified digest.
     if (decision.due) await run.packages("daily_close", day);
   }
-  const catering = decideCatering(io.now, run.settings);
   if (catering.due) await run.catering(catering.day);
   const due = periodicPackageDue(io.now);
   for (const periodic of due) await run.packages(periodic.cadence, periodic.day);
@@ -641,8 +952,15 @@ export async function runClosingDigestsWith(io: DigestIO, locationId: string, da
   if (!(run instanceof Run)) return run;
   const finalized = (await io.finalizedClosings([day])).get(day) ?? new Set<string>();
   const location = run.locations.find((l) => l.id === locationId);
-  if (location && finalized.has(locationId)) await run.shop(day, location);
   const decision = decideUnified({ day, activeLocationIds: run.locations.map((l) => l.id), finalizedLocationIds: finalized, now: io.now, settings: run.settings });
+  // Labor money (PR 4): nothing unless the switch is on. Every optional read of the run happens here.
+  await run.preload({
+    days: [day],
+    shops: location && finalized.has(locationId) ? [{ day, location }] : [],
+    unified: decision.due ? [day] : [],
+    catering: null,
+  });
+  if (location && finalized.has(locationId)) await run.shop(day, location);
   if (decision.due) await run.unified(day, decision.missing);
   if (decision.due) await run.packages("daily_close", day);
   if (run.didWork) await io.recordRun(run.summary);

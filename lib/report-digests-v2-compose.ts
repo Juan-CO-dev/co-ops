@@ -33,6 +33,8 @@ import { digestLink, sectionLink, type DigestTarget, type LinkViewer } from "@/l
 import { digestCan, type DigestAccess, type DigestCapability } from "@/lib/report-digests-access-shared";
 import { capItems, finishSection, finishSections, LINE_ITEMS_MAX, SECTION_CAP_WIDE, type SectionDraft } from "@/lib/report-digests-layout-shared";
 import { scheduleDays, scheduledVsWorkedLine, scheduleNotAvailableLine, staffScheduledLine } from "@/lib/report-digests-staffing-compose";
+import type { LaborMoneyStore } from "@/lib/report-digests-labor-shared";
+import { laborMoneyLines } from "@/lib/report-digests-labor-compose";
 
 type Params = Record<string, string | number>;
 export type T = (key: TranslationKey, params?: Params) => string;
@@ -631,6 +633,26 @@ export function laborSectionLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
   return [...base.slice(0, at), scheduledVsWorkedLine(c, roster, v.labor, href), ...base.slice(at)];
 }
 
+/**
+ * The Labor section WITH the labor-money lines (digests round 3, PR 4; plan §3.7 as amended by §11.2.1): status line ·
+ * F1 · scheduled vs worked (PR 2) · F2 · hours by job · who worked · Toast overtime flags · F3 · F4 · F5. PR 2's
+ * `laborSectionLines` is taken AS IT IS and the money lines are inserted around it, so every existing line keeps its
+ * text and relative order; a line that does not exist (no Toast labor for D, no schedule) is simply not in the list.
+ * `laborMoney` absent or null = not a labor-money run: exactly PR 2's lines (the switch-off byte identity). The
+ * money lines do not depend on today's Toast state, and each carries its own `needs` (finishSection cuts them).
+ */
+export function laborSectionWithMoney(c: Ctx, v: ShopV2Facts, laborMoney: LaborMoneyStore | null | undefined): DigestLine[] {
+  const sec = laborSectionLines(c, v);
+  const money = laborMoneyLines({ language: c.language, baseUrl: c.baseUrl, locationId: c.locationId, day: c.day, viewer: c.viewer }, laborMoney);
+  if (!money) return sec;
+  // laborLines' first line (when it returns any) is the status line ("N h clocked", "No one clocked in", or its one
+  // "not available" line); laborSectionLines puts "Scheduled vs worked" right after it (index min(1, n)).
+  const status = v.labor && laborLines(c, v).length > 0 ? 1 : 0;
+  const vs = status + (laborScheduleDay(c, v) ? 1 : 0);
+  const opt = (l: DigestLine | null): DigestLine[] => (l ? [l] : []);
+  return [...sec.slice(0, status), money.f1, ...sec.slice(status, vs), ...opt(money.f2), ...sec.slice(vs), ...opt(money.f3), money.f4, ...opt(money.f5)];
+}
+
 // ── Labor (Toast time entries, D) ── appended to lib/report-digests-v2-compose.ts ────────────
 
 export function laborLines(c: Ctx, v: ShopV2Facts): DigestLine[] {
@@ -724,7 +746,8 @@ export function v2SectionLinks(c: Ctx): Record<"headline" | "ordering" | "receiv
  * count → cap) against this shop and day. `access` = the recipient's data gates; absent or null = no
  * gated line (fail closed). Sales and labor carry the wide cap.
  */
-export function composeV2Sections(args: { shopName: string; locationId: string; day: string; v: ShopV2Facts; extras: V2Extras; prefix: boolean }, language: Language, baseUrl: string, viewer?: LinkViewer | null, access?: DigestAccess | null): DigestSection[] {
+export function composeV2Sections(args: { shopName: string; locationId: string; day: string; v: ShopV2Facts; extras: V2Extras; prefix: boolean }, language: Language, baseUrl: string, viewer?: LinkViewer | null, access?: DigestAccess | null,
+  laborMoney?: LaborMoneyStore | null): DigestSection[] {
   const c: Ctx = { t: translator(language), language, baseUrl, locationId: args.locationId, day: args.day, viewer };
   const title = (key: TranslationKey, params?: Params) => (args.prefix ? `${args.shopName} · ` : "") + c.t(key, params);
   const toRing = toastRingLines(args.v.catering.kind === "ok" ? args.v.catering.value.toRingInToast ?? [] : [], args.locationId, args.v.lookahead, language, baseUrl, viewer);
@@ -737,9 +760,11 @@ export function composeV2Sections(args: { shopName: string; locationId: string; 
     { title: title("digest.v2.section.inventory"), lines: inventoryLines(c, args.v, args.extras.pendingItems), ...href.inventory },
     { title: title("digest.v2.section.operations"), lines: args.extras.operations, ...href.operations },
     { title: title("digest.v2.section.sales"), lines: salesDetailLines(c, args.v), ...href.sales, cap: SECTION_CAP_WIDE },
-    // Drafted when Toast labor exists OR day D's schedule loaded (S5). finishSection decides presence from the ALLOWED
-    // lines, so a recipient refused `published_staffing` gets this section exactly as before: absent when it was absent.
-    ...(args.v.labor || laborScheduleDay(c, args.v) ? [{ title: title("digest.v2.section.labor"), lines: laborSectionLines(c, args.v), ...href.labor, cap: SECTION_CAP_WIDE }] : []),
+    // Drafted when Toast labor exists OR day D's schedule loaded (S5) OR this is a labor-money run (PR 4: the money
+    // lines then exist). finishSection decides presence from the ALLOWED lines, so a recipient refused
+    // `published_staffing` and every labor-money capability gets this section exactly as before: absent when it was absent.
+    ...(args.v.labor || laborScheduleDay(c, args.v) || laborMoney
+      ? [{ title: title("digest.v2.section.labor"), lines: laborSectionWithMoney(c, args.v, laborMoney), ...href.labor, cap: SECTION_CAP_WIDE }] : []),
     { title: title("digest.v2.section.people"), lines: peopleLines(c, args.v, args.extras.who, args.extras.pmLine), ...href.people },
     { title: title("digest.v2.section.tomorrow", { date: formatDateLabel(args.v.lookahead, language) }), lines: tomorrowLines(c, args.v), ...href.tomorrow },
     // Present only when a line is left for this recipient: finishSection decides from the allowed lines.
