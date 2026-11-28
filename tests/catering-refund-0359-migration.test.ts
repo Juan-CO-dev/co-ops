@@ -243,7 +243,7 @@ describe("the lock order of every function (plan 2.3 as re-stated by [S8])", () 
     // The only earlier answer is `not_found` (no row: no lock to take).
     const before = st.slice(0, p).filter((x) => /return jsonb_build_object/.test(x));
     expect(before).toHaveLength(1);
-    expect(unquote(body)).toContain("if v_now - v_t0 > v_wait * interval '' then");
+    expect(unquote(body)).toContain("if v_now - v_t0 >= v_wait * interval '' then");
   });
 
   it("F6, F10, F12 and F16 lock the state row after the payment; F11 locks the payment only", () => {

@@ -191,6 +191,12 @@ export interface RefundWorld {
   opts: Required<RefundWorldOptions>;
   paymentIntents: Map<string, WorldPaymentIntent>;
   refunds: WorldRefund[];
+  /**
+   * Refund ids that EXIST at the provider (they count against the charge: a create over what is left is refused) but
+   * that the LISTS and the exact RETRIEVE do not show yet (404 resource_missing): Stripe's read-after-write is
+   * UNVERIFIED (plan section 9, [R15] / [Q6]). Empty by default; added for tests/catering-refunds-flow.test.ts.
+   */
+  hidden: Set<string>;
   /** Saved idempotent responses, by `<scope>|<idempotency key>` (scope = account id when kept, else the key). */
   idempotency: Map<string, { fingerprint: string; status: number; body: unknown }>;
   /** Every create that reached execution or a replay: the key, and whether it was a replay. */
@@ -274,6 +280,7 @@ export function refundWorld(options: RefundWorldOptions = {}): RefundWorld {
     opts,
     paymentIntents: new Map(),
     refunds: [],
+    hidden: new Set<string>(),
     idempotency: new Map(),
     creates: [],
 
@@ -385,6 +392,7 @@ export function refundWorld(options: RefundWorldOptions = {}): RefundWorld {
         if (!pi) return { status: 400, body: errorBody(400, "resource_missing", `No such charge: '${filter.chargeId}'`) };
         all = w.refunds.filter((r) => r.account === accountId && r.chargeId === filter.chargeId);
       }
+      all = all.filter((r) => !w.hidden.has(r.id));
       all.sort(newestFirst);
       let from = 0;
       if (startingAfter !== null) {
@@ -639,7 +647,7 @@ export function stripeHttpFake(options: RefundWorldOptions = {}): StripeHttpFake
         ? { status: 200, body: world.paymentIntentBody(pi) }
         : { status: 404, body: errorBody(404, "resource_missing", `No such payment_intent: '${id}'`) };
     } else if (endpoint === "refund") {
-      const r = world.refunds.find((x) => x.id === id && x.account === accountId);
+      const r = world.refunds.find((x) => x.id === id && x.account === accountId && !world.hidden.has(x.id));
       answer = r ? { status: 200, body: world.refundBody(r) } : { status: 404, body: errorBody(404, "resource_missing", `No such refund: '${id}'`) };
     } else {
       const pi = url.searchParams.get("payment_intent");

@@ -821,21 +821,32 @@ await group("a_refund_id_under_two_payments_marks_dirty_and_commits", async (db)
   eq((await mirror(db, p3.id)).length, 0, "…and no mirror write of that call survives");
   eq((await stateRow(db, p3.id)).last_attempt_result, "evidence_conflict", "…the reason committed");
   await db.exec("drop trigger fx_race on public.catering_refund_observed; drop function public.fx_race()");
-  // CRB02 (contested): a stored row that is NOT older than this read. F5 makes it unreachable: a begin starts strictly
-  // after every mirrored row's read start (shown first); the fixture then moves the stored row's start past the OPEN
-  // read's start, between its begin and its record.
+  // CRB02 (contested): a stored row that is NOT older than this read. Inside one clock tick F5 bridges the gap (a begin
+  // starts strictly after an earlier read's start that falls in the same tick: shown first). A stored start that lies
+  // further in the future (the clock was set back; here a fixture write) is NOT followed: the read records `contested`.
   const R4 = refundOf(p4, 100);
   eq((await read(db, p4, { refunds: [R4] })).result, "complete", "p4 mirrors a refund");
-  await fx(db, "update public.catering_refund_observed set read_started_at = clock_timestamp() + interval '1 day' where refund_id = $1", [R4.id]);
+  await fx(db, "update public.catering_refund_observed set read_started_at = clock_timestamp() + interval '300 milliseconds' where refund_id = $1", [R4.id]);
   const b4 = await begin(db, p4.id);
   check((await one(db, "select $1::timestamptz > read_started_at as x from public.catering_refund_observed where refund_id = $2", [b4.started_at, R4.id])).x,
-    "F5: a begin starts strictly after every mirrored row's read start, even one in the future (so CRB02 cannot arise)");
-  await record(db, p4.id, b4.read_id, { owner: ownerOf(p4), lists: listsOf([R4]), refunds: [R4] });
+    "F5: a begin starts strictly after a mirrored row's read start that is inside the clock's granularity (under one second ahead)");
+  eq((await record(db, p4.id, b4.read_id, { owner: ownerOf(p4), lists: listsOf([R4]), refunds: [R4] })).result, "complete", "…and that read records complete");
+  await elapse(db, "6 minutes");
+  await keepAlive(db);
+  eq(await st(db, p4), "known", "p4 is KNOWN");
+  await fx(db, "update public.catering_refund_observed set read_started_at = clock_timestamp() + interval '1 day' where refund_id = $1", [R4.id]);
   const b5 = await begin(db, p4.id);
-  await fx(db, "update public.catering_refund_observed set read_started_at = $2::timestamptz + interval '1 second' where refund_id = $1", [R4.id, b5.started_at]);
+  check((await one(db, "select $1::timestamptz < read_started_at as x from public.catering_refund_observed where refund_id = $2", [b5.started_at, R4.id])).x,
+    "F5 does NOT follow a stored start that lies a day in the future: the begin starts at the clock");
   const before = await mirror(db, p4.id);
   const rc = await record(db, p4.id, b5.read_id, { owner: ownerOf(p4), lists: listsOf([R4]), refunds: [R4] });
+  eq([rc.result, rc.reason], ["not_complete", "contested"], "a stored row that is not older than this read: not complete, reason `contested` (CRB02), returned and not raised");
   eq(await mirror(db, p4.id), before, "…the stored row is untouched");
+  eq(await st(db, p4), "dirty", "…and the payment is not known afterwards (fails closed)");
+  // A complete read whose own start lies in the future proves nothing either (F3; the sweep's twin agrees).
+  await fx(db, "update public.catering_refund_payment_state set last_complete_read_started_at = clock_timestamp() + interval '1 hour', dirty_since = null where payment_id = $1", [p2.id]);
+  eq(await st(db, p2), "dirty", "a complete read stamped in the future reads dirty, never known");
+  eq((await rpc(db, "catering_refund_sweep_due", [50])).states[p2.id], "dirty", "…and F14 classifies it the same way");
 });
 
 await group("evidence_mismatch_writes_nothing", async (db) => {
@@ -854,7 +865,7 @@ await group("evidence_mismatch_writes_nothing", async (db) => {
     eq([r.result, r.reason], ["not_complete", "evidence_mismatch"], `${what}: evidence_mismatch`);
     eq((await mirror(db, s.p.id)).length, 0, `${what}: nothing written (not even the good refund of the same call)`);
   }
-  const { credential_fp: _drop, ...partial } = ownerOf(s.p);
+  const partial = Object.fromEntries(Object.entries(ownerOf(s.p)).filter(([key]) => key !== "credential_fp"));
   const r = await read(db, s.p, { refunds: [good()], owner: partial });
   eq([r.result, r.reason], ["not_complete", "evidence_mismatch"], "refunds handed over with an owner that is not whole: evidence_mismatch");
   eq((await mirror(db, s.p.id)).length, 0, "…nothing written");
@@ -1818,7 +1829,8 @@ await group("inventory_counts_and_lists", async (db) => {
   await withPartsReady(db);
   const s = { w, owner, q };
   const mk = async (amount = 10000, opts = {}) => (await another(db, s, amount, opts)).p;
-  const pNever = await mk(), pKnown = await mk(), pConflict = await mk(), pOpen = await mk(), pClaims = await mk();
+  await mk(); // a payment that is never read
+  const pKnown = await mk(), pConflict = await mk(), pOpen = await mk(), pClaims = await mk();
   const qd = await w.quote();
   const pDue = await w.pay(qd, "balance", 500, { status: "due", session: "cs_test_unsettled1" });
   await observing(db);

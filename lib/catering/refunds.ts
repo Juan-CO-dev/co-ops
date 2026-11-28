@@ -37,6 +37,7 @@ import {
 import {
   canReleaseRefund,
   canRequestRefund,
+  cateringRefundsOn,
   isRefundReasonCode,
   refundActionBlock,
   refundCreateBlock,
@@ -153,9 +154,11 @@ async function summaryFor(sb: ServiceClient, actor: AuthContext, quote: QuoteRow
 
 /**
  * The panel's read model for one order (F7): stored state only, ZERO Stripe calls, no token. The route answers it as
- * `{ summary }`. Refusals: 403 `forbidden` (below the read floor), 404 `not_found`, 503 `refunds_unavailable`.
+ * `{ summary }`. Refusals: 503 `refunds_off` (the switch, again here), 403 `forbidden` (below the read floor),
+ * 404 `not_found`, 503 `refunds_unavailable`.
  */
 export async function loadRefundSummary(actor: AuthContext, quoteId: string): Promise<RefundSummary> {
+  if (!cateringRefundsOn(process.env)) throw new CateringRefundError(503, "refunds_off");
   if (getRoleLevel(actor.user.role) < REFUND_READ_MIN) throw new CateringRefundError(403, "forbidden");
   const sb = getServiceRoleClient();
   const quote = await loadQuote(sb, quoteId);
@@ -175,6 +178,7 @@ export interface LeadRefundable {
 }
 /** F7 for every live quote of the lead the actor can see (one call, at most 50 quotes). Zero Stripe calls. */
 export async function loadLeadRefundables(actor: AuthContext, leadId: string): Promise<LeadRefundable[]> {
+  if (!cateringRefundsOn(process.env)) throw new CateringRefundError(503, "refunds_off");
   if (getRoleLevel(actor.user.role) < REFUND_READ_MIN) throw new CateringRefundError(403, "forbidden");
   const sb = getServiceRoleClient();
   const { data, error } = await sb

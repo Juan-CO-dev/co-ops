@@ -1,21 +1,24 @@
 /**
- * Catering refunds for one order (migration 0357; lib/catering/refunds.ts). SHIPS DARK behind CATERING_REFUNDS=1.
+ * Catering refunds for one order (migrations 0357 -> 0359; lib/catering/refunds.ts). SHIPS DARK behind CATERING_REFUNDS=1.
  *
- *   GET  — what was paid, what is still refundable, and the refund history (read floor 5, a shop the viewer sees).
- *   POST — the ONE explicit confirm tap: { clientToken, amountCents | null (= everything refundable), reasonCode,
- *          reasonNote, trigger }. Tier B step-up (a fresh password, like Send): money OUT. This path is a step-up
- *          surface (lib/session.ts `isCateringStepUpPath`) so its own requireSession keeps the unlock the preceding
- *          POST /api/auth/step-up set.
+ *   GET  — the panel's read model (F7 `catering_refund_summary`): STORED STATE ONLY, zero Stripe calls (read floor 5, a
+ *          shop the viewer sees). `{ summary }`.
+ *   POST — the ONE explicit confirm tap: { clientToken, amountCents, seenRefundableCents, reasonCode, reasonNote,
+ *          trigger }. Tier B step-up (a fresh password, like Send): money OUT. This path is a step-up surface
+ *          (lib/session.ts `isCateringStepUpPath`) so its own requireSession keeps the unlock the preceding
+ *          POST /api/auth/step-up set. `{ result: RefundPressResult, summary }`.
  *
  * Order (POST): same-origin, the session on the route's own path, the switch (503 `refunds_off` before the body is
- * read), the strict parse (400), the role gate (403 before the password is asked for), Tier B, the lib. The server
- * recomputes every figure under the payment locks; nothing the client sends about amounts is trusted beyond the
- * one number it asks for.
+ * read), the strict parse (400), the role gate (403 before the password is asked for), Tier B, the lib. With the switch
+ * unset every answer up to and including the switch is main's, byte for byte. With it on, the lib refuses again by its
+ * own gate: OBSERVE off = 503 `refunds_unavailable`; a build or a database without B2 / B3 = 503
+ * `refunds_not_activated`. A refusal is `{ error, code, ...detail }` (main's shape); a 409 also carries a fresh
+ * `summary` (null when it cannot be read), so the panel re-draws from what the server knows now [S11].
  */
 import { type NextRequest } from "next/server";
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import { assertStepUp } from "@/lib/admin/step-up";
-import { requireSession } from "@/lib/session";
+import { requireSession, type AuthContext } from "@/lib/session";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import {
   CateringRefundError,
@@ -27,11 +30,17 @@ import {
   parseRefundBody,
   requestRefund,
 } from "@/lib/catering/refunds";
+import { RefundsUnavailableError } from "@/lib/catering/refund-observe";
 import { ROLES } from "@/lib/roles";
 
-function refusal(e: unknown) {
-  if (e instanceof CateringRefundError) return jsonError(e.status, e.code, e.detail ?? {});
-  throw e;
+export const maxDuration = 120;
+
+/** A named refusal answers by name; anything else is a defect and is thrown (500), never a 2xx. */
+async function refusal(e: unknown, fresh?: { ctx: AuthContext; id: string }) {
+  if (e instanceof RefundsUnavailableError) return jsonError(503, "refunds_unavailable");
+  if (!(e instanceof CateringRefundError)) throw e;
+  const summary = fresh && e.status === 409 ? { summary: await loadRefundSummary(fresh.ctx, fresh.id).catch(() => null) } : {};
+  return jsonError(e.status, e.code, { ...(e.detail ?? {}), ...summary });
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -64,11 +73,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const step = assertStepUp(ctx, "B");
   if (!step.ok) return jsonError(403, step.code);
   try {
-    const out = await requestRefund(ctx, id, body);
-    // The refund is made; a failed re-read must not turn that into an error the person would retry.
+    const result = await requestRefund(ctx, id, body);
+    // Whatever the press did is done; a failed re-read must not turn that into an error the person would retry.
     const summary = await loadRefundSummary(ctx, id).catch(() => null);
-    return jsonOk({ ok: true, replay: out.replay, results: out.results, summary });
+    return jsonOk({ result, summary });
   } catch (e) {
-    return refusal(e);
+    return refusal(e, { ctx, id });
   }
 }

@@ -529,6 +529,9 @@ end $$;
 -- ── F3 The figures of one payment: THE one definition ───────────────────────────────────────────────────
 -- o_state: paused (observation not recorded on, or the sweep has not CLAIMED within the liveness interval: at
 -- exactly 60:00 it is paused [S12]) -> never_read -> dirty -> known. Not known = no number and no refund button.
+-- dirty = the read was begun under another transition count; or the PaymentIntent changed; or the read's start lies
+-- in the future (the clock was set back); or coverage cannot be proven; or the read started less than the settle
+-- interval after the dirty instant.
 -- counted = every mirrored refund that is not failed / canceled, once, whatever it claims. in_flight = our own
 -- requests that are not closed and that no mirrored refund accounts for. B1 never corrects main's status: it
 -- reports the disagreement.
@@ -561,6 +564,7 @@ begin
     v_dirty := public.catering_refund_dirty_at(p_payment_id);
     if s.last_complete_read_transitions is distinct from o.transitions
        or s.payment_intent_id is distinct from v_pay.provider_ref
+       or s.last_complete_read_started_at > v_now + interval '1 second' -- a read "from the future" (the clock was set back) proves nothing
        or v_dirty = 'infinity'::timestamptz
        or (v_dirty is not null and s.last_complete_read_started_at < v_dirty + public.catering_refund_settle_interval()) then
       o_state := 'dirty';
@@ -785,6 +789,7 @@ begin
     select j.*,
            case when j.read_at is null then 'never_read'
                 when j.read_tr is distinct from o.transitions or j.payment_intent_id is distinct from j.provider_ref
+                     or j.read_at > v_now + interval '1 second'
                      or j.dirty_at = 'infinity'::timestamptz
                      or (j.dirty_at is not null and j.read_at < j.dirty_at + v_settle) then 'dirty'
                 else 'known' end as st
@@ -860,8 +865,9 @@ end $$;
 -- state row, and F6 accepts only the id that is still the open one. A newer begin REPLACES the open read; when it
 -- does, the payment is stamped dirty in the same statement, whatever the old read's age [T2]: a read that was begun
 -- and never recorded is a read that did not end complete, and the read that replaced it cannot read `known` by
--- itself. The start is strictly later than every earlier read's start on this payment (a coarse clock cannot make
--- two reads share an instant). A first call creates the state row with every complete-read column null [R13].
+-- itself. The start is strictly later than an earlier read's start that falls inside the same clock tick (a coarse
+-- clock cannot make two reads share an instant); it never follows a stored start that lies further in the future.
+-- A first call creates the state row with every complete-read column null [R13].
 -- It never returns a token and takes no time from the caller. Not eligible: nothing is written.
 create function public.catering_refund_read_begin(p_payment_id uuid) returns jsonb
 language plpgsql security definer set search_path = pg_catalog, public as $$
@@ -870,6 +876,7 @@ declare
   s public.catering_refund_payment_state%rowtype;
   v_id uuid := gen_random_uuid();
   v_start timestamptz;
+  v_prev timestamptz;
   v_tr bigint;
   v_shop uuid;
   v_replaced boolean := false;
@@ -884,11 +891,14 @@ begin
   select * into s from public.catering_refund_payment_state x where x.payment_id = p_payment_id for update;
   v_replaced := s.open_read_id is not null;
   select x.transitions into v_tr from public.catering_refund_observation x where x.id;
-  v_start := greatest(clock_timestamp(),
-                      s.open_read_started_at + interval '1 microsecond',
-                      s.last_complete_read_started_at + interval '1 microsecond',
-                      (select max(m.read_started_at) from public.catering_refund_observed m where m.payment_id = p_payment_id)
-                        + interval '1 microsecond');
+  v_start := clock_timestamp();
+  v_prev := greatest(s.open_read_started_at, s.last_complete_read_started_at,
+                     (select max(m.read_started_at) from public.catering_refund_observed m where m.payment_id = p_payment_id));
+  -- Only the clock's own granularity is bridged (two reads inside one tick). A stored start further ahead than that
+  -- (the clock was set back) is NOT followed: this read then records as `contested`, which fails closed.
+  if v_prev is not null and v_prev >= v_start and v_prev < v_start + interval '1 second' then
+    v_start := v_prev + interval '1 microsecond';
+  end if;
   -- Unconditional upsert under the payment lock (census allowlist: F5's upsert).
   insert into public.catering_refund_payment_state as x (payment_id, open_read_id, open_read_started_at, open_read_transitions)
     values (p_payment_id, v_id, v_start, coalesce(v_tr, 0))
@@ -1429,7 +1439,7 @@ end $$;
 -- UPDATE, BOTH before any check, so a wait for either (the operator statement's or the sweep's bulk stamp holds the
 -- state row) is inside the measured budget. Then, all measured AFTER the waits:
 --   not_armable      the row is not `pending` and unarmed: its ACTUAL state is returned, never "not sent" by assumption
---   deadline_passed  the locks took longer than p_max_wait_ms
+--   deadline_passed  the locks took p_max_wait_ms or longer (so a budget of 0 always refuses)
 --   figures_stale    unless ALL hold: the payment is still eligible; the state row's PaymentIntent is the row's;
 --                    p_read_token is this row's own reserve token AND the payment's current complete-read token; that
 --                    read started within the fresh interval of NOW; F3 says `known` (no ledger event, no stamp,
@@ -1460,7 +1470,7 @@ begin
     return jsonb_build_object('result', 'not_armable', 'status', r.status, 'armed', r.create_armed_at is not null,
                               'stripe_refund_id', r.stripe_refund_id);
   end if;
-  if v_now - v_t0 > v_wait * interval '1 millisecond' then
+  if v_now - v_t0 >= v_wait * interval '1 millisecond' then -- a budget of 0 is spent on entry
     return jsonb_build_object('result', 'deadline_passed', 'status', r.status, 'armed', false);
   end if;
   select * into f from public.catering_refund_payment_figures(v_pid);

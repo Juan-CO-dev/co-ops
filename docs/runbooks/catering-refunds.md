@@ -236,8 +236,9 @@ and `users` (the new foreign keys). `stripe_events` and `cron_route_leases` are 
 select public.catering_refund_observe_set(true);
 ```
 
-It prints the new transition count and how many payments it stamped. (The switch tool in the job's tooling folder
-runs exactly this statement and prints the answer.)
+It prints the new transition count and how many payments it stamped. (The job's tooling folder holds exactly this
+statement, the ON form and the OFF form, as `observe-switch.sql`. It is a file to copy from, not a program: a person
+runs the statement.)
 
 (b) Then set `CATERING_REFUNDS_OBSERVE=1`.
 

@@ -147,8 +147,8 @@ it('classifies every route and runtime HTTP export, including aliases and re-exp
     expect(mutations.some(e => `${e.path} ${e.method}` === key), key).toBe(true);
     expect(entry.reason.length).toBeGreaterThanOrEqual(15);
   }
-  expect(mutations.length).toBe(122); // +2 catering refunds (0357): POST refunds, POST refunds/[requestId]/retry; +1 catering delivery D4: POST delivery/gratuity; +4 catering delivery D2: POST delivery, status, cost, keep-pickup; +1 item 21 PR 3: POST toast-links; +1 W26: POST /api/notifications/mark-all-read; +2 W23: reopen + portal logout; -2 nav PR 2: the /api/ai and prep/generate stubs deleted
-  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(101); // +2 catering refunds (0357)
+  expect(mutations.length).toBe(125); // +3 catering refunds B1 v2 (0359): POST refunds/check, refunds/[requestId]/release, refunds/[requestId]/attach; +2 catering refunds (0357): POST refunds, POST refunds/[requestId]/retry; +1 catering delivery D4: POST delivery/gratuity; +4 catering delivery D2: POST delivery, status, cost, keep-pickup; +1 item 21 PR 3: POST toast-links; +1 W26: POST /api/notifications/mark-all-read; +2 W23: reopen + portal logout; -2 nav PR 2: the /api/ai and prep/generate stubs deleted
+  expect(mutations.filter(e => !exceptions[`${e.path} ${e.method}`])).toHaveLength(104); // +3 catering refunds B1 v2 (0359); +2 catering refunds (0357)
 }, 120_000);
 
 // Full parsed stub source includes alias targets and module initializers: an implemented
@@ -249,7 +249,7 @@ it.each(['app/api/landing/ad-code/route.ts', 'app/api/landing/events/route.ts', 
 // GET-only cron endpoints are not mutation-method exemptions. Their external callers
 // authenticate with secrets, and adding a POST still changes the exact export inventory.
 const cronGet = [
-  'app/api/cron/catering-inbox-delivery/route.ts', 'app/api/cron/digest-tick/route.ts', 'app/api/cron/job-watch/route.ts', 'app/api/cron/meta-leads/route.ts', 'app/api/cron/parse-receipts/route.ts',
+  'app/api/cron/catering-inbox-delivery/route.ts', 'app/api/cron/catering-refund-sweep/route.ts', 'app/api/cron/digest-tick/route.ts', 'app/api/cron/job-watch/route.ts', 'app/api/cron/meta-leads/route.ts', 'app/api/cron/parse-receipts/route.ts',
   'app/api/cron/prune-sessions/route.ts', 'app/api/cron/schedule-draft/route.ts', 'app/api/cron/sevenshifts-sync/route.ts',
   'app/api/cron/toast-catering-scan/route.ts', 'app/api/cron/toast-sales-pull/route.ts', 'app/api/cron/toast-sales-today/route.ts',
 ];

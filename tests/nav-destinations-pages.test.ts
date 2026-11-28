@@ -12,11 +12,11 @@ const routes = DESTINATIONS.map((d) => d.route);
 const children = DESTINATIONS.flatMap((d) => (d.children ?? []).map((c) => ({ child: c, owner: d.id })));
 
 describe("guard (a): every page has exactly one place", () => {
-  it("the inventory after nav PR 2 (+1 catering delivery D2: /admin/catering/delivery): 127 pages = 85 destinations + 20 children + 22 named", () => {
-    expect(pages.size).toBe(127);
+  it("the inventory after nav PR 2 (+1 catering delivery D2: /admin/catering/delivery; +1 catering refunds B1: /admin/catering/refunds, named): 128 pages = 85 destinations + 20 children + 23 named", () => {
+    expect(pages.size).toBe(128);
     expect(DESTINATIONS).toHaveLength(85);
     expect(children).toHaveLength(20);
-    expect(Object.keys(NAMED_PAGES)).toHaveLength(22);
+    expect(Object.keys(NAMED_PAGES)).toHaveLength(23);
   });
 
   it.each([...pages.keys()])("%s is in exactly one of: destination, child, named", (route) => {
