@@ -1,896 +1,1199 @@
 /**
- * Catering refunds — the server flow (lib/catering/refunds.ts) over a predicate-aware fake database and a STATEFUL fake
- * of Stripe's refund endpoints. NEVER a network call: lib/stripe/client.ts's refund functions are replaced, and the
- * fake models exactly what decides "one refund, never two" (docs.stripe.com/api/idempotent_requests,
- * docs.stripe.com/error-low-level):
- *   · a key replays its FIRST response — a saved 500 included — and a key re-used with other parameters is an error;
- *   · a refund carries our `metadata.refund_request_id`, so a list can find a send whose answer was lost;
- *   · a refund above what is left on the charge is refused.
- * The reserve RPC is a TS stand-in that keeps 0357's contract (the real SQL is proven by scripts/sql-harness-0357.mjs,
- * run in CI by tests/catering-refund-0357-migration.test.ts): token replay, figures from refundFigures, allocation,
- * named refusals.
- * The SQL ACTOR RULE (`catering_refund_actor_ok`) is a TS stand-in too (`sqlActorOk`): an active user, owner / cgs at
- * any shop, a membership-branch role only with an ACTIVE membership at that shop. It answers as migration 0358 wrote
- * it (GM and AGM in the membership branch) or, for the deploy-order tests, as 0357 did (`h.sqlRule`); its role lists
- * are held equal to the two real files below, and the real SQL is proven by scripts/sql-harness-0358.mjs.
+ * Catering refunds Part B1 v2 — the END-TO-END FLOW of the server lib (lib/catering/refunds.ts,
+ * lib/catering/refund-observe.ts) on the REAL SQL: PGlite carrying the real 0357 -> 0358 -> 0359
+ * (tests/helpers/refund-pglite.ts), the REAL Stripe client over the HTTP fake (tests/stripe-http-fake.ts). Nothing
+ * between them is mocked except the service-client factory (it hands the PGlite client out), `server-only`, and the
+ * build constant `REFUND_PARTS_BUILT` (true here: B2 / B3 are "built"; the database half of the gate is the isolated
+ * readiness fixture `withPartsReady()`). SYNTHETIC rows, FAKE keys, no network.
+ *
+ * OUTBOUND POSTS ARE COUNTED BY THE FAKE (`calls`, HTTP requests: a followed redirect would be a second one), never
+ * inferred from the lib's answer. Every test ends with the INVARIANT SWEEP (plan 10, item 20; the top-level
+ * `afterEach`): at most ONE POST per idempotency key; every POST names a request row that was ARMED when it left
+ * (checked at the moment the fake received it); main's five tables carry exactly the rows the scenario itself wrote
+ * "as main" (payments, ledger rows), whatever B1 did.
+ *
+ * Scenario names follow plan section 10 (the `tests/catering-refunds-flow.test.ts` bullet) and section 15
+ * ([T1]..[T5], [S9], [S11]); the numbers in the describe names are the build brief's.
  */
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { PGliteInterface as PGlite } from "@electric-sql/pglite";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { fakeSupabase, type FakeDb, type Row } from "./fake-supabase";
-
-const h = vi.hoisted(() => ({
-  db: null as unknown as import("./fake-supabase").FakeDb,
-  accounts: [{ secretKey: "sk_test_fake_A", webhookSecret: "whsec_fake", source: "default" }] as Array<{ secretKey: string; webhookSecret: string; source: string }>,
-  /** Which migration's actor rule the fake database answers with (the deploy-order tests set "0357"). */
-  sqlRule: "0358" as "0357" | "0358",
-  /** Every RPC the code under test called, by name, in order. */
-  rpcCalls: [] as string[],
-}));
+const h = vi.hoisted(() => ({ sb: null as unknown }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.db.client }));
-vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
-vi.mock("@/lib/stripe/session-owner", () => ({ stripeAccountsForShop: () => h.accounts }));
-
-// ── The Stripe refund fake ───────────────────────────────────────────────────────────────────────────
-interface FakeRefund { id: string; status: string; amount: number; paymentIntent: string; requestId: string | null; account: string }
-const stripe = vi.hoisted(() => {
-  const state = {
-    charges: new Map<string, { account: string; captured: number; refunded: number }>(),
-    refunds: [] as FakeRefund[],
-    keys: new Map<string, { params: string; response: { ok: true; refund: FakeRefund } | { ok: false; status: number; code: string } }>(),
-    /** Next create calls answer like this BEFORE executing (no result saved) or AFTER (saved, like a 500). */
-    nextCreate: [] as Array<"network_lost_after_executing" | "network_before" | "500_saved" | "429">,
-    creates: [] as Array<{ key: string; account: string; params: string }>,
-    seq: 0,
-  };
-  return state;
-});
-
-vi.mock("@/lib/stripe/client", async (original) => {
-  const real = await original<typeof import("@/lib/stripe/client")>();
-  const { StripeError } = real;
+vi.mock("@/lib/supabase-server", () => ({
+  getServiceRoleClient: () => {
+    if (!h.sb) throw new Error("catering-refunds-flow.test: no client handed out");
+    return h.sb;
+  },
+}));
+// B2 / B3 "built" (the build half of the gate); the database half is `withPartsReady()`.
+vi.mock("@/lib/catering/refunds-shared", async (original) => {
+  const real = await original<typeof import("@/lib/catering/refunds-shared")>();
   return {
     ...real,
-    retrievePaymentIntentCharge: vi.fn(async (key: string, pi: string) => {
-      const c = stripe.charges.get(pi);
-      if (!c || c.account !== key) return { status: "not_found", amountCapturedCents: null, amountRefundedCents: null };
-      return { status: "found", amountCapturedCents: c.captured, amountRefundedCents: c.refunded };
-    }),
-    listRefundsForPaymentIntent: vi.fn(async (key: string, pi: string) =>
-      stripe.refunds.filter((r) => r.paymentIntent === pi && r.account === key).map((r) => ({ id: r.id, status: r.status, amountCents: r.amount, requestId: r.requestId }))),
-    retrieveRefund: vi.fn(async (key: string, id: string) => {
-      const r = stripe.refunds.find((x) => x.id === id && x.account === key);
-      if (!r) throw new StripeError(404, "resource_missing");
-      return { id: r.id, status: r.status, amountCents: r.amount, requestId: r.requestId };
-    }),
-    createRefund: vi.fn(async (key: string, input: { paymentIntentId: string; amountCents: number; reason: string | null; metadata: { refund_request_id: string } }, idem: string) => {
-      const params = JSON.stringify(input);
-      stripe.creates.push({ key: idem, account: key, params });
-      const saved = stripe.keys.get(`${key}|${idem}`);
-      if (saved) {
-        if (saved.params !== params) throw new StripeError(400, "idempotency_error", "Keys for idempotent requests can only be used with the same parameters");
-        if (saved.response.ok) return { id: saved.response.refund.id, status: saved.response.refund.status, amountCents: saved.response.refund.amount, requestId: saved.response.refund.requestId };
-        throw new StripeError(saved.response.status, saved.response.code);
-      }
-      const mode = stripe.nextCreate.shift();
-      if (mode === "network_before") throw new StripeError(0, "network_error");
-      if (mode === "429") throw new StripeError(429, "rate_limit");
-      if (mode === "500_saved") {
-        stripe.keys.set(`${key}|${idem}`, { params, response: { ok: false, status: 500, code: "api_error" } });
-        throw new StripeError(500, "api_error");
-      }
-      const c = stripe.charges.get(input.paymentIntentId);
-      if (!c || c.account !== key) {
-        stripe.keys.set(`${key}|${idem}`, { params, response: { ok: false, status: 400, code: "resource_missing" } });
-        throw new StripeError(400, "resource_missing");
-      }
-      if (input.amountCents > c.captured - c.refunded) {
-        stripe.keys.set(`${key}|${idem}`, { params, response: { ok: false, status: 400, code: "charge_already_refunded" } });
-        throw new StripeError(400, "charge_already_refunded");
-      }
-      c.refunded += input.amountCents;
-      const refund: FakeRefund = { id: `re_fake_${++stripe.seq}`, status: "succeeded", amount: input.amountCents, paymentIntent: input.paymentIntentId, requestId: input.metadata.refund_request_id, account: key };
-      stripe.refunds.push(refund);
-      stripe.keys.set(`${key}|${idem}`, { params, response: { ok: true, refund } });
-      if (mode === "network_lost_after_executing") throw new StripeError(0, "network_error");
-      return { id: refund.id, status: refund.status, amountCents: refund.amount, requestId: refund.requestId };
-    }),
+    REFUND_PARTS_BUILT: true,
+    refundCreateBlock: (env: Record<string, string | undefined>, partsBuilt = true) => real.refundCreateBlock(env, partsBuilt),
   };
 });
 
-import { createRefund } from "@/lib/stripe/client";
-import { audit } from "@/lib/audit";
 import {
-  actorMayRefund,
-  loadLeadRefundables,
+  attachRefund,
+  CateringRefundError,
+  checkRefunds,
   loadRefundSummary,
-  refundFigures,
+  REFUND_RPC_REFUSALS,
+  releaseRefund,
   requestRefund,
-  retryRefundRequest,
-  REFUND_RETRY_WINDOW_MS,
+  type RefundPressResult,
   type RefundRequestBody,
+  type RefundRowOutcome,
 } from "@/lib/catering/refunds";
-import type { AuthContext } from "@/lib/session";
-import { ROLES, type RoleCode } from "@/lib/roles";
+import { credentialFingerprint, runRefundRead, runRefundSweep } from "@/lib/catering/refund-observe";
+import { harnessKit as kit, harnessLib as lib, refundClient, type RefundCall, type RefundClientOpts } from "./helpers/refund-pglite";
+import {
+  actorOf,
+  armedEpoch,
+  auditOf,
+  claimsOf,
+  flowDb,
+  inventory,
+  KEY_DEF,
+  KEY_LOC,
+  KEY_LOC_ROTATED,
+  elapseBoth,
+  live,
+  mainDigest,
+  owned,
+  requestRow,
+  requestsOf,
+  type FlowDb,
+  type KitPayment,
+} from "./helpers/refund-flow-kit";
+import { delay, networkError, redirect, status, stripeHttpFake, type HttpFakeCall, type StripeHttpFake } from "./stripe-http-fake";
 
-const SHOP = "00000000-0000-4000-8000-0000000000a1";
-const OTHER = "00000000-0000-4000-8000-0000000000a2";
-const QUOTE = "00000000-0000-4000-8000-0000000000b1";
-const DEP = "00000000-0000-4000-8000-0000000000c1";
-const BAL = "00000000-0000-4000-8000-0000000000c2";
-const ACTOR = "00000000-0000-4000-8000-0000000000aa";
+vi.setConfig({ testTimeout: 240_000, hookTimeout: 240_000 });
 
-/**
- * A signed-in person. The fake database is made to AGREE with the session (the role, and an ACTIVE membership at each
- * of the session's shops), as it does while a session is fresh. A test of a STALE session changes the tables after
- * calling this.
- */
-function actor(role: string, locations: string[] = [SHOP]): AuthContext {
-  const t = h.db.tables;
-  const user = (t.users ??= []).find((u) => u.id === ACTOR);
-  if (user) Object.assign(user, { role, active: true });
-  t.user_locations = locations.map((location_id) => ({ user_id: ACTOR, location_id, active: true }));
-  return { user: { id: ACTOR, role, active: true, language: "en", name: "Kim" }, locations, session: { stepUpUnlocked: true, stepUpUnlockedAt: new Date().toISOString() } } as unknown as AuthContext;
-}
+// ── The wiring ───────────────────────────────────────────────────────────────────────────────────────────
+type HookCall = Parameters<NonNullable<RefundClientOpts["onCall"]>>[0];
+type Hook = (call: HookCall) => void | Promise<void>;
+type Overrides = NonNullable<RefundClientOpts["rpc"]>;
 
-/** `catering_refund_actor_ok` in TS, as 0357 or 0358 wrote it (see the header). */
-const SQL_ANY_SHOP = ["owner", "cgs"];
-const SQL_MEMBER_SHOP = { "0357": ["moo", "catering_mgr"], "0358": ["moo", "catering_mgr", "gm", "agm"] } as const;
-function sqlActorOk(db: FakeDb, actorId: unknown, shopId: unknown): boolean {
-  const u = (db.tables.users ?? []).find((x) => x.id === actorId);
-  if (!u || u.active !== true) return false; // SQL: `and u.active` — NULL is not active
-  const role = String(u.role);
-  if (SQL_ANY_SHOP.includes(role)) return true;
-  return (SQL_MEMBER_SHOP[h.sqlRule] as readonly string[]).includes(role) && shopId != null
-    && (db.tables.user_locations ?? []).some((m) => m.user_id === actorId && m.location_id === shopId && m.active === true);
-}
-
-let reqSeq = 0;
-let claimSeq = 0;
-/** 0357's contract in TS: token replay, figures under "the lock", allocation, named refusals. */
-function reserve(args: Record<string, unknown>, db: FakeDb) {
-  const t = db.tables;
-  const quote = (t.catering_quotes ?? []).find((q) => q.id === args.p_quote_id);
-  if (!quote) return { data: null, error: { message: "quote_not_found" } };
-  if (!sqlActorOk(db, args.p_actor_id, quote.location_id)) return { data: null, error: { message: "forbidden" } };
-  const pays = (t.catering_payments ?? []).filter((p) => p.quote_id === quote.id);
-  const existing = (t.catering_refund_requests ?? []).filter((r) => r.client_token === args.p_client_token);
-  if (existing.length > 0) {
-    const total = existing.reduce((s, r) => s + Number(r.amount_cents), 0);
-    if (args.p_amount_cents !== total) return { data: null, error: { message: "token_reused" } };
-    return { data: { replay: true, location_id: quote.location_id, requests: existing.map((r) => ({ id: r.id, payment_id: r.payment_id, amount_cents: r.amount_cents, status: r.status })) }, error: null };
-  }
-  // The same inputs 0357's catering_refund_figures reads: events, own rows, the newest snapshot.
-  const fig = (p: Row) => {
-    const snap = (t.catering_refund_stripe_snapshots ?? []).find((x) => x.payment_id === p.id);
-    return refundFigures(
-      { amountCents: Number(p.amount_cents), status: String(p.status), provider: p.provider as string | null, providerRef: p.provider_ref as string | null },
-      (t.catering_payment_refund_events ?? []).filter((e) => e.payment_id === p.id).map((e) => ({
-        cumulativeRefundedCents: Number(e.cumulative_refunded_cents), chargeAmountCents: e.charge_amount_cents == null ? null : Number(e.charge_amount_cents), refundedAt: (e.refunded_at as string | undefined) ?? null,
-      })),
-      (t.catering_refund_requests ?? []).filter((r) => r.payment_id === p.id).map((r) => ({
-        id: r.id as string, amountCents: Number(r.amount_cents), status: r.status as "pending", stripeRefundId: (r.stripe_refund_id as string | null) ?? null,
-      })),
-      snap ? {
-        listedAt: String(snap.listed_at), capturedCents: snap.captured_cents == null ? null : Number(snap.captured_cents),
-        refunds: (snap.refunds as Array<{ id: string; amount: number; status: string | null; request_id: string | null }>).map((x) => ({ id: x.id, amountCents: x.amount, status: x.status, requestId: x.request_id })),
-      } : null,
-    );
-  };
-  const total = pays.reduce((s, p) => s + fig(p).refundableCents, 0);
-  if (total <= 0) return { data: null, error: { message: "nothing_refundable" } };
-  if (args.p_amount_cents == null || Number(args.p_amount_cents) <= 0) return { data: null, error: { message: "invalid_amount" } };
-  const want = Number(args.p_amount_cents);
-  if (want > total) return { data: null, error: { message: "over_refundable", details: String(total) } };
-  let left = want;
-  const out: Row[] = [];
-  for (const p of [...pays].sort((a, b) => (a.kind === "balance" ? -1 : b.kind === "balance" ? 1 : 0))) {
-    if (left <= 0) break;
-    const take = Math.min(left, fig(p).refundableCents);
-    if (take <= 0) continue;
-    const row = {
-      id: `00000000-0000-4000-8000-${String(++reqSeq).padStart(12, "0")}`, payment_id: p.id, quote_id: quote.id, location_id: quote.location_id,
-      client_token: args.p_client_token, amount_cents: take, reason_code: args.p_reason_code, reason_note: args.p_reason_note, trigger_kind: args.p_trigger,
-      status: "pending", stripe_refund_id: null, stripe_status: null, last_error_code: null, last_error_message: null, attempts: 0, first_attempt_at: null,
-      requested_by: args.p_actor_id, requested_at: new Date().toISOString(), updated_at: new Date().toISOString(), settled_at: null,
-    };
-    (t.catering_refund_requests ??= []).push(row);
-    out.push({ id: row.id, payment_id: row.payment_id, amount_cents: take, status: "pending" });
-    left -= take;
-  }
-  return { data: { replay: false, location_id: quote.location_id, requests: out }, error: null };
-}
-
-function seed() {
-  h.db = fakeSupabase(
-    {
-      catering_quotes: [{ id: QUOTE, location_id: SHOP, root_id: null, pipeline_id: "lead-1", superseded_at: null }],
-      catering_payments: [
-        { id: DEP, quote_id: QUOTE, kind: "deposit", amount_cents: 30000, status: "paid", provider: "stripe", provider_ref: "pi_dep", paid_at: "2026-11-01T10:00:00Z", created_at: "2026-11-01T09:00:00Z" },
-        { id: BAL, quote_id: QUOTE, kind: "balance", amount_cents: 70000, status: "paid", provider: "stripe", provider_ref: "pi_bal", paid_at: "2026-11-05T10:00:00Z", created_at: "2026-11-05T09:00:00Z" },
-      ],
-      catering_payment_refund_events: [],
-      catering_refund_requests: [],
-      catering_refund_stripe_snapshots: [],
-      locations: [{ id: SHOP, code: "S1" }],
-      users: [{ id: ACTOR, role: "catering_mgr", name: "Kim", active: true }],
-      user_locations: [{ user_id: ACTOR, location_id: SHOP, active: true }],
+/** One PostgREST-shaped client over the database, with its own call log, hook and RPC answers. */
+interface Client { sb: SupabaseClient; calls: RefundCall[]; onCall: Hook | null; rpc: Overrides }
+function makeClient(db: PGlite, wrap?: Hook): Client {
+  const c: Client = { sb: null as unknown as SupabaseClient, calls: [], onCall: null, rpc: {} };
+  c.sb = refundClient(db, {
+    calls: c.calls,
+    rpc: new Proxy({}, { get: (_t, name: string) => c.rpc[name] }) as Overrides,
+    onCall: async (call) => {
+      await wrap?.(call);
+      await c.onCall?.(call);
     },
-    {
-      catering_refund_reserve: reserve,
-      catering_refund_claim: (args, db) => {
-        const r = (db.tables.catering_refund_requests ?? []).find((x) => x.id === args.p_request_id);
-        const live = r && r.claimed_until && Date.parse(String(r.claimed_until)) > Date.now();
-        if (!r || !["pending", "submitted"].includes(String(r.status)) || live) return { data: null, error: null };
-        r.claim_token = `claim-${++claimSeq}`;
-        r.claimed_until = new Date(Date.now() + 180_000).toISOString();
-        if (r.status === "pending") {
-          r.attempts = Number(r.attempts) + 1;
-          r.first_attempt_at ??= new Date().toISOString();
+  });
+  return c;
+}
+
+interface Ctx {
+  f: FlowDb;
+  db: PGlite;
+  stripe: StripeHttpFake;
+  /** The default client (press "A"). */
+  main: Client;
+  /** A fresh client (press "B", a sweep, a read) with no hook. */
+  client(): Client;
+  /** Awaited before every refund-surface request the fake answers (after the invariant bookkeeping). */
+  onStripe: ((call: HttpFakeCall) => void | Promise<void>) | null;
+  /** `created` (epoch seconds) of a refund the POST makes = the arm's own second + this. 0 = the arm's own second. */
+  armOffsetSec: number;
+  /** Rewrites the 2xx body the POST answers (the refund itself is made as Stripe would). */
+  bendPost: ((body: Record<string, unknown>) => unknown) | null;
+  /** When set, the POST of this press gets a short timeout (the clock is moved after the arm; see `shortPost`). */
+  postTimeoutDeadline: number | null;
+  restoreNow: (() => void) | null;
+  violations: string[];
+  baseline: Record<string, string>;
+  /** A write "as main" (a payment, a ledger row, a status): the main-table baseline moves with it. */
+  mainWrite<T>(fn: () => Promise<T>): Promise<T>;
+}
+
+let current: Ctx | null = null;
+
+async function ctx(f: FlowDb, opts: { slots?: "location" | "both" } = {}): Promise<Ctx> {
+  vi.stubEnv("CATERING_REFUNDS", "1");
+  vi.stubEnv("CATERING_REFUNDS_OBSERVE", "1");
+  vi.stubEnv("STRIPE_SECRET_KEY__S1", KEY_LOC);
+  vi.stubEnv("STRIPE_WEBHOOK_SECRET__S1", "whsec_fake_flow_location");
+  if (opts.slots === "both") {
+    vi.stubEnv("STRIPE_SECRET_KEY", KEY_DEF);
+    vi.stubEnv("STRIPE_WEBHOOK_SECRET", "whsec_fake_flow_default");
+  }
+  const stripe = stripeHttpFake();
+  stripe.account(KEY_LOC);
+  stripe.account(KEY_DEF);
+  // Stripe's refund ids are unique everywhere; the fake numbers them per instance, and tests here share a database.
+  const tag = randomUUID().slice(0, 8);
+  let rn = 0;
+  const addRefund = stripe.world.addRefund;
+  stripe.world.addRefund = (r) => addRefund({ ...r, id: r.id ?? `re_fake_${tag}_${++rn}` });
+  const db = f.db;
+  const c: Ctx = {
+    f, db, stripe,
+    main: null as unknown as Client,
+    client: () => makeClient(db),
+    onStripe: null,
+    armOffsetSec: 0,
+    bendPost: null,
+    postTimeoutDeadline: null,
+    restoreNow: null,
+    violations: [],
+    baseline: {},
+    mainWrite: (fn) => owned(db, async () => {
+      const out = await fn();
+      c.baseline = await mainDigest(db);
+      return out;
+    }),
+  };
+  // The press's own client: after its arm, a short POST timeout when the test asked for one.
+  c.main = makeClient(db, (call) => {
+    if (c.postTimeoutDeadline !== null && call.phase === "after" && call.kind === "rpc" && call.name === "catering_refund_arm" && !c.restoreNow) {
+      const realNow = Date.now.bind(Date);
+      const offset = c.postTimeoutDeadline - realNow() - 6_500; // the lib's POST budget = deadline - now - 5 s = 1.5 s
+      const spy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+      c.restoreNow = () => spy.mockRestore();
+    }
+  });
+  stripe.onRequest = async (call) => {
+    if (call.method === "POST" && call.path === "/v1/refunds") {
+      c.restoreNow?.();
+      c.restoreNow = null;
+      const id = new URLSearchParams(call.body ?? "").get("metadata[refund_request_id]") ?? "";
+      if (call.idempotencyKey !== `catering-refund:${id}`) c.violations.push(`a POST whose key ${call.idempotencyKey} is not its request's`);
+      const armed = /^[0-9a-f-]{36}$/.test(id) ? await owned(db, () => armedEpoch(db, id)) : null;
+      if (armed === null) c.violations.push(`a POST for ${id || "no request id"} whose request row was not armed when it left`);
+      else stripe.world.opts.createdAt = () => Math.floor(armed) + c.armOffsetSec;
+    }
+    await c.onStripe?.(call);
+  };
+  vi.stubGlobal("fetch", async (url: unknown, init?: unknown) => {
+    const res = await stripe.fetch(url, init);
+    const i = (init ?? {}) as { method?: string };
+    if (c.bendPost && i.method === "POST" && res.ok) {
+      const body = (await res.json()) as Record<string, unknown>;
+      const bent = c.bendPost(body);
+      return { ...res, json: async () => bent };
+    }
+    return res;
+  });
+  await live(db, (i) => elapseBoth(db, stripe.world.refunds, i));
+  c.baseline = await mainDigest(db);
+  current = c;
+  return c;
+}
+
+afterEach(async () => {
+  const c = current;
+  current = null;
+  try {
+    if (c) {
+      c.restoreNow?.();
+      // ── THE INVARIANT SWEEP (item 20) ──
+      const posts = c.stripe.calls.filter((x) => x.method === "POST" && x.path === "/v1/refunds");
+      const perKey = new Map<string, number>();
+      for (const p of posts) perKey.set(String(p.idempotencyKey), (perKey.get(String(p.idempotencyKey)) ?? 0) + 1);
+      for (const [key, n] of perKey) expect(n, `POSTs carrying ${key}`).toBe(1);
+      expect(c.violations, "every POST names a request row armed before it left").toEqual([]);
+      expect(await owned(c.db, () => mainDigest(c.db)), "main's five tables: only the scenario's own writes as main").toEqual(c.baseline);
+    }
+  } finally {
+    h.sb = null;
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  }
+});
+
+// ── Small helpers ────────────────────────────────────────────────────────────────────────────────────────
+const gmOf = (c: Ctx, id = c.f.gm) => actorOf(id, "gm", [c.f.w.shop]);
+const mooOf = (c: Ctx) => actorOf(c.f.moo, "moo", [c.f.w.shop]);
+
+function body(amountCents: number, seenRefundableCents: number, clientToken: string = randomUUID()): RefundRequestBody {
+  return { clientToken, amountCents, seenRefundableCents, reasonCode: "customer_cancelled", reasonNote: null, trigger: "panel" };
+}
+
+/** One order (a quote) with Stripe payments the shop's own account knows. One amount = a `full` payment. */
+async function order(c: Ctx, amounts: number[], opts: { kinds?: string[] } = {}): Promise<{ quote: string; pays: KitPayment[] }> {
+  const quote = await c.f.w.quote();
+  const kinds = opts.kinds ?? (amounts.length === 1 ? ["full"] : ["deposit", "balance"]);
+  const pays: KitPayment[] = [];
+  for (let i = 0; i < amounts.length; i++) {
+    const p = await c.mainWrite(() => c.f.w.pay(quote, kinds[i]!, amounts[i]!));
+    c.stripe.world.addPaymentIntent({ id: p.pi, account: KEY_LOC, chargeId: p.charge, amountCaptured: amounts[i]! });
+    pays.push(p);
+  }
+  return { quote, pays };
+}
+
+/** A press through the lib, on `client` (default: the context's own). The client is captured at the call. */
+function press(c: Ctx, quote: string, b: RefundRequestBody, o: { client?: Client; actor?: string; deadlineMs?: number } = {}): Promise<RefundPressResult> {
+  h.sb = (o.client ?? c.main).sb;
+  return requestRefund(gmOf(c, o.actor), quote, b, o.deadlineMs !== undefined ? { deadlineMs: o.deadlineMs } : {});
+}
+function pressed(r: RefundPressResult): RefundRowOutcome[] {
+  expect(r.kind).toBe("pressed");
+  return r.kind === "pressed" ? r.rows : [];
+}
+type Settled = { ok: true; value: RefundPressResult } | { ok: false; error: unknown };
+async function settle<T>(p: Promise<T>): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> {
+  try {
+    return { ok: true, value: await p };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+async function refused(p: Promise<unknown>, statusCode: number, code: string): Promise<CateringRefundError> {
+  const r = await settle(p);
+  expect(r.ok, `expected the refusal ${code}`).toBe(false);
+  const e = (r as { error: unknown }).error;
+  expect(e).toBeInstanceOf(CateringRefundError);
+  expect(e).toMatchObject({ status: statusCode, code });
+  return e as CateringRefundError;
+}
+function deferred<T = void>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+const never = () => new Promise<never>(() => {});
+const isRpc = (call: HookCall, name: string) => call.kind === "rpc" && call.name === name;
+const argsOf = (call: { args?: unknown }) => (call.args ?? {}) as Record<string, unknown>;
+const isReserveWithReads = (call: HookCall) => isRpc(call, "catering_refund_reserve_fresh") && argsOf(call).p_reads != null;
+const rpcNames = (cl: Client) => cl.calls.filter((x) => x.kind === "rpc").map((x) => x.name);
+const postsOf = (c: Ctx, pi?: string) =>
+  c.stripe.calls.filter((x) => x.method === "POST" && x.path === "/v1/refunds" && (!pi || new URLSearchParams(x.body ?? "").get("payment_intent") === pi));
+const getsOf = (c: Ctx) => c.stripe.calls.filter((x) => x.method === "GET").length;
+
+/** A read through the lib on a fresh client (what Check Stripe, a release or the sweep would make). */
+function readNow(c: Ctx, paymentId: string) {
+  return runRefundRead(c.client().sb, paymentId, { deadlineMs: Date.now() + 20_000 });
+}
+/** One sweep run through the lib (6 minutes pass first, so no earlier lease is held). */
+async function sweep(c: Ctx, cl: Client = c.client()) {
+  await elapse(c, "6 minutes");
+  return runRefundSweep(cl.sb, { deadlineMs: Date.now() + 60_000 });
+}
+/** Time passes for the database AND for Stripe's clock in the fake (see `elapseBoth`). */
+const elapse = (c: Ctx, interval: string) => owned(c.db, () => elapseBoth(c.db, c.stripe.world.refunds, interval));
+/** Observation live now (see `live`), with Stripe's clock moving with the database's. */
+const relive = (c: Ctx) => owned(c.db, () => live(c.db, (i) => elapseBoth(c.db, c.stripe.world.refunds, i)));
+const figures = (c: Ctx, paymentId: string) => owned(c.db, () => kit.figures(c.db, paymentId));
+const ledgerFor = (c: Ctx, p: KitPayment, type = "charge.refund.updated") => c.mainWrite(() => kit.ledger(c.db, { type, pi: p.pi, charge: p.charge }));
+
+// ── 1, 2. The happy path and the duplicate tap ─────────────────────────────────────────────────────────────
+describe("1-2 happy path and the duplicate tap", () => {
+  let f: FlowDb;
+  beforeAll(async () => { f = await flowDb(); });
+
+  it("happy path, one payment: one POST (its key, its metadata), the row created, the audit rows, the follow-up read mirrors and links; figures withheld 5 minutes, then the new refundable", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    expect(row).toMatchObject({ paymentId: p.id, amountCents: 10_000, outcome: "created", posted: true, cause: null, accountSlot: "location", httpStatus: 200, alreadyBound: false });
+    const posts = postsOf(c);
+    expect(posts).toHaveLength(1);
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+    expect(posts[0]!.idempotencyKey).toBe(`catering-refund:${row.requestId}`);
+    expect(posts[0]!.redirectMode).toBe("manual");
+    const form = new URLSearchParams(posts[0]!.body);
+    expect(form.get("metadata[refund_request_id]")).toBe(row.requestId);
+    expect(form.get("payment_intent")).toBe(p.pi);
+    expect(form.get("amount")).toBe("10000");
+    const r = await requestRow(c.db, row.requestId);
+    expect(r).toMatchObject({ status: "submitted", stripe_refund_id: row.stripeRefundId, arm_account_slot: "location", arm_livemode: false, arm_credential_fp: credentialFingerprint(KEY_LOC), arm_payment_intent: p.pi });
+    expect(r.create_armed_at).not.toBeNull();
+    // The audit rows: the reserve's (SQL, destructive) and the app's stripe_result with the account slot.
+    const audits = await auditOf(c.db, row.requestId);
+    expect(audits.map((a) => a.action)).toEqual(["catering.refund.request", "catering.refund.stripe_result"]);
+    expect(audits[0]!.destructive).toBe(true);
+    expect(audits[1]!.metadata).toMatchObject({ outcome: "created", posted: true, account_slot: "location", stripe_refund_id: row.stripeRefundId, payment_id: p.id });
+    // Step 6: the follow-up read mirrored the refund and linked it to the request.
+    const m = await kit.mirror(c.db, p.id);
+    expect(m.map((x) => [x.refund_id, x.request_id])).toEqual([[row.stripeRefundId, row.requestId]]);
+    // Our own arm / finish are changes: no figure for 5 minutes.
+    expect(await figures(c, p.id)).toMatchObject({ known: false, refundable: null });
+    await elapse(c, "6 minutes");
+    expect((await readNow(c, p.id)).result).toBe("complete");
+    expect(await figures(c, p.id)).toMatchObject({ known: true, captured: 30_000, counted: 10_000, in_flight: 0, refundable: 20_000, blocked: false });
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+  });
+
+  it("happy path, two payments: one POST per reserved row (balance first), each with its own key and metadata", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [10_000, 20_000]); // deposit, balance
+    const [dep, bal] = o.pays as [KitPayment, KitPayment];
+    const rows = pressed(await press(c, o.quote, body(30_000, 30_000)));
+    expect(rows.map((r) => [r.paymentId, r.amountCents, r.outcome, r.posted])).toEqual([
+      [bal.id, 20_000, "created", true],
+      [dep.id, 10_000, "created", true],
+    ]);
+    const posts = postsOf(c);
+    expect(posts).toHaveLength(2);
+    expect(posts.map((x) => x.idempotencyKey)).toEqual(rows.map((r) => `catering-refund:${r.requestId}`));
+    expect(posts.map((x) => new URLSearchParams(x.body).get("metadata[refund_request_id]"))).toEqual(rows.map((r) => r.requestId));
+    for (const r of rows) expect((await requestRow(c.db, r.requestId)).status).toBe("submitted");
+  });
+
+  it("a duplicate tap (the same client token) after completion: the original rows; NO read, NO POST", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const b = body(5_000, 30_000);
+    const first = pressed(await press(c, o.quote, b));
+    expect(first[0]!.outcome).toBe("created");
+    const getsBefore = getsOf(c);
+    const callsBefore = c.main.calls.length;
+    const again = await press(c, o.quote, b);
+    expect(again.kind).toBe("replay");
+    expect(again.kind === "replay" && again.requests.map((r) => [r.id, r.status, r.armed, r.stripeRefundId])).toEqual([[first[0]!.requestId, "submitted", true, first[0]!.stripeRefundId]]);
+    expect(c.main.calls.slice(callsBefore).filter((x) => x.kind === "rpc").map((x) => x.name)).toEqual(["catering_refund_reserve_fresh"]);
+    expect(getsOf(c)).toBe(getsBefore);
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+  });
+});
+
+// ── 3. [R7] A concurrent duplicate whose read loses ───────────────────────────────────────────────────────
+describe("3 [R7] [T2] a concurrent duplicate (same token) whose read loses", () => {
+  let f: FlowDb;
+  beforeAll(async () => { f = await flowDb(); });
+
+  /** Copy B runs its probe and its read, then waits before its reserve until `go` resolves. */
+  function holdBBeforeReserve(c: Ctx, quote: string, b: RefundRequestBody) {
+    const bClient = c.client();
+    const atReserve = deferred();
+    const go = deferred();
+    bClient.onCall = async (call) => {
+      if (call.phase === "before" && isReserveWithReads(call)) {
+        atReserve.resolve();
+        await go.promise;
+      }
+    };
+    const result = settle(press(c, quote, b, { client: bClient }));
+    return { bClient, atReserve: atReserve.promise, go: go.resolve, result };
+  }
+
+  it("B's last look runs AFTER the winner's reserve: B returns the original rows; ONE POST in total", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const b = body(10_000, 30_000);
+    const B = holdBBeforeReserve(c, o.quote, b);
+    await B.atReserve; // B read (its token is now stale-to-be)
+    c.main.onCall = async (call) => {
+      if (call.phase === "after" && isReserveWithReads(call)) {
+        c.main.onCall = null;
+        B.go();
+        await B.result; // B's reserve runs now, after A reserved and before A arms
+      }
+    };
+    const a = pressed(await press(c, o.quote, b));
+    const bOut = await B.result;
+    expect(a).toHaveLength(1);
+    expect(a[0]).toMatchObject({ outcome: "created", posted: true });
+    expect(bOut.ok).toBe(true);
+    const bRes = (bOut as { value: RefundPressResult }).value;
+    expect(bRes.kind).toBe("replay");
+    expect(bRes.kind === "replay" && bRes.requests.map((r) => r.id)).toEqual([a[0]!.requestId]);
+    // B's answer says only what the row was when B looked: reserved, not armed. It never claims a refund was sent.
+    expect(bRes.kind === "replay" && bRes.requests[0]).toMatchObject({ status: "pending", armed: false, stripeRefundId: null });
+    expect(rpcNames(B.bClient)).not.toContain("catering_refund_arm");
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+  });
+
+  it("B's last look runs BEFORE the winner's reserve: B gets 409 stripe_unchecked (the S11 code) naming the payment; a fresh summary then shows the winner's row; ONE POST in total", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    const b = body(10_000, 30_000);
+    const B = holdBBeforeReserve(c, o.quote, b);
+    await B.atReserve; // B read: token tB
+    c.main.onCall = async (call) => {
+      if (call.phase === "before" && isReserveWithReads(call)) {
+        c.main.onCall = null;
+        B.go();
+        await B.result; // A has read (tA replaced tB as the payment's token); B's reserve runs before A's
+      }
+    };
+    const a = pressed(await press(c, o.quote, b));
+    expect(a[0]).toMatchObject({ outcome: "created", posted: true });
+    const e = await refused(B.result.then((r) => { if (r.ok) return r.value; throw r.error; }), 409, "stripe_unchecked");
+    expect(e.detail).toEqual({ paymentId: p.id });
+    // The S11 code: figures_stale on the create maps to stripe_unchecked (the text is the S11 sentence; its copy
+    // lives with the routes / panel pieces).
+    expect(REFUND_RPC_REFUSALS.reserve.figures_stale).toEqual({ status: 409, code: "stripe_unchecked" });
+    expect(e.message).not.toMatch(/not sent|nothing was sent|no refund was sent/i);
+    // The code's copy IS the S11 sentence (en + es).
+    const t = (lang: string) => (JSON.parse(readFileSync(join(process.cwd(), "lib", "i18n", `${lang}.json`), "utf8")) as Record<string, string>)[`catering.refunds.error.${e.code}`];
+    expect(t("en")).toBe("This copy of your press did not send a refund. Check the list below before you try again.");
+    expect(t("es")).toBe("Esta copia de tu toque no envió un reembolso. Revisa la lista de abajo antes de intentarlo otra vez.");
+    h.sb = c.client().sb;
+    const summary = await loadRefundSummary(gmOf(c), o.quote);
+    expect(summary.requests.map((r) => [r.id, r.status])).toEqual([[a[0]!.requestId, "submitted"]]);
+    expect(rpcNames(B.bClient)).not.toContain("catering_refund_arm");
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+  });
+
+  it("[T2] B's read REPLACES A's open read: both copies answer 409 stripe_unchecked ('check the list'); NOTHING reserved, ZERO POSTs", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    const b = body(10_000, 30_000);
+    const bClient = c.client();
+    const B: { out: Settled | null } = { out: null };
+    c.main.onCall = async (call) => {
+      if (call.phase === "after" && isRpc(call, "catering_refund_read_begin")) {
+        c.main.onCall = null;
+        B.out = await settle(press(c, o.quote, b, { client: bClient })); // B whole, while A's read is OPEN
+      }
+    };
+    const aOut = await settle(press(c, o.quote, b));
+    // A: its record answers read_replaced (and stamps dirty); its reserve has no token.
+    expect(aOut.ok).toBe(false);
+    expect((aOut as { error: unknown }).error).toMatchObject({ status: 409, code: "stripe_unchecked", detail: { paymentId: p.id } });
+    // B: its own read was complete, but began while A's was open -> the payment was stamped dirty -> not known.
+    expect(B.out).not.toBeNull();
+    expect(B.out!.ok).toBe(false);
+    expect((B.out! as { error: unknown }).error).toMatchObject({ status: 409, code: "stripe_unchecked" });
+    const recA = c.main.calls.filter((x) => isRpc({ ...x, phase: "before" }, "catering_refund_record_read"));
+    expect(recA).toHaveLength(1);
+    expect(await requestsOf(c.db, p.id)).toHaveLength(0);
+    expect(await figures(c, p.id)).toMatchObject({ known: false, refundable: null });
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+
+  it("B's whole press (its probe) after the winner's reserve: replay at the probe, no read, no POST from B", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const b = body(10_000, 30_000);
+    const bClient = c.client();
+    const B: { out: Settled | null } = { out: null };
+    c.main.onCall = async (call) => {
+      if (call.phase === "after" && isReserveWithReads(call)) {
+        c.main.onCall = null;
+        B.out = await settle(press(c, o.quote, b, { client: bClient }));
+      }
+    };
+    const a = pressed(await press(c, o.quote, b));
+    expect(a[0]!.outcome).toBe("created");
+    expect(B.out!.ok).toBe(true);
+    expect((B.out! as { value: RefundPressResult }).value.kind).toBe("replay");
+    expect(rpcNames(bClient)).toEqual(["catering_refund_reserve_fresh"]);
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+  });
+});
+
+// ── 4. Concurrent presses by two staff, interleaved at every RPC boundary ───────────────────────────────
+describe("4 concurrent presses by two different staff (different tokens), B injected before each RPC of A", () => {
+  let f: FlowDb;
+  beforeAll(async () => { f = await flowDb(); });
+
+  it("never more than the refundable total reserved; one unresolved request per payment; POSTs = rows armed and sent", async () => {
+    const c = await ctx(f);
+    // The dry run: A alone, to enumerate its RPC sequence.
+    const dry = await order(c, [30_000]);
+    pressed(await press(c, dry.quote, body(20_000, 30_000)));
+    const seq = rpcNames(c.main);
+    expect(seq.slice(0, 6)).toEqual([
+      "catering_refund_reserve_fresh", "catering_refund_read_begin", "catering_refund_record_read",
+      "catering_refund_reserve_fresh", "catering_refund_arm", "catering_refund_finish",
+    ]);
+    const boundaries = [...seq.map((name, k) => ({ k, name })), { k: -1, name: "the POST" }];
+    const report: string[] = [];
+    for (const at of boundaries) {
+      const o = await order(c, [30_000]);
+      const p = o.pays[0]!;
+      const bClient = c.client();
+      let n = 0;
+      const B: { out: Settled | null } = { out: null };
+      const runB = async () => { B.out = await settle(press(c, o.quote, body(20_000, 30_000), { client: bClient, actor: c.f.gm2 })); };
+      c.main.calls.length = 0;
+      c.main.onCall = async (call) => {
+        if (call.phase !== "before" || call.kind !== "rpc") return;
+        if (n++ === at.k) await runB();
+      };
+      c.onStripe = async (call) => {
+        if (at.k === -1 && call.method === "POST" && !B.out && new URLSearchParams(call.body ?? "").get("payment_intent") === p.pi) {
+          c.onStripe = null;
+          await runB();
         }
-        return { data: { claim_token: r.claim_token, attempts: r.attempts, first_attempt_at: r.first_attempt_at, status: r.status }, error: null };
-      },
-      catering_refund_record_snapshot: (args, db) => {
-        const t = (db.tables.catering_refund_stripe_snapshots ??= []);
-        const cur = t.find((x) => x.payment_id === args.p_payment_id);
-        if (cur && String(cur.listed_at) > String(args.p_listed_at)) return { data: false, error: null };
-        const row = { payment_id: args.p_payment_id, listed_at: args.p_listed_at, captured_cents: args.p_captured_cents, refunds: args.p_refunds };
-        if (cur) Object.assign(cur, row);
-        else t.push(row);
-        return { data: true, error: null };
-      },
-      catering_refund_actor_ok: (args, db) => ({ data: sqlActorOk(db, args.p_actor_id, args.p_shop_id), error: null }),
-    },
-  );
-  h.sqlRule = "0358";
-  h.rpcCalls = [];
-  const client = h.db.client as unknown as { rpc: (name: string, args: Record<string, unknown>) => unknown };
-  const rpc = client.rpc;
-  client.rpc = (name, args) => { h.rpcCalls.push(name); return rpc(name, args); };
-  stripe.charges = new Map([
-    ["pi_dep", { account: "sk_test_fake_A", captured: 30000, refunded: 0 }],
-    ["pi_bal", { account: "sk_test_fake_A", captured: 70000, refunded: 0 }],
-  ]);
-  stripe.refunds = [];
-  stripe.keys = new Map();
-  stripe.nextCreate = [];
-  stripe.creates = [];
-  h.accounts = [{ secretKey: "sk_test_fake_A", webhookSecret: "whsec_fake", source: "default" }];
-}
-
-const body = (over: Partial<RefundRequestBody> = {}): RefundRequestBody => ({
-  clientToken: "11111111-1111-4111-8111-111111111111", amountCents: 100000, reasonCode: "event_lost", reasonNote: null, trigger: "lost", ...over,
-});
-const rows = () => h.db.tables.catering_refund_requests as Row[];
-
-beforeEach(() => {
-  seed();
-  vi.mocked(createRefund).mockClear();
-  vi.mocked(audit).mockClear();
-});
-
-describe("the confirm tap", () => {
-  it("a full refund: one Stripe refund per paid payment, each under its own row's key, and the rows succeed", async () => {
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body());
-    expect(out.replay).toBe(false);
-    expect(out.results.map((r) => [r.paymentId, r.amountCents, r.status])).toEqual([[BAL, 70000, "succeeded"], [DEP, 30000, "succeeded"]]);
-    expect(stripe.creates.map((c) => c.key)).toEqual(rows().map((r) => `catering-refund:${r.id}`));
-    expect(stripe.refunds).toHaveLength(2);
-    expect(rows().every((r) => r.status === "succeeded" && typeof r.stripe_refund_id === "string" && r.attempts === 1)).toBe(true);
-    // The metadata carries the row id (how a later list finds a lost answer) and the reason maps onto Stripe's enum.
-    const sent = JSON.parse(stripe.creates[0]!.params) as { reason: string; metadata: Record<string, string> };
-    expect(sent.reason).toBe("requested_by_customer");
-    expect(sent.metadata.refund_request_id).toBe(rows()[0]!.id);
-  });
-
-  it("review r1: a payment that lands between the screen and the tap never grows a Full refund (the confirmed number is sent)", async () => {
-    (h.db.tables.catering_payments as Row[]).push({ id: "00000000-0000-4000-8000-0000000000c9", quote_id: QUOTE, kind: "full", amount_cents: 50000, status: "paid", provider: "stripe", provider_ref: "pi_late", paid_at: "2026-11-06T10:00:00Z", created_at: "2026-11-06T09:00:00Z" });
-    stripe.charges.set("pi_late", { account: "sk_test_fake_A", captured: 50000, refunded: 0 });
-    // The person saw (and confirmed) $1,000.00; $500 more landed meanwhile.
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100000 }));
-    expect(out.results.reduce((s, r) => s + r.amountCents, 0)).toBe(100000);
-    expect(stripe.refunds.reduce((s, r) => s + r.amount, 0)).toBe(100000);
-  });
-
-  it("a double tap (the same token) is the same request: no second Stripe call, no second row", async () => {
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
-    const again = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
-    expect(again.replay).toBe(true);
-    expect(stripe.creates).toHaveLength(1);
-    expect(rows()).toHaveLength(1);
-    expect(stripe.refunds.reduce((s, r) => s + r.amount, 0)).toBe(5000);
-  });
-
-  it("a partial refund takes the balance first", async () => {
-    const out = await requestRefund(actor("owner", []), QUOTE, body({ amountCents: 1234 }));
-    expect(out.results).toEqual([expect.objectContaining({ paymentId: BAL, amountCents: 1234, status: "succeeded" })]);
-  });
-
-  it("over-refund is refused by name with the refundable total, and nothing reaches Stripe", async () => {
-    await expect(requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100001 }))).rejects.toMatchObject({ status: 409, code: "over_refundable", detail: { refundableCents: 100000 } });
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("a prep manager at the shop (403) and a catering manager, GM or AGM of another shop (404) are refused before the database is asked", async () => {
-    for (const role of ["prep_mgr", "social_media_mgr", "shift_lead", "key_holder", "employee"]) {
-      await expect(requestRefund(actor(role), QUOTE, body()), role).rejects.toMatchObject({ status: 403, code: "forbidden" });
+      };
+      const aOut = await settle(press(c, o.quote, body(20_000, 30_000)));
+      c.main.onCall = null;
+      c.onStripe = null;
+      const bOut = B.out;
+      expect(bOut, `B ran before ${at.name}#${at.k}`).not.toBeNull();
+      const rows = await requestsOf(c.db, p.id);
+      const held = rows.filter((r) => r.status !== "failed").reduce((s, r) => s + Number(r.amount_cents), 0);
+      const pendingN = rows.filter((r) => r.status === "pending").length;
+      const armed = rows.filter((r) => r.create_armed_at !== null);
+      const posts = postsOf(c, p.pi);
+      report.push(`${at.name}#${at.k}: A ${aOut.ok ? (aOut.value.kind === "pressed" ? aOut.value.rows.map((r) => r.outcome).join(",") : "replay") : (aOut.error as CateringRefundError).code}; `
+        + `B ${bOut!.ok ? (bOut!.value.kind === "pressed" ? bOut!.value.rows.map((r) => r.outcome).join(",") : "replay") : (bOut!.error as CateringRefundError).code}; held ${held}; posts ${posts.length}`);
+      expect(held, report.at(-1)).toBeLessThanOrEqual(30_000);
+      expect(pendingN, report.at(-1)).toBeLessThanOrEqual(1);
+      expect(posts.length, report.at(-1)).toBe(armed.length);
+      expect(new Set(posts.map((x) => x.idempotencyKey)).size).toBe(posts.length);
+      expect(c.stripe.world.refundedOn(p.pi), report.at(-1)).toBeLessThanOrEqual(30_000);
+      // No POST reached Stripe asking for more than the charge had left.
+      const keys = new Set(posts.map((x) => String(x.idempotencyKey)));
+      expect(c.stripe.world.creates.filter((x) => keys.has(x.idempotencyKey) && x.status !== 200), report.at(-1)).toEqual([]);
     }
-    // Another shop's people cannot see this order at all: 404, never a leak (unchanged; the role is not even looked at).
-    for (const role of ["catering_mgr", "gm", "agm", "moo", "prep_mgr"]) {
-      await expect(requestRefund(actor(role, [OTHER]), QUOTE, body()), role).rejects.toMatchObject({ status: 404, code: "not_found" });
-      await expect(requestRefund(actor(role, []), QUOTE, body()), role).rejects.toMatchObject({ status: 404, code: "not_found" });
-    }
-    expect(h.rpcCalls).toEqual([]);
-    expect(rows()).toHaveLength(0);
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("the live cap: less left on the charge than the row asks for fails it before any send, releasing the amount", async () => {
-    // Stripe already gave back part of the balance (a dashboard refund the webhook has not reported): the live cap.
-    stripe.charges.get("pi_bal")!.refunded = 69000;
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
-    expect(out.results[0]).toMatchObject({ status: "failed", errorCode: "over_charge_remaining" });
-    expect(stripe.creates).toHaveLength(0);
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    expect(s.totals.refundableCents).toBe(100000); // the failed row counts for nothing
-  });
-
-  it("a 400 at create (Stripe refused) is terminal: failed, amount released", async () => {
-    stripe.charges.set("pi_dep", { account: "sk_test_fake_A", captured: 30000, refunded: 0 });
-    stripe.nextCreate = [];
-    // Make Stripe refuse: the charge was fully refunded between our live read and the create.
-    const spy = vi.mocked(createRefund);
-    spy.mockImplementationOnce(async () => { const { StripeError } = await import("@/lib/stripe/client"); throw new StripeError(400, "charge_already_refunded"); });
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    expect(out.results[0]).toMatchObject({ status: "failed", errorCode: "charge_already_refunded" });
+    // What each interleaving came to (printed for the record; the invariants above are the assertions).
+    console.info(`[4] B injected before each boundary of A:\n${report.join("\n")}`);
+    expect(report).toHaveLength(boundaries.length);
   });
 });
 
-describe("unknown outcomes stay pending and are retried safely", () => {
-  it("the answer was lost but the refund landed: Retry finds it by request id and sends nothing again", async () => {
-    stripe.nextCreate = ["network_lost_after_executing"];
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "network_error" });
-    const s1 = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    // Opening the panel asked Stripe: the landed refund is listed under this row id, so it counts once, as refunded.
-    expect([s1.totals.inFlightCents, s1.totals.refundedCents]).toEqual([0, 2000]);
-    expect(s1.totals.refundableCents).toBe(98000);
-    expect(s1.requests[0]).toMatchObject({ retryable: true, needsReconcile: false });
+// ── 5. Crashes ────────────────────────────────────────────────────────────────────────────────────────────
+describe("5 a crash at each step", () => {
+  let f: FlowDb;
+  beforeAll(async () => { f = await flowDb(); });
 
-    const id = rows()[0]!.id as string;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, id);
-    expect(r.status).toBe("succeeded");
-    expect(stripe.creates).toHaveLength(1); // found, not re-sent
-    expect(stripe.refunds).toHaveLength(1);
-  });
-
-  it("no response and nothing landed: Retry re-sends the SAME key and parameters once", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const id = rows()[0]!.id as string;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, id);
-    expect(r.status).toBe("succeeded");
-    expect(stripe.creates.map((c) => c.key)).toEqual([`catering-refund:${id}`, `catering-refund:${id}`]);
-    expect(stripe.creates[0]!.params).toBe(stripe.creates[1]!.params);
-    expect(stripe.refunds).toHaveLength(1);
-  });
-
-  it("a saved 500 stays pending on retry (Stripe replays it); nothing is ever sent under a new key", async () => {
-    stripe.nextCreate = ["500_saved"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const id = rows()[0]!.id as string;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, id);
-    expect(r).toMatchObject({ status: "pending", errorCode: "api_error" });
-    expect(new Set(stripe.creates.map((c) => c.key))).toEqual(new Set([`catering-refund:${id}`]));
-    expect(stripe.refunds).toHaveLength(0);
-  });
-
-  it("a 429 stays pending and is retryable", async () => {
-    stripe.nextCreate = ["429"];
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "rate_limit" });
-  });
-
-  it("past Stripe's 24-hour window a press RECONCILES: it lists, never sends, and says when Stripe shows nothing", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const id = rows()[0]!.id as string;
-    const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, id, later);
-    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
-    expect(stripe.creates).toHaveLength(1); // never a second send
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE, later);
-    expect(s.requests[0]).toMatchObject({ needsReconcile: true, retryable: false });
-  });
-
-  it("review r10: a retry that reaches the send inside the window's last minute is not sent: needs_reconcile", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    // 30 seconds before the window ends: the first check passes, the send-time check (60 s margin) does not.
-    const at = Date.parse(String(row.first_attempt_at)) + REFUND_RETRY_WINDOW_MS - 30_000;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, at);
-    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
-    expect(stripe.creates).toHaveLength(1); // the first send only
-    expect(row.claim_token).toBeNull(); // released; the reservation stays
-  });
-
-  it("review r10: the clock crosses the deadline DURING the Stripe reads: nothing is sent", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    const at = Date.parse(String(row.first_attempt_at)) + REFUND_RETRY_WINDOW_MS - 120_000; // 2 minutes left
-    const { listRefundsForPaymentIntent } = await import("@/lib/stripe/client");
-    const realList = vi.mocked(listRefundsForPaymentIntent).getMockImplementation()!;
-    const realNow = Date.now.bind(Date);
-    let skew = 0;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + skew);
-    vi.mocked(listRefundsForPaymentIntent).mockImplementation(async (k: string, pi: string) => {
-      skew += 90_000; // the listing took 90 seconds
-      return realList(k, pi);
-    });
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, at);
-    nowSpy.mockRestore();
-    vi.mocked(listRefundsForPaymentIntent).mockImplementation(realList);
-    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
-    expect(stripe.creates).toHaveLength(1);
-  });
-
-  it("review r11: the clock crosses the deadline during the CALLER's database reads: nothing is sent", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    const at = Date.parse(String(row.first_attempt_at)) + REFUND_RETRY_WINDOW_MS - 120_000; // 2 minutes left
-    const realNow = Date.now.bind(Date);
-    let skew = 0;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + skew);
-    const db = h.db as unknown as { client: { rpc: (n: string, a: Record<string, unknown>) => Promise<unknown> } };
-    const realRpc = db.client.rpc;
-    db.client.rpc = async (n: string, a: Record<string, unknown>) => {
-      if (n === "catering_refund_actor_ok") skew += 130_000; // the actor check took 130 seconds
-      return realRpc(n, a);
+  /** Start a press that will hang forever at `where`; resolves once it got there. */
+  async function crashAt(c: Ctx, quote: string, b: RefundRequestBody, where: (call: HookCall) => boolean) {
+    const reached = deferred();
+    c.main.onCall = async (call) => {
+      if (where(call)) {
+        reached.resolve();
+        await never();
+      }
     };
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, at);
-    db.client.rpc = realRpc;
-    nowSpy.mockRestore();
-    expect(r).toMatchObject({ status: "pending", errorCode: "needs_reconcile" });
-    expect(stripe.creates).toHaveLength(1);
+    void press(c, quote, b).catch(() => {});
+    await reached.promise;
+    c.main.onCall = null;
+  }
+
+  it("after the reserve, before the arm: the sweep cancels the row (stale_unarmed) after 15 minutes; nothing sent", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    await crashAt(c, o.quote, body(10_000, 30_000), (call) => call.phase === "before" && isRpc(call, "catering_refund_arm"));
+    const [r0] = await requestsOf(c.db, p.id);
+    expect(r0).toMatchObject({ status: "pending", create_armed_at: null });
+    await elapse(c, "16 minutes");
+    const s = await runRefundSweep(c.client().sb, { deadlineMs: Date.now() + 60_000 });
+    expect(s.claimed).toBe(true);
+    expect(s.cancelledUnarmed).toBeGreaterThanOrEqual(1);
+    expect(await requestRow(c.db, r0!.id)).toMatchObject({ status: "failed", last_error_code: "never_sent", create_armed_at: null });
+    expect(c.stripe.httpRequests("POST")).toBe(0);
   });
 
-  it("review r2: a lost answer that landed, its webhook recorded, nobody retried for 24 h: Check Stripe adopts it and the money is no longer double-held", async () => {
-    stripe.nextCreate = ["network_lost_after_executing"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 40000 }));
-    const row = rows()[0]!;
-    // The webhook's charge.refunded event for the balance (cumulative $400 of $700).
-    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: BAL, cumulative_refunded_cents: 40000, charge_amount_cents: 70000 });
-    const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
-    const before = await loadRefundSummary(actor("catering_mgr"), QUOTE, later);
-    // Opening the panel asks Stripe (review r6): the landed refund is LISTED under this row's id, so it already
-    // counts once (refunded), not twice (refunded and in flight).
-    expect(before.totals.refundableCents).toBe(60000);
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, later);
-    expect(r.status).toBe("succeeded");
-    expect(stripe.creates).toHaveLength(1);
-    const after = await loadRefundSummary(actor("catering_mgr"), QUOTE, later);
-    expect(after.totals.refundableCents).toBe(60000); // $1,000 - $400
+  it("after the POST, before finish: the next read binds it by metadata when Stripe's created is AFTER the arm [T1]", async () => {
+    const c = await ctx(f);
+    c.armOffsetSec = 1;
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    await crashAt(c, o.quote, body(10_000, 30_000), (call) => call.phase === "before" && isRpc(call, "catering_refund_finish"));
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+    const [r0] = await requestsOf(c.db, p.id);
+    expect(r0).toMatchObject({ status: "pending", stripe_refund_id: null });
+    expect(r0!.create_armed_at).not.toBeNull();
+    const refund = c.stripe.world.refunds.find((x) => x.metadata.refund_request_id === r0!.id)!;
+    const read = await readNow(c, p.id);
+    expect(read.result).toBe("complete");
+    expect(read.bound).toEqual([{ requestId: r0!.id, refundId: refund.id }]);
+    expect(await requestRow(c.db, r0!.id)).toMatchObject({ status: "submitted", stripe_refund_id: refund.id });
+    expect(c.stripe.httpRequests("POST")).toBe(1);
   });
 
-  it("review r2: Release closes a past-window row only after a fresh look finds no refund; before the window it is refused", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    await expect(retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, Date.now(), "release")).rejects.toMatchObject({ status: 409, code: "not_releasable" });
-    const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, later, "release");
-    expect(r).toMatchObject({ status: "failed", errorCode: "released_no_refund" });
-    expect(stripe.creates).toHaveLength(1);
-    expect((await loadRefundSummary(actor("catering_mgr"), QUOTE, later)).totals.refundableCents).toBe(100000);
+  it("after the POST, before finish, Stripe's created in the arm's OWN second [T1]: NOT bound; attachable; still unconfirmed", async () => {
+    const c = await ctx(f);
+    c.armOffsetSec = 0;
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    await crashAt(c, o.quote, body(10_000, 30_000), (call) => call.phase === "before" && isRpc(call, "catering_refund_finish"));
+    const [r0] = await requestsOf(c.db, p.id);
+    const armed = (await armedEpoch(c.db, r0!.id))!;
+    expect(armed % 1, "the arm did not fall on a whole second").not.toBe(0);
+    const refund = c.stripe.world.refunds.find((x) => x.metadata.refund_request_id === r0!.id)!;
+    expect(refund.created).toBe(Math.floor(armed));
+    const read = await readNow(c, p.id);
+    expect(read.result).toBe("complete");
+    expect(read.bound).toEqual([]);
+    expect(await requestRow(c.db, r0!.id)).toMatchObject({ status: "pending", stripe_refund_id: null });
+    expect(await claimsOf(c.db, p.id)).toEqual([{ refund_id: refund.id, kind: "mismatch", attachable_to: r0!.id }]);
+    expect(c.stripe.httpRequests("POST")).toBe(1);
   });
 
-  it("review r2: Release never closes a row whose refund IS at Stripe: it adopts it instead", async () => {
-    stripe.nextCreate = ["network_lost_after_executing"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    const later = Date.now() + REFUND_RETRY_WINDOW_MS + 60_000;
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string, later, "release");
-    expect(r.status).toBe("succeeded");
-    expect(row.stripe_refund_id).toMatch(/^re_fake_/);
+  it("after the arm, before the POST: armed, never sent; unconfirmed, blocks, zero POSTs from the sweep or a new press; released after 24 h with `no_request`", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    await crashAt(c, o.quote, body(10_000, 30_000), (call) => call.phase === "after" && isRpc(call, "catering_refund_arm"));
+    const [r0] = await requestsOf(c.db, p.id);
+    expect(r0).toMatchObject({ status: "pending", stripe_refund_id: null });
+    expect(r0!.create_armed_at).not.toBeNull();
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+    // The sweep looks for it (class A every run) and never POSTs.
+    const s = await sweep(c);
+    expect(s.claimed).toBe(true);
+    expect(s.passes).toBeGreaterThanOrEqual(1);
+    await relive(c);
+    expect(await figures(c, p.id)).toMatchObject({ blocked: true, refundable: 0 });
+    // A new press on that payment is refused; nothing is sent.
+    await refused(press(c, o.quote, body(1_000, 0)), 409, "nothing_refundable");
+    // Not before 24 hours.
+    h.sb = c.client().sb;
+    await refused(releaseRefund(mooOf(c), o.quote, r0!.id, { finding: "no_request", accountSlot: "location", livemode: false, note: null }), 409, "not_releasable_yet");
+    await elapse(c, "24 hours 1 minute");
+    await relive(c);
+    h.sb = c.client().sb;
+    const rel = await releaseRefund(mooOf(c), o.quote, r0!.id, { finding: "no_request", accountSlot: "location", livemode: false, note: null });
+    expect(rel).toMatchObject({ result: "released", requestId: r0!.id });
+    expect(await requestRow(c.db, r0!.id)).toMatchObject({ status: "failed", last_error_code: "released_no_refund", resolved_by: c.f.moo });
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+});
+
+// ── 6. Each ambiguous answer = unconfirmed with exactly one POST ───────────────────────────────────────────
+describe("6 each ambiguous answer is UNCONFIRMED with exactly one POST; Check / the sweep / a replay never POST; a new press is refused", () => {
+  let f: FlowDb;
+  beforeAll(async () => { f = await flowDb(); });
+
+  type Case = [name: string, arrange: (c: Ctx) => void, http: number | null, code: string];
+  const cases: Case[] = [
+    ["a 500 (saved under the key)", (c) => c.stripe.script("create", status(500)), 500, "api_error"],
+    ["a 409", (c) => c.stripe.script("create", status(409)), 409, "invalid_request_error"],
+    ["a 429", (c) => c.stripe.script("create", status(429)), 429, "rate_limit"],
+    ["a 400", (c) => c.stripe.script("create", status(400)), 400, "invalid_request_error"],
+    ["a timeout (Stripe executed; the answer came too late)", (c) => c.stripe.script("create", delay(5_000)), null, "timeout"],
+    ["a network error after Stripe executed", (c) => c.stripe.script("create", networkError("after_executing")), null, "network_error"],
+    ["a 307 (never followed)", (c) => c.stripe.script("create", redirect(307)), 307, "redirect_not_followed"],
+    ["an unparseable 2xx", (c) => c.stripe.script("create", status(200, { object: "refund", id: "re_fake_half" })), 200, "unparseable_2xx"],
+  ];
+
+  it.each(cases)("%s", async (name, arrange, http, code) => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    arrange(c);
+    const deadlineMs = Date.now() + 100_000;
+    if (name.startsWith("a timeout")) c.postTimeoutDeadline = deadlineMs;
+    const b = body(10_000, 30_000);
+    const rows = pressed(await press(c, o.quote, b, { deadlineMs }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ outcome: "unconfirmed", posted: true, httpStatus: http });
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+    const r0 = await requestRow(c.db, rows[0]!.requestId);
+    expect(r0).toMatchObject({ status: "pending", stripe_refund_id: null });
+    expect(r0.create_armed_at).not.toBeNull();
+    if (code) expect(r0.last_error_code).toBe(code);
+    // Check Stripe: GETs only.
+    h.sb = c.client().sb;
+    const checks = await checkRefunds(gmOf(c), o.quote);
+    expect(checks.map((x) => x.paymentId)).toEqual([p.id]);
+    // The sweep: reads it (unconfirmed = class A every run), never POSTs.
+    const s = await sweep(c);
+    expect(s.claimed).toBe(true);
+    // A replay of the same token: the original row, nothing read, nothing sent.
+    const again = await press(c, o.quote, b);
+    expect(again.kind).toBe("replay");
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+    // A NEW press on that payment (once its figures are known again): the payment is blocked, nothing to allocate.
+    await relive(c);
+    expect(await figures(c, p.id)).toMatchObject({ blocked: true, refundable: 0 });
+    await refused(press(c, o.quote, body(1_000, 0)), 409, "nothing_refundable");
+    expect(await requestsOf(c.db, p.id)).toHaveLength(1);
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+    expect(postsOf(c)[0]!.idempotencyKey).toBe(`catering-refund:${rows[0]!.requestId}`);
+  });
+});
+
+// ── 7, 8. Answers that do not match; a timeout after a read bound the row ───────────────────────────────
+describe("7-8 [R8] [S9] 2xx answers that do not match; a lost answer after a read bound the row", () => {
+  let f: FlowDb;
+  beforeAll(async () => { f = await flowDb(); });
+
+  type Bend = [name: string, bend: (b: Record<string, unknown>) => Record<string, unknown>];
+  const bends: Bend[] = [
+    ["another PaymentIntent", (b) => ({ ...b, payment_intent: "pi_fake_another_intent" })],
+    ["another amount", (b) => ({ ...b, amount: Number(b.amount) + 1 })],
+    ["another currency", (b) => ({ ...b, currency: "eur" })],
+    ["another charge", (b) => ({ ...b, charge: "ch_fake_another_charge" })],
+    ["no metadata", (b) => ({ ...b, metadata: {} })],
+  ];
+
+  it.each(bends)("a 2xx naming %s: answer_mismatch, the row stays unconfirmed, the next tender is NOT armed", async (_n, bend) => {
+    const c = await ctx(f);
+    const o = await order(c, [10_000, 20_000]);
+    const [dep, bal] = o.pays as [KitPayment, KitPayment];
+    c.bendPost = bend;
+    const rows = pressed(await press(c, o.quote, body(30_000, 30_000)));
+    expect(rows.map((r) => [r.paymentId, r.outcome, r.posted, r.cause])).toEqual([
+      [bal.id, "answer_mismatch", true, null],
+      [dep.id, "never_sent", false, "stopped"],
+    ]);
+    expect(await requestRow(c.db, rows[0]!.requestId)).toMatchObject({ status: "pending", stripe_refund_id: null, last_error_code: "answer_mismatch" });
+    expect(await requestRow(c.db, rows[1]!.requestId)).toMatchObject({ status: "failed", last_error_code: "never_sent", create_armed_at: null });
+    expect(c.stripe.httpRequests("POST")).toBe(1);
   });
 
-  it("review r1: a press while another holds the claim sends nothing; a press that outlived its claim writes nothing", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const row = rows()[0]!;
-    // Press B takes the claim (for example its Stripe call is slow).
-    row.claim_token = "claim-B";
-    row.claimed_until = new Date(Date.now() + 60_000).toISOString();
-    const a = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
-    expect(a).toMatchObject({ status: "pending", errorCode: "in_progress" });
-    expect(stripe.creates).toHaveLength(1); // only the first tap's send
-
-    // B's claim expires; press C claims, and B (holding the OLD token) comes back with "failed": fenced out.
-    row.claimed_until = new Date(Date.now() - 1000).toISOString();
-    const c = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
-    expect(c.status).toBe("succeeded");
-    const { error, count } = await h.db.client.from("catering_refund_requests").update({ status: "failed" }, { count: "exact" }).eq("id", row.id).eq("status", "pending").eq("claim_token", "claim-B");
-    expect([error, count]).toEqual([null, 0]);
-    expect(row.status).toBe("succeeded");
-    expect(row.claim_token).toBeNull(); // released by the outcome write
-    expect(stripe.refunds).toHaveLength(1);
-  });
-
-  it("review r1: even a FIRST attempt lists first, and adopts a refund already carrying this row's id instead of sending", async () => {
-    // A reserved row nobody has sent yet, and a Stripe refund that names it (a press that outlived its claim).
-    reserve({ p_actor_id: ACTOR, p_quote_id: QUOTE, p_client_token: "22222222-2222-4222-8222-222222222222", p_amount_cents: 2000, p_reason_code: "event_lost", p_reason_note: null, p_trigger: "lost" }, h.db);
-    const row = rows()[0]!;
-    expect(row.attempts).toBe(0);
-    stripe.refunds.push({ id: "re_ghost", status: "succeeded", amount: 2000, paymentIntent: "pi_bal", requestId: row.id as string, account: "sk_test_fake_A" });
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
-    expect(r.status).toBe("succeeded");
-    expect(row.stripe_refund_id).toBe("re_ghost");
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("a payment Stripe does not know in any configured account fails before anything is sent", async () => {
-    h.accounts = [{ secretKey: "sk_test_fake_B", webhookSecret: "whsec_fake", source: "location" }];
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    expect(out.results[0]).toMatchObject({ status: "failed", errorCode: "payment_not_in_stripe" });
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("the shop's own account is asked first, then the shared one (the PaymentIntent lives where it was minted)", async () => {
-    h.accounts = [
-      { secretKey: "sk_test_fake_B", webhookSecret: "whsec_fake", source: "location" },
-      { secretKey: "sk_test_fake_A", webhookSecret: "whsec_fake", source: "default" },
-    ];
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    expect(out.results[0]!.status).toBe("succeeded");
-    expect(stripe.creates[0]!.account).toBe("sk_test_fake_A");
-  });
-
-  it("review r3: an account that cannot be asked does not hide the one that owns the payment", async () => {
-    h.accounts = [
-      { secretKey: "sk_test_fake_BROKEN", webhookSecret: "whsec_fake", source: "location" },
-      { secretKey: "sk_test_fake_A", webhookSecret: "whsec_fake", source: "default" },
-    ];
-    const { retrievePaymentIntentCharge } = await import("@/lib/stripe/client");
-    const real = vi.mocked(retrievePaymentIntentCharge).getMockImplementation()!;
-    vi.mocked(retrievePaymentIntentCharge).mockImplementation(async (key: string, pi: string) => {
-      if (key === "sk_test_fake_BROKEN") {
-        const { StripeError } = await import("@/lib/stripe/client");
-        throw new StripeError(401, "api_key_expired");
+  it("[R8] a TIMEOUT delivered to finish after a read already bound the row: already_bound_unconfirmed_answer, the row bound, its audit row, the next tender not armed, one POST", async () => {
+    const c = await ctx(f);
+    c.armOffsetSec = 1;
+    const o = await order(c, [10_000, 20_000]);
+    const [dep, bal] = o.pays as [KitPayment, KitPayment];
+    const deadlineMs = Date.now() + 100_000;
+    c.postTimeoutDeadline = deadlineMs;
+    c.stripe.script("create", delay(5_000)); // executed at Stripe; the answer is lost to the timeout
+    const R: { bound: Array<{ requestId: string; refundId: string }> } = { bound: [] };
+    c.main.onCall = async (call) => {
+      if (call.phase === "before" && isRpc(call, "catering_refund_finish")) {
+        c.main.onCall = null;
+        R.bound = (await readNow(c, bal.id)).bound; // the sweep / Check Stripe got there first
       }
-      return real(key, pi);
-    });
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    vi.mocked(retrievePaymentIntentCharge).mockImplementation(real);
-    expect(out.results[0]!.status).toBe("succeeded");
-    expect(stripe.creates[0]!.account).toBe("sk_test_fake_A");
+    };
+    const rows = pressed(await press(c, o.quote, body(30_000, 30_000), { deadlineMs }));
+    const bound = R.bound;
+    expect(bound).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ paymentId: bal.id, outcome: "already_bound_unconfirmed_answer", posted: true, httpStatus: null, stripeRefundId: bound[0]!.refundId });
+    expect(rows[1]).toMatchObject({ paymentId: dep.id, outcome: "never_sent", posted: false, cause: "stopped" });
+    expect(await requestRow(c.db, rows[0]!.requestId)).toMatchObject({ status: "submitted", stripe_refund_id: bound[0]!.refundId });
+    const audit = (await auditOf(c.db, rows[0]!.requestId)).find((a) => a.action === "catering.refund.stripe_result");
+    expect(audit?.metadata).toMatchObject({ outcome: "already_bound_unconfirmed_answer", posted: true, row_status: "submitted" });
+    expect(c.stripe.httpRequests("POST")).toBe(1);
   });
 
-  it("review r3: when no account owns it and one could not be asked, the row stays pending (never failed)", async () => {
-    h.accounts = [{ secretKey: "sk_test_fake_BROKEN", webhookSecret: "whsec_fake", source: "location" }];
-    const { retrievePaymentIntentCharge, StripeError } = await import("@/lib/stripe/client");
-    const real = vi.mocked(retrievePaymentIntentCharge).getMockImplementation()!;
-    vi.mocked(retrievePaymentIntentCharge).mockImplementation(async () => { throw new StripeError(401, "api_key_expired"); });
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    vi.mocked(retrievePaymentIntentCharge).mockImplementation(real);
-    expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "stripe_unreachable" });
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("no Stripe account configured: the first attempt fails by name (nothing was sent)", async () => {
-    h.accounts = [];
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    expect(out.results[0]).toMatchObject({ status: "failed", errorCode: "stripe_not_configured" });
-  });
-});
-
-describe("review r4-r6: mixed dashboard and app refunds, by identity and current status", () => {
-  const setup = () => {
-    // $100 refunded on the deposit in the Stripe dashboard (no CO-OPS id), still pending; the webhook recorded it.
-    stripe.charges.get("pi_dep")!.refunded = 10000;
-    stripe.refunds.push({ id: "re_dash", status: "pending", amount: 10000, paymentIntent: "pi_dep", requestId: null, account: "sk_test_fake_A" });
-    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: DEP, cumulative_refunded_cents: 10000, charge_amount_cents: 30000, refunded_at: new Date(Date.now() - 600_000).toISOString() });
-    (h.db.tables.catering_payments as Row[]).find((p) => p.id === BAL)!.status = "refunded";
-  };
-  const dep = async () => (await loadRefundSummary(actor("catering_mgr"), QUOTE)).payments.find((p) => p.id === DEP)!.figures;
-
-  it("r4: a dashboard refund plus an app refund leave exactly what is left", async () => {
-    setup();
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
-    expect(await dep()).toMatchObject({ refundedCents: 15000, refundableCents: 15000 });
-  });
-
-  it("r5: two separate app refunds: the dashboard refund counts once and both of ours count", async () => {
-    setup();
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ clientToken: "33333333-3333-4333-8333-333333333333", amountCents: 5000 }));
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ clientToken: "44444444-4444-4444-8444-444444444444", amountCents: 5000 }));
-    expect(await dep()).toMatchObject({ refundedCents: 20000, refundableCents: 10000 });
-  });
-
-  it("r6: the dashboard refund is CANCELED: opening the panel asks Stripe again and the amount is refundable again", async () => {
-    setup();
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 5000 }));
-    expect(await dep()).toMatchObject({ refundableCents: 15000 });
-    stripe.refunds.find((r) => r.id === "re_dash")!.status = "canceled";
-    stripe.charges.get("pi_dep")!.refunded -= 10000;
-    await new Promise((r) => setTimeout(r, 5)); // a later listing
-    expect(await dep()).toMatchObject({ refundedCents: 5000, refundableCents: 25000 });
-  });
-
-  it("r7: a whole-charge refund the webhook recorded, later CANCELED at Stripe: the payment is refundable again", async () => {
-    const bal = (h.db.tables.catering_payments as Row[]).find((p) => p.id === BAL)!;
-    bal.status = "refunded"; // the webhook's flip on charge.refunded (whole charge)
-    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: BAL, cumulative_refunded_cents: 70000, charge_amount_cents: 70000, refunded_at: new Date(Date.now() - 600_000).toISOString() });
-    stripe.refunds.push({ id: "re_full", status: "canceled", amount: 70000, paymentIntent: "pi_bal", requestId: null, account: "sk_test_fake_A" });
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    expect(s.payments.find((p) => p.id === BAL)!.figures).toMatchObject({ eligible: true, refundedCents: 0, refundableCents: 70000 });
-    expect(s.totals.refundableCents).toBe(100000);
-    // …and the reserve agrees: the balance can be refunded (the live cap at Stripe has the last word).
-    const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 70000 }));
-    expect(out.results[0]).toMatchObject({ paymentId: BAL, status: "succeeded" });
-  });
-
-  it("r7: Stripe answered but the snapshot could not be stored: the summary says the figures may be out of date", async () => {
-    setup();
-    const db = h.db as unknown as { client: { rpc: (n: string, a: Record<string, unknown>) => Promise<unknown> } };
-    const real = db.client.rpc;
-    db.client.rpc = async (n: string, a: Record<string, unknown>) =>
-      n === "catering_refund_record_snapshot" ? { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } } : real(n, a);
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    db.client.rpc = real;
-    expect(s.stripeUnchecked).toBe(true);
-  });
-
-  it("r8: the lead read carries 'could not check' through, even for an order showing $0 refundable", async () => {
-    setup();
-    (h.db.tables.catering_payments as Row[]).find((p) => p.id === DEP)!.status = "refunded";
-    h.accounts = [];
-    const rows = await loadLeadRefundables(actor("catering_mgr"), "lead-1");
-    expect(rows).toEqual([expect.objectContaining({ quoteId: QUOTE, refundableCents: 0, stripeUnchecked: true })]);
-  });
-
-  it("r6: Stripe cannot be asked: the last snapshot stands and the summary says the figures may be out of date", async () => {
-    setup();
-    h.accounts = [];
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    expect(s.stripeUnchecked).toBe(true);
-  });
-});
-
-describe("a submitted (Stripe pending) refund is refreshed, never re-sent", () => {
-  it("Check status reads the refund again", async () => {
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    const row = rows()[0]!;
-    stripe.refunds[0]!.status = "pending";
-    row.status = "submitted";
-    row.stripe_status = "pending";
-    stripe.refunds[0]!.status = "succeeded";
-    const r = await retryRefundRequest(actor("catering_mgr"), QUOTE, row.id as string);
-    expect(r.status).toBe("succeeded");
-    expect(stripe.creates).toHaveLength(1);
-  });
-
-  it("a finished row is not retryable", async () => {
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 100 }));
-    await expect(retryRefundRequest(actor("catering_mgr"), QUOTE, rows()[0]!.id as string)).rejects.toMatchObject({ status: 409, code: "not_retryable" });
-  });
-});
-
-describe("the read model", () => {
-  it("names what was paid, refunded, in flight and refundable; a hand-marked payment is outside the app", async () => {
-    (h.db.tables.catering_payments as Row[]).push({ id: "00000000-0000-4000-8000-0000000000c3", quote_id: QUOTE, kind: "full", amount_cents: 5000, status: "paid", provider: "manual", provider_ref: null, paid_at: null, created_at: "2026-11-06T00:00:00Z" });
-    (h.db.tables.catering_payment_refund_events as Row[]).push({ payment_id: DEP, cumulative_refunded_cents: 1000, charge_amount_cents: 30000 });
-    stripe.refunds.push({ id: "re_ev", status: "succeeded", amount: 1000, paymentIntent: "pi_dep", requestId: null, account: "sk_test_fake_A" });
-    const s = await loadRefundSummary(actor("shift_lead"), QUOTE);
-    expect(s.totals).toEqual({ paidCents: 100000, refundedCents: 1000, inFlightCents: 0, refundableCents: 99000, outsideAppCents: 5000 });
-    expect(s.canRefund).toBe(false); // a shift lead sees, never refunds
-    expect((await loadRefundSummary(actor("catering_mgr"), QUOTE)).canRefund).toBe(true);
-  });
-
-  it("before 0357 is applied the panel says so and offers nothing", async () => {
-    h.db.failSelectTables = [];
-    const client = h.db.client as unknown as { from: (t: string) => unknown };
-    const real = client.from;
-    client.from = (t: string) => (t === "catering_refund_requests"
-      ? { select: () => ({ in: () => ({ order: () => ({ returns: async () => ({ data: null, error: { code: "PGRST205", message: "Could not find the table" } }) }) }) }) }
-      : real(t));
-    const s = await loadRefundSummary(actor("catering_mgr"), QUOTE);
-    client.from = real;
-    expect(s.installed).toBe(false);
-    expect(s.canRefund).toBe(false);
-  });
-
-  it("another shop's order is a 404, never a leak", async () => {
-    await expect(loadRefundSummary(actor("shift_lead", [OTHER]), QUOTE)).rejects.toMatchObject({ status: 404 });
-  });
-});
-
-// ── Refund round 2, Part A (Juan 2026-11-25): GM and AGM refund at a shop they belong to ───────────────
-describe("the stand-in actor rule is the SQL's", () => {
-  const sqlLists = (file: string) => {
-    const code = readFileSync(`supabase/migrations/${file}`, "utf8").replace(/\r\n/g, "\n").replace(/--[^\n]*/g, "");
-    const fn = code.match(/function public\.catering_refund_actor_ok\([\s\S]*?\nend \$\$;/);
-    if (!fn) throw new Error(`catering_refund_actor_ok not found in ${file}`);
-    return [...fn[0].matchAll(/v_role in \(([^)]*)\)/g)].map((m) => [...m[1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!));
-  };
-  it("its role lists are the two files' own, in the same branches", () => {
-    expect(sqlLists("0357_catering_refund_requests.sql")).toEqual([SQL_ANY_SHOP, [...SQL_MEMBER_SHOP["0357"]]]);
-    expect(sqlLists("0358_catering_refund_roles.sql")).toEqual([SQL_ANY_SHOP, [...SQL_MEMBER_SHOP["0358"]]]);
-  });
-  it("NULL is not active (as in SQL): a user or a membership whose `active` is missing is refused", () => {
-    actor("gm");
-    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(true);
-    delete (h.db.tables.user_locations as Row[])[0]!.active;
-    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(false);
-    actor("owner", []);
-    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(true);
-    (h.db.tables.users as Row[])[0]!.active = null;
-    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(false);
-  });
-  it("for a fresh session the app gate and the SQL rule give the SAME answer, every role x member / other shop / no shop", () => {
-    for (const role of Object.keys(ROLES) as RoleCode[]) {
-      for (const locations of [[SHOP], [OTHER], [], [SHOP, OTHER]]) {
-        const a = actor(role, locations);
-        expect([role, locations.length, actorMayRefund(a, SHOP)]).toEqual([role, locations.length, sqlActorOk(h.db, ACTOR, SHOP)]);
-        expect([role, locations.length, actorMayRefund(a, OTHER)]).toEqual([role, locations.length, sqlActorOk(h.db, ACTOR, OTHER)]);
+  it("[S9] an already-bound row whose 2xx (the SAME refund) fails verification: answer_mismatch, next tender not armed", async () => {
+    const c = await ctx(f);
+    c.armOffsetSec = 1;
+    const o = await order(c, [10_000, 20_000]);
+    const [dep, bal] = o.pays as [KitPayment, KitPayment];
+    c.bendPost = (b) => ({ ...b, amount: Number(b.amount) - 1 });
+    c.main.onCall = async (call) => {
+      if (call.phase === "before" && isRpc(call, "catering_refund_finish")) {
+        c.main.onCall = null;
+        expect((await readNow(c, bal.id)).bound).toHaveLength(1);
       }
-    }
+    };
+    const rows = pressed(await press(c, o.quote, body(30_000, 30_000)));
+    expect(rows[0]).toMatchObject({ paymentId: bal.id, outcome: "answer_mismatch", posted: true, alreadyBound: true });
+    expect(rows[1]).toMatchObject({ paymentId: dep.id, outcome: "never_sent", cause: "stopped", posted: false });
+    expect((await requestRow(c.db, rows[0]!.requestId)).status).toBe("submitted"); // the read's binding stands
+    expect(c.stripe.httpRequests("POST")).toBe(1);
   });
 });
 
-describe("Part A: a GM and an AGM refund at a shop they belong to", () => {
-  it("the confirm tap: reserved, sent to Stripe once under the row's key, succeeded, audited", async () => {
-    for (const role of ["gm", "agm"]) {
-      seed();
-      vi.mocked(audit).mockClear();
-      const out = await requestRefund(actor(role), QUOTE, body({ amountCents: 5000 }));
-      expect(out.results).toEqual([expect.objectContaining({ paymentId: BAL, amountCents: 5000, status: "succeeded" })]);
-      expect(stripe.creates.map((c) => c.key)).toEqual([`catering-refund:${rows()[0]!.id}`]);
-      expect(stripe.refunds).toHaveLength(1);
-      expect(rows()[0]).toMatchObject({ requested_by: ACTOR, status: "succeeded", location_id: SHOP });
-      expect(h.rpcCalls[0]).toBe("catering_refund_reserve");
-      expect(vi.mocked(audit).mock.calls.some(([a]) => a.action === "catering.refund.stripe_result" && a.actorRole === role)).toBe(true);
-    }
-  });
+// ── 9-12. Events, budgets, the arm in transport, multi-payment, a read binding first ─────────────────────
+describe("9-12 events in between, the budgets, the arm's transport, a multi-payment press, a read binding first", () => {
+  let f: FlowDb;
+  beforeAll(async () => { f = await flowDb(); });
 
-  it("a full refund of the order by a GM is one Stripe refund per payment, like every other refunder's", async () => {
-    const out = await requestRefund(actor("gm"), QUOTE, body());
-    expect(out.results.map((r) => [r.paymentId, r.amountCents, r.status])).toEqual([[BAL, 70000, "succeeded"], [DEP, 30000, "succeeded"]]);
-    await expect(requestRefund(actor("gm"), QUOTE, body({ clientToken: "22222222-2222-4222-8222-222222222222", amountCents: 1 }))).rejects.toMatchObject({ status: 409, code: "nothing_refundable" });
-  });
-
-  it("summary.canRefund follows the same rule: member GM / AGM yes, other level-6 managers no, another shop never sees it", async () => {
-    for (const role of ["gm", "agm", "catering_mgr", "moo"]) expect([role, (await loadRefundSummary(actor(role), QUOTE)).canRefund]).toEqual([role, true]);
-    for (const role of ["owner", "cgs"]) expect([role, (await loadRefundSummary(actor(role, []), QUOTE)).canRefund]).toEqual([role, true]);
-    for (const role of ["prep_mgr", "social_media_mgr", "shift_lead"]) expect([role, (await loadRefundSummary(actor(role), QUOTE)).canRefund]).toEqual([role, false]);
-    for (const role of ["gm", "agm", "catering_mgr", "moo"]) {
-      await expect(loadRefundSummary(actor(role, [OTHER]), QUOTE), role).rejects.toMatchObject({ status: 404 });
-    }
-  });
-
-  it("a GM of BOTH shops refunds this shop's order; the row is this shop's", async () => {
-    const out = await requestRefund(actor("gm", [OTHER, SHOP]), QUOTE, body({ amountCents: 700 }));
-    expect(out.results[0]).toMatchObject({ status: "succeeded", amountCents: 700 });
-    expect(rows()[0]!.location_id).toBe(SHOP);
-  });
-
-  it("a STALE session: a GM whose membership was switched off is refused by the SQL rule (403), and nothing is sent", async () => {
-    for (const role of ["gm", "agm"]) {
-      seed();
-      const a = actor(role); // the session still lists the shop…
-      (h.db.tables.user_locations as Row[])[0]!.active = false; // …the membership row no longer does
-      await expect(requestRefund(a, QUOTE, body()), role).rejects.toMatchObject({ status: 403, code: "forbidden" });
-      expect(h.rpcCalls).toEqual(["catering_refund_reserve"]); // the app let it through; the database refused
-      expect(rows()).toHaveLength(0);
-      expect(stripe.creates).toHaveLength(0);
-    }
-  });
-
-  it("a STALE session: a membership moved to another shop, or a deactivated GM, is refused the same way", async () => {
-    const a = actor("gm");
-    (h.db.tables.user_locations as Row[])[0]!.location_id = OTHER;
-    await expect(requestRefund(a, QUOTE, body())).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    const b = actor("gm");
-    (h.db.tables.users as Row[])[0]!.active = false;
-    await expect(requestRefund(b, QUOTE, body())).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    // A session that says GM for a person the database now calls a prep manager (demoted since sign-in).
-    const c = actor("gm");
-    (h.db.tables.users as Row[])[0]!.role = "prep_mgr";
-    await expect(requestRefund(c, QUOTE, body())).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    expect(rows()).toHaveLength(0);
-    expect(stripe.creates).toHaveLength(0);
-  });
-
-  it("Retry / Check Stripe by a GM or an AGM: a lost answer is found and nothing is sent twice", async () => {
-    for (const role of ["gm", "agm"]) {
-      seed();
-      stripe.nextCreate = ["network_lost_after_executing"];
-      const out = await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-      expect(out.results[0]).toMatchObject({ status: "pending", errorCode: "network_error" });
-      const r = await retryRefundRequest(actor(role), QUOTE, rows()[0]!.id as string);
-      expect(r.status).toBe("succeeded");
-      expect(stripe.creates).toHaveLength(1);
-      expect(stripe.refunds).toHaveLength(1);
-      expect(h.rpcCalls).toContain("catering_refund_actor_ok");
-    }
-  });
-
-  it("Retry re-sends the SAME key for a GM when nothing landed", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("agm"), QUOTE, body({ amountCents: 2000 }));
-    const id = rows()[0]!.id as string;
-    const r = await retryRefundRequest(actor("gm"), QUOTE, id);
-    expect(r.status).toBe("succeeded");
-    expect(stripe.creates.map((c) => c.key)).toEqual([`catering-refund:${id}`, `catering-refund:${id}`]);
-    expect(stripe.refunds).toHaveLength(1);
-  });
-
-  it("Retry and Release with a STALE session are refused by the SQL re-check before any claim: 403, nothing sent", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 }));
-    const id = rows()[0]!.id as string;
-    for (const mode of ["retry", "release"] as const) {
-      const a = actor("gm");
-      (h.db.tables.user_locations as Row[])[0]!.active = false;
-      h.rpcCalls = [];
-      await expect(retryRefundRequest(a, QUOTE, id, Date.now(), mode), mode).rejects.toMatchObject({ status: 403, code: "forbidden" });
-      expect(h.rpcCalls).toEqual(["catering_refund_actor_ok"]);
-    }
-    expect(stripe.creates).toHaveLength(1); // only the first tap's send
-    expect(rows()[0]).toMatchObject({ status: "pending", attempts: 1 });
-    // A refused role at the shop, and another shop's GM, never reach the database on this path either.
-    h.rpcCalls = [];
-    await expect(retryRefundRequest(actor("prep_mgr"), QUOTE, id)).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    await expect(retryRefundRequest(actor("gm", [OTHER]), QUOTE, id)).rejects.toMatchObject({ status: 404, code: "not_found" });
-    expect(h.rpcCalls).toEqual([]);
-  });
-});
-
-describe("deploy order: the NEW app on 0357's SQL rule (the app deployed before migration 0358)", () => {
-  beforeEach(() => { h.sqlRule = "0357"; });
-
-  it("a GM / AGM passes the app's gate and the database refuses: 403 forbidden, no row, nothing reaches Stripe", async () => {
-    for (const role of ["gm", "agm"]) {
-      seed();
-      h.sqlRule = "0357";
-      await expect(requestRefund(actor(role), QUOTE, body()), role).rejects.toMatchObject({ status: 403, code: "forbidden" });
-      expect(h.rpcCalls).toEqual(["catering_refund_reserve"]);
-      expect(rows()).toHaveLength(0);
-      expect(stripe.creates).toHaveLength(0);
-      expect(stripe.refunds).toHaveLength(0);
-    }
-  });
-
-  it("Retry and Release on someone else's pending row: refused by the SQL re-check, nothing claimed or sent", async () => {
-    stripe.nextCreate = ["network_before"];
-    await requestRefund(actor("catering_mgr"), QUOTE, body({ amountCents: 2000 })); // 0357 still lets a catering manager
-    const id = rows()[0]!.id as string;
-    for (const role of ["gm", "agm"]) {
-      for (const mode of ["retry", "release"] as const) {
-        h.rpcCalls = [];
-        await expect(retryRefundRequest(actor(role), QUOTE, id, Date.now(), mode), `${role} ${mode}`).rejects.toMatchObject({ status: 403, code: "forbidden" });
-        expect(h.rpcCalls).toEqual(["catering_refund_actor_ok"]);
+  it("9a an event between the read and the reserve: 409 stripe_unchecked, nothing reserved, zero POSTs", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    c.main.onCall = async (call) => {
+      if (call.phase === "before" && isReserveWithReads(call)) {
+        c.main.onCall = null;
+        await ledgerFor(c, p);
       }
-    }
-    expect(stripe.creates).toHaveLength(1);
-    expect(rows()[0]).toMatchObject({ status: "pending", attempts: 1 });
+    };
+    const b = body(10_000, 30_000);
+    await refused(press(c, o.quote, b), 409, "stripe_unchecked");
+    expect(await lib.count(c.db, "select count(*) n from public.catering_refund_requests where client_token = $1", [b.clientToken])).toBe(0);
+    expect(c.stripe.httpRequests("POST")).toBe(0);
   });
 
-  it("stated consequence: the panel offers the button (the app's list) and the press answers 403 until 0358 is applied", async () => {
-    expect((await loadRefundSummary(actor("gm"), QUOTE)).canRefund).toBe(true);
-    await expect(requestRefund(actor("gm"), QUOTE, body())).rejects.toMatchObject({ status: 403 });
+  it("9b an event between the reserve and the arm: the arm answers figures_stale, the row is cancelled never_sent, zero POSTs", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    c.main.onCall = async (call) => {
+      if (call.phase === "before" && isRpc(call, "catering_refund_arm")) {
+        c.main.onCall = null;
+        await ledgerFor(c, p);
+      }
+    };
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    expect(rows[0]).toMatchObject({ outcome: "never_sent", posted: false, cause: "figures_stale" });
+    expect(await requestRow(c.db, rows[0]!.requestId)).toMatchObject({ status: "failed", last_error_code: "never_sent", create_armed_at: null });
+    expect(c.stripe.httpRequests("POST")).toBe(0);
   });
 
-  it("everyone 0357 allowed still refunds", async () => {
-    for (const [role, locations] of [["catering_mgr", [SHOP]], ["moo", [SHOP]], ["owner", []], ["cgs", []]] as const) {
-      seed();
-      h.sqlRule = "0357";
-      const out = await requestRefund(actor(role, [...locations]), QUOTE, body({ amountCents: 300 }));
-      expect([role, out.results[0]!.status]).toEqual([role, "succeeded"]);
-    }
+  it("10a the 35-second budget: a row with less than 35 s left is cancelled, never armed", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000), { deadlineMs: Date.now() + 30_000 }));
+    expect(rows[0]).toMatchObject({ outcome: "never_sent", posted: false, cause: "deadline" });
+    expect(rpcNames(c.main)).not.toContain("catering_refund_arm");
+    expect((await requestRow(c.db, rows[0]!.requestId)).status).toBe("failed");
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+
+  it("10b [R9] an arm that waited past its budget (`deadline_passed`): the lib cancels once and does not POST", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    c.main.rpc.catering_refund_arm = () => ({ data: { result: "deadline_passed", status: "pending", armed: false }, error: null });
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    expect(rows[0]).toMatchObject({ outcome: "never_sent", posted: false, cause: "deadline_passed" });
+    expect(rpcNames(c.main).filter((n) => n === "catering_refund_cancel_unarmed")).toHaveLength(1);
+    expect((await requestRow(c.db, rows[0]!.requestId)).status).toBe("failed");
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+
+  it("10c the arm call fails in transport BEFORE it ran (15.1 P3-e): no POST, cancel once, `never_sent`", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    c.main.onCall = (call) => {
+      if (call.phase === "before" && isRpc(call, "catering_refund_arm")) throw new TypeError("fetch failed");
+    };
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    expect(rows[0]).toMatchObject({ outcome: "never_sent", posted: false, cause: "arm_unanswered", rowState: { status: "failed", armed: false } });
+    expect(rpcNames(c.main).filter((n) => n === "catering_refund_cancel_unarmed")).toHaveLength(1);
+    expect(await requestRow(c.db, rows[0]!.requestId)).toMatchObject({ status: "failed", create_armed_at: null });
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+
+  it("10d the arm call fails in transport AFTER it ran (committed): no POST, cancel once, `armed_unsent` (the row's real state)", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    c.main.onCall = (call) => {
+      if (call.phase === "after" && isRpc(call, "catering_refund_arm")) throw new TypeError("fetch failed");
+    };
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    expect(rows[0]).toMatchObject({ outcome: "armed_unsent", posted: false, cause: "arm_unanswered", rowState: { status: "pending", armed: true } });
+    expect(rpcNames(c.main).filter((n) => n === "catering_refund_cancel_unarmed")).toHaveLength(1);
+    const r0 = await requestRow(c.db, rows[0]!.requestId);
+    expect(r0.status).toBe("pending");
+    expect(r0.create_armed_at).not.toBeNull();
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+
+  it("11a a multi-payment press whose first POST is ambiguous: the second row is cancelled; one POST", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [10_000, 20_000]);
+    const [dep, bal] = o.pays as [KitPayment, KitPayment];
+    c.stripe.script("create", status(500));
+    const rows = pressed(await press(c, o.quote, body(30_000, 30_000)));
+    expect(rows.map((r) => [r.paymentId, r.outcome, r.posted, r.cause])).toEqual([
+      [bal.id, "unconfirmed", true, null],
+      [dep.id, "never_sent", false, "stopped"],
+    ]);
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+  });
+
+  it("11b [P3-9] the payment's PaymentIntent changes after the reserve, before the arm: never_sent (the arm's own re-check), zero POSTs", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    c.main.onCall = async (call) => {
+      if (call.phase === "before" && isRpc(call, "catering_refund_arm")) {
+        c.main.onCall = null;
+        await c.mainWrite(() => c.db.query("update public.catering_payments set provider_ref = $2 where id = $1", [p.id, `${p.pi}_moved`]));
+      }
+    };
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    expect(rows[0]).toMatchObject({ outcome: "never_sent", posted: false, cause: "figures_stale" });
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+
+  it("11c [P3-9] the lib's own PaymentIntent compare: the reserve names another PaymentIntent than the read proved -> never_sent, no arm, zero POSTs", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const real = c.client();
+    c.main.rpc.catering_refund_reserve_fresh = async (args) => {
+      if (args.p_reads == null) return undefined;
+      const a = await real.sb.rpc("catering_refund_reserve_fresh", args);
+      const data = a.data as { requests?: Array<Record<string, unknown>> } | null;
+      for (const r of data?.requests ?? []) r.payment_intent = "pi_fake_moved_elsewhere";
+      return { data, error: a.error as never };
+    };
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    expect(rows[0]).toMatchObject({ outcome: "never_sent", posted: false, cause: "payment_intent_changed" });
+    expect(rpcNames(c.main)).not.toContain("catering_refund_arm");
+    expect((await requestRow(c.db, rows[0]!.requestId)).status).toBe("failed");
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+
+  it("12 a read binds before finish (the sweep runs between the POST and finish): finish answers created + already bound; one POST", async () => {
+    const c = await ctx(f);
+    c.armOffsetSec = 1;
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    const S: { out: Awaited<ReturnType<typeof runRefundSweep>> | null } = { out: null };
+    c.main.onCall = async (call) => {
+      if (call.phase === "before" && isRpc(call, "catering_refund_finish")) {
+        c.main.onCall = null;
+        S.out = await sweep(c);
+      }
+    };
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    expect(S.out!.claimed).toBe(true);
+    expect(S.out!.bound).toBeGreaterThanOrEqual(1);
+    expect(rows[0]).toMatchObject({ outcome: "created", alreadyBound: true, posted: true });
+    expect(await requestRow(c.db, rows[0]!.requestId)).toMatchObject({ status: "submitted", stripe_refund_id: rows[0]!.stripeRefundId });
+    expect(postsOf(c, p.pi)).toHaveLength(1);
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+  });
+});
+
+// ── 13, 14. The two staff exits ──────────────────────────────────────────────────────────────────────────
+describe("13 [R6] [T5] release with two permitted accounts; each finding; released then found", () => {
+  let f: FlowDb;
+  beforeAll(async () => { f = await flowDb(); });
+
+  it("the wrong slot / mode refuses; before 24 h refuses; each finding; the right account releases; the refund appears later and is counted as a `released` claim", async () => {
+    const c = await ctx(f, { slots: "both" });
+    const unconfirmed = async () => {
+      const o = await order(c, [30_000]);
+      c.stripe.script("create", status(500));
+      const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+      expect(rows[0]!.outcome).toBe("unconfirmed");
+      return { ...o, p: o.pays[0]!, req: rows[0]!.requestId };
+    };
+    const o1 = await unconfirmed();
+    const o2 = await unconfirmed();
+    const rel = (o: { quote: string; req: string }, over: Partial<{ finding: string; accountSlot: string; livemode: boolean }> = {}) => {
+      h.sb = c.client().sb;
+      return releaseRefund(mooOf(c), o.quote, o.req, { finding: "no_request", accountSlot: "location", livemode: false, note: null, ...over } as never);
+    };
+    const early = await refused(rel(o1), 409, "not_releasable_yet");
+    expect(early.detail).toMatchObject({ releasableAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/) });
+    await elapse(c, "24 hours 1 minute");
+    await relive(c);
+    // The payment's own account is the shop's slot (the shared account answered 404): the other slot, or the other
+    // mode, is refused by name.
+    await refused(rel(o1, { accountSlot: "default" }), 409, "wrong_account");
+    await refused(rel(o1, { livemode: true }), 409, "wrong_account");
+    await refused(rel(o1, { finding: "request_succeeded" }), 409, "use_attach");
+    await refused(rel(o1, { finding: "unclear" }), 400, "finding_not_releasable");
+    h.sb = c.client().sb;
+    await refused(releaseRefund(gmOf(c), o1.quote, o1.req, { finding: "no_request", accountSlot: "location", livemode: false, note: null }), 403, "forbidden");
+    expect((await requestRow(c.db, o1.req)).status).toBe("pending");
+    expect(await rel(o1)).toMatchObject({ result: "released", requestId: o1.req });
+    expect(await rel(o2, { finding: "request_failed" })).toMatchObject({ result: "released" });
+    expect(await requestRow(c.db, o1.req)).toMatchObject({ status: "failed", last_error_code: "released_no_refund", resolved_by: c.f.moo });
+    const audit = (await auditOf(c.db, o1.req)).find((a) => a.action === "catering.refund.release");
+    expect(audit).toMatchObject({ destructive: true });
+    expect(audit!.metadata).toMatchObject({ finding: "no_request", account_slot: "location", livemode: false, credential_fp: credentialFingerprint(KEY_LOC) });
+    // Released, then found: the POST had landed after all. Mirrored, counted, reported as a `released` claim.
+    const late = c.stripe.world.addRefund({ paymentIntentId: o1.p.pi, amount: 10_000, metadata: { refund_request_id: o1.req }, created: Math.floor(Date.now() / 1000) });
+    expect((await readNow(c, o1.p.id)).result).toBe("complete");
+    expect(await claimsOf(c.db, o1.p.id)).toEqual([{ refund_id: late.id, kind: "released", attachable_to: null }]);
+    expect(await figures(c, o1.p.id)).toMatchObject({ known: true, counted: 10_000, in_flight: 0, refundable: 20_000, blocked: false });
+    expect((await owned(c.db, () => inventory(c.db))).counts.released_with_refund).toBeGreaterThanOrEqual(1);
+    expect(c.stripe.httpRequests("POST")).toBe(2);
+  });
+
+  it("[T5] the credential changed since the arm (the slot's key swapped: another fingerprint): release AND attach refuse `credential_changed`; the request stays reserved", async () => {
+    const c = await ctx(f, { slots: "both" });
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    c.stripe.script("create", status(500));
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    const req = rows[0]!.requestId;
+    expect((await requestRow(c.db, req)).arm_credential_fp).toBe(credentialFingerprint(KEY_LOC));
+    await elapse(c, "24 hours 1 minute");
+    await relive(c);
+    c.stripe.rotateKey(KEY_LOC, KEY_LOC_ROTATED);
+    vi.stubEnv("STRIPE_SECRET_KEY__S1", KEY_LOC_ROTATED);
+    h.sb = c.client().sb;
+    await refused(releaseRefund(mooOf(c), o.quote, req, { finding: "no_request", accountSlot: "location", livemode: false, note: null }), 409, "credential_changed");
+    h.sb = c.client().sb;
+    await refused(attachRefund(mooOf(c), o.quote, req, { refundId: "re_fake_absent_1", note: null }), 409, "credential_changed");
+    expect((await kit.stateRow(c.db, p.id))?.credential_fp).toBe(credentialFingerprint(KEY_LOC_ROTATED));
+    expect(await requestRow(c.db, req)).toMatchObject({ status: "pending", stripe_refund_id: null });
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+  });
+});
+
+describe("14 [Q4] [T1] attach: a refund whose metadata was removed, and one created in the arm's own second", () => {
+  let f: FlowDb;
+  beforeAll(async () => { f = await flowDb(); });
+
+  it("metadata removed: never auto-bound; a GM is refused; a MoO attaches it; no POST", async () => {
+    const c = await ctx(f);
+    c.armOffsetSec = 1; // created AFTER the arm: only the missing metadata keeps a read from binding it
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    c.stripe.script("create", networkError("after_executing"));
+    c.main.onCall = (call) => {
+      if (call.phase === "before" && isRpc(call, "catering_refund_finish")) {
+        c.main.onCall = null;
+        const r = c.stripe.world.refunds.find((x) => x.metadata.refund_request_id === argsOf(call).p_request_id)!;
+        r.metadata = {}; // someone removed it at Stripe
+      }
+    };
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    const req = rows[0]!.requestId;
+    expect(rows[0]).toMatchObject({ outcome: "unconfirmed", posted: true });
+    const refund = c.stripe.world.refunds.find((x) => x.paymentIntentId === p.pi)!;
+    await relive(c);
+    expect((await readNow(c, p.id)).bound).toEqual([]);
+    expect(await claimsOf(c.db, p.id)).toEqual([{ refund_id: refund.id, kind: "none", attachable_to: req }]);
+    expect((await requestRow(c.db, req)).status).toBe("pending");
+    h.sb = c.client().sb;
+    await refused(attachRefund(gmOf(c), o.quote, req, { refundId: refund.id, note: null }), 403, "forbidden");
+    h.sb = c.client().sb;
+    expect(await attachRefund(mooOf(c), o.quote, req, { refundId: refund.id, note: null })).toMatchObject({ result: "attached", refundId: refund.id });
+    expect(await requestRow(c.db, req)).toMatchObject({ status: "submitted", stripe_refund_id: refund.id, resolved_by: c.f.moo });
+    const audit = (await auditOf(c.db, req)).find((a) => a.action === "catering.refund.attach");
+    expect(audit).toMatchObject({ destructive: true });
+    expect(audit!.metadata).toMatchObject({ refund_id: refund.id, metadata_named_request: false });
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+  });
+
+  it("[T1] a refund created in the arm's own second (metadata intact): not auto-bound, attachable, attached by a MoO", async () => {
+    const c = await ctx(f);
+    c.armOffsetSec = 0;
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    c.stripe.script("create", networkError("after_executing"));
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    const req = rows[0]!.requestId;
+    const refund = c.stripe.world.refunds.find((x) => x.paymentIntentId === p.pi)!;
+    expect(refund.metadata.refund_request_id).toBe(req);
+    await relive(c);
+    expect((await readNow(c, p.id)).bound).toEqual([]);
+    expect(await claimsOf(c.db, p.id)).toEqual([{ refund_id: refund.id, kind: "mismatch", attachable_to: req }]);
+    h.sb = c.client().sb;
+    expect(await attachRefund(mooOf(c), o.quote, req, { refundId: refund.id, note: null })).toMatchObject({ result: "attached" });
+    expect(await requestRow(c.db, req)).toMatchObject({ status: "submitted", stripe_refund_id: refund.id });
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+  });
+});
+
+// ── 15-19. Settlement order, a late reversal, the switches, a reversal with no webhook, the residual ─────
+describe("15-19 settlement order, a late reversal, the switches, the hourly re-read, the [Q6] residual", () => {
+  let f: FlowDb;
+  beforeAll(async () => { f = await flowDb(); });
+
+  it("15 a refund event before its payment is recorded: the checkout counts as NOT covered meanwhile; after main records it paid, the first read finds the refund", async () => {
+    const c = await ctx(f);
+    const quote = await c.f.w.quote();
+    const p = await c.mainWrite(() => c.f.w.pay(quote, "full", 30_000, { status: "due", session: `cs_test_fake_open_${randomUUID().slice(0, 8)}` }));
+    c.stripe.world.addPaymentIntent({ id: p.pi, account: KEY_LOC, chargeId: p.charge, amountCaptured: 30_000 });
+    const refund = c.stripe.world.addRefund({ paymentIntentId: p.pi, amount: 5_000 });
+    await ledgerFor(c, p);
+    const inv = await owned(c.db, () => inventory(c.db));
+    expect(inv.lists.unsettled_checkouts).toContainEqual({ payment_id: p.id, status: "due" });
+    expect((await readNow(c, p.id)).result).toBe("ineligible");
+    // main's settlement path (not B1's to run): the row turns paid with its PaymentIntent.
+    await c.mainWrite(() => c.db.query(
+      "update public.catering_payments set status = 'paid', provider_ref = $2, paid_at = now(), provider_session_id = null where id = $1", [p.id, p.pi]));
+    expect((await readNow(c, p.id)).result).toBe("complete");
+    expect((await kit.mirror(c.db, p.id)).map((m) => m.refund_id)).toEqual([refund.id]);
+    expect(await figures(c, p.id)).toMatchObject({ known: false }); // the delivery is inside the read's window
+    await elapse(c, "6 minutes");
+    expect((await readNow(c, p.id)).result).toBe("complete");
+    expect(await figures(c, p.id)).toMatchObject({ known: true, captured: 30_000, counted: 5_000, refundable: 25_000 });
+    expect((await owned(c.db, () => inventory(c.db))).lists.unsettled_checkouts).not.toContainEqual({ payment_id: p.id, status: "due" });
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+
+  it("16 a late reversal with an open sibling checkout: the mirror shows the failure, the disagreement is reported, the payment row and the sibling are byte-identical", async () => {
+    const c = await ctx(f);
+    const quote = await c.f.w.quote();
+    const p = await c.mainWrite(() => c.f.w.pay(quote, "deposit", 30_000, { status: "refunded" }));
+    const sib = await c.mainWrite(() => c.f.w.pay(quote, "balance", 20_000, { status: "due", session: `cs_test_fake_sibling_${randomUUID().slice(0, 8)}` }));
+    c.stripe.world.addPaymentIntent({ id: p.pi, account: KEY_LOC, chargeId: p.charge, amountCaptured: 30_000 });
+    const whole = c.stripe.world.addRefund({ paymentIntentId: p.pi, amount: 30_000 });
+    const snap = () => lib.rows(c.db, "select p::text as t from public.catering_payments p where p.id in ($1, $2) order by p.id", [p.id, sib.id]);
+    const before = await snap();
+    expect((await readNow(c, p.id)).result).toBe("complete");
+    expect(await figures(c, p.id)).toMatchObject({ known: true, stripe_whole: true, disagrees: false, refundable: 0 });
+    // The late reversal (Stripe tells us with an event, as main records every signed delivery).
+    c.stripe.world.setRefundStatus(whole.id, "failed");
+    await ledgerFor(c, p);
+    await elapse(c, "6 minutes");
+    expect((await readNow(c, p.id)).result).toBe("complete");
+    const [m] = await kit.mirror(c.db, p.id);
+    expect(m).toMatchObject({ refund_id: whole.id, status: "failed", previous_status: "succeeded" });
+    expect(await figures(c, p.id)).toMatchObject({ known: true, stripe_whole: false, disagrees: true, counted: 0, refundable: 30_000 });
+    h.sb = c.client().sb;
+    const view = (await loadRefundSummary(gmOf(c), quote)).payments.find((x) => x.id === p.id)!;
+    expect(view).toMatchObject({ status: "refunded", disagrees: true, known: true });
+    expect(await snap()).toEqual(before);
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+
+  it("17 creates stopped while observation continues; observation off with creates on: refunds_unavailable, no GET, no POST", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    vi.stubEnv("CATERING_REFUNDS", "");
+    await refused(press(c, o.quote, body(1_000, 30_000)), 503, "refunds_off");
+    const s = await sweep(c);
+    expect(s.claimed).toBe(true);
+    expect(s.passes).toBeGreaterThanOrEqual(1);
+    expect(getsOf(c)).toBeGreaterThan(0);
+    vi.stubEnv("CATERING_REFUNDS", "1");
+    vi.stubEnv("CATERING_REFUNDS_OBSERVE", "");
+    const n = c.stripe.calls.length;
+    await refused(press(c, o.quote, body(1_000, 30_000)), 503, "refunds_unavailable");
+    h.sb = c.client().sb;
+    await refused(checkRefunds(gmOf(c), o.quote), 503, "refunds_unavailable");
+    expect(c.stripe.calls).toHaveLength(n);
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+
+  it("18 [T3] a reversal found with NO webhook: 45+ minutes after the last complete read the sweep's class C makes the exact GET for that refund", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    const r = c.stripe.world.addRefund({ paymentIntentId: p.pi, amount: 4_000 });
+    expect((await readNow(c, p.id)).result).toBe("complete");
+    expect(await figures(c, p.id)).toMatchObject({ known: true, refundable: 26_000 });
+    c.stripe.world.setRefundStatus(r.id, "failed"); // no event: nothing reaches the ledger
+    await elapse(c, "40 minutes");
+    const n = c.stripe.calls.length;
+    const s = await sweep(c); // + 6 minutes: the read is 46 minutes old
+    expect(s.claimed).toBe(true);
+    expect(c.stripe.calls.slice(n).filter((x) => x.method === "GET" && x.path === `/v1/refunds/${r.id}`)).toHaveLength(1);
+    expect((await kit.mirror(c.db, p.id))[0]).toMatchObject({ refund_id: r.id, status: "failed", previous_status: "succeeded" });
+    expect(c.stripe.httpRequests("POST")).toBe(0);
+  });
+
+  it("19 [R15] [Q6] ACCEPTED RESIDUAL, documented: a delivered event whose refund the lists do not show yet — no figure for 5 minutes; after them the reserve trusts a read that cannot see it", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    expect((await readNow(c, p.id)).result).toBe("complete");
+    // A refund made at Stripe (outside the app); its event is delivered; the lists and retrieves do not show it yet.
+    const hidden = c.stripe.world.addRefund({ paymentIntentId: p.pi, amount: 20_000, created: Math.floor(Date.now() / 1000) });
+    c.stripe.world.hidden.add(hidden.id);
+    await ledgerFor(c, p);
+    expect(await figures(c, p.id)).toMatchObject({ known: false, refundable: null });
+    await elapse(c, "4 minutes");
+    expect((await readNow(c, p.id)).result).toBe("complete");
+    expect(await figures(c, p.id)).toMatchObject({ known: false, refundable: null }); // inside the 5 minutes: no figure
+    await elapse(c, "2 minutes");
+    // After the 5 minutes the press's own read is complete and known WITHOUT the hidden refund: the reserve accepts
+    // the whole 30,000 although only 10,000 is left at Stripe. What stops a second refund of the same money is
+    // Stripe's own cap: the ONE POST is refused (400, saved under the key) and the row is unconfirmed.
+    const rows = pressed(await press(c, o.quote, body(30_000, 30_000)));
+    expect(rows[0]).toMatchObject({ outcome: "unconfirmed", posted: true, httpStatus: 400 });
+    expect((await requestRow(c.db, rows[0]!.requestId)).last_error_code).toBe("charge_already_refunded");
+    expect(c.stripe.world.refundedOn(p.pi)).toBe(20_000);
+    expect(c.stripe.httpRequests("POST")).toBe(1);
+  });
+
+  it("19b [R15] [Q6] ACCEPTED RESIDUAL, documented: inside the charge's cap the same blind window lets a second partial land", async () => {
+    const c = await ctx(f);
+    const o = await order(c, [30_000]);
+    const p = o.pays[0]!;
+    expect((await readNow(c, p.id)).result).toBe("complete");
+    const hidden = c.stripe.world.addRefund({ paymentIntentId: p.pi, amount: 20_000, created: Math.floor(Date.now() / 1000) });
+    c.stripe.world.hidden.add(hidden.id);
+    await ledgerFor(c, p);
+    await elapse(c, "6 minutes");
+    const rows = pressed(await press(c, o.quote, body(10_000, 30_000)));
+    expect(rows[0]).toMatchObject({ outcome: "created", posted: true });
+    expect(c.stripe.world.refundedOn(p.pi)).toBe(30_000); // the charge is whole; never above it
+    expect(c.stripe.httpRequests("POST")).toBe(1);
   });
 });

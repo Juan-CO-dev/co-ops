@@ -439,6 +439,12 @@ export const RESERVED_ACTIONS = [
   // true; who, the quote, the payment, the amount, the reason code, where it was opened from — never the note) in the
   // same transaction as the row. No TypeScript audit() call site: lib/catering/refunds.ts only calls the RPC.
   "catering.refund.request",
+  // SQL-only: 0359 (Part B1 v2) `catering_refund_release` (F12) / `catering_refund_attach` (F16) each INSERT one audit
+  // row (destructive literally true; who, the request, the payment, the finding / the refund id, the account slot, the
+  // mode and the credential fingerprint — never the note, never a key) in the same transaction as the row they resolve.
+  // No TypeScript audit() call site: lib/catering/refunds.ts only calls the RPCs.
+  "catering.refund.release",
+  "catering.refund.attach",
   // Emitted from SQL only — migration 0198 rewrote the PostgREST-role grants on public.users
   // (LRA-001 credential columns readable, LRA-214 self-promotion via PATCH) and INSERTs its own
   // audit row with destructive=true literally. Grant changes never go through app code.

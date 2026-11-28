@@ -1,22 +1,27 @@
 /**
- * Retry / refresh ONE refund request (migration 0357; lib/catering/refunds.ts `retryRefundRequest`). SHIPS DARK.
+ * "Check Stripe" from one refund request's row (Part B1 v2; lib/catering/refunds.ts `checkRefunds`). SHIPS DARK.
  *
- * A `pending` row (Stripe's answer was never confirmed): look for a Stripe refund carrying this row's id first, then
- * re-send with the SAME idempotency key and parameters — only inside Stripe's 24-hour retry window (past it: 409
- * `needs_reconcile`, a person checks Stripe). A `submitted` row: read its status from Stripe again. Anything else:
- * 409 `not_retryable`. Past the window a press RECONCILES instead (lists Stripe's refunds for one carrying this row's id
- * and adopts it; never sends), and `{ "release": true }` closes a past-window row Stripe shows no refund for
- * (`released_no_refund`); before the window a release is 409 `not_releasable` (review r2).
+ * Main's retry route, KEPT AT ITS PATH so a panel served before B1 v2 still reaches something safe: it NEVER SENDS.
+ * It reads Stripe for every eligible payment of the order (GETs only: each read mirrors what Stripe shows and binds a
+ * request whose refund it finds), then answers the results and a fresh summary — exactly what POST .../refunds/check
+ * answers. There is no resend and no release here any more: an unconfirmed request is resolved by a read that binds
+ * it, or by a person through .../release or .../attach (Tier B, the release roles). THIS FILE IMPORTS NO SENDER
+ * (`createRefund` / `requestRefund`): pinned by tests/catering-refund-routes.test.ts.
  *
- * NO STEP-UP, deliberately: a retry can only re-send a request a person already confirmed behind a fresh password
- * (the POST on ../../ route); it cannot change the amount, the payment or the reason, and it is idempotent at Stripe.
- * The role and shop gate is the same as the confirm tap's, and 0357's actor rule is asked again.
+ * Order: same-origin, the session on the route's own path, the switch (503 `refunds_off`, as main), the ids, the body
+ * (`{}` exactly; anything else is 400 `invalid_request`), the refund roles (403), the lib (its own gate: OBSERVE off =
+ * 503 `refunds_unavailable`; the shop). No step-up: it moves no money. Not a step-up surface: it clears an unlock.
+ * `requestId` names the row the person pressed from; the check covers the whole order the row belongs to.
  */
 import { type NextRequest } from "next/server";
 import { assertSameOrigin } from "@/lib/portal/csrf";
 import { requireSession } from "@/lib/session";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { CateringRefundError, canRequestRefund, cateringRefundsOn, isUuid, loadRefundSummary, retryRefundRequest } from "@/lib/catering/refunds";
+import { CateringRefundError, canRequestRefund, checkRefunds, cateringRefundsOn, isUuid, loadRefundSummary, parseCheckBody } from "@/lib/catering/refunds";
+import { RefundsUnavailableError } from "@/lib/catering/refund-observe";
+
+/** The reads have 25 s (`REFUND_ACTION_READ_MS`); the summary and the response fit well inside this. */
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string; requestId: string }> }) {
   const origin = assertSameOrigin(req);
@@ -28,15 +33,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!isUuid(id) || !isUuid(requestId)) return jsonError(400, "invalid_request");
   const raw = await parseJsonBody(req);
   if (raw instanceof Response) return raw;
-  const b = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
-  if (!b || Object.keys(b).some((k) => k !== "release") || ("release" in b && b.release !== true)) return jsonError(400, "invalid_request");
+  if (parseCheckBody(raw) !== true) return jsonError(400, "invalid_request");
   if (!canRequestRefund(ctx.user.role)) return jsonError(403, "forbidden");
   try {
-    const result = await retryRefundRequest(ctx, id, requestId, Date.now(), b.release === true ? "release" : "retry");
+    const checks = await checkRefunds(ctx, id);
     const summary = await loadRefundSummary(ctx, id).catch(() => null);
-    return jsonOk({ ok: true, result, summary });
+    return jsonOk({ checks, summary });
   } catch (e) {
-    if (e instanceof CateringRefundError) return jsonError(e.status, e.code, e.detail ?? {});
+    if (e instanceof RefundsUnavailableError) return jsonError(503, "refunds_unavailable");
+    if (e instanceof CateringRefundError) {
+      const summary = e.status === 409 ? { summary: await loadRefundSummary(ctx, id).catch(() => null) } : {};
+      return jsonError(e.status, e.code, { ...(e.detail ?? {}), ...summary });
+    }
     throw e;
   }
 }

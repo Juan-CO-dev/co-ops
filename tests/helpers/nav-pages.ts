@@ -28,7 +28,7 @@ export function pageFiles(): Map<string, string> {
   return out;
 }
 
-export type NamedCategory = "public" | "planned" | "redirect" | "print";
+export type NamedCategory = "public" | "planned" | "redirect" | "print" | "operator";
 
 /** Pages that are not destinations and not children of one, each with its category and reason. */
 export const NAMED_PAGES: Readonly<Record<string, { category: NamedCategory; reason: string }>> = {
@@ -54,4 +54,5 @@ export const NAMED_PAGES: Readonly<Record<string, { category: NamedCategory; rea
   "/written-reports": { category: "redirect", reason: "redirects to /reports/written" },
   "/admin/menu-costing": { category: "redirect", reason: "redirects to /admin/sandwiches (kept by decision)" },
   "/catering/quotes/[id]/label": { category: "print", reason: "a printable quote label" },
+  "/admin/catering/refunds": { category: "operator", reason: "catering refunds B1 (0359): the Owner / CGS sign-off inventory, by design in no menu or search (plan DR9); 404 unless CATERING_REFUNDS_OBSERVE=1" },
 };

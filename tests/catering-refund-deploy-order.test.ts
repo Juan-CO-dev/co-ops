@@ -1,282 +1,256 @@
 /**
- * Refund round 2, Part A — BOTH deploy orders (plan A2: "Deploy order is safe both ways … Nothing opens until both
- * are in"). The permission has two homes: the app's role list (`REFUND_ROLES` / `canRequestRefund`,
- * lib/catering/refunds-shared.ts) and the SQL actor rule (`catering_refund_actor_ok`, re-emitted by migration 0358).
- * This file runs the REAL lib and the REAL routes over the four combinations for a GM / AGM who is an active member of
- * the order's shop:
+ * Catering refunds — BOTH deploy orders are safe.
  *
- *   app      SQL rule   what happens
- *   old      0357       refused by the app before the database is asked          (main today)
- *   old      0358       refused by the app before the database is asked          (the migration applied first)
- *   new      0357       the app lets it through; the reserve answers `forbidden`  (the app deployed first)  → 403
- *   new      0358       the reserve is reached and does not refuse the actor      (both in)
+ * Part A (round 2, KEPT): the permission has two homes, the app's role list (`REFUND_ROLES` / `canRequestRefund`,
+ * lib/catering/refunds-shared.ts) and the SQL actor rule (`catering_refund_actor_ok`, 0357, re-emitted by 0358). The two
+ * models those deploy-order cases were built on are still pinned to the two files here. (The four app x SQL cases
+ * themselves drove 0357's sender — `catering_refund_reserve` / `retryRefundRequest` — which Part B1 v2 retired: 0359
+ * revokes its grants, and no app code calls it any more, pinned below.)
  *
- * THE OLD APP is modelled by replacing ONE function — the app's role gate — with main's four-role list; every other
- * line under test is this branch's. That list is pinned equal to 0357's own roles (what main's gate was held to).
- * THE NEW APP is the REAL gate, untouched: with nothing switched the mock hands every call to the module's own
- * `canRequestRefund` (review, Astra P3: a re-implemented "new" gate could admit someone the real one refuses).
- * THE SQL RULE is the same TS stand-in tests/catering-refunds-flow.test.ts uses, pinned there and here to the two
- * real files; the real SQL of each rule is proven by scripts/sql-harness-0357.mjs and scripts/sql-harness-0358.mjs.
- * Stripe is never reachable from this file: every Stripe function throws.
+ * Part B1 v2 (migration 0359), the two orders, on the REAL SQL (PGlite) under the REAL lib and the REAL routes:
+ *   APP FIRST  (0359 not applied, both switches ON, every part built): every lib entry point and every route answers
+ *              503 `refunds_unavailable`, the sweep answers 503 and writes `cron.failure`; nothing falls back to 0357's
+ *              sender (no call to it is made, although 0357's functions are present), and nothing reaches Stripe.
+ *   SQL FIRST  (0359 applied, both switches UNSET: main's app): no route calls an RPC (every refund route answers
+ *              `refunds_off` before the lib; the sweep skips with no client); the lib's own gated entry points refuse
+ *              `refunds_off` without a call; and no caller of 0357's sender remains anywhere in lib/ or app/.
+ * SYNTHETIC rows, fake keys, no network.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { NextRequest } from "next/server";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { fakeSupabase, type FakeDb } from "./fake-supabase";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PGliteInterface as PGlite } from "@electric-sql/pglite";
 
 const h = vi.hoisted(() => ({
-  db: null as unknown as import("./fake-supabase").FakeDb,
-  /** null = this branch's list; an array = the OLD app's list. */
-  appRoles: null as readonly string[] | null,
-  sqlRule: "0358" as "0357" | "0358",
-  rpcCalls: [] as string[],
-  stripeCalls: 0,
+  sb: null as unknown,
+  factory: vi.fn(),
   actor: null as unknown,
-  session: vi.fn(),
+  audit: vi.fn<(input: { action: string; metadata?: Record<string, unknown> }) => Promise<void>>(async () => {}),
 }));
-
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: () => h.db.client }));
-vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
-vi.mock("@/lib/session", async (original) => ({ ...await original<typeof import("@/lib/session")>(), requireSession: h.session }));
-vi.mock("@/lib/stripe/session-owner", () => ({ stripeAccountsForShop: () => { h.stripeCalls += 1; throw new Error("no Stripe call is expected in this file"); } }));
-vi.mock("@/lib/stripe/client", async (original) => {
-  const real = await original<typeof import("@/lib/stripe/client")>();
-  const never = async () => { h.stripeCalls += 1; throw new Error("no Stripe call is expected in this file"); };
-  return { ...real, createRefund: never, listRefundsForPaymentIntent: never, retrievePaymentIntentCharge: never, retrieveRefund: never };
-});
+vi.mock("@/lib/supabase-server", () => ({ getServiceRoleClient: h.factory, createAuthedClient: h.factory }));
+vi.mock("@/lib/audit", () => ({ audit: h.audit, auditChecked: async () => ({ ok: true }) }));
+vi.mock("@/lib/session", async (original) => ({ ...await original<typeof import("@/lib/session")>(), requireSession: async () => h.actor }));
 vi.mock("@/lib/catering/refunds-shared", async (original) => {
   const real = await original<typeof import("@/lib/catering/refunds-shared")>();
-  // OLD app: main's list. NEW app: the module's OWN function, called as it is (never a copy of its rule).
-  return { ...real, canRequestRefund: (role: RoleCode) => (h.appRoles ? h.appRoles.includes(role) : real.canRequestRefund(role)) };
+  // Every part BUILT: so the only thing between the app and the database is the database.
+  return { ...real, REFUND_PARTS_BUILT: true, refundCreateBlock: (env: Record<string, string | undefined>, built?: boolean) => real.refundCreateBlock(env, built ?? true) };
 });
 
-import { REFUND_ROLES, actorMayRefund, canRequestRefund, requestRefund, retryRefundRequest, type RefundRequestBody } from "@/lib/catering/refunds";
-import { POST } from "@/app/api/catering/quotes/[id]/refunds/route";
+import {
+  REFUND_ROLES,
+  attachRefund,
+  canRequestRefund,
+  checkRefunds,
+  loadLeadRefundables,
+  loadRefundSummary,
+  releaseRefund,
+  requestRefund,
+  type RefundRequestBody,
+} from "@/lib/catering/refunds";
+import { RefundsUnavailableError, runRefundRead, runRefundSweep } from "@/lib/catering/refund-observe";
+import { GET as QUOTE_GET, POST as QUOTE_POST } from "@/app/api/catering/quotes/[id]/refunds/route";
+import { POST as CHECK } from "@/app/api/catering/quotes/[id]/refunds/check/route";
 import { POST as RETRY } from "@/app/api/catering/quotes/[id]/refunds/[requestId]/retry/route";
-import type { AuthContext } from "@/lib/session";
+import { POST as RELEASE } from "@/app/api/catering/quotes/[id]/refunds/[requestId]/release/route";
+import { POST as ATTACH } from "@/app/api/catering/quotes/[id]/refunds/[requestId]/attach/route";
+import { GET as LEAD_GET } from "@/app/api/catering/pipeline/[id]/refunds/route";
+import { GET as SWEEP } from "@/app/api/cron/catering-refund-sweep/route";
 import { ROLES, type RoleCode } from "@/lib/roles";
+import type { AuthContext } from "@/lib/session";
+import { harnessKit as kit, harnessLib, refundClient, refundDb, type KitPayment, type RefundCall } from "./helpers/refund-pglite";
+import { stripeHttpFake, type StripeHttpFake } from "./stripe-http-fake";
 
-/** Main's app gate before this PR (and 0357's rule: pinned below). */
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
+
+/** Main's app gate before refund round 2 (and 0357's rule). */
 const OLD_APP_ROLES = ["catering_mgr", "moo", "owner", "cgs"] as const;
 const SQL_ANY_SHOP = ["owner", "cgs"];
 const SQL_MEMBER_SHOP = { "0357": ["moo", "catering_mgr"], "0358": ["moo", "catering_mgr", "gm", "agm"] } as const;
+/** 0357's sender: retired by 0359 (grants revoked) and called by nothing. */
+const SENDER_0357 = ["catering_refund_reserve", "catering_refund_claim", "catering_refund_record_snapshot"];
 
 const ORIGIN = "http://localhost";
-const SHOP = "00000000-0000-4000-8000-0000000000a1";
-const OTHER = "00000000-0000-4000-8000-0000000000a2";
-const QUOTE = "00000000-0000-4000-8000-0000000000b1";
-const REQUEST = "00000000-0000-4000-8000-0000000000d1";
-const PAYMENT = "00000000-0000-4000-8000-0000000000c1";
-const ACTOR = "00000000-0000-4000-8000-0000000000aa";
-const BODY: RefundRequestBody = { clientToken: "11111111-1111-4111-8111-111111111111", amountCents: 100000, reasonCode: "event_lost", reasonNote: null, trigger: "lost" };
+const KEY = "sk_test_fake_refund_deploy_order_S1";
+const SECRET = "test-only-deploy-order-cron";
 
-function sqlActorOk(db: FakeDb, actorId: unknown, shopId: unknown): boolean {
-  const u = (db.tables.users ?? []).find((x) => x.id === actorId);
-  if (!u || u.active !== true) return false; // SQL: `and u.active` — NULL is not active
-  const role = String(u.role);
-  if (SQL_ANY_SHOP.includes(role)) return true;
-  return (SQL_MEMBER_SHOP[h.sqlRule] as readonly string[]).includes(role) && shopId != null
-    && (db.tables.user_locations ?? []).some((m) => m.user_id === actorId && m.location_id === shopId && m.active === true);
-}
-
-/** A signed-in member of `locations`, the database agreeing with the session. `fresh` = a password typed just now. */
-function actor(role: string, locations: string[] = [SHOP], fresh = true): AuthContext {
-  h.db.tables.users = [{ id: ACTOR, role, name: "Kim", active: true }];
-  h.db.tables.user_locations = locations.map((location_id) => ({ user_id: ACTOR, location_id, active: true }));
-  const ctx = {
-    user: { id: ACTOR, role, active: true, language: "en", name: "Kim" }, locations,
-    session: { stepUpUnlocked: fresh, stepUpUnlockedAt: fresh ? new Date().toISOString() : null, catalogEditUnlockedAt: null },
-  } as unknown as AuthContext;
-  h.actor = ctx;
-  return ctx;
-}
-
-const post = (path: string, body: unknown) =>
-  new NextRequest(`${ORIGIN}${path}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", origin: ORIGIN } });
-const confirmPath = `/api/catering/quotes/${QUOTE}/refunds`;
-const retryPath = `${confirmPath}/${REQUEST}/retry`;
-const confirm = () => POST(post(confirmPath, BODY), { params: Promise.resolve({ id: QUOTE }) });
-const retry = (body: unknown = {}) => RETRY(post(retryPath, body), { params: Promise.resolve({ id: QUOTE, requestId: REQUEST }) });
-const answer = async (res: Response) => [res.status, ((await res.json()) as { code?: string }).code];
-
-beforeEach(() => {
-  vi.stubEnv("CATERING_REFUNDS", "1");
-  h.db = fakeSupabase(
-    {
-      catering_quotes: [{ id: QUOTE, location_id: SHOP, root_id: null }],
-      // One Stripe-paid payment and one request someone else left pending: what Retry / Release act on.
-      catering_payments: [{ id: PAYMENT, quote_id: QUOTE, kind: "deposit", amount_cents: 30000, status: "paid", provider: "stripe", provider_ref: "pi_dep", paid_at: "2026-11-01T10:00:00Z", created_at: "2026-11-01T09:00:00Z" }],
-      catering_refund_requests: [{
-        id: REQUEST, payment_id: PAYMENT, quote_id: QUOTE, location_id: SHOP, client_token: "33333333-3333-4333-8333-333333333333", amount_cents: 2000,
-        reason_code: "event_lost", reason_note: null, trigger_kind: "lost", status: "pending", stripe_refund_id: null, stripe_status: null, last_error_code: "network_error",
-        last_error_message: null, attempts: 1, first_attempt_at: new Date().toISOString(), requested_by: "00000000-0000-4000-8000-0000000000ab",
-        requested_at: new Date().toISOString(), updated_at: new Date().toISOString(), settled_at: null, claim_token: null, claimed_until: null,
-      }],
-      users: [], user_locations: [],
-    },
-    {
-      // The reserve as far as this file needs it: the actor rule first (as 0357 / 0358 order it), then "nothing to refund".
-      catering_refund_reserve: (args, db) => ({ data: null, error: { message: sqlActorOk(db, args.p_actor_id, SHOP) ? "nothing_refundable" : "forbidden" } }),
-      catering_refund_actor_ok: (args, db) => ({ data: sqlActorOk(db, args.p_actor_id, args.p_shop_id), error: null }),
-    },
-  );
-  const client = h.db.client as unknown as { rpc: (name: string, args: Record<string, unknown>) => unknown };
-  const rpc = client.rpc;
-  client.rpc = (name, args) => { h.rpcCalls.push(name); return rpc(name, args); };
-  h.rpcCalls = [];
-  h.stripeCalls = 0;
-  h.appRoles = null;
-  h.sqlRule = "0358";
-  h.session.mockReset();
-  h.session.mockImplementation(async () => h.actor);
-});
-afterEach(() => vi.unstubAllEnvs());
-
-describe("the two models are the real things", () => {
+describe("Part A (kept): the two homes of the refund role rule are still the two files' own", () => {
   const sqlLists = (file: string) => {
     const code = readFileSync(`supabase/migrations/${file}`, "utf8").replace(/\r\n/g, "\n").replace(/--[^\n]*/g, "");
     const fn = code.match(/function public\.catering_refund_actor_ok\([\s\S]*?\nend \$\$;/);
     if (!fn) throw new Error(`catering_refund_actor_ok not found in ${file}`);
     return [...fn[0].matchAll(/v_role in \(([^)]*)\)/g)].map((m) => [...m[1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!));
   };
-  it("the SQL stand-in's lists are the two files' own", () => {
+  it("0357's and 0358's actor rules", () => {
     expect(sqlLists("0357_catering_refund_requests.sql")).toEqual([SQL_ANY_SHOP, [...SQL_MEMBER_SHOP["0357"]]]);
     expect(sqlLists("0358_catering_refund_roles.sql")).toEqual([SQL_ANY_SHOP, [...SQL_MEMBER_SHOP["0358"]]]);
   });
-  it("the OLD app's list is 0357's roles (what main's gate was pinned to), and the NEW list adds exactly gm and agm", () => {
+  it("the OLD app's list is 0357's roles, the app's list adds exactly gm and agm, and canRequestRefund is that list for every role", () => {
     expect([...OLD_APP_ROLES].sort()).toEqual(sqlLists("0357_catering_refund_requests.sql").flat().sort());
     expect([...REFUND_ROLES].sort()).toEqual([...OLD_APP_ROLES, "gm", "agm"].sort());
-    // With nothing switched the gate under test is the module's own function (see the mock): every role, against the
-    // list the module exports.
+    expect([...REFUND_ROLES].sort()).toEqual(sqlLists("0358_catering_refund_roles.sql").flat().sort());
     for (const role of Object.keys(ROLES) as RoleCode[]) {
       expect([role, canRequestRefund(role)]).toEqual([role, (REFUND_ROLES as readonly string[]).includes(role)]);
     }
-    h.appRoles = OLD_APP_ROLES;
-    expect([canRequestRefund("gm"), canRequestRefund("agm"), canRequestRefund("catering_mgr")]).toEqual([false, false, true]);
   });
 });
 
-describe.each(["gm", "agm"] as const)("a member %s, app x SQL", (role) => {
-  it.each([["0357"], ["0358"]] as const)("OLD app + %s: refused by the app (403) before the database or Stripe is asked", async (sqlRule) => {
-    h.appRoles = OLD_APP_ROLES;
-    h.sqlRule = sqlRule;
-    const a = actor(role);
-    // Under 0358 the database WOULD say yes; under 0357 it would say no. Either way it is not asked.
-    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(sqlRule === "0358");
-    expect(actorMayRefund(a, SHOP)).toBe(false);
-    await expect(requestRefund(a, QUOTE, BODY)).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    await expect(retryRefundRequest(a, QUOTE, REQUEST)).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    await expect(retryRefundRequest(a, QUOTE, REQUEST, Date.now(), "release")).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    // The routes: refused by role BEFORE the password is asked for (a stale unlock still answers `forbidden`).
-    expect(await answer(await confirm())).toEqual([403, "forbidden"]);
-    actor(role, [SHOP], false);
-    expect(await answer(await confirm())).toEqual([403, "forbidden"]);
-    expect(await answer(await retry())).toEqual([403, "forbidden"]);
-    expect(await answer(await retry({ release: true }))).toEqual([403, "forbidden"]);
-    expect(h.rpcCalls).toEqual([]);
-    expect(h.stripeCalls).toBe(0);
-    expect(h.db.writes).toEqual([]);
-  });
+const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+const sourceFiles = (dir: string): string[] => readdirSync(dir).flatMap((n) => {
+  const p = join(dir, n).replace(/\\/g, "/");
+  if (statSync(p).isDirectory()) return n === "node_modules" ? [] : sourceFiles(p);
+  return /\.(ts|tsx|mts|js|mjs)$/.test(p) ? [p] : [];
+});
 
-  it("NEW app + 0357 (the app deployed first): the reserve is asked and answers forbidden → 403; nothing written, nothing sent", async () => {
-    h.sqlRule = "0357";
-    const a = actor(role);
-    expect(actorMayRefund(a, SHOP)).toBe(true);
-    await expect(requestRefund(a, QUOTE, BODY)).rejects.toMatchObject({ status: 403, code: "forbidden" });
-    expect(h.rpcCalls).toEqual(["catering_refund_reserve"]);
-    // Through the route, with the password typed: the same 403 by name.
-    h.rpcCalls = [];
-    expect(await answer(await confirm())).toEqual([403, "forbidden"]);
-    expect(h.rpcCalls).toEqual(["catering_refund_reserve"]);
-    // …and without the password the route stops at Tier B, like any refunder (the database is not asked).
-    h.rpcCalls = [];
-    actor(role, [SHOP], false);
-    expect(await answer(await confirm())).toEqual([403, "step_up_required"]);
-    expect(h.rpcCalls).toEqual([]);
-    expect(h.stripeCalls).toBe(0);
-    expect(h.db.writes).toEqual([]);
-  });
-
-  it("NEW app + 0357, Retry and Release THROUGH THE ROUTE: the SQL re-check refuses before any claim → 403; nothing claimed, written or sent", async () => {
-    h.sqlRule = "0357";
-    for (const body of [{}, { release: true }]) {
-      h.rpcCalls = [];
-      actor(role, [SHOP], false); // the retry path asks for no password
-      expect(await answer(await retry(body))).toEqual([403, "forbidden"]);
-      expect(h.rpcCalls).toEqual(["catering_refund_actor_ok"]); // asked once, refused; catering_refund_claim never reached
+describe("nothing falls back to 0357's sender (static)", () => {
+  it("no file under lib/ or app/ names catering_refund_reserve / _claim / _record_snapshot (0359's own `_reserve_fresh` is not one of them)", () => {
+    const files = [...sourceFiles("lib"), ...sourceFiles("app")];
+    expect(files.length).toBeGreaterThan(100);
+    const hits: string[] = [];
+    for (const f of files) {
+      const raw = readFileSync(f, "utf8");
+      if (!SENDER_0357.some((name) => raw.includes(name))) continue; // the cheap pass; the exact rule below
+      const src = strip(raw);
+      for (const name of SENDER_0357) if (new RegExp(`\\b${name}(?![a-z_])`).test(src)) hits.push(`${f}: ${name}`);
     }
-    expect(h.stripeCalls).toBe(0);
-    expect(h.db.writes).toEqual([]);
-    expect(h.db.tables.catering_refund_requests![0]).toMatchObject({ status: "pending", attempts: 1, claim_token: null });
-    // The control for this test: under 0358 the same press gets PAST the SQL re-check (it then reaches the sender
-    // claim, which this file does not model: the fake throws by name).
-    h.sqlRule = "0358";
-    h.rpcCalls = [];
-    actor(role, [SHOP], false);
-    await expect(retry()).rejects.toThrow(/no fake for rpc catering_refund_claim/);
-    expect(h.rpcCalls).toEqual(["catering_refund_actor_ok", "catering_refund_claim"]);
-    expect(h.stripeCalls).toBe(0);
+    expect(hits).toEqual([]);
+    // The lib's sender path is 0359's only: the reserve it calls is `catering_refund_reserve_fresh`.
+    expect(readFileSync("lib/catering/refunds.ts", "utf8")).toContain('"catering_refund_reserve_fresh"');
+  }, 420_000); // ~1,350 files: seconds on CI, minutes on a loaded laptop
+});
+
+// ── The two orders, on the real SQL ──────────────────────────────────────────────────────────────────────
+interface World { db: PGlite; calls: RefundCall[]; stripe: StripeHttpFake; quote: string; lead: string; pay: KitPayment; request: string; owner: string; shop: string }
+
+async function world(upTo: "0358" | "0359"): Promise<World> {
+  const db = upTo === "0359" ? await refundDb() : await harnessLib.base({ upTo: "0358" });
+  const w = await kit.world(db);
+  const owner = await w.user("owner", { member: null });
+  const lead = (await harnessLib.one(db, "insert into public.catering_pipeline (contact_name, stage) values ('Synthetic lead', 'lost') returning id")).id as string;
+  const quote = await w.quote();
+  await db.query("update public.catering_quotes set pipeline_id = $1 where id = $2", [lead, quote]);
+  const pay = await w.pay(quote, "full", 15_000);
+  // A request row as 0357's sender left it (pending, attempted): what Release / Attach / Retry would act on.
+  const request = (await harnessLib.one(db,
+    `insert into public.catering_refund_requests (payment_id, quote_id, location_id, client_token, amount_cents, reason_code, trigger_kind, status, attempts, requested_by)
+     values ($1, $2, $3, gen_random_uuid(), 5000, 'event_lost', 'lost', 'pending', 1, $4) returning id`, [pay.id, quote, w.shop, owner])).id as string;
+  const calls: RefundCall[] = [];
+  h.sb = refundClient(db, { calls });
+  const stripe = stripeHttpFake();
+  stripe.account(KEY);
+  stripe.world.addPaymentIntent({ id: pay.pi, account: KEY, chargeId: pay.charge, amountCaptured: 15_000 });
+  return { db, calls, stripe, quote, lead, pay, request, owner, shop: w.shop };
+}
+function enter(wd: World) {
+  h.factory.mockReset();
+  h.factory.mockImplementation(() => h.sb);
+  h.audit.mockClear();
+  h.sb = refundClient(wd.db, { calls: wd.calls });
+  wd.calls.length = 0;
+  vi.stubEnv("STRIPE_SECRET_KEY__S1", KEY);
+  vi.stubEnv("STRIPE_WEBHOOK_SECRET__S1", "whsec_fake_deploy_order_s1");
+  vi.stubEnv("CRON_SECRET", SECRET);
+  vi.stubGlobal("fetch", wd.stripe.fetch);
+  h.actor = { user: { id: wd.owner, role: "owner", active: true, language: "en" }, locations: [], session: { stepUpUnlocked: true, stepUpUnlockedAt: new Date().toISOString(), catalogEditUnlockedAt: null } };
+}
+const actor = () => h.actor as AuthContext;
+const BODY: RefundRequestBody = { clientToken: "55555555-5555-4555-8555-000000000001", amountCents: 15_000, seenRefundableCents: 15_000, reasonCode: "event_lost", reasonNote: null, trigger: "panel" };
+const post = (path: string, body: unknown) =>
+  new NextRequest(`${ORIGIN}${path}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", origin: ORIGIN } });
+const answer = async (res: Response) => {
+  const b = (await res.json()) as { code?: string; skipped?: string };
+  return [res.status, b.code ?? b.skipped];
+};
+const routeCalls = (wd: World) => {
+  const q = wd.quote, r = wd.request;
+  return [
+    ["GET quote", () => QUOTE_GET(new NextRequest(`${ORIGIN}/api/catering/quotes/${q}/refunds`), { params: Promise.resolve({ id: q }) })],
+    ["POST create", () => QUOTE_POST(post(`/api/catering/quotes/${q}/refunds`, BODY), { params: Promise.resolve({ id: q }) })],
+    ["POST check", () => CHECK(post(`/api/catering/quotes/${q}/refunds/check`, {}), { params: Promise.resolve({ id: q }) })],
+    ["POST retry", () => RETRY(post(`/api/catering/quotes/${q}/refunds/${r}/retry`, {}), { params: Promise.resolve({ id: q, requestId: r }) })],
+    ["POST release", () => RELEASE(post(`/api/catering/quotes/${q}/refunds/${r}/release`, { finding: "no_request", accountSlot: "location", livemode: false }), { params: Promise.resolve({ id: q, requestId: r }) })],
+    ["POST attach", () => ATTACH(post(`/api/catering/quotes/${q}/refunds/${r}/attach`, { refundId: "re_fake_deploy_1" }), { params: Promise.resolve({ id: q, requestId: r }) })],
+    ["GET lead", () => LEAD_GET(new NextRequest(`${ORIGIN}/api/catering/pipeline/${wd.lead}/refunds`), { params: Promise.resolve({ id: wd.lead }) })],
+  ] as const;
+};
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
+
+describe("APP FIRST: 0359 not applied (0357 + 0358 only), both switches ON, every part built", () => {
+  let wd: World;
+  beforeAll(async () => { wd = await world("0358"); });
+  beforeEach(() => {
+    enter(wd);
+    vi.stubEnv("CATERING_REFUNDS", "1");
+    vi.stubEnv("CATERING_REFUNDS_OBSERVE", "1");
+  });
+  const noFallback = () => {
+    const rpcs = wd.calls.filter((x) => x.kind === "rpc").map((x) => x.name);
+    for (const name of rpcs) expect(SENDER_0357).not.toContain(name);
+    expect(wd.calls.filter((x) => x.kind !== "select")).toEqual(wd.calls.filter((x) => x.kind === "rpc")); // no table write
+    expect(wd.stripe.calls).toHaveLength(0);
+  };
+
+  it("every lib entry point answers 503 refunds_unavailable (or throws RefundsUnavailableError); none falls back", async () => {
+    const unavailable = { status: 503, code: "refunds_unavailable" };
+    await expect(loadRefundSummary(actor(), wd.quote)).rejects.toMatchObject(unavailable);
+    await expect(loadLeadRefundables(actor(), wd.lead)).rejects.toMatchObject(unavailable);
+    await expect(requestRefund(actor(), wd.quote, BODY)).rejects.toMatchObject(unavailable);
+    await expect(checkRefunds(actor(), wd.quote)).rejects.toMatchObject(unavailable);
+    await expect(releaseRefund(actor(), wd.quote, wd.request, { finding: "no_request", accountSlot: "location", livemode: false, note: null })).rejects.toMatchObject(unavailable);
+    await expect(attachRefund(actor(), wd.quote, wd.request, { refundId: "re_fake_deploy_1", note: null })).rejects.toMatchObject(unavailable);
+    const sb = h.sb as Parameters<typeof runRefundRead>[0];
+    await expect(runRefundRead(sb, wd.pay.id, { deadlineMs: Date.now() + 10_000 })).rejects.toBeInstanceOf(RefundsUnavailableError);
+    await expect(runRefundSweep(sb, { deadlineMs: Date.now() + 10_000 })).rejects.toBeInstanceOf(RefundsUnavailableError);
+    noFallback();
+    expect((await wd.db.query("select status, attempts from public.catering_refund_requests where id = $1", [wd.request])).rows[0]).toEqual({ status: "pending", attempts: 1 });
   });
 
-  it("NEW app + 0358 (both in): the actor passes both homes; the reserve is reached and refuses nothing about WHO", async () => {
-    const a = actor(role);
-    expect(actorMayRefund(a, SHOP)).toBe(true);
-    // The stand-in reserve has nothing to refund on this empty order: 409, not 403. The actor was accepted.
-    await expect(requestRefund(a, QUOTE, BODY)).rejects.toMatchObject({ status: 409, code: "nothing_refundable" });
-    expect(h.rpcCalls).toEqual(["catering_refund_reserve"]);
-    expect(await answer(await confirm())).toEqual([409, "nothing_refundable"]);
-    expect(h.stripeCalls).toBe(0);
+  it("every route answers 503 refunds_unavailable; the sweep answers 503 and writes ONE cron.failure; none falls back", async () => {
+    for (const [name, call] of routeCalls(wd)) expect([name, ...await answer(await call())]).toEqual([name, 503, "refunds_unavailable"]);
+    const res = await SWEEP(new NextRequest(`${ORIGIN}/api/cron/catering-refund-sweep`, { headers: { authorization: `Bearer ${SECRET}` } }));
+    expect(await answer(res)).toEqual([503, "refunds_unavailable"]);
+    expect(h.audit.mock.calls.map(([a]) => [a.action, a.metadata])).toEqual([["cron.failure", { job: "catering-refund-sweep", error: "refunds_unavailable" }]]);
+    noFallback();
   });
+});
 
-  it("both in, but NOT a member of the order's shop: 404 from the app (and the SQL rule would refuse too)", async () => {
-    const a = actor(role, [OTHER]);
-    expect(sqlActorOk(h.db, ACTOR, SHOP)).toBe(false);
-    expect(actorMayRefund(a, SHOP)).toBe(false);
-    await expect(requestRefund(a, QUOTE, BODY)).rejects.toMatchObject({ status: 404, code: "not_found" });
-    expect(await answer(await confirm())).toEqual([404, "not_found"]);
-    expect(h.rpcCalls).toEqual([]);
-  });
-
-  it("in every combination the switch comes first: CATERING_REFUNDS unset = 503 refunds_off, nothing asked", async () => {
+describe("SQL FIRST: 0359 applied, both switches UNSET (main's app on the new schema)", () => {
+  let wd: World;
+  beforeAll(async () => { wd = await world("0359"); });
+  beforeEach(() => {
+    enter(wd);
     vi.stubEnv("CATERING_REFUNDS", "");
-    for (const appRoles of [OLD_APP_ROLES, null]) {
-      for (const sqlRule of ["0357", "0358"] as const) {
-        h.appRoles = appRoles;
-        h.sqlRule = sqlRule;
-        actor(role);
-        expect(await answer(await confirm())).toEqual([503, "refunds_off"]);
-        expect(await answer(await retry())).toEqual([503, "refunds_off"]);
-      }
-    }
-    expect(h.rpcCalls).toEqual([]);
-    expect(h.stripeCalls).toBe(0);
+    vi.stubEnv("CATERING_REFUNDS_OBSERVE", "");
   });
-});
 
-describe("the roles that could already refund are unaffected by either order", () => {
-  it.each([["catering_mgr", [SHOP]], ["moo", [SHOP]], ["owner", []], ["cgs", []]] as const)("%s reaches the reserve in all four combinations", async (role, locations) => {
-    for (const appRoles of [OLD_APP_ROLES, null]) {
-      for (const sqlRule of ["0357", "0358"] as const) {
-        h.appRoles = appRoles;
-        h.sqlRule = sqlRule;
-        h.rpcCalls = [];
-        await expect(requestRefund(actor(role, [...locations]), QUOTE, BODY)).rejects.toMatchObject({ status: 409, code: "nothing_refundable" });
-        expect(h.rpcCalls).toEqual(["catering_refund_reserve"]);
-      }
-    }
+  it("no route calls an RPC or reads a table: every refund route answers refunds_off; the sweep skips with no client", async () => {
+    for (const [name, call] of routeCalls(wd)) expect([name, ...await answer(await call())]).toEqual([name, 503, "refunds_off"]);
+    const res = await SWEEP(new NextRequest(`${ORIGIN}/api/cron/catering-refund-sweep`, { headers: { authorization: `Bearer ${SECRET}` } }));
+    expect([res.status, await res.json()]).toEqual([200, { skipped: "observe_off" }]);
+    expect(wd.calls).toEqual([]);
+    expect(h.factory).not.toHaveBeenCalled();
+    expect(h.audit).not.toHaveBeenCalled();
+    expect(wd.stripe.calls).toHaveLength(0);
   });
-  it("…and the roles outside both lists are refused by the app in all four", async () => {
-    for (const role of ["prep_mgr", "social_media_mgr", "shift_lead"]) {
-      for (const appRoles of [OLD_APP_ROLES, null]) {
-        for (const sqlRule of ["0357", "0358"] as const) {
-          h.appRoles = appRoles;
-          h.sqlRule = sqlRule;
-          await expect(requestRefund(actor(role), QUOTE, BODY)).rejects.toMatchObject({ status: 403, code: "forbidden" });
-        }
-      }
-    }
-    expect(h.rpcCalls).toEqual([]);
+
+  it("the lib's gated entry points refuse refunds_off on their own, before any call", async () => {
+    const off = { status: 503, code: "refunds_off" };
+    await expect(requestRefund(actor(), wd.quote, BODY)).rejects.toMatchObject(off);
+    await expect(checkRefunds(actor(), wd.quote)).rejects.toMatchObject(off);
+    await expect(releaseRefund(actor(), wd.quote, wd.request, { finding: "no_request", accountSlot: "location", livemode: false, note: null })).rejects.toMatchObject(off);
+    await expect(attachRefund(actor(), wd.quote, wd.request, { refundId: "re_fake_deploy_1", note: null })).rejects.toMatchObject(off);
+    expect(wd.calls).toEqual([]);
+    expect(wd.stripe.calls).toHaveLength(0);
+  });
+
+  it("OBSERVE alone (the GETs-only switch): the existing and new refund routes still answer refunds_off, with no call", async () => {
+    vi.stubEnv("CATERING_REFUNDS_OBSERVE", "1");
+    for (const [name, call] of routeCalls(wd)) expect([name, ...await answer(await call())]).toEqual([name, 503, "refunds_off"]);
+    expect(wd.calls).toEqual([]);
   });
 });

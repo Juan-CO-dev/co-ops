@@ -1,6 +1,7 @@
 /**
- * Stripe REST client — SERVER-ONLY, no SDK. Three calls: create a Checkout Session, retire
- * one (`retireCheckoutSession`, audit W02/B035) and read one (`retrieveCheckoutSession`).
+ * Stripe REST client — SERVER-ONLY, no SDK. Checkout Sessions: create one, retire one
+ * (`retireCheckoutSession`, audit W02/B035) and read one (`retrieveCheckoutSession`). Refunds (catering refunds
+ * Part B1 v2): the strict evidence reads and the ONE create POST, in the section at the end.
  *
  * package.json carries no `stripe` package and this file is why that is fine: the request
  * is a form POST with a bearer token, exactly the shape lib/receipt-parse.ts uses for the
@@ -406,87 +407,248 @@ export async function retrieveCheckoutSession(secretKey: string, sessionId: stri
   };
 }
 
-// ── Refunds (catering refund step, migration 0357) ──────────────────────────────────────────────────
+// ── Refunds (catering refunds Part B1 v2, migration 0359; lib/catering/refund-observe.ts, lib/catering/refunds.ts) ─
 //
-// Four calls, and only these: locate the PaymentIntent's charge (GET), create a refund (POST, idempotent), list the
-// refunds of a PaymentIntent (GET, to find one carrying our request id after an unknown outcome), read one refund
-// (GET). Every rule cited is from Stripe's own reference:
-//   · POST /v1/refunds takes `payment_intent`, `amount` ("Can refund only up to the remaining, unrefunded amount of the
-//     charge"), `reason` (`duplicate` | `fraudulent` | `requested_by_customer`) and `metadata`; it "will raise an error
-//     when called on an already-refunded charge, or when trying to refund more money than is left on a charge"
-//     (docs.stripe.com/api/refunds/create).
-//   · GET /v1/refunds?payment_intent=… lists "refunds for the PaymentIntent specified by this ID", newest first,
-//     `limit` 1–100, paged by `starting_after` (docs.stripe.com/api/refunds/list).
-//   · A PaymentIntent's `latest_charge` is expandable; the Charge carries `amount_captured` and `amount_refunded`
-//     (docs.stripe.com/api/payment_intents/object, docs.stripe.com/api/charges/object).
-// A secret key sees only its own account (see `retireCheckoutSession`), so a 404 on the PaymentIntent means "not in
-// THIS account" and the caller asks the shop's other configured account (lib/stripe/session-owner.ts
-// `stripeAccountsForShop`).
+// Five calls, and only these. Four GETs that hand over EVIDENCE (strictly parsed: a malformed answer is refused by
+// name, `refund_evidence_malformed`, never read around) and ONE POST:
+//   · GET /v1/payment_intents/:id?expand[]=latest_charge — the owner facts: "ID of the latest Charge object created by
+//     this PaymentIntent"; the Charge's `amount_captured` is "Amount in the smallest currency unit captured"
+//     (docs.stripe.com/api/payment_intents/object, docs.stripe.com/api/charges/object). The charge's own refunded
+//     total is NOT parsed, carried or compared anywhere [Q3]: whether it counts a pending refund, or drops one that
+//     later failed, is not documented.
+//   · GET /v1/refunds?payment_intent=… and GET /v1/refunds?charge=… — ONE page each: "Only return refunds for the
+//     PaymentIntent specified by this ID." · "Only return refunds for the charge specified by this charge ID." ·
+//     `has_more`: "If `false`, this set comprises the end of the list" (docs.stripe.com/api/refunds/list,
+//     docs.stripe.com/api/pagination). Cross-page rules (a repeated id or cursor, a page limit) are the caller's.
+//   · GET /v1/refunds/:id — "Retrieves the details of an existing refund" (docs.stripe.com/api/refunds/retrieve).
+//   · POST /v1/refunds — exactly ONE request per call, no retry, redirects never followed (below).
+// A 404 means "THIS key cannot see it" and nothing more (see `retireCheckoutSession`).
+//
+// REDIRECTS ARE NEVER FOLLOWED. A default `fetch` follows a 307 / 308 by RE-SENDING the request, body included, so a
+// POST could be made twice by the transport. The create therefore uses `redirect: "manual"` (a 3xx is a non-2xx
+// answer = unconfirmed) and every GET uses `redirect: "error"` (a 3xx is a failure to ask).
 
 const STRIPE_API = "https://api.stripe.com/v1";
 const PAYMENT_INTENT_ID_RE = /^pi_[A-Za-z0-9_]+$/;
-const REFUND_ID_RE = /^(re|pyr)_[A-Za-z0-9_]+$/;
+/** A provider id this build does not have to recognise: bounded, URL-safe, never interpolated unencoded. */
+const OPAQUE_STRIPE_ID_RE = /^[A-Za-z0-9_]{1,255}$/;
+const UUID_META_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The `StripeError.code` of an answer that is not well-formed evidence. */
+export const REFUND_EVIDENCE_MALFORMED = "refund_evidence_malformed";
+/** The longest a single Stripe refund call may take (main's 20 s). */
+export const STRIPE_REFUND_CALL_MAX_MS = 20_000;
 
-export interface StripeRefund {
+export interface StrictRefund {
   id: string;
-  /** Stripe's own status: pending | requires_action | succeeded | failed | canceled (or null). */
+  paymentIntentId: string | null;
+  chargeId: string | null;
+  /** A safe positive integer of cents. */
+  amountCents: number;
+  currency: string;
+  /** Stripe's own status, verbatim (an unfamiliar value is kept, bounded). */
   status: string | null;
-  amountCents: number | null;
-  /** `metadata.refund_request_id` exactly as we wrote it. */
+  /** The refund's own `created`, epoch seconds ("Measured in seconds since the Unix epoch"). */
+  createdSec: number;
+  /** `metadata.refund_request_id` / `payment_id` / `quote_id` exactly as written, when each is a UUID. A CLAIM, never proof. */
   requestId: string | null;
+  metaPaymentId: string | null;
+  metaQuoteId: string | null;
 }
 
-function parseRefund(json: Record<string, unknown> | null): StripeRefund | null {
-  const id = typeof json?.id === "string" && REFUND_ID_RE.test(json.id) ? json.id : null;
+function strictId(v: unknown): string | null {
+  const id = typeof v === "string" ? v : v && typeof v === "object" && !Array.isArray(v) ? (v as { id?: unknown }).id : null;
+  return typeof id === "string" && OPAQUE_STRIPE_ID_RE.test(id) ? id : null;
+}
+
+/** One Refund object, or null when ANY required fact is missing or ill-formed. Bare or expanded ids both read. */
+export function parseStrictRefund(json: unknown): StrictRefund | null {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return null;
+  const o = json as Record<string, unknown>;
+  if (o.object !== undefined && o.object !== "refund") return null;
+  const id = strictId(o.id);
   if (!id) return null;
-  const metadata = (json?.metadata ?? null) as Record<string, unknown> | null;
+  if (typeof o.amount !== "number" || !Number.isSafeInteger(o.amount) || o.amount <= 0) return null;
+  if (typeof o.currency !== "string" || !/^[a-z]{3}$/.test(o.currency)) return null;
+  if (typeof o.created !== "number" || !Number.isSafeInteger(o.created) || o.created <= 0) return null;
+  if (o.status !== null && o.status !== undefined && (typeof o.status !== "string" || o.status.length === 0 || o.status.length > 40)) return null;
+  // Present-but-unreadable ids are malformed; absent ones are simply absent.
+  const pi = o.payment_intent === null || o.payment_intent === undefined ? null : strictId(o.payment_intent);
+  if (o.payment_intent !== null && o.payment_intent !== undefined && !pi) return null;
+  const charge = o.charge === null || o.charge === undefined ? null : strictId(o.charge);
+  if (o.charge !== null && o.charge !== undefined && !charge) return null;
+  if (o.metadata !== null && o.metadata !== undefined && (typeof o.metadata !== "object" || Array.isArray(o.metadata))) return null;
+  const meta = (o.metadata ?? {}) as Record<string, unknown>;
+  const uuid = (v: unknown) => (typeof v === "string" && UUID_META_RE.test(v) ? v.toLowerCase() : null);
   return {
-    id,
-    status: typeof json?.status === "string" ? json.status : null,
-    amountCents: typeof json?.amount === "number" && Number.isInteger(json.amount) ? json.amount : null,
-    requestId: typeof metadata?.refund_request_id === "string" ? metadata.refund_request_id : null,
+    id, paymentIntentId: pi, chargeId: charge, amountCents: o.amount, currency: o.currency,
+    status: typeof o.status === "string" ? o.status : null, createdSec: o.created,
+    requestId: uuid(meta.refund_request_id), metaPaymentId: uuid(meta.payment_id), metaQuoteId: uuid(meta.quote_id),
   };
 }
 
-export interface PaymentIntentCharge {
-  /** `found` = this account owns the PaymentIntent. `not_found` = it does not (a 404): ask the next account. */
-  status: "found" | "not_found";
-  amountCapturedCents: number | null;
-  amountRefundedCents: number | null;
+function errorFrom(status: number, json: Record<string, unknown> | null): StripeError {
+  const err = (json?.error ?? null) as { message?: unknown; code?: unknown; type?: unknown } | null;
+  const code = typeof err?.code === "string" ? err.code : typeof err?.type === "string" ? err.type : `http_${status}`;
+  const message = typeof err?.message === "string" ? err.message : `Stripe returned ${status}`;
+  return new StripeError(status, code, message);
 }
 
-/** Read a PaymentIntent with its latest charge expanded. THROWS StripeError on anything but 2xx / 404. */
-export async function retrievePaymentIntentCharge(secretKey: string, paymentIntentId: string): Promise<PaymentIntentCharge> {
+/** A GET with a per-call deadline. Redirects are an error (see the section header). */
+async function stripeGet(secretKey: string, url: string, timeoutMs: number): Promise<{ status: number; ok: boolean; json: Record<string, unknown> | null }> {
   if (!secretKey) throw new StripeError(500, "not_configured", "Stripe secret key is not set");
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 250) throw new StripeError(0, "deadline_exhausted", "No time left for this Stripe read");
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${secretKey}`, "Stripe-Version": apiVersion() },
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(Math.min(timeoutMs, STRIPE_REFUND_CALL_MAX_MS)),
+    });
+  } catch (e) {
+    throw new StripeError(0, "network_error", e instanceof Error ? e.message : String(e));
+  }
+  if (res.status >= 300 && res.status < 400) throw new StripeError(res.status, "redirect_refused", "Stripe answered with a redirect");
+  const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  return { status: res.status, ok: res.ok, json };
+}
+
+export interface PaymentIntentOwner {
+  status: "found" | "not_found";
+  chargeId: string | null;
+  currency: string | null;
+  livemode: boolean | null;
+  /** The latest charge's `amount_captured`; null when the answer does not carry a usable one. */
+  amountCapturedCents: number | null;
+}
+
+/** Does THIS account own the PaymentIntent, and what are its immutable facts? THROWS StripeError on anything but 2xx / 404. */
+export async function retrievePaymentIntentOwner(secretKey: string, paymentIntentId: string, timeoutMs = STRIPE_REFUND_CALL_MAX_MS): Promise<PaymentIntentOwner> {
   if (!PAYMENT_INTENT_ID_RE.test(paymentIntentId)) throw new StripeError(400, "bad_payment_intent_id", "Not a PaymentIntent id");
-  const read = await stripeSessionCall(secretKey, "GET", `${STRIPE_API}/payment_intents/${paymentIntentId}?expand%5B%5D=latest_charge`);
-  if (read.status === 404) return { status: "not_found", amountCapturedCents: null, amountRefundedCents: null };
-  if (!read.ok) throw stripeErrorFrom(read.status, read.json);
-  const charge = read.json?.latest_charge;
-  const c = charge && typeof charge === "object" ? (charge as Record<string, unknown>) : null;
-  const int = (v: unknown) => (typeof v === "number" && Number.isInteger(v) ? v : null);
-  return { status: "found", amountCapturedCents: int(c?.amount_captured), amountRefundedCents: int(c?.amount_refunded) };
+  const read = await stripeGet(secretKey, `${STRIPE_API}/payment_intents/${paymentIntentId}?expand%5B%5D=latest_charge`, timeoutMs);
+  if (read.status === 404) return { status: "not_found", chargeId: null, currency: null, livemode: null, amountCapturedCents: null };
+  if (!read.ok) throw errorFrom(read.status, read.json);
+  if (!read.json || read.json.id !== paymentIntentId) throw new StripeError(502, REFUND_EVIDENCE_MALFORMED, "Stripe answered with another PaymentIntent");
+  const charge = read.json.latest_charge;
+  const c = charge && typeof charge === "object" && !Array.isArray(charge) ? (charge as Record<string, unknown>) : null;
+  const currency = typeof read.json.currency === "string" && /^[a-z]{3}$/.test(read.json.currency) ? read.json.currency : null;
+  const captured = c && typeof c.amount_captured === "number" && Number.isSafeInteger(c.amount_captured) && c.amount_captured >= 0 ? c.amount_captured : null;
+  return {
+    status: "found", chargeId: strictId(charge), currency,
+    livemode: typeof read.json.livemode === "boolean" ? read.json.livemode : null, amountCapturedCents: captured,
+  };
+}
+
+/**
+ * Which list, and the membership rule its items must obey:
+ *   by PaymentIntent  an item's PaymentIntent is the filter's, or it has none and its charge is the owner's;
+ *   by charge         an item's charge is the filter's, or it has none and its PaymentIntent is the owner's.
+ * An item that does not belong makes the page `refund_evidence_malformed`.
+ */
+export type RefundListFilter =
+  | { paymentIntentId: string; ownerChargeId: string | null }
+  | { chargeId: string; ownerPaymentIntentId: string | null };
+
+export interface RefundListPage {
+  refunds: StrictRefund[];
+  /** Stripe's own `has_more`: false = an EXPLICIT terminal page. */
+  hasMore: boolean;
+  /** The cursor for the next page (the last object's id). Null on an empty page. */
+  lastId: string | null;
+}
+
+/**
+ * ONE page of a PaymentIntent's or a charge's refunds. THROWS `refund_evidence_malformed` unless the answer has a real
+ * `data` array, a boolean `has_more`, and every object is a well-formed refund that belongs to the filter (above),
+ * with no id repeated in the page; a non-terminal page must carry an advancing cursor.
+ */
+export async function listRefundsPageStrict(secretKey: string, filter: RefundListFilter, startingAfter: string | null, timeoutMs = STRIPE_REFUND_CALL_MAX_MS): Promise<RefundListPage> {
+  let query: string;
+  let belongs: (r: StrictRefund) => boolean;
+  if ("paymentIntentId" in filter) {
+    if (!PAYMENT_INTENT_ID_RE.test(filter.paymentIntentId)) throw new StripeError(400, "bad_payment_intent_id", "Not a PaymentIntent id");
+    query = `payment_intent=${encodeURIComponent(filter.paymentIntentId)}`;
+    belongs = (r) => r.paymentIntentId === filter.paymentIntentId || (r.paymentIntentId === null && filter.ownerChargeId !== null && r.chargeId === filter.ownerChargeId);
+  } else {
+    if (!OPAQUE_STRIPE_ID_RE.test(filter.chargeId)) throw new StripeError(400, "bad_charge_id", "Not a charge id");
+    query = `charge=${encodeURIComponent(filter.chargeId)}`;
+    belongs = (r) => r.chargeId === filter.chargeId || (r.chargeId === null && filter.ownerPaymentIntentId !== null && r.paymentIntentId === filter.ownerPaymentIntentId);
+  }
+  if (startingAfter !== null && !OPAQUE_STRIPE_ID_RE.test(startingAfter)) throw new StripeError(400, "bad_cursor", "Not a list cursor");
+  const cursor = startingAfter ? `&starting_after=${encodeURIComponent(startingAfter)}` : "";
+  const read = await stripeGet(secretKey, `${STRIPE_API}/refunds?${query}&limit=100${cursor}`, timeoutMs);
+  if (!read.ok) throw errorFrom(read.status, read.json);
+  const malformed = (why: string) => new StripeError(502, REFUND_EVIDENCE_MALFORMED, why);
+  if (!read.json || !Array.isArray(read.json.data) || typeof read.json.has_more !== "boolean") throw malformed("The refund list has no data array or no has_more");
+  const refunds: StrictRefund[] = [];
+  const seen = new Set<string>();
+  for (const d of read.json.data as unknown[]) {
+    const r = parseStrictRefund(d);
+    if (!r) throw malformed("The refund list carries a malformed refund");
+    if (!belongs(r)) throw malformed("The refund list carries a refund that does not belong to its filter");
+    if (seen.has(r.id)) throw malformed("The refund list repeats an id");
+    seen.add(r.id);
+    refunds.push(r);
+  }
+  const lastId = refunds.length > 0 ? refunds[refunds.length - 1]!.id : null;
+  if (read.json.has_more && (!lastId || lastId === startingAfter)) throw malformed("A non-terminal page has no advancing cursor");
+  return { refunds, hasMore: read.json.has_more, lastId };
+}
+
+/** An EXACT read of one refund by a bounded, safely encoded opaque id. `not_found` = this key cannot see it. */
+export async function retrieveRefundStrict(secretKey: string, refundId: string, timeoutMs = STRIPE_REFUND_CALL_MAX_MS): Promise<{ status: "found"; refund: StrictRefund } | { status: "not_found" }> {
+  if (!OPAQUE_STRIPE_ID_RE.test(refundId)) throw new StripeError(400, "bad_refund_id", "Not a refund id");
+  const read = await stripeGet(secretKey, `${STRIPE_API}/refunds/${encodeURIComponent(refundId)}`, timeoutMs);
+  if (read.status === 404) return { status: "not_found" };
+  if (!read.ok) throw errorFrom(read.status, read.json);
+  const refund = parseStrictRefund(read.json);
+  if (!refund || refund.id !== refundId) throw new StripeError(502, REFUND_EVIDENCE_MALFORMED, "Stripe answered with a malformed or different refund");
+  return { status: "found", refund };
 }
 
 export interface CreateRefundInput {
   paymentIntentId: string;
   amountCents: number;
   reason: "duplicate" | "requested_by_customer" | null;
-  /** Written to the refund's metadata; `refund_request_id` is how a later list finds it. Deterministic per row. */
+  /**
+   * Written to the refund's metadata. `refund_request_id` is also the ONE Idempotency-Key spelling
+   * (`catering-refund:<request id>`), so the key and the metadata can never name different requests.
+   */
   metadata: { refund_request_id: string; quote_id: string; payment_id: string };
 }
 
 /**
- * Create a refund. The SAME `idempotencyKey` and the SAME parameters on every attempt of one request row: Stripe
- * "saves the status code and body of the first request made with a given idempotency key after endpoint execution
- * begins. Retries with the same key return the saved response, including `500` errors", and "compares incoming
- * parameters to those of the original request and errors if they're not the same" (docs.stripe.com/api/idempotent_requests).
- * No response throws StripeError(0, "network_error"); every non-2xx throws with its HTTP status.
+ * What ONE POST /v1/refunds came to. Only `created` carries a refund; every other kind is UNCONFIRMED (the caller
+ * records it as such and never sends again), except `not_sent`, which made no request at all.
+ *   created      a 2xx whose body is a well-formed refund (the caller still verifies it is THIS request's: F10)
+ *   unparseable  a 2xx whose body is not a well-formed refund
+ *   refused      any non-2xx answer, a 3xx included (redirects are not followed)
+ *   no_response  the request may have left; no answer came back (`timeout`: the deadline; `network_error`: anything else)
+ *   not_sent     refused BEFORE any request (no key, a bad id or amount)
  */
-export async function createRefund(secretKey: string, input: CreateRefundInput, idempotencyKey: string): Promise<StripeRefund> {
-  if (!secretKey) throw new StripeError(500, "not_configured", "Stripe secret key is not set");
-  if (!PAYMENT_INTENT_ID_RE.test(input.paymentIntentId)) throw new StripeError(400, "bad_payment_intent_id", "Not a PaymentIntent id");
-  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new StripeError(400, "bad_amount", "A refund amount is a positive integer");
+export type CreateRefundOutcome =
+  | { kind: "created"; httpStatus: number; refund: StrictRefund }
+  | { kind: "unparseable"; httpStatus: number }
+  | { kind: "refused"; httpStatus: number; code: string; message: string }
+  | { kind: "no_response"; code: "timeout" | "network_error" }
+  | { kind: "not_sent"; code: "not_configured" | "bad_payment_intent_id" | "bad_amount" | "bad_request_id" };
+
+/** The one Stripe Idempotency-Key spelling for a request row (held equal to refunds-shared `refundIdempotencyKey`). */
+const idempotencyKeyFor = (requestId: string) => `catering-refund:${requestId}`;
+
+/**
+ * Create a refund: EXACTLY ONE `fetch`, no retry loop, `redirect: "manual"`, the request's own Idempotency-Key and
+ * `metadata[refund_request_id]`. It never throws for a Stripe or transport problem: the outcome says what happened
+ * (above). Stripe: "Treat the outcome of a request that returns `500` as indeterminate" and "If the outcome is still
+ * unknown after that window, don't retry with either the old key or a new one" (docs.stripe.com/error-low-level), so
+ * the caller never asks again, by any path.
+ */
+export async function createRefund(secretKey: string, input: CreateRefundInput, timeoutMs: number = STRIPE_REFUND_CALL_MAX_MS): Promise<CreateRefundOutcome> {
+  if (!secretKey) return { kind: "not_sent", code: "not_configured" };
+  if (!PAYMENT_INTENT_ID_RE.test(input.paymentIntentId)) return { kind: "not_sent", code: "bad_payment_intent_id" };
+  if (!Number.isSafeInteger(input.amountCents) || input.amountCents <= 0) return { kind: "not_sent", code: "bad_amount" };
+  if (!UUID_META_RE.test(input.metadata.refund_request_id)) return { kind: "not_sent", code: "bad_request_id" };
   const params: Record<string, string | number | undefined> = {
     payment_intent: input.paymentIntentId,
     amount: input.amountCents,
@@ -502,54 +664,30 @@ export async function createRefund(secretKey: string, input: CreateRefundInput, 
       headers: {
         Authorization: `Bearer ${secretKey}`,
         "Content-Type": "application/x-www-form-urlencoded",
-        "Idempotency-Key": idempotencyKey,
+        "Idempotency-Key": idempotencyKeyFor(input.metadata.refund_request_id),
         "Stripe-Version": apiVersion(),
       },
       body: encodeForm(params),
       cache: "no-store",
-      signal: AbortSignal.timeout(20_000),
+      redirect: "manual",
+      signal: AbortSignal.timeout(Math.min(Math.max(Number.isFinite(timeoutMs) ? timeoutMs : 1, 1), STRIPE_REFUND_CALL_MAX_MS)),
     });
   } catch (e) {
-    // No response: Stripe may or may not have executed it. The caller keeps the row pending.
-    throw new StripeError(0, "network_error", e instanceof Error ? e.message : String(e));
+    // The request may have reached Stripe: unconfirmed, never "not sent".
+    const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+    return { kind: "no_response", code: timedOut ? "timeout" : "network_error" };
   }
-  const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!res.ok) throw stripeErrorFrom(res.status, json);
-  const refund = parseRefund(json);
-  if (!refund) throw new StripeError(502, "bad_payload", "Stripe returned no refund id");
-  return refund;
-}
-
-/** Every refund of a PaymentIntent (newest first), up to `maxPages` pages of 100. THROWS on anything but 2xx. */
-export async function listRefundsForPaymentIntent(secretKey: string, paymentIntentId: string, maxPages = 5): Promise<StripeRefund[]> {
-  if (!secretKey) throw new StripeError(500, "not_configured", "Stripe secret key is not set");
-  if (!PAYMENT_INTENT_ID_RE.test(paymentIntentId)) throw new StripeError(400, "bad_payment_intent_id", "Not a PaymentIntent id");
-  const out: StripeRefund[] = [];
-  let after: string | null = null;
-  for (let page = 0; page < maxPages; page++) {
-    const cursor = after ? `&starting_after=${encodeURIComponent(after)}` : "";
-    const read = await stripeSessionCall(secretKey, "GET", `${STRIPE_API}/refunds?payment_intent=${encodeURIComponent(paymentIntentId)}&limit=100${cursor}`);
-    if (!read.ok) throw stripeErrorFrom(read.status, read.json);
-    const data = Array.isArray(read.json?.data) ? (read.json.data as Array<Record<string, unknown>>) : [];
-    for (const d of data) {
-      const r = parseRefund(d);
-      if (r) out.push(r);
-    }
-    const last = data[data.length - 1];
-    if (read.json?.has_more !== true || !last || typeof last.id !== "string") return out;
-    after = last.id;
+  // A browser-style manual redirect is an opaque response with status 0; Node answers the 3xx itself. Both are
+  // non-2xx answers.
+  if (res.type === "opaqueredirect" || res.status < 200 || res.status >= 300) {
+    const json = res.status >= 400 ? ((await res.json().catch(() => null)) as Record<string, unknown> | null) : null;
+    const err = (res.status >= 300 && res.status < 400) || res.type === "opaqueredirect"
+      ? new StripeError(res.status, "redirect_not_followed", "Stripe answered with a redirect")
+      : errorFrom(res.status, json);
+    return { kind: "refused", httpStatus: res.status, code: err.code, message: err.message };
   }
-  // More refunds than we look through: refuse rather than answer "none of them is ours" from a partial list.
-  throw new StripeError(502, "refund_list_incomplete", "Too many refunds on this payment to check");
-}
-
-/** Read one refund. THROWS on anything but 2xx. */
-export async function retrieveRefund(secretKey: string, refundId: string): Promise<StripeRefund> {
-  if (!secretKey) throw new StripeError(500, "not_configured", "Stripe secret key is not set");
-  if (!REFUND_ID_RE.test(refundId)) throw new StripeError(400, "bad_refund_id", "Not a refund id");
-  const read = await stripeSessionCall(secretKey, "GET", `${STRIPE_API}/refunds/${refundId}`);
-  if (!read.ok) throw stripeErrorFrom(read.status, read.json);
-  const refund = parseRefund(read.json);
-  if (!refund) throw new StripeError(502, "bad_payload", "Stripe returned no refund id");
-  return refund;
+  const json = (await res.json().catch(() => null)) as unknown;
+  const refund = parseStrictRefund(json);
+  if (!refund) return { kind: "unparseable", httpStatus: res.status };
+  return { kind: "created", httpStatus: res.status, refund };
 }

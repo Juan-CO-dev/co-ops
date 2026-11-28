@@ -292,9 +292,13 @@ const SERVER_TIER_MAP: Record<string, string[]> = {
   "app/api/catering/quotes/[id]/send/route.ts": ["B"],
   // Owner request 2026-11-15: resend an expired quote with a new expiry — Send's own tier.
   "app/api/catering/quotes/[id]/resend/route.ts": ["B"],
-  // Catering refunds (0357): money out takes Send's fresh password. Its retry route asserts no tier (it can only
-  // re-send a request already confirmed behind this one).
+  // Catering refunds (0357): money out takes Send's fresh password. B1 v2 (0359): its retry route is "Check Stripe"
+  // (GETs only, never sends) and asserts no tier, nor does the new check route; the two staff exits (release an
+  // unconfirmed request; attach a retrieved Stripe refund to it) take the same fresh password, and their exact paths
+  // are step-up surfaces (lib/session.ts `isCateringStepUpPath`).
   "app/api/catering/quotes/[id]/refunds/route.ts": ["B"],
+  "app/api/catering/quotes/[id]/refunds/[requestId]/release/route.ts": ["B"],
+  "app/api/catering/quotes/[id]/refunds/[requestId]/attach/route.ts": ["B"],
   // Catering inbox phase 1b: Send draft (outside /admin, isCateringInboxSendPath) and the owner / CGS mode switch.
   "app/api/catering/inbox/[id]/send/route.ts": ["B"],
   "app/api/admin/catering-inbox/settings/route.ts": ["B"],
