@@ -51,10 +51,14 @@ const frozenBody = (path: string): string => {
   expect(text.startsWith(HEADER), `${path}: the frozen copy carries its header`).toBe(true);
   return text.slice(HEADER.length);
 };
-/** `git show 9ce98df5:<path>`, or null when the object is not in this clone (a shallow CI checkout). */
+/**
+ * `git show 9ce98df5:<path>`, or null when this clone cannot give the object (a shallow CI checkout: git then fails, or
+ * answers with nothing). An OPTIONAL cross-check of the frozen copy; a frozen file is never empty.
+ */
 const mainBlob = (path: string): string | null => {
   try {
-    return lf(execFileSync("git", ["show", `9ce98df5:${path}`], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 32 * 1024 * 1024 }));
+    const out = lf(execFileSync("git", ["show", `9ce98df5:${path}`], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 32 * 1024 * 1024 }));
+    return out.length > 0 ? out : null;
   } catch {
     return null;
   }
