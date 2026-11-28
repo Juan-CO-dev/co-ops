@@ -127,7 +127,13 @@ const realRpc = (args: { p_rows: unknown }) => serial(async () => {
   } catch (e) { return { data: null, error: pgError(e) }; }
 });
 
-/** MAIN's statement in PostgREST's upsert shape: every sent column inserted, and every sent column set on conflict. */
+/**
+ * MAIN's statement in PostgREST's upsert shape: every sent column inserted, and every sent column set on conflict.
+ * THE OFF CONTROL ONLY, never the proof of the guard. It is a hand-built stand-in for what PostgREST does with
+ * `lib/toast/labor.ts`'s `.upsert(rows, { onConflict })`: if main's writer ever changes shape (other columns, another
+ * conflict target), change this with it, or the control keeps showing a bug main no longer has (review, GLM P3).
+ * What main actually SENDS is pinned elsewhere, by tests/toast-labor-guard-off.test.ts's golden.
+ */
 const realUpsert = (rows: Array<Record<string, unknown>>, opts: { onConflict?: string }) => serial(async () => {
   try {
     if (opts.onConflict !== "location_id,time_entry_guid") throw new Error(`race: unexpected onConflict ${String(opts.onConflict)}`);

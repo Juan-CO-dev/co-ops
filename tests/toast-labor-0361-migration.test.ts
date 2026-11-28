@@ -28,7 +28,6 @@ const flat = code.replace(/\s+/g, " ").trim();
 const flatHeader = sql.slice(0, sql.indexOf("\nbegin;\n")).replace(/^--[ \t]?/gm, "").replace(/\s+/g, " ");
 const harness = readFileSync("scripts/sql-harness-0361.mjs", "utf8").replace(/\r\n/g, "\n");
 
-const GATE = "-- AUTHORED 2026-11-28 (Toast labor \"only if newer\", CC ruling D-R2, CO CC Fable lead, for CC). NOT YET APPLIED -- GATE CC/JUAN: sim first, then prod on Juan's word.";
 const STAMP = new RegExp(`^-- APPLIED TO (SIM|PROD) \\d{4}-\\d{2}-\\d{2}( UTC)? \\(schema_migrations version \\d{14}, name '${NAME}'\\)$`);
 
 /** LaborEntryRow's keys; `satisfies` keeps the list complete and exact as the interface changes. */
@@ -43,7 +42,8 @@ const CENSUS_SQL = new RegExp(`\\b(insert\\s+into|update|delete\\s+from|truncate
 describe("0361 header and shape", () => {
   it("line 1 is the name, line 2 the AUTHORED gate line; APPLIED stamps only directly under it", () => {
     expect(lines[0]).toBe(`-- Migration ${NAME}`);
-    expect(lines[1]).toBe(GATE);
+    // The gate line by its PARTS, not its whole wording (fix round, review GLM P3): authored date, still gated, by whom.
+    expect(lines[1]).toMatch(/^-- AUTHORED 2026-11-28 \(.+\)\. NOT YET APPLIED -- GATE CC\/JUAN: sim first, then prod on Juan's word\.$/);
     let i = 2;
     while (i < lines.length && STAMP.test(lines[i] ?? "")) i++;
     expect(lines[i] ?? "").not.toMatch(/^-- APPLIED/);
@@ -95,6 +95,23 @@ describe("0361 header and shape", () => {
     const rewrapped = code.replace(/\n/g, "\n      ").replace(/(\w) (\w)/g, "$1\n$2");
     expect(rewrapped).not.toBe(code);
     expect(rewrapped.replace(/\s+/g, " ").trim()).toBe(flat);
+  });
+});
+
+describe("the link lock the function takes is 0233's own key (fix round, review GLM P3)", () => {
+  it("0361 takes it SHARED, 0233's statement trigger takes the same key shared, link / unlink take it exclusive", () => {
+    // Compared with ALL whitespace removed: the key expression, not its spelling on the page.
+    const tight = (s: string) => s.replace(/--[^\n]*/g, "").replace(/\s+/g, "");
+    const KEY = "(hashtextextended('toast-link',0))";
+    const m0233 = tight(readFileSync("supabase/migrations/0233_whos_here.sql", "utf8"));
+    const m0361 = tight(sql);
+    expect(m0361).toContain(`performpg_advisory_xact_lock_shared${KEY};`);
+    expect(m0361.split(`pg_advisory_xact_lock_shared${KEY}`).length - 1).toBe(1);
+    expect(m0361).not.toContain(`pg_advisory_xact_lock${KEY}`);
+    // 0233: the BEFORE STATEMENT trigger function (shared) and the two link writers (exclusive).
+    expect(m0233).toContain(`createfunctionpublic.toast_time_entries_link_lock()`);
+    expect(m0233.split(`pg_advisory_xact_lock_shared${KEY}`).length - 1).toBe(1);
+    expect(m0233.split(`pg_advisory_xact_lock${KEY}`).length - 1).toBe(2);
   });
 });
 

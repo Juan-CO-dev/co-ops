@@ -307,6 +307,13 @@ describe("2. fail CLOSED: the read is ok:false, no upsert, the other reads still
     ]);
     expect(result.modified).toBe(1);
     expect(result.guard).toEqual(counts(4, { inserted: 4 }));
+    // The heartbeat is still written after a deadline (its own 5 s bound), as a FAILURE that names the read, and it
+    // carries the counts of the reads that did land (fix round, review GLM P3).
+    const hb = heartbeat();
+    expect(hb.action).toBe("cron.failure");
+    expect(hb.metadata.per_location_failures).toBe(1);
+    expect(hb.metadata.errors).toEqual(["loc-b:modified:toast_labor_deadline"]);
+    expect(hb.metadata.guard).toEqual(counts(4, { inserted: 4 }));
   }, 30_000);
 });
 
