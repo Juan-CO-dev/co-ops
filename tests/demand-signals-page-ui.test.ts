@@ -53,7 +53,7 @@ describe("an event's time, in every shape it can be entered", () => {
 
 const FACT = { id: "e1", kind: "named_event" as const, date: "2026-11-21", endDate: "2026-11-21", category: "sports_game" as const, impact: "up" as const, origin: "manual" as const, scope: "shop" as const };
 const GAP = { id: "g1", kind: "coverage_gap" as const, date: "2026-11-19", endDate: "2026-11-20", reason: "not_collected" as const };
-const ready = (over: Partial<Extract<InsightsView, { status: "ready" }>> = {}): InsightsView => ({ status: "ready", blocked: null, attempt: null, monthSpentMicro: 0, capMicro: 5_000_000, ...over });
+const ready = (over: Partial<Extract<InsightsView, { status: "ready" }>> = {}): InsightsView => ({ status: "ready", blocked: null, attempt: null, monthSpentMicro: 0, capMicro: 50_000_000, ...over });
 const openAi = () => fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${en["signals.ai.title"]}`) }));
 
 describe("AI insights on the page", () => {
@@ -128,9 +128,9 @@ describe("AI insights on the page", () => {
     expect(screen.queryByText(en["signals.ai.nothing_picked"])).toBeNull();
   });
   it("the month's spend is shown in whole cents, rounded up, with the cap", () => {
-    mount(data(), ready({ monthSpentMicro: 12_001, capMicro: 5_000_000 }));
+    mount(data(), ready({ monthSpentMicro: 12_001, capMicro: 50_000_000 }));
     openAi();
     expect(screen.getByText(/\$0\.02/)).toBeTruthy();   // 1.2001 cents is shown as 2, never as 1
-    expect(screen.getByText(/\$5\.00/)).toBeTruthy();
+    expect(screen.getByText(/\$50\.00/)).toBeTruthy();
   });
 });
