@@ -1,0 +1,3462 @@
+{
+  "two-shops-several-days": {
+    "events": [
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "locations"
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "select",
+        "args": [
+          "id, toast_restaurant_guid"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "eq",
+        "args": [
+          "active",
+          true
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "not",
+        "args": [
+          "toast_restaurant_guid",
+          "is",
+          null
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "returns",
+        "args": []
+      },
+      {
+        "ev": "await",
+        "target": "from:locations"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261006",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-06T12:00:00.000Z",
+              "out_at": "2026-10-06T20:00:00.000Z",
+              "hours": 8,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T19:30:00.000Z",
+              "hours": 7.5,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-07T19:31:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            },
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0702",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a2",
+              "employee_first_name": "Mox",
+              "job_guid": "job-a-close",
+              "job_name": "Closer",
+              "in_at": "2026-10-07T21:00:00.000Z",
+              "out_at": "2026-10-08T04:00:00.000Z",
+              "hours": 6.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261008",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0801",
+              "business_date": "2026-10-08",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-08T12:00:00.000Z",
+              "out_at": null,
+              "hours": null,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T20:00:00.000Z",
+              "hours": 8,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T09:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261006",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-06T13:00:00.000Z",
+              "out_at": "2026-10-06T18:00:00.000Z",
+              "hours": 5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-b2",
+              "employee_first_name": "Sample",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-07T10:00:00.000Z",
+              "out_at": "2026-10-07T21:00:00.000Z",
+              "hours": 11,
+              "overtime_hours": 1,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261008",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0801",
+              "business_date": "2026-10-08",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": null,
+              "job_name": null,
+              "in_at": "2026-10-08T11:00:00.000Z",
+              "out_at": "2026-10-08T14:00:00.000Z",
+              "hours": null,
+              "overtime_hours": null,
+              "auto_clocked_out": true,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-06T13:00:00.000Z",
+              "out_at": "2026-10-06T18:30:00.000Z",
+              "hours": 5.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T08:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "audit",
+        "input": {
+          "actorId": null,
+          "actorRole": null,
+          "action": "cron.success",
+          "resourceTable": "cron",
+          "resourceId": null,
+          "metadata": {
+            "job": "toast-labor-pull",
+            "dates": [
+              "2026-10-06",
+              "2026-10-07",
+              "2026-10-08"
+            ],
+            "modified_rows": 2,
+            "rows": 7,
+            "skipped": 0,
+            "per_location_failures": 0,
+            "errors": []
+          },
+          "ipAddress": null,
+          "userAgent": null
+        }
+      }
+    ],
+    "result": {
+      "ran": true,
+      "results": [
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-06",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 2,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-08",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-06",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-08",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        }
+      ],
+      "modified": 2
+    }
+  },
+  "modified-window-tombstone-and-edit": {
+    "events": [
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "locations"
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "select",
+        "args": [
+          "id, toast_restaurant_guid"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "eq",
+        "args": [
+          "active",
+          true
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "not",
+        "args": [
+          "toast_restaurant_guid",
+          "is",
+          null
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "returns",
+        "args": []
+      },
+      {
+        "ev": "await",
+        "target": "from:locations"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T19:30:00.000Z",
+              "hours": 7.5,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-07T19:31:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            },
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0702",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a2",
+              "employee_first_name": "Mox",
+              "job_guid": "job-a-close",
+              "job_name": "Closer",
+              "in_at": "2026-10-07T21:00:00.000Z",
+              "out_at": "2026-10-08T04:00:00.000Z",
+              "hours": 6.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": null,
+              "job_name": null,
+              "in_at": "2026-10-06T12:00:00.000Z",
+              "out_at": null,
+              "hours": null,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": true,
+              "source_modified_at": "2026-10-08T10:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            },
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0702",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a2",
+              "employee_first_name": "Mox",
+              "job_guid": "job-a-close",
+              "job_name": "Closer",
+              "in_at": "2026-10-07T21:00:00.000Z",
+              "out_at": "2026-10-08T03:15:00.000Z",
+              "hours": 6.25,
+              "overtime_hours": 0.25,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T11:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-b2",
+              "employee_first_name": "Sample",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-07T10:00:00.000Z",
+              "out_at": "2026-10-07T21:00:00.000Z",
+              "hours": 11,
+              "overtime_hours": 1,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-b2",
+              "employee_first_name": "Sample",
+              "job_guid": null,
+              "job_name": null,
+              "in_at": "2026-10-07T10:00:00.000Z",
+              "out_at": null,
+              "hours": null,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": true,
+              "source_modified_at": "2026-10-08T12:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "audit",
+        "input": {
+          "actorId": null,
+          "actorRole": null,
+          "action": "cron.success",
+          "resourceTable": "cron",
+          "resourceId": null,
+          "metadata": {
+            "job": "toast-labor-pull-backfill",
+            "dates": [
+              "2026-10-07"
+            ],
+            "modified_rows": 3,
+            "rows": 3,
+            "skipped": 0,
+            "per_location_failures": 0,
+            "errors": []
+          },
+          "ipAddress": null,
+          "userAgent": null
+        }
+      }
+    ],
+    "result": {
+      "ran": true,
+      "results": [
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 2,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        }
+      ],
+      "modified": 3
+    }
+  },
+  "sparse-entry-skipped": {
+    "events": [
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "locations"
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "select",
+        "args": [
+          "id, toast_restaurant_guid"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "eq",
+        "args": [
+          "active",
+          true
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "not",
+        "args": [
+          "toast_restaurant_guid",
+          "is",
+          null
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "returns",
+        "args": []
+      },
+      {
+        "ev": "await",
+        "target": "from:locations"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": null,
+              "job_name": null,
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T16:00:00.000Z",
+              "hours": 4,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T20:00:00.000Z",
+              "hours": 8,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T09:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-b2",
+              "employee_first_name": "Sample",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-07T10:00:00.000Z",
+              "out_at": "2026-10-07T21:00:00.000Z",
+              "hours": 11,
+              "overtime_hours": 1,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-06T13:00:00.000Z",
+              "out_at": "2026-10-06T18:30:00.000Z",
+              "hours": 5.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T08:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "audit",
+        "input": {
+          "actorId": null,
+          "actorRole": null,
+          "action": "cron.success",
+          "resourceTable": "cron",
+          "resourceId": null,
+          "metadata": {
+            "job": "toast-labor-pull-digest",
+            "dates": [
+              "2026-10-07"
+            ],
+            "modified_rows": 2,
+            "rows": 2,
+            "skipped": 3,
+            "per_location_failures": 0,
+            "errors": []
+          },
+          "ipAddress": null,
+          "userAgent": null
+        }
+      }
+    ],
+    "result": {
+      "ran": true,
+      "results": [
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 1,
+          "skipped": 3
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        }
+      ],
+      "modified": 2
+    }
+  },
+  "same-guid-twice": {
+    "events": [
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "locations"
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "select",
+        "args": [
+          "id, toast_restaurant_guid"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "eq",
+        "args": [
+          "active",
+          true
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "not",
+        "args": [
+          "toast_restaurant_guid",
+          "is",
+          null
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "returns",
+        "args": []
+      },
+      {
+        "ev": "await",
+        "target": "from:locations"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T18:00:00.000Z",
+              "hours": 6,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-07T18:01:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            },
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T20:00:00.000Z",
+              "hours": 8,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-07T20:05:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T20:00:00.000Z",
+              "hours": 8,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T09:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-b2",
+              "employee_first_name": "Sample",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-07T10:00:00.000Z",
+              "out_at": "2026-10-07T21:00:00.000Z",
+              "hours": 11,
+              "overtime_hours": 1,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-06T13:00:00.000Z",
+              "out_at": "2026-10-06T18:30:00.000Z",
+              "hours": 5.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T08:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "audit",
+        "input": {
+          "actorId": null,
+          "actorRole": null,
+          "action": "cron.success",
+          "resourceTable": "cron",
+          "resourceId": null,
+          "metadata": {
+            "job": "toast-labor-pull",
+            "dates": [
+              "2026-10-07"
+            ],
+            "modified_rows": 2,
+            "rows": 3,
+            "skipped": 0,
+            "per_location_failures": 0,
+            "errors": []
+          },
+          "ipAddress": null,
+          "userAgent": null
+        }
+      }
+    ],
+    "result": {
+      "ran": true,
+      "results": [
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 2,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        }
+      ],
+      "modified": 2
+    }
+  },
+  "failing-write": {
+    "events": [
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "locations"
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "select",
+        "args": [
+          "id, toast_restaurant_guid"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "eq",
+        "args": [
+          "active",
+          true
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "not",
+        "args": [
+          "toast_restaurant_guid",
+          "is",
+          null
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "returns",
+        "args": []
+      },
+      {
+        "ev": "await",
+        "target": "from:locations"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261006",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-06T12:00:00.000Z",
+              "out_at": "2026-10-06T20:00:00.000Z",
+              "hours": 8,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T19:30:00.000Z",
+              "hours": 7.5,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-07T19:31:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            },
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0702",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a2",
+              "employee_first_name": "Mox",
+              "job_guid": "job-a-close",
+              "job_name": "Closer",
+              "in_at": "2026-10-07T21:00:00.000Z",
+              "out_at": "2026-10-08T04:00:00.000Z",
+              "hours": 6.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T20:00:00.000Z",
+              "hours": 8,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T09:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261006",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-06T13:00:00.000Z",
+              "out_at": "2026-10-06T18:00:00.000Z",
+              "hours": 5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-b2",
+              "employee_first_name": "Sample",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-07T10:00:00.000Z",
+              "out_at": "2026-10-07T21:00:00.000Z",
+              "hours": 11,
+              "overtime_hours": 1,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-06T13:00:00.000Z",
+              "out_at": "2026-10-06T18:30:00.000Z",
+              "hours": 5.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T08:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "audit",
+        "input": {
+          "actorId": null,
+          "actorRole": null,
+          "action": "cron.failure",
+          "resourceTable": "cron",
+          "resourceId": null,
+          "metadata": {
+            "job": "toast-labor-pull",
+            "dates": [
+              "2026-10-06",
+              "2026-10-07"
+            ],
+            "modified_rows": 2,
+            "rows": 3,
+            "skipped": 0,
+            "per_location_failures": 1,
+            "errors": [
+              "loc-a:2026-10-07:toast_labor_write_failed"
+            ]
+          },
+          "ipAddress": null,
+          "userAgent": null
+        }
+      }
+    ],
+    "result": {
+      "ran": true,
+      "results": [
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-06",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-07",
+          "ok": false,
+          "rows": 0,
+          "skipped": 0,
+          "error": "toast_labor_write_failed"
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-06",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        }
+      ],
+      "modified": 2
+    }
+  },
+  "failing-toast-read": {
+    "events": [
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "locations"
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "select",
+        "args": [
+          "id, toast_restaurant_guid"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "eq",
+        "args": [
+          "active",
+          true
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "not",
+        "args": [
+          "toast_restaurant_guid",
+          "is",
+          null
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "returns",
+        "args": []
+      },
+      {
+        "ev": "await",
+        "target": "from:locations"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261006",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T19:30:00.000Z",
+              "hours": 7.5,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-07T19:31:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            },
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0702",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a2",
+              "employee_first_name": "Mox",
+              "job_guid": "job-a-close",
+              "job_name": "Closer",
+              "in_at": "2026-10-07T21:00:00.000Z",
+              "out_at": "2026-10-08T04:00:00.000Z",
+              "hours": 6.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T20:00:00.000Z",
+              "hours": 8,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T09:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261006",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-06T13:00:00.000Z",
+              "out_at": "2026-10-06T18:00:00.000Z",
+              "hours": 5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-06T13:00:00.000Z",
+              "out_at": "2026-10-06T18:30:00.000Z",
+              "hours": 5.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T08:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "audit",
+        "input": {
+          "actorId": null,
+          "actorRole": null,
+          "action": "cron.failure",
+          "resourceTable": "cron",
+          "resourceId": null,
+          "metadata": {
+            "job": "toast-labor-pull",
+            "dates": [
+              "2026-10-06",
+              "2026-10-07"
+            ],
+            "modified_rows": 2,
+            "rows": 3,
+            "skipped": 0,
+            "per_location_failures": 2,
+            "errors": [
+              "loc-a:2026-10-06:toast_labor_failed",
+              "loc-b:2026-10-07:toast_labor_http_503"
+            ]
+          },
+          "ipAddress": null,
+          "userAgent": null
+        }
+      }
+    ],
+    "result": {
+      "ran": true,
+      "results": [
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-06",
+          "ok": false,
+          "rows": 0,
+          "skipped": 0,
+          "error": "toast_labor_failed"
+        },
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 2,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-06",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-07",
+          "ok": false,
+          "rows": 0,
+          "skipped": 0,
+          "error": "toast_labor_http_503"
+        }
+      ],
+      "modified": 2
+    }
+  },
+  "empty-day": {
+    "events": [
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "locations"
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "select",
+        "args": [
+          "id, toast_restaurant_guid"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "eq",
+        "args": [
+          "active",
+          true
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "not",
+        "args": [
+          "toast_restaurant_guid",
+          "is",
+          null
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "returns",
+        "args": []
+      },
+      {
+        "ev": "await",
+        "target": "from:locations"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "audit",
+        "input": {
+          "actorId": null,
+          "actorRole": null,
+          "action": "cron.success",
+          "resourceTable": "cron",
+          "resourceId": null,
+          "metadata": {
+            "job": "toast-labor-pull",
+            "dates": [
+              "2026-10-07"
+            ],
+            "modified_rows": 0,
+            "rows": 0,
+            "skipped": 0,
+            "per_location_failures": 0,
+            "errors": []
+          },
+          "ipAddress": null,
+          "userAgent": null
+        }
+      }
+    ],
+    "result": {
+      "ran": true,
+      "results": [
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 0,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 0,
+          "skipped": 0
+        }
+      ],
+      "modified": 0
+    }
+  },
+  "station-lifecycle-reconcile": {
+    "events": [
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "locations"
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "select",
+        "args": [
+          "id, toast_restaurant_guid"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "eq",
+        "args": [
+          "active",
+          true
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "not",
+        "args": [
+          "toast_restaurant_guid",
+          "is",
+          null
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "returns",
+        "args": []
+      },
+      {
+        "ev": "await",
+        "target": "from:locations"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T19:30:00.000Z",
+              "hours": 7.5,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-07T19:31:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            },
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0702",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a2",
+              "employee_first_name": "Mox",
+              "job_guid": "job-a-close",
+              "job_name": "Closer",
+              "in_at": "2026-10-07T21:00:00.000Z",
+              "out_at": "2026-10-08T04:00:00.000Z",
+              "hours": 6.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261008",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0801",
+              "business_date": "2026-10-08",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-08T12:00:00.000Z",
+              "out_at": null,
+              "hours": null,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-a"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-a",
+              "time_entry_guid": "a-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-a1",
+              "employee_first_name": "Testa",
+              "job_guid": "job-a-line",
+              "job_name": "Line Cook",
+              "in_at": "2026-10-07T12:00:00.000Z",
+              "out_at": "2026-10-07T20:00:00.000Z",
+              "hours": 8,
+              "overtime_hours": 0,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T09:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "rpc",
+        "name": "reconcile_station_lifecycle",
+        "args": {
+          "p_location_id": "loc-a",
+          "p_day": "2026-10-08"
+        }
+      },
+      {
+        "ev": "call",
+        "target": "rpc:reconcile_station_lifecycle",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "rpc:reconcile_station_lifecycle"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-b2",
+              "employee_first_name": "Sample",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-07T10:00:00.000Z",
+              "out_at": "2026-10-07T21:00:00.000Z",
+              "hours": 11,
+              "overtime_hours": 1,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261008",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0801",
+              "business_date": "2026-10-08",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": null,
+              "job_name": null,
+              "in_at": "2026-10-08T11:00:00.000Z",
+              "out_at": "2026-10-08T14:00:00.000Z",
+              "hours": null,
+              "overtime_hours": null,
+              "auto_clocked_out": true,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-06T13:00:00.000Z",
+              "out_at": "2026-10-06T18:30:00.000Z",
+              "hours": 5.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T08:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "rpc",
+        "name": "reconcile_station_lifecycle",
+        "args": {
+          "p_location_id": "loc-b",
+          "p_day": "2026-10-08"
+        }
+      },
+      {
+        "ev": "call",
+        "target": "rpc:reconcile_station_lifecycle",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "rpc:reconcile_station_lifecycle"
+      },
+      {
+        "ev": "audit",
+        "input": {
+          "actorId": null,
+          "actorRole": null,
+          "action": "cron.success",
+          "resourceTable": "cron",
+          "resourceId": null,
+          "metadata": {
+            "job": "toast-labor-pull",
+            "dates": [
+              "2026-10-07",
+              "2026-10-08"
+            ],
+            "modified_rows": 2,
+            "rows": 5,
+            "skipped": 0,
+            "per_location_failures": 0,
+            "errors": []
+          },
+          "ipAddress": null,
+          "userAgent": null
+        }
+      }
+    ],
+    "result": {
+      "ran": true,
+      "results": [
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 2,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-a",
+          "businessDate": "2026-10-08",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        },
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-08",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        }
+      ],
+      "modified": 2
+    }
+  },
+  "location-ids-restricted": {
+    "events": [
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "locations"
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "select",
+        "args": [
+          "id, toast_restaurant_guid"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "eq",
+        "args": [
+          "active",
+          true
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "not",
+        "args": [
+          "toast_restaurant_guid",
+          "is",
+          null
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "in",
+        "args": [
+          "id",
+          [
+            "loc-b"
+          ]
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "returns",
+        "args": []
+      },
+      {
+        "ev": "await",
+        "target": "from:locations"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/jobs",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/employees",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?businessDate=20261007",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0701",
+              "business_date": "2026-10-07",
+              "employee_guid": "emp-b2",
+              "employee_first_name": "Sample",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-07T10:00:00.000Z",
+              "out_at": "2026-10-07T21:00:00.000Z",
+              "hours": 11,
+              "overtime_hours": 1,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": null,
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "toastGet",
+        "path": "/labor/v1/timeEntries?modifiedStartDate=2026-10-06T15%3A00%3A00.000%2B0000&modifiedEndDate=2026-10-08T15%3A00%3A00.000%2B0000&includeArchived=true",
+        "guid": "rest-b"
+      },
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "toast_time_entries"
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "upsert",
+        "args": [
+          [
+            {
+              "location_id": "loc-b",
+              "time_entry_guid": "b-0601",
+              "business_date": "2026-10-06",
+              "employee_guid": "emp-b1",
+              "employee_first_name": "Fakey",
+              "job_guid": "job-b-prep",
+              "job_name": "Prep",
+              "in_at": "2026-10-06T13:00:00.000Z",
+              "out_at": "2026-10-06T18:30:00.000Z",
+              "hours": 5.5,
+              "overtime_hours": null,
+              "auto_clocked_out": false,
+              "deleted": false,
+              "source_modified_at": "2026-10-08T08:00:00.000Z",
+              "pulled_at": "2026-10-08T15:00:00.000Z"
+            }
+          ],
+          {
+            "onConflict": "location_id,time_entry_guid"
+          }
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:toast_time_entries",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "await",
+        "target": "from:toast_time_entries"
+      },
+      {
+        "ev": "audit",
+        "input": {
+          "actorId": null,
+          "actorRole": null,
+          "action": "cron.success",
+          "resourceTable": "cron",
+          "resourceId": null,
+          "metadata": {
+            "job": "toast-labor-pull-digest",
+            "dates": [
+              "2026-10-07"
+            ],
+            "modified_rows": 1,
+            "rows": 1,
+            "skipped": 0,
+            "per_location_failures": 0,
+            "errors": []
+          },
+          "ipAddress": null,
+          "userAgent": null
+        }
+      }
+    ],
+    "result": {
+      "ran": true,
+      "results": [
+        {
+          "locationId": "loc-b",
+          "businessDate": "2026-10-07",
+          "ok": true,
+          "rows": 1,
+          "skipped": 0
+        }
+      ],
+      "modified": 1
+    }
+  },
+  "locations-read-fails": {
+    "events": [
+      {
+        "ev": "getServiceRoleClient"
+      },
+      {
+        "ev": "from",
+        "table": "locations"
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "select",
+        "args": [
+          "id, toast_restaurant_guid"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "eq",
+        "args": [
+          "active",
+          true
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "not",
+        "args": [
+          "toast_restaurant_guid",
+          "is",
+          null
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "abortSignal",
+        "args": [
+          "<AbortSignal>"
+        ]
+      },
+      {
+        "ev": "call",
+        "target": "from:locations",
+        "method": "returns",
+        "args": []
+      },
+      {
+        "ev": "await",
+        "target": "from:locations"
+      },
+      {
+        "ev": "audit",
+        "input": {
+          "actorId": null,
+          "actorRole": null,
+          "action": "cron.failure",
+          "resourceTable": "cron",
+          "resourceId": null,
+          "metadata": {
+            "job": "toast-labor-pull",
+            "dates": [
+              "2026-10-07"
+            ],
+            "modified_rows": 0,
+            "rows": 0,
+            "skipped": 0,
+            "per_location_failures": 1,
+            "errors": [
+              "*:2026-10-07:toast_labor_locations_failed"
+            ]
+          },
+          "ipAddress": null,
+          "userAgent": null
+        }
+      }
+    ],
+    "result": {
+      "ran": true,
+      "results": [
+        {
+          "locationId": "*",
+          "businessDate": "2026-10-07",
+          "ok": false,
+          "rows": 0,
+          "skipped": 0,
+          "error": "toast_labor_locations_failed"
+        }
+      ],
+      "modified": 0
+    }
+  },
+  "pull-disabled": {
+    "events": [],
+    "result": {
+      "ran": false,
+      "results": [],
+      "modified": 0
+    }
+  }
+}
