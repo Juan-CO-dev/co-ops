@@ -35,7 +35,9 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       if (!result.ran) failures.push("toast_labor_disabled");
       if (!result.results.length) failures.push("toast_labor_no_locations");
       console.log(JSON.stringify({ from: chunk[0], through: chunk.at(-1),
-        rows: result.results.reduce((n, r) => n + r.rows, 0), modified: result.modified, failures }));
+        rows: result.results.reduce((n, r) => n + r.rows, 0), modified: result.modified, failures,
+        // TOAST_LABOR_GUARD=1 only: the guarded writer's counts for this chunk (the one-time re-pull's evidence).
+        ...(result.guard ? { guard: result.guard } : {}) }));
       if (failures.length) throw new Error("toast_labor_backfill_failed");
     }
   } finally {
