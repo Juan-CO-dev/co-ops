@@ -378,6 +378,22 @@ test("refund_void_before_event_cannot_explain_later_event", async () => {
   const c = await pass(y.db, y.p.id, y.s);
   eq([c.floors_outstanding, c.held], [1, true], "a signed refund.failed dated before the event bars that refund from explaining it");
   await y.db.close();
+  // Review fix (all three seats, A1 gap): the signed void event is already in the LEDGER from before the epoch, imported
+  // by the recovery seed; the first exact read of R1 happens only AFTER Tuesday's live event.
+  const db3 = await ready();
+  const w3 = await world(db3); const s3 = new FakeStripe(); const q3 = await w3.quote(); const p3 = await w3.pay(q3, "deposit", 30000); s3.charge(p3.pi);
+  const lastMonday = now() - 86400;
+  const h1 = s3.refund(p3.pi, 10000, "failed", { created: lastMonday - 10 });
+  const hist = await ingest(db3, { type: "refund.failed", pi: p3.pi, created: lastMonday, hints: [{ id: h1, status: "failed" }], ledgerOnly: true });
+  await db3.query("update public.stripe_events set outcome = 'ignored', received_at = now() - interval '1 day' where id = $1", [hist.id]);
+  await rpc(db3, "catering_refund_open_recovery", ["cc"]);
+  for (let i = 0; i < 3; i++) await rpc(db3, "catering_refund_recovery_seed_batch", [CALLER, 100]);
+  check((await one(db3, "select void_evidence_at from public.catering_refund_identities where refund_id = $1", [h1])).void_evidence_at != null, "the seeded signed refund.failed dates R1 void at the event's own created (Monday)");
+  const h2 = s3.refund(p3.pi, 10000, "succeeded", { created: now() - 61 }); s3.hidden.add(h2);
+  await ingest(db3, { pi: p3.pi, created: now() - 60, cumulative: 10000, chargeAmount: 30000, full: false });
+  const d = await pass(db3, p3.id, s3);
+  eq([d.result, d.floors_outstanding, d.held], ["applied", 1, true], "R1 (held void since Monday by the seeded signed event) cannot explain Tuesday's live floor");
+  await db3.close();
 });
 
 test("refund_void_after_event_explains_it", async () => {
@@ -408,6 +424,15 @@ test("floor_coverage_variants", async () => {
   const a = await pass(x.db, x.p.id, x.s);
   eq([a.floors_outstanding, a.held], [1, true], "a later-created refund and a refund on another charge explain nothing");
   check((await issues(x.db, x.p.id)).some((i) => i.code === "wrong_charge" && i.blocking), "wrong_charge_rejected: the refund on another charge is a wrong-charge hold, never counted");
+  // Review fix (Astra P1): an EVENT about another charge of the PaymentIntent is never explained by this charge's refunds.
+  const z = await liveWorld();
+  const zr = z.s.refund(z.p.pi, 10000, "succeeded", { created: t0 - 30 });
+  const zev = await ingest(z.db, { pi: z.p.pi, charge: "ch_ANOTHER_CHARGE", created: t0, cumulative: 10000, chargeAmount: 30000, full: false });
+  z.s.set(zr, { status: "failed" });
+  const zb = await pass(z.db, z.p.id, z.s);
+  eq([zb.floors_outstanding, zb.held, (await one(z.db, "select floor_state from public.catering_refund_event_work where event_id = $1", [zev.id])).floor_state], [1, true, "outstanding"],
+    "an equal-sized void refund on the verified charge cannot discharge the floor of an event on ANOTHER charge");
+  await z.db.close();
   eq(a.returned_cents, 10000, "only the same-charge refund is counted as money (wrong-charge evidence is not)");
   await x.db.close();
   // Two independent events each need their own explanation.
@@ -461,6 +486,29 @@ test("live_ingress_racing_historical_seed_keeps_its_floor", async () => {
   eq(await one(db, "select source, floor_state, floor_cents::int as floor_cents from public.catering_refund_event_work where event_id = $1", [ev.id]),
     { source: "ingress", floor_state: "outstanding", floor_cents: 10000 }, "the seed cannot erase, demote or discharge the live-ingress floor");
   await db.close();
+  // Review fix (Opus F1 / Fable 3 / Astra P1): THE OTHER ORDER. (a) A delivery that failed BEFORE the epoch (the ledger
+  // says processing_failed) is imported by the seed; Stripe's retry then arrives with the switch ON.
+  const db2 = await ready();
+  const w2 = await world(db2); const q2 = await w2.quote(); const p2 = await w2.pay(q2, "deposit", 30000);
+  const old = await ingest(db2, { pi: p2.pi, created: now() - 600, cumulative: 10000, chargeAmount: 30000, full: false, ledgerOnly: true });
+  await db2.query("update public.stripe_events set outcome = 'processing_failed', received_at = now() - interval '10 minutes' where id = $1", [old.id]);
+  await rpc(db2, "catering_refund_open_recovery", ["cc"]);
+  for (let i = 0; i < 3; i++) await rpc(db2, "catering_refund_recovery_seed_batch", [CALLER, 100]);
+  eq(await one(db2, "select source, floor_state from public.catering_refund_event_work where event_id = $1", [old.id]), { source: "recovery_seed", floor_state: "none" }, "seed first: imported as history, no floor yet");
+  const retry = await rpc(db2, "catering_refund_event_register", [CALLER, old.id, "charge.refunded", null, false, p2.pi, null, now() - 600, 10000, 30000, false, "[]"]);
+  eq([retry.result, retry.floor, await ledger(db2, old.id)], ["registered", true, "refund_state_owed"], "the genuine signed delivery is PROMOTED: it registers, with its floor, and is acknowledged");
+  eq(await one(db2, "select source, floor_state, floor_cents::int as floor_cents, applied_at from public.catering_refund_event_work where event_id = $1", [old.id]),
+    { source: "ingress", floor_state: "outstanding", floor_cents: 10000, applied_at: null }, "it keeps its ingress obligation: source ingress, the floor outstanding, owed to the sweep");
+  eq(await count(db2, "select count(*) n from public.catering_payment_refund_events where stripe_event_id = $1", [old.id]), 1, "and its 0333 charge-history row is appended once");
+  eq((await figures(db2, p2.id)).o_floor, 10000, "the floor is honoured");
+  // (b) THE RACE inside the epoch: the ledger row is appended, the seed scan runs, then the registration. An unfinished
+  // delivery of this epoch is never taken as a seed.
+  const racing = await ingest(db2, { pi: p2.pi, created: now() - 5, cumulative: 15000, chargeAmount: 30000, full: false, ledgerOnly: true });
+  for (let i = 0; i < 2; i++) await rpc(db2, "catering_refund_recovery_seed_batch", [CALLER, 100]);
+  eq(await count(db2, "select count(*) n from public.catering_refund_event_work where event_id = $1", [racing.id]), 0, "an in-epoch unfinished delivery (NULL verdict) is not seeded");
+  const reg = await rpc(db2, "catering_refund_event_register", [CALLER, racing.id, "charge.refunded", null, false, p2.pi, null, now() - 5, 15000, 30000, false, "[]"]);
+  eq([reg.result, reg.floor, (await figures(db2, p2.id)).o_floor], ["registered", true, 15000], "its registration then creates the floor");
+  await db2.close();
 });
 
 test("uncovered_floor_step_up_disposition_lifts_only_that_event", async () => {
@@ -546,9 +594,19 @@ test("every_hold_code_has_an_exit", async () => {
       refund = x.s.refund(p.pi, 5000, "succeeded");
       await pass(x.db, p.id, x.s);
     }
-    if (["wrong_charge", "quarantined_hint", "verified_unreadable"].includes(code)) {
+    if (["wrong_charge", "quarantined_hint"].includes(code)) {
       refund = `re_hint_${code}`;
       await x.db.query("insert into public.catering_refund_identities (refund_id, payment_id, first_source) values ($1, $2, 'event')", [refund, p.id]);
+    }
+    if (code === "verified_unreadable") {
+      // A REAL occurrence: a verified id that every account then answers 404 for.
+      refund = x.s.refund(p.pi, 1000, "succeeded");
+      await pass(x.db, p.id, x.s);
+      await pass(x.db, p.id, x.s, { reads: { [refund]: "not_found_all" } });
+    }
+    if (code === "owner_indeterminate") {
+      // A REAL occurrence: no permitted account knows the PaymentIntent.
+      await pass(x.db, p.id, x.s, { ownerStatus: "indeterminate" });
     }
     if (code === "awaiting_identity") {
       event = (await ingest(x.db, { pi: p.pi, created: now() - 60, cumulative: 7000, chargeAmount: 20000, full: false })).id;
@@ -564,9 +622,11 @@ test("every_hold_code_has_an_exit", async () => {
     }
     const action = EXITS[code][0];
     const out = await rpc(x.db, "catering_refund_resolve_anomaly", [CALLER, id, g, action, "ref:census/0001", await x.w.session(x.moo, { fresh: true }), ["bind_verified_refund", "exclude_unrelated_hint"].includes(action) ? refund : null]);
+    // A recheck is not an exit by itself: the exit is the REPAIRED pass it asks for (access restored), which must END the hold.
+    if (action === "recheck_after_access") await pass(x.db, p.id, x.s);
     const after = await one(x.db, "select state, disposition from public.catering_refund_issues where id = $1", [id]);
-    const exits = action === "recheck_after_access" ? after.state === "open" && after.disposition === action : after.state === "resolved";
-    check(out.result === "ok" && exits, `${code}: the panel action ${action} runs through the protected RPC and ${action === "recheck_after_access" ? "re-opens the investigation for a fresh pass" : "ends the hold"}`);
+    check(out.result === "ok" && after.state === "resolved", `${code}: the panel action ${action} runs through the protected RPC and ENDS the occurrence (state ${after.state}, ${after.disposition})`);
+    if (BLOCKING.includes(code)) check(!(await figures(x.db, p.id)).o_held, `${code}: after its exit the payment is no longer held`);
     if (code === "awaiting_identity") check(!(await figures(x.db, p.id)).o_held && (await figures(x.db, p.id)).o_floor === 0, "awaiting_identity: the exit is FINANCIAL (the floor is gone and the payment is unheld)");
     void w0;
   }
@@ -602,6 +662,13 @@ test("disposition_matrix_authority_staleness_and_reopen", async () => {
   eq([ok.result, ok.held], ["applied", false], "after access is restored a fresh sufficient pass closes the hold");
   eq((await one(x.db, "select state, disposition from public.catering_refund_issues where id = $1", [issue.id])), { state: "resolved", disposition: "evidence_cleared" }, "the issue is closed by the evidence");
   await refuses(() => act("keep_held"), "issue_closed", "a closed issue takes no further action");
+  // Review fix (Opus F8): the SAME evidence comes back (unreadable again): the occurrence the evidence had cleared RE-OPENS.
+  x.s.hidden.add(r);
+  eq((await pass(x.db, x.p.id, x.s, { reads: { [r]: "not_found_all" } })).result, "held", "unreadable again: the apply is blocked again");
+  eq([(await one(x.db, "select state from public.catering_refund_issues where id = $1", [issue.id])).state, (await figures(x.db, x.p.id)).o_held], ["open", true],
+    "the evidence-cleared occurrence re-opens and holds the payment again");
+  x.s.hidden.delete(r);
+  await pass(x.db, x.p.id, x.s);
   // A service-role caller cannot promote a client-supplied actor: the function has no actor argument at all.
   const sig = (await one(x.db, "select pg_get_function_identity_arguments('public.catering_refund_resolve_anomaly(text, uuid, bigint, text, text, uuid, text)'::regprocedure) as a")).a;
   check(!/actor|stepped/.test(sig), "resolve_anomaly takes no actor and no stepped_up argument (the session row decides both)");
@@ -668,14 +735,20 @@ test("unknown_prefix_reserves_without_blocking_other_identities", async () => {
   const strange = x.s.refund(x.p.pi, 3000, "under_review"); // a structurally valid, unfamiliar provider status
   const fine = x.s.refund(x.p.pi, 2000, "succeeded");
   const a = await pass(x.db, x.p.id, x.s);
-  eq([a.result, a.returned_cents, a.reserved_cents, a.available_cents, a.held], ["applied", 6000, 3000, 21000, false],
-    "the unfamiliar STATUS reserves its verified amount; a familiar status on an unfamiliar PREFIX is counted by its class; other identities proceed");
+  eq([a.result, a.returned_cents, a.reserved_cents, a.available_cents, a.held, a.payment_status], ["applied", 2000, 7000, 21000, false, "paid"],
+    "an unfamiliar STATUS and an unfamiliar PREFIX each RESERVE their verified amount (never counted as returned); other identities proceed");
   eq(await rows(x.db, "select refund_id, unfamiliar, class from public.catering_refund_identities where payment_id = $1 order by refund_id", [x.p.id]),
-    [{ refund_id: fine, unfamiliar: false, class: "returned" }, { refund_id: strange, unfamiliar: true, class: "reserved" }, { refund_id: odd, unfamiliar: true, class: "returned" }].sort((p, q) => p.refund_id < q.refund_id ? -1 : 1), "both unfamiliar values are flagged in the ledger");
+    [{ refund_id: fine, unfamiliar: false, class: "returned" }, { refund_id: strange, unfamiliar: true, class: "reserved" }, { refund_id: odd, unfamiliar: true, class: "reserved" }].sort((p, q) => p.refund_id < q.refund_id ? -1 : 1), "both unfamiliar values are flagged in the ledger");
   eq((await issues(x.db, x.p.id)).map((i) => [i.code, i.blocking]).sort(), [["unfamiliar_identity", false], ["unfamiliar_identity", false]], "flagged, never blocking");
   // The opaque id is never forced through 0357's `re_` / `pyr_` request binding.
   check((await one(x.db, "select refunds from public.catering_refund_stripe_snapshots where payment_id = $1", [x.p.id])).refunds.some((r) => r.id === odd), "the conservative snapshot projection keeps the opaque id");
   await x.db.close();
+  // Review fix (Astra P1): a new-prefix refund for the WHOLE capture, status succeeded, never marks the payment refunded.
+  const y = await liveWorld();
+  y.s.refund(y.p.pi, 30000, "succeeded", { id: "rfnd_WHOLE1" });
+  const b = await pass(y.db, y.p.id, y.s);
+  eq([b.payment_status, b.returned_cents, b.reserved_cents, b.available_cents], ["paid", 0, 30000, 0], "an unfamiliar-prefix whole refund reserves the capture; the payment stays paid and checkout is not reopened");
+  await y.db.close();
 });
 
 test("request_transitions_and_stored_view", async () => {
@@ -916,6 +989,14 @@ test("released_request_late_success_staff_review_no_second_create", async () => 
   eq([r.status, r.last_error_code, r.binding_hold, a.returned_cents, a.held], ["failed", "released_no_refund", "released_request_has_refund", 10000, true],
     "the verified money is counted, the human disposition is preserved, and released_request_has_refund holds the payment for staff review");
   await refuses(() => rpc(x.db, "catering_refund_reserve_admitted", [CALLER, x.gm, session, x.quote, randomUUID(), 10000, "customer_cancelled", null, "panel"]), "payment_held", "no second create while that origin is disputed");
+  // Review fix (Astra P1 / Fable 4): the STAFF REVIEW itself. `evidence_reviewed` lifts the hold and nothing else.
+  const issue = (await issues(x.db, x.p.id)).find((i) => i.code === "released_request_has_refund");
+  await rpc(x.db, "catering_refund_resolve_anomaly", [CALLER, issue.id, Number((await work(x.db, x.p.id)).generation), "evidence_reviewed", "ref:late/0001", await x.w.session(x.moo, { fresh: true }), null]);
+  const b = await pass(x.db, x.p.id, x.s);
+  const r2 = await req(x.db, k.request);
+  eq([r2.status, r2.last_error_code, r2.binding_hold, b.transitions, b.held, b.returned_cents], ["failed", "released_no_refund", "released_request_has_refund", 0, false, 10000],
+    "after the review the request is STILL the released one (never flipped to succeeded), the money stays counted, the hold is lifted");
+  eq((await issues(x.db, x.p.id)).filter((i) => i.code === "refund_revived").length, 0, "and no refund_revived occurrence is raised by reviewing it");
   await x.db.close();
 });
 
@@ -938,6 +1019,21 @@ test("ambiguous_binding_keeps_independent_reservation", async () => {
   eq([r2.status, r2.stripe_refund_id, r2.binding_hold, b.returned_cents, b.available_cents], ["succeeded", a1, null, 20000, 10000], "Bind verified refund: the request follows the chosen id; the other refund stays counted");
   await refuses(() => x.db.query("update public.catering_refund_requests set stripe_refund_id = $2 where id = $1", [k.request, a2]), "refund_request_immutable", "an existing immutable binding cannot be moved");
   await x.db.close();
+  // Review fix (Astra P1): a refund whose LIST entry names request R but whose exact metadata contradicts R's facts
+  // (another quote) is an unrelated external refund: it never binds R and never removes R's independent reservation.
+  const y = await liveWorld();
+  const ky = await reserveClaimArm(y, y.owner, 10000);
+  await rpc(y.db, "catering_refund_finish", [CALLER, ky.request, ky.claim.claim_token, "uncertain", null, "network_error", "timeout"]);
+  const ext = y.s.refund(y.p.pi, 10000, "succeeded", { request: ky.request, metaPayment: y.p.id, metaQuote: randomUUID() });
+  const by = await rpc(y.db, "catering_refund_pass_begin", [CALLER, y.p.id, randomUUID()]);
+  // The list page teaches the id WITH the request it names (what the reconciler used to remember):
+  await rpc(y.db, "catering_refund_pass_remember", [CALLER, y.p.id, by.pass_token, JSON.stringify([{ id: ext, request: ky.request }]), null, 1]);
+  eq((await one(y.db, "select candidate_request_id from public.catering_refund_identities where refund_id = $1", [ext])).candidate_request_id, null, "list metadata is never a request candidate");
+  const ay = await rpc(y.db, "catering_refund_apply", [CALLER, y.p.id, by.pass_token, by.generation, JSON.stringify({ complete: true, owner: y.s.owner(y.p.pi), refunds: [y.s.read(ext)] })]);
+  const ry = await req(y.db, ky.request);
+  eq([ay.result, ry.status, ry.stripe_refund_id, ry.binding_hold, ay.returned_cents, ay.available_cents], ["applied", "pending", null, null, 10000, 10000],
+    "the contradictory refund is counted as money and binds nothing: the request stays pending with its own reservation (300 - 100 - 100)");
+  await y.db.close();
 });
 
 test("ingress_durable_floor_history_and_verdict", async () => {
@@ -1278,6 +1374,128 @@ test("summary_is_one_read_per_batch_and_figures_twin_inputs", async () => {
   eq([s.quotes.length, s.epoch.state, s.quotes.every((q) => q.payments.length === 1)], [9, "live", true], "one call returns the stored state of every quote in the batch");
   eq(s.quotes.find((q) => q.quote_id === x.quote).payments[0].verified, false, "an unchecked amount is labelled (verified = false until a complete pass)");
   await refuses(() => rpc(x.db, "catering_refund_summary", [CALLER, Array.from({ length: 61 }, () => randomUUID())]), "invalid_request", "the batch is bounded");
+  await x.db.close();
+});
+
+test("conflicting_identity_hold_has_an_exit", async () => {
+  // Review fix (Opus F2 / Fable 1 / Astra P1): a hold raised because an id belongs to ANOTHER payment has an operator
+  // exit, and a charge / owner hold is cleared by the evidence of a repaired pass.
+  const x = await liveWorld();
+  const p2 = await x.w.pay(x.quote, "balance", 20000); x.s.charge(p2.pi, { captured: 20000 });
+  const theirs = x.s.refund(p2.pi, 5000, "succeeded");
+  await pass(x.db, p2.id, x.s);
+  // A signed event on the FIRST payment names the other payment's refund id.
+  await ingest(x.db, { type: "refund.updated", pi: x.p.pi, created: now() - 30, hints: [{ id: theirs, status: "succeeded" }] });
+  const issue = (await issues(x.db, x.p.id)).find((i) => i.code === "wrong_charge");
+  check(issue && (await figures(x.db, x.p.id)).o_held, "conflicting ownership holds THIS payment and moves nothing");
+  eq((await one(x.db, "select payment_id from public.catering_refund_identities where refund_id = $1", [theirs])).payment_id, p2.id, "the id stays the other payment's");
+  await pass(x.db, x.p.id, x.s);
+  const out = await rpc(x.db, "catering_refund_resolve_anomaly", [CALLER, issue.id, Number((await work(x.db, x.p.id)).generation), "exclude_unrelated_hint", "ref:foreign/0001", await x.w.session(x.moo, { fresh: true }), null]);
+  eq([out.result, out.state, (await figures(x.db, x.p.id)).o_held], ["ok", "resolved", false], "Exclude unrelated hint ends the hold");
+  // The same hint again: the reviewed evidence never holds the payment (or pages staff) again.
+  await ingest(x.db, { type: "refund.updated", pi: x.p.pi, created: now() - 10, hints: [{ id: theirs, status: "succeeded" }] });
+  const a = await pass(x.db, x.p.id, x.s);
+  eq([a.result, a.held, (await issues(x.db, x.p.id)).filter((i) => i.state !== "resolved").length], ["applied", false, 0], "the same reviewed evidence does not hold the payment again");
+  // owner_indeterminate: raised while no account knows the PaymentIntent; the repaired pass clears it by evidence.
+  const b = await pass(x.db, p2.id, x.s, { ownerStatus: "indeterminate" });
+  eq([b.result, (await figures(x.db, p2.id)).o_held], ["incomplete_evidence", true], "an indeterminate owner holds the payment");
+  const c = await pass(x.db, p2.id, x.s);
+  eq([c.result, c.held, (await issues(x.db, p2.id)).filter((i) => i.state !== "resolved").length], ["applied", false, 0], "after access is restored a clean pass ENDS the hold (no direct SQL repair)");
+  // A changed charge holds; reading the verified charge again clears it.
+  const saved = x.s.charges.get(p2.pi).charge;
+  x.s.charges.get(p2.pi).charge = "ch_CHANGED";
+  eq([(await pass(x.db, p2.id, x.s)).result, (await figures(x.db, p2.id)).o_held], ["held", true], "a changed owning charge holds the payment");
+  x.s.charges.get(p2.pi).charge = saved;
+  const d = await pass(x.db, p2.id, x.s);
+  eq([d.result, d.held], ["applied", false], "the verified charge again: the hold is cleared by evidence");
+  // An immutable fact that changed: reviewed by the operator, then verified afresh.
+  x.s.set(theirs, { amount: 6000 });
+  eq((await pass(x.db, p2.id, x.s)).result, "held", "a verified refund whose amount no longer reads the same holds the payment");
+  const im = (await issues(x.db, p2.id)).find((i) => i.code === "capture_review" && i.state === "open");
+  await rpc(x.db, "catering_refund_resolve_anomaly", [CALLER, im.id, Number((await work(x.db, p2.id)).generation), "evidence_reviewed", "ref:immutable/0001", await x.w.session(x.moo, { fresh: true }), null]);
+  const e = await pass(x.db, p2.id, x.s);
+  eq([e.result, e.held, e.returned_cents], ["applied", false, 6000], "after the review the refund is verified afresh with the facts Stripe now reports; the payment is unheld");
+  await x.db.close();
+});
+
+test("aged_work_alert_survives_a_moving_retry_date", async () => {
+  // Review fix (Fable 6 / Astra P2): passes that keep failing move next_due_at forward every time; the watch ages the
+  // payment by how long its work has been UNRESOLVED.
+  const x = await liveWorld();
+  for (let i = 0; i < 3; i++) eq((await pass(x.db, x.p.id, x.s, { ownerStatus: "unreachable" })).result, "incomplete_evidence", `failing pass ${i + 1} (account unreachable: no issue is raised)`);
+  const w1 = await work(x.db, x.p.id);
+  check(new Date(w1.next_due_at) > new Date() && w1.oldest_unresolved_at != null, "the retry date is in the future, and the unresolved-since time is kept");
+  eq((await rpc(x.db, "catering_refund_watch_state", [CALLER])).aged, null, "not aged yet");
+  await backdate(x.db, "catering_refund_payment_work", "oldest_unresolved_at", x.p.id, "25 hours", "payment_id");
+  const ws = await rpc(x.db, "catering_refund_watch_state", [CALLER]);
+  eq([ws.aged?.kind, new Date((await work(x.db, x.p.id)).next_due_at) > new Date()], ["payment", true], "25 h unresolved: aged work, although the retry date keeps moving and heartbeats are fresh");
+  eq((await pass(x.db, x.p.id, x.s)).result, "applied", "a clean pass");
+  eq([(await work(x.db, x.p.id)).oldest_unresolved_at, (await rpc(x.db, "catering_refund_watch_state", [CALLER])).aged], [null, null], "clears the unresolved-since time and the alert condition");
+  // The identity-poll queue does not jump a payment that is backing off.
+  const r = x.s.refund(x.p.pi, 1000, "pending");
+  await pass(x.db, x.p.id, x.s);
+  await backdate(x.db, "catering_refund_identities", "next_poll_at", r, "2 hours", "refund_id");
+  eq((await rpc(x.db, "catering_refund_sweep_due", [CALLER, 10])).identity_polls, [x.p.id], "a due identity poll is listed");
+  await pass(x.db, x.p.id, x.s, { ownerStatus: "unreachable" });
+  eq((await rpc(x.db, "catering_refund_sweep_due", [CALLER, 10])).identity_polls, [], "while the payment backs off after a failed pass its identity poll waits for the payment's own due time");
+  await x.db.close();
+});
+
+test("reserved_not_sent_clears_on_arm_then_unconfirmed_is_raised", async () => {
+  // Review fix (Fable 5): the two occurrences are one PER KIND; the arm ends "reserved, not sent".
+  const x = await liveWorld();
+  const session = await x.w.session(x.owner);
+  const request = (await rpc(x.db, "catering_refund_reserve_admitted", [CALLER, x.owner, session, x.quote, randomUUID(), 10000, "customer_cancelled", null, "panel"])).requests[0].id;
+  await backdate(x.db, "catering_refund_requests", "requested_at", request, "16 minutes");
+  eq((await rpc(x.db, "catering_refund_sweep_housekeeping", [CALLER])).reserved_not_sent, 1, "unarmed for 15 minutes: reserved_not_sent");
+  // Staff press Retry: claim -> pass -> arm.
+  const claim = await rpc(x.db, "catering_refund_claim_admitted", [CALLER, x.owner, session, request]);
+  const ap = await pass(x.db, x.p.id, x.s);
+  const c = x.s.charges.get(x.p.pi);
+  eq((await rpc(x.db, "catering_refund_arm", [CALLER, x.owner, session, request, claim.claim_token, ap.generation, x.p.pi, c.charge, c.livemode])).result, "armed", "armed");
+  eq((await one(x.db, "select state, disposition from public.catering_refund_issues where request_id = $1 and code = 'reserved_not_sent'", [request])), { state: "resolved", disposition: "evidence_cleared" },
+    "the arm ends the `Reserved, not sent` occurrence (a POST may have left: it can no longer say nothing was sent)");
+  // The POST's answer and the process are lost.
+  await x.db.exec("set session_replication_role = replica");
+  await x.db.query("update public.catering_refund_requests set create_armed_at = create_armed_at - interval '10 minutes', claimed_until = now() - interval '5 minutes' where id = $1", [request]);
+  await x.db.exec("set session_replication_role = origin");
+  const hk = await rpc(x.db, "catering_refund_sweep_housekeeping", [CALLER]);
+  eq([hk.reserved_not_sent, hk.submission_unconfirmed], [0, 1], "the lost response is raised as `Submission unconfirmed`, although the request already had an earlier occurrence of the other kind");
+  // The create had landed: the verified outcome ends that occurrence too.
+  x.s.refund(x.p.pi, 10000, "succeeded", { request, metaPayment: x.p.id, metaQuote: x.quote, created: now() - 500 });
+  await pass(x.db, x.p.id, x.s);
+  eq([(await req(x.db, request)).status, (await issues(x.db, x.p.id)).filter((i) => i.state !== "resolved").length], ["succeeded", 0], "the verified outcome ends `Submission unconfirmed`");
+  await x.db.close();
+});
+
+test("drain_holds_a_whole_refund_the_status_rule_could_not_publish", async () => {
+  // Review fix (Astra A2 / Fable 11): a succeeded whole refund on a payment whose capture is unknown ends in a capture
+  // review with the payment still `paid`. Its event is NOT drained: OFF readers would keep `paid` for a refunded order.
+  const x = await liveWorld();
+  x.s.charges.get(x.p.pi).captured = null;
+  x.s.refund(x.p.pi, 30000, "succeeded", { created: now() - 120 });
+  const ev = await ingest(x.db, { pi: x.p.pi, created: now() - 100, cumulative: 30000, chargeAmount: 30000, full: true });
+  const wrongShop = await ingest(x.db, { pi: x.p.pi, created: now() - 90, cumulative: 30000, chargeAmount: 30000, full: true, loc: x.w.other });
+  const a = await pass(x.db, x.p.id, x.s);
+  eq([a.result, a.payment_status, a.floors_outstanding, a.held], ["applied", "paid", 0, true], "the floor is explained, the status rule could not run (capture unknown): capture review, payment still paid");
+  // An armed request whose response was lost, for the break-glass list.
+  const p2 = await x.w.pay(x.quote, "balance", 20000); x.s.charge(p2.pi, { captured: 20000 });
+  const y = { ...x, p: p2 };
+  const k = await reserveClaimArm(y, x.owner, 5000);
+  await rpc(x.db, "catering_refund_finish", [CALLER, k.request, k.claim.claim_token, "uncertain", null, "network_error", "timeout"]);
+  await x.db.exec("set session_replication_role = replica");
+  await x.db.query("update public.catering_refund_requests set create_armed_at = create_armed_at - interval '10 minutes' where id = $1", [k.request]);
+  await x.db.exec("set session_replication_role = origin");
+  const d = await rpc(x.db, "catering_refund_start_drain", [x.ep.epoch, x.ep.generation, "cc"]);
+  const fin = await rpc(x.db, "catering_refund_finish_drain", [x.ep.epoch, d.generation, "cc"]);
+  eq([fin.closed, fin.report.outstanding_events.map((o) => [o.event_id, o.reason])], [false, [[ev.id, "capture_review"]]], "the drain does NOT seal over it: the event is outstanding (capture_review)");
+  eq(fin.report.quarantined_events.map((q) => q.event_id), [wrongShop.id], "a quarantined (wrong-shop) event is an explicit, LISTED class (it changed no money and is not re-stamped)");
+  // Break glass records it, and the unconfirmed armed request, in the audited list.
+  const bg = await rpc(x.db, "catering_refund_break_glass_close", [x.ep.epoch, d.generation, "cc", "juan-2026-11-28-msg-0001"]);
+  const audit = await one(x.db, "select metadata from public.audit_log where action = 'catering.refund.break_glass'");
+  eq([bg.closed, audit.metadata.undrained.outstanding_events.map((o) => o.event_id), audit.metadata.undrained.unconfirmed_requests.map((r) => r.request_id),
+      audit.metadata.undrained.quarantined_events.length, await ledger(x.db, ev.id)],
+    [true, [ev.id], [k.request], 1, "payment_not_found"], "break glass lists the unresolved whole refund, the unconfirmed armed request and the quarantined event, and re-stamps the event-backed item");
   await x.db.close();
 });
 

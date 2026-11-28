@@ -400,6 +400,16 @@ export function RefundPanel({
           {issues.map((issue) => (
             <div key={issue.id} className="flex flex-col gap-1 text-sm" data-testid="refund-issue">
               <span className="font-semibold text-co-text">{t(`catering.refunds.issue.${issue.code}` as TranslationKey)}</span>
+              {issue.code === "awaiting_identity" && typeof issue.detail.event_cumulative_cents === "number" && (
+                <span className="text-xs text-co-text" data-testid="refund-issue-floor">
+                  {t("catering.refunds.issue.floor_detail", {
+                    event: issue.eventId ?? "",
+                    cumulative: money(issue.detail.event_cumulative_cents),
+                    explained: money(typeof issue.detail.explained_cents === "number" ? issue.detail.explained_cents : 0),
+                    remainder: money(typeof issue.detail.remainder_cents === "number" ? issue.detail.remainder_cents : issue.detail.event_cumulative_cents),
+                  })}
+                </span>
+              )}
               <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
                 <span className={issue.blocking ? "font-semibold text-co-warning-text" : "text-co-text-muted"}>
                   {t(issue.blocking ? "catering.refunds.issue_blocking" : "catering.refunds.issue_not_blocking")}

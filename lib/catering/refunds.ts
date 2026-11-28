@@ -193,8 +193,8 @@ function buildSummary(actor: AuthContext, quote: QuoteRow, stored: StoredRefundQ
     requestedAt: r.requested_at,
     requestedByName: names.get(r.requested_by) ?? null,
     ...requestRetryState({ status: r.status, firstAttemptAt: r.first_attempt_at, requestedAt: r.requested_at }, nowMs),
-    state: storedRequestState({ status: r.status, armed: r.armed, bound: r.bound, bindingHold: r.binding_hold, claimLive: r.claim_live, lastErrorCode: r.last_error_code }),
-    armed: r.armed,
+    state: storedRequestState({ status: r.status, armed: r.armed, legacyPossiblySent: r.legacy_possibly_sent === true, bound: r.bound, bindingHold: r.binding_hold, claimLive: r.claim_live, lastErrorCode: r.last_error_code }),
+    armed: r.armed || r.legacy_possibly_sent === true,
     bindingHold: r.binding_hold,
   }));
   const issues: RefundIssueView[] = (stored?.issues ?? []).flatMap((i) =>

@@ -215,6 +215,16 @@ const WRITERS: Writer[] = [
     bind: "status + quote_id CAS (the revision the person was looking at); refused 409 not_current otherwise",
     pinnedBy: { file: "tests/portal-checkout-settlement-race.test.ts", title: "THE REPORTED INTERLEAVING: mark-paid reads P on v1, a revise carries P to v2 and a checkout is attached, mark-paid resumes — never `paid` beside an open checkout nobody knows about" },
   },
+  // ── lib/catering/refund-reconcile.ts — a refund reversal restoring a payment (Part B1, CATERING_REFUNDS ON only) ──
+  {
+    file: "lib/catering/refund-reconcile.ts",
+    fn: "runReversalCleanup",
+    verb: "update",
+    writes: "provider_session_id = null on a REPLACEMENT intent, after the owning account confirmed that session expired",
+    guards: ["eq:id", "eq:provider_session_id"],
+    bind: "provider_session_id CAS (the exact session retired)",
+    pinnedBy: { file: "tests/catering-refund-reconcile.test.ts", title: "reversal_retires_reopened_checkout_and_reports_race: a REPLACEMENT balance checkout opened while the balance read refunded is retired through the owning account (review fix, Astra P1)" },
+  },
   // ── lib/portal/quotes.ts — the customer's pay tap ──────────────────────────────────
   {
     file: "lib/portal/quotes.ts",

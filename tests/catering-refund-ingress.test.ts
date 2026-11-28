@@ -524,6 +524,23 @@ describe("the rollback handoff to main (app halves)", () => {
     expect(h.stripeCalls).toEqual([]);
   }, 60_000);
 
+  it("ingress_racing_stop_is_applied_or_retryable: an event handed back to main at the seal (payment_not_found) and redelivered to an old ON instance is retryable and KEEPS main's verdict (review fix, Fable 9)", async () => {
+    const x = await setup();
+    await harnessKit.goLive(x.db);
+    // A refund seen before any payment row exists: acknowledged ON, out of scope at the seal, re-stamped for main.
+    const parked = chargeRefunded({ pi: "pi_handed_back_1", cumulative: 5000, amount: 5000, full: true });
+    expect((await deliver(parked)).body.result).toBe("refund_state_owed");
+    const d = await drain(x.db);
+    expect((await finishDrain(x.db, d)).closed).toBe(true);
+    expect(await ledger(x.db, parked.id)).toBe("payment_not_found");
+    // Stripe redelivers it to an instance still running ON: never a final "duplicate", and the verdict is untouched.
+    const on = await deliver(parked);
+    expect(on.status).toBe(500);
+    expect(on.body.code).toBe("processing_failed");
+    expect(await ledger(x.db, parked.id)).toBe("payment_not_found");
+    expect(legacyRefundAudits()).toHaveLength(0);
+  }, 60_000);
+
   it("on_ingress_then_off_rollback_whole_refund_not_lost: whole refund ingress (2xx), a premature drain lists it, one pass applies it, seal, OFF: the portal's payment read and the digest's refund loader see `refunded` and one 0333 event", async () => {
     const x = await setup();
     const q = await x.w.quote();

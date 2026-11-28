@@ -642,7 +642,15 @@ begin
                                              evidence_fingerprint, blocking, generation_at_open, detail)
     values (p_code, p_payment_id, p_location_id, p_request_id, p_refund_id, p_event_id, left(p_fingerprint, 300), p_blocking,
             p_generation, coalesce(p_detail, '{}'::jsonb))
-  on conflict (payment_id, code, evidence_fingerprint) do update set last_seen_at = clock_timestamp()
+  on conflict (payment_id, code, evidence_fingerprint) do update
+    set last_seen_at = clock_timestamp(),
+        -- Cleared by EVIDENCE and now back: the occurrence re-opens. Dispositioned by a PERSON: it stands, and the same
+        -- reviewed evidence never pages staff again.
+        state = case when catering_refund_issues.state = 'resolved' and catering_refund_issues.disposition = 'evidence_cleared' then 'open' else catering_refund_issues.state end,
+        opened_at = case when catering_refund_issues.state = 'resolved' and catering_refund_issues.disposition = 'evidence_cleared' then clock_timestamp() else catering_refund_issues.opened_at end,
+        aged_at = case when catering_refund_issues.state = 'resolved' and catering_refund_issues.disposition = 'evidence_cleared' then null else catering_refund_issues.aged_at end,
+        disposition = case when catering_refund_issues.state = 'resolved' and catering_refund_issues.disposition = 'evidence_cleared' then null else catering_refund_issues.disposition end,
+        disposition_at = case when catering_refund_issues.state = 'resolved' and catering_refund_issues.disposition = 'evidence_cleared' then null else catering_refund_issues.disposition_at end
   returning id into v_id;
   update public.catering_refund_payment_work w set oldest_unresolved_at = coalesce(w.oldest_unresolved_at, clock_timestamp())
    where w.payment_id = p_payment_id and exists (select 1 from public.catering_refund_issues i where i.id = v_id and i.state = 'open');
@@ -670,7 +678,11 @@ end $$;
 
 -- Id hints for one payment (from a signed event, a create response, a list page, a retained snapshot or request).
 -- A hint never carries provider status into the money: only an exact read does. It can carry VOID EVIDENCE TIME
--- (addendum A1): a signed event naming the refund failed / canceled dates that fact at the event's own `created`.
+-- (addendum A1): a signed event naming the refund failed / canceled dates that fact at the event's own `created` --
+-- whether it arrived through live ingress or was imported by the recovery seed -- and a retained 0357 snapshot that
+-- lists it void dates it at the snapshot's listing time (a database observation the app already holds).
+-- A hint names a REQUEST only when it is our own create response or an existing binding: list or event metadata is
+-- never a candidate before the exact read has verified it.
 create function public.catering_refund_register_hints(p_payment_id uuid, p_location_id uuid, p_hints jsonb, p_source text,
   p_evidence_at timestamptz, p_generation bigint) returns integer
 language plpgsql security definer set search_path = pg_catalog, public as $$
@@ -692,8 +704,8 @@ begin
     select i.payment_id into v_owner from public.catering_refund_identities i where i.refund_id = v_id for update;
     if not found then
       insert into public.catering_refund_identities (refund_id, payment_id, first_source, candidate_request_id, void_evidence_at)
-        values (v_id, p_payment_id, p_source, v_req,
-                case when h->>'status' in ('failed', 'canceled') and p_source = 'event' then p_evidence_at end);
+        values (v_id, p_payment_id, p_source, case when p_source in ('create_response', 'request_binding') then v_req end,
+                case when h->>'status' in ('failed', 'canceled') and p_source in ('event', 'recovery_seed', 'snapshot') then p_evidence_at end);
       v_n := v_n + 1;
     elsif v_owner <> p_payment_id then
       -- Another payment already owns this id: conflicting ownership holds THIS payment and moves nothing.
@@ -701,8 +713,8 @@ begin
         'foreign:' || v_id, true, p_generation, jsonb_build_object('reason', 'owned_by_another_payment'));
     else
       update public.catering_refund_identities i
-         set candidate_request_id = coalesce(i.candidate_request_id, v_req),
-             void_evidence_at = case when h->>'status' in ('failed', 'canceled') and p_source = 'event' and p_evidence_at is not null
+         set candidate_request_id = coalesce(i.candidate_request_id, case when p_source in ('create_response', 'request_binding') then v_req end),
+             void_evidence_at = case when h->>'status' in ('failed', 'canceled') and p_source in ('event', 'recovery_seed', 'snapshot') and p_evidence_at is not null
                                      then least(coalesce(i.void_evidence_at, p_evidence_at), p_evidence_at) else i.void_evidence_at end,
              -- New evidence re-opens a quarantined hint.
              quarantined_at = case when p_source in ('event', 'create_response') then null else i.quarantined_at end,
@@ -907,22 +919,31 @@ end $$;
 --   out_of_scope        parked / unmatched / no_payment ingress whose PaymentIntent matches no catering_payments row.
 --   pending_whole       a payment still `paid` whose verified reserved refunds cover its capture (listed, not blocking).
 --   cleanup_open        post-reversal checkout cleanup still owed (listed, not blocking; Fable P3-5).
+--   quarantined_events  wrong-shop / wrong-mode ingress: changed no money, never re-stamped (listed, not blocking).
+--   An applied event on a payment under an open capture review is outstanding too (`capture_review`): its refund may
+--   be whole while the stored status OFF readers use still says `paid`.
 create function public.catering_refund_drain_report() returns jsonb
 language plpgsql stable security definer set search_path = pg_catalog, public as $$
 declare
-  v_out jsonb; v_send jsonb; v_scope jsonb; v_pending jsonb; v_cleanup jsonb; v_unconf jsonb;
+  v_out jsonb; v_send jsonb; v_scope jsonb; v_pending jsonb; v_cleanup jsonb; v_unconf jsonb; v_quar jsonb;
   v_now timestamptz := clock_timestamp();
 begin
   select coalesce(jsonb_agg(jsonb_build_object('event_id', x.event_id, 'payment_id', x.payment_id, 'location_id', x.location_id, 'reason', x.reason)
                             order by x.event_id), '[]'::jsonb) into v_out
     from (select e.event_id, coalesce(e.payment_id, p.id) as payment_id, w.location_id,
                  case when e.state = 'unmatched' or e.state = 'no_payment' then 'attach_owed'
-                      when e.applied_at is null then 'unapplied' else 'floor_outstanding' end as reason
+                      when e.applied_at is null then 'unapplied'
+                      when e.floor_state = 'outstanding' then 'floor_outstanding' else 'capture_review' end as reason
             from public.catering_refund_event_work e
             left join public.catering_payments p on e.state in ('unmatched', 'no_payment') and p.provider = 'stripe' and p.provider_ref = e.payment_intent_id
+                                                and p.status in ('paid', 'refunded')
             left join public.catering_refund_payment_work w on w.payment_id = coalesce(e.payment_id, p.id)
            where e.source = 'ingress' and e.restamped_at is null
-             and ((e.state = 'attached' and (e.applied_at is null or e.floor_state = 'outstanding'))
+             and ((e.state = 'attached' and (e.applied_at is null or e.floor_state = 'outstanding'
+                     -- applied, yet the payment's status could not be published (capture review): a refund that may
+                     -- already be whole is NOT visible to OFF readers, so the event is still owed.
+                     or exists (select 1 from public.catering_refund_issues s where s.payment_id = e.payment_id
+                                  and s.code = 'capture_review' and s.state in ('open', 'held'))))
                or (e.state in ('unmatched', 'no_payment') and p.id is not null))) x;
   select coalesce(jsonb_agg(jsonb_build_object('request_id', r.id, 'payment_id', r.payment_id, 'location_id', r.location_id,
            'reason', case when r.claimed_until is not null and r.claimed_until > v_now then 'live_claim' else 'recent_arm' end) order by r.id), '[]'::jsonb)
@@ -934,7 +955,12 @@ begin
     into v_scope
     from public.catering_refund_event_work e
    where e.source = 'ingress' and e.restamped_at is null and e.state in ('unmatched', 'no_payment')
-     and not exists (select 1 from public.catering_payments p where p.provider = 'stripe' and p.provider_ref = e.payment_intent_id);
+     and not exists (select 1 from public.catering_payments p where p.provider = 'stripe' and p.provider_ref = e.payment_intent_id
+                        and p.status in ('paid', 'refunded'));
+  -- Quarantined (wrong-shop / wrong-mode) ingress: it changed no money and is never re-stamped; LISTED so nothing is unaccounted.
+  select coalesce(jsonb_agg(jsonb_build_object('event_id', e.event_id, 'event_type', e.event_type, 'payment_id', e.payment_id) order by e.event_id), '[]'::jsonb)
+    into v_quar
+    from public.catering_refund_event_work e where e.source = 'ingress' and e.state = 'quarantined';
   select coalesce(jsonb_agg(jsonb_build_object('payment_id', w.payment_id, 'location_id', w.location_id, 'reserved_cents', w.reserved_cents,
                                                'captured_cents', w.captured_cents) order by w.payment_id), '[]'::jsonb)
     into v_pending
@@ -948,7 +974,7 @@ begin
     from public.catering_refund_requests r where r.status = 'pending' and r.stripe_refund_id is null and r.create_armed_at is not null;
   return jsonb_build_object(
     'outstanding_events', v_out, 'admitted_senders', v_send, 'out_of_scope', v_scope, 'pending_whole_refunds', v_pending,
-    'cleanup_open', v_cleanup, 'unconfirmed_requests', v_unconf,
+    'cleanup_open', v_cleanup, 'unconfirmed_requests', v_unconf, 'quarantined_events', v_quar,
     'counts', jsonb_build_object(
       'accepted', (select count(*) from public.catering_refund_event_work e where e.source = 'ingress'),
       'applied', (select count(*) from public.catering_refund_event_work e where e.source = 'ingress' and e.state = 'attached'
@@ -1041,7 +1067,8 @@ begin
   perform public.catering_refund_epoch_audit(p_epoch_id, 'break_glass_close', btrim(p_operator), true,
     jsonb_build_object('juan_word_ref', p_juan_word, 'undrained', jsonb_build_object('outstanding_events', v_report->'outstanding_events',
       'admitted_senders', v_report->'admitted_senders', 'out_of_scope', v_report->'out_of_scope',
-      'pending_whole_refunds', v_report->'pending_whole_refunds', 'cleanup_open', v_report->'cleanup_open'), 'restamped', v_restamped));
+      'pending_whole_refunds', v_report->'pending_whole_refunds', 'cleanup_open', v_report->'cleanup_open',
+      'unconfirmed_requests', v_report->'unconfirmed_requests', 'quarantined_events', v_report->'quarantined_events'), 'restamped', v_restamped));
   return jsonb_build_object('closed', true, 'epoch_id', p_epoch_id, 'state', 'closed', 'break_glass', true, 'report', v_report);
 end $$;
 
@@ -1198,6 +1225,7 @@ begin
              'reason_note', r.reason_note, 'trigger_kind', r.trigger_kind, 'stripe_status', r.stripe_status,
              'last_error_code', r.last_error_code, 'attempts', r.attempts, 'first_attempt_at', r.first_attempt_at,
              'requested_at', r.requested_at, 'requested_by', r.requested_by, 'armed', r.create_armed_at is not null,
+             'legacy_possibly_sent', r.legacy_possibly_sent,
              'bound', r.stripe_refund_id is not null or exists (select 1 from public.catering_refund_identities i where i.request_id = r.id),
              'binding_hold', r.binding_hold, 'first_reversed_at', r.first_reversed_at,
              'claim_live', r.claimed_until is not null and r.claimed_until > v_now) order by r.requested_at desc, r.id), '[]'::jsonb)
@@ -1439,6 +1467,8 @@ begin
          arm_payment_intent = coalesce(r.arm_payment_intent, p_payment_intent), arm_count = r.arm_count + 1, updated_at = v_now
    where r.id = p_request_id
   returning * into v_r;
+  update public.catering_refund_issues s set state = 'resolved', disposition = 'evidence_cleared', disposition_at = v_now
+   where s.request_id = p_request_id and s.code = 'reserved_not_sent' and s.state <> 'resolved';
   -- A POST may leave now. If this process dies before `finish`, the sweep must look within minutes, not at the
   -- healthy poll the pass before the arm scheduled.
   update public.catering_refund_payment_work w set next_due_at = least(w.next_due_at, v_now + interval '5 minutes'), updated_at = v_now
@@ -1598,6 +1628,8 @@ declare
   v_payment uuid;
   v_state text := 'unmatched';
   v_shop uuid;
+  v_gen bigint;
+  v_promoted boolean := false;
   v_now timestamptz;
 begin
   if p_event_id is null or length(p_event_id) not between 1 and 255 or p_livemode is null
@@ -1612,7 +1644,7 @@ begin
   -- The same admission lock finish_drain takes exclusively. Sealed = a retryable refusal before any verdict.
   select * into v_adm from public.catering_refund_admit(p_caller, 'ingress');
   v_now := clock_timestamp();
-  select * into v_ev from public.catering_refund_event_work e where e.event_id = p_event_id;
+  select * into v_ev from public.catering_refund_event_work e where e.event_id = p_event_id for update;
   if not found then
     insert into public.catering_refund_event_work (event_id, event_type, source, endpoint_location_id, livemode, payment_intent_id,
         charge_id, provider_created_at, cumulative_cents, charge_amount_cents, charge_fully_refunded, hints, state)
@@ -1628,6 +1660,52 @@ begin
         if v_state in ('attached', 'quarantined') then v_payment := v_pay.id; end if;
       end if;
     end if;
+  elsif v_ev.source = 'recovery_seed' then
+    -- A GENUINE SIGNED DELIVERY of an event the recovery scan imported first (a retry of a delivery that had failed, or
+    -- the scan running between the ledger append and this call): it KEEPS its ingress obligation. The row becomes
+    -- ingress, gets the floor and the 0333 row it would have had, and is owed to the sweep again.
+    v_promoted := true;
+    update public.catering_refund_event_work e
+       set source = 'ingress', endpoint_location_id = p_endpoint_location_id,
+           provider_created_at = coalesce(case when p_created_sec is not null then to_timestamp(p_created_sec) end, e.provider_created_at),
+           cumulative_cents = coalesce(p_cumulative_cents, e.cumulative_cents), charge_amount_cents = coalesce(p_charge_amount_cents, e.charge_amount_cents),
+           charge_fully_refunded = coalesce(p_fully_refunded, e.charge_fully_refunded), charge_id = coalesce(p_charge, e.charge_id),
+           hints = case when jsonb_array_length(coalesce(p_hints, '[]'::jsonb)) > 0 then p_hints else e.hints end
+     where e.event_id = p_event_id
+    returning * into v_ev;
+    if v_ev.state = 'attached' then
+      perform 1 from public.catering_payments p where p.id = v_ev.payment_id for no key update;
+      select w.location_id, w.generation into v_shop, v_gen from public.catering_refund_payment_work w where w.payment_id = v_ev.payment_id for update;
+      if p_endpoint_location_id is not null and p_endpoint_location_id <> v_shop then
+        update public.catering_refund_event_work e set state = 'quarantined' where e.event_id = p_event_id;
+      else
+        update public.catering_refund_event_work e
+           set floor_state = case when e.event_type = 'charge.refunded' and coalesce(e.cumulative_cents, 0) > 0 and e.floor_state = 'none' then 'outstanding' else e.floor_state end,
+               floor_cents = case when e.event_type = 'charge.refunded' and coalesce(e.cumulative_cents, 0) > 0 and e.floor_state = 'none' then e.cumulative_cents else e.floor_cents end,
+               applied_at = null, applied_generation = null
+         where e.event_id = p_event_id;
+        perform public.catering_refund_register_hints(v_ev.payment_id, v_shop, v_ev.hints, 'event', v_ev.provider_created_at, v_gen);
+        if v_ev.event_type = 'charge.refunded' and v_ev.cumulative_cents is not null and not v_ev.history_appended then
+          insert into public.catering_payment_refund_events (stripe_event_id, payment_id, refunded_at, cumulative_refunded_cents,
+                                                             charge_amount_cents, refunded_at_approximate)
+            values (p_event_id, v_ev.payment_id, least(coalesce(v_ev.provider_created_at, v_now), v_now), v_ev.cumulative_cents,
+                    v_ev.charge_amount_cents, v_ev.provider_created_at is null)
+          on conflict do nothing;
+          update public.catering_refund_event_work e set history_appended = true where e.event_id = p_event_id;
+        end if;
+        update public.catering_refund_payment_work w
+           set generation = w.generation + 1, next_due_at = v_now, retry_count = 0, updated_at = v_now,
+               oldest_unresolved_at = coalesce(w.oldest_unresolved_at, v_now)
+         where w.payment_id = v_ev.payment_id;
+      end if;
+    elsif v_ev.state in ('unmatched', 'no_payment') and v_ev.payment_intent_id is not null then
+      select p.id, p.status into v_pay from public.catering_payments p
+       where p.provider = 'stripe' and p.provider_ref = v_ev.payment_intent_id order by p.id limit 1 for no key update;
+      if found and v_pay.status in ('paid', 'refunded') then
+        perform public.catering_refund_attach_event(p_event_id, v_pay.id);
+      end if;
+    end if;
+    select e.state, e.payment_id into v_state, v_payment from public.catering_refund_event_work e where e.event_id = p_event_id;
   else
     v_state := v_ev.state;
     v_payment := v_ev.payment_id;
@@ -1639,7 +1717,7 @@ begin
   update public.stripe_events s set outcome = 'refund_state_owed', processed_at = v_now,
          location_id = coalesce(s.location_id, case when v_state = 'attached' then v_shop end)
    where s.id = p_event_id and (s.outcome is null or s.outcome = 'processing_failed');
-  return jsonb_build_object('result', case when v_ev.event_id is null then 'registered' else 'duplicate' end, 'state', v_state,
+  return jsonb_build_object('result', case when v_ev.event_id is null or v_promoted then 'registered' else 'duplicate' end, 'state', v_state,
                             'payment_id', v_payment, 'location_id', v_shop,
                             'floor', exists (select 1 from public.catering_refund_event_work e where e.event_id = p_event_id and e.floor_state = 'outstanding'));
 end $$;
@@ -1673,7 +1751,8 @@ begin
      order by e.received_at, e.event_id
   loop
     v_r := public.catering_refund_attach_event(v_ev.event_id, p_payment_id);
-    if v_r in ('attached', 'quarantined') then v_ids := v_ids || to_jsonb(v_ev.event_id); end if;
+    if v_r in ('attached', 'quarantined') then v_ids := v_ids || to_jsonb(v_ev.event_id);
+    else raise exception 'attach_failed' using errcode = 'P0001', detail = v_r; end if;
   end loop;
   select count(*) into v_floors from public.catering_refund_event_work e where e.payment_id = p_payment_id and e.floor_state = 'outstanding';
   return jsonb_build_object('result', 'attached', 'events', v_ids, 'floors', v_floors);
@@ -1691,6 +1770,7 @@ declare
   v_pay record;
   v_w record;
   v_snap jsonb;
+  v_snap_at timestamptz;
   v_hints jsonb;
   v_token uuid := gen_random_uuid();
   v_now timestamptz;
@@ -1712,10 +1792,10 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object('id', r.stripe_refund_id, 'request', r.id)), '[]'::jsonb) into v_hints
     from public.catering_refund_requests r where r.payment_id = p_payment_id and r.stripe_refund_id is not null;
   perform public.catering_refund_register_hints(p_payment_id, v_w.location_id, v_hints, 'request_binding', null, v_w.generation);
-  select s.refunds into v_snap from public.catering_refund_stripe_snapshots s where s.payment_id = p_payment_id;
+  select s.refunds, s.listed_at into v_snap, v_snap_at from public.catering_refund_stripe_snapshots s where s.payment_id = p_payment_id;
   if v_snap is not null then
-    select coalesce(jsonb_agg(jsonb_build_object('id', x->>'id')), '[]'::jsonb) into v_hints from jsonb_array_elements(v_snap) x;
-    perform public.catering_refund_register_hints(p_payment_id, v_w.location_id, v_hints, 'snapshot', null, v_w.generation);
+    select coalesce(jsonb_agg(jsonb_build_object('id', x->>'id', 'status', x->>'status')), '[]'::jsonb) into v_hints from jsonb_array_elements(v_snap) x;
+    perform public.catering_refund_register_hints(p_payment_id, v_w.location_id, v_hints, 'snapshot', v_snap_at, v_w.generation);
   end if;
   -- A changed generation invalidates the staged continuation.
   v_cursor := case when v_w.discovery_cursor is not null and (v_w.discovery_cursor->>'generation')::bigint = v_w.generation
@@ -1844,7 +1924,10 @@ begin
     end if;
     v_incomplete := 'owner_' || coalesce(v_owner->>'status', 'missing');
   elsif (v_owner->>'payment_intent') is distinct from v_w.payment_intent_id or coalesce(v_owner->>'charge', '') !~ '^[A-Za-z0-9_]{1,255}$'
-        or coalesce(v_owner->>'currency', '') !~ '^[a-z]{3}$' or (v_owner->>'livemode') is null then
+        or coalesce(v_owner->>'currency', '') !~ '^[a-z]{3}$' or (v_owner->>'livemode') is null
+        or (jsonb_typeof(v_owner->'captured_cents') = 'number' and ((v_owner->>'captured_cents')::numeric < 0
+              or (v_owner->>'captured_cents')::numeric <> trunc((v_owner->>'captured_cents')::numeric)
+              or (v_owner->>'captured_cents')::numeric > 9007199254740991)) then
     raise exception 'invalid_request' using errcode = 'P0001';
   elsif (v_w.charge_id is not null and v_w.charge_id <> v_owner->>'charge')
         or (v_w.livemode is not null and v_w.livemode <> (v_owner->>'livemode')::boolean) then
@@ -1873,15 +1956,21 @@ begin
         raise exception 'invalid_request' using errcode = 'P0001';
       end if;
       select * into v_i from public.catering_refund_identities i where i.refund_id = v_id for update;
+      -- An id that is NOT this payment's: another payment already owns it, or (never seen before) its exact read names
+      -- another PaymentIntent. It is never scoped to this payment; it holds this payment until an operator excludes it.
+      if (found and v_i.payment_id <> p_payment_id)
+         or (not found and v_read = 'ok' and (e->>'payment_intent') is distinct from v_w.payment_intent_id) then
+        if not exists (select 1 from public.catering_refund_issues s where s.payment_id = p_payment_id and s.code = 'wrong_charge'
+                          and s.evidence_fingerprint = 'foreign:' || v_id and s.disposition = 'exclude_unrelated_hint') then
+          perform public.catering_refund_raise_issue('wrong_charge', p_payment_id, v_w.location_id, null, v_id, null,
+            'foreign:' || v_id, true, v_gen, jsonb_build_object('reason', 'owned_by_another_payment'));
+          v_blocked := true;
+        end if;
+        continue;
+      end if;
       if not found then
         insert into public.catering_refund_identities (refund_id, payment_id, first_source) values (v_id, p_payment_id, 'list');
         select * into v_i from public.catering_refund_identities i where i.refund_id = v_id for update;
-      end if;
-      if v_i.payment_id <> p_payment_id then
-        perform public.catering_refund_raise_issue('wrong_charge', p_payment_id, v_w.location_id, null, v_id, null,
-          'foreign:' || v_id, true, v_gen, jsonb_build_object('reason', 'owned_by_another_payment'));
-        v_blocked := true;
-        continue;
       end if;
       continue when v_i.excluded_at is not null;
       if v_read = 'ok' then
@@ -1943,6 +2032,12 @@ begin
 
   -- ── C. The writes. The owner's facts, stored once verified. ────────────────────────────────────────────
   v_new_gen := v_gen + 1;
+  -- The owner resolved, on the verified charge and currency: the holds that said otherwise are cleared BY THIS EVIDENCE
+  -- (an indeterminate owner after access is restored; a charge or currency that reads as verified again).
+  update public.catering_refund_issues s set state = 'resolved', disposition = 'evidence_cleared', disposition_at = v_now
+   where s.payment_id = p_payment_id and s.state <> 'resolved'
+     and (s.code = 'owner_indeterminate' or (s.code = 'wrong_charge' and s.evidence_fingerprint like 'charge:%')
+          or (s.code = 'capture_review' and s.evidence_fingerprint like 'currency:%'));
   update public.catering_refund_payment_work w
      set charge_id = coalesce(w.charge_id, v_owner->>'charge'), currency = coalesce(w.currency, v_owner->>'currency'),
          livemode = coalesce(w.livemode, (v_owner->>'livemode')::boolean),
@@ -1956,8 +2051,10 @@ begin
     v_id := e->>'id';
     select * into v_i from public.catering_refund_identities i where i.refund_id = v_id for update;
     continue when v_i.excluded_at is not null;
-    v_class := public.catering_refund_class_of(e->>'status');
+    continue when v_i.payment_id <> p_payment_id; -- another payment's id (excluded by an operator above): never written here
     v_unfamiliar := coalesce(e->>'status', '') not in ('pending', 'requires_action', 'succeeded', 'failed', 'canceled') or v_id !~ '^(re|pyr)_';
+    -- An unfamiliar id prefix or provider status RESERVES its verified amount: it is never counted as returned.
+    v_class := case when v_unfamiliar then 'reserved' else public.catering_refund_class_of(e->>'status') end;
     v_created := to_timestamp((e->>'created')::bigint);
     v_req := null;
     if coalesce(e->>'request', '') ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
@@ -1972,7 +2069,9 @@ begin
            provider_created_at = v_created, provider_status = left(e->>'status', 40), class = v_class, unfamiliar = v_unfamiliar,
            wrong_charge = (e->>'payment_intent') is distinct from v_w.payment_intent_id or (e->>'charge') <> v_w.charge_id
                           or (e->>'currency') <> v_w.currency,
-           candidate_request_id = coalesce(i.candidate_request_id, v_req),
+           -- The EXACT read decides the candidate: its verified metadata wins; metadata that names a request and
+           -- does not verify (another quote, another amount) clears a candidate; no metadata keeps what we hold.
+           candidate_request_id = case when v_req is not null then v_req when (e->>'request') is null then i.candidate_request_id else null end,
            verified_at = coalesce(i.verified_at, v_now), last_read_at = v_now, unreadable_since = null, not_found_passes = 0,
            -- A1: the FIRST database observation of the void class (a signed event's earlier `created` is kept).
            void_evidence_at = case when v_class = 'void' then coalesce(i.void_evidence_at, v_now) else i.void_evidence_at end,
@@ -2009,6 +2108,9 @@ begin
       into v_sum, v_members
       from public.catering_refund_identities i
      where i.payment_id = p_payment_id and i.verified and not i.wrong_charge and i.excluded_at is null
+       -- The EVENT's own charge and mode: an event about another charge of this PaymentIntent (or another mode) is
+       -- never explained by this charge's identities.
+       and v_ev.livemode = v_w.livemode and (v_ev.charge_id is null or v_ev.charge_id = v_w.charge_id)
        and v_ev.provider_created_at is not null and i.provider_created_at <= v_ev.provider_created_at
        and not (i.class = 'void' and i.void_evidence_at is not null and i.void_evidence_at <= v_ev.provider_created_at);
     if v_sum >= v_ev.floor_cents then
@@ -2105,6 +2207,9 @@ begin
       perform public.catering_refund_raise_issue('refund_revived', p_payment_id, v_w.location_id, v_r.id, v_r.i_refund, null,
         'revived:' || v_r.i_refund || ':' || v_r.i_class, true, v_new_gen, jsonb_build_object('class', v_r.i_class));
     end if;
+    -- The request has a verified outcome now: "reserved, not sent" / "submission unconfirmed" no longer describe it.
+    update public.catering_refund_issues s set state = 'resolved', disposition = 'evidence_cleared', disposition_at = v_now
+     where s.request_id = v_r.id and s.code in ('reserved_not_sent', 'submission_unconfirmed') and s.state <> 'resolved';
     if v_r.status = 'succeeded' or v_target = 'failed' or v_r.status = 'failed' then
       insert into public.audit_log (actor_id, actor_role, action, resource_table, resource_id, metadata, destructive)
         values (null, null, case when v_r.status = 'succeeded' then 'catering.refund.reversed'
@@ -2332,6 +2437,7 @@ begin
       into v_sum, v_members
       from public.catering_refund_identities i
      where i.payment_id = v_issue.payment_id and i.verified and not i.wrong_charge and i.excluded_at is null
+       and v_ev.livemode = v_w.livemode and (v_ev.charge_id is null or v_ev.charge_id = v_w.charge_id)
        and v_ev.provider_created_at is not null and i.provider_created_at <= v_ev.provider_created_at
        and not (i.class = 'void' and i.void_evidence_at is not null and i.void_evidence_at <= v_ev.provider_created_at);
     update public.catering_refund_event_work x
@@ -2374,8 +2480,12 @@ begin
         v_state := 'open'; -- more than one candidate is left: the ambiguity stands until the next choice
       end if;
     end if;
+  elsif p_action = 'exclude_unrelated_hint' and v_issue.evidence_fingerprint like 'foreign:%' then
+    -- The id is ANOTHER payment's (or its exact read names another PaymentIntent): nothing of this payment is excluded.
+    -- The recorded disposition is what stops this payment being held by that id again (the apply reads it).
+    null;
   elsif p_action = 'exclude_unrelated_hint' then
-    if coalesce(p_target, v_issue.refund_id) is null then raise exception 'invalid_request' using errcode = 'P0001'; end if;
+    if coalesce(p_target, v_issue.refund_id) is null then raise exception 'invalid_action' using errcode = 'P0001'; end if;
     select * into v_i from public.catering_refund_identities i where i.refund_id = coalesce(p_target, v_issue.refund_id) for update;
     -- Only a never-verified hint or wrong-charge evidence of THIS payment; a verified refund of this charge is money.
     if v_i.refund_id is null or v_i.payment_id <> v_issue.payment_id or (v_i.verified and not v_i.wrong_charge) then
@@ -2387,8 +2497,17 @@ begin
   elsif p_action in ('access_still_required', 'keep_held') then
     v_state := 'held';
   elsif p_action = 'evidence_reviewed' then
+    -- A revived refund's hold is lifted. A RELEASED request keeps its marker for good: the human disposition is
+    -- preserved, so a reviewed late refund never turns the released request into a success.
     update public.catering_refund_requests r set binding_hold = null, updated_at = v_now
-     where r.id = v_issue.request_id and r.binding_hold in ('refund_revived', 'released_request_has_refund');
+     where r.id = v_issue.request_id and r.binding_hold = 'refund_revived';
+    if v_issue.code = 'capture_review' and v_issue.evidence_fingerprint like 'immutable:%' and v_issue.refund_id is not null then
+      -- The operator reviewed a refund whose immutable facts no longer read as verified: its facts are verified
+      -- AFRESH by the next exact read (it is a hint again until then, and its binding is re-established by that read).
+      update public.catering_refund_identities i
+         set verified = false, class = null, request_id = null, candidate_request_id = coalesce(i.candidate_request_id, i.request_id), verified_at = null
+       where i.refund_id = v_issue.refund_id and i.payment_id = v_issue.payment_id;
+    end if;
   elsif p_action = 'release_unsent' then
     select * into v_r from public.catering_refund_requests r where r.id = v_issue.request_id for update;
     if v_r.id is null or v_r.status <> 'pending' or v_r.create_armed_at is not null or v_r.legacy_possibly_sent
@@ -2413,7 +2532,7 @@ begin
   update public.catering_refund_payment_work w
      set generation = w.generation + 1, pass_token = null, updated_at = v_now,
          next_due_at = case when p_action in ('recheck_after_access', 'reopen_recheck', 'bind_verified_refund', 'treat_as_external',
-                                              'exclude_unrelated_hint', 'resolve_event_floor') then v_now else w.next_due_at end,
+                                              'exclude_unrelated_hint', 'resolve_event_floor', 'evidence_reviewed') then v_now else w.next_due_at end,
          retry_count = case when p_action in ('recheck_after_access', 'reopen_recheck') then 0 else w.retry_count end,
          last_complete_generation = case when p_action in ('resolve_event_floor', 'keep_held', 'access_still_required', 'evidence_reviewed',
                                                            'acknowledge_followup', 'release_unsent')
@@ -2465,8 +2584,9 @@ begin
                  and e.state = 'attached' and (e.applied_at is null or e.floor_state = 'outstanding'))
          order by w.next_due_at, w.payment_id limit v_lim) x),
     'identity_polls', (select coalesce(jsonb_agg(x.payment_id), '[]'::jsonb) from (
-        select i.payment_id from public.catering_refund_identities i
+        select i.payment_id from public.catering_refund_identities i join public.catering_refund_payment_work w on w.payment_id = i.payment_id
          where i.verified and i.next_poll_at is not null and i.next_poll_at <= v_now
+           and not (w.retry_count > 0 and w.next_due_at > v_now) -- in its retry ladder: it comes back through its own due time
          group by i.payment_id order by min(i.next_poll_at), i.payment_id limit v_lim) x),
     'discovery', (select coalesce(jsonb_agg(x.payment_id), '[]'::jsonb) from (
         select w.payment_id from public.catering_refund_payment_work w
@@ -2500,7 +2620,8 @@ begin
      where r.status = 'pending' and r.stripe_refund_id is null and (r.claimed_until is null or r.claimed_until <= v_now)
        and ((r.create_armed_at is null and not r.legacy_possibly_sent and r.requested_at < v_now - interval '15 minutes')
          or ((r.create_armed_at is not null and r.create_armed_at < v_now - interval '180 seconds') or r.legacy_possibly_sent))
-       and not exists (select 1 from public.catering_refund_issues s where s.request_id = r.id and s.code in ('reserved_not_sent', 'submission_unconfirmed'))
+       and not exists (select 1 from public.catering_refund_issues s where s.request_id = r.id
+             and s.code = case when r.create_armed_at is null and not r.legacy_possibly_sent then 'reserved_not_sent' else 'submission_unconfirmed' end)
      order by r.requested_at, r.id limit 200
   loop
     if v_r.create_armed_at is null and not v_r.legacy_possibly_sent then
@@ -2514,15 +2635,19 @@ begin
     end if;
   end loop;
   -- Unmatched events: attach when their payment has settled since (a safety net behind settlement), else park.
+  -- Payment locks are taken in payment-id order here too (the stated lock order), never in event order.
   for v_e in
-    select e.event_id, e.payment_intent_id, e.received_at from public.catering_refund_event_work e
-     where e.state = 'unmatched' and e.restamped_at is null order by e.received_at, e.event_id limit 200
+    select e.event_id, e.received_at, p.id as pid, p.status as pstatus
+      from public.catering_refund_event_work e
+      left join lateral (select p.id, p.status from public.catering_payments p
+                          where p.provider = 'stripe' and p.provider_ref = e.payment_intent_id order by p.id limit 1) p on true
+     where e.state = 'unmatched' and e.restamped_at is null
+     order by p.id nulls last, e.received_at, e.event_id limit 200
   loop
-    select p.id, p.status into v_pay from public.catering_payments p
-     where p.provider = 'stripe' and p.provider_ref = v_e.payment_intent_id order by p.id limit 1 for no key update;
-    if found and v_pay.status in ('paid', 'refunded') then
-      if public.catering_refund_attach_event(v_e.event_id, v_pay.id) in ('attached', 'quarantined') then v_attached := v_attached + 1; end if;
-    elsif not found and v_e.received_at < v_now - interval '24 hours' then
+    if v_e.pid is not null and v_e.pstatus in ('paid', 'refunded') then
+      perform 1 from public.catering_payments p where p.id = v_e.pid for no key update;
+      if public.catering_refund_attach_event(v_e.event_id, v_e.pid) in ('attached', 'quarantined') then v_attached := v_attached + 1; end if;
+    elsif v_e.pid is null and v_e.received_at < v_now - interval '24 hours' then
       update public.catering_refund_event_work e set state = 'no_payment', parked_at = v_now where e.event_id = v_e.event_id and e.state = 'unmatched';
       v_parked := v_parked + 1;
     end if;
@@ -2586,10 +2711,10 @@ begin
           from public.catering_refund_requests r where r.payment_id = v_p.id and r.stripe_refund_id is not null;
         perform public.catering_refund_register_hints(v_p.id, (select w.location_id from public.catering_refund_payment_work w where w.payment_id = v_p.id),
           v_hints, 'request_binding', null, 1);
-        select coalesce(jsonb_agg(jsonb_build_object('id', x->>'id')), '[]'::jsonb) into v_hints
+        select coalesce(jsonb_agg(jsonb_build_object('id', x->>'id', 'status', x->>'status')), '[]'::jsonb), max(s.listed_at) into v_hints, v_last_at
           from public.catering_refund_stripe_snapshots s, jsonb_array_elements(s.refunds) x where s.payment_id = v_p.id;
         perform public.catering_refund_register_hints(v_p.id, (select w.location_id from public.catering_refund_payment_work w where w.payment_id = v_p.id),
-          v_hints, 'snapshot', null, 1);
+          v_hints, 'snapshot', v_last_at, 1);
       end if;
     end loop;
     v_cur := v_cur || case when v_n < v_lim then jsonb_build_object('payments_done', true)
@@ -2599,6 +2724,9 @@ begin
     for v_s in
       select s.id, s.type, s.livemode, s.received_at, s.payload, s.outcome from public.stripe_events s
        where s.type in ('charge.refunded', 'refund.created', 'refund.updated', 'refund.failed', 'charge.refund.updated')
+         -- HISTORY only: received before this epoch opened, or carrying a terminal legacy verdict. A delivery of this
+         -- epoch that is not finished yet (NULL / processing_failed) is live ingress and is never taken as a seed.
+         and (s.received_at < v_ep.recovery_cutoff or (s.outcome is not null and s.outcome not in ('processing_failed', 'refund_state_owed')))
          and (v_cur->>'events_after_at' is null or (s.received_at, s.id) > ((v_cur->>'events_after_at')::timestamptz, v_cur->>'events_after_id'))
        order by s.received_at, s.id limit v_lim
     loop
@@ -2698,7 +2826,7 @@ begin
       from public.catering_refund_event_work e join public.catering_refund_payment_work w on w.payment_id = e.payment_id
      where e.source = 'ingress' and e.state = 'attached' and e.applied_at is null and e.restamped_at is null
     union all
-    select 'payment', w.payment_id::text, w.next_due_at, w.generation, w.location_id
+    select 'payment', w.payment_id::text, least(coalesce(w.oldest_unresolved_at, 'infinity'::timestamptz), w.next_due_at), w.generation, w.location_id
       from public.catering_refund_payment_work w
      where w.restricted_at is null
        and not exists (select 1 from public.catering_refund_issues s where s.payment_id = w.payment_id and s.state in ('open', 'held'))

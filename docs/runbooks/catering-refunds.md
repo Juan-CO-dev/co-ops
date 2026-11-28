@@ -274,8 +274,10 @@ Never set the switch OFF while an epoch is open: acknowledged refund work would 
    | `admitted_senders` | Yes | A live sender claim, or an arm younger than 180 seconds (a create response may still add evidence). |
    | applied (`counts.applied`) | No | Done. |
    | `out_of_scope` | No | Parked / unmatched / `no_payment` events whose PaymentIntent matches no `catering_payments` row. At the seal each is RE-STAMPED to main's `payment_not_found` verdict, so main's own OFF replay picks it up. Nothing parks for ever and nothing blocks the drain for ever. |
-   | `pending_whole_refunds` | No (listed) | A whole refund still PENDING at the drain: the payment stays `paid` (the money has not returned yet), and main's legacy `charge.refunded` settles it when Stripe does. |
+   | `outstanding_events`, reason `capture_review` | Yes | An applied event on a payment under an open capture review: its refund may already be whole while the stored status OFF readers use still says `paid`. Disposition the review (panel) or break glass. |
+   | `pending_whole_refunds` | No (listed) | A whole refund still PENDING at the drain: the payment stays `paid` (the money has not returned yet), and main's legacy `charge.refunded` settles it when Stripe does. **UNVERIFIED: whether Stripe sends a new `charge.refunded` when a pending refund later succeeds** (its documented signal for that transition is `refund.updated`, which main ignores). So for every payment listed here: re-check the charge in Stripe after the refund settles and confirm the payment reads `refunded`; if it does not, resend that charge's `charge.refunded` event from the Stripe dashboard. |
    | `cleanup_open`, `unconfirmed_requests` | No (listed) | Post-reversal checkout cleanup still owed; armed requests whose create response was lost. |
+   | `quarantined_events` | No (listed) | Wrong-shop / wrong-mode ingress: it changed no money and is never re-stamped. |
 
 3. With nothing blocking, the same call seals ON ingress and closes the epoch in one transaction (`closed: true`).
    **Only after that receipt** may CC set the switch OFF and roll the app back. The seal stays across the rollout.
@@ -285,7 +287,14 @@ Never set the switch OFF while an epoch is open: acknowledged refund work would 
 OFF with undrained work is allowed **ONLY on Juan's explicit word** (**needs Juan's word**, recorded):
 `select public.catering_refund_break_glass_close('<epoch id>', <generation>, '<operator>', '<reference to Juan''s recorded word>');`
 It records the FULL undrained list in the epoch's drain report and in a destructive `catering.refund.break_glass`
-audit row, and re-stamps every event-backed item (outstanding and out-of-scope) to main's `payment_not_found` per A2.
+audit row (outstanding events, admitted senders, out-of-scope events, pending whole refunds, open cleanup, unconfirmed
+requests, quarantined events), and re-stamps every event-backed item (outstanding and out-of-scope) to main's
+`payment_not_found` per A2.
+**A re-stamp alone applies nothing to a payment that is already settled:** Stripe does not redeliver an event it was
+answered 2xx for, and main replays a seen-first refund only at settlement. So after the switch is OFF, for every
+payment in the recorded `outstanding_events` list: resend its `charge.refunded` event from the Stripe dashboard (main's
+duplicate gate then works it, because its verdict is `payment_not_found` and a paid row carries the charge) and confirm
+the payment's status against the charge.
 The reference is a structured id (8 to 120 of `A-Za-z0-9_.:/#-`), never a name or a message body.
 
 ### A contract upgrade during a drain (addendum A3 i)

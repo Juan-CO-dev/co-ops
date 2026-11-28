@@ -300,6 +300,8 @@ export interface StoredRefundRequest {
   id: string; payment_id: string; amount_cents: number; status: "pending" | "submitted" | "succeeded" | "failed";
   reason_code: string; reason_note: string | null; trigger_kind: string; stripe_status: string | null; last_error_code: string | null;
   attempts: number; first_attempt_at: string | null; requested_at: string; requested_by: string; armed: boolean; bound: boolean;
+  /** Attempted before 0359 (no arm could be reconstructed): possibly sent, never "reserved, not sent". */
+  legacy_possibly_sent?: boolean;
   binding_hold: string | null; first_reversed_at: string | null; claim_live: boolean;
 }
 export interface StoredRefundIssue {

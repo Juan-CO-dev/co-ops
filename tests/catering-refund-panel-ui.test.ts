@@ -270,6 +270,19 @@ describe("RefundPanel, Part B1: the issues list", () => {
     for (const label of actionLabels) expect(screen.queryByText(label)).toBeNull();
   });
 
+  it("an event floor names its event and shows cumulative, explained and unexplained (review fix, Astra P2); other issues show no such line", async () => {
+    panelWith(b1Summary({ issues: [b1Issue("awaiting_identity", true, {
+      eventId: "evt_test_floor_1",
+      detail: { event_cumulative_cents: 12000, explained_cents: 7000, remainder_cents: 5000 },
+    })] }));
+    const line = await screen.findByTestId("refund-issue-floor");
+    for (const part of ["evt_test_floor_1", "$120.00", "$70.00", "$50.00"]) expect(line.textContent).toContain(part);
+    cleanup();
+    panelWith(b1Summary({ issues: [b1Issue("awaiting_identity", true), b1Issue("refund_revived", true, { id: "00000000-0000-4000-8000-0000000000e2", detail: { event_cumulative_cents: 12000 } })] }));
+    await screen.findAllByTestId("refund-issue");
+    expect(screen.queryByTestId("refund-issue-floor")).toBeNull();
+  });
+
   it("with authority: one button per action the server sent; a held issue also offers Reopen and recheck", async () => {
     panelWith(b1Summary({ issues: [b1Issue("refund_revived", true, { state: "held", blocking: true })] }));
     const row = await screen.findByTestId("refund-issue");

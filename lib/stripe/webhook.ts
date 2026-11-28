@@ -925,6 +925,17 @@ async function registerRefundIngress(sb: ServiceClient, ingress: RefundIngress, 
   return { locationId: typeof location === "string" ? location : null };
 }
 
+/** Is refund ingress sealed (the final drain closed the epoch and no new one released the seal)? Unknown = sealed. */
+async function refundIngressSealed(sb: ServiceClient): Promise<boolean> {
+  try {
+    const { data, error } = await sb.rpc("catering_refund_epoch_state", { p_caller: REFUND_CALLER_CONTRACT });
+    if (error) return true;
+    return (data as { state?: unknown } | null)?.state === "sealed";
+  } catch {
+    return true;
+  }
+}
+
 async function processRefundIngress(
   sb: ServiceClient,
   event: unknown,
@@ -937,7 +948,16 @@ async function processRefundIngress(
     // A duplicate whose work already committed answers 2xx again, even if the previous response was lost. So does a
     // delivery that carries a terminal verdict from before the switch (recovery imports those as history).
     const prior = await readLedgerOutcome(sb, ingress.eventId);
-    if (!isRetryableLedgerOutcome(prior)) return { result: "duplicate", locationId: ctx.locationId };
+    if (!isRetryableLedgerOutcome(prior)) {
+      // ONE exception, and only once ingress is SEALED: `payment_not_found` is the verdict the seal hands an
+      // undrained event back to main with (addendum A2). An old ON instance must not answer that redelivery with a
+      // final 2xx "duplicate": it answers retryable and writes NOTHING (the stored verdict stays main's), so the OFF
+      // deployment's redelivery works it through main's own duplicate gate. With ingress open nothing changes: a
+      // terminal verdict from before the switch is a duplicate.
+      if (prior !== "payment_not_found" || !(await refundIngressSealed(sb))) return { result: "duplicate", locationId: ctx.locationId };
+      console.error(`[stripe webhook] refund ingress is sealed; ${ingress.eventId} is left to the OFF deployment`);
+      return { result: "processing_failed", locationId: ctx.locationId };
+    }
   }
   try {
     const registered = await registerRefundIngress(sb, ingress, ctx);

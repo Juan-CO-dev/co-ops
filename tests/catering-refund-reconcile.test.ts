@@ -112,15 +112,16 @@ describe("discovery", () => {
     expect(x.stripe.posts).toBe(1);
   });
 
-  it("unknown_prefix_reserves_without_blocking_other_identities: an unfamiliar status reserves, an unfamiliar prefix counts by its class, others proceed; flagged, never blocking", async () => {
+  it("unknown_prefix_reserves_without_blocking_other_identities: an unfamiliar status AND an unfamiliar prefix each reserve (never counted as returned), others proceed; flagged, never blocking", async () => {
     await setup();
     const odd = x.stripe.refund(x.pay.pi, 4000, "succeeded", { id: "rfnd_NEWPREFIX1" });
     const strange = x.stripe.refund(x.pay.pi, 3000, "under_review");
     const fine = x.stripe.refund(x.pay.pi, 2000, "succeeded");
     const a = await pass(x.pay.id);
-    expect([a.result, a.returned_cents, a.reserved_cents, a.available_cents, a.held]).toEqual(["applied", 6000, 3000, 21000, false]);
+    // Review fix (Astra P1): plan B1.2 "Reserve the verified amount ... Do not count it as returned" holds for a prefix too.
+    expect([a.result, a.returned_cents, a.reserved_cents, a.available_cents, a.held]).toEqual(["applied", 2000, 7000, 21000, false]);
     const rows = await harnessLib.rows(x.db, "select refund_id, unfamiliar, class from public.catering_refund_identities where payment_id = $1 order by refund_id", [x.pay.id]);
-    expect(rows).toEqual([{ refund_id: fine, unfamiliar: false, class: "returned" }, { refund_id: strange, unfamiliar: true, class: "reserved" }, { refund_id: odd, unfamiliar: true, class: "returned" }]
+    expect(rows).toEqual([{ refund_id: fine, unfamiliar: false, class: "returned" }, { refund_id: strange, unfamiliar: true, class: "reserved" }, { refund_id: odd, unfamiliar: true, class: "reserved" }]
       .sort((p, q) => (p.refund_id < q.refund_id ? -1 : 1)));
     expect((await openIssues(x.db, x.pay.id)).map((i) => [i.code, i.blocking])).toEqual([["unfamiliar_identity", false], ["unfamiliar_identity", false]]);
     // Not blocking: a Confirm against what is left still goes through.
@@ -253,6 +254,52 @@ describe("reversal", () => {
     // Nothing is refunded automatically, ever.
     expect(x.stripe.posts).toBe(0);
     expect(await harnessLib.count(x.db, "select count(*) n from public.catering_refund_requests")).toBe(0);
+  });
+
+  it("reversal_retires_reopened_checkout_and_reports_race: a REPLACEMENT balance checkout opened while the balance read refunded is retired through the owning account (review fix, Astra P1)", async () => {
+    await setup();
+    const balance = await x.w.pay(x.quote, "balance", 20000);
+    x.stripe.charge(balance.pi, { account: ACCT_A, captured: 20000 });
+    const full = x.stripe.refund(balance.pi, 20000, "succeeded");
+    let a = await pass(balance.id);
+    expect(a.payment_status).toBe("refunded");
+    // While it read `refunded` the portal opened a REPLACEMENT balance intent with its own checkout.
+    const replacement = await x.w.pay(x.quote, "balance", 20000, { status: "due" });
+    await x.db.query("update public.catering_payments set provider_session_id = 'cs_test_replacement_balance' where id = $1", [replacement.id]);
+    // The shared helper preserves an ordinary balance by design: it reports nothing for the replacement.
+    const close = vi.fn(async () => ({ retired: [], stillOpen: [], completing: [] }));
+    const retired: string[] = [];
+    const retireFor = vi.fn(async () => async (sessionId: string) => { retired.push(sessionId); return "expired" as const; });
+    x.stripe.refunds.get(full)!.status = "canceled";
+    let report: unknown = null;
+    a = await runRefundPass(sb(), balance.id, { deadlineMs: DEADLINE(), cleanup: async (c, pid) => (report = await runReversalCleanup(c as never, pid, close as never, retireFor as never)) as never });
+    expect([a.payment_status, a.previous_payment_status]).toEqual(["paid", "refunded"]);
+    expect(retired).toEqual(["cs_test_replacement_balance"]);
+    expect(report).toEqual({ complete: true, report: { still_open: 0, completing: 0, already_paid_duplicates: 0, retired: 1 } });
+    expect((await harnessLib.one(x.db, "select provider_session_id from public.catering_payments where id = $1", [replacement.id])).provider_session_id).toBeNull();
+    // The designed deposit + balance pair is untouched: the DEPOSIT's row and session were never asked about.
+    expect(retireFor).toHaveBeenCalledTimes(1);
+    expect(x.stripe.posts).toBe(0);
+  });
+
+  it("reversal_retires_reopened_checkout_and_reports_race: a replacement checkout that cannot be confirmed closed keeps the obligation and is raised", async () => {
+    await setup();
+    const balance = await x.w.pay(x.quote, "balance", 20000);
+    x.stripe.charge(balance.pi, { account: ACCT_A, captured: 20000 });
+    const full = x.stripe.refund(balance.pi, 20000, "succeeded");
+    await pass(balance.id);
+    const replacement = await x.w.pay(x.quote, "balance", 20000, { status: "due" });
+    await x.db.query("update public.catering_payments set provider_session_id = 'cs_test_replacement_stuck' where id = $1", [replacement.id]);
+    const close = vi.fn(async () => ({ retired: [], stillOpen: [], completing: [] }));
+    const retireFor = vi.fn(async () => async () => { throw new Error("stripe down"); });
+    x.stripe.refunds.get(full)!.status = "failed";
+    let report: unknown = null;
+    await runRefundPass(sb(), balance.id, { deadlineMs: DEADLINE(), cleanup: async (c, pid) => (report = await runReversalCleanup(c as never, pid, close as never, retireFor as never)) as never });
+    expect(report).toEqual({ complete: false, report: { still_open: 1, completing: 0, already_paid_duplicates: 0, retired: 0 } });
+    expect((await harnessLib.one(x.db, "select provider_session_id from public.catering_payments where id = $1", [replacement.id])).provider_session_id).toBe("cs_test_replacement_stuck");
+    const w = await work(x.db, balance.id);
+    expect([w.checkout_cleanup_owed_at != null, w.checkout_cleanup_done_at]).toEqual([true, null]);
+    expect((await openIssues(x.db, balance.id)).map((i) => i.code)).toContain("checkout_still_open");
   });
 
   it("reversal_retires_reopened_checkout_and_reports_race: with only the designed deposit + balance pair, no duplicate is reported", async () => {

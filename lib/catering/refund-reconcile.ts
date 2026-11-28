@@ -38,6 +38,7 @@ import {
 } from "@/lib/stripe/client";
 import { stripeAccountsForShop } from "@/lib/stripe/session-owner";
 import { closeQuoteCheckouts, settlementCleanupComplete, type ClosedCheckouts, type CloseQuoteCheckoutsInput } from "@/lib/catering/payment-sessions";
+import { retireSessionFor, type RetireSession } from "@/lib/catering/payment-carry";
 import { REFUND_SQL_REFUSALS } from "@/lib/catering/refunds-shared";
 import {
   REFUND_B1_SQL_REFUSALS,
@@ -223,6 +224,8 @@ export interface RefundPassOutcome extends RefundApplyResult {
 
 /** Time kept back at the end of a pass for the database writes that finish it. */
 const FINISH_RESERVE_MS = 2_500;
+/** Exact refund reads made at once (GETs; well under Stripe's read rate limit). */
+const EXACT_READ_CONCURRENCY = 8;
 
 /**
  * Run ONE discovery pass over a settled payment and hand its evidence to the financial writer. Never throws for a
@@ -265,13 +268,14 @@ export async function runRefundPass(sb: ServiceClient, paymentId: string, opts: 
     } catch (e) {
       return defer(e instanceof StripeError ? e.code.slice(0, 60) : "list_failed", 60);
     }
-    const learned: Array<{ id: string; request: string | null }> = [];
+    // Ids only: what a LIST entry's metadata names is never a request candidate (the exact read decides that).
+    const learned: Array<{ id: string }> = [];
     for (const r of page.refunds) {
       // A repeated id ACROSS pages means the list is not a stable enumeration: incomplete, never "all of them".
       if (listed.has(r.id)) return defer("list_repeated_id", 60);
       listed.add(r.id);
       ids.add(r.id);
-      learned.push({ id: r.id, request: r.requestId });
+      learned.push({ id: r.id });
     }
     pages++;
     if (!page.hasMore) {
@@ -291,9 +295,14 @@ export async function runRefundPass(sb: ServiceClient, paymentId: string, opts: 
   }
 
   // COVERAGE: an exact read of every id. A spent budget leaves the rest `transient` (the pass is then incomplete).
+  // In bounded parallel (never one long serial walk): a payment with a hundred refunds finishes inside one slice
+  // instead of re-reading the same prefix on every sweep.
   const reads: RefundRead[] = [];
-  for (const id of [...ids].sort()) {
-    reads.push(Date.now() >= stop ? { id, read: "transient" } : await readRefundExact(owner, id, stop));
+  const sorted = [...ids].sort();
+  for (let i = 0; i < sorted.length; i += EXACT_READ_CONCURRENCY) {
+    const batch = sorted.slice(i, i + EXACT_READ_CONCURRENCY);
+    reads.push(...(await Promise.all(batch.map((id): Promise<RefundRead> =>
+      Date.now() >= stop ? Promise.resolve({ id, read: "transient" }) : readRefundExact(owner, id, stop)))));
   }
 
   const applied = await apply({
@@ -317,16 +326,27 @@ export interface ReversalCleanup {
   report: { still_open: number; completing: number; already_paid_duplicates: number; retired: number };
 }
 
+/** Does an intent of kind `a` collect the same money as the restored payment of kind `b`? The designed deposit + balance pair does not. */
+function duplicatesRestored(a: string, b: string): boolean {
+  return a === b || a === "full" || b === "full";
+}
+
 /**
  * A payment that read `refunded` re-opened its order's checkout; now that it is `paid` again, a checkout opened
- * meanwhile is a second way to pay the same thing. Retire them through the shared checkout-retirement helper
- * (`closeQuoteCheckouts`, which keeps the designed deposit + balance pair), count an intent of the SAME kind that was
- * already paid meanwhile as a possible duplicate, and report. Nothing is ever reimbursed automatically.
+ * meanwhile is a second way to pay the same thing. Two steps:
+ *   1. the shared checkout-retirement helper (`closeQuoteCheckouts`), exactly as a settlement runs it;
+ *   2. THE REVERSAL CASE that helper does not cover by design (it preserves an ordinary balance): a REPLACEMENT intent
+ *      that collects the same money as the restored payment (a new balance for a restored balance, a full for
+ *      anything) and still names an open checkout is retired through the owning account too. The designed
+ *      deposit + balance pair is left alone.
+ * An intent of the same kind ALREADY PAID meanwhile is counted as a possible duplicate. What could not be confirmed
+ * closed keeps the obligation owed and is reported. Nothing is ever reimbursed automatically.
  */
 export async function runReversalCleanup(
   sb: ServiceClient,
   paymentId: string,
   close: (sb: ServiceClient, input: CloseQuoteCheckoutsInput) => Promise<ClosedCheckouts> = closeQuoteCheckouts,
+  retireFor: (sb: ServiceClient, locationId: string) => Promise<RetireSession> = retireSessionFor,
 ): Promise<ReversalCleanup> {
   const { data: pay, error } = await sb
     .from("catering_payments")
@@ -344,11 +364,37 @@ export async function runReversalCleanup(
   if (fErr) throw new Error(`reversal cleanup family: ${fErr.message}`);
   const { data: others, error: oErr } = await sb
     .from("catering_payments")
-    .select("id, kind, status")
+    .select("id, kind, status, provider_session_id")
     .in("quote_id", [...new Set([pay.quote_id, ...(fam ?? []).map((r) => r.id)])])
-    .returns<Array<{ id: string; kind: string; status: string }>>();
+    .returns<Array<{ id: string; kind: string; status: string; provider_session_id: string | null }>>();
   if (oErr) throw new Error(`reversal cleanup payments: ${oErr.message}`);
-  const duplicates = (others ?? []).filter((o) => o.id !== pay.id && o.status === "paid" && (o.kind === pay.kind || o.kind === "full" || pay.kind === "full")).length;
+  const duplicates = (others ?? []).filter((o) => o.id !== pay.id && o.status === "paid" && duplicatesRestored(o.kind, pay.kind)).length;
+  // Step 2: a replacement intent of the restored payment's own money that still names a checkout nobody closed above.
+  const handled = new Set([...closed.retired, ...closed.stillOpen, ...closed.completing]);
+  const replacements = (others ?? []).filter((o) => o.id !== pay.id && (o.status === "due" || o.status === "void")
+    && o.provider_session_id && duplicatesRestored(o.kind, pay.kind) && !handled.has(o.id));
+  if (replacements.length > 0) {
+    let retire: RetireSession = null;
+    try {
+      retire = quote?.location_id ? await retireFor(sb, quote.location_id) : null;
+    } catch {
+      retire = null;
+    }
+    for (const r of replacements) {
+      const sessionId = r.provider_session_id!;
+      if (!retire) { closed.stillOpen.push(r.id); continue; }
+      try {
+        const outcome = await retire(sessionId);
+        if (outcome === "complete") { closed.completing.push(r.id); continue; } // that money is landing: its own event records it
+        // Confirmed expired by the owning account: clear the id, guarded on the exact session retired.
+        const { error: cErr } = await sb.from("catering_payments").update({ provider_session_id: null }).eq("id", r.id).eq("provider_session_id", sessionId);
+        if (cErr) throw new Error(cErr.message);
+        closed.retired.push(r.id);
+      } catch {
+        closed.stillOpen.push(r.id); // not confirmed closed: the obligation stays owed and staff are told
+      }
+    }
+  }
   const complete = settlementCleanupComplete(closed);
   const report = { still_open: closed.stillOpen.length, completing: closed.completing.length, already_paid_duplicates: duplicates, retired: closed.retired.length };
   await refundRpc(sb, "catering_refund_cleanup_done", { p_payment_id: paymentId, p_complete: complete, p_report: report });

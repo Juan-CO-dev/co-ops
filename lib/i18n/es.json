@@ -10625,6 +10625,7 @@
   "catering.refunds.issue_not_blocking": "No retiene el pago",
   "catering.refunds.issue_held": "Revisado y mantenido retenido",
   "catering.refunds.issue_aged": "Abierto hace más de 24 horas",
+  "catering.refunds.issue.floor_detail": "Evento de Stripe {event}: {cumulative} reportado como reembolsado en el cargo, {explained} explicado por reembolsos que verificamos, {remainder} sin explicar.",
   "catering.refunds.issue.awaiting_identity": "Stripe reportó más reembolsado en este cargo de lo que explican los reembolsos que vemos. El pago queda retenido hasta que se explique.",
   "catering.refunds.issue.verified_unreadable": "Un reembolso que vimos antes ya no se puede leer en Stripe. Puede que haya cambiado el acceso a la cuenta de Stripe.",
   "catering.refunds.issue.ambiguous_binding": "Un reembolso de Stripe podría corresponder a más de un reembolso de aquí. Alguien tiene que elegir el correcto.",

@@ -10625,6 +10625,7 @@
   "catering.refunds.issue_not_blocking": "Does not hold the payment",
   "catering.refunds.issue_held": "Reviewed and kept on hold",
   "catering.refunds.issue_aged": "Open more than 24 hours",
+  "catering.refunds.issue.floor_detail": "Stripe event {event}: {cumulative} reported refunded on the charge, {explained} explained by refunds we verified, {remainder} unexplained.",
   "catering.refunds.issue.awaiting_identity": "Stripe reported more refunded on this charge than the refunds we can see explain. The payment is held until that is explained.",
   "catering.refunds.issue.verified_unreadable": "A refund we saw before can't be read from Stripe now. Access to the Stripe account may have changed.",
   "catering.refunds.issue.ambiguous_binding": "A Stripe refund could belong to more than one refund here. Someone has to pick the right one.",
