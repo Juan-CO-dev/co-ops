@@ -171,4 +171,35 @@ describe("P2 (Astra): the outlook shows the prep LOAD — quantities, units, dem
     expect(text).toContain("prep for Wed, Oct 7: 1 ea Item 0, 2 ea Item 1, 3 ea Item 2, 4 ea Item 3, 5 ea Item 4, +3 more");
     expect(text).not.toContain("Item 5");
   });
+
+  // Digest round 3 polish (1a F7): ONE 5-item budget for the whole order line, across every prep date — the budget
+  // used to restart for each date, so a three-date order printed up to 15 items with no "+N".
+  const DAY3 = "2026-10-09";
+  const threeDates = (perDate: number) => [DAY3, TOMORROW, TODAY].flatMap((d) =>
+    Array.from({ length: perDate }, (_, i) => ({ needDate: d, name: `${d.slice(-2)}-${i}`, nameEs: null, qty: 1, unit: "ea", portion: null })));
+  const todayLine = (prep: ReturnType<typeof threeDates>, lang: "en" | "es" = "en") =>
+    composeCateringSections(empty([lead({ contactName: "Many", eventDate: TODAY, stage: "confirmed", prep })]), { locations: [shops[0]!], includeUnassigned: false }, lang, BASE)[1]!.lines[0]!.text;
+
+  it("three prep dates × 3 items: 5 items across the first two dates (date order), then ONE '+4 more'; the third date is not named", () => {
+    const text = todayLine(threeDates(3));
+    expect(text).toContain("prep for Wed, Oct 7: 1 ea 07-0, 1 ea 07-1, 1 ea 07-2 · prep for Thu, Oct 8: 1 ea 08-0, 1 ea 08-1, +4 more");
+    expect(text).not.toContain("08-2");
+    expect(text).not.toContain("Oct 9");
+    expect(text.match(/ ea /g)).toHaveLength(5);
+    expect(text.match(/more/g)).toHaveLength(1);
+  });
+
+  it("three prep dates × 1 item (under the budget): every date, every item, no '+N'", () => {
+    const text = todayLine(threeDates(1));
+    expect(text).toContain("prep for Wed, Oct 7: 1 ea 07-0 · prep for Thu, Oct 8: 1 ea 08-0 · prep for Fri, Oct 9: 1 ea 09-0");
+    expect(text).not.toContain("more");
+  });
+
+  it("exactly 5 items across three dates: all of them, no '+N'; Spanish '+N más' when over", () => {
+    const five = threeDates(2).slice(0, 5); // 09 ×2, 08 ×2, 07 ×1
+    const text = todayLine(five);
+    expect(text.match(/ ea /g)).toHaveLength(5);
+    expect(text).not.toContain("more");
+    expect(todayLine(threeDates(3), "es")).toMatch(/, \+4 más$/);
+  });
 });
